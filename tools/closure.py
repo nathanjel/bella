@@ -8,7 +8,9 @@ every module Bella claims to support must have every module it imports at runtim
 supported too, or an adaptation named. Review rounds two and three showed that an
 inventory made by reading source is not closed (logging -> threading, argparse -> gettext,
 statistics -> bisect, collections -> keyword/reprlib, shutil -> optional bz2/lzma). This
-tool computes the closure mechanically and fails the build when the manifest is open.
+tool computes the closure mechanically and fails the build when the manifest is open. A closed
+manifest is an inventory -- every import accounted for -- not proof that those modules compile or
+that their APIs are reproduced (review 2026-11-01, astra-low-01).
 
 How it works
 ------------

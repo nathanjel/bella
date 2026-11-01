@@ -112,3 +112,8 @@ design document edited and re-exported the same day):
      attribute (C-3-06); 3.14 left it `None`. `name` is a structured payload (D-08 keeps it).
    Also: `ast.Import`/`ast.ImportFrom` gained `is_lazy` (not listed in What's New), and eleven
    phase-1 modules use module-level `lazy import` (TODO, task 1).
+6. The 2026-11-01 reviews (astra-low-01/02, gemini-4-argon-high-01): 51 findings, every one
+   reproduced or refuted on 3.15.2; verdicts, evidence and the four items that need the author's
+   decision (D-1 to D-4) are in `docs/reviews/review-log.md`. Two facts measured along the way
+   that the implementation must follow: CPython 3.15 leaves `UnboundLocalError.name` as None
+   (NameError carries the name), and a `with` statement looks up `__exit__` before `__enter__`.

@@ -14,13 +14,13 @@ third review asked for. Nothing here compiles a real program yet.
 | Path | What | State |
 | --- | --- | --- |
 | `docs/` | The three design documents (Markdown exports), decisions, the deviation register as data, the reviews | current |
-| `tools/closure.py` + `manifest.toml` | Phase-1 standard-library closure: mechanically closed, with per-API scoping and declared omissions | closed on CPython 3.13; **must be rerun on 3.15.2** |
-| `refmodel/` | Executable reference model of the object model (promoted fields, `__dict__` exposure, descriptors, inline caches) tested against CPython | agrees on ~40k random ops per seed; two design findings recorded |
-| `conformance/` | Harness and 25 corpus cases, one per demonstrated behaviour from the reviews or a CPython change | recorded on 3.15.2 (authoritative) |
+| `tools/closure.py` + `manifest.toml` | Phase-1 standard-library closure: an inventory of every module the phase-1 library imports (computed, not read), with per-API scoping and declared omissions. Closed means accounted for, not compiled | closed on CPython 3.13; **must be rerun on 3.15.2** |
+| `refmodel/` | Executable reference model of the object model (promoted fields, `__dict__` exposure, descriptors, inline caches) tested against CPython; cache soundness is checked by comparing lookup plans, so user hooks run once | agrees on ~40k random ops per seed; design findings recorded |
+| `conformance/` | Harness (`record`, `verify`, `check`; fail closed) and 28 corpus cases (27 recorded, 1 excluded construct), one per demonstrated behaviour from the reviews or a CPython change | recorded on 3.15.2 (authoritative); `make verify` reproduces all 27 |
 | `pipeline/` | L1 (PyCore) grammar, desugaring passes with `PassSpec` records, `eval1`, pass manager, toy C++ emitter, end-to-end slice | 3 integer programs agree CPython == eval1 == C++; BigInt is XFAIL |
 | `runtime/include/bella/int.hpp` | Exact `int` fast paths (63-bit immediates, floor semantics), differentially tested with UBSan | promotion to BigInt not implemented |
 | `runtime/probes/` | 20 C++23/26 feature probes; `make probes` reports what the toolchain supports | run on GCC 16 in Docker |
-| `validation/` | Range-certificate checkers (interval arithmetic; Z3); clause C-9-1 | passing |
+| `validation/` | Range-certificate checkers (interval arithmetic; Z3) with three verdicts: proved, refuted, unknown; clause C-9-1 | passing; only PROVED removes a check |
 | `TODO.md` | Gate 0, first increment: five tasks with acceptance criteria | — |
 
 ## Quick start
@@ -66,4 +66,5 @@ Python source ──parse──▶ L0 (ast) ──desugar passes──▶ L1 PyC
 ## Reading order
 
 `docs/dialect-spec.md` (what), `docs/design.md` (how), `docs/DECISIONS.md` (what was decided),
-`TODO.md` (what is next), then `CLAUDE.md` (how to work in this repository).
+`docs/reviews/review-log.md` (every review finding and its verdict), `TODO.md` (what is next),
+then `CLAUDE.md` (how to work in this repository).

@@ -41,6 +41,9 @@ running it, not by recollection; the conformance harness exists for that.
   stdexec, Eigen, GMP, Shed Skin are out (study, section 12).
 * **Readable output.** Generated C++ keeps Python identifiers and is committed
   (`pipeline/examples/out/`). If a reviewer could not follow it, it is wrong.
+* **Reviews are input, not authority.** External reviews live in `docs/reviews/`; every finding
+  gets an id, a reproduction and a verdict in `docs/reviews/review-log.md` before anything
+  changes. Fix confirmed defects that leave the design intact; take design changes to the author.
 
 ## Commands
 
@@ -48,11 +51,13 @@ running it, not by recollection; the conformance harness exists for that.
 make test               pytest (if installed) + refmodel self-check
 make closure            phase-1 closure vs manifest.toml  (pinned interpreter; --allow-unpinned elsewhere)
 make record             conformance expectations under the pinned CPython
+make verify             the pinned CPython reproduces every recorded expectation (fails closed)
 make check-conformance  RUNNER="python3 {case}" today; the compiled runner later
 make slice              CPython == eval1 == C++ on pipeline/examples
 make int-test           int.hpp vs CPython with UBSan
 make probes             C++26 feature report for the toolchain in use
-make check              all of the above (CI)
+make lint               ruff and mypy, both clean
+make check              closure, lint, test, verify, probes, slice, int-test (CI)
 ```
 
 On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):

@@ -18,7 +18,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   first-use edge, not an eager one; today it is followed as eager, which is sound but
   over-approximates. Eleven phase-1 modules use it (`collections`, `contextlib`,
   `dataclasses`, `typing`, `traceback`, `pathlib`, `argparse`, `inspect`, `difflib`,
-  `tokenize`, `_colorize`), so lazy-import semantics are phase-1 runtime work.
+  `tokenize`, `_colorize`), so lazy-import semantics are phase-1 runtime work. Two decisions
+  wait on the author (review log D-3, D-4): imports under `if` (omission or lazy, and a
+  `[platform]` table), and a `codeop` shim for `traceback`.
   Review the six `dynamic_unknown` import sites the lock lists (`encodings`, `inspect`,
   `traceback`, `unittest.loader/main`, `warnings`) and decide: registry entry, adaptation, or
   per-API scope.
@@ -27,9 +29,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## 2. Grow the conformance corpus on 3.15.2
 
-* Today: 24 cases + 1 excluded-construct case under `conformance/cases`, from review findings
-  and from CPython 3.15 changes (C-9-07), recorded authoritatively on 3.15.2 (2026-11-01) with
-  the harness masks for D-06/D-08.
+* Today: 27 cases + 1 excluded-construct case under `conformance/cases`, from review findings
+  and from CPython 3.15 changes (C-9-07, C-3-09..11), recorded authoritatively on 3.15.2
+  (2026-11-01); `make verify` reproduces them, D-08 masking is opt-in per case (`# mask:`).
 * To do: cases for the 3.15 additions the phase-1 library depends on or the dialect must
   decide: PEP 810 lazy imports (reification at first use, import errors at first use,
   `__lazy_modules__`, `sys.set_lazy_imports` rejected by E-04), PEP 798 unpacking in
@@ -41,8 +43,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   short-circuit with rich comparisons, dict mutation-during-iteration edge (size change only).
   Port the first 100 functions from CPython's `test_descr`, `test_int`, `test_dict`,
   `test_generators` as clauses (PSF-licensed; test-only, never shipped).
-* Done when: every [P1] clause in the spec has at least one case, and `make record` is
-  authoritative.
+* Done when: every [P1] clause in the spec has at least one case, and `make verify` passes on
+  the pin.
 
 ## 3. Finish the reference object model and write the real header from it
 
@@ -54,14 +56,20 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * To do, in the model first (with a conformance case each): `__setattr__`/`__delattr__`/
   `__getattribute__` overrides; `__class__` assignment; dict-mode (runtime-created) classes
   with shapes; setattr caching; `MAY_RECEIVE_COMPUTED_WRITES` as a class fact and the
-  `__getattr__` shortcut it licenses; weak references. Then write `runtime/include/bella/object.hpp`
+  `__getattr__` shortcut it licenses; weak references; object lifetimes, so that `found` is
+  really borrowed (review log RL-20); oracle operations for the 2026-11-01 scenarios (RL-22).
+  Class versions from one global counter wait on the author (D-1). Then write `runtime/include/bella/object.hpp`
   from the model (start from `docs/drafts/object.hpp.draft` and the two findings in
   `docs/DECISIONS.md`), single-threaded first: plain counters, no atomics, no collector.
 * Done when: the C++ object model passes the same stateful test through a thin Python
-  binding, and C-3-01..08 pass under the compiled runner.
+  binding, and C-3-01..11 pass under the compiled runner.
 
 ## 4. One complete compilation path on the three target programs
 
+* Scope: both code reviews of 2026-11-01 ask for a smaller first deliverable (split phase 1,
+  prototype staging on one `@dataclass` and one `namedtuple`, lifetimes in L2 first); this
+  waits on the author (review log D-2). The toy emitter now refuses, rather than invents, what
+  it cannot represent: possibly unassigned reads, None values, calls before the `def`.
 * Today: `make slice` runs `pipeline/examples/*.py` through parse → L1 → `eval1` and through
   the toy C++ emitter; 3/3 integer programs agree with CPython and `fact_big.py` is XFAIL on
   the missing BigInt. The pass manager orders the frontend passes by facts and refuses
