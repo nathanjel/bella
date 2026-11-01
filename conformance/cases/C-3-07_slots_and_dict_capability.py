@@ -38,8 +38,8 @@ try:
 except AttributeError as exc:
     print("undeclared on slotted:", type(exc).__name__, exc.name)
 try:
-    print(c.t)
+    print(c.t)  # type: ignore[attr-defined]  # an unset slot, read on purpose
 except AttributeError as exc:
     print("unset slot:", type(exc).__name__, exc.name)
-c.t = 5
-print("slot set:", c.t)
+c.t = 5  # type: ignore[attr-defined]  # the slot exists at runtime; the checker cannot see it
+print("slot set:", c.t)  # type: ignore[attr-defined]  # as above

@@ -24,7 +24,7 @@ def set_(self: Desc, obj: object, value: object) -> None:
     pass
 
 
-Desc.__set__ = set_          # Desc is now a data descriptor; Holder itself did not change
+Desc.__set__ = set_  # type: ignore[attr-defined]  # Desc becomes a data descriptor; Holder does not change
 print("data descriptor wins after promotion:", h.attr)
-del Desc.__set__
+del Desc.__set__  # type: ignore[attr-defined]  # demotion, on purpose
 print("instance visible again after demotion:", h.attr)

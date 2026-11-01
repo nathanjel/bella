@@ -16,7 +16,7 @@ help:
 	@echo "make probes            compile the C++26 feature probes       -> toolchain-probes.md"
 	@echo "make slice             the toy end-to-end slice: python == eval1 == emitted C++"
 	@echo "make int-test          differential test of runtime/include/bella/int.hpp vs CPython"
-	@echo "make lint              ruff and mypy (clean since 2026-11-01; keep them clean)"
+	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
 	@echo "make check             everything above (what CI runs)"
 
 test:
@@ -52,6 +52,8 @@ int-test:
 
 lint:
 	$(PY) -m ruff check . && $(PY) -m mypy
+	# dialect programs: the input contract of design section 2 (strict, no explicit Any)
+	$(PY) -m mypy --disallow-any-explicit conformance/cases pipeline/examples
 
 check: closure lint test verify probes slice int-test
 

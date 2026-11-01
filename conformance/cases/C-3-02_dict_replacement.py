@@ -14,11 +14,11 @@ obj = Example()
 old = obj.__dict__
 replacement: dict[str, int] = {"y": 2}
 obj.__dict__ = replacement
-print("new attr visible:", obj.y)
+print("new attr visible:", obj.y)  # type: ignore[attr-defined]  # from the replaced __dict__, on purpose
 print("old attr gone:", not hasattr(obj, "x"))
 print("vars is replacement:", vars(obj) is replacement)
 replacement["z"] = 3
-print("write through replacement:", obj.z)
+print("write through replacement:", obj.z)  # type: ignore[attr-defined]  # as above
 print("old dict still usable:", list(old.items()))
 try:
     obj.__dict__ = 5  # type: ignore[assignment]

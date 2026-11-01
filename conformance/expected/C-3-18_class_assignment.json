@@ -1,0 +1,12 @@
+{
+ "case": "C-3-18_class_assignment.py",
+ "clause": "C-3-18",
+ "spec": "section 3",
+ "status": "P2+",
+ "source": "TODO task 2 (__class__ assignment with CPython's layout rule); spec section 3, \"Classes, later\"",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "B B True\nSlotted -> TypeError\nint -> TypeError\n",
+ "stderr": "",
+ "exit_code": 0
+}

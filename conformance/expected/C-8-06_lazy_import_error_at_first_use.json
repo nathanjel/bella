@@ -1,0 +1,12 @@
+{
+ "case": "C-8-06_lazy_import_error_at_first_use.py",
+ "clause": "C-8-06",
+ "spec": "section 8",
+ "status": "P1",
+ "source": "dialect specification v0.4 section 3 (PEP 810: import errors are raised at first use)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "statement done: False\n  [lazy_broken initialising]\nattempt 1 LookupError ('lazy_broken refuses to initialise',) | in sys.modules: False\n  [lazy_broken initialising]\nattempt 2 LookupError ('lazy_broken refuses to initialise',) | in sys.modules: False\n",
+ "stderr": "",
+ "exit_code": 0
+}

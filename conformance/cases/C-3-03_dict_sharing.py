@@ -12,9 +12,9 @@ class Example:
 first = Example()
 second = Example()
 second.__dict__ = first.__dict__
-first.z = 3
-print("shared write visible:", second.z)
-second.w = 4
-print("shared both ways:", first.w, vars(first) is vars(second))
-del first.z
+first.z = 3  # type: ignore[attr-defined]  # attributes through a shared __dict__ are the point
+print("shared write visible:", second.z)  # type: ignore[attr-defined]  # as above
+second.w = 4  # type: ignore[attr-defined]  # as above
+print("shared both ways:", first.w, vars(first) is vars(second))  # type: ignore[attr-defined]  # as above
+del first.z  # type: ignore[attr-defined]  # as above
 print("shared delete visible:", not hasattr(second, "z"))

@@ -27,7 +27,7 @@ m = hmac.new(b"key", data, hashlib.sha256)
 print("hmac.new:", m.name, m.digest_size, m.block_size, m.hexdigest())
 print("hmac.new by name:", hmac.new(b"key", data, "sha512").hexdigest()[:32])
 try:
-    hmac.new(memoryview(b"key"), data, "sha256")
+    hmac.new(memoryview(b"key"), data, "sha256")  # type: ignore[call-overload]  # the TypeError is the point
 except TypeError as exc:
     print("hmac.new, memoryview key:", type(exc).__name__)
 print("compare_digest:", hmac.compare_digest(b"a", b"a"), hmac.compare_digest("a", "b"))

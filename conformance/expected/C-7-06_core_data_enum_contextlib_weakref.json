@@ -1,0 +1,12 @@
+{
+ "case": "C-7-06_core_data_enum_contextlib_weakref.py",
+ "clause": "C-7-06",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7, Core data (enum, contextlib, weakref, contextvars, copy, abc, types, reprlib, keyword)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "Perm.R|W <Perm.R|X: 5> [<Perm.R: 1>, <Perm.W: 2>, <Perm.X: 4>] Perm.R|W True Perm(0)\n3 LIGHT [1, 2] True <Shade.LIGHT: 1>\nExitStack unwinds: ['c', 'b', 'a']\nsuppressed\n['enter x', 'X', 'exit x']\nalive: True\nafter del: False\nouter inner inner\n[[1], [2, 3, 4]] [[1], [2, 3]]\nabstract: TypeError\nnamespace(a=1, b=2) True\n[0, 1, 2, 3, 4, 5, ...] 'xxxxxxxxxxxx...xxxxxxxxxxxxx'\nFalse True False True\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -6,7 +6,7 @@
 
 
 class Odd:
-    def __eq__(self, other: object) -> object:  # type: ignore[override]  -- returning a non-bool is the point
+    def __eq__(self, other: object) -> object:  # type: ignore[override]  # returning a non-bool is the point
         return "comparison-result"
 
 

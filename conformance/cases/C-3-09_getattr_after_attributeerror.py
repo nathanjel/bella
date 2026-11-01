@@ -37,6 +37,6 @@ print(Slotted().s)
 w = WithDescriptor()
 print(w.p, w.q, w.missing)
 try:
-    print(NoHook().s)
+    print(NoHook().s)  # type: ignore[attr-defined]  # an unset slot, read on purpose
 except AttributeError as exc:
     print("no hook:", type(exc).__name__, exc.name)

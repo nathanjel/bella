@@ -1,0 +1,12 @@
+{
+ "case": "C-2-02_chained_comparison_rich_results.py",
+ "clause": "C-2-02",
+ "spec": "section 2",
+ "status": "P1",
+ "source": "TODO task 2 (chained-comparison short-circuit with rich comparisons); spec section 3",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "Verdict(b<c) ['make a', 'make b', 'a<b', 'bool a<b', 'make c', 'b<c']\nVerdict(a<b) ['make a', 'make b', 'a<b', 'bool a<b']\nin an if: no ['make a', 'make b', 'a<b', 'bool a<b', 'make c', 'b<c', 'bool b<c']\n",
+ "stderr": "",
+ "exit_code": 0
+}

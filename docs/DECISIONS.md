@@ -175,6 +175,25 @@ and the design document edited and re-exported the same day).
   Option 2, providing `pbkdf2_hmac` and `scrypt` in the runtime, is a later task (`TODO.md`).
   Spec section 11, `docs/deviations.toml`.
 
+**2026-11-01 — the conformance corpus, first increment of Gate 0 task 2.** 57 cases and 2
+excluded-construct cases, every \[P1\] row of spec sections 3 and 7 covered at least once,
+recorded on 3.15.2.
+
+* \[P2+\] cases are recorded on CPython and must be refused by the runner: a non-zero exit with
+  `[P2+]` in stderr (and the case's `# expect:` text). The compiler's milestone refusals carry
+  that marker; spec section 10 asks for a milestone-naming error and does not fix its form.
+* A case may declare one registered deviation it differs by; it then has a second expectation,
+  recorded on CPython made to show the deviation. D-20 is the only one that can be shown that
+  way (the manifest's omissions and the codecs outside the phase-1 set, blocked at start-up).
+* The corpus and `pipeline/examples` are type-checked by `make lint` under strict mypy with no
+  explicit `Any`, the input contract of design section 2. Fifteen files needed it: deliberate
+  dynamism now carries targeted ignores with reasons, and three new cases had real typing
+  mistakes, fixed. No recorded expectation changed.
+* Measured on the way: a dict mutation that keeps the size does not raise, and iteration then
+  follows CPython's entry table (C-6-08); a failed lazy import runs the module again at the next
+  use (C-8-06); `copy.deepcopy` of a `frozendict` is a new object, `copy.copy` the same one
+  (C-6-05).
+
 ## Pins
 
 | What | Value | Where |

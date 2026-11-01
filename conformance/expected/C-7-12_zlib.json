@@ -1,0 +1,12 @@
+{
+ "case": "C-7-12_zlib.py",
+ "clause": "C-7-12",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7, Persistence and compression (zlib is [P1])",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "True True 3706485945 3543904321 2679148245\nTrue True b''\nb'hello world' b'hello world'\nbad stream: error\n15 9 True\n",
+ "stderr": "",
+ "exit_code": 0
+}

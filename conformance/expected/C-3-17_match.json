@@ -1,0 +1,12 @@
+{
+ "case": "C-3-17_match.py",
+ "clause": "C-3-17",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "TODO task 2 (match); spec section 3 lists match as [P1]",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "origin\npositive x-axis at 3\npoint -1,2\nred\nother Color\nstarts with 1, rest [2, 3]\nstarts with 1, rest []\na pair\nstring 'ab'\nuser with ['id', 'name']\nkind group\nnegative -2\nnegative -1.5\nother int\nnone\n",
+ "stderr": "",
+ "exit_code": 0
+}

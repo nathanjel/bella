@@ -1,0 +1,12 @@
+{
+ "case": "C-3-15_generator_close_and_throw.py",
+ "clause": "C-3-15",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "TODO task 2 (generator close()/throw()); review rounds (generators are [P1])",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "1 2 3\nstop value: done\nclose after the end: None [\"received 'hi'\", \"caught ('boom',)\", 'finally']\nclose returns: returned on close ['GeneratorExit', 'finally']\nstubborn close: RuntimeError\nthrow before start: KeyError ('early',)\nfresh is finished: exhausted\n",
+ "stderr": "",
+ "exit_code": 0
+}

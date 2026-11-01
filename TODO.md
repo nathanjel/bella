@@ -19,24 +19,24 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## 2. Grow the conformance corpus on 3.15.2
 
-* Today: 31 cases + 1 excluded-construct case under `conformance/cases`, from review findings
-  and from CPython 3.15 changes (C-9-07, C-3-09..13, C-7-01..02), recorded authoritatively on 3.15.2
-  (2026-11-01); `make verify` reproduces them, D-08 masking is opt-in per case (`# mask:`).
-* To do: cases for the 3.15 additions the phase-1 library depends on or the dialect must
-  decide: PEP 810 lazy imports (reification at first use, import errors at first use,
-  `__lazy_modules__`, `sys.set_lazy_imports` rejected by E-04), PEP 798 unpacking in
-  comprehensions (\[P2+\]: a rejection case),
-  `frozendict` (PEP 814), `sentinel` (PEP 661); add the cases the reviews asked for that are not yet
-  here — the seeding-compatibility clause for D-14 (`PYTHONHASHSEED` fixed, compare
-  `hash("x")` across runs), `__class__` assignment with CPython's layout rule, `__getattribute__`
-  override cost tier, generator `close()`/`throw()`, `except*`, `match`, chained-comparison
-  short-circuit with rich comparisons, dict mutation-during-iteration edge (size change only).
-  Teach the harness two kinds of case it cannot check yet: a \[P2+\] case that must fail with
-  the milestone-naming error (review log RL-59: `shutil.make_archive` for a built-in format),
-  and a case that differs by a registered deviation (D-20: `pbkdf2_hmac`,
-  `algorithms_available`, archive formats, codec names).
-  Port the first 100 functions from CPython's `test_descr`, `test_int`, `test_dict`,
-  `test_generators` as clauses (PSF-licensed; test-only, never shipped).
+* Today (2026-11-01): 57 cases (53 \[P1\], 4 \[P2+\]) and 2 excluded-construct cases, recorded
+  on 3.15.2; `make verify` reproduces 58 expectations. Every \[P1\] row of spec sections 3 and
+  7 has at least one case. The harness checks \[P2+\] cases (the runner must refuse them with
+  `[P2+]`) and deviation cases (D-20, simulated on CPython), and `make lint` type-checks the
+  corpus as dialect programs. Added in this increment: PEP 810 lazy imports (C-8-05..07,
+  X-4-02), PEP 798 (C-3-14, \[P2+\]), `frozendict` and `sentinel` (C-6-05, C-6-06), D-14 seeding
+  (C-6-07), generators, `except*`, `match` (C-3-15..17), chained rich comparisons (C-2-02), dict
+  mutation (C-6-08: only a size change raises; otherwise iteration follows CPython's entry
+  table), `__class__` and `__getattribute__` (C-3-18, C-3-19, \[P2+\]), D-20 (C-7-03), the
+  archive formats (C-7-04, \[P2+\]), and one or two cases per stdlib row (C-7-05..14).
+* To do: a row is not a sentence. Cases for the normative sentences each row still leaves open,
+  starting with section 6 (`str`, `bytes`, `float` formatting and parsing, `complex`, `range`,
+  `list`/`tuple` operations, `set` order beyond C-6-03), the data model (numeric protocol with
+  `NotImplemented` and reflected operands, `__format__`, `__index__`), exception chaining
+  (`__cause__`, `__context__`, `__suppress_context__`), `with`, closures and `nonlocal`,
+  `__init_subclass__`, `__set_name__`, `super()`, t-strings (PEP 750). Then port the first 100
+  functions from CPython's `test_descr`, `test_int`, `test_dict`, `test_generators` as clauses
+  (PSF-licensed; test-only, never shipped).
 * Done when: every [P1] clause in the spec has at least one case, and `make verify` passes on
   the pin.
 

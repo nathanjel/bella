@@ -1,0 +1,12 @@
+{
+ "case": "C-8-05_lazy_import_first_use.py",
+ "clause": "C-8-05",
+ "spec": "section 8",
+ "status": "P1",
+ "source": "dialect specification v0.4 sections 3 and 8 (PEP 810 lazy imports are [P1])",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "after the statements: False False\nproxies: True True\n  [lazy_noisy initialised]\nfirst use: 42\nsecond use: 42 | reified: module\n  [lazy_items initialised]\ncall: item\nitem reified: function True\n",
+ "stderr": "",
+ "exit_code": 0
+}

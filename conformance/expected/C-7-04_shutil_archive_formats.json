@@ -1,0 +1,12 @@
+{
+ "case": "C-7-04_shutil_archive_formats.py",
+ "clause": "C-7-04",
+ "spec": "section 7",
+ "status": "P2+",
+ "source": "review log RL-59 (shutil's built-in archive formats import tarfile or zipfile and are [P2+])",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "out.zip True\n['a.txt'] hello\n",
+ "stderr": "",
+ "exit_code": 0
+}

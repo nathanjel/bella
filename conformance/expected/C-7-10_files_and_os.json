@@ -1,0 +1,12 @@
+{
+ "case": "C-7-10_files_and_os.py",
+ "clause": "C-7-10",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7, Files and OS (os, os.path, pathlib, io, shutil, tempfile, glob, fnmatch, stat, errno)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "['a.txt', 'b.py', 'pkg'] ['a.txt', 'b.py', 'pkg']\n['src/a.txt', 'src/pkg/c.txt']\n['src/a.txt', 'src/b.py', 'src/pkg']\n['src/a.txt', 'src/pkg/c.txt'] ['a.txt']\n[('copy', ['pkg'], ['a.txt', 'a2.txt']), ('copy/pkg', [], ['b.py', 'c.txt'])]\n6 True True drwxr-xr-x\n.txt a a.md src alpha True\nmissing: FileNotFoundError True missing.txt\n['one\\n', 'two\\n'] 8\nafter rmtree: ['log.txt', 'src']\na/b/../c a/c ('x.tar', '.gz') y.z\n('/', 'a', 'b', 'c.txt') a/b / . EEXIST\nb'abc' line1\n ['line2\\n'] \u00e9\n",
+ "stderr": "",
+ "exit_code": 0
+}

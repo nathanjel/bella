@@ -1,0 +1,12 @@
+{
+ "case": "C-7-11_process_signals_gc.py",
+ "clause": "C-7-11",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification sections 3 and 7, Process and signals (signal in the main thread, atexit) and gc; the threading shim",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "previous handler is default: True\nreceived: ['SIGUSR1', 'SIGUSR1'] True\nignored, still 2\ngc: True True True\ndisabled: False\nlocked: True\nrlock re-entered\nMainThread True 1 True 1\nmain body done\natexit: registered second, runs first\natexit: registered first, runs last\n",
+ "stderr": "",
+ "exit_code": 0
+}

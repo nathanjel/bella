@@ -1,0 +1,12 @@
+{
+ "case": "C-7-13_locale_and_gettext.py",
+ "clause": "C-7-13",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7, Internationalisation (the C and UTF-8 subset of locale; gettext)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "C . ''\n1234.50 2.5 3.25 12\nTrue abc C.UTF-8\nhello {n} files Open\nNullTranslations text plain a\nno catalogue: FileNotFoundError\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -1,0 +1,12 @@
+{
+ "case": "C-7-14_development_modules.py",
+ "clause": "C-7-14",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7, Development (logging, argparse, warnings, unittest, pprint)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "'INFO:bella.case:work:value 42\\nWARNING:bella.case:work:careful now\\nERROR:bella.case.child:<module>:from the child\\n' Level 25 30\n{'path': 'x', 'count': 3, 'verbose': False, 'fast': True, 'slow': False}\nusage: tool [-h] [-n COUNT] [--verbose] [--fast | --slow]\n            path\n\nA tool.\n\npositional arguments:\n  path\n\noptions:\n  -h, --help         show this help message and exit\n  -n, --count COUNT  how many\n  --verbose\n  --fast\n  --slow\n\nexit code: 2 | usage line: usage: tool [-h] [-n COUNT] [--verbose] [--fast | --slow]\n[('DeprecationWarning', 'old API'), ('UserWarning', 'odd value')]\n3 1 1 False ['test_fails']\n{'key': [0,\n         1,\n         2,\n         3,\n         4,\n         5,\n         6,\n         7,\n         8,\n         9,\n         10,\n         11],\n 'nested': {'a': [1, 2],\n            'b': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -1,0 +1,12 @@
+{
+ "case": "C-6-05_frozendict.py",
+ "clause": "C-6-05",
+ "spec": "section 6",
+ "status": "P1",
+ "source": "dialect specification v0.4 section 6 (frozendict, PEP 814, new in 3.15)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "frozendict({'b': 2, 'a': 1}) ['b', 'a'] 2 True 0\n== ignores order: True | == dict: True\ndict subclass: False ['frozendict', 'object']\nhash: True True\nitem assignment -> TypeError\nitem deletion -> TypeError\nupdate -> AttributeError\nhash of a list value -> TypeError\nmerge: frozendict({'b': 2, 'a': 1, 'c': 3}) frozendict | dict(): {'b': 2, 'a': 1} | fromkeys: frozendict({'a': 0, 'b': 0})\ncopy is same: True | deepcopy is same: False True\n",
+ "stderr": "",
+ "exit_code": 0
+}

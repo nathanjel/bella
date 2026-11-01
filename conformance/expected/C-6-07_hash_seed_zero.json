@@ -1,0 +1,12 @@
+{
+ "case": "C-6-07_hash_seed_zero.py",
+ "clause": "C-6-07",
+ "spec": "section 6",
+ "status": "P1",
+ "source": "deviation D-14 (seeding compatibility is a conformance clause); the harness sets PYTHONHASHSEED=0",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "[0, -3368204716105132637, -2096571579003691106, 6395329678795984700, 6243316497235261705]\n[0, -3368204716105132637, -5534508902283672202]\n6955645834154447545 -7857795138424989601\n['banana', 'apple', 'cherry', 'date', 'elderberry']\n[0, 1, -2, -2, 0, 1, 465258685558744706, -465258685558744706]\n[1152921504606846977, 0, 230584300921369408, 1224995262755759164, 314159, -314159] True\n",
+ "stderr": "",
+ "exit_code": 0
+}

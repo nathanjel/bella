@@ -1,0 +1,13 @@
+{
+ "case": "C-7-03_phase1_omissions_observable.py",
+ "clause": "C-7-03",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "review log D-6 and RL-57 (deviation D-20: what the phase-1 omissions make observable)",
+ "deviation": "D-20",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "pbkdf2_hmac: False | scrypt: False\nbeyond the guaranteed set: []\narchive formats: ['gztar', 'tar', 'zip']\nutf-8 -> utf-8\nlatin1 -> iso8859-1\nascii -> ascii\nutf-16-le -> utf-16-le\nutf_32 -> utf-32\nutf-8-sig -> utf-8-sig\ncp1252 -> LookupError\nkoi8_r -> LookupError\nshift_jis -> LookupError\n",
+ "stderr": "",
+ "exit_code": 0
+}

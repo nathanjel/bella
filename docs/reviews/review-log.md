@@ -9,8 +9,8 @@ anything that would change the design, the specification or the build plan goes 
 
 **Status on 2026-11-01:** 70 findings from five reviews: 48 fixed (most in commit `0d92b51`,
 RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after the
-closure reviews, RL-57 with D-6), 9 already done before or because of the review, 5 planned
-(D-2 and D-5, accepted by the author), 3 deferred, 3 refuted and 2 checked with no issue.
+closure reviews, RL-57 with D-6), 10 already done before or because of the review, 5 planned
+(D-2 and D-5, accepted by the author), 2 deferred, 3 refuted and 2 checked with no issue.
 Nothing is open for discussion: the author decided D-1 to D-6 on 2026-11-01.
 
 ## Reviews received
@@ -139,7 +139,7 @@ their function and parent package.
 | RL-56 | A3-5 | `[dynamic]` recorded a review per module, so a new site in a reviewed module passed | Confirmed | Fixed | One key per site, `"<function>: <name expression>"`; a new site and a stale key are errors. Test `test_each_computed_import_site_is_reviewed_a3_5` |
 | RL-57 | A3, G2 2.2 | hashlib without OpenSSL: add cases for the kept surface; the absent APIs and `algorithms_available` differ from the pinned CPython | Confirmed (measured: `pbkdf2_hmac`, `scrypt` absent; five names fewer in `algorithms_available`) | Fixed with D-6: deviation D-20 | Case C-7-01 prints the kept surface (digests, HMAC, buffer keys); it is identical on the pinned build and with `_hashlib` blocked. The differences are not in the deviation register |
 | RL-58 | G2 2.1, A3 | The `annotationlib` shim refuses what `@dataclass`, `NamedTuple`, `TypedDict` and `singledispatch.register` call at runtime | Confirmed: spec section 8 runs decorators and class bodies at runtime; calls at `dataclasses.py` 1057 and 1413, `typing.py` 3054 and 3208, `functools.py` 970; `inspect` imports `get_annotations` at module level | Planned: D-5 (TODO task 5) | Annotations \[P1\] at runtime; case C-3-13 pins CPython's behaviour |
-| RL-59 | A3 | Refusals name private `shutil` helpers; decide which public calls stay valid | Agreed | Deferred: TODO task 2 | Decided in spec section 7: the built-in archive formats are \[P2+\], so `make_archive` and `unpack_archive` refuse for them; `get_archive_formats` and registered formats work. A case waits for the harness to check \[P2+\] refusals |
+| RL-59 | A3 | Refusals name private `shutil` helpers; decide which public calls stay valid | Agreed | Done | Decided in spec section 7: the built-in archive formats are \[P2+\], so `make_archive` and `unpack_archive` refuse for them; `get_archive_formats` and registered formats work. Case C-7-04 (\[P2+\]), now that the harness checks \[P2+\] refusals (TODO task 2) |
 | RL-60 | A3 | The `traceback` replacement needs a runtime test | Agreed | Done | Case C-7-02: `TracebackException` and `format_exception_only` on a `ModuleNotFoundError`, which goes through the replaced function |
 | RL-61 | G2 2.2 | Omitting `_hmac` loses CPython behaviour for no licence reason | Confirmed: `hmac.digest(memoryview(b"k"), ...)` raises `TypeError` with `_hashlib` and `_hmac` blocked and works with only `_hashlib` blocked | Fixed | `_hmac` mapped, like the digests it builds on; C-7-01 covers it |
 | RL-62 | G2 2.3 | `PurePath.as_uri` is allowed while `Path.as_uri` is refused | No issue | No change | `PurePath.as_uri` imports only `urllib.parse` (\[P1\]), so the per-function rule supports it, as CPython would run it |

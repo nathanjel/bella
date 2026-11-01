@@ -1,0 +1,12 @@
+{
+ "case": "C-3-16_except_star.py",
+ "clause": "C-3-16",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "TODO task 2 (except*); spec section 3 lists try/except* as [P1]",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "ValueError: batch ['ValueError', 'ExceptionGroup'] 'inner'\nType/Key: ['ExceptionGroup', 'TypeError']\nhandled the ValueErrors\nrest: batch ['TypeError', 'ExceptionGroup'] ['KeyError']\nbare: ExceptionGroup '' [('bare',)]\nsplit: ['ValueError', 'ExceptionGroup'] ['OSError']\nsubgroup: [('b',)]\n",
+ "stderr": "",
+ "exit_code": 0
+}

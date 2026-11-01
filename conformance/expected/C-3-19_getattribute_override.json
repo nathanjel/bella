@@ -1,0 +1,12 @@
+{
+ "case": "C-3-19_getattribute_override.py",
+ "clause": "C-3-19",
+ "spec": "section 3",
+ "status": "P2+",
+ "source": "TODO task 2 (__getattribute__ override); decision 3 (admitted, tier 2, [P2+])",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "1 m ['x'] ['x', 'method', '__dict__']\n",
+ "stderr": "",
+ "exit_code": 0
+}

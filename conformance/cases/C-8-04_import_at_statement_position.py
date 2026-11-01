@@ -18,5 +18,5 @@ def late() -> None:
 
 late()
 if False:
-    import this_module_does_not_exist  # noqa: F401  -- never reached, never resolved
+    import this_module_does_not_exist  # type: ignore[import-not-found, unreachable]  # noqa: F401  # never reached, never resolved
 print("conditional import skipped")

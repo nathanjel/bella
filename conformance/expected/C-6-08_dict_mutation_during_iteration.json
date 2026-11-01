@@ -1,0 +1,12 @@
+{
+ "case": "C-6-08_dict_mutation_during_iteration.py",
+ "clause": "C-6-08",
+ "spec": "section 6",
+ "status": "P1",
+ "source": "TODO task 2 (dict mutation during iteration: only a size change raises)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "assign existing -> no error, seen ['a', 'b'] | now {'a': 10, 'b': 20}\ninsert -> RuntimeError seen ['a'] | now {'a': 1, 'b': 2, 'c': 3, 'new': 0}\npop -> RuntimeError seen ['a'] | now {'b': 2, 'c': 3}\npop self, add another -> no error, seen ['a', 'b', 'c'] | now {'a!': 1, 'b!': 1, 'c!': 1}\npop last, add another -> no error, seen ['a', 'b', 'z'] | now {'a': 1, 'b': 2, 'z': 1}\nclear and refill -> no error, seen ['a', 'y'] | now {'x': 1, 'y': 2}\nset add -> RuntimeError\n",
+ "stderr": "",
+ "exit_code": 0
+}
