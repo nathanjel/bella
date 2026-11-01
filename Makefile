@@ -51,7 +51,7 @@ int-test:
 	$(PY) runtime/tests/int_differential.py --cxx $(CXX) --std $(CXXSTD) --cases 2000
 
 lint:
-	ruff check . && mypy
+	$(PY) -m ruff check . && $(PY) -m mypy
 
 check: closure lint test verify probes slice int-test
 

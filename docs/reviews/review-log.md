@@ -7,11 +7,11 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 51 findings from three reviews: 34 fixed (most in commit `0d92b51`,
-RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1), 7 already done before or
-because of the review, 4 planned (D-2, accepted by the author), 2 deferred, 3 refuted and 1
-checked with no issue. Nothing is open for discussion: the author decided D-1 to D-4 on
-2026-11-01.
+**Status on 2026-11-01:** 70 findings from five reviews: 47 fixed (most in commit `0d92b51`,
+RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after the
+closure reviews), 9 already done before or because of the review, 4 planned (D-2, accepted by
+the author), 3 deferred, 3 refuted, 2 checked with no issue, and 2 open for discussion (D-5,
+D-6). The author decided D-1 to D-4 on 2026-11-01.
 
 ## Reviews received
 
@@ -20,6 +20,8 @@ checked with no issue. Nothing is open for discussion: the author decided D-1 to
 | 2026-11-01 | astra-low (A1) | [2026-11-01-astra-low-01-design-codebase-review.md](2026-11-01-astra-low-01-design-codebase-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
 | 2026-11-01 | astra-low (A2) | [2026-11-01-astra-low-02-python-version-review.md](2026-11-01-astra-low-02-python-version-review.md) | choice of reference Python | release notes; Bella not run on 3.15.2 |
 | 2026-11-01 | gemini-4-argon-high (G) | [2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md](2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
+| 2026-11-01 | astra-low (A3) | [2026-11-01-astra-low-03-stdlib-closure-review.md](2026-11-01-astra-low-03-stdlib-closure-review.md) | Gate 0 task 1: closure tool, manifest and lock at `b40ef2d` | CPython 3.15.2 (pinned uv build) |
+| 2026-11-01 | gemini-4-argon-high (G2) | [2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md](2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md) | task 1 and the review-log fixes, `f56d495` to `b40ef2d` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-10-30 | external, rounds 1-3 | [round-1.md](round-1.md), [round-2.md](round-2.md), [round-3.md](round-3.md) | design documents | resolved in design sections 13-15 |
 
 All findings below were re-checked on CPython 3.15.2 (the pin since `f56d495`). Several of G's
@@ -119,6 +121,37 @@ author accepted, scheduled in `TODO.md`).
 | RL-50 | A1, G 1.2.2 | The staging-to-runtime contract for `exec`-built code is unresolved | Agreed by both | Planned: D-2 | |
 | RL-51 | A1 | Consolidate the authoritative documents; present PassSpec as obligation tracking | Agreed | Planned: D-2 | |
 
+### Closure on 3.15.2 (A3, G2)
+
+Both reviews reproduced the 174-module lock byte for byte. Every tool finding below was
+reproduced on `b40ef2d` with the reviewers' method (temporary modules, runtime observation
+stubbed) before it was fixed; each fix has a test in `tools/tests/test_closure.py`. The fixed
+tool closes the manifest at 175 modules (`_hmac` added), and the lock changed only where the
+fixes say: `os.add_dll_directory`'s import of `nt` is now dead, and the `[dynamic]` edges name
+their function and parent package.
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-52 | A3-1 | A module seen only by the runtime observation was scanned but its edges never processed | Confirmed: `rv_child`'s lazy import of a module outside the manifest went unreported | Fixed | The queue is drained to a fixed point after the observation. Test `test_runtime_discovered_modules_are_traversed_a3_1`. Today's lock does not change (its runtime-only modules have no edges), as the reviewer said |
+| RL-53 | A3-2, G2 3.2 | A target missing on this machine needed no decision | Confirmed: `def f(): import missing` and an optional import of a missing module both passed | Fixed | No host-absence exemption; Windows-only `_winapi` and `nt` are now `[omissions]` of `ntpath` and `pathlib._os`; `os.add_dll_directory` is proved dead instead (RL-65). Test `test_a_module_missing_here_still_needs_a_decision_a3_2` |
+| RL-54 | A3-3 | An ImportError handler around a `def` made the imports in its body optional | Confirmed: `('rv_required', 'optional', 3, 'f')` | Fixed | A function or lambda body starts with no exception context. Test `test_a_handler_around_a_definition_does_not_cover_its_body_a3_3` |
+| RL-55 | A3-4 | `__lazy_modules__` was read for the whole statement and the whole module | Confirmed. Measured on 3.15.2: checked per imported module, with the value at that point; reassignment and in-place mutation take effect; the full dotted name matches; `from` imports count; module-level `if`, `with` and `for` blocks count; `try` and class bodies do not | Fixed | Classified per module in execution order; any other form than a literal assigned at module level is an error, since the closure could not tell. The lock is described as an inventory; the compiler takes laziness from each statement (design section 10.4 corrected). Test `test_lazy_modules_is_read_per_import_and_in_order_a3_4` |
+| RL-56 | A3-5 | `[dynamic]` recorded a review per module, so a new site in a reviewed module passed | Confirmed | Fixed | One key per site, `"<function>: <name expression>"`; a new site and a stale key are errors. Test `test_each_computed_import_site_is_reviewed_a3_5` |
+| RL-57 | A3, G2 2.2 | hashlib without OpenSSL: add cases for the kept surface; the absent APIs and `algorithms_available` differ from the pinned CPython | Confirmed (measured: `pbkdf2_hmac`, `scrypt` absent; five names fewer in `algorithms_available`) | Discuss: D-6 | Case C-7-01 prints the kept surface (digests, HMAC, buffer keys); it is identical on the pinned build and with `_hashlib` blocked. The differences are not in the deviation register |
+| RL-58 | G2 2.1, A3 | The `annotationlib` shim refuses what `@dataclass`, `NamedTuple`, `TypedDict` and `singledispatch.register` call at runtime | Confirmed: spec section 8 runs decorators and class bodies at runtime; calls at `dataclasses.py` 1057 and 1413, `typing.py` 3054 and 3208, `functools.py` 970; `inspect` imports `get_annotations` at module level | Discuss: D-5 | The shim text is provisional until D-5 |
+| RL-59 | A3 | Refusals name private `shutil` helpers; decide which public calls stay valid | Agreed | Deferred: TODO task 2 | Decided in spec section 7: the built-in archive formats are \[P2+\], so `make_archive` and `unpack_archive` refuse for them; `get_archive_formats` and registered formats work. A case waits for the harness to check \[P2+\] refusals |
+| RL-60 | A3 | The `traceback` replacement needs a runtime test | Agreed | Done | Case C-7-02: `TracebackException` and `format_exception_only` on a `ModuleNotFoundError`, which goes through the replaced function |
+| RL-61 | G2 2.2 | Omitting `_hmac` loses CPython behaviour for no licence reason | Confirmed: `hmac.digest(memoryview(b"k"), ...)` raises `TypeError` with `_hashlib` and `_hmac` blocked and works with only `_hashlib` blocked | Fixed | `_hmac` mapped, like the digests it builds on; C-7-01 covers it |
+| RL-62 | G2 2.3 | `PurePath.as_uri` is allowed while `Path.as_uri` is refused | No issue | No change | `PurePath.as_uri` imports only `urllib.parse` (\[P1\]), so the per-function rule supports it, as CPython would run it |
+| RL-63 | G2 2.3 | A refused function must still exist as an object: `shutil` sets `supports_root_dir` on two of them at import | Agreed | Done | Spec section 7 and `TODO.md` (runtime work): only a call raises |
+| RL-64 | G2 3.1 | An edge whose target was already reached skipped the lazy and optional accounting | Confirmed: a correct `[lazy_unsupported]` entry was reported stale | Fixed | Every edge is accounted for before the queue check. Test `test_every_edge_is_accounted_for_whatever_reached_its_target_first_g2_3_1` |
+| RL-65 | G2 3.2 | `from posix import *` made `os.name` unknown, so `os.add_dll_directory` was not dead | Confirmed | Fixed | A star import from a built-in module binds exactly the names that module exports. Test `test_a_star_import_from_a_builtin_binds_only_its_exports_g2_3_2` |
+| RL-66 | G2 3.3 | The static reach of omitted modules could mask runtime observations (`tracemalloc` reaches `pickle`) | Confirmed | Fixed | The observation blocks every omitted module (`sys.modules[name] = None`), so importers take their phase-1 fallbacks; the masking set is gone. All 68 roots import cleanly that way |
+| RL-67 | G2 3.4.1 | A dotted dynamic target did not reach its parent packages | Confirmed | Fixed | Literal dynamic imports and `[dynamic]` targets add every parent. Test `test_dotted_dynamic_targets_import_their_parents_g2_3_4` |
+| RL-68 | G2 3.4.2 | A literal `import_module("x")` inside a function was followed as required | Confirmed | Fixed | It is a lazy edge, like an import statement there |
+| RL-69 | G2 3.4.3 | A nested helper, not the function a program names, was recorded as refused | Confirmed | Fixed | The outermost enclosing function is refused (spec section 7 says so). Test `test_a_nested_helper_refuses_the_function_a_program_names_g2_3_4` |
+| RL-70 | G2 3.5 | `make lint` ran `ruff`/`mypy` from `PATH`, not `$(PY)` | Confirmed | Fixed | `$(PY) -m ruff check . && $(PY) -m mypy` |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -180,8 +213,43 @@ runtime, because `compile` is excluded (E-01). Recommendation: a `codeop` shim u
 milestone name, recorded in `[adaptations]`. Keeping E-08 intact is better than un-excluding
 `codeop`.
 
+**D-5 Annotations at runtime and the `annotationlib` shim (RL-58).** Open. Spec v0.6 section 7
+specifies a shim whose `get_annotations` and `call_annotate_function` raise with the milestone
+name, because annotations are \[P2+\] (section 3). But section 8 runs every decorator and class
+body at runtime, and `@dataclass`, `NamedTuple`, `TypedDict` and `singledispatch.register` call
+those functions with the FORWARDREF format, so the shim as specified fails every dataclass at
+runtime. CPython's own path needs no `__code__` when the annotations evaluate: FORWARDREF reads
+`__annotations__` first, and `call_annotate_function` calls `annotate(format)` before any
+fallback (3.15.2 source). Options:
+1. Annotations in the VALUE format become \[P1\] for classes and functions (a compiler-generated
+   `__annotate__`), and the shim serves VALUE, FORWARDREF when evaluation succeeds, and STRING
+   from compile-time text; only the `__code__` fallbacks (a `NameError` under FORWARDREF,
+   `ForwardRef.evaluate`) stay \[P2+\]. This is G2's proposal.
+2. Annotations stay \[P2+\]; the staging contract replaces the annotation reads in
+   `dataclasses`, `typing` and `functools` with staged metadata (adaptations of three modules).
+
+Recommendation: 1. It follows CPython's own fast path, leaves the three modules unadapted, and is
+what section 8 already implies. Settle the details in the staging prototype (TODO task 5), which
+gates phase 1b, where these modules belong.
+
+**D-6 Phase-1 omissions are observable (RL-57).** Open. An omission makes a module behave as not
+installed (spec section 7), and the pinned CPython has those modules, so some effects are visible:
+`hashlib.pbkdf2_hmac` and `hashlib.scrypt` are absent, `algorithms_available` lacks `md5-sha1`,
+`ripemd160`, `sha512_224`, `sha512_256` and `sm3`, `shutil` lists 3 archive formats instead of 6
+(no `bztar`, `xztar`, `zstdtar`), and a codec outside the phase-1 set raises `LookupError` (all
+measured on 3.15.2 with the omitted modules blocked). The deviation register has no entry for this,
+and a difference not in the register is a defect. Options:
+1. Register D-20, "phase-1 omissions behave as modules not installed", accepted for phase 1, with
+   these effects listed and a lint rule for `pbkdf2_hmac`, `scrypt`, `algorithms_available`,
+   archive format names and codec names outside the set.
+2. Close the `hashlib` part instead: `pbkdf2_hmac` over the mapped HMAC and `scrypt` from
+   libsodium, as an adaptation of `hashlib`.
+
+Recommendation: 1 now, 2 when a target program needs either. The harness then needs a way to
+check a case that differs by a registered deviation (TODO task 2).
+
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-52` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-71` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

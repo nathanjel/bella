@@ -124,6 +124,7 @@ the same day). `make closure` passes on the pin with 174 modules, and CI require
 * `_hashlib` (OpenSSL, Apache-2.0) and `_hmac` are omitted, so `hashlib` and `hmac` behave as in
   a CPython built without OpenSSL: `pbkdf2_hmac` and `scrypt` are absent in phase 1. The digests
   stay mapped (BearSSL or libsodium, spec section 7). Revisit if a target program needs either.
+  (`_hmac` was mapped after review the same day; see the next entry.)
 * Contradictions resolved by spec section 7: `_decimal`, `_datetime` and `_uuid` omitted (the
   pure-Python paths); `_locale`, `_sha2`, `pwd` and `grp` mapped; `_thread` a shim only.
 * The codec search must find the ten phase-1 codecs (`encodings.utf_8` and relatives), which are
@@ -135,6 +136,28 @@ the same day). `make closure` passes on the pin with 174 modules, and CI require
   `_math_integer` (mapped), `_types` (core). Removed as unreached on 3.15.2: `pathlib._abc`,
   `pathlib._local`, `_socket`, and `difflib`'s `[lazy_unsupported]` entry (3.15 removed
   `difflib._test`).
+
+**2026-11-01 — the closure reviews** (astra-low-03, gemini-4-argon-high-02; review log RL-52 to
+RL-70). Both reproduced the lock byte for byte. Nineteen findings: thirteen fixed, two done, one
+deferred, one checked with no issue, two for the author (D-5, D-6).
+
+* The closure tool, each with a test: modules seen only at runtime are traversed; a module
+  missing on this machine needs a decision like any other; a handler around a `def` does not
+  cover its body; `__lazy_modules__` is read per import in execution order (measured); every
+  computed-import site is reviewed by key; every edge is accounted for whatever reached its
+  target first; a star import from a built-in binds only its exports (`os.add_dll_directory` is
+  dead); the observation blocks omitted modules; dotted dynamic targets reach their parents; a
+  nested helper refuses the outermost function; `make lint` uses `$(PY)`.
+* `_hmac` is mapped: omitting it made `hmac.digest` reject buffer keys, with no licence reason.
+  The Windows-only `_winapi` and `nt` are declared omissions of `ntpath` and `pathlib._os`. The
+  closure has 175 modules.
+* Spec v0.6 section 7, amended the same day: an unsupported function is the outermost one that
+  contains the import, and it exists as an ordinary object; only a call raises.
+* Cases C-7-01 (the hashing surface phase 1 keeps; identical with `_hashlib` blocked) and C-7-02
+  (`traceback` formats a `ModuleNotFoundError` through the replaced function).
+* Open: D-5, annotations at runtime (spec section 8 runs `@dataclass` at runtime, and it calls
+  `get_annotations`, which the shim refuses); D-6, registering the observable effects of
+  omissions as deviation D-20.
 
 ## Pins
 

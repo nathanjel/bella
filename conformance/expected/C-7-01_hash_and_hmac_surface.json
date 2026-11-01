@@ -1,0 +1,12 @@
+{
+ "case": "C-7-01_hash_and_hmac_surface.py",
+ "clause": "C-7-01",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "review 2026-11-01 astra-low-03 and gemini-4-argon-high-02 (review log RL-57, RL-61)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "md5 md5 16 64 9e107d9d372bb6826bd81d3542a419d6\nsha1 sha1 20 64 2fd4e1c67a2d28fced849ee1bb76e7391b93eb12\nsha224 sha224 28 64 730e109bd7a8a32b1cb9d9a09aa2325d2430587ddbc0c38bad911525\nsha256 sha256 32 64 d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592\nsha384 sha384 48 128 ca737f1014a48f4c0b6dd43cb177b0afd9e5169367544c494011e3317dbf9a509cb1e5dc1e85a941bbee3d7f2afbc9b1\nsha512 sha512 64 128 07e547d9586f6a73f73fbac0435ed76951218fb7d0c8d788a309d785436bbb642e93a252a954f23912547d1e8a3b5ed6e1bfd7097821233fa0538f3db854fee6\nsha3_256 sha3_256 32 136 69070dda01975c8c120c3aada1b282394e7f032fa9cf32f4cb2259a0897dfc04\nsha3_512 sha3_512 64 72 01dedd5de4ef14642445ba5f5b97c15e47b9ad931326e4b0727cd94cefc44fff23f07bf543139939b49128caf436dc1bdee54fcb24023a08d9403f9b4bf0d450\nblake2b blake2b 64 128 a8add4bdddfd93e4877d2746e62817b116364a1fa7bc148d95090bc7333b3673f82401cf7aa2e4cb1ecd90296e3f14cb5413f8ed77be73045b13914cdcd6a918\nblake2s blake2s 32 64 606beeec743ccbeff6cbcdf5d5302aa855c256c29b88c8ed331ea1a6bf3c8812\nconstructor == new: True\nincremental: True 1a90011d5a17cbd702ea49cddd28190439dfeec1710e0efe52315e034ef449bc\nshake_128: f4202e3c5852f9182a0430fd8144f0a7\nblake2b keyed: 47f47d0e1888e926241a8232f04be3d5\nguaranteed: ['blake2b', 'blake2s', 'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha3_224', 'sha3_256', 'sha3_384', 'sha3_512', 'sha512', 'shake_128', 'shake_256']\nhmac.digest, bytes key: f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8\nhmac.digest, memoryview key: f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8\nhmac.new: hmac-sha256 32 64 f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8\nhmac.new by name: b42af09057bac1e2d41708e48a902e09\nhmac.new, memoryview key: TypeError\ncompare_digest: True False\n",
+ "stderr": "",
+ "exit_code": 0
+}

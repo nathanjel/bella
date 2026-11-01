@@ -84,7 +84,7 @@
    "nt"
   ]
  },
- "module_count": 174,
+ "module_count": 175,
  "errors": [],
  "notes": [],
  "unsupported_functions": {
@@ -322,6 +322,15 @@
    "kind": "builtin",
    "status": "mapped",
    "reached_by": "heapq:optional:597",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_hmac": {
+   "name": "_hmac",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "hmac:optional:17",
    "dynamic_unknown_lines": [],
    "path": null,
    "edges": []
@@ -2104,73 +2113,143 @@
     },
     {
      "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
      "target": "encodings.ascii",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.latin_1",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.utf_8",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.utf_8_sig",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.utf_16",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.utf_16_be",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.utf_16_le",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.utf_32",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.utf_32_be",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
     },
     {
      "importer": "encodings",
      "target": "encodings.utf_32_le",
      "cls": "dynamic",
      "line": 0,
-     "func": "[dynamic]"
+     "func": "search_function"
     }
    ]
   },
@@ -4268,7 +4347,7 @@
     {
      "importer": "os",
      "target": "nt",
-     "cls": "lazy",
+     "cls": "dead",
      "line": 1197,
      "func": "add_dll_directory"
     }

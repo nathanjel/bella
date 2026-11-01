@@ -1,0 +1,12 @@
+{
+ "case": "C-7-02_traceback_formats_module_not_found.py",
+ "clause": "C-7-02",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "review 2026-11-01 astra-low-03 (review log RL-60): traceback with its extension-module search replaced",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "type: ModuleNotFoundError | name: True\nformat_exception_only: 1 line(s), type ModuleNotFoundError\nTracebackException: ModuleNotFoundError | stack entries: True\n",
+ "stderr": "",
+ "exit_code": 0
+}

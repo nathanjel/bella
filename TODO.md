@@ -6,18 +6,20 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## 1. ~~Compute the real phase-1 dependency closure on CPython 3.15.2~~ Done 2026-11-01
 
-* `make closure` exits 0 on 3.15.2 with `authoritative: true`: 174 modules (112 compiled, 36
-  mapped, 19 core, 7 shims). `closure.lock.json` is committed, and CI requires it to be what the
+* `make closure` exits 0 on 3.15.2 with `authoritative: true`: 175 modules (112 compiled, 37
+  mapped, 19 core, 7 shims; after the closure reviews, review log RL-52 to RL-70). `closure.lock.json` is committed, and CI requires it to be what the
   pinned image computes. Every adaptation in the manifest has its note in spec section 7 (v0.6).
   Decisions: `docs/DECISIONS.md`; mechanism: design section 10.4.
 * Runtime work this leaves for the phase-1 runtime: the 16 `first-use` bindings (PEP 810), the
-  functions listed under `unsupported_functions` in the lock (each raises the milestone-naming
-  error when called), the `annotationlib` shim, and the codec search over the ten phase-1 codecs.
+  functions listed under `unsupported_functions` in the lock (each exists as an ordinary object,
+  since `shutil` sets `supports_root_dir` on two of them at import, and raises the
+  milestone-naming error when called), the `annotationlib` shim (provisional: review log D-5),
+  and the codec search over the ten phase-1 codecs.
 
 ## 2. Grow the conformance corpus on 3.15.2
 
-* Today: 28 cases + 1 excluded-construct case under `conformance/cases`, from review findings
-  and from CPython 3.15 changes (C-9-07, C-3-09..12), recorded authoritatively on 3.15.2
+* Today: 30 cases + 1 excluded-construct case under `conformance/cases`, from review findings
+  and from CPython 3.15 changes (C-9-07, C-3-09..12, C-7-01..02), recorded authoritatively on 3.15.2
   (2026-11-01); `make verify` reproduces them, D-08 masking is opt-in per case (`# mask:`).
 * To do: cases for the 3.15 additions the phase-1 library depends on or the dialect must
   decide: PEP 810 lazy imports (reification at first use, import errors at first use,
@@ -28,6 +30,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   `hash("x")` across runs), `__class__` assignment with CPython's layout rule, `__getattribute__`
   override cost tier, generator `close()`/`throw()`, `except*`, `match`, chained-comparison
   short-circuit with rich comparisons, dict mutation-during-iteration edge (size change only).
+  Teach the harness two kinds of case it cannot check yet: a \[P2+\] case that must fail with
+  the milestone-naming error (review log RL-59: `shutil.make_archive` for a built-in format),
+  and a case that differs by a registered deviation (D-6, once decided: `pbkdf2_hmac`,
+  `algorithms_available`, archive formats, codec names).
   Port the first 100 functions from CPython's `test_descr`, `test_int`, `test_dict`,
   `test_generators` as clauses (PSF-licensed; test-only, never shipped).
 * Done when: every [P1] clause in the spec has at least one case, and `make verify` passes on
@@ -82,6 +88,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Why: review log D-2 and RL-50. `dataclasses`, `namedtuple`, `enum` and `typing` build code
   with `exec` at definition time; spec section 8 stages it, but the contract between the
   staged result and the runtime is unproven.
+* Settle review log D-5 here: spec section 8 runs `@dataclass` at runtime, and it calls
+  `annotationlib.get_annotations(cls, format=FORWARDREF)`, which the phase-1 shim refuses today.
 * To do: prototype one `@dataclass` and one `namedtuple` whose definitions have observable
   effects (a default factory that counts calls, a field order printed at definition, an
   `__init_subclass__` hook), with a conformance case each first. Try both mechanisms the
