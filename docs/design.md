@@ -746,7 +746,7 @@ New in 3.15 and now listed: `_py_warnings`, `pathlib._os` and `_missing_stdlib_i
 - Dotted dynamic targets reach their parent packages.
 - A nested helper's import refuses the function a program names.
 
-`_hmac` is now mapped: omitting it made `hmac.digest` reject a buffer key for no licence reason. The `annotationlib` shim is provisional, because section 8 runs `@dataclass` at runtime and it calls `get_annotations` (review log D-5); whether the remaining `hashlib` gaps become a registered deviation is D-6.
+`_hmac` is now mapped: omitting it made `hmac.digest` reject a buffer key for no licence reason. Decided the same day: annotations are \[P1\] at runtime (review log D-5), and the `annotationlib` shim serves them through the compiler-generated `__annotate__`; only CPython's `__code__` fallbacks stay \[P2+\] (case C-3-13). The `hashlib` gaps, the archive formats and the codec subset are registered as deviation D-20 (D-6); providing `pbkdf2_hmac` and `scrypt` in the runtime is a later task.
 
 The `codeop` shim (D-4). `traceback` imports `codeop` at module level (3.15.2 `traceback.py`, line 13), and E-08 excludes `codeop` because it compiles source text (E-01). The calls sit in one method, `TracebackException._find_keyword_typos` (lines 1458 and 1507). When it formats a `SyntaxError`, it recompiles the offending lines with `codeop.compile_command` to test whether a keyword in place of a misspelled name fixes them, and if so the message ends "Did you mean 'while'?". Measured on 3.15.2:
 

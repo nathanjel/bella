@@ -1,4 +1,4 @@
-# manifest.toml -- the phase-1 standard-library manifest (dialect specification v0.6, section 7).
+# manifest.toml -- the phase-1 standard-library manifest (dialect specification v0.7, section 7).
 #
 # `make closure` (tools/closure.py) computes the import closure of [phase1].roots against the
 # pinned CPython and fails if any required module is not listed in compiled, mapped, core or
@@ -105,7 +105,7 @@ _thread = "single-threaded primitives behind the threading shim"
 socket = "import succeeds for logging.handlers type hints; sockets are [P2+]"
 subprocess = "import succeeds; every API raises with the milestone name"
 asyncio = "import succeeds for unittest.async_case; async is [P2+]"
-annotationlib = "imported by dataclasses, typing, functools and _collections_abc, whose annotation work runs at staging (spec section 4, the staging exemption): Format, ForwardRef (without evaluate) and type_repr; get_annotations, call_annotate_function and the FORWARDREF and STRING formats raise with the milestone name, since annotations are [P2+] (spec section 3) and the real formats rebuild functions from __code__ (E-02, E-07)"
+annotationlib = "every public name; get_annotations and call_annotate_function serve the VALUE format, FORWARDREF when every name resolves, and STRING through the compiler-generated __annotate__ (spec section 3, review log D-5). Only what CPython does by rebuilding a function from __code__ (FORWARDREF with an undefined name, ForwardRef.evaluate) raises with the milestone name (E-02, E-07). dataclasses, typing, functools and inspect use it while the module runs (spec section 8; case C-3-13)"
 codeop = "for traceback only (review log D-4): the PyCF_* flags with CPython's values; compile_command, Compile and CommandCompiler stop the program with the E-08 refusal, which except clauses cannot catch. A program's own import of codeop stays a compile-time error (E-08)"
 
 [adaptations]

@@ -159,6 +159,22 @@ deferred, one checked with no issue, two for the author (D-5, D-6).
   `get_annotations`, which the shim refuses); D-6, registering the observable effects of
   omissions as deviation D-20.
 
+**2026-11-01 — review-log decisions D-5 and D-6** (author's decisions; dialect specification v0.7
+and the design document edited and re-exported the same day).
+
+* D-5, annotations at runtime: option 1. Annotations are \[P1\] in the VALUE format, in
+  FORWARDREF when every name resolves, and in STRING, through a compiler-generated
+  `__annotate__`; only what needs CPython's `__code__` fallback (FORWARDREF with an undefined
+  name, `ForwardRef.evaluate`) stays \[P2+\]. The `annotationlib` shim has every public name and
+  serves those formats, so `@dataclass`, `NamedTuple`, `TypedDict` and `singledispatch` work while
+  the module runs (spec section 8). Case C-3-13 records CPython's behaviour; the implementation
+  belongs to the staging prototype (TODO task 5). Spec sections 3 and 7.
+* D-6, observable omissions: option 1. Deviation D-20, accepted for phase 1: `hashlib` without
+  OpenSSL (`pbkdf2_hmac`, `scrypt` absent, `algorithms_available` equal to the guaranteed set),
+  `shutil` with three archive formats, and `LookupError` for a codec outside the phase-1 set.
+  Option 2, providing `pbkdf2_hmac` and `scrypt` in the runtime, is a later task (`TODO.md`).
+  Spec section 11, `docs/deviations.toml`.
+
 ## Pins
 
 | What | Value | Where |

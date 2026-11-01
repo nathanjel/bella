@@ -1,4 +1,4 @@
-# Deviation register (dialect specification v0.6, section 11), machine-readable.
+# Deviation register (dialect specification v0.7, section 11), machine-readable.
 # The conformance harness and bella-lint read this file. A difference from the reference CPython
 # (bella.toml, 3.15.2) that is not listed here is a defect. Fields: status = accepted | decided | pending; lint = yes | partial | no;
 # expires = the phase in which a temporary deviation ends, if any.
@@ -121,3 +121,11 @@ summary = "module objects are immortal; functions, classes and every other defin
 status = "accepted"
 lint = "no"
 note = "narrowed after review round three: a weak reference to a module never dies; compiled code and layouts are immortal metadata the program cannot observe"
+
+[deviations.D-20]
+summary = "modules the phase-1 manifest omits behave as not installed (spec section 7): hashlib.pbkdf2_hmac and hashlib.scrypt are absent and hashlib.algorithms_available equals algorithms_guaranteed (no OpenSSL); shutil offers only the gztar, tar and zip archive formats (no bz2, lzma or zstd); a codec outside the phase-1 set raises LookupError"
+status = "accepted"
+lint = "partial"
+observable = "measured on 3.15.2 with the omitted modules blocked: algorithms_available lacks md5-sha1, ripemd160, sha512_224, sha512_256 and sm3; get_archive_formats and get_unpack_formats list 3 formats instead of 6"
+note = "review log D-6, decided 2026-11-01. Lint flags pbkdf2_hmac, scrypt, algorithms_available, the missing archive format names, and codec names given as literals outside the phase-1 set; a computed codec name cannot be linted. Providing pbkdf2_hmac and scrypt in the runtime is a later task (TODO.md)"
+expires = "phase 2 (revisit)"

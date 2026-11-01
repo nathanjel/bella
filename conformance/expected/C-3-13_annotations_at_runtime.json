@@ -1,0 +1,12 @@
+{
+ "case": "C-3-13_annotations_at_runtime.py",
+ "clause": "C-3-13",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "review log D-5 (2026-11-01): annotations at runtime in the VALUE, FORWARDREF and STRING formats",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "Point VALUE {'x': 'int', 'y': 'float', 'tags': 'list[str]'}\nPoint FORWARDREF {'x': 'int', 'y': 'float', 'tags': 'list[str]'}\nPoint STRING {'x': 'int', 'y': 'float', 'tags': 'list[str]'}\nscale VALUE {'p': '__main__.Point', 'factor': 'float', 'return': 'dict[str, int]'}\nscale FORWARDREF {'p': '__main__.Point', 'factor': 'float', 'return': 'dict[str, int]'}\nscale STRING {'p': 'Point', 'factor': 'float', 'return': 'dict[str, int]'}\n__annotations__ is VALUE: True\n__annotate__(VALUE): ['tags', 'x', 'y']\n[('name', 'str', True), ('qty', 'int', False), ('tags', 'list[str]', True)]\nItem(name='bolt', qty=1, tags=[]) Item(name='nut', qty=3, tags=['m4'])\n('left', 'right') {'right': 'r'} Pair(left=1, right='r') {'left': 'int', 'right': 'str'}\n['title', 'year'] {'title': 'str', 'year': 'int'}\nint list object object\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -4,7 +4,7 @@
 [reference]
 python = "3.15.2"        # dialect specification section 1: moving this pin is a spec revision (3.14.8 -> 3.15.2 on 2026-11-01)
 grammar = "3.15"         # frozen for phases 0-2 (decision 15, revised 2026-11-01)
-dialect = "v0.6"         # 2026-11-01: the phase-1 closure on 3.15.2 (spec section 13)
+dialect = "v0.7"         # 2026-11-01: annotations at runtime, deviation D-20 (spec section 13)
 
 [toolchain]
 cxx = "g++"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Conformance harness (dialect specification v0.6, section 10).
+"""Conformance harness (dialect specification v0.7, section 10).
 
     harness.py record  [--python PATH] [--allow-unpinned] [--filter SUBSTR]
     harness.py verify  [--python PATH] [--filter SUBSTR]

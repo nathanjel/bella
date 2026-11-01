@@ -13,13 +13,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Runtime work this leaves for the phase-1 runtime: the 16 `first-use` bindings (PEP 810), the
   functions listed under `unsupported_functions` in the lock (each exists as an ordinary object,
   since `shutil` sets `supports_root_dir` on two of them at import, and raises the
-  milestone-naming error when called), the `annotationlib` shim (provisional: review log D-5),
-  and the codec search over the ten phase-1 codecs.
+  milestone-naming error when called), the `annotationlib` shim (review log D-5: it serves the
+  annotation formats through the compiler-generated `__annotate__`), and the codec search over
+  the ten phase-1 codecs.
 
 ## 2. Grow the conformance corpus on 3.15.2
 
-* Today: 30 cases + 1 excluded-construct case under `conformance/cases`, from review findings
-  and from CPython 3.15 changes (C-9-07, C-3-09..12, C-7-01..02), recorded authoritatively on 3.15.2
+* Today: 31 cases + 1 excluded-construct case under `conformance/cases`, from review findings
+  and from CPython 3.15 changes (C-9-07, C-3-09..13, C-7-01..02), recorded authoritatively on 3.15.2
   (2026-11-01); `make verify` reproduces them, D-08 masking is opt-in per case (`# mask:`).
 * To do: cases for the 3.15 additions the phase-1 library depends on or the dialect must
   decide: PEP 810 lazy imports (reification at first use, import errors at first use,
@@ -32,7 +33,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   short-circuit with rich comparisons, dict mutation-during-iteration edge (size change only).
   Teach the harness two kinds of case it cannot check yet: a \[P2+\] case that must fail with
   the milestone-naming error (review log RL-59: `shutil.make_archive` for a built-in format),
-  and a case that differs by a registered deviation (D-6, once decided: `pbkdf2_hmac`,
+  and a case that differs by a registered deviation (D-20: `pbkdf2_hmac`,
   `algorithms_available`, archive formats, codec names).
   Port the first 100 functions from CPython's `test_descr`, `test_int`, `test_dict`,
   `test_generators` as clauses (PSF-licensed; test-only, never shipped).
@@ -88,8 +89,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Why: review log D-2 and RL-50. `dataclasses`, `namedtuple`, `enum` and `typing` build code
   with `exec` at definition time; spec section 8 stages it, but the contract between the
   staged result and the runtime is unproven.
-* Settle review log D-5 here: spec section 8 runs `@dataclass` at runtime, and it calls
-  `annotationlib.get_annotations(cls, format=FORWARDREF)`, which the phase-1 shim refuses today.
+* Implement review log D-5 here (decided 2026-11-01): a compiler-generated `__annotate__` that
+  answers VALUE, FORWARDREF when every name resolves, and STRING, and the `annotationlib` shim over
+  it, so that `@dataclass`, `NamedTuple`, `TypedDict` and `singledispatch` read annotations while
+  the module runs (spec section 8). Case C-3-13 is the target.
 * To do: prototype one `@dataclass` and one `namedtuple` whose definitions have observable
   effects (a default factory that counts calls, a field order printed at definition, an
   `__init_subclass__` hook), with a conformance case each first. Try both mechanisms the
@@ -109,6 +112,12 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Consolidate the documents (review log D-2): rewrite design sections 3-10 around the final
   decisions, keep sections 13-15 as history, and let `docs/reviews/review-log.md` carry review
   history; make each `PassSpec` status name its evidence, so that "tested" points at the tests.
+
+## Later
+
+* `hashlib.pbkdf2_hmac` (over the mapped HMAC) and `hashlib.scrypt` (libsodium) as an adaptation
+  of `hashlib`, closing that part of deviation D-20 (review log D-6, option 2). When a target
+  program needs either; then add a case, narrow D-20, and record it in `docs/DECISIONS.md`.
 
 ## Housekeeping
 

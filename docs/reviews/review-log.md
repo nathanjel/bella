@@ -7,11 +7,11 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 70 findings from five reviews: 47 fixed (most in commit `0d92b51`,
+**Status on 2026-11-01:** 70 findings from five reviews: 48 fixed (most in commit `0d92b51`,
 RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after the
-closure reviews), 9 already done before or because of the review, 4 planned (D-2, accepted by
-the author), 3 deferred, 3 refuted, 2 checked with no issue, and 2 open for discussion (D-5,
-D-6). The author decided D-1 to D-4 on 2026-11-01.
+closure reviews, RL-57 with D-6), 9 already done before or because of the review, 5 planned
+(D-2 and D-5, accepted by the author), 3 deferred, 3 refuted and 2 checked with no issue.
+Nothing is open for discussion: the author decided D-1 to D-6 on 2026-11-01.
 
 ## Reviews received
 
@@ -137,8 +137,8 @@ their function and parent package.
 | RL-54 | A3-3 | An ImportError handler around a `def` made the imports in its body optional | Confirmed: `('rv_required', 'optional', 3, 'f')` | Fixed | A function or lambda body starts with no exception context. Test `test_a_handler_around_a_definition_does_not_cover_its_body_a3_3` |
 | RL-55 | A3-4 | `__lazy_modules__` was read for the whole statement and the whole module | Confirmed. Measured on 3.15.2: checked per imported module, with the value at that point; reassignment and in-place mutation take effect; the full dotted name matches; `from` imports count; module-level `if`, `with` and `for` blocks count; `try` and class bodies do not | Fixed | Classified per module in execution order; any other form than a literal assigned at module level is an error, since the closure could not tell. The lock is described as an inventory; the compiler takes laziness from each statement (design section 10.4 corrected). Test `test_lazy_modules_is_read_per_import_and_in_order_a3_4` |
 | RL-56 | A3-5 | `[dynamic]` recorded a review per module, so a new site in a reviewed module passed | Confirmed | Fixed | One key per site, `"<function>: <name expression>"`; a new site and a stale key are errors. Test `test_each_computed_import_site_is_reviewed_a3_5` |
-| RL-57 | A3, G2 2.2 | hashlib without OpenSSL: add cases for the kept surface; the absent APIs and `algorithms_available` differ from the pinned CPython | Confirmed (measured: `pbkdf2_hmac`, `scrypt` absent; five names fewer in `algorithms_available`) | Discuss: D-6 | Case C-7-01 prints the kept surface (digests, HMAC, buffer keys); it is identical on the pinned build and with `_hashlib` blocked. The differences are not in the deviation register |
-| RL-58 | G2 2.1, A3 | The `annotationlib` shim refuses what `@dataclass`, `NamedTuple`, `TypedDict` and `singledispatch.register` call at runtime | Confirmed: spec section 8 runs decorators and class bodies at runtime; calls at `dataclasses.py` 1057 and 1413, `typing.py` 3054 and 3208, `functools.py` 970; `inspect` imports `get_annotations` at module level | Discuss: D-5 | The shim text is provisional until D-5 |
+| RL-57 | A3, G2 2.2 | hashlib without OpenSSL: add cases for the kept surface; the absent APIs and `algorithms_available` differ from the pinned CPython | Confirmed (measured: `pbkdf2_hmac`, `scrypt` absent; five names fewer in `algorithms_available`) | Fixed with D-6: deviation D-20 | Case C-7-01 prints the kept surface (digests, HMAC, buffer keys); it is identical on the pinned build and with `_hashlib` blocked. The differences are not in the deviation register |
+| RL-58 | G2 2.1, A3 | The `annotationlib` shim refuses what `@dataclass`, `NamedTuple`, `TypedDict` and `singledispatch.register` call at runtime | Confirmed: spec section 8 runs decorators and class bodies at runtime; calls at `dataclasses.py` 1057 and 1413, `typing.py` 3054 and 3208, `functools.py` 970; `inspect` imports `get_annotations` at module level | Planned: D-5 (TODO task 5) | Annotations \[P1\] at runtime; case C-3-13 pins CPython's behaviour |
 | RL-59 | A3 | Refusals name private `shutil` helpers; decide which public calls stay valid | Agreed | Deferred: TODO task 2 | Decided in spec section 7: the built-in archive formats are \[P2+\], so `make_archive` and `unpack_archive` refuse for them; `get_archive_formats` and registered formats work. A case waits for the harness to check \[P2+\] refusals |
 | RL-60 | A3 | The `traceback` replacement needs a runtime test | Agreed | Done | Case C-7-02: `TracebackException` and `format_exception_only` on a `ModuleNotFoundError`, which goes through the replaced function |
 | RL-61 | G2 2.2 | Omitting `_hmac` loses CPython behaviour for no licence reason | Confirmed: `hmac.digest(memoryview(b"k"), ...)` raises `TypeError` with `_hashlib` and `_hmac` blocked and works with only `_hashlib` blocked | Fixed | `_hmac` mapped, like the digests it builds on; C-7-01 covers it |
@@ -213,7 +213,8 @@ runtime, because `compile` is excluded (E-01). Recommendation: a `codeop` shim u
 milestone name, recorded in `[adaptations]`. Keeping E-08 intact is better than un-excluding
 `codeop`.
 
-**D-5 Annotations at runtime and the `annotationlib` shim (RL-58).** Open. Spec v0.6 section 7
+**D-5 Annotations at runtime and the `annotationlib` shim (RL-58).** Decided 2026-11-01: option
+1, as recommended (spec v0.7 sections 3 and 7; case C-3-13; implemented in TODO task 5). Spec v0.6 section 7
 specifies a shim whose `get_annotations` and `call_annotate_function` raise with the milestone
 name, because annotations are \[P2+\] (section 3). But section 8 runs every decorator and class
 body at runtime, and `@dataclass`, `NamedTuple`, `TypedDict` and `singledispatch.register` call
@@ -232,7 +233,9 @@ Recommendation: 1. It follows CPython's own fast path, leaves the three modules 
 what section 8 already implies. Settle the details in the staging prototype (TODO task 5), which
 gates phase 1b, where these modules belong.
 
-**D-6 Phase-1 omissions are observable (RL-57).** Open. An omission makes a module behave as not
+**D-6 Phase-1 omissions are observable (RL-57).** Decided 2026-11-01: option 1, deviation D-20
+registered (spec v0.7 section 11, `docs/deviations.toml`); option 2 is a later task in `TODO.md`.
+An omission makes a module behave as not
 installed (spec section 7), and the pinned CPython has those modules, so some effects are visible:
 `hashlib.pbkdf2_hmac` and `hashlib.scrypt` are absent, `algorithms_available` lacks `md5-sha1`,
 `ripemd160`, `sha512_224`, `sha512_256` and `sm3`, `shutil` lists 3 archive formats instead of 6
