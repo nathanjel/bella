@@ -1,0 +1,26 @@
+data/sample_module.py:1:10: E401 multiple imports on one line
+data/sample_module.py:2:1: E302 expected 2 blank lines, found 0
+data/sample_module.py:2:8: E231 missing whitespace after ','
+data/sample_module.py:3:6: E225 missing whitespace around operator
+data/sample_module.py:3:8: E226 missing whitespace around arithmetic operator
+data/sample_module.py:4:9: E225 missing whitespace around operator
+data/sample_module.py:4:11: E203 whitespace before ':'
+data/sample_module.py:6:5: E741 ambiguous variable name 'l'
+data/sample_module.py:6:11: E231 missing whitespace after ','
+data/sample_module.py:6:13: E203 whitespace before ','
+data/sample_module.py:6:14: E231 missing whitespace after ','
+data/sample_module.py:8:1: E302 expected 2 blank lines, found 0
+data/sample_module.py:8:6: E271 multiple spaces after keyword
+data/sample_module.py:9:16: E201 whitespace after '('
+data/sample_module.py:9:21: E202 whitespace before ')'
+E201: 1
+E202: 1
+E203: 2
+E225: 2
+E226: 1
+E231: 3
+E271: 1
+E302: 2
+E401: 1
+E741: 1
+total: 15

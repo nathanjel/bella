@@ -1,0 +1,82 @@
+# The six candidate target programs of phase 0 (docs/targets.md has the comparison and the
+# recommendation). `targets/run_targets.py` reads this file; every driver is run from the
+# `targets/` directory with PYTHONPATH=vendor, PYTHONHASHSEED=0, PYTHONUTF8=1.
+#
+# kind      cli | data | service        (the three shapes the design document names)
+# level     easy | tricky
+# argv      arguments after the driver path
+# packages  vendored third-party packages the driver imports (under vendor/)
+# stressors the dialect features the program exercises, in the words of the spec's tier table
+
+[cli_easy_slugs]
+kind = "cli"
+level = "easy"
+driver = "drivers/cli_easy_slugs.py"
+argv = ["data/lines.txt", "--max-length", "24"]
+packages = []
+stressors = ["argparse", "re", "unicodedata (NFKD)", "str methods", "Counter"]
+
+[cli_tricky_check]
+kind = "cli"
+level = "tricky"
+driver = "drivers/cli_tricky_check.py"
+argv = ["data/sample_module.py"]
+packages = ["pycodestyle"]
+stressors = [
+  "generators (66 defs) and tokenize over _tokenize (core)",
+  "decorator registration reading inspect.signature(...).parameters and __doc__",
+  "getattr(self, name) with computed names (tier 2)",
+  "options.__dict__.update(kwargs) on an optparse.Values (computed writes, tier 2)",
+  "optparse + configparser: two stdlib modules outside the phase-1 manifest",
+  "dead compile(..., PyCF_ONLY_AST) path (E-01) behind an empty _ast_checks",
+]
+
+[data_easy_sales]
+kind = "data"
+level = "easy"
+driver = "drivers/data_easy_sales.py"
+argv = ["data/sales.csv"]
+packages = ["humanize"]
+stressors = ["csv.DictReader", "Decimal (_pydecimal, compiled)", "Fraction", "statistics",
+             "defaultdict", "f-string format specs", "threading.local with getattr default (humanize.i18n)"]
+
+[data_tricky_toml]
+kind = "data"
+level = "tricky"
+driver = "drivers/data_tricky_toml.py"
+argv = ["data/pyproject.toml"]
+packages = ["tomlkit"]
+stressors = [
+  "subclasses of str/int/float/list/dict/datetime with extra state and __new__ (tier 3 MI)",
+  "ABC mixins: MutableSequence+list, MutableMapping+dict, Integral+int (ABCMeta, staged)",
+  "copy.copy/deepcopy through __reduce_ex__",
+  "58 classes, 79 decorators (property/abstractmethod/classmethod/wrap_method)",
+  "dataclasses, enum, contextlib",
+]
+
+[service_easy_tokens]
+kind = "service"
+level = "easy"
+driver = "drivers/service_easy_tokens.py"
+argv = ["data/token_requests.jsonl"]
+packages = ["itsdangerous"]
+stressors = ["hmac/hashlib sha1 (mapped)", "zlib (mapped)", "base64", "json", "struct",
+             "exception hierarchy with payload (BadSignature/SignatureExpired)",
+             "Generic[...] subscription in class bases (staged)", "mixin MI (URLSafeSerializerMixin)",
+             "subclass overriding a method the library calls back (ClockedSigner.get_timestamp)"]
+
+[service_tricky_markdown]
+kind = "service"
+level = "tricky"
+driver = "drivers/service_tricky_markdown.py"
+argv = ["data/render_requests.jsonl"]
+packages = ["mistune"]
+stressors = [
+  "method tables built with getattr(self, 'parse_' + name) over rule lists (tier 2)",
+  "plugins loaded by name through importlib.import_module (tier 2, closed world)",
+  "regex-driven parsers: re with named groups, finditer, lastgroup",
+  "renderer dispatch through object.__getattribute__(self, token['type']) (tier 2, core.py:276)",
+  "name-mangled private attribute (self.__methods) and lambda *args, **kwargs closures",
+  "html.escape and html._replace_charref (private stdlib function)",
+  "31 classes, 33 decorators, generators",
+]

@@ -194,6 +194,26 @@ recorded on 3.15.2.
   use (C-8-06); `copy.deepcopy` of a `frozendict` is a new object, `copy.copy` the same one
   (C-6-05).
 
+**2026-11-01 — the target programs** (author's decision; `targets/`, `docs/targets.md`). Six
+programs, an easy and a tricky one for each shape, built and recorded by the author's earlier
+session and imported here: `cli_easy_slugs` (stdlib), `service_easy_tokens` (itsdangerous
+2.3.0.dev at `672971d`), `data_easy_sales` (humanize 4.14.0 at `38d9d91`), `service_tricky_markdown`
+(mistune 3.4.0 at `f7ec702`), `data_tricky_toml` (tomlkit 0.15.2 at `d7def7d`), `cli_tricky_check`
+(pycodestyle 2.15.0 at `3cee4cc`); all MIT or BSD-3. Gate 0 task 4 starts with the easy three,
+`cli_easy_slugs` first.
+
+* Re-recorded on the 3.15.2 pin (authoritative): identical output to the 3.13.18 recording,
+  under both hash seeds, and under the phase-1 configuration (omissions and the codec subset
+  blocked, as D-20 is simulated). `make targets-check` runs in `make check` and in CI; recording
+  stays a deliberate step (`make targets-record`), as for the conformance corpus.
+* The drivers are dialect programs and pass strict mypy (`make lint`; four needed targeted
+  ignores, no behaviour change); the vendored snapshots and the input data are excluded from
+  ruff and never edited.
+* Open for the author: `unicodedata`, which `cli_easy_slugs` needs (NFKD), is \[P2+\] in spec
+  sections 6 and 7; the easy targets need modules review log D-2 placed in 1c, so each increment
+  is best defined as the closure of its targets; and items 1 to 5 of `docs/targets.md` section 5
+  (item 6 is done by `[dynamic]`; item 2's deviation would be D-21).
+
 ## Pins
 
 | What | Value | Where |

@@ -1,0 +1,8 @@
+{"request": "plain", "response": {"html": "<h1>Title</h1>\n<p>Some <em>emphasis</em> and <code>code</code>.</p>\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n", "length": 101, "status": 200}}
+{"request": "table", "response": {"html": "<table>\n<thead>\n<tr>\n  <th>a</th>\n  <th>b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n  <td>1</td>\n  <td>2</td>\n</tr>\n</tbody>\n</table>\n", "length": 125, "status": 200}}
+{"request": "strike+tasks", "response": {"html": "<ul>\n<li class=\"task-list-item\"><input class=\"task-list-item-checkbox\" type=\"checkbox\" disabled checked/>done <del>old</del></li>\n<li class=\"task-list-item\"><input class=\"task-list-item-checkbox\" type=\"checkbox\" disabled/>todo</li>\n</ul>\n", "length": 238, "status": 200}}
+{"request": "footnote", "response": {"html": "<p>Text<sup class=\"footnote-ref\" id=\"fnref-1\"><a href=\"#fn-1\">1</a></sup>.</p>\n<section class=\"footnotes\">\n<ol>\n<li id=\"fn-1\"><p>The note.<a href=\"#fnref-1\" class=\"footnote\">&#8617;</a></p></li>\n</ol>\n</section>\n", "length": 212, "status": 200}}
+{"request": "unicode", "response": {"html": "<p>Zażółć <strong>gęślą</strong> jaźń — 東京</p>\n", "length": 47, "status": 200}}
+{"request": "html-escaped", "response": {"html": "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>\n", "length": 45, "status": 200}}
+{"request": "html-raw", "response": {"html": "<p><b>bold</b></p>\n", "length": 19, "status": 200}}
+{"request": "missing-plugin", "response": {"error": "ValueError", "status": 400}}

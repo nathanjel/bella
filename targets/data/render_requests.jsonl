@@ -1,0 +1,8 @@
+{"name": "plain", "source": "# Title\n\nSome *emphasis* and `code`.\n\n- a\n- b\n"}
+{"name": "table", "plugins": ["table"], "source": "| a | b |\n| - | - |\n| 1 | 2 |\n"}
+{"name": "strike+tasks", "plugins": ["strikethrough", "task_lists"], "source": "- [x] done ~~old~~\n- [ ] todo\n"}
+{"name": "footnote", "plugins": ["footnotes"], "source": "Text[^1].\n\n[^1]: The note.\n"}
+{"name": "unicode", "source": "Zażółć **gęślą** jaźń — 東京\n"}
+{"name": "html-escaped", "source": "<script>alert(1)</script>\n"}
+{"name": "html-raw", "escape": false, "source": "<b>bold</b>\n"}
+{"name": "missing-plugin", "plugins": ["no_such_plugin"], "source": "x"}

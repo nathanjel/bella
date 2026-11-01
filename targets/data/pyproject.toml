@@ -1,0 +1,13 @@
+# Example project file for the data-tricky target
+[project]
+name = "example"            # the name
+version = "1.4.9"
+dependencies = [
+    "requests>=2.31",   # http
+    "attrs",
+]
+
+[project.urls]
+homepage = "https://example.invalid"
+
+[tool]

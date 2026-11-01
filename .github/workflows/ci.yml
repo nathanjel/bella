@@ -13,8 +13,8 @@ jobs:
         run: docker build -t bella .
       - name: make closure (and the committed lock is what the pinned image computes)
         run: docker run --rm bella sh -c 'cp closure.lock.json /tmp/committed.json && make closure && cmp closure.lock.json /tmp/committed.json'
-      - name: make lint test verify probes slice int-test
-        run: docker run --rm bella make lint test verify probes slice int-test
+      - name: make lint test verify probes slice int-test targets-check
+        run: docker run --rm bella make lint test verify probes slice int-test targets-check
       - name: Keep the probe report
         if: always()
         run: docker run --rm bella cat toolchain-probes.md > toolchain-probes.md || true
@@ -39,3 +39,4 @@ jobs:
       - run: uv run python tools/closure.py --allow-unpinned --quiet --out /tmp/closure.lock.json
       - run: uv run make slice CXXSTD=c++23
       - run: uv run make int-test CXXSTD=c++23 --silent
+      - run: uv run python targets/run_targets.py check

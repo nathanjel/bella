@@ -1,0 +1,7 @@
+{"request": "s1", "response": {"signed_at": 1700000000, "status": 200, "token": "<82 chars>"}}
+{"request": "v1", "response": {"payload": {"roles": ["admin", "ops"], "user": 42}, "status": 200}}
+{"request": "v2", "response": {"error": "bad signature", "status": 400}}
+{"request": "v3", "response": {"error": "expired", "now": 1700007200, "signed_at": 1700000000, "status": 401}}
+{"request": "s2", "response": {"signed_at": 1700007200, "status": 200, "token": "<54 chars>"}}
+{"request": "v4", "response": {"payload": "plain string", "status": 200}}
+{"request": "bad", "response": {"error": "unknown op 'frobnicate'", "status": 404}}

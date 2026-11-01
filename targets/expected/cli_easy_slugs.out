@@ -1,0 +1,9 @@
+'Hello, World!' -> 'hello-world'
+'Zażółć gęślą jaźń' -> 'zazoc-gesla-jazn'
+'  Déjà vu — again  ' -> 'deja-vu-again'
+'C++26 & Python 3.14: a "study"' -> 'c-26-python-3-14-a-study'
+'hello world' -> 'hello-world'
+'HELLO WORLD' -> 'hello-world'
+'東京タワー' -> ''
+'The quick brown fox jumps over the lazy dog, repeatedly, until the line is long enough to be cut' -> 'the-quick-brown-fox'
+8 lines, 6 distinct slugs, 1 duplicated: ['hello-world']

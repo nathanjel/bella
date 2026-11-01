@@ -58,8 +58,9 @@ make check-conformance  RUNNER="python3 {case}" today; the compiled runner later
 make slice              CPython == eval1 == C++ on pipeline/examples
 make int-test           int.hpp vs CPython with UBSan
 make probes             C++26 feature report for the toolchain in use
-make lint               ruff and mypy, both clean
-make check              closure, lint, test, verify, probes, slice, int-test (CI)
+make targets-record     record the six target programs (pinned CPython); make targets-check compares
+make lint               ruff and mypy, both clean; dialect programs and target drivers under strict mypy
+make check              closure, lint, test, verify, probes, slice, int-test, targets-check (CI)
 ```
 
 On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):
@@ -85,7 +86,8 @@ Without pytest, every test module runs directly: `python3 -m refmodel.tests.test
 
 ## Where to start
 
-`TODO.md` lists Gate 0's first increment in dependency order. Task 1 (the closure on 3.15.2)
-is done; `make closure` runs pinned under `uv run` or in the image (`docker build -t bella .`),
+`TODO.md` lists Gate 0's first increment in dependency order. The programs the compiler is
+being built for are under `targets/` (`docs/targets.md` says which comes first and why: the
+easy three, `cli_easy_slugs` first). Task 1 (the closure on 3.15.2) is done; `make closure` runs pinned under `uv run` or in the image (`docker build -t bella .`),
 and a manifest change is committed with the `closure.lock.json` it produces. Tasks 2-5 can
 start on any developer machine with `--allow-unpinned`.

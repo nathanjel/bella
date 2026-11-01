@@ -1,0 +1,7 @@
+{"name": "s1", "op": "sign", "payload": {"user": 42, "roles": ["admin", "ops"]}}
+{"name": "v1", "op": "verify", "token_ref": "s1"}
+{"name": "v2", "op": "verify", "token_ref": "s1", "tamper": "x"}
+{"name": "v3", "op": "verify", "token_ref": "s1", "advance": 7200, "max_age": 3600}
+{"name": "s2", "op": "sign", "payload": "plain string"}
+{"name": "v4", "op": "verify", "token_ref": "s2", "advance": 10}
+{"name": "bad", "op": "frobnicate"}

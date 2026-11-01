@@ -1,0 +1,20 @@
+# Example project file for the data-tricky target
+[project]
+name = "example"            # the name
+version = "1.4.10"
+dependencies = [
+    "requests>=2.31",   # http
+    "attrs",
+    "bella>=0.0.1",
+]
+
+[project.urls]
+homepage = "https://example.invalid"
+
+[tool]
+[tool.bella]
+targets = ["linux-x86_64", "linux-aarch64"]
+
+round-trip stable: True
+version: 1.4.10 String
+deps: ['requests>=2.31', 'attrs', 'bella>=0.0.1']

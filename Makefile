@@ -5,7 +5,7 @@ CXX     ?= g++
 CXXSTD  ?= c++26
 RUNNER  ?= $(PY) {case}
 
-.PHONY: help test selftest closure record verify check-conformance probes slice int-test lint check clean
+.PHONY: help test selftest closure record verify check-conformance probes slice int-test targets-record targets-check lint check clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
@@ -16,6 +16,8 @@ help:
 	@echo "make probes            compile the C++26 feature probes       -> toolchain-probes.md"
 	@echo "make slice             the toy end-to-end slice: python == eval1 == emitted C++"
 	@echo "make int-test          differential test of runtime/include/bella/int.hpp vs CPython"
+	@echo "make targets-record    record the six target programs under the pinned CPython -> targets/expected/"
+	@echo "make targets-check     re-run the targets (two hash seeds) and compare; TARGET_RUNNER= for compiled binaries"
 	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
 	@echo "make check             everything above (what CI runs)"
 
@@ -50,12 +52,20 @@ slice:
 int-test:
 	$(PY) runtime/tests/int_differential.py --cxx $(CXX) --std $(CXXSTD) --cases 2000
 
+targets-record:
+	$(PY) targets/run_targets.py record
+
+targets-check:
+	$(PY) targets/run_targets.py check $(if $(TARGET_RUNNER),--runner "$(TARGET_RUNNER)",)
+
 lint:
 	$(PY) -m ruff check . && $(PY) -m mypy
 	# dialect programs: the input contract of design section 2 (strict, no explicit Any)
 	$(PY) -m mypy --disallow-any-explicit conformance/cases pipeline/examples
+	# the target drivers too; the vendored libraries they import are read, not reported
+	MYPYPATH=targets/vendor $(PY) -m mypy --disallow-any-explicit --follow-imports=silent targets/drivers
 
-check: closure lint test verify probes slice int-test
+check: closure lint test verify probes slice int-test targets-check
 
 clean:
 	rm -rf build runtime/build pipeline/examples/out/*.bin .pytest_cache .hypothesis

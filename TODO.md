@@ -62,27 +62,39 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Done when: the C++ object model passes the same stateful test through a thin Python
   binding, and C-3-01..12 pass under the compiled runner.
 
-## 4. One complete compilation path on the three target programs
+## 4. One complete compilation path on the target programs
 
 * Scope (review log D-2, decided 2026-11-01): phase 1 is delivered as 1a (core language and
   the data-structure modules the target programs need), 1b (`enum`, `dataclasses`,
   `typing`) and 1c (I/O, `re`, `json`, `logging`, `unittest` and the rest), each closed by a
-  gate on its slice of the manifest (design section 11). This task is 1a's first path. The toy emitter now refuses, rather than invents, what
-  it cannot represent: possibly unassigned reads, None values, calls before the `def`.
+  gate on its slice of the manifest (design section 11). This task is 1a's first path. The toy
+  emitter refuses, rather than invents, what it cannot represent.
 * Today: `make slice` runs `pipeline/examples/*.py` through parse → L1 → `eval1` and through
-  the toy C++ emitter; 3/3 integer programs agree with CPython and `fact_big.py` is XFAIL on
-  the missing BigInt. The pass manager orders the frontend passes by facts and refuses
-  incomplete `PassSpec` records.
-* To do: pick the three target programs of phase 0 (one of each shape: a CLI tool, a data
-  script, a service handler), run `bella-lint` on them for the tier profile (the linter does
-  not exist yet: write it as an `ast` walker over `docs/deviations.toml` and the tier table),
-  and grow the slice until the smallest of the three runs end to end: BigInt in `int.hpp`
-  (Karatsuba above 64 limbs, Knuth D; or libtommath), `str`, `list`, `dict`, exceptions as
-  C++ exceptions, functions as objects, the L2 grammar with declared/proven/representation
-  kept apart.
-* Done when: the smallest target program prints the same trace under CPython 3.15.2, `eval1`
-  and the compiled binary, and the generated C++ is committed under `pipeline/examples/out/`;
-  the manifest roots are split into the 1a, 1b and 1c slices, with the closure per slice.
+  the toy C++ emitter; 4 integer programs (Mandelbrot among them, `docs/measurements.md`) agree
+  with CPython and `fact_big.py` is XFAIL on the missing BigInt. The target programs are chosen
+  (author, 2026-11-01) and recorded: six under `targets/`, an easy and a tricky one per shape
+  (`docs/targets.md` has the comparison and the recommendation), their libraries vendored at
+  pinned commits, recorded on 3.15.2 and identical under two hash seeds and under the phase-1
+  omissions (`make targets-check`, in CI). On 3.15.2 they stay inside the manifest except for
+  pycodestyle (`optparse`, `configparser`).
+* To do: take the easy three in the order `docs/targets.md` gives — `cli_easy_slugs`,
+  `service_easy_tokens`, `data_easy_sales` — and grow the slice until the first runs end to
+  end: BigInt in `int.hpp` (Karatsuba above 64 limbs, Knuth D; or libtommath), `str`, `list`,
+  `dict`, exceptions as C++ exceptions, functions as objects, classes with promoted fields
+  (argparse's `Namespace` is the first computed-write object), the `re` parser/compiler
+  compiled and `_sre` ported, `unicodedata` tables, `float` with CPython's `repr`, the L2
+  grammar with declared/proven/representation kept apart. Write `bella-lint` as an `ast`
+  walker over `docs/deviations.toml` and the tier table (`tools/score_candidate.py` is its
+  seed). Teach `tools/closure.py` to take a target program as its root, so each target has its
+  own closure and the increments follow from them.
+* Decisions this needs from the author, before the work reaches them: `unicodedata` for
+  `cli_easy_slugs` (spec sections 6 and 7 keep it \[P2+\]); whether each increment is the
+  closure of its target programs; and items 1 to 5 of `docs/targets.md` section 5 (function
+  metadata at runtime, dead excluded calls, manifest growth for pycodestyle, zlib's licence,
+  the source of the hash primitives). Item 6 is done (`[dynamic]`, review log RL-56).
+* Done when: `cli_easy_slugs` prints the recorded output under CPython 3.15.2, `eval1` and the
+  compiled binary (`make targets-check TARGET_RUNNER=...` passes for it), and the generated C++
+  is committed under `pipeline/examples/out/`.
 
 ## 5. Staging prototype (gates phase 1b)
 
