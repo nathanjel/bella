@@ -30,8 +30,14 @@ third review asked for. Nothing here compiles a real program yet.
 docker build -t bella .
 docker run --rm bella            # = make check
 
-# on a developer machine with any recent g++ and Python >= 3.13 (non-authoritative runs)
-make test                        # pytest if installed, then the stdlib-only model self-check
+# on a developer machine with uv 0.13.6: the same uv-managed CPython 3.14.8 build as the image,
+# so Python-side runs (closure, record, refmodel) are pinned; the image remains the reference
+# for anything that depends on the C++ compiler
+uv sync --extra dev
+uv run make test                 # pytest, then the model self-check
+uv run make closure
+uv run make record
+# any other Python >= 3.13 and g++ (non-authoritative runs)
 python3 tools/closure.py --allow-unpinned
 python3 conformance/harness.py record --allow-unpinned
 make slice CXXSTD=c++23          # the toy end-to-end slice

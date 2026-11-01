@@ -19,6 +19,13 @@ dev = [
   "z3-solver>=4.13",
 ]
 
+[tool.uv]
+# The uv release decides which python-build-standalone build of 3.14.8 is downloaded, so it is
+# pinned exactly, here and in the Dockerfile (UV_VERSION). Only uv-managed interpreters are
+# used, so a developer machine runs the same CPython build as the image, not a distro build.
+required-version = "==0.13.6"
+python-preference = "only-managed"
+
 [tool.pytest.ini_options]
 testpaths = ["tools/tests", "refmodel/tests", "pipeline/tests", "validation/tests", "runtime/tests"]
 addopts = "-q"

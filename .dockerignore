@@ -1,0 +1,13 @@
+# Keep host state out of the pinned image (the image builds its own /opt/venv).
+.git
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.hypothesis
+.mypy_cache
+.ruff_cache
+build
+runtime/build
+pipeline/examples/out/*.bin
+toolchain-probes.md

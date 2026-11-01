@@ -72,7 +72,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## Housekeeping
 
-* `uv lock` and commit `uv.lock`; pin the `gcc:16.x` image tag after `docker pull`.
+* ~~`uv lock` and commit `uv.lock`; pin the `gcc:16.x` image tag after `docker pull`.~~ Done
+  2026-11-01: `uv.lock`, uv 0.13.6, `gcc:16.2.0` by digest (`docs/DECISIONS.md`, Pins).
 * Rename the author line in the Markdown exports if the docs are published.
 * The `.github/workflows/ci.yml` builds the image and runs `make check`; turn it on once the
-  image builds.
+  closure is reconciled (task 1). The image builds and every other target in `make check`
+  passes in it (2026-11-01). The unpinned smoke job still installs CPython 3.13 with pip; move it
+  to `astral-sh/setup-uv` with uv 0.13.6 so it runs the locked set.

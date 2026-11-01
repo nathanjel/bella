@@ -46,8 +46,9 @@ rationale; this file is the quick reference agents and reviewers can grep. D-num
 | --- | --- | --- |
 | Reference CPython | 3.14.8 (moving it is a spec revision) | `bella.toml`, `manifest.toml`, the harness |
 | Grammar | 3.14 | `bella.toml` |
-| C++ | GCC 16.x, `-std=c++26` | `Dockerfile`, `bella.toml` |
-| Python dependencies | `uv.lock` (generate with `uv lock`, commit it) | `pyproject.toml` |
+| C++ | GCC 16.2.0 (`gcc:16.2.0@sha256:07280eb2…`, multi-arch index), `-std=c++26` | `Dockerfile`, `bella.toml` |
+| uv | 0.13.6 exactly; it selects the CPython build (python-build-standalone `3.14.8+20261013`), uv-managed interpreters only | `Dockerfile`, `pyproject.toml` `[tool.uv]`, `.python-version` |
+| Python dependencies | `uv.lock` (pytest 9.2.0, hypothesis 6.170.14, ruff 0.17.3, mypy 2.4.1, z3-solver 5.3.3.0 on 2026-11-01) | `pyproject.toml` |
 
 ## Findings recorded by the executable model (2026-10-31)
 
@@ -65,3 +66,11 @@ rationale; this file is the quick reference agents and reviewers can grep. D-num
 3. C++ argument evaluation order (GCC: right to left) is observable through `print(f(), g())`
    when the calls have effects; the emitter binds every effectful argument to a temporary in
    order (C-2-01). Found by the toy slice on `pipeline/examples/loops.py`.
+4. GCC 16.2 ships more of C++26 than design section 10.3 says (2026-11-01, `make probes`, 17/20 on
+   both GCC 16.2.0 in the image and Fedora's 16.2.1): reflection (`-freflection`), expansion
+   statements, contracts (`-fcontracts`) and `std::simd` in libstdc++ itself (namespace
+   `std::simd`, `std::simd::vec<T>`, per P3287/P3441), so no reference `simd` headers are needed.
+   Four probes had been failing on their own bugs (a non-transient `constexpr std::vector`, a
+   constexpr loop variable over a runtime tuple, a non-const parameter in `post`, the pre-P3287
+   `std::simd<T>` spelling). Still missing: `std::execution`, `std::hazard_pointer`, `std::rcu`.
+   Section 10.3 of the living design document should be updated to match.

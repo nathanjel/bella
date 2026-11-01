@@ -55,6 +55,11 @@ make probes             C++26 feature report for the toolchain in use
 make check              all of the above (CI)
 ```
 
+On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):
+the project requires uv 0.13.6 and uses only uv-managed interpreters, so `.venv` holds the same
+CPython 3.14.8 build as the image and Python-side runs are pinned. The image stays the
+reference for C++ results (vanilla GCC 16.2.0; a distro GCC may differ).
+
 Without pytest, every test module runs directly: `python3 -m refmodel.tests.test_cases`,
 `python3 -m pipeline.tests.test_frontend_eval1`, `python3 -m validation.tests.test_certificates`,
 `python3 tools/tests/test_closure.py`.
@@ -73,4 +78,5 @@ Without pytest, every test module runs directly: `python3 -m refmodel.tests.test
 ## Where to start
 
 `TODO.md` lists Gate 0's first increment in dependency order. Task 1 (the closure on 3.14.8)
-needs the Docker image; tasks 2-4 can start on a developer machine with `--allow-unpinned`.
+runs pinned under `uv run` or in the image (`docker build -t bella .`); tasks 2-4 can start on
+any developer machine with `--allow-unpinned`.

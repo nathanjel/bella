@@ -9,8 +9,9 @@ dialect = "v0.3"
 [toolchain]
 cxx = "g++"
 cxx_std = "c++26"        # GCC 16 only, no fallback profile (design document, section 10.3)
-gcc = "16.2"             # the Docker image pins the exact release; `make probes` records what it found
-ruff = "0.9"             # pinned exactly in uv.lock
+gcc = "16.2.0"           # the Docker image pins it by digest; `make probes` records what it found
+uv = "0.13.6"            # also pyproject [tool.uv] required-version and the Dockerfile
+ruff = "0.17.3"          # pinned exactly in uv.lock
 checker = "mypy"         # or "pyrefly" / "ty"; pinned exactly in uv.lock
 
 [platform]
