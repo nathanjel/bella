@@ -43,7 +43,7 @@ _FUTURE_MASK = 0x3FE0000          # every CO_FUTURE_* flag (Include/cpython/code
 PRELOADED = sorted(n for n, m in sys.modules.items() if m is not None)   # None: a D-20 block
 sys.dont_write_bytecode = True
 _bodies: list[str] = []            # the module bodies running, innermost last
-_texts: dict[tuple[str, str, str], tuple[set[str], int]] = {}     # (site, kind, text) -> (by, flags)
+_texts: dict[tuple[str, str, str | bytes], tuple[set[str], int, Any]] = {}   # (site, kind, source) -> (by, flags, code)
 _compiled: dict[tuple[Any, ...], tuple[set[str], tuple[Any, ...]]] = {}   # compile(): key -> (by, outcome)
 _inputs: dict[str, set[str]] = {}
 _compiles: dict[str, set[str]] = {}            # compile() calls not staged, by site with line
@@ -71,11 +71,26 @@ def _body() -> str:
     return _bodies[-1] if _bodies else "<start-up>"
 
 
-def _record(kind: str, source: Any, frame: FrameType) -> None:
-    text = source.decode("utf-8") if isinstance(source, bytes) else source
-    if isinstance(text, str):
-        by, _ = _texts.setdefault((_site(frame), kind, text), (set(), frame.f_code.co_flags & _FUTURE_MASK))
-        by.add(_body())
+def _compile_as_builtin(kind: str, source: str | bytes, flags: int) -> Any:
+    """What exec or eval compiles a string or bytes source to, in the caller's context: its
+    __future__ flags, not this file's (review 2026-11-02 astra-low-06, A6-2), and the builtin's
+    preprocessing: eval strips leading spaces and tabs, and bytes are decoded by their PEP 263
+    declaration, as compile() decodes them (A6-3)."""
+    if kind == "eval":
+        source = source.lstrip(b" \t") if isinstance(source, bytes) else source.lstrip(" \t")
+    return _REAL_COMPILE(source, "<string>", kind, flags, True)
+
+
+def _staged_code(kind: str, source: Any, frame: FrameType) -> Any:
+    """The code exec or eval runs for `source` here, recorded under the original source (its
+    identity: str or bytes, before any preprocessing) when it is a string."""
+    if not isinstance(source, (str, bytes)):
+        return source
+    flags = frame.f_code.co_flags & _FUTURE_MASK
+    code = _compile_as_builtin(kind, source, flags)
+    by, _, _ = _texts.setdefault((_site(frame), kind, source), (set(), flags, code))
+    by.add(_body())
+    return code
 
 
 def _namespaces(frame: FrameType, g: Any, loc: Any) -> tuple[Any, Any]:
@@ -88,18 +103,20 @@ def _namespaces(frame: FrameType, g: Any, loc: Any) -> tuple[Any, Any]:
 
 def _exec(source: Any, globals: Any = None, locals: Any = None, /, *, closure: Any = None) -> None:
     frame = sys._getframe(1)
-    _record("exec", source, frame)
+    if closure is not None and isinstance(source, (str, bytes)):
+        raise TypeError("closure can only be used when source is a code object")
+    code = _staged_code("exec", source, frame)
     g, loc = _namespaces(frame, globals, locals)
     if closure is None:
-        return _REAL_EXEC(source, g, loc)  # noqa: S102  # recorded, then run as CPython runs it
-    return _REAL_EXEC(source, g, loc, closure=closure)  # noqa: S102
+        return _REAL_EXEC(code, g, loc)  # noqa: S102  # recorded, then run as CPython runs it
+    return _REAL_EXEC(code, g, loc, closure=closure)  # noqa: S102
 
 
 def _eval(source: Any, globals: Any = None, locals: Any = None, /) -> Any:
     frame = sys._getframe(1)
-    _record("eval", source, frame)
+    code = _staged_code("eval", source, frame)
     g, loc = _namespaces(frame, globals, locals)
-    return _REAL_EVAL(source, g, loc)  # noqa: S307
+    return _REAL_EVAL(code, g, loc)  # noqa: S307
 
 
 def _ours() -> bool:
@@ -110,12 +127,12 @@ def _ours() -> bool:
 
 def compile_key(site: str, source: Any, filename: Any, mode: Any, flags: int, dont_inherit: bool, optimize: int,
                 module: Any, feature_version: int, caller_flags: int) -> tuple[Any, ...] | None:
-    """What a compile() call's result depends on; None if it is not stageable (a tree, not code)."""
-    text = source.decode("utf-8") if isinstance(source, bytes) else source
-    if not isinstance(text, str) or flags & _AST_RESULT:
+    """What a compile() call's result depends on, the source as given (str or bytes); None if it
+    is not stageable (a tree, not code)."""
+    if not isinstance(source, (str, bytes)) or flags & _AST_RESULT:
         return None
     inherited = 0 if dont_inherit else caller_flags
-    return (site, "compile", text, str(filename), str(mode), flags | inherited, optimize, module, feature_version)
+    return (site, "compile", source, str(filename), str(mode), flags | inherited, optimize, module, feature_version)
 
 
 def _compile(source: Any, filename: Any, mode: str, flags: int = 0, dont_inherit: bool = False, optimize: int = -1,
@@ -341,11 +358,11 @@ def main() -> int:
     # modules (asyncio, socket, ...) import here: ssl, selectors, concurrent.futures.
     wanted = set(lock_modules) | set(program) | {"<probe>"}
     texts = []
-    for (site, kind, text), (bodies, flags) in sorted(_texts.items()):
+    for (site, kind, text), (bodies, flags, code) in sorted(_texts.items(), key=lambda kv: (kv[0][0], kv[0][1], repr(kv[0][2]))):
         by = sorted(b for b in bodies if b in wanted or (not lock_modules and not b.startswith("pipeline.")))
         if by:
-            texts.append((site, kind, text, by, flags))
-    staged_at = collections.Counter(site for site, _, _, _, _ in texts)
+            texts.append((site, kind, text, by, flags, code))
+    staged_at = collections.Counter(site for site, _, _, _, _, _ in texts)
     staged_at.update(key[0] for key, (bodies, _) in _compiled.items() if any(b in wanted for b in bodies) or not lock_modules)
     table = intrinsics.intrinsic_table(calls)
     compiled_kept = {key: (bodies, outcome) for key, (bodies, outcome) in _compiled.items()
@@ -360,10 +377,13 @@ def main() -> int:
         "sources": sources,
         "python": ".".join(map(str, sys.version_info[:3])),
         "preloaded": PRELOADED,
-        "texts": [{"site": site, "kind": kind, "sha256": hashlib.sha256(text.encode()).hexdigest(),
-                   "by": by, "flags": flags, "text": text} for site, kind, text, by, flags in texts],
+        "texts": [{"site": site, "kind": kind,
+                   "sha256": hashlib.sha256(text if isinstance(text, bytes) else text.encode()).hexdigest(),
+                   "by": by, "flags": flags, "text": text if isinstance(text, str) else repr(text)}
+                  for site, kind, text, by, flags, _ in texts],
         "exec_sites": [{"site": s, "kind": k, "texts": staged_at.get(s.rsplit(":", 1)[0], 0)} for s, k in sorted(sites.items())],
-        "compiles": [{"site": key[0], "text": key[2], "parameters": list(key[3:]), "outcome": outcome[0],
+        "compiles": [{"site": key[0], "text": key[2] if isinstance(key[2], str) else repr(key[2]),
+                      "parameters": list(key[3:]), "outcome": outcome[0],
                       "by": sorted(bodies)} for key, (bodies, outcome) in sorted(compiled_kept.items(), key=lambda kv: str(kv[0]))],
         "compile_calls_not_staged": {site: sorted(b for b in by if not b.startswith("pipeline."))
                                      for site, by in sorted(_compiles.items()) if any(not b.startswith("pipeline.") for b in by)},
@@ -379,8 +399,7 @@ def main() -> int:
         f.write("\n")
     # (site, operation, text) -> (code, future flags): an eval never runs code staged for an exec
     # (review 2026-11-01 astra-low-05, A5-1), and the caller's flags are checked at runtime
-    compiled = {(site, kind, text): (_REAL_COMPILE(text, "<string>", kind, flags=flags, dont_inherit=True), flags)
-                for site, kind, text, _, flags in texts}
+    compiled = {(site, kind, text): (code, flags) for site, kind, text, _, flags, code in texts}   # as the dry run ran it
     intrinsic_code = {fields: _REAL_COMPILE(text, "<string>", "eval", dont_inherit=True) for fields, text in table.items()}
     manifest = tomllib.loads(Path(_REPO, "manifest.toml").read_text(encoding="utf-8"))
     unsupported: dict[str, list[str]] = {}
@@ -391,6 +410,9 @@ def main() -> int:
     with open(args.binary, "wb") as binary:
         marshal.dump({"optimize": sys.flags.optimize, "texts": compiled, "compiled": {k: o for k, (_, o) in compiled_kept.items()},
                       "annotations": {k: (e.freevars, e.code) for k, e in evaluators.items()},
+                      # compiler-generated functions without an entry point; one that matched no
+                      # annotation owner is hand-written, which is not the compiler's to declare
+                      "declined": dict(d.split(": ", 1) for d in declined if "matched to 0 annotation owners" not in d),
                       "intrinsics": intrinsic_code, "refused": dict(manifest.get("refused", {})),
                       "unstaged": dict(manifest.get("unstaged", {})), "unsupported": unsupported}, binary)
     return 0

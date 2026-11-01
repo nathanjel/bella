@@ -14,9 +14,13 @@ annotations.py generates it). Each function does what its opcode does, including
     builtins_of          the builtins a function made over these globals gets
     unpack1              UNPACK_SEQUENCE 1 (`*args: *Ts`)
 
-It imports only what start-up has: the replay model loads this file before the program.
+and `entry_key`, the identity under which the build files an entry point and the model finds it
+for a live function (in Bella the compiler attaches the entry point to the function instead).
+
+It imports only what start-up has loaded: the replay model loads this file before the program.
 """
 import builtins
+import os
 import sys
 
 TYPE_CHECKING = False
@@ -81,6 +85,15 @@ def load_dict_or_global(classdict: object, g: dict[str, object], b: object, name
 def load_dict_or_deref(classdict: object, cells: dict[str, object], name: str) -> object:
     value = _optional_item(classdict, name)
     return load_deref(cells, name) if value is _MISSING else value
+
+
+def entry_key(code: Any) -> str:
+    """The file, qualified name and first line, and the source positions of every instruction:
+    two definitions can share the first three (two aliases on one line, review 2026-11-02
+    astra-low-06, A6-1), not the positions. A tuple of ints and None hashes the same in every
+    process, whatever PYTHONHASHSEED is."""
+    positions = hash(tuple(code.co_positions())) & 0xFFFF_FFFF_FFFF_FFFF
+    return f"{os.path.realpath(code.co_filename)}::{code.co_qualname}::{code.co_firstlineno}::{positions:016x}"
 
 
 def unpack1(value: Any) -> Any:

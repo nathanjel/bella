@@ -257,6 +257,29 @@ REVIEW_PROBES: dict[str, tuple[str, dict[str, str], tuple[str, ...]]] = {
     "3.5d namedtuple fields by keyword, inside a function": (
         "import collections\ndef make():\n    return collections.namedtuple('Pt', field_names='u v')\n"
         "if __name__ == '__main__':\n    print(make()(1, 2))\n", {}, ()),
+    # review 2026-11-02 astra-low-06
+    "A6-1 two aliases with one name on one line": (
+        "import annotationlib\ntype A = int; Old = A; type A = str\nif __name__ == '__main__':\n"
+        "    print(annotationlib.call_evaluate_function(Old.evaluate_value, annotationlib.Format.STRING))\n"
+        "    print(annotationlib.call_evaluate_function(A.evaluate_value, annotationlib.Format.STRING))\n", {}, ()),
+    "A6-2 exec in the caller's context, without PEP 563": (
+        "from collections import namedtuple\nns = {}\nexec('def f(x: Missing): pass', ns)\ntry:\n"
+        "    ns['f'].__annotations__\n    fields = 'present'\nexcept NameError:\n    fields = 'absent'\n"
+        "T = namedtuple('T', fields)\nif __name__ == '__main__':\n    print(T(1))\n", {}, ()),
+    "A6-2 exec in the caller's context, with PEP 563": (
+        "from __future__ import annotations\nfrom collections import namedtuple\nns = {}\n"
+        "exec('def f(x: Missing): pass', ns)\ntry:\n    ns['f'].__annotations__\n    fields = 'present'\n"
+        "except NameError:\n    fields = 'absent'\nT = namedtuple('T', fields)\nif __name__ == '__main__':\n    print(T(1))\n", {}, ()),
+    "A6-3 eval strips leading spaces": ("value = eval('  1 + 2')\nif __name__ == '__main__':\n    print(value)\n", {}, ()),
+    "A6-3 eval of bytes with an encoding declaration": (
+        "value = eval(b'# coding: latin-1\\n\"\\xe9\"')\nif __name__ == '__main__':\n    print(value)\n", {}, ()),
+    "A6-3 compile of bytes with an encoding declaration": (
+        "code = compile(b'# coding: latin-1\\nx = \"\\xe9\"', '<s>', 'exec')\nns = {}\nexec(code, ns)\n"
+        "if __name__ == '__main__':\n    print(ns['x'])\n", {}, ()),
+    "A6-4 a private attribute with an unbound companion": (
+        "import annotationlib\nclass C:\n    __v = int\n    def f(x: C.__v, y: Missing):\n        pass\n"
+        "if __name__ == '__main__':\n    ann = annotationlib.get_annotations(C.f, format=annotationlib.Format.FORWARDREF)\n"
+        "    print(ann['x'] is int, ann['y'].__forward_arg__)\n", {}, ()),
     "3.5d exec of a text with closure=": (
         "if __name__ == '__main__':\n    try:\n        exec('x = 1', {}, closure=())\n"
         "    except TypeError as e:\n        print('TypeError', e)\n", {}, ()),
@@ -299,6 +322,36 @@ def test_unsupported_functions_are_refused() -> None:
             print(pathlib.Path("/x").as_uri())
     ''')
     assert proc.returncode == 70 and "[P2+] pathlib.Path.as_uri" in proc.stderr, proc.stderr
+
+
+def test_a_refused_function_is_refused_on_entry() -> None:
+    """Review 2026-11-02 astra-low-06, on S-4: gettext.c2py is refused when it is called, before
+    its parser could raise a catchable ValueError for malformed input."""
+    proc = _replay('''
+        import gettext
+        if __name__ == "__main__":
+            try:
+                gettext.c2py("bad_token")
+            except ValueError:
+                print("caught")
+    ''')
+    assert proc.returncode == 70 and proc.stdout == "" and "[P2+] gettext" in proc.stderr, (proc.stdout, proc.stderr)
+
+
+def test_two_annotate_functions_never_share_an_entry_point() -> None:
+    """Review 2026-11-02 astra-low-06, A6-1: every compiler-generated annotate or evaluate function
+    of the closure and the corpus has its own identity."""
+    import json
+    keys: list[str] = []
+    for path in [*sorted(CASES.glob("*.py")), *sorted((ROOT / "pipeline" / "tests").glob("*.py"))]:
+        keys += entries.evaluators_for_source(str(path))[0]
+    assert len(keys) == len(set(keys))
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp, "aliases.py")
+        path.write_text("type A = int; Old = A; type A = str\n", encoding="utf-8")
+        found, declined = entries.evaluators_for_source(str(path))
+    assert len(found) == 2 and declined == [], (found, declined)
+    del json
 
 
 def test_scan_names_sites_as_frames_do_and_resolves_aliases() -> None:

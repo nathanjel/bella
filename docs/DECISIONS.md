@@ -321,6 +321,13 @@ and section 3, design section 11 rev 445).
   findings are fixed or done, each with a test; the review probes run as one differential test.
   `compile()` is now staged like `exec` and `eval`, and keys drop line numbers.
 
+**2026-11-02 — the staging revision reviewed** (astra-low-06; review log RL-113 to RL-121). Four
+findings, each reproduced and now a replay-against-CPython test: evaluator identities could
+collide (two aliases on one line; now keyed by source positions as well, duplicates declined),
+the dry run compiled strings in its own `__future__` context, `eval`'s whitespace and the
+decoding of bytes were not the builtins', and private attribute names were not mangled. `[refused]`
+now acts when the function is called, as the manifest says.
+
 ## Pins
 
 | What | Value | Where |

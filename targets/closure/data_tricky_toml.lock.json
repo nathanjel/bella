@@ -785,7 +785,7 @@
    "status": "shim",
    "reached_by": "_collections_abc:lazy:488",
    "dynamic_unknown_lines": [],
-   "path": "annotationlib.py",
+   "path": "runtime/shims/annotationlib.py",
    "edges": [
     {
      "importer": "annotationlib",

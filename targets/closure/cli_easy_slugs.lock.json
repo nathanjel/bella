@@ -600,7 +600,7 @@
    "status": "shim",
    "reached_by": "functools:lazy:970",
    "dynamic_unknown_lines": [],
-   "path": "annotationlib.py",
+   "path": "runtime/shims/annotationlib.py",
    "edges": [
     {
      "importer": "annotationlib",

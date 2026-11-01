@@ -5,10 +5,14 @@ start-up, before the program, and then runs the program exactly as `python scrip
 (same `__main__`, arguments, tracebacks). From here on:
 
 * the phase-1 configuration holds: the D-20 omissions behave as modules not installed;
-* `exec` and `eval` of a text run only code staged by the dry run, looked up by call site and
-  text and compiled at build time (the stand-in for the C++ the compiler emits); any other text,
-  any code object and any `compile` stop the program with the E-01 refusal, which no `except`
-  clause sees (design section 10.4: a refusal is not a Python exception);
+* `exec`, `eval` and `compile` of a text answer only with what the dry run staged, looked up by
+  the calling function, the operation, the source as given and the compilation parameters, and
+  compiled at build time (the stand-in for the C++ the compiler emits); a code object that a
+  staged `compile` returned may be run. Any other text or code object stops the program with
+  the E-01 refusal, which no `except` clause sees (design section 10.4: a refusal is not a
+  Python exception);
+* a function in the manifest's `[refused]` table, or in a closure lock's unsupported functions,
+  stops the program when it is called;
 * `annotationlib` is the phase-1 shim (runtime/shims/annotationlib.py): where CPython re-runs an
   annotate function's `__code__` against substitute globals, it calls the second entry point
   the compiler generated for that `__annotate__` (decision S-1, pipeline/staging/annotations.py).
@@ -56,12 +60,13 @@ def _where(frame: FrameType) -> str:
     return f"{_site(frame)}:{frame.f_lineno}"
 
 
-_texts: dict[tuple[str, str, str], Any] = {}        # (site, operation, text) -> (code, future flags)
+_texts: dict[tuple[str, str, str | bytes], Any] = {}   # (site, operation, source as given) -> (code, future flags)
 _compiled: dict[tuple[Any, ...], Any] = {}          # compile(): what it depends on -> outcome
 _staged_code: set[int] = set()                      # ids of the code objects staged compile() hands out
 _FUTURE_MASK = 0x3FE0000                            # every CO_FUTURE_* flag
 _AST_RESULT = 0x400 | 0x8000                        # PyCF_ONLY_AST, PyCF_OPTIMIZED_AST
 _entry_points: dict[str, tuple[tuple[str, ...], Any]] = {}   # annotate key -> (free variables, code)
+_declined: dict[str, str] = {}                      # annotate key -> why the build declined its entry point
 _FunctionType: Any = type(_refuse)        # types.FunctionType, without importing types
 _rt = type(sys)("annotate_rt")          # the entry points' helpers; not in sys.modules
 _intrinsics: dict[tuple[str, ...], Any] = {}
@@ -85,8 +90,7 @@ def _code_for(kind: str, source: Any, frame: FrameType) -> Any:
         if id(source) in _staged_code:       # code a staged compile() returned: compiled at build time
             return source
         _refuse(f"E-01: {kind} of a code object at {_where(frame)}")
-    text = source.decode("utf-8") if isinstance(source, bytes) else source
-    if not isinstance(text, str):
+    if not isinstance(source, (str, bytes)):
         _refuse(f"E-01: {kind} of a {type(source).__name__} at {_where(frame)}")
     if _mechanism == "intrinsics":
         fields = frame.f_locals.get("field_names") if site == _NAMEDTUPLE_SITE else None
@@ -94,7 +98,7 @@ def _code_for(kind: str, source: Any, frame: FrameType) -> Any:
         if code is None:
             _refuse(f"E-01: {kind} at {_where(frame)}: no compiler intrinsic generates this code (fields {fields!r})")
         return code
-    staged = _texts.get((site, kind, text))
+    staged = _texts.get((site, kind, source))       # the source as given: str or bytes, unprocessed
     if staged is None:
         _miss(kind, frame)
     code, flags = staged
@@ -143,11 +147,10 @@ def compile(source: Any, filename: Any, mode: str, flags: int = 0, dont_inherit:
     site = _site(frame)
     if site in _refused:
         _refuse(_refused[site])
-    text = source.decode("utf-8") if isinstance(source, bytes) else source
-    if not isinstance(text, str) or flags & _AST_RESULT:
+    if not isinstance(source, (str, bytes)) or flags & _AST_RESULT:
         _refuse(f"E-01: compile at {_where(frame)}")
     inherited = 0 if dont_inherit else frame.f_code.co_flags & _FUTURE_MASK
-    outcome = _compiled.get((site, "compile", text, str(filename), str(mode), flags | inherited, optimize, module, _feature_version))
+    outcome = _compiled.get((site, "compile", source, str(filename), str(mode), flags | inherited, optimize, module, _feature_version))
     if outcome is None:
         _miss("compile", frame)
     if outcome[0] == "raises":
@@ -158,6 +161,12 @@ def compile(source: Any, filename: Any, mode: str, flags: int = 0, dont_inherit:
     return outcome[1]
 
 
+def _refused_function(message: str) -> Any:
+    def refused(*args: object, **kwargs: object) -> NoReturn:
+        _refuse(message)
+    return refused
+
+
 def _unsupported_function(module: str, function: str) -> Any:
     def refused(*args: object, **kwargs: object) -> NoReturn:
         _refuse(f"[P2+] {module}.{function} is unsupported in phase 1: it imports a module phase 1 does not have "
@@ -165,11 +174,22 @@ def _unsupported_function(module: str, function: str) -> Any:
     return refused
 
 
+def _key_of(annotate: object) -> str | None:
+    """The entry point's identity for a live annotate function (model only: in Bella the compiler
+    attaches the entry point to the function). A function the build declined is refused here,
+    with the build's reason, rather than taken for one the compiler did not generate."""
+    code = getattr(annotate, "__code__", None)
+    if not isinstance(code, _CodeType):
+        return None
+    key: str = _rt.entry_key(code)
+    if key in _declined:
+        _refuse(f"[P2+] annotationlib: the build declined the entry point of {code.co_qualname}: {_declined[key]}")
+    return key
+
+
 def _entry_point(annotate: object) -> tuple[tuple[str, ...], Any]:
-    code = getattr(annotate, "__code__", None)       # model only: the compiler attaches the entry point
-    entry = None
-    if isinstance(code, _CodeType):
-        entry = _entry_points.get(f"{os.path.realpath(code.co_filename)}::{code.co_qualname}::{code.co_firstlineno}")
+    key = _key_of(annotate)
+    entry = _entry_points.get(key) if key is not None else None
     if entry is None:
         _refuse("[P2+] annotationlib: FORWARDREF and STRING of an annotate function the compiler did not "
                 "generate re-run its __code__ (spec section 3; docs/staging.md, decision S-1)")
@@ -181,9 +201,8 @@ class _Hooks:
 
     @staticmethod
     def has_entry_point(annotate: object) -> bool:
-        code = getattr(annotate, "__code__", None)
-        return isinstance(code, _CodeType) and (
-            f"{os.path.realpath(code.co_filename)}::{code.co_qualname}::{code.co_firstlineno}" in _entry_points)
+        key = _key_of(annotate)
+        return key is not None and key in _entry_points
 
     @staticmethod
     def annotate_freevars(annotate: object) -> tuple[str, ...]:
@@ -280,7 +299,11 @@ def _install() -> None:
         _compiled.update(data["compiled"])
         _staged_code.update(id(o[1]) for o in data["compiled"].values() if o[0] == "code")
         _entry_points.update(data["annotations"])
+        _declined.update(data["declined"])
         _refused.update(data["refused"])
+        for site, message in data["refused"].items():    # refused on entry, not only at its exec (A6, S-4)
+            module, _, function = site.partition(":")
+            _PatchingLoader.patches.setdefault(module, {})[function] = _refused_function(message)
         _unstaged.update(data["unstaged"])
         for module, functions in data["unsupported"].items():
             for function in functions:

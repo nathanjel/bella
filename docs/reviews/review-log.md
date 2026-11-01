@@ -7,12 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 112 findings from nine reviews: 84 fixed (most in commit `0d92b51`,
+**Status on 2026-11-02:** 121 findings from ten reviews: 91 fixed (most in commit `0d92b51`,
 RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after the
 closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
-and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-111 after
-the staging reviews), 15 already done before or because of the review, 4 planned (D-2 and D-10,
-accepted by the author), 2 deferred, 3 refuted and 4 checked with no issue. Nothing is open: the
+and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-120 after
+the staging reviews), 16 already done before or because of the review, 4 planned (D-2 and D-10,
+accepted by the author), 2 deferred, 3 refuted and 5 checked with no issue. Nothing is open: the
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 
 ## Reviews received
@@ -24,6 +24,7 @@ author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 | 2026-11-01 | gemini-4-argon-high (G) | [2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md](2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
 | 2026-11-01 | astra-low (A3) | [2026-11-01-astra-low-03-stdlib-closure-review.md](2026-11-01-astra-low-03-stdlib-closure-review.md) | Gate 0 task 1: closure tool, manifest and lock at `b40ef2d` | CPython 3.15.2 (pinned uv build) |
 | 2026-11-01 | gemini-4-argon-high (G2) | [2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md](2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md) | task 1 and the review-log fixes, `f56d495` to `b40ef2d` | CPython 3.15.2, GCC 16.2.1 |
+| 2026-11-02 | astra-low (A6) | [2026-11-02-astra-low-06-staging-revision-review.md](2026-11-02-astra-low-06-staging-revision-review.md) | the staging revision, `b838bc5..d0bec20` | CPython 3.15.2 |
 | 2026-11-01 | astra-low (A5) | [2026-11-01-astra-low-05-staging-prototype-review.md](2026-11-01-astra-low-05-staging-prototype-review.md) | the staging prototype, `19316ba..b838bc5` | CPython 3.15.2 |
 | 2026-11-01 | gemini-4-argon-high (G4) | [2026-11-01-04-gemini-4-argon-high-staging-prototype-review.md](2026-11-01-04-gemini-4-argon-high-staging-prototype-review.md) | the staging prototype and D-7 to D-11, `19316ba..b838bc5` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-01 | astra-low (A4) | [2026-11-01-astra-low-04-target-increment-review.md](2026-11-01-astra-low-04-target-increment-review.md) | the target programs and the computed increments, `b40ef2d` to `8b8eb0d` | CPython 3.15.2 (pinned uv build) |
@@ -221,6 +222,23 @@ removes the build-time tables that A5-5, G4 3.5a and 3.5b are about.
 | RL-111 | G4 on 3.3 | `run.py` ignored `-P` for the dry run | Confirmed | Fixed | With RL-104 |
 | RL-112 | G4 on S-1 to S-5 | Agree with the proposals | Noted | No change | The author decided S-1 to S-5 |
 
+### Staging revision (A6)
+
+Each probe was reproduced on `d0bec20` before the fix, and each now runs in
+`test_the_review_probes_print_what_cpython_prints`.
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-113 | A6-1 | Two evaluators could share an identity (file, qualified name, first line) and overwrite each other: two aliases named alike on one line | Confirmed: `str` twice where CPython prints `int`, `str` | Fixed | The identity adds a hash of every instruction's source position (`annotate_rt.entry_key`, used by the build and the replay alike); a duplicate is declined, never overwritten. Test `test_two_annotate_functions_never_share_an_entry_point` |
+| RL-114 | A6-2 | The dry run's `exec` and `eval` compiled in the recorder's context (its `from __future__ import annotations`), so discovery could differ from CPython | Confirmed: exit 70 where CPython prints `T(absent=1)` | Fixed | Each text is compiled explicitly with the caller's flags, and the code the dry run ran is the code staged. Tests with and without PEP 563 in the caller |
+| RL-115 | A6-3 | Source handling differed from the builtins: `eval` strips leading spaces and tabs; bytes are decoded by their PEP 263 declaration | Confirmed: an `IndentationError` and a `UnicodeDecodeError` | Fixed | The builtin's preprocessing, applied once, in the dry run; the key is the source as given, `str` or `bytes`. Tests for whitespace and for `eval` and `compile` of declared bytes |
+| RL-116 | A6-4 | Private attribute names were not mangled in the evaluators (`C.__v` for `C._C__v`) | Confirmed: the build declined it, and the runtime blamed a function the compiler did not generate | Fixed | Attribute names are mangled as CPython does (keyword-argument names are not); a declined entry point is refused with the build's reason |
+| RL-117 | A6 on S-1 | Validating each evaluator does not validate the mapping from live functions to evaluators; keep runtime tests of FORWARDREF's first run, with real globals and live cells | Agreed | Done | RL-113's test; C-3-22 runs the first FORWARDREF run with real globals and live cells (a closure variable before and after binding, class-level names) |
+| RL-118 | A6 on S-4 | `[refused]` acted at the `exec`, so `gettext.c2py("bad")` raised a catchable `ValueError` | Confirmed | Fixed | Refused on entry, as the manifest says. Test `test_a_refused_function_is_refused_on_entry` |
+| RL-119 | A6 on the closure | A scanned shim's lock entry named CPython's module as its path | Confirmed: `annotationlib.py` | Fixed | `runtime/shims/annotationlib.py` |
+| RL-120 | A6 on the documents | `docs/staging.md` section 4 and the replay's header still said any code object and any `compile` stop the program | Confirmed | Fixed | Both state the boundary as implemented |
+| RL-121 | A6 on S-2, S-3 | The refusal policies have their cases and interception points; layout staging stays open | Noted | No change | |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -393,5 +411,5 @@ conformance case comes first: copying unslotted, slotted and customised user cla
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-113` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-122` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

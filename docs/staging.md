@@ -2,7 +2,8 @@
 
 *2026-11-01. The prototype that design section 11 asks for before the first program relies on
 staging, and the implementation of review log D-5 (annotations at runtime) as decision S-1
-changed it. Revised the same day after reviews astra-low-05 and gemini-4-argon-high-04 (section 8). Everything
+changed it. Revised the same day after reviews astra-low-05 and gemini-4-argon-high-04, and on 2026-11-02
+after astra-low-06 (section 8). Everything
 below is reproduced by `make staging-check` (section 10) on the pinned CPython 3.15.2.*
 
 ## 1. Summary
@@ -102,8 +103,12 @@ call it.
 ## 4. The contract as implemented
 
 * **Key.** A staged text is found by the function it is called from (`module:qualname`, as the
-  frame names it), the operation (`exec`, `eval` or `compile`) and the text itself.
-  * It is compiled at build time with the caller's `__future__` flags. For `compile`, the key
+  frame names it), the operation (`exec`, `eval` or `compile`) and the source as given, `str` or
+  `bytes`, before any preprocessing.
+  * It is compiled with the caller's `__future__` flags and the builtin's own preprocessing:
+    `eval` strips leading spaces and tabs, and bytes are decoded by their PEP 263 declaration.
+    The dry run runs that same code, in the caller's context, so what it discovers is what
+    CPython would (A6-2). For `compile`, the key
     also holds the mode, file name, flags, optimisation level and module name. At runtime the
     flags and the optimisation level must match, or the call is refused.
   * A `compile` stages its outcome: the code, or the exception with its arguments. That is how
@@ -117,17 +122,18 @@ call it.
   namespaces it was given. Definition-time effects therefore happen at runtime, once, in
   CPython's order: `__init_subclass__` running twice for `slots=True`, `__set_name__`,
   class-body statements, a counting default factory, decorator order. C-8-08 prints them.
-* **Miss.** Any other text, any code object and any `compile` stop the program with the E-01
-  refusal.
+* **Miss.** Any other text, and any code object that a staged `compile` did not return, stop the
+  program with the E-01 refusal.
   * No `except` clause, `finally` block or `atexit` handler sees it. Output is flushed, and the
     model exits with status 70 (provisional).
   * The message names the site, for example `E-01: exec at
     dataclasses:_FuncBuilder.add_fns_to_class:499 of a text the dry run did not stage`.
   * A dataclass made inside a function is refused only when no identical text was staged. That
     is the rule; `bella-lint` warns about such definitions (S-3).
-* **Policy refusals.** A function in the manifest's `[refused]` table is refused whether or not
-  its text was staged. C-7-16 needs this: the dry run of its module body loads the catalogue, so
-  the text is staged.
+* **Policy refusals.** A function in the manifest's `[refused]` table is refused when it is
+  called, malformed input included (`gettext.c2py("bad")` is refused, not a catchable
+  `ValueError`), and whether or not its text was staged. C-7-16 needs the latter: the dry run of
+  its module body loads the catalogue, so the text is staged.
 * **Probes.** A `namedtuple` call with literal fields (by position or by keyword), anywhere in
   the program's or the closure's source, is made once at build time, so its text is staged even
   inside a function.
@@ -188,7 +194,7 @@ functions, the probes now cover.
   `__getitem__` and `__missing__` run. The generator works from the source, as the compiler
   will. It knows:
   * scopes and bindings (`global`, `nonlocal`, type parameters);
-  * name mangling;
+  * name mangling, of names and of attribute names, not of keyword-argument names;
   * which module and class annotations are conditional, and their indices: all of a module's,
     only those under a compound statement in a class;
   * `*args: *Ts` and the two result shapes.
@@ -204,6 +210,10 @@ functions, the probes now cover.
   An annotate function the compiler did not generate has no entry point. If its fallback needs
   the re-run, it is refused. The same entry points serve PEP 695 evaluate functions: type-alias
   values, bounds, constraints and defaults.
+* **Identity.** An entry point is filed under its function's file, qualified name, first line,
+  and a hash of every instruction's source position (`annotate_rt.entry_key`), which the replay
+  computes the same way for a live function. Two definitions with one name on one line therefore
+  differ, and a duplicate identity is declined, never overwritten (A6-1).
 * **Checked at build time**, for every annotate function. An entry point is kept only if both
   checks agree:
   * its loads (kind, name, order) are the bytecode's;
@@ -271,6 +281,18 @@ replays each and compares it with CPython:
 * **3.5.** FORWARDREF refused hand-written annotate functions and PEP 695 evaluate functions
   that CPython answers. The scan missed keyword `namedtuple` arguments and `builtins.exec`, and
   `exec(text, closure=...)` dropped `closure`.
+
+Review astra-low-06, on the revision, is review log RL-113 to RL-121, each probe now a test:
+
+* **A6-1.** Two type aliases named alike on one line shared an evaluator identity, and the
+  replay printed the wrong one. Identities now include the instructions' source positions.
+* **A6-2.** The dry run compiled strings in its own context, a file with PEP 563, not the
+  caller's.
+* **A6-3.** `eval`'s whitespace stripping and the decoding of bytes by declaration were missing.
+* **A6-4.** Private attribute names were not mangled. The build caught it and declined; the
+  runtime now says so.
+* **Notes.** `[refused]` acts on entry to the function; the lock names a shim's own source;
+  the description of misses is corrected.
 
 ## 9. Decisions (2026-11-01, author)
 

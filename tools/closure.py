@@ -1030,6 +1030,7 @@ def _compute_closure(manifest: Manifest, program: Program | None) -> tuple[dict[
             shim_source = SHIM_SOURCES / f"{name}.py"
             if info.status == "shim" and shim_source.exists():
                 kind, path = "source", str(shim_source)
+                info.kind, info.path = kind, path     # the lock names the source that was scanned (A6)
             if (info.status not in ("core", "shim") or shim_source.exists()) and kind in ("source", "frozen") and path:
                 scan = scan_module(name, path, manifest.platform, manifest.replaced.get(name, set()),
                                    as_main=program is not None and name == program.root)

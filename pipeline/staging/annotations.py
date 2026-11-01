@@ -30,7 +30,6 @@ import annotationlib
 import ast
 import copy
 import dis
-import os
 import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -80,9 +79,7 @@ class _Owner:
     entries: list[Entry]
 
 
-def entry_key(filename: str, qualname: str, firstlineno: int) -> str:
-    """How the model finds the evaluator of an `__annotate__` (the compiler attaches it instead)."""
-    return f"{os.path.realpath(filename)}::{qualname}::{firstlineno}"
+entry_key = annotate_rt.entry_key       # the identity the build files an evaluator under
 
 
 def mangle(private: str | None, name: str) -> str:
@@ -323,6 +320,12 @@ class _Rewrite(ast.NodeTransformer):
         self.loads: list[tuple[str, str]] = []
         self.free: set[str] = set()
 
+    def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+        # CPython mangles a private attribute name in a class too (C.__v is C._C__v; review
+        # 2026-11-02 astra-low-06, A6-4), not a keyword argument's name
+        node.attr = mangle(self.owner.private, node.attr)
+        return self.generic_visit(node)
+
     def visit_Name(self, node: ast.Name) -> ast.expr:
         if not isinstance(node.ctx, ast.Load):
             raise Unsupported(f"a {type(node.ctx).__name__} of {node.id}")
@@ -449,7 +452,8 @@ def _span(node: ast.AST) -> tuple[object, ...]:
 
 
 def evaluators_for_source(path: str) -> tuple[dict[str, Evaluator], list[str]]:
-    """(the evaluators of the module at `path`, by entry key; what was declined, and why)."""
+    """(the evaluators of the module at `path`, by entry key; what was declined, as
+    "key: reason")."""
     with open(path, "rb") as f:
         source = f.read()
     tree = ast.parse(source, path)
@@ -466,7 +470,7 @@ def evaluators_for_source(path: str) -> tuple[dict[str, Evaluator], list[str]]:
     evaluators: dict[str, Evaluator] = {}
     declined: list[str] = []
     for annotate in _annotate_codes(code):
-        key = entry_key(annotate.co_filename, annotate.co_qualname, annotate.co_firstlineno)
+        key = entry_key(annotate)
         owners = {id(o): o for pos in annotate.co_positions() if (o := by_span.get(pos)) is not None}
         if len(owners) != 1:
             declined.append(f"{key}: matched to {len(owners)} annotation owners")
@@ -487,6 +491,10 @@ def evaluators_for_source(path: str) -> tuple[dict[str, Evaluator], list[str]]:
             problem = _agree(annotate, evaluator, freevars)
         if problem:
             declined.append(f"{key}: MISMATCH {problem}")
+            continue
+        if key in evaluators:     # never file two under one identity: fail closed (A6-1)
+            declined.append(f"{key}: MISMATCH two annotate functions share this identity")
+            del evaluators[key]
             continue
         evaluators[key] = Evaluator(key, freevars, ast.unparse(fn), evaluator)
     return evaluators, declined
