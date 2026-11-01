@@ -66,8 +66,9 @@ Target programs (`targets/targets.toml`, review log D-2 as refined on 2026-11-01
 computes one program's closure. Its driver is the root, and the program's own code (the driver
 and its vendored libraries) has status `program`: it is compiled with the program, not taken
 from the manifest. `--all-targets` writes every target's lock under `targets/closure/` and
-`targets/closure-summary.json`, which derives the phase-1 increments: 1a is what the easy
-programs reach, 1b what the tricky ones add, 1c the rest of the manifest.
+`targets/closure-summary.json`, which derives the phase-1 increments from each target's stage:
+1a.1, 1a.2 and 1a.3 are what the easy programs reach, one after the other, and 1c is the rest of
+the manifest. The tricky programs (stage "later") follow phase 1; what they add is reported.
 
 Run it with the pinned interpreter (bella.toml: reference.python) on the target platform.
 `--allow-unpinned` lets it run elsewhere for development, with a loud warning in the lock file.
@@ -131,6 +132,11 @@ class Program:
     owned: tuple[Path, ...] = ()   # the driver and its declared packages; () means everything under dirs
     argv: tuple[str, ...] = ()     # how the target is run (targets.toml), for the runtime observation
     cwd: Path | None = None
+    stage: str = "later"           # 1a.1, 1a.2, 1a.3 (phase 1, in order) or "later" (review log D-7, D-10)
+
+    @property
+    def in_phase1(self) -> bool:
+        return self.stage != "later"
 
     @classmethod
     def load(cls, name: str, targets_file: Path = TARGETS_FILE) -> Program:
@@ -141,7 +147,7 @@ class Program:
         # only the packages targets.toml declares belong to the program (review 2026-11-01, G3 3.2)
         owned = (driver, *(p for pkg in spec["packages"] for p in (vendor / pkg, vendor / f"{pkg}.py")))
         return cls(name, spec["level"], driver.stem, (driver.parent, vendor), dict(spec.get("closure", {})),
-                   owned, tuple(spec["argv"]), here)
+                   owned, tuple(spec["argv"]), here, str(spec["stage"]))
 
     @property
     def driver(self) -> Path:
@@ -1211,18 +1217,15 @@ def _source_lines(info: ModuleInfo) -> int:
 
 def increments(results: dict[str, tuple[Program, dict[str, ModuleInfo]]],
                manifest: Manifest) -> dict[str, dict[str, object]]:
-    """The phase-1 increments as closures of the target programs (review log D-2, refined
-    2026-11-01): 1a is what the easy programs reach in the manifest, 1b what the tricky ones add,
-    1c the rest of the manifest. Each lists its modules with their status and source lines."""
-    def reached(level: str) -> dict[str, ModuleInfo]:
-        out: dict[str, ModuleInfo] = {}
-        for program, infos in results.values():
-            if program.level == level:
-                out.update({n: i for n, i in infos.items() if i.status in MANIFEST_STATUSES})
-        return out
-    easy = reached("easy")
-    tricky = {n: i for n, i in reached("tricky").items() if n not in easy}
-    rest = {n: manifest.status_of(n) for n in sorted(manifest.supported) if n not in easy and n not in tricky}
+    """The phase-1 increments as closures of the target programs (review log D-2, D-7 and D-10):
+    each phase-1 stage (1a.1, 1a.2, 1a.3) is what its program reaches in the manifest beyond the
+    stages before it; "1a" is their sum, 1c the rest of the manifest. "later" reports what the
+    programs after phase 1 reach beyond 1a. Each lists its modules with their status and lines."""
+    def reached(program_infos: dict[str, ModuleInfo]) -> dict[str, ModuleInfo]:
+        return {n: i for n, i in program_infos.items() if i.status in MANIFEST_STATUSES}
+    stages = sorted({p.stage for p, _ in results.values() if p.in_phase1})
+    out: dict[str, dict[str, object]] = {}
+    phase1: dict[str, ModuleInfo] = {}
     def describe(mods: dict[str, ModuleInfo]) -> dict[str, object]:
         by_status: dict[str, int] = {}
         for i in mods.values():
@@ -1230,8 +1233,22 @@ def increments(results: dict[str, tuple[Program, dict[str, ModuleInfo]]],
         return {"modules": len(mods), "by_status": dict(sorted(by_status.items())),
                 "compiled_source_lines": sum(_source_lines(i) for i in mods.values() if i.status == "compiled"),
                 "list": {n: mods[n].status for n in sorted(mods)}}
-    return {"1a": describe(easy), "1b": describe(tricky),
-            "1c": {"modules": len(rest), "list": rest}}
+    for stage in stages:
+        mods: dict[str, ModuleInfo] = {}
+        for program, infos in results.values():
+            if program.stage == stage:
+                mods.update({n: i for n, i in reached(infos).items() if n not in phase1})
+        out[stage] = describe(mods) | {"targets": sorted(n for n, (p, _) in results.items() if p.stage == stage)}
+        phase1.update(mods)
+    out["1a"] = describe(phase1)
+    rest = {n: manifest.status_of(n) for n in sorted(manifest.supported) if n not in phase1}
+    out["1c"] = {"modules": len(rest), "list": rest}
+    later: dict[str, ModuleInfo] = {}
+    for program, infos in results.values():
+        if not program.in_phase1:
+            later.update({n: i for n, i in reached(infos).items() if n not in phase1})
+    out["later"] = describe(later) | {"targets": sorted(n for n, (p, _) in results.items() if not p.in_phase1)}
+    return out
 
 
 # ------------------------------------------------------------------------------------------
@@ -1287,10 +1304,10 @@ def _targets_main(args: argparse.Namespace, manifest: Manifest, pinned: bool) ->
         by_status: dict[str, int] = {}
         for i in infos.values():
             by_status[i.status] = by_status.get(i.status, 0) + 1
-        summary[name] = {"level": program.level, "by_status": dict(sorted(by_status.items())), "errors": errors}
+        summary[name] = {"level": program.level, "stage": program.stage, "by_status": dict(sorted(by_status.items())), "errors": errors}
         errors_of[name] = errors
         if not args.quiet:
-            print(f"{name:24} {program.level:6} {len(infos):4} modules  "
+            print(f"{name:24} {program.stage:6} {len(infos):4} modules  "
                   + "  ".join(f"{s} {c}" for s, c in sorted(by_status.items()))
                   + (f"\n{'':24} {len(errors)} problem(s): " + "; ".join(errors) if errors else ""))
     if args.all_targets:
@@ -1303,11 +1320,11 @@ def _targets_main(args: argparse.Namespace, manifest: Manifest, pinned: bool) ->
                 print(f"increment {inc}: {d['modules']} modules"
                       + (f", {d['compiled_source_lines']} compiled source lines, {d['by_status']}" if "by_status" in d else ""))
             print("wrote targets/closure/*.lock.json and targets/closure-summary.json")
-    # 1a must be closed: an easy target's problem fails the run; a tricky one's is reported
-    open_easy = [n for n in names if results[n][0].level == "easy" and errors_of[n]]
-    if open_easy:
-        print(f"open: {', '.join(open_easy)}", file=sys.stderr)
-    return 1 if open_easy else 0
+    # phase 1 must be closed: a phase-1 target's problem fails the run; a later one's is reported
+    open_phase1 = [n for n in names if results[n][0].in_phase1 and errors_of[n]]
+    if open_phase1:
+        print(f"open: {', '.join(open_phase1)}", file=sys.stderr)
+    return 1 if open_phase1 else 0
 
 
 def main(argv: list[str] | None = None) -> int:

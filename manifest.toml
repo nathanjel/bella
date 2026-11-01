@@ -44,7 +44,7 @@ roots = [
   "heapq", "keyword", "reprlib",
   # text
   "string", "re", "textwrap", "difflib", "json", "csv", "struct", "base64", "binascii", "codecs",
-  "html", "urllib.parse",
+  "html", "urllib.parse", "unicodedata",   # unicodedata [P1] since 2026-11-01 (review log D-8)
   # numbers
   "math", "cmath", "decimal", "fractions", "random", "statistics", "numbers",
   # dates

@@ -30,11 +30,18 @@ the manifest as closed on it (175 modules):*
   phase-1 increment is the closure of its target programs (design section 11); items 4 and 5 of
   section 5 (zlib's licence, the source of the hash primitives) join the licence register,
   `docs/licences.md`, to be settled when worth it.*
+* *Decided by the author after the target reviews (2026-11-01, review log D-7 to D-11): phase 1
+  is the easy three, staged one target at a time, 1a.1 `cli_easy_slugs`, 1a.2
+  `service_easy_tokens`, 1a.3 `data_easy_sales` (111, 24 and 14 manifest modules; 1c is the
+  other 31), and the tricky three follow phase 1, with items 1 to 3 of section 5. `unicodedata`
+  is \[P1\] after all, since `re`, `traceback` and `urllib.parse` call it on non-ASCII input;
+  `cli_easy_slugs` keeps its lowered requirements. `re` runs on a port of `_sre` (section 4),
+  and copying through `__reduce_ex__` is \[P1\] (tomlkit's `copy.copy`, for later).*
 
 ## 1. Recommendation
 
 Six programs, two per shape, all under `targets/`. The **first attempt is the easy three**, in
-this order; the tricky three are the next review's material (Gate 1).
+this order; the tricky three follow phase 1 (review log D-7).
 
 | Order | Target | Shape | Library | Why this one |
 | --- | --- | --- | --- | --- |
@@ -90,8 +97,9 @@ behaviour), which is the honest stdlib answer and a nice fixed point for the Uni
 Exercises: `argparse` (2.7k lines; `BooleanOptionalAction`; `HelpFormatter` calls
 `shutil.get_terminal_size()` from `add_argument`, so `shutil` and `COLUMNS` are live in every
 argparse program), `re` (the `_sre` engine, mapped), `str` methods (`unicodedata.normalize` and
-`combining` until 2026-11-01, when the author lowered the requirements: `unicodedata` stays
-\[P2+\]), `collections.Counter`, `pathlib.Path.read_text`.
+`combining` until 2026-11-01, when the author lowered the requirements; `unicodedata` became
+\[P1\] later that day, review log D-8, and the driver kept the lower requirements),
+`collections.Counter`, `pathlib.Path.read_text`.
 Argparse's `Namespace` is written with `setattr(namespace, self.dest, values)`
 (`argparse.py:975`) — the first `MAY_RECEIVE_COMPUTED_WRITES` object every CLI target meets.
 
@@ -266,11 +274,16 @@ the per-target numbers in section 2 include it.
 * `json` (compiled pure-Python paths; `_json` mapped), `datetime` on `_pydatetime`, `decimal`
   on `_pydecimal`: the two services and the data scripts.
 * `unicodedata` (mapped): UCD tables generated from the Unicode data files (Unicode licence,
-  permissive), not copied from CPython. No target uses it since 2026-11-01; `urllib.parse`
-  reaches it lazily. The licence is entry L-03 of `docs/licences.md`.
+  permissive), not copied from CPython. \[P1\] since 2026-11-01 (review log D-8): `re`'s parser
+  (`\N{...}`), `traceback`'s width functions and `urllib.parse`'s netloc check call it on
+  non-ASCII input, so every target reaches it, though no driver calls it. The licence is entry
+  L-03 of `docs/licences.md`; the `_sre` port's is L-08.
 * `hashlib` → `_sha1`/`_sha2`/`_md5`/`_blake2` (mapped), `zlib` (mapped): the token service.
 
 ## 5. Decisions and clauses this surfaced
+
+Items 1 to 3 follow the tricky targets past phase 1 (review log D-7); items 4 and 5 are in the
+licence register; item 6 is done.
 
 1. **Function metadata at run time.** pycodestyle needs `inspect.signature(f).parameters`
    (names and kinds) and `f.__doc__`; tomlkit and toolz would too. Proposal: compiled function

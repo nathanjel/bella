@@ -36,6 +36,7 @@
   "codecs",
   "html",
   "urllib.parse",
+  "unicodedata",
   "math",
   "cmath",
   "decimal",
@@ -6387,7 +6388,7 @@
    "name": "unicodedata",
    "kind": "builtin",
    "status": "mapped",
-   "reached_by": "urllib.parse:lazy:514",
+   "reached_by": null,
    "dynamic_unknown_lines": [],
    "path": null,
    "edges": []

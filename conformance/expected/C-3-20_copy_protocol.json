@@ -1,0 +1,12 @@
+{
+ "case": "C-3-20_copy_protocol.py",
+ "clause": "C-3-20",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "review log D-11 (2026-11-01): the reduction protocol as copy uses it is [P1]; pickle stays [P2+]",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "plain: True False True {'items': [1, 2], 'label': 'plain'} Plain\nslots: True False False\nstate: ['getstate', 'setstate'] {'data': [1, 2], 'restored': True}\nnewargs: ['new 3', 'new 3'] 3\nreduce: ['reduce'] 40\ncustom: False True ['__copy__', '__deepcopy__']\nint subclass: True Tagged {'note': 'n'}\nsharing and cycles: True True True\n",
+ "stderr": "",
+ "exit_code": 0
+}

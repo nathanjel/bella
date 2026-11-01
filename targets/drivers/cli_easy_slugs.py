@@ -5,8 +5,8 @@
 
 Reads lines, prints `original -> slug`, and a summary with the duplicated slugs. Every non-ASCII
 character is dropped. (It used NFKD decomposition and dropped combining marks, as python-slugify
-does without unidecode; `unicodedata` stays [P2+] in phase 1, so the author lowered this
-program's requirements on 2026-11-01.) Deterministic for a fixed input file.
+does without unidecode; the author lowered this program's requirements on 2026-11-01, while
+`unicodedata` was [P2+]; it is [P1] since review log D-8.) Deterministic for a fixed input file.
 """
 from __future__ import annotations
 

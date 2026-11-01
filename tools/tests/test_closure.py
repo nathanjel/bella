@@ -509,6 +509,27 @@ def test_only_declared_packages_belong_to_the_program_g3_3_2() -> None:
     assert any(p.startswith("rv_undeclared [source]: required but not in manifest") for p in problems), problems
 
 
+def test_phase1_is_staged_by_target_d10() -> None:
+    """Each phase-1 stage counts only what the stages before it do not reach; a target after
+    phase 1 (D-7) adds nothing to 1a and is reported apart (review log D-10)."""
+    manifest = closure.Manifest.load(Path(__file__).resolve().parents[2] / "manifest.toml")
+    def prog(name: str, stage: str) -> closure.Program:
+        return closure.Program(name, "easy" if stage != "later" else "tricky", name, (Path("."),), stage=stage)
+    def infos(*names: str) -> dict[str, closure.ModuleInfo]:
+        return {n: closure.ModuleInfo(n, "source", None, "compiled") for n in names} | {
+            "drv": closure.ModuleInfo("drv", "source", None, closure.PROGRAM)}
+    results = {"second": (prog("second", "1a.2"), infos("re", "json", "base64")),
+               "first": (prog("first", "1a.1"), infos("re", "enum")),
+               "after": (prog("after", "later"), infos("re", "html"))}
+    incs = closure.increments(results, manifest)
+    assert list(incs) == ["1a.1", "1a.2", "1a", "1c", "later"]
+    assert list(incs["1a.1"]["list"]) == ["enum", "re"]            # type: ignore[call-overload]
+    assert list(incs["1a.2"]["list"]) == ["base64", "json"]        # type: ignore[call-overload]
+    assert incs["1a"]["modules"] == 4 and incs["later"]["targets"] == ["after"]
+    assert list(incs["later"]["list"]) == ["html"]                  # type: ignore[call-overload]
+    assert "html" in incs["1c"]["list"] and "re" not in incs["1c"]["list"]   # type: ignore[operator]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

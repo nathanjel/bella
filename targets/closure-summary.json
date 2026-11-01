@@ -4,6 +4,7 @@
  "targets": {
   "cli_easy_slugs": {
    "level": "easy",
+   "stage": "1a.1",
    "by_status": {
     "compiled": 72,
     "core": 15,
@@ -15,6 +16,7 @@
   },
   "cli_tricky_check": {
    "level": "tricky",
+   "stage": "later",
    "by_status": {
     "compiled": 74,
     "core": 18,
@@ -31,6 +33,7 @@
   },
   "data_easy_sales": {
    "level": "easy",
+   "stage": "1a.3",
    "by_status": {
     "compiled": 86,
     "core": 15,
@@ -42,6 +45,7 @@
   },
   "data_tricky_toml": {
    "level": "tricky",
+   "stage": "later",
    "by_status": {
     "compiled": 78,
     "core": 17,
@@ -53,6 +57,7 @@
   },
   "service_easy_tokens": {
    "level": "easy",
+   "stage": "1a.2",
    "by_status": {
     "compiled": 84,
     "core": 15,
@@ -64,6 +69,7 @@
   },
   "service_tricky_markdown": {
    "level": "tricky",
+   "stage": "later",
    "by_status": {
     "compiled": 80,
     "core": 17,
@@ -75,6 +81,197 @@
   }
  },
  "increments": {
+  "1a.1": {
+   "modules": 111,
+   "by_status": {
+    "compiled": 72,
+    "core": 15,
+    "mapped": 20,
+    "shim": 4
+   },
+   "compiled_source_lines": 52106,
+   "list": {
+    "__future__": "compiled",
+    "_abc": "core",
+    "_ast": "core",
+    "_codecs": "core",
+    "_collections": "mapped",
+    "_collections_abc": "compiled",
+    "_colorize": "compiled",
+    "_contextvars": "mapped",
+    "_functools": "mapped",
+    "_heapq": "mapped",
+    "_io": "core",
+    "_locale": "mapped",
+    "_missing_stdlib_info": "compiled",
+    "_opcode": "mapped",
+    "_opcode_metadata": "compiled",
+    "_operator": "mapped",
+    "_py_abc": "compiled",
+    "_py_warnings": "compiled",
+    "_sre": "mapped",
+    "_stat": "mapped",
+    "_struct": "mapped",
+    "_suggestions": "core",
+    "_thread": "shim",
+    "_tokenize": "core",
+    "_types": "core",
+    "_typing": "mapped",
+    "_warnings": "core",
+    "_weakref": "core",
+    "_weakrefset": "compiled",
+    "abc": "compiled",
+    "annotationlib": "shim",
+    "argparse": "compiled",
+    "ast": "compiled",
+    "atexit": "mapped",
+    "builtins": "core",
+    "codecs": "compiled",
+    "codeop": "shim",
+    "collections": "compiled",
+    "collections.abc": "compiled",
+    "contextlib": "compiled",
+    "copy": "compiled",
+    "copyreg": "compiled",
+    "dataclasses": "compiled",
+    "difflib": "compiled",
+    "dis": "compiled",
+    "encodings": "compiled",
+    "encodings.aliases": "compiled",
+    "encodings.ascii": "compiled",
+    "encodings.latin_1": "compiled",
+    "encodings.utf_16": "compiled",
+    "encodings.utf_16_be": "compiled",
+    "encodings.utf_16_le": "compiled",
+    "encodings.utf_32": "compiled",
+    "encodings.utf_32_be": "compiled",
+    "encodings.utf_32_le": "compiled",
+    "encodings.utf_8": "compiled",
+    "encodings.utf_8_sig": "compiled",
+    "enum": "compiled",
+    "errno": "mapped",
+    "fnmatch": "compiled",
+    "functools": "compiled",
+    "gc": "mapped",
+    "genericpath": "compiled",
+    "gettext": "compiled",
+    "glob": "compiled",
+    "grp": "mapped",
+    "heapq": "compiled",
+    "importlib": "core",
+    "importlib.machinery": "core",
+    "importlib.util": "core",
+    "inspect": "compiled",
+    "io": "compiled",
+    "ipaddress": "compiled",
+    "itertools": "mapped",
+    "keyword": "compiled",
+    "linecache": "compiled",
+    "locale": "compiled",
+    "math": "mapped",
+    "ntpath": "compiled",
+    "opcode": "compiled",
+    "operator": "compiled",
+    "os": "compiled",
+    "os.path": "compiled",
+    "pathlib": "compiled",
+    "pathlib._os": "compiled",
+    "posix": "core",
+    "posixpath": "compiled",
+    "pwd": "mapped",
+    "re": "compiled",
+    "re._casefix": "compiled",
+    "re._compiler": "compiled",
+    "re._constants": "compiled",
+    "re._parser": "compiled",
+    "reprlib": "compiled",
+    "shutil": "compiled",
+    "stat": "compiled",
+    "struct": "compiled",
+    "subprocess": "shim",
+    "sys": "core",
+    "textwrap": "compiled",
+    "token": "compiled",
+    "tokenize": "compiled",
+    "traceback": "compiled",
+    "types": "compiled",
+    "typing": "compiled",
+    "unicodedata": "mapped",
+    "urllib": "compiled",
+    "urllib.parse": "compiled",
+    "warnings": "compiled",
+    "weakref": "compiled",
+    "zlib": "mapped"
+   },
+   "targets": [
+    "cli_easy_slugs"
+   ]
+  },
+  "1a.2": {
+   "modules": 24,
+   "by_status": {
+    "compiled": 12,
+    "mapped": 12
+   },
+   "compiled_source_lines": 7356,
+   "list": {
+    "_blake2": "mapped",
+    "_hmac": "mapped",
+    "_json": "mapped",
+    "_math_integer": "mapped",
+    "_md5": "mapped",
+    "_pydatetime": "compiled",
+    "_sha1": "mapped",
+    "_sha2": "mapped",
+    "_sha3": "mapped",
+    "_string": "mapped",
+    "_strptime": "compiled",
+    "base64": "compiled",
+    "binascii": "mapped",
+    "calendar": "compiled",
+    "datetime": "compiled",
+    "hashlib": "compiled",
+    "hmac": "compiled",
+    "json": "compiled",
+    "json.decoder": "compiled",
+    "json.encoder": "compiled",
+    "json.scanner": "compiled",
+    "math.integer": "mapped",
+    "string": "compiled",
+    "time": "mapped"
+   },
+   "targets": [
+    "service_easy_tokens"
+   ]
+  },
+  "1a.3": {
+   "modules": 14,
+   "by_status": {
+    "compiled": 9,
+    "mapped": 4,
+    "shim": 1
+   },
+   "compiled_source_lines": 11757,
+   "list": {
+    "_bisect": "mapped",
+    "_csv": "mapped",
+    "_pydecimal": "compiled",
+    "_random": "mapped",
+    "_statistics": "mapped",
+    "bisect": "compiled",
+    "contextvars": "compiled",
+    "csv": "compiled",
+    "decimal": "compiled",
+    "fractions": "compiled",
+    "numbers": "compiled",
+    "random": "compiled",
+    "statistics": "compiled",
+    "threading": "shim"
+   },
+   "targets": [
+    "data_easy_sales"
+   ]
+  },
   "1a": {
    "modules": 149,
    "by_status": {
@@ -236,35 +433,25 @@
     "zlib": "mapped"
    }
   },
-  "1b": {
-   "modules": 6,
-   "by_status": {
-    "compiled": 3,
-    "core": 3
-   },
-   "compiled_source_lines": 2739,
-   "list": {
-    "_signal": "core",
-    "html": "compiled",
-    "html.entities": "compiled",
-    "importlib._bootstrap": "core",
-    "importlib._bootstrap_external": "core",
-    "signal": "compiled"
-   }
-  },
   "1c": {
-   "modules": 25,
+   "modules": 31,
    "list": {
     "_frozen_importlib": "core",
     "_frozen_importlib_external": "core",
     "_imp": "core",
+    "_signal": "core",
     "asyncio": "shim",
     "cmath": "mapped",
+    "html": "compiled",
+    "html.entities": "compiled",
     "importlib._abc": "core",
+    "importlib._bootstrap": "core",
+    "importlib._bootstrap_external": "core",
     "logging": "compiled",
     "marshal": "core",
     "pprint": "compiled",
     "secrets": "compiled",
+    "signal": "compiled",
     "socket": "shim",
     "tempfile": "compiled",
     "unittest": "compiled",
@@ -281,6 +468,27 @@
     "uuid": "compiled",
     "zipimport": "core"
    }
+  },
+  "later": {
+   "modules": 6,
+   "by_status": {
+    "compiled": 3,
+    "core": 3
+   },
+   "compiled_source_lines": 2739,
+   "list": {
+    "_signal": "core",
+    "html": "compiled",
+    "html.entities": "compiled",
+    "importlib._bootstrap": "core",
+    "importlib._bootstrap_external": "core",
+    "signal": "compiled"
+   },
+   "targets": [
+    "cli_tricky_check",
+    "data_tricky_toml",
+    "service_tricky_markdown"
+   ]
   }
  }
 }

@@ -82,32 +82,40 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   end: BigInt in `int.hpp` (Karatsuba above 64 limbs, Knuth D; or libtommath), `str`, `list`,
   `dict`, exceptions as C++ exceptions, functions as objects, classes with promoted fields
   (argparse's `Namespace` is the first computed-write object), the `re` parser/compiler
-  compiled and `_sre` ported, `float` with CPython's `repr`, the L2
+  compiled and `_sre` ported, `unicodedata` with tables generated from the UCD (case C-7-15),
+  the copy protocol (case C-3-20), `float` with CPython's `repr`, the L2
   grammar with declared/proven/representation kept apart. Write `bella-lint` as an `ast`
   walker over `docs/deviations.toml` and the tier table (`tools/score_candidate.py` is its
   seed).
-* Decided 2026-11-01: each increment is the closure of its target programs (1a: the easy
-  three). The easy three already reach `enum` (`re`'s flags) and `typing` (itsdangerous), so
-  task 5's staging prototype comes before the first path is done. `make targets-closure`
-  computes them (`targets/closure-summary.json`, checked in CI): 1a is 149 manifest modules and
-  71,219 compiled source lines, the tricky three add 6 modules, and 25 are reached by none.
-  Five targets are closed; `cli_tricky_check` waits on the parked pycodestyle items.
-* Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata`, which stays \[P2+\];
-  licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's
+* Decided 2026-11-01: each increment is the closure of its target programs, and phase 1 is the
+  easy three, one stage each with its own gate (review log D-7, D-10): 1a.1 `cli_easy_slugs`
+  (111 manifest modules, 52,106 compiled source lines), 1a.2 `service_easy_tokens` (+24,
+  7,356), 1a.3 `data_easy_sales` (+14, 11,757); 1c is the other 31. `cli_easy_slugs` already
+  reaches `enum` (`re`'s flags), and `service_easy_tokens` `typing` (itsdangerous), so task 5's
+  staging prototype comes before the first path is done. `make targets-closure` computes the
+  stages from `targets.toml` (`targets/closure-summary.json`, checked in CI). The tricky three
+  follow phase 1; their recordings stay oracles.
+* Measure the compile scope before task 4 commits to one (review log D-10): compiling a stage's
+  whole closure against compiling what the closed world reaches, function by function (a pass
+  with a `PassSpec` whose obligation is that nothing reachable at runtime is left out), with
+  what each target actually loads as the yardstick (62, 91 and 83 modules for the easy three,
+  review 2026-11-01 gemini-4-argon-high-03).
+* Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata` (it kept the lowered
+  requirements when `unicodedata` became \[P1\] the same day, review log D-8); licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's
   licence and the source of the hash primitives (items 4 and 5 of `docs/targets.md` section 5)
   do not block the work.
-* Decisions this needs from the author, before the tricky targets: items 1 to 3 of
-  `docs/targets.md` section 5 (function metadata at runtime, dead excluded calls, manifest
-  growth for pycodestyle). Item 6 is done (`[dynamic]`, review log RL-56).
-* Open after the target reviews (review log D-7 to D-11): tomlkit's stateful multiple
-  inheritance against 1b, `unicodedata` reached on non-ASCII paths of `re`, `traceback` and
-  `urllib.parse`, the regex engine (PCRE2 in the spec, a `_sre` port in this plan), what is
-  compiled for a target (the whole closure or what is reachable, and 1a staged by target), and
-  the copy protocol against pickling.
+* After phase 1, with the tricky targets: items 1 to 3 of `docs/targets.md` section 5 (function
+  metadata at runtime, dead excluded calls, manifest growth for pycodestyle) and stateful
+  multiple inheritance with built-in bases (tomlkit). Item 6 is done (`[dynamic]`, review log
+  RL-56).
+* Decided after the target reviews (review log D-7 to D-11): the tricky three follow phase 1;
+  `unicodedata` is \[P1\] (spec v0.8, for later revision); `re` runs on a port of `_sre`, its
+  licence entry L-08; 1a is staged by target; the copy protocol is \[P1\] and `pickle` stays
+  \[P2+\].
 * The target oracle (`make targets-check`): bytes, an authoritative recording on the pin, two
   hash seeds and the phase-1 configuration per target; `service_easy_tokens` records whole
   tokens and verifies one CPython signed (review log RL-71 to RL-86).
-* Done when: `cli_easy_slugs` prints the recorded output under CPython 3.15.2, `eval1` and the
+* Done when (the gate of 1a.1): `cli_easy_slugs` prints the recorded output under CPython 3.15.2, `eval1` and the
   compiled binary (`make targets-check TARGET_RUNNER=...` passes for it), and the generated C++
   is committed under `pipeline/examples/out/`.
 

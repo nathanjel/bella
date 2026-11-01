@@ -248,6 +248,31 @@ corrected. The locks and increments are unchanged. Five points go to the author,
 tomlkit's stateful multiple inheritance, `unicodedata` on non-ASCII paths of the phase-1
 library, the regex engine, the compile scope of a target, and the copy protocol.
 
+**2026-11-01 — D-7 to D-11 decided** (author; review log D-7 to D-11, spec v0.8, design section
+11 rev 444). This changes two decisions taken earlier the same day, as noted.
+* D-7: the three tricky targets follow phase 1, not only tomlkit (the author widened option 1).
+  Phase 1 is the easy three. The increments decision above said 1b was "a change of order, not
+  of scope"; that was wrong for the tricky targets, whose language features (stateful multiple
+  inheritance with built-in bases, function metadata at runtime) a module closure does not
+  measure. 1b is gone; their recordings stay oracles, their closures are still computed, and
+  items 1 to 3 of `docs/targets.md` section 5 move with them.
+* D-8: `unicodedata` becomes \[P1\] (option 2), for later revision, because of how much of the
+  phase-1 library depends on it: `re`'s parser, `traceback`'s width functions and
+  `urllib.parse`'s netloc check call it on non-ASCII input. This reverses option (c) above;
+  `cli_easy_slugs` keeps its lowered requirements. The recommendation was the shim (option 1).
+  Case C-7-15; licence register L-03.
+* D-9: `re` runs on a C++ port of `_sre` under its compiled pure-Python parser and compiler, not
+  on PCRE2 (spec section 7). Its licence is a separate register entry, L-08: the `re` package
+  and `sre.c` carry Secret Labs AB's notice, redistributable under CNRI's Python 1.6 licence.
+* D-10: as recommended. 1a is staged by target, each stage with its own gate: 1a.1
+  `cli_easy_slugs`, 1a.2 `service_easy_tokens`, 1a.3 `data_easy_sales` (`targets.toml` stage;
+  111, 24 and 14 manifest modules; 1c the other 31). Compiling the whole closure against
+  compiling what the closed world reaches, function by function, is measured in TODO task 4.
+* D-11: as recommended. Copying through the reduction protocol (`__reduce_ex__`, `__reduce__`,
+  `__getstate__`, `__setstate__`, `__getnewargs__`, `__getnewargs_ex__`, `copyreg`'s
+  reconstructors) is \[P1\]; the `pickle` module stays \[P2+\]. Case C-3-20. `Logger.__reduce__`
+  still refuses `copy.copy(logger)`, since it imports `pickle` (D-3).
+
 ## Pins
 
 | What | Value | Where |

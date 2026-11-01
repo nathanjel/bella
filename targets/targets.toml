@@ -4,6 +4,8 @@
 #
 # kind      cli | data | service        (the three shapes the design document names)
 # level     easy | tricky
+# stage     the phase-1 increment the program closes, in order (1a.1, 1a.2, 1a.3), or "later":
+#           the tricky three follow phase 1 (review log D-7, D-10; design section 11)
 # argv      arguments after the driver path
 # packages  vendored third-party packages the driver imports (under vendor/)
 # stressors the dialect features the program exercises, in the words of the spec's tier table
@@ -11,6 +13,7 @@
 [cli_easy_slugs]
 kind = "cli"
 level = "easy"
+stage = "1a.1"
 driver = "drivers/cli_easy_slugs.py"
 argv = ["data/lines.txt", "--max-length", "24"]
 packages = []
@@ -19,6 +22,7 @@ stressors = ["argparse", "re", "str methods (encode with errors='ignore')", "Cou
 [cli_tricky_check]
 kind = "cli"
 level = "tricky"
+stage = "later"
 driver = "drivers/cli_tricky_check.py"
 argv = ["data/sample_module.py"]
 packages = ["pycodestyle"]
@@ -34,6 +38,7 @@ stressors = [
 [data_easy_sales]
 kind = "data"
 level = "easy"
+stage = "1a.3"
 driver = "drivers/data_easy_sales.py"
 argv = ["data/sales.csv"]
 packages = ["humanize"]
@@ -43,6 +48,7 @@ stressors = ["csv.DictReader", "Decimal (_pydecimal, compiled)", "Fraction", "st
 [data_tricky_toml]
 kind = "data"
 level = "tricky"
+stage = "later"
 driver = "drivers/data_tricky_toml.py"
 argv = ["data/pyproject.toml"]
 packages = ["tomlkit"]
@@ -57,6 +63,7 @@ stressors = [
 [service_easy_tokens]
 kind = "service"
 level = "easy"
+stage = "1a.2"
 driver = "drivers/service_easy_tokens.py"
 argv = ["data/token_requests.jsonl"]
 packages = ["itsdangerous"]
@@ -68,6 +75,7 @@ stressors = ["hmac/hashlib sha1 (mapped)", "zlib (mapped)", "base64", "json", "s
 [service_tricky_markdown]
 kind = "service"
 level = "tricky"
+stage = "later"
 driver = "drivers/service_tricky_markdown.py"
 argv = ["data/render_requests.jsonl"]
 packages = ["mistune"]

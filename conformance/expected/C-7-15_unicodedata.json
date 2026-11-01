@@ -1,0 +1,12 @@
+{
+ "case": "C-7-15_unicodedata.py",
+ "clause": "C-7-15",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "review log D-8 (2026-11-01): unicodedata is [P1], with CPython's Unicode tables",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "Unicode 17.0.0\nNFC '\\xc5ngstr\\xf6m \\ufb01 \\u2460 \\xbd' 14 True\nNFD 'A\\u030angstro\\u0308m \\ufb01 \\u2460 \\xbd' 16 False\nNFKC '\\xc5ngstr\\xf6m fi 1 1\\u20442' 17 False\nNFKD 'A\\u030angstro\\u0308m fi 1 1\\u20442' 19 False\n'a' Ll 0 Na L 0 -\n'\\xc5' Lu 0 N L 0 0041 030A\n'\\u0301' Mn 230 A NSM 0 -\n'\\u2460' No 0 A ON 0 <circle> 0031\n'\\u4e2d' Lo 0 W L 0 -\n'\\u200d' Cf 0 N BN 0 -\n'\\U0001f600' So 0 W ON 0 -\nEURO SIGN '\\u03b1' no name\n7 2 0.5 None\nunknown name: KeyError\n[\"'e\\\\u0301'\", \"'\\\\U0001f44d\\\\U0001f3fd'\", \"'\\\\U0001f1f5\\\\U0001f1f1'\", \"'a'\"]\nTrue cafe\nTrue\nnetloc: ValueError\n",
+ "stderr": "",
+ "exit_code": 0
+}

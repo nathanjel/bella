@@ -7,12 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 87 findings from seven reviews: 59 fixed (most in commit `0d92b51`,
+**Status on 2026-11-01:** 87 findings from seven reviews: 63 fixed (most in commit `0d92b51`,
 RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after the
-closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews), 10 already done
-before or because of the review, 5 planned (D-2 and D-5, accepted by the author), 2 deferred,
-3 refuted, 3 checked with no issue, and 5 open for discussion (D-7 to D-11). The author decided
-D-1 to D-6 on 2026-11-01.
+closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
+and RL-80 with D-7, D-8, D-9 and D-11), 10 already done before or because of the review, 6
+planned (D-2, D-5 and D-10, accepted by the author), 2 deferred, 3 refuted and 3 checked with
+no issue. Nothing is open for discussion: the author decided D-1 to D-11 on 2026-11-01.
 
 ## Reviews received
 
@@ -165,15 +165,15 @@ nothing relied on the other gaps.
 | ID | From | Finding | Verdict | Status | Evidence and fix |
 | --- | --- | --- | --- | --- | --- |
 | RL-71 | A4-1 | The closure evaluated a target's entry script as an imported module, so imports under `if __name__ == "__main__":` were dead | Confirmed: the reviewer's probe recorded the import as dead, with no problem reported | Fixed | The root is scanned with `__name__ == "__main__"` (its identity unchanged), and the runtime observation runs the program as the harness does (`__main__`, its arguments and directory, by `compile` and `exec`, not `runpy`, which imports `pkgutil` itself) instead of importing it. Test `test_the_entry_script_runs_as_main_a4_1` |
-| RL-72 | A4-2, G3 2.3.1 | `data_tricky_toml` needs stateful multiple inheritance with built-in bases, which is \[P2+\], yet the refined D-2 puts it in 1b | Confirmed: `Integer(Item, _CustomInt)`, `String(str, Item)`, `DateTime(Item, datetime)` and four more; `Item.__init__` stores `_trivia` | Discuss: D-7 | Module closures do not measure language features |
-| RL-73 | A4-3, G3 2.1 | `unicodedata` is in the 1a inventory although the author kept it \[P2+\] | Confirmed, and wider than reported: six functions in `re._parser`, `traceback` and `urllib.parse` import it on non-ASCII paths of functions every ASCII input goes through, so refusing those functions whole would break ASCII regexes, URLs and tracebacks | Discuss: D-8 | |
+| RL-72 | A4-2, G3 2.3.1 | `data_tricky_toml` needs stateful multiple inheritance with built-in bases, which is \[P2+\], yet the refined D-2 puts it in 1b | Confirmed: `Integer(Item, _CustomInt)`, `String(str, Item)`, `DateTime(Item, datetime)` and four more; `Item.__init__` stores `_trivia` | Fixed with D-7: the tricky three follow phase 1 | Module closures do not measure language features; design section 11, `targets.toml` stage |
+| RL-73 | A4-3, G3 2.1 | `unicodedata` is in the 1a inventory although the author kept it \[P2+\] | Confirmed, and wider than reported: six functions in `re._parser`, `traceback` and `urllib.parse` import it on non-ASCII paths of functions every ASCII input goes through, so refusing those functions whole would break ASCII regexes, URLs and tracebacks | Fixed with D-8: `unicodedata` \[P1\] | Spec v0.8 sections 6 and 7, case C-7-15, a manifest root |
 | RL-74 | A4-4, G3 3.3.1 | `run_targets.py check` accepted a non-authoritative or stale recording | Confirmed (the reviewer's probe passed) | Fixed | `check` requires `authoritative` and the pinned Python version; `--allow-unpinned` permits a development comparison. `tools/tests/test_run_targets.py` |
 | RL-75 | A4-5 | The token target printed token lengths, so a wrong MAC of the same length passed | Confirmed: with every signature replaced by `b"X" * 20` the output still matched | Fixed | Full tokens are recorded, a token CPython signed is verified, and a same-length mutation is rejected; the constant-MAC probe now fails |
 | RL-76 | A4 note | The target oracle compared decoded text and had no time limit | Confirmed | Fixed | Bytes, 600 s per run |
-| RL-77 | A4 note | Spec section 7 maps `re` onto PCRE2; `docs/targets.md` and `TODO.md` plan a port of `_sre` | Confirmed (inconsistent) | Discuss: D-9 | |
+| RL-77 | A4 note | Spec section 7 maps `re` onto PCRE2; `docs/targets.md` and `TODO.md` plan a port of `_sre` | Confirmed (inconsistent) | Fixed with D-9: the `_sre` port | Spec v0.8 section 7; licence register L-08 |
 | RL-78 | A4 note, G3 3.3.2 | `targets-check` did not run the phase-1 configuration | Confirmed | Fixed | A third run under the D-20 simulation; all six pass |
-| RL-79 | A4 note, G3 2.2 | 1a is 85 % of the manifest because the closure counts uncalled functions; G3 measured 62, 91 and 83 modules loaded by the easy targets against 112, 144 and 146 in their locks | Agreed | Discuss: D-10 | The closure stays the inventory of what may run; the compile scope is the open question |
-| RL-80 | G3 2.3.2 | `copy` is \[P1\], but copying a user class goes through `__reduce_ex__`, `__getstate__` and `copyreg`, which spec section 3 files under pickling, \[P2+\] | Confirmed | Discuss: D-11 | |
+| RL-79 | A4 note, G3 2.2 | 1a is 85 % of the manifest because the closure counts uncalled functions; G3 measured 62, 91 and 83 modules loaded by the easy targets against 112, 144 and 146 in their locks | Agreed | Planned: D-10 (TODO task 4) | 1a staged by target, 1a.1 to 1a.3 (`targets/closure-summary.json`); the compile scope is measured in task 4 |
+| RL-80 | G3 2.3.2 | `copy` is \[P1\], but copying a user class goes through `__reduce_ex__`, `__getstate__` and `copyreg`, which spec section 3 files under pickling, \[P2+\] | Confirmed | Fixed with D-11: the copy protocol \[P1\] | Spec v0.8 section 3, case C-3-20 |
 | RL-81 | G3 3.1 | A per-target declaration replaced the manifest's entry for the same module, and a misspelt or stale key passed silently | Confirmed (the reviewer's probe) | Fixed | Entries are merged; a declaration for a module the closure does not reach is an error. Test `test_per_target_declarations_merge_and_must_name_reached_modules_g3_3_1` |
 | RL-82 | G3 3.2 | Every file under `targets/drivers` and `targets/vendor` counted as the program's own; the platform check was skipped in target mode | Confirmed | Fixed | Only the driver and the packages `targets.toml` declares; the platform facts are checked. Test `test_only_declared_packages_belong_to_the_program_g3_3_2` |
 | RL-83 | G3 3.3.3 | `check --verbose` showed no stderr diff | Confirmed | Fixed | |
@@ -283,7 +283,9 @@ and a difference not in the register is a defect. Options:
 Recommendation: 1 now, 2 when a target program needs either. The harness then needs a way to
 check a case that differs by a registered deviation (TODO task 2).
 
-**D-7 tomlkit's stateful multiple inheritance (RL-72).** Open. Seven tomlkit classes combine
+**D-7 tomlkit's stateful multiple inheritance (RL-72).** Decided 2026-11-01: option 1, widened by
+the author to all three tricky targets, which follow phase 1 (design section 11, `targets.toml`
+stage "later"); items 1 to 3 of `docs/targets.md` section 5 move with them. Seven tomlkit classes combine
 `Item`, which keeps instance state, with a built-in base (`int`, `float`, `str`, `list`, `dict`,
 `datetime`, `date`, `time`): stateful multiple inheritance, \[P2+\] in spec sections 3 and 5.
 Decision D-2 as refined makes 1b the closure of the tricky targets; describing that as a change
@@ -299,7 +301,9 @@ Recommendation: 1 now, and revisit 2 once the object header exists (TODO task 3)
 layout of built-in bases belongs to it. Each tricky target's language features should be checked
 against the tier table as well as its module closure (`bella-lint`'s job, TODO task 4).
 
-**D-8 `unicodedata` in phase 1 (RL-73).** Open. The author kept `unicodedata` \[P2+\] (option (c)
+**D-8 `unicodedata` in phase 1 (RL-73).** Decided 2026-11-01: option 2, for later revision, because
+of how much of the phase-1 library depends on it (spec v0.8 sections 6 and 7, case C-7-15); this
+reverses option (c), and `cli_easy_slugs` keeps its lowered requirements. The author kept `unicodedata` \[P2+\] (option (c)
 of 2026-11-01), but the phase-1 library calls it on non-ASCII paths: `re._parser._escape` and
 `_class_escape` for `\N{...}` (`lookup`), `traceback._str_width` and `_zip_display_width`
 (`combining`, `category`, `east_asian_width`, `iter_graphemes`), `traceback._compute_suggestion_error`
@@ -315,14 +319,17 @@ ASCII input. Options:
 Recommendation: 1. It is the existing shim mechanism and keeps the author's decision; release
 builds print file and line only (D-06), so tracebacks there never reach the width functions.
 
-**D-9 The regex engine (RL-77).** Open. Spec section 7 maps `re` onto PCRE2; `docs/targets.md`
+**D-9 The regex engine (RL-77).** Decided 2026-11-01, as recommended (spec v0.8 section 7), with
+the licence as its own register entry, L-08: `re` and `sre.c` carry Secret Labs AB's notice,
+redistributable under CNRI's Python 1.6 licence. Spec section 7 maps `re` onto PCRE2; `docs/targets.md`
 and `TODO.md` plan to compile `re`'s pure-Python parser and compiler and port the `_sre` engine.
 Recommendation: the `_sre` port. PCRE2 differs from CPython's `re` in syntax, Unicode classes,
 error messages and the order of backtracking, and "never approximate" rules out an engine that
 gives different matches; the port is PSF-licensed (licence register L-01). If accepted, spec
 section 7 changes in the next revision.
 
-**D-10 What is compiled for a target (RL-79).** Open. The closure counts every function of every
+**D-10 What is compiled for a target (RL-79).** Decided 2026-11-01, as recommended: 1a.1 to 1a.3
+now (`targets.toml` stage), and the function-level scope measured in TODO task 4. The closure counts every function of every
 reached module (an inventory of what may run), which makes 1a 149 modules and 71,219 lines.
 Options:
 1. Compile the whole closure.
@@ -335,7 +342,8 @@ Options:
 Recommendation: 3 now, and 2 as compiler work in TODO task 4, measured against what the
 targets load (G3's numbers).
 
-**D-11 The copy protocol (RL-80).** Open. `copy.copy` and `copy.deepcopy` on a user class without
+**D-11 The copy protocol (RL-80).** Decided 2026-11-01, as recommended (spec v0.8 section 3, case
+C-3-20). `copy.copy` and `copy.deepcopy` on a user class without
 `__copy__` call `__reduce_ex__(4)`, which uses `__getstate__` and `copyreg`, while spec section 3
 files `__reduce__`, `__getstate__` and `__setstate__` under pickling, \[P2+\]. Recommendation (G3's):
 the reduction protocol as `copy` uses it becomes \[P1\] (`__reduce_ex__`, `__reduce__`,

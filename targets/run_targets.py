@@ -12,8 +12,8 @@ stderr and the exit status. Recording is authoritative only under the pinned int
 conformance harness does. `check` runs every target under PYTHONHASHSEED=1 as well as 0, so a
 program whose output depends on hash order fails before the compiler ever sees it, and once more
 in the phase-1 configuration (the manifest's omissions and the codecs outside the phase-1 set
-blocked, as deviation D-20 is simulated): a target must print the same there, since that is how
-phase 1 runs it. `check` compares bytes, and only against an authoritative recording made on the
+blocked, as deviation D-20 is simulated) when the target belongs to phase 1: it must print the
+same there, since that is how phase 1 runs it. `check` compares bytes, and only against an authoritative recording made on the
 pinned interpreter (`--allow-unpinned` relaxes that for development); each run has a time limit.
 """
 from __future__ import annotations
@@ -46,6 +46,7 @@ def current_python() -> str:
 class Target(TypedDict):
     kind: str
     level: str
+    stage: str
     driver: str
     argv: list[str]
     packages: list[str]
@@ -54,7 +55,7 @@ class Target(TypedDict):
 
 def load_targets() -> dict[str, Target]:
     data = tomllib.loads((HERE / "targets.toml").read_text(encoding="utf-8"))
-    return {name: Target(kind=t["kind"], level=t["level"], driver=t["driver"], argv=list(t["argv"]),
+    return {name: Target(kind=t["kind"], level=t["level"], stage=t["stage"], driver=t["driver"], argv=list(t["argv"]),
                          packages=list(t["packages"]), stressors=list(t.get("stressors", []))) for name, t in data.items()}
 
 
@@ -119,10 +120,10 @@ def selected(args: argparse.Namespace) -> list[tuple[str, Target]]:
 
 def check(args: argparse.Namespace) -> int:
     failures = 0
-    # CPython: two hash seeds, then the phase-1 configuration; a compiled runner: once
-    runs = [(0, False)] if args.runner else [(0, False), (1, False), (0, True)]
     pinned = pinned_python()
     for name, spec in selected(args):
+        # CPython: two hash seeds, then the phase-1 configuration for a phase-1 target; a compiled runner: once
+        runs = [(0, False)] if args.runner else [(0, False), (1, False)] + ([(0, True)] if spec["stage"] != "later" else [])
         meta = json.loads((EXPECTED / f"{name}.json").read_text(encoding="utf-8"))
         if not (meta.get("authoritative") is True and meta.get("python") == pinned) and not args.allow_unpinned:
             # the oracle must be the reference interpreter's own recording (review 2026-11-01, A4-4)
@@ -166,7 +167,7 @@ def _diff(a: bytes, b: bytes, label: str = "stdout") -> list[str]:
 def list_targets(_: argparse.Namespace) -> int:
     for name, spec in load_targets().items():
         pk = ", ".join(spec["packages"]) or "stdlib only"
-        print(f"{name:26s} {spec['kind']:8s} {spec['level']:7s} {spec['driver']}  [{pk}]")
+        print(f"{name:26s} {spec['kind']:8s} {spec['level']:7s} {spec['stage']:6s} {spec['driver']}  [{pk}]")
     return 0
 
 
