@@ -68,6 +68,29 @@ design document edited and re-exported the same day):
 * Still open: the closure tool's first-use edge class for module-level `lazy import` (TODO,
   task 1).
 
+**2026-11-01 — review-log decisions D-2, D-3 and D-4** (author's decisions on the discussion
+items of [the review log](reviews/review-log.md); dialect specification v0.5 and the design
+document edited and re-exported the same day). D-1 (class versions from one global counter)
+is still open.
+
+* D-2, the next increment: phase 1 is delivered as 1a (core language and the data-structure
+  modules the three target programs need), 1b (`enum`, `dataclasses`, `typing`) and 1c (I/O,
+  `re`, `json`, `logging`, `unittest` and the rest). Staging is prototyped on one `@dataclass`
+  and one `namedtuple` before 1b relies on it; lifetimes become explicit (retain/release in
+  L2, finaliser traces in `eval1`, lifetimes in the model) before the object header; the
+  documents are consolidated after Gate 0, with review history in the review log from
+  2026-11-01 on and each `PassSpec` status naming its evidence. Design section 11; `TODO.md`.
+* D-3, import guards: only `try`/`except ImportError` and `suppress(ImportError)` make an
+  import optional, and `[omissions]` holds nothing else. Guards over constants, `__name__` and
+  the `[platform]` facts are evaluated at build time (false: dead, true: unguarded); any other
+  guard makes an import lazy inside a function and required at module level. Spec section 7,
+  design section 10.4, `tools/closure.py`, `manifest.toml` `[platform]`.
+* D-4, `traceback` and `codeop`: a shim with CPython's `PyCF_*` values whose compiling
+  functions stop the program with the E-08 refusal, which no `except` clause catches (a
+  catchable error would be swallowed by `traceback`'s `suppress(Exception)` and drop the
+  keyword suggestion silently). E-08 is unchanged for programs. Spec sections 4 and 7, design
+  section 10.4, `manifest.toml` `[phase1.shim]`.
+
 ## Pins
 
 | What | Value | Where |

@@ -612,7 +612,7 @@ Subinterpreters are one process and one address space, not multiple processes; w
 
 Recommended defaults: B for clusters whose extensions all support per-interpreter GILs, C for bulk-call clusters that would otherwise bring a GIL into the process (pandas, torch inference), A only when the whole island is free-threading-ready. The policy file can pin any of them per cluster.
 
-What the island costs whenever it is used, regardless of topology: per-call overhead that makes element-wise calls in a loop a performance bug (`bella-lint` flags an island call inside a loop); results typed only as well as the package's stubs, so a loose stub turns values into boxed island handles downstream; libpython plus the package's shared objects in the artefact, pinned to one 3.14t minor; stack traces split at the boundary; and one PSF-licensed component in the build. The ledger exists so that none of this is a surprise.
+What the island costs whenever it is used, regardless of topology: per-call overhead that makes element-wise calls in a loop a performance bug (`bella-lint` flags an island call inside a loop); results typed only as well as the package's stubs, so a loose stub turns values into boxed island handles downstream; libpython plus the package's shared objects in the artefact, pinned to one 3.15t minor; stack traces split at the boundary; and one PSF-licensed component in the build. The ledger exists so that none of this is a surprise.
 
 ```
 package    strategy   detail                         call sites        note
@@ -685,6 +685,35 @@ GCC 16 as the only toolchain. The language side of C++26 is largely there (refle
 
 The phase 5 gate changes accordingly: every optimising pass at rung 2 of the proof ladder or higher; "GCC and Clang agree" is dropped.
 
+## 10.4 The phase-1 library: import guards and the `codeop` shim
+
+The phase-1 library is the dependency closure that `tools/closure.py` computes from `manifest.toml` against the pinned standard library (spec, section 7). Two decisions of 2026-11-01 fix how the closure reads import guards (review log D-3) and how `traceback` gets `codeop` (review log D-4).
+
+Import guards (D-3). Every import gets exactly one class, in this order of precedence:
+
+| Class | Where the import stands | Closure | When the target is outside the manifest |
+| --- | --- | --- | --- |
+| dead | Under a guard that is false on the target: constants, the module's own `__name__`, and `sys.platform`, `os.name` and membership in `sys.builtin_module_names` from the manifest's `[platform]` table, directly or through a module-level name bound once to them | Not followed, never compiled | Nothing to declare; the lock lists the import with its line |
+| optional | Inside `try`/`except ImportError` or `with suppress(ImportError)` | Followed if in the manifest | `[omissions]`: ImportError at runtime, as if not installed |
+| lazy | Inside a function body, guarded or not | Followed if in the manifest | `[lazy_unsupported]`: that function is unsupported in phase 1 |
+| guarded | At module level under a guard the build cannot evaluate, or in an exception handler | Always followed | An error: the module is required |
+| eager | At module level, unguarded or under a true guard | Always followed | An error: the module is required |
+
+Before D-3, every guarded import was one class, "conditional", and could be declared an omission. An `if` inside a function then became a silent ImportError at runtime, although spec section 7 calls only ImportError-guarded imports optional. Now an omission means exactly what CPython does when a module is not installed. A platform test is decided at build time from facts that the tool checks against the interpreter it runs on (the pinned build on Linux). A name the module binds twice, deletes, binds inside a loop or `try`, or that a function declares `global`, is not assumed inside functions, and a star import may rebind any public name. On 3.15.2 the closure finds 14 dead import edges: an \`if \_false:\` block in codecs and the Windows branches of `os`, `shutil`, `encodings` and `_colorize`, `uuid`'s non-Linux branch and `heapq`'s `__main__` block. Twelve entries left `[omissions]`: six were platform branches or `__main__` blocks, and six named imports that 3.15.2 no longer makes. `logging`'s `pickle` import, inside `Logger.__reduce__`, moved to `[lazy_unsupported]`.
+
+The `codeop` shim (D-4). `traceback` imports `codeop` at module level (3.15.2 `traceback.py`, line 13), and E-08 excludes `codeop` because it compiles source text (E-01). The calls sit in one method, `TracebackException._find_keyword_typos` (lines 1458 and 1507). When it formats a `SyntaxError`, it recompiles the offending lines with `codeop.compile_command` to test whether a keyword in place of a misspelled name fixes them, and if so the message ends "Did you mean 'while'?". Measured on 3.15.2:
+
+| The `SyntaxError` | Its `_metadata` | `compile_command` calls | Last line printed |
+| --- | --- | --- | --- |
+| Raised by the parser, `compile("whille x: ...")` | Set by the parser | 2 | `SyntaxError: invalid syntax. Did you mean 'while'?` |
+| Built by the program, `SyntaxError("invalid syntax", (...))` | None | 0 | `SyntaxError: invalid syntax` |
+| Built by the program, `_metadata` assigned by hand | Set by the program | 2 | `SyntaxError: invalid syntax. Did you mean 'while'?` |
+| As above, with a `compile_command` that raises a catchable error | Set by the program | 1, which raises | `SyntaxError: invalid syntax`: the suggestion is silently lost |
+
+A compiled program has no parser at runtime, so the first row cannot occur, and the second needs no `codeop`. Only the third reaches it, by assigning a private attribute. Three answers were possible. Un-excluding `codeop` would put a parser in the runtime, which E-01 rules out. Compiling `traceback` without its import would change what the module binds (`traceback.codeop` would be missing), an unregistered divergence. A shim keeps E-08 intact, and it was chosen.
+
+The shim exposes `codeop`'s whole public surface, so `traceback`, and anything that reaches `traceback.codeop`, sees the names CPython has: `PyCF_ONLY_AST` (1024), `PyCF_DONT_IMPLY_DEDENT` (512) and `PyCF_ALLOW_INCOMPLETE_INPUT` (16384) with CPython's values, and `compile_command`, `Compile` and `CommandCompiler`. Calling or instantiating any of the three stops the program with the E-08 refusal. The refusal must not be a Python exception. `traceback` calls `_find_keyword_typos` inside `suppress(Exception)`, so a catchable error would be swallowed, and the program would print the message without CPython's suggestion (the last row): a silent divergence. It is a runtime refusal of the kind `bella::NotImplemented` already is, a C++ exception that no `except` clause sees. It names E-08 rather than a milestone, because the exclusion is permanent. A program's own `import codeop` stays a compile-time error, so only `traceback` brings the shim into the closure. The manifest records the shim under `[phase1.shim]` and the dependency under `[adaptations]`.
+
 ## 11. Build plan
 
 &#91;embedded content: roadmap · 6 phases, each closed by a measured gate\]
@@ -710,6 +739,8 @@ Phase 0 deliverables, in order, because they are the ones that de-risk everythin
 5. `bella-lint` with the tier reports, run on three real codebases the team picks as targets, so the tier distribution of real programs is known before the object model is built.
 
 External milestones: after phase 1, programs in the constrained dialect compiled boxed, single-threaded and CPython-free (a Nuitka-class product on a native runtime); after phase 2, the typed fast path (a mypyc or Pythran replacement with readable output); after phase 3, whole applications with C-extension packages in the island; after phase 4, the GIL-free threaded runtime; after phase 5, the proof ladder at rung 2 or higher for every optimising pass.
+
+Phase 1 in three increments (2026-11-01, review log D-2). Phase 1 is delivered as 1a, 1b and 1c, each closed by a gate on its own slice of the manifest. 1a is the core language and the data-structure modules the three target programs need; Gate 0 picks the programs and starts with the smallest. 1b adds `enum`, `dataclasses` and `typing`, which depend on staging, and 1c adds I/O, `re`, `json`, `logging`, `unittest` and the rest of the manifest. Two prerequisites come first. Before 1b relies on staging, it is prototyped on one `@dataclass` and one `namedtuple` with observable definition-time effects, and the prototype decides between stage-time `exec` keyed by call site and source hash, and compiler intrinsics for the known users. Before the object header is written, lifetimes are made explicit: retain and release points in the L2 grammar, finaliser traces in `eval1`, and lifetimes in the reference model (review log RL-20, RL-49). The documents are consolidated after Gate 0: sections 3 to 10 are rewritten around the final decisions, sections 13 to 15 stay as history, review history lives in `docs/reviews/review-log.md` from 2026-11-01 on, and each `PassSpec` status names its evidence.
 
 ## 12. Decisions (resolved 2026-10-30)
 

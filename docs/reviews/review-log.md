@@ -7,9 +7,10 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 51 findings from three reviews: 31 fixed (all but RL-39 and RL-47 in
-commit `0d92b51`), 7 already done before or because of the review, 2 deferred, 3 refuted,
-1 checked with no issue, 7 open in four discussion items (D-1 to D-4).
+**Status on 2026-11-01:** 51 findings from three reviews: 32 fixed (most in commit `0d92b51`,
+RL-37 with decision D-3), 7 already done before or because of the review, 4 planned (D-2,
+accepted by the author), 2 deferred, 3 refuted, 1 checked with no issue, 1 known Gate-0 task,
+and 1 open for discussion (D-1). The author decided D-2, D-3 and D-4 on 2026-11-01.
 
 ## Reviews received
 
@@ -26,7 +27,8 @@ they were rewritten against the real ones (`Site`, `RefClass`, `RangeCertificate
 
 **Verdicts:** Confirmed, Partly confirmed, Refuted, No issue (checked, nothing wrong).
 **Status:** Fixed (commit), Done (already applied before the review), Discuss (see below),
-Deferred (tracked in `TODO.md`), Known (already a Gate-0 task).
+Deferred (tracked in `TODO.md`), Known (already a Gate-0 task), Planned (a design change the
+author accepted, scheduled in `TODO.md`).
 
 ## Findings
 
@@ -90,8 +92,8 @@ Deferred (tracked in `TODO.md`), Known (already a Gate-0 task).
 | RL-34 | G 2.4.3.1-2 | mypy 44 errors, ruff 18 (23 on py315) | Confirmed | Fixed `0d92b51` | Both clean; `lint` added to `make check` and CI. Deliberate patterns in dialect programs carry a targeted `noqa` code with a reason, never a per-file ignore |
 | RL-35 | G 2.4.3.1 | `test_closure.py` assertions pass vacuously | Refuted | Annotation fixed | `_edges` returns a dict keyed by `(target, class)`, so `("os", EAGER) in edges` is a real check; only its declared return type was wrong |
 | RL-36 | G 2.4.1.4 | Omitted-module reach should follow CONDITIONAL and LAZY edges | Refuted | No change | The set is used to *ignore* runtime observations: following conditional edges from `bz2` grows it from 14 to 318 modules (`unittest`, `asyncio`, `__main__` included), hiding real requirements. Lazy edges never run at import time. The cited case is covered: `compression/zstd/__init__.py:29` imports `_zstd` eagerly |
-| RL-37 | G 2.4.1.3 | An unguarded import under `if` inside a function is CONDITIONAL, not LAZY | Confirmed as described, but deliberate (the test and the manifest's `[omissions]` comment say so) | Discuss: D-3 | It conflicts with spec section 7, which calls only `try/except ImportError` imports optional |
-| RL-38 | G 2.4.1.1-2 | Closure fails on the pin; `traceback` imports excluded `codeop`; unclassified 3.14/3.15 modules | Confirmed | Known: TODO task 1; `codeop`: D-4 | 28 open items on 3.15.2 |
+| RL-37 | G 2.4.1.3 | An unguarded import under `if` inside a function is CONDITIONAL, not LAZY | Confirmed as described, but deliberate (the test and the manifest's `[omissions]` comment say so) | Fixed with D-3 | It conflicted with spec section 7, which calls only `try/except ImportError` imports optional. Classes are now dead, optional, lazy, guarded and eager; guards over the `[platform]` facts are evaluated; `[omissions]` may hold only optional imports, which the tool checks. Tests `test_guards_the_closed_world_can_evaluate_d3` and four more in `tools/tests/test_closure.py` |
+| RL-38 | G 2.4.1.1-2 | Closure fails on the pin; `traceback` imports excluded `codeop`; unclassified 3.14/3.15 modules | Confirmed | Known: TODO task 1; `codeop` fixed with D-4 | 28 open items on 3.15.2, 25 after D-3 and D-4, all of them modules new in 3.15 |
 | RL-39 | A1 | The closure is an inventory, not proof that the modules compile | Accepted | Fixed (with this log) | README and `tools/closure.py` docstring |
 
 ### Python version (A2)
@@ -111,20 +113,31 @@ Deferred (tracked in `TODO.md`), Known (already a Gate-0 task).
 
 | ID | From | Finding | Verdict | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
-| RL-48 | A1, G 1.2.1 | Phase 1 is too wide: split it | Agreed in substance by both | Discuss: D-2 | |
-| RL-49 | A1 | Make lifetimes (retain/release timing) explicit in the IR | Agreed | Discuss: D-2 | Prerequisite for RL-20 |
-| RL-50 | A1, G 1.2.2 | The staging-to-runtime contract for `exec`-built code is unresolved | Agreed by both | Discuss: D-2 | |
-| RL-51 | A1 | Consolidate the authoritative documents; present PassSpec as obligation tracking | Agreed | Discuss: D-2 | |
+| RL-48 | A1, G 1.2.1 | Phase 1 is too wide: split it | Agreed in substance by both | Planned: D-2 | |
+| RL-49 | A1 | Make lifetimes (retain/release timing) explicit in the IR | Agreed | Planned: D-2 | Prerequisite for RL-20 |
+| RL-50 | A1, G 1.2.2 | The staging-to-runtime contract for `exec`-built code is unresolved | Agreed by both | Planned: D-2 | |
+| RL-51 | A1 | Consolidate the authoritative documents; present PassSpec as obligation tracking | Agreed | Planned: D-2 | |
 
 ## Open for discussion
 
-**D-1 Class versions from one global counter (RL-23).** Recommendation: accept. CPython does
-the same for type version tags, and the reviewer's case is real once runtime-created classes
-can die. It changes design section 3 (the `version` field and its allocation) and the draft
-header; the model adopts it in the same change, so the header is still written from the model.
+**D-1 Class versions from one global counter (RL-23).** Open: the author asked for a detailed
+explanation (given 2026-11-01). Recommendation: accept. CPython does the same for type version
+tags, and the reviewer's case is real once runtime-created classes can die. It changes design
+section 3 (the `version` field and its allocation) and the draft header; the model adopts it in
+the same change, so the header is still written from the model.
 
-**D-2 Scope and order of the next increment (RL-48 to RL-51).** Both code reviewers ask for a
-smaller first deliverable, and A1 adds three prerequisites. Recommendation:
+Measured on 3.15.2 by reading `tp_version_tag` (offset 384 in the pinned headers) through
+`ctypes`: tags come from one process-wide counter (two new classes got 131185 and 131186); a
+modification sets a class's tag to 0, and the next lookup assigns the next number (131187), to
+each subclass as well; a class created after another died took the dead class's address
+(`0x37774080`) with a new tag (131191, then 131192); after 1000 modifications a class gets no
+new tag and is never cached again. In Bella's draft, versions are per class and start at 0, so a
+new class at a freed address would match a stale entry that also says 0: a field offset from
+another layout, or a dangling `found`.
+
+**D-2 Scope and order of the next increment (RL-48 to RL-51).** Decided 2026-11-01: accepted
+as recommended (design section 11, `TODO.md`, `docs/DECISIONS.md`). Both code reviewers ask for
+a smaller first deliverable, and A1 adds three prerequisites. Recommendation:
 1. Split phase 1 into 1a (core language and the data-structure modules the three target
    programs need), 1b (`enum`, `dataclasses`, `typing`), 1c (I/O, `re`, `json`, `logging`,
    `unittest`, ...). Gate 0 task 4 already targets the smallest program first; this makes it
@@ -138,14 +151,19 @@ smaller first deliverable, and A1 adds three prerequisites. Recommendation:
    decisions, keep sections 13-15 as history, and let this log carry review history from now
    on. PassSpec status should name its evidence, so that "tested" points at the tests.
 
-**D-3 Imports under `if` (RL-37).** Today an `if`-guarded import outside the manifest becomes an
-omission (ImportError at runtime), while spec section 7 defines optional imports as
-`try/except ImportError` only. Recommendation: inside functions, `if`-guarded imports become
+**D-3 Imports under `if` (RL-37).** Decided 2026-11-01: accepted as recommended (spec v0.5
+section 7, design section 10.4, `tools/closure.py`, `manifest.toml` `[platform]`). Until then an
+`if`-guarded import outside the manifest became an omission (ImportError at runtime), while
+spec section 7 defines optional imports as `try/except ImportError` only. Recommendation: inside functions, `if`-guarded imports become
 LAZY (the function is unsupported, not silently failing). At module level, add a `[platform]`
 manifest table for guards the closed world can evaluate (`sys.platform`, `os.name`), and keep
 `[omissions]` for ImportError guards only.
 
-**D-4 `traceback` needs `codeop` (RL-38).** `traceback` imports `codeop` (excluded by E-08) at
+**D-4 `traceback` needs `codeop` (RL-38).** Decided 2026-11-01: the shim, as recommended, with
+one refinement found while writing it up: the refusal names E-08 rather than a milestone and
+cannot be caught, since `traceback` calls `compile_command` inside `suppress(Exception)` and a
+catchable error would drop CPython's keyword suggestion silently (measured; spec v0.5 sections 4
+and 7, design section 10.4). `traceback` imports `codeop` (excluded by E-08) at
 module level, but only calls `codeop.compile_command` in two functions that format syntax errors
 (3.15.2 `traceback.py` lines 1458 and 1507). A compiled program cannot raise a syntax error at
 runtime, because `compile` is excluded (E-01). Recommendation: a `codeop` shim under

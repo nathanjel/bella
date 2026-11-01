@@ -7,7 +7,9 @@ agent or person working here. It is short on purpose; the documents it points to
 
 1. `docs/dialect-spec.md` decides what a compiled program must do. On semantics it wins.
 2. `docs/design.md` decides how the compiler and runtime are built (sections 13-15 hold the
-   review resolutions; where earlier sections disagree, 13-15 win).
+   review resolutions of rounds 1-3; where earlier sections disagree, 13-15 win). Reviews from
+   2026-11-01 on are resolved in `docs/reviews/review-log.md`, and their decisions are folded
+   into the sections they change.
 3. `docs/DECISIONS.md` lists every decision taken; do not reopen one silently. If a decision
    turns out wrong, say so in the PR and record the change there and in the living document.
 4. `docs/feasibility-study.md` is history.
@@ -84,5 +86,5 @@ Without pytest, every test module runs directly: `python3 -m refmodel.tests.test
 ## Where to start
 
 `TODO.md` lists Gate 0's first increment in dependency order. Task 1 (the closure on 3.15.2)
-runs pinned under `uv run` or in the image (`docker build -t bella .`); tasks 2-4 can start on
+runs pinned under `uv run` or in the image (`docker build -t bella .`); tasks 2-5 can start on
 any developer machine with `--allow-unpinned`.
