@@ -4,8 +4,8 @@
  "spec": "section 6 (dict insertion order; set order for value-hashed elements, D-05)",
  "status": "P1",
  "source": "dialect specification section 6",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "reinsert goes to the end: ['b', 'c', 'a']\npopitem is LIFO: ('a', 4)\nset of small ints: {1, 3, 5, 7, 9}\nset of strings is value-hashed; order fixed by PYTHONHASHSEED=0: ['x', 'y', 'z']\nsize change during iteration: RuntimeError\n",
  "stderr": "",
  "exit_code": 0

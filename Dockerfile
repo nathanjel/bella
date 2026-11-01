@@ -1,15 +1,15 @@
-# Pinned toolchain for Bella: GCC 16.2.0 (C++26) + CPython 3.14.8 + uv-locked Python deps.
+# Pinned toolchain for Bella: GCC 16.2.0 (C++26) + CPython 3.15.2 + uv-locked Python deps.
 #
 # Both base images are pinned by tag and digest (pulled 2026-11-01; the gcc digest is the
 # multi-arch index, so linux/arm64 resolves to the same release). uv is pinned exactly because
-# the uv release decides which python-build-standalone build of 3.14.8 is installed
-# (uv 0.13.6 -> cpython-3.14.8+20261013); pyproject.toml [tool.uv] requires the same version.
+# the uv release decides which python-build-standalone build of the pin is installed
+# (uv 0.13.6 -> cpython-3.15.2+20261026); pyproject.toml [tool.uv] requires the same version.
 ARG GCC_IMAGE=gcc:16.2.0@sha256:07280eb2e744f1b7a2d8d4a3894c089ea07266c109758afc388a634bd098e4eb
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0
 FROM ${UV_IMAGE} AS uv
 FROM ${GCC_IMAGE}
 
-ARG PYTHON_VERSION=3.14.8
+ARG PYTHON_VERSION=3.15.2
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends cmake ninja-build ca-certificates curl git \

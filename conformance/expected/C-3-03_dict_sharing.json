@@ -4,8 +4,8 @@
  "spec": "section 3",
  "status": "P1",
  "source": "review round 3, finding 2 (two objects can share one instance dictionary)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "shared write visible: 3\nshared both ways: 4 True\nshared delete visible: True\n",
  "stderr": "",
  "exit_code": 0

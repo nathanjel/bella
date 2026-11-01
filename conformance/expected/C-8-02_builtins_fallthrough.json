@@ -4,8 +4,8 @@
  "spec": "section 8",
  "status": "P1",
  "source": "review round 2, finding 6 (global lookup falls through to builtins after a global is deleted)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "3\n-1\n3\nunbound global: NameError undefined_name\nunbound local: UnboundLocalError None\n",
  "stderr": "",
  "exit_code": 0

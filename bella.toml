@@ -2,9 +2,9 @@
 # specification, section 8). Every version here is part of the artefact key.
 
 [reference]
-python = "3.14.8"        # dialect specification v0.3, section 1: moving this pin is a spec revision
-grammar = "3.14"         # frozen for phases 0-2 (decision 15)
-dialect = "v0.3"
+python = "3.15.2"        # dialect specification section 1: moving this pin is a spec revision (3.14.8 -> 3.15.2 on 2026-11-01)
+grammar = "3.15"         # frozen for phases 0-2 (decision 15, revised 2026-11-01)
+dialect = "v0.3"         # the v0.4 revision for the 3.15 pin is pending in the living document (DECISIONS)
 
 [toolchain]
 cxx = "g++"

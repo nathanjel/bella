@@ -4,25 +4,36 @@ The next gate is the one the reviewer set in round two and refined in round thre
 artefacts, not prose. Each task below says what exists today, what is left, and what "done"
 means. Order matters: 1 constrains everything after it; 4 is where the next review happens.
 
-## 1. Compute the real phase-1 dependency closure on CPython 3.14.8
+## 1. Compute the real phase-1 dependency closure on CPython 3.15.2
 
 * Today: `tools/closure.py` computes the closure (dynamic + static, lazy and conditional edges,
   per-API scoping through `[lazy_unsupported]`, optional imports through `[omissions]`);
   `manifest.toml` is closed on CPython **3.13.18** (161 modules), which is not the reference.
-* To do: build the Docker image, run `make closure`, reconcile `manifest.toml` until it is
-  closed on 3.14.8 (expect `annotationlib`, `_colorize` changes, `string.templatelib`, and
-  any 3.14-only imports), commit `closure.lock.json`, and change the "LAST RECONCILED" line.
+* To do: run `uv run make closure` (or in the image), reconcile `manifest.toml` until it is
+  closed on 3.15.2, commit `closure.lock.json`, and change the "LAST RECONCILED" line. On
+  2026-11-01 it reported 28 open items over 172 modules: `annotationlib`, `_py_warnings`,
+  `compression.zstd`, `math.integer`, `pathlib._os`, `_hmac`, `fcntl`, `_missing_stdlib_info`,
+  `codeop` reached through `traceback` (excluded), and lazy imports in `pathlib`/`traceback`.
+  Teach the tool PEP 810 first: a module-level `lazy import` (`ast.Import.is_lazy`) is a
+  first-use edge, not an eager one; today it is followed as eager, which is sound but
+  over-approximates. Eleven phase-1 modules use it (`collections`, `contextlib`,
+  `dataclasses`, `typing`, `traceback`, `pathlib`, `argparse`, `inspect`, `difflib`,
+  `tokenize`, `_colorize`), so lazy-import semantics are phase-1 runtime work.
   Review the six `dynamic_unknown` import sites the lock lists (`encodings`, `inspect`,
   `traceback`, `unittest.loader/main`, `warnings`) and decide: registry entry, adaptation, or
   per-API scope.
-* Done when: `make closure` exits 0 on 3.14.8 with `authoritative: true` in the lock, and every
+* Done when: `make closure` exits 0 on 3.15.2 with `authoritative: true` in the lock, and every
   adaptation named in the manifest has an owner note in `docs/dialect-spec.md` section 7.
 
-## 2. Record the conformance expectations on 3.14.8 and grow the corpus
+## 2. Grow the conformance corpus on 3.15.2
 
-* Today: 23 cases + 1 excluded-construct case under `conformance/cases`, every one from a
-  review finding, recorded on 3.13.18 (non-authoritative) with the harness masks for D-06/D-08.
-* To do: `make record` in the image; add the cases the reviews asked for that are not yet
+* Today: 24 cases + 1 excluded-construct case under `conformance/cases`, from review findings
+  and from CPython 3.15 changes (C-9-07), recorded authoritatively on 3.15.2 (2026-11-01) with
+  the harness masks for D-06/D-08.
+* To do: cases for the 3.15 additions the phase-1 library depends on or the dialect must
+  decide: PEP 810 lazy imports (reification at first use, import errors at first use,
+  `__lazy_modules__`, `sys.set_lazy_imports`), PEP 798 unpacking in comprehensions,
+  `frozendict` (PEP 814), `sentinel` (PEP 661); add the cases the reviews asked for that are not yet
   here — the seeding-compatibility clause for D-14 (`PYTHONHASHSEED` fixed, compare
   `hash("x")` across runs), `__class__` assignment with CPython's layout rule, `__getattribute__`
   override cost tier, generator `close()`/`throw()`, `except*`, `match`, chained-comparison
@@ -61,7 +72,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   (Karatsuba above 64 limbs, Knuth D; or libtommath), `str`, `list`, `dict`, exceptions as
   C++ exceptions, functions as objects, the L2 grammar with declared/proven/representation
   kept apart.
-* Done when: the smallest target program prints the same trace under CPython 3.14.8, `eval1`
+* Done when: the smallest target program prints the same trace under CPython 3.15.2, `eval1`
   and the compiled binary, and the generated C++ is committed under `pipeline/examples/out/`.
 
 ## 5. Report
@@ -77,5 +88,4 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Rename the author line in the Markdown exports if the docs are published.
 * The `.github/workflows/ci.yml` builds the image and runs `make check`; turn it on once the
   closure is reconciled (task 1). The image builds and every other target in `make check`
-  passes in it (2026-11-01). The unpinned smoke job still installs CPython 3.13 with pip; move it
-  to `astral-sh/setup-uv` with uv 0.13.6 so it runs the locked set.
+  passes in it (2026-11-01). Until then the closure step is `continue-on-error`.

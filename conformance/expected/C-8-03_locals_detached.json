@@ -4,8 +4,8 @@
  "spec": "section 8 (PEP 667)",
  "status": "P1",
  "source": "review round 2, finding 6 (locals() in a function is a fresh mutable dictionary)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "variable unchanged: 1 snapshot mutated: 2 3\nfresh object each call: False\nfresh snapshot sees current value: 1\n",
  "stderr": "",
  "exit_code": 0

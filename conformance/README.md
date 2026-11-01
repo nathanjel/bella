@@ -1,7 +1,7 @@
 # Conformance corpus
 
 The dialect specification is the test plan: every normative sentence maps to a clause, and a
-clause is a program that runs unchanged under CPython 3.14.8 and under Bella. `harness.py`
+clause is a program that runs unchanged under CPython 3.15.2 and under Bella. `harness.py`
 records the observable trace under CPython and compares a Bella run against it.
 
 ```
@@ -35,8 +35,8 @@ itself is compared exactly.
 ## Status of the recorded expectations
 
 `expected/*.json` carries `recorded_with` and `authoritative`. Expectations recorded on any
-Python other than the pinned 3.14.8 are kept only as examples of the format; `check` skips them
-unless `--allow-unpinned` is given. Gate 0 re-records the corpus in the Docker image.
+Python other than the pinned 3.15.2 are kept only as examples of the format; `check` skips them
+unless `--allow-unpinned` is given. The corpus was recorded on the pinned 3.15.2 on 2026-11-01.
 
 ## Provenance
 

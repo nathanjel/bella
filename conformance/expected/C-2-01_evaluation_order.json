@@ -4,8 +4,8 @@
  "spec": "section 2",
  "status": "P1",
  "source": "review round 1, finding 6 (left-to-right evaluation, each operand once, chained comparisons)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "True ['a', 'b', 'c']\nFalse ['a', 'b']\n['p', 'q', 'r']\n[3] ['x', 'y']\n1 0 ['l', 'f']\n",
  "stderr": "",
  "exit_code": 0

@@ -4,8 +4,8 @@
  "spec": "section 6",
  "status": "P1",
  "source": "dialect specification section 6 (mixed int/float comparison is exact; round half to even)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "2**53+1 == 2.0**53: False\n2**53+1 > 2.0**53: True\nrepr shortest: 0.30000000000000004 1e+16 1.0 -0.0\nround half to even: 0 2 2 2.67\nnan != nan: True nan in [nan]: True\nint/float promotion: 0.5 3.0 True float\nhash(2.0) == hash(2): True 1152921504606846977\nint too large for float: OverflowError\n",
  "stderr": "",
  "exit_code": 0

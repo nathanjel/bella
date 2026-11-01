@@ -4,8 +4,8 @@
  "spec": "section 9",
  "status": "P1",
  "source": "review round 3, finding 1 (PEP 442: weak references are cleared before finalisers run on a cycle)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "cyclic disposal order: ['weakref', 'finalizer']\nweakref dead: True\n",
  "stderr": "",
  "exit_code": 0

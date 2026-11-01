@@ -4,8 +4,8 @@
  "spec": "section 9",
  "status": "P1",
  "source": "dialect specification section 9 (generators are closed when their last reference is dropped)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "first: 1\nGeneratorExit delivered at the suspension point\nfinally ran\nafter del\n",
  "stderr": "",
  "exit_code": 0

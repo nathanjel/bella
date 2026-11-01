@@ -4,8 +4,8 @@
  "spec": "section 3",
  "status": "P1",
  "source": "review round 3, finding 2 (an exposed instance dictionary outlives its owner)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "stable identity: True type is dict: True\nowner finalized\nretained after del: [('y', 2), ('x', 1)]\n",
  "stderr": "",
  "exit_code": 0

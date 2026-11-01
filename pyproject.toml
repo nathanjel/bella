@@ -1,13 +1,13 @@
 [project]
 name = "bella"
 version = "0.0.1"
-description = "Python -> C++26 converter: intent-level IR passes, exact CPython 3.14 semantics, GCC-only"
+description = "Python -> C++26 converter: intent-level IR passes, exact CPython 3.15 semantics, GCC-only"
 readme = "README.md"
 license = "MIT"
-# The reference build is CPython 3.14.8 (bella.toml). 3.13 is accepted only so that the
-# stdlib-only self-checks can run on a developer machine; anything that records
-# conformance expectations or computes the dependency closure refuses to run unpinned.
-requires-python = ">=3.13"
+# The reference build is CPython 3.15.2 (bella.toml). The compiler runs on the reference minor
+# only: its L0 is the host `ast`, so the grammar it parses is the interpreter's. Anything that
+# records conformance expectations or computes the dependency closure refuses other patch releases.
+requires-python = "==3.15.*"
 dependencies = []
 
 [project.optional-dependencies]
@@ -20,8 +20,8 @@ dev = [
 ]
 
 [tool.uv]
-# The uv release decides which python-build-standalone build of 3.14.8 is downloaded, so it is
-# pinned exactly, here and in the Dockerfile (UV_VERSION). Only uv-managed interpreters are
+# The uv release decides which python-build-standalone build of the pin is downloaded, so it is
+# pinned exactly, here and in the Dockerfile (UV_IMAGE). Only uv-managed interpreters are
 # used, so a developer machine runs the same CPython build as the image, not a distro build.
 required-version = "==0.13.6"
 python-preference = "only-managed"
@@ -36,7 +36,7 @@ addopts = "-q"
 # runs under CPython and is held to the ordinary rules below it.
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py315"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "UP", "PGH", "S102", "S307"]
@@ -54,7 +54,7 @@ ignore = ["E501"]
 "conformance/cases/**" = []
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.15"
 strict = true
 warn_unreachable = true
 # disallow_any_explicit is the dialect's rule for compiled programs; the compiler itself

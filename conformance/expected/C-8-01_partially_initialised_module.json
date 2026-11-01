@@ -4,8 +4,8 @@
  "spec": "section 8",
  "status": "P1",
  "source": "review round 2, finding 6 (a.x raises AttributeError, from a import x raises ImportError)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "cycpkg: package body runs\na: start\nb: start\nb: attribute access -> AttributeError name = X\nb: from-import -> ImportError name = cycpkg.a\nb: end\na: after importing b\na: end\nmain: X = 1\n",
  "stderr": "",
  "exit_code": 0

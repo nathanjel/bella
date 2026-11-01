@@ -4,8 +4,8 @@
  "spec": "section 9",
  "status": "P1",
  "source": "review round 2, finding 6 (resurrection on the refcount path aborts disposal before weakrefs are cleared)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "refcount resurrection: weakref alive = True object alive = True\nfinalizer ran once (PEP 442): True\n",
  "stderr": "",
  "exit_code": 0

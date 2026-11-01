@@ -4,8 +4,8 @@
  "spec": "section 6",
  "status": "P1",
  "source": "review round 1, finding 6 (sorted is stable and evaluates key once per element)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "[(0, 'b'), (0, 'd'), (1, 'a'), (1, 'c'), (1, 'e')]\nkey calls: 5 == len: True\nreverse keeps stability: [(1, 'a'), (1, 'c'), (1, 'e'), (0, 'b'), (0, 'd')]\n",
  "stderr": "",
  "exit_code": 0

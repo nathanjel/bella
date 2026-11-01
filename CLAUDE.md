@@ -1,6 +1,6 @@
 # Working in the Bella repository
 
-Bella is a Python → C++26 compiler with exact CPython 3.14.8 semantics. This file is for any
+Bella is a Python → C++26 compiler with exact CPython 3.15.2 semantics. This file is for any
 agent or person working here. It is short on purpose; the documents it points to are long.
 
 ## Authority
@@ -12,7 +12,7 @@ agent or person working here. It is short on purpose; the documents it points to
    turns out wrong, say so in the PR and record the change there and in the living document.
 4. `docs/feasibility-study.md` is history.
 
-The reference implementation is CPython **3.14.8**. "What does CPython do?" is answered by
+The reference implementation is CPython **3.15.2**. "What does CPython do?" is answered by
 running it, not by recollection; the conformance harness exists for that.
 
 ## Rules that are not negotiable
@@ -34,7 +34,7 @@ running it, not by recollection; the conformance harness exists for that.
 * **The model before the header.** Changes to attribute lookup, caches, dictionaries or
   lifetimes go into `refmodel/objects.py` first and must keep `python3 -m refmodel.selftest`
   green on several seeds; `runtime/include/bella/object.hpp` is written from the model.
-* **Pins are pins.** CPython 3.14.8, the GCC 16 image, `uv.lock`, the grammar at 3.14.
+* **Pins are pins.** CPython 3.15.2, the GCC 16 image, `uv.lock`, the grammar at 3.15.
   `--allow-unpinned` runs are for development and are marked non-authoritative in their output.
 * **Licences.** Anything linked into a shipped artefact is MIT, BSD or ISC. Tools and test-only
   dependencies may differ (Hypothesis MPL-2.0, Lean 4, GCC). Codon, Boost, Abseil, folly,
@@ -57,7 +57,7 @@ make check              all of the above (CI)
 
 On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):
 the project requires uv 0.13.6 and uses only uv-managed interpreters, so `.venv` holds the same
-CPython 3.14.8 build as the image and Python-side runs are pinned. The image stays the
+CPython 3.15.2 build as the image and Python-side runs are pinned. The image stays the
 reference for C++ results (vanilla GCC 16.2.0; a distro GCC may differ).
 
 Without pytest, every test module runs directly: `python3 -m refmodel.tests.test_cases`,
@@ -66,7 +66,8 @@ Without pytest, every test module runs directly: `python3 -m refmodel.tests.test
 
 ## Conventions
 
-* Python ≥ 3.13 for the compiler's own code, typed, `ruff` clean (`pyproject.toml`); the dialect
+* Python 3.15 for the compiler's own code (its L0 is the host `ast`, so it runs on the reference
+  minor only), typed, `ruff` clean (`pyproject.toml`); the dialect
   rules (annotations everywhere, no `Any`, no `eval`) apply to `conformance/cases` and
   `pipeline/examples`, which are dialect programs.
 * C++26 on GCC only; `__int128` and `__builtin_*_overflow` are allowed (GCC-only project).
@@ -77,6 +78,6 @@ Without pytest, every test module runs directly: `python3 -m refmodel.tests.test
 
 ## Where to start
 
-`TODO.md` lists Gate 0's first increment in dependency order. Task 1 (the closure on 3.14.8)
+`TODO.md` lists Gate 0's first increment in dependency order. Task 1 (the closure on 3.15.2)
 runs pinned under `uv run` or in the image (`docker build -t bella .`); tasks 2-4 can start on
 any developer machine with `--allow-unpinned`.

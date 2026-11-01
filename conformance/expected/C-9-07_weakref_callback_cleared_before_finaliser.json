@@ -1,0 +1,12 @@
+{
+ "case": "C-9-07_weakref_callback_cleared_before_finaliser.py",
+ "clause": "C-9-07",
+ "spec": "section 9",
+ "status": "P1",
+ "source": "CPython 3.15 change found by re-recording C-9-02 on 2026-11-01 (DECISIONS, finding 5)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "resurrect=False: callback | __del__ sees plain dead=False callback dead=True | after collect: plain dead=True callback dead=True resurrected=0 | after release: plain dead=True\nresurrect=True: callback | __del__ sees plain dead=False callback dead=True | after collect: plain dead=False callback dead=True resurrected=1 | after release: plain dead=True\n",
+ "stderr": "",
+ "exit_code": 0
+}

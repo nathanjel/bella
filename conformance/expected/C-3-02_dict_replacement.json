@@ -4,8 +4,8 @@
  "spec": "section 3",
  "status": "P1",
  "source": "review round 2, finding 4 and round 3, finding 2 (obj.__dict__ = d; the old dict stays usable)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "new attr visible: 2\nold attr gone: True\nvars is replacement: True\nwrite through replacement: 3\nold dict still usable: [('x', 1)]\nnon-dict rejected: TypeError\nclass __dict__ is read-only: mappingproxy\nwrite through class __dict__ rejected: TypeError\n",
  "stderr": "",
  "exit_code": 0

@@ -4,8 +4,8 @@
  "spec": "section 6",
  "status": "P1",
  "source": "review round 1, finding 5 (kMin // -1 must promote; range proofs must cover intermediates)",
- "recorded_with": "3.13.18",
- "authoritative": false,
+ "recorded_with": "3.15.2",
+ "authoritative": true,
  "stdout": "kMin // -1: 4611686018427387904\nkMin % -1: 0\ndivmod(kMin, -1): (4611686018427387904, 0)\nkMax + 1: 4611686018427387904\nkMin - 1: -4611686018427387905\n-(2**63) // -1: 9223372036854775808\nnorm2 at -2**31: 9223372036854775808\n2**62 * 2: 9223372036854775808\nfloor division signs: 3 -4 -4 3\nmodulo signs: 1 1 -1 -1\nbool is int: 2 True bool\nhash formulas: 0 1 -2 -2\nbitwise on negatives: -6 -3 251 -1180591620717411303424\npow: 4 0.5 1267650600228229401496703205376\ndivision by zero: ZeroDivisionError\nstr/int round trip: True 1000 255\n",
  "stderr": "",
  "exit_code": 0

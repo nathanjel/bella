@@ -4,9 +4,9 @@
  "spec": "section 3",
  "status": "P1",
  "source": "review round 3, finding 3 (an attribute assigned into an inline field shadows a cached class attribute)",
- "recorded_with": "3.13.18",
- "authoritative": false,
- "stdout": "1\n2\n1\nsecond delete: AttributeError None\n",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "1\n2\n1\nsecond delete: AttributeError x\n",
  "stderr": "",
  "exit_code": 0
 }

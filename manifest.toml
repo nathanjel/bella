@@ -11,10 +11,10 @@
 #   shim     : phase-1 stand-in with reduced behaviour, named in [adaptations]
 #
 # THIS FILE WAS LAST RECONCILED ON CPython 3.13.18 (non-authoritative). Gate 0, task 1 is to
-# rerun `make closure` on 3.14.8 in the Docker image and reconcile the lists.
+# rerun `make closure` on the pinned 3.15.2 and reconcile the lists.
 
 [reference]
-python = "3.14.8"
+python = "3.15.2"
 
 [phase1]
 # The modules the dialect promises in phase 1 (spec, section 7). Everything they pull in must

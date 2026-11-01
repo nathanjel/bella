@@ -1,6 +1,6 @@
 # Bella
 
-Bella compiles Python to readable C++26 through intent-level IR passes, keeping CPython 3.14's
+Bella compiles Python to readable C++26 through intent-level IR passes, keeping CPython 3.15's
 semantics exactly (arbitrary-precision `int`, insertion-ordered `dict`, Python's attribute
 lookup, finaliser timing) and replacing the interpreter with a native runtime that has no GIL.
 Target toolchain: the newest GCC at `-std=c++26`, Linux x86-64 and aarch64. Licence: MIT.
@@ -14,9 +14,9 @@ third review asked for. Nothing here compiles a real program yet.
 | Path | What | State |
 | --- | --- | --- |
 | `docs/` | The three design documents (Markdown exports), decisions, the deviation register as data, the reviews | current |
-| `tools/closure.py` + `manifest.toml` | Phase-1 standard-library closure: mechanically closed, with per-API scoping and declared omissions | closed on CPython 3.13; **must be rerun on 3.14.8** |
+| `tools/closure.py` + `manifest.toml` | Phase-1 standard-library closure: mechanically closed, with per-API scoping and declared omissions | closed on CPython 3.13; **must be rerun on 3.15.2** |
 | `refmodel/` | Executable reference model of the object model (promoted fields, `__dict__` exposure, descriptors, inline caches) tested against CPython | agrees on ~40k random ops per seed; two design findings recorded |
-| `conformance/` | Harness and 24 corpus cases, one per demonstrated behaviour from the reviews | recorded on 3.13 (non-authoritative) |
+| `conformance/` | Harness and 25 corpus cases, one per demonstrated behaviour from the reviews or a CPython change | recorded on 3.15.2 (authoritative) |
 | `pipeline/` | L1 (PyCore) grammar, desugaring passes with `PassSpec` records, `eval1`, pass manager, toy C++ emitter, end-to-end slice | 3 integer programs agree CPython == eval1 == C++; BigInt is XFAIL |
 | `runtime/include/bella/int.hpp` | Exact `int` fast paths (63-bit immediates, floor semantics), differentially tested with UBSan | promotion to BigInt not implemented |
 | `runtime/probes/` | 20 C++23/26 feature probes; `make probes` reports what the toolchain supports | run on GCC 16 in Docker |
@@ -26,18 +26,18 @@ third review asked for. Nothing here compiles a real program yet.
 ## Quick start
 
 ```bash
-# pinned toolchain (GCC 16, CPython 3.14.8, locked deps)
+# pinned toolchain (GCC 16, CPython 3.15.2, locked deps)
 docker build -t bella .
 docker run --rm bella            # = make check
 
-# on a developer machine with uv 0.13.6: the same uv-managed CPython 3.14.8 build as the image,
+# on a developer machine with uv 0.13.6: the same uv-managed CPython 3.15.2 build as the image,
 # so Python-side runs (closure, record, refmodel) are pinned; the image remains the reference
 # for anything that depends on the C++ compiler
 uv sync --extra dev
 uv run make test                 # pytest, then the model self-check
 uv run make closure
 uv run make record
-# any other Python >= 3.13 and g++ (non-authoritative runs)
+# another 3.15.x and any g++ (non-authoritative runs)
 python3 tools/closure.py --allow-unpinned
 python3 conformance/harness.py record --allow-unpinned
 make slice CXXSTD=c++23          # the toy end-to-end slice
@@ -50,7 +50,7 @@ make int-test CXXSTD=c++23
 Python source ──parse──▶ L0 (ast) ──desugar passes──▶ L1 PyCore ──▶ eval1 (reference semantics)
                                                           │
                                                           └──▶ toy C++ emitter ──▶ g++ ──▶ binary
-                 CPython 3.14.8 ◀── conformance harness ──▶ compiled program
+                 CPython 3.15.2 ◀── conformance harness ──▶ compiled program
                  refmodel (object model) ◀── random programs ──▶ CPython
 ```
 
