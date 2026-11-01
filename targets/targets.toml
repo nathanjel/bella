@@ -14,7 +14,7 @@ level = "easy"
 driver = "drivers/cli_easy_slugs.py"
 argv = ["data/lines.txt", "--max-length", "24"]
 packages = []
-stressors = ["argparse", "re", "unicodedata (NFKD)", "str methods", "Counter"]
+stressors = ["argparse", "re", "str methods (encode with errors='ignore')", "Counter"]
 
 [cli_tricky_check]
 kind = "cli"

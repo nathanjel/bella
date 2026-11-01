@@ -82,7 +82,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   end: BigInt in `int.hpp` (Karatsuba above 64 limbs, Knuth D; or libtommath), `str`, `list`,
   `dict`, exceptions as C++ exceptions, functions as objects, classes with promoted fields
   (argparse's `Namespace` is the first computed-write object), the `re` parser/compiler
-  compiled and `_sre` ported, `unicodedata` tables, `float` with CPython's `repr`, the L2
+  compiled and `_sre` ported, `float` with CPython's `repr`, the L2
   grammar with declared/proven/representation kept apart. Write `bella-lint` as an `ast`
   walker over `docs/deviations.toml` and the tier table (`tools/score_candidate.py` is its
   seed). Teach `tools/closure.py` to take a target program as its root, so each target has its
@@ -90,11 +90,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Decided 2026-11-01: each increment is the closure of its target programs (1a: the easy
   three). The easy three already reach `enum` (`re`'s flags) and `typing` (itsdangerous), so
   task 5's staging prototype comes before the first path is done.
-* Decisions this needs from the author, before the work reaches them: `unicodedata` for
-  `cli_easy_slugs` (spec sections 6 and 7 keep it \[P2+\]); and items 1 to 5 of
-  `docs/targets.md` section 5 (function
-  metadata at runtime, dead excluded calls, manifest growth for pycodestyle, zlib's licence,
-  the source of the hash primitives). Item 6 is done (`[dynamic]`, review log RL-56).
+* Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata`, which stays \[P2+\];
+  licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's
+  licence and the source of the hash primitives (items 4 and 5 of `docs/targets.md` section 5)
+  do not block the work.
+* Decisions this needs from the author, before the tricky targets: items 1 to 3 of
+  `docs/targets.md` section 5 (function metadata at runtime, dead excluded calls, manifest
+  growth for pycodestyle). Item 6 is done (`[dynamic]`, review log RL-56).
 * Done when: `cli_easy_slugs` prints the recorded output under CPython 3.15.2, `eval1` and the
   compiled binary (`make targets-check TARGET_RUNNER=...` passes for it), and the generated C++
   is committed under `pipeline/examples/out/`.
@@ -130,6 +132,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## Later
 
+* Settle the entries of the licence register, `docs/licences.md`, one by one when each becomes
+  worth it (for example, when the component is about to be linked into an artefact).
 * `hashlib.pbkdf2_hmac` (over the mapped HMAC) and `hashlib.scrypt` (libsodium) as an adaptation
   of `hashlib`, closing that part of deviation D-20 (review log D-6, option 2). When a target
   program needs either; then add a case, narrow D-20, and record it in `docs/DECISIONS.md`.

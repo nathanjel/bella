@@ -38,7 +38,9 @@ running it, not by recollection; the conformance harness exists for that.
   green on several seeds; `runtime/include/bella/object.hpp` is written from the model.
 * **Pins are pins.** CPython 3.15.2, the GCC 16 image, `uv.lock`, the grammar at 3.15.
   `--allow-unpinned` runs are for development and are marked non-authoritative in their output.
-* **Licences.** Anything linked into a shipped artefact is MIT, BSD or ISC. Tools and test-only
+* **Licences.** Anything linked into a shipped artefact is MIT, BSD or ISC. Components that may
+  ship under another licence, or whose source is still open, are entries in `docs/licences.md`,
+  settled one by one when worth it; until then the work proceeds. Tools and test-only
   dependencies may differ (Hypothesis MPL-2.0, Lean 4, GCC). Codon, Boost, Abseil, folly,
   stdexec, Eigen, GMP, Shed Skin are out (study, section 12).
 * **Readable output.** Generated C++ keeps Python identifiers and is committed

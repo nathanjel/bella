@@ -214,9 +214,15 @@ session and imported here: `cli_easy_slugs` (stdlib), `service_easy_tokens` (its
   manifest. A change of order, not of scope: the easy programs already reach `enum` (`re`'s flags
   are an `IntFlag`) and `typing` (itsdangerous's `Generic` bases), so staging (TODO task 5)
   comes before the first path. Design section 11; review log D-2.
-* Open for the author: `unicodedata`, which `cli_easy_slugs` needs (NFKD), is \[P2+\] in spec
-  sections 6 and 7; and items 1 to 5 of `docs/targets.md` section 5 (item 6 is done by
-  `[dynamic]`; item 2's deviation would be D-21).
+* Decided the same day (author): `unicodedata` stays \[P2+\], and `cli_easy_slugs` lowers its
+  requirements instead: it drops non-ASCII characters rather than decomposing them (NFKD), so
+  "Zażółć gęślą jaźń" now slugs to `za-gl-ja` (re-recorded). A scope change was avoided, not made.
+* Decided the same day (author): licence questions go to a register, `docs/licences.md`, and are
+  settled one by one when worth it; work proceeds meanwhile. It holds seven entries, L-01 to
+  L-07, among them the PSF licence of the compiled standard library, zlib, the Unicode tables,
+  and the source of the hash primitives (items 4 and 5 of `docs/targets.md` section 5).
+* Open for the author, before the tricky targets: items 1 to 3 of `docs/targets.md` section 5
+  (item 6 is done by `[dynamic]`; item 2's deviation would be D-21).
 
 ## Pins
 

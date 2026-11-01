@@ -18,10 +18,11 @@ the manifest as closed on it (175 modules):*
   and lists the modules it must reach, review log RL-56); item 2's deviation would be D-21, since
   D-20 is now the phase-1 omissions; item 5's HACL\* code is what spec section 7 would map the
   digests onto instead of BearSSL or libsodium, which is the author's choice.*
-* *Open for the author: spec sections 6 and 7 keep `unicodedata` \[P2+\], while `cli_easy_slugs`
-  needs `unicodedata.normalize` (NFKD); and the phase-1 increments of review log D-2 place `re`,
-  `json` and `argparse` in 1c, though the easy programs need them, so each increment is best
-  defined as the closure of its target programs.*
+* *Decided by the author the same day: `cli_easy_slugs` no longer uses `unicodedata` (it drops
+  non-ASCII characters instead of decomposing them), so `unicodedata` stays \[P2+\]; each
+  phase-1 increment is the closure of its target programs (design section 11); items 4 and 5 of
+  section 5 (zlib's licence, the source of the hash primitives) join the licence register,
+  `docs/licences.md`, to be settled when worth it.*
 
 ## 1. Recommendation
 
@@ -30,7 +31,7 @@ this order; the tricky three are the next review's material (Gate 1).
 
 | Order | Target | Shape | Library | Why this one |
 | --- | --- | --- | --- | --- |
-| 1 | `cli_easy_slugs` | CLI, easy | none (stdlib) | The slice plus `str`, `re`, `unicodedata`, `Counter` and argparse. No third-party code; everything it needs is already in the manifest. Argparse is the shared cost of every CLI and brings the first tier-2 object (`Namespace`, written with `setattr(namespace, dest, value)`). |
+| 1 | `cli_easy_slugs` | CLI, easy | none (stdlib) | The slice plus `str`, `re`, `Counter` and argparse (`unicodedata` dropped on 2026-11-01). No third-party code; everything it needs is already in the manifest. Argparse is the shared cost of every CLI and brings the first tier-2 object (`Namespace`, written with `setattr(namespace, dest, value)`). |
 | 2 | `service_easy_tokens` | service, easy | itsdangerous 2.3.0.dev (868 lines, BSD-3) | Smallest library of the six. Exceptions as control flow with payloads, the `bytes`/`str` boundary, `json`, `struct`, `base64`; the first *mapped* modules with real implementations behind them (`_sha1`/`_sha2`, `zlib`). A subclass overriding a method the library calls back (`ClockedSigner.get_timestamp`). |
 | 3 | `data_easy_sales` | data, easy | humanize 4.14.0 (1,316 lines, MIT) | `csv`, `Decimal` on the pure-Python `_pydecimal` (exact-int heavy), `Fraction`, `statistics`, `defaultdict`, format specs; humanize's `threading.local` with `getattr(..., default)`. |
 | 4 | `service_tricky_markdown` | service, tricky | mistune 3.4.0 (3,145 lines loaded, BSD-3) | Tier 2 by construction: method tables built with `getattr(self, "parse_" + name)`, renderer dispatch through `object.__getattribute__(self, token["type"])`, plugins loaded by name with `importlib.import_module`, regex-driven parsing with `lastgroup`. |
@@ -81,8 +82,9 @@ behaviour), which is the honest stdlib answer and a nice fixed point for the Uni
 
 Exercises: `argparse` (2.7k lines; `BooleanOptionalAction`; `HelpFormatter` calls
 `shutil.get_terminal_size()` from `add_argument`, so `shutil` and `COLUMNS` are live in every
-argparse program), `re` (the `_sre` engine, mapped), `unicodedata.normalize` and `combining`
-(mapped: the UCD tables), `str` methods, `collections.Counter`, `pathlib.Path.read_text`.
+argparse program), `re` (the `_sre` engine, mapped), `str` methods (`unicodedata.normalize` and
+`combining` until 2026-11-01, when the author lowered the requirements: `unicodedata` stays
+\[P2+\]), `collections.Counter`, `pathlib.Path.read_text`.
 Argparse's `Namespace` is written with `setattr(namespace, self.dest, values)`
 (`argparse.py:975`) — the first `MAY_RECEIVE_COMPUTED_WRITES` object every CLI target meets.
 
@@ -255,7 +257,8 @@ the per-target numbers in section 2 include it.
 * `json` (compiled pure-Python paths; `_json` mapped), `datetime` on `_pydatetime`, `decimal`
   on `_pydecimal`: the two services and the data scripts.
 * `unicodedata` (mapped): UCD tables generated from the Unicode data files (Unicode licence,
-  permissive), not copied from CPython.
+  permissive), not copied from CPython. No target uses it since 2026-11-01; `urllib.parse`
+  reaches it lazily. The licence is entry L-03 of `docs/licences.md`.
 * `hashlib` → `_sha1`/`_sha2`/`_md5`/`_blake2` (mapped), `zlib` (mapped): the token service.
 
 ## 5. Decisions and clauses this surfaced

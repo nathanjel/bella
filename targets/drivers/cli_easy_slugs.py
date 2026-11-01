@@ -3,16 +3,16 @@
 
     slugs.py [--max-length N] [--separator SEP] [--no-lowercase] FILE
 
-Reads lines, prints `original -> slug`, and a summary with the duplicated slugs. Transliteration
-is NFKD decomposition plus the removal of combining marks, which is what python-slugify does
-without its optional unidecode backend. Deterministic for a fixed input file.
+Reads lines, prints `original -> slug`, and a summary with the duplicated slugs. Every non-ASCII
+character is dropped. (It used NFKD decomposition and dropped combining marks, as python-slugify
+does without unidecode; `unicodedata` stays [P2+] in phase 1, so the author lowered this
+program's requirements on 2026-11-01.) Deterministic for a fixed input file.
 """
 from __future__ import annotations
 
 import argparse
 import re
 import sys
-import unicodedata
 from pathlib import Path
 
 _NOT_ALLOWED = re.compile(r"[^-a-zA-Z0-9]+")
@@ -20,8 +20,7 @@ _DUPLICATE_SEP = re.compile(r"-{2,}")
 
 
 def slugify(text: str, *, max_length: int = 0, separator: str = "-", lowercase: bool = True) -> str:
-    decomposed = unicodedata.normalize("NFKD", text)
-    ascii_text = "".join(ch for ch in decomposed if not unicodedata.combining(ch)).encode("ascii", "ignore").decode()
+    ascii_text = text.encode("ascii", "ignore").decode()
     if lowercase:
         ascii_text = ascii_text.lower()
     slug = _DUPLICATE_SEP.sub("-", _NOT_ALLOWED.sub("-", ascii_text)).strip("-")

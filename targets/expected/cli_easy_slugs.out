@@ -1,6 +1,6 @@
 'Hello, World!' -> 'hello-world'
-'Zażółć gęślą jaźń' -> 'zazoc-gesla-jazn'
-'  Déjà vu — again  ' -> 'deja-vu-again'
+'Zażółć gęślą jaźń' -> 'za-gl-ja'
+'  Déjà vu — again  ' -> 'dj-vu-again'
 'C++26 & Python 3.14: a "study"' -> 'c-26-python-3-14-a-study'
 'hello world' -> 'hello-world'
 'HELLO WORLD' -> 'hello-world'
