@@ -30,16 +30,28 @@ How it works
      guarded   at module level under a guard the closed world cannot evaluate, or in an
                exception handler: executed at import time on some runs, so required.
      eager     at module level, unconditional, or under a guard that is true on the target.
-3. Transitive closure. Eager, guarded and dynamic edges are always followed. A lazy edge is
+     first-use a PEP 810 `lazy import` (or an import of a module the importer lists in
+               `__lazy_modules__`): the module is initialised when the bound name is first used.
+               Followed like an eager edge (spec section 7: a module an import-time observation
+               does not show can still be needed at first use); the class tells the runtime which
+               bindings are lazy.
+   Every edge records the qualified name of the function it sits in ("" at module level).
+3. Transitive closure. Eager, guarded, first-use and dynamic edges are always followed. A lazy edge is
    followed when its target is in the manifest; otherwise the importing function must be
    declared unsupported in `[lazy_unsupported]` -- the "support per API" the second review
    asked for (difflib._test imports doctest; that does not make doctest a phase-1 dependency,
    it makes difflib._test unsupported). An optional edge is followed when its target is in the
    manifest; otherwise it must appear in `[omissions]` (the import resolves to ImportError at
-   runtime, as if not installed), and `[omissions]` may hold nothing else. Modules with status
-   `core` or `shim` are provided by the runtime and are not scanned: a shim replaces the real
-   module, so the real module's imports do not count.
-4. Compare with manifest.toml and write closure.lock.json. Exit 1 on any gap.
+   runtime, as if not installed), and `[omissions]` may hold nothing else; neither table may
+   name a module the manifest provides. Modules with status `core` or `shim` are provided by
+   the runtime and are not scanned: a shim replaces the real module, so the real module's
+   imports do not count. Likewise a function listed in `[replaced]` is replaced by the
+   adaptation its module has in `[adaptations]`, so its imports do not count either.
+   An import with a computed name (`__import__(name)`) is a lookup in the closed world at
+   runtime (spec section 3). Each module that has one must be listed in `[dynamic]`, with the
+   modules the lookup must find in phase 1 (followed as dynamic edges) or `[]`.
+4. Compare with manifest.toml and write closure.lock.json. Exit 1 on any gap. The lock lists,
+   per module, the functions that `[lazy_unsupported]` makes unsupported.
 
 Run it with the pinned interpreter (bella.toml: reference.python) on the target platform.
 `--allow-unpinned` lets it run elsewhere for development, with a loud warning in the lock file.
@@ -56,6 +68,7 @@ import sys
 import sysconfig
 import tomllib
 from collections import Counter, deque
+from collections.abc import Collection
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import NamedTuple
@@ -67,9 +80,11 @@ OPTIONAL = "optional"        # under try/except ImportError or suppress(ImportEr
 DEAD = "dead"                # under a guard false on the target platform: never executed
 DYNAMIC = "dynamic"          # importlib.import_module / __import__ with a literal name
 DYNAMIC_UNKNOWN = "dynamic-unknown"  # same, with a computed name: reported, not followed
+FIRST_USE = "first-use"      # PEP 810 lazy import at module level: initialised at first use of the name
+REPLACED = "replaced"        # inside a function an adaptation replaces ([replaced]): never executed
 RUNTIME = "runtime"          # observed in sys.modules after importing the roots, not seen statically
 
-FOLLOWED_CLASSES = {EAGER, GUARDED, DYNAMIC}   # required whatever the manifest says
+FOLLOWED_CLASSES = {EAGER, GUARDED, FIRST_USE, DYNAMIC}   # required whatever the manifest says
 IMPORT_ERROR_NAMES = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
 
 
@@ -79,6 +94,7 @@ class Edge:
     target: str
     cls: str
     line: int
+    func: str = ""                  # qualified name of the enclosing function; "" at module level
 
 
 @dataclass
@@ -137,6 +153,8 @@ class Manifest:
     lazy_unsupported: dict[str, set[str]]
     adaptations: dict[str, str]
     platform: Platform = field(default_factory=Platform)
+    replaced: dict[str, set[str]] = field(default_factory=dict)    # module -> functions an adaptation replaces
+    dynamic: dict[str, list[str]] = field(default_factory=dict)    # module -> modules its computed imports reach
 
     @property
     def supported(self) -> set[str]:
@@ -171,6 +189,8 @@ class Manifest:
             lazy_unsupported={k: set(v) for k, v in data.get("lazy_unsupported", {}).items()},
             adaptations=dict(data.get("adaptations", {})),
             platform=Platform.from_table(data.get("platform", {})),
+            replaced={k: set(v) for k, v in data.get("replaced", {}).items()},
+            dynamic={k: list(v) for k, v in data.get("dynamic", {}).items()},
         )
 
 
@@ -471,7 +491,10 @@ class _Ctx(NamedTuple):
     guarded: bool = False                  # under a guard the closed world cannot evaluate, or in a handler
     optional: bool = False                 # under try/except ImportError or suppress(ImportError)
     dead: bool = False                     # under a guard that is false on the target platform
+    first_use: bool = False                # a PEP 810 lazy import (module level only, by the grammar)
     local: frozenset[str] = frozenset()    # names bound by the enclosing function and class bodies
+    qual: str = ""                         # qualified name of the enclosing class or function
+    func: str = ""                         # qualified name of the enclosing function ("" outside any)
 
 
 class _Scanner:
@@ -482,12 +505,15 @@ class _Scanner:
         self.package = module if is_package else module.rpartition(".")[0]
         self.ev = _Evaluator(platform or Platform(), module)
         self.menv: _ModuleEnv | None = None
-        self.edges: list[tuple[str, str, int]] = []   # (target, cls, line)
-        self.dynamic_unknown: list[int] = []
+        self.edges: list[tuple[str, str, int, str]] = []   # (target, cls, line, enclosing function)
+        self.dynamic_unknown: list[tuple[int, str]] = []    # (line, enclosing function)
+        self.functions: set[str] = set()                    # qualified names of every function defined
+        self.lazy_modules: frozenset[str] = frozenset()     # the module's literal __lazy_modules__
 
     def scan(self, tree: ast.AST) -> None:
         if isinstance(tree, ast.Module):
             self.menv = _ModuleEnv(self.ev, tree)
+            self.lazy_modules = _literal_lazy_modules(tree)
         self._children(tree, _Ctx())
 
     # -- context tracking -----------------------------------------------------------------
@@ -512,13 +538,31 @@ class _Scanner:
             return ctx._replace(dead=True), ctx
         return ctx._replace(guarded=True), ctx._replace(guarded=True)
 
+    def _first_use(self, node: ast.Import | ast.ImportFrom, ctx: _Ctx) -> _Ctx:
+        """PEP 810: `lazy import`, or a plain module-level import of a module in __lazy_modules__."""
+        if getattr(node, "is_lazy", 0):
+            return ctx._replace(first_use=True)
+        if self.lazy_modules and not (ctx.lazy or ctx.optional or ctx.local or ctx.qual):
+            names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            if node.__class__ is ast.Import or getattr(node, "level", 0) == 0:
+                if all(n in self.lazy_modules for n in names):
+                    return ctx._replace(first_use=True)
+        return ctx
+
+    @staticmethod
+    def _qual(ctx: _Ctx, name: str) -> str:
+        if not ctx.qual:
+            return name
+        return f"{ctx.qual}.<locals>.{name}" if ctx.func == ctx.qual and ctx.func else f"{ctx.qual}.{name}"
+
     def _visit(self, node: ast.AST, ctx: _Ctx) -> None:
         if isinstance(node, ast.Import):
+            ctx = self._first_use(node, ctx)
             for alias in node.names:
                 self._add_dotted(alias.name, ctx, node.lineno)
             return
         if isinstance(node, ast.ImportFrom):
-            self._add_from(node, ctx)
+            self._add_from(node, self._first_use(node, ctx))
             return
         if isinstance(node, ast.Call):
             self._maybe_dynamic(node, ctx)
@@ -531,7 +575,9 @@ class _Scanner:
             args = node.args
             for d in list(args.defaults) + [d for d in args.kw_defaults if d is not None]:
                 self._visit(d, ctx)
-            inner = ctx._replace(lazy=True, local=ctx.local | _locals_of(node))
+            q = self._qual(ctx, node.name if not isinstance(node, ast.Lambda) else "<lambda>")
+            self.functions.add(q)
+            inner = ctx._replace(lazy=True, local=ctx.local | _locals_of(node), qual=q, func=q)
             for stmt in node.body if isinstance(node.body, list) else [node.body]:
                 self._visit(stmt, inner)
             return
@@ -539,7 +585,7 @@ class _Scanner:
             # the class body runs at definition time, with its own names shadowing the module's
             for part in [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]:
                 self._visit(part, ctx)
-            inner = ctx._replace(local=ctx.local | _locals_of(node))
+            inner = ctx._replace(local=ctx.local | _locals_of(node), qual=self._qual(ctx, node.name))
             for stmt in node.body:
                 self._visit(stmt, inner)
             return
@@ -592,6 +638,8 @@ class _Scanner:
     def _cls(ctx: _Ctx) -> str:
         if ctx.dead:
             return DEAD
+        if ctx.first_use:
+            return FIRST_USE
         if ctx.optional:
             return OPTIONAL
         if ctx.lazy:
@@ -601,7 +649,7 @@ class _Scanner:
     def _add_dotted(self, dotted: str, ctx: _Ctx, line: int) -> None:
         parts = dotted.split(".")
         for i in range(1, len(parts) + 1):
-            self.edges.append((".".join(parts[:i]), self._cls(ctx), line))
+            self.edges.append((".".join(parts[:i]), self._cls(ctx), line, ctx.func))
 
     def _add_from(self, node: ast.ImportFrom, ctx: _Ctx) -> None:
         if node.level == 0:
@@ -621,7 +669,7 @@ class _Scanner:
             candidate = f"{base}.{alias.name}" if base else alias.name
             kind, _ = classify(candidate)
             if kind != "missing":
-                self.edges.append((candidate, self._cls(ctx), node.lineno))
+                self.edges.append((candidate, self._cls(ctx), node.lineno, ctx.func))
 
     def _maybe_dynamic(self, node: ast.Call, ctx: _Ctx) -> None:
         fn = node.func
@@ -641,9 +689,9 @@ class _Scanner:
                 except (ImportError, ValueError):
                     return
             cls = DEAD if ctx.dead else OPTIONAL if ctx.optional else DYNAMIC
-            self.edges.append((target, cls, node.lineno))
+            self.edges.append((target, cls, node.lineno, ctx.func))
         elif not ctx.dead:
-            self.dynamic_unknown.append(node.lineno)
+            self.dynamic_unknown.append((node.lineno, ctx.func))
 
 
 def _handler_catches_import_error(handler: ast.ExceptHandler) -> bool:
@@ -674,15 +722,39 @@ def _is_suppress_import_error(expr: ast.AST) -> bool:
     return False
 
 
-def scan_module(name: str, path: str, platform: Platform) -> tuple[list[Edge], list[int]]:
+def _literal_lazy_modules(tree: ast.Module) -> frozenset[str]:
+    """A module-level `__lazy_modules__ = [...]` of string literals (PEP 810 compatibility form)."""
+    names: set[str] = set()
+    for stmt in tree.body:
+        if (isinstance(stmt, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__lazy_modules__"
+                                                 for t in stmt.targets)
+                and isinstance(stmt.value, (ast.List, ast.Tuple, ast.Set))):
+            names |= {e.value for e in stmt.value.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+    return frozenset(names)
+
+
+@dataclass
+class Scan:
+    edges: list[Edge] = field(default_factory=list)
+    dynamic_unknown: list[tuple[int, str]] = field(default_factory=list)   # (line, enclosing function)
+    functions: set[str] = field(default_factory=set)
+
+
+def _inside(func: str, replaced: Collection[str]) -> bool:
+    return any(func == f or func.startswith(f + ".") for f in replaced)
+
+
+def scan_module(name: str, path: str, platform: Platform, replaced: Collection[str] = ()) -> Scan:
+    """Edges of one module. Imports inside a function in `replaced` become REPLACED edges."""
     try:
         tree = ast.parse(Path(path).read_text(encoding="utf-8", errors="replace"), filename=path)
     except SyntaxError:
-        return [], []
+        return Scan()
     scanner = _Scanner(name, _is_package_path(path), platform)
     scanner.scan(tree)
-    edges = [Edge(name, t, c, line) for (t, c, line) in scanner.edges]
-    return edges, scanner.dynamic_unknown
+    edges = [Edge(name, t, REPLACED if _inside(f, replaced) else c, line, f) for (t, c, line, f) in scanner.edges]
+    unknown = [(line, f) for (line, f) in scanner.dynamic_unknown if not _inside(f, replaced)]
+    return Scan(edges, unknown, scanner.functions)
 
 
 # ------------------------------------------------------------------------------------------
@@ -732,8 +804,7 @@ def _static_reach(starts: set[str], classes: set[str], platform: Platform) -> se
         seen.add(name)
         kind, path = classify(name)
         if kind in ("source", "frozen") and path:
-            edges, _ = scan_module(name, path, platform)
-            for e in edges:
+            for e in scan_module(name, path, platform).edges:
                 if e.cls in classes and e.target not in seen:
                     queue.append(e.target)
     return seen
@@ -744,7 +815,9 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
     problems: list[str] = []
     queue: deque[tuple[str, str | None]] = deque((r, None) for r in manifest.roots)
     optional_outside: dict[str, set[str]] = {}
-    lazy_outside: dict[str, set[tuple[str, int]]] = {}
+    lazy_outside: dict[str, set[tuple[str, int, str]]] = {}
+    functions: dict[str, set[str]] = {}
+    unknown_sites: dict[str, list[tuple[int, str]]] = {}
 
     def ensure(name: str, reached_by: str | None) -> ModuleInfo:
         info = infos.get(name)
@@ -755,7 +828,13 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
             infos[name] = info
             # core and shim modules are provided by the runtime: their real source is not scanned
             if info.status not in ("core", "shim") and kind in ("source", "frozen") and path:
-                info.edges, info.dynamic_unknown_lines = scan_module(name, path, manifest.platform)
+                scan = scan_module(name, path, manifest.platform, manifest.replaced.get(name, set()))
+                info.edges = scan.edges
+                info.dynamic_unknown_lines = [line for line, _ in scan.dynamic_unknown]
+                functions[name] = scan.functions
+                unknown_sites[name] = scan.dynamic_unknown
+                # the modules a reviewed computed import must reach in phase 1 ([dynamic])
+                info.edges += [Edge(name, t, DYNAMIC, 0, "[dynamic]") for t in manifest.dynamic.get(name, [])]
         return info
 
     while queue:
@@ -773,13 +852,14 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
                 if e.target in manifest.supported:
                     queue.append((e.target, via))
                 else:
-                    lazy_outside.setdefault(e.importer, set()).add((e.target, e.line))
+                    lazy_outside.setdefault(e.importer, set()).add((e.target, e.line, e.func))
             elif e.cls == OPTIONAL:
                 if e.target in manifest.supported:
                     queue.append((e.target, via))
                 else:
                     optional_outside.setdefault(e.importer, set()).add(e.target)
-            # DEAD: never executed on the target platform; kept in the lock, never followed
+            # DEAD: never executed on the target platform; REPLACED: inside a function an adaptation
+            # replaces. Both kept in the lock, never followed
 
     # modules that load only because an omitted optional import succeeded on this machine
     omitted_targets = {t for ts in manifest.omissions.values() for t in ts}
@@ -830,7 +910,7 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
                                 f"belongs in [lazy_unsupported])")
     for importer, lazy_targets in sorted(lazy_outside.items()):
         declared = manifest.lazy_unsupported.get(importer, set())
-        for t, line in sorted(lazy_targets):
+        for t, line, _func in sorted(lazy_targets):
             if t in declared:
                 continue
             kind, _ = classify(t)
@@ -838,11 +918,70 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
                 continue
             problems.append(f"{importer}:{line}: lazy import of {t} outside the manifest; add {t} to the manifest "
                             f"or declare the importing function unsupported in [lazy_unsupported]")
+    # an omitted or lazily unsupported module must really be outside the manifest
+    for table, entries in (("[omissions]", manifest.omissions), ("[lazy_unsupported]", manifest.lazy_unsupported)):
+        for importer, targets in sorted(entries.items()):
+            for t in sorted(targets & manifest.supported):
+                problems.append(f"{table} lists {t} for {importer}, but the manifest provides {t} "
+                                f"({manifest.status_of(t)}): remove one of the two")
+    for importer, declared in sorted(manifest.lazy_unsupported.items()):
+        if importer in infos:
+            stale = declared - {t for t, _, _ in lazy_outside.get(importer, set())}
+            for t in sorted(stale - manifest.supported):
+                problems.append(f"[lazy_unsupported] lists {t} for {importer}, which {importer} does not import "
+                                f"inside a function")
+    # [replaced]: functions an adaptation replaces; they must exist, and the adaptation must be named
+    for module, funcs in sorted(manifest.replaced.items()):
+        if module not in infos:
+            problems.append(f"[replaced] names {module}, which the closure does not reach")
+            continue
+        if module not in manifest.adaptations:
+            problems.append(f"[replaced] names functions of {module}, which has no entry in [adaptations]")
+        for f in sorted(funcs - functions.get(module, set())):
+            problems.append(f"[replaced] names {module}.{f}, which {module} does not define")
+    # [dynamic]: every module with a computed-name import has been reviewed
+    for module, sites in sorted(unknown_sites.items()):
+        if sites and module not in manifest.dynamic:
+            where = ", ".join(f"{line} ({func or 'module level'})" for line, func in sites)
+            problems.append(f"{module}: import with a computed name at line {where}; review it and list {module} in "
+                            f"[dynamic] with the modules it must reach in phase 1, or []")
+    for module in sorted(manifest.dynamic):
+        if module in infos and not unknown_sites.get(module):
+            problems.append(f"[dynamic] lists {module}, which has no import with a computed name")
+    statuses = {"compiled": manifest.compiled, "mapped": manifest.mapped, "core": manifest.core,
+                "shim": set(manifest.shim), "excluded": manifest.excluded}
+    for module in sorted(set().union(*statuses.values())):
+        listed = [k for k, v in statuses.items() if module in v]
+        if len(listed) > 1:
+            problems.append(f"{module} is listed under {' and '.join(listed)}: a module has one status")
     unreached = sorted(m for m in manifest.supported - manifest.core if m not in infos)
     if unreached:
         problems.append(f"note: {len(unreached)} manifest entries never reached: "
                         f"{', '.join(unreached[:12])}{'...' if len(unreached) > 12 else ''}")
     return infos, problems
+
+
+def unsupported_functions(infos: dict[str, ModuleInfo], manifest: Manifest) -> dict[str, list[str]]:
+    """The functions [lazy_unsupported] refuses: calling one raises the milestone-naming error on
+    every path through it (spec section 7)."""
+    out: dict[str, set[str]] = {}
+    for name, info in infos.items():
+        declared = manifest.lazy_unsupported.get(name, set())
+        for e in info.edges:
+            if e.cls == LAZY and e.target in declared and e.target not in manifest.supported:
+                out.setdefault(name, set()).add(e.func)
+    return {k: sorted(v) for k, v in sorted(out.items())}
+
+
+def _stdlib_relative(path: str | None) -> str | None:
+    """Paths in the lock are relative to the standard library, so the lock is the same on every
+    machine that runs the pinned build."""
+    if path is None:
+        return None
+    try:
+        return str(Path(path).relative_to(STDLIB_DIR))
+    except ValueError:
+        return path
 
 
 # ------------------------------------------------------------------------------------------
@@ -876,7 +1015,8 @@ def main(argv: list[str] | None = None) -> int:
         "python": running,
         "pinned": pinned,
         "authoritative": pinned,
-        "stdlib_dir": str(STDLIB_DIR),
+        "build": sys.version,
+        "stdlib_dir": "lib/python" + ".".join(map(str, sys.version_info[:2])) + " (paths below are relative to it)",
         "roots": manifest.roots,
         "platform": manifest.platform.facts | {
             "builtin_modules_present": sorted(manifest.platform.builtin_present),
@@ -885,9 +1025,11 @@ def main(argv: list[str] | None = None) -> int:
         "module_count": len(infos),
         "errors": errors,
         "notes": notes,
+        "unsupported_functions": unsupported_functions(infos, manifest),
         "modules": {
-            n: {k: v for k, v in asdict(i).items() if k != "edges"} | {
-                "edges": [asdict(e) for e in i.edges]
+            n: {k: v for k, v in asdict(i).items() if k not in ("edges", "path")} | {
+                "path": _stdlib_relative(i.path),
+                "edges": [asdict(e) for e in i.edges],
             }
             for n, i in sorted(infos.items())
         },

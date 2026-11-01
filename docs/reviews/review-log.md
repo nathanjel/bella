@@ -7,10 +7,11 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 51 findings from three reviews: 33 fixed (most in commit `0d92b51`,
-RL-37 with decision D-3, RL-23 with D-1), 7 already done before or because of the review, 4
-planned (D-2, accepted by the author), 2 deferred, 3 refuted, 1 checked with no issue and 1
-known Gate-0 task. Nothing is open for discussion: the author decided D-1 to D-4 on 2026-11-01.
+**Status on 2026-11-01:** 51 findings from three reviews: 34 fixed (most in commit `0d92b51`,
+RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1), 7 already done before or
+because of the review, 4 planned (D-2, accepted by the author), 2 deferred, 3 refuted and 1
+checked with no issue. Nothing is open for discussion: the author decided D-1 to D-4 on
+2026-11-01.
 
 ## Reviews received
 
@@ -93,7 +94,7 @@ author accepted, scheduled in `TODO.md`).
 | RL-35 | G 2.4.3.1 | `test_closure.py` assertions pass vacuously | Refuted | Annotation fixed | `_edges` returns a dict keyed by `(target, class)`, so `("os", EAGER) in edges` is a real check; only its declared return type was wrong |
 | RL-36 | G 2.4.1.4 | Omitted-module reach should follow CONDITIONAL and LAZY edges | Refuted | No change | The set is used to *ignore* runtime observations: following conditional edges from `bz2` grows it from 14 to 318 modules (`unittest`, `asyncio`, `__main__` included), hiding real requirements. Lazy edges never run at import time. The cited case is covered: `compression/zstd/__init__.py:29` imports `_zstd` eagerly |
 | RL-37 | G 2.4.1.3 | An unguarded import under `if` inside a function is CONDITIONAL, not LAZY | Confirmed as described, but deliberate (the test and the manifest's `[omissions]` comment say so) | Fixed with D-3 | It conflicted with spec section 7, which calls only `try/except ImportError` imports optional. Classes are now dead, optional, lazy, guarded and eager; guards over the `[platform]` facts are evaluated; `[omissions]` may hold only optional imports, which the tool checks. Tests `test_guards_the_closed_world_can_evaluate_d3` and four more in `tools/tests/test_closure.py` |
-| RL-38 | G 2.4.1.1-2 | Closure fails on the pin; `traceback` imports excluded `codeop`; unclassified 3.14/3.15 modules | Confirmed | Known: TODO task 1; `codeop` fixed with D-4 | 28 open items on 3.15.2, 25 after D-3 and D-4, all of them modules new in 3.15 |
+| RL-38 | G 2.4.1.1-2 | Closure fails on the pin; `traceback` imports excluded `codeop`; unclassified 3.14/3.15 modules | Confirmed | Fixed (Gate 0 task 1); `codeop` with D-4 | 28 open items on 3.15.2, 25 after D-3 and D-4, all of them modules new in 3.15; closed on 2026-11-01 with 174 modules, and CI requires the committed lock to match the pinned image's. Decisions in `docs/DECISIONS.md` and design section 10.4 |
 | RL-39 | A1 | The closure is an inventory, not proof that the modules compile | Accepted | Fixed (with this log) | README and `tools/closure.py` docstring |
 
 ### Python version (A2)

@@ -1,10 +1,12 @@
-# manifest.toml -- the phase-1 standard-library manifest (dialect specification v0.5, section 7).
+# manifest.toml -- the phase-1 standard-library manifest (dialect specification v0.6, section 7).
 #
 # `make closure` (tools/closure.py) computes the import closure of [phase1].roots against the
 # pinned CPython and fails if any required module is not listed in compiled, mapped, core or
-# shim, if an optional import outside the manifest is not declared in [omissions], or if a lazy
-# import outside the manifest is not declared in [lazy_unsupported]. Import guards the closed
-# world can evaluate are decided by [platform] (review log D-3).
+# shim, if an optional import outside the manifest is not declared in [omissions], if a lazy
+# import outside the manifest is not declared in [lazy_unsupported], or if an import with a
+# computed name has not been reviewed in [dynamic]. Import guards the closed world can evaluate
+# are decided by [platform] (review log D-3); functions an adaptation replaces are named in
+# [replaced]. A module has exactly one status, and a module the manifest provides is never omitted.
 #
 # Status meanings
 #   compiled : pure-Python stdlib module compiled through the Bella pipeline
@@ -12,8 +14,9 @@
 #   core     : interpreter-core builtin provided by the runtime itself (sys, builtins, _imp, ...)
 #   shim     : phase-1 stand-in with reduced behaviour, named in [adaptations]
 #
-# THIS FILE WAS LAST RECONCILED ON CPython 3.13.18 (non-authoritative). Gate 0, task 1 is to
-# rerun `make closure` on the pinned 3.15.2 and reconcile the lists.
+# Reconciled on the pinned CPython 3.15.2 on 2026-11-01 (Gate 0, task 1): 174 modules, recorded
+# in closure.lock.json, which CI requires to match what the pinned image computes. After any
+# change here, run `make closure` and commit the lock with it.
 
 [reference]
 python = "3.15.2"
@@ -64,10 +67,13 @@ compiled = [
   "__future__", "abc", "argparse", "ast", "base64", "bisect", "calendar", "codecs", "collections",
   "collections.abc", "contextlib", "contextvars", "copy", "copyreg", "csv", "dataclasses",
   "datetime", "decimal", "difflib", "dis", "encodings", "encodings.aliases",
+  "encodings.ascii", "encodings.latin_1", "encodings.utf_8", "encodings.utf_8_sig",
+  "encodings.utf_16", "encodings.utf_16_be", "encodings.utf_16_le", "encodings.utf_32",
+  "encodings.utf_32_be", "encodings.utf_32_le",
   "enum", "fnmatch", "fractions", "functools", "genericpath", "gettext", "glob", "hashlib",
   "heapq", "hmac", "html", "html.entities", "inspect", "io", "ipaddress", "json", "json.decoder",
   "json.encoder", "json.scanner", "keyword", "linecache", "locale", "logging", "ntpath", "numbers",
-  "opcode", "operator", "os", "os.path", "pathlib", "pathlib._abc", "pathlib._local", "posixpath",
+  "opcode", "operator", "os", "os.path", "pathlib", "pathlib._os", "posixpath",
   "pprint", "random", "re", "re._casefix", "re._compiler", "re._constants", "re._parser",
   "reprlib", "secrets", "shutil", "signal", "stat", "statistics", "string", "struct",
   "tempfile", "textwrap", "token", "tokenize", "traceback", "types", "typing", "unittest",
@@ -75,22 +81,22 @@ compiled = [
   "unittest._log", "unittest.runner", "unittest.signals", "unittest.suite", "unittest.util", "urllib",
   "urllib.parse", "uuid", "warnings", "weakref", "_collections_abc", "_colorize",
   "_opcode_metadata", "_pydatetime", "_pydecimal", "_py_abc", "_weakrefset",
-  "_strptime",
+  "_strptime", "_py_warnings", "_missing_stdlib_info",
 ]
 
 mapped = [
   "atexit", "binascii", "cmath", "errno", "gc", "grp", "itertools", "pwd",
   "time", "unicodedata", "zlib", "_bisect", "_blake2", "_collections", "_contextvars",
-  "_csv", "_datetime", "_decimal", "_functools", "_hashlib", "_heapq", "_json", "_locale", "_md5",
-  "_opcode", "_operator", "_random", "_sha1", "_sha2", "_sha3", "_socket", "_sre", "_stat",
-  "_statistics", "_string", "_struct", "_typing", "_uuid", "math",
+  "_csv", "_functools", "_heapq", "_json", "_locale", "_md5",
+  "_opcode", "_operator", "_random", "_sha1", "_sha2", "_sha3", "_sre", "_stat",
+  "_statistics", "_string", "_struct", "_typing", "math", "math.integer", "_math_integer",
 ]
 
 core = [
   "builtins", "sys", "marshal", "posix", "_abc", "_codecs", "_frozen_importlib",
-  "_frozen_importlib_external", "_imp", "_io", "_signal", "_thread", "_warnings", "_weakref",
+  "_frozen_importlib_external", "_imp", "_io", "_signal", "_warnings", "_weakref",
   "importlib", "importlib._abc", "importlib._bootstrap", "importlib._bootstrap_external",
-  "importlib.machinery", "importlib.util", "zipimport", "_tokenize", "_suggestions", "_ast",
+  "importlib.machinery", "importlib.util", "zipimport", "_tokenize", "_suggestions", "_ast", "_types",
 ]
 
 [phase1.shim]
@@ -99,26 +105,53 @@ _thread = "single-threaded primitives behind the threading shim"
 socket = "import succeeds for logging.handlers type hints; sockets are [P2+]"
 subprocess = "import succeeds; every API raises with the milestone name"
 asyncio = "import succeeds for unittest.async_case; async is [P2+]"
+annotationlib = "imported by dataclasses, typing, functools and _collections_abc, whose annotation work runs at staging (spec section 4, the staging exemption): Format, ForwardRef (without evaluate) and type_repr; get_annotations, call_annotate_function and the FORWARDREF and STRING formats raise with the milestone name, since annotations are [P2+] (spec section 3) and the real formats rebuild functions from __code__ (E-02, E-07)"
 codeop = "for traceback only (review log D-4): the PyCF_* flags with CPython's values; compile_command, Compile and CommandCompiler stop the program with the E-08 refusal, which except clauses cannot catch. A program's own import of codeop stays a compile-time error (E-08)"
 
 [adaptations]
 # Named adaptations the closure relies on (spec, section 7): without them these roots are open.
 logging = "findCaller receives call-site information from the compiler instead of sys._getframe (E-02)"
-traceback = "formatting from source maps; file and line in release builds (D-06); imports the codeop shim, reached only to suggest a keyword for a SyntaxError carrying parser metadata (review log D-4)"
+traceback = "formatting from source maps; file and line in release builds (D-06); imports the codeop shim, reached only to suggest a keyword for a SyntaxError carrying parser metadata (review log D-4); _find_incompatible_extension_module returns None, since a closed world has no extension module built for another Python version (see [replaced])"
 contextvars = "single-threaded implementation over _contextvars mapping"
 locale = "C and UTF-8 locales only; the rest of locale is [P2+]"
 decimal = "C accelerator omitted so the pure-Python _pydecimal is used (see [omissions])"
 datetime = "C accelerator omitted so the pure-Python _pydatetime is used (see [omissions])"
+hashlib = "the OpenSSL module _hashlib is omitted (see [omissions]): the built-in digests are mapped, and pbkdf2_hmac and scrypt, which only _hashlib provides, are absent, as in a CPython built without OpenSSL"
+hmac = "_hashlib and _hmac omitted: CPython's pure-Python HMAC over the mapped digests, as in a CPython built without OpenSSL"
+encodings = "codec lookup finds the phase-1 codecs listed in [dynamic]; any other encoding raises LookupError (the full registry is [P2+])"
 
 [lazy_unsupported]
 # Imports inside functions whose target is outside the manifest: the importing function is
 # not supported in phase 1 (calling it raises with the milestone name, on every path through
 # it, also one that would not reach the import: author's decision 2026-11-01). This is support
-# per API: difflib is in, difflib._test (which imports doctest) is not.
-difflib = ["doctest"]            # difflib._test
+# per API: base64 is in, base64.main (the command line, which imports getopt) is not. The lock
+# lists the refused functions under "unsupported_functions". (difflib's entry for doctest left
+# on 2026-11-01: 3.15 removed difflib._test.)
 base64 = ["getopt"]              # base64.main (the command-line entry point)
 shutil = ["tarfile", "zipfile"]  # shutil.make_archive / unpack_archive: archive formats are [P2+]
 logging = ["pickle"]             # Logger.__reduce__, so copy.copy(logger) is refused too (D-3)
+pathlib = ["urllib.request", "urllib.error"]   # Path.as_uri, Path.from_uri: urllib.request is [P2+]
+ast = ["_ast_unparse"]           # ast.unparse; ast.parse is compile() on source text (E-01)
+
+[replaced]
+# Functions an adaptation in [adaptations] replaces: their imports do not count.
+traceback = ["_find_incompatible_extension_module"]   # imports importlib.resources.readers, which imports zipfile
+
+[dynamic]
+# Every module with an import whose name is computed (__import__(name), import_module(name)),
+# reviewed on 2026-11-01. At runtime such an import is a lookup in the closed world (spec section
+# 3): a module compiled into the program is found, any other raises ModuleNotFoundError. Listed
+# targets are modules the lookup must find in phase 1, followed by the closure; [] means none.
+encodings = [
+  "encodings.ascii", "encodings.latin_1", "encodings.utf_8", "encodings.utf_8_sig",
+  "encodings.utf_16", "encodings.utf_16_be", "encodings.utf_16_le", "encodings.utf_32",
+  "encodings.utf_32_be", "encodings.utf_32_le",
+]                                # search_function: the phase-1 codecs (spec section 7, Text)
+_py_warnings = []                # _getcategory: a category named in -W or PYTHONWARNINGS
+inspect = []                     # _main: the `python -m inspect` command line
+traceback = []                   # _compute_suggestion_error: the module an ImportError names, already imported
+"unittest.loader" = []           # tests by name; discovery finds only test modules compiled into the program
+"unittest.main" = []             # the module unittest.main() runs, '__main__' by default
 
 [omissions]
 # Optional imports (try/except ImportError, suppress(ImportError)) whose target is outside the
@@ -127,20 +160,17 @@ logging = ["pickle"]             # Logger.__reduce__, so copy.copy(logger) is re
 # 2026-11-01 (D-3): the platform-guarded entries (nt, _winapi, posix, platform, doctest under
 # `__name__ == "__main__"`) are dead on the target and left this table; logging's pickle import
 # is lazy and moved to [lazy_unsupported]; entries 3.15.2 no longer imports were removed.
+# 2026-11-01 (closure on 3.15.2): an omitted module may not also be provided. _decimal,
+# _datetime, _hashlib and _uuid left `mapped`; random's _sha2, pathlib's pwd and grp and locale's
+# _locale left this table, since hashlib, posixpath and the locale subset need them mapped.
 decimal = ["_decimal"]
 datetime = ["_datetime"]
-shutil = ["bz2", "lzma"]
-random = ["_sha2"]
-hashlib = ["_hashlib"]
-unittest = []
+shutil = ["bz2", "lzma", "compression", "compression.zstd"]   # compression.zstd is [P2+], spec section 7
+hashlib = ["_hashlib"]           # OpenSSL (Apache-2.0); see [adaptations]
+hmac = ["_hashlib", "_hmac"]
 _py_warnings = ["tracemalloc"]   # 3.15 moved warnings' implementation here
-pathlib = ["pwd", "grp"]
-"pathlib._local" = ["pwd", "grp"]
-"pathlib._abc" = []
-uuid = ["_uuid"]
-locale = ["_locale"]
-gettext = []
-calendar = []
+"pathlib._os" = ["fcntl"]        # FICLONE copy-on-write cloning; copies fall back to read and write
+uuid = ["_uuid"]                 # libuuid; uuid1 takes the pure-Python path
 
 [excluded]
 # Dialect specification, section 4: reaching one of these as a required import is an error.

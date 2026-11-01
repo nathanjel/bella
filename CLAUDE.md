@@ -86,5 +86,6 @@ Without pytest, every test module runs directly: `python3 -m refmodel.tests.test
 ## Where to start
 
 `TODO.md` lists Gate 0's first increment in dependency order. Task 1 (the closure on 3.15.2)
-runs pinned under `uv run` or in the image (`docker build -t bella .`); tasks 2-5 can start on
-any developer machine with `--allow-unpinned`.
+is done; `make closure` runs pinned under `uv run` or in the image (`docker build -t bella .`),
+and a manifest change is committed with the `closure.lock.json` it produces. Tasks 2-5 can
+start on any developer machine with `--allow-unpinned`.

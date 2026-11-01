@@ -4,32 +4,15 @@ The next gate is the one the reviewer set in round two and refined in round thre
 artefacts, not prose. Each task below says what exists today, what is left, and what "done"
 means. Order matters: 1 constrains everything after it; 4 is where the next review happens.
 
-## 1. Compute the real phase-1 dependency closure on CPython 3.15.2
+## 1. ~~Compute the real phase-1 dependency closure on CPython 3.15.2~~ Done 2026-11-01
 
-* Today: `tools/closure.py` computes the closure (dynamic + static; dead, optional, lazy,
-  guarded and eager edges with platform guards evaluated from `[platform]`, review log D-3;
-  per-API scoping through `[lazy_unsupported]`, optional imports through `[omissions]`, which
-  may hold nothing else); `codeop` is a shim for `traceback` (D-4); `manifest.toml` was last
-  closed on CPython **3.13.18** (161 modules), which is not the reference.
-* To do: run `uv run make closure` (or in the image), reconcile `manifest.toml` until it is
-  closed on 3.15.2, commit `closure.lock.json`, and change the "LAST RECONCILED" line. On
-  2026-11-01, after D-3 and D-4, it reports 25 open items over 172 modules, all new in 3.15:
-  `annotationlib`, `_py_warnings`, `compression.zstd` (and `_zstd`), `math.integer` (and
-  `_math_integer`), `pathlib._os`, `_hmac`, `fcntl`, `_missing_stdlib_info`, `_types`,
-  `_ast_unparse`, and lazy imports in `pathlib` (`urllib.request`, `urllib.error`) and
-  `traceback` (`importlib.resources`).
-  Teach the tool PEP 810 first: a module-level `lazy import` (`ast.Import.is_lazy`) is a
-  first-use edge, not an eager one; today it is followed as eager, which is sound but
-  over-approximates. Eleven phase-1 modules use it (`collections`, `contextlib`,
-  `dataclasses`, `typing`, `traceback`, `pathlib`, `argparse`, `inspect`, `difflib`,
-  `tokenize`, `_colorize`), so lazy-import semantics are phase-1 runtime work.
-  `[lazy_unsupported]` refuses whole functions, on every path (author's decision 2026-11-01,
-  spec section 7): `Logger.__reduce__` stays there, and `copy.copy(logger)` is refused.
-  Review the six `dynamic_unknown` import sites the lock lists (`encodings`, `inspect`,
-  `traceback`, `unittest.loader/main`, `warnings`) and decide: registry entry, adaptation, or
-  per-API scope.
-* Done when: `make closure` exits 0 on 3.15.2 with `authoritative: true` in the lock, and every
-  adaptation named in the manifest has an owner note in `docs/dialect-spec.md` section 7.
+* `make closure` exits 0 on 3.15.2 with `authoritative: true`: 174 modules (112 compiled, 36
+  mapped, 19 core, 7 shims). `closure.lock.json` is committed, and CI requires it to be what the
+  pinned image computes. Every adaptation in the manifest has its note in spec section 7 (v0.6).
+  Decisions: `docs/DECISIONS.md`; mechanism: design section 10.4.
+* Runtime work this leaves for the phase-1 runtime: the 16 `first-use` bindings (PEP 810), the
+  functions listed under `unsupported_functions` in the lock (each raises the milestone-naming
+  error when called), the `annotationlib` shim, and the codec search over the ten phase-1 codecs.
 
 ## 2. Grow the conformance corpus on 3.15.2
 
@@ -124,6 +107,6 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * ~~`uv lock` and commit `uv.lock`; pin the `gcc:16.x` image tag after `docker pull`.~~ Done
   2026-11-01: `uv.lock`, uv 0.13.6, `gcc:16.2.0` by digest (`docs/DECISIONS.md`, Pins).
 * Rename the author line in the Markdown exports if the docs are published.
-* The `.github/workflows/ci.yml` builds the image and runs `make check`; turn it on once the
-  closure is reconciled (task 1). The image builds and every other target in `make check`
-  passes in it (2026-11-01). Until then the closure step is `continue-on-error`.
+* ~~Turn the closure step on in `.github/workflows/ci.yml` once task 1 is done.~~ Done
+  2026-11-01: both jobs run it without `continue-on-error`, and the pinned job also requires the
+  committed `closure.lock.json` to match.

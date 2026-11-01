@@ -109,6 +109,33 @@ and re-exported the same day).
   because `Logger.__reduce__` imports `pickle` for an unregistered logger. Support stays a
   build-time property of an API, not of a run.
 
+**2026-11-01 — the phase-1 closure on CPython 3.15.2** (Gate 0, task 1, with the author's go-ahead;
+dialect specification v0.6 section 7 and design document section 10.4, edited and re-exported
+the same day). `make closure` passes on the pin with 174 modules, and CI requires the committed
+`closure.lock.json` to be what the pinned image computes (it is, byte for byte).
+
+* The tool: `first-use` edges for PEP 810 lazy imports, followed as required (spec section 7);
+  `[replaced]` for functions an adaptation replaces; `[dynamic]` for the review of every import
+  with a computed name; a module has one status, and a provided module is never omitted; the
+  lock lists the functions `[lazy_unsupported]` refuses and holds no machine paths.
+* `annotationlib` is a shim (`Format`, `ForwardRef` without `evaluate`, `type_repr`): its
+  other formats rebuild functions from `__code__` (E-02, E-07), and `dataclasses`, `typing` and
+  `functools` need it at staging.
+* `_hashlib` (OpenSSL, Apache-2.0) and `_hmac` are omitted, so `hashlib` and `hmac` behave as in
+  a CPython built without OpenSSL: `pbkdf2_hmac` and `scrypt` are absent in phase 1. The digests
+  stay mapped (BearSSL or libsodium, spec section 7). Revisit if a target program needs either.
+* Contradictions resolved by spec section 7: `_decimal`, `_datetime` and `_uuid` omitted (the
+  pure-Python paths); `_locale`, `_sha2`, `pwd` and `grp` mapped; `_thread` a shim only.
+* The codec search must find the ten phase-1 codecs (`encodings.utf_8` and relatives), which are
+  compiled and listed in `[dynamic]`; any other encoding raises `LookupError`.
+* Unsupported in phase 1: `ast.unparse`, `Path.as_uri`, `Path.from_uri` (they import
+  `_ast_unparse` and `urllib.request`). Omitted: `compression.zstd` (for `shutil`) and `fcntl`
+  (for `pathlib._os`). `traceback._find_incompatible_extension_module` is replaced (returns None).
+* Listed: `_py_warnings`, `pathlib._os`, `_missing_stdlib_info` (compiled), `math.integer` and
+  `_math_integer` (mapped), `_types` (core). Removed as unreached on 3.15.2: `pathlib._abc`,
+  `pathlib._local`, `_socket`, and `difflib`'s `[lazy_unsupported]` entry (3.15 removed
+  `difflib._test`).
+
 ## Pins
 
 | What | Value | Where |

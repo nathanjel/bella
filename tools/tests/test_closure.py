@@ -2,21 +2,27 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import tools.closure as closure  # noqa: E402
 from tools.closure import (  # noqa: E402
     DEAD,
     DYNAMIC,
     EAGER,
+    FIRST_USE,
     GUARDED,
     LAZY,
     OPTIONAL,
+    REPLACED,
     Platform,
     _Scanner,
+    scan_module,
 )
 
 LINUX = Platform({"sys.platform": "linux", "os.name": "posix"}, frozenset({"posix"}), frozenset({"nt"}))
@@ -52,9 +58,9 @@ def _edges(src: str, module: str = "pkg.mod", is_package: bool = False,
     s = _Scanner(module, is_package, platform)
     s.scan(ast.parse(src))
     out: dict[tuple[str, str], int] = {}
-    for target, cls, line in s.edges:
+    for target, cls, line, _func in s.edges:
         out[(target, cls)] = line
-    return out, s.dynamic_unknown
+    return out, [line for line, _ in s.dynamic_unknown]
 
 
 def test_eager_lazy_optional_classes() -> None:
@@ -194,6 +200,123 @@ def test_platform_facts_are_checked_against_the_running_interpreter() -> None:
     wrong = Platform({"sys.platform": "not-" + sys.platform}, frozenset({"no_such_builtin"}), frozenset({"sys"}))
     problems = wrong.mismatches()
     assert len(problems) == 3, problems
+
+
+def test_pep810_lazy_imports_are_first_use_edges() -> None:
+    src = (
+        "import sys\n"
+        "lazy import json\n"
+        "lazy from collections import OrderedDict\n"
+        "__lazy_modules__ = ['csv']\n"
+        "import csv\n"
+        "import re\n"
+        "if sys.platform == 'win32':\n    lazy import winreg\n"
+        "def f():\n    import heapq\n"
+    )
+    edges, _ = _edges(src)
+    assert ("json", FIRST_USE) in edges and ("collections", FIRST_USE) in edges
+    assert ("collections.OrderedDict", FIRST_USE) not in edges   # a name, not a module
+    assert ("csv", FIRST_USE) in edges                # __lazy_modules__ makes a plain import lazy
+    assert ("re", EAGER) in edges
+    assert ("winreg", DEAD) in edges                  # a false guard still wins
+    assert ("heapq", LAZY) in edges
+
+
+def test_edges_record_their_function() -> None:
+    src = (
+        "import os\n"
+        "class C:\n"
+        "    def m(self):\n"
+        "        import json\n"
+        "        def inner():\n"
+        "            import csv\n"
+        "def outer():\n"
+        "    class K:\n"
+        "        def k(self):\n"
+        "            import re\n"
+        "    return __import__(os.environ['X'])\n"
+    )
+    s = _Scanner("m", False, LINUX)
+    s.scan(ast.parse(src))
+    funcs = {t: f for t, _c, _l, f in s.edges}
+    assert funcs == {"os": "", "json": "C.m", "csv": "C.m.<locals>.inner", "re": "outer.<locals>.K.k"}
+    assert s.dynamic_unknown == [(11, "outer")]
+    assert {"C.m", "C.m.<locals>.inner", "outer", "outer.<locals>.K.k"} <= s.functions
+
+
+def test_imports_inside_replaced_functions_do_not_count() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp, "m.py")
+        path.write_text("def keep():\n    import json\n\ndef swap():\n    import zipfile\n    __import__(x)\n")
+        scan = scan_module("m", str(path), LINUX, {"swap"})
+    assert {(e.target, e.cls, e.func) for e in scan.edges} == {("json", LAZY, "keep"), ("zipfile", REPLACED, "swap")}
+    assert scan.dynamic_unknown == []
+
+
+BT_FILES = {
+    "bt_app": "import bt_lib\nlazy import bt_later\n",
+    "bt_lib": ("def load(name):\n    return __import__(name)\n\n"
+               "def fancy():\n    import bt_outside\n\n"
+               "def swapped():\n    import bt_heavy\n"),
+    "bt_later": "", "bt_target": "", "bt_outside": "", "bt_heavy": "",
+}
+BT_MANIFEST = """
+[reference]
+python = "3.15.2"
+[phase1]
+roots = ["bt_app"]
+compiled = ["bt_app", "bt_lib", "bt_later", "bt_target"]
+[adaptations]
+bt_lib = "swapped() is replaced"
+[replaced]
+bt_lib = ["swapped"]
+[lazy_unsupported]
+bt_lib = ["bt_outside"]
+[dynamic]
+bt_lib = ["bt_target"]
+"""
+
+
+def _closure(manifest_text: str) -> tuple[dict[str, closure.ModuleInfo], list[str], dict[str, list[str]]]:
+    """compute_closure on a small module tree, without the runtime observation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, src in BT_FILES.items():
+            Path(tmp, f"{name}.py").write_text(src)
+        Path(tmp, "manifest.toml").write_text(manifest_text)
+        sys.path.insert(0, tmp)
+        importlib.invalidate_caches()
+        saved = closure.observe_runtime_imports
+        closure.observe_runtime_imports = lambda roots: {}
+        try:
+            manifest = closure.Manifest.load(Path(tmp, "manifest.toml"))
+            infos, problems = closure.compute_closure(manifest)
+            return infos, problems, closure.unsupported_functions(infos, manifest)
+        finally:
+            closure.observe_runtime_imports = saved
+            sys.path.remove(tmp)
+            for name in BT_FILES:
+                sys.modules.pop(name, None)
+
+
+def test_replaced_dynamic_and_unsupported_tables() -> None:
+    infos, problems, unsupported = _closure(BT_MANIFEST)
+    assert problems == [], problems
+    assert {"bt_later", "bt_target"} <= set(infos) and "bt_heavy" not in infos
+    assert infos["bt_later"].reached_by == "bt_app:first-use:2"
+    assert unsupported == {"bt_lib": ["fancy"]}       # the function refused, on every path through it
+
+
+def test_manifest_tables_are_checked() -> None:
+    _, problems, _ = _closure(BT_MANIFEST.replace('[dynamic]\nbt_lib = ["bt_target"]\n', ""))
+    assert any("bt_lib: import with a computed name at line 2 (load)" in p for p in problems), problems
+    _, problems, _ = _closure(BT_MANIFEST.replace('bt_lib = ["swapped"]', 'bt_lib = ["gone"]'))
+    assert any("[replaced] names bt_lib.gone" in p for p in problems), problems
+    _, problems, _ = _closure(BT_MANIFEST + '[omissions]\nbt_app = ["bt_lib"]\n')
+    assert any("[omissions] lists bt_lib for bt_app, but the manifest provides bt_lib" in p for p in problems)
+    _, problems, _ = _closure(BT_MANIFEST.replace('bt_lib = "swapped() is replaced"', ""))
+    assert any("has no entry in [adaptations]" in p for p in problems), problems
+    _, problems, _ = _closure(BT_MANIFEST.replace('compiled = ["bt_app"', 'mapped = ["bt_later"]\ncompiled = ["bt_app"'))
+    assert any("bt_later is listed under compiled and mapped" in p for p in problems), problems
 
 
 if __name__ == "__main__":
