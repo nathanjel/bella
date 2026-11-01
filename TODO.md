@@ -32,7 +32,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   the harness masks for D-06/D-08.
 * To do: cases for the 3.15 additions the phase-1 library depends on or the dialect must
   decide: PEP 810 lazy imports (reification at first use, import errors at first use,
-  `__lazy_modules__`, `sys.set_lazy_imports`), PEP 798 unpacking in comprehensions,
+  `__lazy_modules__`, `sys.set_lazy_imports` rejected by E-04), PEP 798 unpacking in
+  comprehensions (\[P2+\]: a rejection case),
   `frozendict` (PEP 814), `sentinel` (PEP 661); add the cases the reviews asked for that are not yet
   here — the seeding-compatibility clause for D-14 (`PYTHONHASHSEED` fixed, compare
   `hash("x")` across runs), `__class__` assignment with CPython's layout rule, `__getattribute__`

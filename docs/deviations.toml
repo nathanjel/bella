@@ -1,4 +1,4 @@
-# Deviation register (dialect specification v0.3, section 11), machine-readable.
+# Deviation register (dialect specification v0.4, section 11), machine-readable.
 # The conformance harness and bella-lint read this file. A difference from the reference CPython
 # (bella.toml, 3.15.2) that is not listed here is a defect. Fields: status = accepted | decided | pending; lint = yes | partial | no;
 # expires = the phase in which a temporary deviation ends, if any.
@@ -94,7 +94,7 @@ lint = "no"
 note = "seeding compatibility is a conformance clause"
 
 [deviations.D-15]
-summary = "UTF-8 mode is always on; PYTHONIOENCODING and locale-based encodings are ignored"
+summary = "UTF-8 mode is always on and cannot be turned off (PYTHONUTF8=0, -X utf8=0); PYTHONIOENCODING and encoding=\"locale\" are ignored and mean UTF-8 (narrowed in v0.4: CPython 3.15 has UTF-8 mode on by default, PEP 686)"
 status = "decided"
 decision = 10
 lint = "yes"
@@ -112,7 +112,7 @@ decision = 2
 lint = "yes"
 
 [deviations.D-18]
-summary = "PYTHONPATH, .pth files and site are ignored; sys.path reflects the build"
+summary = "PYTHONPATH, .pth and .start files, site, and the lazy-imports mode (PYTHON_LAZY_IMPORTS, -X lazy_imports; always normal) are ignored; sys.path reflects the build"
 status = "accepted"
 lint = "yes"
 

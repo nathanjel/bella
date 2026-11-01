@@ -129,6 +129,6 @@ calendar = []
 [excluded]
 # Dialect specification, section 4: reaching one of these as a required import is an error.
 modules = [
-  "code", "codeop", "pdb", "bdb", "doctest", "tracemalloc", "cProfile", "profile", "pydoc",
-  "timeit", "ctypes.pythonapi",
+  "code", "codeop", "pdb", "bdb", "doctest", "tracemalloc", "cProfile", "profile", "profiling",
+  "pydoc", "timeit", "ctypes.pythonapi",
 ]

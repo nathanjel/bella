@@ -47,21 +47,26 @@ newest stable release, since Bella has no installed base to keep compatible). 3.
 alpha 1 and cannot be a reference for exact semantics. The move cost nothing in artefacts:
 the closure had never been reconciled and the corpus had been recorded on 3.13, and every
 test, the model self-check (four seeds), the slice and the int differential pass unchanged
-on 3.15.2. Consequences, applied here or pending in the living documents:
+on 3.15.2. Consequences, all applied (repository 2026-11-01; dialect specification v0.4 and the
+design document edited and re-exported the same day):
 
 * Applied: `bella.toml`, `manifest.toml`, `.python-version`, `Dockerfile`, `pyproject.toml`
   (the compiler now requires 3.15: its L0 is the host `ast`), decision 15 (grammar at 3.15),
   the corpus re-recorded authoritatively, C-9-02's premise corrected, C-9-07 added.
-* Pending in the dialect specification (v0.4): section 1 (the pin); section 9 (the cyclic
-  finalisation sequence of finding 5 below replaces the round-3 sequence); section 7 (PEP 810
-  is phase-1 runtime work because the phase-1 library uses it; the closure tool needs a
-  first-use edge class); tier/exclusion entries for PEP 798 unpacking in comprehensions and
-  `sys.set_lazy_imports("all")`/`-X lazy_imports`; `frozendict` and `sentinel` as builtins;
-  D-15 narrows, since UTF-8 mode is CPython's default from 3.15 (PEP 686) and only the
-  `PYTHONUTF8=0` opt-out remains a deviation.
-* Pending in the design document: the island is 3.15t, and PEP 803 (`abi3t`, a stable ABI for
-  free-threaded builds) reopens the stable-ABI bridge that round one's finding 8 made
-  version-specific; the GC note (3.14.5+ and 3.15 use the generational collector again).
+* Dialect specification v0.4: the pin and grammar (sections 1-3, decision 15); PEP 810 lazy
+  imports \[P1\], because eleven phase-1 modules use them, with initialisation at first use
+  (sections 3, 7, 8); PEP 798 unpacking in comprehensions \[P2+\], since no phase-1 module
+  uses it; `frozendict` and `sentinel` commitments (sections 3, 6); `profiling` in E-03,
+  `sys.set_lazy_imports*` in E-04; the cyclic finalisation sequence of finding 5 (section 9);
+  D-15 narrowed to the opt-out, `PYTHONIOENCODING` and `encoding="locale"`, all of which
+  CPython 3.15 honours (verified); D-18 adds `.start` files and the lazy-imports mode.
+* Design document: the island is 3.15t; PEP 803 (`abi3t`, a stable ABI for free-threaded
+  builds) makes a stable-ABI bridge possible again, but the version-specific bridge of round
+  one's finding 8 stays the baseline until the bridge's API needs are known (sections 10, 10.1,
+  13); L0 is 3.15 syntax (section 8). The design never relied on 3.14's incremental collector
+  (reverted in 3.14.5 and 3.15), so nothing changed there.
+* Still open: the closure tool's first-use edge class for module-level `lazy import` (TODO,
+  task 1).
 
 ## Pins
 
@@ -96,7 +101,7 @@ on 3.15.2. Consequences, applied here or pending in the living documents:
    Four probes had been failing on their own bugs (a non-transient `constexpr std::vector`, a
    constexpr loop variable over a runtime tuple, a non-const parameter in `post`, the pre-P3287
    `std::simd<T>` spelling). Still missing: `std::execution`, `std::hazard_pointer`, `std::rcu`.
-   Section 10.3 of the living design document should be updated to match.
+   Section 10.3 of the design document was corrected on 2026-11-01.
 5. CPython 3.15 changed two behaviours the corpus records (found by re-recording on 3.15.2;
    both differ on 3.15.0 and 3.15.2 and on no 3.14 release up to 3.14.10):
    * Cyclic finalisation (C-9-02, C-9-07): weak references *with* callbacks are cleared and
