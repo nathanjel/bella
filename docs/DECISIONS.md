@@ -273,6 +273,33 @@ library, the regex engine, the compile scope of a target, and the copy protocol.
   reconstructors) is \[P1\]; the `pickle` module stays \[P2+\]. Case C-3-20. `Logger.__reduce__`
   still refuses `copy.copy(logger)`, since it imports `pickle` (D-3).
 
+**2026-11-01 — Gate 0 task 5, the staging prototype** (`docs/staging.md`; spec v0.9 section 8
+and section 3, design section 11 rev 445).
+* Mechanism, chosen by the prototype as design section 11 asked, for the author to confirm
+  (S-5): code that module bodies generate with `exec`/`eval` is staged by call site and text,
+  compiled at build time and found at runtime by the same key. A literal `namedtuple` call is
+  also made at build time wherever it sits. An unstaged text stops the program with the E-01
+  refusal. Compiler intrinsics were tried for `namedtuple` and lost: no `dataclasses` text, a
+  computed `namedtuple` in `inspect` missed, 53 of 58 \[P1\] cases against 58, and CPython's
+  templates copied per version.
+* Evidence: every \[P1\] case and the three phase-1 targets print CPython's output under the
+  replay model (no `exec` but staged code, the annotationlib shim, the D-20 omissions); the dry
+  run is identical under two hash seeds. Cases C-8-08 and C-8-09 pin the definition-time
+  effects. `make staging-check` runs in `make check` and CI. The model runs the staged code as
+  CPython bytecode compiled at build time; `eval1` cannot run a class yet, so it is not used.
+* D-5 implemented as a shim and build-time tables: STRING computed by CPython's own fallback
+  code on the program's code objects, FORWARDREF from VALUE when every name resolves. Spec
+  v0.7's statement that the generated `__annotate__` answers STRING itself was an observable
+  difference from CPython, whose function raises `NotImplementedError` (C-3-21). Corrected in
+  v0.9, the design otherwise unchanged.
+* Found on the way: the phase-1 configuration changes C-7-09's output (`_pydatetime`'s
+  `IsoCalendarDate` repr). It is a D-20 effect that no check saw. The case now declares D-20,
+  `verify` runs every \[P1\] case in the phase-1 configuration, and D-20 names the effect.
+* For the author, S-1 to S-5 in `docs/staging.md`. The pressing one is S-1: under D-5 as
+  decided, a dataclass whose annotation names its own class is refused (C-3-22, \[P2+\]). The
+  recommendation is a second, compiler-generated entry point per `__annotate__` that makes
+  FORWARDREF and STRING exact.
+
 ## Pins
 
 | What | Value | Where |

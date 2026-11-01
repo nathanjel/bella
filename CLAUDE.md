@@ -62,8 +62,10 @@ make int-test           int.hpp vs CPython with UBSan
 make probes             C++26 feature report for the toolchain in use
 make targets-record     record the six target programs (pinned CPython); make targets-check compares
 make targets-closure    each target's closure and the phase-1 increments (targets/closure-summary.json)
+make staging-check      the staging prototype (docs/staging.md): the P1 corpus and targets with no exec
 make lint               ruff and mypy, both clean; dialect programs and target drivers under strict mypy
-make check              closure, targets-closure, lint, test, verify, probes, slice, int-test, targets-check (CI)
+make check              closure, targets-closure, lint, test, verify, probes, slice, int-test, targets-check,
+                        staging-check (CI)
 ```
 
 On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):

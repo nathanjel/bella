@@ -1,0 +1,12 @@
+{
+ "case": "C-8-08_staged_dataclass.py",
+ "clause": "C-8-08",
+ "spec": "section 8",
+ "status": "P1",
+ "source": "Gate 0 task 5, the staging prototype (docs/staging.md): staging adds nothing observable",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "class body of Item\nset_name Item label\ninit_subclass Item 'plain' False\ndecorated Item ['name', 'note', 'qty', 'tags']\nItem fields: ['name', 'qty', 'tags', 'note'] factory calls: 0\ninit_subclass Point '' False\ninit_subclass Point '' True\nPoint fields: ['x', 'y'] ('x', 'y')\nChild fields: ['a', 'b', 'c'] Pair fields: ['left', 'right']\nItem(name='bolt', qty=1, tags=[1], note='') Item(name='nut', qty=3, tags=[2], note='m4') factory calls: 2\nTrue True bolt\nItem(name='nut', qty=5, tags=[2], note='m4') {'name': 'nut', 'qty': 3, 'tags': [2], 'note': 'm4'} ('bolt', 1, [1], '')\n('name', 'qty', 'tags') True factory calls: 2\nmatched nut 3\nfrozen: FrozenInstanceError (\"cannot assign to field 'x'\",)\nPoint(x=3, y=-4) 7 True True\nAccount(owner='ann', balance=10) ['open 10'] ['owner', 'balance', 'history']\nChild(a=10, b=2, c=3) Child(a=1, b=2, c=3) Pair(left=1, right=0) True\nmissing argument: TypeError\n",
+ "stderr": "",
+ "exit_code": 0
+}

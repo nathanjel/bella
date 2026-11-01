@@ -123,9 +123,9 @@ lint = "no"
 note = "narrowed after review round three: a weak reference to a module never dies; compiled code and layouts are immortal metadata the program cannot observe"
 
 [deviations.D-20]
-summary = "modules the phase-1 manifest omits behave as not installed (spec section 7): hashlib.pbkdf2_hmac and hashlib.scrypt are absent and hashlib.algorithms_available equals algorithms_guaranteed (no OpenSSL); shutil.get_archive_formats() and get_unpack_formats() list only gztar, tar and zip (no bz2, lzma or zstd; calling the built-in formats is [P2+], C-7-04); a codec outside the phase-1 set raises LookupError"
+summary = "modules the phase-1 manifest omits behave as not installed (spec section 7): hashlib.pbkdf2_hmac and hashlib.scrypt are absent and hashlib.algorithms_available equals algorithms_guaranteed (no OpenSSL); shutil.get_archive_formats() and get_unpack_formats() list only gztar, tar and zip (no bz2, lzma or zstd; calling the built-in formats is [P2+], C-7-04); a codec outside the phase-1 set raises LookupError; where CPython's pure-Python datetime (_pydatetime) differs from its C accelerator, phase 1 shows the pure-Python behaviour, as date.isocalendar()'s IsoCalendarDate, whose repr has no 'datetime.' prefix (C-7-09)"
 status = "accepted"
 lint = "partial"
-observable = "measured on 3.15.2 with the omitted modules blocked: algorithms_available lacks md5-sha1, ripemd160, sha512_224, sha512_256 and sm3; get_archive_formats and get_unpack_formats list 3 formats instead of 6"
+observable = "measured on 3.15.2 with the omitted modules blocked: algorithms_available lacks md5-sha1, ripemd160, sha512_224, sha512_256 and sm3; get_archive_formats and get_unpack_formats list 3 formats instead of 6; repr(date.isocalendar()) is IsoCalendarDate(...) instead of datetime.IsoCalendarDate(...), found when the staging replay ran every case in the phase-1 configuration (docs/staging.md)"
 note = "review log D-6, decided 2026-11-01. Lint flags pbkdf2_hmac, scrypt, algorithms_available, the missing archive format names, and codec names given as literals outside the phase-1 set; a computed codec name cannot be linted. Providing pbkdf2_hmac and scrypt in the runtime is a later task (TODO.md)"
 expires = "phase 2 (revisit)"

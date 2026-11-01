@@ -1,0 +1,12 @@
+{
+ "case": "C-3-22_forwardref_unbound_name.py",
+ "clause": "C-3-22",
+ "spec": "section 3",
+ "status": "P2+",
+ "source": "Gate 0 task 5 (review log D-5): FORWARDREF with a name not bound yet needs CPython's __code__ fallback",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "Node(value=1, next=...) ['value', 'next']\n{'a': 'Later', 'return': None}\n",
+ "stderr": "",
+ "exit_code": 0
+}

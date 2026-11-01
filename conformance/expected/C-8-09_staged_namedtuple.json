@@ -1,0 +1,12 @@
+{
+ "case": "C-8-09_staged_namedtuple.py",
+ "clause": "C-8-09",
+ "spec": "section 8",
+ "status": "P1",
+ "source": "Gate 0 task 5, the staging prototype (docs/staging.md): staging adds nothing observable",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "Point: ('x', 'y') {'y': 0} __main__ Point(x, y)\nRenamed: ('abc', '_1', '_2', '_3')\nPlaced: geo Placed\nSame: True 2\nclass body of Version\nPoint(x=1, y=0) 1 {'x': 1, 'y': 0} Point(x=1, y=5) Point(x=7, y=8) True\n('x', 'y') (0,) Create new instance of Point(x, y) Alias for field number 0\nTrue True Point\nUrl(scheme='https', host='example.org') https://example.org False ('scheme', 'host')\nVersion(major=1, minor=0) Version(major=1, minor=1) {'minor': 0} ['major', 'minor']\nLocal(p=1, q=2) False ('p', 'q')\nmatched 2 3\nrejected 'x x' Encountered duplicate field name: 'x'\nrejected '_x' Field names cannot start with an underscore: '_x'\nrejected 'x def' Type names and field names cannot be a keyword: 'def'\n",
+ "stderr": "",
+ "exit_code": 0
+}

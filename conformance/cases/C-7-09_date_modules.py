@@ -1,6 +1,7 @@
 # clause: C-7-09
 # spec: section 7
 # status: P1
+# deviation: D-20
 # source: dialect specification section 7, Dates (datetime via _pydatetime, time, calendar)
 """Date modules on fixed instants and fixed offsets only (no local time zone, no clock)."""
 import calendar

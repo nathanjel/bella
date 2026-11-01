@@ -247,6 +247,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     if not cases:
         print("check: no case selected", file=sys.stderr)
         return 2
+    if status := getattr(args, "status", None):
+        cases = [c for c in cases if read_header(c).status == status]
     failures = 0
     for case in cases:
         header = read_header(case)
@@ -292,6 +294,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print("\n".join(lines))
             failures += status == "FAIL"
             checked += 1
+        if header.status == "P1" and not header.deviation:
+            # a phase-1 program runs with the D-20 omissions: a case that prints differently there
+            # must declare it (found by the staging replay, docs/staging.md)
+            status, lines = _compare([args.python, case.name], case, header, allow_unpinned=False,
+                                     extra_env=simulation_env("D-20", args.python))
+            if status == "FAIL":
+                lines = [f"FAIL  {case.name:48} prints differently in the phase-1 configuration; "
+                         "declare `# deviation: D-20` and record it", *lines[1:]]
+                print("\n".join(lines))
+            failures += status == "FAIL"
+            checked += 1
     print(f"\nverify: {checked - failures}/{checked} expectations reproduced by CPython {version}")
     return 1 if failures else 0
 
@@ -315,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--runner", required=True, help='command with {case}, e.g. "python3 {case}"')
     c.add_argument("--allow-unpinned", action="store_true")
     c.add_argument("--filter")
+    c.add_argument("--status", choices=STATUSES, help="only the cases of this status")
     c.set_defaults(fn=cmd_check)
     v = sub.add_parser("verify")
     v.add_argument("--python", default=sys.executable)

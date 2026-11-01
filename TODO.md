@@ -119,7 +119,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   compiled binary (`make targets-check TARGET_RUNNER=...` passes for it), and the generated C++
   is committed under `pipeline/examples/out/`.
 
-## 5. Staging prototype (gates the first target path: `re` reaches `enum`, itsdangerous `typing`)
+## 5. ~~Staging prototype~~ Done 2026-11-01 (`docs/staging.md`; S-1 to S-5 wait on the author)
 
 * Why: review log D-2 and RL-50. `dataclasses`, `namedtuple`, `enum` and `typing` build code
   with `exec` at definition time; spec section 8 stages it, but the contract between the
@@ -135,6 +135,15 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   for the known users. Record the choice in `docs/DECISIONS.md`.
 * Done when: both programs print CPython's trace under the compiled runner (or under `eval1`
   plus the staged artefact, if the runner is not there yet), and 1b has a mechanism.
+* Done 2026-11-01. Staged texts, keyed by call site and text, with probes for literal
+  `namedtuple` calls; intrinsics compared and rejected. C-8-08, C-8-09, C-3-21 and every other
+  \[P1\] case, and the three phase-1 targets, print CPython's output under the replay model
+  (`make staging-check`). `eval1` cannot run a class, so the replay runs the staged code as
+  bytecode compiled at build time in its place. D-5's shim and tables are in
+  `runtime/shims/annotationlib.py` and `pipeline/staging/annotations.py`. What remains moves
+  to task 4: compile the staged texts through L1 to C++, generate `__annotate__` and its tables,
+  and provide the shim's `_bella` hooks and the refusal in the runtime. The other phase-1 shims
+  (`threading`, `socket`, `subprocess`, `asyncio`, `_thread`, `codeop`) are still to be written.
 
 ## 6. Report
 

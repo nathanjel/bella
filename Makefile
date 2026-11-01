@@ -5,7 +5,7 @@ CXX     ?= g++
 CXXSTD  ?= c++26
 RUNNER  ?= $(PY) {case}
 
-.PHONY: help test selftest closure record verify check-conformance probes slice int-test targets-record targets-check targets-closure lint check clean
+.PHONY: help test selftest closure record verify check-conformance probes slice int-test targets-record targets-check targets-closure staging-check lint check clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
@@ -18,6 +18,7 @@ help:
 	@echo "make int-test          differential test of runtime/include/bella/int.hpp vs CPython"
 	@echo "make targets-record    record the six target programs under the pinned CPython -> targets/expected/"
 	@echo "make targets-check     re-run the targets (two hash seeds) and compare; TARGET_RUNNER= for compiled binaries"
+	@echo "make staging-check     the staging prototype: dry-run determinism, the P1 corpus and targets under the replay"
 	@echo "make targets-closure   each target's closure and the phase-1 increments -> targets/closure*"
 	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
 	@echo "make check             everything above (what CI runs)"
@@ -34,6 +35,9 @@ selftest:
 
 closure:
 	$(PY) tools/closure.py --manifest manifest.toml --out closure.lock.json
+
+staging-check:
+	$(PY) pipeline/staging/check.py
 
 record:
 	$(PY) conformance/harness.py record
@@ -69,7 +73,7 @@ lint:
 	# the target drivers too; the vendored libraries they import are read, not reported
 	MYPYPATH=targets/vendor $(PY) -m mypy --disallow-any-explicit --follow-imports=silent targets/drivers
 
-check: closure targets-closure lint test verify probes slice int-test targets-check
+check: closure targets-closure lint test verify probes slice int-test targets-check staging-check
 
 clean:
 	rm -rf build runtime/build pipeline/examples/out/*.bin .pytest_cache .hypothesis
