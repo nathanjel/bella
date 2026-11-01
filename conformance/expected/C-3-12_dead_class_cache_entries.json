@@ -1,0 +1,12 @@
+{
+ "case": "C-3-12_dead_class_cache_entries.py",
+ "clause": "C-3-12",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "review 2026-11-01 gemini-4-argon-high, bug 2.1.4 (review log RL-23, decision D-1)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "0 TwoSlots second slot second slot\n  collected: True\n0 OneSlot first slot first slot\n  collected: True\n0 ClassAttribute class attribute class attribute\n  collected: True\n0 Property property property\n  collected: True\n0 Hook __getattr__ x __getattr__ x\n  collected: True\n0 Plain instance dictionary instance dictionary\n  collected: True\n1 TwoSlots second slot second slot\n  collected: True\n1 OneSlot first slot first slot\n  collected: True\n1 ClassAttribute class attribute class attribute\n  collected: True\n1 Property property property\n  collected: True\n1 Hook __getattr__ x __getattr__ x\n  collected: True\n1 Plain instance dictionary instance dictionary\n  collected: True\n",
+ "stderr": "",
+ "exit_code": 0
+}

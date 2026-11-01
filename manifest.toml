@@ -112,12 +112,13 @@ datetime = "C accelerator omitted so the pure-Python _pydatetime is used (see [o
 
 [lazy_unsupported]
 # Imports inside functions whose target is outside the manifest: the importing function is
-# not supported in phase 1 (calling it raises with the milestone name). This is support per
-# API: difflib is in, difflib._test (which imports doctest) is not.
+# not supported in phase 1 (calling it raises with the milestone name, on every path through
+# it, also one that would not reach the import: author's decision 2026-11-01). This is support
+# per API: difflib is in, difflib._test (which imports doctest) is not.
 difflib = ["doctest"]            # difflib._test
 base64 = ["getopt"]              # base64.main (the command-line entry point)
 shutil = ["tarfile", "zipfile"]  # shutil.make_archive / unpack_archive: archive formats are [P2+]
-logging = ["pickle"]             # Logger.__reduce__ for a logger that is not the registered one (D-3)
+logging = ["pickle"]             # Logger.__reduce__, so copy.copy(logger) is refused too (D-3)
 
 [omissions]
 # Optional imports (try/except ImportError, suppress(ImportError)) whose target is outside the

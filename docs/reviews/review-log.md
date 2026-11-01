@@ -7,10 +7,10 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 51 findings from three reviews: 32 fixed (most in commit `0d92b51`,
-RL-37 with decision D-3), 7 already done before or because of the review, 4 planned (D-2,
-accepted by the author), 2 deferred, 3 refuted, 1 checked with no issue, 1 known Gate-0 task,
-and 1 open for discussion (D-1). The author decided D-2, D-3 and D-4 on 2026-11-01.
+**Status on 2026-11-01:** 51 findings from three reviews: 33 fixed (most in commit `0d92b51`,
+RL-37 with decision D-3, RL-23 with D-1), 7 already done before or because of the review, 4
+planned (D-2, accepted by the author), 2 deferred, 3 refuted, 1 checked with no issue and 1
+known Gate-0 task. Nothing is open for discussion: the author decided D-1 to D-4 on 2026-11-01.
 
 ## Reviews received
 
@@ -68,7 +68,7 @@ author accepted, scheduled in `TODO.md`).
 | RL-20 | A1 #4 | `CacheEntry.found` described as borrowed but held strongly | Confirmed (the model has no lifetimes) | Deferred: TODO task 3 | Stated in the model's docstring; lifetimes enter the model with RL-49 |
 | RL-21 | G 2.1.5 | `InstanceDict` fast path does not say a miss falls back | Confirmed (the model already falls back) | Fixed `0d92b51` | Design section 3 and `docs/drafts/object.hpp.draft` |
 | RL-22 | G 3.2 | Oracle should generate the new scenarios randomly | Accepted | Deferred: TODO task 3 | Deterministic tests cover them now (RL-16 to RL-19) |
-| RL-23 | G 2.1.4 | ABA: per-class versions start at 0, so a freed class's entry can match a new class at the same address | Confirmed for the C++ draft (not the model: an entry keeps its class alive in Python) | Discuss: D-1 | Fix is a design change: section 3 code |
+| RL-23 | G 2.1.4 | ABA: per-class versions start at 0, so a freed class's entry can match a new class at the same address | Confirmed for the C++ draft; reproduced in the model once its entries stopped holding their class | Fixed with D-1 | One process-wide 64-bit counter; entries keyed by version alone, with no class pointer; 0 is never cached. With versions tied to the class address, the model's self-check serves a dead class's entry to the class born at its address on seed 1. Case C-3-12 (CPython 3.15.2 puts 10 of its 12 classes at one address), oracle operation `recreate_class`, test `test_dead_class_entries_never_match_a_new_class_c_3_12` and two more; design section 3, `docs/drafts/object.hpp.draft` |
 
 ### Runtime, validation, harness and CI
 
@@ -120,8 +120,13 @@ author accepted, scheduled in `TODO.md`).
 
 ## Open for discussion
 
-**D-1 Class versions from one global counter (RL-23).** Open: the author asked for a detailed
-explanation (given 2026-11-01). Recommendation: accept. CPython does the same for type version
+**D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
+recommended (design section 3, `docs/drafts/object.hpp.draft`, `refmodel/objects.py`, case
+C-3-12). Writing it into the model first showed two simplifications: an entry needs no class
+pointer at all, since the version names the class (a `cls_hint` integer only decides which
+older entry an install replaces), and the found object's class is read through `found` after
+the class version matched, which also notices a `__class__` assignment to `found`. The
+recommendation, explained in detail at the author's request, was to accept: CPython does the same for type version
 tags, and the reviewer's case is real once runtime-created classes can die. It changes design
 section 3 (the `version` field and its allocation) and the draft header; the model adopts it in
 the same change, so the header is still written from the model.
@@ -157,7 +162,10 @@ section 7, design section 10.4, `tools/closure.py`, `manifest.toml` `[platform]`
 spec section 7 defines optional imports as `try/except ImportError` only. Recommendation: inside functions, `if`-guarded imports become
 LAZY (the function is unsupported, not silently failing). At module level, add a `[platform]`
 manifest table for guards the closed world can evaluate (`sys.platform`, `os.name`), and keep
-`[omissions]` for ImportError guards only.
+`[omissions]` for ImportError guards only. Follow-up decided the same day: `[lazy_unsupported]`
+keeps refusing whole functions, on every path (spec section 7, design section 10.4), so
+`copy.copy(logger)` stays refused although CPython reaches `Logger.__reduce__` without importing
+`pickle`.
 
 **D-4 `traceback` needs `codeop` (RL-38).** Decided 2026-11-01: the shim, as recommended, with
 one refinement found while writing it up: the refusal names E-08 rather than a milestone and

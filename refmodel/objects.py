@@ -3,7 +3,11 @@
 What is modelled (design document, section 3, as revised by review rounds two and three):
 
 * A ``RefClass`` has an MRO, class attributes (plain values, descriptors, slot markers), a
-  ``version`` that every mutation of the class or any base bumps, and a layout: real
+  ``version`` and a layout. Versions come from one process-wide counter (review log D-1): a new
+  class and every mutation of a class or any of its bases take a number never issued before, so
+  a version names one class in one state, and a class created after another died can never
+  match the dead one's cache entries. 0 is no version: a class that gets it is never cached. The
+  layout has real
   ``__slots__`` fields (reachable only through their slot descriptor) and *promoted* fields
   (attributes CPython would keep in ``__dict__`` that the compiler keeps inline until the
   dictionary is exposed). Whether instances have a ``__dict__`` is an inherited layout
@@ -16,11 +20,12 @@ What is modelled (design document, section 3, as revised by review rounds two an
   order after promotion).
 * ``Runtime.getattr/setattr/delattr`` implement Python's order: data descriptor, instance
   storage, non-data descriptor or class attribute, ``__getattr__``, ``AttributeError``.
-* ``Site`` holds up to N immutable ``CacheEntry`` records keyed by class, class version,
-  interned name (and, for the found object, its class and version), each kind with its own
-  validity predicate. Every cached read is checked against the generic path by comparing the
-  *plans* both select before any user code runs (the selected plan then runs once); a
-  disagreement raises ``ModelError`` -- the model refuses to be unsound silently.
+* ``Site`` holds up to N immutable ``CacheEntry`` records keyed by class version and interned
+  name; the version alone identifies the class, so an entry holds no reference to it. An entry
+  also records the version of the found object's class, read through the found object, and each
+  kind has its own validity predicate. Every cached read is checked against the generic path
+  by comparing the *plans* both select before any user code runs (the selected plan then runs
+  once); a disagreement raises ``ModelError`` -- the model refuses to be unsound silently.
 * Lifetimes are not modelled: ``CacheEntry.found`` is documented as borrowed (owned by the
   class) but is an ordinary Python reference here; the C++ header owes that property.
 
@@ -33,6 +38,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+NO_VERSION = 0
 
 
 class _Unset:
@@ -59,6 +66,36 @@ class SlotDescriptor:
 
     def __repr__(self) -> str:
         return f"<slot {self.name}>"
+
+
+# ---------------------------------------------------------------------------------------------
+# Class versions (review log D-1, 2026-11-01)
+# ---------------------------------------------------------------------------------------------
+
+class VersionCounter:
+    """The one source of class versions, shared by every class in the process.
+
+    A per-class counter starting at 0 lets a class created at a dead class's address match the
+    dead class's cache entries (review log RL-23); one counter that never reissues a number makes
+    a version name exactly one class in one state, as CPython's type version tags do. The runtime's
+    counter is 64 bits and issues 2**64 - 1 versions; past them a class gets NO_VERSION and is
+    never cached again (CPython does the same when its tags run out). ``limit`` exists so that a
+    test can reach that state.
+    """
+
+    def __init__(self, limit: int = 2**64 - 1) -> None:
+        self.next = 1
+        self.limit = limit
+
+    def issue(self) -> int:
+        if self.next > self.limit:
+            return NO_VERSION
+        version = self.next
+        self.next += 1
+        return version
+
+
+VERSIONS = VersionCounter()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -99,7 +136,7 @@ class RefClass:
         self.bases = tuple(bases)
         self.mro: tuple[RefClass, ...] = tuple(_c3(self))
         self.attrs: dict[str, Any] = dict(attrs or {})
-        self.version = 0
+        self.version = VERSIONS.issue()
         self.subclasses: list[RefClass] = []
         for b in self.bases:
             b.subclasses.append(self)
@@ -130,7 +167,7 @@ class RefClass:
                 return c.attrs[name], c
         return None
 
-    # -- mutation: every change bumps this class and all subclasses -------------------------
+    # -- mutation: every change gives this class and all subclasses new versions --------------
     def set_attr(self, name: str, value: Any) -> None:
         self.attrs[name] = value
         self.bump()
@@ -142,9 +179,15 @@ class RefClass:
         self.bump()
 
     def bump(self) -> None:
-        self.version += 1
+        self.version = VERSIONS.issue()
         for s in self.subclasses:
             s.bump()
+
+    def unregister(self) -> None:
+        """The class is dying: its bases stop propagating versions to it. Cache entries need no
+        cleanup, since its versions are never issued again (review log D-1)."""
+        for b in self.bases:
+            b.subclasses.remove(self)
 
     def __repr__(self) -> str:
         return f"<RefClass {self.name} v{self.version}>"
@@ -213,13 +256,20 @@ class _Plan:
 
 @dataclass(frozen=True)
 class CacheEntry:
-    cls: RefClass
+    """Immutable once installed. ``version`` names the class and its state (review log D-1), so
+    no class reference is kept; ``cls_hint`` is the class's identity as a plain number, used only
+    to replace that class's older entries on install, never to validate. ``found`` is what the
+    class lookup found (also for instance-storage kinds, where it is the shadowed class-level
+    object); ``found_version`` is the version of its class at plan time, or NO_VERSION when its
+    descriptor status cannot change. The check reads ``found.cls.version`` only after the class
+    version matched: the class still owns ``found``, and ``found`` holds its own class."""
+
     version: int
     name: str
     kind: str
     found: Any = None                 # borrowed: the class owns it (section 15, finding 3)
-    found_cls: RefClass | None = None
-    found_version: int = 0
+    found_version: int = NO_VERSION
+    cls_hint: int = 0
 
 
 class Site:
@@ -233,16 +283,18 @@ class Site:
         self.hits = 0
         self.misses = 0
 
-    def find(self, cls: RefClass, name: str) -> CacheEntry | None:
+    def find(self, version: int, name: str) -> CacheEntry | None:
+        if version == NO_VERSION:
+            return None
         for e in self.entries:
-            if e.cls is cls and e.name == name:
+            if e.version == version and e.name == name:
                 return e
         return None
 
     def install(self, entry: CacheEntry) -> None:
         if self.megamorphic:
             return
-        self.entries = [e for e in self.entries if not (e.cls is entry.cls and e.name == entry.name)]
+        self.entries = [e for e in self.entries if not (e.cls_hint == entry.cls_hint and e.name == entry.name)]
         if len(self.entries) >= self.N:
             self.megamorphic = True
             self.entries = []
@@ -295,12 +347,18 @@ class Runtime:
         hit = cls.lookup(name)
         found, _owner = hit if hit else (None, None)
         # Finding (refmodel, 2026-10-31): an entry that resolves to *instance storage* must still
-        # depend on the class and version of whatever object the class lookup found, because a
+        # depend on the version of the class of whatever object the class lookup found, because a
         # non-data descriptor can become a data descriptor through a change to its own class
         # alone (promotion), and then it must win over the instance value. Plain values cannot
         # change their descriptor status, so only model objects create the dependency. The same
         # holds for a plain class attribute whose own class later gains __get__ (C-3-11).
-        dep: tuple[RefClass | None, int] = (found.cls, found.cls.version) if isinstance(found, RefObject) else (None, 0)
+        found_version = found.cls.version if isinstance(found, RefObject) else NO_VERSION
+        cacheable = version != NO_VERSION and (found_version != NO_VERSION or not isinstance(found, RefObject))
+
+        def entry(kind: str, cached_found: Any = None) -> CacheEntry | None:
+            if not cacheable:
+                return None
+            return CacheEntry(version, name, kind, cached_found, found_version, id(cls))
         # CPython's slot_tp_getattr_hook looks __getattr__ up before running the generic lookup and
         # calls it when that lookup raises AttributeError for any reason (C-3-09).
         hook_hit = cls.lookup("__getattr__")
@@ -309,45 +367,46 @@ class Runtime:
         # 1. data descriptor on the class (slots are data descriptors)
         if hit is not None and is_data_descriptor(found):
             if isinstance(found, SlotDescriptor):
-                return _Plan(SLOT, None, obj.inline[name], hook), CacheEntry(cls, version, name, SLOT)
+                return _Plan(SLOT, None, obj.inline[name], hook), entry(SLOT)
             assert isinstance(found, RefObject)
             if found.cls.lookup("__get__") is None:
                 # data descriptor without __get__: instance storage wins, then the descriptor itself
                 present, v = self._instance_storage(obj, name)
                 return _Plan(_UNCACHED_VALUE, None, v if present else found, hook), None
-            return (_Plan(DATA_DESCRIPTOR, found, None, hook),
-                    CacheEntry(cls, version, name, DATA_DESCRIPTOR, found, found.cls, found.cls.version))
+            return _Plan(DATA_DESCRIPTOR, found, None, hook), entry(DATA_DESCRIPTOR, found)
 
         # 2. instance storage
         present, v = self._instance_storage(obj, name)
         if present:
             kind = FIELD if (not obj.exposed and name in cls.promoted_fields) else INSTANCE_DICT
-            return _Plan(kind, None, v, hook), CacheEntry(cls, version, name, kind, None, dep[0], dep[1])
+            return _Plan(kind, None, v, hook), entry(kind, found)
 
         # 3. non-data descriptor or plain class attribute
         if hit is not None:
             if is_descriptor(found):
                 assert isinstance(found, RefObject)
-                return (_Plan(NON_DATA_DESCRIPTOR, found, None, hook),
-                        CacheEntry(cls, version, name, NON_DATA_DESCRIPTOR, found, found.cls, found.cls.version))
-            return _Plan(CLASS_ATTR, found, found, hook), CacheEntry(cls, version, name, CLASS_ATTR, found, dep[0], dep[1])
+                return _Plan(NON_DATA_DESCRIPTOR, found, None, hook), entry(NON_DATA_DESCRIPTOR, found)
+            return _Plan(CLASS_ATTR, found, found, hook), entry(CLASS_ATTR, found)
 
         # 4. __getattr__, or AttributeError
         if hook is not None:
-            return _Plan(GETATTR_HOOK, hook, None, None), CacheEntry(cls, version, name, GETATTR_HOOK, hook)
+            return _Plan(GETATTR_HOOK, hook, None, None), entry(GETATTR_HOOK, hook)
         return _Plan(_RAISE, None, None, None), None
 
     # ---- cached lookup: validity predicates per kind ------------------------------------
     def _plan_cached(self, obj: RefObject, name: str, site: Site) -> _Plan | None:
         """The plan the cache alone selects, or None when no valid entry applies. Runs no user code."""
         cls = obj.cls
-        e = site.find(cls, name)
-        if e is None or e.version != cls.version:
+        e = site.find(cls.version, name)    # the version alone names the class (review log D-1)
+        if e is None:
             return None
-        if e.found_cls is not None and e.found_version != e.found_cls.version:
+        if e.found_version != NO_VERSION and e.found.cls.version != e.found_version:
             return None                 # the found object's own class changed (gained __get__ or __set__)
         hook_hit = cls.lookup("__getattr__")
         hook = hook_hit[0] if hook_hit is not None else None   # covered by the class version
+        if e.kind in (SLOT, FIELD) and name not in obj.inline:
+            # the C++ analogue reads a field offset from another layout (review log RL-23)
+            raise ModelError(f"unsound cache: {name} cached as {e.kind} for a layout without that field")
         if e.kind == SLOT:
             return _Plan(SLOT, None, obj.inline[name], hook)
         if e.kind == FIELD:

@@ -1,4 +1,4 @@
-// runtime/object.hpp  -- draft v4 after review round three (design document, section 3).
+// runtime/object.hpp  -- draft v5: review round three, then review log D-1 (design document, section 3).
 // NOT COMPILABLE AS IS: declarations only (CompactDict, Unset, this_thread_id and the allocator are
 // unspecified). The executable statement of this design is refmodel/objects.py; write the real
 // header from the model, one conformance case at a time. Open points are listed in TODO.md.
@@ -107,6 +107,18 @@ struct FieldEntry {
   bool          promoted;    // true: a __dict__ attribute kept inline (migrates on exposure); false: a real __slots__ field
 };
 
+// ---- Class versions: one process-wide counter (review log D-1, 2026-11-01), as CPython's type version tags ----
+// A new class and every mutation of a class or any base take a number never issued before, so a version names one class
+// in one state and a class created at a dead class's address cannot match the dead class's cache entries (C-3-12).
+// 0 is never a version: after 2^64 - 1 numbers the counter stays at 0, and a class that takes it is never cached again.
+inline std::atomic<std::uint64_t> next_class_version{1};
+inline std::uint64_t new_class_version() noexcept {
+  std::uint64_t v = next_class_version.load(std::memory_order_relaxed);
+  do { if (v == 0) return 0; }
+  while (!next_class_version.compare_exchange_weak(v, v + 1, std::memory_order_relaxed));
+  return v;
+}
+
 // ---- Class object: one per Python class, created at module initialisation (reference-counted, D-19) or at runtime ----
 enum ClassFlag : std::uint32_t {
   HAS_INSTANCE_DICT = 1u << 0, HAS_GETATTR = 1u << 1, HAS_GETATTRIBUTE = 1u << 2, HAS_SETATTR = 1u << 3,
@@ -115,11 +127,13 @@ enum ClassFlag : std::uint32_t {
 struct ClassObject : Object {
   const Str*                    name;
   std::span<ClassObject*>       mro;            // C3 order, self first; immutable after creation
-  std::span<ClassObject*>       subclasses;     // direct subclasses; a version bump propagates down this list
+  std::span<ClassObject*>       subclasses;     // direct subclasses; each takes a new version when this class does; a
+                                                //   dying class leaves its bases' lists
   std::span<const FieldEntry>   fields;         // sorted by name_hash; empty in dict mode
   std::span<std::atomic<void*>> methods;        // one slot per method name, index fixed in the closed world
   Slots                         slots;
-  std::atomic<std::uint32_t>    version;        // bumped by every mutation of this class or any base; caches compare it
+  std::atomic<std::uint64_t>    version;        // new_class_version() at creation and on every mutation of this class or
+                                                //   any base; caches compare it; 0: never cached
   std::atomic<Dict*>            class_attrs;    // attributes added to the class after definition; lazy; owns the values
   Shape*                        root_shape;     // non-null only for dict-mode classes
   std::size_t                   instance_size;
@@ -129,17 +143,23 @@ Ref<Object> class_dict_view(ClassObject*);      // Cls.__dict__: a read-only map
 
 // ---- Attribute access: Python's order at every tier, with cache entries that say when they are valid ----
 struct ICacheEntry {            // immutable metadata once published; a call site holds up to N of these behind one
-  ClassObject*  cls;            //   std::atomic<const ICacheEntry*> stored with release and loaded with acquire;
-  std::uint32_t version;        //   beyond N entries the site is megamorphic and always takes the generic path
+                                //   std::atomic<const ICacheEntry*> stored with release and loaded with acquire;
+                                //   beyond N entries the site is megamorphic and always takes the generic path
+  std::uint64_t  version;       // the class and its state: versions are never reissued (D-1), so no class pointer is kept
+  std::uintptr_t cls_hint;      // the class's address as a number: an install replaces this class's older entries by it;
+                                //   never dereferenced and never part of validity
   const Str*    name;           // interned; literal sites have one name, computed-name sites key on it
   Shape*        shape;          // dict-mode instances only
   enum Kind : std::uint8_t { DataDescriptor, Field, InstanceDict, ClassAttr, GetAttrHook, ShapeSlot } kind;
   std::uint32_t offset; TypeTag tag;
-  const Object* found;          // BORROWED: the descriptor or class attribute the lookup found; the class owns it.
-  ClassObject*  found_cls;      // FINDING (refmodel, 2026-10-31): recorded on EVERY kind, including Field and
-  std::uint32_t found_version;  //   InstanceDict: a non-data descriptor can be promoted through its own class alone.
+  const Object* found;          // BORROWED: what the class lookup found (for Field and InstanceDict, the class-level object
+                                //   the instance storage shadows); the class owns it while version matches.
+  std::uint64_t found_version;  // FINDING (refmodel, 2026-10-31): the version of found's class, on EVERY kind: a non-data
+                                //   descriptor can be promoted through its own class alone. 0: found cannot change status.
 };
-// An entry is used only if cls and version match, found_cls and found_version match, and then, by kind:
+// An entry is used only if version equals the object's class version (never 0), and then, if found_version is not 0,
+// found->cls->version equals found_version: read only after the first check, when the class still owns found and found
+// holds its class (D-1); reading the class through found also sees a __class__ assignment to found. Then, by kind:
 //   Field          : the inline slot is not Unset and DICT_EXPOSED is clear; otherwise the slow path
 //   ClassAttr      : no instance storage shadows the name: the promoted inline field for name (if declared) is Unset,
 //                    and the instance dict is null or has no entry for name

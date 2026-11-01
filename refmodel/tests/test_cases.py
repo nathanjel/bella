@@ -6,7 +6,20 @@ or directly: python -m refmodel.tests.test_cases
 """
 from __future__ import annotations
 
-from refmodel.objects import UNSET, ModelError, RefClass, RefObject, Runtime, Site, make_descriptor_class
+import gc
+import weakref
+
+from refmodel.objects import (
+    NO_VERSION,
+    UNSET,
+    VERSIONS,
+    ModelError,
+    RefClass,
+    RefObject,
+    Runtime,
+    Site,
+    make_descriptor_class,
+)
 
 
 def _world() -> tuple[Runtime, RefClass, RefClass, RefClass, RefClass]:
@@ -192,6 +205,87 @@ def test_class_attribute_becomes_descriptor_c_3_11() -> None:
     D.del_attr("__get__")
     assert rt.getattr(h, "x", site) is d
 
+
+
+# ---- review log D-1 (2026-11-01): class versions from one global counter ---------------------
+
+def test_dead_class_entries_never_match_a_new_class_c_3_12() -> None:
+    """C-3-12, RL-23: classes that die one after another and are read through one site. Each
+    new class misses on its first read, whatever memory it reuses, and no entry keeps a class
+    alive."""
+    rt, site = Runtime(), Site()
+    shapes = [
+        ("TwoSlots", {"slots": ("a", "x")}, "second slot"),
+        ("OneSlot", {"slots": ("x",)}, "first slot"),
+        ("ClassAttribute", {"attrs": {"x": "class attribute"}}, None),
+        ("Plain", {"promoted": ("x",)}, "instance dictionary"),
+    ]
+    versions: list[int] = []
+    for _ in range(2):
+        for name, layout, stored in shapes:
+            K = RefClass(name, **layout)  # type: ignore[arg-type]
+            versions.append(K.version)
+            o = RefObject(K)
+            if stored is not None:
+                rt.setattr(o, "x", stored)
+            misses = site.misses
+            assert rt.getattr(o, "x", site) == rt.getattr(o, "x", site) == (stored or "class attribute")
+            assert site.misses == misses + 1, name
+            ref = weakref.ref(K)
+            del K, o
+            gc.collect()
+            assert ref() is None, f"a cache entry kept {name} alive"
+    assert len(set(versions)) == len(versions) and NO_VERSION not in versions
+
+
+def test_a_reissued_version_is_served_stale_d_1() -> None:
+    """What per-class versions would do: give a new class a number a dead class's entry still
+    carries. The cache then selects the dead class's plan, and the model reports it."""
+    rt, site = Runtime(), Site()
+    Old = RefClass("Old", attrs={"x": "old"})
+    assert rt.getattr(RefObject(Old), "x", site) == "old"
+    stale = Old.version
+    del Old
+    New = RefClass("New", slots=("x",))
+    n = RefObject(New)
+    rt.setattr(n, "x", "new")
+    New.version = stale
+    try:
+        rt.getattr(n, "x", site)
+    except ModelError:
+        pass
+    else:
+        raise AssertionError("a reissued version served a dead class's entry silently")
+
+
+def test_every_bump_takes_a_new_version_and_exhaustion_stops_caching_d_1() -> None:
+    A = RefClass("A")
+    B = RefClass("B", (A,), promoted=("x",))
+    C = RefClass("C", (A,))
+    before = {A.version, B.version, C.version}
+    A.set_attr("x", 1)                           # A and both subclasses: three new, distinct versions
+    after = {A.version, B.version, C.version}
+    assert len(after) == 3 and not after & before
+    C.unregister()                               # a dying subclass leaves its bases
+    c_version = C.version
+    A.set_attr("x", 2)
+    assert C.version == c_version and C not in A.subclasses
+
+    rt, site = Runtime(), Site()
+    saved = VERSIONS.limit
+    VERSIONS.limit = VERSIONS.next               # one version left: A takes it, B gets none
+    try:
+        A.set_attr("x", 3)
+        assert A.version != NO_VERSION and B.version == NO_VERSION
+        b = RefObject(B)
+        assert [rt.getattr(b, "x", site) for _ in range(3)] == [3, 3, 3]
+        assert site.hits == 0 and site.entries == []       # an uncacheable class is always looked up
+        rt.setattr(b, "x", 4)
+        assert [rt.getattr(b, "x", site) for _ in range(2)] == [4, 4] and site.hits == 0
+        a = RefObject(A)
+        assert [rt.getattr(a, "x", site) for _ in range(2)] == [3, 3] and site.hits == 1
+    finally:
+        VERSIONS.limit = saved
 
 if __name__ == "__main__":
     for name, fn in list(globals().items()):

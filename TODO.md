@@ -22,12 +22,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   first-use edge, not an eager one; today it is followed as eager, which is sound but
   over-approximates. Eleven phase-1 modules use it (`collections`, `contextlib`,
   `dataclasses`, `typing`, `traceback`, `pathlib`, `argparse`, `inspect`, `difflib`,
-  `tokenize`, `_colorize`), so lazy-import semantics are phase-1 runtime work. One question
-  for the author before the reconciliation: `[lazy_unsupported]` refuses a whole function, so
-  `Logger.__reduce__` (moved there by D-3: it imports `pickle` only for a logger that is not
-  the registered one, to raise `PicklingError`) would refuse `copy.copy(logger)` on the path
-  that never imports. Refusing at the import statement when it runs is finer; it changes the
-  manifest's contract, so it is the author's call.
+  `tokenize`, `_colorize`), so lazy-import semantics are phase-1 runtime work.
+  `[lazy_unsupported]` refuses whole functions, on every path (author's decision 2026-11-01,
+  spec section 7): `Logger.__reduce__` stays there, and `copy.copy(logger)` is refused.
   Review the six `dynamic_unknown` import sites the lock lists (`encodings`, `inspect`,
   `traceback`, `unittest.loader/main`, `warnings`) and decide: registry entry, adaptation, or
   per-API scope.
@@ -36,8 +33,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## 2. Grow the conformance corpus on 3.15.2
 
-* Today: 27 cases + 1 excluded-construct case under `conformance/cases`, from review findings
-  and from CPython 3.15 changes (C-9-07, C-3-09..11), recorded authoritatively on 3.15.2
+* Today: 28 cases + 1 excluded-construct case under `conformance/cases`, from review findings
+  and from CPython 3.15 changes (C-9-07, C-3-09..12), recorded authoritatively on 3.15.2
   (2026-11-01); `make verify` reproduces them, D-08 masking is opt-in per case (`# mask:`).
 * To do: cases for the 3.15 additions the phase-1 library depends on or the dialect must
   decide: PEP 810 lazy imports (reification at first use, import errors at first use,
@@ -57,21 +54,23 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 * Today: `refmodel/objects.py` models promoted fields, dict exposure/replacement/sharing with
   insertion order, descriptors by Python's rules incl. descriptor-class mutation, `__getattr__`,
-  class versions with subclass propagation, inline caches with validity predicates, and checks
+  class versions from one global counter with subclass propagation (review log D-1),
+  runtime-created classes that die (the oracle's `recreate_class`), inline caches keyed by
+  version with validity predicates, and checks
   every cached read against the generic path; `refmodel.selftest` and the Hypothesis state
   machine agree with CPython on tens of thousands of random operations.
 * To do, in the model first (with a conformance case each): `__setattr__`/`__delattr__`/
   `__getattribute__` overrides; `__class__` assignment; dict-mode (runtime-created) classes
   with shapes; setattr caching; `MAY_RECEIVE_COMPUTED_WRITES` as a class fact and the
   `__getattr__` shortcut it licenses; weak references; object lifetimes, so that `found` is
-  really borrowed (review log RL-20); oracle operations for the 2026-11-01 scenarios (RL-22).
-  Class versions from one global counter wait on the author (D-1). Before the header, make
+  really borrowed (review log RL-20); oracle operations for the other 2026-11-01 scenarios
+  (RL-22: a raising `__get__`, a memoising `__getattr__`). Before the header, make
   lifetimes explicit (review log D-2, RL-20, RL-49): retain and release points in the L2
   grammar, finaliser traces in `eval1`, and lifetimes in the model. Then write `runtime/include/bella/object.hpp`
   from the model (start from `docs/drafts/object.hpp.draft` and the two findings in
   `docs/DECISIONS.md`), single-threaded first: plain counters, no atomics, no collector.
 * Done when: the C++ object model passes the same stateful test through a thin Python
-  binding, and C-3-01..11 pass under the compiled runner.
+  binding, and C-3-01..12 pass under the compiled runner.
 
 ## 4. One complete compilation path on the three target programs
 

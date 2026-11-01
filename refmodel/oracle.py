@@ -3,6 +3,10 @@
 Every operation is applied to both sides and the outcomes compared. Promotion (which
 attributes the compiler keeps inline) exists only on the model side; that it is invisible
 from the CPython side is exactly the property under test.
+
+One class slot holds a class created while the program runs: ``recreate_class`` drops it with
+its two instances and creates another variant (a different layout or lookup kind), so the
+sites hold entries for a dead class when the new one is read through them (review log D-1).
 """
 from __future__ import annotations
 
@@ -14,6 +18,9 @@ from typing import Any
 from refmodel.objects import ModelError, RefClass, RefObject, Runtime, Site, make_descriptor_class
 
 NAMES: tuple[str, ...] = ("x", "y", "z", "s", "t", "w", "cv", "g1", "attr", "k")
+RUNTIME_CLASS = 6                     # index in World.classes of the class recreate_class replaces
+RUNTIME_OBJECTS = (8, 9)              # indices in World.objects of its instances
+RUNTIME_VARIANTS = 5
 
 Outcome = tuple[str, Any]   # ("value", v) | ("error", "AttributeError") | ("dict", [(k, v), ...])
 
@@ -85,16 +92,52 @@ class World:
                 raise AttributeError(name)
 
         self.classes: list[tuple[RefClass, type]] = [(A, RA), (B, RB), (S, RS), (T, RT), (E, RE), (G, RG)]
+        self.classes.append(self._make_runtime_class(0))
+        R, RR = self.classes[RUNTIME_CLASS]
         self.objects: list[tuple[RefObject, Any]] = [
             (RefObject(A), RA()), (RefObject(A), RA()),
             (RefObject(B), RB()), (RefObject(B), RB()),
             (RefObject(S), RS()), (RefObject(T), RT()), (RefObject(E), RE()), (RefObject(G), RG()),
+            (RefObject(R), RR()), (RefObject(R), RR()),
         ]
         # one inline cache per literal-name call site, plus one computed-name site
         self.sites: dict[str, Site] = {name: Site() for name in NAMES}
         self.sites["<computed>"] = Site()
         self.descriptors: list[DescriptorPair] = []
         self.log: list[tuple[Any, ...]] = []
+
+    # ---- runtime-created classes (review log D-1) ------------------------------------------
+    def _make_runtime_class(self, variant: int) -> tuple[RefClass, type]:
+        """A new model class and a new CPython class on every call, in one of five shapes."""
+        A, RA = self.classes[0]
+        if variant == 0:
+            class R0:
+                __slots__ = ("k", "x")
+            return RefClass("R0", slots=("k", "x")), R0
+        if variant == 1:
+            class R1:
+                __slots__ = ("x",)
+            return RefClass("R1", slots=("x",)), R1
+        if variant == 2:
+            class R2:
+                x = 7
+            return RefClass("R2", promoted=("y",), attrs={"x": 7}), R2
+        if variant == 3:
+            class R3(RA):                                  # type: ignore[misc,valid-type]  # a runtime subclass
+                pass
+            return RefClass("R3", (A,), promoted=("k",)), R3
+
+        def model_hook(obj: RefObject, name: str) -> Any:
+            if name in ("x", "k"):
+                return ("R4", name)
+            raise AttributeError(name)
+
+        class R4:
+            def __getattr__(self, name: str) -> Any:
+                if name in ("x", "k"):
+                    return ("R4", name)
+                raise AttributeError(name)
+        return RefClass("R4", attrs={"__getattr__": model_hook}), R4
 
     # ---- descriptor factory ----------------------------------------------------------------
     def make_descriptor(self, data: bool) -> DescriptorPair:
@@ -208,6 +251,29 @@ class World:
 
         return _outcome(model), _outcome(real)
 
+    def op_recreate_class(self, variant: int) -> tuple[Outcome, Outcome]:
+        """Drop the runtime-created class and its instances, then create a new class (review log
+        D-1). The old model class dies before the new one exists: no cache entry refers to it and
+        its bases forget it. Its only cycle is its own MRO, which this method clears in place of
+        the cycle collector (a full collection per operation makes the Hypothesis run five times
+        slower), so reference counting frees it at once and the new class usually takes its
+        memory and its id, as C-3-12 shows CPython does. The descriptor stores forget the dropped
+        instances, whose ids the new instances may take as well."""
+        assert RUNTIME_CLASS == len(self.classes) - 1 and RUNTIME_OBJECTS == (len(self.objects) - 2, len(self.objects) - 1)
+        old, _ = self.classes.pop()
+        old.unregister()
+        old.mro = ()
+        for _ in RUNTIME_OBJECTS:
+            m, r = self.objects.pop()
+            for pair in self.descriptors:
+                pair.store_m.pop(id(m), None)
+                pair.store_r.pop(id(r), None)
+        del old, m, r
+        mc, rc = self._make_runtime_class(variant)
+        self.classes.append((mc, rc))
+        self.objects += [(RefObject(mc), rc()) for _ in RUNTIME_OBJECTS]
+        return ("value", mc.name), ("value", rc.__name__)
+
     def op_demote_descriptor(self, desc_i: int) -> tuple[Outcome, Outcome]:
         """Remove __set__ from a descriptor's class: a data descriptor becomes non-data, so
         instance storage it used to hide becomes visible again."""
@@ -238,6 +304,8 @@ class World:
     def random_op(self, rng: random.Random) -> tuple[Any, ...]:
         n_obj = len(self.objects)
         roll = rng.random()
+        if roll < 0.03:
+            return ("recreate_class", rng.randrange(RUNTIME_VARIANTS))
         if roll < 0.30:
             return ("get", rng.randrange(n_obj), rng.choice(NAMES), rng.random() < 0.2)
         if roll < 0.58:

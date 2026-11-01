@@ -70,8 +70,7 @@ design document edited and re-exported the same day):
 
 **2026-11-01 — review-log decisions D-2, D-3 and D-4** (author's decisions on the discussion
 items of [the review log](reviews/review-log.md); dialect specification v0.5 and the design
-document edited and re-exported the same day). D-1 (class versions from one global counter)
-is still open.
+document edited and re-exported the same day). D-1 followed the same day (below).
 
 * D-2, the next increment: phase 1 is delivered as 1a (core language and the data-structure
   modules the three target programs need), 1b (`enum`, `dataclasses`, `typing`) and 1c (I/O,
@@ -90,6 +89,25 @@ is still open.
   catchable error would be swallowed by `traceback`'s `suppress(Exception)` and drop the
   keyword suggestion silently). E-08 is unchanged for programs. Spec sections 4 and 7, design
   section 10.4, `manifest.toml` `[phase1.shim]`.
+
+**2026-11-01 — review-log decision D-1, and the unit of `[lazy_unsupported]`** (author's
+decisions; design document sections 3 and 10.4, dialect specification v0.5 section 7, edited
+and re-exported the same day).
+
+* D-1, class versions: one process-wide 64-bit counter, as CPython's type version tags, instead
+  of a counter per class. A new class and every mutation of a class or a base take a number
+  never issued before, so a cache entry is keyed by the version alone and keeps no class
+  pointer (`cls_hint`, the address as an integer, only picks which older entry an install
+  replaces); `found_version` is checked through `found`, after the class version matched; 0 is
+  never a version, and a class that gets it after 2^64 − 1 numbers is never cached again. No
+  per-class limit (CPython's 1000 rations a 32-bit space). Model first (`VersionCounter`, the
+  oracle's `recreate_class`), then case C-3-12, design section 3 and
+  `docs/drafts/object.hpp.draft`. Review log RL-23.
+* `[lazy_unsupported]` refuses the whole function, as before (the alternative was refusing at
+  the import statement when it runs): calling an unsupported function raises the
+  milestone-naming error on every path through it, so `copy.copy(logger)` is refused in phase 1
+  because `Logger.__reduce__` imports `pickle` for an unregistered logger. Support stays a
+  build-time property of an API, not of a run.
 
 ## Pins
 
@@ -112,8 +130,9 @@ is still open.
    for that name: a non-data descriptor can become a data descriptor through a change to its
    own class alone, and then it must win over the instance value. CPython's specializer
    avoids the case by never specialising when the class has an attribute of that name; Bella
-   records `found_cls`/`found_version` on every entry kind. Found by `refmodel.selftest` on
-   its first run with cache-heavy workloads; fixed in `refmodel/objects.py`.
+   records `found_cls`/`found_version` on every entry kind (since D-1, `found_version` alone,
+   checked through `found`). Found by `refmodel.selftest` on its first run with cache-heavy
+   workloads; fixed in `refmodel/objects.py`.
 3. C++ argument evaluation order (GCC: right to left) is observable through `print(f(), g())`
    when the calls have effects; the emitter binds every effectful argument to a temporary in
    order (C-2-01). Found by the toy slice on `pipeline/examples/loops.py`.
@@ -140,3 +159,9 @@ is still open.
    decision (D-1 to D-4) are in `docs/reviews/review-log.md`. Two facts measured along the way
    that the implementation must follow: CPython 3.15 leaves `UnboundLocalError.name` as None
    (NameError carries the name), and a `with` statement looks up `__exit__` before `__enter__`.
+7. Class versions must never be reissued (2026-11-01, D-1). Once cache entries stopped holding
+   their class, the model reproduced RL-23: with versions tied to the class address, a dead
+   class's entry was served to the class created at its address on the first seed (a Slot entry
+   for a field the new layout does not have), which the model reported as an unsound hit. Per-class counters starting at 0 fail sooner, since two
+   live classes share version 0. CPython 3.15.2 placed ten of C-3-12's twelve classes at one
+   address.

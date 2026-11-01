@@ -48,7 +48,7 @@ Two conventions in application code feed the passes directly and are worth recom
 The runtime has two worlds. Statically typed values (`int64_t`, `double`, `py::Int`, `std::vector<T>`, generated structs) are what the compiler uses wherever the oracle gave a type; the boxed world below is the uniform representation for `object`, mixed containers, dynamic attributes and function values. The draft makes five choices, each for a reason: no C++ virtual functions (dispatch goes through the class object's slot table so that `__class__` assignment and monkey-patching stay possible); a tagged 64-bit `Obj` word so that small integers never allocate even inside boxed containers; a 24-byte header laid out for biased reference counting; a per-class field table that maps an attribute name to a byte offset, which is what makes computed-name access and `__getattr__` cheap; and an inline overflow pointer in every class without \_\_slots\_\_, null until the first undeclared attribute, so that no shared table sits on the attribute path (decision of 2026-10-30, section 12).
 
 ```cpp
-// runtime/object.hpp  -- draft v4 after review round three; C++26 on the newest GCC
+// runtime/object.hpp  -- draft v5: review round three, then review log D-1; C++26 on the newest GCC
 #include <atomic>
 #include <cstdint>
 #include <span>
@@ -152,6 +152,18 @@ struct FieldEntry {
   bool          promoted;    // true: a __dict__ attribute kept inline (migrates on exposure); false: a real __slots__ field
 };
 
+// ---- Class versions: one process-wide counter (review log D-1, 2026-11-01), as CPython's type version tags ----
+// A new class and every mutation of a class or any base take a number never issued before, so a version names one class
+// in one state and a class created at a dead class's address cannot match the dead class's cache entries (C-3-12).
+// 0 is never a version: after 2^64 - 1 numbers the counter stays at 0, and a class that takes it is never cached again.
+inline std::atomic<std::uint64_t> next_class_version{1};
+inline std::uint64_t new_class_version() noexcept {
+  std::uint64_t v = next_class_version.load(std::memory_order_relaxed);
+  do { if (v == 0) return 0; }
+  while (!next_class_version.compare_exchange_weak(v, v + 1, std::memory_order_relaxed));
+  return v;
+}
+
 // ---- Class object: one per Python class, created at module initialisation (reference-counted, D-19) or at runtime ----
 enum ClassFlag : std::uint32_t {
   HAS_INSTANCE_DICT = 1u << 0, HAS_GETATTR = 1u << 1, HAS_GETATTRIBUTE = 1u << 2, HAS_SETATTR = 1u << 3,
@@ -160,11 +172,13 @@ enum ClassFlag : std::uint32_t {
 struct ClassObject : Object {
   const Str*                    name;
   std::span<ClassObject*>       mro;            // C3 order, self first; immutable after creation
-  std::span<ClassObject*>       subclasses;     // direct subclasses; a version bump propagates down this list
+  std::span<ClassObject*>       subclasses;     // direct subclasses; each takes a new version when this class does; a
+                                                //   dying class leaves its bases' lists
   std::span<const FieldEntry>   fields;         // sorted by name_hash; empty in dict mode
   std::span<std::atomic<void*>> methods;        // one slot per method name, index fixed in the closed world
   Slots                         slots;
-  std::atomic<std::uint32_t>    version;        // bumped by every mutation of this class or any base; caches compare it
+  std::atomic<std::uint64_t>    version;        // new_class_version() at creation and on every mutation of this class or
+                                                //   any base; caches compare it; 0: never cached
   std::atomic<Dict*>            class_attrs;    // attributes added to the class after definition; lazy; owns the values
   Shape*                        root_shape;     // non-null only for dict-mode classes
   std::size_t                   instance_size;
@@ -190,17 +204,23 @@ struct DynObject : DynamicObject { Shape* shape; Obj* values; };   // instance o
 
 // ---- Attribute access: Python's order at every tier, with cache entries that say when they are valid ----
 struct ICacheEntry {            // immutable metadata once published; a call site holds up to N of these behind one
-  ClassObject*  cls;            //   std::atomic<const ICacheEntry*> stored with release and loaded with acquire;
-  std::uint32_t version;        //   beyond N entries the site is megamorphic and always takes the generic path
+                                //   std::atomic<const ICacheEntry*> stored with release and loaded with acquire;
+                                //   beyond N entries the site is megamorphic and always takes the generic path
+  std::uint64_t  version;       // the class and its state: versions are never reissued (D-1), so no class pointer is kept
+  std::uintptr_t cls_hint;      // the class's address as a number: an install replaces this class's older entries by it;
+                                //   never dereferenced and never part of validity
   const Str*    name;           // interned; literal sites have one name, computed-name sites key on it
   Shape*        shape;          // dict-mode instances only
   enum Kind : std::uint8_t { DataDescriptor, Field, InstanceDict, ClassAttr, GetAttrHook, ShapeSlot } kind;
   std::uint32_t offset; TypeTag tag;
-  const Object* found;          // BORROWED: the descriptor or class attribute the lookup found; the class owns it, and the
-  ClassObject*  found_cls;      //   entry is valid only while cls->version matches, so a replaced attribute is never read
-  std::uint32_t found_version;  //   through a stale entry; found_cls/found_version catch a descriptor whose own class
-};                              //   gained or lost __set__ (data-descriptor status changed without touching cls)
-// An entry is used only if cls and version match, found_cls and found_version match, and then, by kind:
+  const Object* found;          // BORROWED: what the class lookup found (for Field and InstanceDict, the class-level object
+                                //   the instance storage shadows); the class owns it, and the entry is valid only while
+                                //   version matches, so a replaced attribute is never read through a stale entry
+  std::uint64_t found_version;  // the version of found's class: catches a descriptor whose own class gained or lost
+};                              //   __set__ without touching this class; 0: found cannot change its status
+// An entry is used only if version equals the object's class version (never 0), and then, if found_version is not 0,
+// found->cls->version equals found_version: read only after the first check, when the class still owns found and found
+// holds its class (D-1); reading the class through found also sees a __class__ assignment to found. Then, by kind:
 //   Field          : the inline slot is not Unset and DICT_EXPOSED is clear; otherwise the slow path
 //   ClassAttr      : no instance storage shadows the name: the promoted inline field for name (if declared) is Unset,
 //                    and the instance dict is null or has no entry for name
@@ -225,9 +245,13 @@ How `obj.name` is resolved, decided at compile time per access:
 2. Class known, no data descriptor for `name` in the closed world, `name` a declared field, `DICT_EXPOSED` clear: a direct load or store at the known offset; the C++ compiler sees `p->x`. A declared field holds the `Unset` sentinel until it is first assigned; a read of `Unset` takes the slow path (class attribute, `__getattr__`, `AttributeError`), which is also how `del obj.x` behaves. Real `__slots__` fields never migrate; promoted fields (the attributes CPython would keep in `__dict__`) migrate into the dictionary when it is exposed.
 3. Class known, `name` not a field, class defines `__getattr__`: if the class can receive computed-name writes anywhere in the program (`MAY_RECEIVE_COMPUTED_WRITES`), the instance dictionary is checked first (a null test, then a probe); otherwise a direct call of the generated `__getattr__`. If the class defines `__getattribute__`, every access on it is a call, which the compiler knows per class.
 4. Class known, `name` not a field, no `__getattr__`: if any code in the program assigns `obj.name` on this class under a literal name, the field has already been added to the layout (layout widening); otherwise the instance dictionary is consulted and `AttributeError` raised on a miss.
-5. Class unknown, or name computed: the call site holds up to N immutable cache entries behind one atomic pointer loaded with acquire. An entry is keyed by class, class version, interned name and, for dict-mode instances, shape; it also records the class and version of the object the lookup found, so a descriptor whose own class gains or loses `__set__` invalidates the entry even though the containing class did not change. The entry's kind carries a validity check beyond those: an `Unset` or exposed field, a promoted inline field or instance-dictionary entry that would shadow a cached class attribute, a missing instance dictionary. The found object is a borrowed reference owned by the class: every entry is invalid the moment the class version moves, so a replaced attribute is never read through a stale entry, and the class releases the old attribute on replacement (under RCU in the threaded runtime), so cache entries never prolong a Python object's life. A mutation of a class bumps its version and the versions of every subclass, which the closed world enumerates and runtime-created subclasses register into; a site that needs more than N entries goes megamorphic and always takes the generic path.
+5. Class unknown, or name computed: the call site holds up to N immutable cache entries behind one atomic pointer loaded with acquire. An entry is keyed by the class version, the interned name and, for dict-mode instances, the shape; the version alone identifies the class, because versions are never reissued (Class versions, below). It also records the version of the found object's class, read through the found object, so a descriptor whose own class gains or loses `__set__` invalidates the entry even though the containing class did not change. The entry's kind carries a validity check beyond those: an `Unset` or exposed field, a promoted inline field or instance-dictionary entry that would shadow a cached class attribute, a missing instance dictionary. The found object is a borrowed reference owned by the class: every entry is invalid the moment the class version moves, so a replaced attribute is never read through a stale entry, and the class releases the old attribute on replacement (under RCU in the threaded runtime), so cache entries never prolong a Python object's life. A mutation of a class gives it and every subclass a new version (the closed world enumerates subclasses; a runtime-created subclass registers with its bases and leaves them when it dies); a site that needs more than N entries goes megamorphic and always takes the generic path.
 6. Computed writes follow the same order as literal ones: a `__setattr__` override if the class has one, else a data descriptor's `__set__`, then a real `__slots__` field, then a promoted field, then the instance dictionary. Nothing writes to the dictionary directly.
 7. `vars(obj)` and `obj.__dict__` expose the instance dictionary: on first exposure the object's promoted fields migrate into an ordinary `dict`, `DICT_EXPOSED` is set, and from then on those attributes go through the dictionary; the result is a real `dict` with stable identity (`vars(obj) is vars(obj)`, `type(vars(obj)) is dict`) and an independent lifetime, so it stays usable after `del obj` while `obj` is finalised on schedule. `obj.__dict__ = d` exposes first, then installs `d`, which may already be another object's dictionary; the previous dictionary lives on for whoever holds it. `Cls.__dict__` is a read-only mapping proxy. `__class__` assignment uses CPython's layout-compatibility criterion (section 13, finding 4).
+
+**Class versions (2026-11-01, review log D-1).** Versions come from one process-wide 64-bit counter, as CPython's type version tags do, not from a counter per class. With per-class counters starting at 0, a class created where a dead class used to be would carry the dead class's number, and a site still holding the dead class's entry would accept it: a field offset from another layout, or a `found` freed with the old class. Conformance case C-3-12 reads one attribute through one call site on twelve classes that die in turn, and CPython 3.15.2 places ten of them at the same address. Measured on 3.15.2 through `tp_version_tag`: two new classes took consecutive tags, a modification sets a class's tag to 0 and the next lookup assigns the next number (to every subclass as well), and a class created at a dead class's address got a fresh tag.
+
+A number that is never reissued has three consequences. An entry keeps no class pointer, only `cls_hint`, the class's address as an integer, which decides which older entry an install replaces and nothing else. The found object's class is reached through `found`, and only after the class version matched: the class then still owns `found`, `found` holds its class, and reading the class through `found` also notices a `__class__` assignment to it. And 0 is never a version: the counter issues 2^64 − 1 numbers, after which a class that needs a new one takes 0 and is never cached again, as CPython does when its tags run out. CPython also stops giving one class new tags after 1000 modifications, to ration a 32-bit space; Bella sets no such limit, since one number per nanosecond lasts 584 years. The reference model adopted the counter first (`VersionCounter` in `refmodel/objects.py`; the oracle's `recreate_class` operation drops a runtime-created class and creates another): with versions tied to the class address instead, its self-check served a dead class's entry to the class born at its address on the first seed, and reported it.
 
 Undeclared attributes live in a per-instance dictionary slot (decision of 2026-10-30, section 12). An instance has the slot exactly when its class's layout inherits a `__dict__`: `object` and the other built-in bases provide none, a class defined without `__slots__` adds one, and a class with `__slots__` adds one only if `'__dict__'` is listed, so a fully slotted hierarchy has none and a class with `__slots__ = ()` under an unslotted base keeps the base's. Such classes derive from `DynamicObject` and carry one atomic pointer at offset 24, null until the first undeclared write or the first exposure of `__dict__`, created by compare-and-swap. Inline fields come in two kinds: real `__slots__` fields, which never appear in `__dict__`, and promoted fields, the attributes CPython would keep in `__dict__` that the compiler keeps inline for speed until the dictionary is exposed, at which point they migrate into it and the object routes those attributes through the dictionary. The dictionary is an ordinary object with its own lifetime: it survives `del obj`, two objects may share one, and it holds no pointer back into its owner; attaching it sets `GC_TRACKED` so that a reference stored there can still close a collectable cycle.
 
@@ -297,7 +321,7 @@ struct Settings final : py::DynamicObject {                // no __slots__: carr
 auto host = s->dict.load(std::memory_order_acquire) ? py::dict_get_or_getattr(s.get(), py::intern("host"))
                                       : s->__getattr__(py::intern("host"));
 // getattr(s, key): computed name, one slow path, no dialect error
-static std::atomic<const py::ICacheEntry*> ic_17{nullptr};   // keyed by class, version and the interned name
+static std::atomic<const py::ICacheEntry*> ic_17{nullptr};   // keyed by the class version and the interned name
 auto port = py::getattr_generic(s.get(), key.get(), &ic_17);   // fields (none) -> class attrs -> side -> __getattr__
 ```
 
@@ -699,7 +723,9 @@ Import guards (D-3). Every import gets exactly one class, in this order of prece
 | guarded | At module level under a guard the build cannot evaluate, or in an exception handler | Always followed | An error: the module is required |
 | eager | At module level, unguarded or under a true guard | Always followed | An error: the module is required |
 
-Before D-3, every guarded import was one class, "conditional", and could be declared an omission. An `if` inside a function then became a silent ImportError at runtime, although spec section 7 calls only ImportError-guarded imports optional. Now an omission means exactly what CPython does when a module is not installed. A platform test is decided at build time from facts that the tool checks against the interpreter it runs on (the pinned build on Linux). A name the module binds twice, deletes, binds inside a loop or `try`, or that a function declares `global`, is not assumed inside functions, and a star import may rebind any public name. On 3.15.2 the closure finds 14 dead import edges: an \`if \_false:\` block in codecs and the Windows branches of `os`, `shutil`, `encodings` and `_colorize`, `uuid`'s non-Linux branch and `heapq`'s `__main__` block. Twelve entries left `[omissions]`: six were platform branches or `__main__` blocks, and six named imports that 3.15.2 no longer makes. `logging`'s `pickle` import, inside `Logger.__reduce__`, moved to `[lazy_unsupported]`.
+Before D-3, every guarded import was one class, "conditional", and could be declared an omission. An `if` inside a function then became a silent ImportError at runtime, although spec section 7 calls only ImportError-guarded imports optional. Now an omission means exactly what CPython does when a module is not installed. A platform test is decided at build time from facts that the tool checks against the interpreter it runs on (the pinned build on Linux). A name the module binds twice, deletes, binds inside a loop or `try`, or that a function declares `global`, is not assumed inside functions, and a star import may rebind any public name. On 3.15.2 the closure finds 14 dead import edges: an `if _false:` block in codecs and the Windows branches of `os`, `shutil`, `encodings` and `_colorize`, `uuid`'s non-Linux branch and `heapq`'s `__main__` block. Twelve entries left `[omissions]`: six were platform branches or `__main__` blocks, and six named imports that 3.15.2 no longer makes. `logging`'s `pickle` import, inside `Logger.__reduce__`, moved to `[lazy_unsupported]`.
+
+The unit of `[lazy_unsupported]` is the function (the author's decision, 2026-11-01): calling a function that contains an import of a module outside the manifest raises with the milestone name, whichever path the call would take. So `copy.copy(logger)` is refused in phase 1, because it runs `Logger.__reduce__`, although that path imports `pickle` only for a logger that is not the registered one. Refusing at the import statement when it runs would admit more programs, but it would make support depend on the path a run takes, and the manifest could no longer say which APIs a phase-1 program may call.
 
 The `codeop` shim (D-4). `traceback` imports `codeop` at module level (3.15.2 `traceback.py`, line 13), and E-08 excludes `codeop` because it compiles source text (E-01). The calls sit in one method, `TracebackException._find_keyword_typos` (lines 1458 and 1507). When it formats a `SyntaxError`, it recompiles the offending lines with `codeop.compile_command` to test whether a keyword in place of a misspelled name fixes them, and if so the message ends "Did you mean 'while'?". Measured on 3.15.2:
 

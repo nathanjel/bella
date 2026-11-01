@@ -11,10 +11,10 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import assume, settings, strategies as st  # noqa: E402
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule  # noqa: E402
 
-from refmodel.oracle import NAMES, World  # noqa: E402
+from refmodel.oracle import NAMES, RUNTIME_VARIANTS, World  # noqa: E402
 
-objects = st.integers(0, 7)
-classes = st.integers(0, 5)
+objects = st.integers(0, 9)
+classes = st.integers(0, 6)
 names = st.sampled_from(NAMES)
 values = st.integers(0, 99)
 
@@ -23,7 +23,7 @@ class AttributeModel(RuleBasedStateMachine):
     def __init__(self) -> None:
         super().__init__()
         self.world = World()
-        assert len(self.world.objects) == 8 and len(self.world.classes) == 6
+        assert len(self.world.objects) == 10 and len(self.world.classes) == 7
 
     @rule(obj=objects, name=names, computed=st.booleans())
     def get(self, obj: int, name: str, computed: bool) -> None:
@@ -66,6 +66,10 @@ class AttributeModel(RuleBasedStateMachine):
     def demote_descriptor(self, idx: int) -> None:
         assume(self.world.descriptors)
         self.world.apply(("demote_descriptor", idx % len(self.world.descriptors)))
+
+    @rule(variant=st.integers(0, RUNTIME_VARIANTS - 1))
+    def recreate_class(self, variant: int) -> None:
+        self.world.apply(("recreate_class", variant))
 
     @invariant()
     def model_agrees_with_cpython(self) -> None:
