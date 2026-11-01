@@ -7,11 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 70 findings from five reviews: 48 fixed (most in commit `0d92b51`,
+**Status on 2026-11-01:** 87 findings from seven reviews: 59 fixed (most in commit `0d92b51`,
 RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after the
-closure reviews, RL-57 with D-6), 10 already done before or because of the review, 5 planned
-(D-2 and D-5, accepted by the author), 2 deferred, 3 refuted and 2 checked with no issue.
-Nothing is open for discussion: the author decided D-1 to D-6 on 2026-11-01.
+closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews), 10 already done
+before or because of the review, 5 planned (D-2 and D-5, accepted by the author), 2 deferred,
+3 refuted, 3 checked with no issue, and 5 open for discussion (D-7 to D-11). The author decided
+D-1 to D-6 on 2026-11-01.
 
 ## Reviews received
 
@@ -22,6 +23,8 @@ Nothing is open for discussion: the author decided D-1 to D-6 on 2026-11-01.
 | 2026-11-01 | gemini-4-argon-high (G) | [2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md](2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
 | 2026-11-01 | astra-low (A3) | [2026-11-01-astra-low-03-stdlib-closure-review.md](2026-11-01-astra-low-03-stdlib-closure-review.md) | Gate 0 task 1: closure tool, manifest and lock at `b40ef2d` | CPython 3.15.2 (pinned uv build) |
 | 2026-11-01 | gemini-4-argon-high (G2) | [2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md](2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md) | task 1 and the review-log fixes, `f56d495` to `b40ef2d` | CPython 3.15.2, GCC 16.2.1 |
+| 2026-11-01 | astra-low (A4) | [2026-11-01-astra-low-04-target-increment-review.md](2026-11-01-astra-low-04-target-increment-review.md) | the target programs and the computed increments, `b40ef2d` to `8b8eb0d` | CPython 3.15.2 (pinned uv build) |
+| 2026-11-01 | gemini-4-argon-high (G3) | [2026-11-01-03-gemini-4-argon-high-targets-increments-review.md](2026-11-01-03-gemini-4-argon-high-targets-increments-review.md) | `6730ed8` to `8b8eb0d`: corpus, targets, licence register, increments | CPython 3.15.2, GCC 16.2.1 |
 | 2026-10-30 | external, rounds 1-3 | [round-1.md](round-1.md), [round-2.md](round-2.md), [round-3.md](round-3.md) | design documents | resolved in design sections 13-15 |
 
 All findings below were re-checked on CPython 3.15.2 (the pin since `f56d495`). Several of G's
@@ -152,6 +155,33 @@ their function and parent package.
 | RL-69 | G2 3.4.3 | A nested helper, not the function a program names, was recorded as refused | Confirmed | Fixed | The outermost enclosing function is refused (spec section 7 says so). Test `test_a_nested_helper_refuses_the_function_a_program_names_g2_3_4` |
 | RL-70 | G2 3.5 | `make lint` ran `ruff`/`mypy` from `PATH`, not `$(PY)` | Confirmed | Fixed | `$(PY) -m ruff check . && $(PY) -m mypy` |
 
+### Target programs and increments (A4, G3)
+
+Both reviews reproduced the six target locks and the increments (149 / 6 / 25) byte for byte.
+Every tool and oracle finding was reproduced on `8b8eb0d` before it was fixed. After the fixes
+the locks and increments are unchanged: no driver had an import under its main guard, and
+nothing relied on the other gaps.
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-71 | A4-1 | The closure evaluated a target's entry script as an imported module, so imports under `if __name__ == "__main__":` were dead | Confirmed: the reviewer's probe recorded the import as dead, with no problem reported | Fixed | The root is scanned with `__name__ == "__main__"` (its identity unchanged), and the runtime observation runs the program as the harness does (`__main__`, its arguments and directory, by `compile` and `exec`, not `runpy`, which imports `pkgutil` itself) instead of importing it. Test `test_the_entry_script_runs_as_main_a4_1` |
+| RL-72 | A4-2, G3 2.3.1 | `data_tricky_toml` needs stateful multiple inheritance with built-in bases, which is \[P2+\], yet the refined D-2 puts it in 1b | Confirmed: `Integer(Item, _CustomInt)`, `String(str, Item)`, `DateTime(Item, datetime)` and four more; `Item.__init__` stores `_trivia` | Discuss: D-7 | Module closures do not measure language features |
+| RL-73 | A4-3, G3 2.1 | `unicodedata` is in the 1a inventory although the author kept it \[P2+\] | Confirmed, and wider than reported: six functions in `re._parser`, `traceback` and `urllib.parse` import it on non-ASCII paths of functions every ASCII input goes through, so refusing those functions whole would break ASCII regexes, URLs and tracebacks | Discuss: D-8 | |
+| RL-74 | A4-4, G3 3.3.1 | `run_targets.py check` accepted a non-authoritative or stale recording | Confirmed (the reviewer's probe passed) | Fixed | `check` requires `authoritative` and the pinned Python version; `--allow-unpinned` permits a development comparison. `tools/tests/test_run_targets.py` |
+| RL-75 | A4-5 | The token target printed token lengths, so a wrong MAC of the same length passed | Confirmed: with every signature replaced by `b"X" * 20` the output still matched | Fixed | Full tokens are recorded, a token CPython signed is verified, and a same-length mutation is rejected; the constant-MAC probe now fails |
+| RL-76 | A4 note | The target oracle compared decoded text and had no time limit | Confirmed | Fixed | Bytes, 600 s per run |
+| RL-77 | A4 note | Spec section 7 maps `re` onto PCRE2; `docs/targets.md` and `TODO.md` plan a port of `_sre` | Confirmed (inconsistent) | Discuss: D-9 | |
+| RL-78 | A4 note, G3 3.3.2 | `targets-check` did not run the phase-1 configuration | Confirmed | Fixed | A third run under the D-20 simulation; all six pass |
+| RL-79 | A4 note, G3 2.2 | 1a is 85 % of the manifest because the closure counts uncalled functions; G3 measured 62, 91 and 83 modules loaded by the easy targets against 112, 144 and 146 in their locks | Agreed | Discuss: D-10 | The closure stays the inventory of what may run; the compile scope is the open question |
+| RL-80 | G3 2.3.2 | `copy` is \[P1\], but copying a user class goes through `__reduce_ex__`, `__getstate__` and `copyreg`, which spec section 3 files under pickling, \[P2+\] | Confirmed | Discuss: D-11 | |
+| RL-81 | G3 3.1 | A per-target declaration replaced the manifest's entry for the same module, and a misspelt or stale key passed silently | Confirmed (the reviewer's probe) | Fixed | Entries are merged; a declaration for a module the closure does not reach is an error. Test `test_per_target_declarations_merge_and_must_name_reached_modules_g3_3_1` |
+| RL-82 | G3 3.2 | Every file under `targets/drivers` and `targets/vendor` counted as the program's own; the platform check was skipped in target mode | Confirmed | Fixed | Only the driver and the packages `targets.toml` declares; the platform facts are checked. Test `test_only_declared_packages_belong_to_the_program_g3_3_2` |
+| RL-83 | G3 3.3.3 | `check --verbose` showed no stderr diff | Confirmed | Fixed | |
+| RL-84 | G3 3.4 | `score_candidate.py` counted submodules by their package, parsed licence files, and walked `TYPE_CHECKING` blocks | Confirmed (humanize's `importlib.resources` was misreported) | Fixed | |
+| RL-85 | G3 3.5 | The conformance harness split `--runner` on spaces; D-20's wording said `shutil` offers three formats, though calling them is \[P2+\] | Confirmed | Fixed | `shlex.split`; D-20 now speaks of what `get_archive_formats` and `get_unpack_formats` list (spec section 11, `docs/deviations.toml`) |
+| RL-86 | G3 2.2 | `docs/targets.md` said only the tricky targets reach `dataclasses` → `inspect` → `ast` | Confirmed: the easy ones do too (`enum.EnumType.__signature__`, `_colorize`) | Fixed | |
+| RL-87 | A4 note | Keep the qualifications of the candidate scorer and the Mandelbrot measurement | Agreed | No change | |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -253,8 +283,68 @@ and a difference not in the register is a defect. Options:
 Recommendation: 1 now, 2 when a target program needs either. The harness then needs a way to
 check a case that differs by a registered deviation (TODO task 2).
 
+**D-7 tomlkit's stateful multiple inheritance (RL-72).** Open. Seven tomlkit classes combine
+`Item`, which keeps instance state, with a built-in base (`int`, `float`, `str`, `list`, `dict`,
+`datetime`, `date`, `time`): stateful multiple inheritance, \[P2+\] in spec sections 3 and 5.
+Decision D-2 as refined makes 1b the closure of the tricky targets; describing that as a change
+of order was wrong for this target, since a module closure does not measure language features.
+Options:
+1. `data_tricky_toml` moves after phase 1, to the milestone where stateful multiple inheritance
+   lands; its recording stays, and 1b is what mistune and pycodestyle need.
+2. Bring the subset tomlkit uses into phase 1: one Python base with instance state plus one
+   built-in base, with CPython's layout rules, model first and with conformance cases.
+3. Adapt tomlkit: rejected, since vendored libraries are never edited.
+
+Recommendation: 1 now, and revisit 2 once the object header exists (TODO task 3), because the
+layout of built-in bases belongs to it. Each tricky target's language features should be checked
+against the tier table as well as its module closure (`bella-lint`'s job, TODO task 4).
+
+**D-8 `unicodedata` in phase 1 (RL-73).** Open. The author kept `unicodedata` \[P2+\] (option (c)
+of 2026-11-01), but the phase-1 library calls it on non-ASCII paths: `re._parser._escape` and
+`_class_escape` for `\N{...}` (`lookup`), `traceback._str_width` and `_zip_display_width`
+(`combining`, `category`, `east_asian_width`, `iter_graphemes`), `traceback._compute_suggestion_error`
+and `urllib.parse._checknetloc` (`normalize`, NFKC). Each of these functions also runs on every
+ASCII input. Options:
+1. A shim (G3's proposal): `import unicodedata` succeeds and each function raises the
+   milestone-naming error when called. ASCII paths run unchanged; a regex with `\N{...}`, a
+   non-ASCII host, a non-ASCII name in a suggestion, and the caret width of a non-ASCII source
+   line in a debug-build traceback raise \[P2+\]. Option (c) stands.
+2. `unicodedata` becomes \[P1\]: the names table, normalisation and grapheme segmentation, a scope
+   change.
+
+Recommendation: 1. It is the existing shim mechanism and keeps the author's decision; release
+builds print file and line only (D-06), so tracebacks there never reach the width functions.
+
+**D-9 The regex engine (RL-77).** Open. Spec section 7 maps `re` onto PCRE2; `docs/targets.md`
+and `TODO.md` plan to compile `re`'s pure-Python parser and compiler and port the `_sre` engine.
+Recommendation: the `_sre` port. PCRE2 differs from CPython's `re` in syntax, Unicode classes,
+error messages and the order of backtracking, and "never approximate" rules out an engine that
+gives different matches; the port is PSF-licensed (licence register L-01). If accepted, spec
+section 7 changes in the next revision.
+
+**D-10 What is compiled for a target (RL-79).** Open. The closure counts every function of every
+reached module (an inventory of what may run), which makes 1a 149 modules and 71,219 lines.
+Options:
+1. Compile the whole closure.
+2. Compile what the closed world can reach, function by function: a pass with a `PassSpec`,
+   whose obligation is that no function reachable at runtime, by name or by a computed name the
+   tier rules admit, is left out. The closure stays the inventory.
+3. In any case, stage 1a by target: 1a.1 `cli_easy_slugs`, 1a.2 `service_easy_tokens`,
+   1a.3 `data_easy_sales`, each with its own gate.
+
+Recommendation: 3 now, and 2 as compiler work in TODO task 4, measured against what the
+targets load (G3's numbers).
+
+**D-11 The copy protocol (RL-80).** Open. `copy.copy` and `copy.deepcopy` on a user class without
+`__copy__` call `__reduce_ex__(4)`, which uses `__getstate__` and `copyreg`, while spec section 3
+files `__reduce__`, `__getstate__` and `__setstate__` under pickling, \[P2+\]. Recommendation (G3's):
+the reduction protocol as `copy` uses it becomes \[P1\] (`__reduce_ex__`, `__reduce__`,
+`__getstate__`, `__setstate__`, `copyreg.__newobj__` and `_reconstructor`), and only the `pickle`
+module stays \[P2+\]; E-05 keeps excluding programs that rely on `copyreg` internals. A
+conformance case comes first: copying unslotted, slotted and customised user classes.
+
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-71` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-88` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

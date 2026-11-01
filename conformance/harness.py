@@ -52,6 +52,7 @@ import builtins
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -249,7 +250,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     failures = 0
     for case in cases:
         header = read_header(case)
-        cmd = [part.replace("{case}", case.name) for part in args.runner.split()]
+        cmd = [part.replace("{case}", case.name) for part in shlex.split(args.runner)]   # quoted arguments survive (G3 3.5)
         if header.status == "X":
             trace = run_case(cmd, case)
             ok = trace["exit_code"] != 0 and (header.expect or "") in str(trace["stderr"])

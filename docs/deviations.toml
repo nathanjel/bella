@@ -123,7 +123,7 @@ lint = "no"
 note = "narrowed after review round three: a weak reference to a module never dies; compiled code and layouts are immortal metadata the program cannot observe"
 
 [deviations.D-20]
-summary = "modules the phase-1 manifest omits behave as not installed (spec section 7): hashlib.pbkdf2_hmac and hashlib.scrypt are absent and hashlib.algorithms_available equals algorithms_guaranteed (no OpenSSL); shutil offers only the gztar, tar and zip archive formats (no bz2, lzma or zstd); a codec outside the phase-1 set raises LookupError"
+summary = "modules the phase-1 manifest omits behave as not installed (spec section 7): hashlib.pbkdf2_hmac and hashlib.scrypt are absent and hashlib.algorithms_available equals algorithms_guaranteed (no OpenSSL); shutil.get_archive_formats() and get_unpack_formats() list only gztar, tar and zip (no bz2, lzma or zstd; calling the built-in formats is [P2+], C-7-04); a codec outside the phase-1 set raises LookupError"
 status = "accepted"
 lint = "partial"
 observable = "measured on 3.15.2 with the omitted modules blocked: algorithms_available lacks md5-sha1, ripemd160, sha512_224, sha512_256 and sm3; get_archive_formats and get_unpack_formats list 3 formats instead of 6"

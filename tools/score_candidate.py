@@ -56,6 +56,15 @@ class Scan(ast.NodeVisitor):
         else:
             self.third.add(top)
 
+    def visit_If(self, n: ast.If) -> None:
+        # `if TYPE_CHECKING:` never runs (PEP 484): only its else branch counts (review 2026-11-01, G3 3.4)
+        t = n.test
+        if (isinstance(t, ast.Name) and t.id == "TYPE_CHECKING") or (isinstance(t, ast.Attribute) and t.attr == "TYPE_CHECKING"):
+            for stmt in n.orelse:
+                self.visit(stmt)
+            return
+        self.generic_visit(n)
+
     def visit_Import(self, n: ast.Import) -> None:
         for a in n.names:
             self._mod(a.name)
@@ -201,7 +210,8 @@ def score(path: Path, supported: set[str]) -> Score:
             scan.visit(ast.parse(src, filename=str(f)))
         except SyntaxError as exc:
             scan.tiers[f"syntax error: {exc.msg}"] += 1
-    outside = sorted(m for m in scan.stdlib if m.split(".")[0] not in supported and m not in supported)
+    # a submodule is in the manifest only by its own name: importlib.resources is not because importlib is
+    outside = sorted(m for m in scan.stdlib if m not in supported)
     inside = sorted(m for m in scan.stdlib if m not in outside)
     return {"path": str(path), "files": len(files), "lines": lines, "stdlib_in": inside, "stdlib_out": outside,
             "third_party": sorted(scan.third), "tiers": dict(scan.tiers.most_common()), "slice_gaps": dict(scan.slice_gaps.most_common())}
@@ -214,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     supported = load_manifest(args.manifest)
     for p in args.paths:
+        if (p.is_file() and p.suffix != ".py") or p.name == "__pycache__":
+            continue                      # a licence file, data, a cache: nothing to parse
         r = score(p, supported)
         print(f"== {r['path']}: {r['files']} files, {r['lines']} lines")
         print(f"   stdlib in manifest : {', '.join(r['stdlib_in']) or '-'}")

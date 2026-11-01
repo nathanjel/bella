@@ -236,6 +236,18 @@ and `configparser`; 25 manifest modules are reached by no target. Found and fixe
 was missed). Neither changes the standard library's closure. The parked items 1 to 3 of
 `docs/targets.md` section 5 wait for the tricky targets.
 
+**2026-11-01 — the target reviews** (astra-low-04, gemini-4-argon-high-03; review log RL-71 to
+RL-87). Both reproduced the target locks and the increments. Eleven fixes, each reproduced
+first: target closures treat the entry script as `__main__` and observe the program by running
+it; per-target declarations merge with the manifest's and must name reached modules; a
+program owns only its driver and declared packages; the target oracle compares bytes, with a
+time limit, only against an authoritative recording on the pin, and also runs each target in the
+phase-1 configuration; the token target records whole tokens and verifies one CPython signed (a
+wrong MAC used to pass); `score_candidate.py`, the harness's runner splitting and D-20's wording
+corrected. The locks and increments are unchanged. Five points go to the author, D-7 to D-11:
+tomlkit's stateful multiple inheritance, `unicodedata` on non-ASCII paths of the phase-1
+library, the regex engine, the compile scope of a target, and the copy protocol.
+
 ## Pins
 
 | What | Value | Where |

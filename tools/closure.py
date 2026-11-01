@@ -82,6 +82,7 @@ import os
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import tomllib
 from collections import Counter, deque
 from collections.abc import Collection
@@ -125,15 +126,26 @@ class Program:
     name: str
     level: str                # easy | tricky
     root: str                 # module name of the driver
-    dirs: tuple[Path, ...]
+    dirs: tuple[Path, ...]    # searched first: the driver's directory and the vendored libraries
     tables: dict[str, object] = field(default_factory=dict)   # [<target>.closure] in targets.toml
+    owned: tuple[Path, ...] = ()   # the driver and its declared packages; () means everything under dirs
+    argv: tuple[str, ...] = ()     # how the target is run (targets.toml), for the runtime observation
+    cwd: Path | None = None
 
     @classmethod
     def load(cls, name: str, targets_file: Path = TARGETS_FILE) -> Program:
         spec = tomllib.loads(targets_file.read_text(encoding="utf-8"))[name]
         here = targets_file.parent
         driver = here / spec["driver"]
-        return cls(name, spec["level"], driver.stem, (driver.parent, here / "vendor"), dict(spec.get("closure", {})))
+        vendor = here / "vendor"
+        # only the packages targets.toml declares belong to the program (review 2026-11-01, G3 3.2)
+        owned = (driver, *(p for pkg in spec["packages"] for p in (vendor / pkg, vendor / f"{pkg}.py")))
+        return cls(name, spec["level"], driver.stem, (driver.parent, vendor), dict(spec.get("closure", {})),
+                   owned, tuple(spec["argv"]), here)
+
+    @property
+    def driver(self) -> Path:
+        return self.dirs[0] / f"{self.root}.py"
 
     def manifest_for(self, manifest: Manifest) -> Manifest:
         """The manifest with this program's own declarations added: its `omissions`,
@@ -143,13 +155,20 @@ class Program:
         dynamic = cast(dict[str, dict[str, list[str]]], self.tables.get("dynamic", {}))
         return replace(
             manifest,
-            omissions=manifest.omissions | {k: set(v) for k, v in omissions.items()},
-            lazy_unsupported=manifest.lazy_unsupported | {k: set(v) for k, v in lazy.items()},
-            dynamic=manifest.dynamic | {k: {site: list(ts) for site, ts in v.items()} for k, v in dynamic.items()},
+            omissions=manifest.omissions | {k: manifest.omissions.get(k, set()) | set(v) for k, v in omissions.items()},
+            lazy_unsupported=manifest.lazy_unsupported
+            | {k: manifest.lazy_unsupported.get(k, set()) | set(v) for k, v in lazy.items()},
+            dynamic=manifest.dynamic
+            | {k: manifest.dynamic.get(k, {}) | {site: list(ts) for site, ts in v.items()} for k, v in dynamic.items()},
         )
 
     def owns(self, path: str | None) -> bool:
-        return path is not None and any(Path(path).resolve().is_relative_to(d.resolve()) for d in self.dirs)
+        if path is None:
+            return False
+        p = Path(path).resolve()
+        if not self.owned:
+            return any(p.is_relative_to(d.resolve()) for d in self.dirs)
+        return any(p == o.resolve() or p.is_relative_to(o.resolve()) for o in self.owned)
 
 
 @dataclass
@@ -610,10 +629,11 @@ class _Ctx(NamedTuple):
 class _Scanner:
     """Collect import edges from one module's AST with their execution class."""
 
-    def __init__(self, module: str, is_package: bool, platform: Platform | None = None) -> None:
+    def __init__(self, module: str, is_package: bool, platform: Platform | None = None, as_main: bool = False) -> None:
         self.module = module
         self.package = module if is_package else module.rpartition(".")[0]
-        self.ev = _Evaluator(platform or Platform(), module)
+        # an entry script runs with __name__ == "__main__"; its identity (keys, relative imports) stays `module`
+        self.ev = _Evaluator(platform or Platform(), "__main__" if as_main else module)
         self.menv: _ModuleEnv | None = None
         self.edges: list[tuple[str, str, int, str]] = []   # (target, cls, line, enclosing function)
         self.dynamic_unknown: list[tuple[int, str, str]] = []   # (line, enclosing function, name expression)
@@ -633,7 +653,7 @@ class _Scanner:
     def _guard(self, node: ast.If | ast.IfExp | ast.While, ctx: _Ctx) -> object:
         if self.menv is not None and node in self.menv.truth:
             return self.menv.truth[node]          # module level: the names bound so far
-        env: dict[str, object] = dict(self.menv.final) if self.menv is not None else {"__name__": self.module}
+        env: dict[str, object] = dict(self.menv.final) if self.menv is not None else {"__name__": self.ev.module}
         for name in ctx.local:
             env.pop(name, None)
         return self.ev.truth(node.test, env)
@@ -862,13 +882,14 @@ def _inside(func: str, replaced: Collection[str]) -> bool:
     return any(func == f or func.startswith(f + ".") for f in replaced)
 
 
-def scan_module(name: str, path: str, platform: Platform, replaced: Collection[str] = ()) -> Scan:
-    """Edges of one module. Imports inside a function in `replaced` become REPLACED edges."""
+def scan_module(name: str, path: str, platform: Platform, replaced: Collection[str] = (), as_main: bool = False) -> Scan:
+    """Edges of one module. Imports inside a function in `replaced` become REPLACED edges.
+    `as_main`: the module is a program's entry script, so `__name__ == "__main__"` (A4-1)."""
     try:
         tree = ast.parse(Path(path).read_text(encoding="utf-8", errors="replace"), filename=path)
     except SyntaxError:
         return Scan()
-    scanner = _Scanner(name, _is_package_path(path), platform)
+    scanner = _Scanner(name, _is_package_path(path), platform, as_main)
     scanner.scan(tree)
     edges = [Edge(name, t, REPLACED if _inside(f, replaced) else c, line, f) for (t, c, line, f) in scanner.edges]
     unknown = [(line, f, x) for (line, f, x) in scanner.dynamic_unknown if not _inside(f, replaced)]
@@ -911,6 +932,48 @@ print(json.dumps({"baseline": sorted(before), "per_root": result}))
     data = json.loads(proc.stdout)
     per_root: dict[str, list[str]] = data["per_root"]
     return per_root
+
+
+def observe_program_run(program: Program, blocked: list[str] | tuple[str, ...] = ()) -> list[str]:
+    """Run a target program as its harness does (`__main__`, its arguments, its directory), with the
+    omitted modules blocked; return every module it loaded. This covers execution, not just import
+    (review 2026-11-01, A4-1); the static scan covers the paths this run does not take."""
+    # The script runs in a fresh __main__ module with compile() and exec(), not runpy, which would
+    # import modules of its own (pkgutil) after the snapshot and blame them on the program.
+    code = r"""
+import json, sys
+driver, argv, search, blocked, out = json.loads(sys.argv[1])
+sys.path[0:0] = search
+for name in blocked:
+    sys.modules[name] = None
+with open(driver, encoding="utf-8") as f:
+    source = f.read()
+main = type(sys)("__main__")
+main.__file__ = driver
+before = set(sys.modules)
+sys.modules["__main__"] = main
+sys.argv = [driver, *argv]
+failure = None
+try:
+    exec(compile(source, driver, "exec"), main.__dict__)
+except SystemExit:
+    pass
+except BaseException as exc:  # report, never hide
+    failure = "%s: %s" % (type(exc).__name__, exc)
+loaded = sorted(set(sys.modules) - before)
+with open(out, "w", encoding="utf-8") as f:
+    json.dump({"loaded": loaded, "failure": failure}, f)
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp, "loaded.json")
+        args = [str(program.driver), list(program.argv), [str(d) for d in program.dirs], list(blocked), str(out)]
+        subprocess.run([sys.executable, "-I", "-c", code, json.dumps(args)], cwd=program.cwd or program.dirs[0],
+                       capture_output=True, text=True, check=False, timeout=600)
+        if not out.exists():
+            return [f"<run failed: no result from {program.driver.name}>"]
+        data = json.loads(out.read_text(encoding="utf-8"))
+    loaded: list[str] = data["loaded"]
+    return loaded + ([f"<run failed: {data['failure']}>"] if data["failure"] else [])
 
 
 # ------------------------------------------------------------------------------------------
@@ -956,7 +1019,8 @@ def _compute_closure(manifest: Manifest, program: Program | None) -> tuple[dict[
             infos[name] = info
             # core and shim modules are provided by the runtime: their real source is not scanned
             if info.status not in ("core", "shim") and kind in ("source", "frozen") and path:
-                scan = scan_module(name, path, manifest.platform, manifest.replaced.get(name, set()))
+                scan = scan_module(name, path, manifest.platform, manifest.replaced.get(name, set()),
+                                   as_main=program is not None and name == program.root)
                 info.edges = scan.edges
                 info.dynamic_unknown_lines = [line for line, _, _ in scan.dynamic_unknown]
                 functions[name] = scan.functions
@@ -998,7 +1062,10 @@ def _compute_closure(manifest: Manifest, program: Program | None) -> tuple[dict[
     # dynamic observation, the omitted modules blocked: anything that loads at import time and
     # was not seen statically is processed like any other module (review 2026-11-01, A3-1)
     blocked = sorted({t for ts in manifest.omissions.values() for t in ts})
-    observed = observe_runtime_imports(roots, blocked, [str(d) for d in program.dirs] if program else ())
+    if program is not None:
+        observed = {program.root: observe_program_run(program, blocked)}
+    else:
+        observed = observe_runtime_imports(roots, blocked)
     for root, loaded in observed.items():
         for mod in loaded:
             if mod.startswith("<import failed"):
@@ -1078,6 +1145,18 @@ def _compute_closure(manifest: Manifest, program: Program | None) -> tuple[dict[
         for key in sorted(set(reviewed) - present):
             problems.append(f"[dynamic.{_toml_key(module)}] reviews {json.dumps(key)}, which "
                             f"{'is not a site in ' + module if module in infos else 'the closure does not reach'}")
+    # a declaration for a module the closure does not reach is stale or misspelt (review 2026-11-01, G3 3.1)
+    if program is None:
+        for table, entries in (("[omissions]", manifest.omissions), ("[lazy_unsupported]", manifest.lazy_unsupported)):
+            for importer in sorted(entries):
+                if importer not in infos:
+                    problems.append(f"{table} has an entry for {importer}, which the closure does not reach")
+    else:
+        for table in ("omissions", "lazy_unsupported", "dynamic"):
+            for module in sorted(cast(dict[str, object], program.tables.get(table, {}))):
+                if module not in infos:
+                    problems.append(f"[{program.name}.closure.{table}] has an entry for {module}, which the closure "
+                                    f"does not reach")
     for module, lines in sorted(lazy_policy_unknown.items()):
         problems.append(f"{module}: __lazy_modules__ is not a literal list assigned at module level, so the closure "
                         f"cannot tell whether the imports at lines {', '.join(map(str, lines))} are lazy (PEP 810)")
@@ -1197,6 +1276,8 @@ def _targets_main(args: argparse.Namespace, manifest: Manifest, pinned: bool) ->
     for name in names:
         program = Program.load(name)
         infos, problems = compute_closure(manifest, program)
+        problems += [f"[platform]: {m}" if pinned else f"note: [platform]: {m} (unpinned run)"
+                     for m in manifest.platform.mismatches()]
         notes = [p for p in problems if p.startswith("note:")]
         errors = [p for p in problems if not p.startswith("note:")]
         (out_dir / f"{name}.lock.json").write_text(

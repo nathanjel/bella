@@ -99,6 +99,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Decisions this needs from the author, before the tricky targets: items 1 to 3 of
   `docs/targets.md` section 5 (function metadata at runtime, dead excluded calls, manifest
   growth for pycodestyle). Item 6 is done (`[dynamic]`, review log RL-56).
+* Open after the target reviews (review log D-7 to D-11): tomlkit's stateful multiple
+  inheritance against 1b, `unicodedata` reached on non-ASCII paths of `re`, `traceback` and
+  `urllib.parse`, the regex engine (PCRE2 in the spec, a `_sre` port in this plan), what is
+  compiled for a target (the whole closure or what is reachable, and 1a staged by target), and
+  the copy protocol against pickling.
+* The target oracle (`make targets-check`): bytes, an authoritative recording on the pin, two
+  hash seeds and the phase-1 configuration per target; `service_easy_tokens` records whole
+  tokens and verifies one CPython signed (review log RL-71 to RL-86).
 * Done when: `cli_easy_slugs` prints the recorded output under CPython 3.15.2, `eval1` and the
   compiled binary (`make targets-check TARGET_RUNNER=...` passes for it), and the generated C++
   is committed under `pipeline/examples/out/`.

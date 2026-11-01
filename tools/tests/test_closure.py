@@ -433,10 +433,10 @@ def test_a_target_programs_closure() -> None:
                                        'core = ["_json"]\n')
         manifest = closure.Manifest.load(Path(tmp, "m.toml"))
         dirs = (drivers, Path(tmp, "vendor"))
-        saved = closure.observe_runtime_imports
-        def no_observation(roots: list[str], blocked: object = (), search: object = ()) -> dict[str, list[str]]:
-            return {}
-        closure.observe_runtime_imports = no_observation
+        saved = closure.observe_program_run
+        def no_run(program: closure.Program, blocked: list[str] | tuple[str, ...] = ()) -> list[str]:
+            return []
+        closure.observe_program_run = no_run
         try:
             program = closure.Program("rv", "easy", "rv_prog", dirs)
             infos, problems = closure.compute_closure(manifest, program)
@@ -448,7 +448,65 @@ def test_a_target_programs_closure() -> None:
             assert not any("csv" in p for p in problems), problems
             assert closure.unsupported_functions(infos, declared.manifest_for(manifest)) == {"rv_lib": ["g"]}
         finally:
-            closure.observe_runtime_imports = saved
+            closure.observe_program_run = saved
+
+
+def _program_closure(files: dict[str, str], vendor: dict[str, str], manifest_text: str, **program: object,
+                     ) -> tuple[dict[str, closure.ModuleInfo], list[str]]:
+    """compute_closure for a small target program, the run observation stubbed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        drivers, vendor_dir = Path(tmp, "drivers"), Path(tmp, "vendor")
+        drivers.mkdir()
+        vendor_dir.mkdir()
+        for name, src in files.items():
+            Path(drivers, f"{name}.py").write_text(src)
+        for rel, src in vendor.items():
+            Path(vendor_dir, rel).parent.mkdir(parents=True, exist_ok=True)
+            Path(vendor_dir, rel).write_text(src)
+        Path(tmp, "m.toml").write_text('[reference]\npython = "3.15.2"\n' + manifest_text)
+        manifest = closure.Manifest.load(Path(tmp, "m.toml"))
+        owned = tuple(Path(tmp, str(o)) for o in program.pop("owned", ()))  # type: ignore[attr-defined]
+        tables = program.pop("tables", {})
+        saved = closure.observe_program_run
+        def no_run(program: closure.Program, blocked: list[str] | tuple[str, ...] = ()) -> list[str]:
+            return []
+        closure.observe_program_run = no_run
+        try:
+            prog = closure.Program("rv", "easy", "rv_main", (drivers, vendor_dir), tables, owned)  # type: ignore[arg-type]
+            return closure.compute_closure(manifest, prog)
+        finally:
+            closure.observe_program_run = saved
+            for mod in [m for m in sys.modules if m.startswith("rv_")]:
+                del sys.modules[mod]
+
+
+def test_the_entry_script_runs_as_main_a4_1() -> None:
+    infos, problems = _program_closure(
+        {"rv_main": 'import rv_mod\nif __name__ == "__main__":\n    import rv_needed\n'},
+        {"rv_mod.py": 'if __name__ == "__main__":\n    import rv_never\n', "rv_needed.py": "", "rv_never.py": ""},
+        '[phase1]\nroots = []\n')
+    assert problems == [], problems
+    assert infos["rv_needed"].status == closure.PROGRAM            # required: the script is __main__
+    assert ("rv_never", DEAD) in {(e.target, e.cls) for e in infos["rv_mod"].edges}   # an imported module is not
+
+
+def test_per_target_declarations_merge_and_must_name_reached_modules_g3_3_1() -> None:
+    base = closure.Manifest.load(Path(__file__).resolve().parents[2] / "manifest.toml")
+    prog = closure.Program("rv", "easy", "rv_main", (), {"lazy_unsupported": {"shutil": ["rv_extra"]}})
+    merged = prog.manifest_for(base)
+    assert merged.lazy_unsupported["shutil"] == base.lazy_unsupported["shutil"] | {"rv_extra"}
+    _, problems = _program_closure({"rv_main": "import json\n"}, {}, '[phase1]\nroots = []\ncompiled = ["json"]\n',
+                                   tables={"dynamic": {"rv_typo": {"f: x": []}}})
+    assert any("[rv.closure.dynamic] has an entry for rv_typo, which the closure does not reach" in p for p in problems)
+
+
+def test_only_declared_packages_belong_to_the_program_g3_3_2() -> None:
+    infos, problems = _program_closure(
+        {"rv_main": "import rv_declared\nimport rv_undeclared\n"},
+        {"rv_declared/__init__.py": "", "rv_undeclared.py": ""}, '[phase1]\nroots = []\n',
+        owned=["drivers/rv_main.py", "vendor/rv_declared"])
+    assert infos["rv_declared"].status == closure.PROGRAM
+    assert any(p.startswith("rv_undeclared [source]: required but not in manifest") for p in problems), problems
 
 
 if __name__ == "__main__":

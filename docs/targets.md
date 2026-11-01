@@ -259,7 +259,9 @@ the per-target numbers in section 2 include it.
   executed at import, mostly dead afterwards; a staging candidate.
 * `dataclasses` → `inspect` → `ast`, `dis`, `opcode`, `tokenize`, `token`, `linecache`
   (compiled, ~8.7k lines) and `_ast`, `_tokenize` (core): tomlkit and mistune import
-  `dataclasses`; pycodestyle imports `inspect` directly. The `[adaptations]` entry for
+  `dataclasses`; pycodestyle imports `inspect` directly. The easy three reach the same chain
+  without calling it (review log RL-86): `enum.EnumType.__signature__` imports `inspect`, and
+  argparse's lazy `_colorize` imports `dataclasses`. The `[adaptations]` entry for
   `inspect` in the manifest is where this chain gets cut if it must be.
 * `json` (compiled pure-Python paths; `_json` mapped), `datetime` on `_pydatetime`, `decimal`
   on `_pydecimal`: the two services and the data scripts.

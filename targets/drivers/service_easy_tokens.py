@@ -75,10 +75,12 @@ def main(path: str) -> int:
         request = json.loads(line)
         if "token_ref" in request:
             request["token"] = tokens[request["token_ref"]] + request.get("tamper", "")
+            if request.get("flip"):   # the same length, one signature character changed
+                token = str(request["token"])
+                request["token"] = token[:-1] + ("A" if token[-1] != "A" else "B")
         response = handle(request, serializer)
-        if "token" in response:
+        if "token" in response:   # the whole token is the observable (review 2026-11-01, A4-5)
             tokens[str(request["name"])] = str(response["token"])
-            response["token"] = f"<{len(str(response['token']))} chars>"
         print(json.dumps({"request": request.get("name"), "response": response}, sort_keys=True))
     return 0
 
