@@ -1,0 +1,12 @@
+{
+ "case": "C-3-05_descriptor_class_mutation.py",
+ "clause": "C-3-05",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "review round 3, finding 3 (adding __set__ to a descriptor's class changes lookup precedence",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "instance wins over non-data descriptor: 99\ndata descriptor wins after promotion: 1\ninstance visible again after demotion: 99\n",
+ "stderr": "",
+ "exit_code": 0
+}

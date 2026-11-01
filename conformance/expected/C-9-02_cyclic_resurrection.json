@@ -1,0 +1,12 @@
+{
+ "case": "C-9-02_cyclic_resurrection.py",
+ "clause": "C-9-02",
+ "spec": "section 9",
+ "status": "P1",
+ "source": "review round 3, finding 1 (a resurrected cyclic group lives on with its weak references already dead)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "cyclic resurrection: old weakref dead = True object alive = True\nsecond collection runs no finalizer again: True\n",
+ "stderr": "",
+ "exit_code": 0
+}

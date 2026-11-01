@@ -1,0 +1,12 @@
+{
+ "case": "C-3-07_slots_and_dict_capability.py",
+ "clause": "C-3-07",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "review round 2, finding 4 and round 3, finding 2 (__dict__ presence is an inherited layout capability)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "open: True slots-under-open: True\nclosed: False empty-under-closed: False with-dict-slot: True\nundeclared on slotted: AttributeError w\nunset slot: AttributeError t\nslot set: 5\n",
+ "stderr": "",
+ "exit_code": 0
+}

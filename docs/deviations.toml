@@ -1,0 +1,123 @@
+# Deviation register (dialect specification v0.3, section 11), machine-readable.
+# The conformance harness and bella-lint read this file. A difference from CPython 3.14.8 that is
+# not listed here is a defect. Fields: status = accepted | decided | pending; lint = yes | partial | no;
+# expires = the phase in which a temporary deviation ends, if any.
+
+[deviations.D-01]
+summary = "id() returns a runtime address that differs from CPython's and may be reused differently"
+status = "accepted"
+decision = 1
+lint = "yes"
+observable = "unobservable in value; identity relationships are preserved up to a consistent renaming within one run"
+
+[deviations.D-02]
+summary = "default __repr__ prints a different address after 'at 0x'"
+status = "accepted"
+decision = 1
+lint = "yes"
+
+[deviations.D-03]
+summary = "'is' is true between equal small-integer immediates and between equal interned strings more often than in CPython"
+status = "accepted"
+decision = 1
+lint = "yes"
+note = "CPython itself warns on code that depends on this"
+
+[deviations.D-04]
+summary = "reference cycles are collected at a different moment and their members are finalised in a different order among themselves"
+status = "accepted"
+lint = "partial"
+note = "PEP 442's cyclic sequence (weakrefs cleared, finalisers, resurrection check, clear) is kept; only timing and order among members differ"
+
+[deviations.D-05]
+summary = "set and frozenset iteration order"
+status = "decided"
+decision = 4
+lint = "yes"
+note = "CPython's set table algorithm is implemented, so order matches for value-hashed elements; identity-hashed elements are unobservable in CPython too"
+
+[deviations.D-06]
+summary = "traceback line text"
+status = "decided"
+decision = 6
+lint = "yes"
+note = "release builds print file and line only; debug builds reproduce CPython's format from source maps"
+
+[deviations.D-07]
+summary = "finalisation order of module globals at exit"
+status = "accepted"
+lint = "no"
+note = "unspecified in CPython too"
+
+[deviations.D-08]
+summary = "runtime-generated human-readable wording of built-in exception messages"
+status = "decided"
+decision = 11
+lint = "yes"
+expires = "phase 2 (revisit)"
+note = "structured and user-supplied payloads stay observable: user args, KeyError key, OSError errno/filename, StopIteration.value, UnicodeError fields, .name of AttributeError/NameError/ImportError; programs that branch on exempt wording are outside the guarantee; the harness masks wording per exception type"
+
+[deviations.D-09]
+summary = "assertions are active by default; a build-profile switch that strips them and makes __debug__ false is planned as the -O equivalent"
+status = "decided"
+decision = 7
+lint = "yes"
+
+[deviations.D-10]
+summary = "return, break or continue leaving a finally block is a compile-time error (CPython 3.14 warns)"
+status = "decided"
+decision = 8
+lint = "yes"
+
+[deviations.D-11]
+summary = "breakpoint() prints a warning and continues"
+status = "decided"
+decision = 9
+lint = "yes"
+
+[deviations.D-12]
+summary = "__file__ is the source path recorded at build, not a path on the running machine"
+status = "accepted"
+lint = "yes"
+
+[deviations.D-13]
+summary = "str internal representation: PEP 393 kinds (Latin-1, UCS-2, UCS-4) with a cached UTF-8 copy; no observable difference intended"
+status = "decided"
+decision = 3
+lint = "no"
+
+[deviations.D-14]
+summary = "hash randomisation uses SipHash-1-3 with the PYTHONHASHSEED protocol; a program that fixes the seed sees CPython's values only if the runtime's seeding matches CPython's"
+status = "accepted"
+decision = 5
+lint = "no"
+note = "seeding compatibility is a conformance clause"
+
+[deviations.D-15]
+summary = "UTF-8 mode is always on; PYTHONIOENCODING and locale-based encodings are ignored"
+status = "decided"
+decision = 10
+lint = "yes"
+
+[deviations.D-16]
+summary = "sys.implementation.name is 'bella' and platform.python_implementation() is 'Bella'"
+status = "decided"
+decision = 12
+lint = "yes"
+
+[deviations.D-17]
+summary = "recursion limit: a per-call depth counter raises RecursionError at sys.getrecursionlimit(), default 1000"
+status = "decided"
+decision = 2
+lint = "yes"
+
+[deviations.D-18]
+summary = "PYTHONPATH, .pth files and site are ignored; sys.path reflects the build"
+status = "accepted"
+lint = "yes"
+
+[deviations.D-19]
+summary = "module objects are immortal; functions, classes and every other definition-time object are reference-counted like any other"
+status = "accepted"
+lint = "no"
+note = "narrowed after review round three: a weak reference to a module never dies; compiled code and layouts are immortal metadata the program cannot observe"

@@ -1,0 +1,5913 @@
+{
+ "python": "3.13.18",
+ "pinned": false,
+ "authoritative": false,
+ "stdlib_dir": "/usr/local/lib/python3.13",
+ "roots": [
+  "collections",
+  "collections.abc",
+  "itertools",
+  "functools",
+  "operator",
+  "enum",
+  "dataclasses",
+  "typing",
+  "abc",
+  "copy",
+  "copyreg",
+  "types",
+  "contextlib",
+  "weakref",
+  "contextvars",
+  "bisect",
+  "heapq",
+  "keyword",
+  "reprlib",
+  "string",
+  "re",
+  "textwrap",
+  "difflib",
+  "json",
+  "csv",
+  "struct",
+  "base64",
+  "binascii",
+  "codecs",
+  "html",
+  "urllib.parse",
+  "math",
+  "cmath",
+  "decimal",
+  "fractions",
+  "random",
+  "statistics",
+  "numbers",
+  "datetime",
+  "time",
+  "calendar",
+  "os",
+  "os.path",
+  "pathlib",
+  "io",
+  "shutil",
+  "tempfile",
+  "glob",
+  "fnmatch",
+  "stat",
+  "errno",
+  "sys",
+  "signal",
+  "atexit",
+  "gc",
+  "hashlib",
+  "hmac",
+  "secrets",
+  "uuid",
+  "logging",
+  "argparse",
+  "warnings",
+  "unittest",
+  "pprint",
+  "traceback",
+  "gettext",
+  "locale",
+  "zlib"
+ ],
+ "module_count": 161,
+ "errors": [],
+ "notes": [],
+ "modules": {
+  "__future__": {
+   "name": "__future__",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/__future__.py",
+   "status": "compiled",
+   "reached_by": "logging:runtime:0",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_abc": {
+   "name": "_abc",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "abc:conditional:85",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_ast": {
+   "name": "_ast",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "ast:eager:25",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_bisect": {
+   "name": "_bisect",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "bisect:conditional:112",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_blake2": {
+   "name": "_blake2",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "hashlib:conditional:103",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_codecs": {
+   "name": "_codecs",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "codecs:conditional:16",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_collections": {
+   "name": "_collections",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "collections:conditional:45",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_collections_abc": {
+   "name": "_collections_abc",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/_collections_abc.py",
+   "status": "compiled",
+   "reached_by": "collections:eager:29",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "_collections_abc",
+     "target": "abc",
+     "cls": "eager",
+     "line": 35
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "sys",
+     "cls": "eager",
+     "line": 36
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 1086
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1095
+    }
+   ]
+  },
+  "_colorize": {
+   "name": "_colorize",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/_colorize.py",
+   "status": "compiled",
+   "reached_by": "traceback:eager:10",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "_colorize",
+     "target": "os",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "_colorize",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "_colorize",
+     "target": "typing",
+     "cls": "conditional",
+     "line": 9
+    },
+    {
+     "importer": "_colorize",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 109
+    }
+   ]
+  },
+  "_contextvars": {
+   "name": "_contextvars",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "contextvars:eager:1",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_csv": {
+   "name": "_csv",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "csv:eager:68",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_datetime": {
+   "name": "_datetime",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "datetime:conditional:2",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_decimal": {
+   "name": "_decimal",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "decimal:conditional:102",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_functools": {
+   "name": "_functools",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "functools:conditional:227",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_hashlib": {
+   "name": "_hashlib",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "hashlib:conditional:170",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_heapq": {
+   "name": "_heapq",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "heapq:conditional:583",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_io": {
+   "name": "_io",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "io:eager:52",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_json": {
+   "name": "_json",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "json.decoder:conditional:7",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_locale": {
+   "name": "_locale",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "locale:conditional:47",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_md5": {
+   "name": "_md5",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "hashlib:conditional:92",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_opcode": {
+   "name": "_opcode",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "dis:eager:20",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_opcode_metadata": {
+   "name": "_opcode_metadata",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/_opcode_metadata.py",
+   "status": "compiled",
+   "reached_by": "opcode:eager:15",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_operator": {
+   "name": "_operator",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "operator:conditional:414",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_py_abc": {
+   "name": "_py_abc",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/_py_abc.py",
+   "status": "compiled",
+   "reached_by": "abc:conditional:89",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "_py_abc",
+     "target": "_weakrefset",
+     "cls": "eager",
+     "line": 1
+    }
+   ]
+  },
+  "_pydatetime": {
+   "name": "_pydatetime",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/_pydatetime.py",
+   "status": "compiled",
+   "reached_by": "datetime:conditional:5",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "_pydatetime",
+     "target": "time",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "math",
+     "cls": "eager",
+     "line": 12
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "sys",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "operator",
+     "cls": "eager",
+     "line": 14
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1820
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1838
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "_strptime",
+     "cls": "lazy",
+     "line": 2104
+    }
+   ]
+  },
+  "_pydecimal": {
+   "name": "_pydecimal",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/_pydecimal.py",
+   "status": "compiled",
+   "reached_by": "decimal:conditional:106",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "_pydecimal",
+     "target": "math",
+     "cls": "eager",
+     "line": 59
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "numbers",
+     "cls": "eager",
+     "line": 60
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "sys",
+     "cls": "eager",
+     "line": 61
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "collections",
+     "cls": "conditional",
+     "line": 64
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "contextvars",
+     "cls": "eager",
+     "line": 345
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "re",
+     "cls": "eager",
+     "line": 6062
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "locale",
+     "cls": "conditional",
+     "line": 6116
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "itertools",
+     "cls": "lazy",
+     "line": 6240
+    }
+   ]
+  },
+  "_random": {
+   "name": "_random",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "random:eager:63",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_sha1": {
+   "name": "_sha1",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "hashlib:conditional:89",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_sha2": {
+   "name": "_sha2",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "random:conditional:160",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_sha3": {
+   "name": "_sha3",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "hashlib:conditional:107",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_signal": {
+   "name": "_signal",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "signal:eager:1",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_socket": {
+   "name": "_socket",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "types:conditional:341",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_sre": {
+   "name": "_sre",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "re:eager:128",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_stat": {
+   "name": "_stat",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "stat:conditional:210",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_statistics": {
+   "name": "_statistics",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "statistics:conditional:1499",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_string": {
+   "name": "_string",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "string:eager:21",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_strptime": {
+   "name": "_strptime",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/_strptime.py",
+   "status": "compiled",
+   "reached_by": "_pydatetime:lazy:2104",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "_strptime",
+     "target": "os",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "_strptime",
+     "target": "time",
+     "cls": "eager",
+     "line": 14
+    },
+    {
+     "importer": "_strptime",
+     "target": "locale",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "_strptime",
+     "target": "calendar",
+     "cls": "eager",
+     "line": 16
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 17
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 18
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 19
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 20
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 21
+    },
+    {
+     "importer": "_strptime",
+     "target": "datetime",
+     "cls": "eager",
+     "line": 22
+    },
+    {
+     "importer": "_strptime",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 25
+    },
+    {
+     "importer": "_strptime",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 473
+    }
+   ]
+  },
+  "_struct": {
+   "name": "_struct",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "struct:eager:13",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_suggestions": {
+   "name": "_suggestions",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "traceback:conditional:1549",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_thread": {
+   "name": "_thread",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "functools:eager:21",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_tokenize": {
+   "name": "_tokenize",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "tokenize:eager:37",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_typing": {
+   "name": "_typing",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "typing:eager:32",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_uuid": {
+   "name": "_uuid",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "uuid:conditional:573",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_warnings": {
+   "name": "_warnings",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "warnings:conditional:704",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_weakref": {
+   "name": "_weakref",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "collections:eager:42",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "_weakrefset": {
+   "name": "_weakrefset",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/_weakrefset.py",
+   "status": "compiled",
+   "reached_by": "weakref:eager:22",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "_weakrefset",
+     "target": "_weakref",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "_weakrefset",
+     "target": "types",
+     "cls": "eager",
+     "line": 6
+    }
+   ]
+  },
+  "abc": {
+   "name": "abc",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/abc.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "abc",
+     "target": "_abc",
+     "cls": "conditional",
+     "line": 85
+    },
+    {
+     "importer": "abc",
+     "target": "_py_abc",
+     "cls": "conditional",
+     "line": 89
+    }
+   ]
+  },
+  "argparse": {
+   "name": "argparse",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/argparse.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "argparse",
+     "target": "os",
+     "cls": "eager",
+     "line": 88
+    },
+    {
+     "importer": "argparse",
+     "target": "re",
+     "cls": "eager",
+     "line": 89
+    },
+    {
+     "importer": "argparse",
+     "target": "sys",
+     "cls": "eager",
+     "line": 90
+    },
+    {
+     "importer": "argparse",
+     "target": "gettext",
+     "cls": "eager",
+     "line": 92
+    },
+    {
+     "importer": "argparse",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 146
+    },
+    {
+     "importer": "argparse",
+     "target": "shutil",
+     "cls": "conditional",
+     "line": 170
+    },
+    {
+     "importer": "argparse",
+     "target": "textwrap",
+     "cls": "lazy",
+     "line": 643
+    },
+    {
+     "importer": "argparse",
+     "target": "textwrap",
+     "cls": "lazy",
+     "line": 648
+    },
+    {
+     "importer": "argparse",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 906
+    },
+    {
+     "importer": "argparse",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1733
+    },
+    {
+     "importer": "argparse",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1762
+    }
+   ]
+  },
+  "ast": {
+   "name": "ast",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/ast.py",
+   "status": "compiled",
+   "reached_by": "traceback:conditional:706",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "ast",
+     "target": "sys",
+     "cls": "eager",
+     "line": 23
+    },
+    {
+     "importer": "ast",
+     "target": "re",
+     "cls": "eager",
+     "line": 24
+    },
+    {
+     "importer": "ast",
+     "target": "_ast",
+     "cls": "eager",
+     "line": 25
+    },
+    {
+     "importer": "ast",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "ast",
+     "target": "enum",
+     "cls": "eager",
+     "line": 27
+    },
+    {
+     "importer": "ast",
+     "target": "inspect",
+     "cls": "conditional",
+     "line": 317
+    },
+    {
+     "importer": "ast",
+     "target": "collections",
+     "cls": "lazy",
+     "line": 390
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 449
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 531
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 538
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 546
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 553
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 569
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 598
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 625
+    },
+    {
+     "importer": "ast",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 1828
+    },
+    {
+     "importer": "ast",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 1837
+    }
+   ]
+  },
+  "asyncio": {
+   "name": "asyncio",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/asyncio/__init__.py",
+   "status": "shim",
+   "reached_by": "unittest.async_case:eager:1",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "atexit": {
+   "name": "atexit",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "base64": {
+   "name": "base64",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/base64.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "base64",
+     "target": "re",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "base64",
+     "target": "struct",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "base64",
+     "target": "binascii",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "base64",
+     "target": "sys",
+     "cls": "lazy",
+     "line": 595
+    },
+    {
+     "importer": "base64",
+     "target": "getopt",
+     "cls": "lazy",
+     "line": 595
+    },
+    {
+     "importer": "base64",
+     "target": "io",
+     "cls": "conditional",
+     "line": 619
+    }
+   ]
+  },
+  "binascii": {
+   "name": "binascii",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "bisect": {
+   "name": "bisect",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/bisect.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "bisect",
+     "target": "_bisect",
+     "cls": "conditional",
+     "line": 112
+    }
+   ]
+  },
+  "builtins": {
+   "name": "builtins",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "operator:eager:22",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "calendar": {
+   "name": "calendar",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/calendar.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "calendar",
+     "target": "sys",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "calendar",
+     "target": "datetime",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "calendar",
+     "target": "enum",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "calendar",
+     "target": "locale",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "calendar",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 12
+    },
+    {
+     "importer": "calendar",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 48
+    },
+    {
+     "importer": "calendar",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 700
+    }
+   ]
+  },
+  "cmath": {
+   "name": "cmath",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "codecs": {
+   "name": "codecs",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/codecs.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "codecs",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "codecs",
+     "target": "sys",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "codecs",
+     "target": "_codecs",
+     "cls": "conditional",
+     "line": 16
+    },
+    {
+     "importer": "codecs",
+     "target": "encodings",
+     "cls": "conditional",
+     "line": 1132
+    }
+   ]
+  },
+  "collections": {
+   "name": "collections",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/collections/__init__.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "collections",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 29
+    },
+    {
+     "importer": "collections",
+     "target": "sys",
+     "cls": "eager",
+     "line": 30
+    },
+    {
+     "importer": "collections",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 35
+    },
+    {
+     "importer": "collections",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 36
+    },
+    {
+     "importer": "collections",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 37
+    },
+    {
+     "importer": "collections",
+     "target": "keyword",
+     "cls": "eager",
+     "line": 38
+    },
+    {
+     "importer": "collections",
+     "target": "operator",
+     "cls": "eager",
+     "line": 39
+    },
+    {
+     "importer": "collections",
+     "target": "operator",
+     "cls": "eager",
+     "line": 40
+    },
+    {
+     "importer": "collections",
+     "target": "reprlib",
+     "cls": "eager",
+     "line": 41
+    },
+    {
+     "importer": "collections",
+     "target": "_weakref",
+     "cls": "eager",
+     "line": 42
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "conditional",
+     "line": 45
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "conditional",
+     "line": 52
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "conditional",
+     "line": 57
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "conditional",
+     "line": 343
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "conditional",
+     "line": 354
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "conditional",
+     "line": 544
+    },
+    {
+     "importer": "collections",
+     "target": "heapq",
+     "cls": "lazy",
+     "line": 638
+    },
+    {
+     "importer": "collections",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 1199
+    }
+   ]
+  },
+  "collections.abc": {
+   "name": "collections.abc",
+   "kind": "frozen",
+   "path": null,
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "contextlib": {
+   "name": "contextlib",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/contextlib.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "contextlib",
+     "target": "abc",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "contextlib",
+     "target": "os",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "contextlib",
+     "target": "sys",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "contextlib",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "contextlib",
+     "target": "collections",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "contextlib",
+     "target": "functools",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "contextlib",
+     "target": "types",
+     "cls": "eager",
+     "line": 8
+    }
+   ]
+  },
+  "contextvars": {
+   "name": "contextvars",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/contextvars.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "contextvars",
+     "target": "_contextvars",
+     "cls": "eager",
+     "line": 1
+    }
+   ]
+  },
+  "copy": {
+   "name": "copy",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/copy.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "copy",
+     "target": "types",
+     "cls": "eager",
+     "line": 52
+    },
+    {
+     "importer": "copy",
+     "target": "weakref",
+     "cls": "eager",
+     "line": 53
+    },
+    {
+     "importer": "copy",
+     "target": "copyreg",
+     "cls": "eager",
+     "line": 54
+    }
+   ]
+  },
+  "copyreg": {
+   "name": "copyreg",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/copyreg.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "copyreg",
+     "target": "functools",
+     "cls": "lazy",
+     "line": 34
+    },
+    {
+     "importer": "copyreg",
+     "target": "operator",
+     "cls": "lazy",
+     "line": 34
+    }
+   ]
+  },
+  "csv": {
+   "name": "csv",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/csv.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "csv",
+     "target": "re",
+     "cls": "eager",
+     "line": 66
+    },
+    {
+     "importer": "csv",
+     "target": "types",
+     "cls": "eager",
+     "line": 67
+    },
+    {
+     "importer": "csv",
+     "target": "_csv",
+     "cls": "eager",
+     "line": 68
+    },
+    {
+     "importer": "csv",
+     "target": "_csv",
+     "cls": "eager",
+     "line": 73
+    },
+    {
+     "importer": "csv",
+     "target": "io",
+     "cls": "eager",
+     "line": 75
+    }
+   ]
+  },
+  "dataclasses": {
+   "name": "dataclasses",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/dataclasses.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "dataclasses",
+     "target": "re",
+     "cls": "eager",
+     "line": 1
+    },
+    {
+     "importer": "dataclasses",
+     "target": "sys",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "dataclasses",
+     "target": "copy",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "dataclasses",
+     "target": "types",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "dataclasses",
+     "target": "inspect",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "dataclasses",
+     "target": "keyword",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "dataclasses",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "dataclasses",
+     "target": "abc",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "dataclasses",
+     "target": "reprlib",
+     "cls": "eager",
+     "line": 9
+    }
+   ]
+  },
+  "datetime": {
+   "name": "datetime",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/datetime.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "datetime",
+     "target": "_datetime",
+     "cls": "conditional",
+     "line": 2
+    },
+    {
+     "importer": "datetime",
+     "target": "_datetime",
+     "cls": "conditional",
+     "line": 3
+    },
+    {
+     "importer": "datetime",
+     "target": "_pydatetime",
+     "cls": "conditional",
+     "line": 5
+    },
+    {
+     "importer": "datetime",
+     "target": "_pydatetime",
+     "cls": "conditional",
+     "line": 6
+    }
+   ]
+  },
+  "decimal": {
+   "name": "decimal",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/decimal.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "decimal",
+     "target": "_decimal",
+     "cls": "conditional",
+     "line": 102
+    },
+    {
+     "importer": "decimal",
+     "target": "_decimal",
+     "cls": "conditional",
+     "line": 103
+    },
+    {
+     "importer": "decimal",
+     "target": "_decimal",
+     "cls": "conditional",
+     "line": 104
+    },
+    {
+     "importer": "decimal",
+     "target": "_pydecimal",
+     "cls": "conditional",
+     "line": 106
+    },
+    {
+     "importer": "decimal",
+     "target": "sys",
+     "cls": "conditional",
+     "line": 107
+    }
+   ]
+  },
+  "difflib": {
+   "name": "difflib",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/difflib.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "difflib",
+     "target": "heapq",
+     "cls": "eager",
+     "line": 33
+    },
+    {
+     "importer": "difflib",
+     "target": "collections",
+     "cls": "eager",
+     "line": 34
+    },
+    {
+     "importer": "difflib",
+     "target": "types",
+     "cls": "eager",
+     "line": 35
+    },
+    {
+     "importer": "difflib",
+     "target": "re",
+     "cls": "eager",
+     "line": 1043
+    },
+    {
+     "importer": "difflib",
+     "target": "re",
+     "cls": "lazy",
+     "line": 1374
+    },
+    {
+     "importer": "difflib",
+     "target": "doctest",
+     "cls": "lazy",
+     "line": 2054
+    },
+    {
+     "importer": "difflib",
+     "target": "difflib",
+     "cls": "lazy",
+     "line": 2054
+    }
+   ]
+  },
+  "dis": {
+   "name": "dis",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/dis.py",
+   "status": "compiled",
+   "reached_by": "inspect:eager:146",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "dis",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "dis",
+     "target": "types",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "dis",
+     "target": "collections",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "dis",
+     "target": "io",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "dis",
+     "target": "opcode",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "dis",
+     "target": "opcode",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "dis",
+     "target": "_opcode",
+     "cls": "eager",
+     "line": 20
+    },
+    {
+     "importer": "dis",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 1055
+    }
+   ]
+  },
+  "encodings": {
+   "name": "encodings",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/encodings/__init__.py",
+   "status": "compiled",
+   "reached_by": "codecs:conditional:1132",
+   "dynamic_unknown_lines": [
+    100
+   ],
+   "edges": [
+    {
+     "importer": "encodings",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 31
+    },
+    {
+     "importer": "encodings",
+     "target": "sys",
+     "cls": "eager",
+     "line": 32
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "eager",
+     "line": 33
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.aliases",
+     "cls": "eager",
+     "line": 33
+    },
+    {
+     "importer": "encodings",
+     "target": "_winapi",
+     "cls": "conditional",
+     "line": 170
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "conditional",
+     "line": 173
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.mbcs",
+     "cls": "conditional",
+     "line": 173
+    }
+   ]
+  },
+  "encodings.aliases": {
+   "name": "encodings.aliases",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/encodings/aliases.py",
+   "status": "compiled",
+   "reached_by": "locale:eager:15",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "enum": {
+   "name": "enum",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/enum.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "enum",
+     "target": "sys",
+     "cls": "eager",
+     "line": 1
+    },
+    {
+     "importer": "enum",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "enum",
+     "target": "functools",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "enum",
+     "target": "types",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "enum",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 411
+    }
+   ]
+  },
+  "errno": {
+   "name": "errno",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "fnmatch": {
+   "name": "fnmatch",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/fnmatch.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "fnmatch",
+     "target": "os",
+     "cls": "eager",
+     "line": 12
+    },
+    {
+     "importer": "fnmatch",
+     "target": "posixpath",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "fnmatch",
+     "target": "re",
+     "cls": "eager",
+     "line": 14
+    },
+    {
+     "importer": "fnmatch",
+     "target": "functools",
+     "cls": "eager",
+     "line": 15
+    }
+   ]
+  },
+  "fractions": {
+   "name": "fractions",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/fractions.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "fractions",
+     "target": "decimal",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "fractions",
+     "target": "functools",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "fractions",
+     "target": "math",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "fractions",
+     "target": "numbers",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "fractions",
+     "target": "operator",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "fractions",
+     "target": "re",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "fractions",
+     "target": "sys",
+     "cls": "eager",
+     "line": 12
+    },
+    {
+     "importer": "fractions",
+     "target": "decimal",
+     "cls": "lazy",
+     "line": 325
+    }
+   ]
+  },
+  "functools": {
+   "name": "functools",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/functools.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "functools",
+     "target": "abc",
+     "cls": "eager",
+     "line": 17
+    },
+    {
+     "importer": "functools",
+     "target": "collections",
+     "cls": "eager",
+     "line": 18
+    },
+    {
+     "importer": "functools",
+     "target": "reprlib",
+     "cls": "eager",
+     "line": 20
+    },
+    {
+     "importer": "functools",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 21
+    },
+    {
+     "importer": "functools",
+     "target": "_functools",
+     "cls": "conditional",
+     "line": 227
+    },
+    {
+     "importer": "functools",
+     "target": "_functools",
+     "cls": "conditional",
+     "line": 269
+    },
+    {
+     "importer": "functools",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 319
+    },
+    {
+     "importer": "functools",
+     "target": "_functools",
+     "cls": "conditional",
+     "line": 358
+    },
+    {
+     "importer": "functools",
+     "target": "_functools",
+     "cls": "conditional",
+     "line": 668
+    },
+    {
+     "importer": "functools",
+     "target": "types",
+     "cls": "lazy",
+     "line": 838
+    },
+    {
+     "importer": "functools",
+     "target": "weakref",
+     "cls": "lazy",
+     "line": 838
+    },
+    {
+     "importer": "functools",
+     "target": "typing",
+     "cls": "lazy",
+     "line": 868
+    },
+    {
+     "importer": "functools",
+     "target": "typing",
+     "cls": "lazy",
+     "line": 874
+    },
+    {
+     "importer": "functools",
+     "target": "typing",
+     "cls": "conditional",
+     "line": 904
+    },
+    {
+     "importer": "functools",
+     "target": "typing",
+     "cls": "conditional",
+     "line": 919
+    }
+   ]
+  },
+  "gc": {
+   "name": "gc",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "genericpath": {
+   "name": "genericpath",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/genericpath.py",
+   "status": "compiled",
+   "reached_by": "posixpath:eager:29",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "genericpath",
+     "target": "os",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "genericpath",
+     "target": "stat",
+     "cls": "eager",
+     "line": 7
+    }
+   ]
+  },
+  "gettext": {
+   "name": "gettext",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/gettext.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "gettext",
+     "target": "operator",
+     "cls": "eager",
+     "line": 49
+    },
+    {
+     "importer": "gettext",
+     "target": "os",
+     "cls": "eager",
+     "line": 50
+    },
+    {
+     "importer": "gettext",
+     "target": "re",
+     "cls": "eager",
+     "line": 51
+    },
+    {
+     "importer": "gettext",
+     "target": "sys",
+     "cls": "eager",
+     "line": 52
+    },
+    {
+     "importer": "gettext",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 185
+    },
+    {
+     "importer": "gettext",
+     "target": "locale",
+     "cls": "lazy",
+     "line": 235
+    },
+    {
+     "importer": "gettext",
+     "target": "builtins",
+     "cls": "lazy",
+     "line": 328
+    },
+    {
+     "importer": "gettext",
+     "target": "struct",
+     "cls": "lazy",
+     "line": 356
+    },
+    {
+     "importer": "gettext",
+     "target": "errno",
+     "cls": "conditional",
+     "line": 539
+    },
+    {
+     "importer": "gettext",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 556
+    }
+   ]
+  },
+  "glob": {
+   "name": "glob",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/glob.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "glob",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "glob",
+     "target": "os",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "glob",
+     "target": "re",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "glob",
+     "target": "fnmatch",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "glob",
+     "target": "functools",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "glob",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "glob",
+     "target": "operator",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "glob",
+     "target": "stat",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "glob",
+     "target": "sys",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "glob",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 158
+    },
+    {
+     "importer": "glob",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 163
+    }
+   ]
+  },
+  "grp": {
+   "name": "grp",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "shutil:conditional:911",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "hashlib": {
+   "name": "hashlib",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/hashlib.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "hashlib",
+     "target": "_sha1",
+     "cls": "conditional",
+     "line": 89
+    },
+    {
+     "importer": "hashlib",
+     "target": "_md5",
+     "cls": "conditional",
+     "line": 92
+    },
+    {
+     "importer": "hashlib",
+     "target": "_sha2",
+     "cls": "conditional",
+     "line": 95
+    },
+    {
+     "importer": "hashlib",
+     "target": "_sha2",
+     "cls": "conditional",
+     "line": 99
+    },
+    {
+     "importer": "hashlib",
+     "target": "_blake2",
+     "cls": "conditional",
+     "line": 103
+    },
+    {
+     "importer": "hashlib",
+     "target": "_sha3",
+     "cls": "conditional",
+     "line": 107
+    },
+    {
+     "importer": "hashlib",
+     "target": "_sha3",
+     "cls": "conditional",
+     "line": 113
+    },
+    {
+     "importer": "hashlib",
+     "target": "_hashlib",
+     "cls": "conditional",
+     "line": 170
+    },
+    {
+     "importer": "hashlib",
+     "target": "_hashlib",
+     "cls": "conditional",
+     "line": 182
+    },
+    {
+     "importer": "hashlib",
+     "target": "_hashlib",
+     "cls": "conditional",
+     "line": 190
+    },
+    {
+     "importer": "hashlib",
+     "target": "logging",
+     "cls": "conditional",
+     "line": 249
+    }
+   ]
+  },
+  "heapq": {
+   "name": "heapq",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/heapq.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "heapq",
+     "target": "_heapq",
+     "cls": "conditional",
+     "line": 583
+    },
+    {
+     "importer": "heapq",
+     "target": "_heapq",
+     "cls": "conditional",
+     "line": 587
+    },
+    {
+     "importer": "heapq",
+     "target": "_heapq",
+     "cls": "conditional",
+     "line": 591
+    },
+    {
+     "importer": "heapq",
+     "target": "_heapq",
+     "cls": "conditional",
+     "line": 595
+    },
+    {
+     "importer": "heapq",
+     "target": "doctest",
+     "cls": "conditional",
+     "line": 602
+    }
+   ]
+  },
+  "hmac": {
+   "name": "hmac",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/hmac.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "hmac",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "hmac",
+     "target": "_hashlib",
+     "cls": "conditional",
+     "line": 8
+    },
+    {
+     "importer": "hmac",
+     "target": "_operator",
+     "cls": "conditional",
+     "line": 12
+    },
+    {
+     "importer": "hmac",
+     "target": "hashlib",
+     "cls": "eager",
+     "line": 17
+    }
+   ]
+  },
+  "html": {
+   "name": "html",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/html/__init__.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "html",
+     "target": "re",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "html",
+     "target": "html",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "html",
+     "target": "html.entities",
+     "cls": "eager",
+     "line": 6
+    }
+   ]
+  },
+  "html.entities": {
+   "name": "html.entities",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/html/entities.py",
+   "status": "compiled",
+   "reached_by": "html:eager:6",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "importlib": {
+   "name": "importlib",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/importlib/__init__.py",
+   "status": "core",
+   "reached_by": "inspect:eager:149",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "importlib._bootstrap": {
+   "name": "importlib._bootstrap",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/importlib/_bootstrap.py",
+   "status": "core",
+   "reached_by": "dataclasses:runtime:0",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "importlib._bootstrap_external": {
+   "name": "importlib._bootstrap_external",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/importlib/_bootstrap_external.py",
+   "status": "core",
+   "reached_by": "dataclasses:runtime:0",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "importlib.machinery": {
+   "name": "importlib.machinery",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/importlib/machinery.py",
+   "status": "core",
+   "reached_by": "inspect:eager:149",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "inspect": {
+   "name": "inspect",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/inspect.py",
+   "status": "compiled",
+   "reached_by": "dataclasses:eager:5",
+   "dynamic_unknown_lines": [
+    3445
+   ],
+   "edges": [
+    {
+     "importer": "inspect",
+     "target": "abc",
+     "cls": "eager",
+     "line": 144
+    },
+    {
+     "importer": "inspect",
+     "target": "ast",
+     "cls": "eager",
+     "line": 145
+    },
+    {
+     "importer": "inspect",
+     "target": "dis",
+     "cls": "eager",
+     "line": 146
+    },
+    {
+     "importer": "inspect",
+     "target": "collections",
+     "cls": "eager",
+     "line": 147
+    },
+    {
+     "importer": "inspect",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 147
+    },
+    {
+     "importer": "inspect",
+     "target": "enum",
+     "cls": "eager",
+     "line": 148
+    },
+    {
+     "importer": "inspect",
+     "target": "importlib",
+     "cls": "eager",
+     "line": 149
+    },
+    {
+     "importer": "inspect",
+     "target": "importlib.machinery",
+     "cls": "eager",
+     "line": 149
+    },
+    {
+     "importer": "inspect",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 150
+    },
+    {
+     "importer": "inspect",
+     "target": "linecache",
+     "cls": "eager",
+     "line": 151
+    },
+    {
+     "importer": "inspect",
+     "target": "os",
+     "cls": "eager",
+     "line": 152
+    },
+    {
+     "importer": "inspect",
+     "target": "re",
+     "cls": "eager",
+     "line": 153
+    },
+    {
+     "importer": "inspect",
+     "target": "sys",
+     "cls": "eager",
+     "line": 154
+    },
+    {
+     "importer": "inspect",
+     "target": "tokenize",
+     "cls": "eager",
+     "line": 155
+    },
+    {
+     "importer": "inspect",
+     "target": "token",
+     "cls": "eager",
+     "line": 156
+    },
+    {
+     "importer": "inspect",
+     "target": "types",
+     "cls": "eager",
+     "line": 157
+    },
+    {
+     "importer": "inspect",
+     "target": "functools",
+     "cls": "eager",
+     "line": 158
+    },
+    {
+     "importer": "inspect",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 159
+    },
+    {
+     "importer": "inspect",
+     "target": "keyword",
+     "cls": "eager",
+     "line": 160
+    },
+    {
+     "importer": "inspect",
+     "target": "operator",
+     "cls": "eager",
+     "line": 161
+    },
+    {
+     "importer": "inspect",
+     "target": "collections",
+     "cls": "eager",
+     "line": 162
+    },
+    {
+     "importer": "inspect",
+     "target": "typing",
+     "cls": "eager",
+     "line": 163
+    },
+    {
+     "importer": "inspect",
+     "target": "weakref",
+     "cls": "eager",
+     "line": 164
+    },
+    {
+     "importer": "inspect",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 3424
+    },
+    {
+     "importer": "inspect",
+     "target": "importlib",
+     "cls": "lazy",
+     "line": 3425
+    }
+   ]
+  },
+  "io": {
+   "name": "io",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/io.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "io",
+     "target": "_io",
+     "cls": "eager",
+     "line": 52
+    },
+    {
+     "importer": "io",
+     "target": "abc",
+     "cls": "eager",
+     "line": 53
+    },
+    {
+     "importer": "io",
+     "target": "_io",
+     "cls": "eager",
+     "line": 55
+    },
+    {
+     "importer": "io",
+     "target": "_io",
+     "cls": "conditional",
+     "line": 95
+    }
+   ]
+  },
+  "ipaddress": {
+   "name": "ipaddress",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/ipaddress.py",
+   "status": "compiled",
+   "reached_by": "urllib.parse:eager:40",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "ipaddress",
+     "target": "functools",
+     "cls": "eager",
+     "line": 14
+    },
+    {
+     "importer": "ipaddress",
+     "target": "re",
+     "cls": "conditional",
+     "line": 641
+    }
+   ]
+  },
+  "itertools": {
+   "name": "itertools",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "json": {
+   "name": "json",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/json/__init__.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "json",
+     "target": "json",
+     "cls": "eager",
+     "line": 106
+    },
+    {
+     "importer": "json",
+     "target": "json.decoder",
+     "cls": "eager",
+     "line": 106
+    },
+    {
+     "importer": "json",
+     "target": "json",
+     "cls": "eager",
+     "line": 107
+    },
+    {
+     "importer": "json",
+     "target": "json.encoder",
+     "cls": "eager",
+     "line": 107
+    },
+    {
+     "importer": "json",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 108
+    }
+   ]
+  },
+  "json.decoder": {
+   "name": "json.decoder",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/json/decoder.py",
+   "status": "compiled",
+   "reached_by": "json:eager:106",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "json.decoder",
+     "target": "re",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "json.decoder",
+     "target": "json",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "json.decoder",
+     "target": "json.scanner",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "json.decoder",
+     "target": "_json",
+     "cls": "conditional",
+     "line": 7
+    }
+   ]
+  },
+  "json.encoder": {
+   "name": "json.encoder",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/json/encoder.py",
+   "status": "compiled",
+   "reached_by": "json:eager:107",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "json.encoder",
+     "target": "re",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "json.encoder",
+     "target": "_json",
+     "cls": "conditional",
+     "line": 6
+    },
+    {
+     "importer": "json.encoder",
+     "target": "_json",
+     "cls": "conditional",
+     "line": 10
+    },
+    {
+     "importer": "json.encoder",
+     "target": "_json",
+     "cls": "conditional",
+     "line": 14
+    }
+   ]
+  },
+  "json.scanner": {
+   "name": "json.scanner",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/json/scanner.py",
+   "status": "compiled",
+   "reached_by": "json.decoder:eager:5",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "json.scanner",
+     "target": "re",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "json.scanner",
+     "target": "_json",
+     "cls": "conditional",
+     "line": 5
+    }
+   ]
+  },
+  "keyword": {
+   "name": "keyword",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/keyword.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "linecache": {
+   "name": "linecache",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/linecache.py",
+   "status": "compiled",
+   "reached_by": "warnings:conditional:41",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "linecache",
+     "target": "os",
+     "cls": "conditional",
+     "line": 84
+    },
+    {
+     "importer": "linecache",
+     "target": "os",
+     "cls": "conditional",
+     "line": 105
+    },
+    {
+     "importer": "linecache",
+     "target": "sys",
+     "cls": "conditional",
+     "line": 106
+    },
+    {
+     "importer": "linecache",
+     "target": "tokenize",
+     "cls": "conditional",
+     "line": 107
+    }
+   ]
+  },
+  "locale": {
+   "name": "locale",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/locale.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "locale",
+     "target": "sys",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "locale",
+     "target": "encodings",
+     "cls": "eager",
+     "line": 14
+    },
+    {
+     "importer": "locale",
+     "target": "encodings",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "locale",
+     "target": "encodings.aliases",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "locale",
+     "target": "re",
+     "cls": "eager",
+     "line": 16
+    },
+    {
+     "importer": "locale",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 17
+    },
+    {
+     "importer": "locale",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 18
+    },
+    {
+     "importer": "locale",
+     "target": "functools",
+     "cls": "eager",
+     "line": 19
+    },
+    {
+     "importer": "locale",
+     "target": "_locale",
+     "cls": "conditional",
+     "line": 47
+    },
+    {
+     "importer": "locale",
+     "target": "_locale",
+     "cls": "conditional",
+     "line": 549
+    },
+    {
+     "importer": "locale",
+     "target": "os",
+     "cls": "lazy",
+     "line": 563
+    },
+    {
+     "importer": "locale",
+     "target": "_locale",
+     "cls": "conditional",
+     "line": 613
+    },
+    {
+     "importer": "locale",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 627
+    },
+    {
+     "importer": "locale",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 641
+    }
+   ]
+  },
+  "logging": {
+   "name": "logging",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/logging/__init__.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "logging",
+     "target": "sys",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "os",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "time",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "io",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "re",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "traceback",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "weakref",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "collections",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "logging",
+     "target": "types",
+     "cls": "eager",
+     "line": 28
+    },
+    {
+     "importer": "logging",
+     "target": "string",
+     "cls": "eager",
+     "line": 29
+    },
+    {
+     "importer": "logging",
+     "target": "string",
+     "cls": "eager",
+     "line": 30
+    },
+    {
+     "importer": "logging",
+     "target": "threading",
+     "cls": "eager",
+     "line": 44
+    },
+    {
+     "importer": "logging",
+     "target": "pickle",
+     "cls": "conditional",
+     "line": 1834
+    },
+    {
+     "importer": "logging",
+     "target": "atexit",
+     "cls": "eager",
+     "line": 2270
+    }
+   ]
+  },
+  "math": {
+   "name": "math",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "ntpath": {
+   "name": "ntpath",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/ntpath.py",
+   "status": "compiled",
+   "reached_by": "os:conditional:81",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "ntpath",
+     "target": "os",
+     "cls": "eager",
+     "line": 20
+    },
+    {
+     "importer": "ntpath",
+     "target": "sys",
+     "cls": "eager",
+     "line": 21
+    },
+    {
+     "importer": "ntpath",
+     "target": "genericpath",
+     "cls": "eager",
+     "line": 22
+    },
+    {
+     "importer": "ntpath",
+     "target": "genericpath",
+     "cls": "eager",
+     "line": 23
+    },
+    {
+     "importer": "ntpath",
+     "target": "_winapi",
+     "cls": "conditional",
+     "line": 45
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 172
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 279
+    },
+    {
+     "importer": "ntpath",
+     "target": "re",
+     "cls": "conditional",
+     "line": 419
+    },
+    {
+     "importer": "ntpath",
+     "target": "re",
+     "cls": "conditional",
+     "line": 431
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 474
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 516
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 559
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 868
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 869
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 870
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 871
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 872
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 873
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 880
+    }
+   ]
+  },
+  "numbers": {
+   "name": "numbers",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/numbers.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "numbers",
+     "target": "abc",
+     "cls": "eager",
+     "line": 33
+    }
+   ]
+  },
+  "opcode": {
+   "name": "opcode",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/opcode.py",
+   "status": "compiled",
+   "reached_by": "dis:eager:8",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "opcode",
+     "target": "_opcode",
+     "cls": "eager",
+     "line": 12
+    },
+    {
+     "importer": "opcode",
+     "target": "_opcode",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "opcode",
+     "target": "_opcode_metadata",
+     "cls": "eager",
+     "line": 15
+    }
+   ]
+  },
+  "operator": {
+   "name": "operator",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/operator.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "operator",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 22
+    },
+    {
+     "importer": "operator",
+     "target": "functools",
+     "cls": "conditional",
+     "line": 333
+    },
+    {
+     "importer": "operator",
+     "target": "_operator",
+     "cls": "conditional",
+     "line": 414
+    },
+    {
+     "importer": "operator",
+     "target": "_operator",
+     "cls": "eager",
+     "line": 418
+    }
+   ]
+  },
+  "os": {
+   "name": "os",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/os.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "os",
+     "target": "abc",
+     "cls": "eager",
+     "line": 25
+    },
+    {
+     "importer": "os",
+     "target": "sys",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "os",
+     "target": "stat",
+     "cls": "eager",
+     "line": 27
+    },
+    {
+     "importer": "os",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 29
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "conditional",
+     "line": 55
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "conditional",
+     "line": 57
+    },
+    {
+     "importer": "os",
+     "target": "posixpath",
+     "cls": "conditional",
+     "line": 61
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "conditional",
+     "line": 64
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "conditional",
+     "line": 68
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 75
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 77
+    },
+    {
+     "importer": "os",
+     "target": "ntpath",
+     "cls": "conditional",
+     "line": 81
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 83
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 88
+    },
+    {
+     "importer": "os",
+     "target": "os",
+     "cls": "eager",
+     "line": 96
+    },
+    {
+     "importer": "os",
+     "target": "os.path",
+     "cls": "eager",
+     "line": 96
+    },
+    {
+     "importer": "os",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 667
+    },
+    {
+     "importer": "os",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 702
+    },
+    {
+     "importer": "os",
+     "target": "subprocess",
+     "cls": "conditional",
+     "line": 1023
+    },
+    {
+     "importer": "os",
+     "target": "io",
+     "cls": "lazy",
+     "line": 1066
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 1164
+    }
+   ]
+  },
+  "os.path": {
+   "name": "os.path",
+   "kind": "frozen",
+   "path": null,
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "pathlib": {
+   "name": "pathlib",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/pathlib/__init__.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "pathlib",
+     "target": "pathlib",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "pathlib",
+     "target": "pathlib._abc",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "pathlib",
+     "target": "pathlib",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "pathlib",
+     "target": "pathlib._local",
+     "cls": "eager",
+     "line": 9
+    }
+   ]
+  },
+  "pathlib._abc": {
+   "name": "pathlib._abc",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/pathlib/_abc.py",
+   "status": "compiled",
+   "reached_by": "pathlib:eager:8",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "pathlib._abc",
+     "target": "functools",
+     "cls": "eager",
+     "line": 14
+    },
+    {
+     "importer": "pathlib._abc",
+     "target": "glob",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "pathlib._abc",
+     "target": "errno",
+     "cls": "eager",
+     "line": 16
+    },
+    {
+     "importer": "pathlib._abc",
+     "target": "stat",
+     "cls": "eager",
+     "line": 17
+    }
+   ]
+  },
+  "pathlib._local": {
+   "name": "pathlib._local",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/pathlib/_local.py",
+   "status": "compiled",
+   "reached_by": "pathlib:eager:9",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "pathlib._local",
+     "target": "io",
+     "cls": "eager",
+     "line": 1
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "ntpath",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "operator",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "os",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "posixpath",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "sys",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "glob",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "pwd",
+     "cls": "conditional",
+     "line": 13
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "grp",
+     "cls": "conditional",
+     "line": 17
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "pathlib",
+     "cls": "eager",
+     "line": 21
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "pathlib._abc",
+     "cls": "eager",
+     "line": 21
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "urllib",
+     "cls": "lazy",
+     "line": 446
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "urllib.parse",
+     "cls": "lazy",
+     "line": 446
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "urllib",
+     "cls": "lazy",
+     "line": 832
+    },
+    {
+     "importer": "pathlib._local",
+     "target": "urllib.parse",
+     "cls": "lazy",
+     "line": 832
+    }
+   ]
+  },
+  "posix": {
+   "name": "posix",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": "os:conditional:55",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "posixpath": {
+   "name": "posixpath",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/posixpath.py",
+   "status": "compiled",
+   "reached_by": "os:conditional:61",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "posixpath",
+     "target": "errno",
+     "cls": "eager",
+     "line": 25
+    },
+    {
+     "importer": "posixpath",
+     "target": "os",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "posixpath",
+     "target": "sys",
+     "cls": "eager",
+     "line": 27
+    },
+    {
+     "importer": "posixpath",
+     "target": "stat",
+     "cls": "eager",
+     "line": 28
+    },
+    {
+     "importer": "posixpath",
+     "target": "genericpath",
+     "cls": "eager",
+     "line": 29
+    },
+    {
+     "importer": "posixpath",
+     "target": "genericpath",
+     "cls": "eager",
+     "line": 30
+    },
+    {
+     "importer": "posixpath",
+     "target": "posix",
+     "cls": "conditional",
+     "line": 139
+    },
+    {
+     "importer": "posixpath",
+     "target": "pwd",
+     "cls": "conditional",
+     "line": 246
+    },
+    {
+     "importer": "posixpath",
+     "target": "pwd",
+     "cls": "conditional",
+     "line": 260
+    },
+    {
+     "importer": "posixpath",
+     "target": "re",
+     "cls": "conditional",
+     "line": 300
+    },
+    {
+     "importer": "posixpath",
+     "target": "re",
+     "cls": "conditional",
+     "line": 310
+    },
+    {
+     "importer": "posixpath",
+     "target": "posix",
+     "cls": "conditional",
+     "line": 341
+    }
+   ]
+  },
+  "pprint": {
+   "name": "pprint",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/pprint.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "pprint",
+     "target": "collections",
+     "cls": "eager",
+     "line": 37
+    },
+    {
+     "importer": "pprint",
+     "target": "dataclasses",
+     "cls": "eager",
+     "line": 38
+    },
+    {
+     "importer": "pprint",
+     "target": "re",
+     "cls": "eager",
+     "line": 39
+    },
+    {
+     "importer": "pprint",
+     "target": "sys",
+     "cls": "eager",
+     "line": 40
+    },
+    {
+     "importer": "pprint",
+     "target": "types",
+     "cls": "eager",
+     "line": 41
+    },
+    {
+     "importer": "pprint",
+     "target": "io",
+     "cls": "eager",
+     "line": 42
+    }
+   ]
+  },
+  "pwd": {
+   "name": "pwd",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "shutil:conditional:929",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "random": {
+   "name": "random",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/random.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "random",
+     "target": "math",
+     "cls": "eager",
+     "line": 53
+    },
+    {
+     "importer": "random",
+     "target": "math",
+     "cls": "eager",
+     "line": 54
+    },
+    {
+     "importer": "random",
+     "target": "math",
+     "cls": "eager",
+     "line": 55
+    },
+    {
+     "importer": "random",
+     "target": "math",
+     "cls": "eager",
+     "line": 56
+    },
+    {
+     "importer": "random",
+     "target": "os",
+     "cls": "eager",
+     "line": 57
+    },
+    {
+     "importer": "random",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 58
+    },
+    {
+     "importer": "random",
+     "target": "operator",
+     "cls": "eager",
+     "line": 59
+    },
+    {
+     "importer": "random",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 60
+    },
+    {
+     "importer": "random",
+     "target": "bisect",
+     "cls": "eager",
+     "line": 61
+    },
+    {
+     "importer": "random",
+     "target": "os",
+     "cls": "eager",
+     "line": 62
+    },
+    {
+     "importer": "random",
+     "target": "_random",
+     "cls": "eager",
+     "line": 63
+    },
+    {
+     "importer": "random",
+     "target": "_sha2",
+     "cls": "conditional",
+     "line": 160
+    },
+    {
+     "importer": "random",
+     "target": "hashlib",
+     "cls": "conditional",
+     "line": 163
+    },
+    {
+     "importer": "random",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 263
+    },
+    {
+     "importer": "random",
+     "target": "statistics",
+     "cls": "lazy",
+     "line": 963
+    },
+    {
+     "importer": "random",
+     "target": "time",
+     "cls": "lazy",
+     "line": 964
+    },
+    {
+     "importer": "random",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 1012
+    }
+   ]
+  },
+  "re": {
+   "name": "re",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/re/__init__.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "re",
+     "target": "enum",
+     "cls": "eager",
+     "line": 125
+    },
+    {
+     "importer": "re",
+     "target": "re",
+     "cls": "eager",
+     "line": 126
+    },
+    {
+     "importer": "re",
+     "target": "re._compiler",
+     "cls": "eager",
+     "line": 126
+    },
+    {
+     "importer": "re",
+     "target": "re._parser",
+     "cls": "eager",
+     "line": 126
+    },
+    {
+     "importer": "re",
+     "target": "functools",
+     "cls": "eager",
+     "line": 127
+    },
+    {
+     "importer": "re",
+     "target": "_sre",
+     "cls": "eager",
+     "line": 128
+    },
+    {
+     "importer": "re",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 202
+    },
+    {
+     "importer": "re",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 232
+    },
+    {
+     "importer": "re",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 261
+    },
+    {
+     "importer": "re",
+     "target": "copyreg",
+     "cls": "eager",
+     "line": 381
+    },
+    {
+     "importer": "re",
+     "target": "re",
+     "cls": "lazy",
+     "line": 393
+    },
+    {
+     "importer": "re",
+     "target": "re._constants",
+     "cls": "lazy",
+     "line": 393
+    }
+   ]
+  },
+  "re._casefix": {
+   "name": "re._casefix",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/re/_casefix.py",
+   "status": "compiled",
+   "reached_by": "re._compiler:eager:17",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "re._compiler": {
+   "name": "re._compiler",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/re/_compiler.py",
+   "status": "compiled",
+   "reached_by": "re:eager:126",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "re._compiler",
+     "target": "_sre",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "re._compiler",
+     "target": "os",
+     "cls": "eager",
+     "line": 14
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re._parser",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re",
+     "cls": "eager",
+     "line": 16
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re._constants",
+     "cls": "eager",
+     "line": 16
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re",
+     "cls": "eager",
+     "line": 17
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re._casefix",
+     "cls": "eager",
+     "line": 17
+    },
+    {
+     "importer": "re._compiler",
+     "target": "sys",
+     "cls": "lazy",
+     "line": 913
+    }
+   ]
+  },
+  "re._constants": {
+   "name": "re._constants",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/re/_constants.py",
+   "status": "compiled",
+   "reached_by": "re:lazy:393",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "re._constants",
+     "target": "_sre",
+     "cls": "eager",
+     "line": 18
+    }
+   ]
+  },
+  "re._parser": {
+   "name": "re._parser",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/re/_parser.py",
+   "status": "compiled",
+   "reached_by": "re:eager:126",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "re._parser",
+     "target": "re",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "re._parser",
+     "target": "re._constants",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "re._parser",
+     "target": "unicodedata",
+     "cls": "conditional",
+     "line": 342
+    },
+    {
+     "importer": "re._parser",
+     "target": "unicodedata",
+     "cls": "conditional",
+     "line": 402
+    },
+    {
+     "importer": "re._parser",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 557
+    },
+    {
+     "importer": "re._parser",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 575
+    },
+    {
+     "importer": "re._parser",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 602
+    },
+    {
+     "importer": "re._parser",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 811
+    },
+    {
+     "importer": "re._parser",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 1042
+    }
+   ]
+  },
+  "reprlib": {
+   "name": "reprlib",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/reprlib.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "reprlib",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "reprlib",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "reprlib",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "reprlib",
+     "target": "math",
+     "cls": "conditional",
+     "line": 190
+    },
+    {
+     "importer": "reprlib",
+     "target": "sys",
+     "cls": "conditional",
+     "line": 190
+    }
+   ]
+  },
+  "secrets": {
+   "name": "secrets",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/secrets.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "secrets",
+     "target": "base64",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "secrets",
+     "target": "hmac",
+     "cls": "eager",
+     "line": 17
+    },
+    {
+     "importer": "secrets",
+     "target": "random",
+     "cls": "eager",
+     "line": 18
+    }
+   ]
+  },
+  "shutil": {
+   "name": "shutil",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/shutil.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "shutil",
+     "target": "os",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "shutil",
+     "target": "sys",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "shutil",
+     "target": "stat",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "shutil",
+     "target": "fnmatch",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "shutil",
+     "target": "collections",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "shutil",
+     "target": "errno",
+     "cls": "eager",
+     "line": 12
+    },
+    {
+     "importer": "shutil",
+     "target": "zlib",
+     "cls": "conditional",
+     "line": 15
+    },
+    {
+     "importer": "shutil",
+     "target": "bz2",
+     "cls": "conditional",
+     "line": 22
+    },
+    {
+     "importer": "shutil",
+     "target": "lzma",
+     "cls": "conditional",
+     "line": 29
+    },
+    {
+     "importer": "shutil",
+     "target": "posix",
+     "cls": "conditional",
+     "line": 38
+    },
+    {
+     "importer": "shutil",
+     "target": "nt",
+     "cls": "conditional",
+     "line": 40
+    },
+    {
+     "importer": "shutil",
+     "target": "_winapi",
+     "cls": "conditional",
+     "line": 43
+    },
+    {
+     "importer": "shutil",
+     "target": "grp",
+     "cls": "conditional",
+     "line": 911
+    },
+    {
+     "importer": "shutil",
+     "target": "pwd",
+     "cls": "conditional",
+     "line": 929
+    },
+    {
+     "importer": "shutil",
+     "target": "tarfile",
+     "cls": "lazy",
+     "line": 969
+    },
+    {
+     "importer": "shutil",
+     "target": "zipfile",
+     "cls": "lazy",
+     "line": 1018
+    },
+    {
+     "importer": "shutil",
+     "target": "zipfile",
+     "cls": "lazy",
+     "line": 1255
+    },
+    {
+     "importer": "shutil",
+     "target": "tarfile",
+     "cls": "lazy",
+     "line": 1267
+    }
+   ]
+  },
+  "signal": {
+   "name": "signal",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/signal.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "signal",
+     "target": "_signal",
+     "cls": "eager",
+     "line": 1
+    },
+    {
+     "importer": "signal",
+     "target": "_signal",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "signal",
+     "target": "enum",
+     "cls": "eager",
+     "line": 3
+    }
+   ]
+  },
+  "socket": {
+   "name": "socket",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/socket.py",
+   "status": "shim",
+   "reached_by": "uuid:lazy:534",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "stat": {
+   "name": "stat",
+   "kind": "frozen",
+   "path": "/usr/local/lib/python3.13/stat.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "stat",
+     "target": "_stat",
+     "cls": "conditional",
+     "line": 210
+    }
+   ]
+  },
+  "statistics": {
+   "name": "statistics",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/statistics.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "statistics",
+     "target": "math",
+     "cls": "eager",
+     "line": 132
+    },
+    {
+     "importer": "statistics",
+     "target": "numbers",
+     "cls": "eager",
+     "line": 133
+    },
+    {
+     "importer": "statistics",
+     "target": "random",
+     "cls": "eager",
+     "line": 134
+    },
+    {
+     "importer": "statistics",
+     "target": "sys",
+     "cls": "eager",
+     "line": 135
+    },
+    {
+     "importer": "statistics",
+     "target": "fractions",
+     "cls": "eager",
+     "line": 137
+    },
+    {
+     "importer": "statistics",
+     "target": "decimal",
+     "cls": "eager",
+     "line": 138
+    },
+    {
+     "importer": "statistics",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 139
+    },
+    {
+     "importer": "statistics",
+     "target": "bisect",
+     "cls": "eager",
+     "line": 140
+    },
+    {
+     "importer": "statistics",
+     "target": "math",
+     "cls": "eager",
+     "line": 141
+    },
+    {
+     "importer": "statistics",
+     "target": "math",
+     "cls": "eager",
+     "line": 142
+    },
+    {
+     "importer": "statistics",
+     "target": "functools",
+     "cls": "eager",
+     "line": 143
+    },
+    {
+     "importer": "statistics",
+     "target": "operator",
+     "cls": "eager",
+     "line": 144
+    },
+    {
+     "importer": "statistics",
+     "target": "collections",
+     "cls": "eager",
+     "line": 145
+    },
+    {
+     "importer": "statistics",
+     "target": "_statistics",
+     "cls": "conditional",
+     "line": 1499
+    }
+   ]
+  },
+  "string": {
+   "name": "string",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/string.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "string",
+     "target": "_string",
+     "cls": "eager",
+     "line": 21
+    },
+    {
+     "importer": "string",
+     "target": "re",
+     "cls": "eager",
+     "line": 52
+    },
+    {
+     "importer": "string",
+     "target": "collections",
+     "cls": "eager",
+     "line": 53
+    }
+   ]
+  },
+  "struct": {
+   "name": "struct",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/struct.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "struct",
+     "target": "_struct",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "struct",
+     "target": "_struct",
+     "cls": "eager",
+     "line": 14
+    },
+    {
+     "importer": "struct",
+     "target": "_struct",
+     "cls": "eager",
+     "line": 15
+    }
+   ]
+  },
+  "subprocess": {
+   "name": "subprocess",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/subprocess.py",
+   "status": "shim",
+   "reached_by": "os:conditional:1023",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "sys": {
+   "name": "sys",
+   "kind": "builtin",
+   "path": null,
+   "status": "core",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "tempfile": {
+   "name": "tempfile",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/tempfile.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "tempfile",
+     "target": "functools",
+     "cls": "eager",
+     "line": 39
+    },
+    {
+     "importer": "tempfile",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 40
+    },
+    {
+     "importer": "tempfile",
+     "target": "io",
+     "cls": "eager",
+     "line": 41
+    },
+    {
+     "importer": "tempfile",
+     "target": "os",
+     "cls": "eager",
+     "line": 42
+    },
+    {
+     "importer": "tempfile",
+     "target": "shutil",
+     "cls": "eager",
+     "line": 43
+    },
+    {
+     "importer": "tempfile",
+     "target": "errno",
+     "cls": "eager",
+     "line": 44
+    },
+    {
+     "importer": "tempfile",
+     "target": "random",
+     "cls": "eager",
+     "line": 45
+    },
+    {
+     "importer": "tempfile",
+     "target": "stat",
+     "cls": "eager",
+     "line": 46
+    },
+    {
+     "importer": "tempfile",
+     "target": "sys",
+     "cls": "eager",
+     "line": 47
+    },
+    {
+     "importer": "tempfile",
+     "target": "types",
+     "cls": "eager",
+     "line": 48
+    },
+    {
+     "importer": "tempfile",
+     "target": "weakref",
+     "cls": "eager",
+     "line": 49
+    },
+    {
+     "importer": "tempfile",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 50
+    }
+   ]
+  },
+  "textwrap": {
+   "name": "textwrap",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/textwrap.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "textwrap",
+     "target": "re",
+     "cls": "eager",
+     "line": 8
+    }
+   ]
+  },
+  "threading": {
+   "name": "threading",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/threading.py",
+   "status": "shim",
+   "reached_by": "logging:eager:44",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "time": {
+   "name": "time",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "token": {
+   "name": "token",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/token.py",
+   "status": "compiled",
+   "reached_by": "inspect:eager:156",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "tokenize": {
+   "name": "tokenize",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/tokenize.py",
+   "status": "compiled",
+   "reached_by": "inspect:eager:155",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "tokenize",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 27
+    },
+    {
+     "importer": "tokenize",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 28
+    },
+    {
+     "importer": "tokenize",
+     "target": "collections",
+     "cls": "eager",
+     "line": 29
+    },
+    {
+     "importer": "tokenize",
+     "target": "functools",
+     "cls": "eager",
+     "line": 30
+    },
+    {
+     "importer": "tokenize",
+     "target": "io",
+     "cls": "eager",
+     "line": 31
+    },
+    {
+     "importer": "tokenize",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 32
+    },
+    {
+     "importer": "tokenize",
+     "target": "re",
+     "cls": "eager",
+     "line": 33
+    },
+    {
+     "importer": "tokenize",
+     "target": "sys",
+     "cls": "eager",
+     "line": 34
+    },
+    {
+     "importer": "tokenize",
+     "target": "token",
+     "cls": "eager",
+     "line": 35
+    },
+    {
+     "importer": "tokenize",
+     "target": "token",
+     "cls": "eager",
+     "line": 36
+    },
+    {
+     "importer": "tokenize",
+     "target": "_tokenize",
+     "cls": "eager",
+     "line": 37
+    },
+    {
+     "importer": "tokenize",
+     "target": "token",
+     "cls": "eager",
+     "line": 42
+    },
+    {
+     "importer": "tokenize",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 503
+    }
+   ]
+  },
+  "traceback": {
+   "name": "traceback",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/traceback.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [
+    1516
+   ],
+   "edges": [
+    {
+     "importer": "traceback",
+     "target": "collections",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "traceback",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "traceback",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "traceback",
+     "target": "linecache",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "traceback",
+     "target": "sys",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "traceback",
+     "target": "textwrap",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "traceback",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "traceback",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "traceback",
+     "target": "_colorize",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "traceback",
+     "target": "_colorize",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "traceback",
+     "target": "ast",
+     "cls": "conditional",
+     "line": 706
+    },
+    {
+     "importer": "traceback",
+     "target": "ast",
+     "cls": "lazy",
+     "line": 811
+    },
+    {
+     "importer": "traceback",
+     "target": "unicodedata",
+     "cls": "lazy",
+     "line": 964
+    },
+    {
+     "importer": "traceback",
+     "target": "_suggestions",
+     "cls": "conditional",
+     "line": 1549
+    }
+   ]
+  },
+  "types": {
+   "name": "types",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/types.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "types",
+     "target": "sys",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "types",
+     "target": "functools",
+     "cls": "lazy",
+     "line": 311
+    },
+    {
+     "importer": "types",
+     "target": "_collections_abc",
+     "cls": "lazy",
+     "line": 312
+    },
+    {
+     "importer": "types",
+     "target": "_socket",
+     "cls": "conditional",
+     "line": 341
+    }
+   ]
+  },
+  "typing": {
+   "name": "typing",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/typing.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "typing",
+     "target": "abc",
+     "cls": "eager",
+     "line": 21
+    },
+    {
+     "importer": "typing",
+     "target": "collections",
+     "cls": "eager",
+     "line": 22
+    },
+    {
+     "importer": "typing",
+     "target": "collections",
+     "cls": "eager",
+     "line": 23
+    },
+    {
+     "importer": "typing",
+     "target": "collections",
+     "cls": "eager",
+     "line": 24
+    },
+    {
+     "importer": "typing",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 24
+    },
+    {
+     "importer": "typing",
+     "target": "copyreg",
+     "cls": "eager",
+     "line": 25
+    },
+    {
+     "importer": "typing",
+     "target": "functools",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "typing",
+     "target": "operator",
+     "cls": "eager",
+     "line": 27
+    },
+    {
+     "importer": "typing",
+     "target": "sys",
+     "cls": "eager",
+     "line": 28
+    },
+    {
+     "importer": "typing",
+     "target": "types",
+     "cls": "eager",
+     "line": 29
+    },
+    {
+     "importer": "typing",
+     "target": "types",
+     "cls": "eager",
+     "line": 30
+    },
+    {
+     "importer": "typing",
+     "target": "_typing",
+     "cls": "eager",
+     "line": 32
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 442
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1713
+    },
+    {
+     "importer": "typing",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 2030
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 2699
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 3129
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 3323
+    },
+    {
+     "importer": "typing",
+     "target": "re",
+     "cls": "conditional",
+     "line": 3828
+    },
+    {
+     "importer": "typing",
+     "target": "contextlib",
+     "cls": "conditional",
+     "line": 3831
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "conditional",
+     "line": 3834
+    }
+   ]
+  },
+  "unicodedata": {
+   "name": "unicodedata",
+   "kind": "builtin",
+   "path": null,
+   "status": "mapped",
+   "reached_by": "urllib.parse:lazy:428",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "unittest": {
+   "name": "unittest",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/__init__.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 56
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest.result",
+     "cls": "eager",
+     "line": 56
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 57
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest.case",
+     "cls": "eager",
+     "line": 57
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 60
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest.suite",
+     "cls": "eager",
+     "line": 60
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 61
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest.loader",
+     "cls": "eager",
+     "line": 61
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 62
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest.main",
+     "cls": "eager",
+     "line": 62
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 63
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest.runner",
+     "cls": "eager",
+     "line": 63
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 64
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest.signals",
+     "cls": "eager",
+     "line": 64
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest",
+     "cls": "conditional",
+     "line": 78
+    },
+    {
+     "importer": "unittest",
+     "target": "unittest.async_case",
+     "cls": "conditional",
+     "line": 78
+    }
+   ]
+  },
+  "unittest._log": {
+   "name": "unittest._log",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/_log.py",
+   "status": "compiled",
+   "reached_by": "unittest.case:lazy:857",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest._log",
+     "target": "logging",
+     "cls": "eager",
+     "line": 1
+    },
+    {
+     "importer": "unittest._log",
+     "target": "collections",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "unittest._log",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "unittest._log",
+     "target": "unittest.case",
+     "cls": "eager",
+     "line": 4
+    }
+   ]
+  },
+  "unittest.async_case": {
+   "name": "unittest.async_case",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/async_case.py",
+   "status": "compiled",
+   "reached_by": "unittest:conditional:78",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest.async_case",
+     "target": "asyncio",
+     "cls": "eager",
+     "line": 1
+    },
+    {
+     "importer": "unittest.async_case",
+     "target": "contextvars",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "unittest.async_case",
+     "target": "inspect",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "unittest.async_case",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "unittest.async_case",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "unittest.async_case",
+     "target": "unittest.case",
+     "cls": "eager",
+     "line": 6
+    }
+   ]
+  },
+  "unittest.case": {
+   "name": "unittest.case",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/case.py",
+   "status": "compiled",
+   "reached_by": "unittest:eager:57",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest.case",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "unittest.case",
+     "target": "functools",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "unittest.case",
+     "target": "difflib",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "unittest.case",
+     "target": "pprint",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "unittest.case",
+     "target": "re",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.case",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "unittest.case",
+     "target": "collections",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "unittest.case",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 10
+    },
+    {
+     "importer": "unittest.case",
+     "target": "traceback",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "unittest.case",
+     "target": "time",
+     "cls": "eager",
+     "line": 12
+    },
+    {
+     "importer": "unittest.case",
+     "target": "types",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "unittest.case",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "unittest.case",
+     "target": "unittest.result",
+     "cls": "eager",
+     "line": 15
+    },
+    {
+     "importer": "unittest.case",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 16
+    },
+    {
+     "importer": "unittest.case",
+     "target": "unittest.util",
+     "cls": "eager",
+     "line": 16
+    },
+    {
+     "importer": "unittest.case",
+     "target": "unittest",
+     "cls": "lazy",
+     "line": 857
+    },
+    {
+     "importer": "unittest.case",
+     "target": "unittest._log",
+     "cls": "lazy",
+     "line": 857
+    },
+    {
+     "importer": "unittest.case",
+     "target": "unittest",
+     "cls": "lazy",
+     "line": 866
+    },
+    {
+     "importer": "unittest.case",
+     "target": "unittest._log",
+     "cls": "lazy",
+     "line": 866
+    }
+   ]
+  },
+  "unittest.loader": {
+   "name": "unittest.loader",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/loader.py",
+   "status": "compiled",
+   "reached_by": "unittest:eager:61",
+   "dynamic_unknown_lines": [
+    141,
+    291,
+    346
+   ],
+   "edges": [
+    {
+     "importer": "unittest.loader",
+     "target": "inspect",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "os",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "re",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "sys",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "traceback",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "types",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "functools",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "fnmatch",
+     "cls": "eager",
+     "line": 11
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "unittest.case",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "unittest.suite",
+     "cls": "eager",
+     "line": 13
+    },
+    {
+     "importer": "unittest.loader",
+     "target": "unittest.util",
+     "cls": "eager",
+     "line": 13
+    }
+   ]
+  },
+  "unittest.main": {
+   "name": "unittest.main",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/main.py",
+   "status": "compiled",
+   "reached_by": "unittest:eager:62",
+   "dynamic_unknown_lines": [
+    72
+   ],
+   "edges": [
+    {
+     "importer": "unittest.main",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "unittest.main",
+     "target": "argparse",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "unittest.main",
+     "target": "os",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "unittest.main",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.main",
+     "target": "unittest.loader",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.main",
+     "target": "unittest.runner",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.main",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "unittest.main",
+     "target": "unittest.signals",
+     "cls": "eager",
+     "line": 8
+    }
+   ]
+  },
+  "unittest.result": {
+   "name": "unittest.result",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/result.py",
+   "status": "compiled",
+   "reached_by": "unittest:eager:56",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest.result",
+     "target": "io",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "unittest.result",
+     "target": "sys",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "unittest.result",
+     "target": "traceback",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "unittest.result",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.result",
+     "target": "unittest.util",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.result",
+     "target": "functools",
+     "cls": "eager",
+     "line": 8
+    }
+   ]
+  },
+  "unittest.runner": {
+   "name": "unittest.runner",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/runner.py",
+   "status": "compiled",
+   "reached_by": "unittest:eager:63",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest.runner",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "unittest.runner",
+     "target": "time",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "unittest.runner",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "unittest.runner",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.runner",
+     "target": "unittest.result",
+     "cls": "eager",
+     "line": 7
+    },
+    {
+     "importer": "unittest.runner",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "unittest.runner",
+     "target": "unittest.case",
+     "cls": "eager",
+     "line": 8
+    },
+    {
+     "importer": "unittest.runner",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 9
+    },
+    {
+     "importer": "unittest.runner",
+     "target": "unittest.signals",
+     "cls": "eager",
+     "line": 9
+    }
+   ]
+  },
+  "unittest.signals": {
+   "name": "unittest.signals",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/signals.py",
+   "status": "compiled",
+   "reached_by": "unittest:eager:64",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest.signals",
+     "target": "signal",
+     "cls": "eager",
+     "line": 1
+    },
+    {
+     "importer": "unittest.signals",
+     "target": "weakref",
+     "cls": "eager",
+     "line": 2
+    },
+    {
+     "importer": "unittest.signals",
+     "target": "functools",
+     "cls": "eager",
+     "line": 4
+    }
+   ]
+  },
+  "unittest.suite": {
+   "name": "unittest.suite",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/suite.py",
+   "status": "compiled",
+   "reached_by": "unittest:eager:60",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest.suite",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "unittest.suite",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "unittest.suite",
+     "target": "unittest.case",
+     "cls": "eager",
+     "line": 5
+    },
+    {
+     "importer": "unittest.suite",
+     "target": "unittest",
+     "cls": "eager",
+     "line": 6
+    },
+    {
+     "importer": "unittest.suite",
+     "target": "unittest.util",
+     "cls": "eager",
+     "line": 6
+    }
+   ]
+  },
+  "unittest.util": {
+   "name": "unittest.util",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/unittest/util.py",
+   "status": "compiled",
+   "reached_by": "unittest.result:eager:7",
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "unittest.util",
+     "target": "collections",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "unittest.util",
+     "target": "os",
+     "cls": "eager",
+     "line": 4
+    },
+    {
+     "importer": "unittest.util",
+     "target": "os.path",
+     "cls": "eager",
+     "line": 4
+    }
+   ]
+  },
+  "urllib": {
+   "name": "urllib",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/urllib/__init__.py",
+   "status": "compiled",
+   "reached_by": "pathlib._local:lazy:446",
+   "dynamic_unknown_lines": [],
+   "edges": []
+  },
+  "urllib.parse": {
+   "name": "urllib.parse",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/urllib/parse.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "urllib.parse",
+     "target": "collections",
+     "cls": "eager",
+     "line": 34
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "functools",
+     "cls": "eager",
+     "line": 35
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "math",
+     "cls": "eager",
+     "line": 36
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "re",
+     "cls": "eager",
+     "line": 37
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "types",
+     "cls": "eager",
+     "line": 38
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 39
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "ipaddress",
+     "cls": "eager",
+     "line": 40
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "unicodedata",
+     "cls": "lazy",
+     "line": 428
+    }
+   ]
+  },
+  "uuid": {
+   "name": "uuid",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/uuid.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "uuid",
+     "target": "os",
+     "cls": "eager",
+     "line": 47
+    },
+    {
+     "importer": "uuid",
+     "target": "sys",
+     "cls": "eager",
+     "line": 48
+    },
+    {
+     "importer": "uuid",
+     "target": "enum",
+     "cls": "eager",
+     "line": 50
+    },
+    {
+     "importer": "uuid",
+     "target": "platform",
+     "cls": "conditional",
+     "line": 62
+    },
+    {
+     "importer": "uuid",
+     "target": "io",
+     "cls": "lazy",
+     "line": 364
+    },
+    {
+     "importer": "uuid",
+     "target": "os",
+     "cls": "lazy",
+     "line": 364
+    },
+    {
+     "importer": "uuid",
+     "target": "shutil",
+     "cls": "lazy",
+     "line": 364
+    },
+    {
+     "importer": "uuid",
+     "target": "subprocess",
+     "cls": "lazy",
+     "line": 364
+    },
+    {
+     "importer": "uuid",
+     "target": "os",
+     "cls": "lazy",
+     "line": 534
+    },
+    {
+     "importer": "uuid",
+     "target": "socket",
+     "cls": "lazy",
+     "line": 534
+    },
+    {
+     "importer": "uuid",
+     "target": "_uuid",
+     "cls": "conditional",
+     "line": 573
+    },
+    {
+     "importer": "uuid",
+     "target": "time",
+     "cls": "lazy",
+     "line": 682
+    },
+    {
+     "importer": "uuid",
+     "target": "random",
+     "cls": "conditional",
+     "line": 691
+    },
+    {
+     "importer": "uuid",
+     "target": "hashlib",
+     "cls": "lazy",
+     "line": 707
+    },
+    {
+     "importer": "uuid",
+     "target": "hashlib",
+     "cls": "lazy",
+     "line": 722
+    },
+    {
+     "importer": "uuid",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 743
+    }
+   ]
+  },
+  "warnings": {
+   "name": "warnings",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/warnings.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [
+    267
+   ],
+   "edges": [
+    {
+     "importer": "warnings",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3
+    },
+    {
+     "importer": "warnings",
+     "target": "linecache",
+     "cls": "conditional",
+     "line": 41
+    },
+    {
+     "importer": "warnings",
+     "target": "tracemalloc",
+     "cls": "conditional",
+     "line": 56
+    },
+    {
+     "importer": "warnings",
+     "target": "re",
+     "cls": "conditional",
+     "line": 157
+    },
+    {
+     "importer": "warnings",
+     "target": "re",
+     "cls": "conditional",
+     "line": 231
+    },
+    {
+     "importer": "warnings",
+     "target": "builtins",
+     "cls": "conditional",
+     "line": 262
+    },
+    {
+     "importer": "warnings",
+     "target": "linecache",
+     "cls": "lazy",
+     "line": 388
+    },
+    {
+     "importer": "warnings",
+     "target": "functools",
+     "cls": "conditional",
+     "line": 586
+    },
+    {
+     "importer": "warnings",
+     "target": "types",
+     "cls": "conditional",
+     "line": 587
+    },
+    {
+     "importer": "warnings",
+     "target": "functools",
+     "cls": "conditional",
+     "line": 631
+    },
+    {
+     "importer": "warnings",
+     "target": "inspect",
+     "cls": "conditional",
+     "line": 632
+    },
+    {
+     "importer": "warnings",
+     "target": "linecache",
+     "cls": "conditional",
+     "line": 678
+    },
+    {
+     "importer": "warnings",
+     "target": "traceback",
+     "cls": "conditional",
+     "line": 678
+    },
+    {
+     "importer": "warnings",
+     "target": "_warnings",
+     "cls": "conditional",
+     "line": 704
+    }
+   ]
+  },
+  "weakref": {
+   "name": "weakref",
+   "kind": "source",
+   "path": "/usr/local/lib/python3.13/weakref.py",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": [
+    {
+     "importer": "weakref",
+     "target": "_weakref",
+     "cls": "eager",
+     "line": 12
+    },
+    {
+     "importer": "weakref",
+     "target": "_weakrefset",
+     "cls": "eager",
+     "line": 22
+    },
+    {
+     "importer": "weakref",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 24
+    },
+    {
+     "importer": "weakref",
+     "target": "sys",
+     "cls": "eager",
+     "line": 25
+    },
+    {
+     "importer": "weakref",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 26
+    },
+    {
+     "importer": "weakref",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 183
+    },
+    {
+     "importer": "weakref",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 442
+    },
+    {
+     "importer": "weakref",
+     "target": "atexit",
+     "cls": "conditional",
+     "line": 572
+    },
+    {
+     "importer": "weakref",
+     "target": "gc",
+     "cls": "conditional",
+     "line": 649
+    }
+   ]
+  },
+  "zlib": {
+   "name": "zlib",
+   "kind": "extension",
+   "path": "/usr/local/lib/python3.13/lib-dynload/zlib.cpython-313-x86_64-linux-gnu.so",
+   "status": "mapped",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "edges": []
+  }
+ }
+}

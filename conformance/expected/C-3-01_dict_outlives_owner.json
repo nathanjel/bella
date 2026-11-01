@@ -1,0 +1,12 @@
+{
+ "case": "C-3-01_dict_outlives_owner.py",
+ "clause": "C-3-01",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "review round 3, finding 2 (an exposed instance dictionary outlives its owner)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "stable identity: True type is dict: True\nowner finalized\nretained after del: [('y', 2), ('x', 1)]\n",
+ "stderr": "",
+ "exit_code": 0
+}

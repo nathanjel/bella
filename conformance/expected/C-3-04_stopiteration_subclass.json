@@ -1,0 +1,12 @@
+{
+ "case": "C-3-04_stopiteration_subclass.py",
+ "clause": "C-3-04",
+ "spec": "section 3 (IterStep carries the original exception)",
+ "status": "P1",
+ "source": "review round 3, finding 4 (next() exposes the StopIteration subclass, args, value and identity)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "Done (7, 'payload') 7 True\nfor-loop ends normally: True\nyield from returned 7\n",
+ "stderr": "",
+ "exit_code": 0
+}

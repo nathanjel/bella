@@ -1,0 +1,12 @@
+{
+ "case": "C-8-04_import_at_statement_position.py",
+ "clause": "C-8-04",
+ "spec": "section 8",
+ "status": "P1",
+ "source": "review round 1, finding 7 (modules initialise at the first import statement that reaches them)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "before first import\ncycpkg: package body runs\nafter first import; in sys.modules: True\nfunction-local import done\nconditional import skipped\n",
+ "stderr": "",
+ "exit_code": 0
+}

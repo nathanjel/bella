@@ -1,0 +1,134 @@
+# manifest.toml -- the phase-1 standard-library manifest (dialect specification v0.3, section 7).
+#
+# `make closure` (tools/closure.py) computes the import closure of [phase1].roots against the
+# pinned CPython and fails if any required module is not listed in compiled, mapped, core or
+# shim, or if a conditional import outside the manifest is not declared in [omissions].
+#
+# Status meanings
+#   compiled : pure-Python stdlib module compiled through the Bella pipeline
+#   mapped   : C module replaced by a runtime facility or a licensed library (study, section 12)
+#   core     : interpreter-core builtin provided by the runtime itself (sys, builtins, _imp, ...)
+#   shim     : phase-1 stand-in with reduced behaviour, named in [adaptations]
+#
+# THIS FILE WAS LAST RECONCILED ON CPython 3.13.18 (non-authoritative). Gate 0, task 1 is to
+# rerun `make closure` on 3.14.8 in the Docker image and reconcile the lists.
+
+[reference]
+python = "3.14.8"
+
+[phase1]
+# The modules the dialect promises in phase 1 (spec, section 7). Everything they pull in must
+# be accounted for below.
+roots = [
+  # core data
+  "collections", "collections.abc", "itertools", "functools", "operator", "enum", "dataclasses",
+  "typing", "abc", "copy", "copyreg", "types", "contextlib", "weakref", "contextvars", "bisect",
+  "heapq", "keyword", "reprlib",
+  # text
+  "string", "re", "textwrap", "difflib", "json", "csv", "struct", "base64", "binascii", "codecs",
+  "html", "urllib.parse",
+  # numbers
+  "math", "cmath", "decimal", "fractions", "random", "statistics", "numbers",
+  # dates
+  "datetime", "time", "calendar",
+  # files and os
+  "os", "os.path", "pathlib", "io", "shutil", "tempfile", "glob", "fnmatch", "stat", "errno", "sys",
+  # process and signals
+  "signal", "atexit", "gc",
+  # hashing
+  "hashlib", "hmac", "secrets", "uuid",
+  # development
+  "logging", "argparse", "warnings", "unittest", "pprint", "traceback",
+  # internationalisation subset
+  "gettext", "locale",
+  # compression
+  "zlib",
+]
+
+compiled = [
+  "__future__", "abc", "argparse", "ast", "base64", "bisect", "calendar", "codecs", "collections",
+  "collections.abc", "contextlib", "contextvars", "copy", "copyreg", "csv", "dataclasses",
+  "datetime", "decimal", "difflib", "dis", "encodings", "encodings.aliases",
+  "enum", "fnmatch", "fractions", "functools", "genericpath", "gettext", "glob", "hashlib",
+  "heapq", "hmac", "html", "html.entities", "inspect", "io", "ipaddress", "json", "json.decoder",
+  "json.encoder", "json.scanner", "keyword", "linecache", "locale", "logging", "ntpath", "numbers",
+  "opcode", "operator", "os", "os.path", "pathlib", "pathlib._abc", "pathlib._local", "posixpath",
+  "pprint", "random", "re", "re._casefix", "re._compiler", "re._constants", "re._parser",
+  "reprlib", "secrets", "shutil", "signal", "stat", "statistics", "string", "struct",
+  "tempfile", "textwrap", "token", "tokenize", "traceback", "types", "typing", "unittest",
+  "unittest.async_case", "unittest.case", "unittest.loader", "unittest.main", "unittest.result",
+  "unittest._log", "unittest.runner", "unittest.signals", "unittest.suite", "unittest.util", "urllib",
+  "urllib.parse", "uuid", "warnings", "weakref", "_collections_abc", "_colorize",
+  "_opcode_metadata", "_pydatetime", "_pydecimal", "_py_abc", "_weakrefset",
+  "_strptime",
+]
+
+mapped = [
+  "atexit", "binascii", "cmath", "errno", "gc", "grp", "itertools", "pwd",
+  "time", "unicodedata", "zlib", "_bisect", "_blake2", "_collections", "_contextvars",
+  "_csv", "_datetime", "_decimal", "_functools", "_hashlib", "_heapq", "_json", "_locale", "_md5",
+  "_opcode", "_operator", "_random", "_sha1", "_sha2", "_sha3", "_socket", "_sre", "_stat",
+  "_statistics", "_string", "_struct", "_typing", "_uuid", "math",
+]
+
+core = [
+  "builtins", "sys", "marshal", "posix", "_abc", "_codecs", "_frozen_importlib",
+  "_frozen_importlib_external", "_imp", "_io", "_signal", "_thread", "_warnings", "_weakref",
+  "importlib", "importlib._abc", "importlib._bootstrap", "importlib._bootstrap_external",
+  "importlib.machinery", "importlib.util", "zipimport", "_tokenize", "_suggestions", "_ast",
+]
+
+[phase1.shim]
+threading = "single-threaded shim: Lock, RLock, local, Event, current_thread; creating a thread raises with the milestone name"
+_thread = "single-threaded primitives behind the threading shim"
+socket = "import succeeds for logging.handlers type hints; sockets are [P2+]"
+subprocess = "import succeeds; every API raises with the milestone name"
+asyncio = "import succeeds for unittest.async_case; async is [P2+]"
+
+[adaptations]
+# Named adaptations the closure relies on (spec, section 7): without them these roots are open.
+logging = "findCaller receives call-site information from the compiler instead of sys._getframe (E-02)"
+traceback = "formatting from source maps; file and line in release builds (D-06)"
+contextvars = "single-threaded implementation over _contextvars mapping"
+locale = "C and UTF-8 locales only; the rest of locale is [P2+]"
+decimal = "C accelerator omitted so the pure-Python _pydecimal is used (see [omissions])"
+datetime = "C accelerator omitted so the pure-Python _pydatetime is used (see [omissions])"
+
+[lazy_unsupported]
+# Imports inside functions whose target is outside the manifest: the importing function is
+# not supported in phase 1 (calling it raises with the milestone name). This is support per
+# API: difflib is in, difflib._test (which imports doctest) is not.
+difflib = ["doctest"]            # difflib._test
+base64 = ["getopt"]              # base64.main (the command-line entry point)
+shutil = ["tarfile", "zipfile"]  # shutil.make_archive / unpack_archive: archive formats are [P2+]
+
+[omissions]
+# Optional imports (try/except ImportError, suppress(ImportError), under `if`) whose target is
+# outside the manifest. Each resolves to ImportError at runtime, as if the module were not
+# installed, and the importer takes its fallback path.
+decimal = ["_decimal"]
+datetime = ["_datetime"]
+shutil = ["bz2", "lzma", "_winapi", "nt", "posix"]
+tempfile = ["_winapi"]
+os = ["nt", "_winapi"]
+random = ["_sha2"]
+hashlib = ["_hashlib"]
+unittest = []
+logging = ["pickle"]
+heapq = ["doctest"]
+warnings = ["tracemalloc"]
+encodings = ["encodings.mbcs"]
+pathlib = ["pwd", "grp"]
+"pathlib._local" = ["pwd", "grp"]
+"pathlib._abc" = []
+uuid = ["_uuid", "ctypes", "netbios", "win32wnet", "platform"]
+locale = ["_locale"]
+gettext = []
+calendar = []
+
+[excluded]
+# Dialect specification, section 4: reaching one of these as a required import is an error.
+modules = [
+  "code", "codeop", "pdb", "bdb", "doctest", "tracemalloc", "cProfile", "profile", "pydoc",
+  "timeit", "ctypes.pythonapi",
+]

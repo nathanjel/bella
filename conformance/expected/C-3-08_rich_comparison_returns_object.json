@@ -1,0 +1,12 @@
+{
+ "case": "C-3-08_rich_comparison_returns_object.py",
+ "clause": "C-3-08",
+ "spec": "section 3 (richcompare returns an object; truth is taken only where needed)",
+ "status": "P1",
+ "source": "review round 2, finding 5 (__eq__ may return any object or NotImplemented)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "== returns: comparison-result str\ntruth in if: yes\nNotImplemented both ways falls back to identity: False True\n!= derives from __eq__ by inverting truth: True\n",
+ "stderr": "",
+ "exit_code": 0
+}

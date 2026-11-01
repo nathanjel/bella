@@ -1,0 +1,42 @@
+# bella.toml -- project policy file (design document, sections 10.1 and 10.2; dialect
+# specification, section 8). Every version here is part of the artefact key.
+
+[reference]
+python = "3.14.8"        # dialect specification v0.3, section 1: moving this pin is a spec revision
+grammar = "3.14"         # frozen for phases 0-2 (decision 15)
+dialect = "v0.3"
+
+[toolchain]
+cxx = "g++"
+cxx_std = "c++26"        # GCC 16 only, no fallback profile (design document, section 10.3)
+gcc = "16.2"             # the Docker image pins the exact release; `make probes` records what it found
+ruff = "0.9"             # pinned exactly in uv.lock
+checker = "mypy"         # or "pyrefly" / "ty"; pinned exactly in uv.lock
+
+[platform]
+targets = ["linux-x86_64", "linux-aarch64"]   # decision 14
+main_stack_mib = 8                            # decision 16
+thread_stack_mib = 2
+
+[runtime]
+recursion_limit = 1000                        # decision 2: per-call depth counter, RecursionError
+int_max_str_digits = 4300                     # decision: CPython's default kept
+hash_randomisation = true                     # decision 5: PYTHONHASHSEED protocol
+utf8_mode = true                              # decision 10
+assertions = "on"                             # decision 7; "off" is the planned -O equivalent [P2+]
+
+[staging]
+# Entry points run in the host CPython before the dry run (spec, section 8). Each must be
+# deterministic and may read only the inputs declared here; every declared input is hashed
+# into the artefact key.
+entrypoints = []
+declared_inputs = { env = [], files = [] }
+
+[island]
+mode = "forbid"          # phase 1 has no island; "allow" prints the ledger
+topology = "subinterpreter"
+
+[packages]
+# Per-package overrides go here once third-party dependencies exist, e.g.
+# [packages.numpy]
+# strategy = "map"

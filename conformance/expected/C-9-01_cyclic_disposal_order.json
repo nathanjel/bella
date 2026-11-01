@@ -1,0 +1,12 @@
+{
+ "case": "C-9-01_cyclic_disposal_order.py",
+ "clause": "C-9-01",
+ "spec": "section 9",
+ "status": "P1",
+ "source": "review round 3, finding 1 (PEP 442: weak references are cleared before finalisers run on a cycle)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "cyclic disposal order: ['weakref', 'finalizer']\nweakref dead: True\n",
+ "stderr": "",
+ "exit_code": 0
+}

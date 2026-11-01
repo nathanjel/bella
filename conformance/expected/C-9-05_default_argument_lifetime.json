@@ -1,0 +1,12 @@
+{
+ "case": "C-9-05_default_argument_lifetime.py",
+ "clause": "C-9-05",
+ "spec": "section 9 (D-19 is limited to module objects)",
+ "status": "P1",
+ "source": "review round 3, finding 5 (a function's defaults die with the function)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "before del\nresource released\nafter del\n",
+ "stderr": "",
+ "exit_code": 0
+}

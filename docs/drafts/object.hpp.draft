@@ -1,0 +1,158 @@
+// runtime/object.hpp  -- draft v4 after review round three (design document, section 3).
+// NOT COMPILABLE AS IS: declarations only (CompactDict, Unset, this_thread_id and the allocator are
+// unspecified). The executable statement of this design is refmodel/objects.py; write the real
+// header from the model, one conformance case at a time. Open points are listed in TODO.md.
+#include <atomic>
+#include <cstdint>
+#include <span>
+#include <vector>
+
+namespace py {
+
+struct Object; struct ClassObject; struct Str; struct Dict; struct Shape; struct Cell; struct KwArgs; struct BaseException;
+
+// ---- Obj: a tagged 64-bit word, either a 63-bit integer immediate or an Object* ----
+class Obj {
+  std::uintptr_t w_;
+public:
+  static Obj from_small(std::int64_t v) noexcept { return Obj{(static_cast<std::uintptr_t>(v) << 1) | 1u}; }
+  static Obj from_ptr(Object* p) noexcept;                 // increments the count (see incref)
+  bool         is_small() const noexcept { return w_ & 1u; }
+  std::int64_t small()    const noexcept { return static_cast<std::int64_t>(w_) >> 1; }
+  Object*      ptr()      const noexcept { return reinterpret_cast<Object*>(w_); }
+  ClassObject* cls()      const noexcept;                  // &int_class for immediates
+};
+
+// ---- Header: 24 bytes. Every location another thread may read while this one writes is atomic. ----
+enum Flag : std::uint32_t {
+  IMMORTAL      = 1u << 0,  // never freed: None, True, False, interned strs, module objects (D-19)
+  GC_TRACKED    = 1u << 1,  // set per object: the class may form cycles, or an instance dict was attached
+  COLOR_MASK    = 3u << 2,  // trial-deletion colour, written only by the collector thread
+  BUFFERED      = 1u << 4,  // already in a candidate buffer
+  DICT_EXPOSED  = 1u << 5,  // __dict__ was exposed or replaced: promoted fields now live in the dict, inline slots are dead
+};
+
+struct ObjHeader {
+  std::atomic<ClassObject*>  cls;     // __class__ assignment: release store; readers: acquire load
+  std::uint32_t              owner;   // id of the allocating thread; written once
+  std::uint32_t              local;   // count used by the owner thread; non-atomic by construction (collector access: section 14)
+  std::atomic<std::uint32_t> shared;  // count used by every other thread
+  std::atomic<std::uint32_t> flags;   // fetch_or / fetch_and, relaxed
+};
+static_assert(sizeof(ObjHeader) == 24);
+
+struct Object : ObjHeader {};         // no virtual functions, by design
+
+// Instances whose class layout inherits a __dict__ (spec, section 3) derive from this; the slot sits at offset 24.
+// Two kinds of inline field exist above it: real __slots__ fields, which never appear in __dict__, and promoted
+// fields, the attributes CPython would keep in __dict__ that the compiler keeps inline until the dict is exposed.
+// FINDING (refmodel, 2026-10-31): exposure must reproduce first-assignment order, so an object with promoted
+// fields also carries an order record (one byte per promoted field), as CPython's _PyDictValues.insertion_order.
+struct DynamicObject : Object {
+  std::atomic<Dict*> dict;  // null until the first undeclared write or the first __dict__ exposure; created by CAS.
+                            // Exposure (vars(obj), obj.__dict__, obj.__dict__ = d) migrates every promoted field into an
+                            // ordinary dict, sets DICT_EXPOSED, and from then on promoted attributes go through the dict.
+                            // The dict is an ordinary object: it outlives its owner if referenced, may be shared by two
+                            // objects, and holds no pointer back into the owner, so the owner is finalised on schedule.
+};
+
+// ---- Ref<T>: intrusive, biased-counted handle; the only way to hold an Object ----
+template <class T> class Ref { /* incref on copy, decref on destruction */ };
+
+inline void incref(Object* o) noexcept {
+  if (o->flags.load(std::memory_order_relaxed) & IMMORTAL) return;
+  if (o->owner == this_thread_id()) ++o->local;
+  else o->shared.fetch_add(1, std::memory_order_relaxed);
+}
+void decref(Object* o) noexcept;  // merges local and shared on zero; destruction cascades synchronously (spec, section 9)
+
+// ---- Protocol results that are richer than a C++ bool ----
+enum class CompareOp : std::uint8_t { Lt, Le, Eq, Ne, Gt, Ge };
+struct IterStep {                       // the internal advance operation used by for, comprehensions and yield from
+  enum : std::uint8_t { Yielded, Finished } kind;
+  Obj value;                            // yielded value, or StopIteration.value on Finished
+  Ref<BaseException> stop;              // the StopIteration instance when __next__ raised one (subclass, args, identity
+                                        // preserved); null when a compiled iterator finished without creating one.
+};                                      // Python-visible next(it) re-raises stop if present, else raises StopIteration(value);
+                                        // every other exception propagates as a C++ exception and never becomes a step.
+
+// ---- Protocol slots: one atomic function pointer per dunder; every writer bumps the class version ----
+template <class F> using Slot = std::atomic<F*>;
+struct Slots {
+  Slot<Obj(Object*, std::span<const Obj>, const KwArgs*)> call;
+  Slot<Obj(Object*, const Str*)>          getattr;     // full lookup; callers keep inline caches
+  Slot<void(Object*, const Str*, Obj)>    setattr;
+  Slot<Obj(Object*, Obj)>                 getitem;
+  Slot<Obj(Object*)>                      iter;
+  Slot<IterStep(Object*)>                 next;
+  Slot<bool(Object*)>                     truth;       // __bool__ must return bool, else TypeError is thrown here
+  Slot<std::size_t(Object*)>              len;
+  Slot<std::int64_t(Object*)>             hash;        // the reduced hash, as hash() returns it
+  Slot<Obj(Object*, Obj, CompareOp)>      richcompare; // returns any object or NotImplemented; truth is taken only
+                                                       // where the operation needs it (if, while, filter, sort)
+  Slot<bool(Object*, Obj)>                eq_bool;     // fast path, present only when the class's __eq__ is proved to return bool
+  Slot<Str*(Object*)>                     repr;
+  Slot<Obj(Object*, Obj)>                 add;         // one entry per dunder of the data model
+  Slot<void(Object*)>                     dealloc;
+  Slot<void(Object*, void(*)(Obj))>       trace;       // for the cycle collector; also walks the instance dict
+};
+
+// ---- Field table: how a computed name reaches a static field (the address delta) ----
+enum class TypeTag : std::uint8_t { Obj, Int, Float, Bool, Str, Ref };
+struct FieldEntry {
+  std::uint64_t name_hash;   // hash of the interned attribute name
+  const Str*    name;
+  std::uint32_t offset;      // byte offset from the object base; the slot holds Unset until first assignment
+  TypeTag       tag;
+  bool          promoted;    // true: a __dict__ attribute kept inline (migrates on exposure); false: a real __slots__ field
+};
+
+// ---- Class object: one per Python class, created at module initialisation (reference-counted, D-19) or at runtime ----
+enum ClassFlag : std::uint32_t {
+  HAS_INSTANCE_DICT = 1u << 0, HAS_GETATTR = 1u << 1, HAS_GETATTRIBUTE = 1u << 2, HAS_SETATTR = 1u << 3,
+  CYCLE_FREE = 1u << 4, DICT_MODE = 1u << 5, MAY_RECEIVE_COMPUTED_WRITES = 1u << 6,
+};
+struct ClassObject : Object {
+  const Str*                    name;
+  std::span<ClassObject*>       mro;            // C3 order, self first; immutable after creation
+  std::span<ClassObject*>       subclasses;     // direct subclasses; a version bump propagates down this list
+  std::span<const FieldEntry>   fields;         // sorted by name_hash; empty in dict mode
+  std::span<std::atomic<void*>> methods;        // one slot per method name, index fixed in the closed world
+  Slots                         slots;
+  std::atomic<std::uint32_t>    version;        // bumped by every mutation of this class or any base; caches compare it
+  std::atomic<Dict*>            class_attrs;    // attributes added to the class after definition; lazy; owns the values
+  Shape*                        root_shape;     // non-null only for dict-mode classes
+  std::size_t                   instance_size;
+  std::uint32_t                 cflags;
+};
+Ref<Object> class_dict_view(ClassObject*);      // Cls.__dict__: a read-only mapping proxy; writes raise TypeError
+
+// ---- Attribute access: Python's order at every tier, with cache entries that say when they are valid ----
+struct ICacheEntry {            // immutable metadata once published; a call site holds up to N of these behind one
+  ClassObject*  cls;            //   std::atomic<const ICacheEntry*> stored with release and loaded with acquire;
+  std::uint32_t version;        //   beyond N entries the site is megamorphic and always takes the generic path
+  const Str*    name;           // interned; literal sites have one name, computed-name sites key on it
+  Shape*        shape;          // dict-mode instances only
+  enum Kind : std::uint8_t { DataDescriptor, Field, InstanceDict, ClassAttr, GetAttrHook, ShapeSlot } kind;
+  std::uint32_t offset; TypeTag tag;
+  const Object* found;          // BORROWED: the descriptor or class attribute the lookup found; the class owns it.
+  ClassObject*  found_cls;      // FINDING (refmodel, 2026-10-31): recorded on EVERY kind, including Field and
+  std::uint32_t found_version;  //   InstanceDict: a non-data descriptor can be promoted through its own class alone.
+};
+// An entry is used only if cls and version match, found_cls and found_version match, and then, by kind:
+//   Field          : the inline slot is not Unset and DICT_EXPOSED is clear; otherwise the slow path
+//   ClassAttr      : no instance storage shadows the name: the promoted inline field for name (if declared) is Unset,
+//                    and the instance dict is null or has no entry for name
+//   GetAttrHook    : same instance-storage check as ClassAttr
+//   InstanceDict   : the dict pointer is non-null; probe by the cached hash
+//   ShapeSlot      : the instance's shape pointer equals shape
+//   DataDescriptor : nothing further; found is called
+Obj  getattr_generic(Object* self, const Str* name, std::atomic<const ICacheEntry*>* ic);
+// order: data descriptor on the class (MRO) -> instance storage (promoted field or instance dict, or the dict alone
+//        once DICT_EXPOSED) -> non-data descriptor or class attribute -> __getattr__ -> AttributeError
+void setattr_generic(Object* self, const Str* name, Obj v, std::atomic<const ICacheEntry*>* ic);
+// order: a __setattr__ override replaces everything; otherwise data descriptor with __set__ -> real __slots__ field
+//        -> promoted field (or the dict once DICT_EXPOSED) -> instance dict (created by CAS, sets GC_TRACKED)
+Ref<Dict> expose_dict(DynamicObject* self);     // vars(obj) / obj.__dict__: migrates promoted fields, sets DICT_EXPOSED, returns the dict
+void      set_dict(DynamicObject* self, Dict* d); // obj.__dict__ = d: exposes first, then installs d (shared or new); the old dict lives on
+} // namespace py

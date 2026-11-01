@@ -1,0 +1,12 @@
+{
+ "case": "C-9-06_generator_closed_on_last_reference.py",
+ "clause": "C-9-06",
+ "spec": "section 9",
+ "status": "P1",
+ "source": "dialect specification section 9 (generators are closed when their last reference is dropped)",
+ "recorded_with": "3.13.18",
+ "authoritative": false,
+ "stdout": "first: 1\nGeneratorExit delivered at the suspension point\nfinally ran\nafter del\n",
+ "stderr": "",
+ "exit_code": 0
+}

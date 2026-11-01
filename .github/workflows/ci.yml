@@ -1,0 +1,38 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  pinned:
+    name: GCC 16 + CPython 3.14.8 (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the pinned toolchain image
+        run: docker build -t bella .
+      - name: make check (closure, tests, record, probes, slice, int-test)
+        run: docker run --rm bella make check
+      - name: Keep the probe report
+        if: always()
+        run: docker run --rm bella cat toolchain-probes.md > toolchain-probes.md || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: toolchain-probes
+          path: toolchain-probes.md
+
+  unpinned-smoke:
+    name: developer-machine smoke (non-authoritative)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install pytest hypothesis z3-solver
+      - run: python -m pytest
+      - run: python -m refmodel.selftest --iterations 5000
+      - run: python tools/closure.py --allow-unpinned --quiet
+      - run: make slice CXXSTD=c++23
+      - run: make int-test CXXSTD=c++23 --silent

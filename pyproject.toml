@@ -1,0 +1,59 @@
+[project]
+name = "bella"
+version = "0.0.1"
+description = "Python -> C++26 converter: intent-level IR passes, exact CPython 3.14 semantics, GCC-only"
+readme = "README.md"
+license = "MIT"
+# The reference build is CPython 3.14.8 (bella.toml). 3.13 is accepted only so that the
+# stdlib-only self-checks can run on a developer machine; anything that records
+# conformance expectations or computes the dependency closure refuses to run unpinned.
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "hypothesis>=6.120",
+  "ruff>=0.9",
+  "mypy>=1.14",
+  "z3-solver>=4.13",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tools/tests", "refmodel/tests", "pipeline/tests", "validation/tests", "runtime/tests"]
+addopts = "-q"
+
+# --- Dialect input contract (design document, section 2) --------------------------------
+# These rules apply to *programs Bella compiles*, which in this repository means the
+# conformance corpus and the pipeline examples. The compiler's own code is Python that
+# runs under CPython and is held to the ordinary rules below it.
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "PGH", "S102", "S307"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Dialect programs: annotations everywhere, no Any, no blanket ignores, no exec/eval,
+# no star imports, literal attribute names.
+"conformance/cases/**" = []
+"pipeline/examples/**" = []
+"**/tests/**" = ["ANN", "S101"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+# ANN401 (no Any) and the dialect-only selectors are enabled for dialect programs only.
+"conformance/cases/**" = []
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+# disallow_any_explicit is the dialect's rule for compiled programs; the compiler itself
+# legitimately handles `ast` and dynamic values, so it is applied per package below.
+packages = ["refmodel", "pipeline", "tools", "validation"]
+
+[[tool.mypy.overrides]]
+module = ["conformance.cases.*"]
+disallow_any_explicit = true
