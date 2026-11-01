@@ -1,0 +1,12 @@
+{
+ "case": "C-3-24_signatures_at_runtime.py",
+ "clause": "C-3-24",
+ "spec": "section 3",
+ "status": "P2+",
+ "source": "decision S-2 (2026-11-01, docs/staging.md): function signatures at runtime stay [P2+]",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "Item(name: str, qty: int = 1)\n(x: int, factor: float = 2.0, *, exact: bool = False) -> float\n",
+ "stderr": "",
+ "exit_code": 0
+}

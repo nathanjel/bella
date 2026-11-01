@@ -141,9 +141,17 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   (`make staging-check`). `eval1` cannot run a class, so the replay runs the staged code as
   bytecode compiled at build time in its place. D-5's shim and tables are in
   `runtime/shims/annotationlib.py` and `pipeline/staging/annotations.py`. What remains moves
-  to task 4: compile the staged texts through L1 to C++, generate `__annotate__` and its tables,
-  and provide the shim's `_bella` hooks and the refusal in the runtime. The other phase-1 shims
-  (`threading`, `socket`, `subprocess`, `asyncio`, `_thread`, `codeop`) are still to be written.
+  to task 4: compile the staged texts through L1 to C++; generate each `__annotate__` and, beside
+  it, the second entry point, which needs the L2 grammar to express name loads through a given
+  mapping (decision S-1; prototype `pipeline/staging/annotations.py`); give compiled functions the
+  attributes the shim reads (`__globals__`, `__builtins__`, `__closure__`, `__defaults__`); provide
+  the shim's `_bella` hooks and the refusal in the runtime; write the `bella-lint` warnings for
+  `@dataclass` and `make_dataclass` inside functions (S-3). Open: the layout half of staging (field
+  sets, MROs taken as facts), which the prototype does not use, under spec section 8's input rule.
+  The other phase-1 shims (`threading`, `socket`, `subprocess`, `asyncio`, `_thread`, `codeop`) are
+  still to be written.
+* Revised 2026-11-01 after the reviews astra-low-05 and gemini-4-argon-high-04 (review log RL-88
+  to RL-112) and decisions S-1 to S-5.
 
 ## 6. Report
 
@@ -159,6 +167,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## Later
 
+* Revisit the staging mechanism (decision S-5, 2026-11-01): the author's idea of using the GCC
+  compiler within the program, so that a text the dry run did not see can still be compiled.
+  GCC's own licence and libgccjit's (GPL; *to verify*) would need a licence register entry.
 * Settle the entries of the licence register, `docs/licences.md`, one by one when each becomes
   worth it (for example, when the component is about to be linked into an artefact).
 * `hashlib.pbkdf2_hmac` (over the mapped HMAC) and `hashlib.scrypt` (libsodium) as an adaptation

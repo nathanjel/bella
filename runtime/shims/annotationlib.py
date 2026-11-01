@@ -1,14 +1,15 @@
 """Helpers for introspecting and wrapping annotations."""
 
-# Bella phase-1 shim (manifest.toml [phase1.shim]; spec section 3, review log D-5).
-# CPython 3.15.2's Lib/annotationlib.py (PSF License 2.0, docs/licences.md L-01), unchanged
-# except where a line says "bella:". What CPython does by re-running an annotate function's
-# __code__ is answered from what the compiler computed at build time
-# (pipeline/staging/annotations.py) or refused; evaluating a string needs a compiler at runtime
-# and is refused. `_bella` is provided by the runtime: compiled_annotations(annotate), the
-# build-time entry of an __annotate__ the compiler generated (None for any other function);
-# refuse(message), which stops the program; exception(recorded), the exception a recorded
-# fallback raises.
+# Bella phase-1 shim (manifest.toml [phase1.shim]; spec section 3, review log D-5, decision S-1
+# in docs/staging.md). CPython 3.15.2's Lib/annotationlib.py (PSF License 2.0, docs/licences.md
+# L-01), unchanged except where a line says "bella:". Where CPython re-runs an annotate
+# function's __code__ against substitute globals and cells, it calls instead the second entry
+# point the compiler generates for each __annotate__, which evaluates the same expressions
+# against the globals and cells it is given. Evaluating the text of a reference or of an
+# annotation needs a compiler at runtime and is refused. `_bella` is provided by the runtime:
+# has_entry_point(annotate), annotate_freevars(annotate) and annotate_with(annotate, globals,
+# closure, ...) (both refuse a function the compiler did not generate), and refuse(message),
+# which stops the program.
 
 import ast
 import builtins
@@ -227,6 +228,11 @@ class ForwardRef:
             else:
                 raise NameError(_NAME_ERROR_MSG.format(name=arg), name=arg)
         else:
+            # bella: evaluating the text of a reference needs a compiler at runtime (E-01); a plain
+            # name, above, does not, and neither does building the reference (__forward_code__,
+            # which typing compiles eagerly: the compiler stages that compile())
+            _bella.refuse("[P2+] annotationlib: evaluating a ForwardRef that is not a plain name "
+                          "needs the text compiled at runtime (spec section 3, decision S-1)")
             code = self.__forward_code__
             try:
                 return eval(code, globals=globals, locals=locals)
@@ -295,7 +301,13 @@ class ForwardRef:
 
             if names:
                 visitor = _ExtraNameFixer(names)
-                ast_expr = ast.parse(resolved_str, mode="eval").body
+                if isinstance(self.__ast_node__, ast.AST):
+                    # bella: the tree the string was unparsed from, not ast.parse of the string
+                    # (no parser at runtime, E-01): the same names, so the same string
+                    import copy
+                    ast_expr = copy.deepcopy(self.__ast_node__)
+                else:
+                    ast_expr = ast.parse(resolved_str, mode="eval").body
                 node = visitor.visit(ast_expr)
                 resolved_str = ast.unparse(node)
 
@@ -307,9 +319,12 @@ class ForwardRef:
     def __forward_code__(self):
         if self.__code__ is not None:
             return self.__code__
-        # bella: compiling the text of a forward reference needs a compiler at runtime (E-01)
-        _bella.refuse("[P2+] annotationlib: evaluating a ForwardRef that is not a plain name "
-                      "needs compile() at runtime (spec section 3, review log D-5)")
+        arg = self.__forward_arg__
+        try:
+            self.__code__ = compile(_rewrite_star_unpack(arg), "<string>", "eval")
+        except SyntaxError:
+            raise SyntaxError(f"Forward reference must be an expression -- got {arg!r}")
+        return self.__code__
 
     def __eq__(self, other):
         if not isinstance(other, ForwardRef):
@@ -783,18 +798,39 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
         except Exception:
             pass
 
-        # bella: CPython re-runs annotate.__code__ here with globals in which every name is a
-        # _Stringifier. The result depends on nothing but the code, so the compiler computes it
-        # at build time, with this module's own _StringifierDict and _build_closure, and
-        # attaches it to the __annotate__ it generates.
-        compiled = _bella.compiled_annotations(annotate)
-        if compiled is None or _is_evaluate or compiled["unstable"] is not None:
-            _bella.refuse("[P2+] annotationlib: this STRING form is not one the compiler could "
-                          "compute at build time (spec section 3, review log D-5)")
-        if compiled["string_raises"] is not None:
-            raise _bella.exception(compiled["string_raises"])
-        return dict(compiled["string"])
+        globals = _StringifierDict({}, format=format)
+        is_class = isinstance(owner, type)
+        closure, _ = _build_closure(
+            annotate, owner, is_class, globals, allow_evaluation=False
+        )
+        func = _bella.annotate_with(  # bella: the entry point, not a function rebuilt from __code__
+            annotate,
+            globals,
+            closure=closure,
+            argdefs=annotate.__defaults__,
+            kwdefaults=annotate.__kwdefaults__,
+        )
+        annos = func(Format.VALUE_WITH_FAKE_GLOBALS)
+        if _is_evaluate:
+            return _stringify_single(annos)
+        return {
+            key: _stringify_single(val)
+            for key, val in annos.items()
+        }
     elif format == Format.FORWARDREF:
+        if not _bella.has_entry_point(annotate):
+            # bella: a function the compiler did not generate cannot be re-run against substitute
+            # globals. CPython's re-run raises NotImplementedError, and CPython then answers
+            # VALUE, when the function supports VALUE only: called with the real globals, it
+            # raises the same. Anything else needs the re-run: [P2+].
+            try:
+                annotate(Format.VALUE_WITH_FAKE_GLOBALS)
+            except NotImplementedError:
+                return annotate(Format.VALUE)
+            except Exception:
+                pass
+            _bella.refuse("[P2+] annotationlib: FORWARDREF of an annotate function the compiler did not "
+                          "generate, which supports VALUE_WITH_FAKE_GLOBALS, re-runs its __code__ (decision S-1)")
         # FORWARDREF is implemented similarly to STRING, but there are two changes,
         # at the beginning and the end of the process.
         # First, while STRING uses an empty dictionary as the namespace, so that all
@@ -812,28 +848,71 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
         # reconstruct the source. But in the dictionary that we eventually return, we
         # want to return objects with more user-friendly behavior, such as an __eq__
         # that returns a bool and an defined set of attributes.
-        # bella: CPython re-runs annotate.__code__ here, first with the real globals in a mapping
-        # that turns a missing name into a _Stringifier, then with no globals. When every name
-        # resolves, the first run computes what VALUE computes, so VALUE is evaluated. When
-        # VALUE raises something other than NameError, the first run raises it too and CPython
-        # returns or raises what the second run does; the compiler computed at build time
-        # whether that run raises, and what. Anything else needs ForwardRef objects that only
-        # re-running __code__ builds: [P2+].
-        compiled = _bella.compiled_annotations(annotate)
-        if compiled is None or _is_evaluate:
-            _bella.refuse("[P2+] annotationlib: FORWARDREF for an annotate function the compiler "
-                          "did not generate needs its __code__ (spec section 3, review log D-5)")
-        failure = None
+        namespace = {**annotate.__builtins__, **annotate.__globals__}
+        is_class = isinstance(owner, type)
+        globals = _StringifierDict(
+            namespace,
+            globals=annotate.__globals__,
+            owner=owner,
+            is_class=is_class,
+            format=format,
+        )
+        closure, cell_dict = _build_closure(
+            annotate, owner, is_class, globals, allow_evaluation=True
+        )
+        func = _bella.annotate_with(  # bella: the entry point, not a function rebuilt from __code__
+            annotate,
+            globals,
+            closure=closure,
+            argdefs=annotate.__defaults__,
+            kwdefaults=annotate.__kwdefaults__,
+        )
         try:
+            result = func(Format.VALUE_WITH_FAKE_GLOBALS)
+        except NotImplementedError:
+            # FORWARDREF and VALUE_WITH_FAKE_GLOBALS not supported, fall back to VALUE
             return annotate(Format.VALUE)
-        except NameError:
-            failure = "a name is not bound yet"
         except Exception:
-            failure = "evaluation raised"
-        if failure == "evaluation raised" and compiled["second_raises"] is not None:
-            raise _bella.exception(compiled["second_raises"])
-        _bella.refuse(f"[P2+] annotationlib: FORWARDREF where {failure} needs ForwardRef objects "
-                      "built from __code__ (spec section 3, review log D-5)")
+            pass
+        else:
+            globals.transmogrify(cell_dict)
+            return result
+
+        # Try again, but do not provide any globals. This allows us to return
+        # a value in certain cases where an exception gets raised during evaluation.
+        globals = _StringifierDict(
+            {},
+            globals=annotate.__globals__,
+            owner=owner,
+            is_class=is_class,
+            format=format,
+        )
+        closure, cell_dict = _build_closure(
+            annotate, owner, is_class, globals, allow_evaluation=False
+        )
+        func = _bella.annotate_with(  # bella: the entry point, not a function rebuilt from __code__
+            annotate,
+            globals,
+            closure=closure,
+            argdefs=annotate.__defaults__,
+            kwdefaults=annotate.__kwdefaults__,
+        )
+        result = func(Format.VALUE_WITH_FAKE_GLOBALS)
+        globals.transmogrify(cell_dict)
+        if _is_evaluate:
+            if isinstance(result, ForwardRef):
+                return result.evaluate(format=Format.FORWARDREF)
+            else:
+                return result
+        else:
+            return {
+                key: (
+                    val.evaluate(format=Format.FORWARDREF)
+                    if isinstance(val, ForwardRef)
+                    else val
+                )
+                for key, val in result.items()
+            }
     elif format == Format.VALUE:
         # Should be impossible because __annotate__ functions must not raise
         # NotImplementedError for this format.
@@ -847,7 +926,7 @@ def _build_closure(annotate, owner, is_class, stringifier_dict, *, allow_evaluat
         return None, None
     new_closure = []
     cell_dict = {}
-    for name, cell in zip(annotate.__code__.co_freevars, annotate.__closure__, strict=True):
+    for name, cell in zip(_bella.annotate_freevars(annotate), annotate.__closure__, strict=True):  # bella
         cell_dict[name] = cell
         new_cell = None
         if allow_evaluation:
@@ -1070,7 +1149,7 @@ def get_annotations(
     if any(isinstance(value, str) for value in ann.values()):
         # bella: evaluating the text of an annotation needs eval() at runtime (E-01)
         _bella.refuse("[P2+] annotationlib: get_annotations(eval_str=True) on a string "
-                      "annotation needs eval() at runtime (spec section 3, review log D-5)")
+                      "annotation needs eval() at runtime (spec section 3, decision S-1)")
     return_value = {
         key: value if not isinstance(value, str)
         else eval(_rewrite_star_unpack(value), globals, locals)

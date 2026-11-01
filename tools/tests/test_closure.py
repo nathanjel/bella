@@ -509,6 +509,18 @@ def test_only_declared_packages_belong_to_the_program_g3_3_2() -> None:
     assert any(p.startswith("rv_undeclared [source]: required but not in manifest") for p in problems), problems
 
 
+def test_a_shim_written_in_python_is_scanned_g4_3_2() -> None:
+    """Review 2026-11-01 gemini-4-argon-high-04, 3.2: a shim's imports run, so the closure follows
+    the shim's source (runtime/shims/annotationlib.py), not CPython's module of that name."""
+    import json
+    lock = json.loads((Path(__file__).resolve().parents[2] / "closure.lock.json").read_text(encoding="utf-8"))
+    shim = lock["modules"]["annotationlib"]
+    assert shim["status"] == "shim" and shim["kind"] == "source" and shim["edges"], shim
+    assert {e["target"] for e in shim["edges"]} >= {"ast", "enum", "keyword", "types"}
+    assert lock["modules"]["_ast_unparse"]["status"] == "compiled"   # ast.unparse: the shim needs it (S-1)
+    assert "ast" not in lock["unsupported_functions"]
+
+
 def test_phase1_is_staged_by_target_d10() -> None:
     """Each phase-1 stage counts only what the stages before it do not reach; a target after
     phase 1 (D-7) adds nothing to 1a and is reported apart (review log D-10)."""

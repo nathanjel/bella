@@ -1,0 +1,12 @@
+{
+ "case": "C-7-16_gettext_plural_forms.py",
+ "clause": "C-7-16",
+ "spec": "section 7",
+ "status": "P2+",
+ "source": "decision S-4 (2026-11-01, docs/staging.md): plural forms from a catalogue stay [P2+]",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "1 jab\u0142ko\n2 jab\u0142ka\n5 jab\u0142ek\n22 jab\u0142ka\n25 jab\u0142ek\n",
+ "stderr": "",
+ "exit_code": 0
+}

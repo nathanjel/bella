@@ -95,10 +95,14 @@ class _Scopes(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         name = _dotted(node.func)
-        if name in ("exec", "eval", "compile"):
-            self.sites.append((f"{self.module}:{self.qualname()}:{node.lineno}", name))
-        if name in self.namedtuple_names and len(node.args) >= 2:
-            self._namedtuple(node, node.args[0], node.args[1])
+        if name.removeprefix("builtins.") in ("exec", "eval", "compile"):
+            self.sites.append((f"{self.module}:{self.qualname()}:{node.lineno}", name.removeprefix("builtins.")))
+        if name in self.namedtuple_names:
+            # positional or by keyword, as namedtuple(typename, field_names, *, rename=...) takes them
+            keywords = {k.arg: k.value for k in node.keywords if k.arg}
+            given = [*node.args[:2]] + [keywords[k] for k in ("typename", "field_names")[len(node.args[:2]):] if k in keywords]
+            if len(given) == 2 and not any(isinstance(a, ast.Starred) for a in node.args) and None not in keywords:
+                self._namedtuple(node, given[0], given[1])
         elif name in self.namedtuple_class_names and len(node.args) == 2 and isinstance(node.args[1], (ast.List, ast.Tuple)):
             names = [e.elts[0] for e in node.args[1].elts if isinstance(e, ast.Tuple) and e.elts]
             if len(names) == len(node.args[1].elts):

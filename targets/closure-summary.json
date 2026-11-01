@@ -6,7 +6,7 @@
    "level": "easy",
    "stage": "1a.1",
    "by_status": {
-    "compiled": 72,
+    "compiled": 73,
     "core": 15,
     "mapped": 20,
     "program": 1,
@@ -18,7 +18,7 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 74,
+    "compiled": 75,
     "core": 18,
     "mapped": 22,
     "missing-from-manifest": 2,
@@ -35,7 +35,7 @@
    "level": "easy",
    "stage": "1a.3",
    "by_status": {
-    "compiled": 86,
+    "compiled": 87,
     "core": 15,
     "mapped": 32,
     "program": 8,
@@ -47,7 +47,7 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 78,
+    "compiled": 79,
     "core": 17,
     "mapped": 24,
     "program": 12,
@@ -59,7 +59,7 @@
    "level": "easy",
    "stage": "1a.2",
    "by_status": {
-    "compiled": 84,
+    "compiled": 85,
     "core": 15,
     "mapped": 32,
     "program": 9,
@@ -71,7 +71,7 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 80,
+    "compiled": 81,
     "core": 17,
     "mapped": 25,
     "program": 20,
@@ -82,18 +82,19 @@
  },
  "increments": {
   "1a.1": {
-   "modules": 111,
+   "modules": 112,
    "by_status": {
-    "compiled": 72,
+    "compiled": 73,
     "core": 15,
     "mapped": 20,
     "shim": 4
    },
-   "compiled_source_lines": 52106,
+   "compiled_source_lines": 53271,
    "list": {
     "__future__": "compiled",
     "_abc": "core",
     "_ast": "core",
+    "_ast_unparse": "compiled",
     "_codecs": "core",
     "_collections": "mapped",
     "_collections_abc": "compiled",
@@ -273,18 +274,19 @@
    ]
   },
   "1a": {
-   "modules": 149,
+   "modules": 150,
    "by_status": {
-    "compiled": 93,
+    "compiled": 94,
     "core": 15,
     "mapped": 36,
     "shim": 5
    },
-   "compiled_source_lines": 71219,
+   "compiled_source_lines": 72384,
    "list": {
     "__future__": "compiled",
     "_abc": "core",
     "_ast": "core",
+    "_ast_unparse": "compiled",
     "_bisect": "mapped",
     "_blake2": "mapped",
     "_codecs": "core",

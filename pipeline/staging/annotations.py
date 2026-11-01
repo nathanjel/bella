@@ -1,126 +1,492 @@
-"""Compile-time answers for annotationlib's `__code__` fallbacks (review log D-5, docs/staging.md).
+"""The second entry point of a compiler-generated `__annotate__` (decision S-1, docs/staging.md).
 
-CPython's compiler-generated `__annotate__` answers VALUE (and VALUE_WITH_FAKE_GLOBALS) and
-raises NotImplementedError for FORWARDREF and STRING. `annotationlib.call_annotate_function`
-then re-runs `annotate.__code__` with substitute globals. A compiled program has no code objects
-to re-run, so for each `__annotate__` it generates, the compiler computes those re-runs at build
-time where their result depends on nothing but the code:
+CPython's compiler-generated `__annotate__` answers VALUE and VALUE_WITH_FAKE_GLOBALS and raises
+NotImplementedError for FORWARDREF and STRING. `annotationlib.call_annotate_function` then re-runs
+`annotate.__code__` against substitute globals (a `_StringifierDict`) and cells (`_build_closure`).
+A compiled program has no code object to re-run. Instead the compiler generates, next to each
+`__annotate__`, an evaluator `__annotate__(format, globals, cells)` that evaluates the same
+annotation expressions, in the same order, with every name load done as CPython's opcode does it
+against the given mapping and cells (annotate_rt.py). The `annotationlib` shim calls it where
+CPython calls the rebuilt function, so FORWARDREF and STRING are CPython's, ForwardRef objects
+for names not bound yet included.
 
-* STRING: the run in which every name, global or free, is a `_Stringifier`. Its result is a
-  function of the annotation expressions alone (`_Stringifier` builds strings from AST nodes and
-  constants), so this module runs CPython's own code for it, on the pinned interpreter, against
-  the same code object the program will contain.
-* FORWARDREF's second run, with no globals: whether it raises, and what. The shim re-raises that
-  when VALUE raises something other than a NameError (an annotation like `1 / 0`).
+This module is that part of the compiler, written from the source as the compiler sees it: the
+scopes and their bindings, name mangling, which annotations of a module or class body are
+conditional, and the shape of the result (a dict display for a function; entry by entry, with
+`__conditional_annotations__` checks, for a class or module). Each evaluator is checked at build
+time against the code CPython compiles from the same source, twice, and kept only if both agree:
 
-An entry whose STRING form would not be the same at runtime (a set of strings, whose order the
-hash seed decides; a lambda, whose repr holds an address) is recorded as unstable, and the shim
-refuses STRING for it rather than answer with a build-time string.
+* statically: the name loads it performs, in order and by kind, are the bytecode's loads;
+* by running: under STRING's substitute globals and under FORWARDREF's second run (no
+  globals), it returns or raises exactly what re-running CPython's code does.
+
+An annotation the generator cannot handle (a lambda, a comprehension, a t-string) gets no
+evaluator; the shim then refuses the fallback with the milestone's marker. Nothing is
+approximated.
 """
 from __future__ import annotations
 
 import annotationlib
-import builtins
+import ast
+import copy
+import dis
 import os
-import re
 import types
-from typing import TypedDict
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
-# CPython's own fallback machinery; private names, read on the pinned interpreter only
+from pipeline.staging import annotate_rt
+
 _StringifierDict = vars(annotationlib)["_StringifierDict"]
 _build_closure = vars(annotationlib)["_build_closure"]
 _stringify_single = vars(annotationlib)["_stringify_single"]
-_Stringifier = vars(annotationlib)["_Stringifier"]
+_LOADS = ("LOAD_GLOBAL", "LOAD_DEREF", "LOAD_FROM_DICT_OR_GLOBALS", "LOAD_FROM_DICT_OR_DEREF")
+_UNSUPPORTED = (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp, ast.NamedExpr,
+                ast.Await, ast.Yield, ast.YieldFrom, ast.TemplateStr)
+RUNTIME = "_rt"        # the evaluator's one global: the helpers of annotate_rt.py
 
-_STABLE_CONSTANTS = (str, bytes, int, float, complex, bool, type(None), type(...))
-_ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")
+
+class Unsupported(Exception):
+    """A construct the generator does not handle; its annotate function gets no evaluator."""
 
 
-class AnnotateEntry(TypedDict):
-    is_class: bool
-    string: dict[str, str] | None         # STRING, when it can be computed at build time
-    string_raises: list[str] | None       # [exception class name, message] if the STRING run raises
-    unstable: str | None                  # why STRING is not a build-time constant, if it is not
-    second_raises: list[str] | None       # FORWARDREF's second run: what it raises, if anything
+@dataclass
+class Evaluator:
+    key: str
+    freevars: tuple[str, ...]
+    source: str
+    code: types.CodeType
+
+
+@dataclass
+class _Scope:
+    kind: str                         # module | function | class | typeparams
+    name: str
+    parent: _Scope | None
+    bound: set[str] = field(default_factory=set)
+    declared_global: set[str] = field(default_factory=set)
+
+
+Entry = tuple[str, ast.expr, int | None, bool]     # (key, annotation, conditional index, *-unpack)
+
+
+@dataclass
+class _Owner:
+    kind: str                         # function | class | module | evaluate (PEP 695: one value)
+    scope: _Scope                     # the scope the annotation scope sits in (a class: its own)
+    sees_class: bool                  # the annotation scope reads a class namespace (__classdict__)
+    private: str | None               # the class name used for mangling
+    type_params: set[str]
+    entries: list[Entry]
 
 
 def entry_key(filename: str, qualname: str, firstlineno: int) -> str:
-    """How the shim finds the entry for an `__annotate__` (the compiler attaches it instead)."""
+    """How the model finds the evaluator of an `__annotate__` (the compiler attaches it instead)."""
     return f"{os.path.realpath(filename)}::{qualname}::{firstlineno}"
 
 
-def _stable(value: object) -> bool:
-    if isinstance(value, _Stringifier) or type(value) in _STABLE_CONSTANTS:
-        return True
-    if isinstance(value, (tuple, list)) and type(value) in (tuple, list):
-        return all(_stable(v) for v in value)
-    if isinstance(value, dict) and type(value) is dict:
-        return all(_stable(k) and _stable(v) for k, v in value.items())
-    return False
+def mangle(private: str | None, name: str) -> str:
+    """_Py_Mangle: `__x` inside class `C` is `_C__x`; dunders, dotted names and all-underscore
+    class names are left alone."""
+    if private is None or not name.startswith("__") or name.endswith("__") or "." in name:
+        return name
+    stripped = private.lstrip("_")
+    return f"_{stripped}{name}" if stripped else name
 
 
-def _stand_in(code: types.CodeType) -> types.FunctionType:
-    """A function over `code` with empty cells: what `_build_closure` reads (`__closure__`,
-    `__code__.co_freevars`) when it replaces every cell with a `_Stringifier`."""
-    cells = tuple(types.CellType() for _ in code.co_freevars) or None
-    return types.FunctionType(code, {}, closure=cells)
+class _Bindings(ast.NodeVisitor):
+    """The names one function body binds, not descending into nested scopes."""
+
+    def __init__(self) -> None:
+        self.bound: set[str] = set()
+        self.declared_global: set[str] = set()
+        self.nonlocal_: set[str] = set()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self.bound.add(node.id)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self.declared_global.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        self.nonlocal_.update(node.names)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self.bound.update(a.asname or a.name.split(".")[0] for a in node.names)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self.bound.update(a.asname or a.name for a in node.names)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.bound.add(node.name)
+        for d in (*node.decorator_list, *node.args.defaults, *(d for d in node.args.kw_defaults if d)):
+            self.visit(d)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.bound.add(node.name)
+        for e in (*node.decorator_list, *node.bases, *(k.value for k in node.keywords)):
+            self.visit(e)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for d in (*node.args.defaults, *(d for d in node.args.kw_defaults if d)):
+            self.visit(d)
+
+    def _comprehension(self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp) -> None:
+        # the iteration variables are the comprehension's own; a walrus inside binds here
+        for n in ast.walk(node):
+            if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name):
+                self.bound.add(n.target.id)
+        self.visit(node.generators[0].iter)
+
+    visit_ListComp = visit_SetComp = visit_DictComp = visit_GeneratorExp = _comprehension
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self.bound.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.name:
+            self.bound.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if node.name:
+            self.bound.add(node.name)
+
+    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        if node.rest:
+            self.bound.add(node.rest)
+        self.generic_visit(node)
 
 
-def _raised(exc: BaseException) -> list[str]:
-    return [type(exc).__name__, str(exc)]
+def _function_scope(node: ast.FunctionDef | ast.AsyncFunctionDef, parent: _Scope) -> _Scope:
+    b = _Bindings()
+    a = node.args
+    params = [*a.posonlyargs, *a.args, *a.kwonlyargs, *([a.vararg] if a.vararg else []), *([a.kwarg] if a.kwarg else [])]
+    b.bound.update(p.arg for p in params)
+    for stmt in node.body:
+        b.visit(stmt)
+    return _Scope("function", node.name, parent, (b.bound - b.declared_global) - b.nonlocal_, b.declared_global)
 
 
-def entry_for(code: types.CodeType) -> AnnotateEntry:
-    is_class = "__classdict__" in code.co_freevars
-    fmt = annotationlib.Format
-    entry: AnnotateEntry = {"is_class": is_class, "string": None, "string_raises": None,
-                            "unstable": None, "second_raises": None}
-    # STRING: call_annotate_function's fallback, as CPython 3.15.2 runs it
-    names = _StringifierDict({}, format=fmt.STRING)
-    closure, _ = _build_closure(_stand_in(code), None, is_class, names, allow_evaluation=False)
-    try:
-        annos = types.FunctionType(code, names, closure=closure)(fmt.VALUE_WITH_FAKE_GLOBALS)
-    except Exception as exc:  # noqa: BLE001  # the program sees whatever the fallback raises
-        entry["string_raises"] = _raised(exc)
-    else:
-        unstable = [k for k, v in annos.items() if not _stable(v)]
-        strings = {k: _stringify_single(v) for k, v in annos.items()}
-        unstable += [k for k, s in strings.items() if _ADDRESS.search(s)]
-        if unstable:
-            entry["unstable"] = f"the STRING form of {', '.join(sorted(set(unstable)))} is not a build-time constant"
+TypeParam = ast.TypeVar | ast.ParamSpec | ast.TypeVarTuple    # the concrete ast.type_param classes
+
+
+def _params(params: list[ast.type_param]) -> list[TypeParam]:
+    return [p for p in params if isinstance(p, (ast.TypeVar, ast.ParamSpec, ast.TypeVarTuple))]
+
+
+def _typeparams_scope(params: list[ast.type_param], parent: _Scope, name: str) -> _Scope | None:
+    return _Scope("typeparams", name, parent, {p.name for p in _params(params)}) if params else None
+
+
+def _body_entries(body: list[ast.stmt], conditional: bool, counter: list[int], private: str | None,
+                  module: bool) -> list[Entry]:
+    """The simple annotations of a class or module body in source order, with the conditional
+    index CPython gives them: in a module every one is conditional; in a class, those inside a
+    compound statement. A non-simple target (`x.y: int`) is no annotation and takes no index."""
+    out: list[Entry] = []
+    for stmt in body:
+        if isinstance(stmt, ast.AnnAssign):
+            if stmt.simple and isinstance(stmt.target, ast.Name):
+                index = None
+                if module or conditional:
+                    index = counter[0]
+                    counter[0] += 1
+                out.append((stmt.target.id if module else mangle(private, stmt.target.id), stmt.annotation, index, False))
+            continue
+        blocks: list[list[ast.stmt]] = []
+        if isinstance(stmt, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+            blocks = [stmt.body, stmt.orelse]
+        elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+            blocks = [stmt.body]
+        elif isinstance(stmt, (ast.Try, ast.TryStar)):
+            blocks = [stmt.body, *(h.body for h in stmt.handlers), stmt.orelse, stmt.finalbody]
+        elif isinstance(stmt, ast.Match):
+            blocks = [c.body for c in stmt.cases]
+        for block in blocks:
+            out += _body_entries(block, True, counter, private, module)
+    return out
+
+
+class _Owners(ast.NodeVisitor):
+    """Every annotation owner of a module, with the scope its annotations are evaluated in."""
+
+    def __init__(self) -> None:
+        self.owners: list[_Owner] = []
+        self.scope = _Scope("module", "<module>", None)
+        self.private: str | None = None
+
+    def _type_params(self, params: list[ast.type_param], tp: _Scope | None) -> None:
+        """PEP 695: each bound, constraint tuple and default is evaluated lazily by a function of
+        its own, inside the type-parameter scope (an evaluate function, like an annotate one)."""
+        for p in _params(params):
+            for expr in (p.bound if isinstance(p, ast.TypeVar) else None, p.default_value):
+                if expr is not None and tp is not None:
+                    self.owners.append(_Owner("evaluate", tp, self.scope.kind == "class", self.private, set(),
+                                              [("", expr, None, False)]))
+
+    def visit_TypeAlias(self, node: ast.TypeAlias) -> None:
+        tp = _typeparams_scope(node.type_params, self.scope, node.name.id)
+        self._type_params(node.type_params, tp)
+        self.owners.append(_Owner("evaluate", tp or self.scope, self.scope.kind == "class", self.private, set(),
+                                  [("", node.value, None, False)]))
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        outer, private = self.scope, self.private
+        for e in (*node.decorator_list, *node.args.defaults, *(d for d in node.args.kw_defaults if d)):
+            self.visit(e)
+        tp = _typeparams_scope(node.type_params, outer, node.name)
+        self._type_params(node.type_params, tp)
+        a = node.args
+        entries: list[Entry] = []
+        for p in (*a.posonlyargs, *a.args):
+            if p.annotation:
+                entries.append((mangle(private, p.arg), p.annotation, None, False))
+        if a.vararg and a.vararg.annotation:
+            ann = a.vararg.annotation
+            starred = isinstance(ann, ast.Starred)
+            entries.append((mangle(private, a.vararg.arg), ann.value if isinstance(ann, ast.Starred) else ann, None, starred))
+        for p in a.kwonlyargs:
+            if p.annotation:
+                entries.append((mangle(private, p.arg), p.annotation, None, False))
+        if a.kwarg and a.kwarg.annotation:
+            entries.append((mangle(private, a.kwarg.arg), a.kwarg.annotation, None, False))
+        if node.returns:
+            entries.append(("return", node.returns, None, False))
+        if entries:
+            self.owners.append(_Owner("function", tp or outer, outer.kind == "class", private,
+                                      {p.name for p in _params(node.type_params)}, entries))
+        self.scope = _function_scope(node, tp or outer)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.scope = outer
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        outer, private = self.scope, self.private
+        for e in (*node.decorator_list, *node.bases, *(k.value for k in node.keywords)):
+            self.visit(e)
+        tp = _typeparams_scope(node.type_params, outer, node.name)
+        self._type_params(node.type_params, tp)
+        cls = _Scope("class", node.name, tp or outer)
+        entries = _body_entries(node.body, False, [0], node.name, module=False)
+        if entries:
+            self.owners.append(_Owner("class", cls, True, node.name, {p.name for p in _params(node.type_params)}, entries))
+        self.scope, self.private = cls, node.name
+        for stmt in node.body:
+            self.visit(stmt)
+        self.scope, self.private = outer, private
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return          # a lambda has no annotations, and nothing inside one owns any
+
+
+def _resolve(owner: _Owner, name: str) -> str:
+    """'free' if a function or type-parameter scope above binds the name, else 'global'."""
+    if name in owner.type_params:
+        return "free"
+    scope: _Scope | None = owner.scope
+    if owner.kind == "class" and scope is not None:
+        scope = scope.parent              # the class body's own names come through __classdict__
+    while scope is not None:
+        if scope.kind in ("function", "typeparams"):
+            if name in scope.declared_global:
+                return "global"
+            if name in scope.bound:
+                return "free"
+        elif scope.kind == "module":
+            return "global"
+        scope = scope.parent              # a class scope is not visible from nested scopes
+    return "global"
+
+
+def _call(fn: str, *args: ast.expr) -> ast.Call:
+    return ast.Call(ast.Attribute(ast.Name(RUNTIME, ast.Load()), fn, ast.Load()), list(args), [])
+
+
+def _name(n: str) -> ast.Name:
+    return ast.Name(n, ast.Load())
+
+
+class _Rewrite(ast.NodeTransformer):
+    """An annotation expression with each name load replaced by its opcode's helper. `loads`
+    records them in evaluation order, in the bytecode's vocabulary, for the static check."""
+
+    def __init__(self, owner: _Owner) -> None:
+        self.owner = owner
+        self.loads: list[tuple[str, str]] = []
+        self.free: set[str] = set()
+
+    def visit_Name(self, node: ast.Name) -> ast.expr:
+        if not isinstance(node.ctx, ast.Load):
+            raise Unsupported(f"a {type(node.ctx).__name__} of {node.id}")
+        name = mangle(self.owner.private, node.id)
+        kind = _resolve(self.owner, name)
+        if kind == "free":
+            self.free.add(name)
+        if self.owner.sees_class:
+            classdict = _call("load_deref", _name("_c"), ast.Constant("__classdict__"))
+            self.loads.append(("LOAD_DEREF", "__classdict__"))
+            if kind == "free":
+                self.loads.append(("LOAD_FROM_DICT_OR_DEREF", name))
+                new: ast.expr = _call("load_dict_or_deref", classdict, _name("_c"), ast.Constant(name))
+            else:
+                self.loads.append(("LOAD_FROM_DICT_OR_GLOBALS", name))
+                new = _call("load_dict_or_global", classdict, _name("_g"), _name("_b"), ast.Constant(name))
+        elif kind == "free":
+            self.loads.append(("LOAD_DEREF", name))
+            new = _call("load_deref", _name("_c"), ast.Constant(name))
         else:
-            entry["string"] = strings
-    # FORWARDREF's second run: no globals, every cell a _Stringifier
-    names = _StringifierDict({}, globals={}, owner=None, is_class=is_class, format=fmt.FORWARDREF)
-    closure, _ = _build_closure(_stand_in(code), None, is_class, names, allow_evaluation=False)
+            self.loads.append(("LOAD_GLOBAL", name))
+            new = _call("load_global", _name("_g"), _name("_b"), ast.Constant(name))
+        return ast.copy_location(new, node)
+
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        if isinstance(node, _UNSUPPORTED):
+            raise Unsupported(type(node).__name__)
+        return super().generic_visit(node)
+
+
+def _generate(owner: _Owner) -> tuple[ast.FunctionDef, list[tuple[str, str]], tuple[str, ...]]:
+    rewrite = _Rewrite(owner)
+    module = owner.kind == "module"
+    conditional = any(index is not None for _, _, index, _ in owner.entries)
+    body: list[ast.stmt] = [
+        ast.If(ast.Compare(_name("format"), [ast.Gt()], [ast.Constant(2)]), [ast.Raise(_name("NotImplementedError"))], []),
+        ast.Assign([ast.Name("_b", ast.Store())], _call("builtins_of", _name("_g"))),
+    ]
+    values: list[tuple[str, ast.expr, int | None]] = []
+    for key, ann, index, starred in owner.entries:
+        if index is not None:   # the conditional check's load comes before the value's, as in the bytecode
+            rewrite.loads.append(("LOAD_GLOBAL" if module else "LOAD_DEREF", "__conditional_annotations__"))
+        value = rewrite.visit(copy.deepcopy(ann))
+        values.append((key, ast.copy_location(_call("unpack1", value), ann) if starred else value, index))
+    if owner.kind == "evaluate":
+        body.append(ast.Return(values[0][1]))
+    elif owner.kind == "function":
+        body.append(ast.Return(ast.Dict([ast.Constant(k) for k, _, _ in values], [v for _, v, _ in values])))
+    else:
+        body.append(ast.Assign([ast.Name("_d", ast.Store())], ast.Dict([], [])))
+        for key, value, index in values:
+            store: ast.stmt = ast.Assign([ast.Subscript(_name("_d"), ast.Constant(key), ast.Store())], value)
+            if index is not None:
+                held = (_call("load_global", _name("_g"), _name("_b"), ast.Constant("__conditional_annotations__")) if module
+                        else _call("load_deref", _name("_c"), ast.Constant("__conditional_annotations__")))
+                store = ast.If(ast.Compare(ast.Constant(index), [ast.In()], [held]), [store], [])
+            body.append(ast.copy_location(store, value))
+        body.append(ast.Return(_name("_d")))
+    freevars = set(rewrite.free)
+    if owner.sees_class:
+        freevars.add("__classdict__")
+    if conditional and not module:
+        freevars.add("__conditional_annotations__")
+    params = ast.arguments([], [ast.arg("format"), ast.arg("_g"), ast.arg("_c")], None, [], [], None, [])
+    fn = ast.FunctionDef("__annotate__", params, body, [], None, None, [])
+    ast.copy_location(fn, owner.entries[0][1])
+    ast.fix_missing_locations(fn)
+    return fn, rewrite.loads, tuple(sorted(freevars))
+
+
+def _cpython_loads(code: types.CodeType) -> list[tuple[str, str]]:
+    return [(i.opname, str(i.argval)) for i in dis.get_instructions(code) if i.opname in _LOADS]
+
+
+def _environment(code: types.CodeType, label: str) -> tuple[object, tuple[object, ...] | None]:
+    """STRING's substitute globals and cells, or FORWARDREF's second run's, as
+    call_annotate_function builds them (no runtime state: every name is a _Stringifier)."""
+    fmt = annotationlib.Format
+    is_class = "__classdict__" in code.co_freevars
+    names = (_StringifierDict({}, format=fmt.STRING) if label == "STRING"
+             else _StringifierDict({}, globals={}, owner=None, is_class=is_class, format=fmt.FORWARDREF))
+    stand_in = types.FunctionType(code, {}, closure=tuple(types.CellType() for _ in code.co_freevars) or None)
+    closure, _ = _build_closure(stand_in, None, is_class, names, allow_evaluation=False)
+    return names, closure
+
+
+def _outcome(call: Callable[[], object]) -> object:
     try:
-        types.FunctionType(code, names, closure=closure)(fmt.VALUE_WITH_FAKE_GLOBALS)
-    except Exception as exc:  # noqa: BLE001
-        entry["second_raises"] = _raised(exc)
-    return entry
+        result = call()
+    except Exception as exc:  # noqa: BLE001  # what the fallback raises is part of its answer
+        return ("raises", type(exc).__name__, exc.args)
+    return {k: _stringify_single(v) for k, v in result.items()} if isinstance(result, dict) else _stringify_single(result)
+
+
+def _agree(code: types.CodeType, evaluator: types.CodeType, freevars: tuple[str, ...]) -> str | None:
+    """None if the evaluator answers as re-running `code` does, in both environments."""
+    fmt = annotationlib.Format
+    fn = types.FunctionType(evaluator, {RUNTIME: annotate_rt})
+    for label in ("STRING", "FORWARDREF"):
+        names, closure = _environment(code, label)
+        expected = _outcome(lambda: types.FunctionType(code, names, closure=closure)(fmt.VALUE_WITH_FAKE_GLOBALS))  # type: ignore[arg-type]  # noqa: B023
+        names, closure = _environment(code, label)
+        cells = dict(zip(freevars, closure or (), strict=True))
+        actual = _outcome(lambda: fn(fmt.VALUE_WITH_FAKE_GLOBALS, names, cells))  # noqa: B023
+        if expected != actual:
+            return f"{label}: CPython {expected!r}, evaluator {actual!r}"
+    return None
 
 
 def _annotate_codes(code: types.CodeType) -> list[types.CodeType]:
+    """The compiler-generated `__annotate__` functions, and the PEP 695 evaluate functions (whose
+    one parameter is `.format`), of a module's code."""
     found: list[types.CodeType] = []
     for const in code.co_consts:
         if isinstance(const, types.CodeType):
-            if const.co_name == "__annotate__":
+            if const.co_name == "__annotate__" or const.co_varnames[:const.co_argcount] == (".format",):
                 found.append(const)
             found += _annotate_codes(const)
     return found
 
 
-def tables_for_source(path: str) -> dict[str, AnnotateEntry]:
-    """Every `__annotate__` the compiler generates for the module at `path`, with its entry.
-    The module is compiled as the import system compiles it (same file name, flags and
-    optimisation level), so the code objects are the ones the program will run."""
+def _span(node: ast.AST) -> tuple[object, ...]:
+    return (node.lineno, node.end_lineno, node.col_offset, node.end_col_offset)  # type: ignore[attr-defined]
+
+
+def evaluators_for_source(path: str) -> tuple[dict[str, Evaluator], list[str]]:
+    """(the evaluators of the module at `path`, by entry key; what was declined, and why)."""
     with open(path, "rb") as f:
         source = f.read()
-    code = compile(source, path, "exec", dont_inherit=True)
-    return {entry_key(c.co_filename, c.co_qualname, c.co_firstlineno): entry_for(c) for c in _annotate_codes(code)}
-
-
-def builtin_exception(name: str) -> type[BaseException] | None:
-    """The exception class a recorded [name, message] pair names, if it is a built-in one."""
-    cls = getattr(builtins, name, None)
-    return cls if isinstance(cls, type) and issubclass(cls, BaseException) else None
+    tree = ast.parse(source, path)
+    if any(isinstance(s, ast.ImportFrom) and s.module == "__future__" and any(a.name == "annotations" for a in s.names)
+           for s in tree.body):
+        return {}, []           # PEP 563: annotations are strings and there is no __annotate__
+    visitor = _Owners()
+    visitor.visit(tree)
+    module_entries = _body_entries(tree.body, False, [0], None, module=True)
+    if module_entries:
+        visitor.owners.append(_Owner("module", visitor.scope, False, None, set(), module_entries))
+    by_span = {_span(ann): owner for owner in visitor.owners for _, ann, _, _ in owner.entries}
+    code = compile(source, path, "exec", dont_inherit=True)   # as the import system compiles it
+    evaluators: dict[str, Evaluator] = {}
+    declined: list[str] = []
+    for annotate in _annotate_codes(code):
+        key = entry_key(annotate.co_filename, annotate.co_qualname, annotate.co_firstlineno)
+        owners = {id(o): o for pos in annotate.co_positions() if (o := by_span.get(pos)) is not None}
+        if len(owners) != 1:
+            declined.append(f"{key}: matched to {len(owners)} annotation owners")
+            continue
+        owner = next(iter(owners.values()))
+        try:
+            fn, loads, freevars = _generate(owner)
+        except Unsupported as exc:
+            declined.append(f"{key}: {exc} in an annotation")
+            continue
+        module_code = compile(ast.Module([fn], []), path, "exec", dont_inherit=True)
+        evaluator = next(c for c in module_code.co_consts if isinstance(c, types.CodeType))
+        if loads != _cpython_loads(annotate):
+            problem: str | None = f"loads {loads} differ from CPython's {_cpython_loads(annotate)}"
+        elif freevars != annotate.co_freevars:
+            problem = f"free variables {freevars} differ from CPython's {annotate.co_freevars}"
+        else:
+            problem = _agree(annotate, evaluator, freevars)
+        if problem:
+            declined.append(f"{key}: MISMATCH {problem}")
+            continue
+        evaluators[key] = Evaluator(key, freevars, ast.unparse(fn), evaluator)
+    return evaluators, declined

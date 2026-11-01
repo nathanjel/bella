@@ -16,7 +16,8 @@ module bodies print is discarded. Meanwhile it records:
   function too), made once here, which stages its text whether or not a module body reaches it;
 * the inputs module bodies read (files outside the import system, environment variables,
   standard input), for the ledger;
-* for each module source, the build-time answers to annotationlib's fallbacks (annotations.py);
+* for each module source, the second entry point of every `__annotate__` CPython generates for it,
+  checked against CPython at build time (annotations.py; decision S-1);
 * the static exec sites of every module source, with the number of texts staged at each.
 
 `--out` is the reviewable artefact (JSON); `--binary` holds the same texts compiled, the stand-in
@@ -43,12 +44,27 @@ PRELOADED = sorted(n for n, m in sys.modules.items() if m is not None)   # None:
 sys.dont_write_bytecode = True
 _bodies: list[str] = []            # the module bodies running, innermost last
 _texts: dict[tuple[str, str, str], tuple[set[str], int]] = {}     # (site, kind, text) -> (by, flags)
+_compiled: dict[tuple[Any, ...], tuple[set[str], tuple[Any, ...]]] = {}   # compile(): key -> (by, outcome)
 _inputs: dict[str, set[str]] = {}
-_compiles: dict[str, set[str]] = {}
+_compiles: dict[str, set[str]] = {}            # compile() calls not staged, by site with line
+ENTRY = "__bella_entry__"          # the entry script's module name here; __main__ when it runs
+_AST_RESULT = 0x400 | 0x8000       # PyCF_ONLY_AST, PyCF_OPTIMIZED_AST: compile() returns a tree
+
+
+def _module_of(frame: FrameType) -> str:
+    name = str(frame.f_globals.get("__name__"))
+    return "__main__" if name == ENTRY else name
 
 
 def _site(frame: FrameType) -> str:
-    return f"{frame.f_globals.get('__name__')}:{frame.f_code.co_qualname}:{frame.f_lineno}"
+    """The function a call is made from, `module:qualname`, as the runtime names it. The line is
+    not part of it: the text, the operation and the compilation parameters identify the code,
+    and a shim's lines differ from CPython's module's (review 2026-11-01 gemini-4-argon-high-04)."""
+    return f"{_module_of(frame)}:{frame.f_code.co_qualname}"
+
+
+def _where(frame: FrameType) -> str:
+    return f"{_site(frame)}:{frame.f_lineno}"
 
 
 def _body() -> str:
@@ -86,26 +102,54 @@ def _eval(source: Any, globals: Any = None, locals: Any = None, /) -> Any:
     return _REAL_EVAL(source, g, loc)  # noqa: S307
 
 
-def _ours(frame: FrameType | None) -> bool:
-    """Called from this tool (its main script or its package), not from the program."""
-    while frame is not None:
-        if str(frame.f_globals.get("__name__")).startswith(("pipeline.", "__main__")):
-            return True
-        frame = frame.f_back
-    return False
+def _ours() -> bool:
+    """A call this tool makes (its scanners parse sources after the imports), not the program's:
+    the program's definition-time code runs inside a module body, or a probe."""
+    return not _bodies or _bodies[-1].startswith("pipeline.")
 
 
-def _compile(source: Any, filename: Any, mode: str, *args: Any, **kwargs: Any) -> Any:
+def compile_key(site: str, source: Any, filename: Any, mode: Any, flags: int, dont_inherit: bool, optimize: int,
+                module: Any, feature_version: int, caller_flags: int) -> tuple[Any, ...] | None:
+    """What a compile() call's result depends on; None if it is not stageable (a tree, not code)."""
+    text = source.decode("utf-8") if isinstance(source, bytes) else source
+    if not isinstance(text, str) or flags & _AST_RESULT:
+        return None
+    inherited = 0 if dont_inherit else caller_flags
+    return (site, "compile", text, str(filename), str(mode), flags | inherited, optimize, module, feature_version)
+
+
+def _compile(source: Any, filename: Any, mode: str, flags: int = 0, dont_inherit: bool = False, optimize: int = -1,
+             *, module: Any = None, _feature_version: int = -1) -> Any:
+    """compile() is staged like exec and eval: CPython's own code calls it while modules are
+    defined (typing._make_forward_ref compiles each string forward reference). The outcome, code
+    or the exception and its arguments, is recorded under what it depends on."""
     frame = sys._getframe(1)
-    if not _ours(frame):
-        _compiles.setdefault(_site(frame), set()).add(_body())
-    return _REAL_COMPILE(source, filename, mode, *args, **kwargs)
+    args = (source, filename, mode, flags, dont_inherit, optimize)
+    if _ours():
+        return _REAL_COMPILE(*args, module=module, _feature_version=_feature_version)
+    key = compile_key(_site(frame), source, filename, mode, flags, dont_inherit, optimize, module, _feature_version,
+                      frame.f_code.co_flags & _FUTURE_MASK)
+    try:
+        result = _REAL_COMPILE(source, filename, mode, flags | (0 if dont_inherit else frame.f_code.co_flags & _FUTURE_MASK),
+                               True, optimize, module=module, _feature_version=_feature_version)
+    except Exception as exc:
+        if key is not None:
+            _compiled.setdefault(key, (set(), ("raises", type(exc).__name__, exc.args)))[0].add(_body())
+        else:
+            _compiles.setdefault(_where(frame), set()).add(_body())
+        raise
+    if key is None:
+        _compiles.setdefault(_where(frame), set()).add(_body())
+    else:
+        _compiled.setdefault(key, (set(), ("code", result)))[0].add(_body())
+    return result
 
 
 def _loader_exec(code: Any, globals: dict[str, Any], /) -> None:
     """The import system's exec of a module body: real, and bracketed so that what the body
     does is attributed to it."""
-    _bodies.append(str(globals.get("__name__")))
+    name = str(globals.get("__name__"))
+    _bodies.append("__main__" if name == ENTRY else name)
     try:
         _REAL_EXEC(code, globals)  # noqa: S102
     finally:
@@ -119,20 +163,19 @@ for _loader in ("_frozen_importlib", "_frozen_importlib_external"):
     vars(sys.modules[_loader]).update(exec=_loader_exec, compile=_REAL_COMPILE)
 
 
-def _by_import_system(frame: FrameType | None) -> bool:
-    while frame is not None:
-        if str(frame.f_globals.get("__name__")).startswith(("_frozen_importlib", "importlib._bootstrap")):
-            return True
-        frame = frame.f_back
-    return False
+_LOADER = ("_frozen_importlib", "importlib._bootstrap", "zipimport")
 
 
 def _audit(event: str, args: tuple[Any, ...]) -> None:
+    """An input is whatever a module body, or anything it calls, reads while it runs. Only the
+    frame that performed the operation decides whether the loader did it (reading a module's
+    source, listing a directory for the path cache): an importer further down the stack is
+    there for every module body (review 2026-11-01 astra-low-05, A5-3)."""
     if not _bodies or event not in ("open", "os.listdir", "os.scandir", "subprocess.Popen", "os.system", "socket.connect"):
         return
-    if _by_import_system(sys._getframe(1)):
+    if str(sys._getframe(1).f_globals.get("__name__")).startswith(_LOADER):
         return
-    _inputs.setdefault(_body(), set()).add(f"open {args[0]}" if event == "open" else event)
+    _inputs.setdefault(_body(), set()).add(f"{event} {args[0]}" if args else event)
 
 
 sys.addaudithook(_audit)
@@ -158,9 +201,10 @@ import importlib.util  # noqa: E402
 import io  # noqa: E402
 import json  # noqa: E402
 import marshal  # noqa: E402
+import tomllib  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-from pipeline.staging import annotations as annotation_tables  # noqa: E402
+from pipeline.staging import annotations as annotation_entries  # noqa: E402
 from pipeline.staging import intrinsics, scan  # noqa: E402
 
 sys.path.remove(_REPO)
@@ -174,9 +218,9 @@ def _import(name: str, failures: dict[str, str]) -> None:
 
 
 def _import_entry(path: str, failures: dict[str, str]) -> str:
-    name = os.path.splitext(os.path.basename(path))[0]
-    if name in sys.modules:
-        name = "__bella_entry__"
+    """The entry script, under a name no other module has, so that its main guard stays false and
+    it cannot shadow a module it imports; its sites and texts are reported under __main__."""
+    name = ENTRY
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -186,6 +230,35 @@ def _import_entry(path: str, failures: dict[str, str]) -> str:
     except BaseException as exc:  # noqa: BLE001  # SystemExit, or an uncaught error the program also raises
         failures[name] = type(exc).__name__
     return name
+
+
+_STDLIB = os.path.realpath(os.path.dirname(os.__file__))
+_TOOL = os.path.realpath(os.path.join(_REPO, "pipeline"))
+
+
+def _program_modules(program: dict[str, str], failures: dict[str, str]) -> None:
+    """Every module the entry brought in from outside the standard library is the program's
+    (review 2026-11-01 gemini-4-argon-high-04, 3.4): its entry points and probes are built too.
+    A PEP 810 lazy import in a program module is resolved here, so that the module it names is
+    defined at build time as it will be at its first use. Reading a name as an attribute of the
+    module resolves a lazy import (reading the namespace dict does not); for a name that exists
+    that is a plain lookup. Repeated until no new module appears."""
+    while True:
+        loaded = len(sys.modules)
+        program |= {name: path for name, m in list(sys.modules.items())
+                    if m is not None and name not in program and name != ENTRY and (path := _source_of(name)) is not None
+                    and not os.path.realpath(path).startswith((_STDLIB + os.sep, _TOOL + os.sep))}
+        for name in list(program):
+            module = sys.modules.get(ENTRY if name == "__main__" else name)
+            if module is None:
+                continue
+            for attr in list(vars(module)):
+                try:
+                    getattr(module, attr)
+                except BaseException as exc:  # noqa: BLE001  # the program meets the same error at first use
+                    failures[f"{name}: lazy import {attr}"] = type(exc).__name__
+        if len(sys.modules) == loaded:
+            return
 
 
 def _source_of(name: str) -> str | None:
@@ -202,7 +275,10 @@ def main() -> int:
     ap.add_argument("--entry", help="the program's entry script, imported under its own name")
     ap.add_argument("--program-module", action="append", default=[])
     ap.add_argument("--tables", choices=("all", "program"), default="program")
-    ap.add_argument("--shims", help="the phase-1 shim sources: their tables and exec sites are covered too")
+    ap.add_argument("--shims", help="the phase-1 shim sources: their entry points and exec sites are covered too")
+    ap.add_argument("--safe-path", action="store_true", help="the program runs with -P: its directory is not on sys.path")
+    ap.add_argument("--unsupported-from", action="append", default=[],
+                    help="a closure lock whose unsupported functions the runtime refuses")
     args = ap.parse_args()
 
     failures: dict[str, str] = {}
@@ -219,7 +295,7 @@ def main() -> int:
     try:
         for name in lock_modules:
             _import(name, failures)
-        if args.entry:
+        if args.entry and not args.safe_path:
             sys.path.insert(0, os.path.dirname(os.path.abspath(args.entry)))
         for name in args.program_module:
             _import(name, failures)
@@ -229,6 +305,7 @@ def main() -> int:
             sys.argv = [args.entry]        # the arguments are the run's input, not the build's
             _import_entry(args.entry, failures)
             program["__main__"] = os.path.abspath(args.entry)
+            _program_modules(program, failures)
 
         # the sources this artefact covers: exec sites, literal namedtuples, annotation tables
         covered = {n: p for n in lock_modules if (p := _source_of(n)) is not None} if args.tables == "all" else {}
@@ -253,9 +330,12 @@ def main() -> int:
     finally:
         sys.stdout, sys.stderr, sys.stdin = real_out, real_err, real_in
 
-    tables: dict[str, annotation_tables.AnnotateEntry] = {}
+    evaluators: dict[str, annotation_entries.Evaluator] = {}
+    declined: list[str] = []
     for path in sorted(set(covered.values())):
-        tables |= annotation_tables.tables_for_source(path)
+        found, refused = annotation_entries.evaluators_for_source(path)
+        evaluators |= found
+        declined += refused
     # Only what the closure's modules, the program or a probe generated. Not this tool's own
     # modules, nor modules phase 1 does not have, which CPython's real versions of the shimmed
     # modules (asyncio, socket, ...) import here: ssl, selectors, concurrent.futures.
@@ -266,30 +346,53 @@ def main() -> int:
         if by:
             texts.append((site, kind, text, by, flags))
     staged_at = collections.Counter(site for site, _, _, _, _ in texts)
+    staged_at.update(key[0] for key, (bodies, _) in _compiled.items() if any(b in wanted for b in bodies) or not lock_modules)
     table = intrinsics.intrinsic_table(calls)
+    compiled_kept = {key: (bodies, outcome) for key, (bodies, outcome) in _compiled.items()
+                     if any(b in wanted for b in bodies) or (not lock_modules and any(not b.startswith("pipeline.") for b in bodies))}
+    # every source this artefact was made from, by content: a cached artefact is used only while
+    # all of them are unchanged (review 2026-11-01 astra-low-05, A5-2)
+    loaded = {os.path.realpath(p) for n in list(sys.modules) if (p := _source_of(n)) is not None}
+    sources = {path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+               for path in sorted(loaded | {os.path.realpath(p) for p in covered.values()})}
     artefact = {
-        "format": 1,
+        "format": 2,
+        "sources": sources,
         "python": ".".join(map(str, sys.version_info[:3])),
         "preloaded": PRELOADED,
         "texts": [{"site": site, "kind": kind, "sha256": hashlib.sha256(text.encode()).hexdigest(),
                    "by": by, "flags": flags, "text": text} for site, kind, text, by, flags in texts],
-        "exec_sites": [{"site": s, "kind": k, "texts": staged_at.get(s, 0)} for s, k in sorted(sites.items())],
-        "compile_calls": {site: sorted(b for b in by if not b.startswith("pipeline."))
-                          for site, by in sorted(_compiles.items()) if any(not b.startswith("pipeline.") for b in by)},
+        "exec_sites": [{"site": s, "kind": k, "texts": staged_at.get(s.rsplit(":", 1)[0], 0)} for s, k in sorted(sites.items())],
+        "compiles": [{"site": key[0], "text": key[2], "parameters": list(key[3:]), "outcome": outcome[0],
+                      "by": sorted(bodies)} for key, (bodies, outcome) in sorted(compiled_kept.items(), key=lambda kv: str(kv[0]))],
+        "compile_calls_not_staged": {site: sorted(b for b in by if not b.startswith("pipeline."))
+                                     for site, by in sorted(_compiles.items()) if any(not b.startswith("pipeline.") for b in by)},
         "failed_imports": dict(sorted(failures.items())),
         "inputs": {m: sorted(v) for m, v in sorted(_inputs.items())},
         "namedtuple_calls": len(calls),
         "intrinsics": {" ".join(k): v for k, v in sorted(table.items())},
-        "annotations": dict(sorted(tables.items())),
+        "annotate_entry_points": {k: {"freevars": list(e.freevars), "source": e.source} for k, e in sorted(evaluators.items())},
+        "annotate_declined": declined,
     }
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(artefact, f, indent=1)
         f.write("\n")
-    compiled = {(site, text): _REAL_COMPILE(text, "<string>", kind, flags=flags, dont_inherit=True)
+    # (site, operation, text) -> (code, future flags): an eval never runs code staged for an exec
+    # (review 2026-11-01 astra-low-05, A5-1), and the caller's flags are checked at runtime
+    compiled = {(site, kind, text): (_REAL_COMPILE(text, "<string>", kind, flags=flags, dont_inherit=True), flags)
                 for site, kind, text, _, flags in texts}
     intrinsic_code = {fields: _REAL_COMPILE(text, "<string>", "eval", dont_inherit=True) for fields, text in table.items()}
+    manifest = tomllib.loads(Path(_REPO, "manifest.toml").read_text(encoding="utf-8"))
+    unsupported: dict[str, list[str]] = {}
+    for lock_path in args.unsupported_from:
+        with open(lock_path, encoding="utf-8") as f:
+            for module, functions in json.load(f).get("unsupported_functions", {}).items():
+                unsupported.setdefault(module, []).extend(fn for fn in functions if fn not in unsupported.get(module, []))
     with open(args.binary, "wb") as binary:
-        marshal.dump({"texts": compiled, "annotations": tables, "intrinsics": intrinsic_code}, binary)
+        marshal.dump({"optimize": sys.flags.optimize, "texts": compiled, "compiled": {k: o for k, (_, o) in compiled_kept.items()},
+                      "annotations": {k: (e.freevars, e.code) for k, e in evaluators.items()},
+                      "intrinsics": intrinsic_code, "refused": dict(manifest.get("refused", {})),
+                      "unstaged": dict(manifest.get("unstaged", {})), "unsupported": unsupported}, binary)
     return 0
 
 

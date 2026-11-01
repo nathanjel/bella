@@ -2,11 +2,11 @@
  "case": "C-3-22_forwardref_unbound_name.py",
  "clause": "C-3-22",
  "spec": "section 3",
- "status": "P2+",
- "source": "Gate 0 task 5 (review log D-5): FORWARDREF with a name not bound yet needs CPython's __code__ fallback",
+ "status": "P1",
+ "source": "decision S-1 (2026-11-01, docs/staging.md): FORWARDREF and STRING with names not bound yet",
  "recorded_with": "3.15.2",
  "authoritative": true,
- "stdout": "Node(value=1, next=...) ['value', 'next']\n{'a': 'Later', 'return': None}\n",
+ "stdout": "Node(value=1, next=...) [('value', 'int'), ('next', \"ForwardRef('Node | None', is_class=True)\")]\ninner before T FORWARDREF {'a': \"ForwardRef('T', is_class=False)\", 'b': \"list[ForwardRef('T', is_class=False)]\", 'return': \"ForwardRef('T', is_class=False)\"}\ninner before T STRING {'a': 'T', 'b': 'list[T]', 'return': 'T'}\ninner after T FORWARDREF {'a': 'int', 'b': 'list[int]', 'return': 'int'}\nlink FORWARDREF {'a': \"ForwardRef('Later', is_class=False)\", 'b': \"list[ForwardRef('Later', is_class=False)] | NoneType\", 'c': \"ForwardRef('Later.attr', is_class=False)\", 'd': \"ForwardRef('__annotationlib_name_1__ | Missing', is_class=False)\", 'return': \"ForwardRef('Later', is_class=False)\"}\nShelf FORWARDREF {'_Shelf__secret': \"list[ForwardRef('Unbound', is_class=True)]\", 'width': 'int', 'depth': \"ForwardRef('Later', is_class=True)\"}\nlink STRING {'a': 'Later', 'b': 'list[Later] | None', 'c': 'Later.attr', 'd': \"note('link') | Missing\", 'return': 'Later'}\nShelf STRING {'_Shelf__secret': 'list[Unbound]', 'width': 'size', 'depth': 'Later'}\neffects ['link']\nraising VALUE raises KeyError ('missing',)\nraising FORWARDREF raises KeyError ('missing',)\nraising STRING raises KeyError ('missing',)\nmodule FORWARDREF {'effects': 'list[str]', 'module_first': '__main__.Later', 'module_last': \"list[ForwardRef('Unbound', is_class=False)]\"}\nmodule STRING {'effects': 'list[str]', 'module_first': 'Later', 'module_skipped': 'int', 'module_last': 'list[Unbound]'}\nlink once Later exists FORWARDREF {'a': '__main__.Later', 'b': 'list[__main__.Later] | NoneType', 'c': 'int', 'd': \"ForwardRef('__annotationlib_name_1__ | Missing', is_class=False)\", 'return': '__main__.Later'}\n",
  "stderr": "",
  "exit_code": 0
 }

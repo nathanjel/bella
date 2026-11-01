@@ -29,7 +29,7 @@ HERE = REPO / "pipeline" / "staging"
 BUILD = REPO / "build" / "staging"
 LOCK = REPO / "closure.lock.json"
 SHIMS = REPO / "runtime" / "shims"
-INPUTS = [LOCK, REPO / "manifest.toml", HERE / "dryrun.py", HERE / "annotations.py", HERE / "scan.py",
+INPUTS = [LOCK, REPO / "manifest.toml", HERE / "dryrun.py", HERE / "annotations.py", HERE / "annotate_rt.py", HERE / "scan.py",
           HERE / "intrinsics.py", *sorted(SHIMS.glob("*.py"))]
 
 
@@ -69,15 +69,31 @@ def dry_run(out: Path, blocked: list[str], args: list[str], seed: str | None = N
         raise SystemExit(f"bella: the dry run failed ({' '.join(args)})")
 
 
+def current(out: Path) -> bool:
+    """A cached artefact is current while every source it was made from is unchanged (review
+    2026-11-01 astra-low-05, A5-2): imported program modules count, not only the entry."""
+    if not (out.with_suffix(".bin").exists() and out.with_suffix(".json").exists()):
+        return False
+    sources = json.loads(out.with_suffix(".json").read_text(encoding="utf-8")).get("sources", {})
+    for path, digest in sources.items():
+        try:
+            if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
+                return False
+        except OSError:
+            return False
+    return bool(sources)
+
+
 def stdlib_artefact(blocked: list[str]) -> Path:
     out = BUILD / f"stdlib-{_key(INPUTS, *blocked)}"
-    if not out.with_suffix(".bin").exists():
+    if not current(out):
         BUILD.mkdir(parents=True, exist_ok=True)
-        dry_run(out, blocked, ["--modules-from", str(LOCK), "--tables", "all", "--shims", str(SHIMS)])
+        dry_run(out, blocked, ["--modules-from", str(LOCK), "--tables", "all", "--shims", str(SHIMS),
+                               "--unsupported-from", str(LOCK)])
     return out
 
 
-def program_artefact(script: Path, program_lock: Path | None, blocked: list[str]) -> Path:
+def program_artefact(script: Path, program_lock: Path | None, blocked: list[str], safe_path: bool = False) -> Path:
     modules: list[str] = []
     paths = [script, *INPUTS]
     if program_lock is not None:
@@ -85,10 +101,12 @@ def program_artefact(script: Path, program_lock: Path | None, blocked: list[str]
         root = lock["roots"][0]
         modules = sorted(n for n, m in lock["modules"].items() if m["status"] == "program" and n != root)
         paths.append(program_lock)
-    out = BUILD / "programs" / f"{script.stem}-{_key(paths, os.environ.get('PYTHONPATH', ''), *blocked)}"
-    if not out.with_suffix(".bin").exists():
+    out = BUILD / "programs" / f"{script.stem}-{_key(paths, os.environ.get('PYTHONPATH', ''), str(safe_path), *blocked)}"
+    if not current(out):
         out.parent.mkdir(parents=True, exist_ok=True)
-        dry_run(out, blocked, ["--entry", str(script), *(a for m in modules for a in ("--program-module", m))])
+        dry_run(out, blocked, ["--entry", str(script), *(a for m in modules for a in ("--program-module", m)),
+                               *(["--safe-path"] if safe_path else []),
+                               *(["--unsupported-from", str(program_lock)] if program_lock else [])])
     return out
 
 
@@ -107,10 +125,12 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("no script")
     script = Path(rest[0])
     blocked = phase1_blocked()
-    artefacts = [stdlib_artefact(blocked), program_artefact(script, ours.program_lock, blocked)]
+    safe_path = any(o == "-P" or (o.startswith("-") and not o.startswith("--") and "P" in o[1:]) for o in python_options)
+    artefacts = [stdlib_artefact(blocked), program_artefact(script, ours.program_lock, blocked, safe_path)]
     env = dict(os.environ, BELLA_STAGING="replay", BELLA_SIMULATE_BLOCK=",".join(blocked),
                BELLA_STAGING_ARTEFACTS=os.pathsep.join(str(a.with_suffix(".bin")) for a in artefacts),
                BELLA_STAGING_SHIMS=str(SHIMS), BELLA_STAGING_MECHANISM=ours.mechanism,
+               BELLA_STAGING_RT=str(HERE / "annotate_rt.py"),
                PYTHONPATH=os.pathsep.join(filter(None, [str(HERE / "boot"), os.environ.get("PYTHONPATH", "")])))
     sys.stdout.flush()
     os.execve(sys.executable, [sys.executable, *python_options, *rest], env)

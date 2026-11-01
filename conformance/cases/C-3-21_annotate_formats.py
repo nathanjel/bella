@@ -77,3 +77,14 @@ for fmt in (Format.VALUE, Format.FORWARDREF, Format.STRING):
         annotationlib.get_annotations(broken, format=fmt)
     except ZeroDivisionError as exc:
         print("broken", fmt.name, "raises", type(exc).__name__)
+
+
+def missing(x: {}["missing"]) -> None:  # type: ignore[valid-type]  # noqa: UP037, F821  # a dict lookup: KeyError('missing')
+    pass
+
+
+for fmt in (Format.VALUE, Format.FORWARDREF, Format.STRING):
+    try:
+        annotationlib.get_annotations(missing, format=fmt)
+    except KeyError as exc:  # the arguments, not only the type (review 2026-11-01 astra-low-05, A5-5)
+        print("missing", fmt.name, "raises", type(exc).__name__, exc.args)

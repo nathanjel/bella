@@ -1,0 +1,12 @@
+{
+ "case": "C-3-23_forwardref_evaluate_expression.py",
+ "clause": "C-3-23",
+ "spec": "section 3",
+ "status": "P2+",
+ "source": "decision S-1 (2026-11-01, docs/staging.md): evaluating the text of a ForwardRef stays [P2+]",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "<class 'int'>\nlist[int]\n",
+ "stderr": "",
+ "exit_code": 0
+}

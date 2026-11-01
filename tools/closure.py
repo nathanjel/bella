@@ -48,9 +48,10 @@ How it works
    it makes difflib._test unsupported). An optional edge is followed when its target is in the
    manifest; otherwise it must appear in `[omissions]` (the import resolves to ImportError at
    runtime, as if not installed), and `[omissions]` may hold nothing else; neither table may
-   name a module the manifest provides. Modules with status `core` or `shim` are provided by
-   the runtime and are not scanned: a shim replaces the real module, so the real module's
-   imports do not count. Likewise a function listed in `[replaced]` is replaced by the
+   name a module the manifest provides. Modules with status `core` are provided by the runtime
+   and are not scanned. A shim replaces the real module, so the real module's imports do not
+   count; a shim written in Python (runtime/shims/<name>.py) is scanned instead, since its
+   imports run (review 2026-11-01 gemini-4-argon-high-04, 3.2). Likewise a function listed in `[replaced]` is replaced by the
    adaptation its module has in `[adaptations]`, so its imports do not count either.
    An import with a computed name (`__import__(name)`) is a lookup in the closed world at
    runtime (spec section 3). Every such site is reviewed in `[dynamic.<module>]` under the key
@@ -106,6 +107,7 @@ FOLLOWED_CLASSES = {EAGER, GUARDED, FIRST_USE, DYNAMIC}   # required whatever th
 PROGRAM = "program"          # status of a target program's own modules: compiled with the program
 REPO = Path(__file__).resolve().parents[1]
 TARGETS_FILE = REPO / "targets" / "targets.toml"
+SHIM_SOURCES = REPO / "runtime" / "shims"
 MANIFEST_STATUSES = ("compiled", "mapped", "core", "shim")
 IMPORT_ERROR_NAMES = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
 
@@ -1023,8 +1025,12 @@ def _compute_closure(manifest: Manifest, program: Program | None) -> tuple[dict[
             status = PROGRAM if program is not None and program.owns(path) else manifest.status_of(name)
             info = ModuleInfo(name=name, kind=kind, path=path, reached_by=reached_by, status=status)
             infos[name] = info
-            # core and shim modules are provided by the runtime: their real source is not scanned
-            if info.status not in ("core", "shim") and kind in ("source", "frozen") and path:
+            # core and shim modules are provided by the runtime: their real source is not scanned,
+            # but a shim written in Python is (its imports run)
+            shim_source = SHIM_SOURCES / f"{name}.py"
+            if info.status == "shim" and shim_source.exists():
+                kind, path = "source", str(shim_source)
+            if (info.status not in ("core", "shim") or shim_source.exists()) and kind in ("source", "frozen") and path:
                 scan = scan_module(name, path, manifest.platform, manifest.replaced.get(name, set()),
                                    as_main=program is not None and name == program.root)
                 info.edges = scan.edges

@@ -7,14 +7,13 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-01:** 87 findings from seven reviews: 65 fixed (most in commit `0d92b51`,
+**Status on 2026-11-01:** 112 findings from nine reviews: 84 fixed (most in commit `0d92b51`,
 RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after the
 closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
-and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5), 10 already done
-before or because of the review, 4 planned (D-2 and D-10, accepted by the author), 2 deferred,
-3 refuted and 3 checked with no issue. Nothing is open for discussion: the author decided D-1
-to D-11 on 2026-11-01. The staging prototype raises its own questions, S-1 to S-5 in
-`docs/staging.md`.
+and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-111 after
+the staging reviews), 15 already done before or because of the review, 4 planned (D-2 and D-10,
+accepted by the author), 2 deferred, 3 refuted and 4 checked with no issue. Nothing is open: the
+author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 
 ## Reviews received
 
@@ -25,6 +24,8 @@ to D-11 on 2026-11-01. The staging prototype raises its own questions, S-1 to S-
 | 2026-11-01 | gemini-4-argon-high (G) | [2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md](2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
 | 2026-11-01 | astra-low (A3) | [2026-11-01-astra-low-03-stdlib-closure-review.md](2026-11-01-astra-low-03-stdlib-closure-review.md) | Gate 0 task 1: closure tool, manifest and lock at `b40ef2d` | CPython 3.15.2 (pinned uv build) |
 | 2026-11-01 | gemini-4-argon-high (G2) | [2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md](2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md) | task 1 and the review-log fixes, `f56d495` to `b40ef2d` | CPython 3.15.2, GCC 16.2.1 |
+| 2026-11-01 | astra-low (A5) | [2026-11-01-astra-low-05-staging-prototype-review.md](2026-11-01-astra-low-05-staging-prototype-review.md) | the staging prototype, `19316ba..b838bc5` | CPython 3.15.2 |
+| 2026-11-01 | gemini-4-argon-high (G4) | [2026-11-01-04-gemini-4-argon-high-staging-prototype-review.md](2026-11-01-04-gemini-4-argon-high-staging-prototype-review.md) | the staging prototype and D-7 to D-11, `19316ba..b838bc5` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-01 | astra-low (A4) | [2026-11-01-astra-low-04-target-increment-review.md](2026-11-01-astra-low-04-target-increment-review.md) | the target programs and the computed increments, `b40ef2d` to `8b8eb0d` | CPython 3.15.2 (pinned uv build) |
 | 2026-11-01 | gemini-4-argon-high (G3) | [2026-11-01-03-gemini-4-argon-high-targets-increments-review.md](2026-11-01-03-gemini-4-argon-high-targets-increments-review.md) | `6730ed8` to `8b8eb0d`: corpus, targets, licence register, increments | CPython 3.15.2, GCC 16.2.1 |
 | 2026-10-30 | external, rounds 1-3 | [round-1.md](round-1.md), [round-2.md](round-2.md), [round-3.md](round-3.md) | design documents | resolved in design sections 13-15 |
@@ -183,6 +184,42 @@ nothing relied on the other gaps.
 | RL-85 | G3 3.5 | The conformance harness split `--runner` on spaces; D-20's wording said `shutil` offers three formats, though calling them is \[P2+\] | Confirmed | Fixed | `shlex.split`; D-20 now speaks of what `get_archive_formats` and `get_unpack_formats` list (spec section 11, `docs/deviations.toml`) |
 | RL-86 | G3 2.2 | `docs/targets.md` said only the tricky targets reach `dataclasses` → `inspect` → `ast` | Confirmed: the easy ones do too (`enum.EnumType.__signature__`, `_colorize`) | Fixed | |
 | RL-87 | A4 note | Keep the qualifications of the candidate scorer and the Mandelbrot measurement | Agreed | No change | |
+
+### Staging prototype (A5, G4)
+
+Every finding was reproduced before anything changed: A5 on the working tree, G4 on `b838bc5` in
+a separate worktree, then on the working tree, which already fixed some. The review probes run
+as `test_the_review_probes_print_what_cpython_prints`, each replayed and compared with CPython.
+The author's decisions S-1 to S-5 (`docs/staging.md`) were applied in the same change; S-1
+removes the build-time tables that A5-5, G4 3.5a and 3.5b are about.
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-88 | A5-1 | The replay matched staged code by site and text only: an `eval` ran code staged for an `exec` | Confirmed: prints `None` where CPython prints `2` | Fixed | The key holds the operation; the caller's `__future__` flags and the optimisation level are checked. Test `test_an_eval_never_runs_code_staged_for_an_exec` |
+| RL-89 | A5-2, G4 3.4c | Changing an imported module reused a stale artefact | Confirmed: `{'x': 'int'}` after the annotation became `bytes` | Fixed | The artefact lists every source it was made from, by content, and is rebuilt when one changes. Test `test_a_changed_imported_module_rebuilds_the_artefact` |
+| RL-90 | A5-3 | The input recorder dropped a module body's own reads, since an importer is always below it on the stack | Confirmed: `"inputs": {}` for a body that reads a file | Fixed | Only the frame that performed the operation decides whether the loader did it. Tests for a body's read, a helper's read and a listing. The stdlib inventory, recomputed, still shows only `subprocess`'s environment read; the recorder's blind spots are listed in `docs/staging.md` section 2 |
+| RL-91 | A5-4 | The evidence gate ignored the harness's exit status | Confirmed by reading; the reviewer's simulated crash passed | Fixed | A non-zero exit or a missing summary fails it; a [P2+] refusal must be exit 70 with the `bella: refused: [P2+]` line. Test `test_the_evidence_gate_fails_on_a_crashed_harness` |
+| RL-92 | A5-5, G4 3.5b | Recorded exceptions were rebuilt from their display text | Confirmed: `("'missing'",)` for `('missing',)` | Fixed with S-1 | No tables: the entry point raises the real exception. C-3-21 and C-3-22 print the arguments |
+| RL-93 | A5 on S-5 | The comparison is coverage and maintenance cost, not a semantic defeat of intrinsics; "nothing per CPython version" is too strong | Agreed | Fixed | `docs/staging.md` sections 1 and 5 |
+| RL-94 | A5 on S-1 | Demonstrate the entry point before the scope change | Agreed | Done | The generator, checked against CPython's bytecode and outputs for 250 annotate functions, a corpus of scope shapes, mutation tests, C-3-22 |
+| RL-95 | A5 on S-2 | A refusal needs a normative boundary, a negative case and a diagnostic | Agreed | Done | Spec section 3, C-3-24 [P2+], the replay's refusal |
+| RL-96 | A5 on S-3 | Keep text and layout contracts apart; a policy refusal needs its own enforcement; fix A5-1 to A5-3 before narrowing the input rule | Agreed | Done | Spec v0.10 section 8; `[refused]` holds when the text was staged (C-7-16); the layout obligation stays open (`TODO.md`) |
+| RL-97 | A5 on S-4 | A negative fixture with a real Plural-Forms catalogue, the path registered | Agreed | Done | C-7-16 writes a `.mo` file; manifest `[refused]` |
+| RL-98 | A5 on D-20 | Accepting every `_pydatetime` difference is broader than the one observed | Agreed | Fixed | D-20 lists only observed differences (spec section 11, `docs/deviations.toml`) |
+| RL-99 | G4 3.1 | The shim refused in `ForwardRef.__forward_code__`, which `typing._make_forward_ref` reads eagerly: every quoted name in a typing form, and every `NamedTuple` or `TypedDict` under PEP 563, was refused | Confirmed on both trees | Fixed | `compile()` is staged like `exec`; the refusal moved to `evaluate` of an expression; a reference built at runtime from an unseen text is refused with `[P2+]` (manifest `[unstaged]`) |
+| RL-100 | G4 3.2 A | `_Stringifier` and `ForwardRef` call `ast.unparse`, which `[lazy_unsupported]` refused | Confirmed: in `unsupported_functions`; the shim calls it five times | Fixed | `_ast_unparse` compiled, \[P1\]: a consequence of S-1 (lock 176 modules) |
+| RL-101 | G4 3.2 B | `ForwardRef.__resolved_str__` re-parses its string with `ast.parse` | Confirmed: an E-01 at `ast:parse:46` | Fixed | The shim fixes names on a copy of the tree it unparsed; equal to CPython's (probe 3.2B) |
+| RL-102 | G4 3.2 C | The closure tool did not scan shim sources | Confirmed: `tools/closure.py:1027` | Fixed | A shim written in Python is scanned instead of CPython's module. Test `test_a_shim_written_in_python_is_scanned_g4_3_2` |
+| RL-103 | G4 3.2, recommendation 4 | The replay did not refuse the lock's unsupported functions | Confirmed | Fixed | It does, as phase 1 does. Test `test_unsupported_functions_are_refused` |
+| RL-104 | G4 3.3 a-c | The entry was dry-run under its file stem: its own sites missed, a stdlib-named entry collided, `-P` was ignored, and with a lock its texts were dropped | Confirmed: three probes | Fixed | `__bella_entry__`, reported as `__main__`; `--safe-path` under `-P`. Probes 3.3a, 3.3b and `test_the_entry_scripts_texts_survive_a_closure_lock` |
+| RL-105 | G4 3.4 a | Sibling modules imported without a lock had no entry points or probes | Confirmed | Fixed | Every module loaded from outside the standard library is the program's (probe 3.4a) |
+| RL-106 | G4 3.4 b | A PEP 810 lazy import's module was never defined at build time | Confirmed | Fixed | The dry run resolves program modules' lazy imports to a fixed point (attribute access resolves them, reading the namespace does not) (probe 3.4b) |
+| RL-107 | G4 3.4 c | The cache key omitted program module sources | Confirmed on `b838bc5` | Done before (RL-89) | |
+| RL-108 | G4 3.5 a | A set inside `Annotated` made a STRING table depend on the hash seed | Confirmed on `b838bc5` | Fixed with S-1 | No build-time STRING: computed at runtime by CPython's own code, as CPython does |
+| RL-109 | G4 3.5 c | FORWARDREF refused a hand-written annotate and a PEP 695 evaluate function that CPython answers | Confirmed on both trees | Fixed | Evaluate functions get entry points; a hand-written function that raises `NotImplementedError` falls back to VALUE as in CPython (probes 3.5c) |
+| RL-110 | G4 3.5 d | Probes missed `field_names=` and `typename=`; `builtins.exec` was not a site; `exec(text, closure=...)` dropped `closure` | Confirmed | Fixed | (The operation in the key is RL-88.) Probes 3.5d |
+| RL-111 | G4 on 3.3 | `run.py` ignored `-P` for the dry run | Confirmed | Fixed | With RL-104 |
+| RL-112 | G4 on S-1 to S-5 | Agree with the proposals | Noted | No change | The author decided S-1 to S-5 |
 
 ## Open for discussion
 
@@ -356,5 +393,5 @@ conformance case comes first: copying unslotted, slotted and customised user cla
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-88` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-113` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

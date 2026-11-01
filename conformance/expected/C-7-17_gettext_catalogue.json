@@ -1,0 +1,12 @@
+{
+ "case": "C-7-17_gettext_catalogue.py",
+ "clause": "C-7-17",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "decision S-4 (2026-11-01, docs/staging.md): a catalogue without plural forms is [P1]",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "gruszka plum {'content-type': 'text/plain; charset=UTF-8'}\n1 jab\u0142ko\n2 jab\u0142ka\n5 jab\u0142ka\n22 jab\u0142ka\n25 jab\u0142ka\n",
+ "stderr": "",
+ "exit_code": 0
+}

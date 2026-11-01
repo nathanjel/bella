@@ -300,6 +300,27 @@ and section 3, design section 11 rev 445).
   recommendation is a second, compiler-generated entry point per `__annotate__` that makes
   FORWARDREF and STRING exact.
 
+**2026-11-01 — S-1 to S-5 decided, and the staging reviews** (author; `docs/staging.md` sections
+8 and 9; review log RL-88 to RL-112; spec v0.10; design section 11 and the shim paragraph, rev 448).
+* S-1, as proposed: the compiler generates a second entry point per `__annotate__` (and per PEP
+  695 evaluate function) that evaluates the same expressions against the globals and cells it is
+  given; the shim calls it where CPython re-runs `__code__`. FORWARDREF and STRING with names not
+  bound yet are \[P1\]; evaluating the text of a reference or annotation stays \[P2+\]. This
+  changes D-5's carve-out. The build-time STRING tables are gone. Consequence, found by review
+  G4: `ast.unparse` is \[P1\], since CPython's FORWARDREF and STRING code calls it.
+* S-2: function signatures at runtime stay out of phase 1 (C-3-24), revisited with item 1 of
+  `docs/targets.md` section 5.
+* S-3, as proposed: an unstaged runtime text is refused, `bella-lint` warns about dataclasses made
+  in functions, and spec section 8 holds code and layouts to separate rules.
+* S-4: catalogues with Plural-Forms are refused until a target needs them (C-7-16; manifest
+  `[refused]`, enforced whether or not the text was staged).
+* S-5: staged texts with probes, confirmed. To revisit later: the author's idea of using the GCC
+  compiler within the program (`TODO.md`, Later).
+* The two reviews of the prototype (astra-low-05, gemini-4-argon-high-04) found wrong-output
+  replays, and gaps in the build's dependencies, its input record and its coverage. All 24
+  findings are fixed or done, each with a test; the review probes run as one differential test.
+  `compile()` is now staged like `exec` and `eval`, and keys drop line numbers.
+
 ## Pins
 
 | What | Value | Where |

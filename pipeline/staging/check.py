@@ -4,8 +4,9 @@
 1. The dry run is deterministic: the standard library's artefact and the staging cases' are
    byte-identical under PYTHONHASHSEED 0 and 1.
 2. Every [P1] conformance case prints CPython's trace under the replay (no exec but staged
-   code, the annotationlib shim, the phase-1 omissions); the [P2+] case C-3-22 is refused with
-   the milestone's marker.
+   code, the annotationlib shim over the generated entry points, the phase-1 omissions); the
+   [P2+] cases the replay can refuse are refused, by the refusal itself (exit status 70 and the
+   `bella: refused: [P2+]` line), not by any failure.
 3. The phase-1 targets agree with their recordings under the replay, with each mechanism.
 4. The comparison of the two mechanisms over the standard library's phase-1 closure.
 Exit status 1 if any of 1 to 3 fails; 4 is a report.
@@ -26,7 +27,10 @@ from pipeline.staging import run  # noqa: E402
 PY = sys.executable
 RUN = str(run.HERE / "run.py")
 CASES = run.REPO / "conformance" / "cases"
-STAGING_CASES = ["C-8-08_staged_dataclass.py", "C-8-09_staged_namedtuple.py", "C-3-21_annotate_formats.py"]
+STAGING_CASES = ["C-8-08_staged_dataclass.py", "C-8-09_staged_namedtuple.py", "C-3-21_annotate_formats.py",
+                 "C-3-22_forwardref_unbound_name.py"]
+REFUSED_CASES = {"C-3-23_forwardref_evaluate_expression.py": "ForwardRef", "C-3-24_signatures_at_runtime.py": "signature",
+                 "C-7-16_gettext_plural_forms.py": "Plural-Forms"}
 
 
 def deterministic(blocked: list[str]) -> list[str]:
@@ -46,19 +50,36 @@ def deterministic(blocked: list[str]) -> list[str]:
     return problems
 
 
+def judge_corpus(proc: subprocess.CompletedProcess[str]) -> list[str]:
+    """The harness run's verdict: a FAIL line, a non-zero exit or no summary line all fail the
+    gate, with the harness's stderr kept (review 2026-11-01 astra-low-05, A5-4)."""
+    lines = proc.stdout.strip().splitlines()
+    failed = [line for line in lines if line.startswith("FAIL")]
+    summary = lines[-1] if lines and lines[-1].endswith("passed") else None
+    print(summary or "no summary from the harness", "(P1 cases under the replay)")
+    for line in failed:
+        print("   ", line[:160])
+    if proc.returncode != 0 and not failed:
+        failed.append(f"the harness exited with status {proc.returncode}: {proc.stderr.strip()[-400:]}")
+    if summary is None and not failed:
+        failed.append(f"the harness printed no summary: {proc.stderr.strip()[-400:]}")
+    return failed
+
+
 def corpus() -> list[str]:
     harness = str(run.REPO / "conformance" / "harness.py")
     proc = subprocess.run([PY, harness, "check", "--status", "P1", "--runner", f"{PY} {RUN} {{case}}"],
                           capture_output=True, text=True, check=False)
-    failed = [line for line in proc.stdout.splitlines() if line.startswith("FAIL")]
-    print(proc.stdout.strip().splitlines()[-1], "(P1 cases under the replay)")
-    for line in failed:
-        print("   ", line[:160])
-    p2 = subprocess.run([PY, RUN, "C-3-22_forwardref_unbound_name.py"], cwd=CASES, capture_output=True, text=True,
-                        env=dict(os.environ, PYTHONHASHSEED="0"), check=False)
-    refused = p2.returncode != 0 and "[P2+]" in p2.stderr and "FORWARDREF" in p2.stderr
-    print(f"{'ok  ' if refused else 'FAIL'} C-3-22 [P2+] refused under the replay: {p2.stderr.strip()[:120]}")
-    return failed + ([] if refused else ["C-3-22 was not refused"])
+    failed = judge_corpus(proc)
+    for case, expect in REFUSED_CASES.items():
+        p2 = subprocess.run([PY, RUN, case], cwd=CASES, capture_output=True, text=True,
+                            env=dict(os.environ, PYTHONHASHSEED="0"), check=False)
+        refusal = [line for line in p2.stderr.splitlines() if line.startswith("bella: refused: [P2+]")]
+        refused = p2.returncode == 70 and len(refusal) == 1 and expect in refusal[0]
+        print(f"{'ok  ' if refused else 'FAIL'} {case} [P2+] refused: {(refusal or [p2.stderr.strip()[-160:]])[0][:150]}")
+        if not refused:
+            failed.append(f"{case} was not refused as [P2+] (exit {p2.returncode})")
+    return failed
 
 
 def targets() -> list[str]:
@@ -95,8 +116,9 @@ def compare(stdlib: Path) -> None:
     print(f"  exec/eval/compile sites in the closure that stage nothing ({len(idle)}): refused if reached at runtime")
     for s in idle:
         print(f"      {s['kind']:7} {s['site']}")
-    print(f"  annotation entries {len(a['annotations'])}, unstable {sum(1 for e in a['annotations'].values() if e['unstable'])};"
-          f" inputs read by module bodies: {a['inputs'] or 'none'}")
+    print(f"  annotate entry points {len(a['annotate_entry_points'])}, declined {len(a['annotate_declined'])}: "
+          + "; ".join(d.split("::", 1)[1] for d in a["annotate_declined"]))
+    print(f"  inputs read by module bodies: {a['inputs'] or 'none'}")
 
 
 def main() -> int:

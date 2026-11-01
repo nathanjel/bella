@@ -85,13 +85,10 @@
    "nt"
   ]
  },
- "module_count": 175,
+ "module_count": 176,
  "errors": [],
  "notes": [],
  "unsupported_functions": {
-  "ast": [
-   "unparse"
-  ],
   "base64": [
    "main"
   ],
@@ -136,6 +133,51 @@
    "dynamic_unknown_lines": [],
    "path": null,
    "edges": []
+  },
+  "_ast_unparse": {
+   "name": "_ast_unparse",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "ast:lazy:658",
+   "dynamic_unknown_lines": [],
+   "path": "_ast_unparse.py",
+   "edges": [
+    {
+     "importer": "_ast_unparse",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "_ast_unparse",
+     "target": "_ast",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "_ast_unparse",
+     "target": "ast",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "_ast_unparse",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "_ast_unparse",
+     "target": "enum",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    }
+   ]
   },
   "_bisect": {
    "name": "_bisect",
@@ -999,7 +1041,71 @@
    "reached_by": "functools:lazy:970",
    "dynamic_unknown_lines": [],
    "path": "annotationlib.py",
-   "edges": []
+   "edges": [
+    {
+     "importer": "annotationlib",
+     "target": "ast",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "annotationlib",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "annotationlib",
+     "target": "enum",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "annotationlib",
+     "target": "keyword",
+     "cls": "eager",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "annotationlib",
+     "target": "sys",
+     "cls": "eager",
+     "line": 18,
+     "func": ""
+    },
+    {
+     "importer": "annotationlib",
+     "target": "types",
+     "cls": "eager",
+     "line": 19,
+     "func": ""
+    },
+    {
+     "importer": "annotationlib",
+     "target": "typing",
+     "cls": "lazy",
+     "line": 261,
+     "func": "ForwardRef._evaluate"
+    },
+    {
+     "importer": "annotationlib",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 262,
+     "func": "ForwardRef._evaluate"
+    },
+    {
+     "importer": "annotationlib",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 307,
+     "func": "ForwardRef.__resolved_str__"
+    }
+   ]
   },
   "argparse": {
    "name": "argparse",
