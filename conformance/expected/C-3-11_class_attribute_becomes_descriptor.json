@@ -1,0 +1,12 @@
+{
+ "case": "C-3-11_class_attribute_becomes_descriptor.py",
+ "clause": "C-3-11",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "review 2026-11-01 gemini-4-argon-high, bug 2.1.1 (a plain class attribute whose own class gains __get__)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "True\n99\nTrue\n",
+ "stderr": "",
+ "exit_code": 0
+}

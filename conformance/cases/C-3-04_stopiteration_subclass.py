@@ -14,7 +14,7 @@ original = Done(7, "payload")
 
 
 class Once:
-    def __iter__(self) -> "Once":
+    def __iter__(self) -> Once:
         return self
 
     def __next__(self) -> int:

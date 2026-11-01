@@ -112,7 +112,7 @@ class Manifest:
         return "missing-from-manifest"
 
     @classmethod
-    def load(cls, path: Path) -> "Manifest":
+    def load(cls, path: Path) -> Manifest:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
         p1 = data.get("phase1", {})
         return cls(
@@ -170,7 +170,7 @@ def _frozen_source(name: str) -> Path | None:
 
 
 def _is_package_path(path: str | None) -> bool:
-    return bool(path) and Path(path).name == "__init__.py"
+    return path is not None and Path(path).name == "__init__.py"
 
 
 # ------------------------------------------------------------------------------------------
@@ -231,7 +231,7 @@ class _Scanner:
                 for stmt in case.body:
                     self._visit(stmt, lazy, True)
             return
-        if isinstance(node, (ast.Try, getattr(ast, "TryStar", ast.Try))):
+        if isinstance(node, (ast.Try, ast.TryStar)):
             optional = any(_handler_catches_import_error(h) for h in node.handlers)
             for stmt in node.body:
                 self._visit(stmt, lazy, conditional or optional)
@@ -373,7 +373,8 @@ print(json.dumps({"baseline": sorted(before), "per_root": result}))
     if proc.returncode != 0:
         raise SystemExit(f"runtime observation failed:\n{proc.stderr}")
     data = json.loads(proc.stdout)
-    return data["per_root"]
+    per_root: dict[str, list[str]] = data["per_root"]
+    return per_root
 
 
 # ------------------------------------------------------------------------------------------
@@ -476,9 +477,9 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
             if kind == "missing":
                 continue  # unavailable on this platform anyway (e.g. msvcrt on Linux)
             problems.append(f"{importer}: conditional import of {t} outside the manifest and not declared in [omissions]")
-    for importer, targets in sorted(lazy_outside.items()):
+    for importer, lazy_targets in sorted(lazy_outside.items()):
         declared = manifest.lazy_unsupported.get(importer, set())
-        for t, line in sorted(targets):
+        for t, line in sorted(lazy_targets):
             if t in declared:
                 continue
             kind, _ = classify(t)

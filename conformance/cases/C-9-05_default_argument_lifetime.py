@@ -10,7 +10,7 @@ class Resource:
         print("resource released")
 
 
-def consume(resource: Resource = Resource()) -> None:
+def consume(resource: Resource = Resource()) -> None:  # noqa: B008  -- evaluated once at definition: the clause
     pass
 
 

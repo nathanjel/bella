@@ -127,6 +127,72 @@ def test_unsound_cache_is_reported_not_hidden() -> None:
         raise AssertionError("a stale entry served silently")
 
 
+
+# ---- review 2026-11-01 (docs/reviews/review-log.md): each mirrors a conformance case ---------
+
+def test_getattr_after_attributeerror_c_3_09() -> None:
+    """C-3-09: an unset slot and a descriptor whose __get__ raises AttributeError both fall
+    through to __getattr__; without a hook the AttributeError propagates."""
+    rt = Runtime()
+    hook = lambda obj, name: f"fallback:{name}"  # noqa: E731
+    Slotted = RefClass("Slotted", slots=("s",), attrs={"__getattr__": hook})
+    assert rt.getattr(RefObject(Slotted), "s", Site()) == "fallback:s"
+
+    def raising_get(desc: RefObject, obj: RefObject, owner: RefClass) -> int:
+        raise AttributeError("from __get__")
+    Raising = make_descriptor_class("Raising", raising_get)
+    W = RefClass("W", attrs={"p": RefObject(Raising), "__getattr__": hook})
+    site = Site()
+    assert [rt.getattr(RefObject(W), "p", site) for _ in range(2)] == ["fallback:p", "fallback:p"]
+    NoHook = RefClass("NoHook", slots=("s",))
+    try:
+        rt.getattr(RefObject(NoHook), "s", Site())
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("an unset slot without __getattr__ must raise AttributeError")
+
+
+def test_attribute_hooks_run_once_per_read_c_3_10() -> None:
+    """C-3-10: the cache check must not execute __get__ or __getattr__ a second time."""
+    rt = Runtime()
+    calls: list[str] = []
+
+    def counting_get(desc: RefObject, obj: RefObject, owner: RefClass) -> int:
+        calls.append("get")
+        return len(calls)
+    C = RefClass("C", attrs={"p": RefObject(make_descriptor_class("Counting", counting_get))})
+    c, site = RefObject(C), Site()
+    assert [rt.getattr(c, "p", site) for _ in range(3)] == [1, 2, 3]
+    assert calls == ["get", "get", "get"]
+
+    calls.clear()
+    Lazy = RefClass("Lazy")
+
+    def lazy(obj: RefObject, name: str) -> int:
+        calls.append(f"getattr {name}")
+        Lazy.set_attr(name, 2)                  # memoise on the class (bumps its version)
+        return 1
+    Lazy.set_attr("__getattr__", lazy)
+    z, site = RefObject(Lazy), Site()
+    assert [rt.getattr(z, "x", site), rt.getattr(z, "x", site), rt.getattr(RefObject(Lazy), "x", site)] == [1, 2, 2]
+    assert calls == ["getattr x"]
+
+
+def test_class_attribute_becomes_descriptor_c_3_11() -> None:
+    """C-3-11: a ClassAttr entry depends on the found object's class and version too."""
+    rt = Runtime()
+    D = RefClass("D")
+    d = RefObject(D)
+    Holder = RefClass("Holder", attrs={"x": d})
+    h, site = RefObject(Holder), Site()
+    assert rt.getattr(h, "x", site) is d
+    D.set_attr("__get__", lambda desc, obj, owner=None: 99)
+    assert rt.getattr(h, "x", site) == 99
+    D.del_attr("__get__")
+    assert rt.getattr(h, "x", site) is d
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

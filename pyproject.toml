@@ -27,7 +27,7 @@ required-version = "==0.13.6"
 python-preference = "only-managed"
 
 [tool.pytest.ini_options]
-testpaths = ["tools/tests", "refmodel/tests", "pipeline/tests", "validation/tests", "runtime/tests"]
+testpaths = ["tools/tests", "refmodel/tests", "pipeline/tests", "validation/tests", "runtime/tests", "conformance/tests"]
 addopts = "-q"
 
 # --- Dialect input contract (design document, section 2) --------------------------------
@@ -60,6 +60,10 @@ warn_unreachable = true
 # disallow_any_explicit is the dialect's rule for compiled programs; the compiler itself
 # legitimately handles `ast` and dynamic values, so it is applied per package below.
 packages = ["refmodel", "pipeline", "tools", "validation"]
+
+[[tool.mypy.overrides]]
+module = ["z3", "z3.*"]        # z3-solver ships no type information
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["conformance.cases.*"]

@@ -31,7 +31,7 @@ static void emit(Int (*f)(Int, Int), Int a, Int b) {
     try { std::cout << bella::to_string(f(a, b)) << '\n'; }
     catch (const bella::NotImplemented&) { std::cout << "promote\n"; }
     catch (const bella::ZeroDivisionError&) { std::cout << "zerodiv\n"; }
-    catch (const std::domain_error&) { std::cout << "domain\n"; }
+    catch (const bella::ValueError&) { std::cout << "valueerror\n"; }
 }
 int main() {
     std::string op; long long a, b;
@@ -66,13 +66,15 @@ def expected(op: str, a: int, b: int) -> str:
         elif op == "mod":
             r = a % b
         elif op == "lshift":
-            if b < 0:
-                return "domain"
-            r = a << b
+            try:
+                r = a << b
+            except ValueError:          # CPython decides, not a re-implementation of its rule
+                return "valueerror"
         elif op == "rshift":
-            if b < 0:
-                return "domain"
-            r = a >> b
+            try:
+                r = a >> b
+            except ValueError:          # CPython decides, not a re-implementation of its rule
+                return "valueerror"
         elif op == "and":
             r = a & b
         elif op == "or":

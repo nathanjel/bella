@@ -12,10 +12,10 @@ print("set of small ints:", {5, 3, 9, 1, 7})
 print("set of strings is value-hashed; order fixed by PYTHONHASHSEED=0:", sorted({"x", "y", "z"}))
 s: dict[int, int] = {}
 try:
-    for k in s:
+    for _ in s:
         pass
     s[1] = 1
-    for k in s:
+    for _ in s:
         s[2] = 2
 except RuntimeError as exc:
     print("size change during iteration:", type(exc).__name__)

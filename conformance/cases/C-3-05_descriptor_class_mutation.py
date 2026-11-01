@@ -4,11 +4,10 @@
 # source: review round 3, finding 3 (adding __set__ to a descriptor's class changes lookup precedence
 #         without any change to the class that holds the descriptor)
 """A non-data descriptor shadowed by an instance attribute becomes a data descriptor and wins."""
-from typing import Any
 
 
 class Desc:
-    def __get__(self, obj: Any, owner: Any = None) -> int:
+    def __get__(self, obj: object, owner: object = None) -> int:
         return 1
 
 
@@ -21,7 +20,7 @@ h.__dict__["attr"] = 99
 print("instance wins over non-data descriptor:", h.attr)
 
 
-def set_(self: Desc, obj: Any, value: Any) -> None:
+def set_(self: Desc, obj: object, value: object) -> None:
     pass
 
 

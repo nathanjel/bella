@@ -18,8 +18,11 @@ What is modelled (design document, section 3, as revised by review rounds two an
   storage, non-data descriptor or class attribute, ``__getattr__``, ``AttributeError``.
 * ``Site`` holds up to N immutable ``CacheEntry`` records keyed by class, class version,
   interned name (and, for the found object, its class and version), each kind with its own
-  validity predicate. Every cached read is checked against the generic path; a disagreement
-  raises ``ModelError`` -- the model refuses to be unsound silently.
+  validity predicate. Every cached read is checked against the generic path by comparing the
+  *plans* both select before any user code runs (the selected plan then runs once); a
+  disagreement raises ``ModelError`` -- the model refuses to be unsound silently.
+* Lifetimes are not modelled: ``CacheEntry.found`` is documented as borrowed (owned by the
+  class) but is an ordinary Python reference here; the C++ header owes that property.
 
 What is not modelled yet: ``__setattr__``/``__delattr__``/``__getattribute__`` overrides,
 ``__class__`` assignment, dict-mode (runtime-created) classes, and setattr caching. Each is a
@@ -104,7 +107,7 @@ class RefClass:
         self.promoted = tuple(promoted)
         # inherited layout capability (spec, section 3)
         own_dict = (slots is None) or ("__dict__" in slots)
-        self.has_dict = own_dict or any(b.has_dict for b in self.bases)
+        self.has_dict: bool = own_dict or any(b.has_dict for b in self.bases)
         own_slots = tuple(s for s in (self.slots or ()) if s != "__dict__")
         for s in own_slots:
             if s in self.attrs:
@@ -189,6 +192,23 @@ INSTANCE_DICT = "InstanceDict"
 CLASS_ATTR = "ClassAttr"
 NON_DATA_DESCRIPTOR = "NonDataDescriptor"
 GETATTR_HOOK = "GetAttrHook"
+_UNCACHED_VALUE = "UncachedValue"   # data descriptor without __get__: storage or the descriptor itself
+_RAISE = "Raise"                     # nothing found and no __getattr__
+
+
+@dataclass(frozen=True)
+class _Plan:
+    """The operation a lookup selects: its kind, the object it calls or returns, the value it
+    reads without running user code, and the __getattr__ fallback looked up beforehand."""
+
+    kind: str
+    found: Any = None
+    value: Any = None
+    hook: Any = None
+
+    def same_as(self, other: _Plan) -> bool:
+        return (self.kind == other.kind and _same(self.found, other.found) and _same(self.value, other.value)
+                and self.hook is other.hook)
 
 
 @dataclass(frozen=True)
@@ -260,112 +280,130 @@ class Runtime:
         assert get is not None
         return get[0](found, obj, obj.cls)
 
-    # ---- generic lookup ------------------------------------------------------------------
-    def _lookup_generic(self, obj: RefObject, name: str) -> tuple[Any, CacheEntry | None]:
-        """Python's lookup order. Returns (value, entry-to-cache) or raises AttributeError."""
+    # ---- lookup as a plan ------------------------------------------------------------------
+    # Review 2026-11-01 (astra-low-01 finding 4, gemini-4-argon-high bugs 2.1.1-2.1.3): lookup is
+    # split into a *plan* -- which operation Python's order selects, decided without running any
+    # user code -- and its *execution*. The cache is checked by comparing the plan it selects
+    # with the generic plan, so __get__ and __getattr__ run exactly once per read (C-3-10), and
+    # entries are stamped with the versions seen when the plan was made, before user code can
+    # mutate a class.
+
+    def _plan_generic(self, obj: RefObject, name: str) -> tuple[_Plan, CacheEntry | None]:
+        """Python's lookup order. Returns the plan and the entry to cache (or None)."""
         cls = obj.cls
+        version = cls.version
         hit = cls.lookup(name)
-        found, owner = hit if hit else (None, None)
+        found, _owner = hit if hit else (None, None)
         # Finding (refmodel, 2026-10-31): an entry that resolves to *instance storage* must still
         # depend on the class and version of whatever object the class lookup found, because a
         # non-data descriptor can become a data descriptor through a change to its own class
         # alone (promotion), and then it must win over the instance value. Plain values cannot
-        # change their descriptor status, so only model objects create the dependency.
+        # change their descriptor status, so only model objects create the dependency. The same
+        # holds for a plain class attribute whose own class later gains __get__ (C-3-11).
         dep: tuple[RefClass | None, int] = (found.cls, found.cls.version) if isinstance(found, RefObject) else (None, 0)
+        # CPython's slot_tp_getattr_hook looks __getattr__ up before running the generic lookup and
+        # calls it when that lookup raises AttributeError for any reason (C-3-09).
+        hook_hit = cls.lookup("__getattr__")
+        hook = hook_hit[0] if hook_hit is not None else None
 
         # 1. data descriptor on the class (slots are data descriptors)
         if hit is not None and is_data_descriptor(found):
             if isinstance(found, SlotDescriptor):
-                v = obj.inline[name]
-                if v is UNSET:
-                    raise AttributeError(name)
-                return v, CacheEntry(cls, cls.version, name, SLOT)
+                return _Plan(SLOT, None, obj.inline[name], hook), CacheEntry(cls, version, name, SLOT)
+            assert isinstance(found, RefObject)
             if found.cls.lookup("__get__") is None:
                 # data descriptor without __get__: instance storage wins, then the descriptor itself
                 present, v = self._instance_storage(obj, name)
-                if present:
-                    return v, None
-                return found, None
-            v = self._call_get(found, obj)
-            return v, CacheEntry(cls, cls.version, name, DATA_DESCRIPTOR, found, found.cls, found.cls.version)
+                return _Plan(_UNCACHED_VALUE, None, v if present else found, hook), None
+            return (_Plan(DATA_DESCRIPTOR, found, None, hook),
+                    CacheEntry(cls, version, name, DATA_DESCRIPTOR, found, found.cls, found.cls.version))
 
         # 2. instance storage
         present, v = self._instance_storage(obj, name)
         if present:
-            if not obj.exposed and name in cls.promoted_fields:
-                return v, CacheEntry(cls, cls.version, name, FIELD, None, dep[0], dep[1])
-            return v, CacheEntry(cls, cls.version, name, INSTANCE_DICT, None, dep[0], dep[1])
+            kind = FIELD if (not obj.exposed and name in cls.promoted_fields) else INSTANCE_DICT
+            return _Plan(kind, None, v, hook), CacheEntry(cls, version, name, kind, None, dep[0], dep[1])
 
         # 3. non-data descriptor or plain class attribute
         if hit is not None:
             if is_descriptor(found):
-                v = self._call_get(found, obj)
-                return v, CacheEntry(cls, cls.version, name, NON_DATA_DESCRIPTOR, found, found.cls, found.cls.version)
-            return found, CacheEntry(cls, cls.version, name, CLASS_ATTR, found)
+                assert isinstance(found, RefObject)
+                return (_Plan(NON_DATA_DESCRIPTOR, found, None, hook),
+                        CacheEntry(cls, version, name, NON_DATA_DESCRIPTOR, found, found.cls, found.cls.version))
+            return _Plan(CLASS_ATTR, found, found, hook), CacheEntry(cls, version, name, CLASS_ATTR, found, dep[0], dep[1])
 
-        # 4. __getattr__
-        hook = cls.lookup("__getattr__")
+        # 4. __getattr__, or AttributeError
         if hook is not None:
-            return hook[0](obj, name), CacheEntry(cls, cls.version, name, GETATTR_HOOK, hook[0])
-
-        raise AttributeError(name)
+            return _Plan(GETATTR_HOOK, hook, None, None), CacheEntry(cls, version, name, GETATTR_HOOK, hook)
+        return _Plan(_RAISE, None, None, None), None
 
     # ---- cached lookup: validity predicates per kind ------------------------------------
-    def _lookup_cached(self, obj: RefObject, name: str, site: Site) -> tuple[bool, Any]:
-        """(valid, value) from the cache alone; (False, None) when no valid entry applies."""
+    def _plan_cached(self, obj: RefObject, name: str, site: Site) -> _Plan | None:
+        """The plan the cache alone selects, or None when no valid entry applies. Runs no user code."""
         cls = obj.cls
         e = site.find(cls, name)
         if e is None or e.version != cls.version:
-            return False, None
+            return None
         if e.found_cls is not None and e.found_version != e.found_cls.version:
-            return False, None          # a descriptor's own class changed (gained or lost __set__)
+            return None                 # the found object's own class changed (gained __get__ or __set__)
+        hook_hit = cls.lookup("__getattr__")
+        hook = hook_hit[0] if hook_hit is not None else None   # covered by the class version
         if e.kind == SLOT:
-            v = obj.inline[name]
-            return (True, v) if v is not UNSET else (False, None)
+            return _Plan(SLOT, None, obj.inline[name], hook)
         if e.kind == FIELD:
             if obj.exposed:
-                return False, None
+                return None
             v = obj.inline[name]
-            return (True, v) if v is not UNSET else (False, None)
+            return _Plan(FIELD, None, v, hook) if v is not UNSET else None
         if e.kind == INSTANCE_DICT:
             if obj.dict is not None and name in obj.dict:
-                return True, obj.dict[name]
-            return False, None
+                return _Plan(INSTANCE_DICT, None, obj.dict[name], hook)
+            return None
         if e.kind == DATA_DESCRIPTOR:
-            return True, self._call_get(e.found, obj)
+            return _Plan(DATA_DESCRIPTOR, e.found, None, hook)
         # ClassAttr / NonDataDescriptor / GetAttrHook: no instance storage may shadow the name
         present, _ = self._instance_storage(obj, name)
         if present:
-            return False, None
+            return None
         if e.kind == CLASS_ATTR:
-            return True, e.found
+            return _Plan(CLASS_ATTR, e.found, e.found, hook)
         if e.kind == NON_DATA_DESCRIPTOR:
-            return True, self._call_get(e.found, obj)
+            return _Plan(NON_DATA_DESCRIPTOR, e.found, None, hook)
         if e.kind == GETATTR_HOOK:
-            return True, e.found(obj, name)
+            return _Plan(GETATTR_HOOK, e.found, None, None)
         raise ModelError(f"unknown cache kind {e.kind}")
+
+    # ---- execution: the only place user code runs ---------------------------------------
+    def _execute(self, plan: _Plan, obj: RefObject, name: str) -> Any:
+        try:
+            if plan.kind == _RAISE:
+                raise AttributeError(name)
+            if plan.kind == GETATTR_HOOK:
+                return plan.found(obj, name)
+            if plan.kind in (DATA_DESCRIPTOR, NON_DATA_DESCRIPTOR):
+                return self._call_get(plan.found, obj)
+            if plan.kind == SLOT and plan.value is UNSET:
+                raise AttributeError(name)
+            return plan.value
+        except AttributeError:
+            if plan.hook is None:
+                raise
+            return plan.hook(obj, name)
 
     # ---- public operations ---------------------------------------------------------------
     def getattr(self, obj: RefObject, name: str, site: Site | None = None) -> Any:
-        try:
-            value, entry = self._lookup_generic(obj, name)
-        except AttributeError:
-            if site is not None:
-                valid, _ = self._lookup_cached(obj, name, site)
-                if valid:
-                    raise ModelError(f"unsound cache: cached value for {name} but generic lookup raises AttributeError")
-            raise
+        plan, entry = self._plan_generic(obj, name)
         if site is not None:
-            valid, cached = self._lookup_cached(obj, name, site)
-            if valid:
+            cached = self._plan_cached(obj, name, site)
+            if cached is not None:
                 site.hits += 1
-                if not _same(cached, value):
-                    raise ModelError(f"unsound cache: {name} cached {cached!r} but generic gives {value!r}")
-            else:
+                if not cached.same_as(plan):
+                    raise ModelError(f"unsound cache: {name} cached plan {cached} but generic plan {plan}")
+            elif plan.kind != _RAISE:        # a lookup that finds nothing is not a cache event
                 site.misses += 1
                 if entry is not None:
                     site.install(entry)
-        return value
+        return self._execute(plan, obj, name)
 
     def setattr(self, obj: RefObject, name: str, value: Any) -> None:
         cls = obj.cls
@@ -378,7 +416,7 @@ class Runtime:
             if is_data_descriptor(found):
                 setter = found.cls.lookup("__set__")
                 if setter is None:
-                    raise AttributeError(f"__set__")      # data descriptor with only __delete__
+                    raise AttributeError("__set__")      # data descriptor with only __delete__
                 setter[0](found, obj, value)
                 return
         if obj.exposed:

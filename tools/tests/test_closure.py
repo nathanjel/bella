@@ -35,13 +35,13 @@ def g(name):
 '''
 
 
-def _edges(src: str, module: str = "pkg.mod", is_package: bool = False) -> dict[tuple[str, str], int]:
+def _edges(src: str, module: str = "pkg.mod", is_package: bool = False) -> tuple[dict[tuple[str, str], int], list[int]]:
     s = _Scanner(module, is_package)
     s.scan(ast.parse(src))
     out: dict[tuple[str, str], int] = {}
     for target, cls, line in s.edges:
         out[(target, cls)] = line
-    return out, s.dynamic_unknown  # type: ignore[return-value]
+    return out, s.dynamic_unknown
 
 
 def test_eager_lazy_conditional_classes() -> None:

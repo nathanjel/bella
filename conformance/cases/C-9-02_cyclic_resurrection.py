@@ -7,7 +7,7 @@
 import gc
 import weakref
 
-keep: list["Node"] = []
+keep: list[Node] = []
 
 
 class Node:

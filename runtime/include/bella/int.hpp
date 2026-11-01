@@ -19,6 +19,9 @@ struct NotImplemented : std::logic_error {
 struct ZeroDivisionError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
+struct ValueError : std::runtime_error {      // Python's ValueError (e.g. a negative shift count)
+    using std::runtime_error::runtime_error;
+};
 
 class Int {
     std::uintptr_t w_;   // bit 0 = 1: signed 63-bit immediate (value << 1 | 1); bit 0 = 0: BigInt* (unused yet)
@@ -94,7 +97,7 @@ inline Int int_mod(Int a, Int b) {
 }
 inline Int int_lshift(Int a, Int b) {
     const std::int64_t x = a.small(), n = b.small();
-    if (n < 0) throw std::domain_error("negative shift count");
+    if (n < 0) throw ValueError("negative shift count");
     if (x == 0) return Int::from_small(0);
     if (n >= 64) return bigint::promote("lshift");
     const __int128 r = static_cast<__int128>(x) << n;          // GCC extension; the project is GCC-only
@@ -103,7 +106,7 @@ inline Int int_lshift(Int a, Int b) {
 }
 inline Int int_rshift(Int a, Int b) {
     const std::int64_t n = b.small();
-    if (n < 0) throw std::domain_error("negative shift count");
+    if (n < 0) throw ValueError("negative shift count");
     return Int::from_small(n >= 63 ? (a.small() < 0 ? -1 : 0) : (a.small() >> n));
 }
 inline Int int_and(Int a, Int b) { return Int::from_small(a.small() & b.small()); }

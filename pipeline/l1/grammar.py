@@ -22,6 +22,11 @@ class Unsupported(NotImplementedError):
     """A Python construct the L1 frontend does not lower yet (never silently approximated)."""
 
 
+class DialectError(Exception):
+    """A program outside the dialect: a compile-time error naming its register or exclusion id
+    (for example D-10, control flow leaving ``finally``). Unlike ``Unsupported`` it is permanent."""
+
+
 @dataclass(frozen=True)
 class Node:
     line: int
@@ -274,3 +279,6 @@ class Assert(Stmt):
 class Module(Node):
     body: tuple[Stmt, ...]
     source: str = field(default="<module>", compare=False)
+    # names the frontend generated (comparison temporaries, comprehension helpers); they are
+    # chosen not to collide with any identifier of the source and are invisible to the program
+    synthetic: frozenset[str] = field(default=frozenset(), compare=False)

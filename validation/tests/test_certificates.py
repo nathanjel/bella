@@ -8,7 +8,14 @@ installed (it is in the dev extras).
 from __future__ import annotations
 
 from validation.certificates import (
-    Add, Lit, Mul, RangeCertificate, Var, check_intervals, evaluate, norm2_certificate,
+    Add,
+    Lit,
+    Mul,
+    RangeCertificate,
+    Var,
+    check_intervals,
+    evaluate,
+    norm2_certificate,
 )
 
 
@@ -39,6 +46,37 @@ def test_c_9_1_z3_agrees() -> None:
     from validation.certificates import check_z3
     assert not check_z3(norm2_certificate(31)).proved
     assert check_z3(norm2_certificate(30)).proved
+
+
+def test_interval_checker_fails_closed_on_dependent_variables() -> None:
+    """review 2026-11-01 (astra-low-01 #6, gemini 2.3.1): x - x is always 0, but the interval
+    [-200, 200] exceeds 8 bits and no corner overflows: UNKNOWN, never a crash or a proof."""
+    from validation.certificates import Outcome, Sub
+    x = Var("x")
+    v = check_intervals(RangeCertificate(Sub(x, x), {"x": (-100, 100)}, 8))
+    assert v.outcome is Outcome.UNKNOWN and not v.proved and v.reason
+    # an interior extremum: 130 - x*x on [-10, 10] overflows 8 bits only at x = 0 (and at the literal)
+    w = check_intervals(RangeCertificate(Sub(Lit(130), Mul(x, x)), {"x": (-10, 10)}, 8))
+    assert not w.proved
+
+
+def test_z3_unknown_is_not_a_proof() -> None:
+    try:
+        import z3
+    except ImportError:
+        return
+    from validation import certificates as vc
+    from validation.certificates import Outcome
+    original = z3.Solver.check
+    z3.Solver.check = lambda self, *a: z3.unknown
+    try:
+        v = vc.check_z3(norm2_certificate(30))
+    finally:
+        z3.Solver.check = original
+    assert v.outcome is Outcome.UNKNOWN and not v.proved
+    x = Var("x")
+    exact = vc.check_z3(RangeCertificate(vc.Sub(x, x), {"x": (-100, 100)}, 8))
+    assert exact.proved                     # what intervals cannot decide, Z3 proves
 
 
 if __name__ == "__main__":

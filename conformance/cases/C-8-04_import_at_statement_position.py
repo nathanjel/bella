@@ -6,13 +6,13 @@
 import sys
 
 print("before first import")
-import cycpkg  # noqa: E402  -- the package __init__ runs now, after the line above
+import cycpkg  # noqa: E402, F401  -- imported for its effect: the package __init__ runs now, after the line above
 
 print("after first import; in sys.modules:", "cycpkg" in sys.modules)
 
 
 def late() -> None:
-    import cycpkg  # noqa: F401  -- already initialised: nothing runs
+    import cycpkg  # noqa: F401, F811  -- already initialised: nothing runs
     print("function-local import done")
 
 

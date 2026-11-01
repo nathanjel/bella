@@ -6,27 +6,31 @@
 bella::Int factorial(bella::Int n);
 
 bella::Int factorial(bella::Int n) {
-    bella::Int result{};
-    bella::Int i{};
+    bella::Int result{};   // assigned before every read (checked)
+    bella::Int i{};   // assigned before every read (checked)
     result = bella::Int(std::int64_t{1});
-    bella::Int _stop1 = (n + bella::Int(std::int64_t{1}));
-    for (i = bella::Int(std::int64_t{2}); i < _stop1; i = i + bella::Int(1)) {
+    bella::Int _range1 = bella::Int(std::int64_t{2});
+    bella::Int _range2 = (n + bella::Int(std::int64_t{1}));
+    for (bella::Int _i3 = _range1; _i3 < _range2; _i3 = _i3 + bella::Int(1)) {
+        i = _i3;
         result = (result * i);
     }
     return result;
-    return bella::Int(0);  // Python's implicit None is unreachable for value-returning toy functions
 }
 
 int main() {
     try {
-        ([&]() { auto _a2 = factorial(bella::Int(std::int64_t{20})); bella::print(_a2); })();
-        ([&]() { auto _a3 = factorial(bella::Int(std::int64_t{25})); bella::print(_a3); })();
-        ([&]() { auto _a4 = bella::int_floordiv(factorial(bella::Int(std::int64_t{30})), factorial(bella::Int(std::int64_t{28}))); bella::print(_a4); })();
+        ([&]() { auto _a4 = factorial(bella::Int(std::int64_t{20})); bella::print(_a4); })();
+        ([&]() { auto _a5 = factorial(bella::Int(std::int64_t{25})); bella::print(_a5); })();
+        ([&]() { auto _a6 = ([&]() -> bella::Int { auto _o7 = factorial(bella::Int(std::int64_t{30})); auto _o8 = factorial(bella::Int(std::int64_t{28})); return bella::int_floordiv(_o7, _o8); })(); bella::print(_a6); })();
     } catch (const bella::NotImplemented& e) {
         std::cerr << "bella::NotImplemented: " << e.what() << '\n';
         return 1;
     } catch (const bella::ZeroDivisionError& e) {
         std::cerr << "ZeroDivisionError: " << e.what() << '\n';
+        return 1;
+    } catch (const bella::ValueError& e) {
+        std::cerr << "ValueError: " << e.what() << '\n';
         return 1;
     }
     return 0;

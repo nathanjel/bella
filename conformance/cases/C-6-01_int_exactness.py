@@ -17,7 +17,7 @@ print("norm2 at -2**31:", x * x + x * x)
 print("2**62 * 2:", 2**62 * 2)
 print("floor division signs:", 7 // 2, -7 // 2, 7 // -2, -7 // -2)
 print("modulo signs:", 7 % 2, -7 % 2, 7 % -2, -7 % -2)
-print("bool is int:", True + True, isinstance(True, int), type(True).__name__)
+print("bool is int:", True + True, isinstance(True, int), type(True).__name__)  # noqa: UP003  -- the runtime type of True is the observable
 print("hash formulas:", hash(2**61 - 1), hash(2**61), hash(-1), hash(-2))
 print("bitwise on negatives:", ~5, -5 >> 1, -5 & 0xFF, (-1) << 70)
 print("pow:", pow(3, 100, 7), 2**-1, 2**100)

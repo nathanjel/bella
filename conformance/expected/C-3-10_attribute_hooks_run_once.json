@@ -1,0 +1,12 @@
+{
+ "case": "C-3-10_attribute_hooks_run_once.py",
+ "clause": "C-3-10",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "review 2026-11-01 astra-low-01 finding 4 and gemini-4-argon-high bug 2.1.2 (user hooks run exactly once per read)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "[1, 2, 3] ['get', 'get', 'get']\n1 2 2 ['getattr x']\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -1,19 +1,22 @@
 # Bella -- developer entry points. Everything here also runs inside the Docker image.
-PY      ?= python3
+# the project venv when there is one (developer machine), else the image's /opt/venv python3
+PY      ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 CXX     ?= g++
 CXXSTD  ?= c++26
 RUNNER  ?= $(PY) {case}
 
-.PHONY: help test selftest closure record check-conformance probes slice int-test lint check clean
+.PHONY: help test selftest closure record verify check-conformance probes slice int-test lint check clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
 	@echo "make closure           phase-1 import closure vs manifest.toml  -> closure.lock.json"
 	@echo "make record            record conformance expectations under the pinned CPython"
+	@echo "make verify            the pinned CPython must reproduce every recorded expectation"
 	@echo "make check-conformance run the corpus through RUNNER and compare with expected/"
 	@echo "make probes            compile the C++26 feature probes       -> toolchain-probes.md"
 	@echo "make slice             the toy end-to-end slice: python == eval1 == emitted C++"
 	@echo "make int-test          differential test of runtime/include/bella/int.hpp vs CPython"
+	@echo "make lint              ruff and mypy (clean since 2026-11-01; keep them clean)"
 	@echo "make check             everything above (what CI runs)"
 
 test:
@@ -32,6 +35,9 @@ closure:
 record:
 	$(PY) conformance/harness.py record
 
+verify:
+	$(PY) conformance/harness.py verify
+
 check-conformance:
 	$(PY) conformance/harness.py check --runner "$(RUNNER)"
 
@@ -47,7 +53,7 @@ int-test:
 lint:
 	ruff check . && mypy
 
-check: closure test record probes slice int-test
+check: closure lint test verify probes slice int-test
 
 clean:
 	rm -rf build runtime/build pipeline/examples/out/*.bin .pytest_cache .hypothesis

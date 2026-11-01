@@ -3,16 +3,15 @@
 # status: P1
 # source: review round 2, finding 5 (__eq__ may return any object or NotImplemented)
 """a == b returns whatever __eq__ returns; `if` applies truth; NotImplemented falls back to identity."""
-from typing import Any
 
 
 class Odd:
-    def __eq__(self, other: Any) -> Any:
+    def __eq__(self, other: object) -> object:  # type: ignore[override]  -- returning a non-bool is the point
         return "comparison-result"
 
 
 class Silent:
-    def __eq__(self, other: Any) -> Any:
+    def __eq__(self, other: object) -> object:  # type: ignore[override]
         return NotImplemented
 
 

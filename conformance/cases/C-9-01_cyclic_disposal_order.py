@@ -17,7 +17,7 @@ class Node:
         order.append("finalizer")
 
 
-def callback(_ref: "weakref.ReferenceType[Node]") -> None:
+def callback(_ref: weakref.ReferenceType[Node]) -> None:
     order.append("weakref")
 
 

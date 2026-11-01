@@ -7,6 +7,7 @@ it does not cover, naming it, so the gap is visible rather than approximated.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import itertools
 from typing import Any
 
@@ -14,14 +15,76 @@ from pipeline.l1 import grammar as L
 from pipeline.passes.spec import Discharge, Fact, Level, Obligation, PassSpec, register
 
 _counter = itertools.count()
+# Hygiene (review 2026-11-01, astra-low-01 #5): generated names never collide with an identifier
+# of the program being lowered, and are recorded so that the module can hide them (Module.synthetic).
+_TAKEN: set[str] = set()
+_SYNTHETIC: set[str] = set()
 
 
 def _tmp(prefix: str) -> str:
-    return f"_{prefix}{next(_counter)}"
+    while True:
+        name = f"_{prefix}{next(_counter)}"
+        if name not in _TAKEN:
+            _SYNTHETIC.add(name)
+            return name
 
 
-def _copy_loc(new: ast.AST, old: ast.AST) -> ast.AST:
+def _identifiers(tree: ast.AST) -> set[str]:
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            out.add(node.id)
+        elif isinstance(node, ast.arg):
+            out.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            out.update(node.names)
+        elif isinstance(node, ast.alias):
+            out.add((node.asname or node.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            out.add(node.name)
+        elif isinstance(node, ast.keyword) and node.arg:
+            out.add(node.arg)
+    return out
+
+
+# ---------------------------------------------------------------------------------------------
+# Dialect checks on L0 (compile-time errors with a register id)
+# ---------------------------------------------------------------------------------------------
+
+def check_finally(tree: ast.AST) -> None:
+    """D-10: return, break or continue that would leave a finally block is a compile-time error
+    (CPython 3.14+ warns, PEP 765). break/continue of a loop inside the finally block are fine."""
+    def scan(stmts: list[ast.stmt], in_loop: bool) -> None:
+        for st in stmts:
+            if isinstance(st, ast.Return) or (isinstance(st, (ast.Break, ast.Continue)) and not in_loop):
+                kind = type(st).__name__.lower()
+                raise L.DialectError(f"D-10: '{kind}' leaving a finally block is a compile-time error (line {st.lineno})")
+            if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            loops = isinstance(st, (ast.For, ast.AsyncFor, ast.While))
+            for fld in ("body", "orelse", "finalbody"):
+                inner = getattr(st, fld, None)
+                if isinstance(inner, list):
+                    scan(inner, in_loop or (loops and fld == "body"))
+            for h in getattr(st, "handlers", []):
+                scan(h.body, in_loop)
+            for case in getattr(st, "cases", []):
+                scan(case.body, in_loop)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            scan(node.finalbody, False)
+
+
+def _copy_loc[N: ast.AST](new: N, old: ast.AST) -> N:
     return ast.copy_location(new, old)
+
+
+def _as_module(tree: object) -> ast.Module:
+    assert isinstance(tree, ast.Module)
+    return tree
 
 
 # ---------------------------------------------------------------------------------------------
@@ -59,7 +122,7 @@ class _ChainedCompare(ast.NodeTransformer):
     discharge=Discharge.TESTED, status="tested",
 ))
 def desugar_chained_compare(tree: ast.Module) -> ast.Module:
-    return ast.fix_missing_locations(_ChainedCompare().visit(tree))
+    return _as_module(ast.fix_missing_locations(_ChainedCompare().visit(tree)))
 
 
 class _With(ast.NodeTransformer):
@@ -73,28 +136,32 @@ class _With(ast.NodeTransformer):
         return body
 
     def _expand(self, item: ast.withitem, body: list[ast.stmt], loc: ast.AST) -> list[ast.stmt]:
-        mgr, exit_, value, exc, err = (_tmp("mgr"), _tmp("exit"), _tmp("val"), _tmp("exc"), _tmp("err"))
+        # __special__ is CPython's special-method lookup (_PyObject_LookupSpecial): the type's MRO,
+        # bound through the descriptor protocol, TypeError when missing. CPython 3.15 looks up
+        # __exit__ before __enter__ (review 2026-11-01, gemini 2.2.5.2; measured on 3.15.2).
+        mgr, exit_, enter, value, exc, err = (_tmp("mgr"), _tmp("exit"), _tmp("enter"), _tmp("val"), _tmp("exc"), _tmp("err"))
         src = f"""
 {mgr} = None
-{exit_} = type({mgr}).__exit__
-{value} = type({mgr}).__enter__({mgr})
+{exit_} = __special__({mgr}, "__exit__")
+{enter} = __special__({mgr}, "__enter__")
+{value} = {enter}()
 {exc} = True
 try:
     try:
         pass
     except BaseException as {err}:
         {exc} = False
-        if not {exit_}({mgr}, type({err}), {err}, {err}.__traceback__):
+        if not {exit_}(type({err}), {err}, {err}.__traceback__):
             raise
 finally:
     if {exc}:
-        {exit_}({mgr}, None, None, None)
+        {exit_}(None, None, None)
 """
         stmts = ast.parse(src).body
         assign = stmts[0]
         assert isinstance(assign, ast.Assign)
         assign.value = item.context_expr
-        try_outer = stmts[4]
+        try_outer = stmts[5]
         assert isinstance(try_outer, ast.Try)
         try_inner = try_outer.body[0]
         assert isinstance(try_inner, ast.Try)
@@ -114,24 +181,46 @@ finally:
     produces=frozenset({Fact.NO_WITH}),
     obligations=(
         Obligation("wf", "output contains no With node"),
-        Obligation("semantics", "PEP 343: __enter__/__exit__ looked up on the type, __exit__ receives the exception triple, a true return suppresses, __exit__ runs exactly once on every exit path"),
+        Obligation("semantics", "PEP 343: __exit__ then __enter__ looked up on the type and bound through the descriptor protocol (TypeError if missing), __exit__ receives the exception triple, a true return suppresses, __exit__ runs exactly once on every exit path"),
         Obligation("terminates", "one expansion per with-item"),
     ),
     discharge=Discharge.TESTED, status="tested",
 ))
 def desugar_with(tree: ast.Module) -> ast.Module:
-    return ast.fix_missing_locations(_With().visit(tree))
+    return _as_module(ast.fix_missing_locations(_With().visit(tree)))
 
 
 class _ListComp(ast.NodeTransformer):
-    """[E for x in IT if C] -> a hoisted helper taking iter(IT): the loop variable does not leak."""
+    """[E for x in IT if C] -> a helper taking iter(IT): the loop variable does not leak.
+
+    The helper is defined in the scope that contains the comprehension, immediately before the
+    statement, so it closes over that scope's names as a comprehension does; the outermost
+    iterable is evaluated in that scope, everything else inside the helper (review 2026-11-01,
+    astra-low-01 #5, gemini 2.2.2). The transformer does not enter nested function bodies:
+    ``_hoist`` lowers each body in its own scope.
+    """
 
     def __init__(self) -> None:
         self.hoisted: list[ast.stmt] = []
 
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        # decorators and defaults run in the enclosing scope; the body is lowered by _hoist
+        node.decorator_list = [self.visit(d) for d in node.decorator_list]
+        node.args.defaults = [self.visit(d) for d in node.args.defaults]
+        node.args.kw_defaults = [self.visit(d) if d is not None else None for d in node.args.kw_defaults]
+        return node
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        return node          # its body is another scope; L1 does not lower lambdas yet
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        return node          # class scopes are not lowered by L1 yet
+
     def visit_ListComp(self, node: ast.ListComp) -> ast.AST:
-        self.generic_visit(node)
+        if isinstance(node.elt, ast.Starred):
+            raise L.Unsupported("unpacking in a comprehension (PEP 798, new in 3.15) is [P2+]")
         fname, res, arg = _tmp("lc"), _tmp("res"), _tmp("it")
+        outer_iter = self.visit(node.generators[0].iter)      # evaluated in this scope
         inner: list[ast.stmt] = [ast.Expr(ast.Call(
             func=ast.Attribute(value=ast.Name(id=res, ctx=ast.Load()), attr="append", ctx=ast.Load()),
             args=[node.elt], keywords=[]))]
@@ -143,14 +232,17 @@ class _ListComp(ast.NodeTransformer):
             is_outer = i == len(node.generators) - 1
             iterable = ast.Name(id=arg, ctx=ast.Load()) if is_outer else gen.iter
             inner = [ast.For(target=gen.target, iter=iterable, body=inner, orelse=[])]
+        body: list[ast.stmt] = ([ast.Assign(targets=[ast.Name(id=res, ctx=ast.Store())], value=ast.List(elts=[], ctx=ast.Load()))]
+                                + inner + [ast.Return(ast.Name(id=res, ctx=ast.Load()))])
+        for st in body:
+            ast.copy_location(st, node)
+            ast.fix_missing_locations(st)
         fn = ast.FunctionDef(
             name=fname,
             args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=arg)], kwonlyargs=[], kw_defaults=[], defaults=[]),
-            body=[ast.Assign(targets=[ast.Name(id=res, ctx=ast.Store())], value=ast.List(elts=[], ctx=ast.Load()))]
-                 + inner + [ast.Return(ast.Name(id=res, ctx=ast.Load()))],
+            body=_hoist(body),           # comprehensions inside the element, conditions or inner loops
             decorator_list=[], returns=None, type_params=[])
         self.hoisted.append(ast.fix_missing_locations(_copy_loc(fn, node)))
-        outer_iter = node.generators[0].iter
         return ast.fix_missing_locations(_copy_loc(ast.Call(
             func=ast.Name(id=fname, ctx=ast.Load()),
             args=[ast.Call(func=ast.Name(id="iter", ctx=ast.Load()), args=[outer_iter], keywords=[])],
@@ -178,7 +270,7 @@ def _hoist(stmts: list[ast.stmt]) -> list[ast.stmt]:
     produces=frozenset({Fact.NO_COMPREHENSIONS}),
     obligations=(
         Obligation("wf", "output contains no ListComp node"),
-        Obligation("semantics", "the outermost iterable is evaluated in the enclosing scope before the loop; loop variables do not leak (PEP 709 observable behaviour); elements appended in order"),
+        Obligation("semantics", "the outermost iterable is evaluated in the enclosing scope before the loop; the helper is defined in the comprehension's own scope so it sees that scope's names; loop variables do not leak (PEP 709 observable behaviour); elements appended in order"),
         Obligation("terminates", "one helper per comprehension"),
     ),
     discharge=Discharge.TESTED, status="tested",
@@ -224,7 +316,7 @@ class _FString(ast.NodeTransformer):
     discharge=Discharge.TESTED, status="tested",
 ))
 def desugar_fstring(tree: ast.Module) -> ast.Module:
-    return ast.fix_missing_locations(_FString().visit(tree))
+    return _as_module(ast.fix_missing_locations(_FString().visit(tree)))
 
 
 class _Decorators(ast.NodeTransformer):
@@ -259,7 +351,7 @@ class _Decorators(ast.NodeTransformer):
     discharge=Discharge.TESTED, status="tested",
 ))
 def desugar_decorators(tree: ast.Module) -> ast.Module:
-    return ast.fix_missing_locations(_Decorators().visit(tree))
+    return _as_module(ast.fix_missing_locations(_Decorators().visit(tree)))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -325,6 +417,8 @@ class _ToL1:
             return L.Assert(ln, self.truth(s.test), self.expr(s.msg) if s.msg else None)
         if isinstance(s, (ast.Global, ast.Nonlocal)):
             return L.Pass(ln)   # recorded on the enclosing FunctionDef
+        if isinstance(s, (ast.Import, ast.ImportFrom)) and getattr(s, "is_lazy", False):
+            raise L.Unsupported(f"lazy import (PEP 810, new in 3.15) (line {ln})")
         raise L.Unsupported(f"statement {type(s).__name__} (line {ln})")
 
     def function(self, f: ast.FunctionDef) -> L.FunctionDef:
@@ -338,11 +432,27 @@ class _ToL1:
                        for arg, d in zip(a.args, defaults, strict=True))
         globals_: set[str] = set()
         nonlocals: set[str] = set()
-        for s in f.body:
-            if isinstance(s, ast.Global):
-                globals_.update(s.names)
-            elif isinstance(s, ast.Nonlocal):
-                nonlocals.update(s.names)
+
+        def declarations(stmts: list[ast.stmt]) -> None:
+            # a global/nonlocal statement applies to the whole function wherever it stands, but
+            # not to nested functions or classes (review 2026-11-01, gemini 2.2.5.1)
+            for s in stmts:
+                if isinstance(s, ast.Global):
+                    globals_.update(s.names)
+                elif isinstance(s, ast.Nonlocal):
+                    nonlocals.update(s.names)
+                elif isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+                for fld in ("body", "orelse", "finalbody"):
+                    inner = getattr(s, fld, None)
+                    if isinstance(inner, list):
+                        declarations(inner)
+                for h in getattr(s, "handlers", []):
+                    declarations(h.body)
+                for case in getattr(s, "cases", []):
+                    declarations(case.body)
+
+        declarations(f.body)
         return L.FunctionDef(f.lineno, f.name, params, self.block(f.body), frozenset(globals_), frozenset(nonlocals))
 
     # ---- targets ----------------------------------------------------------------------------
@@ -443,9 +553,31 @@ FRONTEND_PASSES = ["desugar-chained-compare", "desugar-with", "desugar-listcomp"
                    "desugar-decorators", "to-l1"]
 
 
+def check_host_grammar() -> None:
+    """L0 is the host interpreter's own ast, so the host's minor version *is* the accepted grammar.
+    The three settings stay distinct -- host interpreter (pyproject), semantic reference
+    (bella.toml [reference].python), accepted grammar ([reference].grammar) -- and this is the one
+    place their coupling is enforced (review 2026-11-01, astra-low-02, gate step 1)."""
+    import sys
+    import tomllib
+    from pathlib import Path
+    pinned = tomllib.loads((Path(__file__).resolve().parents[2] / "bella.toml").read_text(encoding="utf-8"))
+    grammar = str(pinned["reference"]["grammar"])
+    host = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if host != grammar:
+        raise RuntimeError(f"the frontend parses with the host ast: host Python {host} != bella.toml grammar {grammar}")
+
+
 def lower(source: str, filename: str = "<module>") -> L.Module:
     """Parse and lower a program to L1 through the registered passes in fact order."""
     from pipeline.passes import manager
+    check_host_grammar()
     tree = ast.parse(source, filename=filename)
+    check_finally(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]
-    return manager.run(tree, manager.pipeline(FRONTEND_PASSES))
+    _TAKEN.clear()
+    _TAKEN.update(_identifiers(tree))
+    _SYNTHETIC.clear()
+    module = manager.run(tree, manager.pipeline(FRONTEND_PASSES))
+    assert isinstance(module, L.Module)
+    return dataclasses.replace(module, synthetic=frozenset(_SYNTHETIC))

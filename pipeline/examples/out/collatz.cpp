@@ -11,7 +11,7 @@ static bella::Int s{};
 bella::Int steps(bella::Int n);
 
 bella::Int steps(bella::Int n) {
-    bella::Int count{};
+    bella::Int count{};   // assigned before every read (checked)
     count = bella::Int(std::int64_t{0});
     while (bella::truth((n != bella::Int(std::int64_t{1})))) {
         if (bella::truth((bella::int_mod(n, bella::Int(std::int64_t{2})) == bella::Int(std::int64_t{0})))) {
@@ -22,15 +22,16 @@ bella::Int steps(bella::Int n) {
         count = (count + bella::Int(std::int64_t{1}));
     }
     return count;
-    return bella::Int(0);  // Python's implicit None is unreachable for value-returning toy functions
 }
 
 int main() {
     try {
         longest = bella::Int(std::int64_t{0});
         arg = bella::Int(std::int64_t{0});
-        bella::Int _stop1 = bella::Int(std::int64_t{300});
-        for (start = bella::Int(std::int64_t{1}); start < _stop1; start = start + bella::Int(1)) {
+        bella::Int _range1 = bella::Int(std::int64_t{1});
+        bella::Int _range2 = bella::Int(std::int64_t{300});
+        for (bella::Int _i3 = _range1; _i3 < _range2; _i3 = _i3 + bella::Int(1)) {
+            start = _i3;
             s = steps(start);
             if (bella::truth((s > longest))) {
                 longest = s;
@@ -38,12 +39,15 @@ int main() {
             }
         }
         bella::print("longest collatz chain below 300:", arg, longest);
-        ([&]() { auto _a2 = "evaluation order:"; auto _a3 = (steps(bella::Int(std::int64_t{27})) - steps(bella::Int(std::int64_t{9}))); auto _a4 = (steps(bella::Int(std::int64_t{97})) + steps(bella::Int(std::int64_t{871}))); bella::print(_a2, _a3, _a4); })();
+        ([&]() { auto _a4 = "evaluation order:"; auto _a5 = ([&]() -> bella::Int { auto _o6 = steps(bella::Int(std::int64_t{27})); auto _o7 = steps(bella::Int(std::int64_t{9})); return (_o6 - _o7); })(); auto _a8 = ([&]() -> bella::Int { auto _o9 = steps(bella::Int(std::int64_t{97})); auto _o10 = steps(bella::Int(std::int64_t{871})); return (_o9 + _o10); })(); bella::print(_a4, _a5, _a8); })();
     } catch (const bella::NotImplemented& e) {
         std::cerr << "bella::NotImplemented: " << e.what() << '\n';
         return 1;
     } catch (const bella::ZeroDivisionError& e) {
         std::cerr << "ZeroDivisionError: " << e.what() << '\n';
+        return 1;
+    } catch (const bella::ValueError& e) {
+        std::cerr << "ValueError: " << e.what() << '\n';
         return 1;
     }
     return 0;

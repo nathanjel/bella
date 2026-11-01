@@ -2,12 +2,16 @@
 
 A ``RangeCertificate`` claims: for every assignment of the variables within ``bounds``, every
 subexpression of ``expr`` (intermediates included, review round one, finding 5) fits in the
-signed ``bits``-bit range. ``check_intervals`` decides it with interval arithmetic, which is
-exact for +, -, * and negation over boxes, and returns a corner witness when it fails;
-``check_z3`` decides the same claim with Z3 when the package is installed.
+signed ``bits``-bit range. Both checkers fail closed (review 2026-11-01, astra-low-01 #6,
+gemini 2.3.1): a verdict is PROVED, REFUTED with a witness, or UNKNOWN, and only PROVED licenses
+removing a check. ``check_intervals`` uses interval arithmetic, a sound over-approximation (not
+exact: a variable that occurs twice, as in ``x - x``, widens the interval), so it proves or, with a
+corner witness, refutes; anything else is UNKNOWN. ``check_z3`` decides the claim with Z3 when the
+package is installed: ``unsat`` proves, ``sat`` refutes with the model, ``unknown`` stays UNKNOWN.
 """
 from __future__ import annotations
 
+import enum
 import itertools
 from dataclasses import dataclass
 from typing import Any
@@ -65,11 +69,27 @@ class RangeCertificate:
         return (1 << (self.bits - 1)) - 1
 
 
+class Outcome(enum.Enum):
+    PROVED = "proved"
+    REFUTED = "refuted"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class Verdict:
-    proved: bool
+    outcome: Outcome
     witness: dict[str, int] | None = None   # an assignment under which some subexpression overflows
     offending: str | None = None            # the subexpression and its value at the witness
+    reason: str | None = None               # why the checker could not decide (UNKNOWN only)
+
+    @property
+    def proved(self) -> bool:
+        """The only verdict that licenses removing a check."""
+        return self.outcome is Outcome.PROVED
+
+    @property
+    def refuted(self) -> bool:
+        return self.outcome is Outcome.REFUTED
 
 
 def evaluate(e: Expr, env: dict[str, int]) -> int:
@@ -95,7 +115,7 @@ def subexpressions(e: Expr) -> list[Expr]:
 
 
 def interval(e: Expr, bounds: Bounds) -> tuple[int, int]:
-    """Sound (and, for this grammar, exact over boxes) bounds of e."""
+    """Sound bounds of e over the box (an over-approximation when a variable occurs more than once)."""
     if isinstance(e, Var):
         return bounds[e.name]
     if isinstance(e, Lit):
@@ -125,19 +145,23 @@ def render(e: Expr) -> str:
 
 
 def check_intervals(cert: RangeCertificate) -> Verdict:
-    """Decide the certificate with interval arithmetic; refute with a corner witness."""
+    """Prove the certificate with interval arithmetic, refute it with a corner witness, or say UNKNOWN."""
+    undecided: list[str] = []
+    names = sorted(cert.bounds)
     for sub in subexpressions(cert.expr):
         lo, hi = interval(sub, cert.bounds)
         if lo < cert.lo or hi > cert.hi:
-            names = sorted(cert.bounds)
             for corner in itertools.product(*(cert.bounds[n] for n in names)):
                 env = dict(zip(names, corner, strict=True))
                 v = evaluate(sub, env)
                 if v < cert.lo or v > cert.hi:
-                    return Verdict(False, env, f"{render(sub)} = {v}")
-            # intervals are exact over boxes for this grammar, so a corner witness must exist
-            raise AssertionError("interval said overflow but no corner witnessed it")
-    return Verdict(True)
+                    return Verdict(Outcome.REFUTED, env, f"{render(sub)} = {v}")
+            # the interval is an over-approximation: no corner overflows, but an interior point
+            # might (130 - x*x at x = 0), or none does (x - x); this checker cannot tell
+            undecided.append(f"{render(sub)} in [{lo}, {hi}]")
+    if undecided:
+        return Verdict(Outcome.UNKNOWN, reason="interval exceeds the range without a corner witness: " + "; ".join(undecided))
+    return Verdict(Outcome.PROVED)
 
 
 def check_z3(cert: RangeCertificate) -> Verdict:
@@ -166,14 +190,18 @@ def check_z3(cert: RangeCertificate) -> Verdict:
         solver.add(zvars[n] >= lo, zvars[n] <= hi)
     overflow = [z3.Or(tr(s) < cert.lo, tr(s) > cert.hi) for s in subexpressions(cert.expr)]
     solver.add(z3.Or(*overflow))
-    if solver.check() == z3.sat:
+    result = solver.check()
+    if result == z3.unsat:
+        return Verdict(Outcome.PROVED)
+    if result == z3.sat:
         m = solver.model()
-        env = {n: m[zvars[n]].as_long() for n in names}
+        env = {n: m.eval(zvars[n], model_completion=True).as_long() for n in names}
         for s in subexpressions(cert.expr):
             v = evaluate(s, env)
             if v < cert.lo or v > cert.hi:
-                return Verdict(False, env, f"{render(s)} = {v}")
-    return Verdict(True)
+                return Verdict(Outcome.REFUTED, env, f"{render(s)} = {v}")
+        return Verdict(Outcome.UNKNOWN, reason="Z3 model does not reproduce an overflow under evaluate()")
+    return Verdict(Outcome.UNKNOWN, reason=f"Z3 returned {result}")
 
 
 # ---- the standing example (design document, section 13; clause C-9-1) ---------------------

@@ -7,7 +7,7 @@ from the facts (design document, section 8). The proof ladder (section 9) is rec
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 

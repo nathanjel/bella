@@ -205,7 +205,7 @@ struct ICacheEntry {            // immutable metadata once published; a call sit
 //   ClassAttr      : no instance storage shadows the name: the promoted inline field for name (if declared) is Unset,
 //                    and the instance dict is null or has no entry for name
 //   GetAttrHook    : same instance-storage check as ClassAttr
-//   InstanceDict   : the dict pointer is non-null; probe by the cached hash
+//   InstanceDict   : the dict pointer is non-null; probe by the cached hash; a miss falls back to the generic lookup
 //   ShapeSlot      : the instance's shape pointer equals shape
 //   DataDescriptor : nothing further; found is called
 Obj  getattr_generic(Object* self, const Str* name, std::atomic<const ICacheEntry*>* ic);

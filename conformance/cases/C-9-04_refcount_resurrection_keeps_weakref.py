@@ -5,7 +5,7 @@
 """Refcount resurrection: the object lives on AND its weak reference is still alive."""
 import weakref
 
-keep: list["Plain"] = []
+keep: list[Plain] = []
 
 
 class Plain:

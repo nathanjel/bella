@@ -7,18 +7,28 @@ the real backend: it skips L2-L4 and assumes every value is an exact ``bella::In
 ``//`` and ``%`` lowered to the runtime's floor helpers, ``for`` over ``range`` as a loop
 whose variable survives the loop, for/while ``else`` through a break flag, left-to-right
 evaluation (each operand bound to a temporary where C++ would not guarantee the order).
+
+What it refuses rather than approximates (review 2026-11-01, docs/reviews/review-log.md): a
+value it would have to invent (a read of a variable that may be unassigned, a function that
+may fall off its end and return None, the None value of a procedure, a call before the
+function's ``def`` has run). The checks are a definite-assignment analysis over the toy subset;
+a program they cannot prove safe is ``Unsupported``, never compiled with a default value.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from pipeline.l1 import grammar as L
 from pipeline.l1.grammar import Unsupported
+from pipeline.l1.wf import _children, _stmt_exprs
 
 _INT_BIN = {"+": "({l} + {r})", "-": "({l} - {r})", "*": "({l} * {r})", "//": "bella::int_floordiv({l}, {r})",
             "%": "bella::int_mod({l}, {r})", "**": "bella::int_pow({l}, {r})", "<<": "({l} << {r})",
             ">>": "({l} >> {r})", "&": "({l} & {r})", "|": "({l} | {r})", "^": "({l} ^ {r})"}
 _CMP = {"<": "<", "<=": "<=", "==": "==", "!=": "!=", ">": ">", ">=": ">="}
+_BIND = "__bind__"
+_RAISING = {"//", "%", "<<", ">>", "**"}   # ZeroDivisionError, ValueError, or the toy's NotImplemented
 
 
 @dataclass
@@ -29,8 +39,27 @@ class _Fn:
     returns_value: bool = False
 
 
+def _is_bind(e: L.Expr) -> bool:
+    return isinstance(e, L.Call) and isinstance(e.func, L.Name) and e.func.id == _BIND
+
+
+def _bind_names(e: L.Expr, out: list[str]) -> None:
+    """Temporaries the chained-comparison desugaring binds, in evaluation order."""
+    if _is_bind(e):
+        assert isinstance(e, L.Call)
+        c = e.args[0]
+        if isinstance(c, L.Const) and isinstance(c.value, str) and c.value not in out:
+            out.append(c.value)
+    for child in _children(e):
+        _bind_names(child, out)
+
+
 def _assigned(stmts: tuple[L.Stmt, ...], out: list[str]) -> None:
+    """Names a block binds (assignment, for targets, comparison temporaries), in first-binding order."""
     for s in stmts:
+        if not isinstance(s, L.FunctionDef):
+            for e in _stmt_exprs(s):
+                _bind_names(e, out)
         if isinstance(s, (L.Assign, L.AugAssign)) and isinstance(s.target, L.NameTarget):
             if s.target.id not in out:
                 out.append(s.target.id)
@@ -53,6 +82,132 @@ def _returns_value(stmts: tuple[L.Stmt, ...]) -> bool:
     return False
 
 
+def _always_returns(stmts: tuple[L.Stmt, ...]) -> bool:
+    """Every path through the block ends in a return (so Python's implicit None is unreachable)."""
+    for s in stmts:
+        if isinstance(s, L.Return):
+            return True
+        if isinstance(s, L.If) and _always_returns(s.body) and _always_returns(s.orelse):
+            return True
+    return False
+
+
+def _names(e: L.Expr) -> Iterator[L.Name]:
+    if isinstance(e, L.Name):
+        yield e
+    for child in _children(e):
+        yield from _names(child)
+
+
+class _DefiniteAssignment:
+    """Refuse every read the toy emitter cannot prove is preceded by an assignment.
+
+    Python raises NameError/UnboundLocalError for such a read; C++ would read a default value.
+    Function bodies can only run once the first module-level statement that calls a user
+    function starts, so a global read inside a function must be assigned before that point.
+    """
+
+    def __init__(self, m: L.Module, functions: dict[str, L.FunctionDef], module_names: list[str]) -> None:
+        self.synthetic = m.synthetic
+        self.functions = functions
+        self.module_names = set(module_names) | set(functions)
+
+    def check(self, m: L.Module) -> None:
+        da: set[str] = set()
+        before_first_call: set[str] | None = None
+        for s in m.body:
+            if isinstance(s, L.FunctionDef):
+                da.add(s.name)
+                continue
+            if before_first_call is None and self._calls_user_function(s):
+                before_first_call = set(da)
+            da, _ = self.block((s,), da, self.module_names)
+        g0 = da if before_first_call is None else before_first_call
+        for f in self.functions.values():
+            params, locals_ = {p.name for p in f.params}, self._locals(f)
+            tracked = params | locals_ | set(f.globals) | self.module_names
+            # a local shadows the global of the same name, so only the non-shadowed globals start assigned
+            start = params | (g0 & ((self.module_names | set(f.globals)) - locals_ - params))
+            self.block(f.body, start, tracked)
+
+    def _locals(self, f: L.FunctionDef) -> set[str]:
+        out: list[str] = []
+        _assigned(f.body, out)
+        return set(out) - set(f.globals)
+
+    def _calls_user_function(self, s: L.Stmt) -> bool:
+        for e in _stmt_exprs(s):
+            if any(isinstance(c, L.Call) and isinstance(c.func, L.Name) and c.func.id in self.functions for c in _walk(e)):
+                return True
+        nested: tuple[L.Stmt, ...] = getattr(s, "body", ()) + getattr(s, "orelse", ())
+        return any(self._calls_user_function(sub) for sub in nested)
+
+    def reads(self, e: L.Expr, da: set[str], tracked: set[str]) -> None:
+        for n in _names(e):
+            if n.id in self.synthetic or n.id == _BIND:
+                continue
+            if n.id in tracked and n.id not in da:
+                what = "function" if n.id in self.functions else "variable"
+                raise Unsupported(f"{what} {n.id!r} may be used before it is assigned (line {n.line}): Python would "
+                                  "raise NameError or UnboundLocalError; the toy emitter cannot represent that")
+
+    def block(self, stmts: tuple[L.Stmt, ...], da: set[str], tracked: set[str]) -> tuple[set[str], bool]:
+        """(names definitely assigned after the block, whether every path left it early)."""
+        da = set(da)
+        for s in stmts:
+            if isinstance(s, L.Assign):
+                self.reads(s.value, da, tracked)
+                if isinstance(s.target, L.NameTarget):
+                    da.add(s.target.id)
+            elif isinstance(s, L.AugAssign):
+                if isinstance(s.target, L.NameTarget):
+                    self.reads(L.Name(s.line, s.target.id), da, tracked)
+                self.reads(s.value, da, tracked)
+            elif isinstance(s, (L.ExprStmt, L.Return)):
+                if s.value is not None:
+                    self.reads(s.value, da, tracked)
+                if isinstance(s, L.Return):
+                    return da, True
+            elif isinstance(s, (L.Break, L.Continue)):
+                return da, True
+            elif isinstance(s, L.If):
+                self.reads(s.test, da, tracked)
+                then, t_left = self.block(s.body, da, tracked)
+                other, o_left = self.block(s.orelse, da, tracked)
+                if t_left and o_left:
+                    return da, True
+                da = other if t_left else then if o_left else then & other
+            elif isinstance(s, L.While):
+                self.reads(s.test, da, tracked)
+                self.block(s.body, da, tracked)
+                self.block(s.orelse, da, tracked)      # the body may run zero times: nothing it assigns is definite
+            elif isinstance(s, L.For):
+                self.reads(s.iterable, da, tracked)
+                inner = set(da)
+                if isinstance(s.target, L.NameTarget):
+                    inner.add(s.target.id)
+                after_first, _ = self.block(s.body, inner, tracked)
+                self.block(s.orelse, da, tracked)
+                if _nonempty_constant_range(s.iterable):
+                    da = after_first        # the body runs at least once: its first pass is definite
+            # Pass, FunctionDef (refused elsewhere when nested) and the rest bind nothing here
+        return da, False
+
+
+def _nonempty_constant_range(it: L.Expr) -> bool:
+    if not (isinstance(it, L.Call) and isinstance(it.func, L.Name) and it.func.id == "range" and not it.kwargs):
+        return False
+    if not 1 <= len(it.args) <= 3 or not all(isinstance(a, L.Const) and type(a.value) is int for a in it.args):
+        return False
+    return len(range(*(a.value for a in it.args if isinstance(a, L.Const) and isinstance(a.value, int)))) > 0
+
+
+def _walk(e: L.Expr) -> Iterator[L.Expr]:
+    yield e
+    for child in _children(e):
+        yield from _walk(child)
+
+
 class Emitter:
     def __init__(self) -> None:
         self.lines: list[str] = []
@@ -61,14 +216,18 @@ class Emitter:
         self.functions: dict[str, L.FunctionDef] = {}
         self.module_names: list[str] = []
         self.tmp = 0
+        self.taken: set[str] = set()     # every identifier of the program: temporaries avoid them
 
     # ---- output helpers ---------------------------------------------------------------------
     def emit(self, line: str) -> None:
         self.lines.append("    " * self.indent + line)
 
     def fresh(self, prefix: str) -> str:
-        self.tmp += 1
-        return f"_{prefix}{self.tmp}"
+        while True:
+            self.tmp += 1
+            name = f"_{prefix}{self.tmp}"
+            if name not in self.taken:
+                return name
 
     # ---- kinds (the toy's whole type system) ----------------------------------------------
     def kind(self, e: L.Expr) -> str:
@@ -80,6 +239,9 @@ class Emitter:
             if isinstance(e.value, str):
                 return "str"
             raise Unsupported(f"constant {e.value!r} (toy emitter handles int, bool and str literals)")
+        if _is_bind(e):
+            assert isinstance(e, L.Call)
+            return self.kind(e.args[1])
         if isinstance(e, (L.Name, L.BinOp, L.UnaryOp, L.Call)):
             return "int"
         if isinstance(e, (L.Compare, L.Truth, L.Not)):
@@ -94,6 +256,20 @@ class Emitter:
         raise Unsupported(f"expression {type(e).__name__} (line {e.line})")
 
     # ---- expressions ------------------------------------------------------------------------
+    def _ordered(self, result: str, operands: tuple[L.Expr, ...], combine: str) -> str:
+        """Python evaluates operands left to right (C-2-01); C++ leaves the order of operands of
+        an overloaded operator or a call unspecified (GCC goes right to left). The order is
+        observable when an operand has an effect (a call, which may also change a name the other
+        operand reads) or when two operands can raise; then the operands are bound to temporaries
+        in order inside a lambda. Otherwise they stay inline, which keeps the output readable."""
+        has_call = any(isinstance(n, L.Call) for o in operands for n in _walk(o))
+        raising = sum(1 for o in operands if any(isinstance(n, L.BinOp) and n.op in _RAISING for n in _walk(o)))
+        if not has_call and raising <= 1:
+            return combine.format(*(self.expr(o) for o in operands))
+        names = [self.fresh("o") for _ in operands]
+        binds = " ".join(f"auto {n} = {self.expr(o)};" for n, o in zip(names, operands, strict=True))
+        return f"([&]() -> {result} {{ {binds} return {combine.format(*names)}; }})()"
+
     def expr(self, e: L.Expr) -> str:
         if isinstance(e, L.Const):
             if isinstance(e.value, bool):
@@ -110,7 +286,7 @@ class Emitter:
         if isinstance(e, L.BinOp):
             if e.op not in _INT_BIN:
                 raise Unsupported(f"operator {e.op} (line {e.line})")
-            return _INT_BIN[e.op].format(l=self.expr(e.left), r=self.expr(e.right))
+            return self._ordered("bella::Int", (e.left, e.right), _INT_BIN[e.op].format(l="{0}", r="{1}"))
         if isinstance(e, L.UnaryOp):
             if e.op == "-":
                 return f"(-{self.expr(e.operand)})"
@@ -120,7 +296,7 @@ class Emitter:
         if isinstance(e, L.Compare):
             if e.op not in _CMP:
                 raise Unsupported(f"comparison {e.op} (line {e.line})")
-            return f"({self.expr(e.left)} {_CMP[e.op]} {self.expr(e.right)})"
+            return self._ordered("bool", (e.left, e.right), f"({{0}} {_CMP[e.op]} {{1}})")
         if isinstance(e, L.Truth):
             return f"bella::truth({self.expr(e.operand)})"
         if isinstance(e, L.Not):
@@ -136,14 +312,18 @@ class Emitter:
         if isinstance(e, L.IfExp):
             return f"({self.expr(e.test)} ? {self.expr(e.body)} : {self.expr(e.orelse)})"
         if isinstance(e, L.Call):
+            if _is_bind(e):
+                name = e.args[0]
+                assert isinstance(name, L.Const) and isinstance(name.value, str)
+                return f"({name.value} = {self.expr(e.args[1])})"
             if not isinstance(e.func, L.Name):
                 raise Unsupported(f"call of a non-name (line {e.line})")
             if e.kwargs:
                 raise Unsupported(f"keyword arguments (line {e.line})")
-            if e.func.id == "print":
-                return self._call("bella::print", e.args, returns_int=False)
+            if e.func.id == "print" or (e.func.id in self.functions and not _returns_value(self.functions[e.func.id].body)):
+                raise Unsupported(f"the value of {e.func.id}(...) is None, which the toy emitter cannot represent (line {e.line})")
             if e.func.id in self.functions:
-                return self._call(e.func.id, e.args, returns_int=_returns_value(self.functions[e.func.id].body))
+                return self._call(e.func.id, e.args, returns_int=True)
             raise Unsupported(f"call of {e.func.id!r} (line {e.line}; the toy knows print and user functions)")
         raise Unsupported(f"expression {type(e).__name__} (line {e.line})")
 
@@ -173,7 +353,13 @@ class Emitter:
 
     def stmt(self, s: L.Stmt) -> None:
         if isinstance(s, L.ExprStmt):
-            self.emit(f"{self.expr(s.value)};")
+            v = s.value
+            if isinstance(v, L.Call) and isinstance(v.func, L.Name) and not v.kwargs and (
+                    v.func.id == "print" or (v.func.id in self.functions and not _returns_value(self.functions[v.func.id].body))):
+                callee = "bella::print" if v.func.id == "print" else v.func.id
+                self.emit(f"{self._call(callee, v.args, returns_int=False)};")
+            else:
+                self.emit(f"{self.expr(v)};")
         elif isinstance(s, L.Assign):
             if not isinstance(s.target, L.NameTarget):
                 raise Unsupported(f"assignment target {type(s.target).__name__} (line {s.line})")
@@ -181,7 +367,9 @@ class Emitter:
         elif isinstance(s, L.AugAssign):
             if not isinstance(s.target, L.NameTarget) or s.op not in _INT_BIN:
                 raise Unsupported(f"augmented assignment (line {s.line})")
-            self.emit(f"{s.target.id} = {_INT_BIN[s.op].format(l=s.target.id, r=self.expr(s.value))};")
+            target = L.Name(s.line, s.target.id)
+            value = self._ordered("bella::Int", (target, s.value), _INT_BIN[s.op].format(l="{0}", r="{1}"))
+            self.emit(f"{s.target.id} = {value};")
         elif isinstance(s, L.Return):
             if self.fn is None:
                 raise Unsupported("return outside a function")
@@ -213,22 +401,27 @@ class Emitter:
         else:
             raise Unsupported(f"statement {type(s).__name__} (line {s.line})")
 
-    def loop(self, head: str, body: tuple[L.Stmt, ...], orelse: tuple[L.Stmt, ...]) -> None:
-        if not orelse:
-            self.emit(f"{head} {{")
-            self.block(body)
-            self.emit("}")
-            return
-        flag = self.fresh("broke")
-        self.emit(f"bool {flag} = false;")
+    def loop(self, head: str, body: tuple[L.Stmt, ...], orelse: tuple[L.Stmt, ...], prologue: tuple[str, ...] = ()) -> None:
+        flag = self.fresh("broke") if orelse else None
+        if flag:
+            self.emit(f"bool {flag} = false;")
         self.emit(f"{head} {{")
         self.indent += 1
-        self._block_with_break_flag(body, flag)
+        for line in prologue:
+            self.emit(line)
+        if flag:
+            self._block_with_break_flag(body, flag)
+        else:
+            if not body:
+                self.emit("/* pass */")
+            for st in body:
+                self.stmt(st)
         self.indent -= 1
         self.emit("}")
-        self.emit(f"if (!{flag}) {{")
-        self.block(orelse)
-        self.emit("}")
+        if flag:
+            self.emit(f"if (!{flag}) {{")
+            self.block(orelse)
+            self.emit("}")
 
     def _block_with_break_flag(self, stmts: tuple[L.Stmt, ...], flag: str) -> None:
         for s in stmts:
@@ -250,42 +443,53 @@ class Emitter:
                 self.stmt(s)
 
     def for_range(self, s: L.For) -> None:
+        """for x in range(...): the arguments are evaluated once, left to right, before the loop; a
+        hidden counter drives the loop and x is assigned at the top of each iteration, so x keeps
+        its last value afterwards, is untouched by an empty range, and assigning it in the body
+        does not change the iteration (review 2026-11-01, astra-low-01 #2, gemini 2.2.4)."""
         it = s.iterable
         if not (isinstance(it, L.Call) and isinstance(it.func, L.Name) and it.func.id == "range"
                 and isinstance(s.target, L.NameTarget)):
             raise Unsupported(f"for over something other than range(...) (line {s.line})")
-        args = [self.expr(a) for a in it.args]
-        if len(args) == 1:
-            start, stop, step = "bella::Int(0)", args[0], None
-        elif len(args) == 2:
-            start, stop, step = args[0], args[1], None
-        elif len(args) == 3 and isinstance(it.args[2], L.Const) and isinstance(it.args[2].value, int) and it.args[2].value > 0:
-            start, stop, step = args[0], args[1], args[2]
-        else:
+        if not 1 <= len(it.args) <= 3 or (len(it.args) == 3 and not (
+                isinstance(it.args[2], L.Const) and isinstance(it.args[2].value, int) and it.args[2].value > 0)):
             raise Unsupported(f"range with a non-literal or non-positive step (line {s.line})")
-        var = s.target.id
-        stop_tmp = self.fresh("stop")
-        self.emit(f"bella::Int {stop_tmp} = {stop};")
-        head = f"for ({var} = {start}; {var} < {stop_tmp}; {var} = {var} + {step or 'bella::Int(1)'})"
-        self.loop(head, s.body, s.orelse)
+        bounds = []
+        for a in it.args:
+            t = self.fresh("range")
+            self.emit(f"bella::Int {t} = {self.expr(a)};")
+            bounds.append(t)
+        if len(bounds) == 1:
+            start, stop, step = "bella::Int(0)", bounds[0], "bella::Int(1)"
+        elif len(bounds) == 2:
+            start, stop, step = bounds[0], bounds[1], "bella::Int(1)"
+        else:
+            start, stop, step = bounds
+        i = self.fresh("i")
+        head = f"for (bella::Int {i} = {start}; {i} < {stop}; {i} = {i} + {step})"
+        self.loop(head, s.body, s.orelse, prologue=(f"{s.target.id} = {i};",))
 
     # ---- functions and module ---------------------------------------------------------------
     def function(self, f: L.FunctionDef) -> None:
         if any(p.default is not None for p in f.params):
             raise Unsupported(f"default parameter values in {f.name}")
+        if f.nonlocals:
+            raise Unsupported(f"nonlocal declarations in {f.name}")
         rv = _returns_value(f.body)
+        if rv and not _always_returns(f.body):
+            raise Unsupported(f"{f.name} returns a value on some paths and may fall off its end (Python returns None "
+                              "there, which the toy emitter cannot represent)")
         locals_: list[str] = []
         _assigned(f.body, locals_)
-        self.fn = _Fn(f.name, [p.name for p in f.params], [n for n in locals_ if n not in {p.name for p in f.params}], rv)
-        params = ", ".join(f"bella::Int {p.name}" for p in f.params)
-        self.emit(f"{'bella::Int' if rv else 'void'} {f.name}({params}) {{")
+        params = {p.name for p in f.params}
+        self.fn = _Fn(f.name, [p.name for p in f.params], [n for n in locals_ if n not in params and n not in f.globals], rv)
+        signature = ", ".join(f"bella::Int {p.name}" for p in f.params)
+        self.emit(f"{'bella::Int' if rv else 'void'} {f.name}({signature}) {{")
         self.indent += 1
         for n in self.fn.locals_:
-            self.emit(f"bella::Int {n}{{}};")
+            self.emit(f"bella::Int {n}{{}};   // assigned before every read (checked)")
         self.indent -= 1
         self.block(f.body)
-        if rv:
-            self.emit("    return bella::Int(0);  // Python's implicit None is unreachable for value-returning toy functions")
         self.emit("}")
         self.emit("")
         self.fn = None
@@ -299,13 +503,27 @@ class Emitter:
         for s in m.body:
             if isinstance(s, L.FunctionDef):
                 self.functions[s.name] = s
+                self.taken.update(p.name for p in s.params)
         _assigned(m.body, self.module_names)
+        self.taken |= set(self.module_names) | set(self.functions) | m.synthetic
+        for s in m.body:
+            for e in _stmt_exprs(s):
+                self.taken.update(n.id for n in _names(e))
+            if isinstance(s, L.FunctionDef):
+                body: list[str] = []
+                _assigned(s.body, body)
+                self.taken.update(body)
+        for f in self.functions.values():
+            for g in sorted(f.globals):
+                if g not in self.module_names:
+                    self.module_names.append(g)
+        _DefiniteAssignment(m, self.functions, self.module_names).check(m)
         for n in self.module_names:
             self.emit(f"static bella::Int {n}{{}};")
         if self.module_names:
             self.emit("")
-        for n in self.functions.values():
-            self.emit(f"{'bella::Int' if _returns_value(n.body) else 'void'} {n.name}({', '.join('bella::Int ' + p.name for p in n.params)});")
+        for fn in self.functions.values():
+            self.emit(f"{'bella::Int' if _returns_value(fn.body) else 'void'} {fn.name}({', '.join('bella::Int ' + p.name for p in fn.params)});")
         if self.functions:
             self.emit("")
         for s in m.body:
@@ -321,6 +539,9 @@ class Emitter:
         self.emit("        return 1;")
         self.emit("    } catch (const bella::ZeroDivisionError& e) {")
         self.emit("        std::cerr << \"ZeroDivisionError: \" << e.what() << '\\n';")
+        self.emit("        return 1;")
+        self.emit("    } catch (const bella::ValueError& e) {")
+        self.emit("        std::cerr << \"ValueError: \" << e.what() << '\\n';")
         self.emit("        return 1;")
         self.emit("    }")
         self.emit("    return 0;")

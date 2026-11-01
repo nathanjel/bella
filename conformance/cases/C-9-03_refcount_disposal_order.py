@@ -13,7 +13,7 @@ class Plain:
         order.append("finalizer")
 
 
-def callback(_ref: "weakref.ReferenceType[Plain]") -> None:
+def callback(_ref: weakref.ReferenceType[Plain]) -> None:
     order.append("weakref")
 
 

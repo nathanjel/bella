@@ -11,58 +11,61 @@ bella::Int gcd(bella::Int a, bella::Int b);
 bella::Int signs(bella::Int a, bella::Int b);
 
 bella::Int gcd(bella::Int a, bella::Int b) {
-    bella::Int r{};
+    bella::Int r{};   // assigned before every read (checked)
     while (bella::truth((b != bella::Int(std::int64_t{0})))) {
         r = bella::int_mod(a, b);
         a = b;
         b = r;
     }
     return a;
-    return bella::Int(0);  // Python's implicit None is unreachable for value-returning toy functions
 }
 
 bella::Int signs(bella::Int a, bella::Int b) {
     ([&]() { auto _a1 = a; auto _a2 = b; auto _a3 = bella::int_floordiv(a, b); auto _a4 = bella::int_mod(a, b); auto _a5 = bella::int_floordiv((-a), b); auto _a6 = bella::int_mod((-a), b); auto _a7 = bella::int_floordiv(a, (-b)); auto _a8 = bella::int_mod(a, (-b)); bella::print(_a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8); })();
-    return (bella::int_floordiv(a, b) + bella::int_mod(a, b));
-    return bella::Int(0);  // Python's implicit None is unreachable for value-returning toy functions
+    return ([&]() -> bella::Int { auto _o9 = bella::int_floordiv(a, b); auto _o10 = bella::int_mod(a, b); return (_o9 + _o10); })();
 }
 
 int main() {
     try {
         total = bella::Int(std::int64_t{0});
-        bella::Int _stop9 = bella::Int(std::int64_t{50});
-        bool _broke10 = false;
-        for (n = bella::Int(std::int64_t{1}); n < _stop9; n = n + bella::Int(1)) {
+        bella::Int _range11 = bella::Int(std::int64_t{1});
+        bella::Int _range12 = bella::Int(std::int64_t{50});
+        bool _broke14 = false;
+        for (bella::Int _i13 = _range11; _i13 < _range12; _i13 = _i13 + bella::Int(1)) {
+            n = _i13;
             if (bella::truth((bella::int_mod(n, bella::Int(std::int64_t{7})) == bella::Int(std::int64_t{0})))) {
                 continue;
             }
             if (bella::truth((n > bella::Int(std::int64_t{40})))) {
-                _broke10 = true;
+                _broke14 = true;
                 break;
             }
             total = (total + n);
         }
-        if (!_broke10) {
+        if (!_broke14) {
             bella::print("never printed: the loop broke");
         }
-        ([&]() { auto _a11 = "total"; auto _a12 = total; auto _a13 = "gcd"; auto _a14 = gcd(bella::Int(std::int64_t{1071}), bella::Int(std::int64_t{462})); auto _a15 = ([&]() -> bella::Int { auto _a16 = (-bella::Int(std::int64_t{48})); auto _a17 = bella::Int(std::int64_t{18}); return gcd(_a16, _a17); })(); bella::print(_a11, _a12, _a13, _a14, _a15); })();
+        ([&]() { auto _a15 = "total"; auto _a16 = total; auto _a17 = "gcd"; auto _a18 = gcd(bella::Int(std::int64_t{1071}), bella::Int(std::int64_t{462})); auto _a19 = ([&]() -> bella::Int { auto _a20 = (-bella::Int(std::int64_t{48})); auto _a21 = bella::Int(std::int64_t{18}); return gcd(_a20, _a21); })(); bella::print(_a15, _a16, _a17, _a18, _a19); })();
         k = bella::Int(std::int64_t{0});
-        bool _broke18 = false;
+        bool _broke22 = false;
         while (bella::truth((k < bella::Int(std::int64_t{10})))) {
             k = (k + bella::Int(std::int64_t{3}));
         }
-        if (!_broke18) {
+        if (!_broke22) {
             bella::print("while-else runs when the loop ends normally", k);
         }
-        ([&]() { auto _a19 = signs(bella::Int(std::int64_t{7}), bella::Int(std::int64_t{2})); auto _a20 = ([&]() -> bella::Int { auto _a21 = (-bella::Int(std::int64_t{7})); auto _a22 = bella::Int(std::int64_t{2}); return signs(_a21, _a22); })(); auto _a23 = ([&]() -> bella::Int { auto _a24 = bella::Int(std::int64_t{7}); auto _a25 = (-bella::Int(std::int64_t{2})); return signs(_a24, _a25); })(); bella::print(_a19, _a20, _a23); })();
-        ([&]() { auto _a26 = "and/or return operands:"; auto _a27 = ([&]() -> bella::Int { bella::Int _l = bella::Int(std::int64_t{0}); return bella::truth(_l) ? _l : bella::Int(std::int64_t{5}); })(); auto _a28 = ([&]() -> bella::Int { bella::Int _l = bella::Int(std::int64_t{3}); return !bella::truth(_l) ? _l : bella::Int(std::int64_t{0}); })(); auto _a29 = ([&]() -> bella::Int { bella::Int _l = bella::Int(std::int64_t{2}); return !bella::truth(_l) ? _l : bella::Int(std::int64_t{4}); })(); auto _a30 = ([&]() -> bella::Int { bella::Int _l = bella::Int(std::int64_t{0}); return bella::truth(_l) ? _l : bella::Int(std::int64_t{0}); })(); bella::print(_a26, _a27, _a28, _a29, _a30); })();
-        ([&]() { auto _a31 = "bool ops:"; auto _a32 = ((bella::Int(std::int64_t{1}) < bella::Int(std::int64_t{2})) && (bella::Int(std::int64_t{3}) > bella::Int(std::int64_t{2}))); auto _a33 = (!bella::truth((bella::Int(std::int64_t{1}) < bella::Int(std::int64_t{2})))); auto _a34 = (bella::truth((bella::Int(std::int64_t{2}) > bella::Int(std::int64_t{1}))) ? bella::Int(std::int64_t{5}) : bella::Int(std::int64_t{6})); bella::print(_a31, _a32, _a33, _a34); })();
-        ([&]() { auto _a35 = "shifts and bits:"; auto _a36 = (bella::Int(std::int64_t{1}) << bella::Int(std::int64_t{40})); auto _a37 = ((-bella::Int(std::int64_t{1})) >> bella::Int(std::int64_t{3})); auto _a38 = (bella::Int(std::int64_t{6}) & bella::Int(std::int64_t{3})); auto _a39 = (bella::Int(std::int64_t{6}) | bella::Int(std::int64_t{3})); auto _a40 = (bella::Int(std::int64_t{6}) ^ bella::Int(std::int64_t{3})); auto _a41 = (~bella::Int(std::int64_t{5})); auto _a42 = bella::int_pow(bella::Int(std::int64_t{2}), bella::Int(std::int64_t{20})); bella::print(_a35, _a36, _a37, _a38, _a39, _a40, _a41, _a42); })();
+        ([&]() { auto _a23 = signs(bella::Int(std::int64_t{7}), bella::Int(std::int64_t{2})); auto _a24 = ([&]() -> bella::Int { auto _a25 = (-bella::Int(std::int64_t{7})); auto _a26 = bella::Int(std::int64_t{2}); return signs(_a25, _a26); })(); auto _a27 = ([&]() -> bella::Int { auto _a28 = bella::Int(std::int64_t{7}); auto _a29 = (-bella::Int(std::int64_t{2})); return signs(_a28, _a29); })(); bella::print(_a23, _a24, _a27); })();
+        ([&]() { auto _a30 = "and/or return operands:"; auto _a31 = ([&]() -> bella::Int { bella::Int _l = bella::Int(std::int64_t{0}); return bella::truth(_l) ? _l : bella::Int(std::int64_t{5}); })(); auto _a32 = ([&]() -> bella::Int { bella::Int _l = bella::Int(std::int64_t{3}); return !bella::truth(_l) ? _l : bella::Int(std::int64_t{0}); })(); auto _a33 = ([&]() -> bella::Int { bella::Int _l = bella::Int(std::int64_t{2}); return !bella::truth(_l) ? _l : bella::Int(std::int64_t{4}); })(); auto _a34 = ([&]() -> bella::Int { bella::Int _l = bella::Int(std::int64_t{0}); return bella::truth(_l) ? _l : bella::Int(std::int64_t{0}); })(); bella::print(_a30, _a31, _a32, _a33, _a34); })();
+        ([&]() { auto _a35 = "bool ops:"; auto _a36 = ((bella::Int(std::int64_t{1}) < bella::Int(std::int64_t{2})) && (bella::Int(std::int64_t{3}) > bella::Int(std::int64_t{2}))); auto _a37 = (!bella::truth((bella::Int(std::int64_t{1}) < bella::Int(std::int64_t{2})))); auto _a38 = (bella::truth((bella::Int(std::int64_t{2}) > bella::Int(std::int64_t{1}))) ? bella::Int(std::int64_t{5}) : bella::Int(std::int64_t{6})); bella::print(_a35, _a36, _a37, _a38); })();
+        ([&]() { auto _a39 = "shifts and bits:"; auto _a40 = (bella::Int(std::int64_t{1}) << bella::Int(std::int64_t{40})); auto _a41 = ((-bella::Int(std::int64_t{1})) >> bella::Int(std::int64_t{3})); auto _a42 = (bella::Int(std::int64_t{6}) & bella::Int(std::int64_t{3})); auto _a43 = (bella::Int(std::int64_t{6}) | bella::Int(std::int64_t{3})); auto _a44 = (bella::Int(std::int64_t{6}) ^ bella::Int(std::int64_t{3})); auto _a45 = (~bella::Int(std::int64_t{5})); auto _a46 = bella::int_pow(bella::Int(std::int64_t{2}), bella::Int(std::int64_t{20})); bella::print(_a39, _a40, _a41, _a42, _a43, _a44, _a45, _a46); })();
     } catch (const bella::NotImplemented& e) {
         std::cerr << "bella::NotImplemented: " << e.what() << '\n';
         return 1;
     } catch (const bella::ZeroDivisionError& e) {
         std::cerr << "ZeroDivisionError: " << e.what() << '\n';
+        return 1;
+    } catch (const bella::ValueError& e) {
+        std::cerr << "ValueError: " << e.what() << '\n';
         return 1;
     }
     return 0;

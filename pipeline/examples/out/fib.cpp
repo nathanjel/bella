@@ -11,22 +11,26 @@ bella::Int fib(bella::Int n) {
     if (bella::truth((n < bella::Int(std::int64_t{2})))) {
         return n;
     }
-    return (([&]() -> bella::Int { auto _a1 = (n - bella::Int(std::int64_t{1})); return fib(_a1); })() + ([&]() -> bella::Int { auto _a2 = (n - bella::Int(std::int64_t{2})); return fib(_a2); })());
-    return bella::Int(0);  // Python's implicit None is unreachable for value-returning toy functions
+    return ([&]() -> bella::Int { auto _o1 = ([&]() -> bella::Int { auto _a3 = (n - bella::Int(std::int64_t{1})); return fib(_a3); })(); auto _o2 = ([&]() -> bella::Int { auto _a4 = (n - bella::Int(std::int64_t{2})); return fib(_a4); })(); return (_o1 + _o2); })();
 }
 
 int main() {
     try {
-        bella::Int _stop3 = bella::Int(std::int64_t{25});
-        for (i = bella::Int(std::int64_t{0}); i < _stop3; i = i + bella::Int(1)) {
-            ([&]() { auto _a4 = i; auto _a5 = fib(i); bella::print(_a4, _a5); })();
+        bella::Int _range5 = bella::Int(std::int64_t{0});
+        bella::Int _range6 = bella::Int(std::int64_t{25});
+        for (bella::Int _i7 = _range5; _i7 < _range6; _i7 = _i7 + bella::Int(1)) {
+            i = _i7;
+            ([&]() { auto _a8 = i; auto _a9 = fib(i); bella::print(_a8, _a9); })();
         }
-        ([&]() { auto _a6 = "fib(60) fits the 63-bit immediate:"; auto _a7 = (fib(bella::Int(std::int64_t{30})) * bella::Int(std::int64_t{1000})); auto _a8 = (bella::Int(std::int64_t{60}) > bella::Int(std::int64_t{30})); bella::print(_a6, _a7, _a8); })();
+        ([&]() { auto _a10 = "fib(60) fits the 63-bit immediate:"; auto _a11 = ([&]() -> bella::Int { auto _o12 = fib(bella::Int(std::int64_t{30})); auto _o13 = bella::Int(std::int64_t{1000}); return (_o12 * _o13); })(); auto _a14 = (bella::Int(std::int64_t{60}) > bella::Int(std::int64_t{30})); bella::print(_a10, _a11, _a14); })();
     } catch (const bella::NotImplemented& e) {
         std::cerr << "bella::NotImplemented: " << e.what() << '\n';
         return 1;
     } catch (const bella::ZeroDivisionError& e) {
         std::cerr << "ZeroDivisionError: " << e.what() << '\n';
+        return 1;
+    } catch (const bella::ValueError& e) {
+        std::cerr << "ValueError: " << e.what() << '\n';
         return 1;
     }
     return 0;

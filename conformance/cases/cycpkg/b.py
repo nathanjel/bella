@@ -1,5 +1,5 @@
 print("b: start")
-import cycpkg.a as a  # the partially initialised module is returned as it stands
+import cycpkg.a as a  # noqa: E402  -- after the print on purpose: the partially initialised module is returned as it stands
 
 try:
     print(a.X)

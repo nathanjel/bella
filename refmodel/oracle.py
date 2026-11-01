@@ -6,6 +6,7 @@ from the CPython side is exactly the property under test.
 """
 from __future__ import annotations
 
+import functools
 import random
 from dataclasses import dataclass, field
 from typing import Any
@@ -227,8 +228,8 @@ class World:
         for i, (m, r) in enumerate(self.objects):
             for name in NAMES:
                 site = self.sites[name]
-                om = _outcome(lambda: self.rt.getattr(m, name, site))
-                orr = _outcome(lambda: getattr(r, name))
+                om = _outcome(functools.partial(self.rt.getattr, m, name, site))
+                orr = _outcome(functools.partial(getattr, r, name))
                 if om != orr:
                     raise Mismatch(f"sweep obj{i}.{name}: model {om!r} != cpython {orr!r}\nlog:\n"
                                    + "\n".join(map(repr, self.log)))

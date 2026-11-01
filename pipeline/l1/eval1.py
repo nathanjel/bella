@@ -59,6 +59,9 @@ class Scope:
     globals_: frozenset[str] = frozenset()
     nonlocals_: frozenset[str] = frozenset()
     module: Scope | None = None
+    # bindings of the frontend's synthetic names (comparison temporaries, comprehension helpers):
+    # real bindings for the program's semantics, invisible to globals(), locals() and friends
+    temps: dict[str, Any] = field(default_factory=dict)
 
     def is_module(self) -> bool:
         return self.module is None
@@ -79,6 +82,19 @@ class Function:
         return self.interp.call(self, args, kwargs)
 
 
+def special_lookup(obj: Any, name: str) -> Any:
+    """CPython's special-method lookup (_PyObject_LookupSpecial) as the with-statement uses it:
+    the name is looked up on the type's MRO, never on the instance, and bound through the
+    descriptor protocol; a missing method is a TypeError. The L1 intrinsic ``__special__``."""
+    t = type(obj)
+    for k in t.__mro__:
+        if name in k.__dict__:
+            v = k.__dict__[name]
+            get = getattr(type(v), "__get__", None)
+            return get(v, obj, t) if get is not None else v
+    raise TypeError(f"'{t.__name__}' object does not support the context manager protocol")
+
+
 def _local_names(f: L.FunctionDef) -> frozenset[str]:
     from pipeline.l1.wf import _bound_in
     out: set[str] = {p.name for p in f.params}
@@ -86,18 +102,43 @@ def _local_names(f: L.FunctionDef) -> frozenset[str]:
     return frozenset(out - set(f.globals) - set(f.nonlocals))
 
 
+# Host builtins whose result depends on the *interpreter's* own frames rather than on the program:
+# called naively they would hand eval1's state to the program (found 2026-11-01 while reproducing
+# gemini 2.2.1). They are intrinsics here, or refused.
+_HOST_STATE = (builtins.globals, builtins.locals, builtins.vars, builtins.dir,
+               builtins.eval, builtins.exec, builtins.compile)
+
+
 class Interpreter:
     def __init__(self, builtins_: dict[str, Any] | None = None) -> None:
         self.builtins = dict(vars(builtins)) if builtins_ is None else builtins_
+        self.builtins.setdefault("__special__", special_lookup)
+        self.synthetic: frozenset[str] = frozenset()
 
     # ---- entry ---------------------------------------------------------------------------
     def run_module(self, m: L.Module, name: str = "__main__") -> Scope:
+        self.synthetic = m.synthetic
         module = Scope(vars={"__name__": name})
         self.block(m.body, module)
         return module
 
+    def _host_state(self, fn: Any, e: L.Call, scope: Scope) -> Any:
+        return _host_state_impl(self, fn, e, scope)
+
     # ---- names -----------------------------------------------------------------------------
+    def _load_synthetic(self, name: str, scope: Scope) -> Any:
+        s: Scope | None = scope
+        while s is not None:
+            if name in s.temps:
+                return s.temps[name]
+            s = s.parent
+        if scope.module is not None and name in scope.module.temps:
+            return scope.module.temps[name]
+        raise NameError(f"synthetic name '{name}' is unbound", name=name)
+
     def load(self, name: str, scope: Scope, line: int) -> Any:
+        if name in self.synthetic:
+            return self._load_synthetic(name, scope)
         if scope.is_module():
             if name in scope.vars:
                 return scope.vars[name]
@@ -109,15 +150,24 @@ class Interpreter:
         if name in scope.locals_:
             if name in scope.vars:
                 return scope.vars[name]
-            raise UnboundLocalError(f"cannot access local variable '{name}' where it is not associated with a value", name=name)
+            # CPython 3.15 leaves UnboundLocalError.name as None (measured; NameError carries it)
+            raise UnboundLocalError(f"cannot access local variable '{name}' where it is not associated with a value")
         s: Scope | None = scope.parent
         while s is not None and not s.is_module():
             if name in s.vars:
                 return s.vars[name]
+            if name in s.locals_:
+                # a free variable whose binding in the enclosing function does not exist (yet):
+                # NameError, never the global of the same name (review 2026-11-01, gemini 2.2.5.3)
+                raise NameError(f"cannot access free variable '{name}' where it is not associated with a value "
+                                "in enclosing scope", name=name)
             s = s.parent
         return self.load(name, scope.module or scope, line)
 
     def store(self, name: str, value: Any, scope: Scope) -> None:
+        if name in self.synthetic:
+            scope.temps[name] = value
+            return
         if scope.is_module() or name in scope.locals_:
             scope.vars[name] = value
             return
@@ -136,10 +186,29 @@ class Interpreter:
         scope.vars[name] = value
 
     def delete(self, name: str, scope: Scope) -> None:
-        target = scope.module if (name in scope.globals_ and scope.module is not None) else scope
-        if name not in target.vars:
-            raise NameError(f"name '{name}' is not defined", name=name)
-        del target.vars[name]
+        """Python's del of a name (review 2026-11-01, gemini 2.2.5.4): an unbound local raises
+        UnboundLocalError, a nonlocal deletes the enclosing binding, a global the module's."""
+        if scope.is_module() or name in scope.globals_:
+            module = scope if scope.is_module() else scope.module
+            assert module is not None
+            if name not in module.vars:
+                raise NameError(f"name '{name}' is not defined", name=name)
+            del module.vars[name]
+            return
+        if name in scope.nonlocals_:
+            s: Scope | None = scope.parent
+            while s is not None and not s.is_module():
+                if name in s.locals_ or name in s.vars:
+                    if name not in s.vars:
+                        raise NameError(f"cannot access free variable '{name}' where it is not associated with a value "
+                                        "in enclosing scope", name=name)
+                    del s.vars[name]
+                    return
+                s = s.parent
+            raise SyntaxError(f"no binding for nonlocal '{name}' found")
+        if name not in scope.vars:
+            raise UnboundLocalError(f"cannot access local variable '{name}' where it is not associated with a value")
+        del scope.vars[name]
 
     # ---- statements ------------------------------------------------------------------------
     def block(self, stmts: tuple[L.Stmt, ...], scope: Scope) -> None:
@@ -288,6 +357,14 @@ class Interpreter:
         scope = Scope(vars={}, parent=fn.closure, locals_=_local_names(node),
                       globals_=node.globals, nonlocals_=node.nonlocals, module=module)
         names = [p.name for p in node.params]
+        if any(n in self.synthetic for n in names):          # a comprehension helper's iterator
+            assert len(names) == 1 and len(args) == 1 and not kwargs
+            scope.temps[names[0]] = args[0]
+            try:
+                self.block(node.body, scope)
+            except _Return as r:
+                return r.value
+            return None
         if len(args) > len(names):
             raise TypeError(f"{node.name}() takes {len(names)} positional arguments but {len(args)} were given")
         for name, value in zip(names, args, strict=False):
@@ -341,6 +418,8 @@ class Interpreter:
                 self.store(name.value, value, scope)
                 return value
             fn = self.expr(e.func, scope)
+            if any(fn is h for h in _HOST_STATE):
+                return self._host_state(fn, e, scope)
             args = [self.expr(a, scope) for a in e.args]
             kwargs = {k: self.expr(v, scope) for k, v in e.kwargs}
             return fn(*args, **kwargs)
@@ -355,6 +434,27 @@ class Interpreter:
         if isinstance(e, L.DictLit):
             return {self.expr(k, scope): self.expr(v, scope) for k, v in zip(e.keys, e.values, strict=True)}
         raise TypeError(f"unknown expression {type(e).__name__}")
+
+
+def _module_of(scope: Scope) -> Scope:
+    return scope if scope.is_module() else (scope.module or scope)
+
+
+def _host_state_impl(interp: Interpreter, fn: Any, e: L.Call, scope: Scope) -> Any:
+    if fn in (builtins.eval, builtins.exec, builtins.compile):
+        raise L.Unsupported(f"{fn.__name__}() of source text is excluded (E-01) (line {e.line})")
+    if e.args or e.kwargs:
+        if fn is builtins.globals or fn is builtins.locals:
+            raise TypeError(f"{fn.__name__}() takes no arguments")
+        return fn(*[interp.expr(a, scope) for a in e.args], **{k: interp.expr(v, scope) for k, v in e.kwargs})
+    if fn is builtins.globals:
+        return _module_of(scope).vars
+    if not scope.is_module():
+        raise L.Unsupported(f"{fn.__name__}() inside a function is not modelled by eval1 yet (line {e.line})")
+    if fn is builtins.dir:
+        return sorted(scope.vars)
+    return scope.vars                                      # locals() and vars() at module level
+
 
 
 def run_source(source: str, filename: str = "<module>") -> Scope:

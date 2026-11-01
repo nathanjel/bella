@@ -31,8 +31,41 @@ def _targets(t: L.Target, out: set[str]) -> None:
             _targets(e, out)
 
 
+def _stmt_exprs(s: L.Stmt) -> list[L.Expr]:
+    """The expressions a statement evaluates in its own scope (not nested statement bodies)."""
+    out: list[L.Expr] = []
+
+    def target(t: L.Target) -> None:
+        if isinstance(t, L.AttrTarget):
+            out.append(t.obj)
+        elif isinstance(t, L.ItemTarget):
+            out.extend((t.obj, t.key))
+        elif isinstance(t, L.TupleTarget):
+            for e in t.elts:
+                target(e)
+
+    if isinstance(s, L.FunctionDef):
+        return [p.default for p in s.params if p.default is not None]   # defaults: enclosing scope
+    for v in vars(s).values():
+        if isinstance(v, L.Expr):
+            out.append(v)
+        elif isinstance(v, L.Target):
+            target(v)
+        elif isinstance(v, tuple):
+            for x in v:
+                if isinstance(x, L.Handler) and x.type is not None:
+                    out.append(x.type)
+                elif isinstance(x, L.Target):
+                    target(x)
+    return out
+
+
 def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
     for s in stmts:
+        # names bound by __bind__ (the chained-comparison desugaring) in any statement position:
+        # conditions, returns, assignments, assertions (review 2026-11-01, gemini 2.2.1)
+        for e in _stmt_exprs(s):
+            _walrus(e, out)
         if isinstance(s, (L.Assign, L.AugAssign)):
             _targets(s.target, out)
         elif isinstance(s, L.For):
@@ -44,6 +77,9 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
             _bound_in(s.orelse, out)
         elif isinstance(s, L.FunctionDef):
             out.add(s.name)
+        elif isinstance(s, L.Delete):
+            for t in s.targets:          # `del x` makes x local to its scope, as assignment does
+                _targets(t, out)
         elif isinstance(s, L.Try):
             _bound_in(s.body, out)
             for h in s.handlers:
@@ -52,8 +88,6 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
                 _bound_in(h.body, out)
             _bound_in(s.orelse, out)
             _bound_in(s.finalbody, out)
-        elif isinstance(s, L.ExprStmt):
-            _walrus(s.value, out)
 
 
 def _walrus(e: L.Expr, out: set[str]) -> None:
@@ -88,7 +122,7 @@ class _Checker:
     def module(self, m: L.Module) -> None:
         scope = _Scope(bound=set())
         _bound_in(m.body, scope.bound)
-        scope.bound |= set(dir(builtins)) | {"__bind__", "__name__"} | set(self.extra_names)
+        scope.bound |= set(dir(builtins)) | {"__bind__", "__special__", "__name__"} | set(self.extra_names)
         self.block(m.body, scope)
 
     def block(self, stmts: tuple[L.Stmt, ...], scope: _Scope) -> None:
