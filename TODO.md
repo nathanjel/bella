@@ -87,16 +87,19 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   walker over `docs/deviations.toml` and the tier table (`tools/score_candidate.py` is its
   seed). Teach `tools/closure.py` to take a target program as its root, so each target has its
   own closure and the increments follow from them.
+* Decided 2026-11-01: each increment is the closure of its target programs (1a: the easy
+  three). The easy three already reach `enum` (`re`'s flags) and `typing` (itsdangerous), so
+  task 5's staging prototype comes before the first path is done.
 * Decisions this needs from the author, before the work reaches them: `unicodedata` for
-  `cli_easy_slugs` (spec sections 6 and 7 keep it \[P2+\]); whether each increment is the
-  closure of its target programs; and items 1 to 5 of `docs/targets.md` section 5 (function
+  `cli_easy_slugs` (spec sections 6 and 7 keep it \[P2+\]); and items 1 to 5 of
+  `docs/targets.md` section 5 (function
   metadata at runtime, dead excluded calls, manifest growth for pycodestyle, zlib's licence,
   the source of the hash primitives). Item 6 is done (`[dynamic]`, review log RL-56).
 * Done when: `cli_easy_slugs` prints the recorded output under CPython 3.15.2, `eval1` and the
   compiled binary (`make targets-check TARGET_RUNNER=...` passes for it), and the generated C++
   is committed under `pipeline/examples/out/`.
 
-## 5. Staging prototype (gates phase 1b)
+## 5. Staging prototype (gates the first target path: `re` reaches `enum`, itsdangerous `typing`)
 
 * Why: review log D-2 and RL-50. `dataclasses`, `namedtuple`, `enum` and `typing` build code
   with `exec` at definition time; spec section 8 stages it, but the contract between the

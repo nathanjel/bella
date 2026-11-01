@@ -209,10 +209,14 @@ session and imported here: `cli_easy_slugs` (stdlib), `service_easy_tokens` (its
 * The drivers are dialect programs and pass strict mypy (`make lint`; four needed targeted
   ignores, no behaviour change); the vendored snapshots and the input data are excluded from
   ruff and never edited.
+* Decided the same day (author): each phase-1 increment is the closure of its target programs:
+  1a what the three easy programs reach, 1b what the tricky three add, 1c the rest of the
+  manifest. A change of order, not of scope: the easy programs already reach `enum` (`re`'s flags
+  are an `IntFlag`) and `typing` (itsdangerous's `Generic` bases), so staging (TODO task 5)
+  comes before the first path. Design section 11; review log D-2.
 * Open for the author: `unicodedata`, which `cli_easy_slugs` needs (NFKD), is \[P2+\] in spec
-  sections 6 and 7; the easy targets need modules review log D-2 placed in 1c, so each increment
-  is best defined as the closure of its targets; and items 1 to 5 of `docs/targets.md` section 5
-  (item 6 is done by `[dynamic]`; item 2's deviation would be D-21).
+  sections 6 and 7; and items 1 to 5 of `docs/targets.md` section 5 (item 6 is done by
+  `[dynamic]`; item 2's deviation would be D-21).
 
 ## Pins
 

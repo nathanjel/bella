@@ -175,7 +175,9 @@ new class at a freed address would match a stale entry that also says 0: a field
 another layout, or a dangling `found`.
 
 **D-2 Scope and order of the next increment (RL-48 to RL-51).** Decided 2026-11-01: accepted
-as recommended (design section 11, `TODO.md`, `docs/DECISIONS.md`). Both code reviewers ask for
+as recommended (design section 11, `TODO.md`, `docs/DECISIONS.md`). Refined the same day, once
+the target programs were picked: each increment is the closure of its target programs, which
+moves `re`, `enum` and `typing` into 1a and staging ahead of the first path (an order change). Both code reviewers ask for
 a smaller first deliverable, and A1 adds three prerequisites. Recommendation:
 1. Split phase 1 into 1a (core language and the data-structure modules the three target
    programs need), 1b (`enum`, `dataclasses`, `typing`), 1c (I/O, `re`, `json`, `logging`,
