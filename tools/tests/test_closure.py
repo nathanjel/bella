@@ -287,7 +287,9 @@ def _closure(manifest_text: str, files: dict[str, str] = BT_FILES, observed: dic
         sys.path.insert(0, tmp)
         importlib.invalidate_caches()
         saved = closure.observe_runtime_imports
-        closure.observe_runtime_imports = lambda roots, blocked=(): dict(observed or {})
+        def stub(roots: list[str], blocked: object = (), search: object = ()) -> dict[str, list[str]]:
+            return dict(observed or {})
+        closure.observe_runtime_imports = stub
         try:
             manifest = closure.Manifest.load(Path(tmp, "manifest.toml"))
             infos, problems = closure.compute_closure(manifest)
@@ -399,6 +401,54 @@ def test_a_nested_helper_refuses_the_function_a_program_names_g2_3_4() -> None:
                 '[lazy_unsupported]\nrv_n = ["rv_far"]\n')
     _, problems, unsupported = _closure(manifest, files)
     assert problems == [] and unsupported == {"rv_n": ["f"]}, (problems, unsupported)
+
+
+
+def test_type_checking_blocks_are_dead() -> None:
+    src = ("import typing as t\nif t.TYPE_CHECKING:\n    import rv_only_for_checkers\n"
+           "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import rv_also_for_checkers\n"
+           "if not TYPE_CHECKING:\n    import rv_at_runtime\n")
+    edges, _ = _edges(src)
+    assert ("rv_only_for_checkers", DEAD) in edges and ("rv_also_for_checkers", DEAD) in edges
+    assert ("rv_at_runtime", EAGER) in edges
+
+
+def test_a_bare_import_module_call_is_a_computed_import() -> None:
+    src = "from importlib import import_module\ndef load(name):\n    return import_module(name)\nimport_module('csv')\n"
+    s = _Scanner("m", False, LINUX)
+    s.scan(ast.parse(src))
+    assert s.dynamic_unknown == [(3, "load", "name")]
+    assert ("csv", DYNAMIC, 4, "") in s.edges
+
+
+def test_a_target_programs_closure() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        drivers, vendor = Path(tmp, "drivers"), Path(tmp, "vendor", "rv_lib")
+        drivers.mkdir()
+        vendor.mkdir(parents=True)
+        Path(drivers, "rv_prog.py").write_text("import rv_lib\nimport json\n")
+        Path(vendor, "__init__.py").write_text("def f():\n    import rv_lib.sub\n\ndef g():\n    import csv\n")
+        Path(vendor, "sub.py").write_text("")
+        Path(tmp, "m.toml").write_text('[reference]\npython = "3.15.2"\n[phase1]\nroots = []\ncompiled = ["json"]\n'
+                                       'core = ["_json"]\n')
+        manifest = closure.Manifest.load(Path(tmp, "m.toml"))
+        dirs = (drivers, Path(tmp, "vendor"))
+        saved = closure.observe_runtime_imports
+        def no_observation(roots: list[str], blocked: object = (), search: object = ()) -> dict[str, list[str]]:
+            return {}
+        closure.observe_runtime_imports = no_observation
+        try:
+            program = closure.Program("rv", "easy", "rv_prog", dirs)
+            infos, problems = closure.compute_closure(manifest, program)
+            assert infos["rv_prog"].status == infos["rv_lib"].status == infos["rv_lib.sub"].status == closure.PROGRAM
+            assert [p for p in problems if "rv_lib.sub" in p] == []        # the program's own module is supported
+            assert any("lazy import of csv outside the manifest" in p for p in problems), problems
+            declared = closure.Program("rv", "easy", "rv_prog", dirs, {"lazy_unsupported": {"rv_lib": ["csv"]}})
+            infos, problems = closure.compute_closure(manifest, declared)
+            assert not any("csv" in p for p in problems), problems
+            assert closure.unsupported_functions(infos, declared.manifest_for(manifest)) == {"rv_lib": ["g"]}
+        finally:
+            closure.observe_runtime_imports = saved
 
 
 if __name__ == "__main__":

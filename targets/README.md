@@ -14,7 +14,8 @@ data/               the fixed inputs
 vendor/             third-party code at a pinned commit, licence file beside each package
 expected/           recorded stdout/stderr/exit status (+ .json: interpreter, authoritative?)
 run_targets.py      record | check [--runner TEMPLATE] | list
-closure-summary.json  dynamic import closure per target, classified by manifest strategy
+closure/              each target's closure lock (`make targets-closure`, tools/closure.py --target)
+closure-summary.json  every target's closure in brief, and the phase-1 increments derived from them
 ```
 
 | Target | Shape | Library (pinned commit) | Licence |

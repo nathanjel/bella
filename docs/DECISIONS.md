@@ -224,6 +224,18 @@ session and imported here: `cli_easy_slugs` (stdlib), `service_easy_tokens` (its
 * Open for the author, before the tricky targets: items 1 to 3 of `docs/targets.md` section 5
   (item 6 is done by `[dynamic]`; item 2's deviation would be D-21).
 
+**2026-11-01 — the phase-1 increments, computed.** `tools/closure.py` takes a target program as
+its root (`--target`, `--all-targets`): the driver and its vendored libraries have status
+`program`, and a target may declare its own `omissions`, `lazy_unsupported` and `dynamic` entries
+in `targets.toml`. `make targets-closure` writes each target's lock and
+`targets/closure-summary.json`, which CI requires to be current. 1a (the easy three) is 149
+manifest modules and 71,219 compiled source lines; the tricky three add 6 modules plus `optparse`
+and `configparser`; 25 manifest modules are reached by no target. Found and fixed on the way:
+`typing.TYPE_CHECKING` is false at runtime, so imports under it are dead (itsdangerous's
+`typing_extensions`); a bare `import_module(name)` is a computed import (mistune's plugin loader
+was missed). Neither changes the standard library's closure. The parked items 1 to 3 of
+`docs/targets.md` section 5 wait for the tricky targets.
+
 ## Pins
 
 | What | Value | Where |

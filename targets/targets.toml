@@ -80,3 +80,20 @@ stressors = [
   "html.escape and html._replace_charref (private stdlib function)",
   "31 classes, 33 decorators, generators",
 ]
+
+# Per-target closure declarations (tools/closure.py --target NAME), for the program's own
+# modules; the manifest's tables hold the standard library's.
+
+[data_easy_sales.closure.lazy_unsupported]
+# humanize.i18n._get_default_locale_path imports importlib.resources, which is outside the
+# manifest. Only activate() without a path calls it; the driver never does (its output is
+# identical with importlib.resources blocked, checked 2026-11-01).
+"humanize.i18n" = ["importlib.resources"]
+
+[service_tricky_markdown.closure.dynamic."mistune.plugins"]
+# import_plugin: the plugins the render requests name (the request naming "no_such_plugin" fails
+# at the rsplit before any import). Any other plugin is outside the closed world.
+"import_plugin: module_path" = [
+  "mistune.plugins.footnotes", "mistune.plugins.formatting", "mistune.plugins.table",
+  "mistune.plugins.task_lists",
+]

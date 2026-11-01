@@ -85,11 +85,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   compiled and `_sre` ported, `float` with CPython's `repr`, the L2
   grammar with declared/proven/representation kept apart. Write `bella-lint` as an `ast`
   walker over `docs/deviations.toml` and the tier table (`tools/score_candidate.py` is its
-  seed). Teach `tools/closure.py` to take a target program as its root, so each target has its
-  own closure and the increments follow from them.
+  seed).
 * Decided 2026-11-01: each increment is the closure of its target programs (1a: the easy
   three). The easy three already reach `enum` (`re`'s flags) and `typing` (itsdangerous), so
-  task 5's staging prototype comes before the first path is done.
+  task 5's staging prototype comes before the first path is done. `make targets-closure`
+  computes them (`targets/closure-summary.json`, checked in CI): 1a is 149 manifest modules and
+  71,219 compiled source lines, the tricky three add 6 modules, and 25 are reached by none.
+  Five targets are closed; `cli_tricky_check` waits on the parked pycodestyle items.
 * Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata`, which stays \[P2+\];
   licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's
   licence and the source of the hash primitives (items 4 and 5 of `docs/targets.md` section 5)

@@ -62,6 +62,13 @@ How it works
 4. Compare with manifest.toml and write closure.lock.json. Exit 1 on any gap. The lock lists,
    per module, the functions that `[lazy_unsupported]` makes unsupported.
 
+Target programs (`targets/targets.toml`, review log D-2 as refined on 2026-11-01): `--target NAME`
+computes one program's closure. Its driver is the root, and the program's own code (the driver
+and its vendored libraries) has status `program`: it is compiled with the program, not taken
+from the manifest. `--all-targets` writes every target's lock under `targets/closure/` and
+`targets/closure-summary.json`, which derives the phase-1 increments: 1a is what the easy
+programs reach, 1b what the tricky ones add, 1c the rest of the manifest.
+
 Run it with the pinned interpreter (bella.toml: reference.python) on the target platform.
 `--allow-unpinned` lets it run elsewhere for development, with a loud warning in the lock file.
 """
@@ -78,9 +85,9 @@ import sysconfig
 import tomllib
 from collections import Counter, deque
 from collections.abc import Collection
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 EAGER = "eager"              # module level, unconditional (or under a guard true on the target)
 GUARDED = "guarded"          # module level, under a guard the closed world cannot evaluate: required
@@ -94,6 +101,10 @@ REPLACED = "replaced"        # inside a function an adaptation replaces ([replac
 RUNTIME = "runtime"          # observed in sys.modules after importing the roots, not seen statically
 
 FOLLOWED_CLASSES = {EAGER, GUARDED, FIRST_USE, DYNAMIC}   # required whatever the manifest says
+PROGRAM = "program"          # status of a target program's own modules: compiled with the program
+REPO = Path(__file__).resolve().parents[1]
+TARGETS_FILE = REPO / "targets" / "targets.toml"
+MANIFEST_STATUSES = ("compiled", "mapped", "core", "shim")
 IMPORT_ERROR_NAMES = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
 
 
@@ -104,6 +115,41 @@ class Edge:
     cls: str
     line: int
     func: str = ""                  # qualified name of the enclosing function; "" at module level
+
+
+@dataclass(frozen=True)
+class Program:
+    """A target program: the driver module is the root; `dirs` hold the program's own code (the
+    driver and its vendored libraries), searched first and compiled with the program."""
+
+    name: str
+    level: str                # easy | tricky
+    root: str                 # module name of the driver
+    dirs: tuple[Path, ...]
+    tables: dict[str, object] = field(default_factory=dict)   # [<target>.closure] in targets.toml
+
+    @classmethod
+    def load(cls, name: str, targets_file: Path = TARGETS_FILE) -> Program:
+        spec = tomllib.loads(targets_file.read_text(encoding="utf-8"))[name]
+        here = targets_file.parent
+        driver = here / spec["driver"]
+        return cls(name, spec["level"], driver.stem, (driver.parent, here / "vendor"), dict(spec.get("closure", {})))
+
+    def manifest_for(self, manifest: Manifest) -> Manifest:
+        """The manifest with this program's own declarations added: its `omissions`,
+        `lazy_unsupported` and `dynamic` entries for the program's modules."""
+        omissions = cast(dict[str, list[str]], self.tables.get("omissions", {}))
+        lazy = cast(dict[str, list[str]], self.tables.get("lazy_unsupported", {}))
+        dynamic = cast(dict[str, dict[str, list[str]]], self.tables.get("dynamic", {}))
+        return replace(
+            manifest,
+            omissions=manifest.omissions | {k: set(v) for k, v in omissions.items()},
+            lazy_unsupported=manifest.lazy_unsupported | {k: set(v) for k, v in lazy.items()},
+            dynamic=manifest.dynamic | {k: {site: list(ts) for site, ts in v.items()} for k, v in dynamic.items()},
+        )
+
+    def owns(self, path: str | None) -> bool:
+        return path is not None and any(Path(path).resolve().is_relative_to(d.resolve()) for d in self.dirs)
 
 
 @dataclass
@@ -298,6 +344,8 @@ class _Evaluator:
                 key = f"{base.name}.{node.attr}"
                 if key == "sys.builtin_module_names":
                     return BUILTIN_NAMES
+                if key == "typing.TYPE_CHECKING":
+                    return False          # PEP 484: false whenever the program runs
                 return self.platform.facts.get(key, UNKNOWN)
             return UNKNOWN
         if isinstance(node, (ast.BoolOp, ast.Compare)) or (isinstance(node, ast.UnaryOp)
@@ -482,6 +530,10 @@ class _ModuleEnv:
             for a in s.names:
                 bound = a.asname or a.name.partition(".")[0]
                 self._bind(bound, _ModuleRef(a.name if a.asname else bound), certain)
+        elif isinstance(s, ast.ImportFrom) and s.module == "typing" and s.level == 0 and \
+                any(a.name == "TYPE_CHECKING" for a in s.names):
+            for a in s.names:             # `from typing import TYPE_CHECKING`: false whenever the program runs
+                self._bind(a.asname or a.name, False if a.name == "TYPE_CHECKING" else UNKNOWN, certain)
         elif isinstance(s, ast.ImportFrom) and any(a.name == "*" for a in s.names):
             exported = _star_exports(s.module) if s.level == 0 and s.module else None
             for k in [k for k in self.env if (k in exported if exported is not None else not k.startswith("_"))]:
@@ -737,8 +789,8 @@ class _Scanner:
     def _maybe_dynamic(self, node: ast.Call, ctx: _Ctx) -> None:
         fn = node.func
         name = None
-        if isinstance(fn, ast.Name) and fn.id == "__import__":
-            name = "__import__"
+        if isinstance(fn, ast.Name) and fn.id in ("__import__", "import_module"):
+            name = fn.id                  # also `from importlib import import_module; import_module(x)`
         elif isinstance(fn, ast.Attribute) and fn.attr == "import_module":
             name = "import_module"
         if name is None or not node.args:
@@ -827,12 +879,15 @@ def scan_module(name: str, path: str, platform: Platform, replaced: Collection[s
 # Dynamic observation
 # ------------------------------------------------------------------------------------------
 
-def observe_runtime_imports(roots: list[str], blocked: list[str] | tuple[str, ...] = ()) -> dict[str, list[str]]:
+def observe_runtime_imports(roots: list[str], blocked: list[str] | tuple[str, ...] = (),
+                            search: list[str] | tuple[str, ...] = ()) -> dict[str, list[str]]:
     """Import every root in a fresh isolated interpreter, with the omitted modules blocked so that
-    their importers take the fallback paths phase 1 takes; return what each root pulled in."""
+    their importers take the fallback paths phase 1 takes; return what each root pulled in.
+    `search` goes first on sys.path (a target program's own directories)."""
     code = r"""
 import json, sys
 roots = json.loads(sys.argv[1])
+sys.path[0:0] = json.loads(sys.argv[3])
 for name in json.loads(sys.argv[2]):
     sys.modules[name] = None      # an omission resolves to ImportError, as in phase 1
 before = set(sys.modules)
@@ -848,7 +903,7 @@ for r in roots:
 print(json.dumps({"baseline": sorted(before), "per_root": result}))
 """
     proc = subprocess.run(
-        [sys.executable, "-I", "-c", code, json.dumps(roots), json.dumps(list(blocked))],
+        [sys.executable, "-I", "-c", code, json.dumps(roots), json.dumps(list(blocked)), json.dumps(list(search))],
         capture_output=True, text=True, check=False,
     )
     if proc.returncode != 0:
@@ -862,10 +917,29 @@ print(json.dumps({"baseline": sorted(before), "per_root": result}))
 # Closure
 # ------------------------------------------------------------------------------------------
 
-def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str]]:
+def compute_closure(manifest: Manifest, program: Program | None = None) -> tuple[dict[str, ModuleInfo], list[str]]:
+    """The closure of the manifest's roots, or of one target program."""
+    if program is None:
+        return _compute_closure(manifest, None)
+    search = [str(d) for d in program.dirs]
+    sys.path[0:0] = search
+    importlib.invalidate_caches()
+    try:
+        return _compute_closure(program.manifest_for(manifest), program)
+    finally:
+        del sys.path[:len(search)]
+        for name in [m for m, mod in sys.modules.items() if program.owns(getattr(mod, "__file__", None))]:
+            del sys.modules[name]
+
+
+def _compute_closure(manifest: Manifest, program: Program | None) -> tuple[dict[str, ModuleInfo], list[str]]:
     infos: dict[str, ModuleInfo] = {}
     problems: list[str] = []
-    queue: deque[tuple[str, str | None]] = deque((r, None) for r in manifest.roots)
+    roots = [program.root] if program else manifest.roots
+    queue: deque[tuple[str, str | None]] = deque((r, None) for r in roots)
+
+    def supported(name: str) -> bool:
+        return name in manifest.supported or (program is not None and program.owns(classify(name)[1]))
     processed: set[str] = set()
     optional_outside: dict[str, set[str]] = {}
     lazy_outside: dict[str, set[tuple[str, int, str]]] = {}
@@ -877,8 +951,8 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
         info = infos.get(name)
         if info is None:
             kind, path = classify(name)
-            info = ModuleInfo(name=name, kind=kind, path=path, reached_by=reached_by,
-                              status=manifest.status_of(name))
+            status = PROGRAM if program is not None and program.owns(path) else manifest.status_of(name)
+            info = ModuleInfo(name=name, kind=kind, path=path, reached_by=reached_by, status=status)
             infos[name] = info
             # core and shim modules are provided by the runtime: their real source is not scanned
             if info.status not in ("core", "shim") and kind in ("source", "frozen") and path:
@@ -909,7 +983,7 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
             for e in info.edges:
                 follow = e.cls in FOLLOWED_CLASSES
                 if e.cls in (LAZY, OPTIONAL):
-                    if e.target in manifest.supported:
+                    if supported(e.target):
                         follow = True
                     elif e.cls == LAZY:
                         lazy_outside.setdefault(e.importer, set()).add((e.target, e.line, e.func))
@@ -924,7 +998,7 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
     # dynamic observation, the omitted modules blocked: anything that loads at import time and
     # was not seen statically is processed like any other module (review 2026-11-01, A3-1)
     blocked = sorted({t for ts in manifest.omissions.values() for t in ts})
-    observed = observe_runtime_imports(manifest.roots, blocked)
+    observed = observe_runtime_imports(roots, blocked, [str(d) for d in program.dirs] if program else ())
     for root, loaded in observed.items():
         for mod in loaded:
             if mod.startswith("<import failed"):
@@ -998,6 +1072,8 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
                 problems.append(f"{module}:{line}: import with a computed name; review it and add {json.dumps(key)} = "
                                 f"[the modules it must reach in phase 1] under [dynamic.{_toml_key(module)}]")
     for module, reviewed in sorted(manifest.dynamic.items()):
+        if program is not None and module not in infos:
+            continue                      # a program reaches part of the manifest by design
         present = {site_key(f, x) for _, f, x in unknown_sites.get(module, [])}
         for key in sorted(set(reviewed) - present):
             problems.append(f"[dynamic.{_toml_key(module)}] reviews {json.dumps(key)}, which "
@@ -1012,7 +1088,7 @@ def compute_closure(manifest: Manifest) -> tuple[dict[str, ModuleInfo], list[str
         if len(listed) > 1:
             problems.append(f"{module} is listed under {' and '.join(listed)}: a module has one status")
     unreached = sorted(m for m in manifest.supported - manifest.core if m not in infos)
-    if unreached:
+    if unreached and program is None:     # a program reaches a part of the manifest by design
         problems.append(f"note: {len(unreached)} manifest entries never reached: "
                         f"{', '.join(unreached[:12])}{'...' if len(unreached) > 12 else ''}")
     return infos, problems
@@ -1036,50 +1112,63 @@ def _toml_key(name: str) -> str:
 
 
 def _stdlib_relative(path: str | None) -> str | None:
-    """Paths in the lock are relative to the standard library, so the lock is the same on every
-    machine that runs the pinned build."""
+    """Paths in the lock are relative to the standard library (or, for a target program's own
+    code, to the repository), so the lock is the same on every machine that runs the pinned build."""
     if path is None:
         return None
-    try:
-        return str(Path(path).relative_to(STDLIB_DIR))
-    except ValueError:
-        return path
+    for base in (STDLIB_DIR, REPO):
+        try:
+            return str(Path(path).resolve().relative_to(base.resolve()))
+        except ValueError:
+            continue
+    return path
+
+
+def _source_lines(info: ModuleInfo) -> int:
+    if info.path is None or info.kind not in ("source", "frozen"):
+        return 0
+    return len(Path(info.path).read_text(encoding="utf-8", errors="replace").splitlines())
+
+
+def increments(results: dict[str, tuple[Program, dict[str, ModuleInfo]]],
+               manifest: Manifest) -> dict[str, dict[str, object]]:
+    """The phase-1 increments as closures of the target programs (review log D-2, refined
+    2026-11-01): 1a is what the easy programs reach in the manifest, 1b what the tricky ones add,
+    1c the rest of the manifest. Each lists its modules with their status and source lines."""
+    def reached(level: str) -> dict[str, ModuleInfo]:
+        out: dict[str, ModuleInfo] = {}
+        for program, infos in results.values():
+            if program.level == level:
+                out.update({n: i for n, i in infos.items() if i.status in MANIFEST_STATUSES})
+        return out
+    easy = reached("easy")
+    tricky = {n: i for n, i in reached("tricky").items() if n not in easy}
+    rest = {n: manifest.status_of(n) for n in sorted(manifest.supported) if n not in easy and n not in tricky}
+    def describe(mods: dict[str, ModuleInfo]) -> dict[str, object]:
+        by_status: dict[str, int] = {}
+        for i in mods.values():
+            by_status[i.status] = by_status.get(i.status, 0) + 1
+        return {"modules": len(mods), "by_status": dict(sorted(by_status.items())),
+                "compiled_source_lines": sum(_source_lines(i) for i in mods.values() if i.status == "compiled"),
+                "list": {n: mods[n].status for n in sorted(mods)}}
+    return {"1a": describe(easy), "1b": describe(tricky),
+            "1c": {"modules": len(rest), "list": rest}}
 
 
 # ------------------------------------------------------------------------------------------
 # CLI
 # ------------------------------------------------------------------------------------------
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--manifest", type=Path, default=Path("manifest.toml"))
-    ap.add_argument("--out", type=Path, default=Path("closure.lock.json"))
-    ap.add_argument("--allow-unpinned", action="store_true", help="run on a Python other than the pinned reference build")
-    ap.add_argument("--quiet", action="store_true")
-    args = ap.parse_args(argv)
-
-    manifest = Manifest.load(args.manifest)
+def _lock(manifest: Manifest, infos: dict[str, ModuleInfo], errors: list[str], notes: list[str], pinned: bool,
+          roots: list[str]) -> dict[str, object]:
     running = ".".join(map(str, sys.version_info[:3]))
-    pinned = running == manifest.python
-    if not pinned and not args.allow_unpinned:
-        print(f"closure: refusing to run on Python {running}; the manifest is pinned to {manifest.python} "
-              f"(use --allow-unpinned for a non-authoritative run)", file=sys.stderr)
-        return 2
-
-    infos, problems = compute_closure(manifest)
-    # the guards were evaluated with the [platform] facts and the observation ran here: they must agree
-    for m in manifest.platform.mismatches():
-        problems.append(f"[platform]: {m}" if pinned else f"note: [platform]: {m} (unpinned run)")
-    notes = [p for p in problems if p.startswith("note:")]
-    errors = [p for p in problems if not p.startswith("note:")]
-
-    lock = {
+    return {
         "python": running,
         "pinned": pinned,
         "authoritative": pinned,
         "build": sys.version,
         "stdlib_dir": "lib/python" + ".".join(map(str, sys.version_info[:2])) + " (paths below are relative to it)",
-        "roots": manifest.roots,
+        "roots": roots,
         "platform": manifest.platform.facts | {
             "builtin_modules_present": sorted(manifest.platform.builtin_present),
             "builtin_modules_absent": sorted(manifest.platform.builtin_absent),
@@ -1096,6 +1185,79 @@ def main(argv: list[str] | None = None) -> int:
             for n, i in sorted(infos.items())
         },
     }
+
+
+def _targets_main(args: argparse.Namespace, manifest: Manifest, pinned: bool) -> int:
+    names = list(tomllib.loads(TARGETS_FILE.read_text(encoding="utf-8"))) if args.all_targets else [args.target]
+    out_dir = REPO / "targets" / "closure"
+    out_dir.mkdir(exist_ok=True)
+    results: dict[str, tuple[Program, dict[str, ModuleInfo]]] = {}
+    summary: dict[str, object] = {}
+    errors_of: dict[str, list[str]] = {}
+    for name in names:
+        program = Program.load(name)
+        infos, problems = compute_closure(manifest, program)
+        notes = [p for p in problems if p.startswith("note:")]
+        errors = [p for p in problems if not p.startswith("note:")]
+        (out_dir / f"{name}.lock.json").write_text(
+            json.dumps(_lock(program.manifest_for(manifest), infos, errors, notes, pinned, [program.root]), indent=1) + "\n",
+            encoding="utf-8")
+        results[name] = (program, infos)
+        by_status: dict[str, int] = {}
+        for i in infos.values():
+            by_status[i.status] = by_status.get(i.status, 0) + 1
+        summary[name] = {"level": program.level, "by_status": dict(sorted(by_status.items())), "errors": errors}
+        errors_of[name] = errors
+        if not args.quiet:
+            print(f"{name:24} {program.level:6} {len(infos):4} modules  "
+                  + "  ".join(f"{s} {c}" for s, c in sorted(by_status.items()))
+                  + (f"\n{'':24} {len(errors)} problem(s): " + "; ".join(errors) if errors else ""))
+    if args.all_targets:
+        running = ".".join(map(str, sys.version_info[:3]))
+        incs = increments(results, manifest)
+        data = {"python": running, "authoritative": pinned, "targets": summary, "increments": incs}
+        (REPO / "targets" / "closure-summary.json").write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        if not args.quiet:
+            for inc, d in incs.items():
+                print(f"increment {inc}: {d['modules']} modules"
+                      + (f", {d['compiled_source_lines']} compiled source lines, {d['by_status']}" if "by_status" in d else ""))
+            print("wrote targets/closure/*.lock.json and targets/closure-summary.json")
+    # 1a must be closed: an easy target's problem fails the run; a tricky one's is reported
+    open_easy = [n for n in names if results[n][0].level == "easy" and errors_of[n]]
+    if open_easy:
+        print(f"open: {', '.join(open_easy)}", file=sys.stderr)
+    return 1 if open_easy else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--manifest", type=Path, default=Path("manifest.toml"))
+    ap.add_argument("--out", type=Path, default=Path("closure.lock.json"))
+    ap.add_argument("--allow-unpinned", action="store_true", help="run on a Python other than the pinned reference build")
+    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--target", help="one target program of targets/targets.toml (its lock goes to targets/closure/)")
+    ap.add_argument("--all-targets", action="store_true",
+                    help="every target, then targets/closure-summary.json with the phase-1 increments")
+    args = ap.parse_args(argv)
+
+    manifest = Manifest.load(args.manifest)
+    running = ".".join(map(str, sys.version_info[:3]))
+    pinned = running == manifest.python
+    if not pinned and not args.allow_unpinned:
+        print(f"closure: refusing to run on Python {running}; the manifest is pinned to {manifest.python} "
+              f"(use --allow-unpinned for a non-authoritative run)", file=sys.stderr)
+        return 2
+
+    if args.target or args.all_targets:
+        return _targets_main(args, manifest, pinned)
+    infos, problems = compute_closure(manifest)
+    # the guards were evaluated with the [platform] facts and the observation ran here: they must agree
+    for m in manifest.platform.mismatches():
+        problems.append(f"[platform]: {m}" if pinned else f"note: [platform]: {m} (unpinned run)")
+    notes = [p for p in problems if p.startswith("note:")]
+    errors = [p for p in problems if not p.startswith("note:")]
+
+    lock = _lock(manifest, infos, errors, notes, pinned, manifest.roots)
     args.out.write_text(json.dumps(lock, indent=1, sort_keys=False) + "\n", encoding="utf-8")
 
     if not args.quiet:

@@ -1,0 +1,6362 @@
+{
+ "python": "3.15.2",
+ "pinned": true,
+ "authoritative": true,
+ "build": "3.15.2 (main, Oct 26 2026, 14:06:56) [Clang 23.1.3 ]",
+ "stdlib_dir": "lib/python3.15 (paths below are relative to it)",
+ "roots": [
+  "data_easy_sales"
+ ],
+ "platform": {
+  "sys.platform": "linux",
+  "os.name": "posix",
+  "builtin_modules_present": [
+   "posix"
+  ],
+  "builtin_modules_absent": [
+   "nt"
+  ]
+ },
+ "module_count": 146,
+ "errors": [],
+ "notes": [],
+ "unsupported_functions": {
+  "ast": [
+   "unparse"
+  ],
+  "humanize.i18n": [
+   "_get_default_locale_path"
+  ],
+  "pathlib": [
+   "Path.as_uri",
+   "Path.from_uri"
+  ],
+  "shutil": [
+   "_make_tarball",
+   "_make_zipfile",
+   "_unpack_tarfile",
+   "_unpack_zipfile"
+  ]
+ },
+ "modules": {
+  "__future__": {
+   "name": "__future__",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "data_easy_sales:runtime:0",
+   "dynamic_unknown_lines": [],
+   "path": "__future__.py",
+   "edges": []
+  },
+  "_abc": {
+   "name": "_abc",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "abc:optional:85",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_ast": {
+   "name": "_ast",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "ast:eager:23",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_bisect": {
+   "name": "_bisect",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "bisect:optional:112",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_blake2": {
+   "name": "_blake2",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "hashlib:optional:108",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_codecs": {
+   "name": "_codecs",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "encodings:eager:33",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_collections": {
+   "name": "_collections",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "collections:optional:47",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_collections_abc": {
+   "name": "_collections_abc",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "collections:eager:29",
+   "dynamic_unknown_lines": [],
+   "path": "_collections_abc.py",
+   "edges": [
+    {
+     "importer": "_collections_abc",
+     "target": "abc",
+     "cls": "eager",
+     "line": 35,
+     "func": ""
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "sys",
+     "cls": "eager",
+     "line": 36,
+     "func": ""
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "annotationlib",
+     "cls": "lazy",
+     "line": 488,
+     "func": "_CallableGenericAlias.__repr__"
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1072,
+     "func": "_DeprecateByteStringMeta.__new__"
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1081,
+     "func": "_DeprecateByteStringMeta.__instancecheck__"
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1179,
+     "func": "__getattr__"
+    }
+   ]
+  },
+  "_colorize": {
+   "name": "_colorize",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "argparse:first-use:95",
+   "dynamic_unknown_lines": [],
+   "path": "_colorize.py",
+   "edges": [
+    {
+     "importer": "_colorize",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 1,
+     "func": ""
+    },
+    {
+     "importer": "_colorize",
+     "target": "os",
+     "cls": "eager",
+     "line": 2,
+     "func": ""
+    },
+    {
+     "importer": "_colorize",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "_colorize",
+     "target": "collections",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "_colorize",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "_colorize",
+     "target": "dataclasses",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "_colorize",
+     "target": "typing",
+     "cls": "first-use",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "_colorize",
+     "target": "nt",
+     "cls": "dead",
+     "line": 594,
+     "func": "can_colorize"
+    }
+   ]
+  },
+  "_contextvars": {
+   "name": "_contextvars",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "_py_warnings:eager:4",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_csv": {
+   "name": "_csv",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "csv:eager:67",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_functools": {
+   "name": "_functools",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "functools:optional:226",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_heapq": {
+   "name": "_heapq",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "heapq:optional:597",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_io": {
+   "name": "_io",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "io:eager:53",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_locale": {
+   "name": "_locale",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "locale:optional:46",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_math_integer": {
+   "name": "_math_integer",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "data_easy_sales:runtime:0",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_md5": {
+   "name": "_md5",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "hashlib:optional:97",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_missing_stdlib_info": {
+   "name": "_missing_stdlib_info",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "traceback:optional:24",
+   "dynamic_unknown_lines": [],
+   "path": "_missing_stdlib_info.py",
+   "edges": []
+  },
+  "_opcode": {
+   "name": "_opcode",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "dis:eager:22",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_opcode_metadata": {
+   "name": "_opcode_metadata",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "opcode:eager:16",
+   "dynamic_unknown_lines": [],
+   "path": "_opcode_metadata.py",
+   "edges": []
+  },
+  "_operator": {
+   "name": "_operator",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "operator:optional:422",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_py_abc": {
+   "name": "_py_abc",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "abc:guarded:89",
+   "dynamic_unknown_lines": [],
+   "path": "_py_abc.py",
+   "edges": [
+    {
+     "importer": "_py_abc",
+     "target": "_weakrefset",
+     "cls": "eager",
+     "line": 1,
+     "func": ""
+    }
+   ]
+  },
+  "_py_warnings": {
+   "name": "_py_warnings",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "warnings:eager:15",
+   "dynamic_unknown_lines": [
+    429
+   ],
+   "path": "_py_warnings.py",
+   "edges": [
+    {
+     "importer": "_py_warnings",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "_contextvars",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "linecache",
+     "cls": "optional",
+     "line": 159,
+     "func": "_formatwarnmsg_impl"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "tracemalloc",
+     "cls": "optional",
+     "line": 174,
+     "func": "_formatwarnmsg_impl"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "re",
+     "cls": "lazy",
+     "line": 280,
+     "func": "filterwarnings"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "re",
+     "cls": "lazy",
+     "line": 370,
+     "func": "_setoption"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "builtins",
+     "cls": "lazy",
+     "line": 424,
+     "func": "_getcategory"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "linecache",
+     "cls": "lazy",
+     "line": 619,
+     "func": "warn_explicit"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "functools",
+     "cls": "lazy",
+     "line": 808,
+     "func": "deprecated.__call__"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "types",
+     "cls": "lazy",
+     "line": 809,
+     "func": "deprecated.__call__"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "functools",
+     "cls": "lazy",
+     "line": 853,
+     "func": "deprecated.__call__"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 854,
+     "func": "deprecated.__call__"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "linecache",
+     "cls": "lazy",
+     "line": 901,
+     "func": "_warn_unawaited_coroutine"
+    },
+    {
+     "importer": "_py_warnings",
+     "target": "traceback",
+     "cls": "lazy",
+     "line": 901,
+     "func": "_warn_unawaited_coroutine"
+    }
+   ]
+  },
+  "_pydatetime": {
+   "name": "_pydatetime",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "datetime:guarded:10",
+   "dynamic_unknown_lines": [],
+   "path": "_pydatetime.py",
+   "edges": [
+    {
+     "importer": "_pydatetime",
+     "target": "time",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "math",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "sys",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "operator",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "_strptime",
+     "cls": "lazy",
+     "line": 1091,
+     "func": "date.strptime"
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "_strptime",
+     "cls": "lazy",
+     "line": 1483,
+     "func": "time.strptime"
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1922,
+     "func": "datetime.utcfromtimestamp"
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1940,
+     "func": "datetime.utcnow"
+    },
+    {
+     "importer": "_pydatetime",
+     "target": "_strptime",
+     "cls": "lazy",
+     "line": 2231,
+     "func": "datetime.strptime"
+    }
+   ]
+  },
+  "_pydecimal": {
+   "name": "_pydecimal",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "decimal:guarded:106",
+   "dynamic_unknown_lines": [],
+   "path": "_pydecimal.py",
+   "edges": [
+    {
+     "importer": "_pydecimal",
+     "target": "math",
+     "cls": "eager",
+     "line": 62,
+     "func": ""
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "numbers",
+     "cls": "eager",
+     "line": 63,
+     "func": ""
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "sys",
+     "cls": "eager",
+     "line": 64,
+     "func": ""
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "collections",
+     "cls": "optional",
+     "line": 67,
+     "func": ""
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "contextvars",
+     "cls": "eager",
+     "line": 350,
+     "func": ""
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "re",
+     "cls": "eager",
+     "line": 6199,
+     "func": ""
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "locale",
+     "cls": "optional",
+     "line": 6257,
+     "func": ""
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "itertools",
+     "cls": "lazy",
+     "line": 6384,
+     "func": "_group_lengths"
+    },
+    {
+     "importer": "_pydecimal",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 6510,
+     "func": "__getattr__"
+    }
+   ]
+  },
+  "_random": {
+   "name": "_random",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "random:eager:63",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_sha1": {
+   "name": "_sha1",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "hashlib:optional:94",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_sha2": {
+   "name": "_sha2",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "random:optional:160",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_sha3": {
+   "name": "_sha3",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "hashlib:optional:112",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_sre": {
+   "name": "_sre",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "re:eager:129",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_stat": {
+   "name": "_stat",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "stat:optional:225",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_statistics": {
+   "name": "_statistics",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "statistics:optional:1878",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_strptime": {
+   "name": "_strptime",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "_pydatetime:lazy:1091",
+   "dynamic_unknown_lines": [],
+   "path": "_strptime.py",
+   "edges": [
+    {
+     "importer": "_strptime",
+     "target": "os",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "time",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "locale",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "calendar",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 18,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 19,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 20,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "re",
+     "cls": "eager",
+     "line": 21,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "datetime",
+     "cls": "eager",
+     "line": 22,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 25,
+     "func": ""
+    },
+    {
+     "importer": "_strptime",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 492,
+     "func": "TimeRE.pattern"
+    }
+   ]
+  },
+  "_struct": {
+   "name": "_struct",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "struct:eager:13",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_suggestions": {
+   "name": "_suggestions",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "traceback:optional:1419",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_thread": {
+   "name": "_thread",
+   "kind": "builtin",
+   "status": "shim",
+   "reached_by": "reprlib:eager:7",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_tokenize": {
+   "name": "_tokenize",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "tokenize:eager:37",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_types": {
+   "name": "_types",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "types:optional:11",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_typing": {
+   "name": "_typing",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "typing:eager:33",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_warnings": {
+   "name": "_warnings",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "warnings:optional:65",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_weakref": {
+   "name": "_weakref",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "collections:eager:44",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "_weakrefset": {
+   "name": "_weakrefset",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "weakref:eager:22",
+   "dynamic_unknown_lines": [],
+   "path": "_weakrefset.py",
+   "edges": [
+    {
+     "importer": "_weakrefset",
+     "target": "_weakref",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "_weakrefset",
+     "target": "types",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    }
+   ]
+  },
+  "abc": {
+   "name": "abc",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "io:eager:54",
+   "dynamic_unknown_lines": [],
+   "path": "abc.py",
+   "edges": [
+    {
+     "importer": "abc",
+     "target": "_abc",
+     "cls": "optional",
+     "line": 85,
+     "func": ""
+    },
+    {
+     "importer": "abc",
+     "target": "_py_abc",
+     "cls": "guarded",
+     "line": 89,
+     "func": ""
+    }
+   ]
+  },
+  "annotationlib": {
+   "name": "annotationlib",
+   "kind": "source",
+   "status": "shim",
+   "reached_by": "_collections_abc:lazy:488",
+   "dynamic_unknown_lines": [],
+   "path": "annotationlib.py",
+   "edges": []
+  },
+  "argparse": {
+   "name": "argparse",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "random:lazy:1021",
+   "dynamic_unknown_lines": [],
+   "path": "argparse.py",
+   "edges": [
+    {
+     "importer": "argparse",
+     "target": "os",
+     "cls": "eager",
+     "line": 89,
+     "func": ""
+    },
+    {
+     "importer": "argparse",
+     "target": "re",
+     "cls": "eager",
+     "line": 90,
+     "func": ""
+    },
+    {
+     "importer": "argparse",
+     "target": "sys",
+     "cls": "eager",
+     "line": 91,
+     "func": ""
+    },
+    {
+     "importer": "argparse",
+     "target": "gettext",
+     "cls": "eager",
+     "line": 92,
+     "func": ""
+    },
+    {
+     "importer": "argparse",
+     "target": "gettext",
+     "cls": "eager",
+     "line": 93,
+     "func": ""
+    },
+    {
+     "importer": "argparse",
+     "target": "_colorize",
+     "cls": "first-use",
+     "line": 95,
+     "func": ""
+    },
+    {
+     "importer": "argparse",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 149,
+     "func": "_copy_items"
+    },
+    {
+     "importer": "argparse",
+     "target": "shutil",
+     "cls": "lazy",
+     "line": 189,
+     "func": "HelpFormatter.__init__"
+    },
+    {
+     "importer": "argparse",
+     "target": "textwrap",
+     "cls": "lazy",
+     "line": 778,
+     "func": "HelpFormatter._split_lines"
+    },
+    {
+     "importer": "argparse",
+     "target": "textwrap",
+     "cls": "lazy",
+     "line": 811,
+     "func": "HelpFormatter._fill_text"
+    },
+    {
+     "importer": "argparse",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1489,
+     "func": "FileType.__init__"
+    },
+    {
+     "importer": "argparse",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1896,
+     "func": "_ArgumentGroup.__init__"
+    },
+    {
+     "importer": "argparse",
+     "target": "difflib",
+     "cls": "lazy",
+     "line": 2830,
+     "func": "ArgumentParser._check_value"
+    },
+    {
+     "importer": "argparse",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 2970,
+     "func": "__getattr__"
+    }
+   ]
+  },
+  "ast": {
+   "name": "ast",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "inspect:eager:148",
+   "dynamic_unknown_lines": [],
+   "path": "ast.py",
+   "edges": [
+    {
+     "importer": "ast",
+     "target": "_ast",
+     "cls": "eager",
+     "line": 23,
+     "func": ""
+    },
+    {
+     "importer": "ast",
+     "target": "_colorize",
+     "cls": "lazy",
+     "line": 144,
+     "func": "dump"
+    },
+    {
+     "importer": "ast",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 349,
+     "func": "get_docstring"
+    },
+    {
+     "importer": "ast",
+     "target": "re",
+     "cls": "lazy",
+     "line": 363,
+     "func": "_splitlines_no_ff"
+    },
+    {
+     "importer": "ast",
+     "target": "collections",
+     "cls": "lazy",
+     "line": 428,
+     "func": "walk"
+    },
+    {
+     "importer": "ast",
+     "target": "_ast_unparse",
+     "cls": "lazy",
+     "line": 658,
+     "func": "unparse"
+    },
+    {
+     "importer": "ast",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 664,
+     "func": "main"
+    },
+    {
+     "importer": "ast",
+     "target": "sys",
+     "cls": "lazy",
+     "line": 665,
+     "func": "main"
+    },
+    {
+     "importer": "ast",
+     "target": "_colorize",
+     "cls": "lazy",
+     "line": 712,
+     "func": "main"
+    }
+   ]
+  },
+  "atexit": {
+   "name": "atexit",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "weakref:lazy:474",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "bisect": {
+   "name": "bisect",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "statistics:eager:140",
+   "dynamic_unknown_lines": [],
+   "path": "bisect.py",
+   "edges": [
+    {
+     "importer": "bisect",
+     "target": "_bisect",
+     "cls": "optional",
+     "line": 112,
+     "func": ""
+    }
+   ]
+  },
+  "builtins": {
+   "name": "builtins",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "operator:eager:22",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "calendar": {
+   "name": "calendar",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "_strptime:eager:16",
+   "dynamic_unknown_lines": [],
+   "path": "calendar.py",
+   "edges": [
+    {
+     "importer": "calendar",
+     "target": "sys",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "calendar",
+     "target": "datetime",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "calendar",
+     "target": "enum",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "calendar",
+     "target": "locale",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "calendar",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "calendar",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 49,
+     "func": "__getattr__"
+    },
+    {
+     "importer": "calendar",
+     "target": "_colorize",
+     "cls": "lazy",
+     "line": 690,
+     "func": "_CLIDemoCalendar._get_theme"
+    },
+    {
+     "importer": "calendar",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 880,
+     "func": "main"
+    }
+   ]
+  },
+  "codecs": {
+   "name": "codecs",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "encodings:eager:31",
+   "dynamic_unknown_lines": [],
+   "path": "codecs.py",
+   "edges": [
+    {
+     "importer": "codecs",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "codecs",
+     "target": "sys",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "codecs",
+     "target": "_codecs",
+     "cls": "optional",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "codecs",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 915,
+     "func": "open"
+    },
+    {
+     "importer": "codecs",
+     "target": "encodings",
+     "cls": "dead",
+     "line": 1125,
+     "func": ""
+    }
+   ]
+  },
+  "codeop": {
+   "name": "codeop",
+   "kind": "source",
+   "status": "shim",
+   "reached_by": "traceback:eager:13",
+   "dynamic_unknown_lines": [],
+   "path": "codeop.py",
+   "edges": []
+  },
+  "collections": {
+   "name": "collections",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "data_easy_sales:eager:13",
+   "dynamic_unknown_lines": [],
+   "path": "collections/__init__.py",
+   "edges": [
+    {
+     "importer": "collections",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 29,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "sys",
+     "cls": "eager",
+     "line": 30,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "copy",
+     "cls": "first-use",
+     "line": 35,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "heapq",
+     "cls": "first-use",
+     "line": 36,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 37,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 38,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 39,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "keyword",
+     "cls": "eager",
+     "line": 40,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "operator",
+     "cls": "eager",
+     "line": 41,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "operator",
+     "cls": "eager",
+     "line": 42,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "reprlib",
+     "cls": "eager",
+     "line": 43,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "_weakref",
+     "cls": "eager",
+     "line": 44,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "optional",
+     "line": 47,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "optional",
+     "line": 55,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "optional",
+     "line": 60,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "optional",
+     "line": 346,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "optional",
+     "line": 357,
+     "func": ""
+    },
+    {
+     "importer": "collections",
+     "target": "_collections",
+     "cls": "optional",
+     "line": 547,
+     "func": ""
+    }
+   ]
+  },
+  "collections.abc": {
+   "name": "collections.abc",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "typing:eager:24",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "contextlib": {
+   "name": "contextlib",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "glob:eager:3",
+   "dynamic_unknown_lines": [],
+   "path": "contextlib.py",
+   "edges": [
+    {
+     "importer": "contextlib",
+     "target": "abc",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "contextlib",
+     "target": "os",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "contextlib",
+     "target": "sys",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "contextlib",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "contextlib",
+     "target": "collections",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "contextlib",
+     "target": "functools",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "contextlib",
+     "target": "inspect",
+     "cls": "first-use",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "contextlib",
+     "target": "types",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "contextlib",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 536,
+     "func": "_lookup_special"
+    }
+   ]
+  },
+  "contextvars": {
+   "name": "contextvars",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "_pydecimal:eager:350",
+   "dynamic_unknown_lines": [],
+   "path": "contextvars.py",
+   "edges": [
+    {
+     "importer": "contextvars",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 1,
+     "func": ""
+    },
+    {
+     "importer": "contextvars",
+     "target": "_contextvars",
+     "cls": "eager",
+     "line": 2,
+     "func": ""
+    }
+   ]
+  },
+  "copy": {
+   "name": "copy",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "collections:first-use:35",
+   "dynamic_unknown_lines": [],
+   "path": "copy.py",
+   "edges": [
+    {
+     "importer": "copy",
+     "target": "types",
+     "cls": "eager",
+     "line": 52,
+     "func": ""
+    },
+    {
+     "importer": "copy",
+     "target": "weakref",
+     "cls": "eager",
+     "line": 53,
+     "func": ""
+    },
+    {
+     "importer": "copy",
+     "target": "copyreg",
+     "cls": "eager",
+     "line": 54,
+     "func": ""
+    }
+   ]
+  },
+  "copyreg": {
+   "name": "copyreg",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "re:eager:383",
+   "dynamic_unknown_lines": [],
+   "path": "copyreg.py",
+   "edges": [
+    {
+     "importer": "copyreg",
+     "target": "typing",
+     "cls": "lazy",
+     "line": 34,
+     "func": "pickle_union"
+    },
+    {
+     "importer": "copyreg",
+     "target": "operator",
+     "cls": "lazy",
+     "line": 34,
+     "func": "pickle_union"
+    }
+   ]
+  },
+  "csv": {
+   "name": "csv",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "data_easy_sales:eager:11",
+   "dynamic_unknown_lines": [],
+   "path": "csv.py",
+   "edges": [
+    {
+     "importer": "csv",
+     "target": "types",
+     "cls": "eager",
+     "line": 66,
+     "func": ""
+    },
+    {
+     "importer": "csv",
+     "target": "_csv",
+     "cls": "eager",
+     "line": 67,
+     "func": ""
+    },
+    {
+     "importer": "csv",
+     "target": "_csv",
+     "cls": "eager",
+     "line": 72,
+     "func": ""
+    },
+    {
+     "importer": "csv",
+     "target": "io",
+     "cls": "eager",
+     "line": 74,
+     "func": ""
+    },
+    {
+     "importer": "csv",
+     "target": "re",
+     "cls": "lazy",
+     "line": 287,
+     "func": "Sniffer._guess_quote_and_delimiter"
+    },
+    {
+     "importer": "csv",
+     "target": "collections",
+     "cls": "lazy",
+     "line": 379,
+     "func": "Sniffer._guess_delimiter"
+    },
+    {
+     "importer": "csv",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 532,
+     "func": "__getattr__"
+    }
+   ]
+  },
+  "data_easy_sales": {
+   "name": "data_easy_sales",
+   "kind": "source",
+   "status": "program",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "path": "targets/drivers/data_easy_sales.py",
+   "edges": [
+    {
+     "importer": "data_easy_sales",
+     "target": "csv",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "data_easy_sales",
+     "target": "sys",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "data_easy_sales",
+     "target": "collections",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "data_easy_sales",
+     "target": "datetime",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "data_easy_sales",
+     "target": "decimal",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "data_easy_sales",
+     "target": "fractions",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "data_easy_sales",
+     "target": "pathlib",
+     "cls": "eager",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "data_easy_sales",
+     "target": "statistics",
+     "cls": "eager",
+     "line": 18,
+     "func": ""
+    },
+    {
+     "importer": "data_easy_sales",
+     "target": "humanize",
+     "cls": "eager",
+     "line": 20,
+     "func": ""
+    }
+   ]
+  },
+  "dataclasses": {
+   "name": "dataclasses",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "_colorize:eager:6",
+   "dynamic_unknown_lines": [],
+   "path": "dataclasses.py",
+   "edges": [
+    {
+     "importer": "dataclasses",
+     "target": "sys",
+     "cls": "eager",
+     "line": 1,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "types",
+     "cls": "eager",
+     "line": 2,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "keyword",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "annotationlib",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "abc",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "reprlib",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "copy",
+     "cls": "first-use",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "re",
+     "cls": "first-use",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "dataclasses",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 987,
+     "func": "_AutoDocstring.__get__"
+    },
+    {
+     "importer": "dataclasses",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 1399,
+     "func": "_add_slots"
+    },
+    {
+     "importer": "dataclasses",
+     "target": "typing",
+     "cls": "lazy",
+     "line": 1729,
+     "func": "make_dataclass.<locals>.annotate_method.<locals>.get_any"
+    }
+   ]
+  },
+  "datetime": {
+   "name": "datetime",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "data_easy_sales:eager:14",
+   "dynamic_unknown_lines": [],
+   "path": "datetime.py",
+   "edges": [
+    {
+     "importer": "datetime",
+     "target": "_datetime",
+     "cls": "optional",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "datetime",
+     "target": "_pydatetime",
+     "cls": "guarded",
+     "line": 10,
+     "func": ""
+    }
+   ]
+  },
+  "decimal": {
+   "name": "decimal",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "data_easy_sales:eager:15",
+   "dynamic_unknown_lines": [],
+   "path": "decimal.py",
+   "edges": [
+    {
+     "importer": "decimal",
+     "target": "_decimal",
+     "cls": "optional",
+     "line": 102,
+     "func": ""
+    },
+    {
+     "importer": "decimal",
+     "target": "_decimal",
+     "cls": "optional",
+     "line": 103,
+     "func": ""
+    },
+    {
+     "importer": "decimal",
+     "target": "_decimal",
+     "cls": "optional",
+     "line": 104,
+     "func": ""
+    },
+    {
+     "importer": "decimal",
+     "target": "_pydecimal",
+     "cls": "guarded",
+     "line": 106,
+     "func": ""
+    },
+    {
+     "importer": "decimal",
+     "target": "sys",
+     "cls": "guarded",
+     "line": 107,
+     "func": ""
+    }
+   ]
+  },
+  "difflib": {
+   "name": "difflib",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "argparse:lazy:2830",
+   "dynamic_unknown_lines": [],
+   "path": "difflib.py",
+   "edges": [
+    {
+     "importer": "difflib",
+     "target": "heapq",
+     "cls": "eager",
+     "line": 33,
+     "func": ""
+    },
+    {
+     "importer": "difflib",
+     "target": "collections",
+     "cls": "eager",
+     "line": 34,
+     "func": ""
+    },
+    {
+     "importer": "difflib",
+     "target": "types",
+     "cls": "eager",
+     "line": 35,
+     "func": ""
+    },
+    {
+     "importer": "difflib",
+     "target": "_colorize",
+     "cls": "first-use",
+     "line": 36,
+     "func": ""
+    },
+    {
+     "importer": "difflib",
+     "target": "re",
+     "cls": "lazy",
+     "line": 1395,
+     "func": "_mdiff"
+    }
+   ]
+  },
+  "dis": {
+   "name": "dis",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "inspect:eager:149",
+   "dynamic_unknown_lines": [],
+   "path": "dis.py",
+   "edges": [
+    {
+     "importer": "dis",
+     "target": "sys",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "dis",
+     "target": "types",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "dis",
+     "target": "collections",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "dis",
+     "target": "io",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "dis",
+     "target": "opcode",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "dis",
+     "target": "opcode",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "dis",
+     "target": "_opcode",
+     "cls": "eager",
+     "line": 22,
+     "func": ""
+    },
+    {
+     "importer": "dis",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 1147,
+     "func": "main"
+    }
+   ]
+  },
+  "encodings": {
+   "name": "encodings",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "locale:eager:14",
+   "dynamic_unknown_lines": [
+    96
+   ],
+   "path": "encodings/__init__.py",
+   "edges": [
+    {
+     "importer": "encodings",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 31,
+     "func": ""
+    },
+    {
+     "importer": "encodings",
+     "target": "sys",
+     "cls": "eager",
+     "line": 32,
+     "func": ""
+    },
+    {
+     "importer": "encodings",
+     "target": "_codecs",
+     "cls": "eager",
+     "line": 33,
+     "func": ""
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "eager",
+     "line": 34,
+     "func": ""
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.aliases",
+     "cls": "eager",
+     "line": 34,
+     "func": ""
+    },
+    {
+     "importer": "encodings",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 61,
+     "func": "normalize_encoding"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dead",
+     "line": 160,
+     "func": ""
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings._win_cp_codecs",
+     "cls": "dead",
+     "line": 160,
+     "func": ""
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.ascii",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.latin_1",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.utf_8",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.utf_8_sig",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.utf_16",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.utf_16_be",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.utf_16_le",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.utf_32",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.utf_32_be",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    },
+    {
+     "importer": "encodings",
+     "target": "encodings.utf_32_le",
+     "cls": "dynamic",
+     "line": 0,
+     "func": "search_function"
+    }
+   ]
+  },
+  "encodings.aliases": {
+   "name": "encodings.aliases",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "locale:eager:15",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/aliases.py",
+   "edges": []
+  },
+  "encodings.ascii": {
+   "name": "encodings.ascii",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/ascii.py",
+   "edges": [
+    {
+     "importer": "encodings.ascii",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.latin_1": {
+   "name": "encodings.latin_1",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/latin_1.py",
+   "edges": [
+    {
+     "importer": "encodings.latin_1",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.utf_16": {
+   "name": "encodings.utf_16",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/utf_16.py",
+   "edges": [
+    {
+     "importer": "encodings.utf_16",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "encodings.utf_16",
+     "target": "sys",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.utf_16_be": {
+   "name": "encodings.utf_16_be",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/utf_16_be.py",
+   "edges": [
+    {
+     "importer": "encodings.utf_16_be",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.utf_16_le": {
+   "name": "encodings.utf_16_le",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/utf_16_le.py",
+   "edges": [
+    {
+     "importer": "encodings.utf_16_le",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.utf_32": {
+   "name": "encodings.utf_32",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/utf_32.py",
+   "edges": [
+    {
+     "importer": "encodings.utf_32",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "encodings.utf_32",
+     "target": "sys",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.utf_32_be": {
+   "name": "encodings.utf_32_be",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/utf_32_be.py",
+   "edges": [
+    {
+     "importer": "encodings.utf_32_be",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.utf_32_le": {
+   "name": "encodings.utf_32_le",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/utf_32_le.py",
+   "edges": [
+    {
+     "importer": "encodings.utf_32_le",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.utf_8": {
+   "name": "encodings.utf_8",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/utf_8.py",
+   "edges": [
+    {
+     "importer": "encodings.utf_8",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    }
+   ]
+  },
+  "encodings.utf_8_sig": {
+   "name": "encodings.utf_8_sig",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "encodings:dynamic:0",
+   "dynamic_unknown_lines": [],
+   "path": "encodings/utf_8_sig.py",
+   "edges": [
+    {
+     "importer": "encodings.utf_8_sig",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    }
+   ]
+  },
+  "enum": {
+   "name": "enum",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "re:eager:126",
+   "dynamic_unknown_lines": [],
+   "path": "enum.py",
+   "edges": [
+    {
+     "importer": "enum",
+     "target": "sys",
+     "cls": "eager",
+     "line": 1,
+     "func": ""
+    },
+    {
+     "importer": "enum",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 2,
+     "func": ""
+    },
+    {
+     "importer": "enum",
+     "target": "types",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "enum",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 1119,
+     "func": "EnumType.__signature__"
+    }
+   ]
+  },
+  "errno": {
+   "name": "errno",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "pathlib:eager:14",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "fnmatch": {
+   "name": "fnmatch",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "shutil:eager:10",
+   "dynamic_unknown_lines": [],
+   "path": "fnmatch.py",
+   "edges": [
+    {
+     "importer": "fnmatch",
+     "target": "functools",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "fnmatch",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "fnmatch",
+     "target": "os",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "fnmatch",
+     "target": "posixpath",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "fnmatch",
+     "target": "re",
+     "cls": "eager",
+     "line": 17,
+     "func": ""
+    }
+   ]
+  },
+  "fractions": {
+   "name": "fractions",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "data_easy_sales:eager:16",
+   "dynamic_unknown_lines": [],
+   "path": "fractions.py",
+   "edges": [
+    {
+     "importer": "fractions",
+     "target": "functools",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "fractions",
+     "target": "math",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "fractions",
+     "target": "numbers",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "fractions",
+     "target": "operator",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "fractions",
+     "target": "re",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "fractions",
+     "target": "sys",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "fractions",
+     "target": "decimal",
+     "cls": "lazy",
+     "line": 352,
+     "func": "Fraction.from_decimal"
+    }
+   ]
+  },
+  "functools": {
+   "name": "functools",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "fractions:eager:6",
+   "dynamic_unknown_lines": [],
+   "path": "functools.py",
+   "edges": [
+    {
+     "importer": "functools",
+     "target": "abc",
+     "cls": "eager",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "collections",
+     "cls": "eager",
+     "line": 18,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "operator",
+     "cls": "eager",
+     "line": 20,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "reprlib",
+     "cls": "eager",
+     "line": 21,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "types",
+     "cls": "eager",
+     "line": 22,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 23,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "_functools",
+     "cls": "optional",
+     "line": 226,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "_functools",
+     "cls": "optional",
+     "line": 438,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "_functools",
+     "cls": "optional",
+     "line": 738,
+     "func": ""
+    },
+    {
+     "importer": "functools",
+     "target": "weakref",
+     "cls": "lazy",
+     "line": 908,
+     "func": "singledispatch"
+    },
+    {
+     "importer": "functools",
+     "target": "typing",
+     "cls": "lazy",
+     "line": 969,
+     "func": "singledispatch.<locals>.register"
+    },
+    {
+     "importer": "functools",
+     "target": "annotationlib",
+     "cls": "lazy",
+     "line": 970,
+     "func": "singledispatch.<locals>.register"
+    },
+    {
+     "importer": "functools",
+     "target": "os",
+     "cls": "lazy",
+     "line": 1186,
+     "func": "_warn_python_reduce_kwargs.<locals>.wrapper"
+    },
+    {
+     "importer": "functools",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1187,
+     "func": "_warn_python_reduce_kwargs.<locals>.wrapper"
+    },
+    {
+     "importer": "functools",
+     "target": "_functools",
+     "cls": "optional",
+     "line": 1206,
+     "func": ""
+    }
+   ]
+  },
+  "gc": {
+   "name": "gc",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "weakref:lazy:551",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "genericpath": {
+   "name": "genericpath",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "ntpath:eager:22",
+   "dynamic_unknown_lines": [],
+   "path": "genericpath.py",
+   "edges": [
+    {
+     "importer": "genericpath",
+     "target": "os",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "genericpath",
+     "target": "stat",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "genericpath",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 108,
+     "func": "commonprefix"
+    }
+   ]
+  },
+  "gettext": {
+   "name": "gettext",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "humanize.i18n:eager:5",
+   "dynamic_unknown_lines": [],
+   "path": "gettext.py",
+   "edges": [
+    {
+     "importer": "gettext",
+     "target": "operator",
+     "cls": "eager",
+     "line": 46,
+     "func": ""
+    },
+    {
+     "importer": "gettext",
+     "target": "os",
+     "cls": "eager",
+     "line": 47,
+     "func": ""
+    },
+    {
+     "importer": "gettext",
+     "target": "sys",
+     "cls": "eager",
+     "line": 48,
+     "func": ""
+    },
+    {
+     "importer": "gettext",
+     "target": "re",
+     "cls": "lazy",
+     "line": 74,
+     "func": "_tokenize"
+    },
+    {
+     "importer": "gettext",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 186,
+     "func": "_as_int2"
+    },
+    {
+     "importer": "gettext",
+     "target": "locale",
+     "cls": "lazy",
+     "line": 236,
+     "func": "_expand_lang"
+    },
+    {
+     "importer": "gettext",
+     "target": "builtins",
+     "cls": "lazy",
+     "line": 329,
+     "func": "NullTranslations.install"
+    },
+    {
+     "importer": "gettext",
+     "target": "struct",
+     "cls": "lazy",
+     "line": 357,
+     "func": "GNUTranslations._parse"
+    },
+    {
+     "importer": "gettext",
+     "target": "errno",
+     "cls": "lazy",
+     "line": 540,
+     "func": "translation"
+    },
+    {
+     "importer": "gettext",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 557,
+     "func": "translation"
+    }
+   ]
+  },
+  "glob": {
+   "name": "glob",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "pathlib:first-use:21",
+   "dynamic_unknown_lines": [],
+   "path": "glob.py",
+   "edges": [
+    {
+     "importer": "glob",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "glob",
+     "target": "os",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "glob",
+     "target": "re",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "glob",
+     "target": "fnmatch",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "glob",
+     "target": "functools",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "glob",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "glob",
+     "target": "operator",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "glob",
+     "target": "stat",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "glob",
+     "target": "sys",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    }
+   ]
+  },
+  "grp": {
+   "name": "grp",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "pathlib:optional:28",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "hashlib": {
+   "name": "hashlib",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "random:lazy:163",
+   "dynamic_unknown_lines": [],
+   "path": "hashlib.py",
+   "edges": [
+    {
+     "importer": "hashlib",
+     "target": "_sha1",
+     "cls": "optional",
+     "line": 94,
+     "func": "__get_builtin_constructor"
+    },
+    {
+     "importer": "hashlib",
+     "target": "_md5",
+     "cls": "optional",
+     "line": 97,
+     "func": "__get_builtin_constructor"
+    },
+    {
+     "importer": "hashlib",
+     "target": "_sha2",
+     "cls": "optional",
+     "line": 100,
+     "func": "__get_builtin_constructor"
+    },
+    {
+     "importer": "hashlib",
+     "target": "_sha2",
+     "cls": "optional",
+     "line": 104,
+     "func": "__get_builtin_constructor"
+    },
+    {
+     "importer": "hashlib",
+     "target": "_blake2",
+     "cls": "optional",
+     "line": 108,
+     "func": "__get_builtin_constructor"
+    },
+    {
+     "importer": "hashlib",
+     "target": "_sha3",
+     "cls": "optional",
+     "line": 112,
+     "func": "__get_builtin_constructor"
+    },
+    {
+     "importer": "hashlib",
+     "target": "_sha3",
+     "cls": "optional",
+     "line": 118,
+     "func": "__get_builtin_constructor"
+    },
+    {
+     "importer": "hashlib",
+     "target": "_hashlib",
+     "cls": "optional",
+     "line": 190,
+     "func": ""
+    },
+    {
+     "importer": "hashlib",
+     "target": "_hashlib",
+     "cls": "optional",
+     "line": 202,
+     "func": ""
+    },
+    {
+     "importer": "hashlib",
+     "target": "_hashlib",
+     "cls": "optional",
+     "line": 210,
+     "func": ""
+    }
+   ]
+  },
+  "heapq": {
+   "name": "heapq",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "collections:first-use:36",
+   "dynamic_unknown_lines": [],
+   "path": "heapq.py",
+   "edges": [
+    {
+     "importer": "heapq",
+     "target": "_heapq",
+     "cls": "optional",
+     "line": 597,
+     "func": ""
+    },
+    {
+     "importer": "heapq",
+     "target": "doctest",
+     "cls": "dead",
+     "line": 610,
+     "func": ""
+    }
+   ]
+  },
+  "humanize": {
+   "name": "humanize",
+   "kind": "source",
+   "status": "program",
+   "reached_by": "data_easy_sales:eager:20",
+   "dynamic_unknown_lines": [],
+   "path": "targets/vendor/humanize/__init__.py",
+   "edges": [
+    {
+     "importer": "humanize",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize.filesize",
+     "cls": "first-use",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize.i18n",
+     "cls": "first-use",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize.lists",
+     "cls": "first-use",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize.number",
+     "cls": "first-use",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 27,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize.time",
+     "cls": "first-use",
+     "line": 27,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 35,
+     "func": ""
+    },
+    {
+     "importer": "humanize",
+     "target": "humanize._version",
+     "cls": "first-use",
+     "line": 35,
+     "func": ""
+    }
+   ]
+  },
+  "humanize._version": {
+   "name": "humanize._version",
+   "kind": "source",
+   "status": "program",
+   "reached_by": "humanize:first-use:35",
+   "dynamic_unknown_lines": [],
+   "path": "targets/vendor/humanize/_version.py",
+   "edges": []
+  },
+  "humanize.filesize": {
+   "name": "humanize.filesize",
+   "kind": "source",
+   "status": "program",
+   "reached_by": "humanize:first-use:14",
+   "dynamic_unknown_lines": [],
+   "path": "targets/vendor/humanize/filesize.py",
+   "edges": [
+    {
+     "importer": "humanize.filesize",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "humanize.filesize",
+     "target": "humanize.i18n",
+     "cls": "first-use",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "humanize.filesize",
+     "target": "math",
+     "cls": "lazy",
+     "line": 99,
+     "func": "naturalsize"
+    }
+   ]
+  },
+  "humanize.i18n": {
+   "name": "humanize.i18n",
+   "kind": "source",
+   "status": "program",
+   "reached_by": "humanize:first-use:15",
+   "dynamic_unknown_lines": [],
+   "path": "targets/vendor/humanize/i18n.py",
+   "edges": [
+    {
+     "importer": "humanize.i18n",
+     "target": "gettext",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "humanize.i18n",
+     "target": "threading",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "humanize.i18n",
+     "target": "os",
+     "cls": "dead",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "humanize.i18n",
+     "target": "pathlib",
+     "cls": "dead",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "humanize.i18n",
+     "target": "importlib",
+     "cls": "lazy",
+     "line": 49,
+     "func": "_get_default_locale_path"
+    },
+    {
+     "importer": "humanize.i18n",
+     "target": "importlib.resources",
+     "cls": "lazy",
+     "line": 49,
+     "func": "_get_default_locale_path"
+    }
+   ]
+  },
+  "humanize.lists": {
+   "name": "humanize.lists",
+   "kind": "source",
+   "status": "program",
+   "reached_by": "humanize:first-use:16",
+   "dynamic_unknown_lines": [],
+   "path": "targets/vendor/humanize/lists.py",
+   "edges": [
+    {
+     "importer": "humanize.lists",
+     "target": "collections",
+     "cls": "dead",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "humanize.lists",
+     "target": "collections.abc",
+     "cls": "dead",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "humanize.lists",
+     "target": "typing",
+     "cls": "dead",
+     "line": 8,
+     "func": ""
+    }
+   ]
+  },
+  "humanize.number": {
+   "name": "humanize.number",
+   "kind": "source",
+   "status": "program",
+   "reached_by": "humanize:first-use:17",
+   "dynamic_unknown_lines": [],
+   "path": "targets/vendor/humanize/number.py",
+   "edges": [
+    {
+     "importer": "humanize.number",
+     "target": "bisect",
+     "cls": "first-use",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize.i18n",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize.i18n",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize.i18n",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize.i18n",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize.i18n",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "humanize.i18n",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "typing",
+     "cls": "dead",
+     "line": 18,
+     "func": ""
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 82,
+     "func": "_format_not_finite"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 130,
+     "func": "ordinal"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 177,
+     "func": "intcomma"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 258,
+     "func": "intword"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 329,
+     "func": "apnumber"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 381,
+     "func": "fractional"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "fractions",
+     "cls": "lazy",
+     "line": 389,
+     "func": "fractional"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 444,
+     "func": "scientific"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 507,
+     "func": "clamp"
+    },
+    {
+     "importer": "humanize.number",
+     "target": "math",
+     "cls": "lazy",
+     "line": 572,
+     "func": "metric"
+    }
+   ]
+  },
+  "humanize.time": {
+   "name": "humanize.time",
+   "kind": "source",
+   "status": "program",
+   "reached_by": "humanize:first-use:27",
+   "dynamic_unknown_lines": [],
+   "path": "targets/vendor/humanize/time.py",
+   "edges": [
+    {
+     "importer": "humanize.time",
+     "target": "enum",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "functools",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "humanize.i18n",
+     "cls": "first-use",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "humanize.i18n",
+     "cls": "first-use",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "humanize",
+     "cls": "first-use",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "humanize.number",
+     "cls": "first-use",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "datetime",
+     "cls": "dead",
+     "line": 19,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "collections",
+     "cls": "dead",
+     "line": 20,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "collections.abc",
+     "cls": "dead",
+     "line": 20,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "typing",
+     "cls": "dead",
+     "line": 21,
+     "func": ""
+    },
+    {
+     "importer": "humanize.time",
+     "target": "datetime",
+     "cls": "lazy",
+     "line": 50,
+     "func": "_now"
+    },
+    {
+     "importer": "humanize.time",
+     "target": "datetime",
+     "cls": "lazy",
+     "line": 77,
+     "func": "_date_and_delta"
+    },
+    {
+     "importer": "humanize.time",
+     "target": "datetime",
+     "cls": "lazy",
+     "line": 140,
+     "func": "naturaldelta"
+    },
+    {
+     "importer": "humanize.time",
+     "target": "math",
+     "cls": "lazy",
+     "line": 162,
+     "func": "naturaldelta"
+    },
+    {
+     "importer": "humanize.time",
+     "target": "datetime",
+     "cls": "lazy",
+     "line": 291,
+     "func": "naturaltime"
+    },
+    {
+     "importer": "humanize.time",
+     "target": "datetime",
+     "cls": "lazy",
+     "line": 321,
+     "func": "_convert_aware_datetime"
+    },
+    {
+     "importer": "humanize.time",
+     "target": "datetime",
+     "cls": "lazy",
+     "line": 336,
+     "func": "naturalday"
+    },
+    {
+     "importer": "humanize.time",
+     "target": "datetime",
+     "cls": "lazy",
+     "line": 368,
+     "func": "naturaldate"
+    },
+    {
+     "importer": "humanize.time",
+     "target": "math",
+     "cls": "lazy",
+     "line": 655,
+     "func": "precisedelta"
+    }
+   ]
+  },
+  "importlib": {
+   "name": "importlib",
+   "kind": "source",
+   "status": "core",
+   "reached_by": "humanize.i18n:lazy:49",
+   "dynamic_unknown_lines": [],
+   "path": "importlib/__init__.py",
+   "edges": []
+  },
+  "importlib.machinery": {
+   "name": "importlib.machinery",
+   "kind": "frozen",
+   "status": "core",
+   "reached_by": "inspect:eager:152",
+   "dynamic_unknown_lines": [],
+   "path": "importlib/machinery.py",
+   "edges": []
+  },
+  "importlib.util": {
+   "name": "importlib.util",
+   "kind": "frozen",
+   "status": "core",
+   "reached_by": "linecache:lazy:239",
+   "dynamic_unknown_lines": [],
+   "path": "importlib/util.py",
+   "edges": []
+  },
+  "inspect": {
+   "name": "inspect",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "enum:lazy:1119",
+   "dynamic_unknown_lines": [
+    3484
+   ],
+   "path": "inspect.py",
+   "edges": [
+    {
+     "importer": "inspect",
+     "target": "abc",
+     "cls": "eager",
+     "line": 145,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "annotationlib",
+     "cls": "eager",
+     "line": 146,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "annotationlib",
+     "cls": "eager",
+     "line": 147,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "ast",
+     "cls": "eager",
+     "line": 148,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "dis",
+     "cls": "eager",
+     "line": 149,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "collections",
+     "cls": "eager",
+     "line": 150,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 150,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "enum",
+     "cls": "eager",
+     "line": 151,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "importlib",
+     "cls": "eager",
+     "line": 152,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "importlib.machinery",
+     "cls": "eager",
+     "line": 152,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 153,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "linecache",
+     "cls": "eager",
+     "line": 154,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "os",
+     "cls": "eager",
+     "line": 155,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "re",
+     "cls": "first-use",
+     "line": 156,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "sys",
+     "cls": "eager",
+     "line": 157,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "tokenize",
+     "cls": "first-use",
+     "line": 158,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "token",
+     "cls": "eager",
+     "line": 159,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "types",
+     "cls": "eager",
+     "line": 160,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "functools",
+     "cls": "eager",
+     "line": 161,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 162,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "keyword",
+     "cls": "eager",
+     "line": 163,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "operator",
+     "cls": "eager",
+     "line": 164,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "collections",
+     "cls": "eager",
+     "line": 165,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "_weakref",
+     "cls": "eager",
+     "line": 166,
+     "func": ""
+    },
+    {
+     "importer": "inspect",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 3461,
+     "func": "_main"
+    },
+    {
+     "importer": "inspect",
+     "target": "importlib",
+     "cls": "lazy",
+     "line": 3462,
+     "func": "_main"
+    }
+   ]
+  },
+  "io": {
+   "name": "io",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "csv:eager:74",
+   "dynamic_unknown_lines": [],
+   "path": "io.py",
+   "edges": [
+    {
+     "importer": "io",
+     "target": "_io",
+     "cls": "eager",
+     "line": 53,
+     "func": ""
+    },
+    {
+     "importer": "io",
+     "target": "abc",
+     "cls": "eager",
+     "line": 54,
+     "func": ""
+    },
+    {
+     "importer": "io",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 56,
+     "func": ""
+    },
+    {
+     "importer": "io",
+     "target": "_io",
+     "cls": "eager",
+     "line": 57,
+     "func": ""
+    },
+    {
+     "importer": "io",
+     "target": "_io",
+     "cls": "optional",
+     "line": 94,
+     "func": ""
+    }
+   ]
+  },
+  "ipaddress": {
+   "name": "ipaddress",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "urllib.parse:eager:40",
+   "dynamic_unknown_lines": [],
+   "path": "ipaddress.py",
+   "edges": [
+    {
+     "importer": "ipaddress",
+     "target": "functools",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "ipaddress",
+     "target": "re",
+     "cls": "lazy",
+     "line": 633,
+     "func": "_BaseAddress.__format__"
+    },
+    {
+     "importer": "ipaddress",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 2427,
+     "func": "__getattr__"
+    }
+   ]
+  },
+  "itertools": {
+   "name": "itertools",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "collections:eager:37",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "keyword": {
+   "name": "keyword",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "collections:eager:40",
+   "dynamic_unknown_lines": [],
+   "path": "keyword.py",
+   "edges": []
+  },
+  "linecache": {
+   "name": "linecache",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "_py_warnings:optional:159",
+   "dynamic_unknown_lines": [],
+   "path": "linecache.py",
+   "edges": [
+    {
+     "importer": "linecache",
+     "target": "os",
+     "cls": "optional",
+     "line": 94,
+     "func": "checkcache"
+    },
+    {
+     "importer": "linecache",
+     "target": "os",
+     "cls": "optional",
+     "line": 115,
+     "func": "updatecache"
+    },
+    {
+     "importer": "linecache",
+     "target": "sys",
+     "cls": "optional",
+     "line": 116,
+     "func": "updatecache"
+    },
+    {
+     "importer": "linecache",
+     "target": "tokenize",
+     "cls": "optional",
+     "line": 117,
+     "func": "updatecache"
+    },
+    {
+     "importer": "linecache",
+     "target": "os",
+     "cls": "lazy",
+     "line": 220,
+     "func": "_read_from_archive"
+    },
+    {
+     "importer": "linecache",
+     "target": "sys",
+     "cls": "lazy",
+     "line": 221,
+     "func": "_read_from_archive"
+    },
+    {
+     "importer": "linecache",
+     "target": "importlib",
+     "cls": "lazy",
+     "line": 239,
+     "func": "_read_from_archive"
+    },
+    {
+     "importer": "linecache",
+     "target": "importlib.util",
+     "cls": "lazy",
+     "line": 239,
+     "func": "_read_from_archive"
+    },
+    {
+     "importer": "linecache",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 310,
+     "func": "_bless_my_loader"
+    },
+    {
+     "importer": "linecache",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 318,
+     "func": "_bless_my_loader"
+    }
+   ]
+  },
+  "locale": {
+   "name": "locale",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "_pydecimal:optional:6257",
+   "dynamic_unknown_lines": [],
+   "path": "locale.py",
+   "edges": [
+    {
+     "importer": "locale",
+     "target": "sys",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "encodings",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "encodings",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "encodings.aliases",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "functools",
+     "cls": "eager",
+     "line": 18,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "_locale",
+     "cls": "optional",
+     "line": 46,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "re",
+     "cls": "lazy",
+     "line": 220,
+     "func": "format_string"
+    },
+    {
+     "importer": "locale",
+     "target": "_locale",
+     "cls": "optional",
+     "line": 568,
+     "func": "_getdefaultlocale"
+    },
+    {
+     "importer": "locale",
+     "target": "os",
+     "cls": "lazy",
+     "line": 578,
+     "func": "_getdefaultlocale"
+    },
+    {
+     "importer": "locale",
+     "target": "_locale",
+     "cls": "optional",
+     "line": 628,
+     "func": ""
+    },
+    {
+     "importer": "locale",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 642,
+     "func": "getpreferredencoding"
+    },
+    {
+     "importer": "locale",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 656,
+     "func": "getpreferredencoding"
+    }
+   ]
+  },
+  "math": {
+   "name": "math",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "fractions:eager:7",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "math.integer": {
+   "name": "math.integer",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "data_easy_sales:runtime:0",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "ntpath": {
+   "name": "ntpath",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "pathlib:eager:9",
+   "dynamic_unknown_lines": [],
+   "path": "ntpath.py",
+   "edges": [
+    {
+     "importer": "ntpath",
+     "target": "os",
+     "cls": "eager",
+     "line": 20,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "sys",
+     "cls": "eager",
+     "line": 21,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "genericpath",
+     "cls": "eager",
+     "line": 22,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "genericpath",
+     "cls": "eager",
+     "line": 23,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "_winapi",
+     "cls": "optional",
+     "line": 45,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 172,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 279,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "re",
+     "cls": "lazy",
+     "line": 419,
+     "func": "expandvars"
+    },
+    {
+     "importer": "ntpath",
+     "target": "re",
+     "cls": "lazy",
+     "line": 431,
+     "func": "expandvars"
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 474,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 516,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 559,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 875,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 876,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 877,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 878,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 879,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 880,
+     "func": ""
+    },
+    {
+     "importer": "ntpath",
+     "target": "nt",
+     "cls": "optional",
+     "line": 887,
+     "func": ""
+    }
+   ]
+  },
+  "numbers": {
+   "name": "numbers",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "fractions:eager:8",
+   "dynamic_unknown_lines": [],
+   "path": "numbers.py",
+   "edges": [
+    {
+     "importer": "numbers",
+     "target": "abc",
+     "cls": "eager",
+     "line": 33,
+     "func": ""
+    }
+   ]
+  },
+  "opcode": {
+   "name": "opcode",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "dis:eager:8",
+   "dynamic_unknown_lines": [],
+   "path": "opcode.py",
+   "edges": [
+    {
+     "importer": "opcode",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "opcode",
+     "target": "_opcode",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "opcode",
+     "target": "_opcode",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "opcode",
+     "target": "_opcode_metadata",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    }
+   ]
+  },
+  "operator": {
+   "name": "operator",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "collections:eager:41",
+   "dynamic_unknown_lines": [],
+   "path": "operator.py",
+   "edges": [
+    {
+     "importer": "operator",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 22,
+     "func": ""
+    },
+    {
+     "importer": "operator",
+     "target": "functools",
+     "cls": "lazy",
+     "line": 341,
+     "func": "methodcaller.__reduce__"
+    },
+    {
+     "importer": "operator",
+     "target": "_operator",
+     "cls": "optional",
+     "line": 422,
+     "func": ""
+    },
+    {
+     "importer": "operator",
+     "target": "_operator",
+     "cls": "eager",
+     "line": 426,
+     "func": ""
+    }
+   ]
+  },
+  "os": {
+   "name": "os",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "pathlib:eager:11",
+   "dynamic_unknown_lines": [],
+   "path": "os.py",
+   "edges": [
+    {
+     "importer": "os",
+     "target": "abc",
+     "cls": "eager",
+     "line": 25,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "sys",
+     "cls": "eager",
+     "line": 26,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "stat",
+     "cls": "eager",
+     "line": 27,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 29,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "eager",
+     "line": 55,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "optional",
+     "line": 57,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "optional",
+     "line": 62,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "posixpath",
+     "cls": "eager",
+     "line": 66,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "optional",
+     "line": 69,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "optional",
+     "line": 73,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "posix",
+     "cls": "eager",
+     "line": 77,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "dead",
+     "line": 84,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "dead",
+     "line": 86,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "ntpath",
+     "cls": "dead",
+     "line": 90,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "dead",
+     "line": 92,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "dead",
+     "line": 97,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "dead",
+     "line": 101,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "os",
+     "cls": "eager",
+     "line": 109,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "os.path",
+     "cls": "eager",
+     "line": 109,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 679,
+     "func": "get_exec_path"
+    },
+    {
+     "importer": "os",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 714,
+     "func": ""
+    },
+    {
+     "importer": "os",
+     "target": "subprocess",
+     "cls": "lazy",
+     "line": 1056,
+     "func": "popen"
+    },
+    {
+     "importer": "os",
+     "target": "io",
+     "cls": "lazy",
+     "line": 1099,
+     "func": "fdopen"
+    },
+    {
+     "importer": "os",
+     "target": "nt",
+     "cls": "dead",
+     "line": 1197,
+     "func": "add_dll_directory"
+    }
+   ]
+  },
+  "os.path": {
+   "name": "os.path",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "os:eager:109",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "pathlib": {
+   "name": "pathlib",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "data_easy_sales:eager:17",
+   "dynamic_unknown_lines": [],
+   "path": "pathlib/__init__.py",
+   "edges": [
+    {
+     "importer": "pathlib",
+     "target": "io",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "ntpath",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "operator",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "os",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "posixpath",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "sys",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "errno",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "stat",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 19,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "shutil",
+     "cls": "first-use",
+     "line": 20,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "glob",
+     "cls": "first-use",
+     "line": 21,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "pwd",
+     "cls": "optional",
+     "line": 24,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "grp",
+     "cls": "optional",
+     "line": 28,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "pathlib",
+     "cls": "eager",
+     "line": 32,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "pathlib._os",
+     "cls": "eager",
+     "line": 32,
+     "func": ""
+    },
+    {
+     "importer": "pathlib",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 524,
+     "func": "PurePath.as_uri"
+    },
+    {
+     "importer": "pathlib",
+     "target": "urllib",
+     "cls": "lazy",
+     "line": 544,
+     "func": "PurePath.as_uri"
+    },
+    {
+     "importer": "pathlib",
+     "target": "urllib.parse",
+     "cls": "lazy",
+     "line": 544,
+     "func": "PurePath.as_uri"
+    },
+    {
+     "importer": "pathlib",
+     "target": "urllib",
+     "cls": "lazy",
+     "line": 1469,
+     "func": "Path.as_uri"
+    },
+    {
+     "importer": "pathlib",
+     "target": "urllib.request",
+     "cls": "lazy",
+     "line": 1469,
+     "func": "Path.as_uri"
+    },
+    {
+     "importer": "pathlib",
+     "target": "urllib",
+     "cls": "lazy",
+     "line": 1475,
+     "func": "Path.from_uri"
+    },
+    {
+     "importer": "pathlib",
+     "target": "urllib.error",
+     "cls": "lazy",
+     "line": 1475,
+     "func": "Path.from_uri"
+    },
+    {
+     "importer": "pathlib",
+     "target": "urllib",
+     "cls": "lazy",
+     "line": 1476,
+     "func": "Path.from_uri"
+    },
+    {
+     "importer": "pathlib",
+     "target": "urllib.request",
+     "cls": "lazy",
+     "line": 1476,
+     "func": "Path.from_uri"
+    }
+   ]
+  },
+  "pathlib._os": {
+   "name": "pathlib._os",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "pathlib:eager:32",
+   "dynamic_unknown_lines": [],
+   "path": "pathlib/_os.py",
+   "edges": [
+    {
+     "importer": "pathlib._os",
+     "target": "errno",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "pathlib._os",
+     "target": "io",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "pathlib._os",
+     "target": "os",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "pathlib._os",
+     "target": "sys",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "pathlib._os",
+     "target": "fcntl",
+     "cls": "optional",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "pathlib._os",
+     "target": "posix",
+     "cls": "optional",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "pathlib._os",
+     "target": "_winapi",
+     "cls": "optional",
+     "line": 18,
+     "func": ""
+    }
+   ]
+  },
+  "posix": {
+   "name": "posix",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "os:eager:55",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "posixpath": {
+   "name": "posixpath",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "pathlib:eager:12",
+   "dynamic_unknown_lines": [],
+   "path": "posixpath.py",
+   "edges": [
+    {
+     "importer": "posixpath",
+     "target": "errno",
+     "cls": "eager",
+     "line": 25,
+     "func": ""
+    },
+    {
+     "importer": "posixpath",
+     "target": "os",
+     "cls": "eager",
+     "line": 26,
+     "func": ""
+    },
+    {
+     "importer": "posixpath",
+     "target": "sys",
+     "cls": "eager",
+     "line": 27,
+     "func": ""
+    },
+    {
+     "importer": "posixpath",
+     "target": "stat",
+     "cls": "eager",
+     "line": 28,
+     "func": ""
+    },
+    {
+     "importer": "posixpath",
+     "target": "genericpath",
+     "cls": "eager",
+     "line": 29,
+     "func": ""
+    },
+    {
+     "importer": "posixpath",
+     "target": "genericpath",
+     "cls": "eager",
+     "line": 30,
+     "func": ""
+    },
+    {
+     "importer": "posixpath",
+     "target": "posix",
+     "cls": "optional",
+     "line": 140,
+     "func": ""
+    },
+    {
+     "importer": "posixpath",
+     "target": "pwd",
+     "cls": "optional",
+     "line": 247,
+     "func": "expanduser"
+    },
+    {
+     "importer": "posixpath",
+     "target": "pwd",
+     "cls": "optional",
+     "line": 261,
+     "func": "expanduser"
+    },
+    {
+     "importer": "posixpath",
+     "target": "re",
+     "cls": "lazy",
+     "line": 301,
+     "func": "expandvars"
+    },
+    {
+     "importer": "posixpath",
+     "target": "re",
+     "cls": "lazy",
+     "line": 311,
+     "func": "expandvars"
+    },
+    {
+     "importer": "posixpath",
+     "target": "posix",
+     "cls": "optional",
+     "line": 342,
+     "func": ""
+    }
+   ]
+  },
+  "pwd": {
+   "name": "pwd",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "pathlib:optional:24",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "random": {
+   "name": "random",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "statistics:eager:134",
+   "dynamic_unknown_lines": [],
+   "path": "random.py",
+   "edges": [
+    {
+     "importer": "random",
+     "target": "math",
+     "cls": "eager",
+     "line": 53,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "math",
+     "cls": "eager",
+     "line": 54,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "math",
+     "cls": "eager",
+     "line": 55,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "math",
+     "cls": "eager",
+     "line": 56,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "os",
+     "cls": "eager",
+     "line": 57,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 58,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "operator",
+     "cls": "eager",
+     "line": 59,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 60,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "bisect",
+     "cls": "eager",
+     "line": 61,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "os",
+     "cls": "eager",
+     "line": 62,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "_random",
+     "cls": "eager",
+     "line": 63,
+     "func": ""
+    },
+    {
+     "importer": "random",
+     "target": "_sha2",
+     "cls": "optional",
+     "line": 160,
+     "func": "Random.seed"
+    },
+    {
+     "importer": "random",
+     "target": "hashlib",
+     "cls": "lazy",
+     "line": 163,
+     "func": "Random.seed"
+    },
+    {
+     "importer": "random",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 262,
+     "func": "Random._randbelow_without_getrandbits"
+    },
+    {
+     "importer": "random",
+     "target": "statistics",
+     "cls": "lazy",
+     "line": 972,
+     "func": "_test_generator"
+    },
+    {
+     "importer": "random",
+     "target": "time",
+     "cls": "lazy",
+     "line": 973,
+     "func": "_test_generator"
+    },
+    {
+     "importer": "random",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 1021,
+     "func": "_parse_args"
+    }
+   ]
+  },
+  "re": {
+   "name": "re",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "csv:lazy:287",
+   "dynamic_unknown_lines": [],
+   "path": "re/__init__.py",
+   "edges": [
+    {
+     "importer": "re",
+     "target": "enum",
+     "cls": "eager",
+     "line": 126,
+     "func": ""
+    },
+    {
+     "importer": "re",
+     "target": "re",
+     "cls": "eager",
+     "line": 127,
+     "func": ""
+    },
+    {
+     "importer": "re",
+     "target": "re._compiler",
+     "cls": "eager",
+     "line": 127,
+     "func": ""
+    },
+    {
+     "importer": "re",
+     "target": "re._parser",
+     "cls": "eager",
+     "line": 127,
+     "func": ""
+    },
+    {
+     "importer": "re",
+     "target": "functools",
+     "cls": "eager",
+     "line": 128,
+     "func": ""
+    },
+    {
+     "importer": "re",
+     "target": "_sre",
+     "cls": "eager",
+     "line": 129,
+     "func": ""
+    },
+    {
+     "importer": "re",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 204,
+     "func": "sub"
+    },
+    {
+     "importer": "re",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 234,
+     "func": "subn"
+    },
+    {
+     "importer": "re",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 263,
+     "func": "split"
+    },
+    {
+     "importer": "re",
+     "target": "copyreg",
+     "cls": "eager",
+     "line": 383,
+     "func": ""
+    },
+    {
+     "importer": "re",
+     "target": "re",
+     "cls": "lazy",
+     "line": 395,
+     "func": "Scanner.__init__"
+    },
+    {
+     "importer": "re",
+     "target": "re._constants",
+     "cls": "lazy",
+     "line": 395,
+     "func": "Scanner.__init__"
+    },
+    {
+     "importer": "re",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 438,
+     "func": "__getattr__"
+    }
+   ]
+  },
+  "re._casefix": {
+   "name": "re._casefix",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "re._compiler:eager:16",
+   "dynamic_unknown_lines": [],
+   "path": "re/_casefix.py",
+   "edges": []
+  },
+  "re._compiler": {
+   "name": "re._compiler",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "re:eager:127",
+   "dynamic_unknown_lines": [],
+   "path": "re/_compiler.py",
+   "edges": [
+    {
+     "importer": "re._compiler",
+     "target": "_sre",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re._parser",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re._constants",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "re._compiler",
+     "target": "re._casefix",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "re._compiler",
+     "target": "sys",
+     "cls": "lazy",
+     "line": 609,
+     "func": "dis"
+    }
+   ]
+  },
+  "re._constants": {
+   "name": "re._constants",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "re:lazy:395",
+   "dynamic_unknown_lines": [],
+   "path": "re/_constants.py",
+   "edges": [
+    {
+     "importer": "re._constants",
+     "target": "_sre",
+     "cls": "eager",
+     "line": 18,
+     "func": ""
+    }
+   ]
+  },
+  "re._parser": {
+   "name": "re._parser",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "re:eager:127",
+   "dynamic_unknown_lines": [],
+   "path": "re/_parser.py",
+   "edges": [
+    {
+     "importer": "re._parser",
+     "target": "re",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "re._parser",
+     "target": "re._constants",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "re._parser",
+     "target": "unicodedata",
+     "cls": "lazy",
+     "line": 343,
+     "func": "_class_escape"
+    },
+    {
+     "importer": "re._parser",
+     "target": "unicodedata",
+     "cls": "lazy",
+     "line": 403,
+     "func": "_escape"
+    },
+    {
+     "importer": "re._parser",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 557,
+     "func": "_parse"
+    },
+    {
+     "importer": "re._parser",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 575,
+     "func": "_parse"
+    },
+    {
+     "importer": "re._parser",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 602,
+     "func": "_parse"
+    }
+   ]
+  },
+  "reprlib": {
+   "name": "reprlib",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "collections:eager:43",
+   "dynamic_unknown_lines": [],
+   "path": "reprlib.py",
+   "edges": [
+    {
+     "importer": "reprlib",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "reprlib",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "reprlib",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "reprlib",
+     "target": "math",
+     "cls": "lazy",
+     "line": 190,
+     "func": "Repr.repr_int"
+    },
+    {
+     "importer": "reprlib",
+     "target": "sys",
+     "cls": "lazy",
+     "line": 190,
+     "func": "Repr.repr_int"
+    }
+   ]
+  },
+  "shutil": {
+   "name": "shutil",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "pathlib:first-use:20",
+   "dynamic_unknown_lines": [],
+   "path": "shutil.py",
+   "edges": [
+    {
+     "importer": "shutil",
+     "target": "os",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "sys",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "stat",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "fnmatch",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "collections",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "errno",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "zlib",
+     "cls": "optional",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "bz2",
+     "cls": "optional",
+     "line": 22,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "lzma",
+     "cls": "optional",
+     "line": 29,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "compression",
+     "cls": "optional",
+     "line": 36,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "compression.zstd",
+     "cls": "optional",
+     "line": 36,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "posix",
+     "cls": "eager",
+     "line": 45,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "nt",
+     "cls": "dead",
+     "line": 47,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "_winapi",
+     "cls": "dead",
+     "line": 50,
+     "func": ""
+    },
+    {
+     "importer": "shutil",
+     "target": "grp",
+     "cls": "optional",
+     "line": 973,
+     "func": "_get_gid"
+    },
+    {
+     "importer": "shutil",
+     "target": "pwd",
+     "cls": "optional",
+     "line": 991,
+     "func": "_get_uid"
+    },
+    {
+     "importer": "shutil",
+     "target": "tarfile",
+     "cls": "lazy",
+     "line": 1033,
+     "func": "_make_tarball"
+    },
+    {
+     "importer": "shutil",
+     "target": "zipfile",
+     "cls": "lazy",
+     "line": 1082,
+     "func": "_make_zipfile"
+    },
+    {
+     "importer": "shutil",
+     "target": "zipfile",
+     "cls": "lazy",
+     "line": 1326,
+     "func": "_unpack_zipfile"
+    },
+    {
+     "importer": "shutil",
+     "target": "tarfile",
+     "cls": "lazy",
+     "line": 1338,
+     "func": "_unpack_tarfile"
+    },
+    {
+     "importer": "shutil",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1655,
+     "func": "__getattr__"
+    }
+   ]
+  },
+  "stat": {
+   "name": "stat",
+   "kind": "frozen",
+   "status": "compiled",
+   "reached_by": "pathlib:eager:16",
+   "dynamic_unknown_lines": [],
+   "path": "stat.py",
+   "edges": [
+    {
+     "importer": "stat",
+     "target": "_stat",
+     "cls": "optional",
+     "line": 225,
+     "func": ""
+    }
+   ]
+  },
+  "statistics": {
+   "name": "statistics",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "data_easy_sales:eager:18",
+   "dynamic_unknown_lines": [],
+   "path": "statistics.py",
+   "edges": [
+    {
+     "importer": "statistics",
+     "target": "math",
+     "cls": "eager",
+     "line": 132,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "numbers",
+     "cls": "eager",
+     "line": 133,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "random",
+     "cls": "eager",
+     "line": 134,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "sys",
+     "cls": "eager",
+     "line": 135,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "fractions",
+     "cls": "eager",
+     "line": 137,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "decimal",
+     "cls": "eager",
+     "line": 138,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 139,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "bisect",
+     "cls": "eager",
+     "line": 140,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "math",
+     "cls": "eager",
+     "line": 141,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "math",
+     "cls": "eager",
+     "line": 142,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "functools",
+     "cls": "eager",
+     "line": 143,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "operator",
+     "cls": "eager",
+     "line": 144,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "collections",
+     "cls": "eager",
+     "line": 145,
+     "func": ""
+    },
+    {
+     "importer": "statistics",
+     "target": "_statistics",
+     "cls": "optional",
+     "line": 1878,
+     "func": ""
+    }
+   ]
+  },
+  "struct": {
+   "name": "struct",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "gettext:lazy:357",
+   "dynamic_unknown_lines": [],
+   "path": "struct.py",
+   "edges": [
+    {
+     "importer": "struct",
+     "target": "_struct",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "struct",
+     "target": "_struct",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "struct",
+     "target": "_struct",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    }
+   ]
+  },
+  "subprocess": {
+   "name": "subprocess",
+   "kind": "source",
+   "status": "shim",
+   "reached_by": "os:lazy:1056",
+   "dynamic_unknown_lines": [],
+   "path": "subprocess.py",
+   "edges": []
+  },
+  "sys": {
+   "name": "sys",
+   "kind": "builtin",
+   "status": "core",
+   "reached_by": "data_easy_sales:eager:12",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "textwrap": {
+   "name": "textwrap",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "argparse:lazy:778",
+   "dynamic_unknown_lines": [],
+   "path": "textwrap.py",
+   "edges": [
+    {
+     "importer": "textwrap",
+     "target": "re",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    }
+   ]
+  },
+  "threading": {
+   "name": "threading",
+   "kind": "source",
+   "status": "shim",
+   "reached_by": "humanize.i18n:eager:6",
+   "dynamic_unknown_lines": [],
+   "path": "threading.py",
+   "edges": []
+  },
+  "time": {
+   "name": "time",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "_pydatetime:eager:9",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "token": {
+   "name": "token",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "inspect:eager:159",
+   "dynamic_unknown_lines": [],
+   "path": "token.py",
+   "edges": []
+  },
+  "tokenize": {
+   "name": "tokenize",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "inspect:first-use:158",
+   "dynamic_unknown_lines": [],
+   "path": "tokenize.py",
+   "edges": [
+    {
+     "importer": "tokenize",
+     "target": "builtins",
+     "cls": "eager",
+     "line": 27,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "codecs",
+     "cls": "eager",
+     "line": 28,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "collections",
+     "cls": "eager",
+     "line": 29,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "functools",
+     "cls": "eager",
+     "line": 30,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "io",
+     "cls": "eager",
+     "line": 31,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 32,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "re",
+     "cls": "eager",
+     "line": 33,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "sys",
+     "cls": "eager",
+     "line": 34,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "token",
+     "cls": "eager",
+     "line": 35,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "token",
+     "cls": "eager",
+     "line": 36,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "_tokenize",
+     "cls": "eager",
+     "line": 37,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "_colorize",
+     "cls": "first-use",
+     "line": 38,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "token",
+     "cls": "eager",
+     "line": 43,
+     "func": ""
+    },
+    {
+     "importer": "tokenize",
+     "target": "argparse",
+     "cls": "lazy",
+     "line": 560,
+     "func": "_main"
+    }
+   ]
+  },
+  "traceback": {
+   "name": "traceback",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "_py_warnings:lazy:901",
+   "dynamic_unknown_lines": [
+    1921
+   ],
+   "path": "traceback.py",
+   "edges": [
+    {
+     "importer": "traceback",
+     "target": "collections",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "functools",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "linecache",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "os",
+     "cls": "eager",
+     "line": 7,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "re",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "sys",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "textwrap",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "types",
+     "cls": "eager",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "codeop",
+     "cls": "eager",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "keyword",
+     "cls": "eager",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "tokenize",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "io",
+     "cls": "eager",
+     "line": 16,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "importlib",
+     "cls": "eager",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "importlib.util",
+     "cls": "eager",
+     "line": 17,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "pathlib",
+     "cls": "eager",
+     "line": 18,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 20,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "_colorize",
+     "cls": "first-use",
+     "line": 21,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "_missing_stdlib_info",
+     "cls": "optional",
+     "line": 24,
+     "func": ""
+    },
+    {
+     "importer": "traceback",
+     "target": "ast",
+     "cls": "optional",
+     "line": 761,
+     "func": "StackSummary._should_show_carets"
+    },
+    {
+     "importer": "traceback",
+     "target": "ast",
+     "cls": "lazy",
+     "line": 866,
+     "func": "_extract_caret_anchors_from_line_segment"
+    },
+    {
+     "importer": "traceback",
+     "target": "unicodedata",
+     "cls": "lazy",
+     "line": 1013,
+     "func": "_zip_display_width"
+    },
+    {
+     "importer": "traceback",
+     "target": "unicodedata",
+     "cls": "lazy",
+     "line": 1026,
+     "func": "_str_width"
+    },
+    {
+     "importer": "traceback",
+     "target": "_suggestions",
+     "cls": "optional",
+     "line": 1419,
+     "func": "TracebackException._find_keyword_typos"
+    },
+    {
+     "importer": "traceback",
+     "target": "difflib",
+     "cls": "lazy",
+     "line": 1467,
+     "func": "TracebackException._find_keyword_typos"
+    },
+    {
+     "importer": "traceback",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 1824,
+     "func": "_check_for_nested_attribute"
+    },
+    {
+     "importer": "traceback",
+     "target": "unicodedata",
+     "cls": "lazy",
+     "line": 1887,
+     "func": "_compute_suggestion_error"
+    },
+    {
+     "importer": "traceback",
+     "target": "_suggestions",
+     "cls": "optional",
+     "line": 1961,
+     "func": "_compute_suggestion_error"
+    },
+    {
+     "importer": "traceback",
+     "target": "importlib",
+     "cls": "replaced",
+     "line": 2065,
+     "func": "_find_incompatible_extension_module"
+    },
+    {
+     "importer": "traceback",
+     "target": "importlib.machinery",
+     "cls": "replaced",
+     "line": 2065,
+     "func": "_find_incompatible_extension_module"
+    },
+    {
+     "importer": "traceback",
+     "target": "importlib",
+     "cls": "replaced",
+     "line": 2066,
+     "func": "_find_incompatible_extension_module"
+    },
+    {
+     "importer": "traceback",
+     "target": "importlib.resources",
+     "cls": "replaced",
+     "line": 2066,
+     "func": "_find_incompatible_extension_module"
+    },
+    {
+     "importer": "traceback",
+     "target": "importlib.resources.readers",
+     "cls": "replaced",
+     "line": 2066,
+     "func": "_find_incompatible_extension_module"
+    }
+   ]
+  },
+  "types": {
+   "name": "types",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "csv:eager:66",
+   "dynamic_unknown_lines": [],
+   "path": "types.py",
+   "edges": [
+    {
+     "importer": "types",
+     "target": "_types",
+     "cls": "optional",
+     "line": 11,
+     "func": ""
+    },
+    {
+     "importer": "types",
+     "target": "sys",
+     "cls": "guarded",
+     "line": 13,
+     "func": ""
+    },
+    {
+     "importer": "types",
+     "target": "functools",
+     "cls": "lazy",
+     "line": 334,
+     "func": "coroutine"
+    },
+    {
+     "importer": "types",
+     "target": "_collections_abc",
+     "cls": "lazy",
+     "line": 335,
+     "func": "coroutine"
+    }
+   ]
+  },
+  "typing": {
+   "name": "typing",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "functools:lazy:969",
+   "dynamic_unknown_lines": [],
+   "path": "typing.py",
+   "edges": [
+    {
+     "importer": "typing",
+     "target": "abc",
+     "cls": "eager",
+     "line": 21,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "collections",
+     "cls": "eager",
+     "line": 22,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "collections",
+     "cls": "eager",
+     "line": 23,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "collections",
+     "cls": "eager",
+     "line": 24,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 24,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "copyreg",
+     "cls": "eager",
+     "line": 25,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "functools",
+     "cls": "eager",
+     "line": 26,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "operator",
+     "cls": "eager",
+     "line": 27,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "sys",
+     "cls": "eager",
+     "line": 28,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "types",
+     "cls": "eager",
+     "line": 29,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "types",
+     "cls": "eager",
+     "line": 30,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "annotationlib",
+     "cls": "first-use",
+     "line": 31,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "_typing",
+     "cls": "eager",
+     "line": 33,
+     "func": ""
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 438,
+     "func": "_deprecation_warning_for_no_type_params_passed"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1717,
+     "func": "_UnionGenericAliasMeta.__instancecheck__"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1722,
+     "func": "_UnionGenericAliasMeta.__subclasscheck__"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1727,
+     "func": "_UnionGenericAliasMeta.__eq__"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1747,
+     "func": "_UnionGenericAlias.__new__"
+    },
+    {
+     "importer": "typing",
+     "target": "inspect",
+     "cls": "lazy",
+     "line": 1969,
+     "func": "_lazy_load_getattr_static"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 2055,
+     "func": "_ProtocolMeta.__subclasscheck__"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 2094,
+     "func": "_ProtocolMeta.__instancecheck__"
+    },
+    {
+     "importer": "typing",
+     "target": "re",
+     "cls": "lazy",
+     "line": 3889,
+     "func": "__getattr__"
+    },
+    {
+     "importer": "typing",
+     "target": "contextlib",
+     "cls": "lazy",
+     "line": 3892,
+     "func": "__getattr__"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 3895,
+     "func": "__getattr__"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 3905,
+     "func": "__getattr__"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 3924,
+     "func": "__getattr__.<locals>._DeprecatedGenericAlias.__instancecheck__"
+    },
+    {
+     "importer": "typing",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 3931,
+     "func": "__getattr__.<locals>._DeprecatedGenericAlias.__subclasscheck__"
+    }
+   ]
+  },
+  "unicodedata": {
+   "name": "unicodedata",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "urllib.parse:lazy:514",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  },
+  "urllib": {
+   "name": "urllib",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "pathlib:lazy:544",
+   "dynamic_unknown_lines": [],
+   "path": "urllib/__init__.py",
+   "edges": []
+  },
+  "urllib.parse": {
+   "name": "urllib.parse",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "pathlib:lazy:544",
+   "dynamic_unknown_lines": [],
+   "path": "urllib/parse.py",
+   "edges": [
+    {
+     "importer": "urllib.parse",
+     "target": "collections",
+     "cls": "eager",
+     "line": 34,
+     "func": ""
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "functools",
+     "cls": "eager",
+     "line": 35,
+     "func": ""
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "math",
+     "cls": "eager",
+     "line": 36,
+     "func": ""
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "re",
+     "cls": "eager",
+     "line": 37,
+     "func": ""
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "types",
+     "cls": "eager",
+     "line": 38,
+     "func": ""
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 39,
+     "func": ""
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "ipaddress",
+     "cls": "eager",
+     "line": 40,
+     "func": ""
+    },
+    {
+     "importer": "urllib.parse",
+     "target": "unicodedata",
+     "cls": "lazy",
+     "line": 514,
+     "func": "_checknetloc"
+    }
+   ]
+  },
+  "warnings": {
+   "name": "warnings",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "csv:lazy:532",
+   "dynamic_unknown_lines": [],
+   "path": "warnings.py",
+   "edges": [
+    {
+     "importer": "warnings",
+     "target": "sys",
+     "cls": "eager",
+     "line": 1,
+     "func": ""
+    },
+    {
+     "importer": "warnings",
+     "target": "_py_warnings",
+     "cls": "eager",
+     "line": 15,
+     "func": ""
+    },
+    {
+     "importer": "warnings",
+     "target": "_warnings",
+     "cls": "optional",
+     "line": 65,
+     "func": ""
+    }
+   ]
+  },
+  "weakref": {
+   "name": "weakref",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "copy:eager:53",
+   "dynamic_unknown_lines": [],
+   "path": "weakref.py",
+   "edges": [
+    {
+     "importer": "weakref",
+     "target": "_weakref",
+     "cls": "eager",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "weakref",
+     "target": "_weakrefset",
+     "cls": "eager",
+     "line": 22,
+     "func": ""
+    },
+    {
+     "importer": "weakref",
+     "target": "_collections_abc",
+     "cls": "eager",
+     "line": 24,
+     "func": ""
+    },
+    {
+     "importer": "weakref",
+     "target": "sys",
+     "cls": "eager",
+     "line": 25,
+     "func": ""
+    },
+    {
+     "importer": "weakref",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 26,
+     "func": ""
+    },
+    {
+     "importer": "weakref",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 152,
+     "func": "WeakValueDictionary.__deepcopy__"
+    },
+    {
+     "importer": "weakref",
+     "target": "copy",
+     "cls": "lazy",
+     "line": 348,
+     "func": "WeakKeyDictionary.__deepcopy__"
+    },
+    {
+     "importer": "weakref",
+     "target": "atexit",
+     "cls": "lazy",
+     "line": 474,
+     "func": "finalize.__init__"
+    },
+    {
+     "importer": "weakref",
+     "target": "gc",
+     "cls": "lazy",
+     "line": 551,
+     "func": "finalize._exitfunc"
+    }
+   ]
+  },
+  "zlib": {
+   "name": "zlib",
+   "kind": "builtin",
+   "status": "mapped",
+   "reached_by": "shutil:optional:15",
+   "dynamic_unknown_lines": [],
+   "path": null,
+   "edges": []
+  }
+ }
+}

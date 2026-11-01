@@ -1,1679 +1,286 @@
 {
- "cli_easy_slugs": {
-  "stdlib": {
-   "__future__": {
-    "strategy": "compiled",
-    "lines": 105
+ "python": "3.15.2",
+ "authoritative": true,
+ "targets": {
+  "cli_easy_slugs": {
+   "level": "easy",
+   "by_status": {
+    "compiled": 72,
+    "core": 15,
+    "mapped": 20,
+    "program": 1,
+    "shim": 4
    },
-   "_abc": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_codecs": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_collections": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_collections_abc": {
-    "strategy": "compiled",
-    "lines": 868
-   },
-   "_functools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_io": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_operator": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_signal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_sre": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_stat": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "abc": {
-    "strategy": "compiled",
-    "lines": 135
-   },
-   "argparse": {
-    "strategy": "compiled",
-    "lines": 1883
-   },
-   "codecs": {
-    "strategy": "compiled",
-    "lines": 777
-   },
-   "collections": {
-    "strategy": "compiled",
-    "lines": 1171
-   },
-   "contextlib": {
-    "strategy": "compiled",
-    "lines": 563
-   },
-   "copyreg": {
-    "strategy": "compiled",
-    "lines": 150
-   },
-   "encodings": {
-    "strategy": "compiled",
-    "lines": 123
-   },
-   "encodings.aliases": {
-    "strategy": "compiled",
-    "lines": 349
-   },
-   "encodings.utf_8": {
-    "strategy": "compiled",
-    "lines": 27
-   },
-   "enum": {
-    "strategy": "compiled",
-    "lines": 1767
-   },
-   "errno": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "fnmatch": {
-    "strategy": "compiled",
-    "lines": 155
-   },
-   "functools": {
-    "strategy": "compiled",
-    "lines": 768
-   },
-   "genericpath": {
-    "strategy": "compiled",
-    "lines": 130
-   },
-   "gettext": {
-    "strategy": "compiled",
-    "lines": 464
-   },
-   "glob": {
-    "strategy": "compiled",
-    "lines": 454
-   },
-   "io": {
-    "strategy": "compiled",
-    "lines": 69
-   },
-   "itertools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "keyword": {
-    "strategy": "compiled",
-    "lines": 56
-   },
-   "locale": {
-    "strategy": "compiled",
-    "lines": 1621
-   },
-   "marshal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "ntpath": {
-    "strategy": "compiled",
-    "lines": 618
-   },
-   "operator": {
-    "strategy": "compiled",
-    "lines": 372
-   },
-   "os": {
-    "strategy": "compiled",
-    "lines": 897
-   },
-   "pathlib": {
-    "strategy": "compiled",
-    "lines": 9
-   },
-   "pathlib._abc": {
-    "strategy": "compiled",
-    "lines": 750
-   },
-   "pathlib._local": {
-    "strategy": "compiled",
-    "lines": 682
-   },
-   "posixpath": {
-    "strategy": "compiled",
-    "lines": 410
-   },
-   "re": {
-    "strategy": "compiled",
-    "lines": 333
-   },
-   "re._casefix": {
-    "strategy": "compiled",
-    "lines": 52
-   },
-   "re._compiler": {
-    "strategy": "compiled",
-    "lines": 919
-   },
-   "re._constants": {
-    "strategy": "compiled",
-    "lines": 159
-   },
-   "re._parser": {
-    "strategy": "compiled",
-    "lines": 938
-   },
-   "reprlib": {
-    "strategy": "compiled",
-    "lines": 186
-   },
-   "shutil": {
-    "strategy": "compiled",
-    "lines": 1203
-   },
-   "stat": {
-    "strategy": "compiled",
-    "lines": 165
-   },
-   "time": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "types": {
-    "strategy": "compiled",
-    "lines": 265
-   },
-   "unicodedata": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "warnings": {
-    "strategy": "compiled",
-    "lines": 573
-   },
-   "zipimport": {
-    "strategy": "core",
-    "lines": 547
-   },
-   "zlib": {
-    "strategy": "mapped",
-    "lines": 0
-   }
+   "errors": []
   },
-  "vendored": {}
- },
- "cli_tricky_check": {
-  "stdlib": {
-   "__future__": {
-    "strategy": "compiled",
-    "lines": 105
-   },
-   "_abc": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_ast": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_bisect": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_codecs": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_collections": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_collections_abc": {
-    "strategy": "compiled",
-    "lines": 868
-   },
-   "_functools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_io": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_opcode": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_opcode_metadata": {
-    "strategy": "compiled",
-    "lines": 336
-   },
-   "_operator": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_signal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_sre": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_stat": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_tokenize": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_typing": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_weakrefset": {
-    "strategy": "compiled",
-    "lines": 157
-   },
-   "abc": {
-    "strategy": "compiled",
-    "lines": 135
-   },
-   "ast": {
-    "strategy": "compiled",
-    "lines": 1570
-   },
-   "bisect": {
-    "strategy": "compiled",
-    "lines": 87
-   },
-   "codecs": {
-    "strategy": "compiled",
-    "lines": 777
-   },
-   "collections": {
-    "strategy": "compiled",
-    "lines": 1171
-   },
-   "configparser": {
-    "strategy": "OUTSIDE",
-    "lines": 1106
-   },
-   "contextlib": {
-    "strategy": "compiled",
-    "lines": 563
-   },
-   "copyreg": {
-    "strategy": "compiled",
-    "lines": 150
-   },
-   "dis": {
-    "strategy": "compiled",
-    "lines": 898
-   },
-   "encodings": {
-    "strategy": "compiled",
-    "lines": 123
-   },
-   "encodings.aliases": {
-    "strategy": "compiled",
-    "lines": 349
-   },
-   "encodings.utf_8": {
-    "strategy": "compiled",
-    "lines": 27
-   },
-   "enum": {
-    "strategy": "compiled",
-    "lines": 1767
-   },
-   "errno": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "fnmatch": {
-    "strategy": "compiled",
-    "lines": 155
-   },
-   "functools": {
-    "strategy": "compiled",
-    "lines": 768
-   },
-   "genericpath": {
-    "strategy": "compiled",
-    "lines": 130
-   },
-   "gettext": {
-    "strategy": "compiled",
-    "lines": 464
-   },
-   "importlib": {
-    "strategy": "core",
-    "lines": 96
-   },
-   "importlib.machinery": {
-    "strategy": "core",
-    "lines": 18
-   },
-   "inspect": {
-    "strategy": "compiled",
-    "lines": 2649
-   },
-   "io": {
-    "strategy": "compiled",
-    "lines": 69
-   },
-   "itertools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "keyword": {
-    "strategy": "compiled",
-    "lines": 56
-   },
-   "linecache": {
-    "strategy": "compiled",
-    "lines": 178
-   },
-   "locale": {
-    "strategy": "compiled",
-    "lines": 1621
-   },
-   "marshal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "opcode": {
-    "strategy": "compiled",
-    "lines": 101
-   },
-   "operator": {
-    "strategy": "compiled",
-    "lines": 372
-   },
-   "optparse": {
-    "strategy": "OUTSIDE",
-    "lines": 1239
-   },
-   "os": {
-    "strategy": "compiled",
-    "lines": 897
-   },
-   "posixpath": {
-    "strategy": "compiled",
-    "lines": 410
-   },
-   "re": {
-    "strategy": "compiled",
-    "lines": 333
-   },
-   "re._casefix": {
-    "strategy": "compiled",
-    "lines": 52
-   },
-   "re._compiler": {
-    "strategy": "compiled",
-    "lines": 919
-   },
-   "re._constants": {
-    "strategy": "compiled",
-    "lines": 159
-   },
-   "re._parser": {
-    "strategy": "compiled",
-    "lines": 938
-   },
-   "reprlib": {
-    "strategy": "compiled",
-    "lines": 186
-   },
-   "stat": {
-    "strategy": "compiled",
-    "lines": 165
-   },
-   "textwrap": {
-    "strategy": "compiled",
-    "lines": 355
-   },
-   "time": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "token": {
-    "strategy": "compiled",
-    "lines": 131
-   },
-   "tokenize": {
-    "strategy": "compiled",
-    "lines": 475
-   },
-   "types": {
-    "strategy": "compiled",
-    "lines": 265
-   },
-   "typing": {
-    "strategy": "compiled",
-    "lines": 2884
-   },
-   "warnings": {
-    "strategy": "compiled",
-    "lines": 573
-   },
-   "weakref": {
-    "strategy": "compiled",
-    "lines": 533
-   },
-   "zipimport": {
-    "strategy": "core",
-    "lines": 547
-   }
+  "cli_tricky_check": {
+   "level": "tricky",
+   "by_status": {
+    "compiled": 74,
+    "core": 18,
+    "mapped": 22,
+    "missing-from-manifest": 2,
+    "program": 2,
+    "shim": 4
+   },
+   "errors": [
+    "configparser [source]: required but not in manifest (via pycodestyle:eager:50)",
+    "optparse [source]: required but not in manifest (via pycodestyle:eager:63)",
+    "optparse:856: import with a computed name; review it and add \"Values.read_module: modname\" = [the modules it must reach in phase 1] under [dynamic.optparse]"
+   ]
   },
-  "vendored": {
-   "pycodestyle": 2176
+  "data_easy_sales": {
+   "level": "easy",
+   "by_status": {
+    "compiled": 86,
+    "core": 15,
+    "mapped": 32,
+    "program": 8,
+    "shim": 5
+   },
+   "errors": []
+  },
+  "data_tricky_toml": {
+   "level": "tricky",
+   "by_status": {
+    "compiled": 78,
+    "core": 17,
+    "mapped": 24,
+    "program": 12,
+    "shim": 4
+   },
+   "errors": []
+  },
+  "service_easy_tokens": {
+   "level": "easy",
+   "by_status": {
+    "compiled": 84,
+    "core": 15,
+    "mapped": 32,
+    "program": 9,
+    "shim": 4
+   },
+   "errors": []
+  },
+  "service_tricky_markdown": {
+   "level": "tricky",
+   "by_status": {
+    "compiled": 80,
+    "core": 17,
+    "mapped": 25,
+    "program": 20,
+    "shim": 4
+   },
+   "errors": []
   }
  },
- "data_easy_sales": {
-  "stdlib": {
-   "__future__": {
-    "strategy": "compiled",
-    "lines": 105
+ "increments": {
+  "1a": {
+   "modules": 149,
+   "by_status": {
+    "compiled": 93,
+    "core": 15,
+    "mapped": 36,
+    "shim": 5
    },
-   "_abc": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_bisect": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_codecs": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_collections": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_collections_abc": {
-    "strategy": "compiled",
-    "lines": 868
-   },
-   "_csv": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_functools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_io": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_operator": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_random": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_signal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_sre": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_stat": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_statistics": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_weakrefset": {
-    "strategy": "compiled",
-    "lines": 157
-   },
-   "abc": {
-    "strategy": "compiled",
-    "lines": 135
-   },
-   "bisect": {
-    "strategy": "compiled",
-    "lines": 87
-   },
-   "codecs": {
-    "strategy": "compiled",
-    "lines": 777
-   },
-   "collections": {
-    "strategy": "compiled",
-    "lines": 1171
-   },
-   "contextlib": {
-    "strategy": "compiled",
-    "lines": 563
-   },
-   "copyreg": {
-    "strategy": "compiled",
-    "lines": 150
-   },
-   "csv": {
-    "strategy": "compiled",
-    "lines": 402
-   },
-   "datetime": {
-    "strategy": "compiled",
-    "lines": 8
-   },
-   "decimal": {
-    "strategy": "compiled",
-    "lines": 100
-   },
-   "encodings": {
-    "strategy": "compiled",
-    "lines": 123
-   },
-   "encodings.aliases": {
-    "strategy": "compiled",
-    "lines": 349
-   },
-   "encodings.utf_8": {
-    "strategy": "compiled",
-    "lines": 27
-   },
-   "enum": {
-    "strategy": "compiled",
-    "lines": 1767
-   },
-   "errno": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "fnmatch": {
-    "strategy": "compiled",
-    "lines": 155
-   },
-   "fractions": {
-    "strategy": "compiled",
-    "lines": 711
-   },
-   "functools": {
-    "strategy": "compiled",
-    "lines": 768
-   },
-   "genericpath": {
-    "strategy": "compiled",
-    "lines": 130
-   },
-   "gettext": {
-    "strategy": "compiled",
-    "lines": 464
-   },
-   "glob": {
-    "strategy": "compiled",
-    "lines": 454
-   },
-   "io": {
-    "strategy": "compiled",
-    "lines": 69
-   },
-   "itertools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "keyword": {
-    "strategy": "compiled",
-    "lines": 56
-   },
-   "marshal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "math": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "ntpath": {
-    "strategy": "compiled",
-    "lines": 618
-   },
-   "numbers": {
-    "strategy": "compiled",
-    "lines": 292
-   },
-   "operator": {
-    "strategy": "compiled",
-    "lines": 372
-   },
-   "os": {
-    "strategy": "compiled",
-    "lines": 897
-   },
-   "pathlib": {
-    "strategy": "compiled",
-    "lines": 9
-   },
-   "pathlib._abc": {
-    "strategy": "compiled",
-    "lines": 750
-   },
-   "pathlib._local": {
-    "strategy": "compiled",
-    "lines": 682
-   },
-   "posixpath": {
-    "strategy": "compiled",
-    "lines": 410
-   },
-   "random": {
-    "strategy": "compiled",
-    "lines": 711
-   },
-   "re": {
-    "strategy": "compiled",
-    "lines": 333
-   },
-   "re._casefix": {
-    "strategy": "compiled",
-    "lines": 52
-   },
-   "re._compiler": {
-    "strategy": "compiled",
-    "lines": 919
-   },
-   "re._constants": {
-    "strategy": "compiled",
-    "lines": 159
-   },
-   "re._parser": {
-    "strategy": "compiled",
-    "lines": 938
-   },
-   "reprlib": {
-    "strategy": "compiled",
-    "lines": 186
-   },
-   "stat": {
-    "strategy": "compiled",
-    "lines": 165
-   },
-   "statistics": {
-    "strategy": "compiled",
-    "lines": 1321
-   },
-   "threading": {
-    "strategy": "shim",
-    "lines": 1123
-   },
-   "time": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "types": {
-    "strategy": "compiled",
-    "lines": 265
-   },
-   "warnings": {
-    "strategy": "compiled",
-    "lines": 573
-   },
-   "zipimport": {
-    "strategy": "core",
-    "lines": 547
+   "compiled_source_lines": 71219,
+   "list": {
+    "__future__": "compiled",
+    "_abc": "core",
+    "_ast": "core",
+    "_bisect": "mapped",
+    "_blake2": "mapped",
+    "_codecs": "core",
+    "_collections": "mapped",
+    "_collections_abc": "compiled",
+    "_colorize": "compiled",
+    "_contextvars": "mapped",
+    "_csv": "mapped",
+    "_functools": "mapped",
+    "_heapq": "mapped",
+    "_hmac": "mapped",
+    "_io": "core",
+    "_json": "mapped",
+    "_locale": "mapped",
+    "_math_integer": "mapped",
+    "_md5": "mapped",
+    "_missing_stdlib_info": "compiled",
+    "_opcode": "mapped",
+    "_opcode_metadata": "compiled",
+    "_operator": "mapped",
+    "_py_abc": "compiled",
+    "_py_warnings": "compiled",
+    "_pydatetime": "compiled",
+    "_pydecimal": "compiled",
+    "_random": "mapped",
+    "_sha1": "mapped",
+    "_sha2": "mapped",
+    "_sha3": "mapped",
+    "_sre": "mapped",
+    "_stat": "mapped",
+    "_statistics": "mapped",
+    "_string": "mapped",
+    "_strptime": "compiled",
+    "_struct": "mapped",
+    "_suggestions": "core",
+    "_thread": "shim",
+    "_tokenize": "core",
+    "_types": "core",
+    "_typing": "mapped",
+    "_warnings": "core",
+    "_weakref": "core",
+    "_weakrefset": "compiled",
+    "abc": "compiled",
+    "annotationlib": "shim",
+    "argparse": "compiled",
+    "ast": "compiled",
+    "atexit": "mapped",
+    "base64": "compiled",
+    "binascii": "mapped",
+    "bisect": "compiled",
+    "builtins": "core",
+    "calendar": "compiled",
+    "codecs": "compiled",
+    "codeop": "shim",
+    "collections": "compiled",
+    "collections.abc": "compiled",
+    "contextlib": "compiled",
+    "contextvars": "compiled",
+    "copy": "compiled",
+    "copyreg": "compiled",
+    "csv": "compiled",
+    "dataclasses": "compiled",
+    "datetime": "compiled",
+    "decimal": "compiled",
+    "difflib": "compiled",
+    "dis": "compiled",
+    "encodings": "compiled",
+    "encodings.aliases": "compiled",
+    "encodings.ascii": "compiled",
+    "encodings.latin_1": "compiled",
+    "encodings.utf_16": "compiled",
+    "encodings.utf_16_be": "compiled",
+    "encodings.utf_16_le": "compiled",
+    "encodings.utf_32": "compiled",
+    "encodings.utf_32_be": "compiled",
+    "encodings.utf_32_le": "compiled",
+    "encodings.utf_8": "compiled",
+    "encodings.utf_8_sig": "compiled",
+    "enum": "compiled",
+    "errno": "mapped",
+    "fnmatch": "compiled",
+    "fractions": "compiled",
+    "functools": "compiled",
+    "gc": "mapped",
+    "genericpath": "compiled",
+    "gettext": "compiled",
+    "glob": "compiled",
+    "grp": "mapped",
+    "hashlib": "compiled",
+    "heapq": "compiled",
+    "hmac": "compiled",
+    "importlib": "core",
+    "importlib.machinery": "core",
+    "importlib.util": "core",
+    "inspect": "compiled",
+    "io": "compiled",
+    "ipaddress": "compiled",
+    "itertools": "mapped",
+    "json": "compiled",
+    "json.decoder": "compiled",
+    "json.encoder": "compiled",
+    "json.scanner": "compiled",
+    "keyword": "compiled",
+    "linecache": "compiled",
+    "locale": "compiled",
+    "math": "mapped",
+    "math.integer": "mapped",
+    "ntpath": "compiled",
+    "numbers": "compiled",
+    "opcode": "compiled",
+    "operator": "compiled",
+    "os": "compiled",
+    "os.path": "compiled",
+    "pathlib": "compiled",
+    "pathlib._os": "compiled",
+    "posix": "core",
+    "posixpath": "compiled",
+    "pwd": "mapped",
+    "random": "compiled",
+    "re": "compiled",
+    "re._casefix": "compiled",
+    "re._compiler": "compiled",
+    "re._constants": "compiled",
+    "re._parser": "compiled",
+    "reprlib": "compiled",
+    "shutil": "compiled",
+    "stat": "compiled",
+    "statistics": "compiled",
+    "string": "compiled",
+    "struct": "compiled",
+    "subprocess": "shim",
+    "sys": "core",
+    "textwrap": "compiled",
+    "threading": "shim",
+    "time": "mapped",
+    "token": "compiled",
+    "tokenize": "compiled",
+    "traceback": "compiled",
+    "types": "compiled",
+    "typing": "compiled",
+    "unicodedata": "mapped",
+    "urllib": "compiled",
+    "urllib.parse": "compiled",
+    "warnings": "compiled",
+    "weakref": "compiled",
+    "zlib": "mapped"
    }
   },
-  "vendored": {
-   "humanize": 53,
-   "humanize._version": 1,
-   "humanize.filesize": 89,
-   "humanize.i18n": 153,
-   "humanize.lists": 31,
-   "humanize.number": 483,
-   "humanize.time": 506
-  }
- },
- "data_tricky_toml": {
-  "stdlib": {
-   "__future__": {
-    "strategy": "compiled",
-    "lines": 105
-   },
-   "_abc": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_ast": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_codecs": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_collections": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_collections_abc": {
-    "strategy": "compiled",
-    "lines": 868
-   },
-   "_functools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_io": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_opcode": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_opcode_metadata": {
-    "strategy": "compiled",
-    "lines": 336
-   },
-   "_operator": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_signal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_sre": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_stat": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_string": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_tokenize": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_typing": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_weakrefset": {
-    "strategy": "compiled",
-    "lines": 157
-   },
-   "abc": {
-    "strategy": "compiled",
-    "lines": 135
-   },
-   "ast": {
-    "strategy": "compiled",
-    "lines": 1570
-   },
-   "codecs": {
-    "strategy": "compiled",
-    "lines": 777
-   },
-   "collections": {
-    "strategy": "compiled",
-    "lines": 1171
-   },
-   "contextlib": {
-    "strategy": "compiled",
-    "lines": 563
-   },
-   "copy": {
-    "strategy": "compiled",
-    "lines": 248
-   },
-   "copyreg": {
-    "strategy": "compiled",
-    "lines": 150
-   },
-   "dataclasses": {
-    "strategy": "compiled",
-    "lines": 881
-   },
-   "datetime": {
-    "strategy": "compiled",
-    "lines": 8
-   },
-   "dis": {
-    "strategy": "compiled",
-    "lines": 898
-   },
-   "encodings": {
-    "strategy": "compiled",
-    "lines": 123
-   },
-   "encodings.aliases": {
-    "strategy": "compiled",
-    "lines": 349
-   },
-   "encodings.utf_8": {
-    "strategy": "compiled",
-    "lines": 27
-   },
-   "enum": {
-    "strategy": "compiled",
-    "lines": 1767
-   },
-   "errno": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "fnmatch": {
-    "strategy": "compiled",
-    "lines": 155
-   },
-   "functools": {
-    "strategy": "compiled",
-    "lines": 768
-   },
-   "genericpath": {
-    "strategy": "compiled",
-    "lines": 130
-   },
-   "glob": {
-    "strategy": "compiled",
-    "lines": 454
-   },
-   "importlib": {
-    "strategy": "core",
-    "lines": 96
-   },
-   "importlib.machinery": {
-    "strategy": "core",
-    "lines": 18
-   },
-   "inspect": {
-    "strategy": "compiled",
-    "lines": 2649
-   },
-   "io": {
-    "strategy": "compiled",
-    "lines": 69
-   },
-   "itertools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "keyword": {
-    "strategy": "compiled",
-    "lines": 56
-   },
-   "linecache": {
-    "strategy": "compiled",
-    "lines": 178
-   },
-   "marshal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "math": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "ntpath": {
-    "strategy": "compiled",
-    "lines": 618
-   },
-   "numbers": {
-    "strategy": "compiled",
-    "lines": 292
-   },
-   "opcode": {
-    "strategy": "compiled",
-    "lines": 101
-   },
-   "operator": {
-    "strategy": "compiled",
-    "lines": 372
-   },
-   "os": {
-    "strategy": "compiled",
-    "lines": 897
-   },
-   "pathlib": {
-    "strategy": "compiled",
-    "lines": 9
-   },
-   "pathlib._abc": {
-    "strategy": "compiled",
-    "lines": 750
-   },
-   "pathlib._local": {
-    "strategy": "compiled",
-    "lines": 682
-   },
-   "posixpath": {
-    "strategy": "compiled",
-    "lines": 410
-   },
-   "re": {
-    "strategy": "compiled",
-    "lines": 333
-   },
-   "re._casefix": {
-    "strategy": "compiled",
-    "lines": 52
-   },
-   "re._compiler": {
-    "strategy": "compiled",
-    "lines": 919
-   },
-   "re._constants": {
-    "strategy": "compiled",
-    "lines": 159
-   },
-   "re._parser": {
-    "strategy": "compiled",
-    "lines": 938
-   },
-   "reprlib": {
-    "strategy": "compiled",
-    "lines": 186
-   },
-   "stat": {
-    "strategy": "compiled",
-    "lines": 165
-   },
-   "string": {
-    "strategy": "compiled",
-    "lines": 204
-   },
-   "time": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "token": {
-    "strategy": "compiled",
-    "lines": 131
-   },
-   "tokenize": {
-    "strategy": "compiled",
-    "lines": 475
-   },
-   "types": {
-    "strategy": "compiled",
-    "lines": 265
-   },
-   "typing": {
-    "strategy": "compiled",
-    "lines": 2884
-   },
-   "warnings": {
-    "strategy": "compiled",
-    "lines": 573
-   },
-   "weakref": {
-    "strategy": "compiled",
-    "lines": 533
-   },
-   "zipimport": {
-    "strategy": "core",
-    "lines": 547
+  "1b": {
+   "modules": 6,
+   "by_status": {
+    "compiled": 3,
+    "core": 3
+   },
+   "compiled_source_lines": 2739,
+   "list": {
+    "_signal": "core",
+    "html": "compiled",
+    "html.entities": "compiled",
+    "importlib._bootstrap": "core",
+    "importlib._bootstrap_external": "core",
+    "signal": "compiled"
    }
   },
-  "vendored": {
-   "tomlkit": 57,
-   "tomlkit._compat": 12,
-   "tomlkit._types": 46,
-   "tomlkit._utils": 124,
-   "tomlkit.api": 283,
-   "tomlkit.container": 1017,
-   "tomlkit.exceptions": 154,
-   "tomlkit.items": 1884,
-   "tomlkit.parser": 950,
-   "tomlkit.source": 183,
-   "tomlkit.toml_document": 5
-  }
- },
- "service_easy_tokens": {
-  "stdlib": {
-   "__future__": {
-    "strategy": "compiled",
-    "lines": 105
-   },
-   "_abc": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_blake2": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_codecs": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_collections": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_collections_abc": {
-    "strategy": "compiled",
-    "lines": 868
-   },
-   "_functools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_io": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_json": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_operator": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_signal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_sre": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_stat": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_string": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_struct": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_typing": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "abc": {
-    "strategy": "compiled",
-    "lines": 135
-   },
-   "base64": {
-    "strategy": "compiled",
-    "lines": 474
-   },
-   "binascii": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "codecs": {
-    "strategy": "compiled",
-    "lines": 777
-   },
-   "collections": {
-    "strategy": "compiled",
-    "lines": 1171
-   },
-   "contextlib": {
-    "strategy": "compiled",
-    "lines": 563
-   },
-   "copyreg": {
-    "strategy": "compiled",
-    "lines": 150
-   },
-   "datetime": {
-    "strategy": "compiled",
-    "lines": 8
-   },
-   "encodings": {
-    "strategy": "compiled",
-    "lines": 123
-   },
-   "encodings.aliases": {
-    "strategy": "compiled",
-    "lines": 349
-   },
-   "encodings.utf_8": {
-    "strategy": "compiled",
-    "lines": 27
-   },
-   "enum": {
-    "strategy": "compiled",
-    "lines": 1767
-   },
-   "errno": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "fnmatch": {
-    "strategy": "compiled",
-    "lines": 155
-   },
-   "functools": {
-    "strategy": "compiled",
-    "lines": 768
-   },
-   "genericpath": {
-    "strategy": "compiled",
-    "lines": 130
-   },
-   "glob": {
-    "strategy": "compiled",
-    "lines": 454
-   },
-   "hashlib": {
-    "strategy": "compiled",
-    "lines": 176
-   },
-   "hmac": {
-    "strategy": "compiled",
-    "lines": 175
-   },
-   "io": {
-    "strategy": "compiled",
-    "lines": 69
-   },
-   "itertools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "json": {
-    "strategy": "compiled",
-    "lines": 292
-   },
-   "json.decoder": {
-    "strategy": "compiled",
-    "lines": 305
-   },
-   "json.encoder": {
-    "strategy": "compiled",
-    "lines": 374
-   },
-   "json.scanner": {
-    "strategy": "compiled",
-    "lines": 64
-   },
-   "keyword": {
-    "strategy": "compiled",
-    "lines": 56
-   },
-   "marshal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "ntpath": {
-    "strategy": "compiled",
-    "lines": 618
-   },
-   "operator": {
-    "strategy": "compiled",
-    "lines": 372
-   },
-   "os": {
-    "strategy": "compiled",
-    "lines": 897
-   },
-   "pathlib": {
-    "strategy": "compiled",
-    "lines": 9
-   },
-   "pathlib._abc": {
-    "strategy": "compiled",
-    "lines": 750
-   },
-   "pathlib._local": {
-    "strategy": "compiled",
-    "lines": 682
-   },
-   "posixpath": {
-    "strategy": "compiled",
-    "lines": 410
-   },
-   "re": {
-    "strategy": "compiled",
-    "lines": 333
-   },
-   "re._casefix": {
-    "strategy": "compiled",
-    "lines": 52
-   },
-   "re._compiler": {
-    "strategy": "compiled",
-    "lines": 919
-   },
-   "re._constants": {
-    "strategy": "compiled",
-    "lines": 159
-   },
-   "re._parser": {
-    "strategy": "compiled",
-    "lines": 938
-   },
-   "reprlib": {
-    "strategy": "compiled",
-    "lines": 186
-   },
-   "stat": {
-    "strategy": "compiled",
-    "lines": 165
-   },
-   "string": {
-    "strategy": "compiled",
-    "lines": 204
-   },
-   "struct": {
-    "strategy": "compiled",
-    "lines": 9
-   },
-   "time": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "types": {
-    "strategy": "compiled",
-    "lines": 265
-   },
-   "typing": {
-    "strategy": "compiled",
-    "lines": 2884
-   },
-   "warnings": {
-    "strategy": "compiled",
-    "lines": 573
-   },
-   "zipimport": {
-    "strategy": "core",
-    "lines": 547
-   },
-   "zlib": {
-    "strategy": "mapped",
-    "lines": 0
+  "1c": {
+   "modules": 25,
+   "list": {
+    "_frozen_importlib": "core",
+    "_frozen_importlib_external": "core",
+    "_imp": "core",
+    "asyncio": "shim",
+    "cmath": "mapped",
+    "importlib._abc": "core",
+    "logging": "compiled",
+    "marshal": "core",
+    "pprint": "compiled",
+    "secrets": "compiled",
+    "socket": "shim",
+    "tempfile": "compiled",
+    "unittest": "compiled",
+    "unittest._log": "compiled",
+    "unittest.async_case": "compiled",
+    "unittest.case": "compiled",
+    "unittest.loader": "compiled",
+    "unittest.main": "compiled",
+    "unittest.result": "compiled",
+    "unittest.runner": "compiled",
+    "unittest.signals": "compiled",
+    "unittest.suite": "compiled",
+    "unittest.util": "compiled",
+    "uuid": "compiled",
+    "zipimport": "core"
    }
-  },
-  "vendored": {
-   "itsdangerous": 17,
-   "itsdangerous._json": 13,
-   "itsdangerous.encoding": 36,
-   "itsdangerous.exc": 60,
-   "itsdangerous.serializer": 316,
-   "itsdangerous.signer": 190,
-   "itsdangerous.timed": 172,
-   "itsdangerous.url_safe": 64
-  }
- },
- "service_tricky_markdown": {
-  "stdlib": {
-   "__future__": {
-    "strategy": "compiled",
-    "lines": 105
-   },
-   "_abc": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_ast": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_bisect": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_codecs": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_collections": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_collections_abc": {
-    "strategy": "compiled",
-    "lines": 868
-   },
-   "_functools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_io": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_json": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_opcode": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_opcode_metadata": {
-    "strategy": "compiled",
-    "lines": 336
-   },
-   "_operator": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_signal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_sre": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_stat": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_string": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_tokenize": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "_typing": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "_weakrefset": {
-    "strategy": "compiled",
-    "lines": 157
-   },
-   "abc": {
-    "strategy": "compiled",
-    "lines": 135
-   },
-   "ast": {
-    "strategy": "compiled",
-    "lines": 1570
-   },
-   "bisect": {
-    "strategy": "compiled",
-    "lines": 87
-   },
-   "codecs": {
-    "strategy": "compiled",
-    "lines": 777
-   },
-   "collections": {
-    "strategy": "compiled",
-    "lines": 1171
-   },
-   "contextlib": {
-    "strategy": "compiled",
-    "lines": 563
-   },
-   "copy": {
-    "strategy": "compiled",
-    "lines": 248
-   },
-   "copyreg": {
-    "strategy": "compiled",
-    "lines": 150
-   },
-   "dataclasses": {
-    "strategy": "compiled",
-    "lines": 881
-   },
-   "dis": {
-    "strategy": "compiled",
-    "lines": 898
-   },
-   "encodings": {
-    "strategy": "compiled",
-    "lines": 123
-   },
-   "encodings.aliases": {
-    "strategy": "compiled",
-    "lines": 349
-   },
-   "encodings.utf_8": {
-    "strategy": "compiled",
-    "lines": 27
-   },
-   "enum": {
-    "strategy": "compiled",
-    "lines": 1767
-   },
-   "errno": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "fnmatch": {
-    "strategy": "compiled",
-    "lines": 155
-   },
-   "functools": {
-    "strategy": "compiled",
-    "lines": 768
-   },
-   "genericpath": {
-    "strategy": "compiled",
-    "lines": 130
-   },
-   "glob": {
-    "strategy": "compiled",
-    "lines": 454
-   },
-   "html": {
-    "strategy": "compiled",
-    "lines": 109
-   },
-   "html.entities": {
-    "strategy": "compiled",
-    "lines": 2495
-   },
-   "importlib": {
-    "strategy": "core",
-    "lines": 96
-   },
-   "importlib.machinery": {
-    "strategy": "core",
-    "lines": 18
-   },
-   "inspect": {
-    "strategy": "compiled",
-    "lines": 2649
-   },
-   "io": {
-    "strategy": "compiled",
-    "lines": 69
-   },
-   "ipaddress": {
-    "strategy": "compiled",
-    "lines": 1813
-   },
-   "itertools": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "json": {
-    "strategy": "compiled",
-    "lines": 292
-   },
-   "json.decoder": {
-    "strategy": "compiled",
-    "lines": 305
-   },
-   "json.encoder": {
-    "strategy": "compiled",
-    "lines": 374
-   },
-   "json.scanner": {
-    "strategy": "compiled",
-    "lines": 64
-   },
-   "keyword": {
-    "strategy": "compiled",
-    "lines": 56
-   },
-   "linecache": {
-    "strategy": "compiled",
-    "lines": 178
-   },
-   "marshal": {
-    "strategy": "core",
-    "lines": 0
-   },
-   "math": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "ntpath": {
-    "strategy": "compiled",
-    "lines": 618
-   },
-   "opcode": {
-    "strategy": "compiled",
-    "lines": 101
-   },
-   "operator": {
-    "strategy": "compiled",
-    "lines": 372
-   },
-   "os": {
-    "strategy": "compiled",
-    "lines": 897
-   },
-   "pathlib": {
-    "strategy": "compiled",
-    "lines": 9
-   },
-   "pathlib._abc": {
-    "strategy": "compiled",
-    "lines": 750
-   },
-   "pathlib._local": {
-    "strategy": "compiled",
-    "lines": 682
-   },
-   "posixpath": {
-    "strategy": "compiled",
-    "lines": 410
-   },
-   "re": {
-    "strategy": "compiled",
-    "lines": 333
-   },
-   "re._casefix": {
-    "strategy": "compiled",
-    "lines": 52
-   },
-   "re._compiler": {
-    "strategy": "compiled",
-    "lines": 919
-   },
-   "re._constants": {
-    "strategy": "compiled",
-    "lines": 159
-   },
-   "re._parser": {
-    "strategy": "compiled",
-    "lines": 938
-   },
-   "reprlib": {
-    "strategy": "compiled",
-    "lines": 186
-   },
-   "stat": {
-    "strategy": "compiled",
-    "lines": 165
-   },
-   "string": {
-    "strategy": "compiled",
-    "lines": 204
-   },
-   "time": {
-    "strategy": "mapped",
-    "lines": 0
-   },
-   "token": {
-    "strategy": "compiled",
-    "lines": 131
-   },
-   "tokenize": {
-    "strategy": "compiled",
-    "lines": 475
-   },
-   "types": {
-    "strategy": "compiled",
-    "lines": 265
-   },
-   "typing": {
-    "strategy": "compiled",
-    "lines": 2884
-   },
-   "urllib": {
-    "strategy": "compiled",
-    "lines": 0
-   },
-   "urllib.parse": {
-    "strategy": "compiled",
-    "lines": 954
-   },
-   "warnings": {
-    "strategy": "compiled",
-    "lines": 573
-   },
-   "weakref": {
-    "strategy": "compiled",
-    "lines": 533
-   },
-   "zipimport": {
-    "strategy": "core",
-    "lines": 547
-   }
-  },
-  "vendored": {
-   "mistune": 84,
-   "mistune._inline": 1,
-   "mistune._inline.delimiters": 58,
-   "mistune._inline.emphasis": 384,
-   "mistune._inline.links": 115,
-   "mistune.block_parser": 477,
-   "mistune.core": 234,
-   "mistune.helpers": 245,
-   "mistune.inline_parser": 357,
-   "mistune.list_parser": 327,
-   "mistune.markdown": 91,
-   "mistune.plugins": 38,
-   "mistune.plugins.footnotes": 129,
-   "mistune.plugins.formatting": 126,
-   "mistune.plugins.table": 183,
-   "mistune.plugins.task_lists": 51,
-   "mistune.renderers": 0,
-   "mistune.renderers.html": 174,
-   "mistune.util": 71
   }
  }
 }
