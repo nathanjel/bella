@@ -129,8 +129,12 @@ def main() -> int:
             out = Path(tmp) / "libbella_object_binding.so"
             compile_binding(args.cxx, args.std, out, sanitize=True)
             ldd = subprocess.run(["ldd", str(out)], capture_output=True, text=True, check=True).stdout
-            asan = next(line.split("=>")[1].split()[0] for line in ldd.splitlines() if "libasan" in line)
-            env = dict(os.environ, LD_PRELOAD=asan, ASAN_OPTIONS="detect_leaks=0:verify_asan_link_order=0", BELLA_ASAN_CHILD="1")
+            def linked(name: str) -> str:
+                return next(line.split("=>")[1].split()[0] for line in ldd.splitlines() if name in line)
+            # libstdc++ too: the interpreter does not load it, and ASan's __cxa_throw interceptor
+            # needs the real one when it starts (some GCC releases fail a CHECK without it)
+            preload = f"{linked('libasan')} {linked('libstdc++')}"
+            env = dict(os.environ, LD_PRELOAD=preload, ASAN_OPTIONS="detect_leaks=0:verify_asan_link_order=0", BELLA_ASAN_CHILD="1")
             return subprocess.run([sys.executable, *sys.argv], env=env, check=False).returncode
         lib = build(args.cxx, args.std, Path(tmp) / "libbella_object_binding.so", args.sanitize)
         try:
