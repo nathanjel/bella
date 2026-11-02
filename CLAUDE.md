@@ -59,6 +59,7 @@ make verify             the pinned CPython reproduces every recorded expectation
 make check-conformance  RUNNER="python3 {case}" today; the compiled runner later
 make slice              CPython == eval1 == C++ on pipeline/examples
 make int-test           int.hpp vs CPython with UBSan
+make float-diff         libstdc++'s float digits (to_chars/from_chars) vs CPython; FLOAT_CASES=3000000 on a GCC bump
 make probes             C++26 feature report for the toolchain in use
 make targets-record     record the six target programs (pinned CPython); make targets-check compares
 make targets-closure    each target's closure and the phase-1 increments (targets/closure-summary.json)
@@ -67,7 +68,7 @@ make eval1-corpus       the conformance corpus under eval1 (pipeline/l1/run.py);
                         conformance/eval1-baseline.txt may regress; --update in tools/eval1_corpus.py
 make targets-eval1      the easy three under eval1 with their whole closures lowered (the gates' second leg)
 make lint               ruff and mypy, both clean; dialect programs and target drivers under strict mypy
-make check              closure, targets-closure, lint, test, verify, probes, slice, int-test, targets-check,
+make check              closure, targets-closure, lint, test, verify, probes, slice, int-test, float-diff, targets-check,
                         staging-check, eval1-corpus, targets-eval1 (CI)
 ```
 

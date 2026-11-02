@@ -55,8 +55,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   `__getattr__` shortcut it licenses; weak references; object lifetimes, so that `found` is
   really borrowed (review log RL-20); oracle operations for the other 2026-11-01 scenarios
   (RL-22: a raising `__get__`, a memoising `__getattr__`). Before the header, make
-  lifetimes explicit (review log D-2, RL-20, RL-49): retain and release points in the L2
-  grammar, finaliser traces in `eval1`, and lifetimes in the model. Then write `runtime/include/bella/object.hpp`
+  lifetimes explicit (review log D-2, RL-20, RL-49): release points in the L2 grammar
+  (`docs/l2.md` v1), checked by `eval2` against CPython's finaliser traces, and lifetimes in
+  the model. `eval1` keeps no finaliser traces (author, 2026-11-02: L1 says nothing about when
+  an object dies, so `eval2` is the first level exact about lifetimes). Then write `runtime/include/bella/object.hpp`
   from the model (start from `docs/drafts/object.hpp.draft` and the two findings in
   `docs/DECISIONS.md`), single-threaded first: plain counters, no atomics, no collector.
 * Done when: the C++ object model passes the same stateful test through a thin Python
@@ -79,12 +81,12 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   pycodestyle (`optparse`, `configparser`).
 * To do: take the easy three in the order `docs/targets.md` gives — `cli_easy_slugs`,
   `service_easy_tokens`, `data_easy_sales` — and grow the slice until the first runs end to
-  end: BigInt in `int.hpp` (Karatsuba above 64 limbs, Knuth D; or libtommath), `str`, `list`,
+  end: BigInt in `int.hpp` on a copy of SEL's `bn` (decided 2026-11-02), `str`, `list`,
   `dict`, exceptions as C++ exceptions, functions as objects, classes with promoted fields
   (argparse's `Namespace` is the first computed-write object), the `re` parser/compiler
   compiled and `_sre` ported, `unicodedata` with tables generated from the UCD (case C-7-15),
-  the copy protocol (case C-3-20), `float` with CPython's `repr`, the L2
-  grammar with declared/proven/representation kept apart. Write `bella-lint` as an `ast`
+  the copy protocol (case C-3-20), `float` with CPython's `repr` (digits from libstdc++'s
+  `<charconv>`, `make float-diff`; decided 2026-11-02), the L2 grammar (`docs/l2.md` v1). Write `bella-lint` as an `ast`
   walker over `docs/deviations.toml` and the tier table (`tools/score_candidate.py` is its
   seed).
 * Decided 2026-11-01: each increment is the closure of its target programs, and phase 1 is the
@@ -276,7 +278,22 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
     dict merges with stored hashes, generator frames and the strict name check without the
     `globals()` exemption. `make eval1-corpus`: 59 of 75. Left as refusals: a `yield` in a `for`
     target, and beside a starred or `**` argument.
-  * C the C++ leg: task 3's header, L2, and the runtime list above.
+  * C the C++ leg (go-ahead 2026-11-02, `docs/DECISIONS.md`), in this order:
+    1. The L2 leg, all Python and testable at once: the grammar file, `wf2`, the printer and
+       `eval2` with its hygiene (a `gc.get_referrers` checking mode, explicit unwinding, a
+       generated `__del__` probe per kind of release point); then `resolve-names`, `to-anf`,
+       `protocol-ops` and `lifetimes`, each checked as `eval1 == eval2` on the corpus and the
+       easy three, and the lifetime cases as `eval2 == CPython`.
+    2. Lifetimes in the model and `object.hpp` from it (task 3); independent of 1.
+    3. The runtime types and the emitter: task 3's done-when (C-3-01..12 under the compiled
+       runner) first, then gate 1a.1.
+  * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
+    design's level table says every L2 expression carries the oracle's type. Closes in phase 2,
+    when a pass produces `Fact.TYPES` (none does today, so none can require it). Until then no
+    pass may let a declared type change what a program does.
+  * Module globals in phase 1: a dict per module and a per-site cache (key version and index, as
+    `LOAD_GLOBAL_MODULE`); the author's glue pass is phase 2, with the module dict as a view over
+    the fields, modelled first (see "After Gate 0").
 * Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata` (it kept the lowered
   requirements when `unicodedata` became \[P1\] the same day, review log D-8); licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's
   licence and the source of the hash primitives (items 4 and 5 of `docs/targets.md` section 5)
@@ -341,6 +358,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Consolidate the documents (review log D-2): rewrite design sections 3-10 around the final
   decisions, keep sections 13-15 as history, and let `docs/reviews/review-log.md` carry review
   history; make each `PassSpec` status name its evidence, so that "tested" points at the tests.
+* Phase 2, decided 2026-11-02: the author's glue pass for module globals, an L2-to-L2 pass after
+  `resolve-names` giving every global the closed world sees a field in one application object.
+  The module dict becomes a view over the fields (insertion order, mutation counter), written in
+  `refmodel/objects.py` first as a kind of object for modules; 15 closure modules and every module
+  with a dataclass expose their dicts, so migrating on exposure would not pay. Also phase 2: the
+  oracle's types in L2 (`Fact.TYPES`, closing the marked gap of task 4) and a pass for the common
+  try-and-catch idioms (C++ throws cost about ten times a CPython raise).
 
 ## Later
 

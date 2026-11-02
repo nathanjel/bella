@@ -447,6 +447,60 @@ refuted. Four changes of structure, all inside the design:
   says writes through `globals()` reach statically known names, and P-3's `strict=False` covers
   the library code that needed it. Library provenance comes from the lock where there is one.
 
+**2026-11-02 — the decisions before the C++ leg** (author, asked one at a time with the
+measurement or code that bears on each; spec v0.13 section 6, design sections 6, 8 and 11 rev 457,
+`docs/l2.md` v1 section 8, `docs/licences.md`).
+1. **Big integers: a copy of SEL's `bn`** (`sel/cpp/sel.cpp`, commit `f6df7ff`; MIT, the author's
+   own). Bella keeps its own copy in `runtime/`, changed freely (first: entry points that write
+   into the object's inline limbs instead of returning a `std::vector`), with a header naming
+   SEL's commit and every change, so fixes can be ported back. L-05 settled as own code. The
+   Python layer on top is Bella's.
+2. **`float` digits from libstdc++** (`std::to_chars`, `std::from_chars`): identical to CPython
+   3.15.2 on the pinned GCC 16.2.0, except out-of-range parses, where the wrapper supplies
+   Python's infinity or zero. `make float-diff` keeps the differential (in `make check` and CI at
+   300,000 cases; every GCC bump runs it at 3,000,000, which on 2026-11-02 compared 3.75 million
+   shortest, 1.5 million `.Ne`, 1.5 million `.Nf` and 2.25 million parses: no difference). Python's
+   layer is ported. Not taken:
+   CPython's `dtoa.c`. **Kept on record as an alternative that may come back**: Bella's own
+   Schubfach and Eisel-Lemire on the `bn` copy, the fallback if the differential ever fails or the
+   libstdc++ entry (L-09, new, GPL-3.0 with the GCC Runtime Library Exception) is refused. L-06
+   settled.
+3. **`math` through glibc's libm, linked dynamically**, so a binary returns what CPython returns
+   on the same machine. Measured: the same CPython 3.15.2 build on glibc 2.41 (the image) and 2.43
+   (this host) differs in the last bit on 33,319 of 2.16 million calls, all in `asinh`, `acosh`,
+   `atanh`, `erf` and `erfc` (`math.erfc(2.338130394649152)`: `...389` against `...386`); the
+   other 24 functions agreed. Spec v0.13 says so; conformance cases must not print the last bits
+   of those functions. glibc gets licence entry L-10 (LGPL-2.1-or-later, dynamic).
+4. **L2 v1** (`docs/l2.md` section 8 has the reasons and the rejected options):
+   * Reference drops are `release` statements; the exception edge is a rule (newest first, before
+     the handler), which C++ unwinding gives.
+   * `eval2` runs on host objects, with a `gc.get_referrers` checking mode, explicit unwinding and
+     a generated probe per kind of release point, not on the reference model.
+   * Types: the slot only, always `object` in phase 1. **A marked gap**: the design's level table
+     says every L2 expression carries the oracle's type; that holds from phase 2, when a pass
+     produces `Fact.TYPES` (`TODO.md`, task 4).
+   * Exceptions are C++ exceptions (design section 12): a throw costs about 1.7 µs against
+     CPython's 0.18 µs per raise, so the runtime uses sentinels for the misses it expects and a
+     phase-2 pass rewrites the common try-and-catch idioms.
+   * Frames: a record on the C++ stack and a guard that, during unwinding, appends the frame to
+     the traceback and takes the locals over, so they die with the traceback, as in CPython.
+5. **Module globals: no glue pass in phase 1** (dicts, with a per-site cache in the style of
+   CPython's `LOAD_GLOBAL_MODULE`); the author's pass comes in phase 2, with the module dict as a
+   view over the fields rather than migrated on exposure, written in the model first. Measured: 15
+   closure modules expose their own globals, and `dataclasses` exposes every module that defines
+   a dataclass.
+6. **`eval1` keeps no finaliser traces** (the author: "drop finaliser traces from eval1"). L1 says
+   nothing about when an object dies, so `eval2` is the first level exact about lifetimes: the
+   lifetime cases compare it with CPython directly, and every other case keeps `eval1 == eval2`.
+   This replaces "finaliser traces in `eval1`" in TODO task 3 and design section 11.
+7. **The go-ahead for the C++ leg**, in this order: the L2 leg (grammar, `wf2`, printer, `eval2`,
+   then `resolve-names`, `to-anf`, `protocol-ops`, `lifetimes`), lifetimes in the model and
+   `object.hpp` (task 3, independent of the L2 leg), then the runtime types and the emitter, with
+   task 3's done-when before gate 1a.1.
+* Corrected on the way: a frame releases its locals in *reverse* slot order
+  (`_PyFrame_ClearLocals` walks down from the stack top; locals `a, b, c` die as `c, b, a`), not in
+  slot order as the L2 draft said.
+
 ## Pins
 
 | What | Value | Where |

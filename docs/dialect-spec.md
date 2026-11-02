@@ -4,7 +4,7 @@ Oct 30, 2026 · @Marcin Gałczyński
 
 ## 1. Scope and status
 
-This specification defines the Python dialect the converter accepts and the behaviour a compiled program must show, so that correctness is checked against CPython rather than argued about. It is normative: MUST, MUST NOT and MAY carry their RFC 2119 meaning; everything else is explanation. This is v0.12: the decisions of section 12 (taken on 2026-10-30, decision 15 revised on 2026-11-01) and the import-guard, traceback, phase-1 closure, annotation, `unicodedata`, regex-engine and copy-protocol decisions of 2026-11-01 (sections 3, 7 and 11), and the compile-scope and library-name decisions of 2026-11-02 (sections 7 and 8), are folded into the register and the sections; it becomes v1 when the conformance corpus of section 10 exists.
+This specification defines the Python dialect the converter accepts and the behaviour a compiled program must show, so that correctness is checked against CPython rather than argued about. It is normative: MUST, MUST NOT and MAY carry their RFC 2119 meaning; everything else is explanation. This is v0.13: the decisions of section 12 (taken on 2026-10-30, decision 15 revised on 2026-11-01) and the import-guard, traceback, phase-1 closure, annotation, `unicodedata`, regex-engine and copy-protocol decisions of 2026-11-01 (sections 3, 7 and 11), and the compile-scope, library-name and libm decisions of 2026-11-02 (sections 6, 7 and 8), are folded into the register and the sections; it becomes v1 when the conformance corpus of section 10 exists.
 
 The reference implementation is CPython 3.15.2, pinned (moved from 3.14.8 in v0.4, section 13); moving the pin is a revision of this document, because exact exception text and cached artefacts depend on it. Where this document is silent, CPython 3.15.2's behaviour is the specification; where CPython's behaviour is unspecified or varies between runs, section 2 says whether a compiled program must match a particular choice.
 
@@ -127,7 +127,7 @@ Where CPython's choice is observable through `repr`, `hash`, ordering or iterati
 | `type` | `isinstance` and `issubclass` honour `__instancecheck__` and `__subclasscheck__` (ABCs work); `__mro__`, `__bases__`, `__name__`, `__qualname__`, `__module__`, `__subclasses__()` (complete, because the world is closed) |
 | `None`, `NotImplemented`, `Ellipsis`, `True`, `False` | Singletons; `type(None)` is `NoneType`; `NotImplemented` drives reflected operators as CPython does |
 | `sentinel` | Named unique marker (PEP 661, new in 3.15): `repr` is its name, it compares equal only to itself, and `copy` and `deepcopy` return the same object; pickling it is \[P2+\] with the rest of pickling (section 3) |
-| Numeric tower | `int` op `float` promotes to `float` with correctly rounded conversion; `int` op `complex` likewise; comparisons across the tower are exact; `math` domain errors raise `ValueError` where CPython does (message text per D-08) |
+| Numeric tower | `int` op `float` promotes to `float` with correctly rounded conversion; `int` op `complex` likewise; comparisons across the tower are exact; `math` domain errors raise `ValueError` where CPython does (message text per D-08); the math functions CPython takes from the platform C library (sin, exp, erf and the like) return what that library returns, linked dynamically as CPython's are, so their last bit can differ between machines exactly as CPython's does (2026-11-02: CPython 3.15.2 on glibc 2.41 and on glibc 2.43 differs for asinh, acosh, atanh, erf and erfc) |
 
 ## 7. Standard library status
 
@@ -285,3 +285,5 @@ v0.10 (2026-11-01, decisions S-1 to S-4 of `docs/staging.md`, review 2026-11-01 
 v0.11 (2026-11-02, decisions P-1 and P-2 of Gate 0 task 4, `docs/measurements.md`): a stage compiles its target's whole closure, and a statement the pipeline does not lower yet is compiled to a refusal at the point where it would run, listed by the build, and reached by no gate's target (section 7). `_collections_abc` is a shim that imports four types from `_types` instead of probing them (section 7, C-7-18).
 
 v0.12 (2026-11-02, decision P-3): in the closure's library modules a name bound nowhere the compiler can see resolves at runtime as any global does; the program's own modules keep the compile-time NameError (section 8).
+
+v0.13 (2026-11-02, the decisions before the C++ leg): the `math` functions CPython takes from the platform C library return what that library returns, linked dynamically as CPython's are, so their last bit can differ between machines as CPython's does; measured on CPython 3.15.2, glibc 2.41 and 2.43 differ for `asinh`, `acosh`, `atanh`, `erf` and `erfc` (section 6).
