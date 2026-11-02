@@ -21,6 +21,7 @@ class _Scope:
     bound: set[str]
     parent: _Scope | None = None
     unresolved: list[tuple[str, int]] = field(default_factory=list)
+    is_class: bool = False     # a class body: its names are invisible to the scopes nested in it
 
 
 def _targets(t: L.Target, out: set[str]) -> None:
@@ -77,7 +78,7 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
             _bound_in(s.body, out)
             _bound_in(s.orelse, out)
         elif isinstance(s, L.FunctionDef):
-            out.add(s.name)
+            out.add(s.store or s.name)
         elif isinstance(s, L.Delete):
             for t in s.targets:          # `del x` makes x local to its scope, as assignment does
                 _targets(t, out)
@@ -89,6 +90,33 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
                 _bound_in(h.body, out)
             _bound_in(s.orelse, out)
             _bound_in(s.finalbody, out)
+
+
+def _declared_global(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
+    """Names a nested function or class body declares global: the module binds them too."""
+    def expr(e: L.Expr) -> None:
+        if isinstance(e, L.ClassBody):
+            out.update(e.globals)
+            _declared_global(e.body, out)
+            return
+        if isinstance(e, L.Lambda):
+            expr(e.body)
+        for child in _children(e):
+            expr(child)
+
+    for s in stmts:
+        if isinstance(s, L.FunctionDef):
+            out.update(s.globals)
+            _declared_global(s.body, out)
+        for e in _stmt_exprs(s):
+            expr(e)
+        for v in vars(s).values():
+            if isinstance(v, tuple):
+                for x in v:
+                    if isinstance(x, L.Stmt):
+                        _declared_global((x,), out)
+                    elif isinstance(x, L.Handler):
+                        _declared_global(x.body, out)
 
 
 def _walrus(e: L.Expr, out: set[str]) -> None:
@@ -106,6 +134,8 @@ def _children(e: L.Expr) -> list[L.Expr]:
     body is a scope of its own."""
     if isinstance(e, L.Lambda):
         return [p.default for p in e.params if p.default is not None]
+    if isinstance(e, L.ClassBody):
+        return []              # its body is a scope of its own; bases and keywords are the call's
     out: list[L.Expr] = []
     for v in vars(e).values():
         if isinstance(v, L.Expr):
@@ -127,6 +157,7 @@ class _Checker:
     def module(self, m: L.Module) -> None:
         scope = _Scope(bound=set())
         _bound_in(m.body, scope.bound)
+        _declared_global(m.body, scope.bound)
         scope.bound |= set(dir(builtins)) | {"__bind__", "__special__", "__name__"} | set(self.extra_names)
         self.block(m.body, scope)
 
@@ -180,10 +211,22 @@ class _Checker:
                     self.expr(p.default, scope)
             self.expr(e.body, inner)
             return
+        if isinstance(e, L.ClassBody):
+            inner = _Scope(bound=set(e.globals) | set(e.nonlocals), parent=scope, is_class=True)
+            _bound_in(e.body, inner.bound)
+            self.block(e.body, inner)
+            return
         if isinstance(e, L.Name):
-            s: _Scope | None = scope
+            # the scope itself, then the enclosing ones, skipping class bodies (Python's rule);
+            # __class__ is the cell of the nearest class a function is in
+            if e.id in scope.bound:
+                return
+            s: _Scope | None = scope.parent
             while s is not None:
-                if e.id in s.bound:
+                if s.is_class:
+                    if e.id == "__class__" and not scope.is_class:
+                        return
+                elif e.id in s.bound:
                     return
                 s = s.parent
             self.errors.append(f"line {e.line}: name {e.id!r} is bound nowhere in its scope chain (NameError at compile time)")

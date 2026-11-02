@@ -101,6 +101,310 @@ def _as_module(tree: object) -> ast.Module:
 # L0 -> L0 desugarings
 # ---------------------------------------------------------------------------------------------
 
+_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def declarations(stmts: list[ast.stmt]) -> tuple[set[str], set[str]]:
+    """The names a scope declares global and nonlocal: a declaration applies to the whole scope
+    wherever it stands, but not to nested functions or classes (review 2026-11-01, gemini
+    2.2.5.1)."""
+    globals_: set[str] = set()
+    nonlocals: set[str] = set()
+
+    def walk(body: list[ast.stmt]) -> None:
+        for s in body:
+            if isinstance(s, ast.Global):
+                globals_.update(s.names)
+            elif isinstance(s, ast.Nonlocal):
+                nonlocals.update(s.names)
+            elif isinstance(s, _DEFS):
+                continue
+            for fld in ("body", "orelse", "finalbody"):
+                inner = getattr(s, fld, None)
+                if isinstance(inner, list):
+                    walk(inner)
+            for h in getattr(s, "handlers", []):
+                walk(h.body)
+            for case in getattr(s, "cases", []):
+                walk(case.body)
+    walk(stmts)
+    return globals_, nonlocals
+
+
+def _own_nodes(node: ast.AST) -> list[ast.AST]:
+    """Every node of a scope's own code: nested functions and lambdas included (they belong to
+    the class for these purposes), nested class bodies not (only their header)."""
+    out: list[ast.AST] = []
+
+    def walk(n: ast.AST) -> None:
+        out.append(n)
+        if isinstance(n, ast.ClassDef):
+            for e in [*n.decorator_list, *n.bases, *(k.value for k in n.keywords)]:
+                walk(e)
+            return
+        for child in ast.iter_child_nodes(n):
+            walk(child)
+    for child in ast.iter_child_nodes(node):
+        if isinstance(node, ast.ClassDef) and child in (*node.decorator_list, *node.bases, *(k.value for k in node.keywords)):
+            continue
+        walk(child)
+    return out
+
+
+def _static_attributes(cls: ast.ClassDef) -> tuple[str, ...]:
+    """CPython 3.13+ __static_attributes__: the names X of every `self.X` stored inside a
+    function of the class (the object literally named self; nested classes record their own),
+    as an annotated or plain target, a for/with/comprehension target; not an augmented
+    assignment's, not a `del`; sorted, unmangled."""
+    found: set[str] = set()
+
+    def walk(n: ast.AST, in_function: bool, skip: ast.AST | None) -> None:
+        if isinstance(n, ast.ClassDef):
+            return
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            in_function = True
+        if isinstance(n, ast.AugAssign):
+            skip = n.target
+        if (in_function and n is not skip and isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Store)
+                and isinstance(n.value, ast.Name) and n.value.id == "self"):
+            found.add(n.attr)
+        for child in ast.iter_child_nodes(n):
+            walk(child, in_function, skip)
+    for s in cls.body:
+        walk(s, False, None)
+    return tuple(sorted(found))
+
+
+def _uses_class_cell(cls: ast.ClassDef) -> bool:
+    """symtable: a function of the class that loads `super` or `__class__` makes the class
+    create the __class__ cell (nested classes make their own)."""
+    def walk(n: ast.AST, in_function: bool) -> bool:
+        if isinstance(n, ast.ClassDef):
+            return False
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            in_function = True
+        if in_function and isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in ("super", "__class__"):
+            return True
+        return any(walk(c, in_function) for c in ast.iter_child_nodes(n))
+    return any(walk(s, False) for s in cls.body)
+
+
+def _needs_classdict(cls: ast.ClassDef) -> bool:
+    """symtable 3.14+: a class whose own body defines a function (anywhere in its statements,
+    not inside a nested function or class) or has an annotation gets the __classdict__ cell,
+    which holds the namespace while the body runs and is stored as __classdictcell__ (measured
+    on 3.15.2)."""
+    def walk(stmts: list[ast.stmt]) -> bool:
+        for s in stmts:
+            if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.AnnAssign)):
+                return True
+            if isinstance(s, ast.ClassDef):
+                continue
+            for fld in ("body", "orelse", "finalbody"):
+                inner = getattr(s, fld, None)
+                if isinstance(inner, list) and walk(inner):
+                    return True
+            if any(walk(h.body) for h in getattr(s, "handlers", [])):
+                return True
+            if any(walk(case.body) for case in getattr(s, "cases", [])):
+                return True
+        return False
+    return walk(cls.body)
+
+
+class _ClassBodies:
+    """Records CPython's qualname on every definition and lambda (compiler_set_qualname), and
+    makes each class body explicit, as CPython's compiler does: it starts by storing
+    __module__ (from __name__), __qualname__ and __firstlineno__, its docstring becomes a
+    store of the cleaned __doc__, and it ends by storing __static_attributes__ and, when a
+    function of the class uses super or __class__, __classcell__, which it returns; before
+    them, __classdictcell__ when the body defines a function or has an annotation.
+    Zero-argument super() in a function becomes an explicit call of the `super` intrinsic
+    with what CPython's super() reads: the function's __class__ cell and its first argument."""
+
+    def __init__(self) -> None:
+        # (kind, qualname, names declared global there, first positional parameter, in a class)
+        self.stack: list[tuple[str, str, frozenset[str], str | None, bool]] = [("module", "", frozenset(), None, False)]
+
+    def qualname(self, name: str) -> str:
+        kind, qual, globals_, _, _ = self.stack[-1]
+        if kind == "module" or name in globals_:
+            return name
+        return f"{qual}.<locals>.{name}" if kind == "function" else f"{qual}.{name}"
+
+    def run(self, tree: ast.Module) -> ast.Module:
+        tree.body = self.block(tree.body)
+        return tree
+
+    def block(self, body: list[ast.stmt]) -> list[ast.stmt]:
+        return [self.node(s) for s in body]  # type: ignore[misc]
+
+    def node(self, n: ast.AST) -> ast.AST:
+        if isinstance(n, ast.ClassDef):
+            return self.class_(n)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return self.function(n)
+        if isinstance(n, ast.Lambda):
+            n.args = self.node(n.args)  # type: ignore[assignment]
+            n.bella_qualname = self.qualname("<lambda>")  # type: ignore[attr-defined]
+            params = [*n.args.posonlyargs, *n.args.args]
+            in_class = self.stack[-1][4] or self.stack[-1][0] == "class"
+            self.stack.append(("function", n.bella_qualname, frozenset(), params[0].arg if params else None, in_class))  # type: ignore[attr-defined]
+            n.body = self.node(n.body)  # type: ignore[assignment]
+            self.stack.pop()
+            return n
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "super" and not n.args
+                and not n.keywords and self.stack[-1][0] == "function"):
+            _, _, _, first, in_class = self.stack[-1]
+            ln = n
+            cell: ast.expr = _intrinsic("classcell") if in_class else _intrinsic("missing")
+            arg: ast.expr = ast.Name(id=first, ctx=ast.Load()) if first else _intrinsic("missing")
+            return ast.fix_missing_locations(_copy_loc(ast.Call(func=_intrinsic("super"), args=[
+                _copy_loc(ast.Name(id="super", ctx=ast.Load()), ln), _copy_loc(cell, ln), _copy_loc(arg, ln)],
+                keywords=[]), ln))
+        for fld, value in ast.iter_fields(n):
+            if isinstance(value, list):
+                setattr(n, fld, [self.node(v) if isinstance(v, ast.AST) else v for v in value])
+            elif isinstance(value, ast.AST):
+                setattr(n, fld, self.node(value))
+        return n
+
+    def function(self, f: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.AST:
+        f.decorator_list = [self.node(d) for d in f.decorator_list]  # type: ignore[misc]
+        f.args = self.node(f.args)  # type: ignore[assignment]
+        if f.returns is not None:
+            f.returns = self.node(f.returns)  # type: ignore[assignment]
+        f.bella_qualname = self.qualname(f.name)  # type: ignore[union-attr]
+        globals_, _ = declarations(f.body)
+        params = [*f.args.posonlyargs, *f.args.args]
+        in_class = self.stack[-1][4] or self.stack[-1][0] == "class"
+        self.stack.append(("function", f.bella_qualname, frozenset(globals_), params[0].arg if params else None, in_class))  # type: ignore[union-attr]
+        f.body = self.block(f.body)
+        self.stack.pop()
+        return f
+
+    def class_(self, c: ast.ClassDef) -> ast.AST:
+        c.decorator_list = [self.node(d) for d in c.decorator_list]  # type: ignore[misc]
+        c.bases = [self.node(b) for b in c.bases]  # type: ignore[misc]
+        for k in c.keywords:
+            k.value = self.node(k.value)  # type: ignore[assignment]
+        qual = self.qualname(c.name)
+        c.bella_qualname = qual  # type: ignore[attr-defined]
+        attributes = _static_attributes(c)
+        classcell = _uses_class_cell(c)
+        c.bella_classcell = classcell  # type: ignore[attr-defined]
+        globals_, _ = declarations(c.body)
+        self.stack.append(("class", qual, frozenset(globals_), None, True))
+        body = self.block(c.body)
+        self.stack.pop()
+        first = c.decorator_list[0].lineno if c.decorator_list else c.lineno
+
+        def store(name: str, value: ast.expr) -> ast.stmt:
+            return ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=value)
+        prologue = [store("__module__", ast.Name(id="__name__", ctx=ast.Load())),
+                    store("__qualname__", ast.Constant(qual)), store("__firstlineno__", ast.Constant(first))]
+        doc = _docstring(c.body)
+        if doc is not None:
+            body = [store("__doc__", ast.Constant(doc)), *body[1:]]
+        epilogue = [store("__static_attributes__", ast.Tuple(elts=[ast.Constant(a) for a in attributes], ctx=ast.Load()))]
+        classdict = _needs_classdict(c)
+        c.bella_classdict = classdict  # type: ignore[attr-defined]
+        if classdict:
+            epilogue.append(store("__classdictcell__", _intrinsic("classdictcell")))
+        if classcell:
+            epilogue += [store("__classcell__", _intrinsic("classcell")), ast.Return(_intrinsic("classcell"))]
+        for s in [*prologue, *epilogue]:
+            _copy_loc(s, c)
+            ast.fix_missing_locations(s)
+        c.body = [*prologue, *body, *epilogue]
+        return c
+
+
+@register(PassSpec(
+    name="desugar-class-body", source=Level.L0, target=Level.L0,
+    produces=frozenset({Fact.CLASS_BODIES_EXPLICIT}),
+    obligations=(
+        Obligation("wf", "every class body starts with the __module__, __qualname__ and __firstlineno__ stores and ends with __static_attributes__ (and __classcell__ when needed); no zero-argument super() call remains in a function"),
+        Obligation("semantics", "the namespace a class body leaves is CPython's (names, values, order of stores); super() reads the __class__ cell and the first argument as CPython's does"),
+        Obligation("terminates", "one rewrite per class and per super() call"),
+    ),
+    discharge=Discharge.TESTED, status="tested",
+))
+def desugar_class_body(tree: ast.Module) -> ast.Module:
+    return ast.fix_missing_locations(_ClassBodies().run(tree))
+
+
+def mangle(private: str | None, name: str) -> str:
+    """_Py_Mangle: __name inside class C is _C__name, unless it ends with __ or holds a dot, or
+    the class name is only underscores."""
+    if private is None or not name.startswith("__") or name.endswith("__") or "." in name:
+        return name
+    stripped = private.lstrip("_")
+    return f"_{stripped}{name}" if stripped else name
+
+
+class _PrivateNames:
+    """Private-name mangling over a class's own code (its functions and lambdas included; a
+    nested class mangles with its own name): names, attributes, parameters, global and
+    nonlocal declarations, except-clause names, imported names, and the names definitions
+    are stored under. A definition keeps its unmangled __name__ and __qualname__, and keyword
+    arguments in calls are not mangled (measured on 3.15.2)."""
+
+    def __init__(self) -> None:
+        self.private: str | None = None
+
+    def visit(self, n: ast.AST) -> None:
+        p = self.private
+        if isinstance(n, ast.ClassDef):
+            for e in [*n.decorator_list, *n.bases, *(k.value for k in n.keywords)]:
+                self.visit(e)
+            n.bella_store = mangle(p, n.name)  # type: ignore[attr-defined]
+            self.private = n.name
+            for s in n.body:
+                self.visit(s)
+            self.private = p
+            return
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            n.bella_store = mangle(p, n.name)  # type: ignore[union-attr]
+        if isinstance(n, ast.arg):
+            n.arg = mangle(p, n.arg)
+        elif isinstance(n, ast.Name):
+            n.id = mangle(p, n.id)
+        elif isinstance(n, ast.Attribute):
+            n.attr = mangle(p, n.attr)
+        elif isinstance(n, (ast.Global, ast.Nonlocal)):
+            n.names = [mangle(p, x) for x in n.names]
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            n.name = mangle(p, n.name)
+        elif isinstance(n, ast.ImportFrom):
+            for a in n.names:
+                if a.name != "*":
+                    a.name = mangle(p, a.name)
+                if a.asname:
+                    a.asname = mangle(p, a.asname)
+        elif isinstance(n, ast.Import):
+            for a in n.names:
+                a.bella_store = mangle(p, a.asname or a.name.partition(".")[0])  # type: ignore[attr-defined]
+        for child in ast.iter_child_nodes(n):
+            self.visit(child)
+
+
+@register(PassSpec(
+    name="desugar-private-names", source=Level.L0, target=Level.L0,
+    requires=frozenset({Fact.CLASS_BODIES_EXPLICIT}),
+    produces=frozenset({Fact.PRIVATE_NAMES_MANGLED}),
+    obligations=(
+        Obligation("wf", "no identifier of a class's code is a private name of that class"),
+        Obligation("semantics", "every identifier CPython's compiler mangles is mangled as _Py_Mangle does; __name__, __qualname__, __static_attributes__ and call keywords are not"),
+        Obligation("terminates", "one visit per node"),
+    ),
+    discharge=Discharge.TESTED, status="tested",
+))
+def desugar_private_names(tree: ast.Module) -> ast.Module:
+    _PrivateNames().visit(tree)
+    return tree
+
+
 class _ChainedCompare(ast.NodeTransformer):
     def visit_Compare(self, node: ast.Compare) -> ast.AST:
         self.generic_visit(node)
@@ -333,6 +637,9 @@ def desugar_fstring(tree: ast.Module) -> ast.Module:
 
 
 class _Decorators(ast.NodeTransformer):
+    def visit_ClassDef(self, node: ast.ClassDef) -> Any:
+        return self.visit_FunctionDef(node)  # type: ignore[arg-type]  # the same rewrite: temps before, applied once
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
         self.generic_visit(node)
         if not node.decorator_list:
@@ -356,7 +663,7 @@ class _Decorators(ast.NodeTransformer):
     name="desugar-decorators", source=Level.L0, target=Level.L0,
     produces=frozenset({Fact.NO_DECORATORS}),
     obligations=(
-        Obligation("wf", "no FunctionDef has decorators"),
+        Obligation("wf", "no FunctionDef or ClassDef has decorators"),
         Obligation("semantics", "decorator expressions are evaluated top-down before the defaults, and applied bottom-up to the new function before its name is bound, once"),
         Obligation("terminates", "one rewrite per decorated def"),
     ),
@@ -466,6 +773,8 @@ class _ToL1:
             return L.Pass(ln)
         if isinstance(s, ast.FunctionDef):
             return self.function(s)
+        if isinstance(s, ast.ClassDef):
+            return self.class_(s)
         if isinstance(s, ast.Raise):
             return L.Raise(ln, self.expr(s.exc) if s.exc else None, self.expr(s.cause) if s.cause else None)
         if isinstance(s, ast.Try):
@@ -530,30 +839,8 @@ class _ToL1:
         if f.type_params:
             raise L.Unsupported(f"type parameters (PEP 695) of {f.name} (line {f.lineno})")
         params = self.params(f.args, f.name)
-        qualname = self.qualname(f.name)
-        globals_: set[str] = set()
-        nonlocals: set[str] = set()
-
-        def declarations(stmts: list[ast.stmt]) -> None:
-            # a global/nonlocal statement applies to the whole function wherever it stands, but
-            # not to nested functions or classes (review 2026-11-01, gemini 2.2.5.1)
-            for s in stmts:
-                if isinstance(s, ast.Global):
-                    globals_.update(s.names)
-                elif isinstance(s, ast.Nonlocal):
-                    nonlocals.update(s.names)
-                elif isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    continue
-                for fld in ("body", "orelse", "finalbody"):
-                    inner = getattr(s, fld, None)
-                    if isinstance(inner, list):
-                        declarations(inner)
-                for h in getattr(s, "handlers", []):
-                    declarations(h.body)
-                for case in getattr(s, "cases", []):
-                    declarations(case.body)
-
-        declarations(f.body)
+        qualname = getattr(f, "bella_qualname", None) or self.qualname(f.name)
+        globals_, nonlocals = declarations(f.body)
         annotate = self.annotate(f, qualname)
         self.units.append(_Unit("function", qualname, frozenset(globals_)))
         try:
@@ -562,11 +849,40 @@ class _ToL1:
             self.units.pop()
         decorators = tuple(L.Name(f.lineno, t) for t in getattr(f, "bella_decorators", []))
         return L.FunctionDef(f.lineno, f.name, params, body, frozenset(globals_), frozenset(nonlocals),
-                             qualname=qualname, decorators=decorators, annotate=annotate, docstring=_docstring(f.body))
+                             qualname=qualname, decorators=decorators, annotate=annotate, docstring=_docstring(f.body),
+                             store=getattr(f, "bella_store", "") if getattr(f, "bella_store", f.name) != f.name else "")
+
+    def class_(self, c: ast.ClassDef) -> L.Assign:
+        """``C = d1(d2(build_class(<body>, "C", *bases, **keywords)))``: the decorators (already
+        evaluated into names) applied once to what build_class returns, then one store."""
+        ln = c.lineno
+        if c.type_params:
+            raise L.Unsupported(f"type parameters (PEP 695) of class {c.name} (line {ln})")
+        if c.decorator_list:
+            raise L.Unsupported("decorators must be desugared first")
+        if not hasattr(c, "bella_qualname"):
+            raise L.Unsupported("class bodies must be made explicit first (desugar-class-body)")
+        qualname: str = c.bella_qualname
+        bases = tuple(L.Starred(b.lineno, self.expr(b.value)) if isinstance(b, ast.Starred) else self.expr(b) for b in c.bases)
+        keywords = tuple((k.arg, self.expr(k.value)) for k in c.keywords)
+        globals_, nonlocals = declarations(c.body)
+        self.units.append(_Unit("class", qualname, frozenset(globals_)))
+        try:
+            body = self.block(c.body)
+        finally:
+            self.units.pop()
+        made: L.Expr = L.Call(ln, L.Intrinsic(ln, "build_class"),
+                              (L.ClassBody(ln, qualname, body, frozenset(globals_), frozenset(nonlocals),
+                                           bool(getattr(c, "bella_classcell", False)),
+                                           bool(getattr(c, "bella_classdict", False))), L.Const(ln, c.name), *bases),
+                              keywords)
+        for t in reversed(getattr(c, "bella_decorators", [])):
+            made = L.Call(ln, L.Name(ln, t), (made,))
+        return L.Assign(ln, L.NameTarget(ln, getattr(c, "bella_store", c.name)), made)
 
     def lambda_(self, e: ast.Lambda) -> L.Lambda:
         params = self.params(e.args, "<lambda>")
-        qualname = self.qualname("<lambda>")
+        qualname = getattr(e, "bella_qualname", None) or self.qualname("<lambda>")
         self.units.append(_Unit("function", qualname))
         try:
             body = self.expr(e.body)
@@ -594,7 +910,7 @@ class _ToL1:
     def expr(self, e: ast.expr) -> L.Expr:
         ln = e.lineno
         if isinstance(e, ast.Constant):
-            if isinstance(e.value, (int, float, str, bool)) or e.value is None:
+            if isinstance(e.value, (int, float, complex, str, bytes, bool)) or e.value is None or e.value is Ellipsis:
                 return L.Const(ln, e.value)
             raise L.Unsupported(f"constant of type {type(e.value).__name__}")
         if isinstance(e, ast.Name):
@@ -658,7 +974,8 @@ class _ToL1WithWalrus(_ToL1):
 
 @register(PassSpec(
     name="to-l1", source=Level.L0, target=Level.L1,
-    requires=frozenset({Fact.NO_CHAINED_COMPARE, Fact.NO_WITH, Fact.NO_COMPREHENSIONS, Fact.NO_FSTRINGS, Fact.NO_DECORATORS}),
+    requires=frozenset({Fact.NO_CHAINED_COMPARE, Fact.NO_WITH, Fact.NO_COMPREHENSIONS, Fact.NO_FSTRINGS, Fact.NO_DECORATORS,
+                        Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED}),
     produces=frozenset({Fact.EXPLICIT_TRUTH}),
     obligations=(
         Obligation("wf", "output satisfies wf1 (pipeline.l1.wf)"),
@@ -671,8 +988,8 @@ def to_l1(tree: ast.Module) -> L.Module:
     return _ToL1WithWalrus().module(tree, getattr(tree, "bella_source", "<module>"))
 
 
-FRONTEND_PASSES = ["desugar-chained-compare", "desugar-with", "desugar-listcomp", "desugar-fstring",
-                   "desugar-decorators", "to-l1"]
+FRONTEND_PASSES = ["desugar-class-body", "desugar-private-names", "desugar-chained-compare", "desugar-with",
+                   "desugar-listcomp", "desugar-fstring", "desugar-decorators", "to-l1"]
 
 
 def check_host_grammar() -> None:

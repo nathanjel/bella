@@ -1,0 +1,12 @@
+{
+ "case": "C-3-27_class_statements.py",
+ "clause": "C-3-27",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Gate 0 task 4, step A3 (the census of docs/measurements.md, 2026-11-02)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "['evaluate outer', 'evaluate inner', 'base', 'meta', 'keyword', \"prepare C ['flavour']\", 'store __module__', 'store __qualname__', 'store __firstlineno__', 'body', 'store x', 'store attr', 'store method', 'store __static_attributes__', 'store __classdictcell__', \"new C ['flavour']\", 'set_name C.attr', 'init_subclass C None', 'apply inner to C', 'apply outer to C']\n[\"prepare Sub ['flavour']\", 'store __module__', 'store __qualname__', 'store __firstlineno__', 'store __static_attributes__', \"new Sub ['flavour']\", 'init_subclass Sub None'] Meta\nTypeError M3\n['E', 'int', 'A', 'object'] True\nRuntimeError\n('enclosing v', 'global x') enclosing v class w\nNameError v\n[0, 1, 2] ['module base']\n['_Private__Inner', '_Private__hidden', '_Private__method', 'annotated', 'augmented', 'call', 'nested']\n(6, 5) Private.__Inner ('__stored', 'ann', 'from_nested')\n'The doc.\\nSecond line.' 201 Private\nouter.<locals>.InFunction outer.<locals>.InFunction.Nested outer.<locals>.InFunction.Nested.m\nR>Q>P Q>P.make R Q RuntimeError\n",
+ "stderr": "",
+ "exit_code": 0
+}

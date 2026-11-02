@@ -16,6 +16,7 @@ is visible rather than approximated.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import EllipsisType
 
 
 class Unsupported(NotImplementedError):
@@ -41,7 +42,7 @@ class Expr(Node):
 
 @dataclass(frozen=True)
 class Const(Expr):
-    value: int | float | str | bool | None
+    value: int | float | complex | str | bytes | bool | None | EllipsisType
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,22 @@ class Call(Expr):
     func: Expr
     args: tuple[Expr, ...]
     kwargs: tuple[tuple[str | None, Expr], ...] = ()
+
+
+@dataclass(frozen=True)
+class ClassBody(Expr):
+    """A class statement's body as a function of the namespace, the way CPython's compiler makes
+    it: called by ``build_class`` with the mapping ``__prepare__`` returned, it runs the body with
+    that mapping as its locals (names stored and deleted through it; a name the body binds is
+    read from it, then from globals and builtins; a free name from it, then from the enclosing
+    function), and returns the ``__class__`` cell when ``classcell`` is set (a function in the
+    body uses ``super`` or ``__class__``). Functions defined in the body do not see its names."""
+    qualname: str
+    body: tuple[Stmt, ...]
+    globals: frozenset[str] = frozenset()
+    nonlocals: frozenset[str] = frozenset()
+    classcell: bool = False
+    classdict: bool = False    # the __classdict__ cell: the namespace while the body runs, stored as __classdictcell__
 
 
 @dataclass(frozen=True)
@@ -283,6 +300,7 @@ class FunctionDef(Stmt):
     decorators: tuple[Expr, ...] = ()
     annotate: FunctionDef | None = None
     docstring: str | None = None
+    store: str = ""            # the name it is bound to, when private-name mangling changed it
 
 
 @dataclass(frozen=True)

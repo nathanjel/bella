@@ -26,6 +26,8 @@ class Fact(Enum):
     NO_COMPREHENSIONS = "no comprehensions"
     NO_FSTRINGS = "no f-strings"
     NO_DECORATORS = "no decorators"
+    CLASS_BODIES_EXPLICIT = "class bodies carry their implicit stores; zero-argument super() is explicit; qualnames recorded"
+    PRIVATE_NAMES_MANGLED = "private names mangled"
     EXPLICIT_TRUTH = "truth tests explicit"
     NAMES_BOUND = "every bare name statically bound"
     TYPES = "expression types from the oracle"

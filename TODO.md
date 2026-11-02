@@ -134,14 +134,29 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
       annotations`.
     * PEP 695 type parameters are refused, not dropped. `pipeline/l1/run.py` runs a program
       under `eval1`, and serves as the harness's runner.
-  * A3 classes, lowered as CPython's own compiler lowers them: the body becomes a function run
-    against the namespace, and `build_class(body, name, *bases, **keywords)` runs it.
-    `build_class` is written in Python and compiled with the rest: metaclass resolution,
-    `__prepare__` (`enum`'s `EnumDict`), `__mro_entries__`, `__classcell__`. The core gains the
-    class-body function (names through the namespace, then globals and builtins). The passes
-    cover decorators, `__qualname__`, `__module__`, `__firstlineno__`,
-    `__static_attributes__`, docstrings, private-name mangling, and zero-argument `super()`
-    with its `__class__` cell.
+  * A3 classes, done 2026-11-02 (C-3-27, `pipeline/tests/test_l1_classes.py`):
+    * A class statement is lowered as CPython's compiler lowers it, to a single store of
+      `build_class(<body>, name, *bases, **keywords)` with the decorators applied.
+      `runtime/prelude/build_class.py` is CPython 3.15.2's `__build_class__` in Python, read
+      from the pinned source. It covers metaclass resolution and conflict, `__prepare__` and its
+      mapping check, `__mro_entries__` and `__orig_bases__`, and the `__class__`-cell checks.
+      The prelude is compiled like any module; `eval1` runs it.
+    * The core gains one node, the class-body function. Its names go through the namespace
+      mapping, and its body is invisible to nested scopes except through the `__class__` cell.
+    * Two passes do the rest:
+      * `desugar-class-body` records qualnames and makes the implicit stores explicit:
+        `__module__`, `__qualname__`, `__firstlineno__`, `__doc__`, `__static_attributes__`,
+        and `__classdictcell__`, which 3.15 stores for any body with a `def`. It also makes
+        zero-argument `super()` an explicit intrinsic call.
+      * `desugar-private-names` mangles as `_Py_Mangle` does.
+    * `eval1` makes its calls through a function whose globals are the program module's, so
+      that `type.__new__`'s `__module__` comes from the program. Frame-walking calls
+      (`sys._getframe`, `sys._getframemodulename`) are for step B.
+    * `wf1` now binds names that nested scopes declare `global`.
+    * Bytes, complex and Ellipsis constants are lowered.
+    * Executed units of `cli_easy_slugs` that lower to L1: 300 of 375, up from 193 of 379.
+    * Known edges, each a RuntimeError or AttributeError where CPython raises another kind:
+      `super()` whose first argument was deleted, and `super` called through another name.
   * A4 imports, as passes onto intrinsic calls: `import a.b`, `as`, `from` (relative and `*`
     too) become `__import__`-style calls and assignments. `eval1` gets a module registry
     (closure modules lowered, core and mapped modules from the host). Then partially initialised

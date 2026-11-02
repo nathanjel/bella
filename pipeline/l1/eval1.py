@@ -12,6 +12,7 @@ from __future__ import annotations
 import builtins
 import operator
 import types
+from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,8 +55,8 @@ _SIGNALS = (_Break, _Continue, _Return)
 
 @dataclass
 class Scope:
-    vars: dict[str, Any]
-    parent: Scope | None = None            # enclosing function scope (closures), None for the module
+    vars: Any                              # a dict; a class body's is the mapping __prepare__ made
+    parent: Scope | None = None            # enclosing scope (closures), None for the module
     locals_: frozenset[str] = frozenset()  # names that are local throughout (Python's rule)
     globals_: frozenset[str] = frozenset()
     nonlocals_: frozenset[str] = frozenset()
@@ -63,9 +64,78 @@ class Scope:
     # bindings of the frontend's synthetic names (comparison temporaries, comprehension helpers):
     # real bindings for the program's semantics, invisible to globals(), locals() and friends
     temps: dict[str, Any] = field(default_factory=dict)
+    synthetic: frozenset[str] = frozenset()   # on a module scope: the names its frontend generated
+    is_class: bool = False                 # a class body: invisible to the scopes nested in it
+    cell: Any = None                       # a class body's __class__ cell, when it has one
+    classdict: Any = None                  # a class body's __classdict__ cell, when it has one
+    caller: Any = None                     # on a module scope: caller_for's function
 
     def is_module(self) -> bool:
         return self.module is None
+
+
+_MISSING = object()            # the `missing` intrinsic: what super() finds absent
+
+
+def __bella_call__(fn: Any, args: Any, kwargs: Any) -> Any:
+    return fn(*args, **kwargs)
+
+
+def caller_for(module: Scope) -> Any:
+    """The function eval1 makes its calls through, one per module, whose globals are that
+    module's: C code that reads the calling frame's globals (type.__new__ filling a missing
+    __module__) then sees the program's module, as under CPython, not eval1's. Code that walks
+    further up the stack (sys._getframe, sys._getframemodulename) is not served by this."""
+    if module.caller is None:
+        module.caller = types.FunctionType(__bella_call__.__code__, module.vars, "__bella_call__")
+    return module.caller
+
+
+class ClassBodyFunction:
+    """What a ClassBody evaluates to: build_class calls it with the namespace."""
+
+    def __init__(self, interp: Interpreter, node: L.ClassBody, closure: Scope) -> None:
+        self.interp, self.node, self.closure = interp, node, closure
+
+    def __call__(self, ns: Any) -> Any:
+        return self.interp.run_class_body(self.node, self.closure, ns)
+
+
+def zero_arg_super(s: Any, cell: Any, first: Any) -> Any:
+    """super() with no arguments in a function (super_init_without_args, Objects/typeobject.c):
+    a `super` that is not the builtin is called with no arguments; the builtin reads the
+    function's first argument and its __class__ cell, with CPython's errors in its order."""
+    if s is not builtins.super:
+        return s()
+    if first is _MISSING:
+        raise RuntimeError("super(): no arguments")
+    if cell is _MISSING:
+        raise RuntimeError("super(): __class__ cell not found")
+    empty = False
+    try:
+        cls = cell.cell_contents
+    except ValueError:
+        empty = True
+    if empty:
+        raise RuntimeError("super(): empty __class__ cell")
+    if not isinstance(cls, type):
+        raise RuntimeError(f"super(): __class__ is not a type ({type(cls).__name__})")
+    return builtins.super(cls, first)
+
+
+_PRELUDE = Path(__file__).resolve().parents[2] / "runtime" / "prelude"
+_LOWERED: dict[Path, L.Module] = {}
+
+
+def _lowered(path: Path) -> L.Module:
+    """A runtime module written in Python (runtime/prelude), lowered once per process."""
+    if path not in _LOWERED:
+        from pipeline.l1.frontend import lower
+        from pipeline.l1.wf import check
+        module = lower(path.read_text(encoding="utf-8"), path.name)
+        check(module)
+        _LOWERED[path] = module
+    return _LOWERED[path]
 
 
 def make_function(interp: Interpreter, node: L.FunctionDef | L.Lambda, closure: Scope) -> types.FunctionType:
@@ -231,14 +301,23 @@ class Interpreter:
     def __init__(self, builtins_: dict[str, Any] | None = None) -> None:
         self.builtins = dict(vars(builtins)) if builtins_ is None else builtins_
         self.builtins.setdefault("__special__", special_lookup)
-        self.synthetic: frozenset[str] = frozenset()
+        self.prelude: dict[str, Any] | None = None
 
     # ---- entry ---------------------------------------------------------------------------
     def run_module(self, m: L.Module, name: str = "__main__") -> Scope:
-        self.synthetic = m.synthetic
-        module = Scope(vars={"__name__": name})
+        module = Scope(vars={"__name__": name}, synthetic=m.synthetic)
         self.block(m.body, module)
         return module
+
+    def runtime(self, name: str) -> Any:
+        """A function of the Python half of the runtime (runtime/prelude), run by this
+        interpreter like any compiled module."""
+        if self.prelude is None:
+            self.prelude = self.run_module(_lowered(_PRELUDE / "build_class.py"), "bella.build_class").vars
+        return self.prelude[name]
+
+    def _syn(self, scope: Scope) -> frozenset[str]:
+        return (scope if scope.is_module() else scope.module or scope).synthetic
 
     def _host_state(self, fn: Any, e: L.Call, scope: Scope) -> Any:
         return _host_state_impl(self, fn, e, scope)
@@ -255,7 +334,7 @@ class Interpreter:
         raise NameError(f"synthetic name '{name}' is unbound", name=name)
 
     def load(self, name: str, scope: Scope, line: int) -> Any:
-        if name in self.synthetic:
+        if name in self._syn(scope):
             return self._load_synthetic(name, scope)
         if scope.is_module():
             if name in scope.vars:
@@ -263,15 +342,43 @@ class Interpreter:
             if name in self.builtins:
                 return self.builtins[name]            # fall-through to builtins (C-8-02)
             raise NameError(f"name '{name}' is not defined", name=name)
+        module = scope.module or scope
         if name in scope.globals_:
-            return self.load(name, scope.module or scope, line)
-        if name in scope.locals_:
+            return self.load(name, module, line)
+        if scope.is_class:
+            if name not in scope.nonlocals_:
+                # LOAD_NAME and LOAD_FROM_DICT_OR_DEREF read the namespace first, through the
+                # mapping (a KeyError means absent)
+                found = True
+                try:
+                    value = scope.vars[name]
+                except KeyError:
+                    found = False
+                if found:
+                    return value
+                if name in scope.locals_:
+                    return self.load(name, module, line)   # bound in the body: globals, builtins
+        elif name in scope.locals_:
             if name in scope.vars:
                 return scope.vars[name]
             # CPython 3.15 leaves UnboundLocalError.name as None (measured; NameError carries it)
             raise UnboundLocalError(f"cannot access local variable '{name}' where it is not associated with a value")
         s: Scope | None = scope.parent
         while s is not None and not s.is_module():
+            if s.is_class:
+                # a class body's names are invisible to what is nested in it, except the
+                # __class__ cell of the nearest class a function is in
+                if name == "__class__" and s.cell is not None and not scope.is_class:
+                    empty = False
+                    try:
+                        return s.cell.cell_contents
+                    except ValueError:
+                        empty = True
+                    if empty:
+                        raise NameError("cannot access free variable '__class__' where it is not associated with a "
+                                        "value in enclosing scope", name="__class__")
+                s = s.parent
+                continue
             if name in s.vars:
                 return s.vars[name]
             if name in s.locals_:
@@ -280,32 +387,34 @@ class Interpreter:
                 raise NameError(f"cannot access free variable '{name}' where it is not associated with a value "
                                 "in enclosing scope", name=name)
             s = s.parent
-        return self.load(name, scope.module or scope, line)
+        return self.load(name, module, line)
+
+    def _enclosing_binding(self, name: str, scope: Scope) -> Scope:
+        """The function scope a nonlocal name belongs to (class bodies skipped)."""
+        s: Scope | None = scope.parent
+        while s is not None and not s.is_module():
+            if not s.is_class and (name in s.locals_ or name in s.vars):
+                return s
+            s = s.parent
+        raise SyntaxError(f"no binding for nonlocal '{name}' found")
 
     def store(self, name: str, value: Any, scope: Scope) -> None:
-        if name in self.synthetic:
+        if name in self._syn(scope):
             scope.temps[name] = value
-            return
-        if scope.is_module() or name in scope.locals_:
-            scope.vars[name] = value
             return
         if name in scope.globals_:
             assert scope.module is not None
             scope.module.vars[name] = value
             return
         if name in scope.nonlocals_:
-            s: Scope | None = scope.parent
-            while s is not None and not s.is_module():
-                if name in s.locals_ or name in s.vars:
-                    s.vars[name] = value
-                    return
-                s = s.parent
-            raise SyntaxError(f"no binding for nonlocal '{name}' found")
-        scope.vars[name] = value
+            self._enclosing_binding(name, scope).vars[name] = value
+            return
+        scope.vars[name] = value           # a class body stores through its mapping
 
     def delete(self, name: str, scope: Scope) -> None:
         """Python's del of a name (review 2026-11-01, gemini 2.2.5.4): an unbound local raises
-        UnboundLocalError, a nonlocal deletes the enclosing binding, a global the module's."""
+        UnboundLocalError, a nonlocal deletes the enclosing binding, a global the module's, and
+        a class body deletes through its mapping (any failure is NameError, DELETE_NAME)."""
         if scope.is_module() or name in scope.globals_:
             module = scope if scope.is_module() else scope.module
             assert module is not None
@@ -314,16 +423,21 @@ class Interpreter:
             del module.vars[name]
             return
         if name in scope.nonlocals_:
-            s: Scope | None = scope.parent
-            while s is not None and not s.is_module():
-                if name in s.locals_ or name in s.vars:
-                    if name not in s.vars:
-                        raise NameError(f"cannot access free variable '{name}' where it is not associated with a value "
-                                        "in enclosing scope", name=name)
-                    del s.vars[name]
-                    return
-                s = s.parent
-            raise SyntaxError(f"no binding for nonlocal '{name}' found")
+            s = self._enclosing_binding(name, scope)
+            if name not in s.vars:
+                raise NameError(f"cannot access free variable '{name}' where it is not associated with a value "
+                                "in enclosing scope", name=name)
+            del s.vars[name]
+            return
+        if scope.is_class:
+            failed = False
+            try:
+                del scope.vars[name]
+            except Exception:  # noqa: BLE001  # DELETE_NAME replaces any failure with NameError
+                failed = True
+            if failed:
+                raise NameError(f"name '{name}' is not defined", name=name)
+            return
         if name not in scope.vars:
             raise UnboundLocalError(f"cannot access local variable '{name}' where it is not associated with a value")
         del scope.vars[name]
@@ -409,8 +523,8 @@ class Interpreter:
         elif isinstance(s, L.FunctionDef):
             fn: Any = self.function(s, scope)
             for d in reversed(s.decorators):          # evaluated before the defaults, applied now
-                fn = self.expr(d, scope)(fn)
-            self.store(s.name, fn, scope)
+                fn = caller_for(_module_of(scope))(self.expr(d, scope), (fn,), {})
+            self.store(s.store or s.name, fn, scope)
         elif isinstance(s, L.Raise):
             if s.exc is None:
                 raise  # re-raise the exception being handled (Python's own machinery)
@@ -494,10 +608,11 @@ class Interpreter:
         scope = Scope(vars={}, parent=closure, locals_=_local_names(node),
                       globals_=node.globals if isinstance(node, L.FunctionDef) else frozenset(),
                       nonlocals_=node.nonlocals if isinstance(node, L.FunctionDef) else frozenset(), module=module)
+        synthetic = self._syn(closure)
         for name, value in bind_arguments(fn, node, args, kwargs).items():
             # a parameter the frontend generated (a comprehension's iterator, the annotate
             # function's format) is a real binding, invisible to the program
-            (scope.temps if name in self.synthetic else scope.vars)[name] = value
+            (scope.temps if name in synthetic else scope.vars)[name] = value
         if not is_def:
             assert isinstance(node, L.Lambda)
             return self.expr(node.body, scope)
@@ -507,6 +622,30 @@ class Interpreter:
         except _Return as r:
             return r.value
         return None
+
+    def run_class_body(self, node: L.ClassBody, closure: Scope, ns: Any) -> Any:
+        """The class body with ns as its locals; returns the __class__ cell, or None."""
+        from pipeline.l1.wf import _bound_in
+        bound: set[str] = set()
+        _bound_in(node.body, bound)
+        module = closure if closure.is_module() else closure.module
+        scope = Scope(vars=ns, parent=closure, locals_=frozenset(bound - node.globals - node.nonlocals),
+                      globals_=node.globals, nonlocals_=node.nonlocals, module=module, is_class=True,
+                      cell=types.CellType() if node.classcell else None,
+                      classdict=types.CellType(ns) if node.classdict else None)   # LOAD_LOCALS; STORE_DEREF
+        try:
+            self.block(node.body, scope)
+        except _Return as r:
+            return r.value
+        return None
+
+    def class_cell(self, scope: Scope) -> Any:
+        s: Scope | None = scope
+        while s is not None:
+            if s.is_class and s.cell is not None:
+                return s.cell
+            s = s.parent
+        raise AssertionError("the classcell intrinsic outside a class that has one")
 
     def arguments(self, e: L.Call, fn: Any, scope: Scope) -> tuple[list[Any], dict[str, Any]]:
         """The positional list (LIST_EXTEND for ``*x``) and the keyword dict (DICT_MERGE for
@@ -585,11 +724,24 @@ class Interpreter:
             if any(fn is h for h in _HOST_STATE):
                 return self._host_state(fn, e, scope)
             args, kwargs = self.arguments(e, fn, scope)
-            return fn(*args, **kwargs)
+            return caller_for(_module_of(scope))(fn, args, kwargs)
         if isinstance(e, L.Lambda):
             return self.function(e, scope)
         if isinstance(e, L.Intrinsic):
+            if e.name == "build_class":
+                return self.runtime("build_class")
+            if e.name == "classcell":
+                return self.class_cell(scope)
+            if e.name == "classdictcell":
+                assert scope.is_class and scope.classdict is not None
+                return scope.classdict
+            if e.name == "super":
+                return zero_arg_super
+            if e.name == "missing":
+                return _MISSING
             return getattr(builtins, e.name)
+        if isinstance(e, L.ClassBody):
+            return ClassBodyFunction(self, e, scope)
         if isinstance(e, L.GetAttr):
             return getattr(self.expr(e.obj, scope), e.name)
         if isinstance(e, L.GetItem):
@@ -640,6 +792,10 @@ def _host_state_impl(interp: Interpreter, fn: Any, e: L.Call, scope: Scope) -> A
         return fn(*args, **kwargs)
     if fn is builtins.globals:
         return _module_of(scope).vars
+    if scope.is_class:
+        if fn is builtins.dir:
+            return sorted(scope.vars.keys())
+        return scope.vars                                  # locals() and vars() in a class body: the namespace
     if not scope.is_module():
         raise L.Unsupported(f"{fn.__name__}() inside a function is not modelled by eval1 yet (line {e.line})")
     if fn is builtins.dir:
