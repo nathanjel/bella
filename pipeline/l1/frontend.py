@@ -1214,7 +1214,7 @@ class _With(ast.NodeTransformer):
         return body
 
     def _expand(self, item: ast.withitem, body: list[ast.stmt], loc: ast.AST) -> list[ast.stmt]:
-        # __special__ is CPython's special-method lookup (_PyObject_LookupSpecial): the type's MRO,
+        # %special is CPython's special-method lookup (_PyObject_LookupSpecial): the type's MRO,
         # bound through the descriptor protocol, TypeError when missing. CPython 3.15 looks up
         # __exit__ before __enter__ (review 2026-11-01, gemini 2.2.5.2; measured on 3.15.2).
         mgr, exit_, enter, value, exc, err = (_tmp("mgr"), _tmp("exit"), _tmp("enter"), _tmp("val"), _tmp("exc"), _tmp("err"))
@@ -1239,6 +1239,8 @@ finally:
         for n in ast.walk(ast.Module(stmts, [])):
             if isinstance(n, ast.Name) and n.id == "type":
                 n.id = _INTRINSIC + "type"
+            elif isinstance(n, ast.Name) and n.id == "__special__":
+                n.id = _INTRINSIC + "special"     # an intrinsic too: no program binding reaches it
         assign = stmts[0]
         assert isinstance(assign, ast.Assign)
         assign.value = item.context_expr

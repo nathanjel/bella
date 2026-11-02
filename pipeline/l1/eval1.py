@@ -384,7 +384,7 @@ def bind_arguments(fn: types.FunctionType, node: L.FunctionDef | L.Lambda,
 def special_lookup(obj: Any, name: str) -> Any:
     """CPython's special-method lookup (_PyObject_LookupSpecial) as the with-statement uses it:
     the name is looked up on the type's MRO, never on the instance, and bound through the
-    descriptor protocol; a missing method is a TypeError. The L1 intrinsic ``__special__``."""
+    descriptor protocol; a missing method is a TypeError. The L1 intrinsic ``special``."""
     t = type(obj)
     for k in t.__mro__:
         if name in k.__dict__:
@@ -413,7 +413,6 @@ _HOST_STATE = (builtins.globals, builtins.locals, builtins.vars, builtins.dir,
 class Interpreter:
     def __init__(self, builtins_: dict[str, Any] | None = None) -> None:
         self.builtins = dict(vars(builtins)) if builtins_ is None else builtins_
-        self.builtins.setdefault("__special__", special_lookup)
         self.prelude: dict[str, Any] | None = None
         # the running code, innermost last: (its module scope, co_qualname), as CPython's frames
         # name a staged text's site (module:qualname)
@@ -1290,6 +1289,8 @@ class Interpreter:
                 return _MISSING
             if e.name == "import_from":
                 return import_from
+            if e.name == "special":
+                return special_lookup
             if e.name == "map_add":
                 return _map_add
             if e.name == "set_add":

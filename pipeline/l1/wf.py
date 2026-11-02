@@ -199,7 +199,7 @@ class _Checker:
         scope = _Scope(bound=set(), star=_imports_star(m.body) or _writes_globals(m))
         _bound_in(m.body, scope.bound)
         _declared_global(m.body, scope.bound)
-        scope.bound |= set(dir(builtins)) | {"__bind__", "__special__", "__name__"} | set(self.extra_names)
+        scope.bound |= set(dir(builtins)) | {"__bind__", "__name__"} | set(self.extra_names)
         self.block(m.body, scope)
 
     def block(self, stmts: tuple[L.Stmt, ...], scope: _Scope) -> None:
