@@ -4,8 +4,19 @@ PY      ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 CXX     ?= g++
 CXXSTD  ?= c++26
 RUNNER  ?= $(PY) {case}
+# Parallelism: `make check` runs the two closure steps first (they write the locks the others
+# read), then every other step at once (`make checks`), each step's output kept together; inside
+# a step, pytest (pytest-xdist), the conformance harness, the target runner and the slice spread
+# their work over BELLA_JOBS workers. JOBS=1 gives the old serial run.
+JOBS    ?= $(shell nproc 2>/dev/null || echo 4)
+export BELLA_JOBS ?= $(JOBS)
+XDIST    = $(shell $(PY) -c "import xdist" 2>/dev/null && echo "-n $(JOBS)")
+CHECKS   = lint test verify probes slice int-test float-diff object-test targets-check staging-check \
+           eval1-corpus eval2-corpus targets-eval1 targets-eval2
 
-.PHONY: help test selftest closure record verify check-conformance probes slice int-test float-diff object-test targets-record targets-check targets-closure staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2 lint check clean
+.PHONY: help test selftest closure record verify check-conformance probes slice int-test float-diff object-test \
+        object-test-lockstep object-test-sanitized object-test-reentrancy targets-record targets-check targets-closure \
+        staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2 lint check checks clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
@@ -27,10 +38,11 @@ help:
 	@echo "make targets-eval2     the easy three through L2 under eval2, each with its whole closure"
 	@echo "make targets-closure   each target's closure and the phase-1 increments -> targets/closure*"
 	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
-	@echo "make check             everything above (what CI runs)"
+	@echo "make check             everything above (what CI runs): the closures, then the rest at once (JOBS=$(JOBS))"
+	@echo "make checks            everything above but the two closures, at once (make -j$(JOBS))"
 
 test:
-	@if $(PY) -c "import pytest" 2>/dev/null; then $(PY) -m pytest; else \
+	@if $(PY) -c "import pytest" 2>/dev/null; then $(PY) -m pytest $(XDIST); else \
 	  echo "pytest not installed: running the test modules directly"; \
 	  $(PY) tools/tests/test_closure.py && $(PY) tools/tests/test_scope.py && $(PY) tools/tests/test_shims.py && $(PY) -m refmodel.tests.test_cases && \
 	  $(PY) -m pipeline.tests.test_frontend_eval1 && $(PY) -m validation.tests.test_certificates; fi
@@ -79,9 +91,15 @@ slice:
 int-test:
 	$(PY) runtime/tests/int_differential.py --cxx $(CXX) --std $(CXXSTD) --cases 2000
 
-object-test:
+object-test: object-test-lockstep object-test-sanitized object-test-reentrancy
+
+object-test-lockstep:
 	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 3000
+
+object-test-sanitized:
 	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 1000 --sanitize
+
+object-test-reentrancy:
 	@mkdir -p build/object-test
 	$(CXX) -std=$(CXXSTD) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
 	    -Iruntime/include runtime/tests/object_reentrancy.cpp -o build/object-test/reentrancy
@@ -110,7 +128,12 @@ lint:
 	# the target drivers too; the vendored libraries they import are read, not reported
 	MYPYPATH=targets/vendor $(PY) -m mypy --disallow-any-explicit --follow-imports=silent targets/drivers
 
-check: closure targets-closure lint test verify probes slice int-test float-diff object-test targets-check staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2
+check:
+	$(MAKE) --no-print-directory closure
+	$(MAKE) --no-print-directory targets-closure
+	$(MAKE) --no-print-directory -j$(JOBS) --output-sync=target checks
+
+checks: $(CHECKS)
 
 clean:
 	rm -rf build runtime/build pipeline/examples/out/*.bin .pytest_cache .hypothesis

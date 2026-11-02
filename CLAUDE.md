@@ -73,7 +73,16 @@ make targets-eval2      the easy three through L2 under eval2, each with its who
 make lint               ruff and mypy, both clean; dialect programs and target drivers under strict mypy
 make check              closure, targets-closure, lint, test, verify, probes, slice, int-test, float-diff, object-test, targets-check,
                         staging-check, eval1-corpus, eval2-corpus, targets-eval1, targets-eval2 (CI)
+make checks             the same without the two closure steps
 ```
+
+`make check` runs the two closure steps first (they write the locks the others read), then the
+rest at once (`make -j$(JOBS)`, each step's output kept together); pytest (pytest-xdist), the
+conformance harness, the target runner and the slice spread their own work over `BELLA_JOBS`
+workers. Both default to the CPU count; `JOBS=1` runs everything serially. About 3 minutes on 16
+CPUs, of which two are `fib.py` interpreted by `eval1` in the slice (one program, one process).
+Tests must not depend on their order or on running alone: one that does passes serially and
+fails on a worker.
 
 On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):
 the project requires uv 0.13.6 and uses only uv-managed interpreters, so `.venv` holds the same

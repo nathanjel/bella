@@ -15,8 +15,8 @@ jobs:
         run: docker run --rm bella sh -c 'cp closure.lock.json /tmp/committed.json && make closure && cmp closure.lock.json /tmp/committed.json'
       - name: make targets-closure (and the committed target closures and increments are current)
         run: docker run --rm bella sh -c 'cp -r targets/closure /tmp/tc && cp targets/closure-summary.json /tmp/tcs.json && make targets-closure && diff -r /tmp/tc targets/closure && cmp /tmp/tcs.json targets/closure-summary.json'
-      - name: make lint test verify probes slice int-test float-diff object-test targets-check staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2
-        run: docker run --rm bella make lint test verify probes slice int-test float-diff object-test targets-check staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2
+      - name: make checks (lint test verify probes slice int-test float-diff object-test targets-check staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2, at once)
+        run: docker run --rm bella make checks
       - name: Keep the probe report
         if: always()
         run: docker run --rm bella cat toolchain-probes.md > toolchain-probes.md || true
@@ -42,7 +42,7 @@ jobs:
       - run: uv run python tools/closure.py --allow-unpinned --quiet --all-targets
       - run: uv run make slice CXXSTD=c++23
       - run: uv run make int-test CXXSTD=c++23 --silent
-      - run: uv run make object-test CXXSTD=c++23
+      - run: uv run make -j3 object-test CXXSTD=c++23
       - run: uv run python targets/run_targets.py check
       - run: uv run make staging-check
       - run: uv run make eval1-corpus

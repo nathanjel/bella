@@ -14,6 +14,7 @@ import contextlib
 import gc
 import io
 import textwrap
+from typing import Any
 
 from pipeline.l2 import eval2
 from pipeline.tests.test_l2 import both, l2
@@ -92,26 +93,31 @@ def program(template: str, in_function: bool) -> str:
     return "def run():\n" + textwrap.indent(template, "    ") + "\nrun()\nprint(\"returned\")\n"
 
 
-def test_every_release_point_kind() -> None:
-    failures = []
-    for kind, template in TEMPLATES.items():
-        for in_function in (False, True):
-            got, ref = both(PRELUDE + program(template, in_function))
-            if got != ref:
-                where = "in a function" if in_function else "at module level"
-                failures.append(f"{kind} ({where}):\n--- eval2\n{got}--- cpython\n{ref}")
-    assert not failures, "\n".join(failures)
+CASES = [(kind, in_function) for kind in TEMPLATES for in_function in (False, True)]
 
 
-def test_the_translation_holds_nothing_it_released() -> None:
-    """The checking mode (docs/l2.md section 5): every release of every probe audited."""
-    for template in TEMPLATES.values():
-        for in_function in (False, True):
-            m = l2(PRELUDE + program(template, in_function))
-            with contextlib.redirect_stdout(io.StringIO()):
-                ns = eval2.Interpreter(dict(vars(builtins)), audit=True).run_module(m)
-                ns.clear()
-                gc.collect()
+def pytest_generate_tests(metafunc: Any) -> None:
+    """Under pytest each probe is a test of its own, so that they run on several workers."""
+    if {"kind", "in_function"} <= set(metafunc.fixturenames):
+        metafunc.parametrize(("kind", "in_function"), CASES,
+                             ids=[f"{k}-{'function' if f else 'module'}" for k, f in CASES])
+
+
+def test_release_point(kind: str, in_function: bool) -> None:
+    got, ref = both(PRELUDE + program(TEMPLATES[kind], in_function))
+    where = "in a function" if in_function else "at module level"
+    assert got == ref, f"{kind} ({where}):\n--- eval2\n{got}--- cpython\n{ref}"
+
+
+def test_the_translation_holds_nothing_it_released(kind: str, in_function: bool) -> None:
+    """The checking mode (docs/l2.md section 5): every release of the probe audited."""
+    m = l2(PRELUDE + program(TEMPLATES[kind], in_function))
+    with contextlib.redirect_stdout(io.StringIO()):
+        interp = eval2.Interpreter(dict(vars(builtins)), audit=True)
+        interp.load_runtime()       # as the module system does
+        ns = interp.run_module(m)
+        ns.clear()
+        gc.collect()
 
 
 def test_the_audit_catches_a_holder_of_the_translations() -> None:
@@ -133,9 +139,11 @@ def test_the_audit_catches_a_holder_of_the_translations() -> None:
 
 
 if __name__ == "__main__":
-    test_every_release_point_kind()
-    print(f"ok test_every_release_point_kind ({len(TEMPLATES)} kinds, two contexts each)")
-    test_the_translation_holds_nothing_it_released()
+    for case in CASES:
+        test_release_point(*case)
+    print(f"ok test_release_point ({len(TEMPLATES)} kinds, two contexts each)")
+    for case in CASES:
+        test_the_translation_holds_nothing_it_released(*case)
     print("ok test_the_translation_holds_nothing_it_released")
     test_the_audit_catches_a_holder_of_the_translations()
     print("ok test_the_audit_catches_a_holder_of_the_translations")

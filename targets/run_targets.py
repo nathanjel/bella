@@ -25,6 +25,7 @@ import shlex
 import subprocess
 import sys
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TypedDict
 
@@ -121,6 +122,7 @@ def selected(args: argparse.Namespace) -> list[tuple[str, Target]]:
 def check(args: argparse.Namespace) -> int:
     failures = 0
     pinned = pinned_python()
+    planned: list[tuple[str, Target, int, bool]] = []
     for name, spec in selected(args):
         # CPython: two hash seeds, then the phase-1 configuration for a phase-1 target; a compiled runner: once
         runs = [(0, False)] if args.runner else [(0, False), (1, False)] + ([(0, True)] if spec["stage"] != "later" else [])
@@ -131,27 +133,32 @@ def check(args: argparse.Namespace) -> int:
             print(f"FAIL {name}: the recording is not authoritative for CPython {pinned} "
                   f"(python {meta.get('python')!r}, authoritative {meta.get('authoritative')!r}); run `make targets-record`")
             continue
+        planned += [(name, spec, seed, phase1) for seed, phase1 in runs]
+    # every run is its own process: run them at once (BELLA_JOBS, else one per CPU), report in order
+    jobs = max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))
+    with ThreadPoolExecutor(jobs) as pool:
+        results = list(pool.map(lambda p: run_one(p[0], p[1], args.runner, p[2], p[3]), planned))
+    for (name, _spec, seed, phase1), r in zip(planned, results, strict=True):
+        meta = json.loads((EXPECTED / f"{name}.json").read_text(encoding="utf-8"))
         want_out = (EXPECTED / f"{name}.out").read_bytes()
         want_err = (EXPECTED / f"{name}.err").read_bytes()
-        for seed, phase1 in runs:
-            r = run_one(name, spec, args.runner, seed, phase1)
-            problems = []
-            if r["stdout"] != want_out:
-                problems.append("stdout")
-            if r["stderr"] != want_err:
-                problems.append("stderr")
-            if r["exit"] != meta["exit"]:
-                problems.append(f"exit {r['exit']} != {meta['exit']}")
-            tag = f"{name} (seed {seed}{', phase-1 omissions' if phase1 else ''})"
-            if problems:
-                failures += 1
-                print(f"FAIL {tag}: {', '.join(problems)}")
-                if args.verbose:
-                    for label, want, got in (("stdout", want_out, r["stdout"]), ("stderr", want_err, r["stderr"])):
-                        for line in _diff(want, got, label)[:20]:
-                            print("   " + line)
-            else:
-                print(f"ok   {tag}")
+        problems = []
+        if r["stdout"] != want_out:
+            problems.append("stdout")
+        if r["stderr"] != want_err:
+            problems.append("stderr")
+        if r["exit"] != meta["exit"]:
+            problems.append(f"exit {r['exit']} != {meta['exit']}")
+        tag = f"{name} (seed {seed}{', phase-1 omissions' if phase1 else ''})"
+        if problems:
+            failures += 1
+            print(f"FAIL {tag}: {', '.join(problems)}")
+            if args.verbose:
+                for label, want, got in (("stdout", want_out, r["stdout"]), ("stderr", want_err, r["stderr"])):
+                    for line in _diff(want, got, label)[:20]:
+                        print("   " + line)
+        else:
+            print(f"ok   {tag}")
     print(f"{failures} failure(s)" if failures else "all targets agree with the recording")
     return 1 if failures else 0
 

@@ -394,7 +394,11 @@ def main() -> int:
         "annotate_entry_points": {k: {"freevars": list(e.freevars), "source": e.source} for k, e in sorted(evaluators.items())},
         "annotate_declined": declined,
     }
-    with open(args.out, "w", encoding="utf-8") as f:
+    # written beside the targets and moved into place, the binary before the JSON that `current`
+    # checks: steps running at once (make -j) may make the same artefact, and none may read a
+    # half-written one
+    json_tmp, binary_tmp = f"{args.out}.{os.getpid()}.tmp", f"{args.binary}.{os.getpid()}.tmp"
+    with open(json_tmp, "w", encoding="utf-8") as f:
         json.dump(artefact, f, indent=1)
         f.write("\n")
     # (site, operation, text) -> (code, future flags): an eval never runs code staged for an exec
@@ -407,7 +411,7 @@ def main() -> int:
         with open(lock_path, encoding="utf-8") as f:
             for module, functions in json.load(f).get("unsupported_functions", {}).items():
                 unsupported.setdefault(module, []).extend(fn for fn in functions if fn not in unsupported.get(module, []))
-    with open(args.binary, "wb") as binary:
+    with open(binary_tmp, "wb") as binary:
         marshal.dump({"optimize": sys.flags.optimize, "texts": compiled, "compiled": {k: o for k, (_, o) in compiled_kept.items()},
                       "annotations": {k: (e.freevars, e.code) for k, e in evaluators.items()},
                       # compiler-generated functions without an entry point; one that matched no
@@ -415,6 +419,8 @@ def main() -> int:
                       "declined": dict(d.split(": ", 1) for d in declined if "matched to 0 annotation owners" not in d),
                       "intrinsics": intrinsic_code, "refused": dict(manifest.get("refused", {})),
                       "unstaged": dict(manifest.get("unstaged", {})), "unsupported": unsupported}, binary)
+    os.replace(binary_tmp, args.binary)
+    os.replace(json_tmp, args.out)
     return 0
 
 

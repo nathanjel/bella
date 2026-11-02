@@ -231,8 +231,12 @@ def test_dead_class_entries_never_match_a_new_class_c_3_12() -> None:
             if stored is not None:
                 rt.setattr(o, "x", stored)
             misses = site.misses
-            assert rt.getattr(o, "x", site) == rt.getattr(o, "x", site) == (stored or "class attribute")
+            first = rt.getattr(o, "x", site)
+            # the first read misses, whatever a dead class left at this address; whether the second
+            # hits depends on the allocator (dead classes' entries fill the site unless an address is
+            # reused), so it is not asserted: run alone, the seventh class finds the site megamorphic
             assert site.misses == misses + 1, name
+            assert first == rt.getattr(o, "x", site) == (stored or "class attribute")
             ref = weakref.ref(K)
             del K, o
             gc.collect()

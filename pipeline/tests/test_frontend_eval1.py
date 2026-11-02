@@ -38,7 +38,9 @@ def both(src: str, extra: dict[str, Any] | None = None) -> tuple[str, str]:
     with contextlib.redirect_stdout(buf):
         m = lower(src, "<test>")
         check(m, frozenset(extra))
-        Interpreter(dict(vars(builtins)) | extra).run_module(m)
+        interp = Interpreter(dict(vars(builtins)) | extra)
+        interp.load_runtime()       # as the module system does: no lowering once the program runs
+        interp.run_module(m)
     ref = io.StringIO()
     with contextlib.redirect_stdout(ref):
         # dont_inherit: this module's `from __future__ import annotations` must not reach the program

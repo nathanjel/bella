@@ -59,7 +59,9 @@ def both(src: str) -> tuple[str, str]:
     _quiet_collect()
     got = io.StringIO()
     with contextlib.redirect_stdout(got):
-        ns = Interpreter(dict(vars(builtins))).run_module(l2(src))
+        interp = Interpreter(dict(vars(builtins)))
+        interp.load_runtime()       # as the module system does: no lowering once the program runs
+        ns = interp.run_module(l2(src))
     _quiet_collect(ns)
     ref = io.StringIO()
     oracle: dict[str, object] = {"__name__": "__main__"}

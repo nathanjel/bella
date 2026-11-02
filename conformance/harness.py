@@ -56,6 +56,7 @@ import shlex
 import subprocess
 import sys
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -242,6 +243,12 @@ def _compare(cmd: list[str], case: Path, header: Header, allow_unpinned: bool, d
     return "FAIL", lines
 
 
+def jobs() -> int:
+    """How many cases run at once: BELLA_JOBS, else one per CPU. Each case is its own process, so
+    the cases are independent; the report keeps the cases' order."""
+    return max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     cases = iter_cases(args.filter)
     if not cases:
@@ -249,27 +256,28 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 2
     if status := getattr(args, "status", None):
         cases = [c for c in cases if read_header(c).status == status]
-    failures = 0
-    for case in cases:
+
+    def one(case: Path) -> tuple[bool, list[str]]:
         header = read_header(case)
         cmd = [part.replace("{case}", case.name) for part in shlex.split(args.runner)]   # quoted arguments survive (G3 3.5)
         if header.status == "X":
             trace = run_case(cmd, case)
             ok = trace["exit_code"] != 0 and (header.expect or "") in str(trace["stderr"])
-            print(f"{'PASS' if ok else 'FAIL'}  {case.name:48} (must be rejected with {header.expect})")
-            failures += not ok
-            continue
+            return ok, [f"{'PASS' if ok else 'FAIL'}  {case.name:48} (must be rejected with {header.expect})"]
         if header.status == "P2+":
             trace = run_case(cmd, case)
             stderr = str(trace["stderr"])
             ok = trace["exit_code"] != 0 and P2_MARKER in stderr and (header.expect or "") in stderr
-            print(f"{'PASS' if ok else 'FAIL'}  {case.name:48} (must be refused with {P2_MARKER}"
-                  f"{' ' + header.expect if header.expect else ''})")
-            failures += not ok
-            continue
+            return ok, [f"{'PASS' if ok else 'FAIL'}  {case.name:48} (must be refused with {P2_MARKER}"
+                        f"{' ' + header.expect if header.expect else ''})"]
         status, lines = _compare(cmd, case, header, args.allow_unpinned, header.deviation)
-        print("\n".join(lines))
-        failures += status == "FAIL"
+        return status == "PASS", lines
+
+    failures = 0
+    with ThreadPoolExecutor(jobs()) as pool:
+        for ok, lines in pool.map(one, cases):
+            print("\n".join(lines))
+            failures += not ok
     print(f"\n{len(cases) - failures}/{len(cases)} passed")
     return 1 if failures else 0
 
@@ -285,13 +293,15 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if not cases:
         print("verify: no case selected", file=sys.stderr)
         return 2
-    failures = checked = 0
-    for case in cases:
+    def one(case: Path) -> tuple[int, int, list[str]]:
+        """(checked, failures, report lines) for one case."""
         header = read_header(case)
+        out: list[str] = []
+        failures = checked = 0
         for deviation in [None] + ([header.deviation] if header.deviation else []):
             status, lines = _compare([args.python, case.name], case, header, allow_unpinned=False,
                                      deviation=deviation, extra_env=simulation_env(deviation, args.python))
-            print("\n".join(lines))
+            out += lines
             failures += status == "FAIL"
             checked += 1
         if header.status == "P1" and not header.deviation:
@@ -300,11 +310,18 @@ def cmd_verify(args: argparse.Namespace) -> int:
             status, lines = _compare([args.python, case.name], case, header, allow_unpinned=False,
                                      extra_env=simulation_env("D-20", args.python))
             if status == "FAIL":
-                lines = [f"FAIL  {case.name:48} prints differently in the phase-1 configuration; "
-                         "declare `# deviation: D-20` and record it", *lines[1:]]
-                print("\n".join(lines))
+                out += [f"FAIL  {case.name:48} prints differently in the phase-1 configuration; "
+                        "declare `# deviation: D-20` and record it", *lines[1:]]
             failures += status == "FAIL"
             checked += 1
+        return checked, failures, out
+
+    failures = checked = 0
+    with ThreadPoolExecutor(jobs()) as pool:
+        for n, bad, lines in pool.map(one, cases):
+            print("\n".join(lines))
+            checked += n
+            failures += bad
     print(f"\nverify: {checked - failures}/{checked} expectations reproduced by CPython {version}")
     return 1 if failures else 0
 

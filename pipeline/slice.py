@@ -14,9 +14,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from pipeline.backend.emit_cpp import emit
@@ -67,6 +69,34 @@ def xfail_reason(path: Path) -> str | None:
     return None
 
 
+def one(prog: Path, out: Path, cxx: str, std: str) -> tuple[bool, str]:
+    """(counts as a failure, report) for one program: CPython, eval1 and the compiled C++."""
+    ref = run_cpython(prog)
+    try:
+        e1 = run_eval1(prog)
+        e1_ok = e1 == ref
+    except Unsupported as exc:
+        e1, e1_ok = f"<unsupported: {exc}>", False
+    xfail = xfail_reason(prog)
+    try:
+        cpp = run_cpp(prog, out, cxx, std)
+        cpp_ok = cpp == ref
+        cpp_note = "" if cpp_ok else cpp.strip().splitlines()[-1] if cpp.strip() else "<empty>"
+    except (Unsupported, RuntimeError) as exc:
+        cpp_ok, cpp_note = False, str(exc).strip().splitlines()[0]
+    if xfail:
+        status = "XFAIL" if not cpp_ok else "XPASS"
+        failed = cpp_ok             # the gap closed: remove the xfail header
+    else:
+        status = "PASS" if (e1_ok and cpp_ok) else "FAIL"
+        failed = not (e1_ok and cpp_ok)
+    report = (f"{status:5} {prog.name:24} eval1={'ok' if e1_ok else 'DIFF'}  c++={'ok' if cpp_ok else 'DIFF'}"
+              + (f"  [{xfail}]" if xfail else "") + ("" if cpp_ok else f"  :: {cpp_note}"))
+    if not e1_ok:
+        report += f"\n      eval1 output:\n{e1}"
+    return failed, report
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("programs", nargs="+", type=Path)
@@ -76,31 +106,14 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     failures = 0
-    for prog in args.programs:
-        ref = run_cpython(prog)
-        try:
-            e1 = run_eval1(prog)
-            e1_ok = e1 == ref
-        except Unsupported as exc:
-            e1, e1_ok = f"<unsupported: {exc}>", False
-        xfail = xfail_reason(prog)
-        try:
-            cpp = run_cpp(prog, args.out, args.cxx, args.std)
-            cpp_ok = cpp == ref
-            cpp_note = "" if cpp_ok else cpp.strip().splitlines()[-1] if cpp.strip() else "<empty>"
-        except (Unsupported, RuntimeError) as exc:
-            cpp_ok, cpp_note = False, str(exc).strip().splitlines()[0]
-        if xfail:
-            status = "XFAIL" if not cpp_ok else "XPASS"
-            if cpp_ok:
-                failures += 1  # the gap closed: remove the xfail header
-        else:
-            status = "PASS" if (e1_ok and cpp_ok) else "FAIL"
-            failures += not (e1_ok and cpp_ok)
-        print(f"{status:5} {prog.name:24} eval1={'ok' if e1_ok else 'DIFF'}  c++={'ok' if cpp_ok else 'DIFF'}"
-              + (f"  [{xfail}]" if xfail else "") + ("" if cpp_ok else f"  :: {cpp_note}"))
-        if not e1_ok:
-            print(f"      eval1 output:\n{e1}")
+    # each program in a process of its own (BELLA_JOBS, else one per CPU), reported in order
+    jobs = max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))
+    with ProcessPoolExecutor(jobs) as pool:
+        futures = [pool.submit(one, prog, args.out, args.cxx, args.std) for prog in args.programs]
+        for future in futures:
+            failed, report = future.result()
+            failures += failed
+            print(report)
     print(f"\nslice: {len(args.programs) - failures}/{len(args.programs)} as expected ({args.cxx} -std={args.std}); "
           f"generated C++ in {args.out}")
     return 1 if failures else 0
