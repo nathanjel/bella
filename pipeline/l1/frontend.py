@@ -628,7 +628,9 @@ class _FunctionAnnotations:
                              body=body, decorator_list=[], returns=None, type_params=[])
         fn.bella_public = {fmt: "format"}  # type: ignore[attr-defined]
         fn.bella_annotation = True  # type: ignore[attr-defined]
-        fn.bella_classdict = kind in ("class", "generic in class")  # type: ignore[attr-defined]
+        # under PEP 563 the values are strings and CPython makes no annotation scope, so nothing
+        # reads the class namespace (no __classdict__ cell; measured against co_freevars)
+        fn.bella_classdict = not self.future and kind in ("class", "generic in class")  # type: ignore[attr-defined]
         fn.bella_annotate_for = f.name  # type: ignore[attr-defined]
         f.bella_annotate = fn.name  # type: ignore[union-attr]
         return ast.fix_missing_locations(_copy_loc(fn, f))

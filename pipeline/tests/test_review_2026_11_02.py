@@ -538,7 +538,7 @@ def test_the_corpus_baseline_is_written_only_from_a_complete_run_a7() -> None:
     tool: Any = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
     before = tool.BASELINE.read_text(encoding="utf-8")
-    tool.run = lambda: {"C-2-01_evaluation_order.py": True}       # a harness that stopped early
+    tool.run = lambda level=1: {"C-2-01_evaluation_order.py": True}       # a harness that stopped early
     with contextlib.redirect_stdout(io.StringIO()) as out:
         assert tool.main(["--update"]) == 1
     assert "incomplete" in out.getvalue()

@@ -25,6 +25,7 @@ STARTUP = list(sys.modules)     # what CPython imported before this script's fir
 
 import os  # noqa: E402
 import traceback  # noqa: E402
+from typing import Any  # noqa: E402
 import types  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -38,7 +39,8 @@ def _refuse(message: str, prefix: str = "bella-eval1: unsupported") -> int:
     return REFUSED
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], level: int = 1, startup: list[str] | None = None) -> int:
+    """`level` 2 runs the program through L2 and eval2 (pipeline/l2/run.py) instead of eval1."""
     sys.path.insert(0, str(ROOT))
     import importlib.machinery
 
@@ -63,12 +65,24 @@ def main(argv: list[str]) -> int:
         print("usage: run.py [--modules program|closure] [--lock LOCK] program.py [args...]", file=sys.stderr)
         return 2
     path = Path(argv[0])
+    unsupported = "bella-eval1: unsupported" if level == 1 else "bella-eval2: unsupported"
     try:
         program = lower(path.read_text(encoding="utf-8"), str(path.resolve()))
         check(program, frozenset({"__file__"}))
     except (Unsupported, DialectError, SyntaxError, WellFormednessError) as exc:
-        return _refuse(str(exc))
-    interp = Interpreter()
+        return _refuse(str(exc), unsupported)
+    interp: Any = Interpreter()
+    if level == 2:
+        from pipeline.l2 import wf as wf2
+        from pipeline.l2.eval2 import Interpreter as Interpreter2
+        from pipeline.l2.lifetimes import lifetimes
+        from pipeline.l2.lower import to_l2
+        try:
+            lowered = lifetimes(to_l2(program))
+            wf2.check(lowered, lifetimes=True)
+        except (Unsupported, wf2.WellFormednessError, SyntaxError) as exc:
+            return _refuse(str(exc), unsupported)
+        interp = Interpreter2()
     system = ModuleSystem(interp, modules, lock)
     blocked: list[str] = []
     if modules == "closure":
@@ -99,10 +113,10 @@ def main(argv: list[str]) -> int:
     sys.modules["__main__"] = main_module
     for name in blocked:
         sys.modules[name] = None  # type: ignore[assignment]  # D-20: absent in phase 1, as the replay blocks it
-    system.activate(STARTUP)        # start-up's imports already see D-20's omissions (G6 2.7.4)
+    system.activate(STARTUP if startup is None else startup)   # start-up's imports already see D-20's omissions (G6 2.7.4)
     sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
     try:
-        interp.run_in(program, main_module.__dict__)
+        interp.run_in(program if level == 1 else lowered, main_module.__dict__)
     except SystemExit as exc:
         code = exc.code
         if code is None or isinstance(code, int):
@@ -112,7 +126,7 @@ def main(argv: list[str]) -> int:
     except Refused as exc:
         return _refuse(str(exc), "bella: refused")     # decision P-1: what the program reached is not lowered
     except Unsupported as exc:
-        return _refuse(str(exc))
+        return _refuse(str(exc), unsupported)
     except BaseException as exc:  # noqa: BLE001  # the program's uncaught exception ends it, as in CPython
         sys.stdout.flush()
         system.deactivate()                             # the host's traceback, warnings, linecache

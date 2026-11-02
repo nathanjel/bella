@@ -284,6 +284,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
        generated `__del__` probe per kind of release point); then `resolve-names`, `to-anf`,
        `protocol-ops` and `lifetimes`, each checked as `eval1 == eval2` on the corpus and the
        easy three, and the lifetime cases as `eval2 == CPython`.
+       * Done 2026-11-02 (`pipeline/l2/`, `docs/l2.md` section 7): the grammar, `wf2`, the printer,
+         resolve-names (checked against CPython's code objects), `to-anf` with protocol-ops,
+         `lifetimes`, and `eval2` as a translation to host functions with the explicit unwinding.
+         `make eval2-corpus`: 62 of 75, every `eval1` case and the lifetime cases.
+       * Still to do in this step: the easy three under eval2 with their closures (`--modules
+         closure`: the staged texts, the module system's lowering through L2), the
+         `gc.get_referrers` checking mode, and a generated probe for every kind of release point
+         (the hand-written ones are in `pipeline/tests/test_l2.py`).
     2. Lifetimes in the model and `object.hpp` from it (task 3); independent of 1.
     3. The runtime types and the emitter: task 3's done-when (C-3-01..12 under the compiled
        runner) first, then gate 1a.1.

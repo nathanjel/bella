@@ -501,6 +501,30 @@ measurement or code that bears on each; spec v0.13 section 6, design sections 6,
   (`_PyFrame_ClearLocals` walks down from the stack top; locals `a, b, c` die as `c, b, a`), not in
   slot order as the L2 draft said.
 
+**2026-11-02 — L2 v1 implemented: resolve-names, to-anf, lifetimes, wf2, eval2** (`pipeline/l2/`,
+`docs/l2.md` sections 4 and 7; the first step of the C++ leg). Within the decisions above, with
+these choices of implementation:
+* `eval2` translates each L2 code object into a host Python function and runs it, rather than
+  interpreting the tree. Temporaries are host locals that `Release` deletes; the exception edge is
+  generated code; local, cell and free variables are the host's own, so the host compiler checks
+  resolve-names a second time (eval2 refuses a code object whose slot tables differ from L2's).
+  This keeps the A+ hygiene by construction (no interpreter loop holding references between
+  statements) and runs the corpus in about 20 seconds. The `gc.get_referrers` checking mode is
+  still to do.
+* The grammar refined while implementing it (docs/l2.md section 4): operands are constants or
+  temporaries only; `Loop` owns what it `holds` and has an `orelse` with `EndLoop`; `Copy` and
+  `Locals`; `Yield` consumes its value; no `retain`. `protocol-ops` is part of `to-anf`.
+* resolve-names agrees with CPython's code objects on the corpus and on every module of the easy
+  three's closures, except where L1 differs on purpose (PEP 709's inlined comprehensions, PEP 695
+  scopes, unlowered `async` bodies). Four rules found along the way: keyword-only parameters come
+  before `*args` in `co_varnames`; cell parameters come first in `co_cellvars`; a `try`'s `else`
+  block precedes its handlers in first-appearance order; loading the name `super` uses `__class__`.
+  The frontend no longer marks a PEP 563 module's `__annotate__` functions as reading the class
+  namespace (CPython's evaluate only strings and have no `__classdict__`).
+* `make eval2-corpus` (in `make check` and CI): 62 of 75 cases, every case `eval1` passes and
+  three more, the lifetime cases included; `pipeline/tests/test_l2.py` holds the release-point
+  probes measured on 3.15.2.
+
 ## Pins
 
 | What | Value | Where |
