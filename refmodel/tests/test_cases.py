@@ -18,6 +18,7 @@ from refmodel.objects import (
     RefObject,
     Runtime,
     Site,
+    incref,
     make_descriptor_class,
 )
 
@@ -59,6 +60,7 @@ def test_dict_replacement_and_sharing() -> None:
     a, b = RefObject(A), RefObject(A)
     rt.setattr(a, "x", 1)
     old = rt.expose_dict(a)
+    incref(old)                                  # a program variable holds the old dict (lifetimes: one count)
     rt.set_dict(a, {"y": 2})
     assert rt.getattr(a, "y") == 2 and old["x"] == 1
     try:
@@ -286,6 +288,190 @@ def test_every_bump_takes_a_new_version_and_exhaustion_stops_caching_d_1() -> No
         assert [rt.getattr(a, "x", site) for _ in range(2)] == [3, 3] and site.hits == 1
     finally:
         VERSIONS.limit = saved
+
+# ---- lifetimes (task 3; review log RL-20, RL-49; case C-9-08) ------------------------------------
+
+def _tagged(heap: object, tag: str) -> RefObject:
+    """A value whose death the heap logs, held by the caller until it is stored."""
+    from refmodel import objects as O
+    tracked = RefClass("Tracked")
+    v = RefObject(tracked, tag=tag)
+    O.incref(v)
+    return v
+
+
+def _store(rt: Runtime, obj: RefObject, name: str, tag: str) -> None:
+    from refmodel import objects as O
+    v = _tagged(O.HEAP, tag)
+    rt.setattr(obj, name, v)
+    O.decref(v)                       # the caller's temporary ends
+
+
+def _fresh_heap() -> object:
+    from refmodel import objects as O
+    O.HEAP = O.Heap()
+    return O.HEAP
+
+
+def _deaths() -> list[object]:
+    from refmodel import objects as O
+    out = list(O.HEAP.deaths)
+    O.HEAP.deaths.clear()
+    return out
+
+
+def test_attribute_values_die_in_the_class_key_order_c_9_08() -> None:
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    Plain = RefClass("Plain", promoted=("x", "y"))
+    first = RefObject(Plain)
+    O.incref(first)
+    _store(rt, first, "x", "x1")
+    _store(rt, first, "y", "y1")
+    O.decref(first)
+    assert _deaths() == ["x1", "y1"]
+    later = RefObject(Plain)
+    O.incref(later)
+    for name in ("y", "z", "x"):
+        _store(rt, later, name, f"{name}2")
+    O.decref(later)
+    assert _deaths() == ["x2", "y2", "z2"]          # the class's keys, not this instance's order
+    Init = RefClass("Init", static_attributes=("b", "a"))
+    init = RefObject(Init)
+    O.incref(init)
+    _store(rt, init, "b", "b")
+    _store(rt, init, "a", "a")
+    O.decref(init)
+    assert _deaths() == ["a", "b"]                  # __static_attributes__, sorted
+
+
+def test_rebinding_deleting_and_dicts_c_9_08() -> None:
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    Plain = RefClass("Plain", promoted=("x",))
+    o = RefObject(Plain)
+    O.incref(o)
+    _store(rt, o, "x", "old")
+    _store(rt, o, "x", "new")
+    assert _deaths() == ["old"]
+    rt.delattr(o, "x")
+    assert _deaths() == ["new"]
+    _store(rt, o, "y", "y")
+    d = rt.expose_dict(o)
+    O.incref(d)                                     # a program variable holds the dict
+    O.decref(o)
+    assert _deaths() == []
+    O.decref(d)
+    assert _deaths() == ["y"]
+    o2 = RefObject(Plain)
+    O.incref(o2)
+    _store(rt, o2, "y", "y")
+    _store(rt, o2, "x", "x")
+    q, pv = _tagged(O.HEAP, "q"), _tagged(O.HEAP, "p")
+    rt.set_dict(o2, {"q": q, "p": pv})
+    O.decref(q)
+    O.decref(pv)
+    assert _deaths() == ["x", "y"]                  # the old dict was split: key order
+    O.decref(o2)
+    assert _deaths() == ["q", "p"]                  # an installed dict: insertion order
+    a1, a2 = RefObject(Plain), RefObject(Plain)
+    O.incref(a1)
+    O.incref(a2)
+    _store(rt, a1, "x", "shared")
+    rt.set_dict(a2, rt.expose_dict(a1))
+    O.decref(a1)
+    assert _deaths() == []
+    O.decref(a2)
+    assert _deaths() == ["shared"]
+
+
+def test_a_failed_delete_moves_the_key_c_9_08() -> None:
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    Probe = RefClass("Probe")
+    probe = RefObject(Probe)
+    try:
+        rt.delattr(probe, "y")
+    except AttributeError:
+        pass
+    second = RefObject(Probe)
+    O.incref(second)
+    _store(rt, second, "x", "x")
+    _store(rt, second, "y", "y")
+    O.decref(second)
+    assert _deaths() == ["y", "x"]
+
+
+def test_slots_die_most_derived_first_then_the_dict_c_9_08() -> None:
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    Slotted = RefClass("Slotted", slots=("p", "q"))
+    Derived = RefClass("Derived", (Slotted,), slots=("r", "__dict__"))
+    s = RefObject(Derived)
+    O.incref(s)
+    for name in ("x", "q", "r", "p"):
+        _store(rt, s, name, name)
+    O.decref(s)
+    assert _deaths() == ["r", "p", "q", "x"]
+
+
+def test_a_found_object_is_borrowed_and_never_read_dead_rl_20() -> None:
+    """A cache entry names its found object without holding it. Replacing the class attribute
+    kills the descriptor while the entry still names it; the class took a new version first, so
+    the entry is never valid again and never read."""
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    Desc = make_descriptor_class("Desc", lambda d, o, c: "described")
+    A = RefClass("A")
+    desc = RefObject(Desc, tag="desc")
+    O.incref(desc)
+    A.set_attr("x", desc)
+    O.decref(desc)                                  # only the class holds it now
+    site = Site()
+    obj = RefObject(A)
+    O.incref(obj)
+    assert rt.getattr(obj, "x", site) == "described"
+    assert site.entries and site.entries[0].found is desc
+    A.set_attr("x", 5)
+    assert _deaths() == ["desc"]                    # dead, while the stale entry still names it
+    assert rt.getattr(obj, "x", site) == 5          # the entry's version is gone: never dereferenced
+
+
+def test_releasing_before_the_version_bump_is_caught_rl_20() -> None:
+    """Fault injection: a class mutation that released the old value before taking a new version
+    would let a finaliser meet an entry that is still valid and names a dead object."""
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    Desc = make_descriptor_class("Desc", lambda d, o, c: "described")
+    A = RefClass("A")
+    desc = RefObject(Desc)
+    O.incref(desc)
+    A.set_attr("x", desc)
+    O.decref(desc)
+    site = Site()
+    obj = RefObject(A)
+    O.incref(obj)
+    rt.getattr(obj, "x", site)
+
+    def wrong_set_attr(self: RefClass, name: str, value: object) -> None:
+        old = self.attrs.get(name)
+        O.incref(value)
+        self.attrs[name] = value
+        O.decref(old)                               # released first ...
+        self.bump()                                 # ... versioned after: wrong
+    try:
+        wrong_set_attr(A, "x", 5)
+    except ModelError as exc:
+        assert "valid cache entry" in str(exc)
+    else:
+        raise AssertionError("a valid entry naming a dead object went unnoticed")
+
 
 if __name__ == "__main__":
     for name, fn in list(globals().items()):

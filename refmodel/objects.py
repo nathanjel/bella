@@ -26,15 +26,29 @@ What is modelled (design document, section 3, as revised by review rounds two an
   kind has its own validity predicate. Every cached read is checked against the generic path
   by comparing the *plans* both select before any user code runs (the selected plan then runs
   once); a disagreement raises ``ModelError`` -- the model refuses to be unsound silently.
-* Lifetimes are not modelled: ``CacheEntry.found`` is documented as borrowed (owned by the
-  class) but is an ordinary Python reference here; the C++ header owes that property.
+* Lifetimes (task 3, RL-20, RL-49): ``RefObject`` and ``RefDict`` carry reference counts; every
+  holder (an instance field, an instance dict, a class attribute, a program variable) owns one,
+  and an object dies when its count reaches zero, with CPython's order (measured on 3.15.2):
+  its finaliser, then its ``__slots__`` (the most-derived class's first, each class's in
+  declaration order), then its ``__dict__``-backed values in the *class's* shared-keys order
+  (``RefClass.keys``: the sorted ``__static_attributes__``, then each name in the order any
+  instance first stored it), or, once the dict is a separate object, the dict's release. A
+  dict made by exposure stays split and releases its values in key order; a dict installed by
+  ``obj.__dict__ = d`` is ordinary and releases them in insertion order. A store keeps the new
+  value before it releases the old one; a class mutation takes the new version before it
+  releases the old attribute (``type_setattro``).
+* ``CacheEntry.found`` is borrowed: it holds no count. The model checks the property the C++
+  header relies on: no entry that a live class's version still validates names an object that
+  dies, and no cached lookup reads a dead ``found``.
 
 What is not modelled yet: ``__setattr__``/``__delattr__``/``__getattribute__`` overrides,
-``__class__`` assignment, dict-mode (runtime-created) classes, and setattr caching. Each is a
-TODO with a conformance case first.
+``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, weak references,
+and classes as counted objects (a class dies only by ``RefClass.dispose``; its cycles are the
+collector's, spec D-04). Each is a TODO with a conformance case first.
 """
 from __future__ import annotations
 
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -97,6 +111,87 @@ class VersionCounter:
 
 VERSIONS = VersionCounter()
 
+SHARED_KEYS_MAX = 30          # SHARED_KEYS_MAX_SIZE (Objects/dictobject.c): a split dict holds at most 30 keys
+
+
+# ---------------------------------------------------------------------------------------------
+# Lifetimes
+# ---------------------------------------------------------------------------------------------
+
+class Heap:
+    """What the lifetime checks need to see: the live classes (whose versions validate cache
+    entries), the sites, and the deaths of tagged objects, in order."""
+
+    def __init__(self) -> None:
+        # held weakly: the registry must not keep a dead class alive (C-3-12)
+        self.classes: weakref.WeakSet[RefClass] = weakref.WeakSet()
+        self.sites: weakref.WeakSet[Site] = weakref.WeakSet()
+        self.deaths: list[Any] = []
+
+    def died(self, obj: RefObject) -> None:
+        """RL-20: an entry a live class still validates never names an object that dies."""
+        live = {c.version for c in self.classes}
+        for site in self.sites:
+            for e in site.entries:
+                if e.found is obj and e.version in live:
+                    raise ModelError(f"a valid cache entry for {e.name!r} names {obj!r}, which dies")
+
+
+HEAP = Heap()
+
+
+def incref(v: Any) -> None:
+    if isinstance(v, (RefObject, RefDict)):
+        if not v.alive:
+            raise ModelError(f"a reference to a dead {v!r} was taken")
+        v.refs += 1
+
+
+def decref(v: Any) -> None:
+    if isinstance(v, (RefObject, RefDict)):
+        if v.refs <= 0:
+            raise ModelError(f"{v!r} released more often than it was held")
+        v.refs -= 1
+        if v.refs == 0:
+            v.dealloc()
+
+
+class RefDict(dict[str, Any]):
+    """An instance dict as an object of its own: counted, shareable, outliving its owner.
+    ``split`` is the class whose shared keys it uses (a dict made by exposure), or None for an
+    ordinary dict; it decides the order in which the values are released when the dict dies."""
+
+    def __init__(self, items: Any = (), split: RefClass | None = None) -> None:
+        super().__init__(items)
+        self.split = split
+        self.refs = 0
+        self.alive = True
+
+    def __hash__(self) -> int:  # type: ignore[override]
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def note_key(self, name: str) -> None:
+        """A new key of a split dict joins its class's shared keys, while there is room."""
+        if self.split is not None and not self.split.note_key(name):
+            self.split = None             # the keys are full: the dict becomes an ordinary one
+
+    def dealloc(self) -> None:
+        self.alive = False
+        order = list(self)
+        if self.split is not None:
+            ranked = [k for k in self.split.keys if k in self]
+            order = ranked + [k for k in self if k not in ranked]
+        values = [self[k] for k in order]
+        self.clear()
+        for v in values:
+            decref(v)
+
+    def __repr__(self) -> str:
+        return f"<RefDict {dict.__repr__(self)}>"
+
 
 # ---------------------------------------------------------------------------------------------
 # Classes
@@ -131,12 +226,21 @@ class RefClass:
         slots: tuple[str, ...] | None = None,
         promoted: tuple[str, ...] = (),
         attrs: dict[str, Any] | None = None,
+        static_attributes: tuple[str, ...] = (),
+        heap: Heap | None = None,
     ) -> None:
         self.name = name
         self.bases = tuple(bases)
         self.mro: tuple[RefClass, ...] = tuple(_c3(self))
         self.attrs: dict[str, Any] = dict(attrs or {})
+        for v in self.attrs.values():
+            incref(v)
         self.version = VERSIONS.issue()
+        # the shared keys of its instances' dicts, in CPython's order: the compiler's sorted
+        # __static_attributes__, then each name the first time any instance stores it
+        self.keys: list[str] = sorted(static_attributes)[:SHARED_KEYS_MAX]
+        self.heap = heap if heap is not None else HEAP
+        self.heap.classes.add(self)
         self.subclasses: list[RefClass] = []
         for b in self.bases:
             b.subclasses.append(self)
@@ -160,6 +264,15 @@ class RefClass:
     def _own_slot_names(self) -> tuple[str, ...]:
         return tuple(s for s in (self.slots or ()) if s != "__dict__")
 
+    def note_key(self, name: str) -> bool:
+        """Records `name` in the shared keys; False when they are full and it is not there."""
+        if name in self.keys:
+            return True
+        if len(self.keys) >= SHARED_KEYS_MAX:
+            return False
+        self.keys.append(name)
+        return True
+
     # -- lookup along the MRO -----------------------------------------------------------------
     def lookup(self, name: str) -> tuple[Any, RefClass] | None:
         for c in self.mro:
@@ -169,14 +282,20 @@ class RefClass:
 
     # -- mutation: every change gives this class and all subclasses new versions --------------
     def set_attr(self, name: str, value: Any) -> None:
+        """type_setattro: the new value stored and the class modified before the old value is
+        released, so a finaliser it runs already sees the new version."""
+        old = self.attrs.get(name)
+        incref(value)
         self.attrs[name] = value
         self.bump()
+        decref(old)
 
     def del_attr(self, name: str) -> None:
         if name not in self.attrs:
             raise AttributeError(name)
-        del self.attrs[name]
+        old = self.attrs.pop(name)
         self.bump()
+        decref(old)
 
     def bump(self) -> None:
         self.version = VERSIONS.issue()
@@ -188,6 +307,17 @@ class RefClass:
         cleanup, since its versions are never issued again (review log D-1)."""
         for b in self.bases:
             b.subclasses.remove(self)
+        self.heap.classes.discard(self)
+
+    def dispose(self) -> None:
+        """The class dies (the collector frees it: its MRO holds itself): it leaves the live
+        classes first, so no entry is valid for it, then releases its attributes in its
+        dictionary's order (type_dealloc clears tp_dict)."""
+        self.unregister()
+        values = list(self.attrs.values())
+        self.attrs.clear()
+        for v in values:
+            decref(v)
 
     def __repr__(self) -> str:
         return f"<RefClass {self.name} v{self.version}>"
@@ -213,15 +343,49 @@ def is_data_descriptor(found: Any) -> bool:
 # ---------------------------------------------------------------------------------------------
 
 class RefObject:
-    def __init__(self, cls: RefClass) -> None:
+    def __init__(self, cls: RefClass, tag: Any = None) -> None:
         self.cls = cls
         self.inline: dict[str, Any] = {n: UNSET for n in cls.slot_fields + cls.promoted_fields}
         self.order: list[str] = []          # first-assignment order of __dict__-backed names
-        self.dict: dict[str, Any] | None = None
+        self.dict: RefDict | None = None    # before exposure: the attributes not promoted; after: the object's __dict__
         self.exposed = False
+        self.refs = 0
+        self.alive = True
+        self.tag = tag                      # a tagged object's death is logged (the oracle compares the logs)
+        self.heap = cls.heap
+
+    def dealloc(self) -> None:
+        """subtype_dealloc's order: the finaliser, the __slots__ of the most-derived class first
+        (each class's in declaration order), then the __dict__-backed values in the class's
+        shared-keys order, or the dict's release once it is an object of its own."""
+        fin = self.cls.lookup("__del__")
+        if fin is not None:
+            fin[0](self)
+        self.alive = False
+        if self.tag is not None:
+            self.heap.deaths.append(self.tag)
+        self.heap.died(self)
+        for c in self.cls.mro:
+            for name in c._own_slot_names():
+                v = self.inline.get(name, UNSET)
+                self.inline[name] = UNSET
+                decref(v)
+        if self.exposed:
+            d, self.dict = self.dict, None
+            decref(d)
+            return
+        held: dict[str, Any] = {n: v for n, v in self.inline.items() if n in self.cls.promoted_fields and v is not UNSET}
+        if self.dict is not None:
+            held.update(self.dict)
+        ranked = [k for k in self.cls.keys if k in held] + [k for k in self.order if k in held and k not in self.cls.keys]
+        for n in self.cls.promoted_fields:
+            self.inline[n] = UNSET
+        self.dict = None
+        for k in ranked:
+            decref(held[k])
 
     def __repr__(self) -> str:
-        return f"<RefObject of {self.cls.name}>"
+        return f"<RefObject of {self.cls.name}" + (f" {self.tag}>" if self.tag is not None else ">")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -277,11 +441,12 @@ class Site:
 
     N = 4
 
-    def __init__(self) -> None:
+    def __init__(self, heap: Heap | None = None) -> None:
         self.entries: list[CacheEntry] = []
         self.megamorphic = False
         self.hits = 0
         self.misses = 0
+        (heap if heap is not None else HEAP).sites.add(self)
 
     def find(self, version: int, name: str) -> CacheEntry | None:
         if version == NO_VERSION:
@@ -400,6 +565,8 @@ class Runtime:
         e = site.find(cls.version, name)    # the version alone names the class (review log D-1)
         if e is None:
             return None
+        if isinstance(e.found, RefObject) and not e.found.alive:
+            raise ModelError(f"the entry for {name!r} is valid but its borrowed found {e.found!r} is dead")
         if e.found_version != NO_VERSION and e.found.cls.version != e.found_version:
             return None                 # the found object's own class changed (gained __get__ or __set__)
         hook_hit = cls.lookup("__getattr__")
@@ -465,12 +632,16 @@ class Runtime:
         return self._execute(plan, obj, name)
 
     def setattr(self, obj: RefObject, name: str, value: Any) -> None:
+        """Every store keeps the new value before it releases the old one."""
         cls = obj.cls
         hit = cls.lookup(name)
         if hit is not None:
             found, _ = hit
             if isinstance(found, SlotDescriptor):
+                old = obj.inline[name]
+                incref(value)
                 obj.inline[name] = value
+                decref(old)
                 return
             if is_data_descriptor(found):
                 setter = found.cls.lookup("__set__")
@@ -479,21 +650,35 @@ class Runtime:
                 setter[0](found, obj, value)
                 return
         if obj.exposed:
-            assert obj.dict is not None
-            obj.dict[name] = value
+            d = obj.dict
+            assert d is not None
+            old = d.get(name)
+            incref(value)
+            if name not in d:
+                d.note_key(name)
+            d[name] = value
+            decref(old)
             return
         if name in cls.promoted_fields:
-            if obj.inline[name] is UNSET:
+            old = obj.inline[name]
+            if old is UNSET:
                 obj.order.append(name)
+                cls.note_key(name)
+            incref(value)
             obj.inline[name] = value
+            decref(old)
             return
         if not cls.has_dict:
             raise AttributeError(f"'{cls.name}' object has no attribute '{name}' and no __dict__ for setting new attributes")
         if obj.dict is None:
-            obj.dict = {}
+            obj.dict = RefDict(split=cls)
+        old = obj.dict.get(name)
         if name not in obj.dict:
             obj.order.append(name)
+            cls.note_key(name)
+        incref(value)
         obj.dict[name] = value
+        decref(old)
 
     def delattr(self, obj: RefObject, name: str) -> None:
         cls = obj.cls
@@ -501,9 +686,11 @@ class Runtime:
         if hit is not None:
             found, _ = hit
             if isinstance(found, SlotDescriptor):
-                if obj.inline[name] is UNSET:
+                old = obj.inline[name]
+                if old is UNSET:
                     raise AttributeError(name)
                 obj.inline[name] = UNSET
+                decref(old)
                 return
             if is_data_descriptor(found):
                 deleter = found.cls.lookup("__delete__")
@@ -511,51 +698,72 @@ class Runtime:
                     raise AttributeError("__delete__")
                 deleter[0](found, obj)
                 return
+        # a delete through a split dict inserts the name into the shared keys before it finds the
+        # attribute missing (_PyObject_StoreInstanceAttribute): a failed `del obj.y` moves y in the
+        # release order of every later instance (found by the Hypothesis machine, measured on 3.15.2)
         if obj.exposed:
             assert obj.dict is not None
+            obj.dict.note_key(name)
             if name not in obj.dict:
                 raise AttributeError(name)
-            del obj.dict[name]
+            decref(obj.dict.pop(name))
             return
+        if cls.has_dict:
+            cls.note_key(name)
         if name in cls.promoted_fields and obj.inline[name] is not UNSET:
+            old = obj.inline[name]
             obj.inline[name] = UNSET
             obj.order.remove(name)
+            decref(old)
             return
         if obj.dict is not None and name in obj.dict:
-            del obj.dict[name]
+            old = obj.dict.pop(name)
             obj.order.remove(name)
+            decref(old)
             return
         raise AttributeError(name)
 
-    def expose_dict(self, obj: RefObject) -> dict[str, Any]:
-        """vars(obj) / obj.__dict__: migrate promoted fields once; stable identity afterwards."""
+    def expose_dict(self, obj: RefObject) -> RefDict:
+        """vars(obj) / obj.__dict__: migrate promoted fields once; stable identity afterwards. The
+        dict is an object of its own from here on, held by the object (one count), split: it
+        shares the class's keys, so it releases its values in key order (3.13+'s materialised
+        dict shares the instance's inline values)."""
         cls = obj.cls
         if not cls.has_dict:
             raise AttributeError(f"'{cls.name}' object has no attribute '__dict__'")
         if obj.exposed:
             assert obj.dict is not None
             return obj.dict
-        d: dict[str, Any] = {}
-        for name in obj.order:
+        d = RefDict(split=cls)
+        for name in obj.order:                       # the references move: no count changes
             if name in cls.promoted_fields:
                 d[name] = obj.inline[name]
                 obj.inline[name] = UNSET            # inline slot is dead from now on
             else:
                 assert obj.dict is not None
                 d[name] = obj.dict[name]
+        d.refs = 1
         obj.dict = d
         obj.order = []
         obj.exposed = True
         return d
 
     def set_dict(self, obj: RefObject, d: Any) -> None:
-        """obj.__dict__ = d: exposes first, then installs d (which may be shared)."""
+        """obj.__dict__ = d: exposes first, then installs d (which may be shared); the old dict
+        is released after the new one is held."""
         if not obj.cls.has_dict:
             raise AttributeError(f"'{obj.cls.name}' object has no attribute '__dict__'")
         if not isinstance(d, dict):
             raise TypeError("__dict__ must be set to a dictionary")
+        if not isinstance(d, RefDict):
+            d = RefDict(d)                           # an ordinary dict: insertion order
+            for v in d.values():
+                incref(v)
         self.expose_dict(obj)
+        old = obj.dict
+        incref(d)
         obj.dict = d
+        decref(old)
 
 
 def _same(a: Any, b: Any) -> bool:

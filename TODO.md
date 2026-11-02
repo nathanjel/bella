@@ -58,7 +58,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   lifetimes explicit (review log D-2, RL-20, RL-49): release points in the L2 grammar
   (`docs/l2.md` v1), checked by `eval2` against CPython's finaliser traces, and lifetimes in
   the model. `eval1` keeps no finaliser traces (author, 2026-11-02: L1 says nothing about when
-  an object dies, so `eval2` is the first level exact about lifetimes). Then write `runtime/include/bella/object.hpp`
+  an object dies, so `eval2` is the first level exact about lifetimes).
+  * Done 2026-11-02: lifetimes in the model (`refmodel/objects.py`): counted objects and dicts,
+    CPython's release orders (slots most-derived first, then instance attributes in the class's
+    shared-keys order, a failed `del` included; split and ordinary dicts), class mutations that
+    version before they release, `CacheEntry.found` borrowed and checked (RL-20). Case C-9-08;
+    the oracle compares death logs after every operation (`drop`, tagged values, dying
+    descriptors), in the self-test and the Hypothesis machine.
+  Then write `runtime/include/bella/object.hpp`
   from the model (start from `docs/drafts/object.hpp.draft` and the two findings in
   `docs/DECISIONS.md`), single-threaded first: plain counters, no atomics, no collector.
 * Done when: the C++ object model passes the same stateful test through a thin Python

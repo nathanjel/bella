@@ -16,7 +16,7 @@ from refmodel.oracle import NAMES, RUNTIME_VARIANTS, World  # noqa: E402
 objects = st.integers(0, 9)
 classes = st.integers(0, 6)
 names = st.sampled_from(NAMES)
-values = st.integers(0, 99)
+values = st.one_of(st.integers(0, 99), st.just("tagged"))      # "tagged": a fresh object whose death is compared
 
 
 class AttributeModel(RuleBasedStateMachine):
@@ -29,9 +29,16 @@ class AttributeModel(RuleBasedStateMachine):
     def get(self, obj: int, name: str, computed: bool) -> None:
         self.world.apply(("get", obj, name, computed))
 
+    def _value(self, value: int | str) -> object:
+        return self.world.new_tag() if value == "tagged" else value
+
     @rule(obj=objects, name=names, value=values)
-    def set(self, obj: int, name: str, value: int) -> None:
-        self.world.apply(("set", obj, name, value))
+    def set(self, obj: int, name: str, value: int | str) -> None:
+        self.world.apply(("set", obj, name, self._value(value)))
+
+    @rule(obj=objects)
+    def drop(self, obj: int) -> None:
+        self.world.apply(("drop", obj))
 
     @rule(obj=objects, name=names)
     def delete(self, obj: int, name: str) -> None:
@@ -46,8 +53,8 @@ class AttributeModel(RuleBasedStateMachine):
         self.world.apply(("replace_dict", obj, src))
 
     @rule(cls=classes, name=names, value=values)
-    def set_class_attr(self, cls: int, name: str, value: int) -> None:
-        self.world.apply(("set_class_attr", cls, name, value))
+    def set_class_attr(self, cls: int, name: str, value: int | str) -> None:
+        self.world.apply(("set_class_attr", cls, name, self._value(value)))
 
     @rule(cls=classes, name=names)
     def del_class_attr(self, cls: int, name: str) -> None:

@@ -538,6 +538,24 @@ these choices of implementation:
   this, step 1 of the C++ leg (the L2 leg) is done; step 2 is lifetimes in the model and
   `object.hpp` (task 3).
 
+**2026-11-02 — lifetimes in the reference model** (task 3; review log RL-20, RL-49; case C-9-08).
+* The model counts references: `RefObject` and `RefDict` (an instance dict as an object of its
+  own) carry counts that every holder owns, and an object dies at zero with CPython 3.15.2's
+  order, measured: its finaliser, its `__slots__` (the most-derived class's first, each class's
+  in declaration order), then its instance attributes in the order of the class's shared keys.
+* Shared keys are per class: the sorted `__static_attributes__`, then each name the first time any
+  instance stores it or tries to delete it (a failed `del obj.y` inserts `y`; found by the
+  Hypothesis machine). So an instance's attributes die in an order that is not its own assignment
+  order, and the runtime must keep the per-class key order, beside the per-instance insertion
+  order that `vars()` iterates. A dict made by exposure stays split (key order); one installed by
+  `obj.__dict__ = d` is ordinary (insertion order).
+* A class mutation stores the new value and takes a new version before it releases the old one
+  (`type_setattro`), so `CacheEntry.found` can be borrowed: the model holds no count for it and
+  fails if an object dies while an entry a live class still validates names it, or if a cached
+  lookup reads a dead `found`. A test injects the opposite order and the check fires.
+* The oracle compares death logs after every operation (tagged values, `drop`, descriptors that
+  die when replaced); the self-test compares about 300 deaths per 5,000 operations.
+
 ## Pins
 
 | What | Value | Where |

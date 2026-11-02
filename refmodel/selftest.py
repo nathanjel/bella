@@ -16,10 +16,10 @@ from refmodel.objects import ModelError
 from refmodel.oracle import Mismatch, World
 
 
-def run(iterations: int, seed: int, ops_per_world: int = 60) -> tuple[int, int, int, int]:
-    """Returns (worlds, ops, cache hits, cache misses); raises Mismatch or ModelError."""
+def run(iterations: int, seed: int, ops_per_world: int = 60) -> tuple[int, int, int, int, int]:
+    """Returns (worlds, ops, cache hits, cache misses, deaths compared); raises Mismatch or ModelError."""
     rng = random.Random(seed)
-    worlds = ops = hits = misses = 0
+    worlds = ops = hits = misses = deaths = 0
     while ops < iterations:
         world = World()
         worlds += 1
@@ -32,7 +32,8 @@ def run(iterations: int, seed: int, ops_per_world: int = 60) -> tuple[int, int, 
             raise ModelError(f"{exc}\nlog:\n" + "\n".join(map(repr, world.log))) from None
         hits += sum(s.hits for s in world.sites.values())
         misses += sum(s.misses for s in world.sites.values())
-    return worlds, ops, hits, misses
+        deaths += world.deaths_compared
+    return worlds, ops, hits, misses, deaths
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=20261031)
     args = ap.parse_args(argv)
     try:
-        worlds, ops, hits, misses = run(args.iterations, args.seed)
+        worlds, ops, hits, misses, deaths = run(args.iterations, args.seed)
     except Mismatch as exc:
         print(f"MISMATCH between model and CPython (seed {args.seed}):\n{exc}", file=sys.stderr)
         return 1
@@ -49,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"MODEL INVARIANT VIOLATED (seed {args.seed}):\n{exc}", file=sys.stderr)
         return 1
     print(f"refmodel selftest: {ops} operations over {worlds} worlds, seed {args.seed}: model == CPython; "
-          f"inline caches: {hits} hits, {misses} misses")
+          f"inline caches: {hits} hits, {misses} misses; {deaths} deaths in CPython's order")
     return 0
 
 

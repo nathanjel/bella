@@ -56,4 +56,5 @@ C-9-03_refcount_disposal_order.py
 C-9-04_refcount_resurrection_keeps_weakref.py
 C-9-06_generator_closed_on_last_reference.py
 C-9-07_weakref_callback_cleared_before_finaliser.py
+C-9-08_attribute_value_lifetimes.py
 X-4-01_eval_rejected.py
