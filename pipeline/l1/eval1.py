@@ -24,6 +24,7 @@ from typing import Any
 
 from pipeline.l1 import grammar as L
 from pipeline.l1.frontend import lower
+from pipeline.l1.staged import flags_of
 from pipeline.l1.wf import _bound_in, _walrus, check
 from pipeline.staging import annotate_rt
 
@@ -414,6 +415,11 @@ class Interpreter:
         self.builtins = dict(vars(builtins)) if builtins_ is None else builtins_
         self.builtins.setdefault("__special__", special_lookup)
         self.prelude: dict[str, Any] | None = None
+        # the running code, innermost last: (its module scope, co_qualname), as CPython's frames
+        # name a staged text's site (module:qualname)
+        self.frames: list[tuple[Scope, str]] = []
+        self.staged: Any = None          # pipeline.l1.staged.Staged, when the program has artefacts
+        self.future: dict[int, frozenset[str]] = {}    # id(module scope's dict) -> its __future__ features
 
     # ---- entry ---------------------------------------------------------------------------
     def run_module(self, m: L.Module, name: str = "__main__") -> Scope:
@@ -424,8 +430,49 @@ class Interpreter:
         module system runs it)."""
         namespace.setdefault("__builtins__", vars(builtins))   # what exec() adds to a module's globals
         module = Scope(vars=namespace, synthetic=m.synthetic)
-        self.block(m.body, module)
+        self.future[id(namespace)] = m.future
+        self.frames.append((module, "<module>"))
+        try:
+            self.block(m.body, module)
+        finally:
+            self.frames.pop()
         return module
+
+    def site(self) -> str:
+        module, qualname = self.frames[-1] if self.frames else (None, "<module>")
+        name = module.vars.get("__name__") if module is not None else None
+        return f"{name}:{qualname}"
+
+    def caller_flags(self) -> int:
+        module = self.frames[-1][0] if self.frames else None
+        return flags_of(self.future.get(id(module.vars), frozenset())) if module is not None else 0
+
+    def run_text(self, m: L.Module, g: Any, loc: Any) -> Any:
+        """A staged text, as exec and eval run code: with `g` as globals (exec adds
+        __builtins__ to it) and `loc`, when it is another mapping, as the locals (names stored
+        there, read from there, then globals, then builtins); eval's value is the expression's."""
+        if not isinstance(g, dict):
+            raise TypeError(f"globals must be a dict, not {_tp_name(type(g))}")
+        g.setdefault("__builtins__", vars(builtins))
+        module = Scope(vars=g, synthetic=m.synthetic)
+        self.future.setdefault(id(g), m.future)
+        if loc is None or loc is g:
+            scope = module
+        else:
+            bound: set[str] = set()
+            _bound_in(m.body, bound)
+            scope = Scope(vars=loc, parent=module, locals_=frozenset(bound), module=module, is_class=True)
+        self.frames.append((module, "<module>"))
+        try:
+            if m.mode == "eval":
+                *helpers, last = m.body
+                self.block(tuple(helpers), scope)
+                assert isinstance(last, L.ExprStmt)
+                return self.expr(last.value, scope)
+            self.block(m.body, scope)
+            return None
+        finally:
+            self.frames.pop()
 
     def load_runtime(self) -> None:
         """The Python half of the runtime (runtime/prelude), lowered and run by this interpreter
@@ -964,6 +1011,8 @@ class Interpreter:
                       globals_=node.globals if isinstance(node, L.FunctionDef) else frozenset(),
                       nonlocals_=node.nonlocals if isinstance(node, L.FunctionDef) else frozenset(), module=module,
                       classdict_scope=_nearest_class(closure) if isinstance(node, L.FunctionDef) and node.classdict else None)
+        if self.staged is not None:
+            self._check_entry(module, node.qualname)
         synthetic = self._syn(closure)
         for name, value in bind_arguments(fn, node, args, kwargs).items():
             # a parameter the frontend generated (a comprehension's iterator, the annotate
@@ -977,16 +1026,75 @@ class Interpreter:
             made: Any = (_refused_coroutine if node.kind == "coroutine" else _refused_async_generator)(fn.__qualname__)
             made.__name__, made.__qualname__ = fn.__name__, fn.__qualname__
             return made
-        if not is_def:
-            assert isinstance(node, L.Lambda)
-            self.block(node.prelude, scope)
-            return self.expr(node.body, scope)
-        assert isinstance(node, L.FunctionDef)
+        assert module is not None
+        self.frames.append((module, node.qualname))
         try:
-            self.block(node.body, scope)
-        except _Return as r:
-            return r.value
-        return None
+            if not is_def:
+                assert isinstance(node, L.Lambda)
+                self.block(node.prelude, scope)
+                return self.expr(node.body, scope)
+            assert isinstance(node, L.FunctionDef)
+            try:
+                self.block(node.body, scope)
+            except _Return as r:
+                return r.value
+            return None
+        finally:
+            self.frames.pop()
+
+    def _check_entry(self, module: Scope | None, qualname: str) -> None:
+        """The manifest's [refused] functions and the lock's unsupported ones stop the program
+        when they are called (decision S-4), as in the replay."""
+        name = module.vars.get("__name__") if module is not None else None
+        site = f"{name}:{qualname}"
+        if site in self.staged.refused:
+            raise L.Refused(self.staged.refused[site])
+        if qualname in self.staged.unsupported.get(name, ()):
+            raise L.Refused(f"[P2+] {site} is not supported in phase 1 (closure.lock.json unsupported_functions)")
+
+    def staged_call(self, fn: Any, e: L.Call, scope: Scope) -> Any:
+        """exec, eval and compile of a staged text (pipeline/l1/staged.py)."""
+        args, kwargs = self.arguments(e, fn, scope)
+        site = self.site()
+        if self.staged is None:
+            raise L.Refused(f"{fn.__name__}() of source text is excluded (E-01) (line {e.line})")
+        if fn is builtins.compile:
+            return self._staged_compile(site, *args, **kwargs)
+        kind = fn.__name__
+        source, *namespaces = args
+        if len(namespaces) > 2 or (kwargs and set(kwargs) - {"globals", "locals", "closure"}):
+            raise TypeError(f"{kind}() takes at most 3 arguments")
+        g = namespaces[0] if namespaces else kwargs.get("globals")
+        loc = namespaces[1] if len(namespaces) > 1 else kwargs.get("locals")
+        if isinstance(source, types.CodeType):
+            text = self.staged.code(source, kind, site)
+        elif isinstance(source, (str, bytes)):
+            text = self.staged.text(site, kind, source, self.caller_flags())
+        else:
+            raise L.Refused(f"E-01: {kind} of a {type(source).__name__} at {site}")
+        if g is None:
+            g = _module_of(scope).vars
+            if loc is None and not scope.is_module():
+                loc = scope.vars if scope.is_class else dict(scope.vars)   # PEP 667: a function's snapshot
+        value = self.run_text(text, g, loc)
+        return value if kind == "eval" else None
+
+    def _staged_compile(self, site: str, source: Any, filename: Any, mode: str, flags: int = 0,
+                        dont_inherit: bool = False, optimize: int = -1, *, module: Any = None,
+                        _feature_version: int = -1) -> Any:
+        if site in self.staged.refused:
+            raise L.Refused(self.staged.refused[site])
+        inherited = 0 if dont_inherit else self.caller_flags()
+        outcome = self.staged.compiled.get((site, "compile", source, str(filename), str(mode), flags | inherited, optimize,
+                                            module, _feature_version))
+        if outcome is None:
+            raise L.Refused(self.staged.unstaged.get(site) or f"E-01: compile at {site} of a text the dry run did not stage")
+        if outcome[0] == "raises":
+            cls = getattr(builtins, outcome[1], None)
+            if not (isinstance(cls, type) and issubclass(cls, BaseException)):
+                raise L.Refused(f"E-01: compile at {site} raised {outcome[1]}, which is not a built-in exception")
+            raise cls(*outcome[2])
+        return outcome[1]
 
     def display(self, e: L.ListLit | L.TupleLit | L.SetLit, scope: Scope) -> Any:
         """starunpack_helper (Python/codegen.c): with no starred item and at most 30 items, every
@@ -1068,10 +1176,14 @@ class Interpreter:
                       globals_=node.globals, nonlocals_=node.nonlocals, module=module, is_class=True,
                       cell=types.CellType() if node.classcell else None,
                       classdict=types.CellType(ns) if node.classdict else None)   # LOAD_LOCALS; STORE_DEREF
+        assert module is not None
+        self.frames.append((module, node.qualname))
         try:
             self.block(node.body, scope)
         except _Return as r:
             return r.value
+        finally:
+            self.frames.pop()
         return None
 
     def class_cell(self, scope: Scope) -> Any:
@@ -1420,7 +1532,7 @@ def _module_of(scope: Scope) -> Scope:
 
 def _host_state_impl(interp: Interpreter, fn: Any, e: L.Call, scope: Scope) -> Any:
     if fn in (builtins.eval, builtins.exec, builtins.compile):
-        raise L.Refused(f"{fn.__name__}() of source text is excluded (E-01) (line {e.line})")
+        return interp.staged_call(fn, e, scope)
     if e.args or e.kwargs:
         if fn is builtins.globals or fn is builtins.locals:
             raise TypeError(f"{fn.__name__}() takes no arguments")

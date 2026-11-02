@@ -98,7 +98,9 @@ class ModuleSystem(importlib.abc.MetaPathFinder):
             raise Refused(f"{path.name}: {self.failures[path]}")
         if path not in self.cache:
             try:
-                self.cache[path] = lower_file(path, library=path in self.closure.values() or path.is_relative_to(STDLIB))
+                # library code (P-3): the standard library, the shims, and vendored packages
+                library = path in self.closure.values() or path.is_relative_to(STDLIB) or "vendor" in path.parts
+                self.cache[path] = lower_file(path, library=library)
             except (Unsupported, DialectError, SyntaxError, WellFormednessError) as exc:
                 self.failures[path] = f"{type(exc).__name__}: {exc}"
                 raise Refused(f"{path.name}: {self.failures[path]}") from None

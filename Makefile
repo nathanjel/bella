@@ -5,7 +5,7 @@ CXX     ?= g++
 CXXSTD  ?= c++26
 RUNNER  ?= $(PY) {case}
 
-.PHONY: help test selftest closure record verify check-conformance probes slice int-test targets-record targets-check targets-closure staging-check eval1-corpus lint check clean
+.PHONY: help test selftest closure record verify check-conformance probes slice int-test targets-record targets-check targets-closure staging-check eval1-corpus targets-eval1 lint check clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
@@ -20,6 +20,7 @@ help:
 	@echo "make targets-check     re-run the targets (two hash seeds) and compare; TARGET_RUNNER= for compiled binaries"
 	@echo "make staging-check     the staging prototype: dry-run determinism, the P1 corpus and targets under the replay"
 	@echo "make eval1-corpus      the conformance corpus under eval1: no case of conformance/eval1-baseline.txt may regress"
+	@echo "make targets-eval1     the easy three under eval1, each with its whole closure lowered (the gates' second leg)"
 	@echo "make targets-closure   each target's closure and the phase-1 increments -> targets/closure*"
 	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
 	@echo "make check             everything above (what CI runs)"
@@ -39,6 +40,11 @@ closure:
 
 eval1-corpus:
 	$(PY) tools/eval1_corpus.py
+
+EVAL1_RUNNER = $(shell $(PY) -c "import sys; print(sys.executable)") -P $(CURDIR)/pipeline/l1/run.py --modules closure --lock closure/{name}.lock.json {driver} {argv}
+targets-eval1:
+	$(PY) targets/run_targets.py check --target cli_easy_slugs --target service_easy_tokens --target data_easy_sales \
+	  --runner "$(EVAL1_RUNNER)"
 
 staging-check:
 	$(PY) pipeline/staging/check.py
@@ -77,7 +83,7 @@ lint:
 	# the target drivers too; the vendored libraries they import are read, not reported
 	MYPYPATH=targets/vendor $(PY) -m mypy --disallow-any-explicit --follow-imports=silent targets/drivers
 
-check: closure targets-closure lint test verify probes slice int-test targets-check staging-check eval1-corpus
+check: closure targets-closure lint test verify probes slice int-test targets-check staging-check eval1-corpus targets-eval1
 
 clean:
 	rm -rf build runtime/build pipeline/examples/out/*.bin .pytest_cache .hypothesis

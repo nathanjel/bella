@@ -247,16 +247,27 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
     * `make eval1-corpus`: 58 of 75. All 72 of `cli_easy_slugs`'s closure modules lower.
     * The S-1 second entry point (FORWARDREF and STRING through the `annotationlib` shim) is
       still to do.
-  * B `eval1` runs `cli_easy_slugs` end to end, started:
-    * Closure mode now runs the start-up modules (`codecs`, `encodings`, `os`, `linecache`)
-      under `eval1` before the program, as the compiled runtime will. The prelude is loaded
-      first, and `importlib.invalidate_caches()` is gone: it imported `importlib.metadata`
-      through `eval1`.
-    * The run reaches `namedtuple`'s `eval()` and refuses (exit 70). Next: the staged texts
-      from the staging artefact, a frame stack for `sys._getframemodulename` and `logging`,
-      and P-1's statement refusals.
-  * The gate's second leg is `cli_easy_slugs` under `eval1` with its closure lowered as P-1
-    decides, the staged texts and refusals as in staging (`make targets-check TARGET_RUNNER=...`).
+  * B, done 2026-11-02: the easy three print their recorded output under `eval1`, each with its
+    whole closure lowered to L1. `make targets-eval1` runs it, in `make check` and CI. That is
+    the second leg of gates 1a.1, 1a.2 and 1a.3; the C++ leg remains.
+    * Staged texts (`pipeline/l1/staged.py`): the staging dry runs' artefacts, as the replay
+      takes them. Every text is lowered before the program starts, in the caller's
+      `__future__` context and with the builtins' preprocessing. At runtime it is found by the
+      replay's key, from a frame stack `eval1` now keeps. A miss, a `[refused]` function and an
+      `[unsupported]` one refuse.
+    * Closure mode runs CPython's start-up modules under `eval1` first, applies the phase-1
+      omissions (D-20) as the replay does, and gives the host its modules back before printing
+      a traceback.
+    * Found:
+      * A module whose annotations all stood in blocks had no conditional set.
+      * Vendored packages were held to the program's strict name rule; they are library code
+        under P-3.
+    * Not needed by the targets, so still open: P-1's statement refusals (every closure module
+      lowers whole), the frames that `sys._getframemodulename` and `logging`'s `findCaller`
+      read (namedtuple's default module worked through the staged text), tracebacks with
+      frames, and the S-1 second entry point.
+    * Each run takes about 11 to 15 seconds: `eval1` interprets `argparse`, `re`'s parser,
+      `enum` and `dataclasses` from L1.
   * C the C++ leg: task 3's header, L2, and the runtime list above.
 * Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata` (it kept the lowered
   requirements when `unicodedata` became \[P1\] the same day, review log D-8); licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's

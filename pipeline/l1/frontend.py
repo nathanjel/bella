@@ -155,13 +155,14 @@ class _Annotations:
     def run(self, tree: ast.Module) -> ast.Module:
         doc = _docstring(tree.body)
         body = tree.body[1:] if doc is not None else tree.body
+        annotated = self.has_annotations(tree.body)     # before block() rewrites nested statements in place
         entries: list[tuple[str, ast.expr, int | None]] = []
         body = self.block(body, entries, module=True, depth=0, condition=ast.Name(id="__conditional_annotations__", ctx=ast.Load()))
         prologue: list[ast.stmt] = []
         if entries:
             prologue.append(_annotate_function(entries, ast.Name(id="__conditional_annotations__", ctx=ast.Load()),
                                                self.future, tree))
-        if self.has_annotations(tree.body):
+        if annotated:
             prologue.append(ast.Assign(targets=[ast.Name(id="__conditional_annotations__", ctx=ast.Store())],
                                        value=ast.Call(func=_intrinsic("set"), args=[], keywords=[])))
         if doc is not None:
@@ -263,6 +264,7 @@ class _Annotations:
         entries: list[tuple[str, ast.expr, int | None]] = []
         doc = _docstring(c.body)
         rest = c.body[1:] if doc is not None else c.body
+        annotated = self.has_annotations(rest)          # before block() rewrites nested statements in place
         body = self.block(rest, entries, module=False, depth=0, condition=ast.Name(id=condition_name, ctx=ast.Load()))
         self.classes.pop()
         head = c.body[:1] if doc is not None else []
@@ -277,7 +279,7 @@ class _Annotations:
             fn.bella_classdict = True  # type: ignore[attr-defined]
             tail.append(fn)
         c.body = [*head, *body, *tail] or [ast.Pass()]
-        if self.has_annotations(rest):
+        if annotated:
             c.bella_has_annotations = True  # type: ignore[attr-defined]
         return c
 
@@ -1940,16 +1942,24 @@ def future_features(tree: ast.Module) -> frozenset[str]:
     return frozenset(features)
 
 
-def lower(source: str, filename: str = "<module>") -> L.Module:
-    """Parse and lower a program to L1 through the registered passes in fact order."""
+def lower(source: str, filename: str = "<module>", mode: str = "exec",
+          inherit_future: frozenset[str] = frozenset()) -> L.Module:
+    """Parse and lower a program to L1 through the registered passes in fact order. Mode "eval"
+    lowers an expression (a staged eval text): the module's last statement is its value.
+    `inherit_future` are the caller's __future__ features (a staged exec text compiled in the
+    context of the function that runs it)."""
     check_host_grammar()
-    tree = ast.parse(source, filename=filename)
+    if mode == "eval":
+        expression = ast.parse(source, filename=filename, mode="eval")
+        tree = ast.Module([ast.fix_missing_locations(ast.copy_location(ast.Expr(expression.body), expression.body))], [])
+    else:
+        tree = ast.parse(source, filename=filename)
     check_finally(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]
-    tree.bella_future = future_features(tree)  # type: ignore[attr-defined]
+    tree.bella_future = future_features(tree) | inherit_future  # type: ignore[attr-defined]
     _TAKEN.clear()
     _TAKEN.update(_identifiers(tree))
     _SYNTHETIC.clear()
     module = manager.run(tree, manager.pipeline(FRONTEND_PASSES))
     assert isinstance(module, L.Module)
-    return dataclasses.replace(module, synthetic=frozenset(_SYNTHETIC))
+    return dataclasses.replace(module, synthetic=frozenset(_SYNTHETIC), future=tree.bella_future, mode=mode)  # type: ignore[attr-defined]

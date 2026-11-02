@@ -69,7 +69,18 @@ def main(argv: list[str]) -> int:
         return _refuse(str(exc))
     interp = Interpreter()
     system = ModuleSystem(interp, modules, lock)
+    blocked: list[str] = []
     if modules == "closure":
+        # the staged texts (docs/staging.md): the dry runs' artefacts for the standard library and
+        # for this program, made (or taken from build/staging) as the replay model takes them,
+        # in the phase-1 configuration, whose omissions (D-20) this run blocks too
+        from pipeline.l1.staged import Staged
+        from pipeline.staging import run as staging
+        blocked = staging.phase1_blocked()
+        optimize = sys.flags.optimize
+        artefacts = [staging.stdlib_artefact(blocked, optimize),
+                     staging.program_artefact(path, lock, blocked, bool(sys.flags.safe_path), optimize)]
+        interp.staged = Staged([a.with_suffix(".bin") for a in artefacts])
         failed = system.prelower()
         if failed:
             # decision P-1 compiles these to statement refusals; until step B the module refuses
@@ -86,6 +97,8 @@ def main(argv: list[str]) -> int:
     main_module.__loader__ = importlib.machinery.SourceFileLoader("__main__", str(path.resolve()))  # type: ignore[assignment]
     sys.modules["__main__"] = main_module
     system.activate(STARTUP)
+    for name in blocked:
+        sys.modules[name] = None  # type: ignore[assignment]  # D-20: absent in phase 1, as the replay blocks it
     sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
     try:
         interp.run_in(program, main_module.__dict__)

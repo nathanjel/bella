@@ -397,6 +397,23 @@ task 4 step A5).
 * Applied provisionally, and reversible: `wf.check(strict=False)` for library modules; it lists
   the unresolved names.
 
+**2026-11-02 — the easy three run under `eval1` with their whole closures** (Gate 0 task 4,
+steps A1 to A6 and B; TODO task 4).
+* L1 covers what the three easy targets' closures contain. All 72, 93 and 94 closure modules
+  lower whole, and each program prints its recorded output under `eval1` (`make targets-eval1`,
+  in CI). This is the second leg of gates 1a.1 to 1a.3.
+* `make eval1-corpus` passes 58 of the 75 conformance cases under `eval1`, and none of
+  `conformance/eval1-baseline.txt` may regress.
+* The lowering follows the author's guidance of the same day: desugaring passes onto a small
+  core. Class statements go to a `build_class` written in Python, and `match` to helpers
+  written in Python; imports become intrinsic calls under CPython's own import machinery.
+  `eval1` lends CPython's objects to the oracle only: functions, generators, PEP 695 objects.
+* Found and fixed on the way: builtins called by name in desugarings, decorators stored twice,
+  PEP 695 and annotations dropped silently, the module docstring never stored, `eval1`'s late
+  imports reached by a program's import hook, an empty keyword dict passed to every call, a
+  stale cache keyed by `id()`, and the oracle inheriting the test module's `__future__`.
+* Next: the C++ leg (task 3's header, L2, the runtime), and P-3 waits on the author.
+
 
 ## Pins
 

@@ -395,3 +395,5 @@ class Module(Node):
     # names the frontend generated (comparison temporaries, comprehension helpers); they are
     # chosen not to collide with any identifier of the source and are invisible to the program
     synthetic: frozenset[str] = field(default=frozenset(), compare=False)
+    future: frozenset[str] = field(default=frozenset(), compare=False)   # its __future__ features
+    mode: str = field(default="exec", compare=False)   # "eval": the value is the last statement's
