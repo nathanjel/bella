@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import gc
 import operator
 import string.templatelib as templatelib
 import sys
@@ -50,6 +51,13 @@ _HOST_STATE_NAMES = ("locals", "vars", "dir", "globals", "eval", "exec", "compil
 
 class SlotMismatch(AssertionError):
     """The host compiler's code object disagrees with L2's slot tables: resolve-names is wrong."""
+
+
+_SHARED_BY_VALUE = (bool, int, float, complex, str, bytes, type(None), type(Ellipsis), type(NotImplemented))
+
+
+class AuditError(AssertionError):
+    """The checking mode found the translation holding an object after its Release."""
 
 
 # ---- the runtime the generated code calls --------------------------------------------------------
@@ -216,6 +224,35 @@ class _Runtime:
         snapshot = {k: v for k, v in frame_locals.items() if not k.startswith(RESERVED) and k not in hidden}
         return sorted(snapshot) if fn is builtins.dir else snapshot
 
+    def audit(self, obj: Any) -> None:
+        """The checking mode (docs/l2.md section 5): after a Release, an object that survives may be
+        held by the program (another temporary, a variable, a container, the exception being
+        handled), never by the translation's own locals. Running frames are walked (they have no
+        frame object for gc.get_referrers to find); suspended generators are found by
+        gc.get_referrers."""
+        if type(obj) in _SHARED_BY_VALUE:
+            return                      # identity shared by value (False, small ints, interned text), no finaliser
+        caller = sys._getframe(1)
+        frames: list[types.FrameType] = []
+        f: types.FrameType | None = caller
+        while f is not None:
+            frames.append(f)
+            f = f.f_back
+        for holder in gc.get_referrers(obj):
+            inner = getattr(holder, "gi_frame", None) or getattr(holder, "cr_frame", None) or getattr(holder, "ag_frame", None)
+            if isinstance(inner, types.FrameType):
+                frames.append(inner)
+        for fr in frames:
+            for name, value in fr.f_locals.items():
+                if value is not obj or not name.startswith(RESERVED):
+                    continue
+                if name.startswith((f"{RESERVED}t", f"{RESERVED}x", f"{RESERVED}ns", f"{RESERVED}K")):
+                    continue            # another temporary, the exception being handled, a namespace, a constant
+                if name == f"{RESERVED}ch" and fr is caller:
+                    continue            # the audit's own handle
+                raise AuditError(f"{fr.f_code.co_qualname}: the translation's {name} still holds "
+                                 f"{type(obj).__name__} after its release")
+
     @staticmethod
     def call_args_tuple(value: Any) -> builtins.tuple[Any, ...]:
         """_MAKE_CALLARGS_A_TUPLE: _Py_Check_ArgsIterable, then PySequence_Tuple."""
@@ -239,7 +276,8 @@ class _Out:
 
 
 class _Translator:
-    def __init__(self, refused: dict[str, str] | None = None) -> None:
+    def __init__(self, refused: dict[str, str] | None = None, audit: bool = False) -> None:
+        self.audit = audit                     # the checking mode: every release audited
         self.refused = refused or {}           # qualname -> why calling it stops the program (S-4)
         self.unchecked: set[str] = set()       # codes whose body the translation replaced
         self.out = _Out()
@@ -510,7 +548,13 @@ class _Translator:
             case G.Delete(r):
                 add(indent, self.delete(r), line)
             case G.Release(t):
-                add(indent, f"del {a(t)}", line)
+                if self.audit:
+                    add(indent, f"{RESERVED}ch = {a(t)}", line)
+                    add(indent, f"del {a(t)}", line)
+                    add(indent, f"{RESERVED}R.audit({RESERVED}ch)", line)
+                    add(indent, f"del {RESERVED}ch", line)
+                else:
+                    add(indent, f"del {a(t)}", line)
             case G.If(t, body, orelse):
                 add(indent, f"if {a(t)}:", line)
                 add(indent + 1, f"del {a(t)}", line)
@@ -685,8 +729,8 @@ def _check_slots(code: types.CodeType, codes: dict[str, G.Code], unchecked: froz
     return code.replace(co_consts=consts, co_name=l2.name, co_qualname=l2.qualname)
 
 
-def compile_module(m: G.Module, refused: dict[str, str] | None = None) -> tuple[_Compiled, str]:
-    tr = _Translator(refused)
+def compile_module(m: G.Module, refused: dict[str, str] | None = None, audit: bool = False) -> tuple[_Compiled, str]:
+    tr = _Translator(refused, audit)
     fname = tr.function(m.code, 1, 1)
     tr.out.lines.insert(0, f"def {RESERVED}factory({RESERVED}R, {RESERVED}codes, {RESERVED}END, {RESERVED}locals_, {RESERVED}K):")
     tr.out.linemap.insert(0, 1)
@@ -704,8 +748,9 @@ def compile_module(m: G.Module, refused: dict[str, str] | None = None) -> tuple[
 class Interpreter:
     """Runs L2 modules (as eval1's Interpreter runs L1 ones)."""
 
-    def __init__(self, builtins_: dict[str, Any] | None = None) -> None:
+    def __init__(self, builtins_: dict[str, Any] | None = None, audit: bool = False) -> None:
         self.builtins = dict(vars(builtins)) if builtins_ is None else builtins_
+        self.audit = audit
         self.prelude: dict[str, Any] | None = None
         self.staged: Any = None          # pipeline.l1.staged.Staged, when the program has artefacts
         self.future: dict[int, frozenset[str]] = {}    # id(a module's globals) -> its __future__ features
@@ -747,7 +792,7 @@ class Interpreter:
         refused = self.refused_in(module_name)
         key = (id(l2), tuple(sorted(refused.items())))
         if key not in self.compiled:
-            self.compiled[key] = (l2, compile_module(l2, refused)[0])
+            self.compiled[key] = (l2, compile_module(l2, refused, self.audit)[0])
 
     def to_l2(self, m: G.Module | Any) -> G.Module:
         if isinstance(m, G.Module):
@@ -766,7 +811,7 @@ class Interpreter:
         key = (id(m), tuple(sorted(refused.items())))
         hit = self.compiled.get(key)
         if hit is None or hit[0] is not m:
-            hit = (m, compile_module(m, refused)[0])
+            hit = (m, compile_module(m, refused, self.audit)[0])
             self.compiled[key] = hit
         compiled = hit[1]
         rt = _Runtime(self, g)

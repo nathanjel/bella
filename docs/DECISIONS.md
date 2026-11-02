@@ -530,6 +530,13 @@ these choices of implementation:
   require); a function the staging refused or the lock lists as unsupported compiles to a
   refusal (S-4); a staged text is found by the site the calling code object names, so eval2 keeps
   no frame stack of its own.
+* The A+ hygiene is in: the checking mode audits every release (`eval2.Interpreter(audit=True)`),
+  and 31 kinds of release point are generated probes, each at module level and in a function, all
+  equal to CPython and clean under the audit. The probes found an L1 bug: the `with` desugaring
+  kept the manager, the bound `__enter__` and the value in synthetic variables until the frame
+  ended; it now deletes them where CPython's stack drops them, which `eval1` gains as well. With
+  this, step 1 of the C++ leg (the L2 leg) is done; step 2 is lifetimes in the model and
+  `object.hpp` (task 3).
 
 ## Pins
 

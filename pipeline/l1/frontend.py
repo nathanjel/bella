@@ -1436,11 +1436,17 @@ class _With(ast.NodeTransformer):
         # bound through the descriptor protocol, TypeError when missing. CPython 3.15 looks up
         # __exit__ before __enter__ (review 2026-11-01, gemini 2.2.5.2; measured on 3.15.2).
         mgr, exit_, enter, value, exc, err = (_tmp("mgr"), _tmp("exit"), _tmp("enter"), _tmp("val"), _tmp("exc"), _tmp("err"))
+        # The references die where CPython's stack drops them: the manager is held only through
+        # the bound __exit__ once both methods are looked up, the bound __enter__ dies after its
+        # call, the value once the target holds it (at once with no target), and __exit__ when the
+        # statement ends, on every path (measured on 3.15.2 with __del__ probes).
         src = f"""
 {mgr} = None
 {exit_} = __special__({mgr}, "__exit__")
 {enter} = __special__({mgr}, "__enter__")
+del {mgr}
 {value} = {enter}()
+del {enter}
 {exc} = True
 try:
     try:
@@ -1450,8 +1456,11 @@ try:
         if not {exit_}(type({err}), {err}, {err}.__traceback__):
             raise
 finally:
-    if {exc}:
-        {exit_}(None, None, None)
+    try:
+        if {exc}:
+            {exit_}(None, None, None)
+    finally:
+        del {exit_}
 """
         stmts = ast.parse(src).body
         for n in ast.walk(ast.Module(stmts, [])):
@@ -1462,13 +1471,14 @@ finally:
         assign = stmts[0]
         assert isinstance(assign, ast.Assign)
         assign.value = item.context_expr
-        try_outer = stmts[5]
+        try_outer = stmts[7]
         assert isinstance(try_outer, ast.Try)
         try_inner = try_outer.body[0]
         assert isinstance(try_inner, ast.Try)
         inner_body: list[ast.stmt] = []
         if item.optional_vars is not None:
             inner_body.append(ast.Assign(targets=[item.optional_vars], value=ast.Name(id=value, ctx=ast.Load())))
+        inner_body.append(ast.Delete(targets=[ast.Name(id=value, ctx=ast.Del())]))
         inner_body.extend(body)
         try_inner.body = inner_body
         for s in stmts:

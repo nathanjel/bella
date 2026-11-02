@@ -291,8 +291,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
        * Done 2026-11-02: the easy three under eval2 with their whole closures (`make
          targets-eval2`, in `make check` and CI): every closure module lowered to L2 and compiled
          before the program starts, the staged texts replayed by the calling code's site.
-       * Still to do in this step: the `gc.get_referrers` checking mode, and a generated probe for
-         every kind of release point (the hand-written ones are in `pipeline/tests/test_l2.py`).
+       * Done 2026-11-02, closing the step: the checking mode (`audit=True`) and the generated
+         probes (`pipeline/tests/test_l2_probes.py`: 31 kinds of release point, at module level
+         and in a function, all equal to CPython and clean under the audit). They found the `with`
+         desugaring keeping its manager alive until the frame ended (fixed in the frontend).
     2. Lifetimes in the model and `object.hpp` from it (task 3); independent of 1.
     3. The runtime types and the emitter: task 3's done-when (C-3-01..12 under the compiled
        runner) first, then gate 1a.1.
