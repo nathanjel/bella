@@ -33,6 +33,9 @@ def _tp_name(t: type) -> str:
     return t.__module__ + "." + t.__qualname__
 
 
+_ABSENT = object()     # an absent attribute, told apart from one that is None (review 2026-11-02, A7-6)
+
+
 def _update_bases(bases: tuple[object, ...]) -> tuple[object, ...]:
     """PEP 560: a base that is not a class and has __mro_entries__ is replaced by the tuple it
     returns, given the original bases."""
@@ -43,8 +46,8 @@ def _update_bases(bases: tuple[object, ...]) -> tuple[object, ...]:
             if new_bases is not None:
                 new_bases.append(base)
             continue
-        meth = getattr(base, "__mro_entries__", None)
-        if meth is None:
+        meth = getattr(base, "__mro_entries__", _ABSENT)   # PyObject_GetOptionalAttr: None is a value
+        if meth is _ABSENT:
             if new_bases is not None:
                 new_bases.append(base)
             continue
@@ -91,8 +94,8 @@ def build_class(body: object, name: str, /, *bases: object, **kwds: object) -> o
         isclass = True
     if isclass:
         meta = _calculate_metaclass(meta, bases)  # type: ignore[arg-type]  # a class, checked above
-    prepare = getattr(meta, "__prepare__", None)
-    if prepare is None:
+    prepare = getattr(meta, "__prepare__", _ABSENT)    # PyObject_GetOptionalAttr: None is a value
+    if prepare is _ABSENT:
         ns: object = {}
     else:
         ns = prepare(name, bases, **kwds)

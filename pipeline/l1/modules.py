@@ -11,7 +11,8 @@ Which modules eval1 runs:
   program's own modules, a conformance case's fixtures, vendored packages. The standard library
   and the core and mapped modules are the host's.
 * "closure": the program's modules, and also every standard-library module the lock lists as
-  compiled, plus the shims written in Python (runtime/shims), whose source replaces CPython's.
+  compiled, plus the shims written in Python (runtime/shims), whose source replaces CPython's,
+  and the program's own modules and vendored packages the lock lists (status "program").
   Every one of those is lowered before the program starts (decision P-1: a stage compiles its
   whole closure), so the frontend never runs while program code is running. (In "program" mode a program's module is
   lowered when it is first imported; nothing on that path imports, so an __import__ hook the
@@ -81,16 +82,27 @@ class ModuleSystem(importlib.abc.MetaPathFinder):
         self.cache: dict[Path, L.Module] = {}
         self.failures: dict[Path, str] = {}
         self.closure: dict[str, Path] = {}
+        self.library: set[Path] = set()     # held to CPython's runtime name resolution (P-3)
         if mode == "closure":
             data = json.loads((lock or ROOT / "closure.lock.json").read_text(encoding="utf-8"))
+            roots = set(data.get("roots", ()))
             for name, m in data["modules"].items():
                 path = m.get("path")
                 if not path:
                     continue
                 if m["status"] == "compiled":
                     self.closure[name] = (STDLIB / path).resolve()
+                    self.library.add(self.closure[name])
                 elif m["status"] == "shim" and path.startswith("runtime/"):
                     self.closure[name] = (ROOT / path).resolve()
+                    self.library.add(self.closure[name])
+                elif m["status"] == "program":
+                    # the driver (a root) and the vendored packages targets.toml declares: all
+                    # lowered ahead (P-1); the packages are library code, by the lock's word, not
+                    # by their directory's name (review 2026-11-02, G6 2.7.4, A7)
+                    self.closure[name] = (ROOT / path).resolve()
+                    if name not in roots:
+                        self.library.add(self.closure[name])
 
     # ---- lowering -------------------------------------------------------------------------
     def lowered(self, path: Path) -> L.Module:
@@ -98,8 +110,10 @@ class ModuleSystem(importlib.abc.MetaPathFinder):
             raise Refused(f"{path.name}: {self.failures[path]}")
         if path not in self.cache:
             try:
-                # library code (P-3): the standard library, the shims, and vendored packages
-                library = path in self.closure.values() or path.is_relative_to(STDLIB) or "vendor" in path.parts
+                # library code (P-3): the standard library, the shims, and vendored packages; a
+                # module the lock does not list (program mode has none) by where it lives
+                library = path in self.library or path.is_relative_to(STDLIB) or \
+                    (path not in self.closure.values() and "vendor" in path.parts)
                 self.cache[path] = lower_file(path, library=library)
             except (Unsupported, DialectError, SyntaxError, WellFormednessError) as exc:
                 self.failures[path] = f"{type(exc).__name__}: {exc}"

@@ -269,6 +269,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
       frames, and the S-1 second entry point.
     * Each run takes about 11 to 15 seconds: `eval1` interprets `argparse`, `re`'s parser,
       `enum` and `dataclasses` from L1.
+  * Reviewed 2026-11-02 (astra-low-07, gemini-4-argon-high-06; review log RL-136 to RL-168,
+    `pipeline/tests/test_review_2026_11_02.py`): 30 fixes, among them CPython's compile-time
+    errors from the host compiler, the pass `desugar-function-annotations`, PEP 563's
+    `__annotations__` dict, call construction (`CALL_FUNCTION_EX`'s lone `*x`, keyword runs),
+    dict merges with stored hashes, generator frames and the strict name check without the
+    `globals()` exemption. `make eval1-corpus`: 59 of 75. Left as refusals: a `yield` in a `for`
+    target, and beside a starred or `**` argument.
   * C the C++ leg: task 3's header, L2, and the runtime list above.
 * Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata` (it kept the lowered
   requirements when `unicodedata` became \[P1\] the same day, review log D-8); licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's

@@ -282,11 +282,14 @@ class While(Stmt):
 
 @dataclass(frozen=True)
 class For(Stmt):
-    """Iteration intent: iter() once, next() until StopIteration (never an index loop)."""
+    """Iteration intent: iter() once, next() until StopIteration (never an index loop).
+    ``iterator``: the iterable is already the iterator, made by GET_ITER where the loop was
+    written (a comprehension's outermost loop), so the loop only advances it (FOR_ITER)."""
     target: Target
     iterable: Expr
     body: tuple[Stmt, ...]
     orelse: tuple[Stmt, ...]
+    iterator: bool = False
 
 
 @dataclass(frozen=True)

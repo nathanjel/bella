@@ -22,9 +22,14 @@ class _Scope:
     parent: _Scope | None = None
     unresolved: list[tuple[str, int]] = field(default_factory=list)
     is_class: bool = False     # a class body: its names are invisible to the scopes nested in it
-    # holds `from m import *`, or (for the module) the module writes its globals through
-    # globals(): what binds which name is known only at runtime
+    # holds `from m import *`: what binds which name is known only at runtime. Writes through
+    # globals() reach statically known names (spec section 8); library code that binds by
+    # computed name is checked with strict=False (P-3), never by a globals() call's presence
+    # (review 2026-11-02, A7-7)
     star: bool = False
+    # a type-parameter or annotation scope in a class: its own loads read the class namespace
+    # first (LOAD_FROM_DICT_OR_GLOBALS / _OR_DEREF), as eval1 does (review 2026-11-02, G6 2.3.1)
+    classdict: bool = False
 
 
 def _targets(t: L.Target, out: set[str]) -> None:
@@ -89,6 +94,9 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
             out.update(s.enclosing_binds)        # a comprehension's walrus targets (PEP 572)
         elif isinstance(s, L.Declare):
             out.update(s.names)                  # `x: T` makes x local
+        elif (isinstance(s, L.ExprStmt) and isinstance(s.value, L.Call) and isinstance(s.value.func, L.Intrinsic)
+              and s.value.func.name == "setup_annotations"):
+            out.add("__annotations__")           # PEP 563's SETUP_ANNOTATIONS binds it in the namespace
         elif isinstance(s, L.Delete):
             for t in s.targets:          # `del x` makes x local to its scope, as assignment does
                 _targets(t, out)
@@ -100,21 +108,6 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
                 _bound_in(h.body, out)
             _bound_in(s.orelse, out)
             _bound_in(s.finalbody, out)
-
-
-def _writes_globals(m: L.Module) -> bool:
-    """The module calls globals() (re binds RegexFlag's members with globals().update, inspect
-    its CO_ flags with globals()[...] =): its globals are written by computed name, so a name
-    this checker cannot resolve may still be bound when the code runs."""
-    def walk(x: object) -> bool:
-        if isinstance(x, L.Call) and isinstance(x.func, L.Name) and x.func.id == "globals":
-            return True
-        if isinstance(x, L.Node) or isinstance(x, L.Handler) or isinstance(x, L.Param):
-            return any(walk(v) for v in vars(x).values())
-        if isinstance(x, tuple):
-            return any(walk(v) for v in x)
-        return False
-    return walk(m.body)
 
 
 def _imports_star(stmts: tuple[L.Stmt, ...]) -> bool:
@@ -134,10 +127,17 @@ def _imports_star(stmts: tuple[L.Stmt, ...]) -> bool:
 
 
 def _declared_global(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
-    """Names a nested function or class body declares global: the module binds them too."""
+    """Names a nested function or class body declares global and binds there (an assignment, a
+    definition, an import, `del`, a walrus of its comprehensions): the module binds them too. A
+    declaration alone binds nothing (review 2026-11-02, G6 2.7.3)."""
+    def declared_and_bound(names: frozenset[str], body: tuple[L.Stmt, ...]) -> set[str]:
+        bound: set[str] = set()
+        _bound_in(body, bound)
+        return set(names) & bound
+
     def expr(e: L.Expr) -> None:
         if isinstance(e, L.ClassBody):
-            out.update(e.globals)
+            out.update(declared_and_bound(e.globals, e.body))
             _declared_global(e.body, out)
             return
         if isinstance(e, L.Lambda):
@@ -147,7 +147,7 @@ def _declared_global(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
 
     for s in stmts:
         if isinstance(s, L.FunctionDef):
-            out.update(s.globals)
+            out.update(declared_and_bound(s.globals, s.body))
             _declared_global(s.body, out)
         for e in _stmt_exprs(s):
             expr(e)
@@ -196,7 +196,7 @@ class _Checker:
         self.extra_names = extra_names
 
     def module(self, m: L.Module) -> None:
-        scope = _Scope(bound=set(), star=_imports_star(m.body) or _writes_globals(m))
+        scope = _Scope(bound=set(), star=_imports_star(m.body))
         _bound_in(m.body, scope.bound)
         _declared_global(m.body, scope.bound)
         scope.bound |= set(dir(builtins)) | {"__bind__", "__name__"} | set(self.extra_names)
@@ -208,7 +208,8 @@ class _Checker:
 
     def stmt(self, s: L.Stmt, scope: _Scope) -> None:
         if isinstance(s, L.FunctionDef):
-            inner = _Scope(bound={p.name for p in s.params} | set(s.globals) | set(s.nonlocals), parent=scope)
+            inner = _Scope(bound={p.name for p in s.params} | set(s.globals) | set(s.nonlocals), parent=scope,
+                           classdict=s.classdict)
             _bound_in(s.body, inner.bound)
             for d in s.decorators:
                 self.expr(d, scope)
@@ -268,11 +269,15 @@ class _Checker:
             # __class__ is the cell of the nearest class a function is in
             if e.id in scope.bound:
                 return
+            sees_class = scope.classdict
             s: _Scope | None = scope.parent
             while s is not None:
                 if s.is_class:
                     if e.id == "__class__" and not scope.is_class:
                         return
+                    if sees_class and e.id in s.bound:
+                        return
+                    sees_class = False                 # only the nearest class
                 elif e.id in s.bound:
                     return
                 s = s.parent

@@ -162,7 +162,7 @@ class _Printer:
                 self.emit(depth, "else:")
                 self.block(s.orelse, depth + 1)
         elif isinstance(s, L.For):
-            self.emit(depth, f"for {target(s.target)} in {expr(s.iterable)}:")
+            self.emit(depth, f"for {target(s.target)} in {'iterator ' if s.iterator else ''}{expr(s.iterable)}:")
             self.block(s.body, depth + 1)
             if s.orelse:
                 self.emit(depth, "else:")

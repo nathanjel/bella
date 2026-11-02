@@ -430,6 +430,22 @@ design section 11 rev 451).
   model's promoted fields, with a dict made only when exposed (`globals()`, `vars(module)`,
   `sys.modules[...].__dict__`), written into `refmodel/objects.py` first.
 
+**2026-11-02 — the L1 and `eval1` reviews processed** (astra-low-07, gemini-4-argon-high-06 on
+`3d4e428..58bb34b`; review log RL-136 to RL-168). 33 findings: 30 fixed, 3 duplicates, none
+refuted. Four changes of structure, all inside the design:
+* The frontend compiles each parsed tree with the pinned host compiler and drops the code
+  (`check_compile`), so a program CPython's symbol table or code generator rejects is rejected
+  with CPython's `SyntaxError`. Five findings were instances of the gap. The host is the pinned
+  interpreter already (L0 is its `ast`); a self-hosted frontend will need its own checks.
+* A function's annotations are lowered by a pass of their own, `desugar-function-annotations`,
+  into an `__annotate__` function placed before the function, so every later pass lowers it;
+  `to-l1` attaches it to the function. Under PEP 563 a module or class sets up a real
+  `__annotations__` mapping (the new `setup_annotations` intrinsic, SETUP_ANNOTATIONS).
+* L1's `For` gains `iterator`: a comprehension's outermost loop advances the iterator made where
+  the comprehension stands, without a second `iter()` (FOR_ITER).
+* `wf1` drops the exemption a `globals()` call gave the whole program: spec section 8 already
+  says writes through `globals()` reach statically known names, and P-3's `strict=False` covers
+  the library code that needed it. Library provenance comes from the lock where there is one.
 
 ## Pins
 

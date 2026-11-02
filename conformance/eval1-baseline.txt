@@ -19,6 +19,7 @@ C-3-20_copy_protocol.py
 C-3-25_calls_and_parameters.py
 C-3-26_function_objects.py
 C-3-27_class_statements.py
+C-3-28_unpacking_and_displays.py
 C-3-29_generators_and_comprehensions.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py

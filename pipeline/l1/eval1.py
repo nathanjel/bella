@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import _suggestions  # type: ignore[import-not-found]  # CPython's own, private: the hint it prints
 import builtins
+import dataclasses
 import operator
 import string.templatelib as templatelib
 import sys
@@ -398,6 +399,7 @@ def _local_names(f: L.FunctionDef | L.Lambda) -> frozenset[str]:
     out: set[str] = {p.name for p in f.params}
     if isinstance(f, L.Lambda):
         _walrus(f.body, out)
+        _bound_in(f.prelude, out)          # its comprehensions' helpers and their walrus targets (G6 2.4.1)
         return frozenset(out)
     _bound_in(f.body, out)
     return frozenset(out - set(f.globals) - set(f.nonlocals))
@@ -682,7 +684,9 @@ class Interpreter:
             if not broke:
                 self.block(s.orelse, scope)
         elif isinstance(s, L.For):
-            it = iter(self.expr(s.iterable, scope))
+            it = self.expr(s.iterable, scope)
+            if not s.iterator:
+                it = iter(it)
             broke = False
             while True:
                 try:
@@ -789,18 +793,25 @@ class Interpreter:
     # it in a _Carrier and the program sees it again at its except clauses and at the boundary of
     # the generator itself.
     def run_generator(self, node: L.FunctionDef | L.Lambda, scope: Scope) -> Any:
+        """The generator's body, its frame on the stack while it runs: pushed when it starts,
+        taken off at each yield and put back when resumed (gexpr), popped when it ends, so
+        site() and caller_flags() name the generator, not whoever resumed it (G6 2.5.3)."""
+        self.frames.append((_module_of(scope), node.qualname))
         try:
             try:
-                if isinstance(node, L.Lambda):
-                    yield from self.gblock(node.prelude, scope)
-                    return (yield from self.gexpr(node.body, scope))
-                yield from self.gblock(node.body, scope)
-                return None
-            except _Return as r:
-                return r.value
-        except _Carrier as carried:
-            inner = carried.inner
-        raise inner                 # here PEP 479 makes it the RuntimeError, as at CPython's boundary
+                try:
+                    if isinstance(node, L.Lambda):
+                        yield from self.gblock(node.prelude, scope)
+                        return (yield from self.gexpr(node.body, scope))
+                    yield from self.gblock(node.body, scope)
+                    return None
+                except _Return as r:
+                    return r.value
+            except _Carrier as carried:
+                inner = carried.inner
+            raise inner             # here PEP 479 makes it the RuntimeError, as at CPython's boundary
+        finally:
+            self.frames.pop()
 
     def gblock(self, stmts: tuple[L.Stmt, ...], scope: Scope) -> Any:
         try:
@@ -844,7 +855,11 @@ class Interpreter:
                 if not broke:
                     yield from self.gblock(s.orelse, scope)
             elif isinstance(s, L.For):
-                it = iter((yield from self.gexpr(s.iterable, scope)))
+                if _has_yield_target(s.target):
+                    raise L.Refused(f"a yield inside a for target is not lowered (line {s.line})")
+                it = yield from self.gexpr(s.iterable, scope)
+                if not s.iterator:
+                    it = iter(it)
                 broke = False
                 while True:
                     v = next(it, _MISSING)
@@ -924,9 +939,18 @@ class Interpreter:
                 return self.expr(e, scope)
             if isinstance(e, L.Yield):
                 value = (yield from self.gexpr(e.value, scope)) if e.value is not None else None
-                return (yield value)
+                frame = self.frames.pop()           # suspended: off the stack until resumed (G6 2.5.3)
+                try:
+                    return (yield value)
+                finally:
+                    self.frames.append(frame)
             if isinstance(e, L.YieldFrom):
-                return (yield from (yield from self.gexpr(e.value, scope)))   # PEP 380, by the host
+                inner = yield from self.gexpr(e.value, scope)
+                frame = self.frames.pop()
+                try:
+                    return (yield from inner)       # PEP 380, by the host
+                finally:
+                    self.frames.append(frame)
             if isinstance(e, L.Truth):
                 return bool((yield from self.gexpr(e.operand, scope)))
             if isinstance(e, L.Not):
@@ -964,6 +988,24 @@ class Interpreter:
                     assert k is not None
                     kwargs[k] = yield from self.gexpr(v, scope)
                 return caller_for(_module_of(scope))(fn, args, kwargs if e.kwargs else None)
+            if isinstance(e, L.Call) and isinstance(e.func, L.Name) and e.func.id == "__bind__":
+                name = e.args[0]
+                assert isinstance(name, L.Const) and isinstance(name.value, str)
+                value = yield from self.gexpr(e.args[1], scope)
+                self.store(name.value, value, scope)
+                return value
+            if isinstance(e, L.Call) and isinstance(e.func, L.Intrinsic) and \
+                    not any(isinstance(a, L.Starred) for a in e.args) and all(k is not None for k, _ in e.kwargs):
+                # an intrinsic's operands in order (an f-string's parts, a slice's bounds, the
+                # outermost iterable of a comprehension), then the intrinsic itself on their
+                # values (review 2026-11-02, G6 2.5.1)
+                operands: list[L.Expr] = []
+                for a in e.args:
+                    operands.append(L.Const(a.line, (yield from self.gexpr(a, scope))))
+                keywords: list[tuple[str | None, L.Expr]] = []
+                for k, v in e.kwargs:
+                    keywords.append((k, L.Const(v.line, (yield from self.gexpr(v, scope)))))
+                return self.expr(dataclasses.replace(e, args=tuple(operands), kwargs=tuple(keywords)), scope)
             if isinstance(e, (L.ListLit, L.TupleLit)) and not any(isinstance(x, L.Starred) for x in e.items) \
                     and len(e.items) <= _STACK_USE_GUIDELINE:
                 values: list[Any] = []
@@ -1194,35 +1236,63 @@ class Interpreter:
         raise AssertionError("the classcell intrinsic outside a class that has one")
 
     def arguments(self, e: L.Call, fn: Any, scope: Scope) -> tuple[list[Any], dict[str, Any]]:
-        """The positional list (LIST_EXTEND for ``*x``) and the keyword dict (DICT_MERGE for
-        ``**m``), with CPython's errors."""
+        """The arguments as codegen_call_helper_impl builds them (Python/codegen.c, CPython 3.15.2).
+        Positional: a lone ``*x`` is only evaluated, and made a tuple when the call is made
+        (CALL_FUNCTION_EX's _MAKE_CALLARGS_A_TUPLE), after the keyword arguments; otherwise a list
+        grows in order (LIST_EXTEND for ``*x``). Keywords: each run of ``k=v`` is evaluated whole
+        into a dict (codegen_subkwargs) before it is merged, and each ``**m`` is merged as it
+        comes (DICT_MERGE), with CPython's errors (review 2026-11-02, A7-1, G6 2.7.1). Without
+        ``*`` or ``**`` the faster call sequence evaluates in the same order."""
+        lone = len(e.args) == 1 and isinstance(e.args[0], L.Starred)
         args: list[Any] = []
-        for a in e.args:
-            if isinstance(a, L.Starred):
-                _list_extend(args, self.expr(a.value, scope))
-            else:
-                args.append(self.expr(a, scope))
+        callargs: Any = None
+        if lone:
+            starred = e.args[0]
+            assert isinstance(starred, L.Starred)
+            callargs = self.expr(starred.value, scope)
+        else:
+            for a in e.args:
+                if isinstance(a, L.Starred):
+                    _list_extend(args, self.expr(a.value, scope))
+                else:
+                    args.append(self.expr(a, scope))
         kwargs: dict[str, Any] = {}
-        for name, v in e.kwargs:
-            value = self.expr(v, scope)
-            if name is not None:
-                if name in kwargs:              # an explicit keyword after a ** that supplied it
-                    raise TypeError(f"{_function_str(fn)} got multiple values for keyword argument '{name}'")
-                kwargs[name] = value
-                continue
+        run: list[tuple[str, L.Expr]] = []
+
+        def merge(m: Any, explicit: bool) -> None:
             failure: TypeError | None = None
             dupkey: tuple[Any] | None = None
             try:
-                dupkey = _dict_merge(kwargs, value)
+                dupkey = _dict_merge(kwargs, m)
             except AttributeError:
                 # _PyEval_FormatKwargsError: only an object without keys() is "not a mapping"
-                if hasattr(value, "keys"):
+                if explicit or hasattr(m, "keys"):
                     raise
-                failure = TypeError(f"Value after ** must be a mapping, not {_fully_qualified(type(value))}")
+                failure = TypeError(f"Value after ** must be a mapping, not {_fully_qualified(type(m))}")
             if failure is not None:
                 raise failure                   # the AttributeError is dropped, not chained
             if dupkey is not None:
                 raise TypeError(f"{_function_str(fn)} got multiple values for keyword argument '{dupkey[0]}'")
+
+        def flush() -> None:
+            if run:
+                sub = {name: self.expr(v, scope) for name, v in run}    # BUILD_MAP: every value first
+                run.clear()
+                merge(sub, explicit=True)       # into an empty dict, the first run is the dict itself
+        for name, v in e.kwargs:
+            if name is not None:
+                run.append((name, v))
+                continue
+            flush()
+            merge(self.expr(v, scope), explicit=False)
+        flush()
+        if lone:
+            if type(callargs) is not tuple:
+                # _Py_Check_ArgsIterable, then PySequence_Tuple
+                if getattr(type(callargs), "__iter__", None) is None and not _is_sequence(callargs):
+                    raise TypeError(f"Value after * must be an iterable, not {_tp_name(type(callargs))}")
+                callargs = tuple(callargs)
+            args = list(callargs)
         return args, kwargs
 
     # ---- expressions -----------------------------------------------------------------------
@@ -1252,6 +1322,10 @@ class Interpreter:
             if isinstance(e.func, L.Intrinsic) and e.func.name in ("type_params", "generic_class", "typealias"):
                 args, _ = self.arguments(e, e.func, scope)
                 return _pep695(e.func.name, args, _module_of(scope).vars.get("__name__", "__main__"))
+            if isinstance(e.func, L.Intrinsic) and e.func.name == "setup_annotations":
+                assert scope.is_module() or scope.is_class, "SETUP_ANNOTATIONS runs in a module or class body"
+                setup_annotations(scope.vars)
+                return None
             if isinstance(e.func, L.Intrinsic) and e.func.name in ("import_name", "import_star"):
                 args, _ = self.arguments(e, e.func, scope)
                 module = _module_of(scope)
@@ -1324,22 +1398,57 @@ def _is_sequence(value: Any) -> bool:
     return not isinstance(value, dict) and getattr(type(value), "__getitem__", None) is not None
 
 
+def _dict_fast(m: Any) -> bool:
+    """dict_merge's fast path (Objects/dictobject.c, CPython 3.15.2): a dict or frozendict whose
+    type keeps dict's iteration is read from its storage, each key with the hash stored with it."""
+    if isinstance(m, dict):
+        return type(m).__iter__ is dict.__iter__
+    if isinstance(m, frozendict):  # a builtin since 3.15
+        return type(m).__iter__ is frozendict.__iter__
+    return False
+
+
 def _dict_merge(target: dict[str, Any], m: Any) -> tuple[Any] | None:
-    """_PyDict_MergeUniq (Objects/dictobject.c, dict_merge with override 2, CPython 3.15.2): a
-    dict whose type keeps dict's iteration is read from its storage; anything else through
-    keys(), listed first, then m[key]. A key already present stops the merge before m[key] is
-    read and is returned (``dupkey``); every other error propagates as raised."""
-    if isinstance(m, dict) and type(m).__iter__ is dict.__iter__:
-        for k, v in dict.items(m):
-            if k in target:
+    """_PyDict_MergeUniq (dict_merge with override 2): DICT_MERGE of a call's ``**m``. From the
+    fast path each key is looked up in the target, then inserted, both with its stored hash; a
+    key already present stops the merge and is returned (``dupkey``). Anything else is read
+    through keys(), listed first, then per key: lookup, m[key], insert. Every other error
+    propagates as raised.
+
+    Python code cannot pass a stored hash. For exact str keys hashing runs no Python code, so
+    the lookups are CPython's; for other keys the fast path is the host's own merge (DICT_UPDATE,
+    stored hashes too) and a duplicate is found afterwards by identity. No __hash__ runs either
+    way, as in CPython; what remains is how often __eq__ runs on unequal keys of equal hash (once
+    rather than twice, and also after a duplicate), for keywords that are not all strings, a
+    call that then fails anyway (review 2026-11-02, A7-5)."""
+    if _dict_fast(m):
+        entries = list(dict.items(m) if isinstance(m, dict) else frozendict.items(m))
+        if all(type(k) is str for k in dict.keys(target)) and all(type(k) is str for k, _ in entries):
+            for k, v in entries:
+                if k in target:
+                    return (k,)
+                target[k] = v
+            return None
+        before = len(target)
+        merged = {**target, **m}
+        added = iter(list(merged)[before:])        # the keys m added, in m's order
+        nxt = next(added, _ABSENT)
+        for k, _ in entries:
+            if k is nxt:
+                nxt = next(added, _ABSENT)
+            else:
                 return (k,)
-            target[k] = v
+        target.clear()
+        target.update(merged)
         return None
     for k in list(m.keys()):
         if k in target:
             return (k,)
         target[k] = m[k]
     return None
+
+
+_ABSENT = object()
 
 
 _STACK_USE_GUIDELINE = 30          # _PY_STACK_USE_GUIDELINE (Include/internal/pycore_compile.h)
@@ -1381,13 +1490,25 @@ def _pep695(kind: str, args: list[Any], module_name: str) -> Any:
         thunks = rest
     for i, thunk in enumerate(thunks):
         ns[f"__bella_{i}__"] = thunk
-    exec(compile(text, f"<{module_name}>", "exec", dont_inherit=True), ns)  # noqa: S102  # CPython makes the objects
+    code = compile(text, f"<{module_name}>", "exec", dont_inherit=True)
+    if kind == "typealias":
+        # the alias's __qualname__ is its value function's (co_qualname): the thunk's, which the
+        # frontend named after the alias where it stands (a class, a function)
+        code = _requalify(code, text.split()[1].split("[")[0], ns["__bella_v__"].__qualname__)
+    exec(code, ns)  # noqa: S102  # CPython makes the objects
     made = ns["__bella_tp__"] if kind != "typealias" else ns[text.split()[1].split("[")[0]]
     if kind == "type_params":
         return made.__type_params__
     if kind == "generic_class":
         return made.__type_params__, made.__orig_bases__[0]
     return made
+
+
+def _requalify(code: types.CodeType, name: str, qualname: str) -> types.CodeType:
+    """The code with the code objects named `name` given `qualname`, at any depth."""
+    consts = tuple(_requalify(k, name, qualname) if isinstance(k, types.CodeType) else k for k in code.co_consts)
+    code = code.replace(co_consts=consts)
+    return code.replace(co_qualname=qualname) if code.co_name == name else code
 
 
 def _set_type_params(fn: Any, params: tuple[Any, ...]) -> Any:
@@ -1457,6 +1578,22 @@ def _has_yield_target(t: L.Target) -> bool:
     return any(_scan_yield(v) for v in vars(t).values() if isinstance(v, L.Node))
 
 
+def setup_annotations(namespace: Any) -> None:
+    """SETUP_ANNOTATIONS (Python/bytecodes.c, PyMapping_GetOptionalItem, CPython 3.15.2): an exact
+    dict is asked without running code; any other mapping through __getitem__, a KeyError meaning
+    absent; then a new dict is stored, unless one was found."""
+    if type(namespace) is dict or type(namespace) is frozendict:  # a builtin since 3.15
+        if "__annotations__" in namespace:
+            return
+    else:
+        try:
+            namespace["__annotations__"]
+            return
+        except KeyError:
+            pass
+    namespace["__annotations__"] = {}
+
+
 def _list_extend(target: list[Any], value: Any) -> None:
     """LIST_EXTEND: a TypeError from a value that is neither iterable nor a sequence becomes
     "Value after * must be an iterable" (the original dropped, not chained)."""
@@ -1473,22 +1610,14 @@ def _list_extend(target: list[Any], value: Any) -> None:
 
 
 def _dict_update(target: dict[Any, Any], m: Any) -> None:
-    """DICT_UPDATE: PyDict_Update (later keys win); an AttributeError from an object without
-    keys() becomes "'T' object is not a mapping"."""
-    failure: TypeError | None = None
-    try:
-        if isinstance(m, dict) and type(m).__iter__ is dict.__iter__:
-            for k, v in dict.items(m):
-                target[k] = v
-        else:
-            for k in list(m.keys()):
-                target[k] = m[k]
-    except AttributeError:
-        if hasattr(m, "keys"):
-            raise
-        failure = TypeError(f"'{_fully_qualified(type(m))}' object is not a mapping")
-    if failure is not None:
-        raise failure
+    """DICT_UPDATE (PyDict_Update, later keys win), done by the host's own DICT_UPDATE on a copy
+    of the target: the same dict_merge, so a dict's keys keep their stored hashes and no
+    __hash__ runs (review 2026-11-02, A7-5), every lookup compares with the same keys in the
+    same order, and an object without keys() is "not a mapping" in CPython's words. The copy
+    then replaces the target's contents, which runs no code (an empty dict takes a dict whole)."""
+    merged = {**target, **m}
+    target.clear()
+    target.update(merged)
 
 
 def unpack_iterable(value: Any, before: int, after: int) -> list[Any]:

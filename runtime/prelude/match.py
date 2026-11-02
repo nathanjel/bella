@@ -50,9 +50,10 @@ def match_keys(subject: object, keys: tuple[object, ...]) -> tuple[object, ...] 
 
 
 def mapping_rest(subject: object, keys: tuple[object, ...]) -> dict[object, object]:
-    """**rest: BUILD_MAP, DICT_UPDATE with the subject, then DELETE_SUBSCR of each key."""
-    rest: dict[object, object] = {}
-    rest.update(subject)  # type: ignore[call-overload]  # a mapping, checked by is_mapping
+    """**rest: BUILD_MAP, DICT_UPDATE with the subject, then DELETE_SUBSCR of each key. The
+    display is DICT_UPDATE itself, where dict.update would also take an iterable of pairs
+    (review 2026-11-02, G6 2.6.3)."""
+    rest: dict[object, object] = {**subject}  # type: ignore[dict-item]  # a mapping, checked by is_mapping
     for key in keys:
         del rest[key]
     return rest

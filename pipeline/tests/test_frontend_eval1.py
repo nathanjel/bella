@@ -158,13 +158,21 @@ def test_unbound_name_is_a_compile_time_error() -> None:
 
 
 def test_unsupported_constructs_are_named_not_approximated() -> None:
-    for src, needle in (("try:\n    pass\nexcept* E:\n    pass\n", "TryStar"), ("x = 1\nawait x\n", "Await")):
+    for src, needle in (("try:\n    pass\nexcept* E:\n    pass\n", "TryStar"),):
         try:
             lower(src, "<test>")
         except Unsupported as exc:
             assert needle in str(exc)
         else:
             raise AssertionError(f"{src!r} lowered silently")
+    # what CPython's compiler rejects is rejected as CPython rejects it, before any refusal
+    # (review 2026-11-02): an await outside a function
+    try:
+        lower("x = 1\nawait x\n", "<test>")
+    except SyntaxError as exc:
+        assert "'await' outside function" in str(exc)
+    else:
+        raise AssertionError("module-level await lowered")
 
 
 def test_pass_manager_orders_by_facts_and_rejects_incomplete_specs() -> None:

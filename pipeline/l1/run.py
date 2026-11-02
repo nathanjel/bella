@@ -9,8 +9,9 @@ with `--modules program` (the default) eval1 runs the program's own modules and 
 library is the host's; with `--modules closure` eval1 also runs every compiled standard-library
 module of the lock and the Python shims, all lowered before the program starts (decision P-1).
 
-A program the frontend cannot lower is not run: stderr ``bella-eval1: unsupported: ...`` and exit
-70, the staging refusal's status. A refusal reached while it runs (decision P-1: a module that is
+A program the frontend cannot lower, or that wf1 rejects (a name bound nowhere is a compile-time
+NameError in the program's own modules, spec section 8), is not run: stderr
+``bella-eval1: unsupported: ...`` and exit 70, the staging refusal's status. A refusal reached while it runs (decision P-1: a module that is
 not lowered, a coroutine run) stops it with ``bella: refused: ...`` and exit 70; no except clause
 catches it and no finally block runs. An exception the program does not catch ends it as
 CPython ends it, with exit 1 and the exception's last line on stderr; the frames above it are
@@ -45,7 +46,7 @@ def main(argv: list[str]) -> int:
     from pipeline.l1.frontend import lower
     from pipeline.l1.grammar import DialectError, Refused, Unsupported
     from pipeline.l1.modules import ModuleSystem
-    from pipeline.l1.wf import check
+    from pipeline.l1.wf import WellFormednessError, check
     sys.path.remove(str(ROOT))
 
     modules, lock = "program", None
@@ -65,7 +66,7 @@ def main(argv: list[str]) -> int:
     try:
         program = lower(path.read_text(encoding="utf-8"), str(path.resolve()))
         check(program, frozenset({"__file__"}))
-    except (Unsupported, DialectError, SyntaxError) as exc:
+    except (Unsupported, DialectError, SyntaxError, WellFormednessError) as exc:
         return _refuse(str(exc))
     interp = Interpreter()
     system = ModuleSystem(interp, modules, lock)
@@ -96,9 +97,9 @@ def main(argv: list[str]) -> int:
     main_module.__file__ = str(path.resolve())
     main_module.__loader__ = importlib.machinery.SourceFileLoader("__main__", str(path.resolve()))  # type: ignore[assignment]
     sys.modules["__main__"] = main_module
-    system.activate(STARTUP)
     for name in blocked:
         sys.modules[name] = None  # type: ignore[assignment]  # D-20: absent in phase 1, as the replay blocks it
+    system.activate(STARTUP)        # start-up's imports already see D-20's omissions (G6 2.7.4)
     sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
     try:
         interp.run_in(program, main_module.__dict__)

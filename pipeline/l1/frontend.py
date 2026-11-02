@@ -6,11 +6,13 @@ it does not cover, naming it, so the gap is visible rather than approximated.
 """
 from __future__ import annotations
 
+import __future__
 import ast
 import dataclasses
 import itertools
 import sys
 import tomllib
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -146,11 +148,22 @@ class _Annotations:
       class; the function is stored as __annotate_func__ at the end of the body and reads names
       from the class's namespace first;
     * a non-simple target's annotation is never evaluated; `x: T` without a value makes x
-      local (Declare). The module's docstring becomes an explicit __doc__ store."""
+      local (Declare), its name mangled as the symbol table mangles it; an attribute or
+      subscript target without a value still has its object (and its index, each part of a
+      slice) evaluated, in every scope. The module's docstring becomes an explicit __doc__ store.
+
+    Under PEP 563 (`from __future__ import annotations`) a module or class whose own statements
+    hold an annotation sets up a real __annotations__ mapping first (SETUP_ANNOTATIONS: before
+    the docstring's __doc__, after the module's set of conditional annotations), and each simple
+    annotation stores its source text in it as it runs; no __annotate__ is made."""
 
     def __init__(self, future: bool) -> None:
         self.future = future
         self.classes: list[str] = []
+
+    @property
+    def private(self) -> str | None:
+        return self.classes[-1] if self.classes else None
 
     def run(self, tree: ast.Module) -> ast.Module:
         doc = _docstring(tree.body)
@@ -165,6 +178,8 @@ class _Annotations:
         if annotated:
             prologue.append(ast.Assign(targets=[ast.Name(id="__conditional_annotations__", ctx=ast.Store())],
                                        value=ast.Call(func=_intrinsic("set"), args=[], keywords=[])))
+        if annotated and self.future:
+            prologue.append(_setup_annotations())
         if doc is not None:
             prologue.append(ast.Assign(targets=[ast.Name(id="__doc__", ctx=ast.Store())], value=ast.Constant(doc)))
         for st in prologue:
@@ -218,8 +233,12 @@ class _Annotations:
         out: list[ast.stmt] = []
         for s in stmts:
             if isinstance(s, ast.AnnAssign):
-                out.append(_copy_loc(ast.Assign(targets=[s.target], value=s.value), s) if s.value is not None
-                           else _declare(s))
+                if s.value is not None:
+                    out.append(_copy_loc(ast.Assign(targets=[s.target], value=s.value), s))
+                elif s.simple and isinstance(s.target, ast.Name):
+                    out.append(_declare(s, self.private))
+                else:
+                    out += _annotated_target_parts(s)
                 continue
             if isinstance(s, ast.ClassDef):
                 out.append(self.class_(s))
@@ -244,9 +263,18 @@ class _Annotations:
         if s.value is not None:
             out.append(_copy_loc(ast.Assign(targets=[s.target], value=s.value), s))
         elif s.simple and isinstance(s.target, ast.Name):
-            out.append(_declare(s))
-        if s.simple and isinstance(s.target, ast.Name):
-            key = mangle(self.classes[-1] if self.classes else None, s.target.id)
+            out.append(_declare(s, self.private))
+        else:
+            out += _annotated_target_parts(s)
+        if s.simple and isinstance(s.target, ast.Name) and self.future:
+            # PEP 563: the text, then LOAD_NAME __annotations__, the mangled name, STORE_SUBSCR
+            key = mangle(self.private, s.target.id)
+            out.append(_copy_loc(ast.Assign(
+                targets=[ast.Subscript(value=ast.Name(id="__annotations__", ctx=ast.Load()), slice=ast.Constant(key),
+                                       ctx=ast.Store())],
+                value=ast.Constant(ast.unparse(s.annotation))), s))
+        elif s.simple and isinstance(s.target, ast.Name):
+            key = mangle(self.private, s.target.id)
             index: int | None = None
             if module or depth > 0:
                 index = len([e for e in entries if e[2] is not None])
@@ -254,8 +282,7 @@ class _Annotations:
                 out.append(_copy_loc(ast.Expr(ast.Call(func=_intrinsic("set_add"), args=[condition, ast.Constant(index)],
                                                        keywords=[])), s))
             entries.append((key, s.annotation, index))
-        elif module:
-            pass                                       # a non-simple target's annotation is never evaluated
+        # a non-simple target's annotation is never evaluated
         return [ast.fix_missing_locations(o) for o in out]
 
     def class_(self, c: ast.ClassDef) -> ast.ClassDef:
@@ -281,13 +308,45 @@ class _Annotations:
         c.body = [*head, *body, *tail] or [ast.Pass()]
         if annotated:
             c.bella_has_annotations = True  # type: ignore[attr-defined]
+            if self.future:
+                c.bella_setup_annotations = True  # type: ignore[attr-defined]  # desugar-class-body places it before __doc__
         return c
 
 
-def _declare(s: ast.AnnAssign) -> ast.stmt:
+def _declare(s: ast.AnnAssign, private: str | None) -> ast.stmt:
+    """`x: T` with no value: x is a local of a function (the symbol table binds it), mangled in a class."""
     assert isinstance(s.target, ast.Name)
-    node = ast.Expr(ast.Call(func=_intrinsic("declare"), args=[ast.Constant(s.target.id)], keywords=[]))
+    node = ast.Expr(ast.Call(func=_intrinsic("declare"), args=[ast.Constant(mangle(private, s.target.id))], keywords=[]))
     return ast.fix_missing_locations(_copy_loc(node, s))
+
+
+def _annotated_target_parts(s: ast.AnnAssign) -> list[ast.stmt]:
+    """codegen_check_ann_expr and codegen_check_ann_subscr (Python/codegen.c, 3.15.2): an
+    annotated attribute or subscript with no value still evaluates the object and, for a
+    subscript, the index (each bound of a slice, each element of an extended slice), and reads
+    or stores nothing; a name target evaluates nothing."""
+    parts: list[ast.expr] = []
+
+    def index(e: ast.expr) -> None:
+        if isinstance(e, ast.Slice):
+            parts.extend(x for x in (e.lower, e.upper, e.step) if x is not None)
+        elif isinstance(e, ast.Tuple):
+            for x in e.elts:
+                index(x)
+        else:
+            parts.append(e)
+    if isinstance(s.target, ast.Attribute):
+        parts.append(s.target.value)
+    elif isinstance(s.target, ast.Subscript):
+        parts.append(s.target.value)
+        index(s.target.slice)
+    return [ast.fix_missing_locations(_copy_loc(ast.Expr(p), p)) for p in parts]
+
+
+def _setup_annotations() -> ast.stmt:
+    """SETUP_ANNOTATIONS: the setup_annotations intrinsic makes __annotations__ in the running
+    module's or class's namespace unless it holds one (PEP 563)."""
+    return ast.Expr(ast.Call(func=_intrinsic("setup_annotations"), args=[], keywords=[]))
 
 
 @register(PassSpec(
@@ -404,6 +463,7 @@ class _TypeParams:
             s.bella_type_params = params  # type: ignore[attr-defined]
             s.type_params = []
             body += [s, ast.Return(ast.Name(id=s.name, ctx=ast.Load()))]
+            return self.scope(s.name, body, decorators, s, in_class, mangle_only=(s.name, frozenset(names)))
         else:
             body.append(ast.Assign(targets=[ast.Name(id=params, ctx=ast.Store())],
                                    value=ast.Call(func=_intrinsic("type_params"),
@@ -421,6 +481,9 @@ class _TypeParams:
         assert isinstance(s.name, ast.Name)
         name = s.name.id
         value_name, value_fn = self.thunk(s.value, in_class)
+        # the value's function is named after the alias, as CPython's is: the alias takes its
+        # __qualname__ from it (_Py_make_typealias; review 2026-11-02, G6 2.3.3)
+        value_fn.name, value_fn.bella_store = name, value_name  # type: ignore[attr-defined]
         text, defs, thunks = self.params_text(s.type_params, in_class)
         made = ast.Call(func=_intrinsic("typealias"),
                         args=[ast.Constant(f"type {name}[{text}] = __bella_v__()" if s.type_params else f"type {name} = __bella_v__()"),
@@ -437,10 +500,13 @@ class _TypeParams:
                                 ast.Return(ast.Name(id=alias, ctx=ast.Load()))]
         return self.scope(name, body, [], s, in_class)
 
-    def scope(self, name: str, body: list[ast.stmt], decorators: list[ast.expr], node: ast.AST, in_class: bool) -> list[ast.stmt]:
+    def scope(self, name: str, body: list[ast.stmt], decorators: list[ast.expr], node: ast.AST, in_class: bool,
+              mangle_only: tuple[str, frozenset[str]] | None = None) -> list[ast.stmt]:
         helper = ast.FunctionDef(name=f"<generic parameters of {name}>",
                                  args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
                                  body=body, decorator_list=[], returns=None, type_params=[])
+        if mangle_only is not None:
+            helper.bella_mangle_only = mangle_only  # type: ignore[attr-defined]  # a generic class (desugar-private-names)
         store = _tmp("generic")
         helper.bella_store = store  # type: ignore[attr-defined]
         helper.bella_transparent = True  # type: ignore[attr-defined]
@@ -470,6 +536,117 @@ def _assign_tuple(names: list[str], value: ast.expr) -> ast.stmt:
 ))
 def desugar_type_params(tree: ast.Module) -> ast.Module:
     return ast.fix_missing_locations(_TypeParams().run(tree))
+
+
+class _FunctionAnnotations:
+    """A function's annotations as 3.15.2 compiles them (PEP 649): its __annotate__(format, /),
+    defined where the function is defined (inside a generic function's type-parameter scope, so
+    it sees the type parameters; reading the class namespace first in a class), raising
+    NotImplementedError above VALUE_WITH_FAKE_GLOBALS (2), else returning the dict in CPython's
+    order: positional-only, positional, *args, keyword-only, **kwargs, return, each name mangled
+    in a class. A starred annotation (`*args: *Ts`) is unpacked to its one item (UNPACK_SEQUENCE 1).
+    Under PEP 563 the values are the annotations' source text, taken here, before any other
+    pass rewrites an expression (review 2026-11-02, G6 2.1).
+
+    The function is an ordinary definition placed just before the one it annotates, so every
+    later pass lowers it as what it is (comprehensions, f-strings, private names); to-l1 attaches
+    it to that function (L1 FunctionDef.annotate) instead of binding it."""
+
+    def __init__(self, future: bool) -> None:
+        self.future = future
+        self.scopes: list[tuple[str, str | None]] = [("module", None)]   # (kind, the class that mangles)
+
+    def run(self, tree: ast.Module) -> ast.Module:
+        tree.body = self.block(tree.body)
+        return tree
+
+    def block(self, stmts: list[ast.stmt]) -> list[ast.stmt]:
+        out: list[ast.stmt] = []
+        for s in stmts:
+            if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                annotate = self.annotate(s)
+                if getattr(s, "bella_transparent", False):
+                    kind = "generic in class" if getattr(s, "bella_classdict", False) else "generic"
+                else:
+                    kind = "function"
+                self.scopes.append((kind, self.scopes[-1][1]))
+                s.body = self.block(s.body)
+                self.scopes.pop()
+                out += [annotate, s] if annotate is not None else [s]
+                continue
+            if isinstance(s, ast.ClassDef):
+                self.scopes.append(("class", s.name))
+                s.body = self.block(s.body)
+                self.scopes.pop()
+                out.append(s)
+                continue
+            for fld in ("body", "orelse", "finalbody"):
+                inner = getattr(s, fld, None)
+                if isinstance(inner, list) and inner and isinstance(inner[0], ast.stmt):
+                    setattr(s, fld, self.block(inner))
+            for h in getattr(s, "handlers", []):
+                h.body = self.block(h.body)
+            for case in getattr(s, "cases", []):
+                case.body = self.block(case.body)
+            out.append(s)
+        return out
+
+    def annotate(self, f: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.FunctionDef | None:
+        a = f.args
+        params = [*a.posonlyargs, *a.args, *([a.vararg] if a.vararg else []), *a.kwonlyargs, *([a.kwarg] if a.kwarg else [])]
+        items: list[tuple[str, ast.expr]] = [(p.arg, p.annotation) for p in params if p.annotation is not None]
+        if f.returns is not None:
+            items.append(("return", f.returns))
+        if not items:
+            return None
+        kind, private = self.scopes[-1]
+        fmt, d = _tmp("format"), _tmp("ann")
+        body: list[ast.stmt] = [
+            ast.If(test=ast.Compare(left=ast.Name(id=fmt, ctx=ast.Load()), ops=[ast.Gt()], comparators=[ast.Constant(2)]),
+                   body=[ast.Raise(exc=_intrinsic("NotImplementedError"), cause=None)], orelse=[]),
+            ast.Assign(targets=[ast.Name(id=d, ctx=ast.Store())], value=ast.Dict(keys=[], values=[]))]
+        for key, e in items:
+            value: ast.expr
+            if self.future:
+                value = ast.Constant(ast.unparse(e))
+            elif isinstance(e, ast.Starred):
+                one = _tmp("unpacked")
+                body.append(_copy_loc(ast.Assign(targets=[ast.Tuple(elts=[ast.Name(id=one, ctx=ast.Store())], ctx=ast.Store())],
+                                                 value=e.value), e))
+                value = ast.Name(id=one, ctx=ast.Load())
+            else:
+                value = e
+            body.append(_copy_loc(ast.Assign(targets=[ast.Subscript(value=ast.Name(id=d, ctx=ast.Load()),
+                                                                    slice=ast.Constant(mangle(private, key)), ctx=ast.Store())],
+                                             value=value), e))
+        body.append(ast.Return(ast.Name(id=d, ctx=ast.Load())))
+        for p in params:
+            p.annotation = None
+        f.returns = None
+        fn = ast.FunctionDef(name=_tmp("annotate"), args=ast.arguments(posonlyargs=[ast.arg(arg=fmt)], args=[], kwonlyargs=[],
+                                                                       kw_defaults=[], defaults=[]),
+                             body=body, decorator_list=[], returns=None, type_params=[])
+        fn.bella_public = {fmt: "format"}  # type: ignore[attr-defined]
+        fn.bella_annotation = True  # type: ignore[attr-defined]
+        fn.bella_classdict = kind in ("class", "generic in class")  # type: ignore[attr-defined]
+        fn.bella_annotate_for = f.name  # type: ignore[attr-defined]
+        f.bella_annotate = fn.name  # type: ignore[union-attr]
+        return ast.fix_missing_locations(_copy_loc(fn, f))
+
+
+@register(PassSpec(
+    name="desugar-function-annotations", source=Level.L0, target=Level.L0,
+    requires=frozenset({Fact.NO_TYPE_PARAMS}),
+    produces=frozenset({Fact.FUNCTION_ANNOTATIONS_EXPLICIT}),
+    obligations=(
+        Obligation("wf", "no function parameter or return annotation remains; each annotated function is preceded by its __annotate__ definition, marked for it"),
+        Obligation("semantics", "PEP 649 as 3.15.2 compiles a function's annotations: evaluated only when __annotate__ is called, in the scope that defines the function, in CPython's order with mangled names; under PEP 563 their source text as written"),
+        Obligation("terminates", "one rewrite per annotated function"),
+    ),
+    discharge=Discharge.TESTED, status="tested",
+))
+def desugar_function_annotations(tree: ast.Module) -> ast.Module:
+    return ast.fix_missing_locations(_FunctionAnnotations("annotations" in getattr(tree, "bella_future", ())).run(tree))
 
 
 _DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -560,14 +737,26 @@ def _uses_class_cell(cls: ast.ClassDef) -> bool:
     return any(walk(s, False) for s in cls.body)
 
 
-def _needs_classdict(cls: ast.ClassDef) -> bool:
+def _needs_classdict(cls: ast.ClassDef, future: bool) -> bool:
     """symtable 3.14+: a class whose own body defines a function (anywhere in its statements,
     not inside a nested function or class) or has an annotation gets the __classdict__ cell,
     which holds the namespace while the body runs and is stored as __classdictcell__ (measured
-    on 3.15.2)."""
+    on 3.15.2). Under PEP 563 no annotation scope reads the class, so only a generic definition
+    or a type alias makes the cell: its type-parameter scope or its value's (measured on 3.15.2,
+    review 2026-11-02)."""
+    if not future and getattr(cls, "bella_has_annotations", False):
+        return True
+
+    def makes_cell(f: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        if not future:
+            return True
+        # a generic definition's scope, or a type alias's value (desugar-type-params)
+        return bool(getattr(f, "bella_transparent", False)) or \
+            (bool(getattr(f, "bella_annotation", False)) and not getattr(f, "bella_annotate_for", None))
+
     def walk(stmts: list[ast.stmt]) -> bool:
         for s in stmts:
-            if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.AnnAssign)):
+            if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) and makes_cell(s):
                 return True
             if isinstance(s, ast.ClassDef):
                 continue
@@ -593,7 +782,8 @@ class _ClassBodies:
     Zero-argument super() in a function becomes an explicit call of the `super` intrinsic
     with what CPython's super() reads: the function's __class__ cell and its first argument."""
 
-    def __init__(self) -> None:
+    def __init__(self, future: bool = False) -> None:
+        self.future = future                 # PEP 563
         # (kind, qualname, names declared global there, first positional parameter, in a class)
         self.stack: list[tuple[str, str, frozenset[str], str | None, bool]] = [("module", "", frozenset(), None, False)]
 
@@ -663,7 +853,9 @@ class _ClassBodies:
             f.bella_qualname = self.qualname(f.name)  # type: ignore[union-attr]
             f.body = self.block(f.body)
             return f
-        f.bella_qualname = self.qualname(f.name)  # type: ignore[union-attr]
+        annotated = getattr(f, "bella_annotate_for", None)
+        f.bella_qualname = (f"{self.qualname(annotated)}.__annotate__" if annotated  # type: ignore[union-attr]
+                            else self.qualname(f.name))
         globals_, _ = declarations(f.body)
         params = [*f.args.posonlyargs, *f.args.args]
         in_class = self.stack[-1][4] or self.stack[-1][0] == "class"
@@ -694,11 +886,13 @@ class _ClassBodies:
                     store("__qualname__", ast.Constant(qual)), store("__firstlineno__", ast.Constant(first))]
         if getattr(c, "bella_type_params", None):
             prologue.append(store("__type_params__", ast.Name(id=c.bella_type_params, ctx=ast.Load())))  # type: ignore[attr-defined]
+        if getattr(c, "bella_setup_annotations", False):
+            prologue.append(_setup_annotations())      # PEP 563: codegen_body, before the docstring
         doc = _docstring(c.body)
         if doc is not None:
             body = [store("__doc__", ast.Constant(doc)), *body[1:]]
         epilogue = [store("__static_attributes__", ast.Tuple(elts=[ast.Constant(a) for a in attributes], ctx=ast.Load()))]
-        classdict = _needs_classdict(c)
+        classdict = _needs_classdict(c, self.future)
         c.bella_classdict = classdict  # type: ignore[attr-defined]
         if classdict:
             epilogue.append(store("__classdictcell__", _intrinsic("classdictcell")))
@@ -713,6 +907,7 @@ class _ClassBodies:
 
 @register(PassSpec(
     name="desugar-class-body", source=Level.L0, target=Level.L0,
+    requires=frozenset({Fact.FUNCTION_ANNOTATIONS_EXPLICIT}),
     produces=frozenset({Fact.CLASS_BODIES_EXPLICIT}),
     obligations=(
         Obligation("wf", "every class body starts with the __module__, __qualname__ and __firstlineno__ stores and ends with __static_attributes__ (and __classcell__ when needed); no zero-argument super() call remains in a function"),
@@ -722,7 +917,7 @@ class _ClassBodies:
     discharge=Discharge.TESTED, status="tested",
 ))
 def desugar_class_body(tree: ast.Module) -> ast.Module:
-    return ast.fix_missing_locations(_ClassBodies().run(tree))
+    return ast.fix_missing_locations(_ClassBodies("annotations" in getattr(tree, "bella_future", ())).run(tree))
 
 
 def mangle(private: str | None, name: str) -> str:
@@ -739,48 +934,66 @@ class _PrivateNames:
     nested class mangles with its own name): names, attributes, parameters, global and
     nonlocal declarations, except-clause names, imported names, and the names definitions
     are stored under. A definition keeps its unmangled __name__ and __qualname__, and keyword
-    arguments in calls are not mangled (measured on 3.15.2)."""
+    arguments in calls are not mangled (measured on 3.15.2).
+
+    The type-parameter scope of a generic class (and the scopes inside it, up to the class body)
+    mangles only the type parameters' names, with the class's own name: _Py_MaybeMangle and
+    ste_mangled_names (Python/symtable.c, 3.15.2), so `class Box[__T]: v = __T` binds and reads
+    _Box__T while any other private name there stays as written (review 2026-11-02, G6 2.3.2)."""
 
     def __init__(self) -> None:
         self.private: str | None = None
+        self.only: frozenset[str] | None = None      # ste_mangled_names, when set
+
+    def mangle(self, name: str) -> str:
+        if self.only is not None and name not in self.only:
+            return name
+        return mangle(self.private, name)
 
     def visit(self, n: ast.AST) -> None:
-        p = self.private
+        p, only = self.private, self.only
         if isinstance(n, ast.ClassDef):
             for e in [*n.decorator_list, *n.bases, *(k.value for k in n.keywords)]:
                 self.visit(e)
-            n.bella_store = mangle(p, n.name)  # type: ignore[attr-defined]
-            self.private = n.name
+            n.bella_store = self.mangle(n.name)  # type: ignore[attr-defined]
+            self.private, self.only = n.name, None
             for s in n.body:
                 self.visit(s)
-            self.private = p
+            self.private, self.only = p, only
             return
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            n.bella_store = mangle(p, getattr(n, "bella_store", n.name))  # type: ignore[union-attr]
+            n.bella_store = self.mangle(getattr(n, "bella_store", n.name))  # type: ignore[union-attr]
+            scoped = getattr(n, "bella_mangle_only", None)
+            if scoped is not None:
+                self.private, self.only = scoped
+                for child in ast.iter_child_nodes(n):
+                    self.visit(child)
+                self.private, self.only = p, only
+                return
         if isinstance(n, ast.arg):
-            n.arg = mangle(p, n.arg)
+            n.arg = self.mangle(n.arg)
         elif isinstance(n, ast.Name):
-            n.id = mangle(p, n.id)
+            n.id = self.mangle(n.id)
         elif isinstance(n, ast.Attribute):
-            n.attr = mangle(p, n.attr)
+            n.attr = self.mangle(n.attr)
         elif isinstance(n, (ast.Global, ast.Nonlocal)):
-            n.names = [mangle(p, x) for x in n.names]
+            n.names = [self.mangle(x) for x in n.names]
         elif isinstance(n, ast.ExceptHandler) and n.name:
-            n.name = mangle(p, n.name)
+            n.name = self.mangle(n.name)
         elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name:
-            n.name = mangle(p, n.name)
+            n.name = self.mangle(n.name)
         elif isinstance(n, ast.MatchMapping) and n.rest:
-            n.rest = mangle(p, n.rest)
+            n.rest = self.mangle(n.rest)
         elif isinstance(n, ast.ImportFrom):
             for a in n.names:
                 a.bella_raw = a.name  # type: ignore[attr-defined]  # the fromlist keeps it unmangled (codegen)
                 if a.name != "*":
-                    a.name = mangle(p, a.name)
+                    a.name = self.mangle(a.name)
                 if a.asname:
-                    a.asname = mangle(p, a.asname)
+                    a.asname = self.mangle(a.asname)
         elif isinstance(n, ast.Import):
             for a in n.names:
-                a.bella_store = mangle(p, a.asname or a.name.partition(".")[0])  # type: ignore[attr-defined]
+                a.bella_store = self.mangle(a.asname or a.name.partition(".")[0])  # type: ignore[attr-defined]
         for child in ast.iter_child_nodes(n):
             self.visit(child)
 
@@ -989,10 +1202,13 @@ def _pattern_names(p: ast.pattern) -> list[str]:
         elif isinstance(q, ast.MatchMapping):
             seen: list[object] = []
             for k in q.keys:
-                if isinstance(k, ast.Constant):
-                    if k.value in seen:
-                        raise SyntaxError(f"mapping pattern checks duplicate key ({k.value!r}) (line {q.lineno})")
-                    seen.append(k.value)
+                if isinstance(k, (ast.Constant, ast.UnaryOp, ast.BinOp)):
+                    # CPython checks the key after its AST optimiser folded a signed or complex
+                    # literal (-1, 1+2j) into a constant (review 2026-11-02, G6 2.6.1)
+                    value = ast.literal_eval(k)
+                    if value in seen:
+                        raise SyntaxError(f"mapping pattern checks duplicate key ({value!r}) (line {q.lineno})")
+                    seen.append(value)
                 elif not isinstance(k, ast.Attribute):
                     raise SyntaxError(f"mapping pattern keys may only match literals and attribute lookups (line {q.lineno})")
             for x in q.patterns:
@@ -1309,9 +1525,10 @@ class _Comprehensions(ast.NodeTransformer):
     transformer does not enter nested function bodies: ``_hoist`` lowers each body in its own
     scope."""
 
-    def __init__(self, scope: str) -> None:
+    def __init__(self, scope: str, globals_: frozenset[str] = frozenset()) -> None:
         self.hoisted: list[ast.stmt] = []
         self.scope = scope                       # "module", "function" or "class"
+        self.globals_ = globals_                 # the names the containing function declares global
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         # decorators and defaults run in the enclosing scope; the body is lowered by _hoist
@@ -1376,15 +1593,24 @@ class _Comprehensions(ast.NodeTransformer):
             is_outer = i == len(node.generators) - 1
             iterable = ast.Name(id=arg, ctx=ast.Load()) if is_outer else gen.iter
             inner = [ast.For(target=gen.target, iter=iterable, body=inner, orelse=[])]
+            if is_outer:
+                inner[0].bella_iterator = True  # type: ignore[attr-defined]  # the iterator GET_ITER made outside (A7-4)
         parts: list[ast.AST] = [node.key, node.value] if isinstance(node, ast.DictComp) and node.key else [node.elt]  # type: ignore[union-attr, list-item]
         parts += [c for g in node.generators for c in g.ifs] + [g.iter for g in node.generators[1:]]
         bound_outside = _walrus_targets(parts)
         body: list[ast.stmt] = []
+        # PEP 572: a walrus target binds in the containing scope, honouring its global declaration
+        # (review 2026-11-02, G6 2.4.2); the helper's own comprehensions see the same names global
+        declared_global = [n for n in bound_outside if self.scope != "function" or n in self.globals_]
+        declared_nonlocal = [n for n in bound_outside if n not in declared_global]
         if bound_outside:
             if self.scope == "class":
                 raise SyntaxError("assignment expression within a comprehension cannot be used in a class body "
                                   f"(line {node.lineno})")
-            body.append(ast.Nonlocal(names=bound_outside) if self.scope == "function" else ast.Global(names=bound_outside))
+            if declared_global:
+                body.append(ast.Global(names=declared_global))
+            if declared_nonlocal:
+                body.append(ast.Nonlocal(names=declared_nonlocal))
         if kind != "genexp":
             init: ast.expr = (ast.List(elts=[], ctx=ast.Load()) if kind == "list" else ast.Dict(keys=[], values=[])
                               if kind == "dict" else ast.Call(func=_intrinsic("set"), args=[], keywords=[]))
@@ -1398,12 +1624,12 @@ class _Comprehensions(ast.NodeTransformer):
         fn = ast.FunctionDef(
             name="<genexpr>" if kind == "genexp" else fname,
             args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=arg)], kwonlyargs=[], kw_defaults=[], defaults=[]),
-            body=_hoist(body, "function"),       # comprehensions inside the element, conditions or inner loops
+            body=_hoist(body, "function", frozenset(declared_global)),   # comprehensions in the element, conditions or inner loops
             decorator_list=[], returns=None, type_params=[])
         fn.bella_store = fname  # type: ignore[attr-defined]
         fn.bella_qualname = getattr(node, "bella_qualname", None)  # type: ignore[attr-defined]
-        if bound_outside and self.scope == "function":
-            fn.bella_enclosing_binds = bound_outside  # type: ignore[attr-defined]
+        if declared_nonlocal:
+            fn.bella_enclosing_binds = declared_nonlocal  # type: ignore[attr-defined]
         self.hoisted.append(ast.fix_missing_locations(_copy_loc(fn, node)))
         return ast.fix_missing_locations(_copy_loc(ast.Call(
             func=ast.Name(id=fname, ctx=ast.Load()),
@@ -1411,21 +1637,25 @@ class _Comprehensions(ast.NodeTransformer):
             keywords=[]), node))
 
 
-def _hoist(stmts: list[ast.stmt], scope: str = "module") -> list[ast.stmt]:
+def _hoist(stmts: list[ast.stmt], scope: str = "module", globals_: frozenset[str] = frozenset()) -> list[ast.stmt]:
+    """`globals_`: the names the function whose statements these are declares global."""
     out: list[ast.stmt] = []
     for s in stmts:
-        tr = _Comprehensions(scope)
+        tr = _Comprehensions(scope, globals_)
         s = tr.visit(s)
-        inner = "function" if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) else \
-            "class" if isinstance(s, ast.ClassDef) else scope
+        inner, inner_globals = scope, globals_
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            inner, inner_globals = "function", frozenset(declarations(s.body)[0])
+        elif isinstance(s, ast.ClassDef):
+            inner, inner_globals = "class", frozenset()
         for fld in ("body", "orelse", "finalbody"):
             if hasattr(s, fld) and isinstance(getattr(s, fld), list):
-                setattr(s, fld, _hoist(getattr(s, fld), inner))
+                setattr(s, fld, _hoist(getattr(s, fld), inner, inner_globals))
         if isinstance(s, (ast.Try, ast.TryStar)):
             for h in s.handlers:
-                h.body = _hoist(h.body, scope)
+                h.body = _hoist(h.body, scope, globals_)
         for case in getattr(s, "cases", []):
-            case.body = _hoist(case.body, scope)
+            case.body = _hoist(case.body, scope, globals_)
         out.extend(tr.hoisted)
         out.append(s)
     return out
@@ -1605,12 +1835,11 @@ class _Unit:
 class _ToL1:
     def __init__(self) -> None:
         self.units: list[_Unit] = []
-        self.future_annotations = False      # PEP 563: annotations are their source text
+        self.annotates: dict[str, L.FunctionDef] = {}   # desugar-function-annotations' functions, by marker
 
     def module(self, tree: ast.Module, source: str) -> L.Module:
-        self.future_annotations = "annotations" in getattr(tree, "bella_future", ())
         self.units = [_Unit("module", "")]
-        return L.Module(line=1, body=tuple(self.stmt(s) for s in tree.body), source=source)
+        return L.Module(line=1, body=self.block(tree.body), source=source)
 
     def qualname(self, name: str) -> str:
         """compiler_set_qualname: <parent>.<locals>.name in a function, <parent>.name in a class,
@@ -1622,7 +1851,14 @@ class _ToL1:
 
     # ---- statements -------------------------------------------------------------------------
     def block(self, stmts: list[ast.stmt]) -> tuple[L.Stmt, ...]:
-        return tuple(self.stmt(s) for s in stmts)
+        out: list[L.Stmt] = []
+        for s in stmts:
+            if isinstance(s, ast.FunctionDef) and getattr(s, "bella_annotate_for", None):
+                # a function's __annotate__ (desugar-function-annotations): made with it, never bound
+                self.annotates[s.name] = dataclasses.replace(self.function(s), name="__annotate__")
+                continue
+            out.append(self.stmt(s))
+        return tuple(out)
 
     def stmt(self, s: ast.stmt) -> L.Stmt:
         ln = s.lineno
@@ -1649,7 +1885,8 @@ class _ToL1:
         if isinstance(s, ast.While):
             return L.While(ln, self.truth(s.test), self.block(s.body), self.block(s.orelse))
         if isinstance(s, ast.For):
-            return L.For(ln, self.target(s.target), self.expr(s.iter), self.block(s.body), self.block(s.orelse))
+            return L.For(ln, self.target(s.target), self.expr(s.iter), self.block(s.body), self.block(s.orelse),
+                         iterator=bool(getattr(s, "bella_iterator", False)))
         if isinstance(s, ast.Break):
             return L.Break(ln)
         if isinstance(s, ast.Continue):
@@ -1693,35 +1930,6 @@ class _ToL1:
             out.append(L.Param(a.kwarg.arg, None, "**kwargs"))
         return tuple(out)
 
-    def annotate(self, f: ast.FunctionDef, qualname: str) -> L.FunctionDef | None:
-        """PEP 649: ``__annotate__(format, /)`` raising NotImplementedError above
-        VALUE_WITH_FAKE_GLOBALS (2), else the dict in CPython's order (positional-only,
-        positional, ``*args``, keyword-only, ``**kwargs``, return). Under PEP 563 the values are
-        the annotations' source text. Its parameter is a hidden name, so an annotation that
-        names ``format`` means the builtin, as in CPython."""
-        a = f.args
-        params = [*a.posonlyargs, *a.args, *([a.vararg] if a.vararg else []), *a.kwonlyargs, *([a.kwarg] if a.kwarg else [])]
-        items = [(p.arg, p.annotation) for p in params if p.annotation is not None]
-        if f.returns is not None:
-            items.append(("return", f.returns))
-        if not items:
-            return None
-        ln = f.lineno
-        fmt = _tmp("format")
-        self.units.append(_Unit("function", f"{qualname}.__annotate__"))
-        try:
-            values = tuple(L.Const(e.lineno, ast.unparse(e)) if self.future_annotations else self.expr(e) for _, e in items)
-        finally:
-            self.units.pop()
-        body: tuple[L.Stmt, ...] = (
-            L.If(ln, L.Truth(ln, L.Compare(ln, ">", L.Name(ln, fmt), L.Const(ln, 2))),
-                 (L.Raise(ln, L.Intrinsic(ln, "NotImplementedError")),), ()),
-            L.Return(ln, L.DictLit(ln, tuple(L.Const(ln, k) for k, _ in items), values)),
-        )
-        return L.FunctionDef(ln, "__annotate__", (L.Param(fmt, None, "positional-only", public="format"),), body,
-                             qualname=f"{qualname}.__annotate__", annotation=True,
-                             classdict=bool(self.units) and self.units[-1].kind in ("class", "generic in class"))
-
     def function(self, f: ast.FunctionDef | ast.AsyncFunctionDef) -> L.FunctionDef:
         if f.decorator_list:
             raise L.Unsupported("decorators must be desugared first")
@@ -1735,7 +1943,7 @@ class _ToL1:
         params = self.params(f.args, f.name, getattr(f, "bella_public", None))
         qualname = getattr(f, "bella_qualname", None) or self.qualname(f.name)
         globals_, nonlocals = declarations(f.body)
-        annotate = self.annotate(f, qualname)  # type: ignore[arg-type]
+        annotate = self.annotates.pop(getattr(f, "bella_annotate", ""), None)
         in_class = bool(self.units) and (self.units[-1].kind == "class" or self.units[-1].kind == "generic in class")
         kind_of_unit = ("generic in class" if in_class else "generic") if getattr(f, "bella_transparent", False) else "function"
         self.units.append(_Unit(kind_of_unit, qualname, frozenset(globals_)))
@@ -1884,7 +2092,7 @@ class _ToL1WithWalrus(_ToL1):
     name="to-l1", source=Level.L0, target=Level.L1,
     requires=frozenset({Fact.NO_CHAINED_COMPARE, Fact.NO_WITH, Fact.NO_COMPREHENSIONS, Fact.NO_FSTRINGS, Fact.NO_DECORATORS,
                         Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED, Fact.NO_IMPORTS, Fact.SINGLE_TARGETS, Fact.NO_MATCH,
-                        Fact.ANNOTATIONS_EXPLICIT, Fact.NO_TYPE_PARAMS}),
+                        Fact.ANNOTATIONS_EXPLICIT, Fact.NO_TYPE_PARAMS, Fact.FUNCTION_ANNOTATIONS_EXPLICIT}),
     produces=frozenset({Fact.EXPLICIT_TRUTH}),
     obligations=(
         Obligation("wf", "output satisfies wf1 (pipeline.l1.wf)"),
@@ -1897,9 +2105,26 @@ def to_l1(tree: ast.Module) -> L.Module:
     return _ToL1WithWalrus().module(tree, getattr(tree, "bella_source", "<module>"))
 
 
-FRONTEND_PASSES = ["desugar-annotations", "desugar-type-params", "desugar-class-body", "desugar-private-names", "desugar-imports", "desugar-several-targets", "desugar-match",
+FRONTEND_PASSES = ["desugar-annotations", "desugar-type-params", "desugar-function-annotations", "desugar-class-body", "desugar-private-names", "desugar-imports", "desugar-several-targets", "desugar-match",
                    "desugar-chained-compare", "desugar-with",
                    "desugar-listcomp", "desugar-fstring", "desugar-decorators", "to-l1"]
+
+
+def check_compile(tree: ast.Module | ast.Expression, filename: str, mode: str, inherit_future: frozenset[str]) -> None:
+    """Every compile-time error of CPython 3.15.2, from its own compiler: the symbol table's and
+    the code generator's (a nonlocal without a binding, a parameter declared global, `import *`
+    outside a module, a lazy import in a try, `yield` in a comprehension, a repeated attribute in
+    a class pattern, ...), raised as the SyntaxError CPython raises (review 2026-11-02, G6 2.4.3,
+    2.6.2, 2.7.2, 2.7.3). The host is the pinned interpreter (check_host_grammar), so "what does
+    CPython reject?" is answered by asking it. The parsed tree is compiled, before any pass
+    rewrites it, and the code is dropped; the parser's warnings were already given by
+    ast.parse, and the compiler's are not repeated here."""
+    flags = 0
+    for name in inherit_future:
+        flags |= getattr(__future__, name).compiler_flag
+    with warnings.catch_warnings(module=warnings):          # the host's module, whatever sys.modules holds
+        warnings.simplefilter("ignore")
+        compile(tree, filename, mode, flags=flags, dont_inherit=True)
 
 
 def check_host_grammar() -> None:
@@ -1953,9 +2178,11 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
     check_host_grammar()
     if mode == "eval":
         expression = ast.parse(source, filename=filename, mode="eval")
+        check_compile(expression, filename, mode, inherit_future)
         tree = ast.Module([ast.fix_missing_locations(ast.copy_location(ast.Expr(expression.body), expression.body))], [])
     else:
         tree = ast.parse(source, filename=filename)
+        check_compile(tree, filename, mode, inherit_future)
     check_finally(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]
     tree.bella_future = future_features(tree) | inherit_future  # type: ignore[attr-defined]

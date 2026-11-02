@@ -7,18 +7,21 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-02:** 135 findings from eleven reviews: 102 fixed (most in commit
+**Status on 2026-11-02:** 168 findings from thirteen reviews: 132 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
-the staging reviews), 18 already done before or because of the review, 4 planned (D-2 and D-10,
-accepted by the author), 2 deferred, 4 refuted and 5 checked with no issue. Nothing is open: the
+the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews), 21 already done before or
+because of the review, 4 planned (D-2 and D-10, accepted by the author), 2 deferred, 4 refuted
+and 5 checked with no issue. Nothing is open: the
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 
 ## Reviews received
 
 | Date | Reviewer | File | Scope | Ran against |
 | --- | --- | --- | --- | --- |
+| 2026-11-02 | astra-low (A7) | [2026-11-02-astra-low-07-eval1-semantics-review.md](2026-11-02-astra-low-07-eval1-semantics-review.md) | Gate 0 task 4 steps A1 to B and P-1 to P-3, `3d4e428..58bb34b` | CPython 3.15.2 |
+| 2026-11-02 | gemini-4-argon-high (G6) | [2026-11-02-06-gemini-4-argon-high-l1-eval1-review.md](2026-11-02-06-gemini-4-argon-high-l1-eval1-review.md) | the same range | CPython 3.15.2 |
 | 2026-11-01 | astra-low (A1) | [2026-11-01-astra-low-01-design-codebase-review.md](2026-11-01-astra-low-01-design-codebase-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
 | 2026-11-01 | astra-low (A2) | [2026-11-01-astra-low-02-python-version-review.md](2026-11-01-astra-low-02-python-version-review.md) | choice of reference Python | release notes; Bella not run on 3.15.2 |
 | 2026-11-01 | gemini-4-argon-high (G) | [2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md](2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
@@ -262,6 +265,62 @@ Reproduced on `d0bec20` in a separate worktree and on `f79ee0a` (after A6), whic
 | RL-134 | G5 3.7 | `scan.py` took a parenthesised `(x): int` as a `NamedTuple` field | Confirmed: the probe staged the wrong fields | Fixed | Only simple targets |
 | RL-135 | G5 3.7 | The lock named CPython's module as a scanned shim's path | Confirmed on `d0bec20` | Done before (RL-119) | |
 
+### L1 and `eval1` (A7)
+
+Reproduced on `58bb34b` under CPython 3.15.2 and `pipeline/l1/run.py`; each probe now runs in
+`pipeline/tests/test_review_2026_11_02.py`. The review's "Approach" section adds two concrete
+defects (RL-143, RL-144). Its remark that a future global-slot pass must keep the observable
+module dictionaries is agreed: the plan keeps a real dict, made when code exposes it (P-3, the
+author's direction).
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-136 | A7-1 | A lone `*x` argument was expanded before the keyword arguments ran | Confirmed: `(1,)` where CPython prints `(1, 2)`, and `__iter__` before the keyword's call | Fixed | `Interpreter.arguments` follows `codegen_call_helper_impl`: a lone `*x` is only evaluated, made a tuple at the call (`_MAKE_CALLARGS_A_TUPLE`, with `_Py_Check_ArgsIterable`'s message) |
+| RL-137 | A7-2 | Under `from __future__ import annotations` a module or class got PEP 649's `__annotate__` instead of an `__annotations__` dict | Confirmed: `NameError` for `__annotations__` | Fixed | `desugar-annotations` emits SETUP_ANNOTATIONS (the new `setup_annotations` intrinsic: the namespace's `__annotations__` unless it has one, through `__getitem__` for a custom mapping) before `__doc__`, and stores each simple annotation's text with LOAD_NAME `__annotations__` |
+| RL-138 | A7-3 | An annotation without a value dropped its target's evaluation; in a function, `obj().x: int` crashed the frontend | Confirmed: no output where CPython prints `obj`, `key`; an `AssertionError` | Fixed | `codegen_check_ann_expr` and `codegen_check_ann_subscr`: the object, and a subscript's index (each bound of a slice, each element of an extended slice), in every scope |
+| RL-139 | A7-4 | A comprehension's helper called `iter()` again on the iterator the enclosing scope made | Confirmed: `iter` twice, and a generator expression's second one after creation | Fixed | L1's `For` gains `iterator`: the comprehension's outermost loop only advances the iterator (FOR_ITER), as CPython's |
+| RL-140 | A7-5 | `{**m}` re-hashed the keys CPython copies with their stored hashes | Confirmed: `['hash']` where CPython prints `[]` | Fixed | DICT_UPDATE is the host's own on a copy of the target, so the stored hashes and every comparison are CPython's. DICT_MERGE: exact for string keys; for others the host merge plus a duplicate found by identity, so no `__hash__` runs, and `__eq__` on unequal keys of equal hash may run a different number of times, for a call that then fails ("keywords must be strings"); stated in its docstring. Found: `frozendict` (new in 3.15) takes dict's fast path too |
+| RL-141 | A7-6 | `__prepare__ = None` was treated as absent | Confirmed: `created` where CPython raises `TypeError` | Fixed | A sentinel in `runtime/prelude/build_class.py`, for `__mro_entries__` too (G6 2.6.4) |
+| RL-142 | A7-7 | Any call named `globals()`, even unused, switched off the program's compile-time NameError | Confirmed with `check(lower(...))` | Fixed | The exemption is gone: spec section 8 says writes through `globals()` reach statically known names, and P-3's `strict=False` covers the library code that needed it. `run.py` now refuses a program `wf1` rejects (exit 70) instead of crashing |
+| RL-143 | A7, approach | `eval1_corpus.py --update` would take a partial run as the baseline | Confirmed by reading | Fixed | The update needs a result for every case the harness selects. Test `test_the_corpus_baseline_is_written_only_from_a_complete_run_a7` |
+| RL-144 | A7, approach | Library provenance (P-3) came from a directory named `vendor` | Agreed | Fixed | In closure mode it comes from the lock: its roots are the program's own code, its other `program` modules the packages `targets.toml` declares. The directory rule stays only for modules no lock lists (program mode), with RL-167 |
+
+### L1 and `eval1` (G6)
+
+Reproduced on `58bb34b` under CPython 3.15.2 and `pipeline/l1/run.py`; each probe now runs in
+`pipeline/tests/test_review_2026_11_02.py`. Five findings (RL-156, RL-161, RL-165, RL-166 a)
+are one gap: the frontend checked only what the parser checks. It now compiles the parsed tree
+with the pinned host compiler (`check_compile` in `pipeline/l1/frontend.py`), so every
+compile-time error of the symbol table and the code generator is CPython's, with its message.
+The review's summary says 74 of 80 cases pass under `eval1`; the baseline was 58 of 75 (now 59).
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-145 | G6 2.1.1 | Under PEP 563 a function's annotation strings were unparsed after other passes had rewritten them (mangled names, `_cmp` walrus, `bella:format`) | Confirmed | Fixed | A new pass, `desugar-function-annotations`, right after `desugar-type-params`: a function's annotations become its `__annotate__` function, an ordinary definition before the function (in its generic scope, if any), which every later pass lowers and `to-l1` attaches to the function. Under PEP 563 the texts are taken there, from the untouched tree |
+| RL-146 | G6 2.1.2 | A comprehension in a function's annotation was `Unsupported` | Confirmed | Fixed | RL-145 |
+| RL-147 | G6 2.2.1 | `x: T` in a method declared the unmangled name | Confirmed: `global_leak` where CPython raises `UnboundLocalError` | Fixed | Mangled with the class |
+| RL-148 | G6 2.2.2 | `self.a: int` in a method crashed the frontend | Confirmed | Done | RL-138 |
+| RL-149 | G6 2.2.3 | `(x): int` in a function made `x` local | Confirmed: `UnboundLocalError` where CPython prints the global | Fixed | Only a simple name target is declared |
+| RL-150 | G6 2.2.4 | Value-less attribute and subscript targets lost their evaluation | Confirmed | Done | RL-138 |
+| RL-151 | G6 2.3.1 | `wf1` rejected a generic class nested in a class whose bases name the outer class's attributes | Confirmed: `WellFormednessError` | Fixed | `wf1` lets a scope marked `classdict` read the nearest class's names, as `eval1` does |
+| RL-152 | G6 2.3.2 | A generic class's private type parameter was bound unmangled and read mangled | Confirmed: `WellFormednessError` | Fixed | `desugar-private-names` follows `_Py_MaybeMangle`: the type-parameter scope of a generic class (and the scopes in it, up to the class body) mangles only the type parameters, with the class's own name; a private name in the bases stays as written (CPython 3.15.2 raises `NameError` for `__x` there too) |
+| RL-153 | G6 2.3.3 | `type Alias = int` in a class had `__qualname__` `Alias` | Confirmed | Fixed | The value's thunk is named after the alias, so its qualname is CPython's; `_pep695` gives the snippet's value code that qualname (`_Py_make_typealias` takes `co_qualname`) |
+| RL-154 | G6 2.4.1 | A walrus in a comprehension in a lambda | Confirmed: `SyntaxError: no binding for nonlocal` | Fixed | `eval1` counts a lambda's prelude among its bindings |
+| RL-155 | G6 2.4.2 | A walrus whose target the containing function declares global | Confirmed: `SyntaxError: no binding for nonlocal` | Fixed | The helper declares it global, and so do comprehensions inside the helper |
+| RL-156 | G6 2.4.3 | `yield` in a comprehension was accepted | Confirmed | Fixed | The compile check |
+| RL-157 | G6 2.5.1 | A `yield` inside an f-string, a slice, a comprehension's iterable or a chained comparison was refused | Confirmed: exit 70 | Fixed | In a generator, an intrinsic's operands are evaluated in order and the intrinsic applied to their values; `__bind__` stores its value. A starred or `**` argument beside a `yield` stays a refusal |
+| RL-158 | G6 2.5.2 | `for a[(yield 1)] in xs` crashed `eval1` with `TypeError` | Confirmed | Fixed | A refusal, as a `yield` in an assignment target already is |
+| RL-159 | G6 2.5.3 | While a generator ran, `site()` and `caller_flags()` named whoever resumed it | Confirmed by reading; a test shows it | Fixed | The generator's frame is pushed while it runs, taken off at each `yield` and for a `yield from`, and popped when it ends |
+| RL-160 | G6 2.6.1 | Mapping patterns with `-1` or `1+2j` keys were rejected | Confirmed: `unsupported` | Fixed | Keys are checked folded, as after CPython's AST optimiser |
+| RL-161 | G6 2.6.2 | A repeated class-pattern keyword was accepted | Confirmed | Fixed | The compile check |
+| RL-162 | G6 2.6.3 | `**rest` used `dict.update`, which takes pairs from an object without `keys()` | Confirmed: `{'a': 1}` where CPython raises `TypeError` | Fixed | `{**subject}`, which is DICT_UPDATE |
+| RL-163 | G6 2.6.4 | `__mro_entries__ = None` and `__prepare__ = None` treated as absent | Confirmed | Done | RL-141 |
+| RL-164 | G6 2.7.1 | `f(**{"a": 0}, a=s1(), b=s2())` stopped before `s2()` | Confirmed: `['s1']` where CPython prints `['s1', 's2']` | Fixed | A run of keywords is evaluated whole into a dict before the merge (`codegen_subkwargs`), with RL-136 |
+| RL-165 | G6 2.7.2 | `lazy import` in a `try` and `from m import *` in a class were accepted | Confirmed | Fixed | The compile check |
+| RL-166 | G6 2.7.3 | (a) `nonlocal` without a binding and a parameter declared `global` accepted; (b) the `globals()` relaxation; (c) `global x` counted as binding `x` though nothing assigns it | Confirmed, all three | Fixed | (a) the compile check; (b) RL-142; (c) `wf1` counts a global declaration as a module binding only where the declaring scope binds the name, a comprehension's walrus included |
+| RL-167 | G6 2.7.4 | (a) Closure mode did not lower the lock's program modules (the vendored packages) ahead; (b) D-20's modules were blocked after start-up imported | Confirmed by reading; (b) has no effect today, as start-up reaches no blocked module | Fixed | (a) every `program` module of the lock is lowered before the program starts (P-1); (b) blocked first. With RL-144 |
+| RL-168 | Found while fixing RL-137 | Under PEP 563 a class with a method stored `__classdictcell__`, which CPython's does not | Confirmed: measured on 3.15.2 over 28 class bodies | Fixed | Under PEP 563 only a generic definition or a type alias makes the cell; without it any definition or annotation does. Test `test_a_class_namespace_sees_cpythons_stores_with_and_without_pep_563` |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -434,5 +493,5 @@ conformance case comes first: copying unslotted, slotted and customised user cla
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-136` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-169` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.
