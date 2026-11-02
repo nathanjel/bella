@@ -1242,8 +1242,16 @@ class _Match(ast.NodeTransformer):
     committed to the first alternative that matches; sequence items unpacked (UNPACK_SEQUENCE
     or UNPACK_EX), or taken by subscript, len() at each access, when the star is a wildcard;
     mapping values by the subject's get(); class attributes by __match_args__ and getattr.
-    (Pattern temporaries live until the scope ends, longer than CPython's stack slots: a
-    difference only finalisation timing can see.)"""
+    A case's pattern temporaries stand for CPython's stack slots and are released where those
+    are popped, newest first: once a pattern has matched and stored its captures (before the
+    guard), and right after the case on the paths where it failed (review 2026-11-02)."""
+
+    _CLEAR = "__bella_clear_pattern_temporaries__"
+
+    def tmp(self, prefix: str) -> str:
+        name = _tmp(prefix)
+        self.case_temps.append(name)
+        return name
 
     def visit_Match(self, node: ast.Match) -> Any:
         self.generic_visit(node)
@@ -1256,17 +1264,36 @@ class _Match(ast.NodeTransformer):
                 raise SyntaxError(f"name capture {name!r} makes remaining patterns unreachable (line {p.lineno})"
                                   if name else f"wildcard makes remaining patterns unreachable (line {p.lineno})")
             names = _pattern_names(case.pattern)
-            self.captures = {n: _tmp("cap") for n in names}
+            self.case_temps: list[str] = []
+            self.captures = {n: self.tmp("cap") for n in names}
             success: list[ast.stmt] = [_assign(done, ast.Constant(True)),
                                        ast.Delete(targets=[ast.Name(id=subj, ctx=ast.Del())]), *case.body]
             then: list[ast.stmt] = [_assign(n, ast.Name(id=self.captures[n], ctx=ast.Load())) for n in names]
+            then.append(ast.Expr(ast.Constant(self._CLEAR)))
             then += [ast.If(test=case.guard, body=success, orelse=[])] if case.guard is not None else success
+            tested = self.pattern(case.pattern, ast.Name(id=subj, ctx=ast.Load()), then)
+            clear = [_assign(t, ast.Constant(None)) for t in reversed(self.case_temps)]
             out.append(ast.If(test=ast.UnaryOp(op=ast.Not(), operand=ast.Name(id=done, ctx=ast.Load())),
-                              body=self.pattern(case.pattern, ast.Name(id=subj, ctx=ast.Load()), then), orelse=[]))
+                              body=self._place(tested, clear), orelse=[]))
+            out += [_assign(t, ast.Constant(None)) for t in reversed(self.case_temps)]   # the failed paths
         out.append(ast.If(test=ast.UnaryOp(op=ast.Not(), operand=ast.Name(id=done, ctx=ast.Load())),
                           body=[ast.Delete(targets=[ast.Name(id=subj, ctx=ast.Del())])], orelse=[]))
         out.append(ast.Delete(targets=[ast.Name(id=done, ctx=ast.Del())]))
         return [ast.fix_missing_locations(_copy_loc(o, node)) for o in out]
+
+    def _place(self, stmts: list[ast.stmt], clear: list[ast.stmt]) -> list[ast.stmt]:
+        """The marker in the success path becomes the clearing statements."""
+        out: list[ast.stmt] = []
+        for st in stmts:
+            if isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant) and st.value.value == self._CLEAR:
+                out += [_assign(t.targets[0].id, ast.Constant(None)) for t in clear if isinstance(t, ast.Assign)
+                        and isinstance(t.targets[0], ast.Name)]
+                continue
+            for fld in ("body", "orelse"):
+                if isinstance(getattr(st, fld, None), list):
+                    setattr(st, fld, self._place(getattr(st, fld), clear))
+            out.append(st)
+        return out
 
     def capture(self, name: str | None, value: ast.expr) -> list[ast.stmt]:
         return [] if name is None else [_assign(self.captures[name], value)]
@@ -1282,7 +1309,7 @@ class _Match(ast.NodeTransformer):
                 return [*self.capture(p.name, subj), *then]
             return self.pattern(p.pattern, subj, [*self.capture(p.name, subj), *then])
         if isinstance(p, ast.MatchOr):
-            ok = _tmp("alt")
+            ok = self.tmp("alt")
             out: list[ast.stmt] = [_assign(ok, ast.Constant(False))]
             for i, alt in enumerate(p.patterns):
                 code = self.pattern(alt, subj, [_assign(ok, ast.Constant(True))])
@@ -1294,7 +1321,7 @@ class _Match(ast.NodeTransformer):
         if isinstance(p, ast.MatchMapping):
             return self.mapping(p, subj, then)
         if isinstance(p, ast.MatchClass):
-            cls, attrs = _tmp("cls"), _tmp("attrs")
+            cls, attrs = self.tmp("cls"), self.tmp("attrs")
             subs = [*p.patterns, *p.kwd_patterns]
             inner = self.chain([(sub, _item(attrs, i)) for i, sub in enumerate(subs) if not _is_wildcard(sub)], then)
             return [_assign(cls, p.cls),
@@ -1326,11 +1353,11 @@ class _Match(ast.NodeTransformer):
                     continue
                 index: ast.expr = ast.Constant(i) if i < star else ast.BinOp(
                     left=ast.Call(func=_intrinsic("len"), args=[subj], keywords=[]), op=ast.Sub(), right=ast.Constant(size - i))
-                item = _tmp("item")
+                item = self.tmp("item")
                 body = [_assign(item, ast.Subscript(value=subj, slice=index, ctx=ast.Load())),
                         *self.pattern(sub, ast.Name(id=item, ctx=ast.Load()), body)]
         else:
-            items = _tmp("items")
+            items = self.tmp("items")
             before, after = (size, -1) if star < 0 else (star, size - star - 1)
             steps = [(sub, _item(items, i)) for i, sub in enumerate(p.patterns)]
             body = [_assign(items, _call("unpack", subj, ast.Constant(before), ast.Constant(after))),
@@ -1348,7 +1375,7 @@ class _Match(ast.NodeTransformer):
         if not size and p.rest is None:
             body = then
         else:
-            keys, values = _tmp("keys"), _tmp("values")
+            keys, values = self.tmp("keys"), self.tmp("values")
             rest = self.capture(p.rest, _call("mapping_rest", subj, ast.Name(id=keys, ctx=ast.Load()))) if p.rest else []
             inner = self.chain([(sub, _item(values, i)) for i, sub in enumerate(p.patterns)], [*rest, *then])
             body = [_assign(keys, ast.Tuple(elts=list(p.keys), ctx=ast.Load())),
@@ -1436,22 +1463,35 @@ class _With(ast.NodeTransformer):
         # bound through the descriptor protocol, TypeError when missing. CPython 3.15 looks up
         # __exit__ before __enter__ (review 2026-11-01, gemini 2.2.5.2; measured on 3.15.2).
         mgr, exit_, enter, value, exc, err = (_tmp("mgr"), _tmp("exit"), _tmp("enter"), _tmp("val"), _tmp("exc"), _tmp("err"))
-        # The references die where CPython's stack drops them: the manager is held only through
-        # the bound __exit__ once both methods are looked up, the bound __enter__ dies after its
-        # call, the value once the target holds it (at once with no target), and __exit__ when the
-        # statement ends, on every path (measured on 3.15.2 with __del__ probes).
+        # The references die where CPython's stack drops them (measured on 3.15.2 with __del__
+        # probes): the manager is held only through the bound __exit__ once both methods are looked
+        # up, the bound __enter__ dies after its call, the value once the target holds it (at once
+        # with no target, and before __exit__ when assigning the target fails), and __exit__ when
+        # the statement ends, on every path. A failed lookup or __enter__ releases them all before
+        # the exception goes on (review 2026-11-02, A8-3). The names are set to None rather than
+        # deleted, so that each path can release them whether or not it had bound them. The
+        # handler's BaseException is the builtin, whatever the program binds to the name (A8-8).
         src = f"""
 {mgr} = None
-{exit_} = __special__({mgr}, "__exit__")
-{enter} = __special__({mgr}, "__enter__")
-del {mgr}
-{value} = {enter}()
-del {enter}
+{exit_} = None
+{enter} = None
+try:
+    {exit_} = __special__({mgr}, "__exit__")
+    {enter} = __special__({mgr}, "__enter__")
+    {mgr} = None
+    {value} = {enter}()
+    {enter} = None
+except BaseException:
+    {mgr} = None
+    {enter} = None
+    {exit_} = None
+    raise
 {exc} = True
 try:
     try:
         pass
     except BaseException as {err}:
+        {value} = None
         {exc} = False
         if not {exit_}(type({err}), {err}, {err}.__traceback__):
             raise
@@ -1460,25 +1500,25 @@ finally:
         if {exc}:
             {exit_}(None, None, None)
     finally:
-        del {exit_}
+        {exit_} = None
 """
         stmts = ast.parse(src).body
         for n in ast.walk(ast.Module(stmts, [])):
-            if isinstance(n, ast.Name) and n.id == "type":
-                n.id = _INTRINSIC + "type"
+            if isinstance(n, ast.Name) and n.id in ("type", "BaseException"):
+                n.id = _INTRINSIC + n.id
             elif isinstance(n, ast.Name) and n.id == "__special__":
                 n.id = _INTRINSIC + "special"     # an intrinsic too: no program binding reaches it
         assign = stmts[0]
         assert isinstance(assign, ast.Assign)
         assign.value = item.context_expr
-        try_outer = stmts[7]
+        try_outer = stmts[5]
         assert isinstance(try_outer, ast.Try)
         try_inner = try_outer.body[0]
         assert isinstance(try_inner, ast.Try)
         inner_body: list[ast.stmt] = []
         if item.optional_vars is not None:
             inner_body.append(ast.Assign(targets=[item.optional_vars], value=ast.Name(id=value, ctx=ast.Load())))
-        inner_body.append(ast.Delete(targets=[ast.Name(id=value, ctx=ast.Del())]))
+        inner_body.append(_assign(value, ast.Constant(None)))
         inner_body.extend(body)
         try_inner.body = inner_body
         for s in stmts:

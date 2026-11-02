@@ -90,7 +90,7 @@ struct World {
 
     ClassObject* runtime_class(int variant) {
         switch (variant) {
-            case 0: return cls({.name = "R0", .slots = std::vector<std::string>{"k", "x"}});
+            case 0: return cls({.name = "R0", .slots = std::vector<std::string>{"x", "k"}});
             case 1: return cls({.name = "R1", .slots = std::vector<std::string>{"x"}});
             case 2: return cls({.name = "R2", .promoted = {"y"}, .attrs = {{"x", Obj::small(7)}}});
             case 3: return cls({.name = "R3", .bases = {classes[0]}, .promoted = {"k"}});

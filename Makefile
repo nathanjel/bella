@@ -82,6 +82,13 @@ int-test:
 object-test:
 	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 3000
 	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 1000 --sanitize
+	@mkdir -p build/object-test
+	$(CXX) -std=$(CXXSTD) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
+	    -Iruntime/include runtime/tests/object_reentrancy.cpp -o build/object-test/reentrancy
+	$(PY) runtime/tests/object_reentrancy.py > build/object-test/reentrancy.cpython
+	ASAN_OPTIONS=detect_leaks=0 build/object-test/reentrancy > build/object-test/reentrancy.header
+	diff build/object-test/reentrancy.cpython build/object-test/reentrancy.header
+	@echo "object.hpp: user code emptying the class it runs from: header == CPython (ASan, UBSan)"
 
 FLOAT_CASES ?= 300000
 float-diff:

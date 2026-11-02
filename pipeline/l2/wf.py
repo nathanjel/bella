@@ -50,10 +50,26 @@ class _Loop:
     ends: list[set[int]] = field(default_factory=list)
 
 
+@dataclass
+class _Final:
+    """A `try` with a `finally` being checked: the live sets of the paths that leave it early."""
+    loop_depth: int
+    exits: list[set[int]] = field(default_factory=list)
+
+
 class _Checker:
     def __init__(self, lifetimes: bool) -> None:
         self.lifetimes = lifetimes
         self.errors: list[str] = []
+        self.finals: list[_Final] = []
+
+    def leave(self, live: set[int], loop_depth: int | None) -> None:
+        """A path leaves the enclosing `try` statements whose `finally` it runs: every one for a
+        return or a raise (loop_depth None), those inside the loop it leaves for a break,
+        continue or loop end."""
+        for f in self.finals:
+            if loop_depth is None or f.loop_depth == loop_depth:
+                f.exits.append(set(live))
 
     def fail(self, code: G.Code, msg: str) -> None:
         self.errors.append(f"{code.qualname}: {msg}")
@@ -210,30 +226,38 @@ class _Checker:
                     self.fail(code, "break outside a loop")
                     return None
                 loops[-1].breaks.append(set(live))
+                self.leave(live, len(loops))
                 return None
             case G.EndLoop():
                 if not loops:
                     self.fail(code, "end of loop outside a loop")
                     return None
                 loops[-1].ends.append(set(live))
+                self.leave(live, len(loops))
                 return None
             case G.Continue():
                 if not loops:
                     self.fail(code, "continue outside a loop")
                     return None
                 loops[-1].continues.append(set(live))
+                self.leave(live, len(loops))
                 return None
             case G.Return(v):
                 self.consume(code, live, v)
                 self.leaving(code, live, loops, "return")
+                self.leave(live, None)
                 return None
             case G.Raise(exc, cause, _):
                 self.consume(code, live, exc)
                 self.consume(code, live, cause)
                 self.leaving(code, live, loops, "raise")
+                self.leave(live, None)
                 return None
             case G.Try(body, handlers, orelse, finalbody):
                 entry = set(live)
+                final = _Final(len(loops))
+                if finalbody:
+                    self.finals.append(final)
                 ends = [self.block(code, (*body, *orelse), entry, loops)]
                 for handler in handlers:
                     matched = self.block(code, handler.match, entry, loops)
@@ -250,9 +274,16 @@ class _Checker:
                             self.fail(code, f"try: a path ends with {sorted(path_end)} live, it began with {sorted(entry)}")
                 after = self.merge(code, "after try", ends)
                 if finalbody:
-                    fin = self.block(code, finalbody, entry, loops)
-                    if self.lifetimes and fin is not None and fin != entry:
-                        self.fail(code, f"finally: ends with {sorted(fin)} live, began with {sorted(entry)}")
+                    self.finals.pop()
+                    # the finally block runs on every path: normal, exceptional (the temporaries made
+                    # in the try die first) and early ones (what a return consumed is gone), so it
+                    # may use only what all of them hold (review 2026-11-02, A8-11)
+                    start = set(entry)
+                    for ex in final.exits:
+                        start &= ex
+                    fin = self.block(code, finalbody, start, loops)
+                    if self.lifetimes and fin is not None and fin != start:
+                        self.fail(code, f"finally: ends with {sorted(fin)} live, began with {sorted(start)}")
                     if fin is None:
                         return None
                 return after

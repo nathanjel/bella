@@ -542,7 +542,8 @@ these choices of implementation:
 * The model counts references: `RefObject` and `RefDict` (an instance dict as an object of its
   own) carry counts that every holder owns, and an object dies at zero with CPython 3.15.2's
   order, measured: its finaliser, its `__slots__` (the most-derived class's first, each class's
-  in declaration order), then its instance attributes in the order of the class's shared keys.
+  sorted by name, as `type_new` stores them; this said declaration order until review RL-178),
+  then its instance attributes in the order of the class's shared keys.
 * Shared keys are per class: the sorted `__static_attributes__`, then each name the first time any
   instance stores it or tries to delete it (a failed `del obj.y` inserts `y`; found by the
   Hypothesis machine). So an instance's attributes die in an order that is not its own assignment
@@ -578,6 +579,35 @@ with `ctypes`, comparing every outcome, every death and every attribute after ev
 (six seeds of 5,000 operations locally, about 320 deaths and 108,000 cache hits each; 1,000 more
 under AddressSanitizer and UBSan). The second half of task 3's done-when, C-3-01..12 under the
 compiled runner, waits for the emitter.
+
+**2026-11-02 — after the L2 and lifetimes reviews** (astra-low-08, gemini-4-argon-high-07; review
+log RL-169 to RL-187). Defects fixed within the design; the rules they settle:
+* Ownership across user code: a lookup owns what it found while user code runs, as CPython's
+  `_PyType_LookupRef` does: the `__getattr__` hook until the operation ends, a descriptor and
+  its method while that method runs, a finaliser while it runs. Cache entries stay borrowed
+  (RL-20). The header's tests now include user code that empties the class it runs from,
+  without quarantine, under ASan (RL-169, RL-187).
+* Slot tables: a fast-local slot is allocated where CPython's code generator first emits a
+  load, store or delete of the name, dead code included; an annotation alone makes a name local
+  without a slot (RL-173). A scope's `global` declarations stop its children from capturing an
+  enclosing function's binding (RL-174).
+* Release order: a statement's operands die in the reverse of the order CPython's stack holds
+  them (STORE\_SUBSCR: key, container, value; STORE\_ATTR: owner, value), and a discarded result
+  after its operands (RL-182 to RL-184). An object's `__slots__` die sorted by name per class
+  (RL-178).
+* Synthetic variables are stack values. A chained comparison's operand is an L2 temporary with
+  no slot; a decorator's value moves into a temporary where it is applied; a `match` drops its
+  pattern temporaries once the pattern has matched, and after each failed case; a `with`
+  statement drops what it holds on every failing path; and when an exception leaves a region,
+  the synthetic variables it stored die after its temporaries, newest first (an inlined
+  comprehension's iterator and result included). They keep their slots otherwise: invisible,
+  and empty when the frame ends (RL-171, RL-172, RL-180, RL-181, RL-185, RL-186). Open: an
+  inlined comprehension's iterator dies after its partial result instead of before (`TODO.md`).
+* L2 and `wf2`: `return` consumes its value, so a `finally` is checked with what every path into
+  it holds (RL-179); unreachable statements are dropped by `to-anf` (RL-177).
+* `eval2`'s hygiene: no helper frame stays in a traceback (RL-170); the builtins that read the
+  calling frame are recognised by identity at every call (RL-175, about 15 % slower on the
+  targets); generated code names nothing a program can rebind (RL-176).
 
 ## Pins
 

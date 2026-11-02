@@ -66,9 +66,58 @@ def _releases(temps: set[int]) -> list[G.Stmt]:
     return [G.Release(G.Temp(n)) for n in sorted(temps, reverse=True)]
 
 
+def _push_order(s: G.Stmt) -> list[G.Atom]:
+    """A statement's operands in the order CPython pushes them. It is the field order, except for
+    the stores, whose value is pushed first: `o[k] = v` and `o[k] += v` both reach STORE_SUBSCR
+    with (value, container, key) and drop key, container, value; STORE_ATTR drops owner, value
+    (review 2026-11-02, G7 2.8 and 2.9)."""
+    match s:
+        case G.Let(_, op) | G.Do(op):
+            if isinstance(op, G.SetItem):
+                return [op.value, op.obj, op.key]
+            if isinstance(op, G.SetAttr):
+                return [op.value, op.obj]
+            return list(_operands(op))
+        case G.Unpack(_, value, _):
+            return [value]
+        case G.Store(_, v) | G.Return(v):
+            return [v]
+        case G.Raise(exc, cause, _):
+            return [a for a in (exc, cause) if a is not None]
+    return []
+
+
+def _ordered_releases(s: G.Stmt, dying: set[int]) -> list[G.Stmt]:
+    """What dies at a statement: its operands, last pushed first (an instruction drops its inputs
+    in that order), then what it made and nothing uses (released after the inputs, as POP_TOP
+    drops a result the instruction pushed after dropping them)."""
+    order: list[int] = []
+    for a in reversed(_push_order(s)):
+        if isinstance(a, G.Temp) and a.n in dying and a.n not in order:
+            order.append(a.n)
+    order += sorted(dying - set(order), reverse=True)
+    return [G.Release(G.Temp(n)) for n in order]
+
+
+def _max_temp(body: tuple[G.Stmt, ...]) -> int:
+    top = 0
+    for st in body:
+        if isinstance(st, G.Let):
+            top = max(top, st.t.n)
+        elif isinstance(st, G.Unpack):
+            top = max([top, *(t.n for t in st.targets)])
+        for name in ("body", "orelse", "finalbody"):
+            top = max(top, _max_temp(getattr(st, name, ())))
+        if isinstance(st, G.Try):
+            for h in st.handlers:
+                top = max(top, _max_temp(h.match), _max_temp(h.body))
+    return top
+
+
 class _Pass:
-    def __init__(self) -> None:
+    def __init__(self, first_free: int = 1 << 30) -> None:
         self.holds_all: set[int] = set()
+        self.next_temp = first_free
 
     def block(self, body: tuple[G.Stmt, ...], live_out: frozenset[int], ctx: _Ctx) -> tuple[tuple[G.Stmt, ...], frozenset[int]]:
         out: list[G.Stmt] = []
@@ -141,16 +190,21 @@ class _Pass:
                     exc_live |= in_m
                 b, in_body = self.block(body, in_or | exc_live, ctx)
                 return [G.Try(b, tuple(new_handlers), o, fin)], in_body | exc_live
+        if isinstance(s, G.Do) and not isinstance(s.op, G.OPS_WITHOUT_RESULT):
+            # a result the program drops dies after the operation's inputs (POP_TOP comes after
+            # the instruction dropped them): the result becomes a temporary released last
+            s = G.Let(G.Temp(self.next_temp), s.op)
+            self.next_temp += 1
         used, consumed, defined = _uses(s)
         live_before = (live_after - defined) | used
         dying = (used | defined) - live_after - consumed - self.holds_all
         if isinstance(s, G.Let) and isinstance(s.op, G.MakeFunction):
             s = replace(s, op=replace(s.op, code=lifetimes_code(s.op.code)))
-        return [s, *_releases(dying)], frozenset(live_before)
+        return [s, *_ordered_releases(s, dying)], frozenset(live_before)
 
 
 def lifetimes_code(code: G.Code) -> G.Code:
-    body, _ = _Pass().block(code.body, frozenset(), _Ctx())
+    body, _ = _Pass(_max_temp(code.body) + 1).block(code.body, frozenset(), _Ctx())
     return replace(code, body=body)
 
 

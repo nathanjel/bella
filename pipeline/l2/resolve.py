@@ -4,12 +4,14 @@ For every scope of an L1 module (the module body, each function, lambda and clas
 computes what CPython's compiler computes: each name's scope (LOCAL, CELL, FREE,
 GLOBAL_EXPLICIT, GLOBAL_IMPLICIT), the implicit `__class__` and `__classdict__` cells of a class
 body, and the slot tables of the code object in CPython's order: `co_varnames` (parameters, then
-the other locals in order of first appearance), `co_cellvars` (sorted, then the implicit class
-cells), `co_freevars` (sorted). `NameRef`s are then read off with `Scopes.ref`.
+the other locals in the order the code generator first emits a load, store or delete of them;
+an annotation alone makes a name local without a slot), `co_cellvars` (sorted, then the implicit
+class cells), `co_freevars` (sorted). `NameRef`s are then read off with `Scopes.ref`.
 
-The frontend's synthetic names (comparison temporaries, decorator values, comprehension helpers)
-are hidden locals of the scope that binds them, in a module or class body too, so that they never
-reach a namespace the program can see (eval1 keeps them apart the same way).
+The frontend's synthetic names (decorator values, a match statement's subject, comprehension
+helpers, ...) are hidden locals of the scope that binds them, in a module or class body too, so
+that they never reach a namespace the program can see (eval1 keeps them apart the same way). A
+chained comparison's `_cmp` names are not variables at all: `to-anf` makes them temporaries.
 """
 from __future__ import annotations
 
@@ -157,8 +159,9 @@ class _Collector:
                 self.block(body, s)
                 self.block(orelse, s)
             case L.Declare(names=names):
-                for n in names:
-                    s.bind(n)
+                # `x: T` makes x local, but the code generator emits nothing for it: the slot is
+                # taken at the first load, store or delete (an annotated-only local has none)
+                s.bound.update(names)
             case L.Raise(exc=exc, cause=cause):
                 if exc is not None:
                     self.expr(exc, s)
@@ -212,7 +215,7 @@ class _Collector:
     def expr(self, e: L.Expr, s: Scope) -> None:
         match e:
             case L.Name(id=name):
-                if name != "__bind__":
+                if name != "__bind__" and not expression_temporary(name, s.synthetic):
                     s.see(name)
                 if name == "super" and s.function_like:
                     s.see("__class__")         # symtable: a function loading `super` uses __class__
@@ -228,10 +231,24 @@ class _Collector:
                 return
             case L.Call(func=L.Name(id="__bind__"), args=(L.Const(value=str() as name), value)):
                 self.expr(value, s)
-                s.bind(name)                   # the chained-comparison walrus
+                if not expression_temporary(name, s.synthetic):
+                    s.bind(name)               # a walrus the program wrote is a real binding
                 return
         for child in _children(e):
             self.expr(child, s)
+
+
+def expression_temporary(name: str, synthetic: frozenset[str]) -> bool:
+    """A chained comparison's middle operand (`_cmp*`): a stack value in CPython, a temporary
+    in L2, never a variable (review 2026-11-02, A8-4)."""
+    return name in synthetic and name.startswith("_cmp")
+
+
+def moved_on_use(name: str, synthetic: frozenset[str]) -> bool:
+    """A decorator's value (`_dec*`), evaluated before the definition and loaded exactly once,
+    where it is applied: the load moves it into a temporary, so it dies after its call as the
+    stack value does in CPython (review 2026-11-02, G7 2.3)."""
+    return name in synthetic and name.startswith("_dec")
 
 
 def _param_order(params: tuple[L.Param, ...]) -> list[str]:
@@ -261,7 +278,9 @@ def _analyze(s: Scope, bound: set[str] | None, class_entry: Scope | None) -> set
     """Decides every name of `s` and its children; returns the names free in `s`."""
     local: set[str] = set()
     free: set[str] = set()
-    names = list(s.order)
+    # every name the scope uses, then the ones it only declares (`x: T` alone): those are
+    # classified too, since a nested function may capture them, but get no slot
+    names = list(s.order) + sorted(n for n in s.bound if n not in s.order)
     for name in names:
         if name in s.synthetic and name in s.bound:
             s.scopes[name] = LOCAL         # a hidden local, in any kind of scope
@@ -299,6 +318,9 @@ def _analyze(s: Scope, bound: set[str] | None, class_entry: Scope | None) -> set
             newbound |= {n for n in local if n in s.synthetic}
         if bound is not None:
             newbound |= bound
+    # analyze_name discards a name declared global from the bound set: an enclosing function's
+    # binding of it is invisible below this scope (review 2026-11-02, A8-6)
+    newbound -= {n for n, sc in s.scopes.items() if sc == GLOBAL_EXPLICIT}
     allfree: set[str] = set()
     for child in s.children:
         entry = s if (child.can_see_class and s.kind == "class") else None
@@ -340,7 +362,7 @@ def _slots(s: Scope, class_free: set[str]) -> None:
     # parameters that are cells first, in parameter order, then the other cells sorted
     # (co_cellvars lists the localsplus entries marked CO_FAST_CELL)
     cells = [n for n in params if s.scopes.get(n) == CELL]
-    cells += sorted(n for n in s.order if s.scopes.get(n) == CELL and n not in params)
+    cells += sorted(n for n, sc in s.scopes.items() if sc == CELL and n not in params)
     if s.kind == "class":
         if s.needs_class_cell:
             cells.append("__class__")

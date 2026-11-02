@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import contextlib
 import gc
 import operator
 import string.templatelib as templatelib
@@ -46,7 +47,11 @@ _INPLACE: dict[str, Callable[[Any, Any], Any]] = {"+": operator.iadd, "-": opera
             ">>": operator.irshift, "&": operator.iand, "|": operator.ior, "^": operator.ixor, "@": operator.imatmul}
 _CMP = {"<": "<", "<=": "<=", "==": "==", "!=": "!=", ">": ">", ">=": ">=", "in": "in", "not-in": "not in",
         "is": "is", "is-not": "is not"}
-_HOST_STATE_NAMES = ("locals", "vars", "dir", "globals", "eval", "exec", "compile")
+# the builtins that read or run in the calling frame: recognised by identity at every call, however
+# the program reached them (review 2026-11-02, A8-7); globals() needs nothing, the generated
+# functions' globals being the module's own
+_HOST_STATE = (builtins.locals, builtins.vars, builtins.dir, builtins.eval, builtins.exec, builtins.compile)
+_IMPLEMENTATION = frozenset({__file__, E1.__file__})
 
 
 class SlotMismatch(AssertionError):
@@ -213,12 +218,8 @@ class _Runtime:
         own variables (PEP 667: a fresh dict in a function), never the translation's."""
         if fn in (builtins.eval, builtins.exec, builtins.compile):
             return self.interp.staged_call(fn, args, kwargs, sys._getframe(1), ns, frame_locals, hidden)
-        if args or kwargs or fn not in (builtins.locals, builtins.vars, builtins.dir, builtins.globals):
-            if fn in (builtins.globals, builtins.locals) and (args or kwargs):
-                raise TypeError(f"{fn.__name__}() takes no arguments")
-            return fn(*args, **kwargs)
-        if fn is builtins.globals:
-            return self.G
+        if args or kwargs:
+            return fn(*args, **kwargs)          # vars(obj), dir(obj), locals(x): the builtin's own result or error
         if ns is not None:
             return sorted(ns.keys()) if fn is builtins.dir else ns
         snapshot = {k: v for k, v in frame_locals.items() if not k.startswith(RESERVED) and k not in hidden}
@@ -252,6 +253,35 @@ class _Runtime:
                     continue            # the audit's own handle
                 raise AuditError(f"{fr.f_code.co_qualname}: the translation's {name} still holds "
                                  f"{type(obj).__name__} after its release")
+
+    @staticmethod
+    def strip(exc: BaseException) -> None:
+        """CPython's instructions keep no frame: an operation that fails releases its operands
+        before any handler runs. The helpers the translation calls do have frames, and a
+        traceback would keep their arguments alive, so where generated code catches an exception
+        their entries are unlinked from it, and from the exceptions it chains, and their frames
+        cleared (review 2026-11-02, A8-2)."""
+        seen: set[int] = set()
+        todo: list[BaseException | None] = [exc]
+        while todo:
+            e = todo.pop()
+            if e is None or id(e) in seen:
+                continue
+            seen.add(id(e))
+            prev, tb = None, e.__traceback__
+            while tb is not None:
+                nxt = tb.tb_next
+                if tb.tb_frame.f_code.co_filename in _IMPLEMENTATION:
+                    if prev is None:
+                        e.__traceback__ = nxt
+                    else:
+                        prev.tb_next = nxt
+                    with contextlib.suppress(RuntimeError):     # a frame still running is not ours to clear
+                        tb.tb_frame.clear()
+                else:
+                    prev = tb
+                tb = nxt
+            todo += [e.__context__, e.__cause__]
 
     @staticmethod
     def call_args_tuple(value: Any) -> builtins.tuple[Any, ...]:
@@ -378,15 +408,10 @@ class _Translator:
                 return f"{R}.next({a(it)})"
             case G.Call(f, args, kw):
                 parts = [*map(a, args), *(f"{k}={a(v)}" for k, v in kw)]
-                src = sources.get(f.n) if isinstance(f, G.Temp) else None
-                if isinstance(src, G.Load) and src.ref.id in _HOST_STATE_NAMES and src.ref.kind != "local":
-                    # locals(), vars(), dir(): the frame's variables, never the translation's
-                    ns = f"{RESERVED}ns" if code.kind in ("module", "classbody") else "None"
-                    hidden = a(G.Const(_hidden(code)))
-                    return f"{R}.host_state({', '.join([a(f), ns, f'{RESERVED}locals_()', hidden, *parts])})"
-                return f"{a(f)}({', '.join(parts)})"
+                return self.call(a(f), parts, code)
             case G.CallEx(f, args, kwargs):
-                return f"{a(f)}(*{a(args)})" if kwargs is None else f"{a(f)}(*{a(args)}, **{a(kwargs)})"
+                parts = [f"*{a(args)}"] + ([] if kwargs is None else [f"**{a(kwargs)}"])
+                return self.call(a(f), parts, code)
             case G.Runtime(name, args, kw):
                 ns = f"{RESERVED}ns" if code.kind in ("module", "classbody") else "None"
                 parts = [repr(name), ns, *map(a, args), *(f"{k}={a(v)}" for k, v in kw)]
@@ -420,6 +445,15 @@ class _Translator:
             case G.YieldFrom(x):
                 return f"(yield from {a(x)})"
         raise Unsupported(f"eval2: operation {type(o).__name__}")
+
+    def call(self, f: str, parts: list[str], code: G.Code) -> str:
+        """A call; locals(), vars(), dir() and the staged eval, exec and compile are recognised by
+        identity, so that they see the frame's own variables, never the translation's."""
+        ns = f"{RESERVED}ns" if code.kind in ("module", "classbody") else "None"
+        hidden = self.atom(G.Const(_hidden(code)))
+        special = " or ".join(f"{f} is {RESERVED}h{i}" for i in range(len(_HOST_STATE)))
+        state = f"{RESERVED}R.host_state({', '.join([f, ns, f'{RESERVED}locals_()', hidden, *parts])})"
+        return f"({state} if ({special}) else {f}({', '.join(parts)}))"
 
     # code objects ------------------------------------------------------------------------------
 
@@ -465,8 +499,14 @@ class _Translator:
         self.block(code.body, code, body_indent + 1, first, sources)
         if not code.body:
             self.out.add(body_indent + 1, "pass", first)
-        self.out.add(body_indent, "except BaseException:", first)
+        self.out.add(body_indent, f"except {RESERVED}BE as {RESERVED}u:", first)
+        self.out.add(body_indent + 1, f"{RESERVED}R.strip({RESERVED}u)", first)
         self.unwind(temps, body_indent + 1, first)
+        # a generator expression's iterator is a real frame's argument in CPython too; the other
+        # helpers' (PEP 709 inlines list, set and dict comprehensions) are stack values
+        arguments: set[str] = set() if code.kind == "generator" else {p.name for p in code.params}
+        hidden = _hidden(code)
+        self.unwind_synthetic((_synthetic_stored(code.body, hidden) | arguments) & hidden, body_indent + 1, first)
         self.out.add(body_indent + 1, "raise", first)
         return name
 
@@ -495,6 +535,15 @@ class _Translator:
         """The exception edge: the region's temporaries die newest first."""
         if temps:
             self.out.add(indent, " = ".join(f"{RESERVED}t{n}" for n in reversed(temps)) + " = None", line)
+
+    def unwind_synthetic(self, names: set[str], indent: int, line: int) -> None:
+        """Then the frontend's synthetic variables the region stored: values CPython keeps on its
+        stack (a match subject and its pattern's intermediates, decorators, a `with` statement's
+        manager, a chained assignment's value, an inlined comprehension's iterator and result),
+        so they die during unwinding as well, newest first: a construct's names are numbered as
+        they are made, after those of the constructs inside it (review 2026-11-02, RL-186)."""
+        for n in sorted(names, key=_creation, reverse=True):
+            self.out.add(indent, f"{n} = None", line)
 
     # statements --------------------------------------------------------------------------------
 
@@ -593,7 +642,13 @@ class _Translator:
                     add(indent, f"{loop_flag} = True", line)
                 add(indent, "break", line)
             case G.Return(v):
-                add(indent, f"return {a(v)}", line)
+                if isinstance(v, G.Temp):
+                    # Return consumes its value: a `finally` that runs on the way out cannot use it
+                    add(indent, f"{RESERVED}ret = {a(v)}", line)
+                    add(indent, f"del {a(v)}", line)
+                    add(indent, f"return {RESERVED}ret", line)
+                else:
+                    add(indent, f"return {a(v)}", line)
             case G.Raise(exc, cause, has_cause):
                 if exc is None:
                     add(indent, "raise", line)
@@ -611,18 +666,22 @@ class _Translator:
              loop_flag: str | None) -> int:
         add = self.out.add
         temps = sorted(_assigned(s.body))
+        synthetic = _synthetic_stored(s.body, _hidden(code))
         add(indent, "try:", line)
-        if temps:
+        if temps or synthetic:
             add(indent + 1, "try:", line)
             self.block(s.body, code, indent + 2, line, sources, loop_flag)
-            add(indent + 1, "except BaseException:", line)
+            add(indent + 1, f"except {RESERVED}BE as {RESERVED}u:", line)
+            add(indent + 2, f"{RESERVED}R.strip({RESERVED}u)", line)
             self.unwind(temps, indent + 2, line)
+            self.unwind_synthetic(synthetic, indent + 2, line)
             add(indent + 2, "raise", line)
         else:
             self.block(s.body, code, indent + 1, line, sources, loop_flag)
         if s.handlers:
             exc = self.fresh("x")
-            add(indent, f"except BaseException as {exc}:", line)
+            add(indent, f"except {RESERVED}BE as {exc}:", line)
+            add(indent + 1, f"{RESERVED}R.strip({exc})", line)
             inner = indent + 1
             for h in s.handlers:
                 # a clause's type is evaluated only when the clauses before it did not match
@@ -665,6 +724,26 @@ def _hidden(code: G.Code) -> frozenset[str]:
     """The frontend's synthetic locals of a code object: never in what locals() shows."""
     hidden = dict(code.meta).get("hidden", frozenset())
     return frozenset(n for n in hidden if isinstance(n, str)) if isinstance(hidden, frozenset) else frozenset()
+
+
+def _synthetic_stored(body: tuple[G.Stmt, ...], hidden: frozenset[str]) -> set[str]:
+    """The synthetic variables a region stores, nested regions included (not nested code objects)."""
+    out: set[str] = set()
+    for s in body:
+        if isinstance(s, G.Store) and s.ref.id in hidden:
+            out.add(s.ref.id)
+        for name in ("body", "orelse", "finalbody"):
+            out |= _synthetic_stored(getattr(s, name, ()), hidden)
+        if isinstance(s, G.Try):
+            for h in s.handlers:
+                out |= _synthetic_stored(h.match, hidden) | _synthetic_stored(h.body, hidden)
+    return out
+
+
+def _creation(name: str) -> int:
+    """A synthetic name's number: the order the frontend made it in."""
+    digits = len(name) - len(name.rstrip("0123456789"))
+    return int(name[-digits:]) if digits else -1
 
 
 def _assigned(body: tuple[G.Stmt, ...]) -> set[int]:
@@ -732,7 +811,8 @@ def _check_slots(code: types.CodeType, codes: dict[str, G.Code], unchecked: froz
 def compile_module(m: G.Module, refused: dict[str, str] | None = None, audit: bool = False) -> tuple[_Compiled, str]:
     tr = _Translator(refused, audit)
     fname = tr.function(m.code, 1, 1)
-    tr.out.lines.insert(0, f"def {RESERVED}factory({RESERVED}R, {RESERVED}codes, {RESERVED}END, {RESERVED}locals_, {RESERVED}K):")
+    tr.out.lines.insert(0, f"def {RESERVED}factory({RESERVED}R, {RESERVED}codes, {RESERVED}END, {RESERVED}locals_, {RESERVED}K, "
+                           f"{RESERVED}BE, {', '.join(f'{RESERVED}h{i}' for i in range(len(_HOST_STATE)))}):")
     tr.out.linemap.insert(0, 1)
     tr.out.add(1, f"return {fname}", 1)
     source = "\n".join(tr.out.lines) + "\n"
@@ -816,7 +896,7 @@ class Interpreter:
         compiled = hit[1]
         rt = _Runtime(self, g)
         factory = types.FunctionType(compiled.factory, g, f"{RESERVED}factory")
-        body = factory(rt, compiled.codes, END, _caller_locals, compiled.consts)
+        body = factory(rt, compiled.codes, END, _caller_locals, compiled.consts, builtins.BaseException, *_HOST_STATE)
         return body(ns)
 
     # staged texts (decision S-1..S-5, pipeline/l1/staged.py) ----------------------------------------

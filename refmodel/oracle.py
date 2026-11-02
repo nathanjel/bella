@@ -148,8 +148,8 @@ class World:
         A, RA = self.classes[0]
         if variant == 0:
             class R0:
-                __slots__ = ("k", "x")
-            return RefClass("R0", slots=("k", "x")), R0
+                __slots__ = ("x", "k")                  # unsorted: CPython releases k first (A8-10)
+            return RefClass("R0", slots=("x", "k")), R0
         if variant == 1:
             class R1:
                 __slots__ = ("x",)

@@ -352,7 +352,7 @@ def test_with_desugaring_binds_through_the_descriptor_protocol() -> None:
     ast.fix_missing_locations(tree)
     desugared, original = io.StringIO(), io.StringIO()
     # the desugaring calls intrinsics, names no source can spell; bind them to the builtins
-    env: dict[str, Any] = {"bella:special": special_lookup, "bella:type": type}
+    env: dict[str, Any] = {"bella:special": special_lookup, "bella:type": type, "bella:BaseException": BaseException}
     with contextlib.redirect_stdout(desugared):
         exec(compile(tree, "<desugared>", "exec", dont_inherit=True), env)  # noqa: S102 -- the desugaring under test
     with contextlib.redirect_stdout(original):

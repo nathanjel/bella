@@ -302,7 +302,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
        * Done 2026-11-02 (`pipeline/l2/`, `docs/l2.md` section 7): the grammar, `wf2`, the printer,
          resolve-names (checked against CPython's code objects), `to-anf` with protocol-ops,
          `lifetimes`, and `eval2` as a translation to host functions with the explicit unwinding.
-         `make eval2-corpus`: 62 of 75, every `eval1` case and the lifetime cases.
+         `make eval2-corpus`: 63 of 76, every `eval1` case and the lifetime cases.
        * Done 2026-11-02: the easy three under eval2 with their whole closures (`make
          targets-eval2`, in `make check` and CI): every closure module lowered to L2 and compiled
          before the program starts, the staged texts replayed by the calling code's site.
@@ -310,6 +310,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          probes (`pipeline/tests/test_l2_probes.py`: 31 kinds of release point, at module level
          and in a function, all equal to CPython and clean under the audit). They found the `with`
          desugaring keeping its manager alive until the frame ended (fixed in the frontend).
+       * Reviewed 2026-11-02 (astra-low-08, gemini-4-argon-high-07; review log RL-169 to
+         RL-187, `pipeline/tests/test_review_2026_11_02b.py`): 19 fixes, among them the header's
+         borrowed hook (a use-after-free), slots at the first emitted use, the frontend's
+         synthetic variables dying where CPython's stack values do, on every path, and helper
+         frames out of tracebacks. **Open:** when a list, set or dict comprehension raises,
+         CPython drops its iterator and then its partial result; `eval2` drops the result first,
+         because the caller's operand holds the iterator while the helper unwinds. The emitter
+         moves the iterator into the helper; `eval2` needs a fused call to do the same (RL-186).
     2. Lifetimes in the model and `object.hpp` from it (task 3); independent of 1.
     3. The runtime types and the emitter: task 3's done-when (C-3-01..12 under the compiled
        runner) first, then gate 1a.1.

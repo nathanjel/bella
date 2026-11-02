@@ -14,7 +14,7 @@
 //  * Inline caches: up to N immutable entries per site keyed by version and name; each kind has
 //    its validity check; an entry's `found` is BORROWED (RL-20).
 //  * Lifetimes (C-9-08): counted objects and dicts; an object dies at zero with CPython 3.15.2's
-//    order: finaliser, __slots__ (most-derived class first), then the instance attributes in the
+//    order: finaliser, __slots__ (most-derived class first, each class's sorted), then the instance attributes in the
 //    class's shared-keys order (sorted __static_attributes__, then first store or attempted
 //    delete by any instance); a split dict releases in key order, an ordinary one in insertion
 //    order. A store keeps the new value before it releases the old one; a class mutation takes a
@@ -586,18 +586,26 @@ inline std::optional<LookupPlan> plan_cached(Instance* obj, const Str* name, con
     }
 }
 
-// Execution: the only place user code runs. Returns a new reference.
+// Execution: the only place user code runs. Returns a new reference. The plan's objects are owned
+// while user code runs, as CPython's lookups take strong references (_PyType_LookupRef): the
+// __getattr__ hook from the lookup until the operation ends; a descriptor, and its __get__, while
+// __get__ runs (released as it returns or raises, before the hook is tried). Cache entries stay
+// borrowed: these are the operation's own references (review 2026-11-02, A8-1).
 inline Ref execute(const LookupPlan& plan, Instance* obj, const Str* name) {
+    Ref hook = Ref::share(plan.hook);
     try {
         switch (plan.kind) {
             case Plan::Raise:
                 throw AttributeError(name->text);
-            case Plan::GetAttrHook:
-                return Ref::steal(call(plan.found, {Obj::of(obj), Obj::of(name)}));
+            case Plan::GetAttrHook: {
+                Ref fn = Ref::share(plan.found);
+                return Ref::steal(call(fn.get(), {Obj::of(obj), Obj::of(name)}));
+            }
             case Plan::DataDescriptor:
             case Plan::NonDataDescriptor: {
-                Obj get = plan.found.object()->cls->lookup(intern("__get__"))->first;
-                return Ref::steal(call(get, {plan.found, Obj::of(obj), Obj::of(obj->cls)}));
+                Ref desc = Ref::share(plan.found);
+                Ref get = Ref::share(plan.found.object()->cls->lookup(intern("__get__"))->first);
+                return Ref::steal(call(get.get(), {desc.get(), Obj::of(obj), Obj::of(obj->cls)}));
             }
             case Plan::Slot:
                 if (plan.value.is_unset()) throw AttributeError(name->text);
@@ -606,8 +614,8 @@ inline Ref execute(const LookupPlan& plan, Instance* obj, const Str* name) {
                 return Ref::share(plan.value);
         }
     } catch (const AttributeError&) {
-        if (plan.hook.is_unset()) throw;
-        return Ref::steal(call(plan.hook, {Obj::of(obj), Obj::of(name)}));
+        if (hook.get().is_unset()) throw;
+        return Ref::steal(call(hook.get(), {Obj::of(obj), Obj::of(name)}));
     }
 }
 
@@ -645,7 +653,9 @@ inline void setattr(Instance* obj, const Str* name, Obj value) {
         if (is_data_descriptor(found)) {
             auto setter = found.object()->cls->lookup(intern("__set__"));
             if (!setter) throw AttributeError("__set__");            // a data descriptor with only __delete__
-            decref(call(setter->first, {found, Obj::of(obj), value}));
+            Ref desc = Ref::share(found);                            // owned while __set__ runs
+            Ref fn = Ref::share(setter->first);
+            decref(call(fn.get(), {desc.get(), Obj::of(obj), value}));
             return;
         }
     }
@@ -697,7 +707,9 @@ inline void delattr(Instance* obj, const Str* name) {
         if (is_data_descriptor(found)) {
             auto deleter = found.object()->cls->lookup(intern("__delete__"));
             if (!deleter) throw AttributeError("__delete__");
-            decref(call(deleter->first, {found, Obj::of(obj)}));
+            Ref desc = Ref::share(found);                            // owned while __delete__ runs
+            Ref fn = Ref::share(deleter->first);
+            decref(call(fn.get(), {desc.get(), Obj::of(obj)}));
             return;
         }
     }
@@ -810,7 +822,7 @@ inline void empty_graveyard() {
 }
 
 // subtype_dealloc's order: the finaliser, the __slots__ of the most-derived class first (each
-// class's in declaration order), then the __dict__-backed values in the class's shared-keys
+// class's sorted by name, as type_new stores them), then the __dict__-backed values in the class's shared-keys
 // order, or the dict's release once it is an object of its own.
 inline void dealloc(Object* o) {
     switch (o->kind) {
@@ -818,15 +830,21 @@ inline void dealloc(Object* o) {
             auto* obj = static_cast<Instance*>(o);
             if (auto fin = obj->cls->lookup(intern("__del__"))) {
                 obj->refs = 1;                          // held by the finaliser's call, so it cannot die again
-                decref(call(fin->first, {Obj::of(obj)}));
+                Ref fn = Ref::share(fin->first);
+                decref(call(fn.get(), {Obj::of(obj)}));
+                fn = Ref{};
                 if (obj->refs != 1) throw ModelError("resurrection by a finaliser is not modelled yet");
                 obj->refs = 0;
             }
             obj->flags |= DEAD;
             if (heap().on_death) heap().on_death(obj);
             if (heap().checking) detail::check_not_named(obj);
-            for (ClassObject* c : obj->cls->mro)
-                for (const Str* s : c->own_slot_names()) decref(std::exchange(obj->field(s), Obj{}));
+            for (ClassObject* c : obj->cls->mro) {
+                // each class's slots sorted by name, as CPython sorts them when it makes the class
+                auto names = c->own_slot_names();
+                std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
+                for (const Str* s : names) decref(std::exchange(obj->field(s), Obj{}));
+            }
             if (obj->exposed()) {
                 DictObject* d = std::exchange(obj->dict, nullptr);
                 decref(d);

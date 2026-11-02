@@ -5,8 +5,8 @@
 """When an object's attribute values die, and in what order (measured on CPython 3.15.2).
 
 A rebound attribute's old value dies at the rebinding, a deleted one at the `del`. When the
-object dies, its __slots__ go first (the most-derived class's, then its bases', each in
-declaration order), then its instance attributes in the order of the class's shared keys: the
+object dies, its __slots__ go first (the most-derived class's, then its bases', each sorted
+by name, as CPython stores them when it makes the class), then its instance attributes in the order of the class's shared keys: the
 sorted names its methods assign (__static_attributes__), then each name in the order any
 instance first stored or tried to delete it, which is not the dying instance's own assignment
 order. A dict made by
@@ -120,6 +120,21 @@ s.r = Tag("r")
 s.p = Tag("p")
 del s
 show("derived slots, base slots, then the dict")
+
+
+class Unsorted:
+    __slots__ = ("zeta", "alpha", "mid")
+    zeta: Tag
+    alpha: Tag
+    mid: Tag
+
+
+u = Unsorted()
+u.zeta = Tag("zeta")
+u.alpha = Tag("alpha")
+u.mid = Tag("mid")
+del u
+show("slots sorted by name, not declared order")
 
 
 class Probe:

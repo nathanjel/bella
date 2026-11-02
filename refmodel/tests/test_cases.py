@@ -419,6 +419,51 @@ def test_slots_die_most_derived_first_then_the_dict_c_9_08() -> None:
     assert _deaths() == ["r", "p", "q", "x"]
 
 
+def test_slots_die_sorted_by_name_not_declared_order_c_9_08() -> None:
+    """CPython sorts a class's __slots__ when it makes the class (review 2026-11-02, A8-10)."""
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    Base = RefClass("Base", slots=("zeta", "alpha"))
+    Unsorted = RefClass("Unsorted", (Base,), slots=("mid", "beta"))
+    u = RefObject(Unsorted)
+    O.incref(u)
+    for name in ("zeta", "alpha", "mid", "beta"):
+        _store(rt, u, name, name)
+    O.decref(u)
+    assert _deaths() == ["beta", "mid", "alpha", "zeta"]
+
+
+def test_a_descriptor_is_owned_while_its_get_runs_a8_1() -> None:
+    """A lookup holds the descriptor it found while __get__ runs: one whose __get__ deletes it
+    from the class is still alive inside __get__, and dies as __get__ fails, before the
+    __getattr__ hook runs (review 2026-11-02, A8-1; measured on 3.15.2,
+    runtime/tests/object_reentrancy.py, which also covers the hook's own lifetime on the header)."""
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    seen: dict[str, list[object]] = {}
+
+    def get(d: object, obj: object, cls: object) -> object:
+        C.del_attr("x")
+        seen["in get, after the delete"] = list(O.HEAP.deaths)
+        raise AttributeError("x")
+
+    def hook(obj: object, name: str) -> object:
+        seen["in the hook"] = list(O.HEAP.deaths)
+        return "from hook"
+
+    C = RefClass("C", attrs={"__getattr__": hook})
+    desc = RefObject(make_descriptor_class("Desc", get), tag="desc")
+    O.incref(desc)
+    C.set_attr("x", desc)
+    O.decref(desc)                                  # only the class holds it now
+    obj = RefObject(C)
+    O.incref(obj)
+    assert rt.getattr(obj, "x", Site()) == "from hook"
+    assert seen == {"in get, after the delete": [], "in the hook": ["desc"]}
+
+
 def test_a_found_object_is_borrowed_and_never_read_dead_rl_20() -> None:
     """A cache entry names its found object without holding it. Replacing the class attribute
     kills the descriptor while the entry still names it; the class took a new version first, so

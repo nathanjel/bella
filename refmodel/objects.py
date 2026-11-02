@@ -29,8 +29,8 @@ What is modelled (design document, section 3, as revised by review rounds two an
 * Lifetimes (task 3, RL-20, RL-49): ``RefObject`` and ``RefDict`` carry reference counts; every
   holder (an instance field, an instance dict, a class attribute, a program variable) owns one,
   and an object dies when its count reaches zero, with CPython's order (measured on 3.15.2):
-  its finaliser, then its ``__slots__`` (the most-derived class's first, each class's in
-  declaration order), then its ``__dict__``-backed values in the *class's* shared-keys order
+  its finaliser, then its ``__slots__`` (the most-derived class's first, each class's sorted by
+  name, as CPython sorts them when it makes the class), then its ``__dict__``-backed values in the *class's* shared-keys order
   (``RefClass.keys``: the sorted ``__static_attributes__``, then each name in the order any
   instance first stored it), or, once the dict is a separate object, the dict's release. A
   dict made by exposure stays split and releases its values in key order; a dict installed by
@@ -356,7 +356,7 @@ class RefObject:
 
     def dealloc(self) -> None:
         """subtype_dealloc's order: the finaliser, the __slots__ of the most-derived class first
-        (each class's in declaration order), then the __dict__-backed values in the class's
+        (each class's sorted by name, as type_new stores them), then the __dict__-backed values in the class's
         shared-keys order, or the dict's release once it is an object of its own."""
         fin = self.cls.lookup("__del__")
         if fin is not None:
@@ -366,7 +366,7 @@ class RefObject:
             self.heap.deaths.append(self.tag)
         self.heap.died(self)
         for c in self.cls.mro:
-            for name in c._own_slot_names():
+            for name in sorted(c._own_slot_names()):     # CPython sorts each class's slots (type_new)
                 v = self.inline.get(name, UNSET)
                 self.inline[name] = UNSET
                 decref(v)
@@ -601,20 +601,35 @@ class Runtime:
 
     # ---- execution: the only place user code runs ---------------------------------------
     def _execute(self, plan: _Plan, obj: RefObject, name: str) -> Any:
+        """The plan's objects are owned while user code runs, as CPython's lookups take strong
+        references (_PyType_LookupRef): the __getattr__ hook from the lookup until the operation
+        ends, a descriptor while its __get__ runs (released as it returns or raises, before the
+        hook is tried). Cache entries stay borrowed; these are the operation's own references
+        (review 2026-11-02, A8-1; the order measured on 3.15.2)."""
+        hook = plan.hook
+        incref(hook)
         try:
-            if plan.kind == _RAISE:
-                raise AttributeError(name)
-            if plan.kind == GETATTR_HOOK:
-                return plan.found(obj, name)
-            if plan.kind in (DATA_DESCRIPTOR, NON_DATA_DESCRIPTOR):
-                return self._call_get(plan.found, obj)
-            if plan.kind == SLOT and plan.value is UNSET:
-                raise AttributeError(name)
-            return plan.value
-        except AttributeError:
-            if plan.hook is None:
-                raise
-            return plan.hook(obj, name)
+            try:
+                if plan.kind == _RAISE:
+                    raise AttributeError(name)
+                if plan.kind == GETATTR_HOOK:
+                    return plan.found(obj, name)
+                if plan.kind in (DATA_DESCRIPTOR, NON_DATA_DESCRIPTOR):
+                    found = plan.found
+                    incref(found)
+                    try:
+                        return self._call_get(found, obj)
+                    finally:
+                        decref(found)
+                if plan.kind == SLOT and plan.value is UNSET:
+                    raise AttributeError(name)
+                return plan.value
+            except AttributeError:
+                if hook is None:
+                    raise
+                return hook(obj, name)
+        finally:
+            decref(hook)
 
     # ---- public operations ---------------------------------------------------------------
     def getattr(self, obj: RefObject, name: str, site: Site | None = None) -> Any:

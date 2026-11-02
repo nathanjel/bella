@@ -7,11 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-02:** 168 findings from thirteen reviews: 132 fixed (most in commit
+**Status on 2026-11-02:** 187 findings from fifteen reviews: 151 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
-the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews), 21 already done before or
+the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
+the L2 and lifetimes reviews), 21 already done before or
 because of the review, 4 planned (D-2 and D-10, accepted by the author), 2 deferred, 4 refuted
 and 5 checked with no issue. Nothing is open: the
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
@@ -20,6 +21,8 @@ author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 
 | Date | Reviewer | File | Scope | Ran against |
 | --- | --- | --- | --- | --- |
+| 2026-11-02 | astra-low (A8) | [2026-11-02-astra-low-08-l2-lifetime-review.md](2026-11-02-astra-low-08-l2-lifetime-review.md) | the L2 leg, lifetimes in the model and `object.hpp`, `58bb34b..d28b256` | CPython 3.15.2, GCC 16.2.1 |
+| 2026-11-02 | gemini-4-argon-high (G7) | [2026-11-02-07-gemini-4-argon-high-l2-lifetimes-review.md](2026-11-02-07-gemini-4-argon-high-l2-lifetimes-review.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-02 | astra-low (A7) | [2026-11-02-astra-low-07-eval1-semantics-review.md](2026-11-02-astra-low-07-eval1-semantics-review.md) | Gate 0 task 4 steps A1 to B and P-1 to P-3, `3d4e428..58bb34b` | CPython 3.15.2 |
 | 2026-11-02 | gemini-4-argon-high (G6) | [2026-11-02-06-gemini-4-argon-high-l1-eval1-review.md](2026-11-02-06-gemini-4-argon-high-l1-eval1-review.md) | the same range | CPython 3.15.2 |
 | 2026-11-01 | astra-low (A1) | [2026-11-01-astra-low-01-design-codebase-review.md](2026-11-01-astra-low-01-design-codebase-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
@@ -321,6 +324,42 @@ The review's summary says 74 of 80 cases pass under `eval1`; the baseline was 58
 | RL-167 | G6 2.7.4 | (a) Closure mode did not lower the lock's program modules (the vendored packages) ahead; (b) D-20's modules were blocked after start-up imported | Confirmed by reading; (b) has no effect today, as start-up reaches no blocked module | Fixed | (a) every `program` module of the lock is lowered before the program starts (P-1); (b) blocked first. With RL-144 |
 | RL-168 | Found while fixing RL-137 | Under PEP 563 a class with a method stored `__classdictcell__`, which CPython's does not | Confirmed: measured on 3.15.2 over 28 class bodies | Fixed | Under PEP 563 only a generic definition or a type alias makes the cell; without it any definition or annotation does. Test `test_a_class_namespace_sees_cpythons_stores_with_and_without_pep_563` |
 
+### L2 and lifetimes (A8, G7)
+
+Reproduced on `d28b256` under CPython 3.15.2, `pipeline/l2/run.py` and GCC 16.2.1 (the header
+under ASan). The two reviews overlap on eleven findings, so they share one table. The pipeline's
+probes now run in `pipeline/tests/test_review_2026_11_02b.py`; the model's in
+`refmodel/tests/test_cases.py`, and the header's in `make object-test`
+(`runtime/tests/object_reentrancy.*`). Three statements of G7 are wrong and none is a finding:
+the range has 8 commits, not 15; SEL is the author's own expression language and its `bn` is MIT
+(`docs/DECISIONS.md`, 2026-11-02), not a BSD-3 library of another vendor; and slots are not
+released in reverse declaration order (RL-178). Both reviews' common thread is G7's section 3.1:
+the frontend's synthetic variables stand for values CPython keeps on its stack, and several
+outlived them. Each kind now dies where CPython's stack value does, on the normal path (RL-171,
+RL-172, RL-180, RL-185) and during unwinding (RL-186).
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-169 | A8-1, G7 2.1 | `execute` called the plan's `__getattr__` hook and descriptor as borrowed references; a `__get__` that deletes the hook from the class frees it before it is called | Confirmed: heap-use-after-free under ASan; CPython prints 7 | Fixed | CPython's lookups take strong references (`_PyType_LookupRef`). The model and the header own the hook from the lookup until the operation ends, a descriptor and its `__get__` (`__set__`, `__delete__`) while that runs, and a finaliser while it runs; cache entries stay borrowed (RL-20). Measured on 3.15.2: a descriptor deleted by its own `__get__` dies as `__get__` returns, before the hook runs; a hook deleted while it runs dies after it returns. Test `test_a_descriptor_is_owned_while_its_get_runs_a8_1`; `runtime/tests/object_reentrancy.cpp` prints what `object_reentrancy.py` prints under CPython, without quarantine, under ASan and UBSan, in `make object-test` (the old header fails it with a heap-use-after-free) |
+| RL-170 | A8-2, G7 2.7 | The traceback of a failing operation kept `eval2`'s helper frames and their arguments (`x += O()`, `a, b = [O()]`, `f(*O())`, `f(**O())`) alive until the handler ended | Confirmed: "handler" before "del" | Fixed | Every handler `eval2` generates first unlinks the frames of `eval2.py` and `eval1.py` from the exception's traceback, and from those of the exceptions it chains, and clears them (`_Runtime.strip`): CPython's instructions keep no frame. `docs/l2.md` section 5 claimed this before it was true |
+| RL-171 | A8-3, G7 2.6 | A failing `__enter__`, or a failing target assignment, left the `with` statement's manager, `__exit__` and value in synthetic variables | Confirmed: "del manager" after the handler; the value after `__exit__` | Fixed | The lookup and `__enter__` run inside a handler that drops the manager, `__enter__` and `__exit__`, and the value is dropped before `__exit__` is called when the target fails. The names are set to None instead of deleted, so every path can drop them whether it bound them or not |
+| RL-172 | A8-4, G7 2.2 | A chained comparison's middle operand stayed in a `_cmp` variable until the scope ended, in the module, a function or a class body | Confirmed | Fixed | A `_cmp` name is a stack value: `to-anf` makes it a temporary, and `resolve-names` gives it no slot (`expression_temporary`). Also removes it from `co_varnames` (G7 2.4) |
+| RL-173 | A8-5, G7 2.4 | `resolve-names` gave an annotation-only declaration (`z: int`) its slot at the declaration | Confirmed: `('z', 'a')` where CPython has `('a', 'z')`, so the locals died in the wrong order | Fixed | Measured on 3.15.2: a slot is allocated at the first load, store or delete the code generator emits, dead code included; the annotation alone allocates nothing, yet makes the name local, and it can be a cell. `Declare` binds without a slot; declared-only names are classified after the others |
+| RL-174 | A8-6, G7 2.5 | A function that declares `x` global did not stop an inner function from capturing an enclosing function's `x` | Confirmed: "2" where CPython prints "1" | Fixed | As `symtable.c`'s `analyze_block`: a scope's global declarations are removed from the bindings it passes to its children; checked two levels deep |
+| RL-175 | A8-7, G7 2.12 | `locals()` and `vars()` were recognised by the name they were called through, so an alias (`see = locals`) or `locals(*())` showed `eval2`'s own variables | Confirmed: `True` where CPython prints `False` | Fixed | Every call compares its callee by identity with `locals`, `vars`, `dir`, `eval`, `exec` and `compile` (bound in the factory, so no program binding reaches them; an `is` test, so no `__eq__` runs). `globals()` needs nothing, the generated functions' globals being the module's own. `make targets-eval2` takes 91 s instead of 78 |
+| RL-176 | A8-8, G7 2.13 | The handlers `eval2` generates, and the `with` expansion, named `BaseException`, which a program can rebind | Confirmed: `TypeError: catching classes that do not inherit from BaseException` | Fixed | `eval2` catches through a reserved name bound to the builtin; the frontend's `with` uses the `%BaseException` intrinsic |
+| RL-177 | A8-9, G7 2.11 | A statement after `return`, `raise`, `break` or `continue` failed `wf2` ("unreachable statement") | Confirmed | Fixed | `to-anf` stops a block at the first statement that does not fall through: CPython compiles the rest and drops it; the names in it were resolved with the others, so slot tables are unchanged |
+| RL-178 | A8-10, G7 2.10 | The model and the header released `__slots__` in declaration order | Confirmed. G7's rule ("reverse declaration order") is wrong too: its example is sorted as well as reversed | Fixed | `type_new` sorts a class's slot names (after mangling); measured on 3.15.2 with `('zeta', 'alpha', 'mid')`: `alpha, mid, zeta`. Each class's slots die sorted, the most-derived class's first. C-9-08 gains the case (re-recorded); test `test_slots_die_sorted_by_name_not_declared_order_c_9_08`; the oracle's R0 declares its slots unsorted. `docs/DECISIONS.md` and the docstrings said declaration order; corrected |
+| RL-179 | A8-11, G7 2.14 | `wf2` checked `finally` against the live set at the start of the `try`, so a `finally` could use a temporary a `return` had consumed | Confirmed with a hand-built L2 program | Fixed | The `finally` block is checked from the intersection of the entry set and the live sets of every path that leaves the `try` early (return, raise, and break, continue or a loop's end from a loop inside it). `eval2` translates `Return` as a move (`_l2_ret`), so it no longer masks such a program |
+| RL-180 | G7 2.3 | A decorator's value stayed in a `_dec` variable until the scope ended | Confirmed, for functions and, found while fixing, classes | Fixed | A `_dec` name is loaded once, where the decorator is applied: the load moves it into a temporary (`moved_on_use`), so it dies after its call |
+| RL-181 | G7 2.4 | Synthetic names appear in `co_varnames` | Partly confirmed | Fixed | `_cmp` names no longer have slots (RL-172). The other synthetic variables keep theirs: a representation difference, not an observable one, since `locals()` hides them and none holds a value when its frame ends (RL-185, RL-186). `test_l2_resolve` compares slot tables without them, as before |
+| RL-182 | G7 2.8 | `obj[k] += v` released the key, container and result in the wrong order | Confirmed | Fixed | `lifetimes` releases a statement's operands in the reverse of the order CPython's stack holds them: STORE\_SUBSCR drops the key, the container, then the value, STORE\_ATTR the owner, then the value |
+| RL-183 | G7 2.9 | `obj.a += v` released the owner after the result | Confirmed | Fixed | RL-182 |
+| RL-184 | Found while fixing RL-182 | A discarded call result was released before the call's arguments | Confirmed: CPython prints "del 2, del 1, del result" | Fixed | An operation whose result is discarded gets a temporary, released after its operands (`lifetimes`) |
+| RL-185 | Found while fixing RL-171 | A `match` statement's pattern temporaries (`_items`, `_keys`, `_values`, `_cls`, `_attrs`, `_alt`, `_item`, `_cap`) lived until the scope ended, as the pass's docstring admitted | Confirmed | Fixed | They are set to None, newest first, once a pattern has matched and stored its captures (before the guard), and after the case on the paths where it failed |
+| RL-186 | Found while fixing RL-185 | When an exception left a `match` pattern, a chained assignment's failing first target, a decorator expression or an inlined comprehension, the synthetic variables outlived the handler | Confirmed: CPython drops these stack values during unwinding | Fixed, but for one order | `eval2`'s generated handlers set the synthetic variables a region stored to None after its temporaries, newest first (a construct is numbered after the ones inside it), and a list, set or dict comprehension's helper its iterator argument as well (CPython inlines them, PEP 709; a generator expression's iterator belongs to a real frame and stays). Open: CPython drops such a comprehension's iterator before its partial result; Bella drops it after, because the caller's operand still holds it while the helper unwinds. The emitter can move the iterator into the helper; `TODO.md` task 4 |
+| RL-187 | A8, verification | `make object-test` passed with the use-after-free: the random programs never mutate a class from inside its own callbacks, and the checking mode quarantines dead objects | Confirmed | Fixed | RL-169's test runs without quarantine under ASan and UBSan in `make object-test`. The oracle's R0 now declares unsorted slots, though its programs seldom observe slot deaths; C-9-08 and the model test cover RL-178 |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -493,5 +532,5 @@ conformance case comes first: copying unslotted, slotted and customised user cla
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-169` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-188` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

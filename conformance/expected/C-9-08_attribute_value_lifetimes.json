@@ -6,7 +6,7 @@
  "source": "Gate 0 task 3, lifetimes in the reference model (review log RL-20, RL-49)",
  "recorded_with": "3.15.2",
  "authoritative": true,
- "stdout": "first instance x, y: ['x1', 'y1']\nkey order x, y, z, whatever the instance's own order: ['x2', 'y2', 'z2']\na new key joins the end: ['x3', 'w3']\n__init__ stores b, a: static attributes sorted: ['a', 'b']\nrebinding: ['old']\ndel: ['new']\nvars() kept, owner dies: []\nthen the dict: ['y']\n__dict__ replaced: the old dict's values: ['x', 'y']\nthen the object: insertion order: ['q', 'p']\nshared dict, first owner: []\nlast owner: ['shared']\nderived slots, base slots, then the dict: ['r', 'p', 'q', 'x']\ndel of a missing attribute: AttributeError\na failed del puts y in the keys first: ['y', 'x']\nclass attribute replaced: ['c1']\n",
+ "stdout": "first instance x, y: ['x1', 'y1']\nkey order x, y, z, whatever the instance's own order: ['x2', 'y2', 'z2']\na new key joins the end: ['x3', 'w3']\n__init__ stores b, a: static attributes sorted: ['a', 'b']\nrebinding: ['old']\ndel: ['new']\nvars() kept, owner dies: []\nthen the dict: ['y']\n__dict__ replaced: the old dict's values: ['x', 'y']\nthen the object: insertion order: ['q', 'p']\nshared dict, first owner: []\nlast owner: ['shared']\nderived slots, base slots, then the dict: ['r', 'p', 'q', 'x']\nslots sorted by name, not declared order: ['alpha', 'mid', 'zeta']\ndel of a missing attribute: AttributeError\na failed del puts y in the keys first: ['y', 'x']\nclass attribute replaced: ['c1']\n",
  "stderr": "",
  "exit_code": 0
 }

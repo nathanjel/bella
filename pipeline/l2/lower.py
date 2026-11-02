@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from pipeline.l1 import grammar as L
 from pipeline.l2 import grammar as G
-from pipeline.l2.resolve import Scope, Scopes, resolve
+from pipeline.l2.resolve import Scope, Scopes, expression_temporary, moved_on_use, resolve
 from pipeline.passes.spec import Discharge, Fact, Level, Obligation, PassSpec, register
 
 STACK_USE_GUIDELINE = 30        # _PY_STACK_USE_GUIDELINE (Include/internal/pycore_compile.h)
@@ -40,6 +40,7 @@ class _Code:
         self.n = 0
         self.blocks: list[_Block] = [_Block()]
         self.line = 0
+        self.expression_temps: dict[str, G.Atom] = {}       # chained-comparison operands: temporaries
 
     # ---- emission ------------------------------------------------------------------------------
 
@@ -172,6 +173,10 @@ class _Code:
 
     def block(self, stmts: tuple[L.Stmt, ...]) -> None:
         for st in stmts:
+            if self.out and not _falls_through(self.out):
+                # unreachable: CPython compiles it and drops the code; its names were resolved
+                # with the rest, so only the statements go (review 2026-11-02, A8-9)
+                break
             self.stmt(st)
 
     def stmt(self, st: L.Stmt) -> None:
@@ -313,7 +318,12 @@ class _Code:
             case L.Const(value=value):
                 return G.Const(value)
             case L.Name(id=name):
-                return self.let(G.Load(self.ref(name)))
+                if name in self.expression_temps:
+                    return self.expression_temps[name]
+                t = self.let(G.Load(self.ref(name)))
+                if moved_on_use(name, self.scope.synthetic):
+                    self.emit(G.Delete(self.ref(name, "del")))      # the temporary owns it now
+                return t
             case L.Intrinsic(name=name):
                 return self.intrinsic(name)
             case L.BinOp(op=op, left=left, right=right):
@@ -384,6 +394,9 @@ class _Code:
             name = e.args[0]
             assert isinstance(name, L.Const) and isinstance(name.value, str)
             v = self.expr(e.args[1])
+            if expression_temporary(name.value, self.scope.synthetic):
+                self.expression_temps[name.value] = v       # a stack value: no variable at all
+                return v
             stored = self.let(G.Copy(v))                    # COPY; STORE: the value stays the result
             self.emit(G.Store(self.ref(name.value, "store"), stored))
             return v
