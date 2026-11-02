@@ -395,6 +395,10 @@ class _PrivateNames:
             n.names = [mangle(p, x) for x in n.names]
         elif isinstance(n, ast.ExceptHandler) and n.name:
             n.name = mangle(p, n.name)
+        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name:
+            n.name = mangle(p, n.name)
+        elif isinstance(n, ast.MatchMapping) and n.rest:
+            n.rest = mangle(p, n.rest)
         elif isinstance(n, ast.ImportFrom):
             for a in n.names:
                 a.bella_raw = a.name  # type: ignore[attr-defined]  # the fromlist keeps it unmangled (codegen)
@@ -571,6 +575,226 @@ class _SeveralTargets(ast.NodeTransformer):
 ))
 def desugar_several_targets(tree: ast.Module) -> ast.Module:
     return _as_module(ast.fix_missing_locations(_SeveralTargets().visit(tree)))
+
+
+def _is_wildcard(p: ast.pattern) -> bool:
+    return isinstance(p, ast.MatchAs) and p.pattern is None and p.name is None
+
+
+def _irrefutable(p: ast.pattern) -> bool:
+    if isinstance(p, ast.MatchAs):
+        return p.pattern is None or _irrefutable(p.pattern)
+    if isinstance(p, ast.MatchOr):
+        return any(_irrefutable(alt) for alt in p.patterns)
+    return False
+
+
+def _pattern_names(p: ast.pattern) -> list[str]:
+    """The names a pattern binds, in the order CPython stores them (codegen's pc->stores):
+    depth first, left to right, an `as` name after its pattern, an or-pattern's in its first
+    alternative's order; with its compile-time errors."""
+    out: list[str] = []
+
+    def add(name: str | None, line: int) -> None:
+        if name is None:
+            return
+        if name in out:
+            raise SyntaxError(f"multiple assignments to name {name!r} in pattern (line {line})")
+        out.append(name)
+
+    def walk(q: ast.pattern) -> None:
+        if isinstance(q, ast.MatchAs):
+            if q.pattern is not None:
+                walk(q.pattern)
+            add(q.name, q.lineno)
+        elif isinstance(q, ast.MatchStar):
+            add(q.name, q.lineno)
+        elif isinstance(q, ast.MatchSequence):
+            if sum(isinstance(x, ast.MatchStar) for x in q.patterns) > 1:
+                raise SyntaxError(f"multiple starred names in sequence pattern (line {q.lineno})")
+            for x in q.patterns:
+                walk(x)
+        elif isinstance(q, ast.MatchMapping):
+            seen: list[object] = []
+            for k in q.keys:
+                if isinstance(k, ast.Constant):
+                    if k.value in seen:
+                        raise SyntaxError(f"mapping pattern checks duplicate key ({k.value!r}) (line {q.lineno})")
+                    seen.append(k.value)
+                elif not isinstance(k, ast.Attribute):
+                    raise SyntaxError(f"mapping pattern keys may only match literals and attribute lookups (line {q.lineno})")
+            for x in q.patterns:
+                walk(x)
+            add(q.rest, q.lineno)
+        elif isinstance(q, ast.MatchClass):
+            for x in [*q.patterns, *q.kwd_patterns]:
+                walk(x)
+        elif isinstance(q, ast.MatchOr):
+            first = _pattern_names(q.patterns[0])
+            for i, alt in enumerate(q.patterns):
+                if i < len(q.patterns) - 1 and _irrefutable(alt):
+                    raise SyntaxError(f"wildcard makes remaining patterns unreachable (line {alt.lineno})"
+                                      if not isinstance(alt, ast.MatchAs) or alt.name is None else
+                                      f"name capture {alt.name!r} makes remaining patterns unreachable (line {alt.lineno})")
+                if set(_pattern_names(alt)) != set(first):
+                    raise SyntaxError(f"alternative patterns bind different names (line {q.lineno})")
+            for name in first:
+                add(name, q.lineno)
+    walk(p)
+    return out
+
+
+class _Match(ast.NodeTransformer):
+    """`match`, as CPython 3.15.2's codegen compiles it (Python/codegen.c), in ordinary checks and
+    the helpers of runtime/prelude/match.py (MATCH_SEQUENCE, MATCH_MAPPING, MATCH_KEYS,
+    MATCH_CLASS): the subject once; the cases in order; a pattern's captures stored, in
+    codegen's order, once the whole pattern has matched and before the guard; an or-pattern
+    committed to the first alternative that matches; sequence items unpacked (UNPACK_SEQUENCE
+    or UNPACK_EX), or taken by subscript, len() at each access, when the star is a wildcard;
+    mapping values by the subject's get(); class attributes by __match_args__ and getattr.
+    (Pattern temporaries live until the scope ends, longer than CPython's stack slots: a
+    difference only finalisation timing can see.)"""
+
+    def visit_Match(self, node: ast.Match) -> Any:
+        self.generic_visit(node)
+        subj, done = _tmp("subj"), _tmp("done")
+        out: list[ast.stmt] = [_assign(subj, node.subject), _assign(done, ast.Constant(False))]
+        for i, case in enumerate(node.cases):
+            if i < len(node.cases) - 1 and case.guard is None and _irrefutable(case.pattern):
+                p = case.pattern
+                name = p.name if isinstance(p, ast.MatchAs) and p.pattern is None else None
+                raise SyntaxError(f"name capture {name!r} makes remaining patterns unreachable (line {p.lineno})"
+                                  if name else f"wildcard makes remaining patterns unreachable (line {p.lineno})")
+            names = _pattern_names(case.pattern)
+            self.captures = {n: _tmp("cap") for n in names}
+            success: list[ast.stmt] = [_assign(done, ast.Constant(True)),
+                                       ast.Delete(targets=[ast.Name(id=subj, ctx=ast.Del())]), *case.body]
+            then: list[ast.stmt] = [_assign(n, ast.Name(id=self.captures[n], ctx=ast.Load())) for n in names]
+            then += [ast.If(test=case.guard, body=success, orelse=[])] if case.guard is not None else success
+            out.append(ast.If(test=ast.UnaryOp(op=ast.Not(), operand=ast.Name(id=done, ctx=ast.Load())),
+                              body=self.pattern(case.pattern, ast.Name(id=subj, ctx=ast.Load()), then), orelse=[]))
+        out.append(ast.If(test=ast.UnaryOp(op=ast.Not(), operand=ast.Name(id=done, ctx=ast.Load())),
+                          body=[ast.Delete(targets=[ast.Name(id=subj, ctx=ast.Del())])], orelse=[]))
+        out.append(ast.Delete(targets=[ast.Name(id=done, ctx=ast.Del())]))
+        return [ast.fix_missing_locations(_copy_loc(o, node)) for o in out]
+
+    def capture(self, name: str | None, value: ast.expr) -> list[ast.stmt]:
+        return [] if name is None else [_assign(self.captures[name], value)]
+
+    def pattern(self, p: ast.pattern, subj: ast.expr, then: list[ast.stmt]) -> list[ast.stmt]:
+        if isinstance(p, ast.MatchValue):
+            return [ast.If(test=ast.Compare(left=subj, ops=[ast.Eq()], comparators=[p.value]), body=then, orelse=[])]
+        if isinstance(p, ast.MatchSingleton):
+            return [ast.If(test=ast.Compare(left=subj, ops=[ast.Is()], comparators=[ast.Constant(p.value)]),
+                           body=then, orelse=[])]
+        if isinstance(p, ast.MatchAs):
+            if p.pattern is None:
+                return [*self.capture(p.name, subj), *then]
+            return self.pattern(p.pattern, subj, [*self.capture(p.name, subj), *then])
+        if isinstance(p, ast.MatchOr):
+            ok = _tmp("alt")
+            out: list[ast.stmt] = [_assign(ok, ast.Constant(False))]
+            for i, alt in enumerate(p.patterns):
+                code = self.pattern(alt, subj, [_assign(ok, ast.Constant(True))])
+                out += code if i == 0 else [ast.If(test=ast.UnaryOp(op=ast.Not(), operand=ast.Name(id=ok, ctx=ast.Load())),
+                                                   body=code, orelse=[])]
+            return [*out, ast.If(test=ast.Name(id=ok, ctx=ast.Load()), body=then, orelse=[])]
+        if isinstance(p, ast.MatchSequence):
+            return self.sequence(p, subj, then)
+        if isinstance(p, ast.MatchMapping):
+            return self.mapping(p, subj, then)
+        if isinstance(p, ast.MatchClass):
+            cls, attrs = _tmp("cls"), _tmp("attrs")
+            subs = [*p.patterns, *p.kwd_patterns]
+            inner = self.chain([(sub, _item(attrs, i)) for i, sub in enumerate(subs) if not _is_wildcard(sub)], then)
+            return [_assign(cls, p.cls),
+                    _assign(attrs, _call("match_class", ast.Name(id=cls, ctx=ast.Load()), subj, ast.Constant(len(p.patterns)),
+                                         ast.Constant(tuple(p.kwd_attrs)))),  # type: ignore[arg-type]  # a tuple constant
+                    ast.If(test=_is_not_none(attrs), body=inner, orelse=[])]
+        raise L.Unsupported(f"pattern {type(p).__name__} (line {p.lineno})")
+
+    def chain(self, steps: list[tuple[ast.pattern, ast.expr]], then: list[ast.stmt]) -> list[ast.stmt]:
+        """Each sub-pattern on its value, in order, the next only if the previous matched."""
+        code = then
+        for sub, value in reversed(steps):
+            code = self.pattern(sub, value, code)
+        return code
+
+    def sequence(self, p: ast.MatchSequence, subj: ast.expr, then: list[ast.stmt]) -> list[ast.stmt]:
+        size = len(p.patterns)
+        star = next((i for i, x in enumerate(p.patterns) if isinstance(x, ast.MatchStar)), -1)
+        star_wildcard = star >= 0 and p.patterns[star].name is None  # type: ignore[attr-defined]
+        only_wildcard = all(_is_wildcard(x) or (isinstance(x, ast.MatchStar) and x.name is None) for x in p.patterns)
+        length = ast.Call(func=_intrinsic("len"), args=[subj], keywords=[])
+        if only_wildcard:
+            body = then
+        elif star_wildcard:
+            body = then
+            for i in reversed(range(size)):
+                sub = p.patterns[i]
+                if i == star or _is_wildcard(sub):
+                    continue
+                index: ast.expr = ast.Constant(i) if i < star else ast.BinOp(
+                    left=ast.Call(func=_intrinsic("len"), args=[subj], keywords=[]), op=ast.Sub(), right=ast.Constant(size - i))
+                item = _tmp("item")
+                body = [_assign(item, ast.Subscript(value=subj, slice=index, ctx=ast.Load())),
+                        *self.pattern(sub, ast.Name(id=item, ctx=ast.Load()), body)]
+        else:
+            items = _tmp("items")
+            before, after = (size, -1) if star < 0 else (star, size - star - 1)
+            steps = [(sub, _item(items, i)) for i, sub in enumerate(p.patterns)]
+            body = [_assign(items, _call("unpack", subj, ast.Constant(before), ast.Constant(after))),
+                    *self.chain([(sub if not isinstance(sub, ast.MatchStar) else
+                                  ast.MatchAs(pattern=None, name=sub.name), value) for sub, value in steps], then)]
+        if star < 0:
+            body = [ast.If(test=ast.Compare(left=length, ops=[ast.Eq()], comparators=[ast.Constant(size)]), body=body, orelse=[])]
+        elif size > 1:
+            body = [ast.If(test=ast.Compare(left=length, ops=[ast.GtE()], comparators=[ast.Constant(size - 1)]),
+                           body=body, orelse=[])]
+        return [ast.If(test=_call("match_is_sequence", subj), body=body, orelse=[])]
+
+    def mapping(self, p: ast.MatchMapping, subj: ast.expr, then: list[ast.stmt]) -> list[ast.stmt]:
+        size = len(p.keys)
+        if not size and p.rest is None:
+            body = then
+        else:
+            keys, values = _tmp("keys"), _tmp("values")
+            rest = self.capture(p.rest, _call("mapping_rest", subj, ast.Name(id=keys, ctx=ast.Load()))) if p.rest else []
+            inner = self.chain([(sub, _item(values, i)) for i, sub in enumerate(p.patterns)], [*rest, *then])
+            body = [_assign(keys, ast.Tuple(elts=list(p.keys), ctx=ast.Load())),
+                    _assign(values, _call("match_keys", subj, ast.Name(id=keys, ctx=ast.Load()))),
+                    ast.If(test=_is_not_none(values), body=inner, orelse=[])]
+            if size:
+                body = [ast.If(test=ast.Compare(left=ast.Call(func=_intrinsic("len"), args=[subj], keywords=[]),
+                                                ops=[ast.GtE()], comparators=[ast.Constant(size)]), body=body, orelse=[])]
+        return [ast.If(test=_call("match_is_mapping", subj), body=body, orelse=[])]
+
+
+def _assign(name: str, value: ast.expr) -> ast.stmt:
+    return ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=value)
+
+
+def _item(name: str, i: int) -> ast.expr:
+    return ast.Subscript(value=ast.Name(id=name, ctx=ast.Load()), slice=ast.Constant(i), ctx=ast.Load())
+
+
+def _is_not_none(name: str) -> ast.expr:
+    return ast.Compare(left=ast.Name(id=name, ctx=ast.Load()), ops=[ast.IsNot()], comparators=[ast.Constant(None)])
+
+
+@register(PassSpec(
+    name="desugar-match", source=Level.L0, target=Level.L0,
+    requires=frozenset({Fact.PRIVATE_NAMES_MANGLED}),
+    produces=frozenset({Fact.NO_MATCH}),
+    obligations=(
+        Obligation("wf", "no Match node remains; codegen's compile-time pattern errors are raised"),
+        Obligation("semantics", "the subject once, cases in order, captures stored in codegen's order after a whole pattern matches and before the guard, or-patterns committed to their first matching alternative, and the MATCH_* instructions' order of effects (runtime/prelude/match.py)"),
+        Obligation("terminates", "one rewrite per match statement and per pattern node"),
+    ),
+    discharge=Discharge.TESTED, status="tested",
+))
+def desugar_match(tree: ast.Module) -> ast.Module:
+    return _as_module(ast.fix_missing_locations(_Match().visit(tree)))
 
 
 class _ChainedCompare(ast.NodeTransformer):
@@ -873,18 +1097,39 @@ class _FString(ast.NodeTransformer):
         return ast.fix_missing_locations(_copy_loc(joined, node))
 
 
+class _TemplateStr(_FString):
+    """PEP 750 t-strings: Template(*parts), each replacement field an Interpolation(value, its
+    source text, its conversion, its format spec), evaluated in order as BUILD_INTERPOLATION and
+    BUILD_TEMPLATE evaluate them; a format spec is an f-string, desugared as one."""
+
+    def visit_TemplateStr(self, node: ast.TemplateStr) -> ast.AST:
+        self.generic_visit(node)
+        parts: list[ast.expr] = []
+        for v in node.values:
+            if isinstance(v, ast.Constant):
+                parts.append(v)
+            elif isinstance(v, ast.Interpolation):
+                conversion = {-1: None, 115: "s", 114: "r", 97: "a"}[v.conversion]
+                spec: ast.expr = v.format_spec if v.format_spec is not None else ast.Constant("")
+                parts.append(ast.Call(func=_intrinsic("interpolation"),
+                                      args=[v.value, ast.Constant(v.str), ast.Constant(conversion), spec], keywords=[]))
+            else:
+                raise L.Unsupported(f"t-string part {type(v).__name__}")
+        return ast.fix_missing_locations(_copy_loc(ast.Call(func=_intrinsic("template"), args=parts, keywords=[]), node))
+
+
 @register(PassSpec(
     name="desugar-fstring", source=Level.L0, target=Level.L0,
     produces=frozenset({Fact.NO_FSTRINGS}),
     obligations=(
-        Obligation("wf", "output contains no JoinedStr node"),
+        Obligation("wf", "output contains no JoinedStr or TemplateStr node"),
         Obligation("semantics", "each replacement field is format(conversion(value), spec) evaluated left to right, joined in order"),
         Obligation("terminates", "one rewrite per JoinedStr"),
     ),
     discharge=Discharge.TESTED, status="tested",
 ))
 def desugar_fstring(tree: ast.Module) -> ast.Module:
-    return _as_module(ast.fix_missing_locations(_FString().visit(tree)))
+    return _as_module(ast.fix_missing_locations(_TemplateStr().visit(tree)))
 
 
 class _Decorators(ast.NodeTransformer):
@@ -1252,7 +1497,7 @@ class _ToL1WithWalrus(_ToL1):
 @register(PassSpec(
     name="to-l1", source=Level.L0, target=Level.L1,
     requires=frozenset({Fact.NO_CHAINED_COMPARE, Fact.NO_WITH, Fact.NO_COMPREHENSIONS, Fact.NO_FSTRINGS, Fact.NO_DECORATORS,
-                        Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED, Fact.NO_IMPORTS, Fact.SINGLE_TARGETS}),
+                        Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED, Fact.NO_IMPORTS, Fact.SINGLE_TARGETS, Fact.NO_MATCH}),
     produces=frozenset({Fact.EXPLICIT_TRUTH}),
     obligations=(
         Obligation("wf", "output satisfies wf1 (pipeline.l1.wf)"),
@@ -1265,7 +1510,7 @@ def to_l1(tree: ast.Module) -> L.Module:
     return _ToL1WithWalrus().module(tree, getattr(tree, "bella_source", "<module>"))
 
 
-FRONTEND_PASSES = ["desugar-class-body", "desugar-private-names", "desugar-imports", "desugar-several-targets",
+FRONTEND_PASSES = ["desugar-class-body", "desugar-private-names", "desugar-imports", "desugar-several-targets", "desugar-match",
                    "desugar-chained-compare", "desugar-with",
                    "desugar-listcomp", "desugar-fstring", "desugar-decorators", "to-l1"]
 

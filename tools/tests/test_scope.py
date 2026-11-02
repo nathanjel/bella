@@ -57,7 +57,7 @@ def test_units_are_keyed_as_cpython_keys_code_objects() -> None:
 def test_the_verdict_comes_from_the_frontend() -> None:
     verdict = scope.lowers_today()
     assert verdict["if"] and verdict["return"]
-    assert not verdict["match"]                 # the frontend has no match yet
+    assert verdict["match"] and not verdict["type alias (PEP 695)"]   # match since A5b; aliases in A6
 
 
 if __name__ == "__main__":

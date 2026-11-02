@@ -12,6 +12,7 @@ from __future__ import annotations
 import _suggestions  # type: ignore[import-not-found]  # CPython's own, private: the hint it prints
 import builtins
 import operator
+import string.templatelib as templatelib
 import sys
 import types
 import warnings
@@ -85,7 +86,9 @@ _MISSING = object()            # the `missing` intrinsic: what super() finds abs
 
 
 def __bella_call__(fn: Any, args: Any, kwargs: Any) -> Any:
-    return fn(*args, **kwargs)
+    # a call with no keyword items passes no dict (CALL); one with any, even an empty **{},
+    # passes the dict (CALL_FUNCTION_EX): a C type that refuses keywords can tell the two apart
+    return fn(*args) if kwargs is None else fn(*args, **kwargs)
 
 
 def caller_for(module: Scope) -> Any:
@@ -429,7 +432,9 @@ class Interpreter:
         """A function of the Python half of the runtime (runtime/prelude), run by this
         interpreter like any compiled module."""
         if self.prelude is None:
-            self.prelude = self.run_module(_lowered(_PRELUDE / "build_class.py"), "bella.build_class").vars
+            self.prelude = {}
+            for module in ("build_class", "match"):
+                self.prelude.update(self.run_module(_lowered(_PRELUDE / f"{module}.py"), f"bella.{module}").vars)
         return self.prelude[name]
 
     def _syn(self, scope: Scope) -> frozenset[str]:
@@ -642,7 +647,7 @@ class Interpreter:
         elif isinstance(s, L.FunctionDef):
             fn: Any = self.function(s, scope)
             for d in reversed(s.decorators):          # evaluated before the defaults, applied now
-                fn = caller_for(_module_of(scope))(self.expr(d, scope), (fn,), {})
+                fn = caller_for(_module_of(scope))(self.expr(d, scope), (fn,), None)
             self.store(s.store or s.name, fn, scope)
         elif isinstance(s, L.Raise):
             # RAISE_VARARGS: both expressions are evaluated, then do_raise instantiates them
@@ -897,7 +902,7 @@ class Interpreter:
                 for k, v in e.kwargs:
                     assert k is not None
                     kwargs[k] = yield from self.gexpr(v, scope)
-                return caller_for(_module_of(scope))(fn, args, kwargs)
+                return caller_for(_module_of(scope))(fn, args, kwargs if e.kwargs else None)
             if isinstance(e, (L.ListLit, L.TupleLit)) and not any(isinstance(x, L.Starred) for x in e.items) \
                     and len(e.items) <= _STACK_USE_GUIDELINE:
                 values: list[Any] = []
@@ -1137,7 +1142,7 @@ class Interpreter:
             if any(fn is h for h in _HOST_STATE):
                 return self._host_state(fn, e, scope)
             args, kwargs = self.arguments(e, fn, scope)
-            return caller_for(_module_of(scope))(fn, args, kwargs)
+            return caller_for(_module_of(scope))(fn, args, kwargs if e.kwargs else None)
         if isinstance(e, L.Lambda):
             return self.function(e, scope)
         if isinstance(e, L.Intrinsic):
@@ -1156,6 +1161,14 @@ class Interpreter:
                 return import_from
             if e.name == "map_add":
                 return _map_add
+            if e.name == "unpack":
+                return unpack_iterable
+            if e.name == "template":
+                return templatelib.Template
+            if e.name == "interpolation":
+                return templatelib.Interpolation
+            if e.name in _MATCH_HELPERS:
+                return self.runtime(_MATCH_HELPERS[e.name])
             return getattr(builtins, e.name)
         if isinstance(e, L.ClassBody):
             return ClassBodyFunction(self, e, scope)
@@ -1194,6 +1207,8 @@ def _dict_merge(target: dict[str, Any], m: Any) -> tuple[Any] | None:
 
 
 _STACK_USE_GUIDELINE = 30          # _PY_STACK_USE_GUIDELINE (Include/internal/pycore_compile.h)
+_MATCH_HELPERS = {"match_is_sequence": "is_sequence", "match_is_mapping": "is_mapping", "match_keys": "match_keys",
+                  "mapping_rest": "mapping_rest", "match_class": "match_class"}
 
 
 class _Carrier(BaseException):

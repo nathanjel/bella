@@ -214,8 +214,19 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
     * Found: the stdlib binds module globals by computed name from other modules (`re`'s flags,
       through `enum.global_enum`). The spec's compile-time NameError would refuse `re`. Proposal
       P-3 is for the author; `wf1` applies it provisionally (`strict=False` for library modules).
-  * A5b `match` (C-3-17), as a desugaring pass onto intrinsics for the sequence, mapping and
-    class patterns.
+  * A5b `match`, done 2026-11-02 (C-3-17, `pipeline/tests/test_l1_match.py`):
+    * `desugar-match` lowers `match` as 3.15.2's codegen does, onto ordinary checks and
+      `runtime/prelude/match.py` (`MATCH_SEQUENCE`, `MATCH_MAPPING`, `MATCH_KEYS`,
+      `MATCH_CLASS` in Python). Captures are stored in codegen's order before the guard; an
+      or-pattern commits to its first alternative; sequence items are unpacked, or taken by
+      subscript with `len()` at each access when the star is a wildcard. The order of
+      effects is tested against CPython, and so are codegen's compile-time pattern errors.
+    * t-strings (PEP 750) lower to `Template` and `Interpolation`; `annotationlib` builds one
+      at import.
+    * Found: `eval1` passed an empty keyword dict to every call. A C type that refuses
+      keywords (`Template`) tells the two apart; now a call with no keyword items passes none,
+      as `CALL` does.
+    * The closure: 69 of 72 modules lower; PEP 695 is left (`typing`, `_colorize`).
   * A6 the rest of the annotations: classes and modules (PEP 649, with `__classdict__`), PEP
     695 aliases and type parameters, and the S-1 second entry point.
   * B `eval1` runs `cli_easy_slugs` end to end: the closure lowered as P-1 decides, the staged

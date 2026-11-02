@@ -30,6 +30,7 @@ class Fact(Enum):
     PRIVATE_NAMES_MANGLED = "private names mangled"
     NO_IMPORTS = "import statements are intrinsic calls and stores"
     SINGLE_TARGETS = "every assignment has one target"
+    NO_MATCH = "no match statements"
     EXPLICIT_TRUTH = "truth tests explicit"
     NAMES_BOUND = "every bare name statically bound"
     TYPES = "expression types from the oracle"
