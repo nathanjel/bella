@@ -106,16 +106,15 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   unpacking, 94 generator functions and 40 `async def`. Found on the way: `_collections_abc`
   runs `async def` and `sys._getframe()` at import, and the frontend silently drops
   annotations and PEP 695 type parameters.
-* For the author (P-1, P-2 in `docs/DECISIONS.md`, 2026-11-02):
-  * P-1, the compile scope. Recommended: compile the whole closure; a statement the pipeline
-    cannot lower compiles to a refusal that names the construct and line (the staging refusal:
-    exit 70 and a `bella: refused:` line), the build writes the inventory of refused
-    statements, and the gate requires the target's runs to reach none of them. Compiling what
-    the closed world reaches (a name-based reachability pass) stays an optimisation, for when
-    compile time or binary size is measured to need it.
-  * P-2, `_collections_abc`'s type probes. Recommended: a shim taking the generator,
-    coroutine, async-generator and frame-locals-proxy types from `_types` (core), as `types`
-    does. Making coroutines in phase 1 is the alternative.
+* Decided 2026-11-02 (P-1, P-2; spec v0.11 section 7):
+  * P-1: the whole closure is compiled. A statement the pipeline cannot lower compiles to a
+    refusal that names the construct and line (exit 70, `bella: refused:`). The build writes the
+    inventory of refused statements, and the gate requires the target to reach none of them.
+  * P-2: `_collections_abc` is a shim that takes its four probed types from `_types` (C-7-18).
+* Recorded with P-1, for step B: the refusal node keeps the names its statement binds, so
+  scoping is unchanged. Desugaring passes leave what they cannot lower in place, so that
+  `to-l1` can refuse it, instead of failing the module. An `async def` is defined, not refused;
+  running a coroutine is \[P2+\].
 * The plan, in the order the census gives. Constructs come in as desugaring passes over the
   AST onto a small L1 core (author, 2026-11-02). Each pass has a `PassSpec` and is tested
   against CPython on observable behaviour, not on bytecode identity. The core grows only where

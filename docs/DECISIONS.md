@@ -366,6 +366,23 @@ log D-10; `docs/measurements.md`, `tools/scope.py`).
   not. TODO task 4's plan is written that way: classes as a pass onto a `build_class` written in
   Python, imports as intrinsic calls, and the remaining forms as desugarings.
 
+**2026-11-02 — P-1 and P-2 decided** (author; spec v0.11 section 7, design section 11 rev 450).
+* P-1, as recommended: a stage compiles its target's whole closure. A statement the pipeline
+  does not lower yet compiles to a refusal where it would run (`bella: refused:`, exit 70,
+  uncatchable). The build lists them, and the gate requires the target to reach none.
+  Exclusions and the program's own dialect errors stay compile-time errors. Consequences found
+  while recording it:
+  * An `async def` statement must be lowered, since class bodies in the closure define
+    coroutine functions at import (`_collections_abc`'s `AsyncIterator.__anext__`). Defining
+    one is lowered; running a coroutine stays \[P2+\].
+  * A refused statement still binds its names for scoping, so its refusal node records them.
+  * Generator functions come before step B, since `_collections_abc` defines them at import.
+* P-2, as recommended: `runtime/shims/_collections_abc.py` is CPython's module with one marked
+  change, the four types imported from `_types` (case C-7-18). `tools/tests/test_shims.py` checks
+  that every shim differs from the pinned module only at `bella:` lines, and that this one has
+  CPython's namespace and the same four objects. The locks are regenerated (113 modules; 1a.1
+  has 72 compiled modules and 5 shims).
+
 
 ## Pins
 

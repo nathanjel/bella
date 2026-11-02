@@ -6,11 +6,11 @@
    "level": "easy",
    "stage": "1a.1",
    "by_status": {
-    "compiled": 73,
+    "compiled": 72,
     "core": 15,
     "mapped": 20,
     "program": 1,
-    "shim": 4
+    "shim": 5
    },
    "errors": []
   },
@@ -18,12 +18,12 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 75,
+    "compiled": 74,
     "core": 18,
     "mapped": 22,
     "missing-from-manifest": 2,
     "program": 2,
-    "shim": 4
+    "shim": 5
    },
    "errors": [
     "configparser [source]: required but not in manifest (via pycodestyle:eager:50)",
@@ -35,11 +35,11 @@
    "level": "easy",
    "stage": "1a.3",
    "by_status": {
-    "compiled": 87,
+    "compiled": 86,
     "core": 15,
     "mapped": 32,
     "program": 8,
-    "shim": 5
+    "shim": 6
    },
    "errors": []
   },
@@ -47,11 +47,11 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 79,
+    "compiled": 78,
     "core": 17,
     "mapped": 24,
     "program": 12,
-    "shim": 4
+    "shim": 5
    },
    "errors": []
   },
@@ -59,11 +59,11 @@
    "level": "easy",
    "stage": "1a.2",
    "by_status": {
-    "compiled": 85,
+    "compiled": 84,
     "core": 15,
     "mapped": 32,
     "program": 9,
-    "shim": 4
+    "shim": 5
    },
    "errors": []
   },
@@ -71,11 +71,11 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 81,
+    "compiled": 80,
     "core": 17,
     "mapped": 25,
     "program": 20,
-    "shim": 4
+    "shim": 5
    },
    "errors": []
   }
@@ -84,12 +84,12 @@
   "1a.1": {
    "modules": 112,
    "by_status": {
-    "compiled": 73,
+    "compiled": 72,
     "core": 15,
     "mapped": 20,
-    "shim": 4
+    "shim": 5
    },
-   "compiled_source_lines": 53271,
+   "compiled_source_lines": 52088,
    "list": {
     "__future__": "compiled",
     "_abc": "core",
@@ -97,7 +97,7 @@
     "_ast_unparse": "compiled",
     "_codecs": "core",
     "_collections": "mapped",
-    "_collections_abc": "compiled",
+    "_collections_abc": "shim",
     "_colorize": "compiled",
     "_contextvars": "mapped",
     "_functools": "mapped",
@@ -276,12 +276,12 @@
   "1a": {
    "modules": 150,
    "by_status": {
-    "compiled": 94,
+    "compiled": 93,
     "core": 15,
     "mapped": 36,
-    "shim": 5
+    "shim": 6
    },
-   "compiled_source_lines": 72384,
+   "compiled_source_lines": 71201,
    "list": {
     "__future__": "compiled",
     "_abc": "core",
@@ -291,7 +291,7 @@
     "_blake2": "mapped",
     "_codecs": "core",
     "_collections": "mapped",
-    "_collections_abc": "compiled",
+    "_collections_abc": "shim",
     "_colorize": "compiled",
     "_contextvars": "mapped",
     "_csv": "mapped",

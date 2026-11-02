@@ -1,0 +1,12 @@
+{
+ "case": "C-7-18_collections_abc_types.py",
+ "clause": "C-7-18",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "decision P-2 (2026-11-02): the _collections_abc shim takes four types from _types",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "True True True True\nTrue True True True True\n['_CallableGenericAlias', '_DeprecateByteStringMeta', '_check_methods', '_deprecated_ByteString', '_is_param_expr']\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -134,52 +134,80 @@
   },
   "_collections_abc": {
    "name": "_collections_abc",
-   "kind": "frozen",
-   "status": "compiled",
+   "kind": "source",
+   "status": "shim",
    "reached_by": "pathlib:eager:19",
    "dynamic_unknown_lines": [],
-   "path": "_collections_abc.py",
+   "path": "runtime/shims/_collections_abc.py",
    "edges": [
     {
      "importer": "_collections_abc",
      "target": "abc",
      "cls": "eager",
-     "line": 35,
+     "line": 40,
      "func": ""
     },
     {
      "importer": "_collections_abc",
      "target": "sys",
      "cls": "eager",
-     "line": 36,
+     "line": 41,
+     "func": ""
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "_types",
+     "cls": "eager",
+     "line": 96,
+     "func": ""
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "_types",
+     "cls": "eager",
+     "line": 97,
+     "func": ""
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "_types",
+     "cls": "eager",
+     "line": 99,
+     "func": ""
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "_types",
+     "cls": "eager",
+     "line": 101,
      "func": ""
     },
     {
      "importer": "_collections_abc",
      "target": "annotationlib",
      "cls": "lazy",
-     "line": 488,
+     "line": 486,
      "func": "_CallableGenericAlias.__repr__"
     },
     {
      "importer": "_collections_abc",
      "target": "warnings",
      "cls": "lazy",
-     "line": 1072,
+     "line": 1070,
      "func": "_DeprecateByteStringMeta.__new__"
     },
     {
      "importer": "_collections_abc",
      "target": "warnings",
      "cls": "lazy",
-     "line": 1081,
+     "line": 1079,
      "func": "_DeprecateByteStringMeta.__instancecheck__"
     },
     {
      "importer": "_collections_abc",
      "target": "warnings",
      "cls": "lazy",
-     "line": 1179,
+     "line": 1177,
      "func": "__getattr__"
     }
    ]
@@ -550,7 +578,7 @@
    "name": "_types",
    "kind": "builtin",
    "status": "core",
-   "reached_by": "types:optional:11",
+   "reached_by": "_collections_abc:eager:96",
    "dynamic_unknown_lines": [],
    "path": null,
    "edges": []
@@ -634,7 +662,7 @@
    "name": "annotationlib",
    "kind": "source",
    "status": "shim",
-   "reached_by": "_collections_abc:lazy:488",
+   "reached_by": "_collections_abc:lazy:486",
    "dynamic_unknown_lines": [],
    "path": "runtime/shims/annotationlib.py",
    "edges": [

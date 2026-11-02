@@ -79,7 +79,7 @@ compiled = [
   "tempfile", "textwrap", "token", "tokenize", "traceback", "types", "typing", "unittest",
   "unittest.async_case", "unittest.case", "unittest.loader", "unittest.main", "unittest.result",
   "unittest._log", "unittest.runner", "unittest.signals", "unittest.suite", "unittest.util", "urllib",
-  "urllib.parse", "uuid", "warnings", "weakref", "_collections_abc", "_colorize",
+  "urllib.parse", "uuid", "warnings", "weakref", "_colorize",
   "_opcode_metadata", "_pydatetime", "_pydecimal", "_py_abc", "_weakrefset",
   "_strptime", "_py_warnings", "_missing_stdlib_info",
   "_ast_unparse",   # ast.unparse: the annotationlib shim's FORWARDREF and STRING need it (decision S-1)
@@ -107,6 +107,7 @@ socket = "import succeeds for logging.handlers type hints; sockets are [P2+]"
 subprocess = "import succeeds; every API raises with the milestone name"
 asyncio = "import succeeds for unittest.async_case; async is [P2+]"
 annotationlib = "CPython's own module (runtime/shims/annotationlib.py) with eight marked changes: where CPython rebuilds an annotate function from __code__ against substitute globals and cells, it calls the second entry point the compiler generates for each __annotate__ (spec section 3, decision S-1 of docs/staging.md), so VALUE, FORWARDREF and STRING are CPython's. Evaluating the text of a reference or annotation (ForwardRef.evaluate of an expression, eval_str=True) raises with the milestone name, as does an annotate function the compiler did not generate. dataclasses, typing, functools and inspect use it while the module runs (spec section 8; cases C-3-13, C-3-21, C-3-22)"
+_collections_abc = "CPython's own module (runtime/shims/_collections_abc.py) with one marked change: the generator, coroutine, async-generator and frame-locals-proxy types are imported from _types (core), as types.py does, instead of being probed by making a coroutine, an async generator and a frame (decision P-2, 2026-11-02; async is [P2+]). The objects are the same (case C-7-18)"
 codeop = "for traceback only (review log D-4): the PyCF_* flags with CPython's values; compile_command, Compile and CommandCompiler stop the program with the E-08 refusal, which except clauses cannot catch. A program's own import of codeop stays a compile-time error (E-08)"
 
 [adaptations]
