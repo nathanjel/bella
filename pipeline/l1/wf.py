@@ -87,6 +87,8 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
         elif isinstance(s, L.FunctionDef):
             out.add(s.store or s.name)
             out.update(s.enclosing_binds)        # a comprehension's walrus targets (PEP 572)
+        elif isinstance(s, L.Declare):
+            out.update(s.names)                  # `x: T` makes x local
         elif isinstance(s, L.Delete):
             for t in s.targets:          # `del x` makes x local to its scope, as assignment does
                 _targets(t, out)
@@ -213,6 +215,8 @@ class _Checker:
             for p in s.params:
                 if p.default is not None:
                     self.expr(p.default, scope)
+            if s.annotation:
+                return            # an annotate function's names are resolved when it is called (PEP 649)
             self.block(s.body, inner)
             return                # s.annotate is evaluated lazily, its names when it is called
         for v in vars(s).values():

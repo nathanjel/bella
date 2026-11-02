@@ -31,6 +31,8 @@ class Fact(Enum):
     NO_IMPORTS = "import statements are intrinsic calls and stores"
     SINGLE_TARGETS = "every assignment has one target"
     NO_MATCH = "no match statements"
+    ANNOTATIONS_EXPLICIT = "module and class annotations are __annotate__ functions; module docstrings are __doc__ stores"
+    NO_TYPE_PARAMS = "PEP 695 type parameters and aliases are generic scopes and intrinsic calls"
     EXPLICIT_TRUTH = "truth tests explicit"
     NAMES_BOUND = "every bare name statically bound"
     TYPES = "expression types from the oracle"

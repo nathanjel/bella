@@ -18,11 +18,14 @@ eval1's own, so only the D-06-masked shape is comparable.
 """
 from __future__ import annotations
 
-import os
 import sys
-import traceback
-import types
-from pathlib import Path
+
+STARTUP = list(sys.modules)     # what CPython imported before this script's first line
+
+import os  # noqa: E402
+import traceback  # noqa: E402
+import types  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 REFUSED = 70
@@ -82,7 +85,7 @@ def main(argv: list[str]) -> int:
     main_module.__file__ = str(path.resolve())
     main_module.__loader__ = importlib.machinery.SourceFileLoader("__main__", str(path.resolve()))  # type: ignore[assignment]
     sys.modules["__main__"] = main_module
-    system.activate()
+    system.activate(STARTUP)
     sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
     try:
         interp.run_in(program, main_module.__dict__)
@@ -98,6 +101,10 @@ def main(argv: list[str]) -> int:
         return _refuse(str(exc))
     except BaseException as exc:  # noqa: BLE001  # the program's uncaught exception ends it, as in CPython
         sys.stdout.flush()
+        system.deactivate()                             # the host's traceback, warnings, linecache
+        if os.environ.get("BELLA_EVAL1_TRACEBACK"):     # development: eval1's own frames too
+            traceback.print_exc()
+            return 1
         print("Traceback (most recent call last):", file=sys.stderr)
         print("".join(traceback.format_exception_only(exc)), end="", file=sys.stderr)
         return 1

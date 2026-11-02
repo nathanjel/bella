@@ -10,8 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from typing import Any
 
-from pipeline.l1.frontend import clean_doc, lower
-from pipeline.l1.grammar import Unsupported
+from pipeline.l1.frontend import clean_doc
 from pipeline.tests.test_frontend_eval1 import both
 
 trace: list[str] = []
@@ -281,15 +280,6 @@ def test_docstrings_are_cleaned_as_cpython_cleans_them() -> None:
 
 def test_future_annotations_are_their_source_text() -> None:
     check(FUTURE_ANNOTATIONS)
-
-
-def test_type_parameters_are_refused_not_dropped() -> None:
-    try:
-        lower("def f[T](x): pass\n", "<test>")
-    except Unsupported as exc:
-        assert "type parameters" in str(exc)
-    else:
-        raise AssertionError("PEP 695 type parameters dropped silently")
 
 
 if __name__ == "__main__":

@@ -226,12 +226,37 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
     * Found: `eval1` passed an empty keyword dict to every call. A C type that refuses
       keywords (`Template`) tells the two apart; now a call with no keyword items passes none,
       as `CALL` does.
-    * The closure: 69 of 72 modules lower; PEP 695 is left (`typing`, `_colorize`).
-  * A6 the rest of the annotations: classes and modules (PEP 649, with `__classdict__`), PEP
-    695 aliases and type parameters, and the S-1 second entry point.
-  * B `eval1` runs `cli_easy_slugs` end to end: the closure lowered as P-1 decides, the staged
-    texts from the staging artefact, and refusals as in staging. This is the gate's second leg
-    (`make targets-check TARGET_RUNNER=...`).
+    * The closure: 70 of 72 modules lower; PEP 695 is left (`typing`, `_colorize`).
+  * A6, done 2026-11-02 (`pipeline/tests/test_l1_annotations.py`; C-3-25, C-3-27 and C-3-28 now
+    pass under `eval1`):
+    * `desugar-annotations` lowers module and class annotations as 3.15.2 compiles them (PEP
+      649).
+      * A module's `__annotate__` is made first, and every module annotation is conditional on
+        its statement having run (`__conditional_annotations__`).
+      * A class's function is stored last, as `__annotate_func__`, and reads the class
+        namespace first. So do methods' annotate functions (`LOAD_FROM_DICT_OR_GLOBALS`).
+      * Non-simple targets' annotations are never evaluated, and `x: T` makes `x` local.
+    * Found: the frontend never stored a module's docstring as `__doc__`; it does now.
+    * `desugar-type-params` lowers PEP 695 into hidden generic scopes, as the bytecode does:
+      decorators first, lazy bounds, constraints and defaults, `Generic[...]` after a class's
+      bases, `__type_params__`, and lazy alias values. `eval1` lets CPython make the objects,
+      from a text whose expressions call `eval1` thunks; the compiled runtime will have its
+      own.
+    * Found: `eval1` cached `_has_yield` by `id()` of nodes that could be freed, so a reused id
+      gave a stale answer under pytest. The cache now keeps the node.
+    * `make eval1-corpus`: 58 of 75. All 72 of `cli_easy_slugs`'s closure modules lower.
+    * The S-1 second entry point (FORWARDREF and STRING through the `annotationlib` shim) is
+      still to do.
+  * B `eval1` runs `cli_easy_slugs` end to end, started:
+    * Closure mode now runs the start-up modules (`codecs`, `encodings`, `os`, `linecache`)
+      under `eval1` before the program, as the compiled runtime will. The prelude is loaded
+      first, and `importlib.invalidate_caches()` is gone: it imported `importlib.metadata`
+      through `eval1`.
+    * The run reaches `namedtuple`'s `eval()` and refuses (exit 70). Next: the staged texts
+      from the staging artefact, a frame stack for `sys._getframemodulename` and `logging`,
+      and P-1's statement refusals.
+  * The gate's second leg is `cli_easy_slugs` under `eval1` with its closure lowered as P-1
+    decides, the staged texts and refusals as in staging (`make targets-check TARGET_RUNNER=...`).
   * C the C++ leg: task 3's header, L2, and the runtime list above.
 * Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata` (it kept the lowered
   requirements when `unicodedata` became \[P1\] the same day, review log D-8); licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's

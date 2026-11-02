@@ -16,7 +16,9 @@ C-3-14_comprehension_unpacking.py
 C-3-15_generator_close_and_throw.py
 C-3-17_match.py
 C-3-20_copy_protocol.py
+C-3-25_calls_and_parameters.py
 C-3-26_function_objects.py
+C-3-27_class_statements.py
 C-3-29_generators_and_comprehensions.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
@@ -45,6 +47,8 @@ C-8-04_import_at_statement_position.py
 C-8-05_lazy_import_first_use.py
 C-8-06_lazy_import_error_at_first_use.py
 C-8-07_lazy_modules_list.py
+C-8-08_staged_dataclass.py
+C-8-09_staged_namedtuple.py
 C-9-01_cyclic_disposal_order.py
 C-9-02_cyclic_resurrection.py
 C-9-03_refcount_disposal_order.py

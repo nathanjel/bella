@@ -77,6 +77,7 @@ class Scope:
     cell: Any = None                       # a class body's __class__ cell, when it has one
     classdict: Any = None                  # a class body's __classdict__ cell, when it has one
     caller: Any = None                     # on a module scope: caller_for's function
+    classdict_scope: Scope | None = None   # an annotate function's class: its namespace is read first
 
     def is_module(self) -> bool:
         return self.module is None
@@ -173,7 +174,11 @@ def import_star(module: Any, namespace: Any) -> None:
     exec(_STAR_CODE, {"__builtins__": _handing_over(module), "__name__": "<bella import *>"}, namespace)  # noqa: S102
 
 
-_AT_MODULE_LEVEL: types.CodeType | None = None
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")              # "'str' object is not callable": placeholders
+    # compiled now: nothing on eval1's path may import or warn while a program runs
+    _AT_MODULE_LEVEL = compile("'bella:f'('bella:0', 'bella:1', 'bella:2', 'bella:3', 'bella:4')",
+                               "<bella import>", "eval", dont_inherit=True)
 
 
 def _call_at_module_level(globals_: dict[str, Any], func: Any, *args: Any) -> Any:
@@ -181,12 +186,6 @@ def _call_at_module_level(globals_: dict[str, Any], func: Any, *args: Any) -> An
     are: __lazy_import__ requires it of the frame that calls it (import.c, 3.15.2). The call is an
     expression whose constants are the function and its arguments, so the namespace is not
     touched (eval adds __builtins__ if missing, as exec does for any module)."""
-    global _AT_MODULE_LEVEL
-    if _AT_MODULE_LEVEL is None:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")          # "'str' object is not callable": placeholders
-            _AT_MODULE_LEVEL = compile("'bella:f'('bella:0', 'bella:1', 'bella:2', 'bella:3', 'bella:4')",
-                                       "<bella import>", "eval", dont_inherit=True)
     values = {"bella:f": func, **{f"bella:{i}": a for i, a in enumerate(args)}}
     consts = tuple(values[c] if isinstance(c, str) and c in values else c for c in _AT_MODULE_LEVEL.co_consts)
     assert len(args) == 5 and sum(isinstance(c, str) and c in values for c in _AT_MODULE_LEVEL.co_consts) == 6
@@ -428,13 +427,19 @@ class Interpreter:
         self.block(m.body, module)
         return module
 
-    def runtime(self, name: str) -> Any:
-        """A function of the Python half of the runtime (runtime/prelude), run by this
-        interpreter like any compiled module."""
+    def load_runtime(self) -> None:
+        """The Python half of the runtime (runtime/prelude), lowered and run by this interpreter
+        like any compiled module; the module system loads it before the program starts, so that
+        no lowering happens while program code runs."""
         if self.prelude is None:
-            self.prelude = {}
+            loaded: dict[str, Any] = {}
             for module in ("build_class", "match"):
-                self.prelude.update(self.run_module(_lowered(_PRELUDE / f"{module}.py"), f"bella.{module}").vars)
+                loaded.update(self.run_module(_lowered(_PRELUDE / f"{module}.py"), f"bella.{module}").vars)
+            self.prelude = loaded
+
+    def runtime(self, name: str) -> Any:
+        self.load_runtime()
+        assert self.prelude is not None
         return self.prelude[name]
 
     def _syn(self, scope: Scope) -> frozenset[str]:
@@ -484,6 +489,16 @@ class Interpreter:
                 return scope.vars[name]
             # CPython 3.15 leaves UnboundLocalError.name as None (measured; NameError carries it)
             raise UnboundLocalError(f"cannot access local variable '{name}' where it is not associated with a value")
+        elif scope.classdict_scope is not None and scope.classdict_scope.classdict is not None:
+            # LOAD_FROM_DICT_OR_GLOBALS / LOAD_FROM_DICT_OR_DEREF: the class's namespace first
+            mapping = scope.classdict_scope.classdict.cell_contents
+            found = True
+            try:
+                value = mapping[name]
+            except KeyError:
+                found = False
+            if found:
+                return _reify(value, name, mapping)
         s: Scope | None = scope.parent
         while s is not None and not s.is_module():
             if s.is_class:
@@ -642,7 +657,7 @@ class Interpreter:
             raise _Break()
         elif isinstance(s, L.Continue):
             raise _Continue()
-        elif isinstance(s, L.Pass):
+        elif isinstance(s, (L.Pass, L.Declare)):
             pass
         elif isinstance(s, L.FunctionDef):
             fn: Any = self.function(s, scope)
@@ -947,7 +962,8 @@ class Interpreter:
         is_def = isinstance(node, L.FunctionDef)
         scope = Scope(vars={}, parent=closure, locals_=_local_names(node),
                       globals_=node.globals if isinstance(node, L.FunctionDef) else frozenset(),
-                      nonlocals_=node.nonlocals if isinstance(node, L.FunctionDef) else frozenset(), module=module)
+                      nonlocals_=node.nonlocals if isinstance(node, L.FunctionDef) else frozenset(), module=module,
+                      classdict_scope=_nearest_class(closure) if isinstance(node, L.FunctionDef) and node.classdict else None)
         synthetic = self._syn(closure)
         for name, value in bind_arguments(fn, node, args, kwargs).items():
             # a parameter the frontend generated (a comprehension's iterator, the annotate
@@ -1122,6 +1138,9 @@ class Interpreter:
         if isinstance(e, L.IfExp):
             return self.expr(e.body, scope) if self.expr(e.test, scope) else self.expr(e.orelse, scope)
         if isinstance(e, L.Call):
+            if isinstance(e.func, L.Intrinsic) and e.func.name in ("type_params", "generic_class", "typealias"):
+                args, _ = self.arguments(e, e.func, scope)
+                return _pep695(e.func.name, args, _module_of(scope).vars.get("__name__", "__main__"))
             if isinstance(e.func, L.Intrinsic) and e.func.name in ("import_name", "import_star"):
                 args, _ = self.arguments(e, e.func, scope)
                 module = _module_of(scope)
@@ -1161,6 +1180,10 @@ class Interpreter:
                 return import_from
             if e.name == "map_add":
                 return _map_add
+            if e.name == "set_add":
+                return set.add
+            if e.name == "set_type_params":
+                return _set_type_params
             if e.name == "unpack":
                 return unpack_iterable
             if e.name == "template":
@@ -1232,6 +1255,43 @@ def _matches(exc: BaseException, spec: Any) -> bool:
     return any(c in type(exc).__mro__ for c in classes)
 
 
+def _pep695(kind: str, args: list[Any], module_name: str) -> Any:
+    """PEP 695's objects, made by CPython (the oracle lends them; the compiled runtime has its
+    own): the text is a generic function, class or alias whose lazy expressions call the
+    thunks, so TypeVar bounds, constraints and defaults and an alias's value stay lazy and are
+    eval1's to compute; __module__ is the program's."""
+    text, *rest = args
+    ns: dict[str, Any] = {"__name__": module_name, "__builtins__": vars(builtins)}
+    if kind == "typealias":
+        ns["__bella_v__"], *thunks = rest
+    else:
+        thunks = rest
+    for i, thunk in enumerate(thunks):
+        ns[f"__bella_{i}__"] = thunk
+    exec(compile(text, f"<{module_name}>", "exec", dont_inherit=True), ns)  # noqa: S102  # CPython makes the objects
+    made = ns["__bella_tp__"] if kind != "typealias" else ns[text.split()[1].split("[")[0]]
+    if kind == "type_params":
+        return made.__type_params__
+    if kind == "generic_class":
+        return made.__type_params__, made.__orig_bases__[0]
+    return made
+
+
+def _set_type_params(fn: Any, params: tuple[Any, ...]) -> Any:
+    """INTRINSIC_SET_FUNCTION_TYPE_PARAMS."""
+    fn.__type_params__ = params
+    return fn
+
+
+def _nearest_class(scope: Scope) -> Scope | None:
+    s: Scope | None = scope
+    while s is not None:
+        if s.is_class:
+            return s
+        s = s.parent
+    return None
+
+
 def _map_add(target: dict[Any, Any], key: Any, value: Any) -> None:
     """MAP_ADD: a dict comprehension's item, the key evaluated before the value."""
     dict.__setitem__(target, key, value)
@@ -1247,17 +1307,17 @@ async def _refused_async_generator(what: str) -> Any:
     yield  # type: ignore[unreachable]  # makes it an async generator
 
 
-_YIELDS: dict[int, bool] = {}
+_YIELDS: dict[int, tuple[L.Node, bool]] = {}
 
 
 def _has_yield(node: L.Node) -> bool:
     """The node's own code yields: a Yield or YieldFrom in it, not in a function or lambda
-    nested in it (a nested def's decorators and defaults count; its body does not)."""
-    key = id(node)
-    found = _YIELDS.get(key)
-    if found is None:
-        found = _YIELDS[key] = _scan_yield(node)
-    return found
+    nested in it (a nested def's decorators and defaults count; its body does not). Cached by
+    identity, the node kept with its answer so that its id cannot be reused by another."""
+    entry = _YIELDS.get(id(node))
+    if entry is None or entry[0] is not node:
+        entry = _YIELDS[id(node)] = (node, _scan_yield(node))
+    return entry[1]
 
 
 def _scan_yield(node: Any) -> bool:

@@ -41,6 +41,7 @@ ROOT = Path(__file__).resolve().parents[2]
 STDLIB = Path(os.path.dirname(os.__file__)).resolve()
 SHIMS = ROOT / "runtime" / "shims"
 TOOLING = ("pipeline", "refmodel", "tools", "validation", "conformance/harness.py")
+STARTUP_ROOTS = ("codecs", "encodings", "encodings.aliases", "encodings.utf_8", "os", "linecache")
 
 
 def module_names(path: Path) -> frozenset[str]:
@@ -135,10 +136,28 @@ class ModuleSystem(importlib.abc.MetaPathFinder):
         return found
 
     # ---- activation -----------------------------------------------------------------------
-    def activate(self) -> None:
+    def activate(self, startup: list[str] | None = None) -> None:
+        """Hand eval1 the imports. In closure mode the host's copies of closure modules leave
+        sys.modules, and the modules CPython has imported before a program's first line
+        (`startup`, in that order) are imported again, run by eval1, as the compiled runtime
+        initialises them at start-up: host code that reads sys.modules (warnings, traceback)
+        then finds the program's, as under CPython."""
+        self.interp.load_runtime()          # the prelude, lowered and run before any program code
+        self.saved: dict[str, Any] = {}
         if self.mode == "closure":
             for name in list(sys.modules):
                 if name in self.closure:
-                    del sys.modules[name]             # the program gets its own, run by eval1
+                    self.saved[name] = sys.modules.pop(name)   # the program gets its own, run by eval1
         sys.meta_path.insert(0, self)
-        importlib.invalidate_caches()
+        # sys.modules lists them in no dependency order (genericpath before os); start-up itself
+        # imports the codec registry's modules, then site imports os and linecache, and the
+        # rest follow as their imports
+        for name in STARTUP_ROOTS:
+            if name in (startup or []) and name in self.closure and name not in sys.modules:
+                importlib.import_module(name)
+
+    def deactivate(self) -> None:
+        """The host's modules back (to print a traceback with the host's own code)."""
+        if self in sys.meta_path:
+            sys.meta_path.remove(self)
+        sys.modules.update(getattr(self, "saved", {}))

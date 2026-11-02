@@ -158,7 +158,7 @@ def test_unbound_name_is_a_compile_time_error() -> None:
 
 
 def test_unsupported_constructs_are_named_not_approximated() -> None:
-    for src, needle in (("type A = int\n", "TypeAlias"), ("try:\n    pass\nexcept* E:\n    pass\n", "TryStar"), ("x = 1\nawait x\n", "Await")):
+    for src, needle in (("try:\n    pass\nexcept* E:\n    pass\n", "TryStar"), ("x = 1\nawait x\n", "Await")):
         try:
             lower(src, "<test>")
         except Unsupported as exc:

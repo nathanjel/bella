@@ -342,6 +342,18 @@ class FunctionDef(Stmt):
     # names this function binds in the scope that contains it: a comprehension's walrus
     # targets (PEP 572), declared nonlocal or global in the comprehension's function
     enclosing_binds: frozenset[str] = frozenset()
+    # an annotate function (PEP 649): its names are resolved when it is called, never checked
+    # statically; `classdict`: defined in a class, so a name is looked up in the class's
+    # namespace first (LOAD_FROM_DICT_OR_GLOBALS, LOAD_FROM_DICT_OR_DEREF)
+    annotation: bool = False
+    classdict: bool = False
+
+
+@dataclass(frozen=True)
+class Declare(Stmt):
+    """`x: T` with no value: binds nothing at runtime, but makes the name local to its scope
+    (symtable's DEF_LOCAL), as an assignment would."""
+    names: tuple[str, ...]
 
 
 @dataclass(frozen=True)
