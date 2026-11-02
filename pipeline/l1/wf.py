@@ -22,12 +22,16 @@ class _Scope:
     parent: _Scope | None = None
     unresolved: list[tuple[str, int]] = field(default_factory=list)
     is_class: bool = False     # a class body: its names are invisible to the scopes nested in it
-    star: bool = False         # holds `from m import *`: what it binds is known only at runtime
+    # holds `from m import *`, or (for the module) the module writes its globals through
+    # globals(): what binds which name is known only at runtime
+    star: bool = False
 
 
 def _targets(t: L.Target, out: set[str]) -> None:
     if isinstance(t, L.NameTarget):
         out.add(t.id)
+    elif isinstance(t, L.StarTarget):
+        _targets(t.target, out)
     elif isinstance(t, L.TupleTarget):
         for e in t.elts:
             _targets(e, out)
@@ -42,6 +46,8 @@ def _stmt_exprs(s: L.Stmt) -> list[L.Expr]:
             out.append(t.obj)
         elif isinstance(t, L.ItemTarget):
             out.extend((t.obj, t.key))
+        elif isinstance(t, L.StarTarget):
+            target(t.target)
         elif isinstance(t, L.TupleTarget):
             for e in t.elts:
                 target(e)
@@ -80,6 +86,7 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
             _bound_in(s.orelse, out)
         elif isinstance(s, L.FunctionDef):
             out.add(s.store or s.name)
+            out.update(s.enclosing_binds)        # a comprehension's walrus targets (PEP 572)
         elif isinstance(s, L.Delete):
             for t in s.targets:          # `del x` makes x local to its scope, as assignment does
                 _targets(t, out)
@@ -91,6 +98,21 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
                 _bound_in(h.body, out)
             _bound_in(s.orelse, out)
             _bound_in(s.finalbody, out)
+
+
+def _writes_globals(m: L.Module) -> bool:
+    """The module calls globals() (re binds RegexFlag's members with globals().update, inspect
+    its CO_ flags with globals()[...] =): its globals are written by computed name, so a name
+    this checker cannot resolve may still be bound when the code runs."""
+    def walk(x: object) -> bool:
+        if isinstance(x, L.Call) and isinstance(x.func, L.Name) and x.func.id == "globals":
+            return True
+        if isinstance(x, L.Node) or isinstance(x, L.Handler) or isinstance(x, L.Param):
+            return any(walk(v) for v in vars(x).values())
+        if isinstance(x, tuple):
+            return any(walk(v) for v in x)
+        return False
+    return walk(m.body)
 
 
 def _imports_star(stmts: tuple[L.Stmt, ...]) -> bool:
@@ -172,7 +194,7 @@ class _Checker:
         self.extra_names = extra_names
 
     def module(self, m: L.Module) -> None:
-        scope = _Scope(bound=set(), star=_imports_star(m.body))
+        scope = _Scope(bound=set(), star=_imports_star(m.body) or _writes_globals(m))
         _bound_in(m.body, scope.bound)
         _declared_global(m.body, scope.bound)
         scope.bound |= set(dir(builtins)) | {"__bind__", "__special__", "__name__"} | set(self.extra_names)
@@ -215,6 +237,8 @@ class _Checker:
         elif isinstance(t, L.ItemTarget):
             self.expr(t.obj, scope)
             self.expr(t.key, scope)
+        elif isinstance(t, L.StarTarget):
+            self.target(t.target, scope)
         elif isinstance(t, L.TupleTarget):
             for e in t.elts:
                 self.target(e, scope)
@@ -223,6 +247,8 @@ class _Checker:
         if isinstance(e, L.Lambda):
             inner = _Scope(bound={p.name for p in e.params}, parent=scope)
             _walrus(e.body, inner.bound)
+            _bound_in(e.prelude, inner.bound)
+            self.block(e.prelude, inner)
             for p in e.params:
                 if p.default is not None:
                     self.expr(p.default, scope)
@@ -261,10 +287,18 @@ class _Checker:
             self.expr(child, scope)
 
 
-def check(m: L.Module, extra_names: frozenset[str] = frozenset()) -> None:
+def check(m: L.Module, extra_names: frozenset[str] = frozenset(), strict: bool = True) -> list[str]:
     """Raise WellFormednessError on any violated L1 invariant. `extra_names` are names the host
-    binds before the module runs (the conformance harness injects none; tests may)."""
+    binds before the module runs (the conformance harness injects none; tests may).
+
+    `strict=False` is for library modules of the closure (proposal P-3, for the author): a name
+    bound nowhere that the checker can see is not a compile-time NameError there but a runtime
+    global lookup, as in CPython, since library code binds module globals by computed name from
+    other modules (enum.global_enum writes re's flags). The unresolved names are returned."""
     c = _Checker(extra_names)
     c.module(m)
-    if c.errors:
-        raise WellFormednessError("\n".join(c.errors))
+    unresolved = [e for e in c.errors if "is bound nowhere in its scope chain" in e]
+    errors = c.errors if strict else [e for e in c.errors if e not in unresolved]
+    if errors:
+        raise WellFormednessError("\n".join(errors))
+    return [] if strict else unresolved

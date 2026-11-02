@@ -574,11 +574,11 @@ class Interpreter:
         elif isinstance(t, L.ItemTarget):
             self.expr(t.obj, scope)[self.expr(t.key, scope)] = value
         elif isinstance(t, L.TupleTarget):
-            items = list(value)
-            if len(items) != len(t.elts):
-                raise ValueError(f"expected {len(t.elts)} values, got {len(items)}")
-            for sub, v in zip(t.elts, items, strict=True):
-                self.assign(sub, v, scope)
+            star = next((i for i, x in enumerate(t.elts) if isinstance(x, L.StarTarget)), None)
+            before = len(t.elts) if star is None else star
+            after = -1 if star is None else len(t.elts) - star - 1
+            for sub, v in zip(t.elts, unpack_iterable(value, before, after), strict=True):
+                self.assign(sub.target if isinstance(sub, L.StarTarget) else sub, v, scope)
         else:
             raise TypeError(f"unknown target {t}")
 
@@ -645,17 +645,10 @@ class Interpreter:
                 fn = caller_for(_module_of(scope))(self.expr(d, scope), (fn,), {})
             self.store(s.store or s.name, fn, scope)
         elif isinstance(s, L.Raise):
-            if s.exc is None:
-                raise  # re-raise the exception being handled (Python's own machinery)
-            exc = self.expr(s.exc, scope)
-            if isinstance(exc, type) and issubclass(exc, BaseException):
-                exc = exc()
-            if s.cause is not None:
-                cause = self.expr(s.cause, scope)
-                if isinstance(cause, type) and issubclass(cause, BaseException):
-                    cause = cause()
-                raise exc from cause
-            raise exc
+            # RAISE_VARARGS: both expressions are evaluated, then do_raise instantiates them
+            exc = self.expr(s.exc, scope) if s.exc is not None else None
+            cause = self.expr(s.cause, scope) if s.cause is not None else None
+            self._raise(exc, cause, s.cause is not None)
         elif isinstance(s, L.Try):
             self.try_stmt(s, scope)
         elif isinstance(s, L.Delete):
@@ -675,33 +668,256 @@ class Interpreter:
             raise TypeError(f"unknown statement {type(s).__name__}")
 
     def try_stmt(self, s: L.Try, scope: Scope) -> None:
+        """try/except/else/finally. A refusal passes through untouched (no handler, no finally);
+        return, break and continue run the finally block outside any handler, as CPython does;
+        an except clause's name is set to None and deleted afterwards (codegen's cleanup)."""
+        pending: BaseException | None = None
         try:
+            handled = False
             try:
                 self.block(s.body, scope)
-            except _SIGNALS:
+            except (*_SIGNALS, L.Refused):
                 raise
-            except BaseException as exc:
-                for h in s.handlers:
-                    if h.type is None:
-                        matched = True
-                    else:
-                        t = self.expr(h.type, scope)
-                        matched = isinstance(exc, t)
-                    if matched:
-                        if h.name:
-                            self.store(h.name, exc, scope)
-                        try:
-                            self.block(h.body, scope)
-                        finally:
-                            if h.name:
-                                scope.vars.pop(h.name, None)   # except-clause names are unbound afterwards
-                        break
-                else:
+            except BaseException as exc:  # noqa: BLE001  # the program's handlers decide
+                handler = self._handler(s, _unwrap(exc), scope)
+                if handler is None:
                     raise
-            else:
+                handled = True
+                self._run_handler(handler, _unwrap(exc), scope)
+            if not handled:
                 self.block(s.orelse, scope)
-        finally:
+        except L.Refused:
+            raise
+        except _SIGNALS as signal:
+            pending = signal
+        except BaseException:  # noqa: BLE001  # finally runs while the exception propagates
             self.block(s.finalbody, scope)
+            raise
+        else:
+            self.block(s.finalbody, scope)
+            return
+        self.block(s.finalbody, scope)
+        raise pending
+
+    def _handler(self, s: L.Try, exc: BaseException, scope: Scope) -> L.Handler | None:
+        for h in s.handlers:
+            if h.type is None or _matches(exc, self.expr(h.type, scope)):
+                return h
+        return None
+
+    def _run_handler(self, h: L.Handler, exc: BaseException, scope: Scope) -> None:
+        if h.name:
+            self.store(h.name, exc, scope)
+        try:
+            self.block(h.body, scope)
+        finally:
+            if h.name:
+                self.store(h.name, None, scope)
+                self.delete(h.name, scope)
+
+    # ---- generators ------------------------------------------------------------------------
+    # A generator function's body runs on host generators, so the program gets a real generator
+    # object: send, throw, close, yield from and the exception context are CPython's. Only code
+    # that contains a yield runs on them; the rest goes through the plain evaluator. PEP 479
+    # would turn a StopIteration into a RuntimeError at each of these inner frames, so they carry
+    # it in a _Carrier and the program sees it again at its except clauses and at the boundary of
+    # the generator itself.
+    def run_generator(self, node: L.FunctionDef | L.Lambda, scope: Scope) -> Any:
+        try:
+            try:
+                if isinstance(node, L.Lambda):
+                    yield from self.gblock(node.prelude, scope)
+                    return (yield from self.gexpr(node.body, scope))
+                yield from self.gblock(node.body, scope)
+                return None
+            except _Return as r:
+                return r.value
+        except _Carrier as carried:
+            inner = carried.inner
+        raise inner                 # here PEP 479 makes it the RuntimeError, as at CPython's boundary
+
+    def gblock(self, stmts: tuple[L.Stmt, ...], scope: Scope) -> Any:
+        try:
+            for s in stmts:
+                if _has_yield(s):
+                    yield from self.gstmt(s, scope)
+                else:
+                    self.stmt(s, scope)
+        except StopIteration as exc:
+            raise _Carrier(exc) from None
+
+    def gstmt(self, s: L.Stmt, scope: Scope) -> Any:
+        try:
+            if isinstance(s, L.ExprStmt):
+                yield from self.gexpr(s.value, scope)
+            elif isinstance(s, L.Assign):
+                if _has_yield_target(s.target):
+                    raise L.Refused(f"a yield inside an assignment target is not lowered (line {s.line})")
+                self.assign(s.target, (yield from self.gexpr(s.value, scope)), scope)
+            elif isinstance(s, L.AugAssign):
+                if not isinstance(s.target, L.NameTarget):
+                    raise L.Refused(f"a yield in an augmented assignment to {type(s.target).__name__} is not lowered "
+                                    f"(line {s.line})")
+                cur = self.load(s.target.id, scope, s.line)
+                self.store(s.target.id, _IBIN[s.op](cur, (yield from self.gexpr(s.value, scope))), scope)
+            elif isinstance(s, L.Return):
+                raise _Return((yield from self.gexpr(s.value, scope)) if s.value is not None else None)
+            elif isinstance(s, L.If):
+                taken = yield from self.gexpr(s.test, scope)
+                yield from self.gblock(s.body if taken else s.orelse, scope)
+            elif isinstance(s, L.While):
+                broke = False
+                while (yield from self.gexpr(s.test, scope)):
+                    try:
+                        yield from self.gblock(s.body, scope)
+                    except _Break:
+                        broke = True
+                        break
+                    except _Continue:
+                        continue
+                if not broke:
+                    yield from self.gblock(s.orelse, scope)
+            elif isinstance(s, L.For):
+                it = iter((yield from self.gexpr(s.iterable, scope)))
+                broke = False
+                while True:
+                    v = next(it, _MISSING)
+                    if v is _MISSING:
+                        break
+                    self.assign(s.target, v, scope)
+                    try:
+                        yield from self.gblock(s.body, scope)
+                    except _Break:
+                        broke = True
+                        break
+                    except _Continue:
+                        continue
+                if not broke:
+                    yield from self.gblock(s.orelse, scope)
+            elif isinstance(s, L.Try):
+                yield from self.gtry(s, scope)
+            elif isinstance(s, L.Raise):
+                exc = (yield from self.gexpr(s.exc, scope)) if s.exc is not None else None
+                cause = (yield from self.gexpr(s.cause, scope)) if s.cause is not None else None
+                self._raise(exc, cause, s.cause is not None)
+            elif isinstance(s, L.Assert):
+                if not (yield from self.gexpr(s.test, scope)):
+                    raise AssertionError((yield from self.gexpr(s.msg, scope))) if s.msg is not None else AssertionError()
+            else:
+                raise L.Refused(f"a yield inside {type(s).__name__} is not lowered (line {s.line})")
+        except StopIteration as exc:
+            raise _Carrier(exc) from None
+
+    def gtry(self, s: L.Try, scope: Scope) -> Any:
+        pending: BaseException | None = None
+        try:
+            handled = False
+            try:
+                yield from self.gblock(s.body, scope)
+            except (*_SIGNALS, L.Refused):
+                raise
+            except BaseException as exc:  # noqa: BLE001  # the program's handlers decide
+                handler = self._handler(s, _unwrap(exc), scope)
+                if handler is None:
+                    raise
+                handled = True
+                inner = _unwrap(exc)
+            if handled:
+                assert handler is not None
+                # the handler runs while the program's exception, not its carrier, is the one
+                # being handled (sys.exception(), the context of what the handler raises)
+                try:
+                    raise inner
+                except BaseException:  # noqa: BLE001
+                    if handler.name:
+                        self.store(handler.name, inner, scope)
+                    try:
+                        yield from self.gblock(handler.body, scope)
+                    finally:
+                        if handler.name:
+                            self.store(handler.name, None, scope)
+                            self.delete(handler.name, scope)
+            else:
+                yield from self.gblock(s.orelse, scope)
+        except L.Refused:
+            raise
+        except _SIGNALS as signal:
+            pending = signal
+        except BaseException:  # noqa: BLE001  # finally runs while the exception propagates
+            yield from self.gblock(s.finalbody, scope)
+            raise
+        else:
+            yield from self.gblock(s.finalbody, scope)
+            return
+        yield from self.gblock(s.finalbody, scope)
+        raise pending
+
+    def gexpr(self, e: L.Expr, scope: Scope) -> Any:
+        try:
+            if not _has_yield(e):
+                return self.expr(e, scope)
+            if isinstance(e, L.Yield):
+                value = (yield from self.gexpr(e.value, scope)) if e.value is not None else None
+                return (yield value)
+            if isinstance(e, L.YieldFrom):
+                return (yield from (yield from self.gexpr(e.value, scope)))   # PEP 380, by the host
+            if isinstance(e, L.Truth):
+                return bool((yield from self.gexpr(e.operand, scope)))
+            if isinstance(e, L.Not):
+                return not (yield from self.gexpr(e.operand, scope))
+            if isinstance(e, L.UnaryOp):
+                return _UN[e.op]((yield from self.gexpr(e.operand, scope)))
+            if isinstance(e, L.BinOp):
+                left = yield from self.gexpr(e.left, scope)
+                return _BIN[e.op](left, (yield from self.gexpr(e.right, scope)))
+            if isinstance(e, L.Compare):
+                left = yield from self.gexpr(e.left, scope)
+                return _CMP[e.op](left, (yield from self.gexpr(e.right, scope)))
+            if isinstance(e, L.BoolOp):
+                left = yield from self.gexpr(e.left, scope)
+                if e.op == "and":
+                    return (yield from self.gexpr(e.right, scope)) if left else left
+                return left if left else (yield from self.gexpr(e.right, scope))
+            if isinstance(e, L.IfExp):
+                taken = yield from self.gexpr(e.test, scope)
+                return (yield from self.gexpr(e.body if taken else e.orelse, scope))
+            if isinstance(e, L.GetAttr):
+                return getattr((yield from self.gexpr(e.obj, scope)), e.name)
+            if isinstance(e, L.GetItem):
+                obj = yield from self.gexpr(e.obj, scope)
+                return obj[(yield from self.gexpr(e.key, scope))]
+            if isinstance(e, L.Call) and not isinstance(e.func, L.Intrinsic) and \
+                    not (isinstance(e.func, L.Name) and e.func.id == "__bind__") and \
+                    not any(isinstance(a, L.Starred) for a in e.args) and all(k is not None for k, _ in e.kwargs):
+                fn = yield from self.gexpr(e.func, scope)
+                args: list[Any] = []
+                for a in e.args:
+                    args.append((yield from self.gexpr(a, scope)))
+                kwargs: dict[str, Any] = {}
+                for k, v in e.kwargs:
+                    assert k is not None
+                    kwargs[k] = yield from self.gexpr(v, scope)
+                return caller_for(_module_of(scope))(fn, args, kwargs)
+            if isinstance(e, (L.ListLit, L.TupleLit)) and not any(isinstance(x, L.Starred) for x in e.items) \
+                    and len(e.items) <= _STACK_USE_GUIDELINE:
+                values: list[Any] = []
+                for x in e.items:
+                    values.append((yield from self.gexpr(x, scope)))
+                return tuple(values) if isinstance(e, L.TupleLit) else values
+            raise L.Refused(f"a yield inside {type(e).__name__} is not lowered (line {e.line})")
+        except StopIteration as exc:
+            raise _Carrier(exc) from None
+
+    def _raise(self, exc: Any, cause: Any, has_cause: bool) -> None:
+        if exc is None:
+            raise  # noqa: PLE0704  # re-raise the exception being handled (Python's own machinery)
+        if isinstance(exc, type) and issubclass(exc, BaseException):
+            exc = exc()
+        if has_cause:
+            if isinstance(cause, type) and issubclass(cause, BaseException):
+                cause = cause()
+            raise exc from cause
+        raise exc
 
     # ---- functions and calls -----------------------------------------------------------------
     def function(self, node: L.FunctionDef | L.Lambda, scope: Scope) -> types.FunctionType:
@@ -732,8 +948,17 @@ class Interpreter:
             # a parameter the frontend generated (a comprehension's iterator, the annotate
             # function's format) is a real binding, invisible to the program
             (scope.temps if name in synthetic else scope.vars)[name] = value
+        if node.kind == "generator":
+            gen = self.run_generator(node, scope)
+            gen.__name__, gen.__qualname__ = fn.__name__, fn.__qualname__
+            return gen
+        if node.kind in ("coroutine", "async generator"):
+            made: Any = (_refused_coroutine if node.kind == "coroutine" else _refused_async_generator)(fn.__qualname__)
+            made.__name__, made.__qualname__ = fn.__name__, fn.__qualname__
+            return made
         if not is_def:
             assert isinstance(node, L.Lambda)
+            self.block(node.prelude, scope)
             return self.expr(node.body, scope)
         assert isinstance(node, L.FunctionDef)
         try:
@@ -741,6 +966,77 @@ class Interpreter:
         except _Return as r:
             return r.value
         return None
+
+    def display(self, e: L.ListLit | L.TupleLit | L.SetLit, scope: Scope) -> Any:
+        """starunpack_helper (Python/codegen.c): with no starred item and at most 30 items, every
+        item is evaluated before the container is built; otherwise it is built at the first
+        starred item (or empty, when big) and each later item added as it is evaluated
+        (LIST_APPEND/SET_ADD, LIST_EXTEND/SET_UPDATE); a tuple is made from the list."""
+        is_set = isinstance(e, L.SetLit)
+        big = len(e.items) > _STACK_USE_GUIDELINE
+        if not big and not any(isinstance(x, L.Starred) for x in e.items):
+            values = [self.expr(x, scope) for x in e.items]
+            return set(values) if is_set else tuple(values) if isinstance(e, L.TupleLit) else values
+        pending: list[Any] = []
+        built: Any = (set() if is_set else []) if big else None
+        for x in e.items:
+            if isinstance(x, L.Starred):
+                if built is None:
+                    built = set(pending) if is_set else list(pending)
+                value = self.expr(x.value, scope)
+                if is_set:
+                    built.update(value)                 # _PySet_Update: its own errors
+                else:
+                    _list_extend(built, value)
+            else:
+                value = self.expr(x, scope)
+                if built is None:
+                    pending.append(value)
+                elif is_set:
+                    built.add(value)
+                else:
+                    built.append(value)
+        return tuple(built) if isinstance(e, L.TupleLit) else built
+
+    def dict_display(self, e: L.DictLit, scope: Scope) -> dict[Any, Any]:
+        """codegen_dict: runs of pairs become sub-dicts (evaluated, then built), a run longer than
+        15 pairs is built pair by pair (MAP_ADD); `**m` is merged with DICT_UPDATE."""
+        result: dict[Any, Any] | None = None
+        run: list[tuple[L.Expr, L.Expr]] = []
+
+        def flush() -> None:
+            nonlocal result
+            if not run:
+                return
+            sub: dict[Any, Any] = {}
+            if len(run) * 2 > _STACK_USE_GUIDELINE:
+                for k, v in run:
+                    key = self.expr(k, scope)
+                    sub[key] = self.expr(v, scope)
+            else:
+                pairs = [(self.expr(k, scope), self.expr(v, scope)) for k, v in run]
+                for key, value in pairs:
+                    sub[key] = value
+            if result is None:
+                result = sub
+            else:
+                result.update(sub)
+            run.clear()
+
+        for k, v in zip(e.keys, e.values, strict=True):
+            if k is None:
+                flush()
+                if result is None:
+                    result = {}
+                _dict_update(result, self.expr(v, scope))
+            else:
+                if len(run) * 2 > _STACK_USE_GUIDELINE:
+                    run.append((k, v))
+                    flush()
+                else:
+                    run.append((k, v))
+        flush()
+        return {} if result is None else result
 
     def run_class_body(self, node: L.ClassBody, closure: Scope, ns: Any) -> Any:
         """The class body with ns as its locals; returns the __class__ cell, or None."""
@@ -771,18 +1067,7 @@ class Interpreter:
         args: list[Any] = []
         for a in e.args:
             if isinstance(a, L.Starred):
-                value = self.expr(a.value, scope)
-                error: TypeError | None = None
-                try:
-                    args.extend(value)
-                except TypeError:
-                    t = type(value)
-                    if getattr(t, "__iter__", None) is None and not _is_sequence(value):
-                        error = TypeError(f"Value after * must be an iterable, not {_tp_name(t)}")
-                    else:
-                        raise
-                if error is not None:
-                    raise error                 # CPython clears the original (no __context__ from it)
+                _list_extend(args, self.expr(a.value, scope))
             else:
                 args.append(self.expr(a, scope))
         kwargs: dict[str, Any] = {}
@@ -869,6 +1154,8 @@ class Interpreter:
                 return _MISSING
             if e.name == "import_from":
                 return import_from
+            if e.name == "map_add":
+                return _map_add
             return getattr(builtins, e.name)
         if isinstance(e, L.ClassBody):
             return ClassBodyFunction(self, e, scope)
@@ -876,12 +1163,10 @@ class Interpreter:
             return getattr(self.expr(e.obj, scope), e.name)
         if isinstance(e, L.GetItem):
             return self.expr(e.obj, scope)[self.expr(e.key, scope)]
-        if isinstance(e, L.ListLit):
-            return [self.expr(x, scope) for x in e.items]
-        if isinstance(e, L.TupleLit):
-            return tuple(self.expr(x, scope) for x in e.items)
+        if isinstance(e, (L.ListLit, L.TupleLit, L.SetLit)):
+            return self.display(e, scope)
         if isinstance(e, L.DictLit):
-            return {self.expr(k, scope): self.expr(v, scope) for k, v in zip(e.keys, e.values, strict=True)}
+            return self.dict_display(e, scope)
         raise TypeError(f"unknown expression {type(e).__name__}")
 
 
@@ -908,13 +1193,159 @@ def _dict_merge(target: dict[str, Any], m: Any) -> tuple[Any] | None:
     return None
 
 
+_STACK_USE_GUIDELINE = 30          # _PY_STACK_USE_GUIDELINE (Include/internal/pycore_compile.h)
+
+
+class _Carrier(BaseException):
+    """A StopIteration on its way through eval1's generator frames (see run_generator)."""
+
+    def __init__(self, inner: StopIteration) -> None:
+        self.inner = inner
+
+
+def _unwrap(exc: BaseException) -> BaseException:
+    return exc.inner if isinstance(exc, _Carrier) else exc
+
+
+def _matches(exc: BaseException, spec: Any) -> bool:
+    """An except clause: _PyEval_CheckExceptTypeValid, then PyErr_GivenExceptionMatches (by the
+    MRO, not __subclasscheck__)."""
+    classes = spec if isinstance(spec, tuple) else (spec,)
+    for c in classes:
+        if not (isinstance(c, type) and BaseException in c.__mro__):
+            raise TypeError("catching classes that do not inherit from BaseException is not allowed")
+    return any(c in type(exc).__mro__ for c in classes)
+
+
+def _map_add(target: dict[Any, Any], key: Any, value: Any) -> None:
+    """MAP_ADD: a dict comprehension's item, the key evaluated before the value."""
+    dict.__setitem__(target, key, value)
+
+
+async def _refused_coroutine(what: str) -> Any:
+    """What calling an async def makes: a real coroutine, which refuses when it runs."""
+    raise L.Refused(f"running the coroutine {what} is [P2+] (async, decision P-1)")
+
+
+async def _refused_async_generator(what: str) -> Any:
+    raise L.Refused(f"running the async generator {what} is [P2+] (async, decision P-1)")
+    yield  # type: ignore[unreachable]  # makes it an async generator
+
+
+_YIELDS: dict[int, bool] = {}
+
+
+def _has_yield(node: L.Node) -> bool:
+    """The node's own code yields: a Yield or YieldFrom in it, not in a function or lambda
+    nested in it (a nested def's decorators and defaults count; its body does not)."""
+    key = id(node)
+    found = _YIELDS.get(key)
+    if found is None:
+        found = _YIELDS[key] = _scan_yield(node)
+    return found
+
+
+def _scan_yield(node: Any) -> bool:
+    if isinstance(node, (L.Yield, L.YieldFrom)):
+        return True
+    if isinstance(node, (L.Lambda, L.ClassBody)):
+        return any(_scan_yield(p.default) for p in getattr(node, "params", ()) if p.default is not None)
+    if isinstance(node, L.FunctionDef):
+        return any(_scan_yield(d) for d in node.decorators) or \
+            any(_scan_yield(p.default) for p in node.params if p.default is not None)
+    for v in vars(node).values():
+        items = v if isinstance(v, tuple) else (v,)
+        for x in items:
+            if isinstance(x, L.Node) and _scan_yield(x):
+                return True
+            if isinstance(x, L.Handler) and (x.type is not None and _scan_yield(x.type) or any(_scan_yield(b) for b in x.body)):
+                return True
+            if isinstance(x, tuple) and len(x) == 2 and isinstance(x[1], L.Node) and _scan_yield(x[1]):
+                return True
+    return False
+
+
+def _has_yield_target(t: L.Target) -> bool:
+    return any(_scan_yield(v) for v in vars(t).values() if isinstance(v, L.Node))
+
+
+def _list_extend(target: list[Any], value: Any) -> None:
+    """LIST_EXTEND: a TypeError from a value that is neither iterable nor a sequence becomes
+    "Value after * must be an iterable" (the original dropped, not chained)."""
+    error: TypeError | None = None
+    try:
+        target.extend(value)
+    except TypeError:
+        if getattr(type(value), "__iter__", None) is None and not _is_sequence(value):
+            error = TypeError(f"Value after * must be an iterable, not {_tp_name(type(value))}")
+        else:
+            raise
+    if error is not None:
+        raise error
+
+
+def _dict_update(target: dict[Any, Any], m: Any) -> None:
+    """DICT_UPDATE: PyDict_Update (later keys win); an AttributeError from an object without
+    keys() becomes "'T' object is not a mapping"."""
+    failure: TypeError | None = None
+    try:
+        if isinstance(m, dict) and type(m).__iter__ is dict.__iter__:
+            for k, v in dict.items(m):
+                target[k] = v
+        else:
+            for k in list(m.keys()):
+                target[k] = m[k]
+    except AttributeError:
+        if hasattr(m, "keys"):
+            raise
+        failure = TypeError(f"'{_fully_qualified(type(m))}' object is not a mapping")
+    if failure is not None:
+        raise failure
+
+
+def unpack_iterable(value: Any, before: int, after: int) -> list[Any]:
+    """_PyEval_UnpackIterableStackRef (Python/ceval.c, 3.15.2): `before` items; with no starred
+    target (after == -1) the iterator must then be exhausted, read one item further only;
+    otherwise the rest becomes a list whose last `after` items go to the targets after it."""
+    error: Exception | None = None
+    try:
+        it = iter(value)
+    except TypeError:
+        if getattr(type(value), "__iter__", None) is None and not _is_sequence(value):
+            error = TypeError(f"cannot unpack non-iterable {_tp_name(type(value))} object")
+        else:
+            raise
+    if error is not None:
+        raise error
+    items: list[Any] = []
+    for i in range(before):
+        w = next(it, _MISSING)
+        if w is _MISSING:
+            if after == -1:
+                raise ValueError(f"not enough values to unpack (expected {before}, got {i})")
+            raise ValueError(f"not enough values to unpack (expected at least {before + after}, got {i})")
+        items.append(w)
+    if after == -1:
+        if next(it, _MISSING) is _MISSING:
+            return items
+        if type(value) in (list, tuple, dict) and len(value) > before:
+            raise ValueError(f"too many values to unpack (expected {before}, got {len(value)})")
+        raise ValueError(f"too many values to unpack (expected {before})")
+    rest = list(it)
+    if len(rest) < after:
+        raise ValueError(f"not enough values to unpack (expected at least {before + after}, got {before + len(rest)})")
+    tail = rest[len(rest) - after:] if after else []
+    del rest[len(rest) - after:]
+    return [*items, rest, *tail]
+
+
 def _module_of(scope: Scope) -> Scope:
     return scope if scope.is_module() else (scope.module or scope)
 
 
 def _host_state_impl(interp: Interpreter, fn: Any, e: L.Call, scope: Scope) -> Any:
     if fn in (builtins.eval, builtins.exec, builtins.compile):
-        raise L.Unsupported(f"{fn.__name__}() of source text is excluded (E-01) (line {e.line})")
+        raise L.Refused(f"{fn.__name__}() of source text is excluded (E-01) (line {e.line})")
     if e.args or e.kwargs:
         if fn is builtins.globals or fn is builtins.locals:
             raise TypeError(f"{fn.__name__}() takes no arguments")
@@ -927,7 +1358,7 @@ def _host_state_impl(interp: Interpreter, fn: Any, e: L.Call, scope: Scope) -> A
             return sorted(scope.vars.keys())
         return scope.vars                                  # locals() and vars() in a class body: the namespace
     if not scope.is_module():
-        raise L.Unsupported(f"{fn.__name__}() inside a function is not modelled by eval1 yet (line {e.line})")
+        raise L.Refused(f"{fn.__name__}() inside a function is not modelled by eval1 yet (line {e.line})")
     if fn is builtins.dir:
         return sorted(scope.vars)
     return scope.vars                                      # locals() and vars() at module level

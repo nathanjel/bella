@@ -259,6 +259,19 @@ class _ClassBodies:
             n.body = self.node(n.body)  # type: ignore[assignment]
             self.stack.pop()
             return n
+        if isinstance(n, ast.GeneratorExp):
+            n.generators[0].iter = self.node(n.generators[0].iter)  # type: ignore[assignment]  # evaluated in the enclosing scope
+            n.bella_qualname = self.qualname("<genexpr>")  # type: ignore[attr-defined]
+            in_class = self.stack[-1][4] or self.stack[-1][0] == "class"
+            self.stack.append(("function", n.bella_qualname, frozenset(), None, in_class))  # type: ignore[attr-defined]
+            n.elt = self.node(n.elt)  # type: ignore[assignment]
+            for i, g in enumerate(n.generators):
+                g.target = self.node(g.target)  # type: ignore[assignment]
+                if i:
+                    g.iter = self.node(g.iter)  # type: ignore[assignment]
+                g.ifs = [self.node(c) for c in g.ifs]  # type: ignore[misc]
+            self.stack.pop()
+            return n
         if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "super" and not n.args
                 and not n.keywords and self.stack[-1][0] == "function"):
             _, _, _, first, in_class = self.stack[-1]
@@ -531,6 +544,35 @@ def desugar_imports(tree: ast.Module) -> ast.Module:
     return ast.fix_missing_locations(_Imports().run(tree))
 
 
+class _SeveralTargets(ast.NodeTransformer):
+    """`a = b[i] = v`: v once, then stored to each target left to right, as CPython's COPY and
+    stores do; the temporary is deleted afterwards so that it holds the value no longer."""
+
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        self.generic_visit(node)
+        if len(node.targets) == 1:
+            return node
+        t = _tmp("val")
+        out: list[ast.stmt] = [ast.Assign(targets=[ast.Name(id=t, ctx=ast.Store())], value=node.value)]
+        out += [ast.Assign(targets=[target], value=ast.Name(id=t, ctx=ast.Load())) for target in node.targets]
+        out.append(ast.Delete(targets=[ast.Name(id=t, ctx=ast.Del())]))
+        return [ast.fix_missing_locations(_copy_loc(s, node)) for s in out]
+
+
+@register(PassSpec(
+    name="desugar-several-targets", source=Level.L0, target=Level.L0,
+    produces=frozenset({Fact.SINGLE_TARGETS}),
+    obligations=(
+        Obligation("wf", "every Assign has one target"),
+        Obligation("semantics", "the value is evaluated once, then stored to the targets left to right, each target's own expressions evaluated when it is stored to"),
+        Obligation("terminates", "one rewrite per assignment"),
+    ),
+    discharge=Discharge.TESTED, status="tested",
+))
+def desugar_several_targets(tree: ast.Module) -> ast.Module:
+    return _as_module(ast.fix_missing_locations(_SeveralTargets().visit(tree)))
+
+
 class _ChainedCompare(ast.NodeTransformer):
     def visit_Compare(self, node: ast.Compare) -> ast.AST:
         self.generic_visit(node)
@@ -633,18 +675,45 @@ def desugar_with(tree: ast.Module) -> ast.Module:
     return _as_module(ast.fix_missing_locations(_With().visit(tree)))
 
 
-class _ListComp(ast.NodeTransformer):
-    """[E for x in IT if C] -> a helper taking iter(IT): the loop variable does not leak.
+def _walrus_targets(nodes: list[ast.AST]) -> list[str]:
+    """PEP 572: the names a comprehension's walrus expressions bind (nested comprehensions
+    included, lambdas not: they are scopes of their own), in source order."""
+    out: list[str] = []
 
-    The helper is defined in the scope that contains the comprehension, immediately before the
-    statement, so it closes over that scope's names as a comprehension does; the outermost
-    iterable is evaluated in that scope, everything else inside the helper (review 2026-11-01,
-    astra-low-01 #5, gemini 2.2.2). The transformer does not enter nested function bodies:
-    ``_hoist`` lowers each body in its own scope.
-    """
+    def walk(n: ast.AST) -> None:
+        if isinstance(n, ast.Lambda):
+            return
+        if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name) and n.target.id not in out:
+            out.append(n.target.id)
+        for child in ast.iter_child_nodes(n):
+            walk(child)
+    for n in nodes:
+        walk(n)
+    return out
 
-    def __init__(self) -> None:
+
+class _Comprehensions(ast.NodeTransformer):
+    """Each comprehension becomes a helper taking iter(<outermost iterable>), defined just before
+    the statement in the scope that contains the comprehension, so that it closes over that
+    scope as a comprehension does; the outermost iterable is evaluated in that scope, the rest
+    inside the helper, and the loop variables do not leak (PEP 709's observable behaviour;
+    review 2026-11-01, astra-low-01 #5, gemini 2.2.2).
+
+    * list, set, dict: the helper builds the container (dict items with the key evaluated
+      before the value, as MAP_ADD) and returns it;
+    * generator expression: the helper is a generator function named <genexpr>, with CPython's
+      qualname, called with the iterator, as CPython calls its genexpr code;
+    * a walrus target binds in the containing scope (PEP 572): the helper declares it nonlocal
+      (global at module level) and the containing function binds it; in a class body it is a
+      SyntaxError, as in CPython.
+
+    Comprehensions in a lambda's body are hoisted into the lambda itself (its prelude). The
+    transformer does not enter nested function bodies: ``_hoist`` lowers each body in its own
+    scope."""
+
+    def __init__(self, scope: str) -> None:
         self.hoisted: list[ast.stmt] = []
+        self.scope = scope                       # "module", "function" or "class"
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         # decorators and defaults run in the enclosing scope; the body is lowered by _hoist
@@ -653,38 +722,90 @@ class _ListComp(ast.NodeTransformer):
         node.args.kw_defaults = [self.visit(d) if d is not None else None for d in node.args.kw_defaults]
         return node
 
-    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
-        return node          # its body is another scope; L1 does not lower lambdas yet
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        return self.visit_FunctionDef(node)  # type: ignore[arg-type]
 
     def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        return node          # class scopes are not lowered by L1 yet
+        # the header runs in this scope; the body is lowered by _hoist
+        node.decorator_list = [self.visit(d) for d in node.decorator_list]
+        node.bases = [self.visit(b) for b in node.bases]
+        for k in node.keywords:
+            k.value = self.visit(k.value)
+        return node
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        node.args.defaults = [self.visit(d) for d in node.args.defaults]
+        node.args.kw_defaults = [self.visit(d) if d is not None else None for d in node.args.kw_defaults]
+        inner = _Comprehensions("function")
+        node.body = inner.visit(node.body)
+        node.bella_prelude = inner.hoisted  # type: ignore[attr-defined]  # helpers, made at each call
+        return node
 
     def visit_ListComp(self, node: ast.ListComp) -> ast.AST:
-        if isinstance(node.elt, ast.Starred):
+        return self.comprehension(node, "list")
+
+    def visit_SetComp(self, node: ast.SetComp) -> ast.AST:
+        return self.comprehension(node, "set")
+
+    def visit_DictComp(self, node: ast.DictComp) -> ast.AST:
+        return self.comprehension(node, "dict")
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> ast.AST:
+        return self.comprehension(node, "genexp")
+
+    def comprehension(self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp, kind: str) -> ast.AST:
+        if not isinstance(node, ast.DictComp) and isinstance(node.elt, ast.Starred):
             raise L.Unsupported("unpacking in a comprehension (PEP 798, new in 3.15) is [P2+]")
-        fname, res, arg = _tmp("lc"), _tmp("res"), _tmp("it")
+        if any(g.is_async for g in node.generators):
+            raise L.Unsupported("async comprehension")
+        fname, res, arg = _tmp("gen" if kind == "genexp" else "comp"), _tmp("res"), _tmp("it")
         outer_iter = self.visit(node.generators[0].iter)      # evaluated in this scope
-        inner: list[ast.stmt] = [ast.Expr(ast.Call(
-            func=ast.Attribute(value=ast.Name(id=res, ctx=ast.Load()), attr="append", ctx=ast.Load()),
-            args=[node.elt], keywords=[]))]
+        res_load = ast.Name(id=res, ctx=ast.Load())
+        action: ast.stmt
+        if isinstance(node, ast.DictComp):
+            assert node.key is not None      # a dict comprehension's key (None only marks ** in a display)
+            action = ast.Expr(ast.Call(func=_intrinsic("map_add"), args=[res_load, node.key, node.value],  # type: ignore[list-item]
+                                       keywords=[]))
+        elif kind == "genexp":
+            action = ast.Expr(ast.Yield(value=node.elt))
+        else:
+            action = ast.Expr(ast.Call(func=ast.Attribute(value=res_load, attr="append" if kind == "list" else "add",
+                                                          ctx=ast.Load()), args=[node.elt], keywords=[]))
+        inner: list[ast.stmt] = [action]
         for i, gen in enumerate(reversed(node.generators)):
-            if gen.is_async:
-                raise L.Unsupported("async comprehension")
             for cond in reversed(gen.ifs):
                 inner = [ast.If(test=cond, body=inner, orelse=[])]
             is_outer = i == len(node.generators) - 1
             iterable = ast.Name(id=arg, ctx=ast.Load()) if is_outer else gen.iter
             inner = [ast.For(target=gen.target, iter=iterable, body=inner, orelse=[])]
-        body: list[ast.stmt] = ([ast.Assign(targets=[ast.Name(id=res, ctx=ast.Store())], value=ast.List(elts=[], ctx=ast.Load()))]
-                                + inner + [ast.Return(ast.Name(id=res, ctx=ast.Load()))])
+        parts: list[ast.AST] = [node.key, node.value] if isinstance(node, ast.DictComp) and node.key else [node.elt]  # type: ignore[union-attr, list-item]
+        parts += [c for g in node.generators for c in g.ifs] + [g.iter for g in node.generators[1:]]
+        bound_outside = _walrus_targets(parts)
+        body: list[ast.stmt] = []
+        if bound_outside:
+            if self.scope == "class":
+                raise SyntaxError("assignment expression within a comprehension cannot be used in a class body "
+                                  f"(line {node.lineno})")
+            body.append(ast.Nonlocal(names=bound_outside) if self.scope == "function" else ast.Global(names=bound_outside))
+        if kind != "genexp":
+            init: ast.expr = (ast.List(elts=[], ctx=ast.Load()) if kind == "list" else ast.Dict(keys=[], values=[])
+                              if kind == "dict" else ast.Call(func=_intrinsic("set"), args=[], keywords=[]))
+            body.append(ast.Assign(targets=[ast.Name(id=res, ctx=ast.Store())], value=init))
+        body += inner
+        if kind != "genexp":
+            body.append(ast.Return(ast.Name(id=res, ctx=ast.Load())))
         for st in body:
             ast.copy_location(st, node)
             ast.fix_missing_locations(st)
         fn = ast.FunctionDef(
-            name=fname,
+            name="<genexpr>" if kind == "genexp" else fname,
             args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=arg)], kwonlyargs=[], kw_defaults=[], defaults=[]),
-            body=_hoist(body),           # comprehensions inside the element, conditions or inner loops
+            body=_hoist(body, "function"),       # comprehensions inside the element, conditions or inner loops
             decorator_list=[], returns=None, type_params=[])
+        fn.bella_store = fname  # type: ignore[attr-defined]
+        fn.bella_qualname = getattr(node, "bella_qualname", None)  # type: ignore[attr-defined]
+        if bound_outside and self.scope == "function":
+            fn.bella_enclosing_binds = bound_outside  # type: ignore[attr-defined]
         self.hoisted.append(ast.fix_missing_locations(_copy_loc(fn, node)))
         return ast.fix_missing_locations(_copy_loc(ast.Call(
             func=ast.Name(id=fname, ctx=ast.Load()),
@@ -692,17 +813,21 @@ class _ListComp(ast.NodeTransformer):
             keywords=[]), node))
 
 
-def _hoist(stmts: list[ast.stmt]) -> list[ast.stmt]:
+def _hoist(stmts: list[ast.stmt], scope: str = "module") -> list[ast.stmt]:
     out: list[ast.stmt] = []
     for s in stmts:
-        tr = _ListComp()
+        tr = _Comprehensions(scope)
         s = tr.visit(s)
+        inner = "function" if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) else \
+            "class" if isinstance(s, ast.ClassDef) else scope
         for fld in ("body", "orelse", "finalbody"):
             if hasattr(s, fld) and isinstance(getattr(s, fld), list):
-                setattr(s, fld, _hoist(getattr(s, fld)))
-        if isinstance(s, ast.Try):
+                setattr(s, fld, _hoist(getattr(s, fld), inner))
+        if isinstance(s, (ast.Try, ast.TryStar)):
             for h in s.handlers:
-                h.body = _hoist(h.body)
+                h.body = _hoist(h.body, scope)
+        for case in getattr(s, "cases", []):
+            case.body = _hoist(case.body, scope)
         out.extend(tr.hoisted)
         out.append(s)
     return out
@@ -712,14 +837,14 @@ def _hoist(stmts: list[ast.stmt]) -> list[ast.stmt]:
     name="desugar-listcomp", source=Level.L0, target=Level.L0,
     produces=frozenset({Fact.NO_COMPREHENSIONS}),
     obligations=(
-        Obligation("wf", "output contains no ListComp node"),
-        Obligation("semantics", "the outermost iterable is evaluated in the enclosing scope before the loop; the helper is defined in the comprehension's own scope so it sees that scope's names; loop variables do not leak (PEP 709 observable behaviour); elements appended in order"),
+        Obligation("wf", "output contains no ListComp, SetComp, DictComp or GeneratorExp node"),
+        Obligation("semantics", "the outermost iterable is evaluated (and iter() called) in the enclosing scope before the loop; the helper is defined in the comprehension's own scope so it sees that scope's names; loop variables do not leak (PEP 709 observable behaviour); elements added in order, a dict's key before its value; a generator expression is a generator named <genexpr>; walrus targets bind in the containing scope (PEP 572)"),
         Obligation("terminates", "one helper per comprehension"),
     ),
     discharge=Discharge.TESTED, status="tested",
 ))
 def desugar_listcomp(tree: ast.Module) -> ast.Module:
-    tree.body = _hoist(tree.body)
+    tree.body = _hoist(tree.body, "module")
     return ast.fix_missing_locations(tree)
 
 
@@ -766,6 +891,9 @@ class _Decorators(ast.NodeTransformer):
     def visit_ClassDef(self, node: ast.ClassDef) -> Any:
         return self.visit_FunctionDef(node)  # type: ignore[arg-type]  # the same rewrite: temps before, applied once
 
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
+        return self.visit_FunctionDef(node)  # type: ignore[arg-type]
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
         self.generic_visit(node)
         if not node.decorator_list:
@@ -809,6 +937,17 @@ _BINOPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.FloorDiv
 _UNOPS = {ast.USub: "-", ast.UAdd: "+", ast.Invert: "~"}
 _CMPOPS = {ast.Lt: "<", ast.LtE: "<=", ast.Eq: "==", ast.NotEq: "!=", ast.Gt: ">", ast.GtE: ">=",
            ast.In: "in", ast.NotIn: "not-in", ast.Is: "is", ast.IsNot: "is-not"}
+
+
+def _yields(body: list[ast.stmt]) -> bool:
+    """The code yields (a generator): a yield in it, not in a nested function, lambda or class."""
+    def walk(n: ast.AST) -> bool:
+        if isinstance(n, (ast.Yield, ast.YieldFrom)):
+            return True
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return False
+        return any(walk(c) for c in ast.iter_child_nodes(n))
+    return any(walk(s) for s in body)
 
 
 def clean_doc(doc: str) -> str:
@@ -872,8 +1011,7 @@ class _ToL1:
             return L.ExprStmt(ln, self.expr(s.value))
         if isinstance(s, ast.Assign):
             if len(s.targets) != 1:
-                # a = b = v  ->  tmp = v; a = tmp; b = tmp  is a later refinement; keep it visible
-                raise L.Unsupported("assignment with several targets")
+                raise L.Unsupported("several assignment targets must be desugared first")
             return L.Assign(ln, self.target(s.targets[0]), self.expr(s.value))
         if isinstance(s, ast.AnnAssign):
             if s.value is None:
@@ -895,7 +1033,7 @@ class _ToL1:
             return L.Continue(ln)
         if isinstance(s, ast.Pass):
             return L.Pass(ln)
-        if isinstance(s, ast.FunctionDef):
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return self.function(s)
         if isinstance(s, ast.ClassDef):
             return self.class_(s)
@@ -957,24 +1095,31 @@ class _ToL1:
         return L.FunctionDef(ln, "__annotate__", (L.Param(fmt, None, "positional-only", public="format"),), body,
                              qualname=f"{qualname}.__annotate__")
 
-    def function(self, f: ast.FunctionDef) -> L.FunctionDef:
+    def function(self, f: ast.FunctionDef | ast.AsyncFunctionDef) -> L.FunctionDef:
         if f.decorator_list:
             raise L.Unsupported("decorators must be desugared first")
+        yields = _yields(f.body)
+        if isinstance(f, ast.AsyncFunctionDef):
+            kind = "async generator" if yields else "coroutine"
+        else:
+            kind = "generator" if yields else "function"
         if f.type_params:
             raise L.Unsupported(f"type parameters (PEP 695) of {f.name} (line {f.lineno})")
         params = self.params(f.args, f.name)
         qualname = getattr(f, "bella_qualname", None) or self.qualname(f.name)
         globals_, nonlocals = declarations(f.body)
-        annotate = self.annotate(f, qualname)
+        annotate = self.annotate(f, qualname)  # type: ignore[arg-type]
         self.units.append(_Unit("function", qualname, frozenset(globals_)))
         try:
-            body = self.block(f.body)
+            # an async def's body runs only when its coroutine runs, which is [P2+]: not lowered
+            body = self.block(f.body) if kind in ("function", "generator") else ()
         finally:
             self.units.pop()
         decorators = tuple(L.Name(f.lineno, t) for t in getattr(f, "bella_decorators", []))
         return L.FunctionDef(f.lineno, f.name, params, body, frozenset(globals_), frozenset(nonlocals),
                              qualname=qualname, decorators=decorators, annotate=annotate, docstring=_docstring(f.body),
-                             store=getattr(f, "bella_store", "") if getattr(f, "bella_store", f.name) != f.name else "")
+                             store=getattr(f, "bella_store", "") if getattr(f, "bella_store", f.name) != f.name else "",
+                             kind=kind, enclosing_binds=frozenset(getattr(f, "bella_enclosing_binds", ())))
 
     def class_(self, c: ast.ClassDef) -> L.Assign:
         """``C = d1(d2(build_class(<body>, "C", *bases, **keywords)))``: the decorators (already
@@ -1009,10 +1154,12 @@ class _ToL1:
         qualname = getattr(e, "bella_qualname", None) or self.qualname("<lambda>")
         self.units.append(_Unit("function", qualname))
         try:
+            prelude = self.block(getattr(e, "bella_prelude", []))
             body = self.expr(e.body)
         finally:
             self.units.pop()
-        return L.Lambda(e.lineno, params, body, qualname)
+        return L.Lambda(e.lineno, params, body, qualname, "generator" if _yields([ast.Expr(e.body)]) else "function",
+                        prelude)
 
     # ---- targets ----------------------------------------------------------------------------
     def target(self, t: ast.expr) -> L.Target:
@@ -1024,7 +1171,8 @@ class _ToL1:
         if isinstance(t, ast.Subscript):
             return L.ItemTarget(ln, self.expr(t.value), self.expr(t.slice))
         if isinstance(t, (ast.Tuple, ast.List)):
-            return L.TupleTarget(ln, tuple(self.target(e) for e in t.elts))
+            return L.TupleTarget(ln, tuple(L.StarTarget(e.lineno, self.target(e.value)) if isinstance(e, ast.Starred)
+                                           else self.target(e) for e in t.elts))
         raise L.Unsupported(f"assignment target {type(t).__name__} (line {ln})")
 
     # ---- expressions ------------------------------------------------------------------------
@@ -1068,6 +1216,10 @@ class _ToL1:
             return L.Call(ln, self.expr(e.func), args, tuple((k.arg, self.expr(k.value)) for k in e.keywords))
         if isinstance(e, ast.Lambda):
             return self.lambda_(e)
+        if isinstance(e, ast.Yield):
+            return L.Yield(ln, self.expr(e.value) if e.value is not None else None)
+        if isinstance(e, ast.YieldFrom):
+            return L.YieldFrom(ln, self.expr(e.value))
         if isinstance(e, ast.Attribute):
             return L.GetAttr(ln, self.expr(e.value), e.attr)
         if isinstance(e, ast.Subscript):
@@ -1075,14 +1227,12 @@ class _ToL1:
         if isinstance(e, ast.Slice):
             parts = [self.expr(p) if p is not None else L.Const(ln, None) for p in (e.lower, e.upper, e.step)]
             return L.Call(ln, L.Intrinsic(ln, "slice"), tuple(parts))      # BUILD_SLICE, whatever `slice` names
-        if isinstance(e, ast.List):
-            return L.ListLit(ln, tuple(self.expr(x) for x in e.elts))
-        if isinstance(e, ast.Tuple):
-            return L.TupleLit(ln, tuple(self.expr(x) for x in e.elts))
+        if isinstance(e, (ast.List, ast.Tuple, ast.Set)):
+            items = tuple(L.Starred(x.lineno, self.expr(x.value)) if isinstance(x, ast.Starred) else self.expr(x)
+                          for x in e.elts)
+            return (L.ListLit if isinstance(e, ast.List) else L.TupleLit if isinstance(e, ast.Tuple) else L.SetLit)(ln, items)
         if isinstance(e, ast.Dict):
-            if any(k is None for k in e.keys):
-                raise L.Unsupported("dict unpacking in literal")
-            return L.DictLit(ln, tuple(self.expr(k) for k in e.keys if k is not None),
+            return L.DictLit(ln, tuple(self.expr(k) if k is not None else None for k in e.keys),
                              tuple(self.expr(v) for v in e.values))
         if isinstance(e, ast.NamedExpr):
             raise L.Unsupported("walrus outside a desugared comparison")
@@ -1102,7 +1252,7 @@ class _ToL1WithWalrus(_ToL1):
 @register(PassSpec(
     name="to-l1", source=Level.L0, target=Level.L1,
     requires=frozenset({Fact.NO_CHAINED_COMPARE, Fact.NO_WITH, Fact.NO_COMPREHENSIONS, Fact.NO_FSTRINGS, Fact.NO_DECORATORS,
-                        Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED, Fact.NO_IMPORTS}),
+                        Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED, Fact.NO_IMPORTS, Fact.SINGLE_TARGETS}),
     produces=frozenset({Fact.EXPLICIT_TRUTH}),
     obligations=(
         Obligation("wf", "output satisfies wf1 (pipeline.l1.wf)"),
@@ -1115,7 +1265,8 @@ def to_l1(tree: ast.Module) -> L.Module:
     return _ToL1WithWalrus().module(tree, getattr(tree, "bella_source", "<module>"))
 
 
-FRONTEND_PASSES = ["desugar-class-body", "desugar-private-names", "desugar-imports", "desugar-chained-compare", "desugar-with",
+FRONTEND_PASSES = ["desugar-class-body", "desugar-private-names", "desugar-imports", "desugar-several-targets",
+                   "desugar-chained-compare", "desugar-with",
                    "desugar-listcomp", "desugar-fstring", "desugar-decorators", "to-l1"]
 
 

@@ -9,8 +9,10 @@ with `--modules program` (the default) eval1 runs the program's own modules and 
 library is the host's; with `--modules closure` eval1 also runs every compiled standard-library
 module of the lock and the Python shims, all lowered before the program starts (decision P-1).
 
-A construct the frontend does not lower stops the run: stderr ``bella-eval1: unsupported: ...``
-and exit 70, the staging refusal's status. An exception the program does not catch ends it as
+A program the frontend cannot lower is not run: stderr ``bella-eval1: unsupported: ...`` and exit
+70, the staging refusal's status. A refusal reached while it runs (decision P-1: a module that is
+not lowered, a coroutine run) stops it with ``bella: refused: ...`` and exit 70; no except clause
+catches it and no finally block runs. An exception the program does not catch ends it as
 CPython ends it, with exit 1 and the exception's last line on stderr; the frames above it are
 eval1's own, so only the D-06-masked shape is comparable.
 """
@@ -26,9 +28,9 @@ ROOT = Path(__file__).resolve().parents[2]
 REFUSED = 70
 
 
-def _refuse(message: str) -> int:
+def _refuse(message: str, prefix: str = "bella-eval1: unsupported") -> int:
     sys.stdout.flush()
-    print(f"bella-eval1: unsupported: {message}", file=sys.stderr)
+    print(f"{prefix}: {message}", file=sys.stderr)
     return REFUSED
 
 
@@ -38,8 +40,8 @@ def main(argv: list[str]) -> int:
 
     from pipeline.l1.eval1 import Interpreter
     from pipeline.l1.frontend import lower
-    from pipeline.l1.grammar import DialectError, Unsupported
-    from pipeline.l1.modules import ModuleSystem, Refused
+    from pipeline.l1.grammar import DialectError, Refused, Unsupported
+    from pipeline.l1.modules import ModuleSystem
     from pipeline.l1.wf import check
     sys.path.remove(str(ROOT))
 
@@ -59,8 +61,8 @@ def main(argv: list[str]) -> int:
     path = Path(argv[0])
     try:
         program = lower(path.read_text(encoding="utf-8"), str(path.resolve()))
-        check(program)
-    except (Unsupported, DialectError) as exc:
+        check(program, frozenset({"__file__"}))
+    except (Unsupported, DialectError, SyntaxError) as exc:
         return _refuse(str(exc))
     interp = Interpreter()
     system = ModuleSystem(interp, modules, lock)
@@ -90,7 +92,9 @@ def main(argv: list[str]) -> int:
             return code or 0
         print(code, file=sys.stderr)
         return 1
-    except (Unsupported, Refused) as exc:
+    except Refused as exc:
+        return _refuse(str(exc), "bella: refused")     # decision P-1: what the program reached is not lowered
+    except Unsupported as exc:
         return _refuse(str(exc))
     except BaseException as exc:  # noqa: BLE001  # the program's uncaught exception ends it, as in CPython
         sys.stdout.flush()

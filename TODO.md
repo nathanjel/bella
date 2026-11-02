@@ -185,12 +185,37 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
       on A5 (generator expressions, several targets, `yield`, sets, comprehensions, starred
       forms) and A6 (a `type` alias). `match`, and an `async def` in `_collections_abc`'s class
       bodies, wait on step B's refusals.
-  * A5 the remaining forms, as passes: several targets (a temporary, then the assignments in
-    order), starred targets, starred and set displays, dict unpacking, set and dict
-    comprehensions, and generator expressions (through the comprehension pass, as generator
-    functions). The core gains bytes, Ellipsis and complex constants, generator functions,
-    `yield` and `yield from`. `eval1` makes real generator objects by evaluating generator
-    bodies in a generator mode.
+  * A5 the remaining forms, done 2026-11-02 (C-3-28, C-3-29, `pipeline/tests/test_l1_forms.py`):
+    * Passes: several targets, stored left to right, with the temporary deleted afterwards.
+      Every comprehension kind (list, set, dict with the key before the value, generator
+      expressions as generators named `<genexpr>`), walrus targets binding in the containing
+      scope (PEP 572; they were rejected before), and comprehensions in lambdas inlined into
+      the lambda.
+    * Core:
+      * Starred targets, with CPython's unpacking, which reads an iterator only one item past
+        what it needs (`eval1` used to read all of it).
+      * Starred, set and dict-unpacking displays, built as codegen builds them (items first
+        unless starred or more than 30; dicts in sub-dicts of 15 pairs).
+      * Bytes, complex and Ellipsis constants; `yield` and `yield from`.
+      * Function kinds: generator, coroutine, async generator.
+    * Generators in `eval1`: the body runs on host generators, so the objects are real
+      generators. A `StopIteration` is carried through the inner frames, so that PEP 479 acts
+      only at the generator's boundary, as in CPython.
+    * `async def` defines its function; the coroutine it makes refuses when run (P-1).
+    * Refusals are uncatchable (`L.Refused`): no except clause catches them and no finally
+      runs. That covers `eval1`'s own runtime gaps, which raised a catchable
+      `NotImplementedError` before, and modules that do not lower.
+    * `try` runs `finally` outside any handler for `return`, `break` and `continue`, and clears
+      an except clause's name as codegen does. Except clauses match by the MRO.
+    * `raise` evaluates the exception and its cause before instantiating either.
+    * `make eval1-corpus`: 53 of 75. Of `cli_easy_slugs`'s 72 closure modules, 67 lower. Left:
+      `match` (`dataclasses`, `traceback`, the `annotationlib` shim) and PEP 695 (`typing`,
+      `_colorize`).
+    * Found: the stdlib binds module globals by computed name from other modules (`re`'s flags,
+      through `enum.global_enum`). The spec's compile-time NameError would refuse `re`. Proposal
+      P-3 is for the author; `wf1` applies it provisionally (`strict=False` for library modules).
+  * A5b `match` (C-3-17), as a desugaring pass onto intrinsics for the sequence, mapping and
+    class patterns.
   * A6 the rest of the annotations: classes and modules (PEP 649, with `__classdict__`), PEP
     695 aliases and type parameters, and the S-1 second entry point.
   * B `eval1` runs `cli_easy_slugs` end to end: the closure lowered as P-1 decides, the staged

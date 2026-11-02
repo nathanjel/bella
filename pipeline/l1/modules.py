@@ -34,8 +34,8 @@ from typing import Any
 
 from pipeline.l1 import grammar as L
 from pipeline.l1.frontend import lower
-from pipeline.l1.grammar import DialectError, Unsupported
-from pipeline.l1.wf import check
+from pipeline.l1.grammar import DialectError, Refused, Unsupported
+from pipeline.l1.wf import WellFormednessError, check
 
 ROOT = Path(__file__).resolve().parents[2]
 STDLIB = Path(os.path.dirname(os.__file__)).resolve()
@@ -43,13 +43,18 @@ SHIMS = ROOT / "runtime" / "shims"
 TOOLING = ("pipeline", "refmodel", "tools", "validation", "conformance/harness.py")
 
 
-class Refused(Exception):
-    """A module the pipeline cannot lower: the run stops with the refusal (exit 70)."""
+def module_names(path: Path) -> frozenset[str]:
+    """What the import system binds in a module's globals before its body runs, beyond builtins
+    (whose dict also holds __name__, __doc__, __package__, __loader__ and __spec__): __file__,
+    and __path__ in a package's __init__."""
+    return frozenset({"__file__", "__path__"} if path.name == "__init__.py" else {"__file__"})
 
 
-def lower_file(path: Path) -> L.Module:
+def lower_file(path: Path, library: bool) -> L.Module:
+    """A module lowered and checked; a library module's names are held to CPython's runtime
+    resolution, not the program's compile-time rule (proposal P-3, wf.check)."""
     module = lower(path.read_text(encoding="utf-8"), str(path))
-    check(module)
+    check(module, module_names(path), strict=not library)
     return module
 
 
@@ -92,8 +97,8 @@ class ModuleSystem(importlib.abc.MetaPathFinder):
             raise Refused(f"{path.name}: {self.failures[path]}")
         if path not in self.cache:
             try:
-                self.cache[path] = lower_file(path)
-            except (Unsupported, DialectError, SyntaxError) as exc:
+                self.cache[path] = lower_file(path, library=path in self.closure.values() or path.is_relative_to(STDLIB))
+            except (Unsupported, DialectError, SyntaxError, WellFormednessError) as exc:
                 self.failures[path] = f"{type(exc).__name__}: {exc}"
                 raise Refused(f"{path.name}: {self.failures[path]}") from None
         return self.cache[path]

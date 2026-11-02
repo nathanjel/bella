@@ -18,7 +18,7 @@ from typing import Any
 
 from pipeline.l1 import frontend as fe
 from pipeline.l1.eval1 import special_lookup
-from pipeline.l1.grammar import DialectError, Unsupported
+from pipeline.l1.grammar import DialectError, Refused, Unsupported
 from pipeline.slice import run_cpp, run_cpython, run_eval1
 from pipeline.tests.test_frontend_eval1 import both
 
@@ -299,7 +299,7 @@ print("a" in globals(), globals()["a"], "a" in locals(), "Interpreter" in global
     for src in ("def f():\n    return locals()\nf()\n", "eval('1')\n", "exec('x = 1')\n"):
         try:
             both(src)
-        except Unsupported:
+        except (Unsupported, Refused):     # a refusal since task 4 step A5: no except clause may catch it
             continue
         raise AssertionError(f"eval1 must refuse {src!r}, not run it against the host")
 

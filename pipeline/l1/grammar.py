@@ -23,6 +23,12 @@ class Unsupported(NotImplementedError):
     """A Python construct the L1 frontend does not lower yet (never silently approximated)."""
 
 
+class Refused(BaseException):  # noqa: N818  # a refusal, not an error a program may handle
+    """A runtime refusal: what the program reached is not lowered (decision P-1) or is beyond the
+    phase (running a coroutine). It stops the program, stderr `bella: refused: ...` and exit 70;
+    no except clause catches it and no finally block runs."""
+
+
 class DialectError(Exception):
     """A program outside the dialect: a compile-time error naming its register or exclusion id
     (for example D-10, control flow leaving ``finally``). Unlike ``Unsupported`` it is permanent."""
@@ -142,6 +148,20 @@ class Lambda(Expr):
     params: tuple[Param, ...]
     body: Expr
     qualname: str
+    kind: str = "function"     # "generator" when the body yields
+    prelude: tuple[Stmt, ...] = ()   # the helpers of comprehensions in the body, made at each call
+
+
+@dataclass(frozen=True)
+class Yield(Expr):
+    """``yield value``: suspends the generator; its value is what send() passes back."""
+    value: Expr | None
+
+
+@dataclass(frozen=True)
+class YieldFrom(Expr):
+    """``yield from value``: PEP 380 delegation; its value is the subiterator's return value."""
+    value: Expr
 
 
 @dataclass(frozen=True)
@@ -158,6 +178,8 @@ class GetItem(Expr):
 
 @dataclass(frozen=True)
 class ListLit(Expr):
+    """A display; a ``Starred`` item is iterated into it in place (LIST_EXTEND). Built as codegen
+    builds it: the items first, unless one is starred or there are more than 30."""
     items: tuple[Expr, ...]
 
 
@@ -167,8 +189,14 @@ class TupleLit(Expr):
 
 
 @dataclass(frozen=True)
+class SetLit(Expr):
+    items: tuple[Expr, ...]
+
+
+@dataclass(frozen=True)
 class DictLit(Expr):
-    keys: tuple[Expr, ...]
+    """A key of None is ``**value`` (DICT_UPDATE). Pairs are built in codegen's sub-dicts."""
+    keys: tuple[Expr | None, ...]
     values: tuple[Expr, ...]
 
 
@@ -194,6 +222,12 @@ class AttrTarget(Target):
 class ItemTarget(Target):
     obj: Expr
     key: Expr
+
+
+@dataclass(frozen=True)
+class StarTarget(Target):
+    """``*target`` among a TupleTarget's elements (at most one): gets the list of the rest."""
+    target: Target
 
 
 @dataclass(frozen=True)
@@ -301,6 +335,13 @@ class FunctionDef(Stmt):
     annotate: FunctionDef | None = None
     docstring: str | None = None
     store: str = ""            # the name it is bound to, when private-name mangling changed it
+    # "function"; "generator" (the body yields: a call makes a generator); "coroutine" and
+    # "async generator" (async def: a call makes the object, and running it is [P2+], so the
+    # body is not lowered)
+    kind: str = "function"
+    # names this function binds in the scope that contains it: a comprehension's walrus
+    # targets (PEP 572), declared nonlocal or global in the comprehension's function
+    enclosing_binds: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

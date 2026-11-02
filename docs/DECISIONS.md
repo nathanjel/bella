@@ -383,6 +383,20 @@ log D-10; `docs/measurements.md`, `tools/scope.py`).
   CPython's namespace and the same four objects. The locks are regenerated (113 modules; 1a.1
   has 72 compiled modules and 5 shims).
 
+**2026-11-02 — P-3 for the author: names the standard library binds by computed name** (Gate 0
+task 4 step A5).
+* Found: `re` binds `DEBUG`, `A`, `I` and the other flags through `enum.global_enum`, which writes
+  `sys.modules[cls.__module__].__dict__` from `enum`. `re._constants` and `inspect` bind names with
+  `globals().update(...)` and `globals()[...] =`. Spec section 8 says a bare name bound nowhere in its
+  scope chain is a compile-time NameError, and that writes through `globals()` reach statically
+  known names. Read that way, `re` is outside the dialect, yet it is \[P1\].
+* Recommended: in the closure's library modules (standard library, shims, vendored packages), a name
+  the compiler cannot resolve is a runtime global lookup, exactly as in CPython: bound, else builtin,
+  else NameError. The compile-time NameError stays for the program's own modules. A later
+  optimisation can take the names that module bodies bind from the staging dry run.
+* Applied provisionally, and reversible: `wf.check(strict=False)` for library modules; it lists
+  the unresolved names.
+
 
 ## Pins
 

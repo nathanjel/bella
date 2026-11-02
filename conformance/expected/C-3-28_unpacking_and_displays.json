@@ -1,0 +1,12 @@
+{
+ "case": "C-3-28_unpacking_and_displays.py",
+ "clause": "C-3-28",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Gate 0 task 4, step A5 (the census of docs/measurements.md, 2026-11-02)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "True True\n0 [1, 2, 3] 4\n['a', 'b'] 1 2 [3, 4]\nValueError ValueError TypeError ValueError\n[0, 1, 2, 4, 'a', 'b'] (1, 2) [1, 2, 3]\n['a', 'b', 'hash 1', 'hash 2']\n['a', 'hash 1', 'b', 'hash 2', 'c', 'hash 3']\n['k1', 'v1', 'hash 1', 'hash 0', 'm', 'k2', 'v2', 'hash 2'] 3\n['v0', 'hash 0', 'v1', 'hash 1', 'hash 2', 'hash 3', 'hash 4', 'hash 5', 'hash 6', 'hash 7', 'hash 8', 'hash 9', 'hash 10', 'hash 11', 'hash 12', 'hash 13', 'hash 14', 'hash 15', 'hash 16']\nTypeError TypeError TypeError\n",
+ "stderr": "",
+ "exit_code": 0
+}
