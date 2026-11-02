@@ -85,8 +85,9 @@ class _Scopes(ast.NodeVisitor):
         for e in (*node.decorator_list, *node.bases, *(k.value for k in node.keywords)):
             self.visit(e)
         if any(_dotted(b) in self.namedtuple_class_names for b in node.bases):
+            # a parenthesised target, `(x): int`, is not simple and not a field (G5 3.7)
             fields = tuple(s.target.id for s in node.body
-                           if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name))
+                           if isinstance(s, ast.AnnAssign) and s.simple and isinstance(s.target, ast.Name))
             self.calls.append(NamedTupleCall(f"{self.path}:{node.lineno}", node.name, fields, False))
         self.stack.append((node.name, False))
         for stmt in node.body:

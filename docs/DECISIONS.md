@@ -328,6 +328,15 @@ the dry run compiled strings in its own `__future__` context, `eval`'s whitespac
 decoding of bytes were not the builtins', and private attribute names were not mangled. `[refused]`
 now acts when the function is called, as the manifest says.
 
+**2026-11-02 — the staging revision reviewed again** (gemini-4-argon-high-05; review log RL-122 to
+RL-135). Two of its findings were astra-low-06's; one is refuted (running a staged `compile`'s code
+object needs no compiler); the rest are fixed, each with a replay-against-CPython test. Among
+them: entry points resolve PEP 810 lazy imports as the interpreter does (read from CPython
+3.15.2's source; `LOAD_DEREF` does not); PEP 695 evaluate functions keep entry points under PEP
+563; the generator covers starred defaults, `IfExp` and f-string annotations, mangled bindings
+and type parameters, a class body's `global`, and a walrus in a lambda; artefacts are keyed by
+the script's real path and the optimisation level.
+
 ## Pins
 
 | What | Value | Where |

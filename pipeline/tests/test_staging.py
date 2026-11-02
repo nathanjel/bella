@@ -280,6 +280,45 @@ REVIEW_PROBES: dict[str, tuple[str, dict[str, str], tuple[str, ...]]] = {
         "import annotationlib\nclass C:\n    __v = int\n    def f(x: C.__v, y: Missing):\n        pass\n"
         "if __name__ == '__main__':\n    ann = annotationlib.get_annotations(C.f, format=annotationlib.Format.FORWARDREF)\n"
         "    print(ann['x'] is int, ann['y'].__forward_arg__)\n", {}, ()),
+    # review 2026-11-02 gemini-4-argon-high-05
+    "G5 3.1 lazy imports under FORWARDREF": (
+        "import annotationlib\nlazy from decimal import Decimal\nlazy from nonexistent_mod import Missing\n"
+        "def f(z: Later, x: Decimal, y: list[Decimal]) -> None: ...\ndef g(x: Missing, y: Later) -> None: ...\n"
+        "a = annotationlib.get_annotations(f, format=annotationlib.Format.FORWARDREF)\n"
+        "print(a['x'].__name__, a['y'])\nb = annotationlib.get_annotations(g, format=annotationlib.Format.FORWARDREF)\n"
+        "print(type(b['x']).__name__, b['x'].__forward_arg__)\n", {}, ()),
+    "G5 3.2 a bound and a default on one line": (
+        "import annotationlib\ntype Alias[T: int = str] = list[T]\nT = Alias.__type_params__[0]\nF = annotationlib.Format\n"
+        "print(annotationlib.call_evaluate_function(T.evaluate_bound, F.STRING), "
+        "annotationlib.call_evaluate_function(T.evaluate_default, F.STRING))\n", {}, ()),
+    "G5 3.3 PEP 563 and PEP 695": (
+        "from __future__ import annotations\nimport annotationlib\ntype Alias[T: Bound = Default] = list[T] | Unbound\n"
+        "print(annotationlib.call_evaluate_function(Alias.evaluate_value, annotationlib.Format.STRING))\n", {}, ()),
+    "G5 3.4 a starred TypeVarTuple default": (
+        "import annotationlib\ntype Alias[*Ts = *tuple[int, str]] = tuple[*Ts]\n"
+        "print(annotationlib.call_evaluate_function(Alias.__type_params__[0].evaluate_default, annotationlib.Format.STRING))\n", {}, ()),
+    "G5 3.5 an IfExp annotation": (
+        "import dataclasses\ncond = True\n@dataclasses.dataclass\nclass Box:\n    x: Later if cond else int = 1\n"
+        "class Later:\n    pass\nprint(Box(2))\n", {}, ()),
+    "G5 3.5 private names bound in a method": (
+        "import annotationlib\nclass Outer:\n    def m(self, __p=int):\n        __loc = str\n"
+        "        def inner(x: __loc, y: __p, z: Missing): ...\n        return inner\n"
+        "print(annotationlib.get_annotations(Outer().m(), format=annotationlib.Format.STRING))\n", {}, ()),
+    "G5 3.5 private type parameters": (
+        "import annotationlib\nclass Outer:\n    type Alias[__T: int] = list[__T] | Missing\n    class Inner[T: __Secret = int]:\n"
+        "        x: T\nF = annotationlib.Format\nprint(annotationlib.call_evaluate_function(Outer.Alias.evaluate_value, F.STRING))\n"
+        "print(annotationlib.call_evaluate_function(Outer.Inner.__type_params__[0].evaluate_bound, F.STRING))\n", {}, ()),
+    "G5 3.5 global in a class body": (
+        "import annotationlib\nG = int\ndef outer():\n    G = str\n    class C:\n        global G\n        x: G\n"
+        "        y: Missing\n        def m(self, a: G, b: Missing): ...\n    return C\nC = outer()\nF = annotationlib.Format\n"
+        "print(annotationlib.get_annotations(C, format=F.FORWARDREF)['x'], annotationlib.get_annotations(C.m, format=F.FORWARDREF)['a'])\n",
+        {}, ()),
+    "G5 3.5 a walrus in a lambda in a comprehension": (
+        "import annotationlib\ndef outer():\n    fs = [lambda: (w := int) for _ in (1,)]\n    def inner(a: w, b: Missing): ...\n"
+        "    return inner\nprint(annotationlib.get_annotations(outer(), format=annotationlib.Format.STRING))\n", {}, ()),
+    "G5 3.7 a parenthesised NamedTuple target": (
+        "import typing\ndef make():\n    class N(typing.NamedTuple):\n        a: int\n        (b): int = 2\n    return N\n"
+        "if __name__ == '__main__':\n    print(make()(1))\n", {}, ()),
     "3.5d exec of a text with closure=": (
         "if __name__ == '__main__':\n    try:\n        exec('x = 1', {}, closure=())\n"
         "    except TypeError as e:\n        print('TypeError', e)\n", {}, ()),
@@ -352,6 +391,22 @@ def test_two_annotate_functions_never_share_an_entry_point() -> None:
         found, declined = entries.evaluators_for_source(str(path))
     assert len(found) == 2 and declined == [], (found, declined)
     del json
+
+
+def test_artefacts_are_per_script_and_per_optimisation_level() -> None:
+    """Review 2026-11-02 gemini-4-argon-high-05, 3.6: two scripts with the same text in two
+    directories get their own artefacts, and so does -O."""
+    main = "import annotationlib, helper\nprint(annotationlib.get_annotations(helper.f, format=annotationlib.Format.STRING))\n"
+    outputs = []
+    with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+        for tmp, annotation in ((tmp1, "int"), (tmp2, "bytes")):
+            Path(tmp, "main.py").write_text(main, encoding="utf-8")
+            Path(tmp, "helper.py").write_text(f"def f(x: {annotation}): pass\n", encoding="utf-8")
+            outputs.append(subprocess.run([sys.executable, str(RUN), "main.py"], cwd=tmp, capture_output=True, text=True,
+                                          check=False).stdout)
+    assert outputs == ["{'x': 'int'}\n", "{'x': 'bytes'}\n"], outputs
+    optimised = _replay("import collections, sys\nprint(collections.namedtuple('P', 'a b')(1, 2), sys.flags.optimize)\n", "-O")
+    assert (optimised.returncode, optimised.stdout) == (0, "P(a=1, b=2) 1\n"), optimised.stderr
 
 
 def test_scan_names_sites_as_frames_do_and_resolves_aliases() -> None:

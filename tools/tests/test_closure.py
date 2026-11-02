@@ -521,6 +521,14 @@ def test_a_shim_written_in_python_is_scanned_g4_3_2() -> None:
     assert "ast" not in lock["unsupported_functions"]
 
 
+def test_a_walrus_in_a_lambda_binds_in_the_lambda_g5_3_5() -> None:
+    """Review 2026-11-02 gemini-4-argon-high-05, 3.5: a walrus in a comprehension binds in the
+    scope around it; one inside a lambda there binds in the lambda."""
+    tree = ast.parse("xs = [(v := 1) for _ in (1,)]\nys = [lambda: (w := 2) for _ in (1,)]\n")
+    names = set().union(*(closure._names_in(s) for s in tree.body))
+    assert {"xs", "ys", "v"} <= names and "w" not in names, names
+
+
 def test_phase1_is_staged_by_target_d10() -> None:
     """Each phase-1 stage counts only what the stages before it do not reach; a target after
     phase 1 (D-7) adds nothing to 1a and is reported apart (review log D-10)."""

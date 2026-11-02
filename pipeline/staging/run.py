@@ -53,7 +53,15 @@ def _key(paths: list[Path], *extra: str) -> str:
     return h.hexdigest()[:16]
 
 
-def dry_run(out: Path, blocked: list[str], args: list[str], seed: str | None = None) -> None:
+def optimisation_level(python_options: list[str]) -> int:
+    """The level the program will run at, from its options and PYTHONOPTIMIZE: asked of the
+    interpreter rather than recomputed (review 2026-11-02 gemini-4-argon-high-05, 3.6)."""
+    proc = subprocess.run([sys.executable, *(o for o in python_options if o.startswith("-O") or o == "-O"),
+                           "-c", "import sys; print(sys.flags.optimize)"], capture_output=True, text=True, check=True)
+    return int(proc.stdout)
+
+
+def dry_run(out: Path, blocked: list[str], args: list[str], seed: str | None = None, optimize: int = 0) -> None:
     """One dry run, in the phase-1 configuration (conformance/simulate blocks the omissions)."""
     env = dict(os.environ, BELLA_SIMULATE_BLOCK=",".join(blocked),
                PYTHONPATH=os.pathsep.join(filter(None, [str(REPO / "conformance" / "simulate"),
@@ -61,7 +69,9 @@ def dry_run(out: Path, blocked: list[str], args: list[str], seed: str | None = N
     env.pop("BELLA_STAGING", None)
     if seed is not None:
         env["PYTHONHASHSEED"] = seed
-    proc = subprocess.run([sys.executable, "-P", str(HERE / "dryrun.py"), "--out", str(out.with_suffix(".json")),
+    env.pop("PYTHONOPTIMIZE", None)
+    proc = subprocess.run([sys.executable, "-P", *(["-" + "O" * optimize] if optimize else []), str(HERE / "dryrun.py"),
+                           "--out", str(out.with_suffix(".json")),
                            "--binary", str(out.with_suffix(".bin")), *args],
                           env=env, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
@@ -69,12 +79,16 @@ def dry_run(out: Path, blocked: list[str], args: list[str], seed: str | None = N
         raise SystemExit(f"bella: the dry run failed ({' '.join(args)})")
 
 
-def current(out: Path) -> bool:
+def current(out: Path, script: Path | None = None) -> bool:
     """A cached artefact is current while every source it was made from is unchanged (review
-    2026-11-01 astra-low-05, A5-2): imported program modules count, not only the entry."""
+    2026-11-01 astra-low-05, A5-2): imported program modules count, not only the entry. A
+    program's artefact must also have been made from this very script, not a twin of it in
+    another directory (G5 3.6)."""
     if not (out.with_suffix(".bin").exists() and out.with_suffix(".json").exists()):
         return False
     sources = json.loads(out.with_suffix(".json").read_text(encoding="utf-8")).get("sources", {})
+    if script is not None and str(script) not in sources:
+        return False
     for path, digest in sources.items():
         try:
             if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
@@ -84,16 +98,18 @@ def current(out: Path) -> bool:
     return bool(sources)
 
 
-def stdlib_artefact(blocked: list[str]) -> Path:
-    out = BUILD / f"stdlib-{_key(INPUTS, *blocked)}"
+def stdlib_artefact(blocked: list[str], optimize: int = 0) -> Path:
+    out = BUILD / f"stdlib-{_key(INPUTS, str(optimize), *blocked)}"
     if not current(out):
         BUILD.mkdir(parents=True, exist_ok=True)
         dry_run(out, blocked, ["--modules-from", str(LOCK), "--tables", "all", "--shims", str(SHIMS),
-                               "--unsupported-from", str(LOCK)])
+                               "--unsupported-from", str(LOCK)], optimize=optimize)
     return out
 
 
-def program_artefact(script: Path, program_lock: Path | None, blocked: list[str], safe_path: bool = False) -> Path:
+def program_artefact(script: Path, program_lock: Path | None, blocked: list[str], safe_path: bool = False,
+                     optimize: int = 0) -> Path:
+    script = Path(os.path.realpath(script))     # not the name it was given: two dirs, two artefacts
     modules: list[str] = []
     paths = [script, *INPUTS]
     if program_lock is not None:
@@ -101,12 +117,12 @@ def program_artefact(script: Path, program_lock: Path | None, blocked: list[str]
         root = lock["roots"][0]
         modules = sorted(n for n, m in lock["modules"].items() if m["status"] == "program" and n != root)
         paths.append(program_lock)
-    out = BUILD / "programs" / f"{script.stem}-{_key(paths, os.environ.get('PYTHONPATH', ''), str(safe_path), *blocked)}"
-    if not current(out):
+    out = BUILD / "programs" / f"{script.stem}-{_key(paths, os.environ.get('PYTHONPATH', ''), str(safe_path), str(optimize), *blocked)}"
+    if not current(out, script):
         out.parent.mkdir(parents=True, exist_ok=True)
         dry_run(out, blocked, ["--entry", str(script), *(a for m in modules for a in ("--program-module", m)),
                                *(["--safe-path"] if safe_path else []),
-                               *(["--unsupported-from", str(program_lock)] if program_lock else [])])
+                               *(["--unsupported-from", str(program_lock)] if program_lock else [])], optimize=optimize)
     return out
 
 
@@ -126,7 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     script = Path(rest[0])
     blocked = phase1_blocked()
     safe_path = any(o == "-P" or (o.startswith("-") and not o.startswith("--") and "P" in o[1:]) for o in python_options)
-    artefacts = [stdlib_artefact(blocked), program_artefact(script, ours.program_lock, blocked, safe_path)]
+    optimize = optimisation_level(python_options)
+    artefacts = [stdlib_artefact(blocked, optimize), program_artefact(script, ours.program_lock, blocked, safe_path, optimize)]
     env = dict(os.environ, BELLA_STAGING="replay", BELLA_SIMULATE_BLOCK=",".join(blocked),
                BELLA_STAGING_ARTEFACTS=os.pathsep.join(str(a.with_suffix(".bin")) for a in artefacts),
                BELLA_STAGING_SHIMS=str(SHIMS), BELLA_STAGING_MECHANISM=ours.mechanism,

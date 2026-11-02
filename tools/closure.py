@@ -448,6 +448,20 @@ class _Evaluator:
         return UNKNOWN
 
 
+def walrus_targets(node: ast.AST) -> set[str]:
+    """The names walruses bind in the scope around a comprehension: through nested comprehensions,
+    not into a lambda, whose walrus binds in the lambda."""
+    found: set[str] = set()
+    stack: list[ast.AST] = [node]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name):
+            found.add(n.target.id)
+        if not isinstance(n, ast.Lambda):
+            stack.extend(ast.iter_child_nodes(n))
+    return found
+
+
 def _names_in(node: ast.AST) -> set[str]:
     """Names a statement binds in its own scope (the bodies of nested scopes excluded)."""
     out: set[str] = set()
@@ -461,9 +475,9 @@ def _names_in(node: ast.AST) -> set[str]:
         elif isinstance(n, ast.Lambda):
             return
         elif isinstance(n, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            # the iteration variables belong to the comprehension; a walrus inside binds outside
-            out.update(s.target.id for s in ast.walk(n)
-                       if isinstance(s, ast.NamedExpr) and isinstance(s.target, ast.Name))
+            # the iteration variables belong to the comprehension; a walrus inside binds outside,
+            # unless it is inside a lambda there (review 2026-11-02 gemini-4-argon-high-05, 3.5)
+            out.update(walrus_targets(n))
             return
         elif isinstance(n, ast.alias):
             out.add(n.asname or n.name.partition(".")[0])

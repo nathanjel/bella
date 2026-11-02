@@ -63,7 +63,7 @@ class _Scope:
     name: str
     parent: _Scope | None
     bound: set[str] = field(default_factory=set)
-    declared_global: set[str] = field(default_factory=set)
+    declared_global: set[str] = field(default_factory=set)   # a class body's `global` too (G5 3.5)
 
 
 Entry = tuple[str, ast.expr, int | None, bool]     # (key, annotation, conditional index, *-unpack)
@@ -132,10 +132,9 @@ class _Bindings(ast.NodeVisitor):
             self.visit(d)
 
     def _comprehension(self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp) -> None:
-        # the iteration variables are the comprehension's own; a walrus inside binds here
-        for n in ast.walk(node):
-            if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name):
-                self.bound.add(n.target.id)
+        # the iteration variables are the comprehension's own; a walrus inside binds here, unless
+        # it is inside a lambda (G5 3.5)
+        self.bound |= walrus_targets(node)
         self.visit(node.generators[0].iter)
 
     visit_ListComp = visit_SetComp = visit_DictComp = visit_GeneratorExp = _comprehension
@@ -160,14 +159,30 @@ class _Bindings(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _function_scope(node: ast.FunctionDef | ast.AsyncFunctionDef, parent: _Scope) -> _Scope:
+def walrus_targets(node: ast.AST) -> set[str]:
+    """The names walruses bind in the scope around a comprehension: through nested comprehensions,
+    not into a lambda, whose walrus binds in the lambda (the same rule as tools/closure.py's)."""
+    found: set[str] = set()
+    stack: list[ast.AST] = [node]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name):
+            found.add(n.target.id)
+        if not isinstance(n, ast.Lambda):
+            stack.extend(ast.iter_child_nodes(n))
+    return found
+
+
+def _function_scope(node: ast.FunctionDef | ast.AsyncFunctionDef, parent: _Scope, private: str | None) -> _Scope:
+    """A function's bindings, mangled as CPython's symbol table mangles them inside a class (G5 3.5)."""
     b = _Bindings()
     a = node.args
     params = [*a.posonlyargs, *a.args, *a.kwonlyargs, *([a.vararg] if a.vararg else []), *([a.kwarg] if a.kwarg else [])]
     b.bound.update(p.arg for p in params)
     for stmt in node.body:
         b.visit(stmt)
-    return _Scope("function", node.name, parent, (b.bound - b.declared_global) - b.nonlocal_, b.declared_global)
+    bound = {mangle(private, n) for n in (b.bound - b.declared_global) - b.nonlocal_}
+    return _Scope("function", node.name, parent, bound, {mangle(private, n) for n in b.declared_global})
 
 
 TypeParam = ast.TypeVar | ast.ParamSpec | ast.TypeVarTuple    # the concrete ast.type_param classes
@@ -177,8 +192,10 @@ def _params(params: list[ast.type_param]) -> list[TypeParam]:
     return [p for p in params if isinstance(p, (ast.TypeVar, ast.ParamSpec, ast.TypeVarTuple))]
 
 
-def _typeparams_scope(params: list[ast.type_param], parent: _Scope, name: str) -> _Scope | None:
-    return _Scope("typeparams", name, parent, {p.name for p in _params(params)}) if params else None
+def _typeparams_scope(params: list[ast.type_param], parent: _Scope, name: str, private: str | None) -> _Scope | None:
+    """A type-parameter scope; its names mangled with `private` (the enclosing class for a function
+    or an alias, the class itself for a class: G5 3.5)."""
+    return _Scope("typeparams", name, parent, {mangle(private, p.name) for p in _params(params)}) if params else None
 
 
 def _body_entries(body: list[ast.stmt], conditional: bool, counter: list[int], private: str | None,
@@ -213,23 +230,29 @@ def _body_entries(body: list[ast.stmt], conditional: bool, counter: list[int], p
 class _Owners(ast.NodeVisitor):
     """Every annotation owner of a module, with the scope its annotations are evaluated in."""
 
-    def __init__(self) -> None:
+    def __init__(self, pep563: bool = False) -> None:
         self.owners: list[_Owner] = []
         self.scope = _Scope("module", "<module>", None)
         self.private: str | None = None
+        # PEP 563 makes annotations strings, with no __annotate__; PEP 695's evaluate functions
+        # remain (review 2026-11-02 gemini-4-argon-high-05, 3.3)
+        self.pep563 = pep563
 
-    def _type_params(self, params: list[ast.type_param], tp: _Scope | None) -> None:
+    def _type_params(self, params: list[ast.type_param], tp: _Scope | None, private: str | None) -> None:
         """PEP 695: each bound, constraint tuple and default is evaluated lazily by a function of
-        its own, inside the type-parameter scope (an evaluate function, like an annotate one)."""
+        its own, inside the type-parameter scope (an evaluate function, like an annotate one). A
+        starred default (`*Ts = *tuple[int, str]`) is unpacked, as `*args: *Ts` is (G5 3.4)."""
         for p in _params(params):
             for expr in (p.bound if isinstance(p, ast.TypeVar) else None, p.default_value):
                 if expr is not None and tp is not None:
-                    self.owners.append(_Owner("evaluate", tp, self.scope.kind == "class", self.private, set(),
-                                              [("", expr, None, False)]))
+                    starred = isinstance(expr, ast.Starred)
+                    inner = expr.value if isinstance(expr, ast.Starred) else expr
+                    self.owners.append(_Owner("evaluate", tp, self.scope.kind == "class", private, set(),
+                                              [("", inner, None, starred)]))
 
     def visit_TypeAlias(self, node: ast.TypeAlias) -> None:
-        tp = _typeparams_scope(node.type_params, self.scope, node.name.id)
-        self._type_params(node.type_params, tp)
+        tp = _typeparams_scope(node.type_params, self.scope, node.name.id, self.private)
+        self._type_params(node.type_params, tp, self.private)
         self.owners.append(_Owner("evaluate", tp or self.scope, self.scope.kind == "class", self.private, set(),
                                   [("", node.value, None, False)]))
 
@@ -237,8 +260,8 @@ class _Owners(ast.NodeVisitor):
         outer, private = self.scope, self.private
         for e in (*node.decorator_list, *node.args.defaults, *(d for d in node.args.kw_defaults if d)):
             self.visit(e)
-        tp = _typeparams_scope(node.type_params, outer, node.name)
-        self._type_params(node.type_params, tp)
+        tp = _typeparams_scope(node.type_params, outer, node.name, private)
+        self._type_params(node.type_params, tp, private)
         a = node.args
         entries: list[Entry] = []
         for p in (*a.posonlyargs, *a.args):
@@ -255,10 +278,10 @@ class _Owners(ast.NodeVisitor):
             entries.append((mangle(private, a.kwarg.arg), a.kwarg.annotation, None, False))
         if node.returns:
             entries.append(("return", node.returns, None, False))
-        if entries:
+        if entries and not self.pep563:
             self.owners.append(_Owner("function", tp or outer, outer.kind == "class", private,
-                                      {p.name for p in _params(node.type_params)}, entries))
-        self.scope = _function_scope(node, tp or outer)
+                                      {mangle(private, p.name) for p in _params(node.type_params)}, entries))
+        self.scope = _function_scope(node, tp or outer, private)
         for stmt in node.body:
             self.visit(stmt)
         self.scope = outer
@@ -269,12 +292,19 @@ class _Owners(ast.NodeVisitor):
         outer, private = self.scope, self.private
         for e in (*node.decorator_list, *node.bases, *(k.value for k in node.keywords)):
             self.visit(e)
-        tp = _typeparams_scope(node.type_params, outer, node.name)
-        self._type_params(node.type_params, tp)
-        cls = _Scope("class", node.name, tp or outer)
+        # a class's type parameters are mangled with the class itself; their bounds and defaults
+        # are evaluated with no class to mangle with (G5 3.5)
+        tp = _typeparams_scope(node.type_params, outer, node.name, node.name)
+        self._type_params(node.type_params, tp, None)
+        declared = _Bindings()
+        for stmt in node.body:
+            if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                declared.visit(stmt)
+        cls = _Scope("class", node.name, tp or outer, set(), {mangle(node.name, n) for n in declared.declared_global})
         entries = _body_entries(node.body, False, [0], node.name, module=False)
-        if entries:
-            self.owners.append(_Owner("class", cls, True, node.name, {p.name for p in _params(node.type_params)}, entries))
+        if entries and not self.pep563:
+            self.owners.append(_Owner("class", cls, True, node.name,
+                                      {mangle(node.name, p.name) for p in _params(node.type_params)}, entries))
         self.scope, self.private = cls, node.name
         for stmt in node.body:
             self.visit(stmt)
@@ -301,6 +331,14 @@ def _resolve(owner: _Owner, name: str) -> str:
             return "global"
         scope = scope.parent              # a class scope is not visible from nested scopes
     return "global"
+
+
+def _visible_class(owner: _Owner) -> _Scope | None:
+    """The class whose namespace an annotation scope reads, if any."""
+    scope: _Scope | None = owner.scope
+    while scope is not None and scope.kind == "typeparams":
+        scope = scope.parent
+    return scope if scope is not None and scope.kind == "class" else None
 
 
 def _call(fn: str, *args: ast.expr) -> ast.Call:
@@ -331,6 +369,11 @@ class _Rewrite(ast.NodeTransformer):
             raise Unsupported(f"a {type(node.ctx).__name__} of {node.id}")
         name = mangle(self.owner.private, node.id)
         kind = _resolve(self.owner, name)
+        visible = _visible_class(self.owner)
+        if self.owner.sees_class and visible is not None and name in visible.declared_global:
+            # a class body's `global` reaches past the class namespace (G5 3.5)
+            self.loads.append(("LOAD_GLOBAL", name))
+            return ast.copy_location(_call("load_global", _name("_g"), _name("_b"), ast.Constant(name)), node)
         if kind == "free":
             self.free.add(name)
         if self.owner.sees_class:
@@ -457,15 +500,16 @@ def evaluators_for_source(path: str) -> tuple[dict[str, Evaluator], list[str]]:
     with open(path, "rb") as f:
         source = f.read()
     tree = ast.parse(source, path)
-    if any(isinstance(s, ast.ImportFrom) and s.module == "__future__" and any(a.name == "annotations" for a in s.names)
-           for s in tree.body):
-        return {}, []           # PEP 563: annotations are strings and there is no __annotate__
-    visitor = _Owners()
+    pep563 = any(isinstance(s, ast.ImportFrom) and s.module == "__future__" and any(a.name == "annotations" for a in s.names)
+                 for s in tree.body)
+    visitor = _Owners(pep563)
     visitor.visit(tree)
     module_entries = _body_entries(tree.body, False, [0], None, module=True)
-    if module_entries:
+    if module_entries and not pep563:
         visitor.owners.append(_Owner("module", visitor.scope, False, None, set(), module_entries))
-    by_span = {_span(ann): owner for owner in visitor.owners for _, ann, _, _ in owner.entries}
+    # every sub-expression's span: an IfExp or an f-string compiles to its parts' positions only (G5 3.5)
+    by_span = {_span(sub): owner for owner in visitor.owners for _, ann, _, _ in owner.entries
+               for sub in ast.walk(ann) if isinstance(sub, ast.expr)}
     code = compile(source, path, "exec", dont_inherit=True)   # as the import system compiles it
     evaluators: dict[str, Evaluator] = {}
     declined: list[str] = []

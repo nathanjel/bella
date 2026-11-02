@@ -7,12 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-02:** 121 findings from ten reviews: 91 fixed (most in commit `0d92b51`,
-RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after the
-closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
-and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-120 after
-the staging reviews), 16 already done before or because of the review, 4 planned (D-2 and D-10,
-accepted by the author), 2 deferred, 3 refuted and 5 checked with no issue. Nothing is open: the
+**Status on 2026-11-02:** 135 findings from eleven reviews: 102 fixed (most in commit
+`0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
+the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
+and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
+the staging reviews), 18 already done before or because of the review, 4 planned (D-2 and D-10,
+accepted by the author), 2 deferred, 4 refuted and 5 checked with no issue. Nothing is open: the
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 
 ## Reviews received
@@ -24,6 +24,7 @@ author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 | 2026-11-01 | gemini-4-argon-high (G) | [2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md](2026-11-01-01-gemini-4-argon-high-scaffold-architecture-review.md) | design and Gate-0 code | CPython 3.14.8, GCC 16.2.1 |
 | 2026-11-01 | astra-low (A3) | [2026-11-01-astra-low-03-stdlib-closure-review.md](2026-11-01-astra-low-03-stdlib-closure-review.md) | Gate 0 task 1: closure tool, manifest and lock at `b40ef2d` | CPython 3.15.2 (pinned uv build) |
 | 2026-11-01 | gemini-4-argon-high (G2) | [2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md](2026-11-01-02-gemini-4-argon-high-stdlib-closure-review.md) | task 1 and the review-log fixes, `f56d495` to `b40ef2d` | CPython 3.15.2, GCC 16.2.1 |
+| 2026-11-02 | gemini-4-argon-high (G5) | [2026-11-02-05-gemini-4-argon-high-staging-revision-review.md](2026-11-02-05-gemini-4-argon-high-staging-revision-review.md) | the staging revision, `b838bc5..d0bec20` | CPython 3.15.2 |
 | 2026-11-02 | astra-low (A6) | [2026-11-02-astra-low-06-staging-revision-review.md](2026-11-02-astra-low-06-staging-revision-review.md) | the staging revision, `b838bc5..d0bec20` | CPython 3.15.2 |
 | 2026-11-01 | astra-low (A5) | [2026-11-01-astra-low-05-staging-prototype-review.md](2026-11-01-astra-low-05-staging-prototype-review.md) | the staging prototype, `19316ba..b838bc5` | CPython 3.15.2 |
 | 2026-11-01 | gemini-4-argon-high (G4) | [2026-11-01-04-gemini-4-argon-high-staging-prototype-review.md](2026-11-01-04-gemini-4-argon-high-staging-prototype-review.md) | the staging prototype and D-7 to D-11, `19316ba..b838bc5` | CPython 3.15.2, GCC 16.2.1 |
@@ -239,6 +240,28 @@ Each probe was reproduced on `d0bec20` before the fix, and each now runs in
 | RL-120 | A6 on the documents | `docs/staging.md` section 4 and the replay's header still said any code object and any `compile` stop the program | Confirmed | Fixed | Both state the boundary as implemented |
 | RL-121 | A6 on S-2, S-3 | The refusal policies have their cases and interception points; layout staging stays open | Noted | No change | |
 
+### Staging revision (G5)
+
+Reproduced on `d0bec20` in a separate worktree and on `f79ee0a` (after A6), which already fixed
+3.2 and 3.7.3. Each probe now runs in `test_the_review_probes_print_what_cpython_prints`.
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-122 | G5 3.1 | The evaluators returned unresolved PEP 810 lazy imports under FORWARDREF | Confirmed: the replay failed with `AttributeError` on an unresolved lazy import | Fixed | `annotate_rt` does what `_PyLazyImport_Reify` does (CPython 3.15.2 `Python/ceval.c`, `bytecodes.c`, `Objects/lazyimportobject.c`): a lazy import found by a global load, or in a class namespace, is resolved and written back. `LOAD_DEREF` does not resolve one, as the source shows, contrary to the review's description |
+| RL-123 | G5 3.2 | Evaluator identities collide for a bound and a default on one line | Confirmed on `d0bec20` | Done before (RL-113) | |
+| RL-124 | G5 3.3 | Under PEP 563 the generator skipped the module, and with it the PEP 695 evaluate functions, which PEP 563 leaves | Confirmed: exit 70 | Fixed | Only the annotate owners are skipped |
+| RL-125 | G5 3.4 | A starred `TypeVarTuple` default crashed the build | Confirmed: `SyntaxError` | Fixed | Unpacked, as `*args: *Ts` is |
+| RL-126 | G5 3.5 | An `IfExp` or f-string annotation matched no owner, since CPython compiles only its parts' positions | Confirmed | Fixed | Every sub-expression's span identifies its owner |
+| RL-127 | G5 3.5 | A method's private parameters and locals were not mangled in its scope, so a nested function's annotation loaded them as globals | Confirmed: declined | Fixed | Bindings are mangled as the symbol table mangles them |
+| RL-128 | G5 3.5 | Private type-parameter names: mangled with the enclosing class (a function or alias) or the class itself; a class's own bounds and defaults are not mangled | Confirmed | Fixed | |
+| RL-129 | G5 3.5 | A class body's `global` reaches past the class namespace | Confirmed | Fixed | A direct global load, in the class's annotations and its methods' |
+| RL-130 | G5 3.5 | A walrus inside a lambda inside a comprehension was bound in the scope around it, in the generator and in `tools/closure.py` | Confirmed | Fixed | Both stop at a lambda. Test `test_a_walrus_in_a_lambda_binds_in_the_lambda_g5_3_5` |
+| RL-131 | G5 3.6 | Two scripts with the same text in two directories shared an artefact | Confirmed: exit 70 in the second | Fixed | Keyed and checked by the script's real path |
+| RL-132 | G5 3.6 | `-O` and `PYTHONOPTIMIZE` were not in the key, nor passed to the dry run | Confirmed: an artefact of level 0 refused under `-O` | Fixed | The level, asked of the interpreter, is in the key and the dry run. Test `test_artefacts_are_per_script_and_per_optimisation_level` |
+| RL-133 | G5 3.7 | `eval` of a code object that a staged `compile` returned is allowed at runtime | Confirmed as described | Refuted | By design: that code was compiled at build time and gives CPython's result, so no compiler is needed. A program's own `exec` or `eval` is E-01, which the compiler rejects at build time and the model does not police (`docs/staging.md` section 4) |
+| RL-134 | G5 3.7 | `scan.py` took a parenthesised `(x): int` as a `NamedTuple` field | Confirmed: the probe staged the wrong fields | Fixed | Only simple targets |
+| RL-135 | G5 3.7 | The lock named CPython's module as a scanned shim's path | Confirmed on `d0bec20` | Done before (RL-119) | |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -411,5 +434,5 @@ conformance case comes first: copying unslotted, slotted and customised user cla
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-122` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-136` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

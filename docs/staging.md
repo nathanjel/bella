@@ -3,7 +3,7 @@
 *2026-11-01. The prototype that design section 11 asks for before the first program relies on
 staging, and the implementation of review log D-5 (annotations at runtime) as decision S-1
 changed it. Revised the same day after reviews astra-low-05 and gemini-4-argon-high-04, and on 2026-11-02
-after astra-low-06 (section 8). Everything
+after astra-low-06 and gemini-4-argon-high-05 (section 8). Everything
 below is reproduced by `make staging-check` (section 10) on the pinned CPython 3.15.2.*
 
 ## 1. Summary
@@ -115,8 +115,8 @@ call it.
     `typing`'s eager compile of a string forward reference works, `SyntaxError` included.
   * The JSON records each text's SHA-256 for review; the replay matches on the full text.
   * The line is not in the key: a shim's lines differ from CPython's module's, and the rest
-    identifies the code. An artefact belongs to one pin and one content of each source, and is
-    rebuilt when either changes.
+    identifies the code. An artefact belongs to one pin, one script (by its real path), one
+    optimisation level and one content of each source, and is rebuilt when any changes.
 * **Hit.** At runtime the library still builds the text: `dataclasses` and `namedtuple` run
   unchanged. Only the `exec`/`eval` call is answered, with the staged code, run with the
   namespaces it was given. Definition-time effects therefore happen at runtime, once, in
@@ -147,6 +147,9 @@ call it.
   establish. Spec v0.10 section 8 keeps the input rule for layouts. This prototype uses none,
   and the layout obligation stays open (`TODO.md`).
 * **Scaffolding**, which belongs to the model and not to the contract:
+  * The model does not reject what the compiler rejects at build time. A program's own `exec`
+    or `eval` is E-01 there; in the model only the runtime half shows. A staged `compile`'s code
+    object may run anywhere, since it needs no compiler.
   * The import system and `traceback`'s caret parsing keep the real `exec`/`compile`.
   * An entry point is found through `annotate.__code__`, which in Bella is attached by the
     compiler.
@@ -190,11 +193,14 @@ functions, the probes now cover.
 * **The entry point** (`annotations.py`) is what the compiler generates instead: a function
   `__annotate__(format, globals, cells)` that evaluates the same expressions in the same order.
   Every name load is done as its opcode does it (`annotate_rt.py`): `LOAD_GLOBAL`, `LOAD_DEREF`,
-  and in class scope `LOAD_FROM_DICT_OR_GLOBALS` and `LOAD_FROM_DICT_OR_DEREF`, including which
-  `__getitem__` and `__missing__` run. The generator works from the source, as the compiler
+  and in class scope `LOAD_FROM_DICT_OR_GLOBALS` and `LOAD_FROM_DICT_OR_DEREF`. That includes
+  which `__getitem__` and `__missing__` run. It also includes PEP 810 lazy imports: one found by
+  a global load or in a class namespace is resolved and written back, and one in a cell is not. The generator works from the source, as the compiler
   will. It knows:
-  * scopes and bindings (`global`, `nonlocal`, type parameters);
-  * name mangling, of names and of attribute names, not of keyword-argument names;
+  * scopes and bindings: `global`, also in a class body; `nonlocal`; type parameters; a walrus
+    in a comprehension, but not in a lambda inside it;
+  * name mangling, of names and attribute names (not keyword-argument names), of a method's
+    bindings, and of type parameters (a class's own bounds and defaults are not mangled);
   * which module and class annotations are conditional, and their indices: all of a module's,
     only those under a compound statement in a class;
   * `*args: *Ts` and the two result shapes.
@@ -293,6 +299,19 @@ Review astra-low-06, on the revision, is review log RL-113 to RL-121, each probe
   runtime now says so.
 * **Notes.** `[refused]` acts on entry to the function; the lock names a shim's own source;
   the description of misses is corrected.
+
+Review gemini-4-argon-high-05, on the same revision, is review log RL-122 to RL-135. Its 3.2
+and 3.7.3 were A6's. Its probes now run as tests:
+
+* **3.1.** Lazy imports leaked unresolved into FORWARDREF; the loads now resolve them as
+  CPython's interpreter does.
+* **3.3 and 3.4.** PEP 695 evaluate functions under PEP 563, and starred `TypeVarTuple`
+  defaults.
+* **3.5.** Owner matching for `IfExp` and f-strings; mangling of a method's bindings and of
+  type parameters; a class body's `global`; a walrus in a lambda.
+* **3.6.** Artefacts now belong to one script and one optimisation level.
+* **3.7.** A `NamedTuple`'s parenthesised targets are not fields. Running a staged `compile`'s
+  code stays allowed, by design (RL-133).
 
 ## 9. Decisions (2026-11-01, author)
 
