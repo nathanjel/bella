@@ -1,4 +1,6 @@
 // runtime/object.hpp  -- draft v5: review round three, then review log D-1 (design document, section 3).
+// 2026-11-02: the single-threaded header exists, written from the model: runtime/include/bella/object.hpp
+// (make object-test). This draft stays the target for the threaded runtime: biased counting, atomics, RCU.
 // NOT COMPILABLE AS IS: declarations only (CompactDict, Unset, this_thread_id and the allocator are
 // unspecified). The executable statement of this design is refmodel/objects.py; write the real
 // header from the model, one conformance case at a time. Open points are listed in TODO.md.

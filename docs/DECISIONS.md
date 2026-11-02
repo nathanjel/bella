@@ -556,6 +556,29 @@ these choices of implementation:
 * The oracle compares death logs after every operation (tagged values, `drop`, descriptors that
   die when replaced); the self-test compares about 300 deaths per 5,000 operations.
 
+**2026-11-02 — `object.hpp` from the model** (task 3; design section 3 rev 459). The header is
+`runtime/include/bella/object.hpp`, written rule for rule from `refmodel/objects.py`,
+single-threaded first as task 3 says. Choices made in writing it, all reversible:
+* A 16-byte object header with a plain 32-bit count, a flags word and the object's kind (dealloc
+  dispatches on the kind; there are no virtual functions); biased counting, atomics and RCU come
+  with threads, as the draft (`docs/drafts/object.hpp.draft`, kept as that target) lays them out.
+* Classes are disposed (they leave the live classes and release their attributes, newest class
+  first) but not freed: a class's MRO holds itself, so freeing is the cycle collector's (D-04).
+* Instance fields, instance dicts and class attributes use standard containers (a vector, and an
+  insertion-ordered map of interned names); the compact layouts are phase-2 work.
+* A class attribute the model holds as a Python callable (`__get__`, `__set__`, `__getattr__`,
+  `__del__`) is a native function object; finalisers that resurrect are refused as not yet
+  modelled.
+* The checking mode (`heap().checking`) does what the model does: every cached read is compared
+  with the generic lookup, and an object dying while an entry a live class still validates names
+  it is a ModelError; the quarantine keeps dead objects' memory so a stale read is caught.
+Evidence: `make object-test` (in `make check` and both CI jobs) runs the oracle's random programs
+three ways in lockstep, the model, CPython and the header through `runtime/tests/object_binding.cpp`
+with `ctypes`, comparing every outcome, every death and every attribute after every operation
+(six seeds of 5,000 operations locally, about 320 deaths and 108,000 cache hits each; 1,000 more
+under AddressSanitizer and UBSan). The second half of task 3's done-when, C-3-01..12 under the
+compiled runner, waits for the emitter.
+
 ## Pins
 
 | What | Value | Where |

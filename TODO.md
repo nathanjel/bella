@@ -65,6 +65,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
     version before they release, `CacheEntry.found` borrowed and checked (RL-20). Case C-9-08;
     the oracle compares death logs after every operation (`drop`, tagged values, dying
     descriptors), in the self-test and the Hypothesis machine.
+  * Done 2026-11-02: `runtime/include/bella/object.hpp`, written from the model, single-threaded
+    (16-byte header, plain counts, classes disposed but not freed, standard containers for
+    storage). `make object-test` (in `make check` and CI, also under ASan and UBSan) runs the
+    model's random programs on the model, on CPython and on the header through a `ctypes`
+    binding (`runtime/tests/object_binding.cpp`), comparing every outcome, death and attribute
+    after every operation; the header's checking mode compares every cached read with the
+    generic lookup. The first half of the done-when below holds; the second waits for the
+    emitter (C-3-01..12 under the compiled runner).
   Then write `runtime/include/bella/object.hpp`
   from the model (start from `docs/drafts/object.hpp.draft` and the two findings in
   `docs/DECISIONS.md`), single-threaded first: plain counters, no atomics, no collector.

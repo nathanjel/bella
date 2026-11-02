@@ -5,7 +5,7 @@ CXX     ?= g++
 CXXSTD  ?= c++26
 RUNNER  ?= $(PY) {case}
 
-.PHONY: help test selftest closure record verify check-conformance probes slice int-test float-diff targets-record targets-check targets-closure staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2 lint check clean
+.PHONY: help test selftest closure record verify check-conformance probes slice int-test float-diff object-test targets-record targets-check targets-closure staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2 lint check clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
@@ -17,6 +17,7 @@ help:
 	@echo "make slice             the toy end-to-end slice: python == eval1 == emitted C++"
 	@echo "make int-test          differential test of runtime/include/bella/int.hpp vs CPython"
 	@echo "make float-diff        libstdc++ to_chars/from_chars vs CPython's float digits (FLOAT_CASES=3000000 on a GCC bump)"
+	@echo "make object-test       object.hpp against the reference model and CPython in lockstep (also under ASan/UBSan)"
 	@echo "make targets-record    record the six target programs under the pinned CPython -> targets/expected/"
 	@echo "make targets-check     re-run the targets (two hash seeds) and compare; TARGET_RUNNER= for compiled binaries"
 	@echo "make staging-check     the staging prototype: dry-run determinism, the P1 corpus and targets under the replay"
@@ -78,6 +79,10 @@ slice:
 int-test:
 	$(PY) runtime/tests/int_differential.py --cxx $(CXX) --std $(CXXSTD) --cases 2000
 
+object-test:
+	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 3000
+	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 1000 --sanitize
+
 FLOAT_CASES ?= 300000
 float-diff:
 	$(PY) runtime/tests/float_differential.py --cxx $(CXX) --std $(CXXSTD) --cases $(FLOAT_CASES)
@@ -98,7 +103,7 @@ lint:
 	# the target drivers too; the vendored libraries they import are read, not reported
 	MYPYPATH=targets/vendor $(PY) -m mypy --disallow-any-explicit --follow-imports=silent targets/drivers
 
-check: closure targets-closure lint test verify probes slice int-test float-diff targets-check staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2
+check: closure targets-closure lint test verify probes slice int-test float-diff object-test targets-check staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2
 
 clean:
 	rm -rf build runtime/build pipeline/examples/out/*.bin .pytest_cache .hypothesis

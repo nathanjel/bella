@@ -84,6 +84,8 @@ class World:
         O.HEAP = self.heap = O.Heap()
         self.real_deaths: list[Any] = []
         self.deaths_compared = 0
+        self.last: tuple[Outcome, Outcome] | None = None
+        self.last_deaths: list[Any] = []
         self.tags = 0
         self.tracked_m = RefClass("Tracked")
         self.rt = Runtime()
@@ -382,6 +384,8 @@ class World:
             raise Mismatch(f"{op}: deaths in the model {self.heap.deaths} != in cpython {self.real_deaths}\nlog:\n"
                            + "\n".join(map(repr, self.log)))
         self.deaths_compared += len(self.real_deaths)
+        self.last = (m, r)                         # for a third implementation run in lockstep
+        self.last_deaths = list(self.real_deaths)
         self.heap.deaths.clear()
         self.real_deaths.clear()
 
@@ -395,6 +399,10 @@ class World:
                 if om != orr:
                     raise Mismatch(f"sweep obj{i}.{name}: model {om!r} != cpython {orr!r}\nlog:\n"
                                    + "\n".join(map(repr, self.log)))
+
+    def real_sweep(self) -> list[Outcome]:
+        """CPython's side of a sweep, in its order: every object, every name."""
+        return [_outcome(functools.partial(getattr, r, name)) for _, r in self.objects for name in NAMES]
 
     # ---- random operation source --------------------------------------------------------
     def random_op(self, rng: random.Random) -> tuple[Any, ...]:
