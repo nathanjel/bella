@@ -1,0 +1,637 @@
+{
+ "target": "cli_easy_slugs",
+ "python": "3.15.2",
+ "closure": {
+  "modules": 73,
+  "code_objects": 3607,
+  "lines": 35360
+ },
+ "runs": {
+  "recorded": {
+   "argv": [
+    "data/lines.txt",
+    "--max-length",
+    "24"
+   ],
+   "code_objects": 253,
+   "lines": 6816,
+   "modules": 35
+  },
+  "--help": {
+   "argv": [
+    "--help"
+   ],
+   "code_objects": 373,
+   "lines": 8410,
+   "modules": 39
+  },
+  "data/lines.txt --max-length x": {
+   "argv": [
+    "data/lines.txt",
+    "--max-length",
+    "x"
+   ],
+   "code_objects": 356,
+   "lines": 8201,
+   "modules": 38
+  },
+  "data/lines.txt --separator _ --no-lowercase": {
+   "argv": [
+    "data/lines.txt",
+    "--separator",
+    "_",
+    "--no-lowercase"
+   ],
+   "code_objects": 254,
+   "lines": 6819,
+   "modules": 35
+  }
+ },
+ "union": {
+  "code_objects": 403,
+  "lines": 8650,
+  "modules": [
+   "__future__",
+   "_collections_abc",
+   "_colorize",
+   "abc",
+   "argparse",
+   "ast",
+   "cli_easy_slugs",
+   "codecs",
+   "collections",
+   "copyreg",
+   "dataclasses",
+   "encodings",
+   "encodings.aliases",
+   "encodings.utf_8",
+   "enum",
+   "fnmatch",
+   "functools",
+   "genericpath",
+   "gettext",
+   "io",
+   "keyword",
+   "linecache",
+   "locale",
+   "ntpath",
+   "operator",
+   "os",
+   "pathlib",
+   "pathlib._os",
+   "posixpath",
+   "re",
+   "re._casefix",
+   "re._compiler",
+   "re._constants",
+   "re._parser",
+   "reprlib",
+   "shutil",
+   "stat",
+   "textwrap",
+   "types"
+  ]
+ },
+ "frontend": {
+  "units": 379,
+  "lower_to_L1": 193,
+  "first_blocker": [
+   {
+    "construct": "statement ClassDef",
+    "units": 90,
+    "lines": 818
+   },
+   {
+    "construct": "statement Import",
+    "units": 32,
+    "lines": 2958
+   },
+   {
+    "construct": "parameter kinds (positional-only, keyword-only, *args, **kwargs)",
+    "units": 29,
+    "lines": 560
+   },
+   {
+    "construct": "statement ImportFrom",
+    "units": 11,
+    "lines": 706
+   },
+   {
+    "construct": "expression GeneratorExp",
+    "units": 7,
+    "lines": 287
+   },
+   {
+    "construct": "call with *args or **kwargs unpacking",
+    "units": 5,
+    "lines": 115
+   },
+   {
+    "construct": "assignment with several targets",
+    "units": 3,
+    "lines": 210
+   },
+   {
+    "construct": "expression Lambda",
+    "units": 3,
+    "lines": 28
+   },
+   {
+    "construct": "constant of type bytes",
+    "units": 3,
+    "lines": 105
+   },
+   {
+    "construct": "expression Starred",
+    "units": 1,
+    "lines": 42
+   },
+   {
+    "construct": "expression YieldFrom",
+    "units": 1,
+    "lines": 8
+   },
+   {
+    "construct": "expression Set",
+    "units": 1,
+    "lines": 21
+   }
+  ]
+ },
+ "census": [
+  {
+   "construct": "def",
+   "executed_units": 338,
+   "closure_units": 3211,
+   "lowers_today": true
+  },
+  {
+   "construct": "constant: int/float/str/bool/None",
+   "executed_units": 321,
+   "closure_units": 2562,
+   "lowers_today": true
+  },
+  {
+   "construct": "attribute",
+   "executed_units": 278,
+   "closure_units": 2465,
+   "lowers_today": true
+  },
+  {
+   "construct": "assignment",
+   "executed_units": 234,
+   "closure_units": 1688,
+   "lowers_today": true
+  },
+  {
+   "construct": "return",
+   "executed_units": 183,
+   "closure_units": 2076,
+   "lowers_today": true
+  },
+  {
+   "construct": "if",
+   "executed_units": 162,
+   "closure_units": 1316,
+   "lowers_today": true
+  },
+  {
+   "construct": "list/tuple display",
+   "executed_units": 144,
+   "closure_units": 894,
+   "lowers_today": true
+  },
+  {
+   "construct": "comparison",
+   "executed_units": 135,
+   "closure_units": 1134,
+   "lowers_today": true
+  },
+  {
+   "construct": "def: default values",
+   "executed_units": 125,
+   "closure_units": 779,
+   "lowers_today": true
+  },
+  {
+   "construct": "class",
+   "executed_units": 116,
+   "closure_units": 435,
+   "lowers_today": false
+  },
+  {
+   "construct": "and/or/not",
+   "executed_units": 103,
+   "closure_units": 766,
+   "lowers_today": true
+  },
+  {
+   "construct": "subscript",
+   "executed_units": 94,
+   "closure_units": 672,
+   "lowers_today": true
+  },
+  {
+   "construct": "class: bases",
+   "executed_units": 90,
+   "closure_units": 321,
+   "lowers_today": false
+  },
+  {
+   "construct": "assignment: attribute/subscript target",
+   "executed_units": 87,
+   "closure_units": 510,
+   "lowers_today": true
+  },
+  {
+   "construct": "for",
+   "executed_units": 62,
+   "closure_units": 440,
+   "lowers_today": true
+  },
+  {
+   "construct": "call: keyword arguments",
+   "executed_units": 57,
+   "closure_units": 405,
+   "lowers_today": true
+  },
+  {
+   "construct": "raise",
+   "executed_units": 54,
+   "closure_units": 468,
+   "lowers_today": true
+  },
+  {
+   "construct": "try/except",
+   "executed_units": 53,
+   "closure_units": 373,
+   "lowers_today": true
+  },
+  {
+   "construct": "dict display",
+   "executed_units": 43,
+   "closure_units": 147,
+   "lowers_today": true
+  },
+  {
+   "construct": "assignment: tuple target",
+   "executed_units": 39,
+   "closure_units": 354,
+   "lowers_today": true
+  },
+  {
+   "construct": "import",
+   "executed_units": 39,
+   "closure_units": 143,
+   "lowers_today": false
+  },
+  {
+   "construct": "f-string",
+   "executed_units": 35,
+   "closure_units": 256,
+   "lowers_today": true
+  },
+  {
+   "construct": "def: keyword-only parameters",
+   "executed_units": 33,
+   "closure_units": 221,
+   "lowers_today": false
+  },
+  {
+   "construct": "def: **kwargs",
+   "executed_units": 33,
+   "closure_units": 198,
+   "lowers_today": false
+  },
+  {
+   "construct": "slice",
+   "executed_units": 32,
+   "closure_units": 212,
+   "lowers_today": true
+  },
+  {
+   "construct": "def: decorators",
+   "executed_units": 31,
+   "closure_units": 439,
+   "lowers_today": true
+  },
+  {
+   "construct": "from ... import",
+   "executed_units": 29,
+   "closure_units": 72,
+   "lowers_today": false
+  },
+  {
+   "construct": "def: *args",
+   "executed_units": 26,
+   "closure_units": 215,
+   "lowers_today": false
+  },
+  {
+   "construct": "augmented assignment",
+   "executed_units": 23,
+   "closure_units": 163,
+   "lowers_today": true
+  },
+  {
+   "construct": "break/continue",
+   "executed_units": 20,
+   "closure_units": 136,
+   "lowers_today": true
+  },
+  {
+   "construct": "list comprehension",
+   "executed_units": 19,
+   "closure_units": 87,
+   "lowers_today": true
+  },
+  {
+   "construct": "class: decorators",
+   "executed_units": 19,
+   "closure_units": 36,
+   "lowers_today": false
+  },
+  {
+   "construct": "annotated assignment",
+   "executed_units": 18,
+   "closure_units": 19,
+   "lowers_today": true
+  },
+  {
+   "construct": "def: positional-only parameters",
+   "executed_units": 17,
+   "closure_units": 159,
+   "lowers_today": false
+  },
+  {
+   "construct": "class: annotations",
+   "executed_units": 17,
+   "closure_units": 17,
+   "lowers_today": false
+  },
+  {
+   "construct": "super() / __class__",
+   "executed_units": 15,
+   "closure_units": 78,
+   "lowers_today": false
+  },
+  {
+   "construct": "comprehension: several for/if",
+   "executed_units": 15,
+   "closure_units": 67,
+   "lowers_today": true
+  },
+  {
+   "construct": "del",
+   "executed_units": 15,
+   "closure_units": 61,
+   "lowers_today": true
+  },
+  {
+   "construct": "conditional expression",
+   "executed_units": 14,
+   "closure_units": 132,
+   "lowers_today": true
+  },
+  {
+   "construct": "f-string: conversion/format spec",
+   "executed_units": 14,
+   "closure_units": 105,
+   "lowers_today": true
+  },
+  {
+   "construct": "def: annotations",
+   "executed_units": 14,
+   "closure_units": 100,
+   "lowers_today": true
+  },
+  {
+   "construct": "from ... import *",
+   "executed_units": 13,
+   "closure_units": 18,
+   "lowers_today": false
+  },
+  {
+   "construct": "def: nested (closure)",
+   "executed_units": 12,
+   "closure_units": 95,
+   "lowers_today": true
+  },
+  {
+   "construct": "assert",
+   "executed_units": 11,
+   "closure_units": 53,
+   "lowers_today": true
+  },
+  {
+   "construct": "while",
+   "executed_units": 9,
+   "closure_units": 113,
+   "lowers_today": true
+  },
+  {
+   "construct": "generator expression",
+   "executed_units": 9,
+   "closure_units": 102,
+   "lowers_today": false
+  },
+  {
+   "construct": "call: **kwargs",
+   "executed_units": 9,
+   "closure_units": 82,
+   "lowers_today": false
+  },
+  {
+   "construct": "raise ... from",
+   "executed_units": 9,
+   "closure_units": 60,
+   "lowers_today": true
+  },
+  {
+   "construct": "assignment: several targets",
+   "executed_units": 9,
+   "closure_units": 52,
+   "lowers_today": false
+  },
+  {
+   "construct": "set display",
+   "executed_units": 9,
+   "closure_units": 37,
+   "lowers_today": false
+  },
+  {
+   "construct": "for/while else",
+   "executed_units": 8,
+   "closure_units": 31,
+   "lowers_today": true
+  },
+  {
+   "construct": "call: *args",
+   "executed_units": 7,
+   "closure_units": 110,
+   "lowers_today": false
+  },
+  {
+   "construct": "constant: bytes",
+   "executed_units": 7,
+   "closure_units": 60,
+   "lowers_today": false
+  },
+  {
+   "construct": "class: keywords (metaclass=...)",
+   "executed_units": 7,
+   "closure_units": 39,
+   "lowers_today": false
+  },
+  {
+   "construct": "lambda",
+   "executed_units": 6,
+   "closure_units": 44,
+   "lowers_today": false
+  },
+  {
+   "construct": "lazy import (PEP 810)",
+   "executed_units": 5,
+   "closure_units": 11,
+   "lowers_today": false
+  },
+  {
+   "construct": "import ... as",
+   "executed_units": 4,
+   "closure_units": 6,
+   "lowers_today": false
+  },
+  {
+   "construct": "from . import (relative)",
+   "executed_units": 4,
+   "closure_units": 5,
+   "lowers_today": false
+  },
+  {
+   "construct": "with",
+   "executed_units": 2,
+   "closure_units": 87,
+   "lowers_today": true
+  },
+  {
+   "construct": "async/await",
+   "executed_units": 2,
+   "closure_units": 40,
+   "lowers_today": false
+  },
+  {
+   "construct": "dict comprehension",
+   "executed_units": 2,
+   "closure_units": 27,
+   "lowers_today": false
+  },
+  {
+   "construct": "chained comparison",
+   "executed_units": 2,
+   "closure_units": 18,
+   "lowers_today": true
+  },
+  {
+   "construct": "constant: Ellipsis",
+   "executed_units": 2,
+   "closure_units": 15,
+   "lowers_today": false
+  },
+  {
+   "construct": "display: starred",
+   "executed_units": 2,
+   "closure_units": 14,
+   "lowers_today": false
+  },
+  {
+   "construct": "annotated name, no value",
+   "executed_units": 2,
+   "closure_units": 2,
+   "lowers_today": true
+  },
+  {
+   "construct": "yield (generator function)",
+   "executed_units": 1,
+   "closure_units": 94,
+   "lowers_today": false
+  },
+  {
+   "construct": "yield from",
+   "executed_units": 1,
+   "closure_units": 23,
+   "lowers_today": false
+  },
+  {
+   "construct": "walrus",
+   "executed_units": 1,
+   "closure_units": 20,
+   "lowers_today": true
+  },
+  {
+   "construct": "try/finally",
+   "executed_units": 1,
+   "closure_units": 18,
+   "lowers_today": true
+  },
+  {
+   "construct": "global (in a function)",
+   "executed_units": 1,
+   "closure_units": 17,
+   "lowers_today": true
+  },
+  {
+   "construct": "import a.b",
+   "executed_units": 1,
+   "closure_units": 6,
+   "lowers_today": false
+  },
+  {
+   "construct": "set comprehension",
+   "executed_units": 1,
+   "closure_units": 5,
+   "lowers_today": false
+  },
+  {
+   "construct": "type alias (PEP 695)",
+   "executed_units": 1,
+   "closure_units": 2,
+   "lowers_today": false
+  },
+  {
+   "construct": "match",
+   "executed_units": 0,
+   "closure_units": 10,
+   "lowers_today": false
+  },
+  {
+   "construct": "nonlocal",
+   "executed_units": 0,
+   "closure_units": 10,
+   "lowers_today": true
+  },
+  {
+   "construct": "type parameters (PEP 695)",
+   "executed_units": 0,
+   "closure_units": 7,
+   "lowers_today": true
+  },
+  {
+   "construct": "assignment: starred target",
+   "executed_units": 0,
+   "closure_units": 5,
+   "lowers_today": false
+  },
+  {
+   "construct": "display: dict unpacking",
+   "executed_units": 0,
+   "closure_units": 5,
+   "lowers_today": false
+  },
+  {
+   "construct": "t-string",
+   "executed_units": 0,
+   "closure_units": 1,
+   "lowers_today": false
+  }
+ ]
+}

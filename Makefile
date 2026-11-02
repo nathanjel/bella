@@ -26,7 +26,7 @@ help:
 test:
 	@if $(PY) -c "import pytest" 2>/dev/null; then $(PY) -m pytest; else \
 	  echo "pytest not installed: running the test modules directly"; \
-	  $(PY) tools/tests/test_closure.py && $(PY) -m refmodel.tests.test_cases && \
+	  $(PY) tools/tests/test_closure.py && $(PY) tools/tests/test_scope.py && $(PY) -m refmodel.tests.test_cases && \
 	  $(PY) -m pipeline.tests.test_frontend_eval1 && $(PY) -m validation.tests.test_certificates; fi
 	$(PY) -m refmodel.selftest --iterations 3000
 

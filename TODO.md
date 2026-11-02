@@ -95,11 +95,52 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   staging prototype comes before the first path is done. `make targets-closure` computes the
   stages from `targets.toml` (`targets/closure-summary.json`, checked in CI). The tricky three
   follow phase 1; their recordings stay oracles.
-* Measure the compile scope before task 4 commits to one (review log D-10): compiling a stage's
-  whole closure against compiling what the closed world reaches, function by function (a pass
-  with a `PassSpec` whose obligation is that nothing reachable at runtime is left out), with
-  what each target actually loads as the yardstick (62, 91 and 83 modules for the easy three,
-  review 2026-11-01 gemini-4-argon-high-03).
+* Measured 2026-11-02 (review log D-10; `docs/measurements.md`, `tools/scope.py`,
+  `targets/scope/*.json`): `cli_easy_slugs`'s closure is 73 modules, 3,607 code objects and
+  35,360 lines. Its recorded run executes 253 code objects (7 %) and 6,816 lines (19 %); with
+  `--help`, a bad argument and other options, 403 and 8,650 (11 %, 24 %). The other two easy
+  targets execute 6 % and 5 % of their code objects. Of the 379 executed units, 193 lower to L1
+  today. The census of what L1 lacks, by executed units: classes 116, imports 68, parameter
+  kinds 33, zero-argument `super()` 15, generator expressions 9, several targets 9, set
+  displays 9, bytes 7, lambdas 6. The whole closure adds `match`, starred targets, dict
+  unpacking, 94 generator functions and 40 `async def`. Found on the way: `_collections_abc`
+  runs `async def` and `sys._getframe()` at import, and the frontend silently drops
+  annotations and PEP 695 type parameters.
+* For the author (P-1, P-2 in `docs/DECISIONS.md`, 2026-11-02):
+  * P-1, the compile scope. Recommended: compile the whole closure; a statement the pipeline
+    cannot lower compiles to a refusal that names the construct and line (the staging refusal:
+    exit 70 and a `bella: refused:` line), the build writes the inventory of refused
+    statements, and the gate requires the target's runs to reach none of them. Compiling what
+    the closed world reaches (a name-based reachability pass) stays an optimisation, for when
+    compile time or binary size is measured to need it.
+  * P-2, `_collections_abc`'s type probes. Recommended: a shim taking the generator,
+    coroutine, async-generator and frame-locals-proxy types from `_types` (core), as `types`
+    does. Making coroutines in phase 1 is the alternative.
+* The plan, in the order the census gives. Each step starts with conformance cases recorded on
+  the pin, and is done in the frontend, `wf1` and `eval1`:
+  * A1 parameters and calls: positional-only, keyword-only, `*args`, `**kwargs`, unpacking in
+    calls, and CPython's binding errors.
+  * A2 functions as objects: `eval1` makes real function objects, so descriptors, `functools`
+    and `type.__new__`'s checks see CPython's function type; lambdas, closures, and
+    `__defaults__` read when the function is called.
+  * A3 classes, as `__build_class__` makes them: bases, `metaclass=` and other keywords,
+    `__prepare__` namespaces (`enum`'s `EnumDict`), decorators, `__qualname__`, `__module__`,
+    `__firstlineno__`, `__static_attributes__`, docstrings, private-name mangling,
+    zero-argument `super()` and `__class__` cells.
+  * A4 imports: a module registry for `eval1` (closure modules lowered, core and mapped modules
+    from the host), `import a.b`, `as`, `from` (relative and `*` too), partially initialised
+    modules (C-8-01), a module's `__getattr__`, and lazy imports (C-8-05 to C-8-07).
+  * A5 the remaining forms: several and starred targets, starred and set displays, dict
+    unpacking, bytes, Ellipsis and complex constants, set and dict comprehensions, generator
+    expressions, generator functions and `yield from`. `eval1` makes real generator objects
+    by evaluating generator bodies in a generator mode.
+  * A6 annotations: PEP 649 `__annotate__` for functions, classes and modules, and PEP 695
+    aliases and type parameters. Today's silent drop ends here, together with the S-1 second
+    entry point.
+  * B `eval1` runs `cli_easy_slugs` end to end: the closure lowered as P-1 decides, the staged
+    texts from the staging artefact, and refusals as in staging. This is the gate's second leg
+    (`make targets-check TARGET_RUNNER=...`).
+  * C the C++ leg: task 3's header, L2, and the runtime list above.
 * Decided 2026-11-01: `cli_easy_slugs` no longer uses `unicodedata` (it kept the lowered
   requirements when `unicodedata` became \[P1\] the same day, review log D-8); licence questions are registered in `docs/licences.md` and settled when worth it, so zlib's
   licence and the source of the hash primitives (items 4 and 5 of `docs/targets.md` section 5)

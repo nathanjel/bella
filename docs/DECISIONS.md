@@ -337,6 +337,28 @@ them: entry points resolve PEP 810 lazy imports as the interpreter does (read fr
 and type parameters, a class body's `global`, and a walrus in a lambda; artefacts are keyed by
 the script's real path and the optimisation level.
 
+**2026-11-02 — the compile scope measured; P-1 and P-2 for the author** (Gate 0 task 4, review
+log D-10; `docs/measurements.md`, `tools/scope.py`).
+* The measurement: `cli_easy_slugs` executes 7 % of its closure's code objects on its recorded
+  run and 11 % with `--help`, a bad argument and other options (19 % and 24 % of the lines). Of
+  its 379 executed units, 193 lower to L1 today. The census of what L1 lacks orders task 4's
+  plan, A1 to C in `TODO.md`.
+* P-1, for the author, is the compile scope. Recommended: the whole closure, with a statement
+  the pipeline cannot lower compiled to a refusal that names it. It gives the staging refusal
+  (exit 70 and a `bella: refused:` line), the build lists every refused statement, and the gate
+  requires the target to reach none. Compile-time `Unsupported` stays the default for the corpus
+  and the examples. The alternatives: the whole closure with every unit lowered (this needs
+  `match`, 94 generator functions and 40 `async def` that the targets never run, and `async`
+  is outside phase 1), or what the closed world reaches. That needs a reachability pass whose
+  obligation is that nothing reachable is left out, and it stays an optimisation for later.
+* P-2, for the author, is `_collections_abc`'s import-time probes: `async def`, a coroutine
+  made and closed, an async generator, and `type(sys._getframe().f_locals)`. Recommended: a
+  shim that takes the four types from `_types`, which is core and exports them, as `types`
+  does. The alternative is making and closing coroutines in phase 1, with running one refused.
+* Found and to be fixed in step A6: the frontend drops function and module annotations and
+  PEP 695 type parameters without saying so, which is an approximation that the rules forbid.
+
+
 ## Pins
 
 | What | Value | Where |
