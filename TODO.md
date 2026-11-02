@@ -320,7 +320,17 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          moves the iterator into the helper; `eval2` needs a fused call to do the same (RL-186).
     2. Lifetimes in the model and `object.hpp` from it (task 3); independent of 1.
     3. The runtime types and the emitter: task 3's done-when (C-3-01..12 under the compiled
-       runner) first, then gate 1a.1.
+       runner) first, then gate 1a.1. Decided 2026-11-02 (`docs/DECISIONS.md`): a C++ core and
+       a Python prelude, in this order:
+       * 3a the emitter from L2 and the runtime core: C-3-01..03, 05..11 and the slice examples
+         compiled; a compiled-corpus baseline; the toy L1 emitter retires.
+         * 3a.1 done 2026-11-02 (`docs/emitter.md`): `pipeline/backend/cpp.py`, the runtime core
+           (`runtime.hpp`, `runtime/src/`), `print` in the prelude, `pipeline/build.py`; the
+           slice examples and `pipeline/tests/test_compiled.py` match CPython compiled, `make
+           compiled-corpus` 1 of 76 (classes next); the toy emitter is gone.
+         * 3a.2 classes and attributes: C-3-05..11. 3a.3 dict exposure: C-3-01..03.
+       * 3b generators (state machines) and compiled imports: C-3-04.
+       * 3c the cycle collector and weak references, model first: C-3-12; task 3 done.
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
     design's level table says every L2 expression carries the oracle's type. Closes in phase 2,
     when a pass produces `Fact.TYPES` (none does today, so none can require it). Until then no

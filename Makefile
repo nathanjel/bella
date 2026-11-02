@@ -12,11 +12,11 @@ JOBS    ?= $(shell nproc 2>/dev/null || echo 4)
 export BELLA_JOBS ?= $(JOBS)
 XDIST    = $(shell $(PY) -c "import xdist" 2>/dev/null && echo "-n $(JOBS)")
 CHECKS   = lint test verify probes slice int-test float-diff object-test targets-check staging-check \
-           eval1-corpus eval2-corpus targets-eval1 targets-eval2
+           eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2
 
 .PHONY: help test selftest closure record verify check-conformance probes slice int-test float-diff object-test \
         object-test-lockstep object-test-sanitized object-test-reentrancy targets-record targets-check targets-closure \
-        staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2 lint check checks clean
+        staging-check eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2 lint check checks clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
@@ -34,6 +34,7 @@ help:
 	@echo "make staging-check     the staging prototype: dry-run determinism, the P1 corpus and targets under the replay"
 	@echo "make eval1-corpus      the conformance corpus under eval1: no case of conformance/eval1-baseline.txt may regress"
 	@echo "make eval2-corpus      the corpus through L2 (to-anf, lifetimes, wf2) under eval2; conformance/eval2-baseline.txt"
+	@echo "make compiled-corpus   the corpus compiled through L2 into C++ (pipeline/build.py); conformance/evalc-baseline.txt"
 	@echo "make targets-eval1     the easy three under eval1, each with its whole closure lowered (the gates' second leg)"
 	@echo "make targets-eval2     the easy three through L2 under eval2, each with its whole closure"
 	@echo "make targets-closure   each target's closure and the phase-1 increments -> targets/closure*"
@@ -59,6 +60,9 @@ eval1-corpus:
 
 eval2-corpus:
 	$(PY) tools/eval1_corpus.py --level 2
+
+compiled-corpus:
+	$(PY) tools/eval1_corpus.py --level c
 
 EVAL1_RUNNER = $(shell $(PY) -c "import sys; print(sys.executable)") -P $(CURDIR)/pipeline/l1/run.py --modules closure --lock closure/{name}.lock.json {driver} {argv}
 targets-eval1:

@@ -76,7 +76,12 @@ public:
 };
 
 // ---- the header: no virtual functions; a dying object is dispatched on its kind ----
-enum class Kind : std::uint8_t { Str, Dict, Class, Instance, Function, SlotDescriptor, Marker };
+enum class Kind : std::uint8_t {
+    Str, Dict, Class, Instance, Function, SlotDescriptor, Marker,
+    // the runtime's own objects (bella/runtime.hpp): their deaths go through destroyer(kind)
+    Singleton, Bool, BigInt, Float, Tuple, List, PyDict, Cell, PyFunction, Builtin, Method, Module,
+    Range, Iterator, Traceback, Native, KindCount
+};
 enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2 };
 
 struct Object {
@@ -105,6 +110,14 @@ inline Heap& heap() {
 }
 
 void dealloc(Object* o);
+
+// The runtime registers how each of its kinds dies (releases what it holds, in CPython's order,
+// then frees itself); the object model's own kinds die in dealloc below.
+using Destroyer = void (*)(Object*);
+inline Destroyer& destroyer(Kind k) {
+    static Destroyer table[static_cast<std::size_t>(Kind::KindCount)] = {};
+    return table[static_cast<std::size_t>(k)];
+}
 
 inline void incref(Object* o) {
     if (o->flags & IMMORTAL) return;
@@ -141,9 +154,69 @@ public:
 ClassObject* builtin_class(const char* name);
 
 // ---- strings: interned, immortal (attribute names) ----
+// ---- str: PEP 393 storage (spec decision 3, D-13): Latin-1, UCS-2 or UCS-4 code units per string,
+// O(1) indexing; `text` is the UTF-8 copy (lone surrogates in the generalised form, as CPython's
+// "surrogatepass"), which names, messages and output use. Interned strings are immortal. ----
 struct Str : Object {
-    std::string text;
-    explicit Str(std::string s) : Object(Kind::Str), text(std::move(s)) { flags |= IMMORTAL; }
+    std::string text;                 // UTF-8
+    std::string units;                // `width` bytes per code point, little-endian
+    std::size_t length = 0;           // code points
+    std::uint8_t width = 1;           // PEP 393 kind: 1, 2 or 4
+    bool ascii = true;
+    mutable std::int64_t hash = -1;   // -1: not computed yet (as CPython's)
+    explicit Str(std::string utf8, bool immortal = true) : Object(Kind::Str), text(std::move(utf8)) {
+        if (immortal) flags |= IMMORTAL;
+        index();
+    }
+    Str(std::u32string_view cps, bool immortal) : Object(Kind::Str) {
+        if (immortal) flags |= IMMORTAL;
+        for (char32_t c : cps) append_utf8(text, c);
+        index();
+    }
+    char32_t at(std::size_t i) const {
+        switch (width) {
+            case 1: return static_cast<unsigned char>(units[i]);
+            case 2: return static_cast<char32_t>(static_cast<unsigned char>(units[2 * i]) |
+                                                 static_cast<unsigned char>(units[2 * i + 1]) << 8);
+            default: {
+                char32_t c = 0;
+                for (int k = 3; k >= 0; --k) c = (c << 8) | static_cast<unsigned char>(units[4 * i + k]);
+                return c;
+            }
+        }
+    }
+    static void append_utf8(std::string& out, char32_t c) {
+        if (c < 0x80) out += static_cast<char>(c);
+        else if (c < 0x800) { out += static_cast<char>(0xC0 | (c >> 6)); out += static_cast<char>(0x80 | (c & 0x3F)); }
+        else if (c < 0x10000) {
+            out += static_cast<char>(0xE0 | (c >> 12)); out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (c & 0x3F));
+        } else {
+            out += static_cast<char>(0xF0 | (c >> 18)); out += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((c >> 6) & 0x3F)); out += static_cast<char>(0x80 | (c & 0x3F));
+        }
+    }
+private:
+    void index() {
+        std::u32string cps;
+        for (std::size_t i = 0; i < text.size();) {
+            auto b = static_cast<unsigned char>(text[i]);
+            int n = b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4;
+            char32_t c = n == 1 ? b : n == 2 ? (b & 0x1F) : n == 3 ? (b & 0x0F) : (b & 0x07);
+            for (int k = 1; k < n && i + k < text.size(); ++k) c = (c << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3F);
+            cps.push_back(c);
+            i += n;
+        }
+        length = cps.size();
+        char32_t top = 0;
+        for (char32_t c : cps) top = std::max(top, c);
+        ascii = top < 0x80;
+        width = top < 0x100 ? 1 : top < 0x10000 ? 2 : 4;
+        if (ascii) { units = text; return; }
+        units.reserve(length * width);
+        for (char32_t c : cps)
+            for (int k = 0; k < width; ++k) units += static_cast<char>((c >> (8 * k)) & 0xFF);
+    }
 };
 inline const Str* intern(std::string_view s) {
     static std::unordered_map<std::string, std::unique_ptr<Str>> table;
@@ -431,10 +504,19 @@ inline bool is_data_descriptor(Obj found) {
     if (found.is_object() && found.object()->kind == Kind::SlotDescriptor) return true;
     return is_instance(found) && (found.object()->cls->has("__set__") || found.object()->cls->has("__delete__"));
 }
+// The runtime (bella/runtime.hpp) calls every other kind of callable; returns a new reference.
+using CallHook = Obj (*)(Obj fn, std::span<const Obj> args);
+inline CallHook& call_hook() {
+    static CallHook hook = nullptr;
+    return hook;
+}
 inline Obj call(Obj fn, std::initializer_list<Obj> args) {
-    if (!fn.is_object() || fn.object()->kind != Kind::Function) throw TypeError("object is not callable");
-    std::vector<Obj> a(args);
-    return static_cast<Function*>(fn.object())->fn(a);
+    if (fn.is_object() && fn.object()->kind == Kind::Function) {
+        std::vector<Obj> a(args);
+        return static_cast<Function*>(fn.object())->fn(a);
+    }
+    if (call_hook() != nullptr) return call_hook()(fn, std::span<const Obj>(args.begin(), args.size()));
+    throw TypeError("object is not callable");
 }
 
 // ---- inline caches (refmodel CacheEntry, Site) ----
@@ -877,6 +959,11 @@ inline void dealloc(Object* o) {
             return;
         }
         default:
+            if (Destroyer d = destroyer(o->kind)) {
+                o->flags |= DEAD;
+                d(o);
+                return;
+            }
             o->flags |= DEAD;
             if (heap().checking) detail::check_not_named(o);
             detail::bury(o);

@@ -1,4 +1,4 @@
-# xfail: BigInt promotion not implemented in runtime/include/bella/int.hpp (factorial(25) exceeds 2**62)
+# xfail: BigInt promotion not implemented yet (the bn port, decided 2026-11-02): factorial(25) exceeds 2**62
 # slice example: exact int beyond the 63-bit immediate range
 
 

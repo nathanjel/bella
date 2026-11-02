@@ -52,12 +52,6 @@ def agree(src: str) -> None:
     assert cpp == ref, f"C++ {cpp!r} != CPython {ref!r}"
 
 
-def eval1_agrees_cpp_refuses(src: str) -> None:
-    ref, e1, cpp = three_way(src)
-    assert e1 == ref, f"eval1 {e1!r} != CPython {ref!r}"
-    assert cpp == "<unsupported>", f"the toy emitter must refuse, not print {cpp!r} (CPython: {ref!r})"
-
-
 # ---- emitter: evaluation order (astra-low-01 #1, gemini 2.2.3) ---------------------------------
 
 def test_binary_and_comparison_operands_evaluate_left_to_right() -> None:
@@ -117,8 +111,11 @@ def test_global_assignment_in_function() -> None:
     """)
 
 
-def test_value_function_that_can_fall_off_the_end_is_refused() -> None:
-    eval1_agrees_cpp_refuses("""
+# RL-03: the toy emitter refused these programs rather than invent a value; the emitter from L2
+# (step 3a.1, docs/emitter.md) runs them with CPython's semantics, so they must now agree.
+
+def test_value_function_that_can_fall_off_the_end_returns_none() -> None:
+    agree("""
         def h(a: int) -> int:
             if a > 0:
                 return 1
@@ -126,41 +123,38 @@ def test_value_function_that_can_fall_off_the_end_is_refused() -> None:
     """)
 
 
-def test_none_valued_call_used_as_a_value_is_refused() -> None:
-    eval1_agrees_cpp_refuses("""
+def test_none_valued_call_used_as_a_value() -> None:
+    agree("""
         def g() -> None:
             print("g")
         print(g())
     """)
 
 
-def test_read_of_a_possibly_unassigned_local_is_refused() -> None:
-    eval1_agrees_cpp_refuses("""
+def test_read_of_a_possibly_unassigned_local() -> None:
+    agree("""
         def f(c: int) -> int:
             if c > 0:
                 v = 1
             return v
         print(f(1))
+        try:
+            print(f(0))
+        except UnboundLocalError:
+            print("UnboundLocalError")
     """)
 
 
-def test_call_before_definition_is_refused() -> None:
-    src = """
+def test_call_before_definition_raises_name_error() -> None:
+    agree("""
         try:
             print(later(1))
         except NameError:
             print("NameError")
         def later(x: int) -> int:
             return x
-    """
-    ref, e1, _ = three_way(src)
-    assert e1 == ref
-    try:
-        run_cpp(_write("print(later(1))\ndef later(x: int) -> int:\n    return x\n"), _TMP / "out", "g++", "c++26")
-    except Unsupported:
-        pass
-    else:
-        raise AssertionError("calling a function before its def must be refused, not compiled")
+        print(later(2))
+    """)
 
 
 # ---- frontend: comprehension scope (astra-low-01 #5, gemini 2.2.2) ---------------------------

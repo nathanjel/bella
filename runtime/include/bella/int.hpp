@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
-#include <iostream>
 
 namespace bella {
 
@@ -80,7 +79,7 @@ inline Int int_neg(Int a) {
 }
 inline Int int_floordiv(Int a, Int b) {
     const std::int64_t x = a.small(), y = b.small();
-    if (y == 0) throw ZeroDivisionError("integer division or modulo by zero");
+    if (y == 0) throw ZeroDivisionError("division by zero");      // CPython 3.15's text
     if (x == Int::kMin && y == -1) return bigint::promote("floordiv");   // quotient 2^62 leaves the tagged range
     std::int64_t q = x / y;
     const std::int64_t r = x % y;
@@ -89,7 +88,7 @@ inline Int int_floordiv(Int a, Int b) {
 }
 inline Int int_mod(Int a, Int b) {
     const std::int64_t x = a.small(), y = b.small();
-    if (y == 0) throw ZeroDivisionError("integer division or modulo by zero");
+    if (y == 0) throw ZeroDivisionError("division by zero");
     if (y == -1) return Int::from_small(0);    // also avoids kMin % -1, which traps in C++
     std::int64_t r = x % y;
     if (r != 0 && ((r < 0) != (y < 0))) r += y;   // sign follows the divisor
@@ -140,16 +139,5 @@ inline Int operator^(Int a, Int b) { return int_xor(a, b); }
 inline Int operator~(Int a) { return int_invert(a); }
 inline Int operator<<(Int a, Int b) { return int_lshift(a, b); }
 inline Int operator>>(Int a, Int b) { return int_rshift(a, b); }
-
-// print(...) for the toy emitter: space-separated, newline-terminated, like Python's default.
-inline void print_one(std::ostream& os, Int v) { os << to_string(v); }
-inline void print_one(std::ostream& os, bool v) { os << (v ? "True" : "False"); }
-inline void print_one(std::ostream& os, const char* s) { os << s; }
-inline void print_one(std::ostream& os, const std::string& s) { os << s; }
-template <class... Ts> void print(Ts... args) {
-    const char* sep = "";
-    ((std::cout << sep, print_one(std::cout, args), sep = " "), ...);
-    std::cout << '\n';
-}
 
 }  // namespace bella

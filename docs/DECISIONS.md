@@ -609,6 +609,24 @@ log RL-169 to RL-187). Defects fixed within the design; the rules they settle:
   calling frame are recognised by identity at every call (RL-175, about 15 % slower on the
   targets); generated code names nothing a program can rebind (RL-176).
 
+**2026-11-02 — step 3 of the C++ leg: the runtime types and the emitter** (author).
+* Where built-in behaviour lives: a C++ core and a Python prelude. C++ holds storage and the hot
+  primitives: `Obj`, `int`, `str` (PEP 393), `tuple`, `list`, `dict`, hashing, iteration, the
+  call protocol, the exception carrier and the type objects. Whatever is defined by other Python
+  operations is Python in `runtime/prelude/` (`__build_class__` and `match` are there already;
+  `print`, the containers' `repr`, the exception classes and their `__str__`, `sorted`, `min`,
+  `max` and the like join them), compiled by Bella like any program and checked against CPython
+  through `eval1` and `eval2`. Less C++ to trust; the prelude is as slow as boxed phase-1 code
+  until types reach L3. Rejected: all in C++ (CPython's way), and nearly all in Python over a few
+  intrinsics.
+* Order: 3a the emitter, from L2, and the runtime core: C-3-01..03 and 05..11 and the slice
+  examples compiled, with a compiled-corpus baseline that may only grow; 3b generators (state
+  machines, decided) and compiled imports: C-3-04; 3c the cycle collector and weak references,
+  in the model first: C-3-12, which closes task 3; then gate 1a.1.
+* Taken with it, reversible: one C++ translation unit per module and the runtime as a prebuilt
+  library (C++20 modules once compile time is measured); the toy L1 emitter retires when the
+  slice examples pass through L2.
+
 ## Pins
 
 | What | Value | Where |

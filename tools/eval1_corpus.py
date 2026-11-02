@@ -4,6 +4,7 @@
     python tools/eval1_corpus.py            check: every case of the baseline passes
     python tools/eval1_corpus.py --update   write the baseline from this run
     python tools/eval1_corpus.py --level 2  the same through L2 and eval2 (conformance/eval2-baseline.txt)
+    python tools/eval1_corpus.py --level c  compiled through L2 into C++ (conformance/evalc-baseline.txt)
 
 Runs `conformance/harness.py check` with pipeline/l1/run.py as the runner (the standard library
 the host's, the program's own modules eval1's). The baseline, conformance/eval1-baseline.txt,
@@ -23,12 +24,13 @@ BASELINE = ROOT / "conformance" / "eval1-baseline.txt"
 CASES = ROOT / "conformance" / "cases"
 
 
-def baseline_path(level: int) -> Path:
+def baseline_path(level: int | str) -> Path:
     return BASELINE if level == 1 else ROOT / "conformance" / f"eval{level}-baseline.txt"
 
 
-def run(level: int = 1) -> dict[str, bool]:
-    runner = f"{sys.executable} {ROOT / 'pipeline' / f'l{level}' / 'run.py'} {{case}}"
+def run(level: int | str = 1) -> dict[str, bool]:
+    script = ROOT / "pipeline" / "build.py" if level == "c" else ROOT / "pipeline" / f"l{level}" / "run.py"
+    runner = f"{sys.executable} {script} {'--run ' if level == 'c' else ''}{{case}}"
     proc = subprocess.run([sys.executable, str(ROOT / "conformance" / "harness.py"), "check", "--runner", runner],
                           capture_output=True, text=True, check=False, cwd=ROOT)
     results: dict[str, bool] = {}
@@ -42,7 +44,8 @@ def run(level: int = 1) -> dict[str, bool]:
 
 
 def main(argv: list[str]) -> int:
-    level = int(argv[argv.index("--level") + 1]) if "--level" in argv else 1
+    given = argv[argv.index("--level") + 1] if "--level" in argv else "1"
+    level: int | str = given if given == "c" else int(given)
     BASELINE = baseline_path(level)  # noqa: N806
     results = run(level)
     passing = sorted(name for name, ok in results.items() if ok)

@@ -24,7 +24,8 @@ running it, not by recollection; the conformance harness exists for that.
   `docs/deviations.toml` with an id, a rationale and a lint rule — never silently.
 * **Never approximate.** A construct the pipeline cannot handle raises `Unsupported` naming it
   (see `pipeline/l1/grammar.py`). A runtime facility that does not exist throws
-  `bella::NotImplemented` (see `runtime/include/bella/int.hpp`). A slow correct path is fine; a
+  `bella::NotImplemented` (see `runtime/include/bella/int.hpp`); a compiled program then stops
+  with `bella: not implemented: ...` and exit 70. A slow correct path is fine; a
   fast wrong path is not.
 * **A conformance case first.** A new runtime mechanism or pass starts with a case under
   `conformance/cases` (or a reference-model test under `refmodel/tests`) that CPython passes,
@@ -68,11 +69,12 @@ make staging-check      the staging prototype (docs/staging.md): the P1 corpus a
 make eval1-corpus       the conformance corpus under eval1 (pipeline/l1/run.py); no case of
                         conformance/eval1-baseline.txt may regress; --update in tools/eval1_corpus.py
 make eval2-corpus       the corpus through L2 (to-anf, lifetimes, wf2) under eval2; conformance/eval2-baseline.txt
+make compiled-corpus    the corpus compiled through L2 into C++ (pipeline/build.py); conformance/evalc-baseline.txt
 make targets-eval1      the easy three under eval1 with their whole closures lowered (the gates' second leg)
 make targets-eval2      the easy three through L2 under eval2, each with its whole closure
 make lint               ruff and mypy, both clean; dialect programs and target drivers under strict mypy
 make check              closure, targets-closure, lint, test, verify, probes, slice, int-test, float-diff, object-test, targets-check,
-                        staging-check, eval1-corpus, eval2-corpus, targets-eval1, targets-eval2 (CI)
+                        staging-check, eval1-corpus, eval2-corpus, compiled-corpus, targets-eval1, targets-eval2 (CI)
 make checks             the same without the two closure steps
 ```
 

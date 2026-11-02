@@ -3,7 +3,7 @@
     python3 -m pipeline.slice --cxx g++ --std c++26 pipeline/examples/*.py
 
 For each program: run it under the host CPython; lower it to L1, check wf1 and interpret it
-with eval1; emit C++ with the toy backend, compile it against runtime/include and run it.
+with eval1; compile it through L2 and the C++ emitter (pipeline/build.py) and run the binary.
 All three outputs must agree. A program whose header says ``# xfail: <reason>`` is expected
 to fail on the C++ leg (a known gap such as BigInt); it is reported XFAIL, and XPASS if the
 gap has closed. Generated C++ is written next to the program under examples/out/ and is
@@ -21,14 +21,13 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from pipeline.backend.emit_cpp import emit
+from pipeline.build import build
 from pipeline.l1.eval1 import Interpreter
 from pipeline.l1.frontend import lower
 from pipeline.l1.grammar import Unsupported
 from pipeline.l1.wf import check
 
 ROOT = Path(__file__).resolve().parents[1]
-INCLUDE = ROOT / "runtime" / "include"
 
 
 def run_cpython(path: Path) -> str:
@@ -46,17 +45,9 @@ def run_eval1(path: Path) -> str:
 
 
 def run_cpp(path: Path, out_dir: Path, cxx: str, std: str) -> str:
-    module = lower(path.read_text(encoding="utf-8"), path.name)
-    check(module)
-    cpp = emit(module)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    src = out_dir / f"{path.stem}.cpp"
-    src.write_text(cpp, encoding="utf-8")
-    exe = out_dir / f"{path.stem}.bin"
-    build = subprocess.run([cxx, f"-std={std}", "-O1", "-Wall", "-I", str(INCLUDE), str(src), "-o", str(exe)],
-                           capture_output=True, text=True, check=False)
-    if build.returncode != 0:
-        raise RuntimeError(f"C++ build failed:\n{build.stderr}")
+    """The C++ leg: the program through L2 and the emitter (pipeline/build.py), its C++ kept in
+    out_dir to be committed and read."""
+    exe = build(path, path.name, cxx, std, keep=out_dir / f"{path.stem}.cpp")
     proc = subprocess.run([str(exe)], capture_output=True, text=True, check=False, timeout=120)
     return proc.stdout + ("" if proc.returncode == 0 else f"<exit {proc.returncode}>\n{proc.stderr}")
 
