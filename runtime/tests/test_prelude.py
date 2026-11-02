@@ -105,6 +105,97 @@ def test_print_does_nothing_without_a_stdout() -> None:
         sys.stdout = saved
 
 
+def descriptor_story(prop: Any, sm: Any, cm: Any) -> list[object]:
+    """The same class built on the given property, staticmethod and classmethod: what a program
+    sees through them, and the messages of their errors."""
+    out: list[object] = []
+
+    def getx(self: Any) -> object:
+        """the x docstring"""
+        return self._x
+
+    def setx(self: Any, v: object) -> None:
+        self._x = v
+
+    def delx(self: Any) -> None:
+        del self._x
+
+    class C:
+        x = prop(getx, setx, delx)
+        ro = prop(getx)
+        nogetter = prop(None, setx)
+
+        @sm
+        def twice(n: int) -> int:
+            return n * 2
+
+        @cm
+        def who(cls: type) -> str:
+            return cls.__name__
+
+    class D(C):
+        pass
+
+    c = C()
+    c.x = 5
+    out += [c.x, C.x.__doc__, C.ro.__doc__, C.twice(3), c.twice(4), C.who(), D.who(), D().who(), type(C.__dict__["x"]).__name__]
+    for f in (lambda: setattr(c, "ro", 1), lambda: delattr(c, "ro"), lambda: c.nogetter):
+        try:
+            f()
+        except AttributeError as e:
+            out.append(("AttributeError", str(e)))
+    del c.x
+    out.append(hasattr(c, "_x"))
+    wrapped = C.__dict__["twice"]
+    out += [wrapped.__func__ is wrapped.__wrapped__, wrapped.__name__, C.__dict__["who"].__func__.__name__]
+    q = C.x.setter(setx)
+    out += [q.__doc__, q.fget is getx, C.x.getter(lambda s: 1).__doc__]
+    anon = prop()
+
+    class E:
+        y = anon
+    try:
+        E().y  # noqa: B018 -- the read raises, which is the point
+    except AttributeError as e:
+        out.append(str(e))
+    return out
+
+
+def test_property_staticmethod_classmethod_match_the_builtins() -> None:
+    prelude = load("builtins")
+    want = descriptor_story(property, staticmethod, classmethod)
+    got = descriptor_story(prelude.property, prelude.staticmethod, prelude.classmethod)
+    # the prelude's classes are named as the builtins; only type(...).__name__ above shows them
+    assert got == want, f"\n  prelude {got}\n  builtin {want}"
+
+
+def test_container_repr_matches_the_builtins() -> None:
+    prelude = load("builtins")
+    funcs = {list: prelude._list_repr, tuple: prelude._tuple_repr, dict: prelude._dict_repr,
+             set: prelude._set_repr, frozenset: prelude._set_repr}
+
+    saved = builtins.repr
+
+    def prelude_repr(x: object) -> str:
+        f = funcs.get(type(x)) or next((g for t, g in funcs.items() if isinstance(x, t)), None)
+        return f(x) if f is not None else saved(x)
+
+    builtins.repr = prelude_repr  # type: ignore[assignment]  # nested containers through the prelude too
+    try:
+        loop: list[object] = [1]
+        loop.append(loop)
+        d: dict[object, object] = {}
+        d["self"] = d
+        class S(set[int]):
+            pass
+        values: list[object] = [[], [1, "a"], (), (1,), (1, 2), {}, {"k": [1, (2,)]}, loop, (loop,), d, set(), {3},
+                                frozenset(), frozenset({1}), S({2}), S()]
+        for v in values:
+            assert prelude_repr(v) == saved(v), f"{saved(v)}: prelude {prelude_repr(v)}"
+    finally:
+        builtins.repr = saved
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

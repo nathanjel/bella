@@ -51,6 +51,15 @@ Types& types() {
         x.module = builtin_type("module", {x.object});
         x.traceback = builtin_type("traceback", {x.object});
         x.textio = builtin_type("TextIOWrapper", {x.object});
+        x.method_descriptor = builtin_type("method_descriptor", {x.object});
+        x.classmethod_descriptor = builtin_type("classmethod_descriptor", {x.object});
+        x.getset_descriptor = builtin_type("getset_descriptor", {x.object});
+        x.mappingproxy = builtin_type("mappingproxy", {x.object});
+        x.slice = builtin_type("slice", {x.object});
+        x.iterator = builtin_type("iterator", {x.object});
+        x.set = builtin_type("set", {x.object});
+        x.frozenset = builtin_type("frozenset", {x.object});
+        x.set_iterator = builtin_type("set_iterator", {x.object});
         return x;
     }();
     return t;
@@ -71,10 +80,21 @@ ClassObject* type_of(Obj v) {
 Tuple::Tuple() : Object(Kind::Tuple) { cls = types().tuple; }
 List::List() : Object(Kind::List) { cls = types().list; }
 Cell::Cell() : Object(Kind::Cell) { cls = types().cell; }
-Builtin::Builtin(std::string n, NativeFn f, Obj s) : Object(Kind::Builtin), name(std::move(n)), fn(f), self(s) {
-    cls = types().builtin;
+Builtin::Builtin(std::string n, NativeFn f, Obj s, Binding b) : Object(Kind::Builtin), name(std::move(n)), fn(f), self(s), binding(b) {
+    cls = !s.is_unset() || b == Binding::Function ? types().builtin
+          : b == Binding::Method                  ? types().method_descriptor
+                                                  : types().classmethod_descriptor;
     incref(self);
 }
+GetSet::GetSet(const char* n, ClassObject* o, Ref (*g)(Obj), void (*s)(Obj, Obj))
+    : Object(Kind::GetSet), name(n), owner(o), get(g), set(s) { cls = types().getset_descriptor; flags |= IMMORTAL; }
+SliceObject::SliceObject(Obj a, Obj b, Obj c) : Object(Kind::Slice), start(a), stop(b), step(c) {
+    cls = types().slice;
+    incref(start);
+    incref(stop);
+    incref(step);
+}
+Proxy::Proxy(ClassObject* c) : Object(Kind::Proxy), of(c) { cls = types().mappingproxy; }
 Method::Method(Obj f, Obj s) : Object(Kind::Method), func(f), self(s) {
     cls = types().method;
     incref(func);
@@ -92,6 +112,8 @@ Iterator::Iterator(Of o, Obj s) : Object(Kind::Iterator), of(o), seq(s) {
         case ListIt: cls = types().list_iterator; break;
         case StrIt: cls = types().str_iterator; break;
         case DictKeysIt: cls = types().dict_keyiterator; break;
+        case SeqIt: cls = types().iterator; break;
+        case SetIt: cls = types().set_iterator; break;
     }
     incref(seq);
 }
@@ -158,6 +180,14 @@ bool register_deaths() {
         destroy<Traceback>(o);
     };
     destroyer(Kind::Native) = [](Object* o) { destroy<Native>(o); };
+    destroyer(Kind::Slice) = [](Object* o) {
+        auto* s = static_cast<SliceObject*>(o);
+        decref(std::exchange(s->start, Obj{}));
+        decref(std::exchange(s->stop, Obj{}));
+        decref(std::exchange(s->step, Obj{}));
+        destroy<SliceObject>(o);
+    };
+    destroyer(Kind::Proxy) = [](Object* o) { destroy<Proxy>(o); };
     return true;
 }
 const bool deaths_registered = register_deaths();
@@ -179,6 +209,11 @@ Ref tuple_new(std::initializer_list<Obj> items) {
         t->items.push_back(v);
     }
     return own(t);
+}
+Ref tuple_copy(std::span<const Obj> items) {
+    std::vector<Obj> v(items.begin(), items.end());
+    for (Obj x : v) incref(x);
+    return tuple_steal(std::move(v));
 }
 Ref tuple_steal(std::vector<Obj> items) {
     auto* t = new Tuple;
@@ -311,6 +346,17 @@ std::int64_t hash_of(Obj v) {
         }
         default:
             break;
+    }
+    // a class's __hash__ (None when it defines __eq__ alone); a C++ type without one is unhashable
+    Obj h = type_lookup(type_of(v), intern("__hash__"));
+    if (!h.is_unset() && h != None()) {
+        Ref r = call_special(v, "__hash__", {});
+        if (r.get().is_small()) {
+            std::int64_t x = r.get().small_value();
+            return x == -1 ? -2 : x;
+        }
+        if (is_kind(r.get(), Kind::Bool)) return static_cast<BoolObject*>(r.get().object())->value ? 1 : 0;
+        raise_new("TypeError", "__hash__ method should return an integer");
     }
     raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
 }

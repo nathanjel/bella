@@ -80,7 +80,7 @@ enum class Kind : std::uint8_t {
     Str, Dict, Class, Instance, Function, SlotDescriptor, Marker,
     // the runtime's own objects (bella/runtime.hpp): their deaths go through destroyer(kind)
     Singleton, Bool, BigInt, Float, Tuple, List, PyDict, Cell, PyFunction, Builtin, Method, Module,
-    Range, Iterator, Traceback, Native, KindCount
+    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, KindCount
 };
 enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2 };
 
@@ -165,10 +165,12 @@ struct Str : Object {
     bool ascii = true;
     mutable std::int64_t hash = -1;   // -1: not computed yet (as CPython's)
     explicit Str(std::string utf8, bool immortal = true) : Object(Kind::Str), text(std::move(utf8)) {
+        cls = builtin_class("str");
         if (immortal) flags |= IMMORTAL;
         index();
     }
     Str(std::u32string_view cps, bool immortal) : Object(Kind::Str) {
+        cls = builtin_class("str");
         if (immortal) flags |= IMMORTAL;
         for (char32_t c : cps) append_utf8(text, c);
         index();
@@ -328,6 +330,8 @@ inline VersionCounter& versions() {
 // ---- classes (refmodel RefClass) ----
 struct ClassObject : Object {
     std::string name;
+    std::string qualname;                        // __qualname__ (the name unless the class body set one)
+    bool heap_type = false;                      // a class a program made (Py_TPFLAGS_HEAPTYPE)
     std::vector<ClassObject*> bases;
     std::vector<ClassObject*> mro;               // C3, self first
     std::vector<ClassObject*> subclasses;
@@ -438,6 +442,7 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     auto* c = new ClassObject();
     c->cls = builtin_class("type");
     c->name = spec.name;
+    c->qualname = spec.name;
     c->bases = spec.bases;
     c->mro = c3(c);
     for (auto& [k, v] : spec.attrs) {
@@ -497,13 +502,25 @@ struct Instance : Object {
 inline Instance* new_instance(ClassObject* c) { return new Instance(c); }
 
 inline bool is_instance(Obj v) { return v.is_object() && v.object()->kind == Kind::Instance; }
+// Python's rule: an object whose type has __get__ is a descriptor (a function, a property, an
+// instance of a class with __get__); with __set__ or __delete__ too, a data descriptor.
 inline bool is_descriptor(Obj found) {
-    return is_instance(found) && found.object()->cls->has("__get__");
+    return found.is_object() && found.object()->cls != nullptr && found.object()->cls->has("__get__");
 }
 inline bool is_data_descriptor(Obj found) {
     if (found.is_object() && found.object()->kind == Kind::SlotDescriptor) return true;
-    return is_instance(found) && (found.object()->cls->has("__set__") || found.object()->cls->has("__delete__"));
+    return found.is_object() && found.object()->cls != nullptr &&
+           (found.object()->cls->has("__set__") || found.object()->cls->has("__delete__"));
 }
+// Whether the exception being handled is an AttributeError the runtime raised for Python code
+// (a property or a __get__ written in Python), so that __getattr__ is tried as for this header's
+// own AttributeError. Called inside a catch block.
+using AttributeErrorHook = bool (*)();
+inline AttributeErrorHook& attribute_error_hook() {
+    static AttributeErrorHook hook = nullptr;
+    return hook;
+}
+
 // The runtime (bella/runtime.hpp) calls every other kind of callable; returns a new reference.
 using CallHook = Obj (*)(Obj fn, std::span<const Obj> args);
 inline CallHook& call_hook() {
@@ -697,6 +714,9 @@ inline Ref execute(const LookupPlan& plan, Instance* obj, const Str* name) {
         }
     } catch (const AttributeError&) {
         if (hook.get().is_unset()) throw;
+        return Ref::steal(call(hook.get(), {Obj::of(obj), Obj::of(name)}));
+    } catch (...) {
+        if (hook.get().is_unset() || attribute_error_hook() == nullptr || !attribute_error_hook()()) throw;
         return Ref::steal(call(hook.get(), {Obj::of(obj), Obj::of(name)}));
     }
 }
@@ -941,8 +961,9 @@ inline void dealloc(Object* o) {
                 }
                 // the class's key order, then any name the keys could not take, in insertion order
                 std::vector<std::pair<const Str*, Obj>> ranked;
-                for (const Str* k : obj->cls->keys->names)
-                    for (auto& [n, v] : held) if (n == k && !v.is_unset()) { ranked.emplace_back(n, v); v = Obj{}; }
+                if (obj->cls->keys)               // a C++ type's instance (object()) shares no keys
+                    for (const Str* k : obj->cls->keys->names)
+                        for (auto& [n, v] : held) if (n == k && !v.is_unset()) { ranked.emplace_back(n, v); v = Obj{}; }
                 for (const Str* n : obj->order)
                     for (auto& [m, v] : held) if (m == n && !v.is_unset()) { ranked.emplace_back(m, v); v = Obj{}; }
                 for (auto& [n, v] : ranked) decref(v);

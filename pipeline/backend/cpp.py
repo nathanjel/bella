@@ -223,6 +223,11 @@ class Emitter:
             head = f"rt::Ref {fn.entry}(rt::Module* m) {{"
             self.out += [f"// the module body of {self.filename}", head, "    M = m;", "    init_constants();",
                          "    Obj ns = Obj::of(m->dict);"]
+        elif c.kind == "classbody":
+            # __build_class__ calls the body with the class namespace (runtime/prelude/build_class.py)
+            self.out += [f"// the body of class {c.qualname}  ({self.filename}:{c.first_line})",
+                         f"static Ref {fn.entry}(rt::PyFunction* self, rt::Args args) {{",
+                         "    (void)self;", "    Obj ns = args.pos(0);"]
         else:
             self.out += [f"// {c.kind} {c.qualname}  ({self.filename}:{c.first_line})",
                          f"static Ref {fn.entry}(rt::PyFunction* self, rt::Args args) {{"]
@@ -230,7 +235,12 @@ class Emitter:
             self.out.append(f"    Ref {self.vars[n]};")
         guard = ", ".join(["", *(self.vars[n] for n in frame_locals)])
         self.out.append(f"    rt::FrameGuard frame({fn.cname}{guard});")
-        if c.kind != "module":
+        if c.kind == "classbody":
+            for n in c.cellvars:
+                self.out.append(f"    {self.vars[n]} = rt::make_cell();")
+            for i, n in enumerate(c.freevars):
+                self.out.append(f"    {self.vars[n]} = self->closure[{i}];")
+        elif c.kind != "module":
             if params:
                 self.out.append(f"    rt::bind(self, args, {{{', '.join('&' + self.vars[n] for n in params)}}});")
             else:
@@ -246,10 +256,6 @@ class Emitter:
                 self.out.append(f"    throw rt::NotImplemented({c_string(f'running the {c.kind} {c.qualname} (step 3b: generators)')});")
                 self.out.append("}")
                 return self.out
-        if c.kind == "classbody":
-            self.out.append(f"    throw rt::NotImplemented({c_string(f'the class body {c.qualname} (step 3a.2: classes)')});")
-            self.out.append("}")
-            return self.out
         self.region(c.body, 1)
         if _falls_through(c.body):
             self.out.append("    return rt::none_ref();")
@@ -485,7 +491,13 @@ class Emitter:
                 return f"rt::load_global(M, {self.name(r.id)})"
             case "name":
                 return f"rt::load_name(ns, M, {self.name(r.id)})"
-        raise Unsupported(f"the C++ emitter: a {r.kind} load of {r.id} (step 3a.2)")
+            case "classdict":
+                # LOAD_FROM_DICT_OR_GLOBALS / _OR_DEREF: the class namespace first
+                mapping = "ns" if r.mapping == "locals" else f"rt::cell_contents({self.vars['__classdict__']})"
+                if r.then == "global":
+                    return f"rt::load_classdict({mapping}, M, {self.name(r.id)})"
+                return f"rt::load_classdict_free({mapping}, {self.name(r.id)}, {self.vars[r.id]}, {c_string(r.id)})"
+        raise Unsupported(f"the C++ emitter: a {r.kind} load of {r.id}")
 
     def store(self, r: G.NameRef, value: str) -> str:
         match r.kind:
@@ -564,21 +576,33 @@ class Emitter:
             case G.CallEx(f, args, kwargs):
                 return f"rt::call_ex({a(f)}, {a(args)}, {a(kwargs)})"
             case G.Runtime(name, args, kw):
+                ns = "ns" if self.code.kind in ("module", "classbody") else "Obj{}"
+                tail = ""
                 if kw:
-                    raise Unsupported(f"the C++ emitter: keywords to the intrinsic {name}")
-                return f"rt::runtime_call({c_string(name)}, {'ns' if self.code.kind in ('module', 'classbody') else 'Obj{}'}, M, {{{', '.join(map(a, args))}}})"
+                    tail = (f", {{{', '.join(self.name(k) for k, _ in kw)}}}, {{{', '.join(a(v) for _, v in kw)}}}")
+                return f"rt::runtime_call({c_string(name)}, {ns}, M, {{{', '.join(map(a, args))}}}{tail})"
             case G.BuildList(items):
                 return f"rt::build_list({{{', '.join(map(a, items))}}})"
             case G.BuildTuple(items):
                 return f"rt::build_tuple({{{', '.join(map(a, items))}}})"
             case G.BuildMap(keys, values):
                 return f"rt::build_map({{{', '.join(map(a, keys))}}}, {{{', '.join(map(a, values))}}})"
+            case G.BuildSet(items):
+                return f"rt::build_set({{{', '.join(map(a, items))}}})"
+            case G.SetAdd(t, v):
+                return f"rt::set_add({a(t)}, {a(v)})"
+            case G.SetUpdate(t, v):
+                return f"rt::set_update({a(t)}, {a(v)})"
             case G.ListAppend(t, v):
                 return f"rt::list_append({a(t)}, {a(v)})"
             case G.ListExtend(t, v):
                 return f"rt::list_extend({a(t)}, {a(v)})"
             case G.ListToTuple(x):
                 return f"rt::list_to_tuple({a(x)})"
+            case G.DictUpdate(t, v):
+                return f"rt::dict_update({a(t)}, {a(v)})"
+            case G.DictMerge(t, v, f):
+                return f"rt::dict_merge({a(t)}, {a(v)}, {a(f)})"
             case G.MapAdd(t, k, v):
                 return f"rt::setitem({a(t)}, {a(k)}, {a(v)})"
             case G.MakeFunction(code, defaults, kwdefaults, closure, annotate):

@@ -53,6 +53,11 @@ Ref invoke(Obj f, Args a) {
         }
         case Kind::Builtin: {
             auto* b = static_cast<Builtin*>(o);
+            if (b->self.is_unset() && b->binding != Binding::Function) {
+                // an unbound method descriptor called directly (str.join(sep, items)): self first
+                if (a.npos == 0) raise_new("TypeError", "unbound method " + b->name + "() needs an argument");
+                return b->fn(a.pos(0), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
+            }
             return b->fn(b->self, a);
         }
         case Kind::Method: {
@@ -68,21 +73,26 @@ Ref invoke(Obj f, Args a) {
         }
         case Kind::Class: {
             auto* c = static_cast<ClassObject*>(o);
-            for (ClassObject* k : c->mro) {
-                auto it = constructors().find(k);
-                if (it != constructors().end()) return it->second(Obj::of(c), a);
-            }
-            throw NotImplemented("calling the class '" + c->name + "' (step 3a.2: classes)");
+            auto it = constructors().find(c);       // a C++ type's own constructor
+            if (it != constructors().end()) return it->second(Obj::of(c), a);
+            return type_call(c, a);
         }
         case Kind::Function: {
             if (a.nkw != 0) throw NotImplemented("keywords to a native test function");
             std::vector<Obj> data(a.data, a.data + a.npos);
             return Ref::steal(static_cast<Function*>(o)->fn(data));
         }
-        case Kind::Instance:
-            throw NotImplemented("calling instances of user classes (step 3a.2)");
         default:
             break;
+    }
+    if (!type_lookup(type_of(f), intern("__call__")).is_unset()) {
+        std::vector<Obj> data{f};
+        data.insert(data.end(), a.data, a.data + a.npos + a.nkw);
+        Obj call = type_lookup(type_of(f), intern("__call__"));
+        Ref hold = Ref::share(call);
+        if (is_kind(call, Kind::PyFunction)) return invoke(call, Args{data.data(), a.npos + 1, a.kwnames, a.nkw});
+        Ref bound = getattr(f, intern("__call__"));
+        return invoke(bound.get(), a);
     }
     raise_new("TypeError", "'" + type_of(f)->name + "' object is not callable");
 }
@@ -265,26 +275,40 @@ void delete_fast(Ref& slot, const char* name) {
     slot = Ref{};
 }
 
+namespace {
+[[noreturn]] void raise_name_error(const Str* name) {      // NameError.name is the missing name
+    Ref msg = str_new("name '" + name->text + "' is not defined");
+    Ref exc = invoke(Obj::of(exception_class("NameError")), {msg.get()});
+    bella::setattr(static_cast<Instance*>(exc.get().object()), intern("name"), Obj::of(name));
+    raise(exc.get());
+}
+}  // namespace
+
 Ref load_global(Module* m, const Str* name) {
     Obj v = dict_get(m->dict, Obj::of(name));
     if (v.is_unset()) v = dict_get(builtins_module()->dict, Obj::of(name));
-    if (v.is_unset()) raise_new("NameError", "name '" + name->text + "' is not defined");
+    if (v.is_unset()) raise_name_error(name);
     return Ref::share(v);
 }
 Ref load_name(Obj ns, Module* m, const Str* name) {
-    if (!is_kind(ns, Kind::PyDict)) throw NotImplemented("a class namespace that is not a dict (__prepare__)");
-    Obj v = dict_get(static_cast<Dict*>(ns.object()), Obj::of(name));
-    if (!v.is_unset()) return Ref::share(v);
+    Ref v = mapping_get(ns, Obj::of(name));      // a class namespace may be any mapping (__prepare__)
+    if (!v.get().is_unset()) return v;
     return load_global(m, name);
 }
-void store_name(Obj ns, const Str* name, Ref value) {
-    if (!is_kind(ns, Kind::PyDict)) throw NotImplemented("a class namespace that is not a dict (__prepare__)");
-    dict_set(static_cast<Dict*>(ns.object()), Obj::of(name), value.get());
-}
+void store_name(Obj ns, const Str* name, Ref value) { mapping_set(ns, Obj::of(name), value.get()); }
 void store_global(Module* m, const Str* name, Ref value) { dict_set(m->dict, Obj::of(name), value.get()); }
 void delete_name(Obj ns, const Str* name) {
-    if (!dict_del(static_cast<Dict*>(ns.object()), Obj::of(name)))
+    if (is_kind(ns, Kind::PyDict)) {
+        if (!dict_del(static_cast<Dict*>(ns.object()), Obj::of(name)))
+            raise_new("NameError", "name '" + name->text + "' is not defined");
+        return;
+    }
+    try {
+        delitem(ns, Obj::of(name));
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("KeyError"))) throw;
         raise_new("NameError", "name '" + name->text + "' is not defined");
+    }
 }
 void delete_global(Module* m, const Str* name) {
     if (!dict_del(m->dict, Obj::of(name))) raise_new("NameError", "name '" + name->text + "' is not defined");
@@ -342,7 +366,14 @@ Ref b_len(Obj, Args a) {
     if (is_kind(v, Kind::List)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<List*>(v.object())->items.size())));
     if (is_kind(v, Kind::PyDict)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(v.object())->used)));
     if (is_kind(v, Kind::Range)) return Ref::steal(Obj::small(static_cast<Range*>(v.object())->length));
-    if (is_kind(v, Kind::Instance)) throw NotImplemented("len() of instances of user classes (step 3a.2)");
+    bool has = false;
+    Ref r = call_special(v, "__len__", {}, &has);
+    if (has) {
+        if (is_kind(r.get(), Kind::Bool)) return Ref::steal(Obj::small(static_cast<BoolObject*>(r.get().object())->value));
+        if (!r.get().is_small()) raise_new("TypeError", "'" + type_of(r.get())->name + "' object cannot be interpreted as an integer");
+        if (r.get().small_value() < 0) raise_new("ValueError", "__len__() should return >= 0");
+        return r;
+    }
     raise_new("TypeError", "object of type '" + type_of(v)->name + "' has no len()");
 }
 Ref b_repr(Obj, Args a) {
@@ -355,6 +386,8 @@ Ref b_format(Obj, Args a) {
     const Str* s = spec.is_unset() ? nullptr : as_str(spec);
     if (!spec.is_unset() && s == nullptr)
         raise_new("TypeError", "format() argument 2 must be str, not " + type_of(spec)->name);
+    if (is_kind(a.pos(0), Kind::Instance))
+        return call_special(a.pos(0), "__format__", {spec.is_unset() ? str_new("").get() : spec});
     if (s != nullptr && s->length != 0) throw NotImplemented("format() with a format specification");
     return str_of(a.pos(0));
 }
@@ -373,6 +406,204 @@ Ref b_isinstance(Obj, Args a) {
     }
     return Ref::steal(boolean(check(spec)));
 }
+Ref attr_name(Obj v, const char* who) {
+    const Str* s = as_str(v);
+    if (s == nullptr) raise_new("TypeError", std::string(who) + "(): attribute name must be string, not '" + type_of(v)->name + "'");
+    return Ref::share(Obj::of(intern(s->text)));
+}
+bool is_attribute_error(const PyError& e) { return isinstance(e.exc.get(), exception_class("AttributeError")); }
+Ref b_getattr(Obj, Args a) {
+    if (a.nkw != 0) raise_new("TypeError", "getattr() takes no keyword arguments");
+    if (a.npos < 2 || a.npos > 3) raise_new("TypeError", "getattr expected 2 or 3 arguments, got " + std::to_string(a.npos));
+    Ref n = attr_name(a.pos(1), "getattr");
+    if (a.npos == 2) return getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
+    try {
+        return getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
+    } catch (const PyError& e) {
+        if (!is_attribute_error(e)) throw;
+        return Ref::share(a.pos(2));
+    }
+}
+Ref b_hasattr(Obj, Args a) {
+    positional_only(a, "hasattr", 2, 2);
+    Ref n = attr_name(a.pos(1), "hasattr");
+    try {
+        getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
+        return Ref::steal(boolean(true));
+    } catch (const PyError& e) {
+        if (!is_attribute_error(e)) throw;
+        return Ref::steal(boolean(false));
+    }
+}
+Ref b_setattr(Obj, Args a) {
+    positional_only(a, "setattr", 3, 3);
+    Ref n = attr_name(a.pos(1), "setattr");
+    setattr(a.pos(0), static_cast<const Str*>(n.get().object()), a.pos(2));
+    return none_ref();
+}
+Ref b_delattr(Obj, Args a) {
+    positional_only(a, "delattr", 2, 2);
+    Ref n = attr_name(a.pos(1), "delattr");
+    delattr(a.pos(0), static_cast<const Str*>(n.get().object()));
+    return none_ref();
+}
+Ref b_issubclass(Obj, Args a) {
+    positional_only(a, "issubclass", 2, 2);
+    if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "issubclass() arg 1 must be a class");
+    auto* c = static_cast<ClassObject*>(a.pos(0).object());
+    auto check = [&](Obj spec) {
+        if (!is_kind(spec, Kind::Class))
+            raise_new("TypeError", "issubclass() arg 2 must be a class, a tuple of classes, or a union");
+        return is_subclass(c, static_cast<ClassObject*>(spec.object()));
+    };
+    if (is_kind(a.pos(1), Kind::Tuple)) {
+        for (Obj s : static_cast<Tuple*>(a.pos(1).object())->items) if (check(s)) return Ref::steal(boolean(true));
+        return Ref::steal(boolean(false));
+    }
+    return Ref::steal(boolean(check(a.pos(1))));
+}
+Ref b_id(Obj, Args a) {
+    positional_only(a, "id", 1, 1);
+    Obj v = a.pos(0);
+    return Ref::steal(Obj::small(static_cast<std::int64_t>(v.is_small() ? (static_cast<std::uint64_t>(v.small_value()) << 1) | 1
+                                                                        : reinterpret_cast<std::uintptr_t>(v.object()) >> 1)));
+}
+Ref b_vars(Obj, Args a) {
+    positional_only(a, "vars", 1, 1);
+    try {
+        return getattr(a.pos(0), intern("__dict__"));
+    } catch (const PyError& e) {
+        if (!is_attribute_error(e)) throw;
+        raise_new("TypeError", "vars() argument must have __dict__ attribute");
+    }
+}
+
+// list, dict and tuple methods the prelude and programs call
+List* list_self(Obj self) { return static_cast<List*>(self.object()); }
+Ref list_append_m(Obj self, Args a) { positional_only(a, "append", 1, 1); list_append(self, a.pos(0)); return none_ref(); }
+Ref list_extend_m(Obj self, Args a) { positional_only(a, "extend", 1, 1); list_extend(self, a.pos(0)); return none_ref(); }
+Ref list_pop_m(Obj self, Args a) {
+    positional_only(a, "pop", 0, 1);
+    auto& items = list_self(self)->items;
+    if (items.empty()) raise_new("IndexError", "pop from empty list");
+    std::int64_t i = a.npos ? (a.pos(0).is_small() ? a.pos(0).small_value() : 0) : -1;
+    if (i < 0) i += static_cast<std::int64_t>(items.size());
+    if (i < 0 || i >= static_cast<std::int64_t>(items.size())) raise_new("IndexError", "pop index out of range");
+    Obj v = items[static_cast<std::size_t>(i)];
+    items.erase(items.begin() + i);
+    return Ref::steal(v);
+}
+Ref list_clear_m(Obj self, Args a) {
+    positional_only(a, "clear", 0, 0);
+    std::vector<Obj> old = std::move(list_self(self)->items);   // list_clear: emptied first, then released
+    list_self(self)->items.clear();
+    for (auto it = old.rbegin(); it != old.rend(); ++it) decref(*it);
+    return none_ref();
+}
+Ref list_insert_m(Obj self, Args a) {
+    positional_only(a, "insert", 2, 2);
+    auto& items = list_self(self)->items;
+    if (!a.pos(0).is_small()) raise_new("TypeError", "'" + type_of(a.pos(0))->name + "' object cannot be interpreted as an integer");
+    std::int64_t n = static_cast<std::int64_t>(items.size()), i = a.pos(0).small_value();
+    if (i < 0) i = std::max<std::int64_t>(0, i + n);
+    if (i > n) i = n;
+    incref(a.pos(1));
+    items.insert(items.begin() + i, a.pos(1));
+    return none_ref();
+}
+std::int64_t list_find(Obj self, Obj v) {
+    auto& items = list_self(self)->items;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        Obj x = items[i];
+        if (x == v) return static_cast<std::int64_t>(i);
+        Ref hold = Ref::share(x);
+        if (truth(compare(CmpOp::Eq, x, v).get())) return static_cast<std::int64_t>(i);
+    }
+    return -1;
+}
+Ref list_index_m(Obj self, Args a) {
+    positional_only(a, "index", 1, 1);
+    std::int64_t i = list_find(self, a.pos(0));
+    if (i < 0) raise_new("ValueError", "list.index(x): x not in list");
+    return Ref::steal(Obj::small(i));
+}
+Ref list_remove_m(Obj self, Args a) {
+    positional_only(a, "remove", 1, 1);
+    std::int64_t i = list_find(self, a.pos(0));
+    if (i < 0) raise_new("ValueError", "list.remove(x): x not in list");
+    auto& items = list_self(self)->items;
+    Obj old = items[static_cast<std::size_t>(i)];
+    items.erase(items.begin() + i);
+    decref(old);
+    return none_ref();
+}
+Ref list_count_m(Obj self, Args a) {
+    positional_only(a, "count", 1, 1);
+    std::int64_t n = 0;
+    for (Obj x : std::vector<Obj>(list_self(self)->items)) {
+        Ref hold = Ref::share(x);
+        if (x == a.pos(0) || truth(compare(CmpOp::Eq, x, a.pos(0)).get())) ++n;
+    }
+    return Ref::steal(Obj::small(n));
+}
+Ref list_reverse_m(Obj self, Args a) {
+    positional_only(a, "reverse", 0, 0);
+    std::reverse(list_self(self)->items.begin(), list_self(self)->items.end());
+    return none_ref();
+}
+Ref list_copy_m(Obj self, Args a) {
+    positional_only(a, "copy", 0, 0);
+    Ref l = list_new({});
+    for (Obj x : list_self(self)->items) list_append(l.get(), x);
+    return l;
+}
+Ref list_len_m(Obj self, Args a) { positional_only(a, "__len__", 0, 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(list_self(self)->items.size()))); }
+Ref getitem_m(Obj self, Args a) { positional_only(a, "__getitem__", 1, 1); return getitem(self, a.pos(0)); }
+Ref setitem_m(Obj self, Args a) { positional_only(a, "__setitem__", 2, 2); setitem(self, a.pos(0), a.pos(1)); return none_ref(); }
+Ref contains_m(Obj self, Args a) { positional_only(a, "__contains__", 1, 1); return compare(CmpOp::In, a.pos(0), self); }
+Ref iter_m(Obj self, Args a) { positional_only(a, "__iter__", 0, 0); return iter(self); }
+Dict* dict_self(Obj self) { return static_cast<Dict*>(self.object()); }
+Ref dict_get_m(Obj self, Args a) {
+    positional_only(a, "get", 1, 2);
+    Obj v = dict_get(dict_self(self), a.pos(0));
+    return !v.is_unset() ? Ref::share(v) : a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
+}
+Ref dict_pop_m(Obj self, Args a) {
+    positional_only(a, "pop", 1, 2);
+    Obj v = dict_get(dict_self(self), a.pos(0));
+    if (v.is_unset()) {
+        if (a.npos > 1) return Ref::share(a.pos(1));
+        Ref exc = invoke(Obj::of(exception_class("KeyError")), {a.pos(0)});
+        raise(exc.get());
+    }
+    Ref out = Ref::share(v);
+    dict_del(dict_self(self), a.pos(0));
+    return out;
+}
+Ref dict_len_m(Obj self, Args a) { positional_only(a, "__len__", 0, 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(dict_self(self)->used))); }
+Ref dict_keys_m(Obj self, Args a) {
+    positional_only(a, "keys", 0, 0);
+    Ref l = list_new({});
+    for (auto& e : dict_self(self)->entries) if (!e.key.is_unset()) list_append(l.get(), e.key);
+    return l;
+}
+Ref dict_items_m(Obj self, Args a) {
+    positional_only(a, "items", 0, 0);
+    Ref l = list_new({});
+    for (auto& e : dict_self(self)->entries)
+        if (!e.key.is_unset()) {
+            Ref pair = tuple_new({e.key, e.value});
+            list_append(l.get(), pair.get());
+        }
+    return l;
+}
+Ref dict_values_m(Obj self, Args a) {
+    positional_only(a, "values", 0, 0);
+    Ref l = list_new({});
+    for (auto& e : dict_self(self)->entries) if (!e.key.is_unset()) list_append(l.get(), e.value);
+    return l;
+}
+
 Ref b_iter(Obj, Args a) {
     positional_only(a, "iter", 1, 1);
     return iter(a.pos(0));
@@ -426,10 +657,6 @@ Ref c_str(Obj, Args a) {
     if (a.npos > 1) throw NotImplemented("str(bytes, encoding)");
     return a.npos == 0 ? str_new("") : str_of(a.pos(0));
 }
-Ref c_type(Obj, Args a) {
-    if (a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(type_of(a.pos(0))));
-    throw NotImplemented("type(name, bases, dict) (step 3a.2)");
-}
 Ref c_bool(Obj, Args a) {
     positional_only(a, "bool", 0, 1);
     return Ref::steal(boolean(a.npos == 1 && truth(a.pos(0))));
@@ -461,19 +688,6 @@ Ref c_list(Obj, Args a) {
     if (a.npos == 1) list_extend(l.get(), a.pos(0));
     return l;
 }
-Ref c_exception(Obj cls, Args a) {
-    if (a.nkw != 0) raise_new("TypeError", static_cast<ClassObject*>(cls.object())->name + "() takes no keyword arguments");
-    std::vector<Obj> items;
-    for (std::size_t i = 0; i < a.npos; ++i) {
-        incref(a.pos(i));
-        items.push_back(a.pos(i));
-    }
-    auto* e = new_instance(static_cast<ClassObject*>(cls.object()));
-    Ref r = own(e);
-    Ref args = tuple_steal(std::move(items));
-    setattr(e, intern("args"), args.get());
-    return r;
-}
 
 Ref str_join(Obj self, Args a) {
     positional_only(a, "join", 1, 1);
@@ -498,8 +712,8 @@ void put_builtin(Dict* d, const char* name, NativeFn fn) {
     put(d, name, b.get());
 }
 void method(ClassObject* c, const char* name, NativeFn fn) {
-    auto* b = new Builtin(name, fn);
-    incref(b);
+    auto* b = new Builtin(name, fn, Obj{}, Binding::Method);
+    b->flags |= IMMORTAL;
     c->attrs.set(intern(name), Obj::of(b));
 }
 
@@ -508,14 +722,12 @@ Module* make_builtins() {
     Dict* d = m->dict;
     Types& t = types();
     for (auto [name, cls, ctor] : std::initializer_list<std::tuple<const char*, ClassObject*, NativeFn>>{
-             {"str", t.str, c_str}, {"type", t.type, c_type}, {"bool", t.bool_, c_bool}, {"range", t.range, c_range},
+             {"str", t.str, c_str}, {"type", t.type, nullptr}, {"bool", t.bool_, c_bool}, {"range", t.range, c_range},
              {"tuple", t.tuple, c_tuple}, {"list", t.list, c_list}, {"int", t.int_, nullptr},
              {"object", t.object, nullptr}, {"dict", t.dict, nullptr}, {"float", t.float_, nullptr}}) {
         put(d, name, Obj::of(cls));
         if (ctor != nullptr) constructors()[cls] = ctor;
     }
-    ClassObject* base = exception_class("BaseException");
-    constructors()[base] = c_exception;
     for (const char* n : {"BaseException", "Exception", "SystemExit", "KeyboardInterrupt", "GeneratorExit",
                           "ArithmeticError", "ZeroDivisionError", "OverflowError", "AssertionError", "AttributeError",
                           "LookupError", "IndexError", "KeyError", "NameError", "UnboundLocalError", "RuntimeError",
@@ -538,7 +750,41 @@ Module* make_builtins() {
     put_builtin(d, "callable", b_callable);
     put_builtin(d, "ord", b_ord);
     put_builtin(d, "chr", b_chr);
+    put_builtin(d, "getattr", b_getattr);
+    put_builtin(d, "hasattr", b_hasattr);
+    put_builtin(d, "setattr", b_setattr);
+    put_builtin(d, "delattr", b_delattr);
+    put_builtin(d, "issubclass", b_issubclass);
+    put_builtin(d, "id", b_id);
+    put_builtin(d, "vars", b_vars);
+    put(d, "slice", Obj::of(t.slice));
+    put(d, "set", Obj::of(t.set));
+    put(d, "frozenset", Obj::of(t.frozenset));
     method(t.str, "join", str_join);
+    for (ClassObject* c : {t.list, t.tuple, t.str, t.dict}) {
+        method(c, "__getitem__", getitem_m);
+        method(c, "__contains__", contains_m);
+        method(c, "__iter__", iter_m);
+    }
+    method(t.list, "append", list_append_m);
+    method(t.list, "extend", list_extend_m);
+    method(t.list, "pop", list_pop_m);
+    method(t.list, "__len__", list_len_m);
+    method(t.list, "clear", list_clear_m);
+    method(t.list, "insert", list_insert_m);
+    method(t.list, "index", list_index_m);
+    method(t.list, "remove", list_remove_m);
+    method(t.list, "count", list_count_m);
+    method(t.list, "reverse", list_reverse_m);
+    method(t.list, "copy", list_copy_m);
+    method(t.list, "__setitem__", setitem_m);
+    method(t.dict, "__setitem__", setitem_m);
+    method(t.dict, "__len__", dict_len_m);
+    method(t.dict, "get", dict_get_m);
+    method(t.dict, "pop", dict_pop_m);
+    method(t.dict, "keys", dict_keys_m);
+    method(t.dict, "items", dict_items_m);
+    method(t.dict, "values", dict_values_m);
     method(t.textio, "write", textio_write);
     method(t.textio, "flush", textio_flush);
     put(d, "__name__", m->name.get());
@@ -584,14 +830,79 @@ Module* new_module(const char* name) {
     return m;
 }
 
+namespace {
+Dict* intrinsics() {                           // what the prelude gives the runtime, not the program
+    static Dict* d = [] {
+        auto* x = new Dict;
+        x->flags |= IMMORTAL;
+        return x;
+    }();
+    return d;
+}
+}  // namespace
+
+namespace {
+// the L1 intrinsics that are helpers of the runtime's own (eval2's intrinsic_value)
+Ref i_special(Obj, Args a) {                    // _PyObject_LookupSpecial, as the with statement uses it
+    positional_only(a, "special", 2, 2);
+    Obj obj = a.pos(0);
+    const Str* name = as_str(a.pos(1));
+    Obj found = type_lookup(type_of(obj), intern(name->text));
+    if (found.is_unset())
+        raise_new("TypeError", "'" + type_of(obj)->name + "' object does not support the context manager protocol");
+    Obj get = type_lookup(type_of(found), intern("__get__"));
+    if (get.is_unset() && !is_kind(found, Kind::PyFunction)) return Ref::share(found);
+    if (is_kind(found, Kind::PyFunction)) return own(new Method(found, obj));
+    return invoke(get, {found, obj, Obj::of(type_of(obj))});
+}
+Ref i_set_add(Obj, Args a) {
+    positional_only(a, "set_add", 2, 2);
+    set_add(a.pos(0), a.pos(1));
+    return none_ref();
+}
+Ref i_map_add(Obj, Args a) {
+    positional_only(a, "map_add", 3, 3);
+    setitem(a.pos(0), a.pos(1), a.pos(2));
+    return none_ref();
+}
+Ref i_unpack(Obj, Args a) {                     // unpack_iterable(value, before, after): a list
+    positional_only(a, "unpack", 3, 3);
+    std::int64_t before = a.pos(1).small_value(), after = a.pos(2).small_value();
+    std::size_t n = static_cast<std::size_t>(before + (after >= 0 ? after + 1 : 0));
+    std::vector<Ref> targets(n);
+    unpack(a.pos(0), targets, after >= 0 ? static_cast<int>(before) : -1);
+    Ref l = list_new({});
+    for (Ref& t : targets) list_append(l.get(), t.get());
+    return l;
+}
+Obj missing_sentinel() {
+    static Obj m = own(new_instance(types().object)).release();
+    return m;
+}
+void register_intrinsics() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    for (auto [name, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
+             {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack}}) {
+        Ref b = own(new Builtin(name, fn));
+        dict_set(intrinsics(), Obj::of(intern(name)), b.get());
+    }
+    dict_set(intrinsics(), Obj::of(intern("missing")), missing_sentinel());
+}
+}  // namespace
+
 Ref builtin(const char* name) {
-    Obj v = dict_get(builtins_module()->dict, Obj::of(intern(name)));
+    register_intrinsics();
+    Obj v = dict_get(intrinsics(), Obj::of(intern(name)));
+    if (v.is_unset()) v = dict_get(builtins_module()->dict, Obj::of(intern(name)));
     if (v.is_unset()) throw NotImplemented(std::string("the intrinsic '") + name + "'");
     return Ref::share(v);
 }
 
 // ---- the intrinsics L2 calls by name (Runtime ops) ----
-Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list<Obj> args) {
+Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list<Obj> args,
+                 std::initializer_list<const Str*> kwnames, std::initializer_list<Obj> kwvalues) {
     std::string_view name(intrinsic);
     std::vector<Obj> a(args);
     if (name == "import_name") {
@@ -611,7 +922,10 @@ Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list
     (void)ns;
     (void)m;
     Ref f = builtin(intrinsic);
-    return invoke(f.get(), Args{a.data(), a.size(), nullptr, 0});
+    std::size_t npos = a.size();
+    a.insert(a.end(), kwvalues.begin(), kwvalues.end());
+    std::vector<const Str*> names(kwnames);
+    return invoke(f.get(), Args{a.data(), npos, names.data(), names.size()});
 }
 
 // ---- frames ----
@@ -666,13 +980,29 @@ int run_main(int argc, char** argv, ModuleBody main_body, std::initializer_list<
         try {
             native_modules()["builtins"] = builtins_module();
             native_modules()["sys"] = make_sys(argc, argv);
+            init_types();
             for (ModuleBody body : prelude) {
-                Module* pm = new_module("bella.prelude");
+                // each prelude module runs as `builtins` (its classes say so in __module__); its
+                // __all__ goes into builtins, its __intrinsics__ to the runtime only, and its
+                // __type_methods__ onto the C++ types (the containers' repr)
+                Module* pm = new_module("builtins");
                 body(pm);
                 Obj all = dict_get(pm->dict, Obj::of(intern("__all__")));
                 if (!all.is_unset())
                     for (Obj n : static_cast<List*>(all.object())->items)
                         dict_set(builtins_module()->dict, n, dict_get(pm->dict, n));
+                Obj intr = dict_get(pm->dict, Obj::of(intern("__intrinsics__")));
+                if (!intr.is_unset())
+                    for (Obj n : static_cast<List*>(intr.object())->items) dict_set(intrinsics(), n, dict_get(pm->dict, n));
+                Obj tm = dict_get(pm->dict, Obj::of(intern("__type_methods__")));
+                if (is_kind(tm, Kind::PyDict))
+                    for (auto& e : static_cast<Dict*>(tm.object())->entries) {
+                        if (e.key.is_unset()) continue;
+                        Obj cls = dict_get(builtins_module()->dict, e.key);
+                        for (auto& m : static_cast<Dict*>(e.value.object())->entries)
+                            if (!m.key.is_unset())
+                                static_cast<ClassObject*>(cls.object())->set_attr(intern(as_str(m.key)->text), m.value);
+                    }
             }
             Module* main = new_module("__main__");
             put(main->dict, "__builtins__", Obj::of(builtins_module()));

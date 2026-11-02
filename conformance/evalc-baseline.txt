@@ -1,1 +1,15 @@
+C-2-01_evaluation_order.py
+C-2-02_chained_comparison_rich_results.py
+C-3-03_dict_sharing.py
+C-3-05_descriptor_class_mutation.py
+C-3-06_instance_shadows_class_attribute.py
+C-3-07_slots_and_dict_capability.py
+C-3-08_rich_comparison_returns_object.py
+C-3-09_getattr_after_attributeerror.py
+C-3-10_attribute_hooks_run_once.py
+C-3-11_class_attribute_becomes_descriptor.py
 C-3-14_comprehension_unpacking.py
+C-3-18_class_assignment.py
+C-3-19_getattribute_override.py
+C-8-02_builtins_fallthrough.py
+C-9-05_default_argument_lifetime.py

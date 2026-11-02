@@ -335,8 +335,9 @@ static Ref f_escape_time(rt::PyFunction* self, rt::Args args) {
 
 }  // namespace bella::m_main
 
+namespace bella::prelude_build_class { ::bella::Ref module_body(::bella::Module* m); }
 namespace bella::prelude_builtins { ::bella::Ref module_body(::bella::Module* m); }
 
 int main(int argc, char** argv) {
-    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {::bella::prelude_builtins::module_body});
+    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {::bella::prelude_build_class::module_body, ::bella::prelude_builtins::module_body});
 }

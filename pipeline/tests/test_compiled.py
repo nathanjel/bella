@@ -2,8 +2,8 @@
 
 Each program goes through the frontend, L2 and the C++ emitter, is compiled against the runtime
 (pipeline/build.py) and run; its output and exit status must be CPython's. The programs use what
-the runtime has before classes compile (step 3a.2): functions, closures, exceptions, try/finally
-on every way out, loops, unpacking, strings, tuples, lists and dicts. Exceptions are printed by
+the runtime has: functions, closures, exceptions, try/finally on every way out, loops, unpacking,
+strings, tuples, lists and dicts, and since step 3a.2 classes and their special methods. Exceptions are printed by
 type, never by message (CLAUDE.md).
 
 Run under pytest or directly: python3 -m pipeline.tests.test_compiled
@@ -268,6 +268,149 @@ def test_uncaught_exception_exits_with_status_1() -> None:
         print("before")
         f()
     ''')
+
+
+# ---- step 3a.2: classes ------------------------------------------------------------------------
+
+
+def test_classes_methods_and_attributes() -> None:
+    if not _HAVE_CXX:
+        return
+    same("""
+        class Base:
+            kind = "base"
+            def __init__(self, x):
+                self.x = x
+            def show(self):
+                return f"{type(self).__name__}({self.x})"
+            @staticmethod
+            def helper(n):
+                return n * 2
+            @classmethod
+            def make(cls, x):
+                return cls(x)
+            @property
+            def double(self):
+                return self.x * 2
+            @double.setter
+            def double(self, v):
+                self.x = v // 2
+        class Child(Base):
+            kind = "child"
+            def show(self):
+                return "child " + Base.show(self)
+        c = Child.make(5)
+        print(c.show(), c.kind, Base.kind, c.helper(4), Child.helper(1), c.double)
+        c.double = 20
+        print(c.x, isinstance(c, Base), issubclass(Child, Base), type(c) is Child, Child.__mro__ == (Child, Base, object))
+        print(Child.__name__, Child.__qualname__, Base.__doc__, getattr(c, "missing", "default"), hasattr(c, "x"))
+        try:
+            del c.double
+        except AttributeError as e:
+            print("AttributeError")
+        try:
+            Base()
+        except TypeError:
+            print("TypeError")
+        class Slotted:
+            __slots__ = ("a",)
+        s = Slotted()
+        try:
+            s.b = 1
+        except AttributeError as e:
+            print("AttributeError", e.name)
+        s.a = 3
+        print(s.a, hasattr(s, "__dict__"))
+    """)
+
+
+def test_special_methods_follow_cpythons_protocols() -> None:
+    if not _HAVE_CXX:
+        return
+    same("""
+        log = []
+        class V:
+            def __init__(self, n): self.n = n
+            def __add__(self, o):
+                log.append("V.add")
+                return V(self.n + (o.n if isinstance(o, V) else o))
+            def __radd__(self, o):
+                log.append("V.radd")
+                return V(o + self.n)
+            def __eq__(self, o): return isinstance(o, V) and self.n == o.n
+            def __lt__(self, o): return self.n < o.n
+            def __repr__(self): return f"V({self.n})"
+            def __len__(self): return self.n
+            def __bool__(self): return self.n != 0
+            def __iter__(self): return iter(range(self.n))
+            def __getitem__(self, i): return i * 10
+            def __contains__(self, x): return x == "in"
+            def __call__(self, *a): return len(a)
+        class W(V):
+            def __radd__(self, o):
+                log.append("W.radd")
+                return W(99)
+        print(V(1) + V(2), 1 + V(2), V(1) + W(2), log)
+        print(V(1) == V(1), V(1) != V(2), V(1) < V(2), V(2) > V(1), sorted_check := [V(3) < V(1)])
+        print(len(V(3)), bool(V(0)), list(V(3)), V(2)[4], "in" in V(1), "out" in V(1), V(0)(1, 2, 3))
+        print(repr(V(7)), str(V(7)), f"{V(8)}", [V(1), V(2)], {"k": V(3)}, (V(4),))
+        class OnlyEq:
+            def __eq__(self, o): return True
+        try:
+            hash(OnlyEq())
+        except TypeError:
+            print("unhashable")
+        class Seq:
+            def __getitem__(self, i):
+                if i > 2:
+                    raise IndexError
+                return i
+        print(list(Seq()), 2 in Seq())
+        try:
+            V(1) < 3
+        except AttributeError:
+            print("AttributeError from __lt__")
+        try:
+            object() < object()
+        except TypeError:
+            print("TypeError")
+    """)
+
+
+def test_descriptors_set_name_and_init_subclass() -> None:
+    if not _HAVE_CXX:
+        return
+    same("""
+        class Named:
+            def __set_name__(self, owner, name):
+                print("set_name", owner.__name__, name)
+                self.name = name
+            def __get__(self, obj, owner=None):
+                return "got " + self.name if obj is not None else self
+        class Registry:
+            subclasses = []
+            def __init_subclass__(cls, **kw):
+                print("init_subclass", cls.__name__, sorted_keys(kw))
+                Registry.subclasses.append(cls.__name__)
+        def sorted_keys(d):
+            out = []
+            for k in d:
+                out.append(k)
+            return out
+        class A(Registry, tag="x"):
+            first = Named()
+            second = Named()
+        print(A().first, A.second.name, Registry.subclasses)
+        class E(Exception):
+            def __init__(self, code):
+                super_init = Exception.__init__
+                super_init(self, "code", code)
+                self.code = code
+        try:
+            raise E(7)
+        except Exception as e:
+            print(type(e).__name__, e.code, e.args, isinstance(e, E))
+    """)
 
 
 if __name__ == "__main__":

@@ -328,7 +328,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            (`runtime.hpp`, `runtime/src/`), `print` in the prelude, `pipeline/build.py`; the
            slice examples and `pipeline/tests/test_compiled.py` match CPython compiled, `make
            compiled-corpus` 1 of 76 (classes next); the toy emitter is gone.
-         * 3a.2 classes and attributes: C-3-05..11. 3a.3 dict exposure: C-3-01..03.
+         * 3a.2 done 2026-11-02 (`docs/emitter.md` section 3): classes compiled. The prelude's
+           `__build_class__`, `type.__new__` in CPython's order, descriptors everywhere,
+           special-method dispatch with CPython's protocols, `property`, `staticmethod`,
+           `classmethod` and the containers' `repr` in the prelude, `set` as CPython's table.
+           C-3-05..11 pass compiled; `make compiled-corpus` 15 of 76 (43 of the rest import
+           modules). Left for 3a.2: the exception classes into the prelude, `super()`,
+           metaclasses.
+         * 3a.3 dict exposure: C-3-01..03.
        * 3b generators (state machines) and compiled imports: C-3-04.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done.
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

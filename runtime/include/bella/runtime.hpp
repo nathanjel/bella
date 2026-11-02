@@ -72,11 +72,43 @@ struct Cell : Object {
     Obj value;                                   // Unset: empty
     Cell();
 };
-struct Builtin : Object {                        // a function written in C++
+// A function written in C++. As a class attribute it is a method descriptor (bound to the instance
+// on access), a class-method descriptor (bound to the class), or a plain function (not bound:
+// object.__new__, the module-level builtins).
+enum class Binding : std::uint8_t { Function, Method, ClassMethod };
+struct Builtin : Object {
     std::string name;
     NativeFn fn;
     Obj self;                                    // a bound method's object (owned), or Unset
-    Builtin(std::string n, NativeFn f, Obj s = Obj{});
+    Binding binding;
+    Builtin(std::string n, NativeFn f, Obj s = Obj{}, Binding b = Binding::Function);
+};
+struct GetSet : Object {                         // a getset descriptor: a data descriptor in C++
+    const char* name;
+    ClassObject* owner;
+    Ref (*get)(Obj self);
+    void (*set)(Obj self, Obj value);            // nullptr: read-only
+    GetSet(const char* n, ClassObject* o, Ref (*g)(Obj), void (*s)(Obj, Obj));
+};
+struct SliceObject : Object {                    // slice(start, stop, step), each owned
+    Obj start, stop, step;
+    SliceObject(Obj a, Obj b, Obj c);
+};
+struct Proxy : Object {                          // a mappingproxy over a class's own attributes
+    ClassObject* of;
+    explicit Proxy(ClassObject* c);
+};
+// CPython's set table (Objects/setobject.c): linear probes, then perturbation; deleted entries
+// are dummies; iteration in table order, which D-05 matches for value-hashed elements
+struct SetObject : Object {
+    struct Entry {
+        Obj key;                                 // Unset: empty (hash 0) or a dummy (hash -1)
+        std::int64_t hash = 0;
+    };
+    std::vector<Entry> table;
+    std::size_t fill = 0, used = 0;
+    bool frozen;
+    explicit SetObject(bool frozen_set);
 };
 struct Method : Object {                         // a bound method: func and self, owned
     Obj func;
@@ -88,7 +120,7 @@ struct Range : Object {
     Range(std::int64_t a, std::int64_t b, std::int64_t c);
 };
 struct Iterator : Object {                       // the C++ types' iterators
-    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, StrIt, DictKeysIt } of;
+    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, StrIt, DictKeysIt, SeqIt, SetIt } of;
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
     Iterator(Of o, Obj s);
@@ -150,7 +182,9 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *tuple_iterator,
-        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_;
+        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
+        *method_descriptor, *classmethod_descriptor, *getset_descriptor, *mappingproxy, *slice, *iterator, *set,
+        *frozenset, *set_iterator;
 };
 Types& types();
 extern Singleton* const NONE;
@@ -232,6 +266,7 @@ Ref repr_of(Obj v);                                          // repr(v)
 // ---- tuples, lists, dicts ----
 Ref tuple_new(std::initializer_list<Obj> items);             // takes new counts of the items
 Ref tuple_steal(std::vector<Obj> items);                     // takes over counts already held
+Ref tuple_copy(std::span<const Obj> items);                  // takes new counts of the items
 Ref list_new(std::initializer_list<Obj> items);
 std::int64_t hash_of(Obj v);
 Obj dict_get(Dict* d, Obj key);                              // borrowed, Unset if absent
@@ -288,10 +323,19 @@ Ref invoke(Obj f, std::initializer_list<Obj> pos);
 Ref invoke_kw(Obj f, std::initializer_list<Obj> pos, std::initializer_list<const Str*> names,
             std::initializer_list<Obj> values);
 Ref call_ex(Obj f, Obj args, Obj kwargs);                    // CALL_FUNCTION_EX; kwargs Unset for none
-Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list<Obj> args);
+Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list<Obj> args,
+                 std::initializer_list<const Str*> kwnames = {}, std::initializer_list<Obj> kwvalues = {});
 Ref build_list(std::initializer_list<Obj> items);
 Ref build_tuple(std::initializer_list<Obj> items);
 Ref build_map(std::initializer_list<Obj> keys, std::initializer_list<Obj> values);
+Ref build_set(std::initializer_list<Obj> items);
+void dict_update(Obj target, Obj mapping);                   // DICT_UPDATE ({**m})
+void dict_merge(Obj target, Obj mapping, Obj func);          // DICT_MERGE (f(**m)): duplicates fail
+void set_add(Obj set, Obj key);                              // takes a new count
+void set_update(Obj set, Obj iterable);
+bool set_contains(SetObject* s, Obj key);
+bool set_discard(SetObject* s, Obj key);
+void init_sets();
 void list_append(Obj list, Obj value);
 void list_extend(Obj list, Obj value);
 Ref list_to_tuple(Obj list);
@@ -302,6 +346,25 @@ Ref make_function(const Code& code, Ref (*entry)(PyFunction*, Args), Module* m, 
                   Obj kwdefaults, std::initializer_list<Obj> closure, Obj annotate);
 // Binds a call's arguments into the frame's parameter slots as CPython does (TypeError otherwise).
 void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params);
+
+// ---- classes and special methods (runtime/src/types.cpp) ----
+void init_types();                                           // the builtin types' attributes
+Obj type_lookup(ClassObject* c, const Str* name);            // _PyType_Lookup: borrowed, Unset if absent
+bool is_subclass(ClassObject* c, ClassObject* base);
+bool isinstance(Obj v, ClassObject* c);
+// A special method of v's type called with v first; Unset Ref (and *found false) when the type has none.
+Ref call_special(Obj v, const char* name, std::initializer_list<Obj> args, bool* found = nullptr);
+Ref type_call(ClassObject* cls, Args a);                     // calling a class: __new__, then __init__
+Ref type_getattr(ClassObject* cls, const Str* name);         // type_getattro
+void type_setattr(ClassObject* cls, const Str* name, Obj value);
+void type_delattr(ClassObject* cls, const Str* name);
+Ref generic_getattr(Obj obj, const Str* name);               // PyObject_GenericGetAttr, non-instances
+[[noreturn]] void raise_attribute_error(Obj obj, const Str* name, const std::string& message);
+Ref load_classdict(Obj mapping, Module* m, const Str* name); // LOAD_FROM_DICT_OR_GLOBALS
+Ref load_classdict_free(Obj mapping, const Str* name, const Ref& cell, const char* text);
+Obj cell_contents(const Ref& cell);                          // borrowed; Unset when empty
+Ref mapping_get(Obj mapping, Obj key);                       // a namespace mapping's item, Unset if absent
+void mapping_set(Obj mapping, Obj key, Obj value);
 
 // ---- modules and start-up ----
 Module* builtins_module();

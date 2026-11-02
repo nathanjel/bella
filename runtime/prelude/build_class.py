@@ -12,6 +12,8 @@ runtime carries no class-creation machinery of its own beyond ``type`` itself.
 ``__build_class__`` requires a function there, and this one is never handed anything else.
 """
 
+__intrinsics__ = ["build_class"]                  # what the compiled runtime takes from this module
+
 _type_mro = type.__dict__["__mro__"].__get__      # tp_mro, whatever a metaclass defines as __mro__
 
 

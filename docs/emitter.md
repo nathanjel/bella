@@ -1,10 +1,11 @@
 # The C++ emitter and the runtime core (step 3 of the C++ leg)
 
-Status: step 3a.1, 2026-11-02. `pipeline/backend/cpp.py` turns an L2 module (`docs/l2.md`) into
+Status: step 3a.2, 2026-11-02. `pipeline/backend/cpp.py` turns an L2 module (`docs/l2.md`) into
 one C++26 translation unit against `runtime/include/bella/runtime.hpp`; `pipeline/build.py`
-compiles it and links it with the runtime library. The slice examples (`make slice`) and
-`pipeline/tests/test_compiled.py` pass; the corpus under the compiled runner is `make
-compiled-corpus`, against `conformance/evalc-baseline.txt`. The toy emitter from L1 is gone.
+compiles it and links it with the runtime library. The slice examples (`make slice`),
+`pipeline/tests/test_compiled.py` and C-3-05..11 pass compiled; the corpus under the compiled
+runner is `make compiled-corpus`, against `conformance/evalc-baseline.txt` (15 of 76: most of
+the rest import modules, step 3b). The toy emitter from L1 is gone.
 
 ## 1. Where things live (decided 2026-11-02, `docs/DECISIONS.md`)
 
@@ -16,7 +17,8 @@ Python in `runtime/prelude/`, compiled by Bella like any program.
 | The object model | `runtime/include/bella/object.hpp` | values (`Obj`, `Ref`), counting, classes, instances, attribute lookup, inline caches, deaths in CPython's order; tested three ways by `make object-test` |
 | Exact `int` | `runtime/include/bella/int.hpp` | the 63-bit fast paths, tested by `make int-test`; the runtime calls them and turns their C++ errors into Python exceptions |
 | The runtime core | `runtime/include/bella/runtime.hpp`, `runtime/src/*.cpp` | `str` (PEP 393), tuple, list, CPython's compact dict, hashing (SipHash-1-3 keyed as `PYTHONHASHSEED` says, `int` and `tuple` hashes as CPython's), the call protocol and argument binding, function objects and cells, modules and names, the exception carrier and frame records, iteration, operators, `sys.stdout` |
-| The prelude | `runtime/prelude/builtins.py` | `print` so far; CPython runs it against the builtin in `runtime/tests/test_prelude.py` |
+| The prelude | `runtime/prelude/build_class.py`, `builtins.py` | `__build_class__`; `print`; `property`, `staticmethod`, `classmethod`; the `repr` of lists, tuples, dicts, sets and frozensets (installed as their `__repr__`). CPython runs each against its builtin in `runtime/tests/test_prelude.py` |
+| Types and classes | `runtime/src/types.cpp`, `set.cpp` | the builtin types' attributes as getset and method descriptors; `type.__new__` and calling a class; attribute access on classes and on the C++ types' objects; special-method dispatch; `set` and `frozenset` as CPython's table (`Objects/setobject.c`), so their order is CPython's (D-05) |
 
 `object.hpp`'s `Str` is the real `str` now (PEP 393 code units beside the UTF-8 text the attribute
 code reads), and its kinds include the runtime's, whose deaths the runtime registers (`destroyer`).
@@ -71,7 +73,37 @@ static Ref f_fib(rt::PyFunction* self, rt::Args args) {
   are made when the module first runs. A constant the runtime cannot make yet (a float, bytes, an
   int beyond 62 bits) is refused where it is used, never when the module starts (P-1).
 
-## 3. Building and running
+## 3. Classes (step 3a.2)
+
+A class statement is L1's `build_class(body, name, *bases, **kw)`: the prelude's
+`__build_class__` (CPython's `builtin___build_class__`, in Python) calls the class body, a C++
+function of the namespace, and then the metaclass, `type`. `type.__new__` is CPython's
+`type_new_impl` in its order: `__qualname__`, `__classcell__` and `__classdictcell__` taken out of
+the namespace, `__slots__` checked and mangled (a conflict with a class variable is a
+`ValueError`), `__new__` made a static method and `__init_subclass__` a class method, `__doc__`
+None when absent, `__hash__` None beside an `__eq__`, the object model's class
+(`object.hpp`'s `make_class`) made, a `__dict__` descriptor when the class adds an instance dict,
+`__set_name__` in attribute order, then the next class's `__init_subclass__` with the keywords.
+Calling a class is `type_call`: `__new__`, then `__init__` when the result is an instance.
+
+Everything is found the way CPython finds it: on the type, through the descriptor protocol.
+Functions are non-data descriptors (`function.__get__` binds), C++ methods are method descriptors,
+the type's own attributes (`__name__`, `__mro__`, `__dict__`, ...) are getset descriptors on
+`type`, and `object.hpp` counts any object whose type has `__get__` as a descriptor. Operators
+dispatch to special methods with CPython's protocols: `binary_op1` (the left operand's method,
+unless the right operand's type is a subclass overriding the reflected one), `do_richcompare`
+(the subclass's reflected method first, identity for `==` and `!=` at the end), `__bool__` then
+`__len__` for truth, `__iter__` and `__next__` or the old `__getitem__` protocol for iteration,
+`__contains__` or iteration for `in`. The C++ types take part with their own operations, which
+answer NotImplemented to operands they do not know. A property or `__get__` written in Python
+that raises AttributeError falls back to `__getattr__`, as the C++ ones do.
+
+Still in C++ until the next step: the exception classes (the decision puts them in the prelude);
+not yet anywhere: `super()`, metaclasses other than `type`, subclasses of the C++ types other than
+`object` and the exceptions (refused by name), a class that overrides `__getattribute__` or
+assigns `__class__` (refused as \[P2+\], spec section 3).
+
+## 4. Building and running
 
 `python3 pipeline/build.py --run prog.py args...` lowers the program, emits it into
 `build/compiled/<name>-<hash>/`, compiles it at `-O1` and links it with `libbella.a`, which is the
@@ -83,11 +115,9 @@ CPython 3.15.2 does, measured), stdout is flushed, and an uncaught exception pri
 file and line (spec D-06) and exits 1; a facility Bella lacks yet stops with
 `bella: not implemented: ...` and exit 70, as the evaluators refuse.
 
-## 4. Gaps, in the order the steps close them
+## 5. Gaps, in the order the steps close them
 
-* 3a.2: classes (`__build_class__` from the prelude, class bodies, `classdict` loads), instances
-  of user classes in operators, truth, `str()`, iteration and calls; the exception classes move to
-  the prelude; the containers' `repr` (prelude); `set`. C-3-05..11.
+* 3a.2, the rest: the exception classes into the prelude; `super()`; metaclasses.
 * 3a.3: instance dicts as real dicts (`vars()`, `__dict__`): C-3-01..03.
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3.
