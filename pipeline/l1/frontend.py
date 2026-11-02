@@ -9,9 +9,15 @@ from __future__ import annotations
 import ast
 import dataclasses
 import itertools
+import sys
+import tomllib
+from pathlib import Path
 from typing import Any
 
+import _ast_unparse  # type: ignore[import-not-found]  # noqa: F401  # ast.unparse imports it on first use; here, never while a program runs
+
 from pipeline.l1 import grammar as L
+from pipeline.passes import manager
 from pipeline.passes.spec import Discharge, Fact, Level, Obligation, PassSpec, register
 
 _counter = itertools.count()
@@ -378,6 +384,7 @@ class _PrivateNames:
             n.name = mangle(p, n.name)
         elif isinstance(n, ast.ImportFrom):
             for a in n.names:
+                a.bella_raw = a.name  # type: ignore[attr-defined]  # the fromlist keeps it unmangled (codegen)
                 if a.name != "*":
                     a.name = mangle(p, a.name)
                 if a.asname:
@@ -403,6 +410,125 @@ class _PrivateNames:
 def desugar_private_names(tree: ast.Module) -> ast.Module:
     _PrivateNames().visit(tree)
     return tree
+
+
+class _Imports:
+    """Import statements as CPython 3.15.2's codegen compiles them (Python/codegen.c), in
+    intrinsic calls and ordinary stores:
+
+        import a.b.c          a = import_name("a.b.c", None, 0, mode)
+        import a.b.c as d     d = import_from(import_from(import_name("a.b.c", None, 0, mode), "b"), "c")
+        from m import x as y  t = import_name("m", ("x",), level, mode); y = import_from(t, "x")
+        from m import *       import_star(import_name("m", ("*",), level, "eager"))
+
+    The mode is decided where codegen decides it, on the original structure: "lazy" for
+    `lazy import` (module scope only), "eager" in a function or class, in a try body, an except
+    handler, a finally block or anything a finally guards, and for `import *`; otherwise
+    "default", which __lazy_modules__ can make lazy at runtime."""
+
+    def __init__(self) -> None:
+        self.scope = "module"
+        self.guarded = 0
+
+    def run(self, tree: ast.Module) -> ast.Module:
+        tree.body = self.block(tree.body)
+        return tree
+
+    def block(self, body: list[ast.stmt]) -> list[ast.stmt]:
+        out: list[ast.stmt] = []
+        for s in body:
+            out.extend(self.stmt(s))
+        return out
+
+    def mode(self, lazy: bool, line: int) -> str:
+        if lazy:
+            if self.scope != "module":
+                raise SyntaxError(f"lazy imports only allowed in module scope (line {line})")
+            return "lazy"
+        return "eager" if self.scope != "module" or self.guarded else "default"
+
+    def stmt(self, s: ast.stmt) -> list[ast.stmt]:
+        if isinstance(s, ast.Import):
+            return self.import_(s)
+        if isinstance(s, ast.ImportFrom):
+            return self.import_from(s)
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            saved, saved_guard = self.scope, self.guarded
+            self.scope, self.guarded = ("class" if isinstance(s, ast.ClassDef) else "function"), 0
+            s.body = self.block(s.body)
+            self.scope, self.guarded = saved, saved_guard
+            return [s]
+        if isinstance(s, (ast.Try, ast.TryStar)):
+            finally_ = bool(s.finalbody)
+            self.guarded += 1
+            s.body = self.block(s.body)
+            for h in s.handlers:
+                h.body = self.block(h.body)
+            self.guarded -= 1
+            # a try's else is outside its handlers; a finally guards everything in the statement
+            self.guarded += finally_
+            s.orelse = self.block(s.orelse)
+            s.finalbody = self.block(s.finalbody)
+            self.guarded -= finally_
+            return [s]
+        for fld in ("body", "orelse"):
+            inner = getattr(s, fld, None)
+            if isinstance(inner, list) and inner and isinstance(inner[0], ast.stmt):
+                setattr(s, fld, self.block(inner))
+        for case in getattr(s, "cases", []):
+            case.body = self.block(case.body)
+        return [s]
+
+    def import_(self, s: ast.Import) -> list[ast.stmt]:
+        mode = self.mode(bool(getattr(s, "is_lazy", False)), s.lineno)
+        out: list[ast.stmt] = []
+        for a in s.names:
+            value: ast.expr = _call("import_name", ast.Constant(a.name), ast.Constant(None), ast.Constant(0), ast.Constant(mode))
+            if a.asname:
+                for part in a.name.split(".")[1:]:
+                    value = _call("import_from", value, ast.Constant(part))
+            store = getattr(a, "bella_store", a.asname or a.name.partition(".")[0])
+            out.append(ast.Assign(targets=[ast.Name(id=store, ctx=ast.Store())], value=value))
+        return [ast.fix_missing_locations(_copy_loc(o, s)) for o in out]
+
+    def import_from(self, s: ast.ImportFrom) -> list[ast.stmt]:
+        lazy = bool(getattr(s, "is_lazy", False))
+        star = s.names[0].name == "*"
+        if star and lazy:
+            raise SyntaxError(f"cannot lazy import * (line {s.lineno})")
+        if star and self.scope == "function":
+            raise SyntaxError(f"import * only allowed at module level (line {s.lineno})")
+        mode = "eager" if star and not lazy else self.mode(lazy, s.lineno)
+        fromlist = ast.Constant(tuple(getattr(a, "bella_raw", a.name) for a in s.names))  # type: ignore[arg-type]  # codegen's tuple constant
+        imported = _call("import_name", ast.Constant(s.module or ""), fromlist, ast.Constant(s.level), ast.Constant(mode))
+        if star:
+            return [ast.fix_missing_locations(_copy_loc(ast.Expr(_call("import_star", imported)), s))]
+        module = _tmp("mod")
+        out: list[ast.stmt] = [ast.Assign(targets=[ast.Name(id=module, ctx=ast.Store())], value=imported)]
+        for a in s.names:
+            value = _call("import_from", ast.Name(id=module, ctx=ast.Load()), ast.Constant(a.name))
+            out.append(ast.Assign(targets=[ast.Name(id=a.asname or a.name, ctx=ast.Store())], value=value))
+        out.append(ast.Delete(targets=[ast.Name(id=module, ctx=ast.Del())]))
+        return [ast.fix_missing_locations(_copy_loc(o, s)) for o in out]
+
+
+def _call(intrinsic: str, *args: ast.expr) -> ast.Call:
+    return ast.Call(func=_intrinsic(intrinsic), args=list(args), keywords=[])
+
+
+@register(PassSpec(
+    name="desugar-imports", source=Level.L0, target=Level.L0,
+    requires=frozenset({Fact.PRIVATE_NAMES_MANGLED}),
+    produces=frozenset({Fact.NO_IMPORTS}),
+    obligations=(
+        Obligation("wf", "no Import or ImportFrom node remains; lazy imports only at module scope, import * not in a function"),
+        Obligation("semantics", "each import runs IMPORT_NAME, IMPORT_FROM and the stores in codegen's order, with the mode codegen gives it (lazy, eager in functions, classes and try/except/finally, default elsewhere), the fromlist unmangled"),
+        Obligation("terminates", "one rewrite per import statement"),
+    ),
+    discharge=Discharge.TESTED, status="tested",
+))
+def desugar_imports(tree: ast.Module) -> ast.Module:
+    return ast.fix_missing_locations(_Imports().run(tree))
 
 
 class _ChainedCompare(ast.NodeTransformer):
@@ -724,9 +850,7 @@ class _ToL1:
         self.future_annotations = False      # PEP 563: annotations are their source text
 
     def module(self, tree: ast.Module, source: str) -> L.Module:
-        self.future_annotations = any(
-            isinstance(s, ast.ImportFrom) and s.module == "__future__" and any(a.name == "annotations" for a in s.names)
-            for s in tree.body)
+        self.future_annotations = "annotations" in getattr(tree, "bella_future", ())
         self.units = [_Unit("module", "")]
         return L.Module(line=1, body=tuple(self.stmt(s) for s in tree.body), source=source)
 
@@ -787,8 +911,8 @@ class _ToL1:
             return L.Assert(ln, self.truth(s.test), self.expr(s.msg) if s.msg else None)
         if isinstance(s, (ast.Global, ast.Nonlocal)):
             return L.Pass(ln)   # recorded on the enclosing FunctionDef
-        if isinstance(s, (ast.Import, ast.ImportFrom)) and getattr(s, "is_lazy", False):
-            raise L.Unsupported(f"lazy import (PEP 810, new in 3.15) (line {ln})")
+        if isinstance(s, (ast.Import, ast.ImportFrom)):
+            raise L.Unsupported(f"imports must be desugared first (line {ln})")
         raise L.Unsupported(f"statement {type(s).__name__} (line {ln})")
 
     def params(self, a: ast.arguments, owner: str) -> tuple[L.Param, ...]:
@@ -910,6 +1034,9 @@ class _ToL1:
     def expr(self, e: ast.expr) -> L.Expr:
         ln = e.lineno
         if isinstance(e, ast.Constant):
+            value: object = e.value
+            if isinstance(value, tuple) and all(isinstance(x, str) for x in value):
+                return L.TupleLit(ln, tuple(L.Const(ln, x) for x in value))       # an import's fromlist
             if isinstance(e.value, (int, float, complex, str, bytes, bool)) or e.value is None or e.value is Ellipsis:
                 return L.Const(ln, e.value)
             raise L.Unsupported(f"constant of type {type(e.value).__name__}")
@@ -975,7 +1102,7 @@ class _ToL1WithWalrus(_ToL1):
 @register(PassSpec(
     name="to-l1", source=Level.L0, target=Level.L1,
     requires=frozenset({Fact.NO_CHAINED_COMPARE, Fact.NO_WITH, Fact.NO_COMPREHENSIONS, Fact.NO_FSTRINGS, Fact.NO_DECORATORS,
-                        Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED}),
+                        Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED, Fact.NO_IMPORTS}),
     produces=frozenset({Fact.EXPLICIT_TRUTH}),
     obligations=(
         Obligation("wf", "output satisfies wf1 (pipeline.l1.wf)"),
@@ -988,7 +1115,7 @@ def to_l1(tree: ast.Module) -> L.Module:
     return _ToL1WithWalrus().module(tree, getattr(tree, "bella_source", "<module>"))
 
 
-FRONTEND_PASSES = ["desugar-class-body", "desugar-private-names", "desugar-chained-compare", "desugar-with",
+FRONTEND_PASSES = ["desugar-class-body", "desugar-private-names", "desugar-imports", "desugar-chained-compare", "desugar-with",
                    "desugar-listcomp", "desugar-fstring", "desugar-decorators", "to-l1"]
 
 
@@ -997,9 +1124,6 @@ def check_host_grammar() -> None:
     The three settings stay distinct -- host interpreter (pyproject), semantic reference
     (bella.toml [reference].python), accepted grammar ([reference].grammar) -- and this is the one
     place their coupling is enforced (review 2026-11-01, astra-low-02, gate step 1)."""
-    import sys
-    import tomllib
-    from pathlib import Path
     pinned = tomllib.loads((Path(__file__).resolve().parents[2] / "bella.toml").read_text(encoding="utf-8"))
     grammar = str(pinned["reference"]["grammar"])
     host = f"{sys.version_info.major}.{sys.version_info.minor}"
@@ -1007,13 +1131,43 @@ def check_host_grammar() -> None:
         raise RuntimeError(f"the frontend parses with the host ast: host Python {host} != bella.toml grammar {grammar}")
 
 
+_FUTURE_FEATURES = frozenset({"nested_scopes", "generators", "division", "absolute_import", "with_statement",
+                              "print_function", "unicode_literals", "barry_as_FLUFL", "generator_stop", "annotations"})
+
+
+def future_features(tree: ast.Module) -> frozenset[str]:
+    """The __future__ features a module enables (Python/future.c): `from __future__ import` at its
+    beginning (after a docstring); one anywhere else, or an unknown feature, is a SyntaxError."""
+    features: set[str] = set()
+    leading = True
+    for i, s in enumerate(tree.body):
+        if i == 0 and isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str):
+            continue
+        if isinstance(s, ast.ImportFrom) and s.module == "__future__" and s.level == 0:
+            if not leading:
+                raise SyntaxError(f"from __future__ imports must occur at the beginning of the file (line {s.lineno})")
+            for a in s.names:
+                if a.name == "braces":
+                    raise SyntaxError(f"not a chance (line {s.lineno})")
+                if a.name not in _FUTURE_FEATURES:
+                    raise SyntaxError(f"future feature {a.name} is not defined (line {s.lineno})")
+                features.add(a.name)
+            continue
+        leading = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__" and node.level == 0 \
+                and not any(node is s for s in tree.body):
+            raise SyntaxError(f"from __future__ imports must occur at the beginning of the file (line {node.lineno})")
+    return frozenset(features)
+
+
 def lower(source: str, filename: str = "<module>") -> L.Module:
     """Parse and lower a program to L1 through the registered passes in fact order."""
-    from pipeline.passes import manager
     check_host_grammar()
     tree = ast.parse(source, filename=filename)
     check_finally(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]
+    tree.bella_future = future_features(tree)  # type: ignore[attr-defined]
     _TAKEN.clear()
     _TAKEN.update(_identifiers(tree))
     _SYNTHETIC.clear()

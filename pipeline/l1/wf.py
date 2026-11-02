@@ -22,6 +22,7 @@ class _Scope:
     parent: _Scope | None = None
     unresolved: list[tuple[str, int]] = field(default_factory=list)
     is_class: bool = False     # a class body: its names are invisible to the scopes nested in it
+    star: bool = False         # holds `from m import *`: what it binds is known only at runtime
 
 
 def _targets(t: L.Target, out: set[str]) -> None:
@@ -92,6 +93,22 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
             _bound_in(s.finalbody, out)
 
 
+def _imports_star(stmts: tuple[L.Stmt, ...]) -> bool:
+    """A scope's own statements hold `from m import *` (the import_star intrinsic)."""
+    for s in stmts:
+        if isinstance(s, L.ExprStmt) and isinstance(s.value, L.Call) and isinstance(s.value.func, L.Intrinsic) \
+                and s.value.func.name == "import_star":
+            return True
+        for v in vars(s).values():
+            if isinstance(v, tuple):
+                inner = tuple(x for x in v if isinstance(x, L.Stmt))
+                if inner and not isinstance(s, L.FunctionDef) and _imports_star(inner):
+                    return True
+                if any(isinstance(x, L.Handler) and _imports_star(x.body) for x in v):
+                    return True
+    return False
+
+
 def _declared_global(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
     """Names a nested function or class body declares global: the module binds them too."""
     def expr(e: L.Expr) -> None:
@@ -155,7 +172,7 @@ class _Checker:
         self.extra_names = extra_names
 
     def module(self, m: L.Module) -> None:
-        scope = _Scope(bound=set())
+        scope = _Scope(bound=set(), star=_imports_star(m.body))
         _bound_in(m.body, scope.bound)
         _declared_global(m.body, scope.bound)
         scope.bound |= set(dir(builtins)) | {"__bind__", "__special__", "__name__"} | set(self.extra_names)
@@ -212,7 +229,7 @@ class _Checker:
             self.expr(e.body, inner)
             return
         if isinstance(e, L.ClassBody):
-            inner = _Scope(bound=set(e.globals) | set(e.nonlocals), parent=scope, is_class=True)
+            inner = _Scope(bound=set(e.globals) | set(e.nonlocals), parent=scope, is_class=True, star=_imports_star(e.body))
             _bound_in(e.body, inner.bound)
             self.block(e.body, inner)
             return
@@ -229,6 +246,13 @@ class _Checker:
                 elif e.id in s.bound:
                     return
                 s = s.parent
+            # a name a star import may bind (the module scope, or the class body using it) is
+            # accepted: what `import *` binds is the imported module's business, known at runtime
+            module = scope
+            while module.parent is not None:
+                module = module.parent
+            if module.star or (scope.is_class and scope.star):
+                return
             self.errors.append(f"line {e.line}: name {e.id!r} is bound nowhere in its scope chain (NameError at compile time)")
             return
         if isinstance(e, L.Compare) and isinstance(e.left, L.Compare):

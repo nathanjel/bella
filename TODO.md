@@ -157,10 +157,34 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
     * Executed units of `cli_easy_slugs` that lower to L1: 300 of 375, up from 193 of 379.
     * Known edges, each a RuntimeError or AttributeError where CPython raises another kind:
       `super()` whose first argument was deleted, and `super` called through another name.
-  * A4 imports, as passes onto intrinsic calls: `import a.b`, `as`, `from` (relative and `*`
-    too) become `__import__`-style calls and assignments. `eval1` gets a module registry
-    (closure modules lowered, core and mapped modules from the host). Then partially initialised
-    modules (C-8-01), a module's `__getattr__`, and lazy imports (C-8-05 to C-8-07).
+  * A4 imports, done 2026-11-02 (`pipeline/tests/test_l1_imports.py`; C-8-01 and C-8-04 to
+    C-8-07 pass under `eval1`):
+    * `desugar-imports` lowers every form as 3.15.2's codegen compiles it: `import_name`,
+      `import_from` and `import_star` intrinsics with ordinary stores, and a fromlist that stays
+      unmangled. Each import gets the mode codegen gives it: lazy, eager (in a function or class,
+      in `try`/`except`/`finally`, or for `import *`), or default, which `__lazy_modules__`
+      can make lazy at runtime. `lazy` outside module scope and `import *` in a function are
+      SyntaxErrors. `__future__` features are read from the original tree, with CPython's
+      placement rule.
+    * `eval1` calls `__import__` and `__lazy_import__` as `_PyEval_LazyImportName` does; the
+      latter from a frame whose globals are its locals, as it requires. `IMPORT_FROM` and
+      `import *` run as CPython's own code, on the object handed over, and loads resolve lazy
+      objects.
+    * `pipeline/l1/modules.py` lets CPython's import machinery decide, with a meta-path finder
+      that hands `eval1` the modules to execute: the program's own modules, and in closure
+      mode the lock's compiled modules and shims, all lowered first (P-1).
+    * `pipeline/l1/run.py` sets up `__main__`, `sys.argv` and `sys.path[0]` as `python
+      program.py` does.
+    * No code of the frontend or `eval1` imports while a program runs, so a program's
+      `__import__` hook sees only the program's imports. One did: the hook recursed into
+      `eval1`'s own late import.
+    * `make eval1-corpus` (in `make check` and CI) runs the corpus under `eval1`: 43 of 73
+      cases pass, and none of `conformance/eval1-baseline.txt` may regress. `wf1` accepts
+      what a star import may bind until the compiler knows modules' exports statically.
+    * In closure mode, 25 of `cli_easy_slugs`'s 72 closure modules lower whole. The rest wait
+      on A5 (generator expressions, several targets, `yield`, sets, comprehensions, starred
+      forms) and A6 (a `type` alias). `match`, and an `async def` in `_collections_abc`'s class
+      bodies, wait on step B's refusals.
   * A5 the remaining forms, as passes: several targets (a temporary, then the assignments in
     order), starred targets, starred and set displays, dict unpacking, set and dict
     comprehensions, and generator expressions (through the comprehension pass, as generator

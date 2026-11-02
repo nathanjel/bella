@@ -158,7 +158,7 @@ def test_unbound_name_is_a_compile_time_error() -> None:
 
 
 def test_unsupported_constructs_are_named_not_approximated() -> None:
-    for src, needle in (("async def f():\n    pass\n", "AsyncFunctionDef"), ("import os\n", "Import"), ("match 1:\n    case 1:\n        pass\n", "Match")):
+    for src, needle in (("async def f():\n    pass\n", "AsyncFunctionDef"), ("try:\n    pass\nexcept* E:\n    pass\n", "TryStar"), ("match 1:\n    case 1:\n        pass\n", "Match")):
         try:
             lower(src, "<test>")
         except Unsupported as exc:

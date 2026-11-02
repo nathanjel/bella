@@ -63,9 +63,11 @@ make probes             C++26 feature report for the toolchain in use
 make targets-record     record the six target programs (pinned CPython); make targets-check compares
 make targets-closure    each target's closure and the phase-1 increments (targets/closure-summary.json)
 make staging-check      the staging prototype (docs/staging.md): the P1 corpus and targets with no exec
+make eval1-corpus       the conformance corpus under eval1 (pipeline/l1/run.py); no case of
+                        conformance/eval1-baseline.txt may regress; --update in tools/eval1_corpus.py
 make lint               ruff and mypy, both clean; dialect programs and target drivers under strict mypy
 make check              closure, targets-closure, lint, test, verify, probes, slice, int-test, targets-check,
-                        staging-check (CI)
+                        staging-check, eval1-corpus (CI)
 ```
 
 On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):

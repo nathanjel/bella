@@ -279,13 +279,8 @@ def test_docstrings_are_cleaned_as_cpython_cleans_them() -> None:
         assert clean_doc(doc) == ns["f"].__doc__, (doc, clean_doc(doc), ns["f"].__doc__)
 
 
-def test_future_annotations_need_imports_first() -> None:
-    try:
-        lower(FUTURE_ANNOTATIONS, "<test>")
-    except Unsupported as exc:
-        assert "ImportFrom" in str(exc)      # step A4; the PEP 563 strings are lowered already
-    else:
-        raise AssertionError("from __future__ import lowered before imports exist")
+def test_future_annotations_are_their_source_text() -> None:
+    check(FUTURE_ANNOTATIONS)
 
 
 def test_type_parameters_are_refused_not_dropped() -> None:

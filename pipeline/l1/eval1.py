@@ -9,15 +9,22 @@ It is the oracle each later level is tested against: eval2(P(x)) must equal eval
 """
 from __future__ import annotations
 
+import _suggestions  # type: ignore[import-not-found]  # CPython's own, private: the hint it prints
 import builtins
 import operator
+import sys
 import types
-from pathlib import Path
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib._bootstrap import _calc___package__, _resolve_name  # type: ignore[attr-defined]  # the import system's own
+from pathlib import Path
 from typing import Any
 
 from pipeline.l1 import grammar as L
+from pipeline.l1.frontend import lower
+from pipeline.l1.wf import _bound_in, _walrus, check
+from pipeline.staging import annotate_rt
 
 _BIN: dict[str, Callable[[Any, Any], Any]] = {
     "+": operator.add, "-": operator.sub, "*": operator.mul, "/": operator.truediv,
@@ -123,6 +130,113 @@ def zero_arg_super(s: Any, cell: Any, first: Any) -> Any:
     return builtins.super(cls, first)
 
 
+# ---- imports ---------------------------------------------------------------------------------
+# The frontend lowers import statements to import_name, import_from and import_star (desugar-
+# imports). eval1 runs the last two with CPython's own IMPORT_FROM and import-star code, on the
+# object import_name returned: a module-level `from _ import NAME` whose __import__ hands that
+# object over once, then behaves as the real one (a lazy attribute made by IMPORT_FROM keeps
+# the builtins it was made with), so lazy objects, the sys.modules fallback and every error are
+# CPython's.
+_FROM_CODE: dict[str, types.CodeType] = {}
+_STAR_CODE = compile("from _ import *", "<bella import *>", "exec", dont_inherit=True)
+
+
+def _handing_over(value: Any) -> dict[str, Any]:
+    real = builtins.__import__
+    handed = [False]
+
+    def __import__(*args: Any, **kwargs: Any) -> Any:
+        if not handed[0]:
+            handed[0] = True
+            return value
+        return real(*args, **kwargs)
+    return {**vars(builtins), "__import__": __import__}
+
+
+def import_from(module: Any, name: str) -> Any:
+    """IMPORT_FROM (_PyEval_ImportFrom, _PyEval_LazyImportFrom on a lazy object)."""
+    code = _FROM_CODE.get(name)
+    if code is None:
+        code = _FROM_CODE[name] = compile(f"from _ import {name} as __bella_value__", "<bella import>", "exec",
+                                          dont_inherit=True)
+    ns: dict[str, Any] = {"__builtins__": _handing_over(module), "__name__": "<bella import>"}
+    exec(code, ns)  # noqa: S102  # CPython's own IMPORT_FROM on the given object
+    return ns["__bella_value__"]
+
+
+def import_star(module: Any, namespace: Any) -> None:
+    """INTRINSIC_IMPORT_STAR (import_all_from): __all__, else the public keys of __dict__,
+    stored into the namespace (a dict directly, another mapping by __setitem__)."""
+    exec(_STAR_CODE, {"__builtins__": _handing_over(module), "__name__": "<bella import *>"}, namespace)  # noqa: S102
+
+
+_AT_MODULE_LEVEL: types.CodeType | None = None
+
+
+def _call_at_module_level(globals_: dict[str, Any], func: Any, *args: Any) -> Any:
+    """func(*args) from a frame whose globals and locals are both `globals_`, as a module body's
+    are: __lazy_import__ requires it of the frame that calls it (import.c, 3.15.2). The call is an
+    expression whose constants are the function and its arguments, so the namespace is not
+    touched (eval adds __builtins__ if missing, as exec does for any module)."""
+    global _AT_MODULE_LEVEL
+    if _AT_MODULE_LEVEL is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")          # "'str' object is not callable": placeholders
+            _AT_MODULE_LEVEL = compile("'bella:f'('bella:0', 'bella:1', 'bella:2', 'bella:3', 'bella:4')",
+                                       "<bella import>", "eval", dont_inherit=True)
+    values = {"bella:f": func, **{f"bella:{i}": a for i, a in enumerate(args)}}
+    consts = tuple(values[c] if isinstance(c, str) and c in values else c for c in _AT_MODULE_LEVEL.co_consts)
+    assert len(args) == 5 and sum(isinstance(c, str) and c in values for c in _AT_MODULE_LEVEL.co_consts) == 6
+    return eval(_AT_MODULE_LEVEL.replace(co_consts=consts), globals_, globals_)  # noqa: S307  # constants only
+
+
+def _frame_builtins(globals_: dict[str, Any]) -> Any:
+    """_PyEval_BuiltinsFromGlobals: globals['__builtins__'] (a module stands for its dict), else
+    the interpreter's."""
+    b = dict.get(globals_, "__builtins__", _MISSING)
+    if b is _MISSING:
+        return vars(builtins)
+    return vars(b) if isinstance(b, types.ModuleType) else b
+
+
+def import_name(name: str, fromlist: Any, level: int, mode: str, globals_: dict[str, Any], locals_: Any) -> Any:
+    """IMPORT_NAME (_PyEval_LazyImportName, _PyEval_ImportName; Python/ceval.c, 3.15.2). A
+    default-mode import (module scope, outside try/except/finally) is lazy when the lazy-imports
+    mode is "all" or __lazy_modules__ names the module; a lazy one calls __lazy_import__."""
+    b = _frame_builtins(globals_)
+    lazy = mode == "lazy"
+    if mode == "default":
+        if sys.get_lazy_imports() == "all":
+            lazy = True
+        else:
+            listed: Any = _MISSING
+            try:
+                listed = globals_["__lazy_modules__"]
+            except KeyError:
+                pass
+            if listed is not _MISSING:
+                absolute = name if level == 0 else _resolve_name(name, _calc___package__(globals_), level)
+                lazy = absolute in listed
+    key = "__lazy_import__" if lazy else "__import__"
+    found = True
+    try:
+        func = b[key]
+    except KeyError:
+        found = False
+    if not found:
+        raise ImportError(f"{key} not found")
+    if lazy:
+        return _call_at_module_level(globals_, func, name, globals_, globals_ if locals_ is None else locals_, fromlist, level)
+    return func(name, globals_, None if locals_ is None else locals_, fromlist, level)
+
+
+def _reify(value: Any, name: str, namespace: Any) -> Any:
+    """A lazy import loaded from a namespace (a global, a builtin, a class body's name) is
+    resolved and the namespace, if it still holds it, gets the result (pipeline/staging/
+    annotate_rt.py, read from CPython 3.15.2's bytecodes.c)."""
+    return annotate_rt._reify(value, name, namespace)
+
+
 _PRELUDE = Path(__file__).resolve().parents[2] / "runtime" / "prelude"
 _LOWERED: dict[Path, L.Module] = {}
 
@@ -130,8 +244,6 @@ _LOWERED: dict[Path, L.Module] = {}
 def _lowered(path: Path) -> L.Module:
     """A runtime module written in Python (runtime/prelude), lowered once per process."""
     if path not in _LOWERED:
-        from pipeline.l1.frontend import lower
-        from pipeline.l1.wf import check
         module = lower(path.read_text(encoding="utf-8"), path.name)
         check(module)
         _LOWERED[path] = module
@@ -223,7 +335,6 @@ def bind_arguments(fn: types.FunctionType, node: L.FunctionDef | L.Lambda,
             if passed:
                 raise TypeError(f"{qual}() got some positional-only arguments passed as keyword arguments: "
                                 f"'{', '.join(passed)}'")
-            import _suggestions  # type: ignore[import-not-found]  # CPython's own, private: the hint it prints
             hint = _suggestions._generate_suggestions(by_keyword, k) if by_keyword else None
             if hint:
                 raise TypeError(f"{qual}() got an unexpected keyword argument '{k}'. Did you mean '{hint}'?")
@@ -281,7 +392,6 @@ def special_lookup(obj: Any, name: str) -> Any:
 
 
 def _local_names(f: L.FunctionDef | L.Lambda) -> frozenset[str]:
-    from pipeline.l1.wf import _bound_in, _walrus
     out: set[str] = {p.name for p in f.params}
     if isinstance(f, L.Lambda):
         _walrus(f.body, out)
@@ -305,7 +415,13 @@ class Interpreter:
 
     # ---- entry ---------------------------------------------------------------------------
     def run_module(self, m: L.Module, name: str = "__main__") -> Scope:
-        module = Scope(vars={"__name__": name}, synthetic=m.synthetic)
+        return self.run_in(m, {"__name__": name})
+
+    def run_in(self, m: L.Module, namespace: dict[str, Any]) -> Scope:
+        """A module body with `namespace` as its globals (a module's own __dict__, when the
+        module system runs it)."""
+        namespace.setdefault("__builtins__", vars(builtins))   # what exec() adds to a module's globals
+        module = Scope(vars=namespace, synthetic=m.synthetic)
         self.block(m.body, module)
         return module
 
@@ -338,9 +454,9 @@ class Interpreter:
             return self._load_synthetic(name, scope)
         if scope.is_module():
             if name in scope.vars:
-                return scope.vars[name]
+                return _reify(scope.vars[name], name, scope.vars)
             if name in self.builtins:
-                return self.builtins[name]            # fall-through to builtins (C-8-02)
+                return _reify(self.builtins[name], name, self.builtins)   # fall-through to builtins (C-8-02)
             raise NameError(f"name '{name}' is not defined", name=name)
         module = scope.module or scope
         if name in scope.globals_:
@@ -355,7 +471,7 @@ class Interpreter:
                 except KeyError:
                     found = False
                 if found:
-                    return value
+                    return _reify(value, name, scope.vars)
                 if name in scope.locals_:
                     return self.load(name, module, line)   # bound in the body: globals, builtins
         elif name in scope.locals_:
@@ -415,6 +531,9 @@ class Interpreter:
         """Python's del of a name (review 2026-11-01, gemini 2.2.5.4): an unbound local raises
         UnboundLocalError, a nonlocal deletes the enclosing binding, a global the module's, and
         a class body deletes through its mapping (any failure is NameError, DELETE_NAME)."""
+        if name in self._syn(scope):
+            scope.temps.pop(name, None)
+            return
         if scope.is_module() or name in scope.globals_:
             module = scope if scope.is_module() else scope.module
             assert module is not None
@@ -625,7 +744,6 @@ class Interpreter:
 
     def run_class_body(self, node: L.ClassBody, closure: Scope, ns: Any) -> Any:
         """The class body with ns as its locals; returns the __class__ cell, or None."""
-        from pipeline.l1.wf import _bound_in
         bound: set[str] = set()
         _bound_in(node.body, bound)
         module = closure if closure.is_module() else closure.module
@@ -714,6 +832,16 @@ class Interpreter:
         if isinstance(e, L.IfExp):
             return self.expr(e.body, scope) if self.expr(e.test, scope) else self.expr(e.orelse, scope)
         if isinstance(e, L.Call):
+            if isinstance(e.func, L.Intrinsic) and e.func.name in ("import_name", "import_star"):
+                args, _ = self.arguments(e, e.func, scope)
+                module = _module_of(scope)
+                namespace = scope.vars if scope.is_module() or scope.is_class else None
+                if e.func.name == "import_star":
+                    assert namespace is not None, "import * in a function is a SyntaxError"
+                    import_star(args[0], namespace)
+                    return None
+                name, fromlist, level, mode = args
+                return import_name(name, fromlist, level, mode, module.vars, namespace)
             if isinstance(e.func, L.Name) and e.func.id == "__bind__":
                 name = e.args[0]
                 assert isinstance(name, L.Const) and isinstance(name.value, str)
@@ -739,6 +867,8 @@ class Interpreter:
                 return zero_arg_super
             if e.name == "missing":
                 return _MISSING
+            if e.name == "import_from":
+                return import_from
             return getattr(builtins, e.name)
         if isinstance(e, L.ClassBody):
             return ClassBodyFunction(self, e, scope)
@@ -805,8 +935,6 @@ def _host_state_impl(interp: Interpreter, fn: Any, e: L.Call, scope: Scope) -> A
 
 
 def run_source(source: str, filename: str = "<module>") -> Scope:
-    from pipeline.l1.frontend import lower
-    from pipeline.l1.wf import check
     module = lower(source, filename)
     check(module)
     return Interpreter().run_module(module)

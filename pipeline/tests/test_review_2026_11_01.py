@@ -379,7 +379,8 @@ def test_d10_control_flow_leaving_finally_is_a_compile_time_error() -> None:
 
 
 def test_new_3_15_syntax_is_refused_by_name() -> None:
-    for src, needle in (("lazy import json\n", "PEP 810"), ("rows = [[1]]\nprint([*r for r in rows])\n", "PEP 798")):
+    # PEP 810 lazy imports are lowered since task 4 step A4 (pipeline/tests/test_l1_imports.py)
+    for src, needle in (("rows = [[1]]\nprint([*r for r in rows])\n", "PEP 798"),):
         try:
             fe.lower(src)
         except Unsupported as exc:
