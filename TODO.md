@@ -116,27 +116,45 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   * P-2, `_collections_abc`'s type probes. Recommended: a shim taking the generator,
     coroutine, async-generator and frame-locals-proxy types from `_types` (core), as `types`
     does. Making coroutines in phase 1 is the alternative.
-* The plan, in the order the census gives. Each step starts with conformance cases recorded on
-  the pin, and is done in the frontend, `wf1` and `eval1`:
-  * A1 parameters and calls: positional-only, keyword-only, `*args`, `**kwargs`, unpacking in
-    calls, and CPython's binding errors.
-  * A2 functions as objects: `eval1` makes real function objects, so descriptors, `functools`
-    and `type.__new__`'s checks see CPython's function type; lambdas, closures, and
-    `__defaults__` read when the function is called.
-  * A3 classes, as `__build_class__` makes them: bases, `metaclass=` and other keywords,
-    `__prepare__` namespaces (`enum`'s `EnumDict`), decorators, `__qualname__`, `__module__`,
-    `__firstlineno__`, `__static_attributes__`, docstrings, private-name mangling,
-    zero-argument `super()` and `__class__` cells.
-  * A4 imports: a module registry for `eval1` (closure modules lowered, core and mapped modules
-    from the host), `import a.b`, `as`, `from` (relative and `*` too), partially initialised
+* The plan, in the order the census gives. Constructs come in as desugaring passes over the
+  AST onto a small L1 core (author, 2026-11-02). Each pass has a `PassSpec` and is tested
+  against CPython on observable behaviour, not on bytecode identity. The core grows only where
+  a function or runtime object needs it, and `eval1` lends CPython's objects to the oracle only;
+  the C++ runtime is Bella's own. Each step starts with conformance cases recorded on the pin.
+  * A1 and A2, done 2026-11-02 (C-3-25, C-3-26, `pipeline/tests/test_l1_functions.py`; the
+    cases also need A3 and A4 to run under `eval1`):
+    * The core gains parameter kinds, the general call (`*` and `**` in place), lambdas, and
+      `__annotate__` made with the function (PEP 649, in CPython's key order, lazy, PEP 563
+      strings ready). Docstrings are cleaned as `_PyCompile_CleanDoc` cleans them.
+    * `eval1` makes real function objects and binds arguments as `initialize_locals` does, with
+      CPython's messages. `**` merges as 3.15.2's `_PyDict_MergeUniq`, read from its source.
+    * Decorators stay a pass, and the definition applies them before its single store.
+    * Desugarings call intrinsics, which a program binding `type`, `iter` or `format` cannot
+      change (until now, a parameter named `type` broke `with`).
+    * The oracle in `both()` no longer inherits the test module's `from __future__ import
+      annotations`.
+    * PEP 695 type parameters are refused, not dropped. `pipeline/l1/run.py` runs a program
+      under `eval1`, and serves as the harness's runner.
+  * A3 classes, lowered as CPython's own compiler lowers them: the body becomes a function run
+    against the namespace, and `build_class(body, name, *bases, **keywords)` runs it.
+    `build_class` is written in Python and compiled with the rest: metaclass resolution,
+    `__prepare__` (`enum`'s `EnumDict`), `__mro_entries__`, `__classcell__`. The core gains the
+    class-body function (names through the namespace, then globals and builtins). The passes
+    cover decorators, `__qualname__`, `__module__`, `__firstlineno__`,
+    `__static_attributes__`, docstrings, private-name mangling, and zero-argument `super()`
+    with its `__class__` cell.
+  * A4 imports, as passes onto intrinsic calls: `import a.b`, `as`, `from` (relative and `*`
+    too) become `__import__`-style calls and assignments. `eval1` gets a module registry
+    (closure modules lowered, core and mapped modules from the host). Then partially initialised
     modules (C-8-01), a module's `__getattr__`, and lazy imports (C-8-05 to C-8-07).
-  * A5 the remaining forms: several and starred targets, starred and set displays, dict
-    unpacking, bytes, Ellipsis and complex constants, set and dict comprehensions, generator
-    expressions, generator functions and `yield from`. `eval1` makes real generator objects
-    by evaluating generator bodies in a generator mode.
-  * A6 annotations: PEP 649 `__annotate__` for functions, classes and modules, and PEP 695
-    aliases and type parameters. Today's silent drop ends here, together with the S-1 second
-    entry point.
+  * A5 the remaining forms, as passes: several targets (a temporary, then the assignments in
+    order), starred targets, starred and set displays, dict unpacking, set and dict
+    comprehensions, and generator expressions (through the comprehension pass, as generator
+    functions). The core gains bytes, Ellipsis and complex constants, generator functions,
+    `yield` and `yield from`. `eval1` makes real generator objects by evaluating generator
+    bodies in a generator mode.
+  * A6 the rest of the annotations: classes and modules (PEP 649, with `__classdict__`), PEP
+    695 aliases and type parameters, and the S-1 second entry point.
   * B `eval1` runs `cli_easy_slugs` end to end: the closure lowered as P-1 decides, the staged
     texts from the staging artefact, and refusals as in staging. This is the gate's second leg
     (`make targets-check TARGET_RUNNER=...`).

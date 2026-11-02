@@ -78,6 +78,16 @@ def check_finally(tree: ast.AST) -> None:
             scan(node.finalbody, False)
 
 
+# Builtins the desugarings call are intrinsics: a name no source can spell (a colon), lowered to
+# L.Intrinsic, so a program binding `type`, `iter` or `format` cannot change what a `with`
+# statement, a comprehension or an f-string does.
+_INTRINSIC = "bella:"
+
+
+def _intrinsic(name: str) -> ast.Name:
+    return ast.Name(id=_INTRINSIC + name, ctx=ast.Load())
+
+
 def _copy_loc[N: ast.AST](new: N, old: ast.AST) -> N:
     return ast.copy_location(new, old)
 
@@ -158,6 +168,9 @@ finally:
         {exit_}(None, None, None)
 """
         stmts = ast.parse(src).body
+        for n in ast.walk(ast.Module(stmts, [])):
+            if isinstance(n, ast.Name) and n.id == "type":
+                n.id = _INTRINSIC + "type"
         assign = stmts[0]
         assert isinstance(assign, ast.Assign)
         assign.value = item.context_expr
@@ -245,7 +258,7 @@ class _ListComp(ast.NodeTransformer):
         self.hoisted.append(ast.fix_missing_locations(_copy_loc(fn, node)))
         return ast.fix_missing_locations(_copy_loc(ast.Call(
             func=ast.Name(id=fname, ctx=ast.Load()),
-            args=[ast.Call(func=ast.Name(id="iter", ctx=ast.Load()), args=[outer_iter], keywords=[])],
+            args=[ast.Call(func=_intrinsic("iter"), args=[outer_iter], keywords=[])],
             keywords=[]), node))
 
 
@@ -290,13 +303,13 @@ class _FString(ast.NodeTransformer):
             elif isinstance(v, ast.FormattedValue):
                 value: ast.expr = v.value
                 if v.conversion == 115:
-                    value = ast.Call(func=ast.Name(id="str", ctx=ast.Load()), args=[value], keywords=[])
+                    value = ast.Call(func=_intrinsic("str"), args=[value], keywords=[])
                 elif v.conversion == 114:
-                    value = ast.Call(func=ast.Name(id="repr", ctx=ast.Load()), args=[value], keywords=[])
+                    value = ast.Call(func=_intrinsic("repr"), args=[value], keywords=[])
                 elif v.conversion == 97:
-                    value = ast.Call(func=ast.Name(id="ascii", ctx=ast.Load()), args=[value], keywords=[])
+                    value = ast.Call(func=_intrinsic("ascii"), args=[value], keywords=[])
                 spec: ast.expr = v.format_spec if v.format_spec is not None else ast.Constant("")
-                parts.append(ast.Call(func=ast.Name(id="format", ctx=ast.Load()), args=[value, spec], keywords=[]))
+                parts.append(ast.Call(func=_intrinsic("format"), args=[value, spec], keywords=[]))
             else:
                 raise L.Unsupported(f"f-string part {type(v).__name__}")
         joined = ast.Call(
@@ -329,11 +342,10 @@ class _Decorators(ast.NodeTransformer):
         pre = [ast.Assign(targets=[ast.Name(id=t, ctx=ast.Store())], value=d)
                for t, d in zip(temps, node.decorator_list, strict=True)]
         node.decorator_list = []
-        applied: ast.expr = ast.Name(id=node.name, ctx=ast.Load())
-        for t in reversed(temps):
-            applied = ast.Call(func=ast.Name(id=t, ctx=ast.Load()), args=[applied], keywords=[])
-        post = ast.Assign(targets=[ast.Name(id=node.name, ctx=ast.Store())], value=applied)
-        out = [*pre, node, post]
+        # the def applies them bottom-up to the new function and binds the name once, as CPython
+        # does (a __prepare__ namespace sees one store)
+        node.bella_decorators = temps  # type: ignore[attr-defined]
+        out = [*pre, node]
         for s in out:
             ast.copy_location(s, node)
             ast.fix_missing_locations(s)
@@ -345,7 +357,7 @@ class _Decorators(ast.NodeTransformer):
     produces=frozenset({Fact.NO_DECORATORS}),
     obligations=(
         Obligation("wf", "no FunctionDef has decorators"),
-        Obligation("semantics", "decorator expressions are evaluated top-down before the definition and applied bottom-up after it; the name is rebound once"),
+        Obligation("semantics", "decorator expressions are evaluated top-down before the defaults, and applied bottom-up to the new function before its name is bound, once"),
         Obligation("terminates", "one rewrite per decorated def"),
     ),
     discharge=Discharge.TESTED, status="tested",
@@ -366,9 +378,58 @@ _CMPOPS = {ast.Lt: "<", ast.LtE: "<=", ast.Eq: "==", ast.NotEq: "!=", ast.Gt: ">
            ast.In: "in", ast.NotIn: "not-in", ast.Is: "is", ast.IsNot: "is-not"}
 
 
+def clean_doc(doc: str) -> str:
+    """A docstring as CPython 3.13+ stores it (``_PyCompile_CleanDoc``, Python/compile.c): tabs
+    expanded, the first line's leading spaces removed, and from every later line the smallest
+    indentation of the later non-blank lines. Nothing else is stripped."""
+    doc = doc.expandtabs()
+    lines = doc.split("\n")
+    margins = [len(x) - len(x.lstrip(" ")) for x in lines[1:] if x.strip(" ")]
+    margin = min(margins) if margins else 0
+    out = [lines[0].lstrip(" ")]
+    for line in lines[1:]:
+        cut = 0
+        while cut < margin and cut < len(line) and line[cut] == " ":
+            cut += 1
+        out.append(line[cut:])
+    return "\n".join(out)
+
+
+def _docstring(body: list[ast.stmt]) -> str | None:
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+            and isinstance(body[0].value.value, str):
+        return clean_doc(body[0].value.value)
+    return None
+
+
+@dataclasses.dataclass
+class _Unit:
+    """A scope being lowered: its kind (module, function, class), CPython's qualname for it, and
+    the names it declares global (a definition named global gets a bare qualname)."""
+    kind: str
+    qualname: str
+    globals: frozenset[str] = frozenset()
+
+
 class _ToL1:
+    def __init__(self) -> None:
+        self.units: list[_Unit] = []
+        self.future_annotations = False      # PEP 563: annotations are their source text
+
     def module(self, tree: ast.Module, source: str) -> L.Module:
+        self.future_annotations = any(
+            isinstance(s, ast.ImportFrom) and s.module == "__future__" and any(a.name == "annotations" for a in s.names)
+            for s in tree.body)
+        self.units = [_Unit("module", "")]
         return L.Module(line=1, body=tuple(self.stmt(s) for s in tree.body), source=source)
+
+    def qualname(self, name: str) -> str:
+        """compiler_set_qualname: <parent>.<locals>.name in a function, <parent>.name in a class,
+        and the bare name at module level or when the parent declares the name global."""
+        parent = self.units[-1]
+        if parent.kind == "module" or name in parent.globals:
+            return name
+        return f"{parent.qualname}.<locals>.{name}" if parent.kind == "function" else f"{parent.qualname}.{name}"
 
     # ---- statements -------------------------------------------------------------------------
     def block(self, stmts: list[ast.stmt]) -> tuple[L.Stmt, ...]:
@@ -421,15 +482,55 @@ class _ToL1:
             raise L.Unsupported(f"lazy import (PEP 810, new in 3.15) (line {ln})")
         raise L.Unsupported(f"statement {type(s).__name__} (line {ln})")
 
+    def params(self, a: ast.arguments, owner: str) -> tuple[L.Param, ...]:
+        positional = [*a.posonlyargs, *a.args]
+        defaults: list[ast.expr | None] = [None] * (len(positional) - len(a.defaults)) + list(a.defaults)
+        out = [L.Param(arg.arg, self.expr(d) if d is not None else None,
+                       "positional-only" if i < len(a.posonlyargs) else "positional-or-keyword")
+               for i, (arg, d) in enumerate(zip(positional, defaults, strict=True))]
+        if a.vararg:
+            out.append(L.Param(a.vararg.arg, None, "*args"))
+        out += [L.Param(arg.arg, self.expr(d) if d is not None else None, "keyword-only")
+                for arg, d in zip(a.kwonlyargs, a.kw_defaults, strict=True)]
+        if a.kwarg:
+            out.append(L.Param(a.kwarg.arg, None, "**kwargs"))
+        return tuple(out)
+
+    def annotate(self, f: ast.FunctionDef, qualname: str) -> L.FunctionDef | None:
+        """PEP 649: ``__annotate__(format, /)`` raising NotImplementedError above
+        VALUE_WITH_FAKE_GLOBALS (2), else the dict in CPython's order (positional-only,
+        positional, ``*args``, keyword-only, ``**kwargs``, return). Under PEP 563 the values are
+        the annotations' source text. Its parameter is a hidden name, so an annotation that
+        names ``format`` means the builtin, as in CPython."""
+        a = f.args
+        params = [*a.posonlyargs, *a.args, *([a.vararg] if a.vararg else []), *a.kwonlyargs, *([a.kwarg] if a.kwarg else [])]
+        items = [(p.arg, p.annotation) for p in params if p.annotation is not None]
+        if f.returns is not None:
+            items.append(("return", f.returns))
+        if not items:
+            return None
+        ln = f.lineno
+        fmt = _tmp("format")
+        self.units.append(_Unit("function", f"{qualname}.__annotate__"))
+        try:
+            values = tuple(L.Const(e.lineno, ast.unparse(e)) if self.future_annotations else self.expr(e) for _, e in items)
+        finally:
+            self.units.pop()
+        body: tuple[L.Stmt, ...] = (
+            L.If(ln, L.Truth(ln, L.Compare(ln, ">", L.Name(ln, fmt), L.Const(ln, 2))),
+                 (L.Raise(ln, L.Intrinsic(ln, "NotImplementedError")),), ()),
+            L.Return(ln, L.DictLit(ln, tuple(L.Const(ln, k) for k, _ in items), values)),
+        )
+        return L.FunctionDef(ln, "__annotate__", (L.Param(fmt, None, "positional-only", public="format"),), body,
+                             qualname=f"{qualname}.__annotate__")
+
     def function(self, f: ast.FunctionDef) -> L.FunctionDef:
         if f.decorator_list:
             raise L.Unsupported("decorators must be desugared first")
-        a = f.args
-        if a.posonlyargs or a.kwonlyargs or a.vararg or a.kwarg:
-            raise L.Unsupported(f"parameter kinds of {f.name} (positional-only, keyword-only, *args, **kwargs)")
-        defaults: list[ast.expr | None] = [None] * (len(a.args) - len(a.defaults)) + list(a.defaults)
-        params = tuple(L.Param(arg.arg, self.expr(d) if d is not None else None)
-                       for arg, d in zip(a.args, defaults, strict=True))
+        if f.type_params:
+            raise L.Unsupported(f"type parameters (PEP 695) of {f.name} (line {f.lineno})")
+        params = self.params(f.args, f.name)
+        qualname = self.qualname(f.name)
         globals_: set[str] = set()
         nonlocals: set[str] = set()
 
@@ -453,7 +554,25 @@ class _ToL1:
                     declarations(case.body)
 
         declarations(f.body)
-        return L.FunctionDef(f.lineno, f.name, params, self.block(f.body), frozenset(globals_), frozenset(nonlocals))
+        annotate = self.annotate(f, qualname)
+        self.units.append(_Unit("function", qualname, frozenset(globals_)))
+        try:
+            body = self.block(f.body)
+        finally:
+            self.units.pop()
+        decorators = tuple(L.Name(f.lineno, t) for t in getattr(f, "bella_decorators", []))
+        return L.FunctionDef(f.lineno, f.name, params, body, frozenset(globals_), frozenset(nonlocals),
+                             qualname=qualname, decorators=decorators, annotate=annotate, docstring=_docstring(f.body))
+
+    def lambda_(self, e: ast.Lambda) -> L.Lambda:
+        params = self.params(e.args, "<lambda>")
+        qualname = self.qualname("<lambda>")
+        self.units.append(_Unit("function", qualname))
+        try:
+            body = self.expr(e.body)
+        finally:
+            self.units.pop()
+        return L.Lambda(e.lineno, params, body, qualname)
 
     # ---- targets ----------------------------------------------------------------------------
     def target(self, t: ast.expr) -> L.Target:
@@ -479,6 +598,8 @@ class _ToL1:
                 return L.Const(ln, e.value)
             raise L.Unsupported(f"constant of type {type(e.value).__name__}")
         if isinstance(e, ast.Name):
+            if e.id.startswith(_INTRINSIC):
+                return L.Intrinsic(ln, e.id.removeprefix(_INTRINSIC))
             return L.Name(ln, e.id)
         if isinstance(e, ast.BinOp):
             return L.BinOp(ln, _BINOPS[type(e.op)], self.expr(e.left), self.expr(e.right))
@@ -499,17 +620,18 @@ class _ToL1:
         if isinstance(e, ast.IfExp):
             return L.IfExp(ln, self.truth(e.test), self.expr(e.body), self.expr(e.orelse))
         if isinstance(e, ast.Call):
-            if any(isinstance(a, ast.Starred) for a in e.args) or any(k.arg is None for k in e.keywords):
-                raise L.Unsupported("call with *args or **kwargs unpacking")
-            return L.Call(ln, self.expr(e.func), tuple(self.expr(a) for a in e.args),
-                          tuple((k.arg or "", self.expr(k.value)) for k in e.keywords))
+            args = tuple(L.Starred(a.lineno, self.expr(a.value)) if isinstance(a, ast.Starred) else self.expr(a)
+                         for a in e.args)
+            return L.Call(ln, self.expr(e.func), args, tuple((k.arg, self.expr(k.value)) for k in e.keywords))
+        if isinstance(e, ast.Lambda):
+            return self.lambda_(e)
         if isinstance(e, ast.Attribute):
             return L.GetAttr(ln, self.expr(e.value), e.attr)
         if isinstance(e, ast.Subscript):
             return L.GetItem(ln, self.expr(e.value), self.expr(e.slice))
         if isinstance(e, ast.Slice):
             parts = [self.expr(p) if p is not None else L.Const(ln, None) for p in (e.lower, e.upper, e.step)]
-            return L.Call(ln, L.Name(ln, "slice"), tuple(parts))
+            return L.Call(ln, L.Intrinsic(ln, "slice"), tuple(parts))      # BUILD_SLICE, whatever `slice` names
         if isinstance(e, ast.List):
             return L.ListLit(ln, tuple(self.expr(x) for x in e.elts))
         if isinstance(e, ast.Tuple):

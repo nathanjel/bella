@@ -334,6 +334,11 @@ with M() as v:
 with P() as w:
     log.append(w)
 try:
+    with M():
+        raise KeyError("inside")
+except KeyError as exc:
+    log.append("propagated " + type(exc).__name__)
+try:
     with 1:
         pass
 except TypeError as exc:
@@ -346,9 +351,10 @@ def test_with_desugaring_binds_through_the_descriptor_protocol() -> None:
     tree = fe.desugar_with(ast.parse(WITH_SOURCE))
     ast.fix_missing_locations(tree)
     desugared, original = io.StringIO(), io.StringIO()
-    env: dict[str, Any] = {"__special__": special_lookup}
+    # the desugaring calls intrinsics, names no source can spell; bind them to the builtins
+    env: dict[str, Any] = {"__special__": special_lookup, "bella:type": type}
     with contextlib.redirect_stdout(desugared):
-        exec(compile(tree, "<desugared>", "exec"), env)  # noqa: S102 -- the desugaring under test
+        exec(compile(tree, "<desugared>", "exec", dont_inherit=True), env)  # noqa: S102 -- the desugaring under test
     with contextlib.redirect_stdout(original):
         exec(WITH_SOURCE, {})  # noqa: S102 -- the oracle
     assert desugared.getvalue() == original.getvalue(), (desugared.getvalue(), original.getvalue())

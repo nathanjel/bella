@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import builtins
 import operator
+import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -67,19 +68,133 @@ class Scope:
         return self.module is None
 
 
-@dataclass
-class Function:
-    node: L.FunctionDef
-    defaults: dict[str, Any]
-    closure: Scope
-    interp: Interpreter = field(repr=False)
+def make_function(interp: Interpreter, node: L.FunctionDef | L.Lambda, closure: Scope) -> types.FunctionType:
+    """A real CPython function object for an L1 function, so that binding as a method,
+    ``staticmethod``, ``functools.wraps`` and ``type.__new__``'s checks see CPython's function
+    type (the oracle delegates objects to CPython; the compiled runtime has its own). Calling it
+    enters ``Interpreter.call``, which binds the arguments as CPython does, with
+    ``__defaults__`` and ``__kwdefaults__`` read when the call happens."""
+    module = closure if closure.is_module() else closure.module
+    assert module is not None
+    name = node.name if isinstance(node, L.FunctionDef) else "<lambda>"
 
-    @property
-    def __name__(self) -> str:
-        return self.node.name
+    def __bella_l1__(*args: Any, **kwargs: Any) -> Any:
+        return interp.call(fn, node, closure, args, kwargs)
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return self.interp.call(self, args, kwargs)
+    fn = types.FunctionType(__bella_l1__.__code__, module.vars, name, None, __bella_l1__.__closure__)
+    fn.__qualname__ = node.qualname or name
+    return fn
+
+
+def _function_str(fn: Any) -> str:
+    """_PyObject_FunctionStr: module.qualname() for a function, qualname() for a builtin."""
+    qualname = getattr(fn, "__qualname__", None)
+    if qualname is None:
+        return str(fn)
+    module = getattr(fn, "__module__", None)
+    if module is not None and module != "builtins":
+        return f"{module}.{qualname}()"
+    return f"{qualname}()"
+
+
+def _tp_name(t: type) -> str:
+    return t.__name__ if t.__flags__ & (1 << 9) or t.__module__ == "builtins" else f"{t.__module__}.{t.__qualname__}"
+
+
+def _fully_qualified(t: type) -> str:
+    """%T (_PyType_GetFullyQualifiedName): module.qualname, with no module for builtins and
+    __main__."""
+    module = t.__module__
+    return t.__qualname__ if module in ("builtins", "__main__") else f"{module}.{t.__qualname__}"
+
+
+def _names(names: list[str]) -> str:
+    """format_missing (Python/ceval.c): 'a', 'a' and 'b', 'a', 'b', and 'c'."""
+    quoted = [repr(n) for n in names]
+    if len(quoted) == 1:
+        return quoted[0]
+    if len(quoted) == 2:
+        return f"{quoted[0]} and {quoted[1]}"
+    return ", ".join(quoted[:-2]) + f", {quoted[-2]}, and {quoted[-1]}"
+
+
+def bind_arguments(fn: types.FunctionType, node: L.FunctionDef | L.Lambda,
+                   args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """CPython's initialize_locals (Python/ceval.c), in its order and with its messages:
+    positional arguments, ``*args``, keywords (multiple values, positional-only names passed as
+    keywords, unexpected names with CPython's suggestion), too many positional arguments, then
+    the missing positional and keyword-only ones from ``__defaults__`` and ``__kwdefaults__``."""
+    qual = fn.__qualname__
+    params = node.params
+    # matching and messages use the name CPython has; the binding is made under the L1 name
+    internal = {p.public or p.name: p.name for p in params}
+    posonly = [p.public or p.name for p in params if p.kind == "positional-only"]
+    positional = [p.public or p.name for p in params if p.kind in ("positional-only", "positional-or-keyword")]
+    kwonly = [p.public or p.name for p in params if p.kind == "keyword-only"]
+    star = next((p.public or p.name for p in params if p.kind == "*args"), None)
+    dstar = next((p.public or p.name for p in params if p.kind == "**kwargs"), None)
+    bound: dict[str, Any] = {}
+    extra: dict[str, Any] | None = {} if dstar is not None else None
+    n = min(len(args), len(positional))
+    for i in range(n):
+        bound[positional[i]] = args[i]
+    if star is not None:
+        bound[star] = tuple(args[n:])
+    by_keyword = positional[len(posonly):] + kwonly
+    for k, v in kwargs.items():
+        if k in by_keyword:
+            if k in bound:
+                raise TypeError(f"{qual}() got multiple values for argument '{k}'")
+            bound[k] = v
+        elif extra is not None:
+            extra[k] = v
+        else:
+            passed = [p for p in posonly if p in kwargs]
+            if passed:
+                raise TypeError(f"{qual}() got some positional-only arguments passed as keyword arguments: "
+                                f"'{', '.join(passed)}'")
+            import _suggestions  # type: ignore[import-not-found]  # CPython's own, private: the hint it prints
+            hint = _suggestions._generate_suggestions(by_keyword, k) if by_keyword else None
+            if hint:
+                raise TypeError(f"{qual}() got an unexpected keyword argument '{k}'. Did you mean '{hint}'?")
+            raise TypeError(f"{qual}() got an unexpected keyword argument '{k}'")
+    defaults = fn.__defaults__ or ()
+    if len(args) > len(positional) and star is None:
+        given_kwonly = sum(1 for k in kwonly if k in bound)
+        if defaults:
+            sig, plural = f"from {len(positional) - len(defaults)} to {len(positional)}", True
+        else:
+            sig, plural = str(len(positional)), len(positional) != 1
+        kw = (f" positional argument{'s' if len(args) != 1 else ''} (and {given_kwonly} keyword-only "
+              f"argument{'s' if given_kwonly != 1 else ''})") if given_kwonly else ""
+        was = "was" if len(args) == 1 and not given_kwonly else "were"
+        raise TypeError(f"{qual}() takes {sig} positional argument{'s' if plural else ''} but {len(args)}{kw} {was} given")
+    if len(args) < len(positional):
+        first_default = len(positional) - len(defaults)
+        missing = [name for name in positional[len(args):max(first_default, 0)] if name not in bound]
+        if missing:
+            raise TypeError(f"{qual}() missing {len(missing)} required positional argument{'s' if len(missing) != 1 else ''}: "
+                            f"{_names(missing)}")
+        for i, name in enumerate(positional):
+            if name not in bound and i - first_default >= 0:
+                bound[name] = defaults[i - first_default]
+    if kwonly:
+        kwdefaults = fn.__kwdefaults__
+        missing = []
+        for name in kwonly:
+            if name in bound:
+                continue
+            if kwdefaults is not None and name in kwdefaults:
+                bound[name] = kwdefaults[name]
+            else:
+                missing.append(name)
+        if missing:
+            raise TypeError(f"{qual}() missing {len(missing)} required keyword-only argument{'s' if len(missing) != 1 else ''}: "
+                            f"{_names(missing)}")
+    if dstar is not None:
+        assert extra is not None
+        bound[dstar] = extra
+    return {internal[k]: v for k, v in bound.items()}
 
 
 def special_lookup(obj: Any, name: str) -> Any:
@@ -95,9 +210,12 @@ def special_lookup(obj: Any, name: str) -> Any:
     raise TypeError(f"'{t.__name__}' object does not support the context manager protocol")
 
 
-def _local_names(f: L.FunctionDef) -> frozenset[str]:
-    from pipeline.l1.wf import _bound_in
+def _local_names(f: L.FunctionDef | L.Lambda) -> frozenset[str]:
+    from pipeline.l1.wf import _bound_in, _walrus
     out: set[str] = {p.name for p in f.params}
+    if isinstance(f, L.Lambda):
+        _walrus(f.body, out)
+        return frozenset(out)
     _bound_in(f.body, out)
     return frozenset(out - set(f.globals) - set(f.nonlocals))
 
@@ -289,8 +407,10 @@ class Interpreter:
         elif isinstance(s, L.Pass):
             pass
         elif isinstance(s, L.FunctionDef):
-            defaults = {p.name: self.expr(p.default, scope) for p in s.params if p.default is not None}
-            self.store(s.name, Function(s, defaults, scope, self), scope)
+            fn: Any = self.function(s, scope)
+            for d in reversed(s.decorators):          # evaluated before the defaults, applied now
+                fn = self.expr(d, scope)(fn)
+            self.store(s.name, fn, scope)
         elif isinstance(s, L.Raise):
             if s.exc is None:
                 raise  # re-raise the exception being handled (Python's own machinery)
@@ -350,42 +470,86 @@ class Interpreter:
         finally:
             self.block(s.finalbody, scope)
 
-    # ---- calls -----------------------------------------------------------------------------
-    def call(self, fn: Function, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-        node = fn.node
-        module = fn.closure if fn.closure.is_module() else fn.closure.module
-        scope = Scope(vars={}, parent=fn.closure, locals_=_local_names(node),
-                      globals_=node.globals, nonlocals_=node.nonlocals, module=module)
-        names = [p.name for p in node.params]
-        if any(n in self.synthetic for n in names):          # a comprehension helper's iterator
-            assert len(names) == 1 and len(args) == 1 and not kwargs
-            scope.temps[names[0]] = args[0]
-            try:
-                self.block(node.body, scope)
-            except _Return as r:
-                return r.value
-            return None
-        if len(args) > len(names):
-            raise TypeError(f"{node.name}() takes {len(names)} positional arguments but {len(args)} were given")
-        for name, value in zip(names, args, strict=False):
-            scope.vars[name] = value
-        for k, v in kwargs.items():
-            if k not in names:
-                raise TypeError(f"{node.name}() got an unexpected keyword argument '{k}'")
-            if k in scope.vars:
-                raise TypeError(f"{node.name}() got multiple values for argument '{k}'")
-            scope.vars[k] = v
-        for name in names:
-            if name not in scope.vars:
-                if name in fn.defaults:
-                    scope.vars[name] = fn.defaults[name]
-                else:
-                    raise TypeError(f"{node.name}() missing 1 required positional argument: '{name}'")
+    # ---- functions and calls -----------------------------------------------------------------
+    def function(self, node: L.FunctionDef | L.Lambda, scope: Scope) -> types.FunctionType:
+        """MAKE_FUNCTION: defaults in parameter order (positional ones, then keyword-only), the
+        docstring, and the annotate function, made in the same scope."""
+        defaults = tuple(self.expr(p.default, scope) for p in node.params
+                         if p.default is not None and p.kind in ("positional-only", "positional-or-keyword"))
+        kwdefaults = {p.name: self.expr(p.default, scope) for p in node.params
+                      if p.default is not None and p.kind == "keyword-only"}
+        fn = make_function(self, node, scope)
+        fn.__defaults__ = defaults or None
+        fn.__kwdefaults__ = kwdefaults or None
+        if isinstance(node, L.FunctionDef):
+            fn.__doc__ = node.docstring
+            if node.annotate is not None:
+                fn.__annotate__ = self.function(node.annotate, scope)
+        return fn
+
+    def call(self, fn: types.FunctionType, node: L.FunctionDef | L.Lambda, closure: Scope,
+             args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+        module = closure if closure.is_module() else closure.module
+        is_def = isinstance(node, L.FunctionDef)
+        scope = Scope(vars={}, parent=closure, locals_=_local_names(node),
+                      globals_=node.globals if isinstance(node, L.FunctionDef) else frozenset(),
+                      nonlocals_=node.nonlocals if isinstance(node, L.FunctionDef) else frozenset(), module=module)
+        for name, value in bind_arguments(fn, node, args, kwargs).items():
+            # a parameter the frontend generated (a comprehension's iterator, the annotate
+            # function's format) is a real binding, invisible to the program
+            (scope.temps if name in self.synthetic else scope.vars)[name] = value
+        if not is_def:
+            assert isinstance(node, L.Lambda)
+            return self.expr(node.body, scope)
+        assert isinstance(node, L.FunctionDef)
         try:
             self.block(node.body, scope)
         except _Return as r:
             return r.value
         return None
+
+    def arguments(self, e: L.Call, fn: Any, scope: Scope) -> tuple[list[Any], dict[str, Any]]:
+        """The positional list (LIST_EXTEND for ``*x``) and the keyword dict (DICT_MERGE for
+        ``**m``), with CPython's errors."""
+        args: list[Any] = []
+        for a in e.args:
+            if isinstance(a, L.Starred):
+                value = self.expr(a.value, scope)
+                error: TypeError | None = None
+                try:
+                    args.extend(value)
+                except TypeError:
+                    t = type(value)
+                    if getattr(t, "__iter__", None) is None and not _is_sequence(value):
+                        error = TypeError(f"Value after * must be an iterable, not {_tp_name(t)}")
+                    else:
+                        raise
+                if error is not None:
+                    raise error                 # CPython clears the original (no __context__ from it)
+            else:
+                args.append(self.expr(a, scope))
+        kwargs: dict[str, Any] = {}
+        for name, v in e.kwargs:
+            value = self.expr(v, scope)
+            if name is not None:
+                if name in kwargs:              # an explicit keyword after a ** that supplied it
+                    raise TypeError(f"{_function_str(fn)} got multiple values for keyword argument '{name}'")
+                kwargs[name] = value
+                continue
+            failure: TypeError | None = None
+            dupkey: tuple[Any] | None = None
+            try:
+                dupkey = _dict_merge(kwargs, value)
+            except AttributeError:
+                # _PyEval_FormatKwargsError: only an object without keys() is "not a mapping"
+                if hasattr(value, "keys"):
+                    raise
+                failure = TypeError(f"Value after ** must be a mapping, not {_fully_qualified(type(value))}")
+            if failure is not None:
+                raise failure                   # the AttributeError is dropped, not chained
+            if dupkey is not None:
+                raise TypeError(f"{_function_str(fn)} got multiple values for keyword argument '{dupkey[0]}'")
+        return args, kwargs
 
     # ---- expressions -----------------------------------------------------------------------
     def expr(self, e: L.Expr, scope: Scope) -> Any:
@@ -420,9 +584,12 @@ class Interpreter:
             fn = self.expr(e.func, scope)
             if any(fn is h for h in _HOST_STATE):
                 return self._host_state(fn, e, scope)
-            args = [self.expr(a, scope) for a in e.args]
-            kwargs = {k: self.expr(v, scope) for k, v in e.kwargs}
+            args, kwargs = self.arguments(e, fn, scope)
             return fn(*args, **kwargs)
+        if isinstance(e, L.Lambda):
+            return self.function(e, scope)
+        if isinstance(e, L.Intrinsic):
+            return getattr(builtins, e.name)
         if isinstance(e, L.GetAttr):
             return getattr(self.expr(e.obj, scope), e.name)
         if isinstance(e, L.GetItem):
@@ -436,6 +603,29 @@ class Interpreter:
         raise TypeError(f"unknown expression {type(e).__name__}")
 
 
+def _is_sequence(value: Any) -> bool:
+    """PySequence_Check: a __getitem__ that is not a dict's."""
+    return not isinstance(value, dict) and getattr(type(value), "__getitem__", None) is not None
+
+
+def _dict_merge(target: dict[str, Any], m: Any) -> tuple[Any] | None:
+    """_PyDict_MergeUniq (Objects/dictobject.c, dict_merge with override 2, CPython 3.15.2): a
+    dict whose type keeps dict's iteration is read from its storage; anything else through
+    keys(), listed first, then m[key]. A key already present stops the merge before m[key] is
+    read and is returned (``dupkey``); every other error propagates as raised."""
+    if isinstance(m, dict) and type(m).__iter__ is dict.__iter__:
+        for k, v in dict.items(m):
+            if k in target:
+                return (k,)
+            target[k] = v
+        return None
+    for k in list(m.keys()):
+        if k in target:
+            return (k,)
+        target[k] = m[k]
+    return None
+
+
 def _module_of(scope: Scope) -> Scope:
     return scope if scope.is_module() else (scope.module or scope)
 
@@ -446,7 +636,8 @@ def _host_state_impl(interp: Interpreter, fn: Any, e: L.Call, scope: Scope) -> A
     if e.args or e.kwargs:
         if fn is builtins.globals or fn is builtins.locals:
             raise TypeError(f"{fn.__name__}() takes no arguments")
-        return fn(*[interp.expr(a, scope) for a in e.args], **{k: interp.expr(v, scope) for k, v in e.kwargs})
+        args, kwargs = interp.arguments(e, fn, scope)
+        return fn(*args, **kwargs)
     if fn is builtins.globals:
         return _module_of(scope).vars
     if not scope.is_module():

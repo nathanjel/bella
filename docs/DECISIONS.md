@@ -357,6 +357,14 @@ log D-10; `docs/measurements.md`, `tools/scope.py`).
   does. The alternative is making and closing coroutines in phase 1, with running one refused.
 * Found and to be fixed in step A6: the frontend drops function and module annotations and
   PEP 695 type parameters without saying so, which is an approximation that the rules forbid.
+  Function annotations and type parameters are fixed in A1/A2: the first are lowered and the
+  second refused.
+* The author, on how task 4 grows the frontend: constructs come in as AST-rewriting passes onto
+  a small L1 core. The lowering need not be 1-to-1 with CPython's internals, and Bella must not
+  become another Nuitka, a compiler that keeps CPython's runtime. Exactness is judged on what a
+  program can observe. `eval1` may lend CPython's objects to the oracle; the C++ runtime may
+  not. TODO task 4's plan is written that way: classes as a pass onto a `build_class` written in
+  Python, imports as intrinsic calls, and the remaining forms as desugarings.
 
 
 ## Pins

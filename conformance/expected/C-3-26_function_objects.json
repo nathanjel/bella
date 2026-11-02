@@ -1,0 +1,12 @@
+{
+ "case": "C-3-26_function_objects.py",
+ "clause": "C-3-26",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Gate 0 task 4, step A2 (the census of docs/measurements.md, 2026-11-02)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "['evaluate outer', 'evaluate inner', 'default', 'apply inner to decorated', 'apply outer to decorated']\ndecorated decorated __main__ 'First line.\\n    Indented more.\\nBack at the margin.\\n\\n    A tab.'\n42 <lambda> outer.<locals>.middle.<locals>.<lambda> None None\n9 8 <lambda>\nNone True {'return': None}\n['p', 'a', 'args', 'k', 'kw', 'return'] <class '__main__.Later'> True list[int]\nTrue annotated.__annotate__\nNotImplementedError ()\n{'x': 'Missing', 'return': None}\nNameError Missing\n['entered', [0, 1, 4], \"     't'|i|f\", ['exit']]\n[2, 3]\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -320,6 +320,8 @@ class Emitter:
                 raise Unsupported(f"call of a non-name (line {e.line})")
             if e.kwargs:
                 raise Unsupported(f"keyword arguments (line {e.line})")
+            if any(isinstance(a, L.Starred) for a in e.args):
+                raise Unsupported(f"*args in a call (line {e.line})")
             if e.func.id == "print" or (e.func.id in self.functions and not _returns_value(self.functions[e.func.id].body)):
                 raise Unsupported(f"the value of {e.func.id}(...) is None, which the toy emitter cannot represent (line {e.line})")
             if e.func.id in self.functions:
@@ -473,6 +475,12 @@ class Emitter:
     def function(self, f: L.FunctionDef) -> None:
         if any(p.default is not None for p in f.params):
             raise Unsupported(f"default parameter values in {f.name}")
+        if any(p.kind != "positional-or-keyword" for p in f.params):
+            raise Unsupported(f"parameter kinds of {f.name} (the toy emitter has positional parameters only)")
+        if f.decorators:
+            raise Unsupported(f"decorators of {f.name}")
+        # f.annotate is not emitted: the toy has no function objects, so nothing can read
+        # __annotate__ (an attribute read on a function is refused as an expression)
         if f.nonlocals:
             raise Unsupported(f"nonlocal declarations in {f.name}")
         rv = _returns_value(f.body)

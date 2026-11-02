@@ -41,7 +41,8 @@ def both(src: str, extra: dict[str, Any] | None = None) -> tuple[str, str]:
         Interpreter(dict(vars(builtins)) | extra).run_module(m)
     ref = io.StringIO()
     with contextlib.redirect_stdout(ref):
-        exec(compile(src, "<cpython>", "exec"), {"__name__": "__main__", **extra})  # noqa: S102 -- the oracle
+        # dont_inherit: this module's `from __future__ import annotations` must not reach the program
+        exec(compile(src, "<cpython>", "exec", dont_inherit=True), {"__name__": "__main__", **extra})  # noqa: S102 -- the oracle
     return buf.getvalue(), ref.getvalue()
 
 
@@ -157,7 +158,7 @@ def test_unbound_name_is_a_compile_time_error() -> None:
 
 
 def test_unsupported_constructs_are_named_not_approximated() -> None:
-    for src, needle in (("class C:\n    pass\n", "ClassDef"), ("import os\n", "Import"), ("f = lambda: 1\n", "Lambda")):
+    for src, needle in (("class C:\n    pass\n", "ClassDef"), ("import os\n", "Import"), ("match 1:\n    case 1:\n        pass\n", "Match")):
         try:
             lower(src, "<test>")
         except Unsupported as exc:

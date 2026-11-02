@@ -45,6 +45,14 @@ class Const(Expr):
 
 
 @dataclass(frozen=True)
+class Intrinsic(Expr):
+    """A builtin the frontend's desugarings call (``iter``, ``format``, ``type``, ...): always
+    the interpreter's own, whatever the program binds to the name (hygiene: a parameter called
+    ``type`` must not change what a ``with`` statement calls)."""
+    name: str
+
+
+@dataclass(frozen=True)
 class Name(Expr):
     id: str
 
@@ -96,10 +104,27 @@ class IfExp(Expr):
 
 
 @dataclass(frozen=True)
+class Starred(Expr):
+    """``*value`` among a call's positional arguments: iterated into them in place."""
+    value: Expr
+
+
+@dataclass(frozen=True)
 class Call(Expr):
+    """Positional arguments (a ``Starred`` one is unpacked in place) are evaluated before the
+    keyword items, which keep their source order; a keyword item named None is ``**mapping``,
+    merged as CPython's DICT_MERGE does (a duplicate name is a TypeError)."""
     func: Expr
     args: tuple[Expr, ...]
-    kwargs: tuple[tuple[str, Expr], ...] = ()
+    kwargs: tuple[tuple[str | None, Expr], ...] = ()
+
+
+@dataclass(frozen=True)
+class Lambda(Expr):
+    """A function expression: ``params`` as in ``FunctionDef``, the body one expression."""
+    params: tuple[Param, ...]
+    body: Expr
+    qualname: str
 
 
 @dataclass(frozen=True)
@@ -228,19 +253,36 @@ class Pass(Stmt):
     pass
 
 
+PARAM_KINDS = ("positional-only", "positional-or-keyword", "*args", "keyword-only", "**kwargs")
+
+
 @dataclass(frozen=True)
 class Param:
+    """A parameter. A function's parameters are in CPython's order: positional-only,
+    positional-or-keyword, ``*args``, keyword-only, ``**kwargs``; defaults are evaluated in that
+    order when the definition runs (positional ones become ``__defaults__``, keyword-only ones
+    ``__kwdefaults__``)."""
     name: str
     default: Expr | None = None
+    kind: str = "positional-or-keyword"
+    public: str | None = None   # the name CPython reports, when `name` is a hidden one (annotate's format)
 
 
 @dataclass(frozen=True)
 class FunctionDef(Stmt):
+    """A definition, run as CPython runs one: the decorators (already evaluated into names by
+    the frontend, top first) are applied bottom-up to the new function, and the name is bound
+    once. ``annotate`` is the PEP 649 ``__annotate__`` the frontend generates, defined in the
+    same scope as the function; ``qualname`` is ``co_qualname``."""
     name: str
     params: tuple[Param, ...]
     body: tuple[Stmt, ...]
     globals: frozenset[str] = frozenset()
     nonlocals: frozenset[str] = frozenset()
+    qualname: str = ""
+    decorators: tuple[Expr, ...] = ()
+    annotate: FunctionDef | None = None
+    docstring: str | None = None
 
 
 @dataclass(frozen=True)

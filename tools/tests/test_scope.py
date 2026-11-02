@@ -51,7 +51,7 @@ def test_units_are_keyed_as_cpython_keys_code_objects() -> None:
             if isinstance(k, types.CodeType):
                 out |= codes(k)
         return out
-    assert set(scope._unit_nodes(source, "<m>")) == codes(compile(source, "<m>", "exec"))
+    assert set(scope._unit_nodes(source, "<m>")) == codes(compile(source, "<m>", "exec", dont_inherit=True))
 
 
 def test_the_verdict_comes_from_the_frontend() -> None:

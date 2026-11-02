@@ -45,7 +45,8 @@ def _stmt_exprs(s: L.Stmt) -> list[L.Expr]:
                 target(e)
 
     if isinstance(s, L.FunctionDef):
-        return [p.default for p in s.params if p.default is not None]   # defaults: enclosing scope
+        # decorators and defaults run in the enclosing scope; the annotate function is lazy
+        return [*s.decorators, *(p.default for p in s.params if p.default is not None)]
     for v in vars(s).values():
         if isinstance(v, L.Expr):
             out.append(v)
@@ -101,6 +102,10 @@ def _walrus(e: L.Expr, out: set[str]) -> None:
 
 
 def _children(e: L.Expr) -> list[L.Expr]:
+    """The sub-expressions evaluated in e's own scope: a lambda contributes its defaults, its
+    body is a scope of its own."""
+    if isinstance(e, L.Lambda):
+        return [p.default for p in e.params if p.default is not None]
     out: list[L.Expr] = []
     for v in vars(e).values():
         if isinstance(v, L.Expr):
@@ -133,11 +138,13 @@ class _Checker:
         if isinstance(s, L.FunctionDef):
             inner = _Scope(bound={p.name for p in s.params} | set(s.globals) | set(s.nonlocals), parent=scope)
             _bound_in(s.body, inner.bound)
+            for d in s.decorators:
+                self.expr(d, scope)
             for p in s.params:
                 if p.default is not None:
                     self.expr(p.default, scope)
             self.block(s.body, inner)
-            return
+            return                # s.annotate is evaluated lazily, its names when it is called
         for v in vars(s).values():
             if isinstance(v, L.Expr):
                 self.expr(v, scope)
@@ -165,6 +172,14 @@ class _Checker:
                 self.target(e, scope)
 
     def expr(self, e: L.Expr, scope: _Scope) -> None:
+        if isinstance(e, L.Lambda):
+            inner = _Scope(bound={p.name for p in e.params}, parent=scope)
+            _walrus(e.body, inner.bound)
+            for p in e.params:
+                if p.default is not None:
+                    self.expr(p.default, scope)
+            self.expr(e.body, inner)
+            return
         if isinstance(e, L.Name):
             s: _Scope | None = scope
             while s is not None:
