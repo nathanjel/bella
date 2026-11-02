@@ -35,6 +35,7 @@ from typing import Any
 
 from pipeline.l1 import eval1 as E1
 from pipeline.l1.grammar import Refused, Unsupported
+from pipeline.l1.staged import flags_of
 from pipeline.l2 import grammar as G
 
 RESERVED = "_l2_"
@@ -202,9 +203,11 @@ class _Runtime:
     def host_state(self, fn: Any, ns: Any, frame_locals: Any, hidden: frozenset[str], *args: Any, **kwargs: Any) -> Any:
         """locals(), vars(), dir() and globals() called by name with no arguments: the frame's
         own variables (PEP 667: a fresh dict in a function), never the translation's."""
+        if fn in (builtins.eval, builtins.exec, builtins.compile):
+            return self.interp.staged_call(fn, args, kwargs, sys._getframe(1), ns, frame_locals, hidden)
         if args or kwargs or fn not in (builtins.locals, builtins.vars, builtins.dir, builtins.globals):
-            if fn in (builtins.eval, builtins.exec, builtins.compile):
-                raise Refused(f"{fn.__name__}() of source text is excluded (E-01)")
+            if fn in (builtins.globals, builtins.locals) and (args or kwargs):
+                raise TypeError(f"{fn.__name__}() takes no arguments")
             return fn(*args, **kwargs)
         if fn is builtins.globals:
             return self.G
@@ -236,7 +239,9 @@ class _Out:
 
 
 class _Translator:
-    def __init__(self) -> None:
+    def __init__(self, refused: dict[str, str] | None = None) -> None:
+        self.refused = refused or {}           # qualname -> why calling it stops the program (S-4)
+        self.unchecked: set[str] = set()       # codes whose body the translation replaced
         self.out = _Out()
         self.codes: dict[str, G.Code] = {}     # reserved def name -> its L2 code
         self.consts: list[Any] = []            # constants with no literal spelling (inf, frozenset)
@@ -410,6 +415,11 @@ class _Translator:
             self.out.add(body_indent, f"raise {RESERVED}R.refused({what + ' is [P2+] (async, decision P-1)'!r})", first)
             if code.kind == "async generator":
                 self.out.add(body_indent, "yield", first)
+            return name
+        if code.qualname in self.refused:
+            # S-4: the call stops the program; the body (and what it would capture) is not run
+            self.out.add(body_indent, f"raise {RESERVED}R.refused({self.refused[code.qualname]!r})", first)
+            self.unchecked.add(name)
             return name
         temps = sorted(_assigned(code.body))
         self.out.add(body_indent, "try:", first)
@@ -638,8 +648,19 @@ class _Compiled:
     consts: list[Any]
 
 
+def _walk(tree: ast.AST) -> list[ast.AST]:
+    """ast.walk without its lazy `from collections import deque`: eval2 compiles while a closure
+    program runs, when sys.modules holds the program's collections, not the host's."""
+    out, stack = [], [tree]
+    while stack:
+        node = stack.pop()
+        out.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return out
+
+
 def _fix_lines(tree: ast.AST, linemap: list[int]) -> None:
-    for node in ast.walk(tree):
+    for node in _walk(tree):
         if hasattr(node, "lineno"):
             n = node.lineno
             node.lineno = linemap[n - 1] if 0 < n <= len(linemap) else 1
@@ -647,9 +668,9 @@ def _fix_lines(tree: ast.AST, linemap: list[int]) -> None:
                 setattr(node, "end_lineno", node.lineno)  # noqa: B010
 
 
-def _check_slots(code: types.CodeType, codes: dict[str, G.Code]) -> types.CodeType:
+def _check_slots(code: types.CodeType, codes: dict[str, G.Code], unchecked: frozenset[str] = frozenset()) -> types.CodeType:
     """Checks every nested code object against its L2 code, and gives it CPython's names."""
-    consts = tuple(_check_slots(c, codes) if isinstance(c, types.CodeType) else c for c in code.co_consts)
+    consts = tuple(_check_slots(c, codes, unchecked) if isinstance(c, types.CodeType) else c for c in code.co_consts)
     l2 = codes.get(code.co_name)
     if l2 is None:
         return code.replace(co_consts=consts)
@@ -659,13 +680,13 @@ def _check_slots(code: types.CodeType, codes: dict[str, G.Code]) -> types.CodeTy
     host = (visible(code.co_varnames), visible(code.co_cellvars), visible(code.co_freevars))
     want_vars = l2.varnames if l2.kind not in ("module", "classbody") else tuple(n for n in l2.varnames)
     want = (want_vars, l2.cellvars, l2.freevars)
-    if l2.kind not in ("coroutine", "async generator") and host != want:
+    if l2.kind not in ("coroutine", "async generator") and code.co_name not in unchecked and host != want:
         raise SlotMismatch(f"{l2.qualname}: the host compiled {host}, L2 says {want}")
     return code.replace(co_consts=consts, co_name=l2.name, co_qualname=l2.qualname)
 
 
-def compile_module(m: G.Module) -> tuple[_Compiled, str]:
-    tr = _Translator()
+def compile_module(m: G.Module, refused: dict[str, str] | None = None) -> tuple[_Compiled, str]:
+    tr = _Translator(refused)
     fname = tr.function(m.code, 1, 1)
     tr.out.lines.insert(0, f"def {RESERVED}factory({RESERVED}R, {RESERVED}codes, {RESERVED}END, {RESERVED}locals_, {RESERVED}K):")
     tr.out.linemap.insert(0, 1)
@@ -676,7 +697,7 @@ def compile_module(m: G.Module) -> tuple[_Compiled, str]:
     flags = 0
     module_code = compile(tree, m.source, "exec", flags=flags, dont_inherit=True)
     factory = next(c for c in module_code.co_consts if isinstance(c, types.CodeType))
-    factory = _check_slots(factory, tr.codes)
+    factory = _check_slots(factory, tr.codes, frozenset(tr.unchecked))
     return _Compiled(factory, tr.codes, tr.consts), source
 
 
@@ -686,7 +707,10 @@ class Interpreter:
     def __init__(self, builtins_: dict[str, Any] | None = None) -> None:
         self.builtins = dict(vars(builtins)) if builtins_ is None else builtins_
         self.prelude: dict[str, Any] | None = None
-        self.eval1 = E1.Interpreter(self.builtins)
+        self.staged: Any = None          # pipeline.l1.staged.Staged, when the program has artefacts
+        self.future: dict[int, frozenset[str]] = {}    # id(a module's globals) -> its __future__ features
+        self.l2: dict[int, tuple[Any, G.Module]] = {}  # id(L1 module) -> (it, its L2), lowered once
+        self.compiled: dict[tuple[int, tuple[tuple[str, str], ...]], tuple[G.Module, _Compiled]] = {}
 
     def run_module(self, m: G.Module, name: str = "__main__") -> dict[str, Any]:
         return self.run_in(m, {"__name__": name})
@@ -697,17 +721,111 @@ class Interpreter:
     def run_in(self, m: G.Module | Any, namespace: dict[str, Any]) -> dict[str, Any]:
         """A module body with `namespace` as its globals; an L1 module is lowered to L2 first
         (the module system hands over L1)."""
-        if not isinstance(m, G.Module):
+        m = self.to_l2(m)
+        namespace.setdefault("__builtins__", vars(builtins))
+        self.future.setdefault(id(namespace), m.future)
+        self.run_code(m, namespace, namespace, namespace.get("__name__"))
+        return namespace
+
+    def refused_in(self, module_name: Any) -> dict[str, str]:
+        """The functions of a module that stop the program when called (decision S-4)."""
+        refused: dict[str, str] = {}
+        if self.staged is not None and isinstance(module_name, str):
+            for site, why in self.staged.refused.items():
+                mod, _, qual = site.partition(":")
+                if mod == module_name:
+                    refused[qual] = why
+            for qual in self.staged.unsupported.get(module_name, ()):
+                refused.setdefault(qual, f"[P2+] {module_name}:{qual} is not supported in phase 1 "
+                                         "(closure.lock.json unsupported_functions)")
+        return refused
+
+    def prepare(self, m: Any, module_name: str) -> None:
+        """Lower and compile a module before the program starts (P-1), while the host's own
+        modules are still the ones in sys.modules."""
+        l2 = self.to_l2(m)
+        refused = self.refused_in(module_name)
+        key = (id(l2), tuple(sorted(refused.items())))
+        if key not in self.compiled:
+            self.compiled[key] = (l2, compile_module(l2, refused)[0])
+
+    def to_l2(self, m: G.Module | Any) -> G.Module:
+        if isinstance(m, G.Module):
+            return m
+        cached = self.l2.get(id(m))
+        if cached is None or cached[0] is not m:      # the L1 module is kept, so its id is never reused
             from pipeline.l2.lifetimes import lifetimes
             from pipeline.l2.lower import to_l2
-            m = lifetimes(to_l2(m))
-        namespace.setdefault("__builtins__", vars(builtins))
-        compiled, _ = compile_module(m)
-        rt = _Runtime(self, namespace)
-        factory = types.FunctionType(compiled.factory, namespace, f"{RESERVED}factory")
+            cached = (m, lifetimes(to_l2(m)))
+            self.l2[id(m)] = cached
+        return cached[1]
+
+    def run_code(self, m: G.Module, g: dict[str, Any], ns: Any, module_name: Any) -> Any:
+        """The module code of `m` with `g` as its globals and `ns` as its namespace mapping."""
+        refused = self.refused_in(module_name)
+        key = (id(m), tuple(sorted(refused.items())))
+        hit = self.compiled.get(key)
+        if hit is None or hit[0] is not m:
+            hit = (m, compile_module(m, refused)[0])
+            self.compiled[key] = hit
+        compiled = hit[1]
+        rt = _Runtime(self, g)
+        factory = types.FunctionType(compiled.factory, g, f"{RESERVED}factory")
         body = factory(rt, compiled.codes, END, _caller_locals, compiled.consts)
-        body(namespace)
-        return namespace
+        return body(ns)
+
+    # staged texts (decision S-1..S-5, pipeline/l1/staged.py) ----------------------------------------
+
+    def staged_call(self, fn: Any, args: tuple[Any, ...], kwargs: dict[str, Any], frame: Any, ns: Any,
+                    frame_locals: Any, hidden: frozenset[str]) -> Any:
+        """exec, eval and compile of a staged text, keyed by the calling code's site."""
+        site = f"{frame.f_globals.get('__name__')}:{frame.f_code.co_qualname}"
+        if self.staged is None:
+            raise Refused(f"{fn.__name__}() of source text is excluded (E-01)")
+        caller_flags = flags_of(self.future.get(id(frame.f_globals), frozenset()))
+        if fn is builtins.compile:
+            return self._staged_compile(site, caller_flags, *args, **kwargs)
+        kind = fn.__name__
+        source, *namespaces = args
+        if len(namespaces) > 2 or (kwargs and set(kwargs) - {"globals", "locals", "closure"}):
+            raise TypeError(f"{kind}() takes at most 3 arguments")
+        g = namespaces[0] if namespaces else kwargs.get("globals")
+        loc = namespaces[1] if len(namespaces) > 1 else kwargs.get("locals")
+        if isinstance(source, types.CodeType):
+            text = self.staged.code(source, kind, site)
+        elif isinstance(source, (str, bytes)):
+            text = self.staged.text(site, kind, source, caller_flags)
+        else:
+            raise Refused(f"E-01: {kind} of a {type(source).__name__} at {site}")
+        if g is None:
+            g = frame.f_globals
+            if loc is None and ns is None:
+                loc = {k: v for k, v in frame_locals.items() if not k.startswith(RESERVED) and k not in hidden}
+            elif loc is None:
+                loc = ns
+        if not isinstance(g, dict):
+            raise TypeError(f"globals must be a dict, not {E1._tp_name(type(g))}")
+        g.setdefault("__builtins__", vars(builtins))
+        self.future.setdefault(id(g), text.future)
+        value = self.run_code(self.to_l2(text), g, g if loc is None else loc, g.get("__name__"))
+        return value if kind == "eval" else None
+
+    def _staged_compile(self, site: str, caller_flags: int, source: Any, filename: Any, mode: str, flags: int = 0,
+                        dont_inherit: bool = False, optimize: int = -1, *, module: Any = None,
+                        _feature_version: int = -1) -> Any:
+        if site in self.staged.refused:
+            raise Refused(self.staged.refused[site])
+        inherited = 0 if dont_inherit else caller_flags
+        outcome = self.staged.compiled.get((site, "compile", source, str(filename), str(mode), flags | inherited, optimize,
+                                            module, _feature_version))
+        if outcome is None:
+            raise Refused(self.staged.unstaged.get(site) or f"E-01: compile at {site} of a text the dry run did not stage")
+        if outcome[0] == "raises":
+            cls = getattr(builtins, outcome[1], None)
+            if not (isinstance(cls, type) and issubclass(cls, BaseException)):
+                raise Refused(f"E-01: compile at {site} raised {outcome[1]}, which is not a built-in exception")
+            raise cls(*outcome[2])
+        return outcome[1]
 
     # intrinsics ----------------------------------------------------------------------------------
 
@@ -756,7 +874,8 @@ class Interpreter:
         if name == "call_args_tuple":
             return _Runtime.call_args_tuple(args[0])
         fn = self.intrinsic_value(name)
-        return fn(*args, **kwargs)
+        # no keyword items, no dict: a C type that refuses keywords tells CALL from CALL_FUNCTION_EX
+        return fn(*args, **kwargs) if kwargs else fn(*args)
 
     def runtime(self, name: str) -> Any:
         """The Python half of the runtime (runtime/prelude), run by this interpreter."""

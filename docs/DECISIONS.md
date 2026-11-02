@@ -524,6 +524,12 @@ these choices of implementation:
 * `make eval2-corpus` (in `make check` and CI): 62 of 75 cases, every case `eval1` passes and
   three more, the lifetime cases included; `pipeline/tests/test_l2.py` holds the release-point
   probes measured on 3.15.2.
+* `make targets-eval2` (in `make check` and CI): the easy three print their recorded output
+  under eval2, each with its whole closure. In closure mode every module is lowered to L2 and
+  compiled before the program starts (P-1's rule for L1, which the host's own lazy imports also
+  require); a function the staging refused or the lock lists as unsupported compiles to a
+  refusal (S-4); a staged text is found by the site the calling code object names, so eval2 keeps
+  no frame stack of its own.
 
 ## Pins
 

@@ -68,9 +68,10 @@ make eval1-corpus       the conformance corpus under eval1 (pipeline/l1/run.py);
                         conformance/eval1-baseline.txt may regress; --update in tools/eval1_corpus.py
 make eval2-corpus       the corpus through L2 (to-anf, lifetimes, wf2) under eval2; conformance/eval2-baseline.txt
 make targets-eval1      the easy three under eval1 with their whole closures lowered (the gates' second leg)
+make targets-eval2      the easy three through L2 under eval2, each with its whole closure
 make lint               ruff and mypy, both clean; dialect programs and target drivers under strict mypy
 make check              closure, targets-closure, lint, test, verify, probes, slice, int-test, float-diff, targets-check,
-                        staging-check, eval1-corpus, eval2-corpus, targets-eval1 (CI)
+                        staging-check, eval1-corpus, eval2-corpus, targets-eval1, targets-eval2 (CI)
 ```
 
 On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):

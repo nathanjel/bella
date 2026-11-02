@@ -97,6 +97,11 @@ def main(argv: list[str], level: int = 1, startup: list[str] | None = None) -> i
                      staging.program_artefact(path, lock, blocked, bool(sys.flags.safe_path), optimize)]
         interp.staged = Staged([a.with_suffix(".bin") for a in artefacts])
         failed = system.prelower()
+        if level == 2:
+            # L2 and the host code eval2 runs, made now, while sys.modules holds the host's modules
+            for name, source in system.closure.items():
+                if source in system.cache:
+                    interp.prepare(system.cache[source], name)
         if failed:
             # decision P-1 compiles these to statement refusals; until step B the module refuses
             print(f"bella-eval1: {len(failed)} closure modules do not lower yet: "

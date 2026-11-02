@@ -94,7 +94,15 @@ class _Code:
         doc: str | None = None
         kind = "module"
         if isinstance(node, L.Module):
-            self.block(node.body)
+            if node.mode == "eval" and node.body and isinstance(node.body[-1], L.ExprStmt):
+                # a staged eval: the value is the last statement's (pipeline/l1/staged.py)
+                *helpers, last = node.body
+                self.block(tuple(helpers))
+                assert isinstance(last, L.ExprStmt)
+                self.at(last.line)
+                self.emit(G.Return(self.expr(last.value)))
+            else:
+                self.block(node.body)
             name = "<module>"
         elif isinstance(node, L.ClassBody):
             kind = "classbody"

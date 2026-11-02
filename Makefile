@@ -5,7 +5,7 @@ CXX     ?= g++
 CXXSTD  ?= c++26
 RUNNER  ?= $(PY) {case}
 
-.PHONY: help test selftest closure record verify check-conformance probes slice int-test float-diff targets-record targets-check targets-closure staging-check eval1-corpus eval2-corpus targets-eval1 lint check clean
+.PHONY: help test selftest closure record verify check-conformance probes slice int-test float-diff targets-record targets-check targets-closure staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2 lint check clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
@@ -23,6 +23,7 @@ help:
 	@echo "make eval1-corpus      the conformance corpus under eval1: no case of conformance/eval1-baseline.txt may regress"
 	@echo "make eval2-corpus      the corpus through L2 (to-anf, lifetimes, wf2) under eval2; conformance/eval2-baseline.txt"
 	@echo "make targets-eval1     the easy three under eval1, each with its whole closure lowered (the gates' second leg)"
+	@echo "make targets-eval2     the easy three through L2 under eval2, each with its whole closure"
 	@echo "make targets-closure   each target's closure and the phase-1 increments -> targets/closure*"
 	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
 	@echo "make check             everything above (what CI runs)"
@@ -50,6 +51,11 @@ EVAL1_RUNNER = $(shell $(PY) -c "import sys; print(sys.executable)") -P $(CURDIR
 targets-eval1:
 	$(PY) targets/run_targets.py check --target cli_easy_slugs --target service_easy_tokens --target data_easy_sales \
 	  --runner "$(EVAL1_RUNNER)"
+
+EVAL2_RUNNER = $(subst /l1/run.py,/l2/run.py,$(EVAL1_RUNNER))
+targets-eval2:
+	$(PY) targets/run_targets.py check --target cli_easy_slugs --target service_easy_tokens --target data_easy_sales \
+	  --runner "$(EVAL2_RUNNER)"
 
 staging-check:
 	$(PY) pipeline/staging/check.py
@@ -92,7 +98,7 @@ lint:
 	# the target drivers too; the vendored libraries they import are read, not reported
 	MYPYPATH=targets/vendor $(PY) -m mypy --disallow-any-explicit --follow-imports=silent targets/drivers
 
-check: closure targets-closure lint test verify probes slice int-test float-diff targets-check staging-check eval1-corpus eval2-corpus targets-eval1
+check: closure targets-closure lint test verify probes slice int-test float-diff targets-check staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2
 
 clean:
 	rm -rf build runtime/build pipeline/examples/out/*.bin .pytest_cache .hypothesis
