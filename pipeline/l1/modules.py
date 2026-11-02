@@ -53,7 +53,7 @@ def module_names(path: Path) -> frozenset[str]:
 
 def lower_file(path: Path, library: bool) -> L.Module:
     """A module lowered and checked; a library module's names are held to CPython's runtime
-    resolution, not the program's compile-time rule (proposal P-3, wf.check)."""
+    resolution, not the program's compile-time rule (decision P-3, wf.check)."""
     module = lower(path.read_text(encoding="utf-8"), str(path))
     check(module, module_names(path), strict=not library)
     return module

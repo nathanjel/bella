@@ -212,8 +212,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
       `match` (`dataclasses`, `traceback`, the `annotationlib` shim) and PEP 695 (`typing`,
       `_colorize`).
     * Found: the stdlib binds module globals by computed name from other modules (`re`'s flags,
-      through `enum.global_enum`). The spec's compile-time NameError would refuse `re`. Proposal
-      P-3 is for the author; `wf1` applies it provisionally (`strict=False` for library modules).
+      through `enum.global_enum`). The spec's compile-time NameError would refuse `re`. Decided
+      as P-3 (spec v0.12 section 8): library modules look such names up at runtime
+      (`strict=False`), and the program's own modules keep the compile-time error.
   * A5b `match`, done 2026-11-02 (C-3-17, `pipeline/tests/test_l1_match.py`):
     * `desugar-match` lowers `match` as 3.15.2's codegen does, onto ordinary checks and
       `runtime/prelude/match.py` (`MATCH_SEQUENCE`, `MATCH_MAPPING`, `MATCH_KEYS`,
@@ -335,6 +336,12 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   history; make each `PassSpec` status name its evidence, so that "tested" points at the tests.
 
 ## Later
+
+* The author's direction (P-3, 2026-11-02): a whole-program pass that glues the modules' globals
+  into one application-wide object with fixed slots, once the closed world and the staging
+  snapshot are known. It belongs with the C++ leg's L2; the model comes first, as promoted
+  globals with a dict made only when exposed (`refmodel/objects.py`). It is to be detailed with
+  the author.
 
 * Revisit the staging mechanism (decision S-5, 2026-11-01): the author's idea of using the GCC
   compiler within the program, so that a text the dry run did not see can still be compiled.

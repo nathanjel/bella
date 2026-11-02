@@ -295,7 +295,7 @@ def check(m: L.Module, extra_names: frozenset[str] = frozenset(), strict: bool =
     """Raise WellFormednessError on any violated L1 invariant. `extra_names` are names the host
     binds before the module runs (the conformance harness injects none; tests may).
 
-    `strict=False` is for library modules of the closure (proposal P-3, for the author): a name
+    `strict=False` is for library modules of the closure (decision P-3, spec v0.12 section 8): a name
     bound nowhere that the checker can see is not a compile-time NameError there but a runtime
     global lookup, as in CPython, since library code binds module globals by computed name from
     other modules (enum.global_enum writes re's flags). The unresolved names are returned."""

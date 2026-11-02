@@ -414,6 +414,22 @@ steps A1 to A6 and B; TODO task 4).
   stale cache keyed by `id()`, and the oracle inheriting the test module's `__future__`.
 * Next: the C++ leg (task 3's header, L2, the runtime), and P-3 waits on the author.
 
+**2026-11-02 — P-3 decided; the author's direction for module globals** (author; spec v0.12 section 8,
+design section 11 rev 451).
+* P-3, as recommended, after a minimal example. A module that uses `enum.global_enum` gets its
+  flags written into its namespace from `enum`, so names like `re`'s `DEBUG` are bound nowhere in
+  its own source. In the closure's library modules (standard library, shims, vendored packages),
+  such a name is a runtime global lookup with CPython's semantics; the program's own modules keep
+  the compile-time NameError. `wf.check(strict=False)` implements it for library modules.
+* The author's direction for later, in the author's words: "another pass that would actually
+  glue these globals together in one global class object for the application". Our reading, to
+  be detailed with the author when L2 is designed: once the closed world is known (every module,
+  and the staging snapshot of what module bodies bound), a whole-program pass gives every
+  module's globals a fixed slot in one application-wide object, so that most global accesses are
+  slot accesses and only what stays dynamic is looked up. The likely mechanism is the reference
+  model's promoted fields, with a dict made only when exposed (`globals()`, `vars(module)`,
+  `sys.modules[...].__dict__`), written into `refmodel/objects.py` first.
+
 
 ## Pins
 
