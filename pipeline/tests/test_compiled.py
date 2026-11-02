@@ -413,6 +413,20 @@ def test_descriptors_set_name_and_init_subclass() -> None:
     """)
 
 
+def test_an_instance_dict_refuses_dict_methods_until_3a3_and_never_crashes() -> None:
+    """vars(obj) is object.hpp's name map until step 3a.3; the dict operations it does not support
+    stop the program with a refusal (exit 70), never by reading the wrong structure."""
+    if not _HAVE_CXX:
+        return
+    for op in ("len(d)", "list(d)", "'x' in d", "d.items()", "d.get('x')"):
+        src = f"class A:\n    def __init__(self): self.x = 1\nd = vars(A())\nprint({op})\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_text(src, encoding="utf-8")
+            got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False)
+        assert got.returncode == 70 and "step 3a.3" in got.stderr, (op, got.returncode, got.stderr)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -562,7 +562,11 @@ Ref getitem_m(Obj self, Args a) { positional_only(a, "__getitem__", 1, 1); retur
 Ref setitem_m(Obj self, Args a) { positional_only(a, "__setitem__", 2, 2); setitem(self, a.pos(0), a.pos(1)); return none_ref(); }
 Ref contains_m(Obj self, Args a) { positional_only(a, "__contains__", 1, 1); return compare(CmpOp::In, a.pos(0), self); }
 Ref iter_m(Obj self, Args a) { positional_only(a, "__iter__", 0, 0); return iter(self); }
-Dict* dict_self(Obj self) { return static_cast<Dict*>(self.object()); }
+Dict* dict_self(Obj self) {
+    // an instance's __dict__ is object.hpp's name map until step 3a.3 makes it a dict like any other
+    if (!is_kind(self, Kind::PyDict)) throw NotImplemented("dict methods on an instance __dict__ (step 3a.3)");
+    return static_cast<Dict*>(self.object());
+}
 Ref dict_get_m(Obj self, Args a) {
     positional_only(a, "get", 1, 2);
     Obj v = dict_get(dict_self(self), a.pos(0));

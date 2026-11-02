@@ -258,6 +258,7 @@ bool contains(Obj container, Obj item) {
     }
     if (is_kind(container, Kind::PyDict)) return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
     if (is_kind(container, Kind::Set)) return set_contains(static_cast<SetObject*>(container.object()), item);
+    if (is_kind(container, Kind::Dict)) throw NotImplemented("`in` on an instance __dict__ (step 3a.3)");
     if (const Str* s = as_str(container)) {
         const Str* sub = as_str(item);
         if (sub == nullptr)
@@ -737,6 +738,7 @@ Ref iter(Obj obj) {
         return r;
     }
     if (is_kind(obj, Kind::Iterator)) return Ref::share(obj);
+    if (is_kind(obj, Kind::Dict)) throw NotImplemented("iterating an instance __dict__ (step 3a.3)");
     bool has = false;
     Ref r = call_special(obj, "__iter__", {}, &has);
     if (has) {
