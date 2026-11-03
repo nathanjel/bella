@@ -7,6 +7,7 @@ or directly: python -m refmodel.tests.test_cases
 from __future__ import annotations
 
 import gc
+from collections.abc import Callable
 import weakref
 
 from refmodel.objects import (
@@ -499,6 +500,108 @@ def test_a_getattr_hook_is_called_as_call_attribute_does() -> None:
     got = [rt.getattr(RefObject(A), "x"), rt.getattr(instance_b, "y"), rt.getattr(RefObject(C), "z")]
     assert got == [1, 3, 2], got
     assert calls == [("function", "x"), ("bound", True, "y"), ("__call__", "z")], calls
+
+
+# An exposed dict under the program's dict operations (step 3a.3): which ones keep it split, so
+# that its values die in the class's key order, and which make it ordinary (insertion order).
+# A scenario is a list of statements: run as a CPython program after SPLIT_PRELUDE, and through
+# the model by _SPLIT_STEPS; "|" marks a checkpoint in both.
+SPLIT_PRELUDE = """
+class V:
+    def __init__(s, n): s.n = n
+    def __del__(s): print(s.n)
+class C: pass
+seed = C(); seed.p = 0; seed.q = 0; seed.r = 0
+"""
+SPLIT_INSTANCE = "o = C(); o.r = V('r'); o.q = V('q'); o.p = V('p')\nd = vars(o)"
+SPLIT_SCENARIOS: dict[str, list[str]] = {
+    "exposed": ["del o", "|", "del d"],
+    "int key": ["d[1] = V('1')", "del o", "del d"],
+    "new str key": ["d['s'] = V('s')", "del o", "del d"],
+    "delete and reinsert": ["del d['q']", "|", "d['q'] = V('q2')", "del o", "del d"],
+    "popitem": ["del o", "x = d.popitem()", "del x", "|", "del d"],
+    "clear, owner alive": ["d.clear()", "|", "d['q'] = V('q2')", "d['p'] = V('p2')", "del o", "|", "del d"],
+    "clear, owner dead": ["del o", "d.clear()", "|", "d['q'] = V('q2')", "d['p'] = V('p2')", "del d"],
+    "clear after replacement": ["o.__dict__ = {}", "d.clear()", "|", "d['q'] = V('q2')", "d['p'] = V('p2')", "del d", "|",
+                                "del o"],
+    "copy": ["c = d.copy()", "del o", "del d", "|", "del c"],
+}
+
+
+def split_program(scenario: str) -> str:
+    steps = ["print('|')" if s == "|" else s for s in SPLIT_SCENARIOS[scenario]]
+    return SPLIT_INSTANCE + "\n" + "\n".join(steps) + "\n"
+
+
+class _SplitWorld:
+    def __init__(self) -> None:
+        from refmodel import objects as O
+        self.O = O
+        _fresh_heap()
+        self.rt = Runtime()
+        C = RefClass("C")
+        seed = RefObject(C)
+        O.incref(seed)
+        for n in ("p", "q", "r"):
+            self.rt.setattr(seed, n, 0)
+        self.o = RefObject(C)
+        O.incref(self.o)
+        for n in ("r", "q", "p"):
+            _store(self.rt, self.o, n, n)
+        self.d = self.rt.expose_dict(self.o)
+        O.incref(self.d)
+        self.c: object = None
+
+    def put(self, key: object, tag: str) -> None:
+        v = _tagged(self.O.HEAP, tag)
+        self.d.store(key, v)
+        self.O.decref(v)
+
+    def popitem(self) -> None:
+        _, v = self.d.popitem_()
+        self.O.decref(v)
+
+    def copy(self) -> None:
+        self.c = self.d.copy_()
+        self.O.incref(self.c)
+
+
+_SPLIT_STEPS: dict[str, Callable[[_SplitWorld], object]] = {
+    "|": lambda w: w.O.HEAP.deaths.append("|"),
+    "del o": lambda w: w.O.decref(w.o),
+    "del d": lambda w: w.O.decref(w.d),
+    "del c": lambda w: w.O.decref(w.c),
+    "d[1] = V('1')": lambda w: w.put(1, "1"),
+    "d['s'] = V('s')": lambda w: w.put("s", "s"),
+    "d['q'] = V('q2')": lambda w: w.put("q", "q2"),
+    "d['p'] = V('p2')": lambda w: w.put("p", "p2"),
+    "del d['q']": lambda w: w.d.delete("q"),
+    "x = d.popitem()": lambda w: w.popitem(),
+    "del x": lambda w: None,
+    "d.clear()": lambda w: w.d.clear_(),
+    "o.__dict__ = {}": lambda w: w.rt.set_dict(w.o, {}),
+    "c = d.copy()": lambda w: w.copy(),
+}
+
+
+def _split_model(scenario: str) -> list[object]:
+    w = _SplitWorld()
+    for step in SPLIT_SCENARIOS[scenario]:
+        _SPLIT_STEPS[step](w)
+    return _deaths()
+
+
+def test_an_exposed_dict_stays_split_as_cpythons() -> None:
+    """vars(obj) under dict operations: CPython 3.15.2 (run here) and the model agree on the order
+    every value dies in, which says whether the dict was split (the class's key order) or ordinary
+    (insertion order) at each point."""
+    import subprocess
+    import sys
+    for scenario in SPLIT_SCENARIOS:
+        out = subprocess.run([sys.executable, "-c", SPLIT_PRELUDE + split_program(scenario)],
+                             capture_output=True, text=True, check=True)
+        got = _split_model(scenario)
+        assert got == out.stdout.split(), (scenario, got, out.stdout.split())
 
 
 def test_a_found_object_is_borrowed_and_never_read_dead_rl_20() -> None:

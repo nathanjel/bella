@@ -343,7 +343,15 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            table instead of answered with NameError or AttributeError. The L2 release-point
            probes run compiled (`test_compiled_probes.py`). Later: the slot wrappers' own types
            (their repr and type are refused, RL-218).
-         * 3a.3 dict exposure: C-3-01..03.
+         * 3a.3 done 2026-11-03 (`docs/emitter.md` section 3a): one dict type, `object.hpp`'s
+           compact dict with the runtime's hash and `==`, so an instance's `__dict__` is a dict
+           like any other; the split rules measured on 3.15.2 and modelled first; the dict's
+           missing methods (`clear`, `copy`, `popitem`, `setdefault`, `update`, `fromkeys`) and
+           live views. C-3-01..03 pass compiled, and C-9-08 with them: `make compiled-corpus`
+           18 of 76. Found on the way and fixed: `keys()`, `values()`, `items()` returned lists,
+           `str(KeyError(k))` was not `repr(k)`, a lookup whose `__eq__` changed the dict raised
+           RuntimeError instead of starting again. Left: the views' set operations (refused),
+           the older C++ methods' argument-count messages.
        * 3b generators (state machines) and compiled imports: C-3-04.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done.
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

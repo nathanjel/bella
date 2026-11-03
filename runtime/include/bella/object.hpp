@@ -79,8 +79,8 @@ public:
 enum class Kind : std::uint8_t {
     Str, Dict, Class, Instance, Function, SlotDescriptor, Marker,
     // the runtime's own objects (bella/runtime.hpp): their deaths go through destroyer(kind)
-    Singleton, Bool, BigInt, Float, Tuple, List, PyDict, Cell, PyFunction, Builtin, Method, Module,
-    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, KindCount
+    Singleton, Bool, BigInt, Float, Tuple, List, Cell, PyFunction, Builtin, Method, Module,
+    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, KindCount
 };
 enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2 };
 
@@ -286,15 +286,225 @@ struct SharedKeys {
     }
 };
 
-// ---- the instance dict as an object of its own (refmodel RefDict) ----
+// ---- the dict: one type for every dict, an instance's __dict__ included (refmodel RefDict) ----
+// CPython's compact dict (Objects/dictobject.c): an index table probed with the perturbation
+// scheme over entries in insertion order, resized to the smallest power of two above three times
+// the entries in use. Keys compare by identity, then by hash and ==, through the runtime's hooks
+// (without the runtime: a str by its text, anything else by identity). A dict made by exposing an
+// instance's __dict__ is split: `split` is its class's shared keys, and its values die in their
+// order; `embedded` is the live object whose values it holds. The rules for when a split dict
+// becomes ordinary are measured on 3.15.2 (refmodel RefDict.store, popitem_, clear_, copy_).
 struct DictObject : Object {
-    NameMap map;
+    struct Entry { std::int64_t hash; Obj key; Obj value; };   // key Unset: deleted
+    std::vector<Entry> entries;
+    std::vector<std::int64_t> indices;           // -1 empty, -2 dummy, else an entry index
+    std::size_t used = 0;
+    std::uint64_t version = 0;                   // changes on every mutation
+    std::uint64_t layout = 0;                    // changes when the table is rebuilt: a lookup restarts
     std::shared_ptr<SharedKeys> split;           // the class keys it shares, or null: an ordinary dict
+    const Object* embedded = nullptr;            // the live object whose values these are (exposure)
     DictObject();
     void note_key(const Str* n) {
         if (split && !split->note(n)) split.reset();   // the keys are full: an ordinary dict from now on
     }
 };
+
+// A key's hash and ==, which may run Python code (the runtime's hash_of and keys_equal).
+using KeyHashHook = std::int64_t (*)(Obj key);
+using KeyEqHook = bool (*)(Obj a, Obj b);
+inline KeyHashHook& key_hash_hook() {
+    static KeyHashHook hook = nullptr;
+    return hook;
+}
+inline KeyEqHook& key_eq_hook() {
+    static KeyEqHook hook = nullptr;
+    return hook;
+}
+
+namespace detail {
+constexpr std::int64_t DKIX_EMPTY = -1, DKIX_DUMMY = -2;
+constexpr int PERTURB_SHIFT = 5;
+inline bool is_str(Obj v) { return v.is_object() && v.object()->kind == Kind::Str; }
+inline std::int64_t key_hash(Obj k) {
+    if (key_hash_hook() != nullptr) return key_hash_hook()(k);
+    if (k.is_small()) return k.small_value() == -1 ? -2 : k.small_value();
+    if (is_str(k)) return static_cast<std::int64_t>(std::hash<std::string>{}(static_cast<const Str*>(k.object())->text) >> 1);
+    return static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(k.object()) >> 4);
+}
+inline bool key_eq(Obj a, Obj b) {
+    if (key_eq_hook() != nullptr) return key_eq_hook()(a, b);
+    return is_str(a) && is_str(b) && static_cast<const Str*>(a.object())->text == static_cast<const Str*>(b.object())->text;
+}
+inline std::size_t usable(const DictObject* d) { return d->indices.size() * 2 / 3; }
+
+// The index slot where `key` is, or where it would go, and its entry index (or DKIX_EMPTY). A
+// comparison that changed the table or the entry starts the lookup again, as CPython does
+// (DKIX_KEY_CHANGED).
+inline std::pair<std::size_t, std::int64_t> probe(DictObject* d, Obj key, std::int64_t hash) {
+restart:
+    std::size_t mask = d->indices.size() - 1;
+    auto perturb = static_cast<std::uint64_t>(hash);
+    std::size_t i = static_cast<std::size_t>(hash) & mask;
+    std::optional<std::size_t> free_slot;
+    for (;;) {
+        std::int64_t ix = d->indices[i];
+        if (ix == DKIX_EMPTY) return {free_slot.value_or(i), DKIX_EMPTY};
+        if (ix == DKIX_DUMMY) {
+            if (!free_slot) free_slot = i;
+        } else {
+            auto& e = d->entries[static_cast<std::size_t>(ix)];
+            if (e.key == key) return {i, ix};
+            if (e.hash == hash) {
+                std::uint64_t layout = d->layout;
+                Obj start = e.key;
+                incref(start);
+                bool eq;
+                try {
+                    eq = key_eq(start, key);
+                } catch (...) {
+                    decref(start);
+                    throw;
+                }
+                bool same = d->layout == layout && static_cast<std::size_t>(ix) < d->entries.size() &&
+                            d->entries[static_cast<std::size_t>(ix)].key == start;
+                decref(start);
+                if (!same) {
+                    if (d->indices.empty()) return {0, DKIX_EMPTY};
+                    goto restart;
+                }
+                if (eq) return {i, ix};
+            }
+        }
+        perturb >>= PERTURB_SHIFT;
+        i = (i * 5 + static_cast<std::size_t>(perturb) + 1) & mask;
+    }
+}
+
+inline void rebuild(DictObject* d, std::size_t minsize) {
+    std::size_t size = 8;
+    while (size <= minsize) size <<= 1;
+    std::vector<DictObject::Entry> live;
+    for (auto& e : d->entries) if (!e.key.is_unset()) live.push_back(e);
+    d->entries = std::move(live);
+    d->indices.assign(size, DKIX_EMPTY);
+    ++d->layout;
+    std::size_t mask = size - 1;
+    for (std::size_t ix = 0; ix < d->entries.size(); ++ix) {
+        auto perturb = static_cast<std::uint64_t>(d->entries[ix].hash);
+        std::size_t i = static_cast<std::size_t>(d->entries[ix].hash) & mask;
+        while (d->indices[i] != DKIX_EMPTY) {
+            perturb >>= PERTURB_SHIFT;
+            i = (i * 5 + static_cast<std::size_t>(perturb) + 1) & mask;
+        }
+        d->indices[i] = static_cast<std::int64_t>(ix);
+    }
+}
+}  // namespace detail
+
+// The value stored under key (borrowed), or Unset.
+inline Obj dict_find(DictObject* d, Obj key, std::int64_t hash) {
+    if (d->indices.empty()) return Obj{};
+    auto [slot, ix] = detail::probe(d, key, hash);
+    return ix >= 0 ? d->entries[static_cast<std::size_t>(ix)].value : Obj{};
+}
+inline Obj dict_find(DictObject* d, Obj key) { return dict_find(d, key, detail::key_hash(key)); }
+
+// Stores value under key, moving in one count of value the caller holds; returns the value it
+// replaced with its count (Unset if the key is new, which goes to the end). A key that is not a
+// str makes a split dict ordinary; a new str key joins its shared keys while there is room.
+inline Obj dict_put(DictObject* d, Obj key, std::int64_t hash, Obj value) {
+    if (d->split && !detail::is_str(key)) d->split.reset();
+    if (d->indices.empty()) detail::rebuild(d, 0);
+    auto [slot, ix] = detail::probe(d, key, hash);
+    ++d->version;
+    if (ix >= 0) return std::exchange(d->entries[static_cast<std::size_t>(ix)].value, value);
+    if (d->split) d->note_key(static_cast<const Str*>(key.object()));
+    if (d->entries.size() >= detail::usable(d)) {
+        detail::rebuild(d, d->used * 3);
+        slot = detail::probe(d, key, hash).first;
+    }
+    incref(key);
+    d->indices[slot] = static_cast<std::int64_t>(d->entries.size());
+    d->entries.push_back({hash, key, value});
+    ++d->used;
+    return Obj{};
+}
+// d[key] = value: the new value is stored before the old one is released.
+inline void dict_store(DictObject* d, Obj key, std::int64_t hash, Obj value) {
+    incref(value);
+    decref(dict_put(d, key, hash, value));
+}
+inline void dict_store(DictObject* d, Obj key, Obj value) { dict_store(d, key, detail::key_hash(key), value); }
+
+// Removes key and releases the key; returns its value with its count, or Unset when absent.
+inline Obj dict_pop(DictObject* d, Obj key, std::int64_t hash) {
+    if (d->indices.empty()) return Obj{};
+    auto [slot, ix] = detail::probe(d, key, hash);
+    if (ix < 0) return Obj{};
+    auto& e = d->entries[static_cast<std::size_t>(ix)];
+    d->indices[slot] = detail::DKIX_DUMMY;
+    Obj k = std::exchange(e.key, Obj{});
+    Obj v = std::exchange(e.value, Obj{});
+    --d->used;
+    ++d->version;
+    decref(k);
+    return v;
+}
+inline Obj dict_pop(DictObject* d, Obj key) { return dict_pop(d, key, detail::key_hash(key)); }
+
+// Empties d; returns its keys and values, with their counts, in insertion order.
+inline std::vector<std::pair<Obj, Obj>> dict_take_all(DictObject* d) {
+    std::vector<std::pair<Obj, Obj>> out;
+    for (auto& e : d->entries)
+        if (!e.key.is_unset()) out.emplace_back(e.key, e.value);
+    d->entries.clear();
+    d->indices.clear();
+    d->used = 0;
+    ++d->version;
+    ++d->layout;
+    return out;
+}
+
+namespace detail {
+// Releases what a dict held: a split dict's values in its shared keys' order (then any value
+// under a name the keys could not take), then the keys; an ordinary dict's entries in order, each
+// key before its value.
+inline void release_entries(std::vector<std::pair<Obj, Obj>> items, const SharedKeys* split) {
+    if (split == nullptr) {
+        for (auto& [k, v] : items) {
+            decref(k);
+            decref(v);
+        }
+        return;
+    }
+    std::vector<Obj> order;
+    for (const Str* name : split->names)
+        for (auto& [k, v] : items)
+            if (k.object() == name && !v.is_unset()) { order.push_back(v); v = Obj{}; }
+    for (auto& [k, v] : items) if (!v.is_unset()) order.push_back(std::exchange(v, Obj{}));
+    for (Obj v : order) decref(v);
+    for (auto& [k, v] : items) decref(k);
+}
+}  // namespace detail
+
+// dict.clear(): a split dict stays split only while its values are embedded in the live object
+// it was exposed from.
+inline void dict_clear(DictObject* d) {
+    auto split = d->split;
+    if (d->embedded == nullptr) d->split.reset();
+    detail::release_entries(dict_take_all(d), split.get());
+}
+// dict.popitem()'s first step: a split dict becomes ordinary.
+inline void dict_unsplit(DictObject* d) { d->split.reset(); }
+// dict.copy(): a split dict's copy is split too, sharing its keys.
+inline void dict_copy_into(DictObject* to, DictObject* from) {
+    for (auto& e : from->entries)
+        if (!e.key.is_unset()) {
+            incref(e.value);
+            decref(dict_put(to, e.key, e.hash, e.value));
+        }
+    to->split = from->split;
+}
 
 // ---- native functions: what a class attribute holds where the model holds a Python callable ----
 struct Function : Object {
@@ -617,15 +827,15 @@ namespace detail {
 // (present, value) for the __dict__-backed storage of a name (never slots)
 inline std::pair<bool, Obj> instance_storage(Instance* obj, const Str* name) {
     if (obj->exposed()) {
-        const Obj* v = obj->dict->map.find(name);
-        return v ? std::pair{true, *v} : std::pair{false, Obj{}};
+        Obj v = dict_find(obj->dict, Obj::of(name));
+        return v.is_unset() ? std::pair{false, Obj{}} : std::pair{true, v};
     }
     if (std::find(obj->cls->promoted_fields.begin(), obj->cls->promoted_fields.end(), name) != obj->cls->promoted_fields.end()) {
         Obj v = obj->field(name);
         if (!v.is_unset()) return {true, v};
     }
     if (obj->dict != nullptr)
-        if (const Obj* v = obj->dict->map.find(name)) return {true, *v};
+        if (Obj v = dict_find(obj->dict, Obj::of(name)); !v.is_unset()) return {true, v};
     return {false, Obj{}};
 }
 inline bool is_promoted(Instance* obj, const Str* name) {
@@ -697,7 +907,7 @@ inline std::optional<LookupPlan> plan_cached(Instance* obj, const Str* name, con
         }
         case Plan::InstanceDict:
             if (obj->dict != nullptr)
-                if (const Obj* v = obj->dict->map.find(name)) return LookupPlan{Plan::InstanceDict, Obj{}, *v, hook};
+                if (Obj v = dict_find(obj->dict, Obj::of(name)); !v.is_unset()) return LookupPlan{Plan::InstanceDict, Obj{}, v, hook};
             return std::nullopt;
         case Plan::DataDescriptor:
             return LookupPlan{Plan::DataDescriptor, e->found, Obj{}, hook};
@@ -807,12 +1017,8 @@ inline void setattr(Instance* obj, const Str* name, Obj value) {
             return;
         }
     }
-    if (obj->exposed()) {
-        DictObject* d = obj->dict;
-        incref(value);
-        if (!d->map.contains(name)) d->note_key(name);
-        Obj old = d->map.set(name, value);
-        decref(old);
+    if (obj->exposed()) {                        // a new name joins a split dict's keys (dict_put)
+        dict_store(obj->dict, Obj::of(name), value);
         return;
     }
     if (detail::is_promoted(obj, name)) {
@@ -833,13 +1039,11 @@ inline void setattr(Instance* obj, const Str* name, Obj value) {
         obj->dict->split = cls->keys;
         incref(obj->dict);
     }
-    if (!obj->dict->map.contains(name)) {
+    if (dict_find(obj->dict, Obj::of(name)).is_unset()) {
         obj->order.push_back(name);
         cls->keys->note(name);
     }
-    incref(value);
-    Obj old = obj->dict->map.set(name, value);
-    decref(old);
+    dict_store(obj->dict, Obj::of(name), value);
 }
 
 inline void delattr(Instance* obj, const Str* name) {
@@ -865,7 +1069,7 @@ inline void delattr(Instance* obj, const Str* name) {
     // attribute missing (_PyObject_StoreInstanceAttribute)
     if (obj->exposed()) {
         obj->dict->note_key(name);
-        Obj old = obj->dict->map.pop(name);
+        Obj old = dict_pop(obj->dict, Obj::of(name));
         if (old.is_unset()) throw AttributeError(name->text);
         decref(old);
         return;
@@ -877,8 +1081,8 @@ inline void delattr(Instance* obj, const Str* name) {
         decref(old);
         return;
     }
-    if (obj->dict != nullptr && obj->dict->map.contains(name)) {
-        Obj old = obj->dict->map.pop(name);
+    if (obj->dict != nullptr && !dict_find(obj->dict, Obj::of(name)).is_unset()) {
+        Obj old = dict_pop(obj->dict, Obj::of(name));
         std::erase(obj->order, name);
         decref(old);
         return;
@@ -894,18 +1098,13 @@ inline Ref expose_dict(Instance* obj) {
     if (!cls->has_dict) throw AttributeError("'" + cls->name + "' object has no attribute '__dict__'");
     if (obj->exposed()) return Ref::share(Obj::of(obj->dict));
     auto* d = new DictObject();
-    d->split = cls->keys;
     for (const Str* name : obj->order) {         // the references move: no count changes
-        if (detail::is_promoted(obj, name)) {
-            d->map.set(name, std::exchange(obj->field(name), Obj{}));
-        } else {
-            d->map.set(name, *obj->dict->map.find(name));
-        }
+        Obj v = detail::is_promoted(obj, name) ? std::exchange(obj->field(name), Obj{}) : dict_pop(obj->dict, Obj::of(name));
+        dict_put(d, Obj::of(name), detail::key_hash(Obj::of(name)), v);
     }
-    if (obj->dict != nullptr) {                  // the overflow map's references moved into d
-        obj->dict->map.take_all();
-        decref(obj->dict);
-    }
+    d->split = cls->keys;                        // split from here on, as the class's keys
+    d->embedded = obj;                           // its values are the object's while it lives
+    if (obj->dict != nullptr) decref(obj->dict); // the overflow dict, emptied
     incref(d);
     obj->dict = d;
     obj->order.clear();
@@ -919,6 +1118,7 @@ inline void set_dict(Instance* obj, DictObject* d) {
     if (!obj->cls->has_dict) throw AttributeError("'" + obj->cls->name + "' object has no attribute '__dict__'");
     expose_dict(obj);
     DictObject* old = obj->dict;
+    if (old->embedded == obj) old->embedded = nullptr;   // its values are detached from obj
     incref(d);
     obj->dict = d;
     decref(old);
@@ -935,15 +1135,6 @@ inline void check_not_named(Object* o) {
                 if (c->version == e.version)
                     throw ModelError("a valid cache entry for '" + e.name->text + "' names an object that dies");
         }
-}
-inline void release_split(std::vector<std::pair<const Str*, Obj>> items, const SharedKeys* keys) {
-    std::vector<Obj> order;
-    if (keys != nullptr)
-        for (const Str* k : keys->names)
-            for (auto& [n, v] : items)
-                if (n == k && !v.is_unset()) { order.push_back(v); v = Obj{}; }
-    for (auto& [n, v] : items) if (!v.is_unset()) order.push_back(v);
-    for (Obj v : order) decref(v);
 }
 inline void bury(Object* o) {
     if (heap().quarantine) heap().graveyard.push_back(o);
@@ -996,13 +1187,18 @@ inline void dealloc(Object* o) {
             }
             if (obj->exposed()) {
                 DictObject* d = std::exchange(obj->dict, nullptr);
+                if (d->embedded == obj) d->embedded = nullptr;   // its values are detached from the dead object
                 decref(d);
             } else {
                 std::vector<std::pair<const Str*, Obj>> held;
+                std::vector<Obj> keys;
                 for (const Str* p : obj->cls->promoted_fields)
                     if (!obj->field(p).is_unset()) held.emplace_back(p, std::exchange(obj->field(p), Obj{}));
                 if (obj->dict != nullptr) {
-                    for (auto& item : obj->dict->map.take_all()) held.push_back(item);
+                    for (auto& [k, v] : dict_take_all(obj->dict)) {
+                        held.emplace_back(static_cast<const Str*>(k.object()), v);
+                        keys.push_back(k);
+                    }
                     DictObject* d = std::exchange(obj->dict, nullptr);
                     decref(d);
                 }
@@ -1014,6 +1210,7 @@ inline void dealloc(Object* o) {
                 for (const Str* n : obj->order)
                     for (auto& [m, v] : held) if (m == n && !v.is_unset()) { ranked.emplace_back(m, v); v = Obj{}; }
                 for (auto& [n, v] : ranked) decref(v);
+                for (Obj k : keys) decref(k);
             }
             detail::bury(o);
             return;
@@ -1022,7 +1219,7 @@ inline void dealloc(Object* o) {
             auto* d = static_cast<DictObject*>(o);
             d->flags |= DEAD;
             auto split = std::move(d->split);
-            detail::release_split(d->map.take_all(), split.get());
+            detail::release_entries(dict_take_all(d), split.get());
             detail::bury(o);
             return;
         }

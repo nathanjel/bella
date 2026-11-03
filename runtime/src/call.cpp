@@ -35,6 +35,32 @@ Ref positional_only(Args a, const char* name, std::size_t lo, std::size_t hi) {
     return Ref{};
 }
 
+// CPython's argument checks by calling convention; each message is CPython's for that kind.
+void no_keywords(Args a, const std::string& qualname) {
+    if (a.nkw != 0) raise_new("TypeError", qualname + "() takes no keyword arguments");
+}
+void noargs(Args a, const std::string& qualname) {                     // METH_NOARGS
+    no_keywords(a, qualname);
+    if (a.npos != 0) raise_new("TypeError", qualname + "() takes no arguments (" + std::to_string(a.npos) + " given)");
+}
+void onearg(Args a, const std::string& qualname) {                     // METH_O
+    no_keywords(a, qualname);
+    if (a.npos != 1) raise_new("TypeError", qualname + "() takes exactly one argument (" + std::to_string(a.npos) + " given)");
+}
+void check_positional(Args a, const std::string& name, std::size_t lo, std::size_t hi) {   // _PyArg_CheckPositional
+    auto plural = [](std::size_t n) { return n == 1 ? " argument" : " arguments"; };
+    if (a.npos < lo)
+        raise_new("TypeError", name + " expected " + (lo == hi ? "" : "at least ") + std::to_string(lo) + plural(lo) +
+                                   ", got " + std::to_string(a.npos));
+    if (a.npos > hi)
+        raise_new("TypeError", name + " expected " + (lo == hi ? "" : "at most ") + std::to_string(hi) + plural(hi) +
+                                   ", got " + std::to_string(a.npos));
+}
+void clinic(Args a, const std::string& name, const std::string& qualname, std::size_t lo, std::size_t hi) {
+    no_keywords(a, qualname);
+    check_positional(a, name, lo, hi);
+}
+
 std::string quoted_list(const std::vector<std::string>& names) {
     std::string out;
     for (std::size_t i = 0; i < names.size(); ++i) {
@@ -124,7 +150,7 @@ Ref call_ex(Obj f, Obj args, Obj kwargs) {
     else throw NotImplemented("CALL_FUNCTION_EX with positional arguments that are not a tuple");
     std::vector<const Str*> names;
     if (!kwargs.is_unset()) {
-        if (!is_kind(kwargs, Kind::PyDict)) throw NotImplemented("CALL_FUNCTION_EX with keywords that are not a dict");
+        if (!is_kind(kwargs, Kind::Dict)) throw NotImplemented("CALL_FUNCTION_EX with keywords that are not a dict");
         for (auto& e : static_cast<Dict*>(kwargs.object())->entries) {
             if (e.key.is_unset()) continue;
             const Str* k = as_str(e.key);
@@ -312,7 +338,7 @@ Ref load_name(Obj ns, Module* m, const Str* name) {
 void store_name(Obj ns, const Str* name, Ref value) { mapping_set(ns, Obj::of(name), value.get()); }
 void store_global(Module* m, const Str* name, Ref value) { dict_set(m->dict, Obj::of(name), value.get()); }
 void delete_name(Obj ns, const Str* name) {
-    if (is_kind(ns, Kind::PyDict)) {
+    if (is_kind(ns, Kind::Dict)) {
         if (!dict_del(static_cast<Dict*>(ns.object()), Obj::of(name)))
             raise_new("NameError", "name '" + name->text + "' is not defined");
         return;
@@ -378,7 +404,9 @@ Ref b_len(Obj, Args a) {
     if (const Str* s = as_str(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
     if (is_kind(v, Kind::Tuple)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Tuple*>(v.object())->items.size())));
     if (is_kind(v, Kind::List)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<List*>(v.object())->items.size())));
-    if (is_kind(v, Kind::PyDict)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(v.object())->used)));
+    if (is_kind(v, Kind::Dict)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(v.object())->used)));
+    if (is_kind(v, Kind::DictView))
+        return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(static_cast<DictView*>(v.object())->dict.object())->used)));
     if (is_kind(v, Kind::Range)) return Ref::steal(Obj::small(static_cast<Range*>(v.object())->length));
     bool has = false;
     Ref r = call_special(v, "__len__", {}, &has);
@@ -571,18 +599,14 @@ Ref getitem_m(Obj self, Args a) { positional_only(a, "__getitem__", 1, 1); retur
 Ref setitem_m(Obj self, Args a) { positional_only(a, "__setitem__", 2, 2); setitem(self, a.pos(0), a.pos(1)); return none_ref(); }
 Ref contains_m(Obj self, Args a) { positional_only(a, "__contains__", 1, 1); return compare(CmpOp::In, a.pos(0), self); }
 Ref iter_m(Obj self, Args a) { positional_only(a, "__iter__", 0, 0); return iter(self); }
-Dict* dict_self(Obj self) {
-    // an instance's __dict__ is object.hpp's name map until step 3a.3 makes it a dict like any other
-    if (!is_kind(self, Kind::PyDict)) throw NotImplemented("dict methods on an instance __dict__ (step 3a.3)");
-    return static_cast<Dict*>(self.object());
-}
+Dict* dict_self(Obj self) { return static_cast<Dict*>(self.object()); }   // the descriptor checked the receiver
 Ref dict_get_m(Obj self, Args a) {
-    positional_only(a, "get", 1, 2);
+    clinic(a, "get", "dict.get", 1, 2);
     Obj v = dict_get(dict_self(self), a.pos(0));
     return !v.is_unset() ? Ref::share(v) : a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
 }
 Ref dict_pop_m(Obj self, Args a) {
-    positional_only(a, "pop", 1, 2);
+    clinic(a, "pop", "dict.pop", 1, 2);
     Obj v = dict_get(dict_self(self), a.pos(0));
     if (v.is_unset()) {
         if (a.npos > 1) return Ref::share(a.pos(1));
@@ -593,28 +617,109 @@ Ref dict_pop_m(Obj self, Args a) {
     dict_del(dict_self(self), a.pos(0));
     return out;
 }
-Ref dict_len_m(Obj self, Args a) { positional_only(a, "__len__", 0, 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(dict_self(self)->used))); }
+Ref dict_len_m(Obj self, Args a) { check_positional(a, "", 0, 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(dict_self(self)->used))); }
 Ref dict_keys_m(Obj self, Args a) {
-    positional_only(a, "keys", 0, 0);
-    Ref l = list_new({});
-    for (auto& e : dict_self(self)->entries) if (!e.key.is_unset()) list_append(l.get(), e.key);
-    return l;
+    noargs(a, "dict.keys");
+    return own(new DictView(self, DictView::Keys));
 }
 Ref dict_items_m(Obj self, Args a) {
-    positional_only(a, "items", 0, 0);
-    Ref l = list_new({});
-    for (auto& e : dict_self(self)->entries)
-        if (!e.key.is_unset()) {
-            Ref pair = tuple_new({e.key, e.value});
-            list_append(l.get(), pair.get());
-        }
-    return l;
+    noargs(a, "dict.items");
+    return own(new DictView(self, DictView::Items));
 }
 Ref dict_values_m(Obj self, Args a) {
-    positional_only(a, "values", 0, 0);
-    Ref l = list_new({});
-    for (auto& e : dict_self(self)->entries) if (!e.key.is_unset()) list_append(l.get(), e.value);
-    return l;
+    noargs(a, "dict.values");
+    return own(new DictView(self, DictView::Values));
+}
+Ref view_len_m(Obj self, Args a) {
+    check_positional(a, "", 0, 0);
+    return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(static_cast<DictView*>(self.object())->dict.object())->used)));
+}
+Ref view_iter_m(Obj self, Args a) {
+    check_positional(a, "", 0, 0);
+    return iter(self);
+}
+Ref view_contains_m(Obj self, Args a) {
+    onearg(a, type_of(self)->name + ".__contains__");
+    return compare(CmpOp::In, a.pos(0), self);
+}
+
+Ref dict_clear_m(Obj self, Args a) {
+    noargs(a, "dict.clear");
+    dict_clear(dict_self(self));
+    return none_ref();
+}
+Ref dict_copy_m(Obj self, Args a) {
+    noargs(a, "dict.copy");
+    Ref out = dict_new();
+    dict_copy_into(static_cast<Dict*>(out.get().object()), dict_self(self));
+    return out;
+}
+Ref dict_popitem_m(Obj self, Args a) {          // the last entry; a split dict becomes ordinary first
+    noargs(a, "dict.popitem");
+    Dict* d = dict_self(self);
+    if (d->used == 0) {
+        Ref msg = str_new("popitem(): dictionary is empty");
+        Ref exc = invoke(Obj::of(exception_class("KeyError")), {msg.get()});
+        raise(exc.get());
+    }
+    dict_unsplit(d);
+    auto it = std::find_if(d->entries.rbegin(), d->entries.rend(), [](auto& e) { return !e.key.is_unset(); });
+    Ref key = Ref::share(it->key);
+    Obj value = dict_pop(d, key.get(), it->hash);
+    Ref v = Ref::steal(value);
+    return tuple_new({key.get(), v.get()});
+}
+Ref dict_setdefault_m(Obj self, Args a) {
+    clinic(a, "setdefault", "dict.setdefault", 1, 2);
+    Dict* d = dict_self(self);
+    std::int64_t hash = hash_of(a.pos(0));
+    Obj v = dict_find(d, a.pos(0), hash);
+    if (!v.is_unset()) return Ref::share(v);
+    Obj dflt = a.npos > 1 ? a.pos(1) : None();
+    dict_store(d, a.pos(0), hash, dflt);
+    return Ref::share(dflt);
+}
+Ref dict_update_m(Obj self, Args a) {           // dict_update_arg, then the keywords
+    if (a.npos > 1) raise_new("TypeError", "update expected at most 1 argument, got " + std::to_string(a.npos));
+    Dict* d = dict_self(self);
+    if (a.npos == 1) {
+        Obj arg = a.pos(0);
+        if (is_kind(arg, Kind::Dict) || !type_lookup(type_of(arg), intern("keys")).is_unset()) {
+            dict_update(self, arg);
+        } else {
+            Ref it = iter(arg);
+            for (std::int64_t i = 0;; ++i) {
+                Ref item = for_next(it.get());
+                if (is_end(item)) break;
+                Ref pair = iter(item.get());
+                std::vector<Ref> kv;
+                for (;;) {
+                    Ref x = for_next(pair.get());
+                    if (is_end(x)) break;
+                    kv.push_back(std::move(x));
+                }
+                if (kv.size() != 2)
+                    raise_new("ValueError", "dictionary update sequence element #" + std::to_string(i) + " has length " +
+                                                std::to_string(kv.size()) + "; 2 is required");
+                dict_set(d, kv[0].get(), kv[1].get());
+            }
+        }
+    }
+    for (std::size_t i = 0; i < a.nkw; ++i) dict_set(d, Obj::of(a.kwnames[i]), a.kw(i));
+    return none_ref();
+}
+Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
+    clinic(a, "fromkeys", "dict.fromkeys", 1, 2);
+    if (cls.object() != Obj::of(types().dict).object()) throw NotImplemented("dict.fromkeys on a subclass of dict");
+    Ref out = dict_new();
+    Obj value = a.npos > 1 ? a.pos(1) : None();
+    Ref it = iter(a.pos(0));
+    for (;;) {
+        Ref k = for_next(it.get());
+        if (is_end(k)) break;
+        dict_set(static_cast<Dict*>(out.get().object()), k.get(), value);
+    }
+    return out;
 }
 
 Ref b_iter(Obj, Args a) {
@@ -804,6 +909,22 @@ Module* make_builtins() {
     method(t.dict, "keys", dict_keys_m);
     method(t.dict, "items", dict_items_m);
     method(t.dict, "values", dict_values_m);
+    for (ClassObject* v : {t.dict_keys, t.dict_values, t.dict_items}) {
+        method(v, "__len__", view_len_m);
+        method(v, "__iter__", view_iter_m);
+        if (v != t.dict_values) method(v, "__contains__", view_contains_m);
+    }
+    method(t.dict, "clear", dict_clear_m);
+    method(t.dict, "copy", dict_copy_m);
+    method(t.dict, "popitem", dict_popitem_m);
+    method(t.dict, "setdefault", dict_setdefault_m);
+    method(t.dict, "update", dict_update_m);
+    {
+        auto* b = new Builtin("fromkeys", dict_fromkeys_m, Obj{}, Binding::ClassMethod);
+        b->owner = t.dict;
+        b->flags |= IMMORTAL;
+        t.dict->attrs.set(intern("fromkeys"), Obj::of(b));
+    }
     method(t.textio, "write", textio_write);
     method(t.textio, "flush", textio_flush);
     put(d, "__name__", m->name.get());
@@ -920,7 +1041,7 @@ Ref i_special(Obj, Args a) {                    // _PyObject_LookupSpecial, as t
 }
 Ref i_dict_next(Obj, Args a) {                   // PyDict_Next: (next position, key, value) or None
     positional_only(a, "_dict_next", 2, 2);
-    if (!is_kind(a.pos(0), Kind::PyDict)) throw NotImplemented("_dict_next of an instance __dict__ (step 3a.3)");
+    if (!is_kind(a.pos(0), Kind::Dict)) raise_new("TypeError", "_dict_next() needs a dict");
     auto* d = static_cast<Dict*>(a.pos(0).object());
     for (std::int64_t i = index_value(a.pos(1)); i >= 0 && static_cast<std::size_t>(i) < d->entries.size(); ++i) {
         auto& e = d->entries[static_cast<std::size_t>(i)];
@@ -1107,10 +1228,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, std::initializer_list<
                 if (!intr.is_unset())
                     for (Obj n : static_cast<List*>(intr.object())->items) dict_set(intrinsics(), n, dict_get(pm->dict, n));
                 Obj tm = dict_get(pm->dict, Obj::of(intern("__type_methods__")));
-                if (is_kind(tm, Kind::PyDict))
+                if (is_kind(tm, Kind::Dict))
                     for (auto& e : static_cast<Dict*>(tm.object())->entries) {
                         if (e.key.is_unset()) continue;
-                        Obj cls = dict_get(builtins_module()->dict, e.key);
+                        Obj cls = is_kind(e.key, Kind::Class) ? e.key : dict_get(builtins_module()->dict, e.key);   // a type, or a builtin's name
                         for (auto& m : static_cast<Dict*>(e.value.object())->entries)
                             if (!m.key.is_unset())
                                 static_cast<ClassObject*>(cls.object())->set_attr(intern(as_str(m.key)->text), m.value);

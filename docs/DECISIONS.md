@@ -665,6 +665,16 @@ intact, and how they were made:
   that carries it (RL-215); the frontend's stack values die on a function's exception edge before
   its frame is recorded (RL-213).
 
+**2026-11-03 — step 3a.3: one dict type** (design section 3; `docs/emitter.md` section 3a).
+* `object.hpp`'s `DictObject` is CPython's compact dict with any key, its hash and `==` supplied
+  by the runtime through hooks (identity and text without it, so `make object-test` still runs the
+  header alone); the runtime's `Dict` is the same type, and `Kind::PyDict` is gone. An instance's
+  `__dict__` is therefore an ordinary dict, as the design's `DictObject` already said.
+* An exposed dict stays split while CPython's does, measured on 3.15.2 and modelled first
+  (`RefDict.store`, `popitem_`, `clear_`, `copy_`, `owner`): a non-`str` key and `popitem` make it
+  ordinary; `clear` keeps it split only while its values are embedded in the live object.
+* Views are objects of their own (`Kind::DictView`); what they cannot do yet is refused.
+
 ## Pins
 
 | What | Value | Where |

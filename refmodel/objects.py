@@ -34,7 +34,11 @@ What is modelled (design document, section 3, as revised by review rounds two an
   (``RefClass.keys``: the sorted ``__static_attributes__``, then each name in the order any
   instance first stored it), or, once the dict is a separate object, the dict's release. A
   dict made by exposure stays split and releases its values in key order; a dict installed by
-  ``obj.__dict__ = d`` is ordinary and releases them in insertion order. A store keeps the new
+  ``obj.__dict__ = d`` is ordinary and releases them in insertion order. An exposed dict is an
+  ordinary ``dict`` to the program (step 3a.3): a key that is not exactly a ``str`` and
+  ``popitem`` make it ordinary, as does ``clear`` unless its values are still embedded in the live
+  object it was exposed from; ``copy`` is split too (all measured on 3.15.2,
+  ``refmodel/tests/test_cases.py::test_an_exposed_dict_stays_split_as_cpythons``). A store keeps the new
   value before it releases the old one; a class mutation takes the new version before it
   releases the old attribute (``type_setattro``).
 * ``CacheEntry.found`` is borrowed: it holds no count. The model checks the property the C++
@@ -156,14 +160,18 @@ def decref(v: Any) -> None:
             v.dealloc()
 
 
-class RefDict(dict[str, Any]):
+class RefDict(dict[Any, Any]):
     """An instance dict as an object of its own: counted, shareable, outliving its owner.
     ``split`` is the class whose shared keys it uses (a dict made by exposure), or None for an
-    ordinary dict; it decides the order in which the values are released when the dict dies."""
+    ordinary dict; it decides the order in which the values are released when the dict dies.
+    ``owner`` is the live object whose inline values this dict's values are (CPython 3.13+'s
+    materialised dict), until the object dies or gets another dict: ``clear`` keeps such a dict
+    split, and makes any other one ordinary."""
 
     def __init__(self, items: Any = (), split: RefClass | None = None) -> None:
         super().__init__(items)
         self.split = split
+        self.owner: RefObject | None = None
         self.refs = 0
         self.alive = True
 
@@ -178,16 +186,52 @@ class RefDict(dict[str, Any]):
         if self.split is not None and not self.split.note_key(name):
             self.split = None             # the keys are full: the dict becomes an ordinary one
 
-    def dealloc(self) -> None:
-        self.alive = False
+    def _release_order(self) -> list[Any]:
         order = list(self)
         if self.split is not None:
             ranked = [k for k in self.split.keys if k in self]
             order = ranked + [k for k in self if k not in ranked]
-        values = [self[k] for k in order]
+        return order
+
+    def dealloc(self) -> None:
+        self.alive = False
+        values = [self[k] for k in self._release_order()]
         self.clear()
         for v in values:
             decref(v)
+
+    # ---- the program's operations on the dict (vars(obj)[k] = v, ...), measured on 3.15.2 ----
+    def store(self, key: Any, value: Any) -> None:
+        if self.split is not None:
+            if type(key) is not str:
+                self.split = None           # insertdict on a split table: a combined one first
+            elif key not in self:
+                self.note_key(key)
+        old = self.get(key)
+        incref(value)
+        self[key] = value
+        decref(old)
+
+    def delete(self, key: Any) -> None:
+        decref(self.pop(key))               # a split dict stays split
+
+    def popitem_(self) -> tuple[Any, Any]:
+        self.split = None                   # dict_popitem makes a split table combined first
+        return self.popitem()               # the caller takes the value's count
+
+    def clear_(self) -> None:
+        values = [self[k] for k in self._release_order()]
+        if self.owner is None:
+            self.split = None               # detached values: the table becomes empty and combined
+        self.clear()
+        for v in values:
+            decref(v)
+
+    def copy_(self) -> RefDict:
+        d = RefDict(self, split=self.split)
+        for v in d.values():
+            incref(v)
+        return d
 
     def __repr__(self) -> str:
         return f"<RefDict {dict.__repr__(self)}>"
@@ -372,6 +416,9 @@ class RefObject:
                 decref(v)
         if self.exposed:
             d, self.dict = self.dict, None
+            assert d is not None
+            if d.owner is self:
+                d.owner = None              # its values are detached from the dead object
             decref(d)
             return
         held: dict[str, Any] = {n: v for n, v in self.inline.items() if n in self.cls.promoted_fields and v is not UNSET}
@@ -777,6 +824,7 @@ class Runtime:
                 assert obj.dict is not None
                 d[name] = obj.dict[name]
         d.refs = 1
+        d.owner = obj
         obj.dict = d
         obj.order = []
         obj.exposed = True
@@ -795,6 +843,9 @@ class Runtime:
                 incref(v)
         self.expose_dict(obj)
         old = obj.dict
+        assert old is not None
+        if old.owner is obj:
+            old.owner = None                # replaced: its values are detached from obj
         incref(d)
         obj.dict = d
         decref(old)

@@ -144,7 +144,12 @@ Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
 
 // binary_op1: the left operand's method, unless the right operand's type is a subclass that
 // overrides the reflected method, which then goes first; the reflected method last
+bool set_like_view(Obj v) { return is_kind(v, Kind::DictView) && static_cast<DictView*>(v.object())->which != DictView::Values; }
+
 Ref binary(BinOp op, Obj a, Obj b) {
+    if ((set_like_view(a) || set_like_view(b)) &&
+        (op == BinOp::And || op == BinOp::Or || op == BinOp::Sub || op == BinOp::Xor))
+        throw NotImplemented("set operations on dict keys and items views");
     std::int64_t x, y;
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (!is_heap_obj(a) && !is_heap_obj(b)) {
@@ -243,6 +248,26 @@ bool ordered(CmpOp op, const T& a, const T& b) {
 }
 bool contains(Obj container, Obj item) {
     auto equal = [&](Obj v) { return v == item || truth(compare(CmpOp::Eq, v, item).get()); };
+    if (is_kind(container, Kind::DictView)) {    // dictkeys_contains, dictitems_contains; values by iteration
+        auto* view = static_cast<DictView*>(container.object());
+        auto* d = static_cast<Dict*>(view->dict.object());
+        if (view->which == DictView::Keys) return !dict_get(d, item).is_unset();
+        if (view->which == DictView::Items) {
+            if (!is_kind(item, Kind::Tuple) || static_cast<Tuple*>(item.object())->items.size() != 2) return false;
+            Ref pair = Ref::share(item);
+            Obj found = dict_get(d, static_cast<Tuple*>(item.object())->items[0]);
+            if (found.is_unset()) return false;
+            Ref held = Ref::share(found);
+            Obj want = static_cast<Tuple*>(item.object())->items[1];
+            return held.get() == want || truth(compare(CmpOp::Eq, held.get(), want).get());
+        }
+        Ref it = iter(container);
+        for (;;) {
+            Ref v = for_next(it.get());
+            if (is_end(v)) return false;
+            if (equal(v.get())) return true;
+        }
+    }
     if (is_kind(container, Kind::Tuple)) {
         for (Obj v : static_cast<Tuple*>(container.object())->items) if (equal(v)) return true;
         return false;
@@ -258,9 +283,8 @@ bool contains(Obj container, Obj item) {
         }
         return false;
     }
-    if (is_kind(container, Kind::PyDict)) return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
+    if (is_kind(container, Kind::Dict)) return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
     if (is_kind(container, Kind::Set)) return set_contains(static_cast<SetObject*>(container.object()), item);
-    if (is_kind(container, Kind::Dict)) throw NotImplemented("`in` on an instance __dict__ (step 3a.3)");
     if (const Str* s = as_str(container)) {
         const Str* sub = as_str(item);
         if (sub == nullptr)
@@ -362,6 +386,7 @@ Ref compare(CmpOp op, Obj a, Obj b) {
         case CmpOp::NotIn: return Ref::steal(boolean(!contains(b, a)));
         default: break;
     }
+    if (set_like_view(a) || set_like_view(b)) throw NotImplemented("comparing dict keys and items views (as sets)");
     std::int64_t x, y;
     if (as_int(a, x) && as_int(b, y)) return Ref::steal(boolean(ordered(op, x, y)));
     ClassObject *ta = type_of(a), *tb = type_of(b);
@@ -395,7 +420,8 @@ bool truth(Obj v) {
         case Kind::Str: return static_cast<Str*>(o)->length != 0;
         case Kind::Tuple: return !static_cast<Tuple*>(o)->items.empty();
         case Kind::List: return !static_cast<List*>(o)->items.empty();
-        case Kind::PyDict: return static_cast<Dict*>(o)->used != 0;
+        case Kind::Dict: return static_cast<Dict*>(o)->used != 0;
+        case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
         case Kind::Range: return static_cast<Range*>(o)->length != 0;
         case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
         case Kind::Instance: {
@@ -708,22 +734,13 @@ Ref getitem(Obj obj, Obj key) {
         each_index(key, static_cast<std::int64_t>(s->length), [&](std::size_t i) { out += s->at(i); });
         return str_from_codepoints(out);
     }
-    if (is_kind(obj, Kind::PyDict)) {
+    if (is_kind(obj, Kind::Dict)) {
         Obj v = dict_get(static_cast<Dict*>(obj.object()), key);
         if (v.is_unset()) {
             Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
             raise(exc.get());
         }
         return Ref::share(v);
-    }
-    if (is_kind(obj, Kind::Dict)) {               // an instance dict (step 3a.3 unifies it with dict)
-        const Str* k = as_str(key);
-        const Obj* v = k == nullptr ? nullptr : static_cast<DictObject*>(obj.object())->map.find(intern(k->text));
-        if (v == nullptr) {
-            Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
-            raise(exc.get());
-        }
-        return Ref::share(*v);
     }
     bool has = false;
     Ref r = call_special(obj, "__getitem__", {key}, &has);
@@ -742,18 +759,8 @@ void setitem(Obj obj, Obj key, Obj value) {
         decref(old);
         return;
     }
-    if (is_kind(obj, Kind::PyDict)) {
+    if (is_kind(obj, Kind::Dict)) {
         dict_set(static_cast<Dict*>(obj.object()), key, value);
-        return;
-    }
-    if (is_kind(obj, Kind::Dict)) {               // an instance dict, keyed by names
-        const Str* k = as_str(key);
-        if (k == nullptr) throw NotImplemented("a key that is not a str in an instance dict (step 3a.3)");
-        auto* d = static_cast<DictObject*>(obj.object());
-        const Str* name = intern(k->text);
-        incref(value);
-        if (!d->map.contains(name)) d->note_key(name);
-        decref(d->map.set(name, value));
         return;
     }
     bool has = false;
@@ -763,7 +770,7 @@ void setitem(Obj obj, Obj key, Obj value) {
 }
 
 void delitem(Obj obj, Obj key) {
-    if (is_kind(obj, Kind::PyDict)) {
+    if (is_kind(obj, Kind::Dict)) {
         if (!dict_del(static_cast<Dict*>(obj.object()), key)) {
             Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
             raise(exc.get());
@@ -796,14 +803,21 @@ Ref iter(Obj obj) {
         it->size = static_cast<std::int64_t>(static_cast<SetObject*>(obj.object())->used);
         return r;
     }
-    if (is_kind(obj, Kind::PyDict)) {
-        auto* it = new Iterator(Iterator::DictKeysIt, obj);
+    if (is_kind(obj, Kind::Dict) || is_kind(obj, Kind::DictView)) {
+        Obj d = obj;
+        Iterator::Of of = Iterator::DictKeysIt;
+        if (is_kind(obj, Kind::DictView)) {
+            auto* view = static_cast<DictView*>(obj.object());
+            d = view->dict;
+            of = view->which == DictView::Keys ? Iterator::DictKeysIt : view->which == DictView::Values ? Iterator::DictValuesIt
+                                                                                                          : Iterator::DictItemsIt;
+        }
+        auto* it = new Iterator(of, d);
         Ref r = own(it);
-        it->size = static_cast<std::int64_t>(static_cast<Dict*>(obj.object())->used);
+        it->size = static_cast<std::int64_t>(static_cast<Dict*>(d.object())->used);
         return r;
     }
     if (is_kind(obj, Kind::Iterator)) return Ref::share(obj);
-    if (is_kind(obj, Kind::Dict)) throw NotImplemented("iterating an instance __dict__ (step 3a.3)");
     bool has = false;
     Ref r = call_special(obj, "__iter__", {}, &has);
     if (has) {
@@ -876,7 +890,9 @@ Ref for_next(Obj itv) {
                 throw;
             }
         }
-        case Iterator::DictKeysIt: {
+        case Iterator::DictKeysIt:
+        case Iterator::DictValuesIt:
+        case Iterator::DictItemsIt: {
             auto* d = static_cast<Dict*>(it->seq.object());
             if (it->size == -2 || static_cast<std::int64_t>(d->used) != it->size) {
                 it->size = -2;
@@ -885,7 +901,10 @@ Ref for_next(Obj itv) {
             while (static_cast<std::size_t>(it->pos) < d->entries.size() &&
                    d->entries[static_cast<std::size_t>(it->pos)].key.is_unset()) ++it->pos;
             if (static_cast<std::size_t>(it->pos) >= d->entries.size()) return finish();
-            return Ref::share(d->entries[static_cast<std::size_t>(it->pos++)].key);
+            auto& e = d->entries[static_cast<std::size_t>(it->pos++)];
+            if (it->of == Iterator::DictKeysIt) return Ref::share(e.key);
+            if (it->of == Iterator::DictValuesIt) return Ref::share(e.value);
+            return tuple_new({e.key, e.value});
         }
     }
     return Ref{};
@@ -940,7 +959,7 @@ namespace {
 // the (key, value) pairs of a mapping: a dict's entries, else keys() and __getitem__
 template <class F>
 void each_item(Obj mapping, F f) {
-    if (is_kind(mapping, Kind::PyDict)) {
+    if (is_kind(mapping, Kind::Dict)) {
         auto* d = static_cast<Dict*>(mapping.object());
         std::vector<std::pair<Ref, Ref>> items;
         for (auto& e : d->entries) if (!e.key.is_unset()) items.emplace_back(Ref::share(e.key), Ref::share(e.value));
@@ -964,7 +983,7 @@ std::string callable_name(Obj func) {
 
 void dict_update(Obj target, Obj mapping) {
     auto* d = static_cast<Dict*>(target.object());
-    if (is_kind(mapping, Kind::PyDict)) {           // dict_merge's fast path: the stored hashes (A9-15)
+    if (is_kind(mapping, Kind::Dict)) {           // dict_merge's fast path: the stored hashes (A9-15)
         std::vector<std::tuple<Ref, std::int64_t, Ref>> items;
         for (auto& e : static_cast<Dict*>(mapping.object())->entries)
             if (!e.key.is_unset()) items.emplace_back(Ref::share(e.key), e.hash, Ref::share(e.value));
@@ -977,7 +996,7 @@ void dict_update(Obj target, Obj mapping) {
 }
 
 void dict_merge(Obj target, Obj mapping, Obj func) {
-    if (!is_kind(mapping, Kind::PyDict) && type_lookup(type_of(mapping), intern("keys")).is_unset())
+    if (!is_kind(mapping, Kind::Dict) && type_lookup(type_of(mapping), intern("keys")).is_unset())
         raise_new("TypeError", callable_name(func) + " argument after ** must be a mapping, not " + type_of(mapping)->name);
     auto* d = static_cast<Dict*>(target.object());
     each_item(mapping, [&](Obj k, Obj v) {

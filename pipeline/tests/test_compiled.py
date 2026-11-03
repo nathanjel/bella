@@ -413,18 +413,40 @@ def test_descriptors_set_name_and_init_subclass() -> None:
     """)
 
 
-def test_an_instance_dict_refuses_dict_methods_until_3a3_and_never_crashes() -> None:
-    """vars(obj) is object.hpp's name map until step 3a.3; the dict operations it does not support
-    stop the program with a refusal (exit 70), never by reading the wrong structure."""
+def test_an_instance_dict_is_an_ordinary_dict_3a3() -> None:
+    """vars(obj) is a dict like any other (step 3a.3, design section 3): any key, the dict's
+    methods and their errors, attributes read through keys the program built, `del obj.__dict__`,
+    and a lookup that starts again when a key's __eq__ changes the dict."""
+    same('class C:\n    pass\no = C()\nvars(o)[1] = "int key"\nvars(o)["a" + "b"] = "built key"\nprint(o.ab, vars(o), len(vars(o)), 1 in vars(o), [k for k in vars(o) if isinstance(k, str)])\no.z = 3\ndel vars(o)["z"]\nprint(hasattr(o, "z"), list(vars(o).items()), list(vars(o).keys()), list(vars(o).values()))\nd = vars(o)\ndel o.__dict__\nprint(d is vars(o), vars(o), d)\np = C(); p.x = 1; p.y = 2\nq = vars(p).copy(); q["w"] = 9\nprint(q, vars(p), vars(p).setdefault("x", 5), vars(p).setdefault("n"), vars(p))\nvars(p).update({"u": 1}, v=2); vars(p).update([("t", 3)])\nprint(list(vars(p).items()), vars(p).popitem(), dict.fromkeys("ab", 0), dict.fromkeys([1]))\nvars(p).clear(); print(vars(p), hasattr(p, "x"))\nfor f in (lambda: {}.popitem(), lambda: {}.update([(1, 2, 3)]), lambda: {}.update({}, {}), lambda: {}.setdefault(),\n          lambda: {}.copy(1), lambda: {}.get(), lambda: {}.keys(1), lambda: {}.pop(1, 2, 3), lambda: {}.get(k=1)):\n    try:\n        f()\n    except (KeyError, TypeError, ValueError) as e:\n        print(type(e).__name__, e)\nclass K:\n    def __init__(self, d): self.d = d\n    def __hash__(self): return 1\n    def __eq__(self, other):\n        if self.d is not None:\n            self.d.clear(); self.d[K(None)] = "re-added"\n            self.d = None\n        return False\nd = {}\nd[K(None)] = "first"\nprint(d.get(K(d), "restart ends: absent"), len(d))\ntry:\n    C.__dict__["x"] = 1\nexcept TypeError as e:\n    print("TypeError", type(C.__dict__).__name__)\n')
+
+
+def test_dict_views_3a3() -> None:
+    """keys(), values() and items() are live views: their types, repr (recursion included),
+    len, `in`, iteration that fails when the dict changes size, and hashing."""
+    same("d = {'a': 1, 'b': [2]}\nk, v, i = d.keys(), d.values(), d.items()\nprint(k, v, i, type(k).__name__, type(iter(v)).__name__, type(iter(i)).__name__, type(iter(k)).__name__)\nprint(len(k), 'a' in k, 1 in v, ('a', 1) in i, ('a', 2) in i, ['a', 1] in i, bool({}.keys()), list(i))\nfor x in (k, v, i):\n    try:\n        print(type(x).__name__, hash(x) is not None)\n    except TypeError as e:\n        print(e)\nprint(v == v, v == d.values())\ne = {}\ne['self'] = e.values()\nprint(repr(e.values()), repr(e))\nd['c'] = 3\nprint(k, len(v), list(i)[-1])\ntry:\n    for key in d:\n        d['z'] = 3\nexcept RuntimeError as err:\n    print(err)\nit = iter(d.items())\nnext(it)\nd['new'] = 1\ntry:\n    next(it)\nexcept RuntimeError as err:\n    print('items', err)\nfor x, y in d.items():\n    print(x, y, end='; ')\nprint()\ntry:\n    {}.keys().__repr__.__self__\nexcept Exception:\n    pass\n")
+
+
+def test_an_exposed_dict_stays_split_compiled_3a3() -> None:
+    """The model's scenarios (refmodel/tests/test_cases.py) compiled: whether an exposed dict is
+    split, so its values die in the class's key order, after each dict operation."""
+    from refmodel.tests.test_cases import SPLIT_PRELUDE, SPLIT_SCENARIOS, split_program
+    parts = [SPLIT_PRELUDE]
+    for name in SPLIT_SCENARIOS:
+        parts.append(f"print('== {name}')\n" + split_program(name))
+    same("\n".join(parts))
+
+
+def test_dict_view_set_operations_are_refused_3a3() -> None:
+    """What the views cannot do yet stops the program (exit 70), never answers wrongly."""
     if not _HAVE_CXX:
         return
-    for op in ("len(d)", "list(d)", "'x' in d", "d.items()", "d.get('x')"):
-        src = f"class A:\n    def __init__(self): self.x = 1\nd = vars(A())\nprint({op})\n"
+    for op in ("d.keys() & {'a'}", "d.items() | set()", "d.keys() == {'a'}", "d.keys().isdisjoint([])", "reversed(d.keys())"):
+        src = f"d = {{'a': 1}}\nprint('start')\nprint({op})\n"
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(src, encoding="utf-8")
             got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False)
-        assert got.returncode == 70 and "step 3a.3" in got.stderr, (op, got.returncode, got.stderr)
+        assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr, (op, got)
 
 
 if __name__ == "__main__":

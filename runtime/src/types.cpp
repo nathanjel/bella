@@ -138,6 +138,10 @@ Ref getset_set(Obj self, Args a) {
 Ref getset_delete(Obj self, Args a) {
     arity(a, "__delete__", 1, 1);
     auto* g = static_cast<GetSet*>(self.object());
+    if (g->deletable) {
+        g->set(a.pos(0), Obj{});
+        return none_ref();
+    }
     raise_new("AttributeError", std::string("cannot delete attribute '") + g->name + "' of '" + g->owner->name + "' objects");
 }
 }  // namespace
@@ -305,7 +309,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     if (name == nullptr) raise_new("TypeError", "type.__new__() argument 1 must be str, not " + type_of(name_obj)->name);
     if (!is_kind(bases_obj, Kind::Tuple))
         raise_new("TypeError", "type.__new__() argument 2 must be tuple, not " + type_of(bases_obj)->name);
-    if (!is_kind(ns_obj, Kind::PyDict))
+    if (!is_kind(ns_obj, Kind::Dict))
         raise_new("TypeError", "type.__new__() argument 3 must be dict, not " + type_of(ns_obj)->name);
     std::vector<ClassObject*> bases;
     for (Obj b : static_cast<Tuple*>(bases_obj.object())->items) {
@@ -517,16 +521,23 @@ Ref instance_dict(Obj self) {
     return expose_dict(static_cast<Instance*>(self.object()));
 }
 void set_instance_dict(Obj self, Obj d) {
-    if (!is_kind(d, Kind::Dict)) {
-        if (is_kind(d, Kind::PyDict)) throw NotImplemented("assigning a dict that is not an instance dict to __dict__ (step 3a.3)");
-        raise_new("TypeError", "__dict__ must be set to a dictionary, not a '" + type_of(d)->name + "'");
+    if (d.is_unset()) {                          // del obj.__dict__: the dict is detached; the object starts afresh
+        Ref fresh = dict_new();
+        set_dict(static_cast<Instance*>(self.object()), static_cast<DictObject*>(fresh.get().object()));
+        return;
     }
+    if (!is_kind(d, Kind::Dict))
+        raise_new("TypeError", "__dict__ must be set to a dictionary, not a '" + type_of(d)->name + "'");
     set_dict(static_cast<Instance*>(self.object()), static_cast<DictObject*>(d.object()));
 }
 
 // the getset a class that adds an instance dict gets as its __dict__ (type_new)
 GetSet* instance_dict_getset() {
-    static GetSet* g = new GetSet("__dict__", types().object, instance_dict, set_instance_dict);
+    static GetSet* g = [] {
+        auto* gs = new GetSet("__dict__", types().object, instance_dict, set_instance_dict);
+        gs->deletable = true;
+        return gs;
+    }();
     return g;
 }
 
@@ -716,6 +727,12 @@ Ref exception_str(Obj self, Args) {
     if (items.size() == 1) return str_of(items[0]);
     return repr_of(args.get());
 }
+Ref key_error_str(Obj self, Args a) {             // KeyError_str: one argument shows as its repr
+    Ref args = getattr(self, N("args"));
+    if (is_kind(args.get(), Kind::Tuple) && static_cast<Tuple*>(args.get().object())->items.size() == 1)
+        return repr_of(static_cast<Tuple*>(args.get().object())->items[0]);
+    return exception_str(self, a);
+}
 Ref exception_repr(Obj self, Args) {
     // BaseException_repr: Name(repr(arg)) for one argument, Name + repr(args) otherwise
     Ref args = getattr(self, N("args"));
@@ -735,7 +752,7 @@ Ref exception_with_traceback(Obj self, Args a) {
 Obj cell_contents(const Ref& cell) { return static_cast<Cell*>(cell.get().object())->value; }
 
 Ref mapping_get(Obj mapping, Obj key) {
-    if (is_kind(mapping, Kind::PyDict)) {
+    if (is_kind(mapping, Kind::Dict)) {
         Obj v = dict_get(static_cast<Dict*>(mapping.object()), key);
         return v.is_unset() ? Ref{} : Ref::share(v);
     }
@@ -753,7 +770,7 @@ Ref mapping_get(Obj mapping, Obj key) {
     }
 }
 void mapping_set(Obj mapping, Obj key, Obj value) {
-    if (is_kind(mapping, Kind::PyDict)) dict_set(static_cast<Dict*>(mapping.object()), key, value);
+    if (is_kind(mapping, Kind::Dict)) dict_set(static_cast<Dict*>(mapping.object()), key, value);
     else setitem(mapping, key, value);
 }
 
@@ -842,6 +859,7 @@ void init_types() {
     method(base, "__str__", exception_str);
     method(base, "__repr__", exception_repr);
     method(base, "with_traceback", exception_with_traceback);
+    method(exception_class("KeyError"), "__str__", key_error_str);
     for (const char* n : {"__cause__", "__context__", "__traceback__"}) value(base, n, None());
     base->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
     value(base, "__suppress_context__", boolean(false));

@@ -30,7 +30,6 @@ namespace bella {
 struct Code;
 struct PyFunction;
 struct Module;
-struct Dict;
 
 // ---- the call protocol: positional values, then keyword values named by kwnames ----
 struct Args {
@@ -89,6 +88,7 @@ struct GetSet : Object {                         // a getset descriptor: a data 
     ClassObject* owner;
     Ref (*get)(Obj self);
     void (*set)(Obj self, Obj value);            // nullptr: read-only
+    bool deletable = false;                      // del calls set with Unset
     GetSet(const char* n, ClassObject* o, Ref (*g)(Obj), void (*s)(Obj, Obj));
 };
 struct SliceObject : Object {                    // slice(start, stop, step), each owned
@@ -121,11 +121,16 @@ struct Range : Object {
     Range(std::int64_t a, std::int64_t b, std::int64_t c);
 };
 struct Iterator : Object {                       // the C++ types' iterators
-    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, StrIt, DictKeysIt, SeqIt, SetIt } of;
+    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, StrIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
     std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
     Iterator(Of o, Obj s);
+};
+struct DictView : Object {                       // dict.keys(), values(), items(): live views of the dict
+    enum Which : std::uint8_t { Keys, Values, Items } which;
+    Obj dict;                                    // owned
+    DictView(Obj d, Which w);
 };
 struct Native : Object {                         // an object of a C++ type with methods (sys.stdout)
     int tag = 0;
@@ -158,14 +163,7 @@ struct PyFunction : Object {
     PyFunction(const Code* c, Ref (*e)(PyFunction*, Args), Module* m);
 };
 
-struct Dict : Object {                           // CPython's compact dict: indices + entries in insertion order
-    struct Entry { std::int64_t hash; Obj key; Obj value; };   // key Unset: deleted
-    std::vector<Entry> entries;
-    std::vector<std::int64_t> indices;           // -1 empty, -2 dummy, else an entry index
-    std::size_t used = 0;
-    std::uint64_t version = 0;                   // changes on every mutation (iteration checks)
-    Dict();
-};
+using Dict = DictObject;                         // object.hpp's: every dict, an instance's __dict__ included
 
 struct Module : Object {
     Ref name;
@@ -187,7 +185,7 @@ struct Types {
         *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
         *method_descriptor, *classmethod_descriptor, *getset_descriptor, *mappingproxy, *slice, *iterator, *set,
-        *frozenset, *set_iterator;
+        *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator;
 };
 Types& types();
 extern Singleton* const NONE;

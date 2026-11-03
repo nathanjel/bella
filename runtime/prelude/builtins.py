@@ -262,5 +262,37 @@ def _set_like_repr(self: set[object] | frozenset[object]) -> str:
         _leave(self)
 
 
-__type_methods__ = {"list": {"__repr__": _list_repr}, "tuple": {"__repr__": _tuple_repr}, "dict": {"__repr__": _dict_repr},
-                    "set": {"__repr__": _set_repr}, "frozenset": {"__repr__": _frozenset_repr}}
+_dict_keys = type({}.keys())
+_dict_values = type({}.values())
+_dict_items = type({}.items())
+
+
+def _keys_repr(self: object) -> str:
+    _receiver(self, _dict_keys, "__repr__")
+    return _view_repr(self)
+
+
+def _values_repr(self: object) -> str:
+    _receiver(self, _dict_values, "__repr__")
+    return _view_repr(self)
+
+
+def _items_repr(self: object) -> str:
+    _receiver(self, _dict_items, "__repr__")
+    return _view_repr(self)
+
+
+def _view_repr(self: object) -> str:
+    """dictview_repr: the type's name around the repr of a list of the view."""
+    if not _enter(self):
+        return "..."
+    try:
+        return type(self).__name__ + "(" + repr(list(self)) + ")"  # type: ignore[call-overload]  # a view is iterable
+    finally:
+        _leave(self)
+
+
+__type_methods__: dict[object, dict[str, object]] = {
+    "list": {"__repr__": _list_repr}, "tuple": {"__repr__": _tuple_repr}, "dict": {"__repr__": _dict_repr},
+    "set": {"__repr__": _set_repr}, "frozenset": {"__repr__": _frozenset_repr},
+    _dict_keys: {"__repr__": _keys_repr}, _dict_values: {"__repr__": _values_repr}, _dict_items: {"__repr__": _items_repr}}

@@ -210,8 +210,9 @@ struct World {
                 out += d1.get() == d2.get() ? "True" : "False";
                 out += ", [";
                 bool first = true;
-                for (auto& [k, v] : static_cast<DictObject*>(d1.get().object())->map.items()) {
-                    out += (first ? "" : ", ") + std::string("(") + quote(k->text) + ", " + lit(v) + ")";
+                for (auto& e : static_cast<DictObject*>(d1.get().object())->entries) {
+                    if (e.key.is_unset()) continue;
+                    out += (first ? "" : ", ") + std::string("(") + quote(static_cast<const Str*>(e.key.object())->text) + ", " + lit(e.value) + ")";
                     first = false;
                 }
                 return out + "]))";

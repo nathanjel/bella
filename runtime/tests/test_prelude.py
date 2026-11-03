@@ -172,7 +172,8 @@ def test_property_staticmethod_classmethod_match_the_builtins() -> None:
 def test_container_repr_matches_the_builtins() -> None:
     prelude = load("builtins")
     funcs = {list: prelude._list_repr, tuple: prelude._tuple_repr, dict: prelude._dict_repr,
-             set: prelude._set_repr, frozenset: prelude._frozenset_repr}
+             set: prelude._set_repr, frozenset: prelude._frozenset_repr, type({}.keys()): prelude._keys_repr,
+             type({}.values()): prelude._values_repr, type({}.items()): prelude._items_repr}
 
     saved = builtins.repr
 
@@ -188,8 +189,11 @@ def test_container_repr_matches_the_builtins() -> None:
         d["self"] = d
         class S(set[int]):
             pass
+        view_loop: dict[str, object] = {}
+        view_loop["self"] = view_loop.values()
         values: list[object] = [[], [1, "a"], (), (1,), (1, 2), {}, {"k": [1, (2,)]}, loop, (loop,), d, set(), {3},
-                                frozenset(), frozenset({1}), S({2}), S()]
+                                frozenset(), frozenset({1}), S({2}), S(), {}.keys(), {"a": 1}.keys(), {"a": [1]}.values(),
+                                {"a": (1,)}.items(), view_loop.values(), view_loop]
         for v in values:
             assert prelude_repr(v) == saved(v), f"{saved(v)}: prelude {prelude_repr(v)}"
     finally:
@@ -200,8 +204,9 @@ def test_type_methods_check_their_receiver_a9_2() -> None:
     """list.__repr__(5) and the like: the prelude's methods of the C++ types refuse a receiver of
     another type with the slot wrapper's TypeError (review 2026-11-03, A9-2)."""
     prelude = load("builtins")
-    for type_name, methods in prelude.__type_methods__.items():
-        cls = getattr(builtins, type_name)
+    for key, methods in prelude.__type_methods__.items():
+        cls = key if isinstance(key, type) else getattr(builtins, key)
+        type_name = cls.__name__
         for name, fn in methods.items():
             for wrong in (5, [], (), {}, set(), frozenset()):
                 if isinstance(wrong, cls):

@@ -1,12 +1,12 @@
 # The C++ emitter and the runtime core (step 3 of the C++ leg)
 
-Status: step 3a.2, 2026-11-02; reviewed 2026-11-03 (astra-low-09, gemini-4-argon-high-08: review
-log RL-188 to RL-219). `pipeline/backend/cpp.py` turns an L2 module (`docs/l2.md`) into
+Status: step 3a.3, 2026-11-03 (3a.2 reviewed the same day: astra-low-09, gemini-4-argon-high-08,
+review log RL-188 to RL-219). `pipeline/backend/cpp.py` turns an L2 module (`docs/l2.md`) into
 one C++26 translation unit against `runtime/include/bella/runtime.hpp`; `pipeline/build.py`
 compiles it and links it with the runtime library. The slice examples (`make slice`),
-`pipeline/tests/test_compiled.py` and C-3-05..11 pass compiled; the corpus under the compiled
-runner is `make compiled-corpus`, against `conformance/evalc-baseline.txt` (15 of 76: most of
-the rest import modules, step 3b). The toy emitter from L1 is gone.
+`pipeline/tests/test_compiled.py` and C-3-01..03 and 05..11 pass compiled; the corpus under the
+compiled runner is `make compiled-corpus`, against `conformance/evalc-baseline.txt` (18 of 76:
+most of the rest import modules, step 3b). The toy emitter from L1 is gone.
 
 ## 1. Where things live (decided 2026-11-02, `docs/DECISIONS.md`)
 
@@ -129,6 +129,22 @@ matrix of every way out of a `finally`, and the 31 L2 release-point probes compi
 (`pipeline/tests/test_review_2026_11_03.py`, `test_compiled_probes.py`). A boundary no test
 covers yet is not claimed to be exact.
 
+## 3a. Instance dicts (step 3a.3)
+
+There is one dict type, `object.hpp`'s `DictObject`: CPython's compact dict (an index table
+probed with the perturbation scheme over entries in insertion order), with any key, whose hash
+and `==` come from the runtime (`key_hash_hook`, `key_eq_hook`; a lookup whose `__eq__` changed
+the table starts again, as CPython's does). The runtime's `Dict` is that type, so `vars(obj)` and
+`obj.__dict__` are ordinary dicts (design section 3): stable identity, a lifetime of their own,
+any key, every method, shared and replaced (`obj.__dict__ = d`), and `del obj.__dict__` starts the
+object afresh. An exposed dict is split as CPython's materialised dict is: its values die in the
+class's shared-keys order. Measured on 3.15.2 and modelled first (`refmodel` `RefDict`): a key that
+is not exactly a `str` and `popitem` make it ordinary, `clear` too unless its values are still
+embedded in the live object it was exposed from, and `copy` is split as well. `keys()`,
+`values()` and `items()` are live views (their repr is the prelude's); their set operations and
+set comparisons are refused until they exist. `pipeline/tests/test_compiled.py` checks the
+model's scenarios compiled.
+
 Still in C++ until the next step: the exception classes (the decision puts them in the prelude);
 not yet anywhere: `super()`, metaclasses other than `type`, subclasses of the C++ types other than
 `object` and the exceptions (refused by name), a class that overrides `__getattribute__` or
@@ -149,7 +165,8 @@ file and line (spec D-06) and exits 1; a facility Bella lacks yet stops with
 ## 5. Gaps, in the order the steps close them
 
 * 3a.2, the rest: the exception classes into the prelude; `super()`; metaclasses.
-* 3a.3: instance dicts as real dicts (`vars()`, `__dict__`): C-3-01..03.
+* The dict views' set operations and comparisons, `reversed` and `mapping`; argument-count
+  messages of the older C++ methods in CPython's wording (the dict's are).
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3.
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and

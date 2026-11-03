@@ -60,6 +60,11 @@ Types& types() {
         x.set = builtin_type("set", {x.object});
         x.frozenset = builtin_type("frozenset", {x.object});
         x.set_iterator = builtin_type("set_iterator", {x.object});
+        x.dict_keys = builtin_type("dict_keys", {x.object});
+        x.dict_values = builtin_type("dict_values", {x.object});
+        x.dict_items = builtin_type("dict_items", {x.object});
+        x.dict_valueiterator = builtin_type("dict_valueiterator", {x.object});
+        x.dict_itemiterator = builtin_type("dict_itemiterator", {x.object});
         return x;
     }();
     return t;
@@ -112,14 +117,19 @@ Iterator::Iterator(Of o, Obj s) : Object(Kind::Iterator), of(o), seq(s) {
         case ListIt: cls = types().list_iterator; break;
         case StrIt: cls = types().str_iterator; break;
         case DictKeysIt: cls = types().dict_keyiterator; break;
+        case DictValuesIt: cls = types().dict_valueiterator; break;
+        case DictItemsIt: cls = types().dict_itemiterator; break;
         case SeqIt: cls = types().iterator; break;
         case SetIt: cls = types().set_iterator; break;
     }
     incref(seq);
 }
+DictView::DictView(Obj d, Which w) : Object(Kind::DictView), which(w), dict(d) {
+    cls = w == Keys ? types().dict_keys : w == Values ? types().dict_values : types().dict_items;
+    incref(dict);
+}
 PyFunction::PyFunction(const Code* c, Ref (*e)(PyFunction*, Args), Module* m)
     : Object(Kind::PyFunction), code(c), entry(e), module(m) { cls = types().function; }
-Dict::Dict() : Object(Kind::PyDict) { cls = types().dict; }
 Module::Module(const char* n) : Object(Kind::Module), name(str_new(n)), dict(new Dict) {
     cls = types().module;
     flags |= IMMORTAL;                           // phase 1: modules live as long as the program
@@ -143,14 +153,6 @@ bool register_deaths() {
     destroyer(Kind::Str) = [](Object* o) { delete static_cast<Str*>(o); };
     destroyer(Kind::Tuple) = [](Object* o) { release_backwards(static_cast<Tuple*>(o)->items); destroy<Tuple>(o); };
     destroyer(Kind::List) = [](Object* o) { release_backwards(static_cast<List*>(o)->items); destroy<List>(o); };
-    destroyer(Kind::PyDict) = [](Object* o) {
-        auto* d = static_cast<Dict*>(o);
-        for (auto& e : d->entries) {
-            decref(std::exchange(e.key, Obj{}));
-            decref(std::exchange(e.value, Obj{}));
-        }
-        destroy<Dict>(o);
-    };
     destroyer(Kind::Cell) = [](Object* o) { decref(std::exchange(static_cast<Cell*>(o)->value, Obj{})); destroy<Cell>(o); };
     destroyer(Kind::PyFunction) = [](Object* o) {
         auto* f = static_cast<PyFunction*>(o);     // func_clear's order
@@ -173,6 +175,7 @@ bool register_deaths() {
     };
     destroyer(Kind::Range) = [](Object* o) { destroy<Range>(o); };
     destroyer(Kind::Iterator) = [](Object* o) { decref(std::exchange(static_cast<Iterator*>(o)->seq, Obj{})); destroy<Iterator>(o); };
+    destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::Traceback) = [](Object* o) {
         auto* t = static_cast<Traceback*>(o);      // tb_dealloc: the deeper entries, then this frame
         t->next = Ref{};
@@ -319,6 +322,9 @@ std::int64_t hash_of(Obj v) {
             }
             return s->hash;
         }
+        case Kind::DictView:                     // keys and items views are unhashable; values views hash by identity
+            if (static_cast<DictView*>(o)->which != DictView::Values) raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
+            [[fallthrough]];
         case Kind::Singleton:
         case Kind::PyFunction:
         case Kind::Builtin:
@@ -361,13 +367,8 @@ std::int64_t hash_of(Obj v) {
     raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
 }
 
-// ---- the dict: CPython's compact dict (Objects/dictobject.c): an index table probed with the
-// perturbation scheme, entries in insertion order, resized to the smallest power of two above
-// three times the entries in use. Keys compare by identity, then by hash and ==. ----
+// ---- the dict: object.hpp's compact dict, with Python's hash and == for its keys ----
 namespace {
-constexpr std::int64_t DKIX_EMPTY = -1, DKIX_DUMMY = -2;
-constexpr int PERTURB_SHIFT = 5;
-
 bool keys_equal(Obj a, Obj b) {
     if (a == b) return true;
     const Str* sa = as_str(a);
@@ -376,101 +377,20 @@ bool keys_equal(Obj a, Obj b) {
     Ref r = compare(CmpOp::Eq, a, b);
     return truth(r.get());
 }
-
-// the index slot where `key` is, or where it would go; the entry index (or DKIX_EMPTY)
-std::pair<std::size_t, std::int64_t> probe(Dict* d, Obj key, std::int64_t hash) {
-    std::size_t mask = d->indices.size() - 1;
-    auto perturb = static_cast<std::uint64_t>(hash);
-    std::size_t i = static_cast<std::size_t>(hash) & mask;
-    std::optional<std::size_t> free_slot;
-    for (;;) {
-        std::int64_t ix = d->indices[i];
-        if (ix == DKIX_EMPTY) return {free_slot.value_or(i), DKIX_EMPTY};
-        if (ix == DKIX_DUMMY) {
-            if (!free_slot) free_slot = i;
-        } else {
-            auto& e = d->entries[static_cast<std::size_t>(ix)];
-            if (e.key == key) return {i, ix};
-            if (e.hash == hash) {
-                std::uint64_t version = d->version;
-                Obj k = e.key;
-                incref(k);
-                bool eq = keys_equal(k, key);
-                decref(k);
-                if (d->version != version) raise_new("RuntimeError", "dictionary changed size during iteration");
-                if (eq) return {i, ix};
-            }
-        }
-        perturb >>= PERTURB_SHIFT;
-        i = (i * 5 + static_cast<std::size_t>(perturb) + 1) & mask;
-    }
-}
-
-void resize(Dict* d, std::size_t minsize) {
-    std::size_t size = 8;
-    while (size <= minsize) size <<= 1;
-    std::vector<Dict::Entry> live;
-    for (auto& e : d->entries) if (!e.key.is_unset()) live.push_back(e);
-    d->entries = std::move(live);
-    d->indices.assign(size, DKIX_EMPTY);
-    std::size_t mask = size - 1;
-    for (std::size_t ix = 0; ix < d->entries.size(); ++ix) {
-        auto perturb = static_cast<std::uint64_t>(d->entries[ix].hash);
-        std::size_t i = static_cast<std::size_t>(d->entries[ix].hash) & mask;
-        while (d->indices[i] != DKIX_EMPTY) {
-            perturb >>= PERTURB_SHIFT;
-            i = (i * 5 + static_cast<std::size_t>(perturb) + 1) & mask;
-        }
-        d->indices[i] = static_cast<std::int64_t>(ix);
-    }
-}
-std::size_t usable(const Dict* d) { return d->indices.size() * 2 / 3; }
+const bool key_hooks_installed = (key_hash_hook() = hash_of, key_eq_hook() = keys_equal, true);
 }  // namespace
 
 Ref dict_new() { return own(new Dict); }
 
 Obj dict_get(Dict* d, Obj key) {
     std::int64_t hash = hash_of(key);             // hashed even when the table is empty (A9-16)
-    if (d->indices.empty()) return Obj{};
-    auto [slot, ix] = probe(d, key, hash);
-    return ix >= 0 ? d->entries[static_cast<std::size_t>(ix)].value : Obj{};
+    return dict_find(d, key, hash);
 }
-
-void dict_set(Dict* d, Obj key, Obj value) { dict_set_hashed(d, key, hash_of(key), value); }
-
-void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value) {
-    if (d->indices.empty()) resize(d, 0);
-    auto [slot, ix] = probe(d, key, hash);
-    incref(value);
-    if (ix >= 0) {
-        Obj old = std::exchange(d->entries[static_cast<std::size_t>(ix)].value, value);
-        ++d->version;
-        decref(old);                               // after the new value is in place
-        return;
-    }
-    if (d->entries.size() >= usable(d)) {
-        resize(d, d->used * 3);
-        slot = probe(d, key, hash).first;
-    }
-    incref(key);
-    d->indices[slot] = static_cast<std::int64_t>(d->entries.size());
-    d->entries.push_back({hash, key, value});
-    ++d->used;
-    ++d->version;
-}
-
+void dict_set(Dict* d, Obj key, Obj value) { dict_store(d, key, hash_of(key), value); }
+void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value) { dict_store(d, key, hash, value); }
 bool dict_del(Dict* d, Obj key) {
-    std::int64_t hash = hash_of(key);
-    if (d->indices.empty()) return false;
-    auto [slot, ix] = probe(d, key, hash);
-    if (ix < 0) return false;
-    auto& e = d->entries[static_cast<std::size_t>(ix)];
-    d->indices[slot] = DKIX_DUMMY;
-    Obj k = std::exchange(e.key, Obj{});
-    Obj v = std::exchange(e.value, Obj{});
-    --d->used;
-    ++d->version;
-    decref(k);
+    Obj v = dict_pop(d, key, hash_of(key));
+    if (v.is_unset()) return false;
     decref(v);
     return true;
 }

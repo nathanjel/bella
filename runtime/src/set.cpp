@@ -148,7 +148,7 @@ void set_update(Obj setv, Obj iterable) {
         for (auto& [k, h] : entries) set_add_hashed(setv, k.get(), h);
         return;
     }
-    if (is_kind(iterable, Kind::PyDict)) {          // set_update_dict_keys: the dict's stored hashes
+    if (is_kind(iterable, Kind::Dict)) {          // set_update_dict_keys: the dict's stored hashes
         std::vector<std::pair<Ref, std::int64_t>> entries;
         for (auto& e : static_cast<Dict*>(iterable.object())->entries)
             if (!e.key.is_unset()) entries.emplace_back(Ref::share(e.key), e.hash);
