@@ -373,6 +373,7 @@ class Handler:
     type: Expr | None
     name: str | None
     body: tuple[Stmt, ...]
+    line: int = 0                       # the `except` line: where matching runs (CHECK_EXC_MATCH's location)
 
 
 @dataclass(frozen=True)

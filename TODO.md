@@ -362,6 +362,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            enters a traceback where the exception arrives, the prelude and inlined comprehensions
            have no frames, and the report prints the chain (RL-221, RL-223 to RL-227, C-3-30);
            lines inside a multi-line statement are the statement's (RL-225, open).
+         * Reviewed 2026-11-03 (astra-low-10, gemini-4-argon-high-09; review log RL-228 to
+           RL-255, `pipeline/tests/test_review_2026_11_03b.py`): 27 fixes, among them an
+           exception's fields as BaseException's (not its `__dict__`, released in
+           `BaseException_clear`'s order; modelled first as a built-in base's native fields,
+           C-3-31), context and cause as `_PyErr_SetObject` and `do_raise` set them, every dict
+           operation calling back into keys as CPython's (C-6-09), crashes and a hang in `list`
+           methods whose `__eq__` changes the list, and `list`, `dict` and `set` hashable until
+           now. Open: RL-254 (a member's type).
        * 3b generators (state machines) and compiled imports: C-3-04.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).

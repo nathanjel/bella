@@ -20,6 +20,19 @@ const Str* N(const char* s) { return intern(s); }
 GetSet* instance_dict_getset();
 bool is_none(Obj v) { return v == None(); }
 
+ClassObject* as_class(Obj v);
+
+// tp_new_wrapper's checks of T.__new__(cls, ...) (Objects/typeobject.c): the class it is given
+ClassObject* new_wrapper_class(Args a, const ClassObject* type) {
+    if (a.npos < 1) raise_new("TypeError", type->name + ".__new__(): not enough arguments");
+    ClassObject* sub = as_class(a.pos(0));
+    if (sub == nullptr)
+        raise_new("TypeError", type->name + ".__new__(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
+    if (!is_subclass(sub, const_cast<ClassObject*>(type)))
+        raise_new("TypeError", type->name + ".__new__(" + sub->name + "): " + sub->name + " is not a subtype of " + type->name);
+    return sub;
+}
+
 void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::Method) {
     auto* f = new Builtin(name, fn, Obj{}, b);
     f->owner = c;
@@ -149,9 +162,8 @@ Ref getset_delete(Obj self, Args a) {
 // ---- attribute errors carry name and obj (CPython 3.10+) ----
 void raise_attribute_error(Obj obj, const Str* name, const std::string& message) {
     Ref exc = invoke(Obj::of(exception_class("AttributeError")), {str_new(message).get()});
-    auto* e = static_cast<Instance*>(exc.get().object());
-    bella::setattr(e, N("name"), Obj::of(name));
-    bella::setattr(e, N("obj"), obj);
+    set_exception_field(exc.get(), "name", Obj::of(name));
+    set_exception_field(exc.get(), "obj", obj);
     raise(exc.get());
 }
 
@@ -271,7 +283,7 @@ Ref object_init(Obj self, Args a) {
         if (type_lookup(cls, N("__init__")) != object_init_fn())
             raise_new("TypeError", "object.__init__() takes exactly one argument (the instance to initialize)");
         if (type_lookup(cls, N("__new__")) == object_new_fn())
-            raise_new("TypeError", cls->qualname + ".__init__() takes exactly one argument (the instance to initialize)");
+            raise_new("TypeError", cls->name + ".__init__() takes exactly one argument (the instance to initialize)");
     }
     return none_ref();
 }
@@ -628,6 +640,7 @@ Ref fn_dict(Obj self) {
 }
 Ref method_func(Obj self) { return Ref::share(static_cast<Method*>(self.object())->func); }
 Ref method_new(Obj, Args a) {                    // method(func, obj): any callable bound to obj
+    new_wrapper_class(a, types().method);
     Args r = rest(a);
     arity(r, "method", 2, 2);
     if (!callable_check(r.pos(0))) raise_new("TypeError", "first argument must be callable");
@@ -693,6 +706,7 @@ Ref proxy_iter(Obj self, Args a) {
 
 // slices
 Ref slice_new(Obj, Args a) {                   // __new__(cls, ...): the class comes first
+    new_wrapper_class(a, types().slice);
     Args r = rest(a);
     arity(r, "slice", 1, 3);
     Obj start = r.npos > 1 ? r.pos(0) : None(), stop = r.npos > 1 ? r.pos(1) : r.pos(0), step = r.npos > 2 ? r.pos(2) : None();
@@ -704,10 +718,7 @@ Ref slice_step(Obj self) { return Ref::share(static_cast<SliceObject*>(self.obje
 
 // BaseException: args from __new__ and __init__, str() and repr()
 Ref exception_new(Obj, Args a) {
-    if (a.npos < 1) raise_new("TypeError", "BaseException.__new__(): not enough arguments");
-    ClassObject* cls = as_class(a.pos(0));
-    if (cls == nullptr || !is_subclass(cls, exception_class("BaseException")))
-        raise_new("TypeError", "BaseException.__new__(X): X is not a subtype of BaseException");
+    ClassObject* cls = new_wrapper_class(a, exception_class("BaseException"));
     auto* e = new_instance(cls);
     Ref r = own(e);
     std::vector<Obj> items;
@@ -716,7 +727,7 @@ Ref exception_new(Obj, Args a) {
         items.push_back(a.pos(i));
     }
     Ref args = tuple_steal(std::move(items));
-    bella::setattr(e, N("args"), args.get());
+    set_exception_field(r.get(), "args", args.get());
     return r;
 }
 Ref exception_init(Obj self, Args a) {
@@ -727,11 +738,16 @@ Ref exception_init(Obj self, Args a) {
         items.push_back(a.pos(i));
     }
     Ref args = tuple_steal(std::move(items));
-    bella::setattr(static_cast<Instance*>(self.object()), N("args"), args.get());
+    set_exception_field(self, "args", args.get());
     return none_ref();
 }
+// what BaseException_str, KeyError_str and BaseException_repr read: the args field itself
+Ref exception_args(Obj self) {
+    Obj v = exception_field(self, "args");
+    return v.is_unset() ? tuple_new({}) : Ref::share(v);
+}
 Ref exception_str(Obj self, Args) {
-    Ref args = getattr(self, N("args"));
+    Ref args = exception_args(self);
     if (!is_kind(args.get(), Kind::Tuple)) return str_of(args.get());
     auto& items = static_cast<Tuple*>(args.get().object())->items;
     if (items.empty()) return str_new("");
@@ -739,23 +755,83 @@ Ref exception_str(Obj self, Args) {
     return repr_of(args.get());
 }
 Ref key_error_str(Obj self, Args a) {             // KeyError_str: one argument shows as its repr
-    Ref args = getattr(self, N("args"));
+    Ref args = exception_args(self);
     if (is_kind(args.get(), Kind::Tuple) && static_cast<Tuple*>(args.get().object())->items.size() == 1)
         return repr_of(static_cast<Tuple*>(args.get().object())->items[0]);
     return exception_str(self, a);
 }
 Ref exception_repr(Obj self, Args) {
     // BaseException_repr: Name(repr(arg)) for one argument, Name + repr(args) otherwise
-    Ref args = getattr(self, N("args"));
+    Ref args = exception_args(self);
     auto& items = static_cast<Tuple*>(args.get().object())->items;
     Ref inner = items.size() == 1 ? repr_of(items[0]) : repr_of(args.get());
     std::string text = as_str(inner.get())->text;
     return str_new(type_of(self)->name + (items.size() == 1 ? "(" + text + ")" : text));
 }
+// BaseException's getset and member descriptors (Objects/exceptions.c): each checks what it is
+// given, with CPython's words; none may be deleted
+void exception_traceback_set(Obj self, Obj v) {
+    if (v.is_unset()) raise_new("TypeError", "__traceback__ may not be deleted");
+    if (!is_kind(v, Kind::Traceback) && !is_none(v)) raise_new("TypeError", "__traceback__ must be a traceback or None");
+    set_exception_field(self, "__traceback__", is_none(v) ? Obj{} : v);
+}
 Ref exception_with_traceback(Obj self, Args a) {
     arity(a, "with_traceback", 1, 1);
-    bella::setattr(static_cast<Instance*>(self.object()), N("__traceback__"), a.pos(0));
+    exception_traceback_set(self, a.pos(0));
     return Ref::share(self);
+}
+Ref field_or_none(Obj self, const char* name) {
+    Obj v = exception_field(self, name);
+    return v.is_unset() ? none_ref() : Ref::share(v);
+}
+Ref exception_args_get(Obj self) { return exception_args(self); }
+void exception_args_set(Obj self, Obj v) {          // PySequence_Tuple
+    if (v.is_unset()) raise_new("TypeError", "args may not be deleted");
+    Ref t;
+    if (is_kind(v, Kind::Tuple)) {
+        t = Ref::share(v);
+    } else {
+        Ref it = iter(v);
+        std::vector<Obj> items;
+        for (Ref x = for_next(it.get()); !is_end(x); x = for_next(it.get())) items.push_back(x.release());
+        t = tuple_steal(std::move(items));
+    }
+    set_exception_field(self, "args", t.get());
+}
+Ref exception_traceback_get(Obj self) { return field_or_none(self, "__traceback__"); }
+Ref exception_context_get(Obj self) { return field_or_none(self, "__context__"); }
+void exception_context_set(Obj self, Obj v) {
+    if (v.is_unset()) raise_new("TypeError", "__context__ may not be deleted");
+    if (!is_none(v) && !is_exception_instance(v))
+        raise_new("TypeError", "exception context must be None or derive from BaseException");
+    set_exception_field(self, "__context__", is_none(v) ? Obj{} : v);
+}
+Ref exception_cause_get(Obj self) { return field_or_none(self, "__cause__"); }
+void exception_cause_set(Obj self, Obj v) {         // PyException_SetCause sets __suppress_context__
+    if (v.is_unset()) raise_new("TypeError", "__cause__ may not be deleted");
+    if (!is_none(v) && !is_exception_instance(v))
+        raise_new("TypeError", "exception cause must be None or derive from BaseException");
+    set_exception_field(self, "__suppress_context__", boolean(true));
+    set_exception_field(self, "__cause__", is_none(v) ? Obj{} : v);
+}
+Ref exception_suppress_get(Obj self) {
+    Obj v = exception_field(self, "__suppress_context__");
+    return Ref::share(v.is_unset() ? boolean(false) : v);
+}
+void exception_suppress_set(Obj self, Obj v) {      // a Py_T_BOOL member
+    if (v.is_unset()) raise_new("TypeError", "can't delete numeric/char attribute");
+    if (!is_kind(v, Kind::Bool)) raise_new("TypeError", "attribute value type must be bool");
+    set_exception_field(self, "__suppress_context__", v);
+}
+// AttributeError's name and obj, NameError's name: _Py_T_OBJECT members (None when absent; del clears)
+Ref exception_name_get(Obj self) { return field_or_none(self, "name"); }
+void exception_name_set(Obj self, Obj v) { set_exception_field(self, "name", v); }
+Ref exception_obj_get(Obj self) { return field_or_none(self, "obj"); }
+void exception_obj_set(Obj self, Obj v) { set_exception_field(self, "obj", v); }
+void deletable_getset(ClassObject* c, const char* name, Ref (*g)(Obj), void (*s)(Obj, Obj)) {
+    auto* d = new GetSet(name, c, g, s);
+    d->deletable = true;
+    c->attrs.set(N(name), Obj::of(d));
 }
 }  // namespace
 
@@ -871,11 +947,15 @@ void init_types() {
     method(base, "__repr__", exception_repr);
     method(base, "with_traceback", exception_with_traceback);
     method(exception_class("KeyError"), "__str__", key_error_str);
-    for (const char* n : {"__cause__", "__context__", "__traceback__"}) value(base, n, None());
     base->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
-    value(base, "__suppress_context__", boolean(false));
-    for (const char* n : {"name", "obj"}) value(exception_class("AttributeError"), n, None());
-    value(exception_class("NameError"), "name", None());
+    deletable_getset(base, "args", exception_args_get, exception_args_set);
+    deletable_getset(base, "__traceback__", exception_traceback_get, exception_traceback_set);
+    deletable_getset(base, "__context__", exception_context_get, exception_context_set);
+    deletable_getset(base, "__cause__", exception_cause_get, exception_cause_set);
+    deletable_getset(base, "__suppress_context__", exception_suppress_get, exception_suppress_set);
+    deletable_getset(exception_class("AttributeError"), "name", exception_name_get, exception_name_set);
+    deletable_getset(exception_class("AttributeError"), "obj", exception_obj_get, exception_obj_set);
+    deletable_getset(exception_class("NameError"), "name", exception_name_get, exception_name_set);
     // object.hpp asks whether an exception the runtime raised is an AttributeError (a property or
     // __get__ in Python raising it), so that __getattr__ is tried
     attribute_error_hook() = [] {

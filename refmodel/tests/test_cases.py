@@ -658,6 +658,71 @@ def test_releasing_before_the_version_bump_is_caught_rl_20() -> None:
         raise AssertionError("a valid entry naming a dead object went unnoticed")
 
 
+BASE_EXCEPTION_FIELDS = ("__dict__", "args", "__traceback__", "__cause__", "__context__")   # BaseException_clear
+
+
+def test_a_builtin_bases_fields_die_after_the_slots_in_its_clear_order() -> None:
+    """An exception's args, cause and context are C fields of BaseException: never in its
+    __dict__, released by BaseException_clear after the subclass's __slots__, the dict first.
+    Measured on 3.15.2 (review 2026-11-03, A10-3): slot, dict value, args, cause, context."""
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    base = RefClass("BaseException", native=BASE_EXCEPTION_FIELDS)
+    E = RefClass("E", (RefClass("Exception", (base,)),), slots=("s",))
+    e = RefObject(E)
+    O.incref(e)
+    for name, tag in (("args", "arg"), ("s", "slot"), ("x", "dictval"), ("__cause__", "cause"), ("__context__", "context")):
+        _store(rt, e, name, tag)
+    assert list(rt.expose_dict(e)) == ["x"]
+    O.decref(e)
+    assert _deaths() == ["slot", "dictval", "arg", "cause", "context"]
+    # AttributeError_clear: obj and name, then BaseException_clear
+    attribute_error = RefClass("AttributeError", (base,), native=("obj", "name", *BASE_EXCEPTION_FIELDS))
+    a = RefObject(attribute_error)
+    O.incref(a)
+    for name in ("args", "x", "name", "obj"):
+        _store(rt, a, name, name)
+    O.decref(a)
+    assert _deaths() == ["obj", "name", "x", "args"]
+    # the solid base decides: a mixin first keeps the exception's layout
+    mixed = RefObject(RefClass("Mixed", (RefClass("Mixin"), RefClass("Exception2", (base,)))))
+    O.incref(mixed)
+    for name in ("args", "x"):
+        _store(rt, mixed, name, name)
+    O.decref(mixed)
+    assert _deaths() == ["x", "args"]
+
+
+def test_a_store_that_fails_takes_no_count() -> None:
+    """d[k] = v whose key comparison raises leaves v's count as it was: insertdict releases the
+    value it was given before the error propagates (review 2026-11-03, A10-5)."""
+    from refmodel import objects as O
+    _fresh_heap()
+
+    class Key:
+        def __hash__(self) -> int:
+            return 1
+
+        def __eq__(self, other: object) -> bool:
+            raise ValueError("eq")
+
+    d = O.RefDict()
+    first = _tagged(O.HEAP, "first")
+    d.store(Key(), first)
+    O.decref(first)
+    v = _tagged(O.HEAP, "value")
+    try:
+        d.store(Key(), v)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("the comparison did not raise")
+    assert v.refs == 1 and len(d) == 1
+    O.decref(v)
+    assert _deaths() == ["value"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

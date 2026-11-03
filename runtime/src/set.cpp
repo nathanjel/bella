@@ -81,7 +81,7 @@ SetObject::SetObject(bool frozen_set) : Object(Kind::Set), table(MINSIZE), froze
     cls = frozen ? types().frozenset : types().set;
 }
 
-void set_add(Obj setv, Obj key) { set_add_hashed(setv, key, hash_of(key)); }
+void set_add(Obj setv, Obj key) { set_add_hashed(setv, key, set_key_hash(key)); }
 
 // set_add_entry. The table takes its count of the key only when it stores it: a comparison that
 // raises leaves nothing behind (review 2026-11-03, A9-8); the caller holds the key meanwhile.
@@ -126,10 +126,10 @@ restart:
     }
 }
 
-bool set_contains(SetObject* s, Obj key) { return lookkey(s, key, hash_of(key)) < s->table.size(); }
+bool set_contains(SetObject* s, Obj key) { return lookkey(s, key, set_key_hash(key)) < s->table.size(); }
 
 bool set_discard(SetObject* s, Obj key) {
-    std::size_t k = lookkey(s, key, hash_of(key));
+    std::size_t k = lookkey(s, key, set_key_hash(key));
     if (k >= s->table.size()) return false;
     Obj old = s->table[k].key;
     s->table[k] = {Obj{}, -1};

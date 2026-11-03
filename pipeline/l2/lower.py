@@ -235,6 +235,8 @@ class _Code:
                 lowered = []
                 for h in handlers:
                     self.capture()
+                    if h.type is not None:       # the clause's type is evaluated and checked at its line (A10-1)
+                        self.at(h.line)
                     ty = self.expr(h.type) if h.type is not None else None
                     if ty is not None and not isinstance(ty, G.Temp):
                         ty = self.let(G.Copy(ty))

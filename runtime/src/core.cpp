@@ -54,6 +54,9 @@ Types& types() {
         x.method_descriptor = builtin_type("method_descriptor", {x.object});
         x.classmethod_descriptor = builtin_type("classmethod_descriptor", {x.object});
         x.getset_descriptor = builtin_type("getset_descriptor", {x.object});
+        // a __slots__ member's type (object.hpp's SlotDescriptor): made a type here, or type(d) has
+        // no class of its own (found while verifying RL-228's round)
+        x.member_descriptor = builtin_type("member_descriptor", {x.object});
         x.mappingproxy = builtin_type("mappingproxy", {x.object});
         x.slice = builtin_type("slice", {x.object});
         x.iterator = builtin_type("iterator", {x.object});
@@ -394,14 +397,35 @@ const bool key_hooks_installed = (key_hash_hook() = hash_of, key_eq_hook() = key
 
 Ref dict_new() { return own(new Dict); }
 
+std::string fully_qualified_name(const ClassObject* c) {
+    if (const Obj* mod = c->attrs.find(intern("__module__")))
+        if (const Str* ms = as_str(*mod); ms != nullptr && ms->text != "builtins" && ms->text != "__main__")
+            return ms->text + "." + c->qualname;
+    return c->qualname;
+}
+namespace {
+std::int64_t container_hash(Obj key, const char* as) {
+    try {
+        return hash_of(key);
+    } catch (const PyError& e) {
+        if (type_of(e.exc.get()) != exception_class("TypeError")) throw;
+        Ref text = str_of(e.exc.get());
+        raise_new("TypeError", "cannot use '" + fully_qualified_name(type_of(key)) + "' as a " + as + " (" +
+                                   as_str(text.get())->text + ")");
+    }
+}
+}  // namespace
+std::int64_t dict_key_hash(Obj key) { return container_hash(key, "dict key"); }
+std::int64_t set_key_hash(Obj key) { return container_hash(key, "set element"); }
+
 Obj dict_get(Dict* d, Obj key) {
-    std::int64_t hash = hash_of(key);             // hashed even when the table is empty (A9-16)
+    std::int64_t hash = dict_key_hash(key);       // hashed even when the table is empty (A9-16)
     return dict_find(d, key, hash);
 }
-void dict_set(Dict* d, Obj key, Obj value) { dict_store(d, key, hash_of(key), value); }
+void dict_set(Dict* d, Obj key, Obj value) { dict_store(d, key, dict_key_hash(key), value); }
 void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value) { dict_store(d, key, hash, value); }
 bool dict_del(Dict* d, Obj key) {
-    Obj v = dict_pop(d, key, hash_of(key));
+    Obj v = dict_pop(d, key, dict_key_hash(key));
     if (v.is_unset()) return false;
     decref(v);
     return true;
@@ -409,12 +433,19 @@ bool dict_del(Dict* d, Obj key) {
 
 // ---- exceptions ----
 namespace {
+// BaseException_clear's order, the dict first; AttributeError_clear and NameError_clear release
+// their own fields before it (Objects/exceptions.c, 3.15.2)
+std::vector<std::string> exception_fields(std::initializer_list<std::string> own) {
+    std::vector<std::string> out(own);
+    for (const char* n : {"__dict__", "args", "__traceback__", "__cause__", "__context__", "__suppress_context__"}) out.push_back(n);
+    return out;
+}
 struct ExceptionClasses {
     std::unordered_map<std::string, ClassObject*> by_name;
-    ClassObject* make(const char* name, const char* base) {
+    ClassObject* make(const char* name, const char* base, std::optional<std::vector<std::string>> native = std::nullopt) {
         std::vector<ClassObject*> bases;
         if (base != nullptr) bases.push_back(by_name.at(base));
-        ClassObject* c = make_class({.name = name, .bases = bases});
+        ClassObject* c = make_class({.name = name, .bases = bases, .native = std::move(native)});
         if (base == nullptr) {                     // BaseException derives from object
             c->bases = {types().object};
             c->mro = {c, types().object};
@@ -429,7 +460,7 @@ struct ExceptionClasses {
     }
     ExceptionClasses() {
         // phase 1, step 3a: in C++ until classes compile (step 3a.2 moves them to the prelude)
-        make("BaseException", nullptr);
+        make("BaseException", nullptr, exception_fields({}));
         for (const char* n : {"Exception", "SystemExit", "KeyboardInterrupt", "GeneratorExit"}) make(n, "BaseException");
         for (auto [n, b] : std::initializer_list<std::pair<const char*, const char*>>{
                  {"ArithmeticError", "Exception"}, {"ZeroDivisionError", "ArithmeticError"},
@@ -439,8 +470,12 @@ struct ExceptionClasses {
                  {"RuntimeError", "Exception"}, {"NotImplementedError", "RuntimeError"},
                  {"RecursionError", "RuntimeError"}, {"StopIteration", "Exception"}, {"TypeError", "Exception"},
                  {"ValueError", "Exception"}, {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"},
-                 {"UnicodeError", "ValueError"}})
-            make(n, b);
+                 {"UnicodeError", "ValueError"}}) {
+            std::optional<std::vector<std::string>> own;
+            if (std::string_view(n) == "AttributeError") own = exception_fields({"obj", "name"});
+            if (std::string_view(n) == "NameError") own = exception_fields({"name"});
+            make(n, b, own);
+        }
     }
 };
 ExceptionClasses& exceptions() {
@@ -451,12 +486,21 @@ ExceptionClasses& exceptions() {
 Ref new_exception(ClassObject* c, Ref args) {
     auto* e = new_instance(c);
     Ref r = own(e);
-    setattr(e, intern("args"), args.get());
+    set_exception_field(r.get(), "args", args.get());
     return r;
 }
 }  // namespace
 
 ClassObject* exception_class(const char* name) { return exceptions().by_name.at(name); }
+
+bool is_exception_instance(Obj v) {
+    return is_kind(v, Kind::Instance) && is_subclass(v.object()->cls, exception_class("BaseException"));
+}
+Obj exception_field(Obj exc, const char* name) { return static_cast<Instance*>(exc.object())->field(intern(name)); }
+void set_exception_field(Obj exc, const char* name, Obj value) {
+    incref(value);
+    decref(std::exchange(static_cast<Instance*>(exc.object())->field(intern(name)), value));
+}
 
 namespace {
 std::vector<Obj>& handled() {                    // the exceptions being handled, innermost last
@@ -476,11 +520,27 @@ Handling::~Handling() {
 }
 
 void raise(Obj exc) {
-    // a new exception raised while another is handled records it as its context (PEP 3134)
-    if (!handled().empty() && handled().back() != exc && is_kind(exc, Kind::Instance)) {
-        auto* inst = static_cast<Instance*>(exc.object());
-        auto [present, ctx] = detail::instance_storage(inst, intern("__context__"));
-        if (!present || ctx == None()) setattr(inst, intern("__context__"), handled().back());
+    // _PyErr_SetObject: an exception raised while another is handled takes it as its context
+    // (PEP 3134), replacing any it had; a link back to the new exception along the handled one's
+    // chain is cut first, so that no cycle is made, while a cycle already there is left alone
+    // (Floyd's walk, Python/errors.c)
+    if (!handled().empty() && is_exception_instance(exc)) {
+        Ref handling = Ref::share(handled().back());
+        if (handling.get() != exc) {
+            Obj o = handling.get(), slow = o;
+            bool toggle = false;
+            for (Obj ctx = exception_field(o, "__context__"); !ctx.is_unset(); ctx = exception_field(o, "__context__")) {
+                if (ctx == exc) {
+                    set_exception_field(o, "__context__", Obj{});
+                    break;
+                }
+                o = ctx;
+                if (o == slow) break;                // a cycle already there: every link was checked
+                if (toggle) slow = exception_field(slow, "__context__");
+                toggle = !toggle;
+            }
+            set_exception_field(exc, "__context__", handling.get());
+        }
     }
     throw PyError{Ref::share(exc)};
 }
@@ -505,46 +565,58 @@ bool is_subclass(ClassObject* c, ClassObject* base) {
     return std::find(c->mro.begin(), c->mro.end(), base) != c->mro.end();
 }
 
-void raise_type(Obj value, Obj cause, bool has_cause) {
-    ClassObject* base = exception_class("BaseException");
-    Ref exc;
-    if (is_kind(value, Kind::Class) && is_subclass(static_cast<ClassObject*>(value.object()), base)) {
-        exc = invoke(value, {});
-    } else if (is_kind(value, Kind::Instance) && is_subclass(value.object()->cls, base)) {
-        exc = Ref::share(value);
-    } else {
-        raise_new("TypeError", "exceptions must derive from BaseException");
+namespace {
+bool is_exception_class(Obj v) {                 // PyExceptionClass_Check
+    return is_kind(v, Kind::Class) && is_subclass(static_cast<ClassObject*>(v.object()), exception_class("BaseException"));
+}
+// calling an exception class with no arguments, as do_raise does (Python/ceval.c)
+Ref instantiate(Obj cls) {
+    Ref made = invoke(cls, {});
+    if (!is_exception_instance(made.get())) {
+        Ref shown = repr_of(cls), got = repr_of(Obj::of(type_of(made.get())));
+        raise_new("TypeError", "calling " + as_str(shown.get())->text + " should have returned an instance of BaseException, not " +
+                                   as_str(got.get())->text);
     }
+    return made;
+}
+}  // namespace
+
+void raise_type(Obj value, Obj cause, bool has_cause) {
+    // do_raise: the exception made or taken first, then the cause: an exception class is called,
+    // an instance taken, None clears it; anything else is a TypeError. Either way the cause sets
+    // __suppress_context__ (PyException_SetCause).
+    Ref exc;
+    if (is_exception_class(value)) exc = instantiate(value);
+    else if (is_exception_instance(value)) exc = Ref::share(value);
+    else raise_new("TypeError", "exceptions must derive from BaseException");
     if (has_cause) {
-        Obj c = cause;
-        Ref made;
-        if (is_kind(c, Kind::Class)) {
-            made = invoke(c, {});
-            c = made.get();
-        }
-        setattr(static_cast<Instance*>(exc.get().object()), intern("__cause__"), c);
-        setattr(static_cast<Instance*>(exc.get().object()), intern("__suppress_context__"), boolean(true));
+        Ref fixed;
+        if (is_exception_class(cause)) fixed = instantiate(cause);
+        else if (is_exception_instance(cause)) fixed = Ref::share(cause);
+        else if (cause != None()) raise_new("TypeError", "exception causes must derive from BaseException");
+        set_exception_field(exc.get(), "__suppress_context__", boolean(true));
+        set_exception_field(exc.get(), "__cause__", fixed.get());
     }
     raise(exc.get());
 }
 
 bool exception_matches(Obj exc, Obj spec) {
-    ClassObject* c = type_of(exc);
+    // CHECK_EXC_MATCH: the clause's types are checked before any is matched; a tuple's items must
+    // each be an exception class (_PyEval_CheckExceptTypeValid), then PyErr_GivenExceptionMatches
+    static const char* const CANNOT_CATCH = "catching classes that do not inherit from BaseException is not allowed";
     if (is_kind(spec, Kind::Tuple)) {
-        for (Obj s : static_cast<Tuple*>(spec.object())->items)
-            if (exception_matches(exc, s)) return true;
+        auto& items = static_cast<Tuple*>(spec.object())->items;
+        for (Obj s : items)
+            if (!is_exception_class(s)) raise_new("TypeError", CANNOT_CATCH);
+        for (Obj s : items)
+            if (is_subclass(type_of(exc), static_cast<ClassObject*>(s.object()))) return true;
         return false;
     }
-    if (!is_kind(spec, Kind::Class) || !is_subclass(static_cast<ClassObject*>(spec.object()), exception_class("BaseException")))
-        raise_new("TypeError", "catching classes that do not inherit from BaseException is not allowed");
-    return is_subclass(c, static_cast<ClassObject*>(spec.object()));
+    if (!is_exception_class(spec)) raise_new("TypeError", CANNOT_CATCH);
+    return is_subclass(type_of(exc), static_cast<ClassObject*>(spec.object()));
 }
 
-Obj traceback_of(Obj exc) {
-    if (!is_kind(exc, Kind::Instance)) return Obj{};
-    auto [present, v] = detail::instance_storage(static_cast<Instance*>(exc.object()), intern("__traceback__"));
-    return present ? v : Obj{};
-}
+Obj traceback_of(Obj exc) { return is_exception_instance(exc) ? exception_field(exc, "__traceback__") : Obj{}; }
 
 namespace {
 std::uint64_t frame_ids = 0;                     // a frame's id, given on its first record: never reused
@@ -555,7 +627,7 @@ Traceback* add_entry(Obj exc, const Code& code, int line, std::uint64_t id) {
     auto* tb = new Traceback(&code, line, Ref::share(prev.is_unset() ? None() : prev));
     tb->frame = id;
     Ref held = own(tb);
-    setattr(static_cast<Instance*>(exc.object()), intern("__traceback__"), held.get());
+    set_exception_field(exc, "__traceback__", held.get());
     return tb;
 }
 }  // namespace

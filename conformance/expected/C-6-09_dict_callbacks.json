@@ -1,0 +1,12 @@
+{
+ "case": "C-6-09_dict_callbacks.py",
+ "clause": "C-6-09",
+ "spec": "section 6 (dict), section 9 (lifetimes)",
+ "status": "P1",
+ "source": "review log RL-228 on (astra-low 10: A10-5 to A10-10; gemini-4-argon-high 09: 2.5, 2.6)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "five colliding inserts comparisons: 10 hashes: 0\nthe insert that resizes comparisons: 5 hashes: 0\nsetdefault of a present key: 2\nsetdefault, present comparisons: 2 hashes: 0\nsetdefault of a new key: 9\nsetdefault, new comparisons: 6 hashes: 0\npop: 0\npop comparisons: 0 hashes: 0\npop from an empty dict: default\nempty pop comparisons: 0 hashes: 0\none hashed key comparisons: 0 hashes: 1\npop: 1 0\npop, hashed once comparisons: 0 hashes: 1\na clean dict made comparisons: 1 hashes: 0\ncopy: [1, 2]\ncopy of a clean dict comparisons: 0 hashes: 0\nmerged into an empty dict: [1, 2]\n{**clean} comparisons: 0 hashes: 0\nupdate of a non-empty dict comparisons: 3 hashes: 0\na sparse dict made comparisons: 15 hashes: 0\ncopy of a sparse dict: [4, 5]\ncopy of a sparse dict comparisons: 1 hashes: 0\na dict of one hashed key comparisons: 0 hashes: 1\nfromkeys: [0] [0]\nfromkeys of a dict and a set comparisons: 0 hashes: 1\nvalue dies\nhandler runs\nafter the store\nfirst: a\nnext: x\nstep 0 RuntimeError\nstep 1 StopIteration\n",
+ "stderr": "",
+ "exit_code": 0
+}

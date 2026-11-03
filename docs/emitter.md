@@ -93,8 +93,17 @@ static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
 * Exceptions are C++ exceptions (decision 4): `rt::PyError` carries the Python exception. An
   `except` clause is a `catch (rt::PyError&)` that matches its clauses in order and rethrows when
   none matches; a `Handling` scope makes the exception the one being handled, for a bare `raise`
-  and for `__context__`. The synthetic variables a `try` body stored are set to None before the
-  handlers, after the body's temporaries, as `eval2` does (review log RL-186).
+  and for `__context__`. A clause's types are evaluated at the `except` line and all checked
+  before any is matched (`CHECK_EXC_MATCH`, RL-228, RL-238). The synthetic variables a `try` body
+  stored are set to None before the handlers, after the body's temporaries, as `eval2` does
+  (review log RL-186).
+* An exception's `args`, `__traceback__`, `__cause__`, `__context__` and `__suppress_context__`
+  (AttributeError's `name` and `obj`, NameError's `name`) are fields of the object, not entries of
+  its `__dict__` (`rt::exception_field`): `object.hpp`'s native fields, from the model's
+  `RefClass(native=...)`, behind BaseException's getsets with CPython's checks, released after the
+  subclass's slots in `BaseException_clear`'s order (RL-230). A raise sets `__context__` as
+  `_PyErr_SetObject` does, replacing an earlier one and cutting a link back that would make a cycle
+  (RL-229); `raise ... from` is `do_raise`'s.
 * C++ has no `finally`. A `try` with one gets a completion variable (`int fin2`): the normal
   end, and every `return`, `break`, `continue` or loop end leaving the `try`, set it and jump to
   the label after the `try`, where the block runs once, outside the `try`'s catch, and the
@@ -158,7 +167,14 @@ any key, every method, shared and replaced (`obj.__dict__ = d`), and `del obj.__
 object afresh. An exposed dict is split as CPython's materialised dict is: its values die in the
 class's shared-keys order. Measured on 3.15.2 and modelled first (`refmodel` `RefDict`): a key that
 is not exactly a `str` and `popitem` make it ordinary, `clear` too unless its values are still
-embedded in the live object it was exposed from, and `copy` is split as well. `keys()`,
+embedded in the live object it was exposed from, and `copy` is split as well. Each operation
+calls back into keys as CPython's does (case C-6-09): one lookup per operation (`setdefault`,
+`pop`), a store that takes the value only once its lookup succeeded, a resize that finds the free
+slot without comparing (`find_empty_slot`), `copy` and merges by `copy_lock_held` and
+`dict_dict_merge` (a clean dict cloned, table and all; stored hashes otherwise), `fromkeys` of a
+dict or set by their stored hashes, and an iterator that counts the entries still to come
+(RL-232 to RL-237, RL-252, RL-253). `list`, `dict`, `set` and the keys and items views are
+unhashable (RL-248), and an unhashable key's error names the container (RL-249). `keys()`,
 `values()` and `items()` are live views (their repr is the prelude's); their set operations and
 set comparisons are refused until they exist. `pipeline/tests/test_compiled.py` checks the
 model's scenarios compiled.
@@ -178,7 +194,8 @@ the compiler's own Python, the flags) under a lock, so parallel builds share it.
 builtins), then `__main__`. At the end `__main__`'s globals are released in insertion order (as
 CPython 3.15.2 does, measured), stdout is flushed, and an uncaught exception prints CPython's
 report, the chain of causes and contexts first, each traceback with file and line (spec D-06),
-and exits 1; a facility Bella lacks yet stops with
+the type by its qualified name and a `str()` that raises as `<exception str() failed>`
+(RL-231, RL-250), and exits 1; a facility Bella lacks yet stops with
 `bella: not implemented: ...` and exit 70, as the evaluators refuse.
 
 ## 5. Gaps, in the order the steps close them
@@ -193,7 +210,11 @@ and exits 1; a facility Bella lacks yet stops with
   which differs inside a statement that spans lines (RL-225). The frontend and L2 would carry
   the expression positions; an inlined comprehension's line then goes to its caller's entry.
 * The constructors of `int`, `float` and `dict` (refused, RL-220), `max`, `min`, `divmod`;
-  `__notes__` in an uncaught exception's report (refused).
+  `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
+  (StopIteration's `value`, SystemExit's `code`, ImportError's) are refused by name, read,
+  stored or deleted (RL-255), until those classes are built as CPython's.
+* `__suppress_context__` presents as a `getset_descriptor`, CPython's as a `member_descriptor`,
+  whose type the runtime has, without methods (RL-251, RL-254).
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and
   type are refused today (RL-218); the names RL-211's table refuses, as programs need them.
 * Later: `float` beyond the digits (the wrapper of `to_chars`/`from_chars`), the `bn` copy for

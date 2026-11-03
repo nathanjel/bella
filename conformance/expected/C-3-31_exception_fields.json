@@ -1,0 +1,12 @@
+{
+ "case": "C-3-31_exception_fields.py",
+ "clause": "C-3-31",
+ "spec": "section 3 (exceptions), section 9 (lifetimes)",
+ "status": "P1",
+ "source": "review log RL-228 on (astra-low 10: A10-2, A10-3, A10-11; gemini-4-argon-high 09: 2.4)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "vars of a new exception: []\nvars after a store: ['extra']\nargs from a list: (3, 4) tuple\n__cause__ = 1 TypeError\n__context__ = 1 TypeError\n__traceback__ = 1 TypeError\n__suppress_context__ = 1 TypeError\ndel args TypeError\ndel __cause__ TypeError\ndel __context__ TypeError\ndel __traceback__ TypeError\ndel __suppress_context__ TypeError\nsuppressed before: False\nsuppressed after __cause__ = None: True None\nafter a cause: True ValueError\nfrom int -> TypeError\nfrom type -> TypeError\nfrom type -> KeyError True\nfrom KeyError -> KeyError True\nfrom NoneType -> NoneType True\ncontext of the reused exception: KeyError\ncontext of the reused exception: TypeError\na's context is b: True b's context cut: True\ninvalid clause tuple\ninvalid clause tuple\nmatched type\nAttributeError vars: [] missing Plain\nsuppressed: True\ndies slot\ndies dict value\ndies arg\ndies cause\ndies context\nend\n",
+ "stderr": "",
+ "exit_code": 0
+}

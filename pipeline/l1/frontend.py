@@ -1953,7 +1953,7 @@ class _ToL1:
         if isinstance(s, ast.Raise):
             return L.Raise(ln, self.expr(s.exc) if s.exc else None, self.expr(s.cause) if s.cause else None)
         if isinstance(s, ast.Try):
-            handlers = tuple(L.Handler(self.expr(h.type) if h.type else None, h.name, self.block(h.body))
+            handlers = tuple(L.Handler(self.expr(h.type) if h.type else None, h.name, self.block(h.body), h.lineno)
                              for h in s.handlers)
             return L.Try(ln, self.block(s.body), handlers, self.block(s.orelse), self.block(s.finalbody))
         if isinstance(s, ast.Delete):

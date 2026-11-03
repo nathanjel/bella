@@ -380,9 +380,10 @@ restart:
     }
 }
 
+// dictresize to calculate_log2_keysize(minsize): the smallest power of two at least minsize, and 8
 inline void rebuild(DictObject* d, std::size_t minsize) {
     std::size_t size = 8;
-    while (size <= minsize) size <<= 1;
+    while (size < minsize) size <<= 1;
     std::vector<DictObject::Entry> live;
     for (auto& e : d->entries) if (!e.key.is_unset()) live.push_back(e);
     d->entries = std::move(live);
@@ -399,6 +400,34 @@ inline void rebuild(DictObject* d, std::size_t minsize) {
         d->indices[i] = static_cast<std::int64_t>(ix);
     }
 }
+
+// find_empty_slot: the first index slot on hash's probe sequence that holds no entry (empty or a
+// dummy); no key is compared
+inline std::size_t find_empty_slot(const DictObject* d, std::int64_t hash) {
+    std::size_t mask = d->indices.size() - 1;
+    auto perturb = static_cast<std::uint64_t>(hash);
+    std::size_t i = static_cast<std::size_t>(hash) & mask;
+    while (d->indices[i] >= 0) {
+        perturb >>= PERTURB_SHIFT;
+        i = (i * 5 + static_cast<std::size_t>(perturb) + 1) & mask;
+    }
+    return i;
+}
+
+// insert_combined_dict: a key the lookup did not find goes at the end, at the slot the lookup
+// found, or after a resize (to three times the entries in use) at the first free one; the key's
+// count is taken here, value's is the caller's
+inline void insert_new(DictObject* d, Obj key, std::int64_t hash, Obj value, std::size_t slot) {
+    if (d->split) d->note_key(static_cast<const Str*>(key.object()));
+    if (d->entries.size() >= usable(d)) {
+        rebuild(d, d->used * 3);
+        slot = find_empty_slot(d, hash);
+    }
+    incref(key);
+    d->indices[slot] = static_cast<std::int64_t>(d->entries.size());
+    d->entries.push_back({hash, key, value});
+    ++d->used;
+}
 }  // namespace detail
 
 // The value stored under key (borrowed), or Unset.
@@ -409,31 +438,47 @@ inline Obj dict_find(DictObject* d, Obj key, std::int64_t hash) {
 }
 inline Obj dict_find(DictObject* d, Obj key) { return dict_find(d, key, detail::key_hash(key)); }
 
-// Stores value under key, moving in one count of value the caller holds; returns the value it
-// replaced with its count (Unset if the key is new, which goes to the end). A key that is not a
-// str makes a split dict ordinary; a new str key joins its shared keys while there is room.
+// Stores value under key (insertdict), moving in one count of value the caller holds once the
+// lookup has succeeded; a lookup that raises takes nothing. Returns the value it replaced with
+// its count (Unset if the key is new, which goes to the end). A key that is not a str makes a
+// split dict ordinary; a new str key joins its shared keys while there is room.
 inline Obj dict_put(DictObject* d, Obj key, std::int64_t hash, Obj value) {
     if (d->split && !detail::is_str(key)) d->split.reset();
     if (d->indices.empty()) detail::rebuild(d, 0);
     auto [slot, ix] = detail::probe(d, key, hash);
     ++d->version;
     if (ix >= 0) return std::exchange(d->entries[static_cast<std::size_t>(ix)].value, value);
-    if (d->split) d->note_key(static_cast<const Str*>(key.object()));
-    if (d->entries.size() >= detail::usable(d)) {
-        detail::rebuild(d, d->used * 3);
-        slot = detail::probe(d, key, hash).first;
-    }
-    incref(key);
-    d->indices[slot] = static_cast<std::int64_t>(d->entries.size());
-    d->entries.push_back({hash, key, value});
-    ++d->used;
+    detail::insert_new(d, key, hash, value, slot);
     return Obj{};
 }
-// d[key] = value: the new value is stored before the old one is released.
+// d[key] = value: the new value is stored before the old one is released; when the lookup raises,
+// the count taken for the store is given back before the error goes on (refmodel RefDict.store)
 inline void dict_store(DictObject* d, Obj key, std::int64_t hash, Obj value) {
     incref(value);
-    decref(dict_put(d, key, hash, value));
+    Obj old;
+    try {
+        old = dict_put(d, key, hash, value);
+    } catch (...) {
+        decref(value);
+        throw;
+    }
+    decref(old);
 }
+// dict.setdefault(key, dflt): one lookup; a missing key is inserted where it was looked for
+// (dict_setdefault_ref_lock_held). Returns the value now under key, borrowed.
+inline Obj dict_setdefault(DictObject* d, Obj key, std::int64_t hash, Obj dflt) {
+    if (d->split && !detail::is_str(key)) d->split.reset();
+    if (d->indices.empty()) detail::rebuild(d, 0);
+    auto [slot, ix] = detail::probe(d, key, hash);
+    if (ix >= 0) return d->entries[static_cast<std::size_t>(ix)].value;
+    ++d->version;
+    incref(dflt);
+    detail::insert_new(d, key, hash, dflt, slot);
+    return dflt;
+}
+// dictresize(estimate_log2_keysize(n)), before a bulk insert of n entries (the caller's condition)
+inline void dict_resize_estimate(DictObject* d, std::size_t n) { detail::rebuild(d, (n * 3 + 1) / 2); }
+inline std::size_t dict_usable(const DictObject* d) { return detail::usable(d); }
 inline void dict_store(DictObject* d, Obj key, Obj value) { dict_store(d, key, detail::key_hash(key), value); }
 
 // Removes key and releases the key; returns its value with its count, or Unset when absent.
@@ -496,14 +541,20 @@ inline void dict_clear(DictObject* d) {
 }
 // dict.popitem()'s first step: a split dict becomes ordinary.
 inline void dict_unsplit(DictObject* d) { d->split.reset(); }
-// dict.copy(): a split dict's copy is split too, sharing its keys.
-inline void dict_copy_into(DictObject* to, DictObject* from) {
-    for (auto& e : from->entries)
+// clone_combined_dict_keys (and copy_values for a split dict): `to`, empty, takes from's table as
+// it stands, deleted entries and all; no key is compared. A split dict's copy shares its keys.
+inline void dict_clone_into(DictObject* to, const DictObject* from) {
+    to->entries = from->entries;
+    for (auto& e : to->entries)
         if (!e.key.is_unset()) {
+            incref(e.key);
             incref(e.value);
-            decref(dict_put(to, e.key, e.hash, e.value));
         }
+    to->indices = from->indices;
+    to->used = from->used;
     to->split = from->split;
+    ++to->version;
+    ++to->layout;
 }
 
 // ---- native functions: what a class attribute holds where the model holds a Python callable ----
@@ -551,7 +602,14 @@ struct ClassObject : Object {
     std::vector<const Str*> promoted;            // this class's own promoted fields
     std::vector<const Str*> slot_fields;         // inherited, in MRO-reversed declaration order
     std::vector<const Str*> promoted_fields;
-    std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, then promoted fields
+    // a built-in type's C fields (BaseException's args, __traceback__, __cause__, ...), in the order
+    // its clear function releases them, "__dict__" marking the dict's place; a class that declares
+    // none has that of the nearest class in its MRO that does; empty, as object's: the dict alone
+    // (refmodel RefClass.native)
+    std::vector<const Str*> native;
+    bool native_declared = false;
+    std::vector<const Str*> native_fields;
+    std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
     bool has_dict = false;
     std::shared_ptr<SharedKeys> keys;
     ClassObject() : Object(Kind::Class) { flags |= IMMORTAL; }
@@ -646,6 +704,7 @@ struct ClassSpec {
     std::vector<std::string> promoted = {};
     std::vector<std::pair<std::string, Obj>> attrs = {};
     std::vector<std::string> static_attributes = {};
+    std::optional<std::vector<std::string>> native = std::nullopt;   // a built-in type's C fields (RefClass native)
 };
 
 // RefClass.__init__
@@ -685,8 +744,26 @@ inline ClassObject* make_class(const ClassSpec& spec) {
             throw ModelError("promoted field '" + p->text + "' collides with a slot");
     for (auto it = c->mro.rbegin(); it != c->mro.rend(); ++it)
         for (const Str* p : (*it)->promoted) add_unique(c->promoted_fields, p);
+    if (spec.native) {
+        c->native.clear();
+        for (const auto& n : *spec.native) c->native.push_back(intern(n));
+        c->native_declared = true;
+    } else {
+        for (std::size_t k = 1; k < c->mro.size(); ++k)
+            if (c->mro[k]->native_declared) {
+                c->native = c->mro[k]->native;
+                break;
+            }
+    }
+    for (const Str* n : c->native)
+        if (n != intern("__dict__")) {
+            auto in = [n](const std::vector<const Str*>& v) { return std::find(v.begin(), v.end(), n) != v.end(); };
+            if (in(c->slot_fields) || in(c->promoted_fields)) throw ModelError("'" + n->text + "' is a field of a built-in base");
+            c->native_fields.push_back(n);
+        }
     std::uint32_t i = 0;
     for (const Str* s : c->slot_fields) c->field_index[s] = i++;
+    for (const Str* n : c->native_fields) c->field_index[n] = i++;
     for (const Str* p : c->promoted_fields) c->field_index[p] = i++;
     c->keys = std::make_shared<SharedKeys>();
     std::vector<std::string> statics = spec.static_attributes;
@@ -1163,6 +1240,40 @@ inline void empty_graveyard() {
 // subtype_dealloc's order: the finaliser, the __slots__ of the most-derived class first (each
 // class's sorted by name, as type_new stores them), then the __dict__-backed values in the class's shared-keys
 // order, or the dict's release once it is an object of its own.
+namespace detail {
+// A dying instance's __dict__-backed values in the class's key order, or the dict's own release
+// once it is an object of its own (RefObject._release_dict).
+inline void release_instance_dict(Instance* obj) {
+    if (obj->exposed()) {
+        DictObject* d = std::exchange(obj->dict, nullptr);
+        if (d->embedded == obj) d->embedded = nullptr;   // its values are detached from the dead object
+        decref(d);
+    } else {
+        std::vector<std::pair<const Str*, Obj>> held;
+        std::vector<Obj> keys;
+        for (const Str* p : obj->cls->promoted_fields)
+            if (!obj->field(p).is_unset()) held.emplace_back(p, std::exchange(obj->field(p), Obj{}));
+        if (obj->dict != nullptr) {
+            for (auto& [k, v] : dict_take_all(obj->dict)) {
+                held.emplace_back(static_cast<const Str*>(k.object()), v);
+                keys.push_back(k);
+            }
+            DictObject* d = std::exchange(obj->dict, nullptr);
+            decref(d);
+        }
+        // the class's key order, then any name the keys could not take, in insertion order
+        std::vector<std::pair<const Str*, Obj>> ranked;
+        if (obj->cls->keys)               // a C++ type's instance (object()) shares no keys
+            for (const Str* k : obj->cls->keys->names)
+                for (auto& [n, v] : held) if (n == k && !v.is_unset()) { ranked.emplace_back(n, v); v = Obj{}; }
+        for (const Str* n : obj->order)
+            for (auto& [m, v] : held) if (m == n && !v.is_unset()) { ranked.emplace_back(m, v); v = Obj{}; }
+        for (auto& [n, v] : ranked) decref(v);
+        for (Obj k : keys) decref(k);
+    }
+}
+}  // namespace detail
+
 inline void dealloc(Object* o) {
     switch (o->kind) {
         case Kind::Instance: {
@@ -1185,32 +1296,11 @@ inline void dealloc(Object* o) {
                 std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
                 for (const Str* s : names) decref(std::exchange(obj->field(s), Obj{}));
             }
-            if (obj->exposed()) {
-                DictObject* d = std::exchange(obj->dict, nullptr);
-                if (d->embedded == obj) d->embedded = nullptr;   // its values are detached from the dead object
-                decref(d);
-            } else {
-                std::vector<std::pair<const Str*, Obj>> held;
-                std::vector<Obj> keys;
-                for (const Str* p : obj->cls->promoted_fields)
-                    if (!obj->field(p).is_unset()) held.emplace_back(p, std::exchange(obj->field(p), Obj{}));
-                if (obj->dict != nullptr) {
-                    for (auto& [k, v] : dict_take_all(obj->dict)) {
-                        held.emplace_back(static_cast<const Str*>(k.object()), v);
-                        keys.push_back(k);
-                    }
-                    DictObject* d = std::exchange(obj->dict, nullptr);
-                    decref(d);
-                }
-                // the class's key order, then any name the keys could not take, in insertion order
-                std::vector<std::pair<const Str*, Obj>> ranked;
-                if (obj->cls->keys)               // a C++ type's instance (object()) shares no keys
-                    for (const Str* k : obj->cls->keys->names)
-                        for (auto& [n, v] : held) if (n == k && !v.is_unset()) { ranked.emplace_back(n, v); v = Obj{}; }
-                for (const Str* n : obj->order)
-                    for (auto& [m, v] : held) if (m == n && !v.is_unset()) { ranked.emplace_back(m, v); v = Obj{}; }
-                for (auto& [n, v] : ranked) decref(v);
-                for (Obj k : keys) decref(k);
+            // the built-in base's clear function: its fields, the dict at its place (RefObject.dealloc)
+            if (obj->cls->native.empty()) detail::release_instance_dict(obj);
+            for (const Str* n : obj->cls->native) {
+                if (n == intern("__dict__")) detail::release_instance_dict(obj);
+                else decref(std::exchange(obj->field(n), Obj{}));
             }
             detail::bury(o);
             return;

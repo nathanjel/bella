@@ -238,8 +238,9 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
                                                 std::to_string(given_kwonly) + " keyword-only argument" +
                                                 (given_kwonly == 1 ? "" : "s") + ")"
                                           : "";
+        // too_many_positional: the keyword-only clause, then was or were (A10-13)
         raise_new("TypeError", who + " takes " + takes + " positional argument" + plural + " but " +
-                                   std::to_string(args.npos) + (given_kwonly ? kwpart : (args.npos == 1 ? " was" : " were")) +
+                                   std::to_string(args.npos) + kwpart + (args.npos == 1 && !given_kwonly ? " was" : " were") +
                                    " given");
     }
     std::vector<std::string> posonly_as_kw;
@@ -336,7 +337,7 @@ namespace {
 [[noreturn]] void raise_name_error(const Str* name) {      // NameError.name is the missing name
     Ref msg = str_new("name '" + name->text + "' is not defined");
     Ref exc = invoke(Obj::of(exception_class("NameError")), {msg.get()});
-    bella::setattr(static_cast<Instance*>(exc.get().object()), intern("name"), Obj::of(name));
+    set_exception_field(exc.get(), "name", Obj::of(name));
     raise(exc.get());
 }
 }  // namespace
@@ -543,8 +544,8 @@ Ref list_extend_m(Obj self, Args a) { onearg(a, "list.extend"); list_extend(self
 Ref list_pop_m(Obj self, Args a) {
     clinic(a, "pop", "list.pop", 0, 1);
     auto& items = list_self(self)->items;
+    std::int64_t i = a.npos ? index_value(a.pos(0)) : -1;          // the argument converted first (A9-11, G9 2.10)
     if (items.empty()) raise_new("IndexError", "pop from empty list");
-    std::int64_t i = a.npos ? index_value(a.pos(0)) : -1;          // bool and __index__, before any change (A9-11)
     if (i < 0) i += static_cast<std::int64_t>(items.size());
     if (i < 0 || i >= static_cast<std::int64_t>(items.size())) raise_new("IndexError", "pop index out of range");
     Obj v = items[static_cast<std::size_t>(i)];
@@ -600,22 +601,34 @@ Ref list_index_m(Obj self, Args a) {              // list_index_impl: start and 
     }
     raise_new("ValueError", "list.index(x): x not in list");
 }
+// list_remove_impl: each item held while it is compared, against the list as it is then; the
+// match deletes the slice [i, i+1) of the list as it is after the comparison, which __eq__ may
+// have shortened (list_ass_slice clamps it; G9 2.1)
 Ref list_remove_m(Obj self, Args a) {
     onearg(a, "list.remove");
-    std::int64_t i = list_find(self, a.pos(0));
-    if (i < 0) raise_new("ValueError", "list.remove(x): x not in list");
     auto& items = list_self(self)->items;
-    Obj old = items[static_cast<std::size_t>(i)];
-    items.erase(items.begin() + i);
-    decref(old);
-    return none_ref();
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        Ref item = Ref::share(items[i]);
+        bool eq = item.get() == a.pos(0) || truth(compare(CmpOp::Eq, item.get(), a.pos(0)).get());
+        item = Ref{};
+        if (eq) {
+            if (i < items.size()) {
+                Obj old = items[i];
+                items.erase(items.begin() + static_cast<std::ptrdiff_t>(i));
+                decref(old);
+            }
+            return none_ref();
+        }
+    }
+    raise_new("ValueError", "list.remove(x): x not in list");
 }
-Ref list_count_m(Obj self, Args a) {
+Ref list_count_m(Obj self, Args a) {             // list_count_impl: the live list, each item held (G9 2.3)
     onearg(a, "list.count");
+    auto& items = list_self(self)->items;
     std::int64_t n = 0;
-    for (Obj x : std::vector<Obj>(list_self(self)->items)) {
-        Ref hold = Ref::share(x);
-        if (x == a.pos(0) || truth(compare(CmpOp::Eq, x, a.pos(0)).get())) ++n;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        Ref item = Ref::share(items[i]);
+        if (item.get() == a.pos(0) || truth(compare(CmpOp::Eq, item.get(), a.pos(0)).get())) ++n;
     }
     return Ref::steal(Obj::small(n));
 }
@@ -641,17 +654,16 @@ Ref dict_get_m(Obj self, Args a) {
     Obj v = dict_get(dict_self(self), a.pos(0));
     return !v.is_unset() ? Ref::share(v) : a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
 }
-Ref dict_pop_m(Obj self, Args a) {
+Ref dict_pop_m(Obj self, Args a) {             // pop_lock_held: an empty dict hashes nothing; one lookup
     clinic(a, "pop", "dict.pop", 1, 2);
-    Obj v = dict_get(dict_self(self), a.pos(0));
+    Dict* d = dict_self(self);
+    Obj v = d->used == 0 ? Obj{} : dict_pop(d, a.pos(0), dict_key_hash(a.pos(0)));
     if (v.is_unset()) {
         if (a.npos > 1) return Ref::share(a.pos(1));
         Ref exc = invoke(Obj::of(exception_class("KeyError")), {a.pos(0)});
         raise(exc.get());
     }
-    Ref out = Ref::share(v);
-    dict_del(dict_self(self), a.pos(0));
-    return out;
+    return Ref::steal(v);
 }
 Ref dict_len_m(Obj self, Args a) { dunder_args(self, a, "__len__", 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(dict_self(self)->used))); }
 Ref dict_keys_m(Obj self, Args a) {
@@ -686,9 +698,7 @@ Ref dict_clear_m(Obj self, Args a) {
 }
 Ref dict_copy_m(Obj self, Args a) {
     noargs(a, "dict.copy");
-    Ref out = dict_new();
-    dict_copy_into(static_cast<Dict*>(out.get().object()), dict_self(self));
-    return out;
+    return dict_copy(dict_self(self));
 }
 Ref dict_popitem_m(Obj self, Args a) {          // the last entry; a split dict becomes ordinary first
     noargs(a, "dict.popitem");
@@ -705,15 +715,11 @@ Ref dict_popitem_m(Obj self, Args a) {          // the last entry; a split dict 
     Ref v = Ref::steal(value);
     return tuple_new({key.get(), v.get()});
 }
-Ref dict_setdefault_m(Obj self, Args a) {
+Ref dict_setdefault_m(Obj self, Args a) {      // one lookup, the insert where it ended (A10-6)
     clinic(a, "setdefault", "dict.setdefault", 1, 2);
     Dict* d = dict_self(self);
-    std::int64_t hash = hash_of(a.pos(0));
-    Obj v = dict_find(d, a.pos(0), hash);
-    if (!v.is_unset()) return Ref::share(v);
-    Obj dflt = a.npos > 1 ? a.pos(1) : None();
-    dict_store(d, a.pos(0), hash, dflt);
-    return Ref::share(dflt);
+    std::int64_t hash = dict_key_hash(a.pos(0));
+    return Ref::share(dict_setdefault(d, a.pos(0), hash, a.npos > 1 ? a.pos(1) : None()));
 }
 }  // namespace
 
@@ -753,12 +759,37 @@ Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
     clinic(a, "fromkeys", "dict.fromkeys", 1, 2);
     if (cls.object() != Obj::of(types().dict).object()) throw NotImplemented("dict.fromkeys on a subclass of dict");
     Ref out = dict_new();
-    Obj value = a.npos > 1 ? a.pos(1) : None();
-    Ref it = iter(a.pos(0));
+    auto* d = static_cast<Dict*>(out.get().object());
+    Obj value = a.npos > 1 ? a.pos(1) : None(), src = a.pos(0);
+    // dict_dict_fromkeys and dict_set_fromkeys: an exact dict's or set's keys with their stored
+    // hashes, after one resize, read from the live table; anything else is iterated and hashed
+    if (is_kind(src, Kind::Dict)) {
+        auto* from = static_cast<Dict*>(src.object());
+        dict_resize_estimate(d, from->used);
+        for (std::size_t pos = 0; pos < from->entries.size(); ++pos) {
+            if (from->entries[pos].key.is_unset()) continue;
+            std::int64_t hash = from->entries[pos].hash;
+            Ref k = Ref::share(from->entries[pos].key);
+            dict_set_hashed(d, k.get(), hash, value);
+        }
+        return out;
+    }
+    if (is_kind(src, Kind::Set)) {
+        auto* from = static_cast<SetObject*>(src.object());
+        dict_resize_estimate(d, from->used);
+        for (std::size_t pos = 0; pos < from->table.size(); ++pos) {
+            if (from->table[pos].key.is_unset()) continue;
+            std::int64_t hash = from->table[pos].hash;
+            Ref k = Ref::share(from->table[pos].key);
+            dict_set_hashed(d, k.get(), hash, value);
+        }
+        return out;
+    }
+    Ref it = iter(src);
     for (;;) {
         Ref k = for_next(it.get());
         if (is_end(k)) break;
-        dict_set(static_cast<Dict*>(out.get().object()), k.get(), value);
+        dict_set(d, k.get(), value);
     }
     return out;
 }
@@ -932,6 +963,12 @@ Module* make_builtins() {
         method(c, "__contains__", contains_m);
         method(c, "__iter__", iter_m);
     }
+    // the mutable containers and the keys and items views are unhashable: __hash__ is None in their
+    // dicts (PyObject_HashNotImplemented), so object.__hash__ is not found (found while fixing A10-7)
+    for (ClassObject* c : {t.list, t.dict, t.set, t.dict_keys, t.dict_items}) {
+        incref(None());
+        decref(c->attrs.set(intern("__hash__"), None()));
+    }
     method(t.list, "append", list_append_m);
     method(t.list, "extend", list_extend_m);
     method(t.list, "pop", list_pop_m);
@@ -1034,6 +1071,14 @@ void refuse_absent_attribute(Obj obj, const Str* name) {
     }
     if (is_kind(obj, Kind::Class)) refuse_in(static_cast<ClassObject*>(obj.object())->mro, name);
     refuse_in(type_of(obj)->mro, name);
+}
+void refuse_absent_data_descriptor(Obj obj, const Str* name) {
+    for (const ClassObject* c : type_of(obj)->mro) {
+        if (c->heap_type) continue;              // the prelude's classes keep their fields as they choose
+        std::string_view kind = cpython_attribute_kind(c, name->text);
+        if (kind == "member_descriptor" || kind == "getset_descriptor")
+            throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
+    }
 }
 std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name) {
     const CPythonName* e = cpython_find(owner->name, name);
@@ -1234,14 +1279,17 @@ void print_one(Stream& err, Obj exc) {
                       e->code->name + "\n");
         }
     }
-    ClassObject* c = type_of(exc);
-    std::string name = c->name;
-    if (const Obj* mod = c->attrs.find(intern("__module__")))
-        if (const Str* ms = as_str(*mod); ms != nullptr && ms->text != "builtins" && ms->text != "__main__")
-            name = ms->text + "." + name;
-    Ref text = str_of(exc);
-    const Str* s = as_str(text.get());
-    err.write(s->length == 0 ? name + "\n" : name + ": " + s->text + "\n");
+    // format_exception_only: the type's __qualname__, its module unless __main__ or builtins, and
+    // _safe_string(exc, 'exception'): a str() that raises anything shows as <exception str() failed>
+    std::string name = fully_qualified_name(type_of(exc));
+    std::string text;
+    try {
+        Ref str = str_of(exc);
+        text = as_str(str.get())->text;
+    } catch (const PyError&) {
+        text = "<exception str() failed>";
+    }
+    err.write(text.empty() ? name + "\n" : name + ": " + text + "\n");
 }
 
 // The report CPython prints (traceback.TracebackException, compact): the chain first, oldest

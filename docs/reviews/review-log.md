@@ -7,20 +7,22 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-03:** 227 findings from seventeen reviews and one round of examples: 189 fixed (most in commit
+**Status on 2026-11-03:** 255 findings from nineteen reviews and one round of examples: 216 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225), 21 already done before or
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators), 21 already done before or
 because of the review, 4 planned (D-2 and D-10, accepted by the author), 3 deferred (RL-222 to step 3c), 4 refuted
-and 5 checked with no issue. Open: RL-225 (lines inside a statement). The
+and 5 checked with no issue. Open: RL-225 (lines inside a statement) and RL-254 (a member's type). The
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, and D-12 on 2026-11-03.
 
 ## Reviews received
 
 | Date | Reviewer | File | Scope | Ran against |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 | astra-low (A10) | [2026-11-03-astra-low-10-traceback-dictionary-review.md](2026-11-03-astra-low-10-traceback-dictionary-review.md) | D-12 part 1, step 3a.3's dict, the operators and argument errors, `f12af86..e827a47` | CPython 3.15.2, GCC 16.2.1 |
+| 2026-11-03 | gemini-4-argon-high (G9) | [2026-11-03-09-gemini-4-argon-high-tracebacks-dict-operators.md](2026-11-03-09-gemini-4-argon-high-tracebacks-dict-operators.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-03 | astra-low (A9) | [2026-11-03-astra-low-09-compiled-classes-review.md](2026-11-03-astra-low-09-compiled-classes-review.md) | the C++ emitter, the runtime core and compiled classes, `d28b256..f12af86` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-02 | gemini-4-argon-high (G8) | [2026-11-02-08-gemini-4-argon-high-cpp-emitter-review.md](2026-11-02-08-gemini-4-argon-high-cpp-emitter-review.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-02 | astra-low (A8) | [2026-11-02-astra-low-08-l2-lifetime-review.md](2026-11-02-astra-low-08-l2-lifetime-review.md) | the L2 leg, lifetimes in the model and `object.hpp`, `58bb34b..d28b256` | CPython 3.15.2, GCC 16.2.1 |
@@ -424,6 +426,54 @@ behaviour; these three are not.
 | RL-226 | Found while writing C-3-30 | The uncaught report printed only the last exception: no cause (`raise ... from`), no context, no separator lines | Confirmed | Fixed | `print_traceback` follows `traceback.TracebackException` (compact): the chain first, cause, else context unless suppressed, an exception already shown ends it; `__notes__` is refused. The unraisable report prints the chain too, as CPython 3.15's does (measured) |
 | RL-227 | Found while writing C-3-30 | stdout was flushed after the uncaught report; CPython flushes it before, so `2>&1` showed the lines in another order | Confirmed | Fixed | `run_main` flushes stdout before the report; the test compares one merged stream |
 
+### Tracebacks, dicts and operators (A10, G9)
+
+All 13 of A10's findings and all 10 of G9's reproduce on CPython 3.15.2 and the compiled runner
+(`PYTHONHASHSEED=0`); three are the same defect (A10-3 and G9 2.4, A10-7 and G9 2.5, A10-10 and
+G9 2.6), so 20 are distinct. G9 numbered its findings RL-228 to RL-237 itself; those labels are
+its own, and its section numbers are mapped below. Two of G9's suggested fixes are wrong and were
+not taken: `list.remove` after `__eq__` shortened the list does not raise ValueError (CPython
+deletes the clamped slice `[i, i+1)` and returns None), and dict iteration does not check the
+dict's version (CPython counts the entries it still expects, `dictiterobject.len`; a version check
+would reject replacing a value, which is allowed). A10-3 is the larger part: an exception's
+`args`, `__traceback__`, `__cause__`, `__context__` and `__suppress_context__` were entries of its
+`__dict__`. They are now C fields of BaseException, modelled first (`refmodel/objects.py`,
+`RefClass(native=...)`: a built-in type's fields, released in its clear function's order, the dict
+at its place). Every program is `pipeline/tests/test_review_2026_11_03b.py`; the mechanisms are
+cases C-3-31 (exception fields and chaining) and C-6-09 (what a dict operation calls back into).
+Fixing them found RL-248 to RL-255.
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-228 | A10-1 | An error while matching an `except` clause (`except missing:`) was reported at the line of the raise being matched (3), not the clause's (4) | Confirmed | Fixed | L1's `Handler` carries the `except` line; the lowering marks it before the clause's type is evaluated and checked (`CHECK_EXC_MATCH`'s location). Report test `RL-228 a handler header is matched at its line` |
+| RL-229 | A10-2 | A raise kept an exception's earlier `__context__` (only an absent or None one was set) and never cut a link back to the new exception, so a reused exception showed a stale context and a cycle could form | Confirmed | Fixed | `raise` follows `_PyErr_SetObject`: the context is always the exception being handled, unless it is the one raised; first the handled exception's context chain is walked (Floyd's) and a link to the new exception cut, a cycle already there left alone. C-3-31 |
+| RL-230 | A10-3, G9 2.4 | The linkage fields were ordinary attributes: `raise E from 1` raised E with `__cause__` 1, assigning `__cause__` did not set `__suppress_context__`, any value was accepted for `__cause__`, `__context__`, `__traceback__`, `__suppress_context__`, and `args` stayed a list; they showed in `vars(e)`, and they died with the dict's entries (args before the dict's values; CPython: the dict, then args, the cause, the context) | Confirmed | Fixed | Model first: `RefClass(native=...)`, tests `test_a_builtin_bases_fields_die_after_the_slots_in_its_clear_order` (a mixin first keeps the exception's layout). `object.hpp`: `ClassSpec.native`, the fields indexed after the slots, released by the solid base's order. The runtime: BaseException's getsets and member as `Objects/exceptions.c` has them (CPython's checks and words, none deletable, `args` through `PySequence_Tuple`, a cause setting `__suppress_context__` even when None); AttributeError's `name`, `obj` and NameError's `name` as members. `raise ... from` as `do_raise`: an exception class is called (its result must be an exception), an instance taken, None clears, else TypeError. C-3-31. The member presents as a `getset_descriptor` (RL-254) |
+| RL-231 | A10-4 | An exception whose `__str__` raised aborted the program (SIGABRT) while it was reported | Confirmed | Fixed | `print_one`: `_safe_string`, any exception (a SystemExit too, as the bare `except:`) gives `<exception str() failed>`; both reports go through it. Report tests `RL-231 ...` |
+| RL-232 | A10-5 | `d[k] = v` whose key comparison raised never released the count taken for `v` | Confirmed | Fixed | Model first: `test_a_store_that_fails_takes_no_count`. `dict_put` takes the value's count only once the lookup succeeded; `dict_store` gives it back when the lookup raises, so `v` dies before the handler runs |
+| RL-233 | A10-6 | `setdefault` looked the key up twice; `__eq__` changing its answer between them replaced an existing value | Confirmed | Fixed | `dict_setdefault`: one lookup, the new key inserted where it ended (`dict_setdefault_ref_lock_held`) |
+| RL-234 | A10-7, G9 2.5 | `dict.pop` looked up (and hashed) twice: an extra `__hash__` or `__eq__` call could raise or leave the key in the dict | Confirmed | Fixed | `pop_lock_held`: an empty dict hashes nothing (`{}.pop([])` is KeyError, measured), otherwise one hash and one lookup through `dict_pop` |
+| RL-235 | A10-8 | `dict.copy()` re-inserted every entry, comparing colliding keys | Confirmed | Fixed | `copy_lock_held`: an empty dict's copy is new; a split dict's shares its keys; a combined one at most a third deleted is cloned, table and all; any other is merged into a new dict (`dict_dict_merge`), which compacts it and compares what collides. C-6-09 |
+| RL-236 | A10-9 | `dict.fromkeys` of a dict (or set) hashed every key again | Confirmed | Fixed | `dict_dict_fromkeys` and `dict_set_fromkeys`: one resize, then the stored hashes, from the live table; any other iterable is iterated and hashed |
+| RL-237 | A10-10, G9 2.6 | A dict iterator went on after a key was deleted and another added (the size unchanged), yielding an entry it did not expect | Confirmed | Fixed | The iterator counts the entries still to come; meeting one more raises `RuntimeError: dictionary keys changed during iteration` and exhausts the iterator (`dictiter_iternextkey`); the same for the values and items iterators |
+| RL-238 | A10-11 | `except (ValueError, 42):` matched ValueError; CPython checks every type of a clause first. A nested tuple was accepted too | Confirmed | Fixed | `exception_matches` as `CHECK_EXC_MATCH`: `_PyEval_CheckExceptTypeValid` (each item an exception class), then the match |
+| RL-239 | A10-12 | `x in some_list` leaked a count of the item whose `__eq__` raised | Confirmed | Fixed | The item is held by a `Ref` while it is compared |
+| RL-240 | A10-13 | The too-many-positional message dropped `were` when keyword-only arguments were given | Confirmed | Fixed | `too_many_positional`'s wording: the keyword-only clause, then `was` or `were` |
+| RL-241 | G9 2.1 | `list.remove` whose `__eq__` emptied the list erased past the end (SIGSEGV) | Confirmed | Fixed | `list_remove_impl`: each item held while compared, against the list as it is then; a match deletes the slice `[i, i+1)` clamped to the list as `__eq__` left it, and returns None (G9's suggested ValueError is not CPython's) |
+| RL-242 | G9 2.2 | `a.extend(a)` and `a += a` never ended | Confirmed | Fixed | `_list_extend`: a list extended by itself is repeated (`list_inplace_repeat`) |
+| RL-243 | G9 2.3 | `list.count` iterated an uncounted copy of the list: after `__eq__` cleared it, it compared freed objects | Confirmed | Fixed | `list_count_impl`: the live list, each item held while compared |
+| RL-244 | G9 2.7 | `MethodType.__new__()` and `slice.__new__()` underflowed the argument count (`got 18446744073709551615`); `BaseException.__new__(int)` and `(1)` printed a literal `X` | Confirmed | Fixed | `tp_new_wrapper`'s checks, shared by the C++ types' `__new__`: `T.__new__(): not enough arguments`, `T.__new__(X): X is not a type object (int)`, `T.__new__(int): int is not a subtype of T` |
+| RL-245 | G9 2.8 | `__iter__ = None` called None (`'NoneType' object is not callable`) | Confirmed | Fixed | `slot_tp_iter`: `__iter__` None is not iterable, whatever `__getitem__` says; `slot_sq_contains`: `__contains__` None is `not a container`; and `in` rewords `iter()`'s TypeError as `argument of type 'X' is not a container or iterable` (`_PySequence_IterSearch`), which the runtime did not either |
+| RL-246 | G9 2.9 | `object.__init__`'s message named the class by `__qualname__` | Confirmed | Fixed | `tp_name`, the class's `__name__` |
+| RL-247 | G9 2.10 | `list.pop(i)` checked for an empty list before converting `i`, so an `__index__` that emptied it gave the wrong message, and `[].pop('x')` was IndexError instead of TypeError | Confirmed | Fixed | The argument is converted first (Argument Clinic), then `pop from empty list` |
+| RL-248 | Found while fixing RL-234 | `list`, `dict`, `set` and the keys and items views were hashable (`hash([])` was an int; `{[]: 1}` worked): their types had no `__hash__ = None`, so `object.__hash__` was found | Confirmed | Fixed | Their dicts hold `__hash__` None, as CPython's (`PyObject_HashNotImplemented`) |
+| RL-249 | Found while fixing RL-248 | An unhashable key's TypeError said `unhashable type: 'C'`; CPython 3.15 says `cannot use 'C' as a dict key (unhashable type: 'C')`, and `... as a set element (...)` | Confirmed | Fixed | `dict_key_hash` and `set_key_hash` word it as `dict_unhashable_type` and `set_unhashable_type` (the type by `%T`); `hash()` itself keeps the plain message |
+| RL-250 | Found while fixing RL-231 | The reports named an exception's class by `__name__`; CPython's use `__qualname__` (`Outer.E: ...`) | Confirmed | Fixed | `fully_qualified_name`, also `%T`'s. Report test `RL-250 ...` |
+| RL-251 | Found while checking RL-230 | `type(C.__dict__['x'])` of a `__slots__` member crashed the program: the header's `member_descriptor` class was never made a type | Confirmed | Fixed | The runtime makes `member_descriptor` a type; its methods are still refused (the names table) |
+| RL-252 | Found while fixing RL-233 | An insert that resized the table looked the key up again, comparing colliding keys a second time | Confirmed | Fixed | `insert_combined_dict`: after the resize, `find_empty_slot`, which compares nothing. C-6-09 (`the insert that resizes`: 5 comparisons, was 10). `rebuild` now rounds as `calculate_log2_keysize` (at least, not above), which only the bulk resizes reach |
+| RL-253 | Found while fixing RL-235 | `{**d}`, `d.update(other)` and `d | other` copied the other dict's items first and inserted them all: no clean-dict clone into an empty dict, and an `__eq__` that changed `other` went unnoticed | Confirmed | Fixed | `dict_merge_dict` as `dict_dict_merge` (override): the clone into an empty dict when `other` is clean, else one resize and each entry from the live table with its stored hash, `RuntimeError: dict mutated during update` when `other`'s size changes |
+| RL-254 | Found while fixing RL-230 | `BaseException.__dict__['__suppress_context__']` presents as a `getset_descriptor`; CPython's is a `member_descriptor` | Confirmed | Open | Behaves as CPython's member; only its type differs. The runtime's `member_descriptor` has no methods yet (RL-251); `docs/emitter.md` section 5 |
+| RL-255 | Found while documenting RL-230 | A store to a field CPython's exception has and the runtime does not (`StopIteration(5).value = 6`) went into the instance `__dict__`; reading it was already refused | Confirmed | Fixed | `refuse_absent_data_descriptor`: a store or delete of a name no class of the runtime has, where CPython's built-in base has a member or getset (the names table), is refused as the read is. Test `test_stores_to_fields_cpython_has_are_refused` |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -628,5 +678,5 @@ exceptions the runtime raises and catches inside itself):
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-228` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-256` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

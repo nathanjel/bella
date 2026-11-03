@@ -272,6 +272,7 @@ class RefClass:
         attrs: dict[str, Any] | None = None,
         static_attributes: tuple[str, ...] = (),
         heap: Heap | None = None,
+        native: tuple[str, ...] | None = None,
     ) -> None:
         self.name = name
         self.bases = tuple(bases)
@@ -304,6 +305,23 @@ class RefClass:
             if p in self.slot_fields:
                 raise ValueError(f"promoted field {p!r} collides with a slot")
         self.promoted_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c.promoted))
+        # A built-in type's C fields (BaseException's args, __traceback__, __cause__, ...): stored in
+        # the object, never in its __dict__, reached through the type's own descriptors, and released
+        # in the order of the type's clear function, which names the place of the dict ("__dict__").
+        # A class that declares none has that of the nearest class in its MRO that does (its solid
+        # base: class E(Mixin, Exception) is laid out as an exception); object's is the dict alone.
+        self.native_declared = native is not None
+        if native is not None:
+            self.native: tuple[str, ...] = tuple(native)
+            for n in self.native:
+                if n != "__dict__":
+                    self.attrs.setdefault(n, SlotDescriptor(n))
+        else:
+            self.native = next((c.native for c in self.mro[1:] if c.native_declared), ("__dict__",))
+        self.native_fields = tuple(n for n in self.native if n != "__dict__")
+        for n in self.native_fields:
+            if n in self.slot_fields or n in self.promoted:
+                raise ValueError(f"{n!r} is a field of a built-in base")
 
     def _own_slot_names(self) -> tuple[str, ...]:
         return tuple(s for s in (self.slots or ()) if s != "__dict__")
@@ -389,7 +407,7 @@ def is_data_descriptor(found: Any) -> bool:
 class RefObject:
     def __init__(self, cls: RefClass, tag: Any = None) -> None:
         self.cls = cls
-        self.inline: dict[str, Any] = {n: UNSET for n in cls.slot_fields + cls.promoted_fields}
+        self.inline: dict[str, Any] = {n: UNSET for n in cls.slot_fields + cls.native_fields + cls.promoted_fields}
         self.order: list[str] = []          # first-assignment order of __dict__-backed names
         self.dict: RefDict | None = None    # before exposure: the attributes not promoted; after: the object's __dict__
         self.exposed = False
@@ -400,8 +418,10 @@ class RefObject:
 
     def dealloc(self) -> None:
         """subtype_dealloc's order: the finaliser, the __slots__ of the most-derived class first
-        (each class's sorted by name, as type_new stores them), then the __dict__-backed values in the class's
-        shared-keys order, or the dict's release once it is an object of its own."""
+        (each class's sorted by name, as type_new stores them), then the built-in base's clear
+        function (BaseException_clear: the dict, args, the traceback, the cause, the context), in
+        which the dict means the __dict__-backed values in the class's shared-keys order, or the
+        dict's release once it is an object of its own (measured on 3.15.2)."""
         fin = self.cls.lookup("__del__")
         if fin is not None:
             fin[0](self)
@@ -414,6 +434,14 @@ class RefObject:
                 v = self.inline.get(name, UNSET)
                 self.inline[name] = UNSET
                 decref(v)
+        for name in self.cls.native:
+            if name == "__dict__":
+                self._release_dict()
+            else:
+                v, self.inline[name] = self.inline[name], UNSET
+                decref(v)
+
+    def _release_dict(self) -> None:
         if self.exposed:
             d, self.dict = self.dict, None
             assert d is not None

@@ -125,6 +125,7 @@ struct Iterator : Object {                       // the C++ types' iterators
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
     std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
+    std::int64_t len = 0;                        // a dict iterator's entries still to come (dictiterobject.len)
     Iterator(Of o, Obj s);
 };
 struct DictView : Object {                       // dict.keys(), values(), items(): live views of the dict
@@ -188,7 +189,7 @@ struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
-        *method_descriptor, *classmethod_descriptor, *getset_descriptor, *mappingproxy, *slice, *iterator, *set,
+        *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator;
 };
 Types& types();
@@ -251,6 +252,12 @@ struct PyError {
 ClassObject* exception_class(const char* name);
 bool exception_matches(Obj exc, Obj spec);       // except clause matching (a class or a tuple of them)
 Obj traceback_of(Obj exc);
+bool is_exception_instance(Obj v);               // PyExceptionInstance_Check
+// BaseException's C fields (args, __traceback__, __cause__, __context__, __suppress_context__;
+// AttributeError's name and obj, NameError's name): the object's own storage, never its __dict__
+// (refmodel RefClass native). Unset reads as absent: None to the descriptors, () for args.
+Obj exception_field(Obj exc, const char* name);
+void set_exception_field(Obj exc, const char* name, Obj value);   // the new value kept before the old is released
 [[noreturn]] void reraise();                     // bare `raise`: the exception being handled
 // Inside a catch block: the caught exception goes on, as the one being propagated again (a
 // finally block or an except clause's test may have raised and caught others meanwhile).
@@ -342,11 +349,18 @@ Ref tuple_steal(std::vector<Obj> items);                     // takes over count
 Ref tuple_copy(std::span<const Obj> items);                  // takes new counts of the items
 Ref list_new(std::initializer_list<Obj> items);
 std::int64_t hash_of(Obj v);
+// a key's hash for a dict or a set: an unhashable key's TypeError names the container, as
+// dict_unhashable_type and set_unhashable_type word it ("cannot use 'list' as a dict key (...)")
+std::int64_t dict_key_hash(Obj key);
+std::int64_t set_key_hash(Obj key);
+std::string fully_qualified_name(const ClassObject* c);     // %T: module.qualname, bare for builtins and __main__
 Obj dict_get(Dict* d, Obj key);                              // borrowed, Unset if absent
 void dict_set(Dict* d, Obj key, Obj value);                  // takes new counts
 void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value);   // a key's stored hash, not __hash__ again
 bool dict_del(Dict* d, Obj key);
 Ref dict_new();
+Ref dict_copy(Dict* d);                                      // dict.copy() (copy_lock_held)
+void dict_merge_dict(Dict* target, Dict* other);             // dict_dict_merge, override: update and {**d}
 
 // ---- names (L2 NameRef kinds) ----
 Ref load_fast(const Ref& slot, const char* name);            // UnboundLocalError
@@ -437,6 +451,9 @@ Ref descr_get(Obj found, Obj obj, Obj type);                 // type(found).__ge
 // with AttributeError or NameError (runtime/src/cpython_names.inc, tools/cpython_names.py): an
 // attribute of a built-in class in the MRO, of a class's metatype, of sys or builtins; a global.
 void refuse_absent_attribute(Obj obj, const Str* name);
+// a store or delete of a name the runtime's classes lack where CPython's built-in base has a data
+// descriptor (a member or getset: StopIteration.value): CPython sets the field, never the __dict__
+void refuse_absent_data_descriptor(Obj obj, const Str* name);
 void refuse_absent_global(const Str* name);
 // An operator CPython handles for these operands' types (the table's binop, iop and cmp entries)
 // and the runtime does not: refused rather than answered with a TypeError CPython would not raise.

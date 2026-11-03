@@ -98,8 +98,7 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
     if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // dict_or: a copy, updated
-        Ref out = dict_new();
-        dict_copy_into(static_cast<Dict*>(out.get().object()), static_cast<Dict*>(a.object()));
+        Ref out = dict_copy(static_cast<Dict*>(a.object()));
         dict_update_arg(out.get(), b);
         return out;
     }
@@ -362,12 +361,9 @@ bool contains(Obj container, Obj item) {
     }
     if (is_kind(container, Kind::List)) {
         auto& items = static_cast<List*>(container.object())->items;
-        for (std::size_t i = 0; i < items.size(); ++i) {
-            Obj v = items[i];
-            incref(v);
-            bool eq = equal(v);
-            decref(v);
-            if (eq) return true;
+        for (std::size_t i = 0; i < items.size(); ++i) {   // list_contains: each item held, also when == raises
+            Ref item = Ref::share(items[i]);
+            if (equal(item.get())) return true;
         }
         return false;
     }
@@ -387,10 +383,19 @@ bool contains(Obj container, Obj item) {
         return (x - r->start) % r->step == 0;
     }
     if (is_kind(container, Kind::Instance)) {
+        // slot_sq_contains: __contains__ = None says it is no container (G9 2.8)
+        if (type_lookup(type_of(container), intern("__contains__")) == None())
+            raise_new("TypeError", "'" + type_of(container)->name + "' object is not a container");
         bool has = false;
         Ref r = call_special(container, "__contains__", {item}, &has);
         if (has) return truth(r.get());
-        Ref it = iter(container);                // _PySequence_IterSearch
+        Ref it;                                  // _PySequence_IterSearch: iter()'s TypeError is reworded
+        try {
+            it = iter(container);
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            raise_new("TypeError", "argument of type '" + type_of(container)->name + "' is not a container or iterable");
+        }
         for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
             if (equal(v.get())) return true;
         return false;
@@ -727,6 +732,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
             call_special(obj, "__setattr__", {Obj::of(name), value});
             return;
         }
+        if (type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
         try {
             bella::setattr(static_cast<Instance*>(obj.object()), name, value);
         } catch (const bella::AttributeError& e) {
@@ -767,6 +773,7 @@ void delattr(Obj obj, const Str* name) {
             call_special(obj, "__delattr__", {Obj::of(name)});
             return;
         }
+        if (type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
         try {
             bella::delattr(static_cast<Instance*>(obj.object()), name);
         } catch (const bella::AttributeError&) {
@@ -937,10 +944,13 @@ Ref iter(Obj obj) {
         }
         auto* it = new Iterator(of, d);
         Ref r = own(it);
-        it->size = static_cast<std::int64_t>(static_cast<Dict*>(d.object())->used);
+        it->size = it->len = static_cast<std::int64_t>(static_cast<Dict*>(d.object())->used);
         return r;
     }
     if (is_kind(obj, Kind::Iterator)) return Ref::share(obj);
+    // slot_tp_iter: __iter__ = None makes it not iterable, __getitem__ or not (G9 2.8)
+    if (type_lookup(type_of(obj), intern("__iter__")) == None())
+        raise_new("TypeError", "'" + type_of(obj)->name + "' object is not iterable");
     bool has = false;
     Ref r = call_special(obj, "__iter__", {}, &has);
     if (has) {
@@ -1024,6 +1034,13 @@ Ref for_next(Obj itv) {
             while (static_cast<std::size_t>(it->pos) < d->entries.size() &&
                    d->entries[static_cast<std::size_t>(it->pos)].key.is_unset()) ++it->pos;
             if (static_cast<std::size_t>(it->pos) >= d->entries.size()) return finish();
+            // an entry the iterator did not expect: a key was deleted and another added, the size
+            // the same; the iterator is exhausted as it fails (dictiter_iternextkey, A10-10)
+            if (it->len == 0) {
+                finish();
+                raise_new("RuntimeError", "dictionary keys changed during iteration");
+            }
+            --it->len;
             auto& e = d->entries[static_cast<std::size_t>(it->pos++)];
             if (it->of == Iterator::DictKeysIt) return Ref::share(e.key);
             if (it->of == Iterator::DictValuesIt) return Ref::share(e.value);
@@ -1104,13 +1121,48 @@ std::string callable_name(Obj func) {
 }
 }  // namespace
 
+// dict.copy() (copy_lock_held): an empty dict's copy is new; a split dict's shares its keys; a
+// combined one at most a third deleted is cloned, table and all; any other is merged into a new
+// dict, which compacts it. Only the merge compares keys.
+Ref dict_copy(Dict* d) {
+    Ref out = dict_new();
+    auto* to = static_cast<Dict*>(out.get().object());
+    if (d->used == 0) return out;
+    if (d->split || d->used >= d->entries.size() * 2 / 3) {
+        dict_clone_into(to, d);
+        return out;
+    }
+    dict_merge_dict(to, d);
+    return out;
+}
+
+// dict_dict_merge with override (DICT_UPDATE, dict.update): into an empty dict, a clean other
+// (no deleted entries, at the smallest size or more than half its usable entries in use) is
+// cloned; otherwise one resize first, then each entry inserted with its stored hash, in order. An
+// insert that changes other's size fails, as CPython says.
+void dict_merge_dict(Dict* mp, Dict* other) {
+    if (other == mp || other->used == 0) return;
+    if (mp->used == 0 && !mp->split && !other->split && other->used == other->entries.size() &&
+        (other->indices.size() == 8 || (other->indices.size() / 2) * 2 / 3 < other->used)) {
+        dict_clone_into(mp, other);                  // mp holds no entry: nothing to release
+        return;
+    }
+    if (dict_usable(mp) < other->used) dict_resize_estimate(mp, mp->used + other->used);
+    std::size_t orig = other->used;
+    for (std::size_t pos = 0; pos < other->entries.size(); ++pos) {   // _PyDict_Next over the live table
+        const auto& e = other->entries[pos];
+        if (e.key.is_unset()) continue;
+        std::int64_t hash = e.hash;
+        Ref k = Ref::share(e.key), v = Ref::share(e.value);
+        dict_set_hashed(mp, k.get(), hash, v.get());
+        if (orig != other->used) raise_new("RuntimeError", "dict mutated during update");
+    }
+}
+
 void dict_update(Obj target, Obj mapping) {
     auto* d = static_cast<Dict*>(target.object());
     if (is_kind(mapping, Kind::Dict)) {           // dict_merge's fast path: the stored hashes (A9-15)
-        std::vector<std::tuple<Ref, std::int64_t, Ref>> items;
-        for (auto& e : static_cast<Dict*>(mapping.object())->entries)
-            if (!e.key.is_unset()) items.emplace_back(Ref::share(e.key), e.hash, Ref::share(e.value));
-        for (auto& [k, h, v] : items) dict_set_hashed(d, k.get(), h, v.get());
+        dict_merge_dict(d, static_cast<Dict*>(mapping.object()));
         return;
     }
     if (type_lookup(type_of(mapping), intern("keys")).is_unset())
@@ -1136,6 +1188,17 @@ void list_append(Obj list, Obj value) {
     static_cast<List*>(list.object())->items.push_back(value);
 }
 void list_extend(Obj list, Obj value) {
+    if (list == value) {                          // _list_extend: a.extend(a) and a += a repeat the list (G9 2.2)
+        auto& items = static_cast<List*>(list.object())->items;
+        std::size_t n = items.size();
+        items.reserve(2 * n);
+        for (std::size_t i = 0; i < n; ++i) {
+            Obj v = items[i];
+            incref(v);
+            items.push_back(v);
+        }
+        return;
+    }
     Ref it = iter(value);
     for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
         static_cast<List*>(list.object())->items.push_back(v.release());
