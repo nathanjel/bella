@@ -590,17 +590,34 @@ conformance case comes first: copying unslotted, slotted and customised user cla
 
 **D-12 When a frame enters a traceback (RL-221, RL-222).** Open, for the author. The emitter's
 decision-5 guard records a frame when an exception leaves the function, and moves the locals
-into the entry. CPython records it when the exception enters the frame (`PyTraceBack_Here` at
-the `error:` label: a raise, or a call that failed), with the line of that instruction; a bare
-`raise` and the re-raise at the end of a `finally` add nothing (`RERAISE` goes to
-`exception_unwind`); `raise e` adds a second entry. The entry holds the frame object, created on
-first need, and when the function returns or unwinds while that object is referenced, the
-locals move into it (`take_ownership`) instead of dying. Recommendation: do what CPython does.
-A raise records the current frame at its line; a guard that an exception leaves records its
-caller's frame at the caller's line (the call); the guard owns a lazily made frame object that
-entries share, and at exit moves the locals into it only if an entry still refers to it. The
-lifetimes change goes into `refmodel/objects.py` first, with a case under `conformance/cases`
-(the frame kept alive by a returned exception, in `__del__` order) and the five line programs.
+into the entry. CPython records it when the exception is detected in the frame (`PyTraceBack_Here`
+at the `error:` label: a `raise X`, or an instruction or call that failed), with that
+instruction's line; the frame's own re-raises add nothing (`RERAISE` at the end of a `finally`
+or an unmatched `except`, and a bare `raise`, go to `exception_unwind`). So `raise e` lists the
+frame twice, and a bare `raise` in `g`, called from `f`'s handler, lists `f` twice (the call,
+then the original line) and `g` not at all (measured). The entry holds the frame object, and a
+frame that returns or unwinds while its object is referenced moves its locals into it.
+
+Recommendation (revised the same day; the first text recorded at every raise and in the
+caller from the guard, which needed a frame stack on every call and made entries for the
+exceptions the runtime raises and catches inside itself):
+1. RL-221 now, with no lifetime change. The first place in the frame that sees an exception
+   arrive (its own `catch` for an `except` or `finally`, or the guard if it has none) records
+   `(code, frame.line)`, before any handler code runs; a thread-local mark beside `raising()`
+   says the frame has recorded it, the frame's own re-raises keep the mark, leaving a frame
+   clears it (so the caller records the call line), and `raise X` records at its own line. The
+   guard of a frame the exception leaves moves the locals into that frame's entry, as today.
+   Nothing changes on a path without an exception.
+2. RL-222 with step 3c. The entry holds a small frame object the guard makes on first need;
+   at exit the guard moves the locals into it only if something else still holds it. This
+   delays release, it allocates nothing lasting: an exception caught and finished in the frame
+   (`except E as e:` unbinds `e`) frees the object while the function runs. But an exception
+   stored in a local of its own frame (`err = e`) makes a cycle, frame, `err`, exception,
+   traceback, frame, that CPython frees only in its collector (measured with `gc.disable()`:
+   the locals die at `gc.collect()`), and the runtime has no collector before 3c: such a frame
+   would leak. Until 3c, RL-222 stays a recorded divergence (those locals die at the return,
+   earlier than CPython). Model first (`refmodel/objects.py`), with a case under
+   `conformance/cases` for each part.
 
 ## How to add a review
 
