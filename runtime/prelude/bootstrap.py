@@ -17,7 +17,7 @@ a closed world uses (licences.md L-01), unchanged except where a line says `bell
   waits for nothing and never deadlocks, and `_find_and_load` does what CPython's does when the
   lock is free.
 * What phase 1 lacks is refused where it would run (`_bella_refuse`, exit 70): the loader's
-  methods that read files, and lazy submodules (PEP 810, next). An ImportWarning goes to
+  methods that read files. An ImportWarning goes to
   `_bella_import_warning`: the default filters ignore it, so it has no effect until a warnings
   module could have changed them, and is refused from then on.
 
@@ -25,7 +25,7 @@ The module runs as `_frozen_importlib`, so its classes say so in `__module__`, a
 """
 import sys
 
-__intrinsics__ = ["_find_and_load", "_handle_fromlist", "_module_repr", "_setup"]
+__intrinsics__ = ["_find_and_load", "_find_and_load_lazy_submodule", "_handle_fromlist", "_module_repr", "_setup"]
 
 _bootstrap_external = None
 
@@ -565,7 +565,7 @@ def _find_spec(name, path, target=None):
 _ERR_MSG_PREFIX = 'No module named '
 
 
-def _find_and_load_unlocked(name, import_):
+def _find_and_load_unlocked(name, import_, *, lazy_submodule=False):
     path = None
     parent = name.rpartition('.')[0]
     parent_spec = None
@@ -586,6 +586,8 @@ def _find_and_load_unlocked(name, import_):
         try:
             path = parent_module.__path__
         except AttributeError:
+            if lazy_submodule:
+                return None
             msg = f'{_ERR_MSG_PREFIX}{name!r}; {parent!r} is not a package'
             raise ModuleNotFoundError(msg, name=name) from None
         parent_spec = parent_module.__spec__
@@ -598,6 +600,8 @@ def _find_and_load_unlocked(name, import_):
         child = name.rpartition('.')[2]
     spec = _find_spec(name, path)
     if spec is None:
+        if lazy_submodule:
+            return None
         raise ModuleNotFoundError(f'{_ERR_MSG_PREFIX}{name!r}', name=name)
     else:
         if parent_spec:
@@ -619,8 +623,13 @@ def _find_and_load_unlocked(name, import_):
             # bella: _warnings.warn(msg, ImportWarning), which the default filters ignore; refused once
             # a warnings module could have changed them (runtime/src/imports.cpp, import_warning)
             _bella_import_warning(msg)
-    # bella: no lazy submodules yet (PEP 810, the next increment), so _imp._set_lazy_attributes has
-    # none to set
+    # Set attributes to lazy submodules on the module.
+    try:
+        _bella_set_lazy_attributes(module, name)  # bella: _imp._set_lazy_attributes
+    except Exception as e:
+        msg = f"Cannot set lazy attributes on {name!r}: {e!r}"
+        # bella: _warnings.warn(msg, ImportWarning), as above
+        _bella_import_warning(msg)
     return module
 
 
@@ -656,7 +665,7 @@ def _resolve_parents(name, import_):
             _call_with_frames_removed(import_, parent)
 
 
-def _find_and_load(name, import_):
+def _find_and_load(name, import_, *, lazy_submodule=False):
     """Find and load the module."""
 
     # Optimization: we avoid unneeded module locking if the module
@@ -674,7 +683,8 @@ def _find_and_load(name, import_):
             # bella: the module lock, taken at once (one thread)
             module = sys.modules.get(name, _NEEDS_LOADING)
             if module is _NEEDS_LOADING:
-                return _find_and_load_unlocked(name, import_)
+                return _find_and_load_unlocked(
+                    name, import_, lazy_submodule=lazy_submodule)
     else:
         # Verify the module is still in sys.modules. Another thread may have
         # removed it (due to import failure) between our sys.modules.get()
@@ -682,13 +692,17 @@ def _find_and_load(name, import_):
         # to preserve normal semantics: the caller gets the exception from
         # the actual import failure rather than a synthetic error.
         if sys.modules.get(name) is not module:
-            return _find_and_load(name, import_)
+            return _find_and_load(name, import_, lazy_submodule=lazy_submodule)
 
     if module is None:
         message = f'import of {name} halted; None in sys.modules'
         raise ModuleNotFoundError(message, name=name)
 
     return module
+
+
+def _find_and_load_lazy_submodule(name, import_):
+    return _find_and_load(name, import_, lazy_submodule=True)
 
 
 def _handle_fromlist(module, fromlist, import_, *, recursive=False):

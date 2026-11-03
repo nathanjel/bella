@@ -4,7 +4,7 @@ Status: step 3b under way, 2026-11-03. `pipeline/backend/cpp.py` turns an L2 mod
 into one C++26 translation unit against `runtime/include/bella/runtime.hpp`; `pipeline/build.py`
 compiles the program's modules and links them with the runtime library. The slice examples
 (`make slice`), `pipeline/tests/test_compiled.py` and the cases of
-`conformance/evalc-baseline.txt` pass compiled (`make compiled-corpus`, 28 of 84: most of the rest
+`conformance/evalc-baseline.txt` pass compiled (`make compiled-corpus`, 30 of 84: most of the rest
 import the standard library, which step 3b compiles next). The toy emitter from L1 is gone.
 
 ## 1. Where things live (decided 2026-11-02, `docs/DECISIONS.md`)
@@ -265,6 +265,27 @@ The import system keeps CPython's split:
   always this thread's own, so taking it waits for nothing. It has no frames, as importlib's are
   removed from tracebacks.
 
+E-04 and E-06 exclude replacing `__import__` and writing `sys.modules` in a program's own code, and
+the linter will say so; the runtime still behaves as CPython there, since the standard library
+writes `sys.modules` (`os.path`, `collections.abc`). So `pipeline/tests/test_compiled_imports.py`
+covers those paths, and case C-8-10 stays inside the dialect. What a hook alone could see of
+CPython's C code importing `_io` to read a module's file has no counterpart here.
+
+Lazy imports (PEP 810; C-8-06 and C-8-07, and C-8-05 once `types` compiles) are
+`Objects/lazyimportobject.c` and `import.c`'s lazy half, in `imports.cpp`. A `lazy_import` object is
+a root (the absolute name, the fromlist, the builtins) or a projection (a placeholder and an
+attribute, which IMPORT_FROM makes); it remembers its declaring frame's code and line, read from
+the frame chain (`detail::FrameRecord`, which `globals()` reads too). A global, name or class-dict
+load, a module's attribute (also its `__getattr__` and `__dir__`) and `resolve()` resolve it, and a
+load writes the result back if the namespace still holds the placeholder. A plain `lazy import a.b`
+binds the root package and leaves `b` pending on `a` (`lazy_pending_submodules`), so that `a.b`
+imports it when read; `hasattr` and `getattr` with a default take `_Py_module_getattro_impl`'s
+suppressing path (`optional_getattr`). A placeholder resolving itself raises `ImportCycleError`. A
+resolution error keeps its chain and names the declaration: an `ImportError` as its cause with
+a traceback entry, or, when it has a chain already, a note. No filter and no `lazy_imports` mode
+exist (D-18, E-04), and `sys.lazy_modules` is left out, since a program could only read it (refused
+by name); calling `__lazy_import__` outside module level is refused until `SyntaxError` exists.
+
 What follows from that, each as CPython: a module's namespace starts with `module_init_dict`'s five
 names, then `__path__`, `__file__`, `__builtins__` (the dict; `__main__`'s is the module); a module
 enters `sys.modules` when its body starts, leaves it if the body fails, and moves to the end when it
@@ -312,9 +333,8 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   CPython would show one).
 * The dict views' set operations and comparisons, `reversed` and `mapping`; `str %`
   formatting; `types.UnionType` (`int | str`).
-* 3b, the rest of imports: lazy imports (PEP 810: C-8-05 to C-8-07, refused today by name), then the
-  standard library, module by module in `cli_easy_slugs`'s order (core modules in C++: `_abc`
-  first). `dir()` of names that are not all str waits for `list.sort`.
+* 3b, the rest of imports: the standard library, module by module in `cli_easy_slugs`'s order (core
+  modules in C++: `_abc` first). `dir()` of names that are not all str waits for `list.sort`.
 * 3b: generators (state machines, design section 10.3): C-3-04.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3; with it,
   a caught exception keeps its frame's locals (RL-222, D-12).

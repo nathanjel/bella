@@ -787,9 +787,23 @@ Ref getattr_impl(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Class)) return type_getattr(static_cast<ClassObject*>(obj.object()), name);
     if (is_kind(obj, Kind::Super)) return super_getattr(obj, name);
     if (is_kind(obj, Kind::Module)) return module_getattr(obj, name);
+    if (is_kind(obj, Kind::LazyImport)) return lazy_getattr(obj, name);
     return generic_getattr(obj, name);
 }
 }  // namespace
+
+// PyObject_GetOptionalAttr: a module answers without raising (_Py_module_getattro_impl with
+// suppress, which treats a pending lazy submodule and a resolving placeholder differently);
+// anything else raises, and an AttributeError means absent
+Ref optional_getattr(Obj obj, const Str* name) {
+    if (is_kind(obj, Kind::Module)) return module_getattr(obj, name, true);
+    try {
+        return getattr(obj, name);
+    } catch (const PyError& e) {
+        if (!is_attribute_error(e)) throw;
+        return Ref{};
+    }
+}
 
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {

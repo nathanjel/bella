@@ -411,9 +411,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              in the order declared, not sorted, in the model and the header (Hypothesis found it);
              an AttributeError leaving `getattr` had no `name` and `obj` unless the runtime raised
              it; `sys.exit` and an uncaught exception left the modules' globals unreleased.
-           * Next: lazy imports (PEP 810, C-8-05 to C-8-07, refused by name today), then the
-             standard library in `cli_easy_slugs`'s import order, the core modules in C++ (`_abc`
-             first; `_py_abc` needs weak references, 3c).
+           * Lazy imports (PEP 810), done 2026-11-04 (C-8-06, C-8-07; C-8-05 needs `types`; tests in
+             `test_compiled_imports.py`): `lazyimportobject.c` and `import.c`'s lazy half in
+             `imports.cpp`, with pending submodules, `__lazy_import__`, `ImportCycleError` and
+             the declaration on a resolution error. Found on the way: the first version of C-8-10
+             was outside the dialect (E-04, E-06: replacing `__import__`, writing `sys.modules`);
+             those paths moved to the runtime's tests, which the standard library needs.
+           * Next: the standard library in `cli_easy_slugs`'s import order, the core modules in C++
+             (`_abc` first; `_py_abc` needs weak references, 3c).
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

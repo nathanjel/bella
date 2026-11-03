@@ -1267,13 +1267,13 @@ void mapping_set(Obj mapping, Obj key, Obj value) {          // STORE_NAME: an e
 
 Ref load_classdict(Obj mapping, Module* m, const Str* name) {
     Ref v = mapping_get(mapping, Obj::of(name));
-    if (!v.get().is_unset()) return v;
+    if (!v.get().is_unset()) return is_kind(v.get(), Kind::LazyImport) ? lazy_reify(v.get(), name, mapping) : v;
     return load_global(m, name);
 }
 Ref load_classdict_free(Obj mapping, const Str* name, const Ref& cell, const char* text) {
     Ref v = mapping_get(mapping, Obj::of(name));
-    if (!v.get().is_unset()) return v;
-    return load_deref(cell, text, true);
+    if (!v.get().is_unset()) return is_kind(v.get(), Kind::LazyImport) ? lazy_reify(v.get(), name, mapping) : v;
+    return load_deref(cell, text, true);      // LOAD_DEREF does not resolve a lazy import
 }
 
 // ---- the builtin types' attributes ----

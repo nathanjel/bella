@@ -133,6 +133,15 @@ struct DictView : Object {                       // dict.keys(), values(), items
     Obj dict;                                    // owned
     DictView(Obj d, Which w);
 };
+struct LazyImport : Object {                      // types.LazyImportType (PEP 810; Objects/lazyimportobject.c)
+    Ref builtins;                                // a root's builtins mapping; Unset in a projection
+    Ref from;                                    // a root's absolute name, or a projection's source placeholder
+    Ref attr;                                    // a root's fromlist (Unset, a str or a tuple), or a projection's attribute
+    const Code* code = nullptr;                  // where it was declared
+    int line = -1;
+    bool active = false;                         // the root was accessed: its declared path requires import semantics
+    LazyImport();
+};
 struct SuperObject : Object {                    // super(type, obj): each owned, Unset for NULL (superobject)
     Obj type;                                    // the class after which the lookup starts (__thisclass__)
     Obj obj;                                     // the instance or class it is bound to (__self__)
@@ -196,7 +205,7 @@ struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
-        *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *mappingproxy, *slice, *iterator, *set,
+        *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator;
 };
 Types& types();
@@ -322,29 +331,34 @@ void arrive(const Code& code, int line, std::uint64_t& id, PyError& e) noexcept;
 void record_frame(const Code& code, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept;
 void enter_frame();                              // RecursionError past the limit (spec D-17)
 void leave_frame() noexcept;
-Module*& current_module();                       // the innermost shown frame's module: globals()
+// What a frame shows to the builtins that read their caller (globals(), a lazy import's declaration).
+// A frame CPython does not have (the prelude's, an inlined comprehension's) is not linked in.
+struct FrameRecord {
+    const Code* code;
+    Module* module;
+    FrameRecord* caller;
+    int line;
+};
+FrameRecord*& current_frame();
 }
 template <std::size_t N>
-class FrameGuard {
-    const Code& code_;
+class FrameGuard : public detail::FrameRecord {
     std::array<Ref*, N> locals_;
     int uncaught_;
-    Module* caller_module_;                      // the module globals() saw before this frame
     std::uint64_t id_ = 0;                       // given when the frame first records an exception
 public:
-    int line;
     template <class... L>
     explicit FrameGuard(const Code& c, Module* m, L&... locals)
-        : code_(c), locals_{&locals...}, uncaught_(std::uncaught_exceptions()), caller_module_(detail::current_module()),
-          line(c.first_line) {
+        : detail::FrameRecord{&c, m, detail::current_frame(), c.first_line}, locals_{&locals...},
+          uncaught_(std::uncaught_exceptions()) {
         detail::enter_frame();
-        if (c.shown) detail::current_module() = m;   // a frame CPython has: globals() is its module's
+        if (c.shown) detail::current_frame() = this;
     }
-    void arrived(PyError& e) noexcept { detail::arrive(code_, line, id_, e); }
+    void arrived(PyError& e) noexcept { detail::arrive(*code, line, id_, e); }
     ~FrameGuard() {
         detail::leave_frame();
-        detail::current_module() = caller_module_;
-        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(code_, line, id_, locals_.data(), N);
+        detail::current_frame() = caller;
+        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, line, id_, locals_.data(), N);
     }
     FrameGuard(const FrameGuard&) = delete;
     FrameGuard& operator=(const FrameGuard&) = delete;
@@ -578,7 +592,11 @@ Ref import_module_level(Obj name, Obj globals, Obj locals, Obj fromlist, std::in
 Ref import_name(Obj name, Obj fromlist, Obj level, Obj mode, Module* m, Obj ns);   // IMPORT_NAME
 Ref import_from(Obj v, const Str* name);         // IMPORT_FROM
 void import_star(Obj v, Obj locals);             // import *
-Ref module_getattr(Obj module, const Str* name); // the module type's __getattribute__
+Ref module_getattr(Obj module, const Str* name, bool suppress = false);   // _Py_module_getattro_impl
+Ref optional_getattr(Obj obj, const Str* name);  // PyObject_GetOptionalAttr: Unset when absent
+Ref lazy_reify(Obj placeholder, const Str* name, Obj ns);   // _PyLazyImport_Reify: resolve and write back
+Ref lazy_getattr(Obj lazy, const Str* name);     // lazy_import_getattro
+Ref b_lazy_import(Obj, Args a);                  // builtins.__lazy_import__
 Ref b_import(Obj, Args a);                       // builtins.__import__
 Ref b_dir(Obj, Args a);                          // builtins.dir
 Ref module_repr_m(Obj self, Args a);
@@ -590,6 +608,7 @@ Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
 Ref i_bella_exec(Obj, Args a);
 Ref i_bella_refuse(Obj, Args a);
 Ref i_bella_import_warning(Obj, Args a);
+Ref i_bella_set_lazy_attributes(Obj, Args a);
 
 // A module of the prelude, run before the program as the module it names (builtins, or
 // _frozen_importlib for runtime/prelude/bootstrap.py).

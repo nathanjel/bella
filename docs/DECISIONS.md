@@ -727,7 +727,9 @@ namespace shows is CPython's. Rejected: the machinery in C++ alone, which would 
 `_bootstrap` with their order of effects and messages, and importing a shim that keeps
 `_ModuleLock`, which needs weak references (3c) and threads for nothing a one-thread program can
 see. The build finds the program's modules statically, as CPython's finders would, and compiles each
-as a unit of its own. Taken here, for the author to overrule: `sys.path` is `[program directory]` until
+as a unit of its own. E-04 and E-06 keep replacing `__import__` and writing `sys.modules` out of a
+program's own code; the runtime follows CPython on those paths because the standard library writes
+`sys.modules`, and the case stays inside the dialect. Taken here, for the author to overrule: `sys.path` is `[program directory]` until
 the standard library compiles (D-18 says only that it reflects the build); `__spec__.cached` uses
 3.15's `cpython-315` tag (D-16 changes only the implementation's name); an ImportWarning has no effect
 until a `warnings` module is loaded, since nothing else can change the default filters that ignore

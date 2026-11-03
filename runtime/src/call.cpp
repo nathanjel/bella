@@ -361,18 +361,25 @@ namespace {
 }
 }  // namespace
 
+// A lazy import found by a load is resolved, and the namespace it was found in gets the result
+// (_PyEval_LoadGlobalStackRef, _PyEval_LoadName)
 Ref load_global(Module* m, const Str* name) {
-    Obj v = dict_get(m->dict, Obj::of(name));
-    if (v.is_unset()) v = dict_get(builtins_module()->dict, Obj::of(name));
+    Dict* ns = m->dict;
+    Obj v = dict_get(ns, Obj::of(name));
+    if (v.is_unset()) {
+        ns = builtins_module()->dict;
+        v = dict_get(ns, Obj::of(name));
+    }
     if (v.is_unset()) {
         refuse_absent_global(name);
         raise_name_error(name);
     }
+    if (is_kind(v, Kind::LazyImport)) return lazy_reify(v, name, Obj::of(ns));
     return Ref::share(v);
 }
 Ref load_name(Obj ns, Module* m, const Str* name) {
     Ref v = mapping_get(ns, Obj::of(name));      // a class namespace may be any mapping (__prepare__)
-    if (!v.get().is_unset()) return v;
+    if (!v.get().is_unset()) return is_kind(v.get(), Kind::LazyImport) ? lazy_reify(v.get(), name, ns) : v;
     return load_global(m, name);
 }
 void store_name(Obj ns, const Str* name, Ref value) { mapping_set(ns, Obj::of(name), value.get()); }
@@ -556,23 +563,14 @@ Ref b_getattr(Obj, Args a) {
     if (a.npos < 2 || a.npos > 3) raise_new("TypeError", "getattr expected 2 or 3 arguments, got " + std::to_string(a.npos));
     Ref n = attr_name(a.pos(1), "getattr");
     if (a.npos == 2) return getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
-    try {
-        return getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
-    } catch (const PyError& e) {
-        if (!is_attribute_error(e)) throw;
-        return Ref::share(a.pos(2));
-    }
+    Ref v = optional_getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
+    return v.get().is_unset() ? Ref::share(a.pos(2)) : v;
 }
 Ref b_hasattr(Obj, Args a) {
     clinic(a, "hasattr", "hasattr", 2, 2);
     Ref n = attr_name(a.pos(1), "hasattr");
-    try {
-        getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
-        return Ref::steal(boolean(true));
-    } catch (const PyError& e) {
-        if (!is_attribute_error(e)) throw;
-        return Ref::steal(boolean(false));
-    }
+    Ref v = optional_getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
+    return Ref::steal(boolean(!v.get().is_unset()));
 }
 Ref b_setattr(Obj, Args a) {
     clinic(a, "setattr", "setattr", 3, 3);
@@ -598,9 +596,9 @@ Ref b_id(Obj, Args a) {
 }
 Ref b_globals(Obj, Args a) {                     // globals(): the calling frame's module's namespace
     noargs(a, "globals");                        // METH_NOARGS
-    Module* m = detail::current_module();
-    if (m == nullptr) throw NotImplemented("globals() outside any frame");
-    return Ref::share(Obj::of(m->dict));
+    detail::FrameRecord* f = detail::current_frame();
+    if (f == nullptr) throw NotImplemented("globals() outside any frame");
+    return Ref::share(Obj::of(f->module->dict));
 }
 Ref b_vars(Obj, Args a) {
     clinic(a, "vars", "vars", 0, 1);
@@ -1055,7 +1053,7 @@ Module* make_builtins() {
                           "ArithmeticError", "ZeroDivisionError", "OverflowError", "AssertionError", "AttributeError",
                           "LookupError", "IndexError", "KeyError", "NameError", "UnboundLocalError", "RuntimeError",
                           "NotImplementedError", "RecursionError", "StopIteration", "TypeError", "ValueError",
-                          "ImportError", "ModuleNotFoundError", "UnicodeError"})
+                          "ImportError", "ModuleNotFoundError", "ImportCycleError", "UnicodeError"})
         put(d, n, Obj::of(exception_class(n)));
     put(d, "None", None());
     put(d, "True", boolean(true));
@@ -1081,6 +1079,7 @@ Module* make_builtins() {
     put_builtin(d, "id", b_id);
     put_builtin(d, "vars", b_vars);
     put_builtin(d, "__import__", b_import);
+    put_builtin(d, "__lazy_import__", b_lazy_import);
     put_builtin(d, "dir", b_dir);
     put_builtin(d, "globals", b_globals);
     put(d, "slice", Obj::of(t.slice));
@@ -1401,9 +1400,9 @@ void detail::enter_frame() {
     }
 }
 void detail::leave_frame() noexcept { --recursion_depth(); }
-Module*& detail::current_module() {
-    static Module* m = nullptr;
-    return m;
+detail::FrameRecord*& detail::current_frame() {
+    static FrameRecord* f = nullptr;
+    return f;
 }
 
 // ---- the program ----
@@ -1605,7 +1604,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     bootstrap = pm;
                     for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
                              {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec}, {"_bella_refuse", i_bella_refuse},
-                             {"_bella_import_warning", i_bella_import_warning}}) {
+                             {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());
                     }

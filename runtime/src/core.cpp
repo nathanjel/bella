@@ -58,6 +58,7 @@ Types& types() {
         // no class of its own (found while verifying RL-228's round)
         x.member_descriptor = builtin_type("member_descriptor", {x.object});
         x.super_ = builtin_type("super", {x.object});
+        x.lazy_import = builtin_type("lazy_import", {x.object});
         x.mappingproxy = builtin_type("mappingproxy", {x.object});
         x.slice = builtin_type("slice", {x.object});
         x.iterator = builtin_type("iterator", {x.object});
@@ -144,6 +145,7 @@ std::vector<Module*>& all_modules() {
     static std::vector<Module*> made;
     return made;
 }
+LazyImport::LazyImport() : Object(Kind::LazyImport) { cls = types().lazy_import; }
 Traceback::Traceback(const Code* c, int l, Ref nx) : Object(Kind::Traceback), code(c), line(l), next(std::move(nx)) {
     cls = types().traceback;
 }
@@ -182,6 +184,7 @@ bool register_deaths() {
         decref(std::exchange(su->obj_type, Obj{}));
         destroy<SuperObject>(o);
     };
+    destroyer(Kind::LazyImport) = [](Object* o) { destroy<LazyImport>(o); };   // lazy_import_clear: its Refs
     destroyer(Kind::Builtin) = [](Object* o) { decref(std::exchange(static_cast<Builtin*>(o)->self, Obj{})); destroy<Builtin>(o); };
     destroyer(Kind::Method) = [](Object* o) {
         auto* m = static_cast<Method*>(o);         // method_dealloc: the function, then self
@@ -490,6 +493,7 @@ struct ExceptionClasses {
                  {"RuntimeError", "Exception"}, {"NotImplementedError", "RuntimeError"},
                  {"RecursionError", "RuntimeError"}, {"StopIteration", "Exception"}, {"TypeError", "Exception"},
                  {"ValueError", "Exception"}, {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"},
+                 {"ImportCycleError", "ImportError"},
                  {"UnicodeError", "ValueError"}}) {
             std::optional<std::vector<std::string>> own;
             if (std::string_view(n) == "AttributeError") own = exception_fields({"obj", "name"});

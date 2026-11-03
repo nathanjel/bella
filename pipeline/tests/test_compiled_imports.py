@@ -260,7 +260,10 @@ def test_globals_and_a_module_run_again() -> None:
 
 
 def test_sys_modules_edits() -> None:
+    """E-04 excludes these in a program's own code; the standard library does them (os.path,
+    collections.abc), so the runtime behaves as CPython."""
     same({"m.py": "print('m runs')\nX = 1\n",
+          "replaced.py": "import sys\nclass StandIn:\n    def __repr__(self):\n        return '<the stand-in>'\nsys.modules[__name__] = StandIn()\n",
           "main.py": """\
               import sys
               import m
@@ -274,6 +277,46 @@ def test_sys_modules_edits() -> None:
                   import m
                   return m
               print(f())
+              sys.modules['blocked'] = None
+              try:
+                  import blocked
+              except ImportError as e:
+                  print(type(e).__name__, e, e.name)
+              import replaced
+              print(replaced, sys.modules['replaced'])
+              """})
+
+
+def test_a_hook_replacing_import() -> None:
+    """E-04 and E-06 exclude this in a program's own code. The call's arguments are CPython's; what
+    a hook would also see of CPython's C code importing `_io` to read a module's file (how often
+    depends on __pycache__) has no counterpart in a program that reads no module files, so the
+    test leaves those calls out."""
+    same({"pkg/__init__.py": "", "pkg/plain.py": "X = 1\n", "pkg/stars.py": "a = 1\n",
+          "main.py": """\
+              import builtins
+              calls = []
+              original = builtins.__import__
+              def hook(name, globals=None, locals=None, fromlist=(), level=0):
+                  if name != '_io':
+                      calls.append((name, fromlist, level, globals is MODULE_GLOBALS, locals is None))
+                  return original(name, globals, locals, fromlist, level)
+              MODULE_GLOBALS = globals()
+              builtins.__import__ = hook
+              import pkg.plain
+              from pkg import stars as s
+              def local():
+                  import pkg.plain as p
+                  from pkg.plain import X
+              local()
+              builtins.__import__ = original
+              print(calls)
+              del builtins.__import__
+              try:
+                  import pkg
+              except ImportError as e:
+                  print(type(e).__name__, e)
+              builtins.__import__ = original
               """})
 
 
@@ -294,6 +337,255 @@ def test_the_build_finds_the_programs_modules() -> None:
     assert found == {"a": ("a/__init__.py", True), "a.b": ("a/b.py", False), "a.sibling": ("a/sibling.py", False),
                      "c": ("c/__init__.py", True), "c.d": ("c/d.py", False), "e": ("e.py", False), "g": ("g.py", False),
                      "ns": (None, True)}, found
+
+
+# ---- lazy imports (PEP 810; C-8-05 to C-8-07) ----
+LAZY_FILES = {
+    "noisy.py": "print('  [noisy runs]')\nVALUE = 42\ndef f():\n    return 'f'\nOTHER = 'other'\n",
+    "broken.py": "print('  [broken runs]')\nraise LookupError('broken refuses')\n",
+    "chained.py": "print('  [chained runs]')\ntry:\n    raise KeyError('inner')\nexcept KeyError:\n    raise ValueError('outer')\n",
+    "pkg/__init__.py": "print('  [pkg runs]')\n",
+    "pkg/sub/__init__.py": "print('  [pkg.sub runs]')\n",
+    "pkg/sub/leaf.py": "print('  [pkg.sub.leaf runs]')\nLEAF = 'leaf'\n",
+    "pkg/other.py": "print('  [pkg.other runs]')\nOTHER = 'other'\n",
+}
+
+
+def lazy(main: str, **more: str) -> None:
+    same({**LAZY_FILES, **{k.replace("__", "/") + ".py": v for k, v in more.items()}, "main.py": main}, stderr=True)
+
+
+def test_lazy_first_use_once_and_rebinding() -> None:
+    lazy("""\
+        import sys
+        lazy import noisy
+        lazy from noisy import VALUE, f as renamed
+        g = globals()
+        print('statement done', 'noisy' in sys.modules, type(g['noisy']).__name__, type(g['VALUE']).__name__, repr(g['noisy']), repr(g['VALUE']), repr(g['renamed']))
+        print('use', VALUE)
+        print('then', type(g['VALUE']).__name__, type(g['noisy']).__name__, type(g['renamed']).__name__)
+        print(renamed(), noisy.OTHER, type(g['noisy']).__name__, type(g['renamed']).__name__)
+        print(g['VALUE'], noisy.VALUE)
+        lazy from noisy import OTHER
+        print('loaded at once:', type(g['OTHER']).__name__, OTHER)
+        """)
+
+
+def test_lazy_use_from_functions_classes_and_other_modules() -> None:
+    lazy("""\
+        lazy import noisy
+        lazy import pkg.other as aliased
+        def reader():
+            return noisy.VALUE
+        print('defined')
+        print(reader())
+        class C:
+            value = aliased.OTHER
+        print(C.value)
+        import holder
+        print(type(vars(holder)['later']).__name__)
+        print(holder.later.VALUE, type(vars(holder)['later']).__name__)
+        print(hasattr(holder, 'never'), type(vars(holder)['never']).__name__, repr(vars(holder)['never']))
+        """, holder="lazy import noisy as later\nlazy import absent_module as never\nprint('holder done')\n")
+
+
+def test_lazy_errors_arrive_at_first_use_with_their_declaration() -> None:
+    lazy("""\
+        import sys
+        lazy import broken
+        lazy import chained
+        lazy import absent_module
+        lazy from noisy import nothing
+        print('statements done')
+        for attempt in (1, 2):
+            try:
+                broken.x
+            except LookupError as e:
+                c = e.__cause__
+                print(attempt, type(e).__name__, e.args, 'broken' in sys.modules, type(c).__name__, c.args, e.__suppress_context__, c.__traceback__ is not None)
+        try:
+            chained.x
+        except ValueError as e:
+            print(type(e).__name__, type(e.__context__).__name__, e.__cause__, [n.rpartition(' at ')[0] for n in e.__notes__])
+        try:
+            absent_module.x
+        except ModuleNotFoundError as e:
+            print(type(e).__name__, e.name, e.__cause__.args)
+        try:
+            nothing
+        except ImportError as e:
+            print(type(e).__name__, e.name, e.name_from, e.__cause__.args)
+        print('still a placeholder:', type(globals()['broken']).__name__)
+        """)
+
+
+def test_an_uncaught_lazy_error_reports_its_declaration() -> None:
+    lazy("lazy import broken\nprint('declared')\nprint(broken.x)\n")
+
+
+def test_lazy_dotted_imports_and_pending_submodules() -> None:
+    lazy("""\
+        import sys
+        lazy import pkg.sub.leaf
+        print('root', repr(globals()['pkg']), 'pkg' in sys.modules)
+        print(pkg.__name__, 'pkg.sub' in sys.modules, 'sub' in vars(pkg))
+        print(pkg.sub.__name__, 'pkg.sub.leaf' in sys.modules)
+        print(pkg.sub.leaf.LEAF, 'leaf' in vars(pkg.sub))
+        lazy import pkg.sub.leaf as leaf
+        print(repr(globals()['leaf']))
+        print(leaf.LEAF, leaf is sys.modules['pkg.sub.leaf'])
+        """)
+    lazy("""\
+        import sys
+        lazy from pkg.sub import leaf
+        lazy from pkg import other, sub
+        print(repr(globals()['leaf']), repr(globals()['other']), 'pkg' in sys.modules)
+        print(leaf.LEAF, 'pkg.other' in sys.modules)
+        print(type(globals()['other']).__name__, other.OTHER, sub.__name__)
+        import pkg
+        print(hasattr(pkg, 'absent'), getattr(pkg, 'absent', 'default'))
+        """)
+    lazy("""\
+        import sys
+        lazy import pkg.sub.leaf
+        import pkg
+        print('pkg' in sys.modules, 'pkg.sub' in sys.modules, 'sub' in vars(pkg))
+        print(hasattr(pkg, 'sub'), 'pkg.sub' in sys.modules, 'sub' in vars(pkg))
+        print(pkg.sub.leaf.LEAF)
+        """)
+    lazy("""\
+        lazy import pkg.absent.child
+        print(pkg.__name__)
+        try:
+            pkg.absent
+        except ImportError as e:
+            print(type(e).__name__, e.name)
+        lazy import noisy.child
+        try:
+            noisy.VALUE
+        except ImportError as e:
+            print(type(e).__name__, e.name)
+        """)
+
+
+def test_lazy_modules_list_and_the_lazy_import_builtin() -> None:
+    lazy("""\
+        import sys
+        __lazy_modules__ = ['noisy', 'pkg.other']
+        import noisy
+        from pkg import other
+        import pkg.other as o2
+        print('noisy' in sys.modules, 'pkg' in sys.modules, repr(globals()['noisy']), repr(globals()['other']), repr(globals()['o2']))
+        print(noisy.VALUE, other.OTHER)
+        __lazy_modules__ = ('noisy',)
+        p = __lazy_import__('pkg.sub')
+        print(repr(p), type(p).__name__, repr(__lazy_import__('pkg.sub', fromlist=('leaf',))), repr(__lazy_import__('pkg.sub', fromlist='leaf')))
+        print(p.resolve().__name__)
+        for f in (lambda: __lazy_import__(), lambda: __lazy_import__(1), lambda: __lazy_import__('x', level=-1),
+                  lambda: __lazy_import__('x', 5), lambda: __lazy_import__('x', {}), lambda: __lazy_import__('x', None, None, None, 1),
+                  lambda: __lazy_import__('x', globals(), None, 5)):
+            try:
+                f()
+            except (TypeError, ValueError) as e:
+                print(type(e).__name__, e)
+        """)
+
+
+def test_lazy_placeholders_are_objects_of_their_own_type() -> None:
+    lazy("""\
+        lazy import noisy
+        lazy from noisy import nothing
+        g = globals()
+        p = g['noisy']
+        L = type(p)
+        print(L.__name__, L.__module__, repr(L), isinstance(p, L), hash(p) == hash(p), p == p, bool(p))
+        for f in (lambda: p.VALUE, lambda: p.x, lambda: L(), lambda: g['nothing'].x, lambda: p.resolve(1)):
+            try:
+                print(f())
+            except (AttributeError, TypeError) as e:
+                print(type(e).__name__, e)
+        print(p.resolve().VALUE, type(g['noisy']).__name__)
+        q = g['noisy']
+        del noisy
+        print('noisy' in g)
+        lazy import noisy
+        noisy = 5
+        print(noisy)
+        def h():
+            return noisy
+        print(h())
+        """)
+
+
+def test_lazy_cycles_and_hooks() -> None:
+    lazy("""\
+        lazy import cyc_a
+        try:
+            cyc_a.V
+        except ImportError as e:
+            print(type(e).__name__, e.name, str(e), isinstance(e, ImportError))
+        """, cyc_a="lazy from cyc_b import B\nprint('a runs')\nV = B\n", cyc_b="lazy from cyc_a import V as B\nprint('b runs')\nW = B\n")
+    lazy("""\
+        import builtins
+        calls = []
+        real = builtins.__import__
+        def hook(name, globals=None, locals=None, fromlist=(), level=0):
+            calls.append((name, globals is GLOBALS, locals is GLOBALS, fromlist, level))
+            return real(name, globals, locals, fromlist, level)
+        GLOBALS = globals()
+        builtins.__import__ = hook
+        lazy import noisy
+        lazy from pkg.other import OTHER
+        lazy import pkg.sub.leaf
+        print('declared', calls)
+        print(noisy.VALUE, OTHER, pkg.sub.leaf.LEAF)
+        print([c for c in calls if c[0] != '_io'])
+        builtins.__import__ = real
+        real_lazy = builtins.__lazy_import__
+        def lazy_hook(name, globals=None, locals=None, fromlist=None, level=0):
+            print('lazy hook', name, globals is GLOBALS, locals is GLOBALS, fromlist, level)
+            return real(name, globals, locals, fromlist or (), level)
+        builtins.__lazy_import__ = lazy_hook
+        lazy import pkg.other
+        lazy from noisy import f
+        print(f(), type(globals()['f']).__name__)
+        del builtins.__lazy_import__
+        try:
+            import needs_lazy
+        except ImportError as e:
+            print(type(e).__name__, e)
+        builtins.__lazy_import__ = real_lazy
+        """, needs_lazy="lazy import noisy\n")
+
+
+def test_lazy_import_called_outside_module_level_is_refused() -> None:
+    """CPython raises SyntaxError, a class the runtime does not have yet: refused by name."""
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        main = Path(tmp, "main.py")
+        main.write_text("def f():\n    return __lazy_import__('x')\nprint('start')\nf()\nprint('not reached')\n", encoding="utf-8")
+        got = subprocess.run([str(build(main, str(main)))], capture_output=True, text=True, check=False, cwd=tmp)
+    assert (got.returncode, got.stdout) == (70, "start\n") and "bella: not implemented" in got.stderr, got
+
+
+def test_a_module_namespace_with_a_placeholder() -> None:
+    lazy("""\
+        import holder
+        print(type(vars(holder)['VALUE']).__name__)
+        from holder import VALUE
+        print(VALUE, type(vars(holder)['VALUE']).__name__)
+        import star_source
+        print(type(vars(star_source)['OTHER']).__name__, star_source.__all__)
+        from star_source import *
+        print(OTHER, type(vars(star_source)['OTHER']).__name__)
+        import hooks
+        print(hooks.anything, dir(hooks))
+        """,
+         holder="lazy from noisy import VALUE\nprint('holder done')\n",
+         star_source="lazy from noisy import OTHER\n__all__ = ['OTHER']\n",
+         hooks="lazy from hook_src import __getattr__, __dir__\n",
+         hook_src="def __getattr__(name):\n    return 'from the lazy hook ' + name\ndef __dir__():\n    return ['b', 'a']\n")
 
 
 def test_slot_descriptors_stand_in_the_class_dict_sorted() -> None:

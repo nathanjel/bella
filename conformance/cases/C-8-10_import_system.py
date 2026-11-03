@@ -2,14 +2,13 @@
 # spec: section 8
 # status: P1
 # source: step 3b (compiled imports): Python/import.c, Python/ceval.c and importlib/_bootstrap.py, 3.15.2
-"""The import system as CPython's: a module's namespace as the import system fills it, the
-spec and loader it is given, sys.modules in the order modules finish, the parent's attribute
-bound once a submodule has loaded, relative imports and their errors, a failing module removed
-from sys.modules and run again by the next import, ModuleNotFoundError and ImportError with
-their name, name_from and path, a None in sys.modules, an object a module put into sys.modules
-in its place, PEP 562's __getattr__ and __dir__, import * with and without __all__, __import__
-called with each statement's arguments, and a hook installed as builtins.__import__."""
-import builtins
+"""The import system as CPython's, as far as a dialect program can see it (E-04 and E-06 exclude
+replacing __import__ and writing sys.modules): a module's namespace as the import system fills
+it, the spec and loader it is given, sys.modules in the order modules finish, the parent's
+attribute bound once a submodule has loaded, relative imports and their errors, a failing module
+removed from sys.modules and run again by the next import, ModuleNotFoundError and ImportError
+with their name, name_from and path, PEP 562's __getattr__ and __dir__, import * with and
+without __all__, and __import__ called with a literal name."""
 import sys
 
 print("main:", __name__, __package__, __spec__, list(globals())[:7], type(globals()["__loader__"]).__name__)
@@ -64,16 +63,6 @@ def missing(statement: str) -> None:
 for statement in ("top", "sub", "not a package", "from", "relative in main"):
     missing(statement)
 
-sys.modules["imppkg_blocked"] = None  # type: ignore[assignment]  # a None blocks the import
-try:
-    import imppkg_blocked  # type: ignore[import-not-found]  # noqa: F401  # blocked on purpose
-except ImportError as exc:
-    print("blocked ->", type(exc).__name__, exc.name)
-
-import imppkg.replaced  # noqa: E402
-
-print("replaced:", imppkg.replaced, sys.modules["imppkg.replaced"])
-
 from imppkg import hooks  # noqa: E402
 
 print("PEP 562:", hooks.computed, hooks.present, dir(hooks))
@@ -95,32 +84,7 @@ try:
 except TypeError:
     print("badstars: TypeError")
 
-calls: list[str] = []
-original = builtins.__import__
-
-
-def hook(name: str, globals: object = None, locals: object = None, fromlist: object = (), level: int = 0) -> object:
-    calls.append(f"{name} fromlist={fromlist} level={level} globals={globals is MODULE_GLOBALS} locals={locals is None}")
-    return original(name, globals, locals, fromlist, level)  # type: ignore[arg-type]  # passed on as given
-
-
-MODULE_GLOBALS = globals()
-builtins.__import__ = hook  # type: ignore[assignment]  # a hook, as importlib's tests install one
-import imppkg.plain  # noqa: E402, F811
 from imppkg import stars as s  # noqa: E402
 
-
-def local() -> None:
-    import imppkg.sub as sub_alias  # noqa: F401
-    from imppkg.sub import deep  # noqa: F401
-
-
-local()
-builtins.__import__ = original
-print("hook saw:", calls)
 print("__import__:", __import__("imppkg.sub").__name__, __import__("imppkg.sub", fromlist=["deep"]).__name__, s.a)
-del sys.modules["imppkg.plain"]
-import imppkg.plain  # noqa: E402, F811
-
-print("rerun: a new module object:", imppkg.plain is not plain, "| bound on the package:", imppkg.plain is sys.modules["imppkg.plain"])
 print("end")

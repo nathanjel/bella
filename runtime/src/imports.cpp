@@ -14,6 +14,12 @@
 
 namespace bella {
 
+// defined below, with the lazy imports
+void clear_lazy_submodule(const std::string& name, bool bind);
+void register_lazy_on_parent(const std::string& name, Obj source);
+Ref try_load_lazy_submodule(Module* m, const Str* attr_name, bool suppress, bool& recheck_dict);
+Ref lazy_import_from(Obj v, const Str* name);
+
 namespace {
 const Str* N(const char* s) { return intern(s); }
 
@@ -38,16 +44,21 @@ Obj& import_func() {                             // interp->import_func: builtin
     static Obj f;
     return f;
 }
-
-// PyObject_GetOptionalAttr: the attribute, or Unset when getting it raises AttributeError
-Ref optional_attr(Obj o, const Str* name) {
-    try {
-        return getattr(o, name);
-    } catch (const PyError& e) {
-        if (!is_attribute_error(e)) throw;
-        return Ref{};
-    }
+Module*& sys_module() {
+    static Module* m = nullptr;
+    return m;
 }
+bool& has_lazy_submodules();
+Ref lazy_import_module_level(Obj name, Obj builtins, Obj globals, Obj fromlist, std::int64_t level);
+Obj& lazy_import_func() {                        // interp->lazy_import_func
+    static Obj f;
+    return f;
+}
+bool has_descr_get(Obj found) {                  // Py_TYPE(descr)->tp_descr_get != NULL
+    return !type_lookup(type_of(found), N("__get__")).is_unset();
+}
+
+Ref optional_attr(Obj o, const Str* name) { return optional_getattr(o, name); }
 
 Ref import_error(const char* type, const std::string& message, Obj name, Obj path, Obj name_from) {
     Ref msg = str_new(message);
@@ -195,10 +206,6 @@ bool is_stdlib_name(Obj name) {                   // sys.stdlib_module_names (th
 std::string quoted(Obj v) { return as_str(repr_of(v).get())->text; }
 }  // namespace
 
-namespace {
-Module* native_sys();
-}  // namespace
-
 // ---- the registry the program's main unit hands over ----
 void register_modules(std::span<const ModuleEntry> modules, const char* program_dir) {
     for (const ModuleEntry& e : modules) registry()[e.name] = Compiled{e.body, e.origin, e.package};
@@ -207,43 +214,10 @@ void register_modules(std::span<const ModuleEntry> modules, const char* program_
     // modules; the standard library's entries come with the standard library (step 3b)
     Ref dir = str_new(program_dir);
     Ref path = list_new({dir.get()});
-    dict_set(native_sys()->dict, Obj::of(N("path")), path.get());
+    dict_set(sys_module()->dict, Obj::of(N("path")), path.get());
 }
 const std::string& program_directory() { return sys_path_0(); }
 
-namespace {
-void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::Method) {
-    auto* f = new Builtin(name, fn, Obj{}, b);
-    f->owner = c;
-    f->flags |= IMMORTAL;                        // owned by the type, which lives as long as the program
-    c->attrs.set(N(name), Obj::of(f));
-}
-}  // namespace
-
-namespace {
-Module*& sys_module() {
-    static Module* m = nullptr;
-    return m;
-}
-Module* native_sys() { return sys_module(); }
-}  // namespace
-
-void init_imports(Module* sys) {
-    sys_module() = sys;
-    ClassObject* mt = types().module;
-    method(mt, "__new__", module_new_m, Binding::Function);
-    method(mt, "__init__", module_init_m);
-    method(mt, "__repr__", module_repr_m);
-    method(mt, "__dir__", module_dir_m);
-    mt->attrs.set(N("__dict__"), Obj::of(new GetSet("__dict__", mt, module_dict_get, nullptr)));
-    Ref modules = dict_new();
-    interp_modules() = static_cast<Dict*>(modules.get().object());
-    incref(modules.get());                       // the interpreter's own count, for the program's lifetime
-    dict_set(sys->dict, Obj::of(N("modules")), modules.get());
-    dict_set(interp_modules(), Obj::of(N("sys")), Obj::of(sys));
-    dict_set(interp_modules(), Obj::of(N("builtins")), Obj::of(builtins_module()));
-    import_func() = dict_get(builtins_module()->dict, Obj::of(N("__import__")));
-}
 Dict* sys_modules() { return interp_modules(); }
 
 // The prelude's primitives for bootstrap.py, which no program can name.
@@ -293,9 +267,10 @@ Ref import_module_level(Obj name, Obj globals, Obj locals, Obj fromlist, std::in
     Ref abs_name = absolute_name(name, globals, level);
     Ref mod = get_module(abs_name.get());
     if (!mod.get().is_unset() && mod.get() != None()) {
-        ensure_initialized(mod.get());
+        bool initializing = ensure_initialized(mod.get());
         Ref check = get_module(abs_name.get());
         if (check.get() != mod.get()) mod = call_bootstrap("_find_and_load", {abs_name.get(), import_func()});
+        else if (!initializing && has_lazy_submodules()) clear_lazy_submodule(as_str(abs_name.get())->text, true);
     } else {
         mod = call_bootstrap("_find_and_load", {abs_name.get(), import_func()});
     }
@@ -350,28 +325,35 @@ Ref b_import(Obj, Args a) {
 // ---- IMPORT_NAME: _PyEval_LazyImportName, then _PyEval_ImportName ----
 Ref import_name(Obj name, Obj fromlist, Obj level, Obj mode, Module* m, Obj ns) {
     Obj globals = Obj::of(m->dict);
+    Obj builtins = Obj::of(builtins_module()->dict);       // the frame's: a compiled module's are the builtins module's dict
     std::string_view how = as_str(mode)->text;
-    if (how == "lazy") throw NotImplemented("a lazy import (PEP 810: the next increment of step 3b)");
+    bool lazy = how == "lazy";
     if (how == "default" && ns == globals) {
-        // __lazy_modules__ at module level: the module is lazy if the list names it (D-18: the
-        // lazy-imports mode is always "normal")
+        // __lazy_modules__ at module level names the module (the lazy-imports mode is always "normal", D-18)
         Obj listed = dict_get(m->dict, Obj::of(N("__lazy_modules__")));
         if (!listed.is_unset()) {
+            Ref keep = Ref::share(listed);
             Ref abs = absolute_name(name, globals, level_value(level));
-            Ref in = compare(CmpOp::In, abs.get(), listed);
-            if (truth(in.get())) throw NotImplemented("a lazy import by __lazy_modules__ (PEP 810: the next increment of step 3b)");
+            Ref in = compare(CmpOp::In, abs.get(), keep.get());
+            lazy = truth(in.get());
         }
     }
-    // the frame's builtins: a compiled module's are the builtins module's dict
-    Obj f = dict_get(builtins_module()->dict, Obj::of(N("__import__")));
-    if (f.is_unset()) raise_new("ImportError", "__import__ not found");
     Obj locals = ns.is_unset() ? None() : ns;
-    if (f == import_func()) return import_module_level(name, globals, locals, fromlist, level_value(level));
-    return invoke(f, {name, globals, locals, fromlist, level});
+    if (lazy) {
+        Ref f = Ref::share(dict_get(builtins_module()->dict, Obj::of(N("__lazy_import__"))));
+        if (f.get().is_unset()) raise_new("ImportError", "__lazy_import__ not found");
+        if (f.get() == lazy_import_func()) return lazy_import_module_level(name, builtins, globals, fromlist, level_value(level));
+        return invoke(f.get(), {name, globals, locals, fromlist, level});
+    }
+    Ref f = Ref::share(dict_get(builtins_module()->dict, Obj::of(N("__import__"))));
+    if (f.get().is_unset()) raise_new("ImportError", "__import__ not found");
+    if (f.get() == import_func()) return import_module_level(name, globals, locals, fromlist, level_value(level));
+    return invoke(f.get(), {name, globals, locals, fromlist, level});
 }
 
 // ---- IMPORT_FROM: _PyEval_ImportFrom ----
 Ref import_from(Obj v, const Str* name) {
+    if (is_kind(v, Kind::LazyImport)) return lazy_import_from(v, name);
     Ref x = optional_attr(v, name);
     if (!x.get().is_unset()) return x;
     // in case this failed because of a circular relative import, the module itself from sys.modules
@@ -460,24 +442,552 @@ void import_star(Obj v, Obj locals) {
     }
 }
 
+// ---- lazy imports (PEP 810; Objects/lazyimportobject.c and Python/import.c, 3.15.2) ----
+// With one thread and D-18's fixed mode: no filter (sys.set_lazy_imports_filter is X-4-02's), and
+// sys.lazy_modules, whose only effect is that a program can read it, is left out until sys has it.
+namespace {
+LazyImport* as_lazy(Obj v) { return static_cast<LazyImport*>(v.object()); }
+bool is_lazy(Obj v) { return is_kind(v, Kind::LazyImport); }
+
+struct RecursionGuard {                          // _Py_EnterRecursiveCallTstate
+    RecursionGuard() { detail::enter_frame(); }
+    ~RecursionGuard() { detail::leave_frame(); }
+};
+
+using PendingChildren = std::unordered_map<std::string, Ref>;
+// lazy_pending_submodules: parent's name -> child's name -> the declaration, or None
+std::unordered_map<std::string, PendingChildren>& pending_submodules() {
+    static auto* table = new std::unordered_map<std::string, PendingChildren>;
+    return *table;
+}
+bool& has_lazy_submodules() {
+    static bool any = false;
+    return any;
+}
+std::vector<Obj>& resolving() {                  // ts->lazy_imports: the placeholders being resolved
+    static std::vector<Obj> active;
+    return active;
+}
+bool is_resolving(Obj v) { return std::find(resolving().begin(), resolving().end(), v) != resolving().end(); }
+
+// _PyLazyImport_New
+Ref lazy_new(bool at_frame, Obj builtins, Obj name, Obj fromlist) {
+    if (as_str(name) == nullptr && !is_lazy(name)) raise_new("TypeError", "expected str or lazy_import for name");
+    if (fromlist == None()) fromlist = Obj{};
+    if (!fromlist.is_unset() && as_str(fromlist) == nullptr && !is_kind(fromlist, Kind::Tuple))
+        raise_new("TypeError", "lazy_import: fromlist must be None, a string, or a tuple");
+    auto* lz = new LazyImport;
+    Ref out = own(lz);
+    if (!builtins.is_unset()) lz->builtins = Ref::share(builtins);
+    lz->from = Ref::share(name);
+    if (!fromlist.is_unset()) lz->attr = Ref::share(fromlist);
+    if (at_frame && detail::current_frame() != nullptr) {
+        lz->code = detail::current_frame()->code;
+        lz->line = detail::current_frame()->line;
+    }
+    return out;
+}
+
+// lazy_import_get_loaded_attr: a concrete attribute of an initialised module, without waiting for
+// imports or resolving lazy attributes; a failed lookup is retried at resolution
+Ref loaded_attr(Obj name, const Str* attr_name) {
+    try {
+        Ref mod = get_module(name);
+        if (!is_kind(mod.get(), Kind::Module)) return Ref{};
+        Ref spec = optional_attr(mod.get(), N("__spec__"));
+        if (spec_is_initializing(spec.get())) return Ref{};
+        Ref current = get_module(name);          // an initialization check can replace the module
+        if (current.get() != mod.get()) return Ref{};
+        Obj v = dict_get(static_cast<Module*>(mod.get().object())->dict, Obj::of(attr_name));
+        return v.is_unset() || is_lazy(v) ? Ref{} : Ref::share(v);
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("Exception"))) throw;
+        return Ref{};
+    }
+}
+
+// lazy_import_path: the dotted name of the object that resolving the placeholder returns
+std::string lazy_path(LazyImport* m) {
+    if (is_lazy(m->from.get())) {
+        RecursionGuard guard;
+        return lazy_path(as_lazy(m->from.get())) + "." + as_str(m->attr.get())->text;
+    }
+    const std::string& from = as_str(m->from.get())->text;
+    Obj attr = m->attr.get();
+    if (!attr.is_unset() && (!is_kind(attr, Kind::Tuple) || !static_cast<Tuple*>(attr.object())->items.empty())) return from;
+    return from.substr(0, from.find('.'));       // __import__("a.b") returns the top-level package `a`
+}
+// lazy_import_name
+std::string lazy_name(LazyImport* m) {
+    if (is_lazy(m->from.get())) return lazy_path(m);
+    const std::string& from = as_str(m->from.get())->text;
+    Obj attr = m->attr.get();
+    if (!attr.is_unset() && (!is_kind(attr, Kind::Tuple) || !static_cast<Tuple*>(attr.object())->items.empty())) return from + "...";
+    return from;
+}
+
+// _PyEval_ImportNameWithImport
+Ref import_with(Obj f, Obj name, Obj globals, Obj locals, Obj fromlist, std::int64_t level) {
+    if (f == import_func()) return import_module_level(name, globals, locals, fromlist, level);
+    return invoke(f, {name, globals, locals, fromlist, Obj::small(level)});
+}
+
+Ref lazy_resolve_impl(Obj lazy, Ref* imported_module);
+
+// lazy_import_resolve_result: a placeholder an import hook or an attribute lookup returned
+Ref lazy_resolve_result(Ref obj) { return is_lazy(obj.get()) ? lazy_resolve_impl(obj.get(), nullptr) : obj; }
+
+// lazy_import_replay_from: the attributes recorded from the root to lz, on the module the root's
+// import returned
+Ref lazy_replay_from(Obj mod, LazyImport* lz) {
+    if (!is_lazy(lz->from.get())) return Ref::share(mod);
+    RecursionGuard guard;
+    Ref from = lazy_replay_from(mod, as_lazy(lz->from.get()));
+    return lazy_resolve_result(import_from(from.get(), intern(as_str(lz->attr.get())->text)));
+}
+
+// lazy_import_add_exception_cause: the resolution error keeps its chain and gets the declaration:
+// a note when it has a chain already, else an ImportError as its cause, with a traceback entry
+void lazy_add_exception_cause(LazyImport* lz, Obj exc) {
+    if (lz->code == nullptr || lz->line < 0 || !is_exception_instance(exc)) return;
+    std::string name = lazy_name(lz);
+    Obj suppress = exception_field(exc, "__suppress_context__");
+    if (!exception_field(exc, "__cause__").is_unset() || !exception_field(exc, "__context__").is_unset() ||
+        suppress == boolean(true)) {
+        Ref note = str_new("lazy import of '" + name + "' declared in " + lz->code->name + " at " + lz->code->filename + ":" +
+                           std::to_string(lz->line));
+        Ref notes = optional_attr(exc, N("__notes__"));
+        if (notes.get().is_unset()) {
+            notes = list_new({});
+            setattr(exc, N("__notes__"), notes.get());
+        } else if (truth(compare(CmpOp::In, note.get(), notes.get()).get())) {
+            return;
+        }
+        if (is_kind(notes.get(), Kind::List)) list_append(notes.get(), note.get());
+        return;
+    }
+    Ref msg = str_new("lazy import of '" + name + "' raised an exception during resolution");
+    Ref cause = invoke(Obj::of(exception_class("ImportError")), {msg.get()});
+    Ref tb = own(new Traceback(lz->code, lz->line, Ref{}));      // _PyTraceback_Add
+    set_exception_field(cause.get(), "__traceback__", tb.get());
+    set_exception_field(exc, "__cause__", cause.get());          // PyException_SetCause
+    set_exception_field(exc, "__suppress_context__", boolean(true));
+}
+
+// lazy_import_resolve_impl
+Ref lazy_resolve_impl(Obj lazy, Ref* imported_module) {
+    Ref held = Ref::share(lazy);
+    LazyImport* lz = as_lazy(lazy);
+    // the placeholder IMPORT_NAME left, and the first lookup on it
+    LazyImport* root = lz;
+    LazyImport* first = nullptr;
+    while (is_lazy(root->from.get())) {
+        first = root;
+        root = as_lazy(root->from.get());
+    }
+    if (is_resolving(lazy)) {
+        Ref text = str_new(lazy_name(lz));
+        Ref exc = import_error("ImportCycleError", "cannot import name " + quoted(text.get()) + " (most likely due to a circular import)",
+                               root->from.get(), Obj{}, Obj{});
+        raise(exc.get());
+    }
+    RecursionGuard guard;
+    resolving().push_back(lazy);
+    auto done = [&] { resolving().erase(std::find(resolving().begin(), resolving().end(), lazy)); };
+    Ref obj;
+    try {
+        // `from a import b, c`: import only the name being resolved; an empty tuple stays for hooks
+        Obj root_attr = root->attr.get();
+        Ref fromlist;
+        if (first != nullptr && is_kind(root_attr, Kind::Tuple) && !static_cast<Tuple*>(root_attr.object())->items.empty())
+            fromlist = tuple_new({first->attr.get()});
+        else
+            fromlist = root_attr.is_unset() ? none_ref() : Ref::share(root_attr);
+        detail::FrameRecord* frame = detail::current_frame();
+        Obj globals = frame != nullptr ? Obj::of(frame->module->dict) : None();     // PyEval_GetGlobals
+        Ref f = mapping_get(root->builtins.get(), Obj::of(N("__import__")));
+        if (f.get().is_unset()) raise_new("ImportError", "__import__ not found");
+        bool default_import = f.get() == import_func();
+        Ref name = Ref::share(root->from.get());
+        Obj list = fromlist.get();
+        if (first == nullptr && (list == None() || (is_kind(list, Kind::Tuple) && static_cast<Tuple*>(list.object())->items.empty())) &&
+            default_import && root->builtins.get() == Obj::of(builtins_module()->dict)) {
+            // A plain import binds the root package; its pending children are imported separately,
+            // when their attributes are accessed. Aliased or non-package parents stay eager.
+            const std::string n = as_str(name.get())->text;
+            std::size_t dot = n.find('.');
+            if (dot != std::string::npos) {
+                bool regular = true, complete = true;
+                for (std::size_t i = dot; i != std::string::npos && regular; i = n.find('.', i + 1)) {
+                    std::string prefix_text = n.substr(0, i);
+                    Ref prefix = str_new(prefix_text);
+                    Ref cached = loaded_attr(prefix.get(), N("__name__"));
+                    if (cached.get().is_unset()) {
+                        complete = false;
+                        break;
+                    }
+                    Ref path = loaded_attr(prefix.get(), N("__path__"));
+                    const Str* cached_name = as_str(cached.get());
+                    regular = !path.get().is_unset() && cached_name != nullptr && cached_name->text == prefix_text;
+                }
+                Ref loaded = loaded_attr(name.get(), N("__name__"));
+                if (regular && (!complete || loaded.get().is_unset())) name = str_new(n.substr(0, dot));
+            }
+        }
+        obj = import_with(f.get(), name.get(), globals, globals, fromlist.get(), 0);
+        bool whole = name.get() == root->from.get();
+        if (!whole) {
+            root->active = true;
+            has_lazy_submodules() = true;
+            bool package = is_kind(obj.get(), Kind::Module) &&
+                           !dict_get(static_cast<Module*>(obj.get().object())->dict, Obj::of(N("__path__"))).is_unset();
+            if (!package) obj = import_with(f.get(), root->from.get(), globals, globals, fromlist.get(), 0);
+        } else if (default_import) {
+            clear_lazy_submodule(as_str(name.get())->text, false);
+        }
+        obj = lazy_resolve_result(std::move(obj));
+        // the normal importer may publish this module on its parent; a hook keeps control of its own
+        if (imported_module != nullptr && is_kind(obj.get(), Kind::Module) && default_import) *imported_module = obj;
+        if (first != nullptr) {                  // the hook's and the root's result stay alive for the lookups
+            Ref from = std::move(obj);
+            obj = lazy_replay_from(from.get(), lz);
+        }
+    } catch (const PyError& e) {
+        done();
+        lazy_add_exception_cause(lz, e.exc.get());
+        rethrow(e);
+    } catch (...) {
+        done();
+        throw;
+    }
+    done();
+    return obj;
+}
+
+// _PyLazyImport_LoadChild: a pending child resolved as an aliased import, keeping its declaration
+Ref lazy_load_child(Obj declaration, Obj name) {
+    LazyImport* source = as_lazy(declaration);
+    const std::string n = as_str(name)->text;
+    Ref lz = lazy_new(false, source->builtins.get(), name, Obj{});
+    std::size_t dot = n.find('.');
+    while (dot != std::string::npos) {
+        std::size_t start = dot + 1;
+        dot = n.find('.', start);
+        Ref attr = str_new(n.substr(start, dot == std::string::npos ? std::string::npos : dot - start));
+        lz = lazy_new(false, Obj{}, lz.get(), attr.get());
+    }
+    LazyImport* child = as_lazy(lz.get());
+    child->code = source->code;
+    child->line = source->line;
+    Ref result = lazy_resolve_impl(lz.get(), nullptr);
+    if (is_kind(result.get(), Kind::Module) && as_str(source->from.get())->text != n &&
+        dict_get(static_cast<Module*>(result.get().object())->dict, Obj::of(N("__path__"))).is_unset())
+        return lazy_load_child(declaration, source->from.get());   // a non-package must still reject an invalid dotted import
+    return result;
+}
+
+// _PyDict_ReplaceItemIf: namespace[name] = value if it still holds `expected`
+bool replace_if(Dict* d, const Str* name, Obj expected, Obj value) {
+    if (dict_get(d, Obj::of(name)) != expected) return false;
+    dict_set(d, Obj::of(name), value);
+    return true;
+}
+
+// lazy_import_replace_child: loading pkg.child can replace a placeholder in pkg.child with the
+// module before a from-import retrieves the value that belongs in that binding
+void lazy_replace_child(Obj placeholder, const Str* name, Dict* ns, Obj child, Obj value) {
+    LazyImport* root = as_lazy(placeholder);
+    if (!is_lazy(root->from.get())) return;
+    while (is_lazy(root->from.get())) root = as_lazy(root->from.get());
+    const std::string& from = as_str(root->from.get())->text;
+    std::size_t dot = from.rfind('.');
+    if (dot == std::string::npos || from.substr(dot + 1) != name->text) return;
+    Ref parent_name = str_new(from.substr(0, dot));
+    Ref parent = get_module(parent_name.get());
+    if (is_kind(parent.get(), Kind::Module) && static_cast<Module*>(parent.get().object())->dict == ns)
+        replace_if(ns, name, child, value);
+}
+
+// _PyImport_LazyImportModuleLevelObject (no filter: D-18)
+Ref lazy_import_module_level(Obj name, Obj builtins, Obj globals, Obj fromlist, std::int64_t level) {
+    if (as_str(name) == nullptr) raise_new("TypeError", "module name must be a string, got " + fully_qualified_name(type_of(name)));
+    if (level < 0) raise_new("ValueError", "level must be >= 0");
+    Ref abs_name = absolute_name(name, globals, level);
+    detail::FrameRecord* frame = detail::current_frame();
+    if (frame == nullptr || std::string_view(frame->code->name) != "<module>" || globals != Obj::of(frame->module->dict))
+        throw NotImplemented("the SyntaxError \"'lazy import' is only allowed at module level\" (SyntaxError: step 3b)");
+    Ref list = fromlist.is_unset() ? none_ref() : as_str(fromlist) != nullptr ? tuple_new({fromlist}) : Ref::share(fromlist);
+    if (is_kind(list.get(), Kind::Tuple))        // the entire fromlist, before registering any pending imports
+        for (Obj item : static_cast<Tuple*>(list.get().object())->items)
+            if (as_str(item) == nullptr) raise_new("TypeError", "Item in ``from list'' must be str, not " + type_of(item)->name);
+    Ref res = lazy_new(true, builtins, abs_name.get(), list.get());
+    Ref existing = get_module(abs_name.get());
+    const std::string& abs = as_str(abs_name.get())->text;
+    if (is_kind(list.get(), Kind::Tuple) && !static_cast<Tuple*>(list.get().object())->items.empty()) {
+        for (Obj item : static_cast<Tuple*>(list.get().object())->items) {
+            // register_from_lazy_on_parent: IMPORT_FROM returns stored attributes directly
+            if (is_kind(existing.get(), Kind::Module) &&
+                !dict_get(static_cast<Module*>(existing.get().object())->dict, item).is_unset())
+                continue;
+            register_lazy_on_parent(abs + "." + as_str(item)->text, None());
+        }
+    } else {
+        register_lazy_on_parent(abs, res.get());
+    }
+    return res;
+}
+}  // namespace
+
+// register_lazy_on_parent: each parent-child relationship of a lazily imported name; a parent's
+// attribute access then finds the child pending (_PyImport_TryLoadLazySubmodule)
+void register_lazy_on_parent(const std::string& name, Obj source) {
+    std::size_t end = name.size();
+    for (;;) {
+        std::size_t dot = end == 0 ? std::string::npos : name.rfind('.', end - 1);
+        if (dot == std::string::npos) return;
+        PendingChildren& children = pending_submodules()[name.substr(0, dot)];
+        std::string child = name.substr(dot + 1, end - dot - 1);
+        Ref fullname = str_new(name.substr(0, end));
+        Ref cached = get_module(fullname.get());
+        Obj value = !cached.get().is_unset() && cached.get() != None() ? None() : source;
+        if (source == None()) children.try_emplace(child, Ref::share(value));
+        else children[child] = Ref::share(value);
+        end = dot;
+    }
+}
+
+// _PyImport_ClearLazySubmodule: release completed declarations, retaining names while their parent
+// may fail; a cached eager import also restores a child removed after failed validation
+void clear_lazy_submodule(const std::string& name, bool bind) {
+    if (pending_submodules().empty()) return;
+    std::size_t dot = name.rfind('.');
+    if (dot == std::string::npos) return;
+    auto parent_entry = pending_submodules().find(name.substr(0, dot));
+    if (parent_entry == pending_submodules().end()) return;
+    PendingChildren& children = parent_entry->second;
+    std::string child = name.substr(dot + 1);
+    if (!children.contains(child)) return;
+    auto still_initializing = [](Obj module) {
+        if (module.is_unset()) return false;
+        Ref spec = optional_attr(module, N("__spec__"));
+        return spec_is_initializing(spec.get());
+    };
+    Ref full = str_new(name), parent_name = str_new(name.substr(0, dot));
+    try {
+        Ref loaded = get_module(full.get());
+        if (still_initializing(loaded.get())) return;
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("Exception"))) throw;
+        return;
+    }
+    Ref module = get_module(parent_name.get());
+    bool initializing = still_initializing(module.get());
+    if (bind && !initializing && is_kind(module.get(), Kind::Module) && children.contains(child)) {
+        Ref value = get_module(full.get());
+        Dict* d = static_cast<Module*>(module.get().object())->dict;
+        Ref key = str_new(child);
+        if (!value.get().is_unset() && value.get() != None() && dict_get(d, key.get()).is_unset()) dict_set(d, key.get(), value.get());
+    }
+    if (initializing) children[child] = none_ref();
+    else children.erase(child);
+}
+
+// _imp._set_lazy_attributes: (sys.lazy_modules, left out,) and the name's pending entry
+Ref i_bella_set_lazy_attributes(Obj, Args a) {
+    positional_only(a, "_bella_set_lazy_attributes", 2, 2);
+    clear_lazy_submodule(as_str(a.pos(1))->text, false);
+    return none_ref();
+}
+
+// _PyImport_TryLoadLazySubmodule
+Ref try_load_lazy_submodule(Module* m, const Str* attr_name, bool suppress, bool& recheck_dict) {
+    recheck_dict = false;
+    Obj mod_name = dict_get(m->dict, Obj::of(N("__name__")));
+    if (mod_name.is_unset() || as_str(mod_name) == nullptr) return Ref{};
+    auto parent_entry = pending_submodules().find(as_str(mod_name)->text);
+    if (parent_entry == pending_submodules().end()) return Ref{};
+    recheck_dict = true;
+    std::string parent_text = parent_entry->first;
+    auto child_entry = parent_entry->second.find(attr_name->text);
+    if (child_entry == parent_entry->second.end()) return Ref{};
+    Ref source = child_entry->second;
+    Ref full = str_new(parent_text + "." + attr_name->text);
+    auto children = [&]() -> PendingChildren& { return pending_submodules()[parent_text]; };   // the map may have grown
+    Ref mod;
+    try {
+        // Match eager from-imports: accept a partial module in an import cycle.
+        if (source.get() != None() && !suppress &&
+            (as_lazy(source.get())->active || dict_get(m->dict, Obj::of(N("__getattr__"))).is_unset())) {
+            mod = lazy_load_child(source.get(), full.get());
+        } else {
+            mod = get_initialized_module(full.get());
+            if (mod.get().is_unset() || mod.get() == None())
+                mod = call_bootstrap("_find_and_load_lazy_submodule", {full.get(), import_func()});
+        }
+    } catch (const PyError& e) {
+        Ref loaded = get_module(full.get());
+        if (!loaded.get().is_unset() && loaded.get() != None()) {
+            if (dict_get(m->dict, Obj::of(attr_name)) == loaded.get()) dict_del(m->dict, Obj::of(attr_name));
+            children().try_emplace(attr_name->text, source);
+        }
+        rethrow(e);
+    }
+    // missing children stay pending: a finder may provide them later
+    if (mod.get().is_unset() || mod.get() == None()) return Ref{};
+    bool initializing = false;
+    try {
+        Ref spec = optional_attr(mod.get(), N("__spec__"));
+        initializing = spec_is_initializing(spec.get());
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("Exception"))) throw;
+    }
+    if (!initializing) {
+        dict_set(m->dict, Obj::of(attr_name), mod.get());
+        children().erase(attr_name->text);
+    }
+    return mod;
+}
+
+// _PyEval_LazyImportFrom
+Ref lazy_import_from(Obj v, const Str* name) {
+    LazyImport* lz = as_lazy(v);
+    // only `from a import b` can take b off an already imported a; `import a.b as c` imports a.b first
+    Obj attr = lz->attr.get();
+    if (is_kind(attr, Kind::Tuple) && !static_cast<Tuple*>(attr.object())->items.empty()) {
+        Ref found = loaded_attr(lz->from.get(), name);
+        if (!found.get().is_unset()) return found;
+    }
+    return lazy_new(true, Obj{}, v, Obj::of(name));
+}
+
+// _PyLazyImport_Reify: resolved, and the namespace, if it still holds the placeholder, gets the result
+Ref lazy_reify(Obj placeholder, const Str* name, Obj ns) {
+    Ref held = Ref::share(placeholder);
+    Ref imported;
+    Ref value = lazy_resolve_impl(placeholder, &imported);
+    if (is_kind(ns, Kind::Dict) && !is_subclass_instance(ns)) {
+        Dict* d = static_cast<Dict*>(ns.object());
+        if (!replace_if(d, name, placeholder, value.get()) && !imported.get().is_unset())
+            lazy_replace_child(placeholder, name, d, imported.get(), value.get());
+    } else if (!is_kind(ns, Kind::Dict) && type_lookup(type_of(ns), N("__setitem__")).is_unset()) {
+        return value;                            // a read-only namespace resolves without caching
+    } else {
+        Ref current = mapping_get(ns, Obj::of(name));
+        if (current.get() == placeholder) mapping_set(ns, Obj::of(name), value.get());
+    }
+    return value;
+}
+
+// lazy_import_getattro: the generic lookup, with its own message
+Ref lazy_getattr(Obj lazy, const Str* name) {
+    ClassObject* c = type_of(lazy);
+    Obj found = type_lookup(c, name);
+    if (!found.is_unset()) return descr_get(found, lazy, Obj::of(c));
+    refuse_absent_attribute(lazy, name);
+    Ref text = str_new(lazy_name(as_lazy(lazy)));
+    raise_attribute_error(lazy, name, "cannot access attribute " + quoted(Obj::of(name)) + " on unresolved lazy import " + quoted(text.get()));
+}
+namespace {
+Ref lazy_repr_m(Obj self, Args a) {
+    positional_only(a, "__repr__", 0, 0);
+    return str_new("<lazy_import '" + lazy_name(as_lazy(self)) + "'>");
+}
+Ref lazy_resolve_m(Obj self, Args a) {           // lazy_import.resolve(): METH_NOARGS
+    positional_only(a, "resolve", 0, 0);
+    return lazy_resolve_impl(self, nullptr);
+}
+Ref lazy_new_m(Obj, Args) { raise_new("TypeError", "cannot create 'lazy_import' instances"); }
+}  // namespace
+
+// builtins.__lazy_import__(name, globals=None, locals=None, fromlist=None, level=0)
+Ref b_lazy_import(Obj, Args a) {
+    static const char* const params[] = {"name", "globals", "locals", "fromlist", "level"};
+    Obj given[5] = {};
+    if (a.npos + a.nkw > 5) raise_new("TypeError", "__lazy_import__() takes at most 5 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
+    for (std::size_t i = 0; i < a.npos; ++i) given[i] = a.pos(i);
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        std::size_t j = 0;
+        while (j < 5 && a.kwnames[k]->text != params[j]) ++j;
+        if (j == 5) throw NotImplemented("__lazy_import__() with an unexpected keyword argument (the suggestion in its message)");
+        if (!given[j].is_unset())
+            raise_new("TypeError", std::string("argument for __lazy_import__() given by name ('") + params[j] + "') and position (" + std::to_string(j + 1) + ")");
+        given[j] = a.kw(k);
+    }
+    if (given[0].is_unset()) raise_new("TypeError", "__lazy_import__() missing required argument 'name' (pos 1)");
+    std::int64_t level = given[4].is_unset() ? 0 : level_value(given[4]);
+    Obj globals = given[1];
+    if (globals.is_unset()) {
+        detail::FrameRecord* frame = detail::current_frame();
+        if (frame == nullptr) raise_new("TypeError", "__lazy_import__() missing globals when called without a frame");
+        globals = Obj::of(frame->module->dict);
+    }
+    if (!is_kind(globals, Kind::Dict)) raise_new("TypeError", "expect dict for globals, got " + fully_qualified_name(type_of(globals)));
+    Obj builtins = dict_get(static_cast<Dict*>(globals.object()), Obj::of(N("__builtins__")));
+    if (builtins.is_unset()) raise_new("ValueError", "unable to get builtins for lazy import");
+    if (is_kind(builtins, Kind::Module)) builtins = Obj::of(static_cast<Module*>(builtins.object())->dict);
+    return lazy_import_module_level(given[0], builtins, globals, given[3], level);
+}
+
 // ---- the module type (Objects/moduleobject.c) ----
-// _Py_module_getattro_impl: the generic lookup with the module's dict, then the module's own
-// __getattr__ (PEP 562), then CPython's message for why the name is missing
-Ref module_getattr(Obj obj, const Str* name) {
+namespace {
+// module_get_resolved_dict_item: an item of the namespace, a lazy import resolved; one this thread
+// is resolving reads as absent
+Ref resolved_dict_item(Dict* d, const Str* name) {
+    Obj v = dict_get(d, Obj::of(name));
+    if (v.is_unset()) return Ref{};
+    if (!is_lazy(v)) return Ref::share(v);
+    if (is_resolving(v)) return Ref{};
+    return lazy_reify(v, name, Obj::of(d));
+}
+}  // namespace
+
+// _Py_module_getattro_impl: the generic lookup with the module's dict; a pending lazy submodule; the
+// module's own __getattr__ (PEP 562); then CPython's message for why the name is missing. With
+// `suppress` (PyObject_GetOptionalAttr) an absent attribute is Unset, not an AttributeError.
+Ref module_getattr(Obj obj, const Str* name, bool suppress) {
     auto* m = static_cast<Module*>(obj.object());
     ClassObject* c = type_of(obj);
     Obj found = type_lookup(c, name);
-    if (!found.is_unset() && is_data_descriptor(found)) return descr_get(found, obj, Obj::of(c));
-    Obj v = dict_get(m->dict, Obj::of(name));
-    if (!v.is_unset()) return Ref::share(v);
-    if (!found.is_unset()) return descr_get(found, obj, Obj::of(c));
-    Obj hook = dict_get(m->dict, Obj::of(N("__getattr__")));
-    if (!hook.is_unset()) {
-        Ref held = Ref::share(hook);
+    Ref attr;
+    bool data = !found.is_unset() && is_data_descriptor(found);
+    try {
+        if (data) {
+            attr = descr_get(found, obj, Obj::of(c));
+        } else {
+            Obj v = dict_get(m->dict, Obj::of(name));
+            if (!v.is_unset()) attr = Ref::share(v);
+            else if (!found.is_unset()) attr = descr_get(found, obj, Obj::of(c));
+        }
+    } catch (const PyError& e) {
+        if (!is_attribute_error(e)) throw;
+    }
+    if (attr.get().is_unset()) {
+        bool recheck_dict = false;
+        attr = try_load_lazy_submodule(m, name, suppress, recheck_dict);
+        if (!attr.get().is_unset()) return attr;
+        // a load may have bound the child and removed its pending entry after the first lookup
+        if (recheck_dict && (found.is_unset() || !has_descr_get(found))) {
+            Obj v = dict_get(m->dict, Obj::of(name));
+            if (!v.is_unset()) attr = Ref::share(v);
+        }
+    }
+    if (!attr.get().is_unset()) {
+        if (!is_lazy(attr.get())) return attr;
+        if (suppress && is_resolving(attr.get())) return Ref{};   // only direct reentry means unavailable
+        return lazy_reify(attr.get(), name, Obj::of(m->dict));
+    }
+    Ref hook = resolved_dict_item(m->dict, N("__getattr__"));
+    if (!hook.get().is_unset()) {
         Ref name_ref = Ref::share(Obj::of(name));
-        return invoke(held.get(), {name_ref.get()});
+        try {
+            return invoke(hook.get(), {name_ref.get()});
+        } catch (const PyError& e) {
+            if (!suppress || !is_attribute_error(e)) throw;
+            return Ref{};
+        }
     }
     refuse_absent_attribute(obj, name);
+    if (suppress) return Ref{};
     Obj mod_name = dict_get(m->dict, Obj::of(N("__name__")));
     if (mod_name.is_unset() || as_str(mod_name) == nullptr)
         raise_attribute_error(obj, name, "module has no attribute '" + name->text + "'");
@@ -528,11 +1038,8 @@ Ref module_repr_m(Obj self, Args a) {            // module_repr: importlib._boot
 Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the namespace, else its keys
     positional_only(a, "__dir__", 0, 0);
     Module* m = as_module(self, "__dir__");
-    Obj dirfunc = dict_get(m->dict, Obj::of(N("__dir__")));
-    if (!dirfunc.is_unset()) {
-        Ref held = Ref::share(dirfunc);
-        return invoke(held.get(), {});
-    }
+    Ref dirfunc = resolved_dict_item(m->dict, N("__dir__"));
+    if (!dirfunc.get().is_unset()) return invoke(dirfunc.get(), {});
     Ref keys = list_new({});
     for (auto& e : m->dict->entries)
         if (!e.key.is_unset()) list_append(keys.get(), e.key);
@@ -586,6 +1093,37 @@ Ref b_dir(Obj, Args a) {
         if (as_str(x) == nullptr) throw NotImplemented("dir() of names that are not all str (list.sort: step 3b)");
     std::stable_sort(items.begin(), items.end(), [](Obj x, Obj y) { return as_str(x)->text < as_str(y)->text; });
     return list;
+}
+
+namespace {
+void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::Method) {
+    auto* f = new Builtin(name, fn, Obj{}, b);
+    f->owner = c;
+    f->flags |= IMMORTAL;                        // owned by the type, which lives as long as the program
+    c->attrs.set(N(name), Obj::of(f));
+}
+}  // namespace
+
+void init_imports(Module* sys) {
+    sys_module() = sys;
+    ClassObject* mt = types().module;
+    method(mt, "__new__", module_new_m, Binding::Function);
+    method(mt, "__init__", module_init_m);
+    method(mt, "__repr__", module_repr_m);
+    method(mt, "__dir__", module_dir_m);
+    mt->attrs.set(N("__dict__"), Obj::of(new GetSet("__dict__", mt, module_dict_get, nullptr)));
+    Ref modules = dict_new();
+    interp_modules() = static_cast<Dict*>(modules.get().object());
+    incref(modules.get());                       // the interpreter's own count, for the program's lifetime
+    dict_set(sys->dict, Obj::of(N("modules")), modules.get());
+    dict_set(interp_modules(), Obj::of(N("sys")), Obj::of(sys));
+    dict_set(interp_modules(), Obj::of(N("builtins")), Obj::of(builtins_module()));
+    import_func() = dict_get(builtins_module()->dict, Obj::of(N("__import__")));
+    lazy_import_func() = dict_get(builtins_module()->dict, Obj::of(N("__lazy_import__")));
+    ClassObject* lt = types().lazy_import;
+    method(lt, "__new__", lazy_new_m, Binding::Function);
+    method(lt, "__repr__", lazy_repr_m);
+    method(lt, "resolve", lazy_resolve_m);
 }
 
 }  // namespace bella
