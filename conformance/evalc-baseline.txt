@@ -13,6 +13,7 @@ C-3-11_class_attribute_becomes_descriptor.py
 C-3-14_comprehension_unpacking.py
 C-3-18_class_assignment.py
 C-3-19_getattribute_override.py
+C-3-30_traceback_entries.py
 C-8-02_builtins_fallthrough.py
 C-9-05_default_argument_lifetime.py
 C-9-08_attribute_value_lifetimes.py

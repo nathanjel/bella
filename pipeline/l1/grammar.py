@@ -350,6 +350,9 @@ class FunctionDef(Stmt):
     # namespace first (LOAD_FROM_DICT_OR_GLOBALS, LOAD_FROM_DICT_OR_DEREF)
     annotation: bool = False
     classdict: bool = False
+    # a list, set or dict comprehension's helper: CPython inlines it (PEP 709), so it has no
+    # frame of its own and never enters a traceback
+    inlined: bool = False
 
 
 @dataclass(frozen=True)

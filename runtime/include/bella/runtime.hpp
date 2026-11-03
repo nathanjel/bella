@@ -150,6 +150,9 @@ struct Code {
     bool varkw;
     std::vector<const char*> varnames;           // parameters first, as co_varnames
     const char* doc = nullptr;                   // the docstring, or none
+    // false for code CPython runs without a frame of its own: the prelude (C functions there)
+    // and an inlined comprehension (PEP 709); such a frame never enters a traceback (RL-223/224)
+    bool shown = true;
 };
 
 struct PyFunction : Object {
@@ -174,6 +177,7 @@ struct Module : Object {
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
     const Code* code;
     int line;
+    std::uint64_t frame = 0;                     // the frame (a FrameGuard's id) it records
     std::vector<Ref> locals;                     // the frame's locals, taken over during unwinding
     Ref next;
     Traceback(const Code* c, int l, Ref nx);
@@ -216,13 +220,23 @@ inline const void*& raising_owner() {
     return owner;
 }
 }
+// A frame records an exception where it arrives (CPython's PyTraceBack_Here at the `error:`
+// label): at the frame's first catch that sees it, or at its guard when nothing catches it
+// there, before any handler code moves the line on. `recorded` says which frame has recorded
+// this throw, so the frame's own re-raises (a finally's end, an unmatched except) add nothing;
+// leaving a frame clears it, so the caller records the call. A bare `raise` is BARE_RAISE: the
+// frame that re-raises records nothing (RL-221).
+namespace detail {
+inline constexpr std::uint64_t BARE_RAISE = ~std::uint64_t{0};
+}
 struct PyError {
     Ref exc;                                     // the exception instance
-    explicit PyError(Ref e) : exc(std::move(e)) {
+    std::uint64_t recorded = 0;                  // the frame that recorded this throw, 0, or BARE_RAISE
+    explicit PyError(Ref e, std::uint64_t rec = 0) : exc(std::move(e)), recorded(rec) {
         detail::raising() = exc.get();
         detail::raising_owner() = this;
     }
-    PyError(const PyError& o) : exc(o.exc) {}
+    PyError(const PyError& o) : exc(o.exc), recorded(o.recorded) {}
     PyError& operator=(const PyError&) = delete;
     ~PyError() {
         if (detail::raising_owner() == this) {
@@ -259,10 +273,13 @@ public:
 };
 
 // The frame record and guard (docs/l2.md decision 5). Declared after the frame's locals, so it is
-// destroyed first when an exception unwinds the function: it appends (code, line) to the
-// exception's traceback and moves the locals into the entry, where they die with the traceback.
+// destroyed first when an exception unwinds the function. An exception is recorded where it
+// arrives in the frame (`arrived`, the first statement of each of the frame's catches, or the
+// guard if none caught it); when it leaves, the guard moves the locals into the frame's entry,
+// where they die with the traceback (RL-221; a caught exception keeping them is RL-222, step 3c).
 namespace detail {
-void record_frame(const Code& code, int line, Ref* const* locals, std::size_t n) noexcept;
+void arrive(const Code& code, int line, std::uint64_t& id, PyError& e) noexcept;
+void record_frame(const Code& code, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept;
 void enter_frame();                              // RecursionError past the limit (spec D-17)
 void leave_frame() noexcept;
 }
@@ -271,6 +288,7 @@ class FrameGuard {
     const Code& code_;
     std::array<Ref*, N> locals_;
     int uncaught_;
+    std::uint64_t id_ = 0;                       // given when the frame first records an exception
 public:
     int line;
     template <class... L>
@@ -278,9 +296,10 @@ public:
         : code_(c), locals_{&locals...}, uncaught_(std::uncaught_exceptions()), line(c.first_line) {
         detail::enter_frame();
     }
+    void arrived(PyError& e) noexcept { detail::arrive(code_, line, id_, e); }
     ~FrameGuard() {
         detail::leave_frame();
-        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(code_, line, locals_.data(), N);
+        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(code_, line, id_, locals_.data(), N);
     }
     FrameGuard(const FrameGuard&) = delete;
     FrameGuard& operator=(const FrameGuard&) = delete;

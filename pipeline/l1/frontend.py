@@ -1679,6 +1679,7 @@ class _Comprehensions(ast.NodeTransformer):
             body=_hoist(body, "function", frozenset(declared_global)),   # comprehensions in the element, conditions or inner loops
             decorator_list=[], returns=None, type_params=[])
         fn.bella_store = fname  # type: ignore[attr-defined]
+        fn.bella_inlined = kind != "genexp"  # type: ignore[attr-defined]
         fn.bella_qualname = getattr(node, "bella_qualname", None)  # type: ignore[attr-defined]
         if declared_nonlocal:
             fn.bella_enclosing_binds = declared_nonlocal  # type: ignore[attr-defined]
@@ -2010,7 +2011,8 @@ class _ToL1:
                              store=getattr(f, "bella_store", "") if getattr(f, "bella_store", f.name) != f.name else "",
                              kind=kind, enclosing_binds=frozenset(getattr(f, "bella_enclosing_binds", ())),
                              annotation=bool(getattr(f, "bella_annotation", False)),
-                             classdict=bool(getattr(f, "bella_classdict", False)))
+                             classdict=bool(getattr(f, "bella_classdict", False)),
+                             inlined=bool(getattr(f, "bella_inlined", False)))
 
     def class_(self, c: ast.ClassDef) -> L.Assign:
         """``C = d1(d2(build_class(<body>, "C", *bases, **keywords)))``: the decorators (already

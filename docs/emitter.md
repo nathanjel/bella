@@ -80,9 +80,16 @@ static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
   L2's exception edge (`docs/l2.md` section 8, decision 1). `release t` is `t = Ref{}`; a store
   moves its value in, and the old value is released after the new one is stored.
 * The frame record and guard of decision 5: `FrameGuard frame(code_f, locals...)` after the
-  locals. When an exception leaves the function, the guard appends `(code, line)` to the
-  exception's `__traceback__` and moves the locals into that entry, so they die with the
-  traceback. The guard also counts the recursion depth (spec D-17: `RecursionError` past 1000).
+  locals. An exception is recorded where it arrives in the frame (D-12, RL-221): every catch the
+  emitter writes starts with `frame.arrived(e)`, which prepends `(code, frame.line)` to the
+  exception's `__traceback__` unless this frame has already recorded that throw (the `PyError`
+  carries the recording frame's id) or re-raises it bare; the guard records an exception that no
+  catch of the frame saw. When an exception leaves the function, the guard moves the locals into
+  the frame's newest entry, so they die with the traceback, and clears the mark so that the
+  caller records the call. A caught exception does not keep the locals yet (RL-222, step 3c).
+  Code CPython runs without a frame, the prelude and an inlined comprehension, has
+  `Code::shown` false and is never recorded (RL-223, RL-224). The guard also counts the recursion
+  depth (spec D-17: `RecursionError` past 1000).
 * Exceptions are C++ exceptions (decision 4): `rt::PyError` carries the Python exception. An
   `except` clause is a `catch (rt::PyError&)` that matches its clauses in order and rethrows when
   none matches; a `Handling` scope makes the exception the one being handled, for a bare `raise`
@@ -169,8 +176,9 @@ runtime sources and the compiled prelude at `-O2`, built once per content hash (
 the compiler's own Python, the flags) under a lock, so parallel builds share it. The program's
 `main` is `run_main`: the builtins module and `sys`, the prelude modules (each `__all__` goes into
 builtins), then `__main__`. At the end `__main__`'s globals are released in insertion order (as
-CPython 3.15.2 does, measured), stdout is flushed, and an uncaught exception prints a traceback of
-file and line (spec D-06) and exits 1; a facility Bella lacks yet stops with
+CPython 3.15.2 does, measured), stdout is flushed, and an uncaught exception prints CPython's
+report, the chain of causes and contexts first, each traceback with file and line (spec D-06),
+and exits 1; a facility Bella lacks yet stops with
 `bella: not implemented: ...` and exit 70, as the evaluators refuse.
 
 ## 5. Gaps, in the order the steps close them
@@ -179,7 +187,13 @@ file and line (spec D-06) and exits 1; a facility Bella lacks yet stops with
 * The dict views' set operations and comparisons, `reversed` and `mapping`; `str %`
   formatting; `types.UnionType` (`int | str`).
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
-* 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3.
+* 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3; with it,
+  a caught exception keeps its frame's locals (RL-222, D-12).
+* Lines: a frame's line is its statement's first line; CPython gives the failing instruction's,
+  which differs inside a statement that spans lines (RL-225). The frontend and L2 would carry
+  the expression positions; an inlined comprehension's line then goes to its caller's entry.
+* The constructors of `int`, `float` and `dict` (refused, RL-220), `max`, `min`, `divmod`;
+  `__notes__` in an uncaught exception's report (refused).
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and
   type are refused today (RL-218); the names RL-211's table refuses, as programs need them.
 * Later: `float` beyond the digits (the wrapper of `to_chars`/`from_chars`), the `bn` copy for

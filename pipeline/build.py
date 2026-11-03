@@ -42,10 +42,10 @@ RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra"]
 PROGRAM_FLAGS = ["-O1", "-w"]
 
 
-def to_cpp(source: str, filename: str, namespace: str) -> str:
+def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False) -> str:
     module: G.Module = lifetimes(to_l2(lower(source, filename)))
     wf2.check(module, lifetimes=True)
-    return emit_module(module, namespace, filename)
+    return emit_module(module, namespace, filename, prelude)
 
 
 def _key(*parts: bytes) -> str:
@@ -93,7 +93,7 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
         units = list(SOURCES)
         for p in PRELUDE:
             cpp = out / f"prelude_{p.stem}.cpp"
-            cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem}"),
+            cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem}", prelude=True),
                            encoding="utf-8")
             units.append(cpp)
         objs = [out / f"{u.stem}.o" for u in units]

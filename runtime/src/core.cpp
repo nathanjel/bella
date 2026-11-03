@@ -487,7 +487,7 @@ void raise(Obj exc) {
 
 void reraise() {
     if (handled().empty()) raise_new("RuntimeError", "No active exception to reraise");
-    throw PyError{Ref::share(handled().back())};
+    throw PyError{Ref::share(handled().back()), detail::BARE_RAISE};   // records nothing here (RL-221)
 }
 
 Obj unsupported_constant(const char* what) { throw NotImplemented(what); }
@@ -546,15 +546,58 @@ Obj traceback_of(Obj exc) {
     return present ? v : Obj{};
 }
 
-void detail::record_frame(const Code& code, int line, Ref* const* locals, std::size_t n) noexcept {
+namespace {
+std::uint64_t frame_ids = 0;                     // a frame's id, given on its first record: never reused
+
+// prepends (code, line) for frame `id` to exc's traceback, as PyTraceBack_Here does
+Traceback* add_entry(Obj exc, const Code& code, int line, std::uint64_t id) {
+    Obj prev = traceback_of(exc);
+    auto* tb = new Traceback(&code, line, Ref::share(prev.is_unset() ? None() : prev));
+    tb->frame = id;
+    Ref held = own(tb);
+    setattr(static_cast<Instance*>(exc.object()), intern("__traceback__"), held.get());
+    return tb;
+}
+}  // namespace
+
+void detail::arrive(const Code& code, int line, std::uint64_t& id, PyError& e) noexcept {
+    try {
+        if (!code.shown) {                       // no frame in CPython: the caller records the call
+            e.recorded = 0;
+            return;
+        }
+        if (id == 0) id = ++frame_ids;
+        if (e.recorded == id) return;            // re-raised by this frame
+        if (e.recorded != BARE_RAISE && is_kind(e.exc.get(), Kind::Instance)) add_entry(e.exc.get(), code, line, id);
+        e.recorded = id;
+    } catch (...) {
+        // a frame record that cannot be made loses the entry, never the exception
+    }
+}
+
+void detail::record_frame(const Code& code, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept {
     try {
         Obj exc = raising();
-        if (!is_kind(exc, Kind::Instance)) return;
-        Obj prev = traceback_of(exc);
-        auto* tb = new Traceback(&code, line, Ref::share(prev.is_unset() ? None() : prev));
-        for (std::size_t i = 0; i < n; ++i) tb->locals.push_back(std::move(*locals[i]));
-        Ref held = own(tb);
-        setattr(static_cast<Instance*>(exc.object()), intern("__traceback__"), held.get());
+        auto* err = static_cast<PyError*>(const_cast<void*>(raising_owner()));
+        if (!is_kind(exc, Kind::Instance) || err == nullptr) return;
+        std::uint64_t rec = err->recorded;
+        err->recorded = 0;                       // the caller records the call
+        if (!code.shown) return;
+        Traceback* entry = nullptr;
+        if (rec == BARE_RAISE || (id != 0 && rec == id)) {
+            // recorded at one of this frame's catches (or re-raised bare): its newest entry for
+            // this frame, if the traceback still has one, takes the locals
+            for (Obj t = traceback_of(exc); id != 0 && is_kind(t, Kind::Traceback); t = static_cast<Traceback*>(t.object())->next.get())
+                if (static_cast<Traceback*>(t.object())->frame == id) {
+                    entry = static_cast<Traceback*>(t.object());
+                    break;
+                }
+        } else {
+            if (id == 0) id = ++frame_ids;
+            entry = add_entry(exc, code, line, id);
+        }
+        if (entry != nullptr)
+            for (std::size_t i = 0; i < n; ++i) entry->locals.push_back(std::move(*locals[i]));
     } catch (...) {
         // a frame record that cannot be made loses the entry, never the exception
     }

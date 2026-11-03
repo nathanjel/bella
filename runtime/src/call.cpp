@@ -1211,8 +1211,19 @@ void report_unraisable(const std::string& context, const PyError& e) {
 }
 
 namespace {
-void print_traceback(Obj exc) {
-    Stream& err = err_stream();
+// What the report reads of an exception, by attribute access as traceback.TracebackException
+// does; `__notes__` may be absent (getattr(exc, '__notes__', None)).
+Ref report_attr(Obj exc, const char* name) {
+    try {
+        return getattr(exc, intern(name));
+    } catch (const PyError& e) {
+        if (is_attribute_error(e) && std::string_view(name) == "__notes__") return none_ref();
+        throw NotImplemented(std::string("the report of an uncaught exception whose ") + name + " raises");
+    }
+}
+
+// One exception of the report: its traceback, then `Type: message`.
+void print_one(Stream& err, Obj exc) {
     Obj tb = traceback_of(exc);
     if (is_kind(tb, Kind::Traceback)) {
         err.write("Traceback (most recent call last):\n");
@@ -1231,6 +1242,43 @@ void print_traceback(Obj exc) {
     Ref text = str_of(exc);
     const Str* s = as_str(text.get());
     err.write(s->length == 0 ? name + "\n" : name + ": " + s->text + "\n");
+}
+
+// The report CPython prints (traceback.TracebackException, compact): the chain first, oldest
+// first, each link introduced by why it is there: an explicit cause, or the context unless
+// suppressed; an exception already in the chain ends it (RL-226).
+void print_traceback(Obj exc) {
+    static const char* const CAUSE = "\nThe above exception was the direct cause of the following exception:\n\n";
+    static const char* const CONTEXT = "\nDuring handling of the above exception, another exception occurred:\n\n";
+    ClassObject* base = exception_class("BaseException");
+    auto is_exception = [&](Obj v) { return is_kind(v, Kind::Instance) && is_subclass(type_of(v), base); };
+    std::vector<std::pair<const char*, Ref>> chain;     // (why the next one is shown, the exception)
+    std::unordered_set<const Object*> seen;
+    for (Ref e = Ref::share(exc); !e.get().is_unset();) {
+        seen.insert(e.get().object());
+        if (report_attr(e.get(), "__notes__").get() != None())
+            throw NotImplemented("the __notes__ of an uncaught exception (PEP 678)");
+        Ref cause = report_attr(e.get(), "__cause__");
+        Ref context = report_attr(e.get(), "__context__");
+        Ref suppress = report_attr(e.get(), "__suppress_context__");
+        const char* why = nullptr;
+        Ref next;
+        bool has_cause = is_exception(cause.get()) && !seen.contains(cause.get().object());
+        if (has_cause) {
+            why = CAUSE;
+            next = std::move(cause);
+        } else if (is_exception(context.get()) && !truth(suppress.get()) && !seen.contains(context.get().object())) {
+            why = CONTEXT;
+            next = std::move(context);
+        }
+        chain.emplace_back(why, std::move(e));
+        e = std::move(next);
+    }
+    Stream& err = err_stream();
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        if (it->first != nullptr) err.write(it->first);
+        print_one(err, it->second.get());
+    }
     err.flush();
 }
 
@@ -1323,6 +1371,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, std::initializer_list<
                     status = 1;
                 }
             } else {
+                out_stream().flush();             // CPython flushes stdout before the report (RL-227)
                 print_traceback(e.exc.get());
                 status = 1;
             }

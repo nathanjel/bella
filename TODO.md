@@ -358,10 +358,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            that the runtime lacks is refused by the recorded table. Left (refused): the views'
            set operations, `str %` formatting, `type | type`;
            the constructors of `int`, `float` and `dict` (they fell into `object.__new__`,
-           RL-220), `max`, `min`, `divmod`, and BigInt in the compiled `int`. Open: when a frame
-           enters a traceback and how long the entry keeps it (RL-221, RL-222, D-12).
+           RL-220), `max`, `min`, `divmod`, and BigInt in the compiled `int`. Then D-12: a frame
+           enters a traceback where the exception arrives, the prelude and inlined comprehensions
+           have no frames, and the report prints the chain (RL-221, RL-223 to RL-227, C-3-30);
+           lines inside a multi-line statement are the statement's (RL-225, open).
        * 3b generators (state machines) and compiled imports: C-3-04.
-       * 3c the cycle collector and weak references, model first: C-3-12; task 3 done.
+       * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
+         a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
     design's level table says every L2 expression carries the oracle's type. Closes in phase 2,
     when a pass produces `Fact.TYPES` (none does today, so none can require it). Until then no

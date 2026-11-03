@@ -11,6 +11,7 @@ Run under pytest or directly: python3 -m pipeline.tests.test_compiled
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ import tempfile
 import textwrap
 from pathlib import Path
 
+from conformance.harness import mask_stderr
 from pipeline.build import build
 
 _HAVE_CXX = shutil.which("g++") is not None
@@ -499,6 +501,137 @@ def test_a_builtin_type_without_a_constructor_is_refused() -> None:
             got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False)
         assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr, (body, got)
 
+
+
+def same_report(src: str, merged: bool = False) -> None:
+    """stdout, stderr and the exit status, compiled and under CPython; stderr with the harness's
+    D-06 mask (a traceback frame is file and line; the source echo dropped), addresses hidden.
+    `merged`: one stream, as `2>&1` shows it, so the order of the two is compared too."""
+    src = textwrap.dedent(src)
+    err = subprocess.STDOUT if merged else subprocess.PIPE
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_text(src, encoding="utf-8")
+        runs = [subprocess.run(cmd, stdout=subprocess.PIPE, stderr=err, text=True, check=False, cwd=tmp)
+                for cmd in ([sys.executable, str(prog)], [str(build(prog, "prog.py"))])]
+    ref, got = ((mask_stderr(r.stdout) if merged else r.stdout, re.sub(r" at 0x[0-9a-f]+", "", mask_stderr(r.stderr or "")),
+                 r.returncode) for r in runs)
+    assert got == ref, f"\n--- compiled\n{got[0]}{got[1]}\n--- CPython\n{ref[0]}{ref[1]}"
+
+
+_REPORTS = {
+    "raise in a try, through its finally": """
+        def g():
+            try:
+                raise ValueError("boom")
+            finally:
+                y = 2
+        g()
+        """,
+    "a bare raise keeps the original line": """
+        def f():
+            try:
+                x = [][0]
+            except IndexError:
+                y = 1
+                raise
+        f()
+        """,
+    "raise e lists the frame twice": """
+        def f():
+            try:
+                x = [][0]
+            except IndexError as e:
+                y = 1
+                raise e
+        f()
+        """,
+    "a failed call under a finally": """
+        def g():
+            raise KeyError("k")
+        def f():
+            try:
+                g()
+            finally:
+                z = 3
+        f()
+        """,
+    "a raise in a loop's try": """
+        def f():
+            for i in range(3):
+                try:
+                    if i == 2:
+                        raise ValueError(i)
+                finally:
+                    k = i
+        f()
+        """,
+    "a bare raise in a function called from a handler": """
+        def g():
+            raise
+        def f():
+            try:
+                x = [][0]
+            except IndexError:
+                g()
+        f()
+        """,
+    "the prelude has no frames": """
+        class C:
+            def __repr__(self):
+                raise KeyError("in repr")
+        def f():
+            x = [C()]
+            print(repr(x))
+        f()
+        """,
+    "an inlined comprehension has no frame": """
+        def f(n):
+            return [10 // (x - n) for x in range(3)]
+        f(1)
+        """,
+    "the cause and the context are reported": """
+        def f():
+            try:
+                x = [][0]
+            except IndexError as e:
+                raise KeyError("k") from e
+        try:
+            f()
+        except KeyError:
+            raise RuntimeError("during")
+        """,
+    "an unraisable exception's chain": """
+        class D:
+            def __del__(self):
+                try:
+                    [][0]
+                except IndexError:
+                    raise KeyError("from del")
+        d = D()
+        del d
+        print("after")
+        """,
+    "stdout is flushed before the report": """
+        import sys
+        print("out")
+        sys.stderr.write("err\\n")
+        raise KeyError(1)
+        """,
+}
+
+
+def test_traceback_entries_and_the_report_are_cpythons() -> None:
+    """RL-221: a frame is recorded where the exception arrives, not where it leaves; RL-223 and
+    RL-224: an inlined comprehension and the prelude have no frames; RL-226: the report prints
+    the chain; RL-227: stdout is flushed before it (C-3-30 runs them together)."""
+    if not _HAVE_CXX:
+        return
+    for name, src in _REPORTS.items():
+        try:
+            same_report(src, merged=name.startswith("stdout is flushed"))
+        except AssertionError as e:
+            raise AssertionError(f"{name}: {e}") from None
 
 if __name__ == "__main__":
     for name, fn in list(globals().items()):

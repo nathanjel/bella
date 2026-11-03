@@ -94,10 +94,11 @@ class _Function:
 
 
 class Emitter:
-    def __init__(self, module: G.Module, namespace: str, filename: str) -> None:
+    def __init__(self, module: G.Module, namespace: str, filename: str, prelude: bool = False) -> None:
         self.module = module
         self.namespace = namespace
         self.filename = filename
+        self.prelude = prelude                   # the prelude: C functions in CPython, no frames
         self.consts: dict[tuple[str, object], str] = {}
         self.const_init: list[str] = []
         self.names: dict[str, str] = {}
@@ -209,9 +210,12 @@ class Emitter:
         varkw = any(p.kind == "**kwargs" for p in c.params)
         names = [p.public or p.name for p in self.param_order(c)]
         doc = "nullptr" if c.docstring is None else c_string(c.docstring)
+        # a frame CPython does not have (the prelude's C functions, an inlined comprehension)
+        # never enters a traceback (RL-223, RL-224)
+        hidden = ", false" if self.prelude or dict(c.meta).get("inlined", False) else ""
         return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(self.filename)}, "
                 f"{c.first_line}, {len(positional)}, {posonly}, {len(kwonly)}, {str(varargs).lower()}, "
-                f"{str(varkw).lower()}, {{{', '.join(c_string(n) for n in names)}}}, {doc}}};")
+                f"{str(varkw).lower()}, {{{', '.join(c_string(n) for n in names)}}}, {doc}{hidden}}};")
 
     @staticmethod
     def param_order(c: G.Code) -> list[G.Param]:
@@ -431,6 +435,7 @@ class Emitter:
         self.exits.pop()
         e = self.aux("e")
         self.add(indent + 1, f"}} catch (rt::PyError& {e}) {{")
+        self.add(indent + 2, f"frame.arrived({e});                     // recorded where it arrived (RL-221)")
         for name in sorted(_synthetic_stored(s.body, self.hidden), key=_creation, reverse=True):
             self.add(indent + 2, f"{self.vars[name]} = rt::none_ref();")   # stack values (RL-186)
         self.add(indent + 2, f"rt::Handling {self.aux('h')}({e}.exc);")
@@ -462,6 +467,7 @@ class Emitter:
         self.add(indent, "try {")
         self.region(s.body, indent + 1)
         self.add(indent, f"}} catch (rt::PyError& {e}) {{")
+        self.add(indent + 1, f"frame.arrived({e});                     // recorded where it arrived (RL-221)")
         synthetic = sorted(_synthetic_stored(s.body, self.hidden), key=_creation, reverse=True)
         for name in synthetic:                   # stack values die during unwinding (RL-186)
             self.add(indent + 1, f"{self.vars[name]} = rt::none_ref();")
@@ -773,5 +779,5 @@ def _falls_through_try(s: G.Try) -> bool:
     return any(paths)
 
 
-def emit_module(module: G.Module, namespace: str, filename: str) -> str:
-    return Emitter(module, namespace, filename).emit()
+def emit_module(module: G.Module, namespace: str, filename: str, prelude: bool = False) -> str:
+    return Emitter(module, namespace, filename, prelude).emit()

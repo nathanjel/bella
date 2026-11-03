@@ -1,0 +1,12 @@
+{
+ "case": "C-3-30_traceback_entries.py",
+ "clause": "C-3-30",
+ "spec": "section 3 (exceptions), section 8 (an uncaught exception's report), D-06",
+ "status": "P1",
+ "source": "review log RL-221, RL-223, RL-224, RL-226 (found while writing examples)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "finally ran: True\nbare_reraise: handled\n",
+ "stderr": "Traceback (most recent call last):\n  File \"C-3-30_traceback_entries.py\", line 54, in <module>\n  File \"C-3-30_traceback_entries.py\", line 46, in raise_e\n  File \"C-3-30_traceback_entries.py\", line 44, in raise_e\n  File \"C-3-30_traceback_entries.py\", line 41, in raise_e\n  File \"C-3-30_traceback_entries.py\", line 28, in bare_reraise\n  File \"C-3-30_traceback_entries.py\", line 20, in through_finally\n  File \"C-3-30_traceback_entries.py\", line 15, in __repr__\nKeyError: 'repr'\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C-3-30_traceback_entries.py\", line 57, in <module>\n  File \"C-3-30_traceback_entries.py\", line 50, in comprehension\nZeroDivisionError: division by zero\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C-3-30_traceback_entries.py\", line 59, in <module>\nRuntimeError: end\n",
+ "exit_code": 1
+}

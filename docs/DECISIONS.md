@@ -681,6 +681,24 @@ refusal when the recorded table (`tools/cpython_names.py`, the `binop`, `iop` an
 says CPython handles that pair of types, else CPython's TypeError. Sets use `setobject.c`'s
 algorithms, so a result's iteration order is CPython's.
 
+**2026-11-03 — D-12: where a frame enters a traceback** (review log D-12, RL-221 to RL-227;
+`docs/emitter.md` section 1; case C-3-30). Decided by the author as recommended, in two parts:
+* Now: a frame is recorded where the exception arrives in it, as CPython's `PyTraceBack_Here` at
+  the `error:` label does: at the frame's first catch that sees it (`frame.arrived(e)`, the
+  catch's first statement), or at its guard when nothing there catches it, before any handler
+  code moves the line on. The `PyError` says which frame has recorded the throw, so the frame's
+  own re-raises add nothing, a bare `raise` adds nothing in the frame that re-raises, leaving a
+  frame lets the caller record the call, and `raise e` adds an entry. Nothing is added to a path
+  without an exception, and an exception the runtime raises and catches inside itself makes no
+  entry. Code CPython runs without a frame (the prelude, an inlined comprehension) is marked
+  (`Code::shown`) and never recorded. The uncaught report prints the chain, and stdout is flushed
+  before it.
+* With step 3c: a caught exception keeps its frame's locals (RL-222). The entry will hold a
+  frame object that takes the locals at exit only if something still holds it; that delays
+  release and allocates nothing lasting, but an exception stored in its own frame's local makes a
+  cycle CPython frees only in its collector, so it waits for the collector. Until then those
+  locals die at the return, earlier than in CPython.
+
 ## Pins
 
 | What | Value | Where |

@@ -202,7 +202,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         header = read_header(case)
         if header.status == "X":
             continue  # excluded constructs are rejected at compile time; nothing to record
-        traces = {None: run_case([args.python, case.name], case, header.mask)}
+        traces: dict[str | None, dict[str, object]] = {None: run_case([args.python, case.name], case, header.mask)}
         if header.deviation:
             traces[header.deviation] = run_case([args.python, case.name], case, header.mask,
                                                 simulation_env(header.deviation, args.python))

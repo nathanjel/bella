@@ -136,7 +136,8 @@ class _Code:
             annotation=isinstance(node, L.FunctionDef) and node.annotation,
             classdict=isinstance(node, L.FunctionDef) and node.classdict,
             meta=(("hidden", frozenset(n for n in s.varnames if n in s.synthetic)),
-                  ("needs_classdict", s.needs_classdict)))
+                  ("needs_classdict", s.needs_classdict),
+                  ("inlined", isinstance(node, L.FunctionDef) and node.inlined)))
 
     def child(self, node: L.FunctionDef | L.Lambda | L.ClassBody) -> G.Code:
         return _Code(self.scopes, self.scopes.of(node)).build(node)
