@@ -9,6 +9,12 @@ exit 70). This tool records, from the pinned CPython, which names exist:
 * `builtins:<name>`: the builtins module, as a script sees it;
 * `globals:<name>`: the globals CPython gives a script before it runs (`__file__`, `__builtins__`);
 * `sys:<name>`: the sys module, as a script sees it;
+* `binop:<type><op><type>`, `iop:...`, `cmp:...`: the operators CPython handles between the
+  built-in types the runtime has (and `instance`, a plain class's object, for any instance whose
+  own methods declined): handled means not rejected as an unsupported operand (or, for an
+  ordering, as not supported between the instances); `==` and `!=` count when a type's own
+  method decides, not the identity fallback. The runtime refuses a handled operation it does
+  not implement, rather than raise the TypeError CPython would not.
 * `<type>:<name>`: each built-in type's own attributes (its `__dict__`), keyed by `__name__`, with
   the kind of object CPython keeps there (`wrapper_descriptor`, `method_descriptor`, ...), which
   says how the attribute presents itself; the runtime walks a class's MRO, so a name is recorded
@@ -71,8 +77,54 @@ def type_names():
     found["type"] = {n: k for n, k in found["type"].items() if hasattr(Probe, n)}
     return found
 
+def operators():
+    import copy
+    import operator as op
+    class Instance:
+        pass
+    reps = {"int": lambda: 3, "bool": lambda: True, "str": lambda: "a%s", "tuple": lambda: (1,), "list": lambda: [1],
+            "dict": lambda: {1: 2}, "set": lambda: {1}, "frozenset": lambda: frozenset({1}), "NoneType": lambda: None,
+            "range": lambda: range(2), "slice": lambda: slice(1), "float": lambda: 1.5, "dict_keys": lambda: {1: 2}.keys(),
+            "dict_values": lambda: {1: 2}.values(), "dict_items": lambda: {1: 2}.items(), "type": lambda: int,
+            "function": lambda: (lambda: 0), "builtin_function_or_method": lambda: len, "ellipsis": lambda: ...,
+            "instance": Instance}
+    binops = {"+": op.add, "-": op.sub, "*": op.mul, "/": op.truediv, "//": op.floordiv, "%": op.mod, "**": op.pow,
+              "<<": op.lshift, ">>": op.rshift, "&": op.and_, "|": op.or_, "^": op.xor, "@": op.matmul}
+    iops = {"+=": op.iadd, "-=": op.isub, "*=": op.imul, "/=": op.itruediv, "//=": op.ifloordiv, "%=": op.imod,
+            "**=": op.ipow, "<<=": op.ilshift, ">>=": op.irshift, "&=": op.iand, "|=": op.ior, "^=": op.ixor, "@=": op.imatmul}
+    orders = {"<": op.lt, "<=": op.le, ">": op.gt, ">=": op.ge}
+    out = []
+    for a, ma in reps.items():
+        for b, mb in reps.items():
+            if a == b == "instance":
+                continue
+            for scope, table in (("binop", binops), ("iop", iops)):
+                for sym, f in table.items():
+                    try:
+                        f(ma(), mb())
+                        out.append(f"{scope}:{a}{sym}{b}")
+                    except TypeError as e:
+                        if not str(e).startswith("unsupported operand type(s)"):
+                            out.append(f"{scope}:{a}{sym}{b}")
+                    except Exception:
+                        out.append(f"{scope}:{a}{sym}{b}")
+            for sym, f in orders.items():
+                try:
+                    f(ma(), mb())
+                    out.append(f"cmp:{a}{sym}{b}")
+                except TypeError as e:
+                    if "not supported between instances of" not in str(e):
+                        out.append(f"cmp:{a}{sym}{b}")
+            x, y = ma(), mb()
+            for sym, name in (("==", "__eq__"), ("!=", "__ne__")):
+                own_x = getattr(type(x), name) is not getattr(object, name) and getattr(type(x), name)(x, y) is not NotImplemented
+                own_y = getattr(type(y), name) is not getattr(object, name) and getattr(type(y), name)(y, x) is not NotImplemented
+                if own_x or own_y:
+                    out.append(f"cmp:{a}{sym}{b}")
+    return sorted(out)
+
 print(json.dumps({"builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names()}))
+                  "types": type_names(), "operators": operators()}))
 '''
 
 
@@ -88,6 +140,7 @@ def record() -> tuple[str, list[tuple[str, str]]]:
     data = json.loads(out.stdout)
     names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
+    names |= {(key, "") for key in data["operators"]}
     version = ".".join(map(str, sys.version_info[:3]))
     return version, sorted(names)
 

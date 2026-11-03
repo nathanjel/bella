@@ -10,6 +10,7 @@ Run under pytest or directly: python3 -m pipeline.tests.test_compiled
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -22,14 +23,17 @@ from pipeline.build import build
 _HAVE_CXX = shutil.which("g++") is not None
 
 
-def same(src: str) -> str:
+def same(src: str, hashseed: str | None = None) -> str:
+    """The program's stdout and exit status, compiled and under CPython; `hashseed` fixes
+    PYTHONHASHSEED for both when the output depends on str hashes (a set's order)."""
     src = textwrap.dedent(src)
+    env = dict(os.environ, PYTHONHASHSEED=hashseed) if hashseed is not None else None
     with tempfile.TemporaryDirectory() as tmp:
         prog = Path(tmp, "prog.py")
         prog.write_text(src, encoding="utf-8")
-        ref = subprocess.run([sys.executable, str(prog)], capture_output=True, text=True, check=False, cwd=tmp)
+        ref = subprocess.run([sys.executable, str(prog)], capture_output=True, text=True, check=False, cwd=tmp, env=env)
         exe = build(prog, "prog.py")
-        got = subprocess.run([str(exe)], capture_output=True, text=True, check=False, cwd=tmp)
+        got = subprocess.run([str(exe)], capture_output=True, text=True, check=False, cwd=tmp, env=env)
     assert (got.stdout, got.returncode) == (ref.stdout, ref.returncode), (
         f"\n--- compiled (exit {got.returncode})\n{got.stdout}{got.stderr}\n--- CPython (exit {ref.returncode})\n"
         f"{ref.stdout}{ref.stderr}")
@@ -459,6 +463,26 @@ def test_argument_errors_are_cpythons() -> None:
 def test_a_starred_call_3a3() -> None:
     """f(*value): a tuple as it is, any iterable made a tuple, anything else CPython's TypeError."""
     same('def f(*a):\n    return a\nt = (1, 2)\nprint(f(*t), f(*[3]), f(0, *t), f(*"ab"), f(*{"k": 1}), f(*range(2)))\nclass S:\n    def __getitem__(self, i):\n        if i > 1:\n            raise IndexError\n        return i\nprint(f(*S()))\ntry:\n    f(*5)\nexcept TypeError as e:\n    print(e)\n')
+
+
+def test_operators_on_builtin_types_are_cpythons() -> None:
+    """Equality of dicts, sets, ranges and slices; set ordering and algebra in CPython's order of
+    insertion (so their iteration order, with colliding str hashes); repetition and concatenation
+    as sequence slots after the number slots (so `+=` defers to __radd__ and `*=` keeps a list);
+    dict | and |=; in-place set operators; the errors CPython raises; one empty tuple."""
+    same('print({1} == {1}, {1} == frozenset({1}), {1: 2} == {1: 2}, {1: 2} != {1: 3}, range(2) == range(0, 2), range(0) == range(5, 5))\nprint(range(1, 2) == range(1, 9, 9), slice(1) == slice(1), slice(1, 2) < slice(1, 3), {1} < {1, 2}, {1, 2} >= {2}, {1} > {1})\nprint([0] * 3, 2 * (1,), "ab" * 2, [1] * 0, (1,) * -1, [1, 2] * True)\nt = (1, 2)\ne = ()\nprint(t * 1 is t, e * 5 is (), tuple([]) is e, "x" * 1)\nwords = ["w" + str(i) for i in range(40)]\na = set(words[:25])\nb = set(words[10:40])\nprint(list(a | b))\nprint(list(a & b))\nprint(list(b & a))\nprint(list(a - b))\nprint(list(b - a))\nprint(list(a ^ b))\nprint(list(frozenset(a) | b), type(frozenset(a) | b).__name__, type(a | frozenset(b)).__name__)\nsmall = set(words[:3])\nprint(list(set(words) - small))\nc = set(a)\nd = c\nc |= b\nprint(c is d, list(c))\nc &= set(words[5:15])\nprint(c is d, list(c))\nc -= {"w5", "w6"}\nc ^= {"w7", "zz"}\nprint(c is d, list(c))\nc -= c\nprint(c, c is d)\nx = {1: 2}\ny = x\nx |= [(3, 4)]\nprint(x is y, x, {1: 2} | {3: 4, 1: 5})\nl = [1]\nm = l\nl *= 2\nl += (3,)\nprint(l is m, l)\nclass R:\n    def __radd__(self, other):\n        return "radd"\n    def __rmul__(self, other):\n        return "rmul"\nq = [1]\nq += R()\nprint(q, [1] * R())\nclass I:\n    def __index__(self):\n        return 2\nprint([7] * I(), I() * (8,))\nfor f in (lambda: [1] + (1,), lambda: (1,) + [1], lambda: "a" + 1, lambda: [1] * "a", lambda: "a" * 1.0 if False else "a" * [1],\n          lambda: {1} < [1], lambda: range(1) < range(2), lambda: 1 + "a"):\n    try:\n        print(f())\n    except TypeError as e:\n        print("TypeError", e)\nn = 1\ntry:\n    n += "a"\nexcept TypeError as e:\n    print("TypeError", e)\n', hashseed="0")
+
+
+def test_operators_cpython_has_and_the_runtime_lacks_are_refused() -> None:
+    """str % (formatting), type | type, a keys view compared as a set: refused, never TypeError."""
+    if not _HAVE_CXX:
+        return
+    for body in ("print('%d' % 5)", "print(int | str)", "print({1: 2}.keys() == {1})", "class C:\n    pass\nprint('%s' % C())"):
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_text("print('start')\n" + body + "\n", encoding="utf-8")
+            got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False)
+        assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr, (body, got)
 
 
 if __name__ == "__main__":

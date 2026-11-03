@@ -34,7 +34,18 @@ script's globals, `sys` and each built-in type's own attributes with their kinds
 it before `__getattr__` runs: `"a".startswith("a")` stops with `bella: not implemented:
 str.startswith (…)` and exit 70, while `"a".nosuch` raises AttributeError as in CPython. The same
 table says which methods CPython keeps as slot wrappers; the runtime holds those as method
-descriptors and refuses their repr and type (RL-218).
+descriptors and refuses their repr and type (RL-218). It also records which operators CPython
+handles between the built-in types (and an instance whose own methods declined): an operator
+the runtime lacks there (`str %`, `type | type`) is refused, while one CPython rejects too still
+raises CPython's TypeError.
+
+Operators follow `abstract.c`: `binary_op1` tries the number slots (the C++ types' own:
+`int` arithmetic, the set operators, `dict |`; then the operands' methods), and only then the
+sequence slots, concatenation by the left operand and repetition by either, so `+=` defers to a
+right operand's `__radd__` before it extends a list, and `*=` repeats a list in place. Sets
+compute `|`, `&`, `-` and `^` by `setobject.c`'s algorithms, whose order of insertion decides the
+result's iteration order (`set_merge` copies slots in place into an empty table of the same
+size). Dicts, sets, ranges and slices compare as CPython's do; the empty tuple is one object.
 
 ## 2. What generated code looks like
 
@@ -165,7 +176,8 @@ file and line (spec D-06) and exits 1; a facility Bella lacks yet stops with
 ## 5. Gaps, in the order the steps close them
 
 * 3a.2, the rest: the exception classes into the prelude; `super()`; metaclasses.
-* The dict views' set operations and comparisons, `reversed` and `mapping`.
+* The dict views' set operations and comparisons, `reversed` and `mapping`; `str %`
+  formatting; `types.UnionType` (`int | str`).
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3.
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and

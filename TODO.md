@@ -352,8 +352,11 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            `str(KeyError(k))` was not `repr(k)`, a lookup whose `__eq__` changed the dict raised
            RuntimeError instead of starting again. Then every C++ builtin and method words a
            wrong argument count as CPython does for its calling convention, `f(*value)` compiles
-           (`call_args_tuple`), and `list.index` takes start and stop. Left: the views' set
-           operations (refused).
+           (`call_args_tuple`), and `list.index` takes start and stop. Then the operators on the
+           built-in types: dict, set, range and slice equality were identity, `[0] * 3` and
+           `{1} | {2}` raised TypeError; they are CPython's now, and an operator CPython handles
+           that the runtime lacks is refused by the recorded table. Left (refused): the views'
+           set operations, `str %` formatting, `type | type`.
        * 3b generators (state machines) and compiled imports: C-3-04.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done.
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

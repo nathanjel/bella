@@ -391,6 +391,9 @@ void set_add_hashed(Obj set, Obj key, std::int64_t hash);   // a key's stored ha
 void set_update(Obj set, Obj iterable);
 bool set_contains(SetObject* s, Obj key);
 bool set_discard(SetObject* s, Obj key);
+Ref set_binary(BinOp op, Obj a, Obj b);                      // | & - ^ of sets and frozensets, else NotImplemented
+Ref set_inplace(BinOp op, Obj a, Obj b);                     // |= &= -= ^= of a set
+Ref set_compare(CmpOp op, Obj a, Obj b);                     // equality, subset and superset
 void init_sets();
 void list_append(Obj list, Obj value);
 void list_extend(Obj list, Obj value);
@@ -416,6 +419,11 @@ Ref descr_get(Obj found, Obj obj, Obj type);                 // type(found).__ge
 // attribute of a built-in class in the MRO, of a class's metatype, of sys or builtins; a global.
 void refuse_absent_attribute(Obj obj, const Str* name);
 void refuse_absent_global(const Str* name);
+// An operator CPython handles for these operands' types (the table's binop, iop and cmp entries)
+// and the runtime does not: refused rather than answered with a TypeError CPython would not raise.
+void refuse_unimplemented_operator(const char* scope, Obj a, const std::string& sym, Obj b);
+void dict_update_arg(Obj target, Obj arg);                   // dict.update's argument: a mapping or pairs
+bool dict_equal(Dict* a, Dict* b);                           // dict == dict: may run __eq__
 // What CPython keeps as `owner.name` (its kind: "wrapper_descriptor", "method_descriptor", ...),
 // or "" when CPython's type has no such attribute.
 std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name);

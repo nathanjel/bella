@@ -715,32 +715,37 @@ Ref dict_setdefault_m(Obj self, Args a) {
     dict_store(d, a.pos(0), hash, dflt);
     return Ref::share(dflt);
 }
+}  // namespace
+
+void dict_update_arg(Obj self, Obj arg) {           // a mapping (keys()), else an iterable of pairs
+    Dict* d = static_cast<Dict*>(self.object());
+    if (is_kind(arg, Kind::Dict) || !type_lookup(type_of(arg), intern("keys")).is_unset()) {
+        dict_update(self, arg);
+        return;
+    }
+    Ref it = iter(arg);
+    for (std::int64_t i = 0;; ++i) {
+        Ref item = for_next(it.get());
+        if (is_end(item)) break;
+        Ref pair = iter(item.get());
+        std::vector<Ref> kv;
+        for (;;) {
+            Ref x = for_next(pair.get());
+            if (is_end(x)) break;
+            kv.push_back(std::move(x));
+        }
+        if (kv.size() != 2)
+            raise_new("ValueError", "dictionary update sequence element #" + std::to_string(i) + " has length " +
+                                        std::to_string(kv.size()) + "; 2 is required");
+        dict_set(d, kv[0].get(), kv[1].get());
+    }
+}
+
+namespace {
 Ref dict_update_m(Obj self, Args a) {           // dict_update_arg, then the keywords
     if (a.npos > 1) raise_new("TypeError", "update expected at most 1 argument, got " + std::to_string(a.npos));
     Dict* d = dict_self(self);
-    if (a.npos == 1) {
-        Obj arg = a.pos(0);
-        if (is_kind(arg, Kind::Dict) || !type_lookup(type_of(arg), intern("keys")).is_unset()) {
-            dict_update(self, arg);
-        } else {
-            Ref it = iter(arg);
-            for (std::int64_t i = 0;; ++i) {
-                Ref item = for_next(it.get());
-                if (is_end(item)) break;
-                Ref pair = iter(item.get());
-                std::vector<Ref> kv;
-                for (;;) {
-                    Ref x = for_next(pair.get());
-                    if (is_end(x)) break;
-                    kv.push_back(std::move(x));
-                }
-                if (kv.size() != 2)
-                    raise_new("ValueError", "dictionary update sequence element #" + std::to_string(i) + " has length " +
-                                                std::to_string(kv.size()) + "; 2 is required");
-                dict_set(d, kv[0].get(), kv[1].get());
-            }
-        }
-    }
+    if (a.npos == 1) dict_update_arg(self, a.pos(0));
     for (std::size_t i = 0; i < a.nkw; ++i) dict_set(d, Obj::of(a.kwnames[i]), a.kw(i));
     return none_ref();
 }
@@ -1036,6 +1041,11 @@ std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_vi
 }
 bool presents_as_builtin(Obj f) { return is_kind(f, Kind::PyFunction) && f.object()->cls == types().builtin; }
 bool immutable_type(const ClassObject* c) { return !c->heap_type || prelude_classes().contains(c); }
+void refuse_unimplemented_operator(const char* scope, Obj a, const std::string& sym, Obj b) {
+    auto name = [](Obj v) { return is_kind(v, Kind::Instance) ? std::string("instance") : type_of(v)->name; };
+    if (cpython_has(scope, name(a) + sym + name(b)))
+        throw NotImplemented("'" + type_of(a)->name + "' " + sym + " '" + type_of(b)->name + "' (CPython has it; the runtime does not yet)");
+}
 void refuse_absent_global(const Str* name) {
     if (cpython_has("builtins", name->text) || cpython_has("globals", name->text))
         throw NotImplemented("the name '" + name->text + "' (CPython has it; the runtime does not yet)");

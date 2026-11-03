@@ -90,33 +90,18 @@ Ref concat_str(const Str* a, const Str* b) { return str_new(a->text + b->text); 
 }  // namespace
 
 // The C++ types' own binary operations: NotImplemented when the operands are not theirs.
+// The C++ types' number slots (nb_add, nb_or, ...): NotImplemented for operands they do not know.
+// Concatenation and repetition are sequence slots, tried after both operands' number slots
+// declined (sequence_op below), as PyNumber_Add and PyNumber_Multiply do.
 Ref native_binary(BinOp op, Obj a, Obj b) {
     std::int64_t x, y;
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
-    const Str* sa = as_str(a);
-    const Str* sb = as_str(b);
-    if (op == BinOp::Add && sa != nullptr && sb != nullptr) return concat_str(sa, sb);
-    if (op == BinOp::Mul && (sa != nullptr) != (sb != nullptr)) {
-        const Str* s = sa != nullptr ? sa : sb;
-        std::int64_t n;
-        if (as_int(sa != nullptr ? b : a, n)) {
-            std::string out;
-            for (std::int64_t i = 0; i < n; ++i) out += s->text;
-            return str_new(out);
-        }
-    }
-    if (op == BinOp::Add && is_kind(a, Kind::Tuple) && is_kind(b, Kind::Tuple)) {
-        std::vector<Obj> items;
-        for (Obj v : static_cast<Tuple*>(a.object())->items) { incref(v); items.push_back(v); }
-        for (Obj v : static_cast<Tuple*>(b.object())->items) { incref(v); items.push_back(v); }
-        return tuple_steal(std::move(items));
-    }
-    if (op == BinOp::Add && is_kind(a, Kind::List) && is_kind(b, Kind::List)) {
-        auto* l = new List;
-        Ref r = own(l);
-        for (Obj v : static_cast<List*>(a.object())->items) { incref(v); l->items.push_back(v); }
-        for (Obj v : static_cast<List*>(b.object())->items) { incref(v); l->items.push_back(v); }
-        return r;
+    if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
+    if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // dict_or: a copy, updated
+        Ref out = dict_new();
+        dict_copy_into(static_cast<Dict*>(out.get().object()), static_cast<Dict*>(a.object()));
+        dict_update_arg(out.get(), b);
+        return out;
     }
     return Ref::steal(Obj::of(NOTIMPLEMENTED));
 }
@@ -146,19 +131,99 @@ Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
 // overrides the reflected method, which then goes first; the reflected method last
 bool set_like_view(Obj v) { return is_kind(v, Kind::DictView) && static_cast<DictView*>(v.object())->which != DictView::Values; }
 
-Ref binary(BinOp op, Obj a, Obj b) {
-    if ((set_like_view(a) || set_like_view(b)) &&
-        (op == BinOp::And || op == BinOp::Or || op == BinOp::Sub || op == BinOp::Xor))
-        throw NotImplemented("set operations on dict keys and items views");
+namespace {
+bool repeatable(Obj v) { return as_str(v) != nullptr || is_kind(v, Kind::List) || is_kind(v, Kind::Tuple); }
+bool has_sequence_methods(Obj v) {               // a type with tp_as_sequence (every class has one)
+    return repeatable(v) || is_heap_obj(v) || is_kind(v, Kind::Dict) || is_kind(v, Kind::Set) || is_kind(v, Kind::Range) ||
+           is_kind(v, Kind::DictView);
+}
+// sequence_repeat: the count through __index__; then str's, tuple's or list's repeat
+Ref repeat(Obj seq, Obj n, bool in_place) {
+    if (!n.is_small() && !is_kind(n, Kind::Bool) && (!is_heap_obj(n) || type_lookup(type_of(n), intern("__index__")).is_unset()))
+        raise_new("TypeError", "can't multiply sequence by non-int of type '" + type_of(n)->name + "'");
+    std::int64_t count = index_value(n);
+    if (const Str* s = as_str(seq)) {
+        if (count <= 0) return str_new("");
+        if (count == 1) return Ref::share(seq);
+        if (s->text.size() * static_cast<std::size_t>(count) > (std::size_t{1} << 32)) throw NotImplemented("a str of more than 2**32 bytes");
+        std::string out;
+        out.reserve(s->text.size() * static_cast<std::size_t>(count));
+        for (std::int64_t i = 0; i < count; ++i) out += s->text;
+        return str_new(out);
+    }
+    if (is_kind(seq, Kind::Tuple)) {                // tuple_repeat: the same tuple when empty or once
+        auto& items = static_cast<Tuple*>(seq.object())->items;
+        if (items.empty() || count == 1) return Ref::share(seq);
+        if (count <= 0) return tuple_steal({});
+        if (items.size() * static_cast<std::size_t>(count) > (std::size_t{1} << 28)) throw NotImplemented("a tuple of more than 2**28 items");
+        std::vector<Obj> out;
+        for (std::int64_t i = 0; i < count; ++i) for (Obj v : items) { incref(v); out.push_back(v); }
+        return tuple_steal(std::move(out));
+    }
+    auto& items = static_cast<List*>(seq.object())->items;
+    if (count > 0 && items.size() * static_cast<std::size_t>(count) > (std::size_t{1} << 28))
+        throw NotImplemented("a list of more than 2**28 items");
+    if (in_place) {                                  // list_inplace_repeat
+        if (count < 1) {
+            std::vector<Obj> old = std::move(items);
+            items.clear();
+            for (auto it = old.rbegin(); it != old.rend(); ++it) decref(*it);
+        } else if (count > 1) {
+            std::vector<Obj> once = items;
+            for (std::int64_t i = 1; i < count; ++i) for (Obj v : once) { incref(v); items.push_back(v); }
+        }
+        return Ref::share(seq);
+    }
+    auto* l = new List;
+    Ref r = own(l);
+    for (std::int64_t i = 0; i < count; ++i) for (Obj v : items) { incref(v); l->items.push_back(v); }
+    return r;
+}
+// PyNumber_Add's and PyNumber_Multiply's sequence step, once both number slots declined: the left
+// operand's concatenation (+= extends a list), or repetition by either operand
+Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
+    if (op == BinOp::Add) {
+        if (is_kind(a, Kind::List)) {
+            if (in_place) {
+                list_extend(a, b);
+                return Ref::share(a);
+            }
+            if (!is_kind(b, Kind::List))
+                raise_new("TypeError", "can only concatenate list (not \"" + type_of(b)->name + "\") to list");
+            auto* l = new List;
+            Ref r = own(l);
+            for (Obj v : static_cast<List*>(a.object())->items) { incref(v); l->items.push_back(v); }
+            for (Obj v : static_cast<List*>(b.object())->items) { incref(v); l->items.push_back(v); }
+            return r;
+        }
+        if (is_kind(a, Kind::Tuple)) {
+            if (!is_kind(b, Kind::Tuple))
+                raise_new("TypeError", "can only concatenate tuple (not \"" + type_of(b)->name + "\") to tuple");
+            std::vector<Obj> items;
+            for (Obj v : static_cast<Tuple*>(a.object())->items) { incref(v); items.push_back(v); }
+            for (Obj v : static_cast<Tuple*>(b.object())->items) { incref(v); items.push_back(v); }
+            return tuple_steal(std::move(items));
+        }
+        if (const Str* sa = as_str(a)) {
+            const Str* sb = as_str(b);
+            if (sb == nullptr) raise_new("TypeError", "can only concatenate str (not \"" + type_of(b)->name + "\") to str");
+            return concat_str(sa, sb);
+        }
+    }
+    if (op == BinOp::Mul) {
+        if (repeatable(a)) return repeat(a, b, in_place && is_kind(a, Kind::List));
+        if ((!in_place || !has_sequence_methods(a)) && repeatable(b)) return repeat(b, a, false);
+    }
+    return Ref::steal(Obj::of(NOTIMPLEMENTED));
+}
+bool set_like_operator(BinOp op) { return op == BinOp::And || op == BinOp::Or || op == BinOp::Sub || op == BinOp::Xor; }
+}  // namespace
+
+// binary_op1: the operands' number slots, NotImplemented when both decline
+Ref binary_op1(BinOp op, Obj a, Obj b) {
     std::int64_t x, y;
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
-    if (!is_heap_obj(a) && !is_heap_obj(b)) {
-        Ref r = native_binary(op, a, b);
-        if (!not_implemented(r)) return r;
-        if (op == BinOp::Add && as_str(a) != nullptr)
-            raise_new("TypeError", "can only concatenate str (not \"" + type_of(b)->name + "\") to str");
-        unsupported(symbol(op), a, b);
-    }
+    if (!is_heap_obj(a) && !is_heap_obj(b)) return native_binary(op, a, b);
     ClassObject *ta = type_of(a), *tb = type_of(b);
     const char* rname = BIN_NAMES[static_cast<int>(op)][1];
     bool tried_reflected = false, has = false;
@@ -177,20 +242,43 @@ Ref binary(BinOp op, Obj a, Obj b) {
         r = operand_method(b, a, op, true, has);
         if (has && !not_implemented(r)) return r;
     }
+    return Ref::steal(Obj::of(NOTIMPLEMENTED));
+}
+
+Ref binary(BinOp op, Obj a, Obj b) {
+    if ((set_like_view(a) || set_like_view(b)) && set_like_operator(op))
+        throw NotImplemented("set operations on dict keys and items views");
+    Ref r = binary_op1(op, a, b);
+    if (!not_implemented(r)) return r;
+    r = sequence_op(op, a, b, false);
+    if (!not_implemented(r)) return r;
+    refuse_unimplemented_operator("binop", a, symbol(op), b);
     unsupported(symbol(op), a, b);
 }
 
+// PyNumber_InPlace*: the left operand's in-place method, then binary_op1, then the sequence step
 Ref inplace(BinOp op, Obj a, Obj b) {
-    if (is_kind(a, Kind::List) && op == BinOp::Add) {
-        list_extend(a, b);
-        return Ref::share(a);
-    }
+    if (set_like_view(a) && set_like_operator(op)) throw NotImplemented("set operations on dict keys and items views");
     if (is_heap_obj(a)) {
         bool has = false;
         Ref r = call_special(a, BIN_NAMES[static_cast<int>(op)][2], {b}, &has);
         if (has && !not_implemented(r)) return r;
     }
-    return binary(op, a, b);
+    if (is_kind(a, Kind::Set) && set_like_operator(op)) {
+        Ref r = set_inplace(op, a, b);
+        if (!not_implemented(r)) return r;
+    }
+    if (op == BinOp::Or && is_kind(a, Kind::Dict)) {   // dict_ior: any mapping or pairs
+        dict_update_arg(a, b);
+        return Ref::share(a);
+    }
+    Ref r = binary_op1(op, a, b);
+    if (!not_implemented(r)) return r;
+    r = sequence_op(op, a, b, true);
+    if (!not_implemented(r)) return r;
+    std::string sym = std::string(symbol(op)) + "=";
+    refuse_unimplemented_operator("iop", a, sym, b);
+    unsupported(sym.c_str(), a, b);
 }
 
 namespace {
@@ -346,6 +434,23 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
         return Ref::steal(boolean(ordered(op, std::string_view(sa->text), std::string_view(sb->text))));
     if (is_kind(a, Kind::Tuple) && is_kind(b, Kind::Tuple)) return sequence_compare(op, a, b, false);
     if (is_kind(a, Kind::List) && is_kind(b, Kind::List)) return sequence_compare(op, a, b, true);
+    if (is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // dict_richcompare: == and != only
+        if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+        return Ref::steal(boolean(dict_equal(static_cast<Dict*>(a.object()), static_cast<Dict*>(b.object())) == (op == CmpOp::Eq)));
+    }
+    if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_compare(op, a, b);
+    if (is_kind(a, Kind::Range) && is_kind(b, Kind::Range)) {   // range_richcompare: == and != only
+        if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+        auto *r0 = static_cast<Range*>(a.object()), *r1 = static_cast<Range*>(b.object());
+        bool eq = r0 == r1 || (r0->length == r1->length &&
+                               (r0->length == 0 || (r0->start == r1->start && (r0->length == 1 || r0->step == r1->step))));
+        return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
+    }
+    if (is_kind(a, Kind::Slice) && is_kind(b, Kind::Slice)) {   // slice_richcompare: as (start, stop, step)
+        auto *s0 = static_cast<SliceObject*>(a.object()), *s1 = static_cast<SliceObject*>(b.object());
+        Ref t0 = tuple_new({s0->start, s0->stop, s0->step}), t1 = tuple_new({s1->start, s1->stop, s1->step});
+        return sequence_compare(op, t0.get(), t1.get(), false);
+    }
     if ((op == CmpOp::Eq || op == CmpOp::Ne) && a == b && !is_heap_obj(a)) return Ref::steal(boolean(op == CmpOp::Eq));
     return Ref::steal(Obj::of(NOTIMPLEMENTED));
 }
@@ -402,6 +507,7 @@ Ref compare(CmpOp op, Obj a, Obj b) {
         r = compare_side(b, a, swapped(op));
         if (!not_implemented(r)) return r;
     }
+    refuse_unimplemented_operator("cmp", a, symbol(op), b);
     if (op == CmpOp::Eq) return Ref::steal(boolean(a == b));
     if (op == CmpOp::Ne) return Ref::steal(boolean(a != b));
     raise_new("TypeError", std::string("'") + symbol(op) + "' not supported between instances of '" + type_of(a)->name +
@@ -461,6 +567,23 @@ std::int64_t length_value(Obj v) {
     std::int64_t n = index_value(v);
     if (n < 0) raise_new("ValueError", "__len__() should return >= 0");
     return n;
+}
+
+// dict_equal: the same size, and each of a's entries found in b with an equal value; a's entries
+// read again at every step, each key and value held while user code runs
+bool dict_equal(Dict* a, Dict* b) {
+    if (a->used != b->used) return false;
+    for (std::size_t i = 0; i < a->entries.size(); ++i) {
+        auto& e = a->entries[i];
+        if (e.key.is_unset()) continue;
+        Ref aval = Ref::share(e.value), key = Ref::share(e.key);
+        Obj found = dict_find(b, key.get(), e.hash);
+        if (found.is_unset()) return false;
+        Ref bval = Ref::share(found);
+        key = Ref{};
+        if (!(aval.get() == bval.get() || truth(compare(CmpOp::Eq, aval.get(), bval.get()).get()))) return false;
+    }
+    return true;
 }
 
 // ---- str() and repr() ----

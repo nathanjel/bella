@@ -205,7 +205,18 @@ const Str* as_str(Obj v) {
 }
 
 // ---- tuples and lists ----
+namespace {
+Ref empty_tuple() {                              // the empty tuple is one object, as CPython's
+    static Tuple* t = [] {
+        auto* e = new Tuple;
+        e->flags |= IMMORTAL;
+        return e;
+    }();
+    return Ref::share(Obj::of(t));
+}
+}  // namespace
 Ref tuple_new(std::initializer_list<Obj> items) {
+    if (items.size() == 0) return empty_tuple();
     auto* t = new Tuple;
     for (Obj v : items) {
         incref(v);
@@ -219,6 +230,7 @@ Ref tuple_copy(std::span<const Obj> items) {
     return tuple_steal(std::move(v));
 }
 Ref tuple_steal(std::vector<Obj> items) {
+    if (items.empty()) return empty_tuple();
     auto* t = new Tuple;
     t->items = std::move(items);
     return own(t);

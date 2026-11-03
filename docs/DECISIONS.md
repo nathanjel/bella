@@ -675,6 +675,12 @@ intact, and how they were made:
   ordinary; `clear` keeps it split only while its values are embedded in the live object.
 * Views are objects of their own (`Kind::DictView`); what they cannot do yet is refused.
 
+**2026-11-03 — operators on the built-in types** (`docs/emitter.md` section 1). The protocol is
+`abstract.c`'s: number slots first, then sequence slots (concatenation, repetition), then a
+refusal when the recorded table (`tools/cpython_names.py`, the `binop`, `iop` and `cmp` entries)
+says CPython handles that pair of types, else CPython's TypeError. Sets use `setobject.c`'s
+algorithms, so a result's iteration order is CPython's.
+
 ## Pins
 
 | What | Value | Where |

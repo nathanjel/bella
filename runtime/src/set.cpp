@@ -138,14 +138,44 @@ bool set_discard(SetObject* s, Obj key) {
     return true;
 }
 
+namespace {
+// set_merge_lock_held: one resize up front; into an empty table of the same size with no dummies
+// the slots are copied where they are, into another empty table inserted clean in table order,
+// else added one by one with the stored hashes (A9-15). The first fast path decides the order of
+// colliding keys, which a reinsertion would not reproduce.
+void set_merge(SetObject* so, SetObject* other) {
+    if (other == so || other->used == 0) return;
+    if ((so->fill + other->used) * 5 >= (so->table.size() - 1) * 3) resize(so, (so->used + other->used) * 2);
+    if (so->fill == 0 && so->table.size() == other->table.size() && other->fill == other->used) {
+        for (std::size_t i = 0; i < other->table.size(); ++i)
+            if (active(other->table[i])) {
+                incref(other->table[i].key);
+                so->table[i] = other->table[i];
+            }
+        so->fill = other->fill;
+        so->used = other->used;
+        return;
+    }
+    if (so->fill == 0) {
+        so->fill = so->used = other->used;
+        for (auto& e : other->table)
+            if (active(e)) {
+                incref(e.key);
+                insert_clean(so->table, e.key, e.hash);
+            }
+        return;
+    }
+    for (std::size_t i = 0; i < other->table.size(); ++i) {
+        if (!active(other->table[i])) continue;
+        Ref key = Ref::share(other->table[i].key);
+        set_add_hashed(Obj::of(so), key.get(), other->table[i].hash);
+    }
+}
+}  // namespace
+
 void set_update(Obj setv, Obj iterable) {
-    if (is_kind(iterable, Kind::Set)) {             // set_merge: the other table's order and hashes (A9-15)
-        auto* other = static_cast<SetObject*>(iterable.object());
-        auto* s = static_cast<SetObject*>(setv.object());
-        if ((s->fill + other->used) * 5 >= (s->table.size() - 1) * 3) resize(s, (s->used + other->used) * 2);
-        std::vector<std::pair<Ref, std::int64_t>> entries;
-        for (auto& e : other->table) if (active(e)) entries.emplace_back(Ref::share(e.key), e.hash);
-        for (auto& [k, h] : entries) set_add_hashed(setv, k.get(), h);
+    if (is_kind(iterable, Kind::Set)) {
+        set_merge(static_cast<SetObject*>(setv.object()), static_cast<SetObject*>(iterable.object()));
         return;
     }
     if (is_kind(iterable, Kind::Dict)) {          // set_update_dict_keys: the dict's stored hashes
@@ -157,6 +187,140 @@ void set_update(Obj setv, Obj iterable) {
     }
     Ref it = iter(iterable);
     for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) set_add(setv, v.get());
+}
+
+// ---- set algebra and comparisons, as Objects/setobject.c computes them: the order keys go in
+// decides the result's iteration order ----
+namespace {
+SetObject* as_set(Obj v) { return static_cast<SetObject*>(v.object()); }
+Ref new_set_like(Obj model) { return own(new SetObject(as_set(model)->frozen)); }   // make_new_set_basetype
+Ref copy_set(Obj so) {
+    Ref r = new_set_like(so);
+    set_merge(as_set(r.get()), as_set(so));
+    return r;
+}
+bool contains_entry(SetObject* s, Obj key, std::int64_t hash) { return lookkey(s, key, hash) < s->table.size(); }
+bool discard_entry(SetObject* s, Obj key, std::int64_t hash) {
+    std::size_t k = lookkey(s, key, hash);
+    if (k >= s->table.size()) return false;
+    Obj old = s->table[k].key;
+    s->table[k] = {Obj{}, -1};
+    --s->used;
+    decref(old);
+    return true;
+}
+void clear_set(SetObject* s) {                   // set_clear_internal: emptied first, then released in table order
+    std::vector<SetObject::Entry> old = std::move(s->table);
+    s->table.assign(MINSIZE, SetObject::Entry{});
+    s->fill = s->used = 0;
+    for (auto& e : old) if (active(e)) decref(e.key);
+}
+// set_next over a live table: each key held while user code may run
+template <class F>
+void each_entry(SetObject* s, F f) {
+    for (std::size_t pos = 0; pos < s->table.size(); ++pos) {
+        if (!active(s->table[pos])) continue;
+        Ref key = Ref::share(s->table[pos].key);
+        if (!f(key.get(), s->table[pos].hash)) return;
+    }
+}
+Ref intersection(Obj sov, Obj otherv) {
+    if (sov == otherv) return copy_set(sov);
+    Ref result = new_set_like(sov);
+    SetObject *so = as_set(sov), *other = as_set(otherv);
+    if (other->used > so->used) std::swap(so, other);
+    each_entry(other, [&](Obj key, std::int64_t hash) {
+        if (contains_entry(so, key, hash)) set_add_hashed(result.get(), key, hash);
+        return true;
+    });
+    return result;
+}
+void difference_update(Obj sov, Obj otherv) {
+    if (sov == otherv) return clear_set(as_set(sov));
+    each_entry(as_set(otherv), [&](Obj key, std::int64_t hash) {
+        discard_entry(as_set(sov), key, hash);
+        return true;
+    });
+}
+Ref difference(Obj sov, Obj otherv) {
+    SetObject *so = as_set(sov), *other = as_set(otherv);
+    if ((so->used >> 2) > other->used) {
+        Ref r = copy_set(sov);
+        difference_update(r.get(), otherv);
+        return r;
+    }
+    Ref result = new_set_like(sov);
+    each_entry(so, [&](Obj key, std::int64_t hash) {
+        if (!contains_entry(other, key, hash)) set_add_hashed(result.get(), key, hash);
+        return true;
+    });
+    return result;
+}
+void symmetric_difference_update(Obj sov, Obj otherv) {
+    if (sov == otherv) return clear_set(as_set(sov));
+    each_entry(as_set(otherv), [&](Obj key, std::int64_t hash) {
+        if (!discard_entry(as_set(sov), key, hash)) set_add_hashed(sov, key, hash);
+        return true;
+    });
+}
+Ref symmetric_difference(Obj sov, Obj otherv) {
+    Ref result = new_set_like(sov);
+    set_merge(as_set(result.get()), as_set(otherv));
+    symmetric_difference_update(result.get(), sov);
+    return result;
+}
+bool issubset(SetObject* so, SetObject* other) {
+    if (so->used > other->used) return false;
+    bool all = true;
+    each_entry(so, [&](Obj key, std::int64_t hash) { return all = contains_entry(other, key, hash); });
+    return all;
+}
+}  // namespace
+
+Ref set_binary(BinOp op, Obj a, Obj b) {
+    if (!is_kind(a, Kind::Set) || !is_kind(b, Kind::Set)) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+    switch (op) {
+        case BinOp::Or: {
+            Ref r = copy_set(a);
+            set_merge(as_set(r.get()), as_set(b));
+            return r;
+        }
+        case BinOp::And: return intersection(a, b);
+        case BinOp::Sub: return difference(a, b);
+        case BinOp::Xor: return symmetric_difference(a, b);
+        default: return Ref::steal(Obj::of(NOTIMPLEMENTED));
+    }
+}
+Ref set_inplace(BinOp op, Obj a, Obj b) {         // a set's own; a frozenset has none (the binary operator then)
+    if (!is_kind(a, Kind::Set) || as_set(a)->frozen || !is_kind(b, Kind::Set)) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+    switch (op) {
+        case BinOp::Or: set_merge(as_set(a), as_set(b)); break;
+        case BinOp::And: {                       // set_intersection_update: the bodies are swapped
+            Ref tmp = intersection(a, b);
+            SetObject *so = as_set(a), *t = as_set(tmp.get());
+            std::swap(so->table, t->table);
+            std::swap(so->fill, t->fill);
+            std::swap(so->used, t->used);
+            break;
+        }
+        case BinOp::Sub: difference_update(a, b); break;
+        case BinOp::Xor: symmetric_difference_update(a, b); break;
+        default: return Ref::steal(Obj::of(NOTIMPLEMENTED));
+    }
+    return Ref::share(a);
+}
+Ref set_compare(CmpOp op, Obj v, Obj w) {         // set_richcompare
+    if (!is_kind(v, Kind::Set) || !is_kind(w, Kind::Set)) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+    SetObject *a = as_set(v), *b = as_set(w);
+    switch (op) {
+        case CmpOp::Eq: return Ref::steal(boolean(a->used == b->used && issubset(a, b)));
+        case CmpOp::Ne: return Ref::steal(boolean(!(a->used == b->used && issubset(a, b))));
+        case CmpOp::Le: return Ref::steal(boolean(issubset(a, b)));
+        case CmpOp::Ge: return Ref::steal(boolean(issubset(b, a)));
+        case CmpOp::Lt: return Ref::steal(boolean(a->used < b->used && issubset(a, b)));
+        case CmpOp::Gt: return Ref::steal(boolean(a->used > b->used && issubset(b, a)));
+        default: return Ref::steal(Obj::of(NOTIMPLEMENTED));
+    }
 }
 
 Ref build_set(std::initializer_list<Obj> items) {
