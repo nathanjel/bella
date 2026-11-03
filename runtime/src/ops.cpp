@@ -9,11 +9,7 @@
 
 namespace bella {
 
-namespace {
-constexpr std::int64_t SMALL_MIN = -(std::int64_t{1} << 62);
-constexpr std::int64_t SMALL_MAX = (std::int64_t{1} << 62) - 1;
-
-// an int the C++ core computes on: a small int or a bool
+// an int's value (PyLong_Check): an immediate, a bool, or an int subclass's instance
 bool as_int(Obj v, std::int64_t& out) {
     if (v.is_small()) {
         out = v.small_value();
@@ -23,8 +19,15 @@ bool as_int(Obj v, std::int64_t& out) {
         out = static_cast<BoolObject*>(v.object())->value ? 1 : 0;
         return true;
     }
+    if (is_kind(v, Kind::IntInstance)) {
+        out = static_cast<IntInstance*>(v.object())->value;
+        return true;
+    }
     return false;
 }
+namespace {
+// an int whose type is the runtime's (an immediate or a bool): what may skip the dispatch
+bool as_exact_int(Obj v, std::int64_t& out) { return !is_kind(v, Kind::IntInstance) && as_int(v, out); }
 
 Ref small(std::int64_t v) {
     if (v < SMALL_MIN || v > SMALL_MAX) throw NotImplemented("BigInt: a result left the 63-bit immediate range");
@@ -224,12 +227,12 @@ bool set_like_operator(BinOp op) { return op == BinOp::And || op == BinOp::Or ||
 // binary_op1: the operands' number slots, NotImplemented when both decline
 Ref binary_op1(BinOp op, Obj a, Obj b) {
     std::int64_t x, y;
-    if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
-    if (!is_heap_obj(a) && !is_heap_obj(b)) return native_binary(op, a, b);
+    if (as_exact_int(a, x) && as_exact_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
+    if (!is_heap_obj(a) && !is_heap_obj(b) && !is_subclass_instance(a) && !is_subclass_instance(b)) return native_binary(op, a, b);
     ClassObject *ta = type_of(a), *tb = type_of(b);
     const char* rname = BIN_NAMES[static_cast<int>(op)][1];
     bool tried_reflected = false, has = false;
-    if (ta != tb && is_heap_obj(b) && is_subclass(tb, ta)) {
+    if (ta != tb && (is_heap_obj(b) || is_subclass_instance(b)) && is_subclass(tb, ta)) {   // a subclass's reflected method first
         Obj rb = type_lookup(tb, intern(rname));
         Obj ra = is_heap_obj(a) ? type_lookup(ta, intern(rname)) : Obj{};
         if (!rb.is_unset() && rb != ra) {
@@ -286,7 +289,7 @@ Ref inplace(BinOp op, Obj a, Obj b) {
 namespace {
 Ref unary_special(Obj a, const char* dunder, const char* sym) {
     bool has = false;
-    if (is_heap_obj(a)) {
+    if (is_heap_obj(a) || is_subclass_instance(a)) {
         Ref r = call_special(a, dunder, {}, &has);
         if (has) return r;
     }
@@ -296,18 +299,18 @@ Ref unary_special(Obj a, const char* dunder, const char* sym) {
 
 Ref unary_neg(Obj a) {
     std::int64_t x;
-    if (as_int(a, x)) return small(int_neg(Int::from_small(x)).small());
+    if (as_int(a, x) && !overridden(a, "__neg__")) return small(int_neg(Int::from_small(x)).small());
     return unary_special(a, "__neg__", "-");
 }
 Ref unary_pos(Obj a) {
     std::int64_t x;
-    if (as_int(a, x)) return small(x);
+    if (as_int(a, x) && !overridden(a, "__pos__")) return small(x);
     return unary_special(a, "__pos__", "+");
 }
 Ref unary_invert(Obj a) {
     std::int64_t x;
     if (is_kind(a, Kind::Bool)) throw NotImplemented("~ on a bool (a DeprecationWarning in CPython 3.15)");
-    if (as_int(a, x)) return small(~x);
+    if (as_int(a, x) && !overridden(a, "__invert__")) return small(~x);
     return unary_special(a, "__invert__", "~");
 }
 
@@ -503,10 +506,10 @@ Ref compare(CmpOp op, Obj a, Obj b) {
     }
     if (set_like_view(a) || set_like_view(b)) throw NotImplemented("comparing dict keys and items views (as sets)");
     std::int64_t x, y;
-    if (as_int(a, x) && as_int(b, y)) return Ref::steal(boolean(ordered(op, x, y)));
+    if (as_exact_int(a, x) && as_exact_int(b, y)) return Ref::steal(boolean(ordered(op, x, y)));
     ClassObject *ta = type_of(a), *tb = type_of(b);
     bool checked_reverse = false;
-    if (ta != tb && is_heap_obj(b) && is_subclass(tb, ta)) {
+    if (ta != tb && (is_heap_obj(b) || is_subclass_instance(b)) && is_subclass(tb, ta)) {
         checked_reverse = true;
         Ref r = compare_side(b, a, swapped(op));
         if (!not_implemented(r)) return r;
@@ -539,6 +542,9 @@ bool truth(Obj v) {
         case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
         case Kind::Range: return static_cast<Range*>(o)->length != 0;
         case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
+        case Kind::IntInstance:
+            if (!overridden(v, "__bool__")) return static_cast<IntInstance*>(o)->value != 0;
+            return truth(call_special(v, "__bool__", {}).get());
         case Kind::Dict:                             // a dict subclass's instance asks its class
             if (!is_subclass_instance(v)) return static_cast<Dict*>(o)->used != 0;
             [[fallthrough]];
@@ -667,6 +673,9 @@ Ref repr_of(Obj v) {
             std::string prefix = ms == nullptr || ms->text == "builtins" ? "" : ms->text + ".";
             return str_new("<class '" + prefix + c->qualname + "'>");
         }
+        case Kind::IntInstance:
+            if (!overridden(v, "__repr__")) return str_new(int_text(static_cast<IntInstance*>(o)->value));
+            break;
         case Kind::Range: {
             auto* r = static_cast<Range*>(o);
             return str_new("range(" + int_text(r->start) + ", " + int_text(r->stop) +
@@ -733,6 +742,7 @@ bool overrides(Obj obj, const char* name) {
 ClassObject* builtin_of(Obj v) {
     switch (v.object()->kind) {
         case Kind::Dict: return types().dict;
+        case Kind::IntInstance: return types().int_;
         default: return types().object;
     }
 }

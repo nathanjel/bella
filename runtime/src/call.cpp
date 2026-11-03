@@ -459,7 +459,7 @@ Ref b_format(Obj, Args a) {
     const Str* s = spec.is_unset() ? nullptr : as_str(spec);
     if (!spec.is_unset() && s == nullptr)
         raise_new("TypeError", "format() argument 2 must be str, not " + type_of(spec)->name);
-    if (is_kind(a.pos(0), Kind::Instance))
+    if (is_kind(a.pos(0), Kind::Instance) || (is_subclass_instance(a.pos(0)) && overrides_builtin(a.pos(0), "__format__")))
         return call_special(a.pos(0), "__format__", {spec.is_unset() ? str_new("").get() : spec});
     if (s != nullptr && s->length != 0) throw NotImplemented("format() with a format specification");
     return str_of(a.pos(0));
@@ -927,6 +927,11 @@ Ref b_abs(Obj, Args a) {                      // PyNumber_Absolute: the int's ow
     Obj v = a.pos(0);
     if (v.is_small()) return v.small_value() < 0 ? unary_neg(v) : Ref::share(v);
     if (is_kind(v, Kind::Bool)) return Ref::steal(Obj::small(static_cast<BoolObject*>(v.object())->value ? 1 : 0));
+    if (is_kind(v, Kind::IntInstance) && !overrides_builtin(v, "__abs__")) {   // an int subclass: int's abs, a plain int
+        std::int64_t x = static_cast<IntInstance*>(v.object())->value;
+        Ref plain = Ref::steal(Obj::small(x));
+        return x < 0 ? unary_neg(plain.get()) : plain;
+    }
     bool has = false;
     Ref r = call_special(v, "__abs__", {}, &has);
     if (has) return r;
@@ -949,9 +954,7 @@ Ref b_ord(Obj, Args a) {
 }
 Ref b_chr(Obj, Args a) {
     onearg(a, "chr");
-    Obj v = a.pos(0);
-    if (!v.is_small()) raise_new("TypeError", "'" + type_of(v)->name + "' object cannot be interpreted as an integer");
-    std::int64_t c = v.small_value();
+    std::int64_t c = index_value(a.pos(0));      // PyLong_AsLongAndOverflow: an int, a bool, or __index__
     if (c < 0 || c > 0x10FFFF) raise_new("ValueError", "chr() arg not in range(0x110000)");
     return str_from_codepoints(std::u32string(1, static_cast<char32_t>(c)));
 }
@@ -969,12 +972,7 @@ Ref c_bool(Obj, Args a) {
 Ref c_range(Obj, Args a) {
     clinic(a, "range", "range", 1, 3);
     std::int64_t v[3] = {0, 0, 1};
-    for (std::size_t i = 0; i < a.npos; ++i) {
-        Obj x = a.pos(i);
-        if (x.is_small()) v[i] = x.small_value();
-        else if (is_kind(x, Kind::Bool)) v[i] = static_cast<BoolObject*>(x.object())->value;
-        else raise_new("TypeError", "'" + type_of(x)->name + "' object cannot be interpreted as an integer");
-    }
+    for (std::size_t i = 0; i < a.npos; ++i) v[i] = index_value(a.pos(i));   // range_new: PyNumber_Index
     if (a.npos == 1) { v[1] = v[0]; v[0] = 0; }
     if (v[2] == 0) raise_new("ValueError", "range() arg 3 must not be zero");
     return own(new Range(v[0], v[1], v[2]));

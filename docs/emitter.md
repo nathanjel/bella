@@ -213,11 +213,18 @@ operators, truth, `str`; `dict`'s own methods do the dict's operation (so an ove
 `__getitem__`. A class body stores through a `__prepare__`'d subclass's `__setitem__`. It dies as
 `subtype_dealloc` then `dict_dealloc` release it: slots, the instance dict, then the entries.
 `dict()` has its constructor (`dict.__new__`, `dict.__init__`); `list(x)` asks an object of a
-Python class for its length hint, `tuple(x)` does not (3.15).
+Python class for its length hint, `tuple(x)` does not (3.15). An instance of an `int` subclass is an
+`IntInstance` (case C-3-35): its value and the class's attribute storage; it is an int to every
+operation that takes one (`as_int`, PyLong_Check), the fast paths that skip the dispatch take exact
+ints only (`as_exact_int`), and its class's overrides come first where CPython's would (a subclass's
+reflected method before the int's). `int()` is `long_new_impl`: `PyNumber_Long` (an int as
+itself, `__int__`, `__index__`, a str) and `PyLong_FromString`'s rules for an ASCII str (a str
+beyond ASCII is refused: its digits and spaces need the Unicode database); a value beyond the
+immediates is refused (the bn port).
 
 Still in C++ until the next step: the exception classes (the decision puts them in the prelude);
-not yet anywhere: subclasses of `int`, `str`, `tuple`, `list` and the other C++ types (refused by
-name; `enum` needs `int`'s), `types.GenericAlias` (`dict[str, int]`), a class that overrides
+not yet anywhere: subclasses of `str`, `tuple`, `list` and the other C++ types (refused by name),
+`bool` (final in CPython: refused here), `types.GenericAlias` (`dict[str, int]`), a class that overrides
 `__getattribute__` or assigns `__class__` (refused as \[P2+\], spec section 3).
 
 ## 4. Building and running
@@ -236,8 +243,9 @@ the type by its qualified name and a `str()` that raises as `<exception str() fa
 
 ## 5. Gaps, in the order the steps close them
 
-* 3a.2, the rest: the exception classes into the prelude; subclasses of `int`, `str`, `tuple`
-  and `list` (`enum` needs `int`'s); `types.GenericAlias`.
+* 3a.2, the rest: the exception classes into the prelude; subclasses of `str`, `tuple` and
+  `list`; `types.GenericAlias`; the warnings machinery (a DeprecationWarning is refused where
+  CPython would show one).
 * The dict views' set operations and comparisons, `reversed` and `mapping`; `str %`
   formatting; `types.UnionType` (`int | str`).
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
@@ -246,7 +254,7 @@ the type by its qualified name and a `str()` that raises as `<exception str() fa
 * Lines: a frame's line is its statement's first line; CPython gives the failing instruction's,
   which differs inside a statement that spans lines (RL-225). The frontend and L2 would carry
   the expression positions; an inlined comprehension's line then goes to its caller's entry.
-* The constructors of `int` and `float` (refused, RL-220), `max`, `min`, `divmod`;
+* The constructor of `float` (refused, RL-220), `max`, `min`, `divmod`;
   `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
   (StopIteration's `value`, SystemExit's `code`, ImportError's) are refused by name, read,
   stored or deleted (RL-255), until those classes are built as CPython's.

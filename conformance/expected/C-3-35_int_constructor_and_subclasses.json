@@ -1,0 +1,12 @@
+{
+ "case": "C-3-35_int_constructor_and_subclasses.py",
+ "clause": "C-3-35",
+ "spec": "section 3 (the data model), section 6 (int), section 9 (lifetimes)",
+ "status": "P1",
+ "source": "decision 2026-11-03 (a subclass of a built-in type is that type's object); enum's IntFlag",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "int(): 0 int\nint(5): 5 int\nint(True): 1 int\nspaces and sign: 7 int\nminus zero: 0 int\nunderscores: 1000 int\nhex, base 16: 31 int\nhex, base 0: 31 int\nbinary, base 0: 5 int\noctal, base 0: 15 int\nbase 36: 35 int\nbase 2: -10 int\nzeros, base 0: 0 int\nleading zero, base 0: ValueError\ndouble underscore: ValueError\nleading underscore: ValueError\ntrailing underscore: ValueError\nempty: ValueError\nblank: ValueError\ntrailing letter: ValueError\ndigit beyond the base: ValueError\nbase 1: ValueError\nbase 37: ValueError\nan int with a base: TypeError\na base alone: TypeError\na list: TypeError\n__index__: 7 int\n__int__: 9 int\n__int__ not an int: TypeError\n5 5 Plain True int 6 15 -5 int\nTrue True five 60 False int\n10 0 [0, 1, 2] 5 5\nDoubled(8) Doubled(8) 801 9 Doubled 8\nattribute {'label': 'attribute'}\ndies a\ndies b\nnonempty __slots__: TypeError\nend\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -136,7 +136,10 @@ class Emitter:
                 return f"Obj::small({value}{'LL' if abs(value) > 2**31 else ''})"
             return f"rt::unsupported_constant({c_string(f'an int literal beyond 62 bits: {value}')})"
         if type(value) is str:
-            return self.lazy(("str", value), f"Obj::of(rt::intern({c_string(value)}))" if value.isascii() or
+            # a NUL inside: the literal's length given, or the string would end there
+            text = (f"std::string_view({c_string(value)}, {len(value.encode('utf-8', 'surrogatepass'))})" if "\0" in value
+                    else c_string(value))
+            return self.lazy(("str", value), f"Obj::of(rt::intern({text}))" if value.isascii() or
                              not any(0xD800 <= ord(c) <= 0xDFFF for c in value)
                              else f"rt::str_constant_cps({{{', '.join(f'U{ord(c):#x}' for c in value)}}})")
         if type(value) is tuple and all(_supported_constant(v) for v in value):

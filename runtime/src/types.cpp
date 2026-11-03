@@ -334,7 +334,7 @@ Ref object_new(Obj, Args a) {
         if (cpython_attribute_kind(cls, "__new__").empty()) refuse_construction(cls);
         raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe, use " + cls->name + ".__new__()");
     }
-    if (is_subclass(cls, types().dict)) {                   // a subclass of dict: its solid base makes it
+    if (is_subclass(cls, types().dict) || is_subclass(cls, types().int_)) {   // a built-in base makes it
         // tp_new_wrapper's staticbase: past the classes whose __new__ is Python's (slot_tp_new)
         ClassObject* staticbase = cls;
         while (!is_kind(type_lookup(staticbase, N("__new__")), Kind::Builtin) && !staticbase->bases.empty())
@@ -432,7 +432,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (bc == nullptr) raise_new("TypeError", "bases must be types");
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
-        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict &&
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().int_ &&
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
@@ -494,6 +494,10 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
                 if (k->text == m) raise_new("ValueError", "'" + s->text + "' in __slots__ conflicts with class variable");
             if (std::find(slots.begin(), slots.end(), m) == slots.end()) slots.push_back(m);   // A9-18
         }
+        // an int subclass's instances have a variable size: only __dict__ (and __weakref__) may be slots
+        bool int_based = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_); });
+        if (int_based && std::any_of(slots.begin(), slots.end(), [](const std::string& n) { return n != "__dict__"; }))
+            raise_new("TypeError", "arbitrary __slots__ not supported for subtype of 'int'");
         spec.slots = slots;
     }
     for (auto& [k, v] : entries) spec.attrs.emplace_back(k->text, v);
@@ -629,6 +633,135 @@ Ref dict_init_m(Obj self, Args a) {
     for (std::size_t i = 0; i < a.nkw; ++i) dict_set(static_cast<Dict*>(self.object()), Obj::of(a.kwnames[i]), a.kw(i));
     return none_ref();
 }
+// ---- int() (long_new_impl, PyNumber_Long, PyLong_FromString) ----
+Ref int_ref(std::int64_t v) {                     // an exact int within the immediates (the bn port: the rest)
+    if (v < SMALL_MIN || v > SMALL_MAX) throw NotImplemented("BigInt: a result left the 63-bit immediate range");
+    return Ref::steal(Obj::small(v));
+}
+// PyLong_FromString on an ASCII str: whitespace around it (Py_ISSPACE), a sign, the base's prefix,
+// single underscores between digits; a ValueError names the base given and the string's repr
+Ref int_from_str(const Str* s, std::int64_t base) {
+    if (!s->ascii) throw NotImplemented("int() of a str beyond ASCII (its digits and spaces need the Unicode database)");
+    const std::string& t = s->text;
+    auto invalid = [&]() -> Ref {
+        Ref r = repr_of(Obj::of(s));
+        const Str* rs = as_str(r.get());
+        std::u32string shown;                       // %.200R: the repr, cut at 200 code points
+        for (std::size_t k = 0; k < std::min<std::size_t>(rs->length, 200); ++k) shown += rs->at(k);
+        Ref cut = str_from_codepoints(shown);
+        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + as_str(cut.get())->text);
+    };
+    auto space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
+    std::size_t i = 0, n = t.size();
+    while (i < n && space(t[i])) ++i;
+    bool negative = false;
+    if (i < n && (t[i] == '+' || t[i] == '-')) negative = t[i++] == '-';
+    std::int64_t b = base;
+    bool error_if_nonzero = false;
+    auto lower = [](char c) { return static_cast<char>(c | 0x20); };
+    if (b == 0) {
+        if (i >= n || t[i] != '0') b = 10;
+        else if (i + 1 < n && lower(t[i + 1]) == 'x') b = 16;
+        else if (i + 1 < n && lower(t[i + 1]) == 'o') b = 8;
+        else if (i + 1 < n && lower(t[i + 1]) == 'b') b = 2;
+        else {
+            error_if_nonzero = true;               // an old octal literal: valid only as zero
+            b = 10;
+        }
+    }
+    if (i + 1 < n && t[i] == '0' && ((b == 16 && lower(t[i + 1]) == 'x') || (b == 8 && lower(t[i + 1]) == 'o') ||
+                                     (b == 2 && lower(t[i + 1]) == 'b'))) {
+        i += 2;
+        if (i < n && t[i] == '_') ++i;             // one underscore allowed here
+    }
+    auto digit = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+        return 37;
+    };
+    std::size_t start = i, digits = 0;
+    if (i < n && t[i] == '_') invalid();          // a leading underscore
+    char prev = 0;
+    while (i < n && (digit(t[i]) < b || t[i] == '_')) {
+        if (t[i] == '_' && prev == '_') invalid();
+        if (t[i] != '_') ++digits;
+        prev = t[i++];
+    }
+    if (prev == '_' || i == start) invalid();     // a trailing underscore, or no digits
+    std::size_t end = i;
+    while (i < n && space(t[i])) ++i;
+    if (i != n) invalid();                          // anything else after the digits (a NUL included)
+    bool binary_base = (b & (b - 1)) == 0;
+    if (!binary_base && digits > 640 && digits > 4300)
+        raise_new("ValueError", "Exceeds the limit (4300 digits) for integer string conversion: value has " + std::to_string(digits) +
+                                    " digits; use sys.set_int_max_str_digits() to increase the limit");
+    __int128 v = 0;
+    for (std::size_t k = start; k < end; ++k) {
+        if (t[k] == '_') continue;
+        v = v * b + digit(t[k]);
+        if (v > (static_cast<__int128>(1) << 62)) throw NotImplemented("BigInt: int() of a str beyond the 63-bit immediate range");
+    }
+    if (error_if_nonzero && v != 0) {
+        base = 0;
+        invalid();
+    }
+    return int_ref(static_cast<std::int64_t>(negative ? -v : v));
+}
+
+// PyNumber_Long: an int as itself (a subclass's value as an exact int), __int__, __index__, a str
+Ref number_long(Obj x) {
+    std::int64_t v;
+    if (x.is_small()) return Ref::share(x);
+    bool python = is_kind(x, Kind::Instance) || is_subclass_instance(x) || has_python_type(x);
+    if (python && !type_lookup(type_of(x), N("__int__")).is_unset() &&
+        !(is_subclass_instance(x) && !overrides_builtin(x, "__int__"))) {
+        Ref r = call_special(x, "__int__", {});
+        if (!as_int(r.get(), v))
+            raise_new("TypeError", fully_qualified_name(type_of(x)) + ".__int__() must return an int, not " +
+                                       fully_qualified_name(type_of(r.get())));
+        if (!r.get().is_small())                 // CPython copies a strict subclass's value with a DeprecationWarning
+            throw NotImplemented("__int__ returning an instance of a subclass of int (a DeprecationWarning in CPython)");
+        return int_ref(v);
+    }
+    if (as_int(x, v)) return int_ref(v);          // a bool, an int subclass's instance: nb_int, an exact copy
+    if (python && !type_lookup(type_of(x), N("__index__")).is_unset()) return int_ref(index_value(x));
+    if (const Str* s = as_str(x)) return int_from_str(s, 10);
+    if (is_kind(x, Kind::Float)) throw NotImplemented("int() of a float");
+    raise_new("TypeError", "int() argument must be a string, a bytes-like object or a real number, not '" + type_of(x)->name + "'");
+}
+
+// int.__new__(cls, x=0, /, base=10) (long_new_impl; a subclass's instance carries the value,
+// long_subtype_new)
+Ref int_new_m(Obj, Args a) {
+    ClassObject* cls = new_wrapper_class(a, types().int_);
+    std::size_t npos = a.npos - 1;
+    if (npos + a.nkw > 2) {
+        if (a.nkw == 0) raise_new("TypeError", "int expected at most 2 arguments, got " + std::to_string(npos));
+        raise_new("TypeError", "int() takes at most 2 arguments (" + std::to_string(npos + a.nkw) + " given)");
+    }
+    Obj x = npos >= 1 ? a.pos(1) : Obj{}, base = npos >= 2 ? a.pos(2) : Obj{};
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        if (a.kwnames[k]->text != "base") raise_new("TypeError", "int() got an unexpected keyword argument '" + a.kwnames[k]->text + "'");
+        base = a.kw(k);
+    }
+    Ref value;
+    if (x.is_unset()) {
+        if (!base.is_unset()) raise_new("TypeError", "int() missing string argument");
+        value = int_ref(0);
+    } else if (base.is_unset()) {
+        value = number_long(x);
+    } else {
+        std::int64_t b = index_value(base);
+        if ((b != 0 && b < 2) || b > 36) raise_new("ValueError", "int() base must be >= 2 and <= 36, or 0");
+        const Str* s = as_str(x);
+        if (s == nullptr) raise_new("TypeError", "int() can't convert non-string with explicit base");
+        value = int_from_str(s, b);
+    }
+    if (cls == types().int_) return value;
+    return own(new IntInstance(cls, value.get().small_value()));
+}
+
 Ref type_call_m(Obj self, Args a) {                // type.__call__: what calling the class does
     return type_call(as_class(self), a);
 }
@@ -1117,6 +1250,7 @@ void init_types() {
     method(t.type, "__init__", type_init);
     method(t.type, "__call__", type_call_m);
     method(t.dict, "__new__", dict_new_m, Binding::Function);
+    method(t.int_, "__new__", int_new_m, Binding::Function);
     method(t.dict, "__init__", dict_init_m);
     {
         auto* g = new GetSet("__abstractmethods__", t.type, type_abstractmethods_get, type_abstractmethods_set);

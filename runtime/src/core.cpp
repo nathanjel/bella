@@ -332,6 +332,10 @@ std::int64_t hash_of(Obj v) {
     if (v.is_small()) return hash_small(v.small_value());
     Object* o = v.object();
     switch (o->kind) {
+        case Kind::IntInstance:                  // an int subclass: its value's hash, unless it has its own
+            if (type_lookup(o->cls, intern("__hash__")) == type_lookup(types().int_, intern("__hash__")))
+                return hash_small(static_cast<IntInstance*>(o)->value);
+            break;
         case Kind::Bool: return static_cast<BoolObject*>(o)->value ? 1 : 0;
         case Kind::Str: {
             auto* s = static_cast<Str*>(o);

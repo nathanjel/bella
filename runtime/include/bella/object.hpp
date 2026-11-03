@@ -80,7 +80,7 @@ enum class Kind : std::uint8_t {
     Str, Dict, Class, Instance, Function, SlotDescriptor, Marker,
     // the runtime's own objects (bella/runtime.hpp): their deaths go through destroyer(kind)
     Singleton, Bool, BigInt, Float, Tuple, List, Cell, PyFunction, Builtin, Method, Module,
-    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, KindCount
+    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, IntInstance, KindCount
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
@@ -809,6 +809,24 @@ struct DictInstance : DictObject {
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
+// An instance of a program's subclass of int: its value (an int's, within the immediates' range;
+// the big ints come with the bn port) and the subclass's attribute storage. Its value is no object,
+// so it dies as an instance does (decision 2026-11-03).
+struct IntInstance : Object {
+    std::int64_t value;
+    std::vector<Obj> fields;
+    DictObject* dict = nullptr;
+    std::vector<const Str*> order;
+    std::int64_t tag = -1;
+    IntInstance(ClassObject* c, std::int64_t v) : Object(Kind::IntInstance), value(v) {
+        cls = c;
+        flags |= HAS_ATTRIBUTES;
+        fields.assign(c->field_index.size(), Obj{});
+    }
+    bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
+    Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    bool has_field(const Str* n) const { return cls->field_index.contains(n); }
+};
 inline bool has_attributes(const Object* o) { return (o->flags & HAS_ATTRIBUTES) != 0; }
 
 inline bool is_instance(Obj v) { return v.is_object() && v.object()->kind == Kind::Instance; }
@@ -1255,6 +1273,7 @@ inline void bury(Object* o) {
                 if (has_attributes(o)) delete static_cast<DictInstance*>(o);
                 else delete static_cast<DictObject*>(o);
                 break;
+            case Kind::IntInstance: delete static_cast<IntInstance*>(o); break;
             case Kind::Function: delete static_cast<Function*>(o); break;
             case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
             case Kind::Marker: delete static_cast<Marker*>(o); break;
@@ -1348,6 +1367,10 @@ inline void dealloc(Object* o) {
     switch (o->kind) {
         case Kind::Instance:
             detail::release_attributes(static_cast<Instance*>(o));
+            detail::bury(o);
+            return;
+        case Kind::IntInstance:
+            detail::release_attributes(static_cast<IntInstance*>(o));
             detail::bury(o);
             return;
         case Kind::Dict: {

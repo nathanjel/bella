@@ -490,12 +490,12 @@ def test_operators_cpython_has_and_the_runtime_lacks_are_refused() -> None:
 def test_a_builtin_type_without_a_constructor_is_refused() -> None:
     """RL-220: int(), float(), dict() and type(len)() fell into object.__new__ and raised TypeErrors
     CPython does not ("int() takes no arguments" for int("42")); they are refused. An explicit
-    object.__new__(int) is checked before its arguments, with CPython's message. dict() has its own
-    constructor since the dict subclasses (decision 2026-11-03)."""
+    object.__new__(int) is checked before its arguments, with CPython's message. dict() and int()
+    have their own constructors since the subclasses of built-ins (decision 2026-11-03)."""
     if not _HAVE_CXX:
         return
-    same('for f in (lambda: object.__new__(int), lambda: object.__new__(dict, 1), lambda: object(1)):\n    try:\n        f()\n    except TypeError as e:\n        print("TypeError", e)\nprint(type(object()).__name__, str(5), list("ab"), dict(a=1))\n')
-    for body in ("int('42')", "int()", "float()", "type(len)()", "object.__new__(type(len))"):
+    same('for f in (lambda: object.__new__(int), lambda: object.__new__(dict, 1), lambda: object(1)):\n    try:\n        f()\n    except TypeError as e:\n        print("TypeError", e)\nprint(type(object()).__name__, str(5), list("ab"), dict(a=1), int("42"), int())\n')
+    for body in ("float()", "type(len)()", "object.__new__(type(len))"):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"print('start')\ntry:\n    {body}\nexcept TypeError:\n    print('TypeError')\n", encoding="utf-8")

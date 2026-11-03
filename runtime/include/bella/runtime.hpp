@@ -279,6 +279,10 @@ bool with_attribute_storage(Obj v, F&& f) {
         f(static_cast<DictInstance*>(v.object()));
         return true;
     }
+    if (is_kind(v, Kind::IntInstance)) {
+        f(static_cast<IntInstance*>(v.object()));
+        return true;
+    }
     return false;
 }
 // BaseException's C fields (args, __traceback__, __cause__, __context__, __suppress_context__;
@@ -377,6 +381,9 @@ Ref tuple_steal(std::vector<Obj> items);                     // takes over count
 Ref tuple_copy(std::span<const Obj> items);                  // takes new counts of the items
 Ref list_new(std::initializer_list<Obj> items);
 std::int64_t hash_of(Obj v);
+inline constexpr std::int64_t SMALL_MIN = -(std::int64_t{1} << 62);   // the int immediates' range
+inline constexpr std::int64_t SMALL_MAX = (std::int64_t{1} << 62) - 1;
+bool as_int(Obj v, std::int64_t& out);                       // an int's value (PyLong_Check: a subclass's too)
 // a key's hash for a dict or a set: an unhashable key's TypeError names the container, as
 // dict_unhashable_type and set_unhashable_type word it ("cannot use 'list' as a dict key (...)")
 std::int64_t dict_key_hash(Obj key);

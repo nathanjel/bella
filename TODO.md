@@ -395,8 +395,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            case C-3-34, `pipeline/tests/test_compiled_builtin_subclasses.py`; found on the way:
            the prelude's dict repr asked a subclass's `__len__`, `list(x)` never asked a Python
            object for its length hint, `object.__setattr__` and friends knew instances only);
-           `int` subclasses
-           (the `int` constructor); `str`, `tuple`, `list` as the targets reach them. Then `types.GenericAlias`
+           `int` subclasses (the `int` constructor; done 2026-11-03, case C-3-35; found on the
+           way: a str constant with a NUL was cut at it, `range()` and `chr()` refused objects
+           with `__index__`, a subclass's reflected method did not come first for subclasses of
+           built-ins); `str`, `tuple`, `list` as the targets reach them. Then `types.GenericAlias`
            (`dict[str, int]` as a base or a value: `__class_getitem__`, `__mro_entries__`).
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
