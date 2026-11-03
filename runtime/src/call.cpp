@@ -60,6 +60,26 @@ void clinic(Args a, const std::string& name, const std::string& qualname, std::s
     no_keywords(a, qualname);
     check_positional(a, name, lo, hi);
 }
+}  // namespace
+
+// A special method's arguments, worded as CPython words them for the receiver's type: a slot
+// wrapper ("expected 0 arguments, got 1"), or a method (METH_O, METH_NOARGS) named by its type.
+void dunder_args(Obj self, Args a, const char* name, std::size_t n) {
+    ClassObject* t = type_of(self);
+    if (cpython_attribute_kind(t, name) == "wrapper_descriptor") {
+        if (a.nkw != 0) raise_new("TypeError", std::string("wrapper ") + name + "() takes no keyword arguments");
+        if (a.npos == n) return;
+        if (std::string_view(name) == "__setitem__") check_positional(a, name, n, n);
+        raise_new("TypeError", "expected " + std::to_string(n) + (n == 1 ? " argument" : " arguments") + ", got " +
+                                   std::to_string(a.npos));
+    }
+    std::string qualname = t->name + "." + name;
+    if (n == 0) noargs(a, qualname);
+    else if (n == 1) onearg(a, qualname);
+    else clinic(a, name, qualname, n, n);
+}
+
+namespace {
 
 std::string quoted_list(const std::vector<std::string>& names) {
     std::string out;
@@ -385,21 +405,21 @@ Stream& err_stream() {
 Stream& stream_of(Obj self) { return static_cast<Native*>(self.object())->tag == 2 ? err_stream() : out_stream(); }
 
 Ref textio_write(Obj self, Args a) {
-    positional_only(a, "write", 1, 1);
+    onearg(a, "TextIOWrapper.write");
     const Str* s = as_str(a.pos(0));
     if (s == nullptr) raise_new("TypeError", "write() argument must be str, not " + type_of(a.pos(0))->name);
     stream_of(self).write(s->text);
     return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
 }
 Ref textio_flush(Obj self, Args a) {
-    positional_only(a, "flush", 0, 0);
+    noargs(a, "TextIOWrapper.flush");
     stream_of(self).flush();
     return none_ref();
 }
 
 // ---- the C++ builtins ----
 Ref b_len(Obj, Args a) {
-    positional_only(a, "len", 1, 1);
+    onearg(a, "len");
     Obj v = a.pos(0);
     if (const Str* s = as_str(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
     if (is_kind(v, Kind::Tuple)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Tuple*>(v.object())->items.size())));
@@ -414,11 +434,11 @@ Ref b_len(Obj, Args a) {
     raise_new("TypeError", "object of type '" + type_of(v)->name + "' has no len()");
 }
 Ref b_repr(Obj, Args a) {
-    positional_only(a, "repr", 1, 1);
+    onearg(a, "repr");
     return repr_of(a.pos(0));
 }
 Ref b_format(Obj, Args a) {
-    positional_only(a, "format", 1, 2);
+    clinic(a, "format", "format", 1, 2);
     Obj spec = a.npos > 1 ? a.pos(1) : Obj{};
     const Str* s = spec.is_unset() ? nullptr : as_str(spec);
     if (!spec.is_unset() && s == nullptr)
@@ -429,7 +449,7 @@ Ref b_format(Obj, Args a) {
     return str_of(a.pos(0));
 }
 Ref b_isinstance(Obj, Args a) {
-    positional_only(a, "isinstance", 2, 2);
+    clinic(a, "isinstance", "isinstance", 2, 2);
     ClassObject* c = type_of(a.pos(0));
     auto check = [&](Obj spec) {
         if (!is_kind(spec, Kind::Class))
@@ -462,7 +482,7 @@ Ref b_getattr(Obj, Args a) {
     }
 }
 Ref b_hasattr(Obj, Args a) {
-    positional_only(a, "hasattr", 2, 2);
+    clinic(a, "hasattr", "hasattr", 2, 2);
     Ref n = attr_name(a.pos(1), "hasattr");
     try {
         getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
@@ -473,19 +493,19 @@ Ref b_hasattr(Obj, Args a) {
     }
 }
 Ref b_setattr(Obj, Args a) {
-    positional_only(a, "setattr", 3, 3);
+    clinic(a, "setattr", "setattr", 3, 3);
     Ref n = attr_name(a.pos(1), "setattr");
     setattr(a.pos(0), static_cast<const Str*>(n.get().object()), a.pos(2));
     return none_ref();
 }
 Ref b_delattr(Obj, Args a) {
-    positional_only(a, "delattr", 2, 2);
+    clinic(a, "delattr", "delattr", 2, 2);
     Ref n = attr_name(a.pos(1), "delattr");
     delattr(a.pos(0), static_cast<const Str*>(n.get().object()));
     return none_ref();
 }
 Ref b_issubclass(Obj, Args a) {
-    positional_only(a, "issubclass", 2, 2);
+    clinic(a, "issubclass", "issubclass", 2, 2);
     if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "issubclass() arg 1 must be a class");
     auto* c = static_cast<ClassObject*>(a.pos(0).object());
     auto check = [&](Obj spec) {
@@ -500,13 +520,14 @@ Ref b_issubclass(Obj, Args a) {
     return Ref::steal(boolean(check(a.pos(1))));
 }
 Ref b_id(Obj, Args a) {
-    positional_only(a, "id", 1, 1);
+    onearg(a, "id");
     Obj v = a.pos(0);
     return Ref::steal(Obj::small(static_cast<std::int64_t>(v.is_small() ? (static_cast<std::uint64_t>(v.small_value()) << 1) | 1
                                                                         : reinterpret_cast<std::uintptr_t>(v.object()) >> 1)));
 }
 Ref b_vars(Obj, Args a) {
-    positional_only(a, "vars", 1, 1);
+    clinic(a, "vars", "vars", 0, 1);
+    if (a.npos == 0) throw NotImplemented("vars() without an argument (the calling frame's locals)");
     try {
         return getattr(a.pos(0), intern("__dict__"));
     } catch (const PyError& e) {
@@ -517,10 +538,10 @@ Ref b_vars(Obj, Args a) {
 
 // list, dict and tuple methods the prelude and programs call
 List* list_self(Obj self) { return static_cast<List*>(self.object()); }
-Ref list_append_m(Obj self, Args a) { positional_only(a, "append", 1, 1); list_append(self, a.pos(0)); return none_ref(); }
-Ref list_extend_m(Obj self, Args a) { positional_only(a, "extend", 1, 1); list_extend(self, a.pos(0)); return none_ref(); }
+Ref list_append_m(Obj self, Args a) { onearg(a, "list.append"); list_append(self, a.pos(0)); return none_ref(); }
+Ref list_extend_m(Obj self, Args a) { onearg(a, "list.extend"); list_extend(self, a.pos(0)); return none_ref(); }
 Ref list_pop_m(Obj self, Args a) {
-    positional_only(a, "pop", 0, 1);
+    clinic(a, "pop", "list.pop", 0, 1);
     auto& items = list_self(self)->items;
     if (items.empty()) raise_new("IndexError", "pop from empty list");
     std::int64_t i = a.npos ? index_value(a.pos(0)) : -1;          // bool and __index__, before any change (A9-11)
@@ -531,14 +552,14 @@ Ref list_pop_m(Obj self, Args a) {
     return Ref::steal(v);
 }
 Ref list_clear_m(Obj self, Args a) {
-    positional_only(a, "clear", 0, 0);
+    noargs(a, "list.clear");
     std::vector<Obj> old = std::move(list_self(self)->items);   // list_clear: emptied first, then released
     list_self(self)->items.clear();
     for (auto it = old.rbegin(); it != old.rend(); ++it) decref(*it);
     return none_ref();
 }
 Ref list_insert_m(Obj self, Args a) {
-    positional_only(a, "insert", 2, 2);
+    clinic(a, "insert", "list.insert", 2, 2);
     auto& items = list_self(self)->items;
     std::int64_t i = index_value(a.pos(0));
     std::int64_t n = static_cast<std::int64_t>(items.size());
@@ -558,14 +579,29 @@ std::int64_t list_find(Obj self, Obj v) {
     }
     return -1;
 }
-Ref list_index_m(Obj self, Args a) {
-    positional_only(a, "index", 1, 1);
-    std::int64_t i = list_find(self, a.pos(0));
-    if (i < 0) raise_new("ValueError", "list.index(x): x not in list");
-    return Ref::steal(Obj::small(i));
+Ref list_index_m(Obj self, Args a) {              // list_index_impl: start and stop as slice indices
+    clinic(a, "index", "list.index", 1, 3);
+    auto& items = list_self(self)->items;
+    auto bound = [&](std::size_t k, std::int64_t dflt) {
+        if (a.npos <= k) return dflt;
+        Obj v = a.pos(k);
+        if (!v.is_small() && !is_kind(v, Kind::Bool) &&
+            (!is_kind(v, Kind::Instance) || type_lookup(type_of(v), intern("__index__")).is_unset()))
+            raise_new("TypeError", "slice indices must be integers or have an __index__ method");
+        std::int64_t x = index_value(v);
+        auto n = static_cast<std::int64_t>(items.size());
+        if (x < 0) x = std::max<std::int64_t>(x + n, 0);
+        return x;
+    };
+    std::int64_t start = bound(1, 0), stop = bound(2, static_cast<std::int64_t>(items.size()));
+    for (std::int64_t i = start; i < stop && i < static_cast<std::int64_t>(items.size()); ++i) {
+        Ref v = Ref::share(items[static_cast<std::size_t>(i)]);
+        if (v.get() == a.pos(0) || truth(compare(CmpOp::Eq, v.get(), a.pos(0)).get())) return Ref::steal(Obj::small(i));
+    }
+    raise_new("ValueError", "list.index(x): x not in list");
 }
 Ref list_remove_m(Obj self, Args a) {
-    positional_only(a, "remove", 1, 1);
+    onearg(a, "list.remove");
     std::int64_t i = list_find(self, a.pos(0));
     if (i < 0) raise_new("ValueError", "list.remove(x): x not in list");
     auto& items = list_self(self)->items;
@@ -575,7 +611,7 @@ Ref list_remove_m(Obj self, Args a) {
     return none_ref();
 }
 Ref list_count_m(Obj self, Args a) {
-    positional_only(a, "count", 1, 1);
+    onearg(a, "list.count");
     std::int64_t n = 0;
     for (Obj x : std::vector<Obj>(list_self(self)->items)) {
         Ref hold = Ref::share(x);
@@ -584,21 +620,21 @@ Ref list_count_m(Obj self, Args a) {
     return Ref::steal(Obj::small(n));
 }
 Ref list_reverse_m(Obj self, Args a) {
-    positional_only(a, "reverse", 0, 0);
+    noargs(a, "list.reverse");
     std::reverse(list_self(self)->items.begin(), list_self(self)->items.end());
     return none_ref();
 }
 Ref list_copy_m(Obj self, Args a) {
-    positional_only(a, "copy", 0, 0);
+    noargs(a, "list.copy");
     Ref l = list_new({});
     for (Obj x : list_self(self)->items) list_append(l.get(), x);
     return l;
 }
-Ref list_len_m(Obj self, Args a) { positional_only(a, "__len__", 0, 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(list_self(self)->items.size()))); }
-Ref getitem_m(Obj self, Args a) { positional_only(a, "__getitem__", 1, 1); return getitem(self, a.pos(0)); }
-Ref setitem_m(Obj self, Args a) { positional_only(a, "__setitem__", 2, 2); setitem(self, a.pos(0), a.pos(1)); return none_ref(); }
-Ref contains_m(Obj self, Args a) { positional_only(a, "__contains__", 1, 1); return compare(CmpOp::In, a.pos(0), self); }
-Ref iter_m(Obj self, Args a) { positional_only(a, "__iter__", 0, 0); return iter(self); }
+Ref list_len_m(Obj self, Args a) { dunder_args(self, a, "__len__", 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(list_self(self)->items.size()))); }
+Ref getitem_m(Obj self, Args a) { dunder_args(self, a, "__getitem__", 1); return getitem(self, a.pos(0)); }
+Ref setitem_m(Obj self, Args a) { dunder_args(self, a, "__setitem__", 2); setitem(self, a.pos(0), a.pos(1)); return none_ref(); }
+Ref contains_m(Obj self, Args a) { dunder_args(self, a, "__contains__", 1); return compare(CmpOp::In, a.pos(0), self); }
+Ref iter_m(Obj self, Args a) { dunder_args(self, a, "__iter__", 0); return iter(self); }
 Dict* dict_self(Obj self) { return static_cast<Dict*>(self.object()); }   // the descriptor checked the receiver
 Ref dict_get_m(Obj self, Args a) {
     clinic(a, "get", "dict.get", 1, 2);
@@ -617,7 +653,7 @@ Ref dict_pop_m(Obj self, Args a) {
     dict_del(dict_self(self), a.pos(0));
     return out;
 }
-Ref dict_len_m(Obj self, Args a) { check_positional(a, "", 0, 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(dict_self(self)->used))); }
+Ref dict_len_m(Obj self, Args a) { dunder_args(self, a, "__len__", 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(dict_self(self)->used))); }
 Ref dict_keys_m(Obj self, Args a) {
     noargs(a, "dict.keys");
     return own(new DictView(self, DictView::Keys));
@@ -631,15 +667,15 @@ Ref dict_values_m(Obj self, Args a) {
     return own(new DictView(self, DictView::Values));
 }
 Ref view_len_m(Obj self, Args a) {
-    check_positional(a, "", 0, 0);
+    dunder_args(self, a, "__len__", 0);
     return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(static_cast<DictView*>(self.object())->dict.object())->used)));
 }
 Ref view_iter_m(Obj self, Args a) {
-    check_positional(a, "", 0, 0);
+    dunder_args(self, a, "__iter__", 0);
     return iter(self);
 }
 Ref view_contains_m(Obj self, Args a) {
-    onearg(a, type_of(self)->name + ".__contains__");
+    dunder_args(self, a, "__contains__", 1);
     return compare(CmpOp::In, a.pos(0), self);
 }
 
@@ -723,11 +759,12 @@ Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
 }
 
 Ref b_iter(Obj, Args a) {
-    positional_only(a, "iter", 1, 1);
+    clinic(a, "iter", "iter", 1, 2);
+    if (a.npos == 2) throw NotImplemented("iter(callable, sentinel)");
     return iter(a.pos(0));
 }
 Ref b_next(Obj, Args a) {
-    positional_only(a, "next", 1, 2);
+    clinic(a, "next", "next", 1, 2);
     if (!is_kind(a.pos(0), Kind::Iterator))
         raise_new("TypeError", "'" + type_of(a.pos(0))->name + "' object is not an iterator");
     Ref v = for_next(a.pos(0));
@@ -737,11 +774,11 @@ Ref b_next(Obj, Args a) {
     raise(exc.get());
 }
 Ref b_hash(Obj, Args a) {
-    positional_only(a, "hash", 1, 1);
+    onearg(a, "hash");
     return Ref::steal(Obj::small(hash_of(a.pos(0))));
 }
 Ref b_abs(Obj, Args a) {                      // PyNumber_Absolute: the int's own, else __abs__ (A9-22)
-    positional_only(a, "abs", 1, 1);
+    onearg(a, "abs");
     Obj v = a.pos(0);
     if (v.is_small()) return v.small_value() < 0 ? unary_neg(v) : Ref::share(v);
     if (is_kind(v, Kind::Bool)) return Ref::steal(Obj::small(static_cast<BoolObject*>(v.object())->value ? 1 : 0));
@@ -751,14 +788,14 @@ Ref b_abs(Obj, Args a) {                      // PyNumber_Absolute: the int's ow
     raise_new("TypeError", "bad operand type for abs(): '" + type_of(v)->name + "'");
 }
 Ref b_callable(Obj, Args a) {
-    positional_only(a, "callable", 1, 1);
+    onearg(a, "callable");
     Kind k = a.pos(0).is_object() ? a.pos(0).object()->kind : Kind::Bool;
     bool yes = k == Kind::PyFunction || k == Kind::Builtin || k == Kind::Method || k == Kind::Class || k == Kind::Function;
     if (k == Kind::Instance) yes = a.pos(0).object()->cls->has("__call__");
     return Ref::steal(boolean(yes));
 }
 Ref b_ord(Obj, Args a) {
-    positional_only(a, "ord", 1, 1);
+    onearg(a, "ord");
     const Str* s = as_str(a.pos(0));
     if (s == nullptr) raise_new("TypeError", "ord() expected string of length 1, but " + type_of(a.pos(0))->name + " found");
     if (s->length != 1)
@@ -766,7 +803,7 @@ Ref b_ord(Obj, Args a) {
     return Ref::steal(Obj::small(static_cast<std::int64_t>(s->at(0))));
 }
 Ref b_chr(Obj, Args a) {
-    positional_only(a, "chr", 1, 1);
+    onearg(a, "chr");
     Obj v = a.pos(0);
     if (!v.is_small()) raise_new("TypeError", "'" + type_of(v)->name + "' object cannot be interpreted as an integer");
     std::int64_t c = v.small_value();
@@ -781,11 +818,11 @@ Ref c_str(Obj, Args a) {
     return a.npos == 0 ? str_new("") : str_of(a.pos(0));
 }
 Ref c_bool(Obj, Args a) {
-    positional_only(a, "bool", 0, 1);
+    clinic(a, "bool", "bool", 0, 1);
     return Ref::steal(boolean(a.npos == 1 && truth(a.pos(0))));
 }
 Ref c_range(Obj, Args a) {
-    positional_only(a, "range", 1, 3);
+    clinic(a, "range", "range", 1, 3);
     std::int64_t v[3] = {0, 0, 1};
     for (std::size_t i = 0; i < a.npos; ++i) {
         Obj x = a.pos(i);
@@ -798,7 +835,7 @@ Ref c_range(Obj, Args a) {
     return own(new Range(v[0], v[1], v[2]));
 }
 Ref c_tuple(Obj, Args a) {
-    positional_only(a, "tuple", 0, 1);
+    clinic(a, "tuple", "tuple", 0, 1);
     if (a.npos == 0) return tuple_new({});
     if (is_kind(a.pos(0), Kind::Tuple)) return Ref::share(a.pos(0));
     Ref l = list_new({});
@@ -806,14 +843,14 @@ Ref c_tuple(Obj, Args a) {
     return list_to_tuple(l.get());
 }
 Ref c_list(Obj, Args a) {
-    positional_only(a, "list", 0, 1);
+    clinic(a, "list", "list", 0, 1);
     Ref l = list_new({});
     if (a.npos == 1) list_extend(l.get(), a.pos(0));
     return l;
 }
 
 Ref str_join(Obj self, Args a) {
-    positional_only(a, "join", 1, 1);
+    onearg(a, "str.join");
     const Str* sep = as_str(self);
     std::string out;
     Ref it = iter(a.pos(0));
@@ -1073,12 +1110,34 @@ Obj missing_sentinel() {
     static Obj m = own(new_instance(types().object)).release();
     return m;
 }
+Ref i_call_args_tuple(Obj, Args a) {             // _MAKE_CALLARGS_A_TUPLE: f(*value)
+    positional_only(a, "call_args_tuple", 1, 1);
+    Obj v = a.pos(0);
+    if (is_kind(v, Kind::Tuple)) return Ref::share(v);
+    // _Py_Check_ArgsIterable: an __iter__, or a sequence's __getitem__
+    if (type_lookup(type_of(v), intern("__iter__")).is_unset() && type_lookup(type_of(v), intern("__getitem__")).is_unset() &&
+        !is_kind(v, Kind::List) && !is_kind(v, Kind::Dict) && !is_kind(v, Kind::Set) && !is_kind(v, Kind::Range) &&
+        !is_kind(v, Kind::Iterator) && !is_kind(v, Kind::DictView) && as_str(v) == nullptr)
+        raise_new("TypeError", "Value after * must be an iterable, not " + type_of(v)->name);
+    std::vector<Ref> items;
+    Ref it = iter(v);
+    for (;;) {
+        Ref x = for_next(it.get());
+        if (is_end(x)) break;
+        items.push_back(std::move(x));
+    }
+    std::vector<Obj> objs;
+    for (auto& r : items) objs.push_back(r.release());
+    return tuple_steal(std::move(objs));
+}
+
 void register_intrinsics() {
     static bool done = false;
     if (done) return;
     done = true;
     for (auto [name, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
-             {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack}}) {
+             {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack},
+             {"call_args_tuple", i_call_args_tuple}}) {
         Ref b = own(new Builtin(name, fn));
         dict_set(intrinsics(), Obj::of(intern(name)), b.get());
     }

@@ -449,6 +449,18 @@ def test_dict_view_set_operations_are_refused_3a3() -> None:
         assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr, (op, got)
 
 
+def test_argument_errors_are_cpythons() -> None:
+    """Every C++ builtin and method a program can call refuses a wrong number of arguments, or a
+    keyword, in CPython's words for its calling convention (METH_O, METH_NOARGS, argument clinic,
+    slot wrapper); list.index takes start and stop."""
+    same('L = [1, 2, 3, 2]\nprint(L.index(2, 2), L.index(2, -3), L.index(2, 0, 2), L.index(3, -100, 100))\nfor a in ((2, 4), (9,), (2, 0, 1), (2, \'x\')):\n    try:\n        L.index(*a)\n    except (ValueError, TypeError) as e:\n        print(type(e).__name__, e)\ncases = {\n "abs": (abs, 1, 1), "callable": (callable, 1, 1), "chr": (chr, 1, 1), "delattr": (delattr, 2, 2), "format": (format, 1, 2),\n "hasattr": (hasattr, 2, 2), "hash": (hash, 1, 1), "id": (id, 1, 1), "isinstance": (isinstance, 2, 2), "issubclass": (issubclass, 2, 2),\n "iter": (iter, 1, 2), "len": (len, 1, 1), "next": (next, 1, 2), "ord": (ord, 1, 1), "repr": (repr, 1, 1), "setattr": (setattr, 3, 3),\n "bool": (bool, 0, 1), "list": (list, 0, 1), "tuple": (tuple, 0, 1), "range": (range, 1, 3),\n "list.append": (L.append, 1, 1), "list.clear": (L.clear, 0, 0), "list.copy": (L.copy, 0, 0), "list.count": (L.count, 1, 1),\n "list.extend": (L.extend, 1, 1), "list.index": (L.index, 1, 3), "list.insert": (L.insert, 2, 2), "list.pop": (L.pop, 0, 1),\n "list.remove": (L.remove, 1, 1), "list.reverse": (L.reverse, 0, 0), "list.__len__": (L.__len__, 0, 0), "list.__iter__": (L.__iter__, 0, 0),\n "list.__getitem__": (L.__getitem__, 1, 1), "list.__setitem__": (L.__setitem__, 2, 2), "list.__contains__": (L.__contains__, 1, 1),\n "dict.__getitem__": ({}.__getitem__, 1, 1), "dict.__setitem__": ({}.__setitem__, 2, 2), "dict.__contains__": ({}.__contains__, 1, 1),\n "dict.__iter__": ({}.__iter__, 0, 0), "dict.__len__": ({}.__len__, 0, 0), "str.join": ("".join, 1, 1), "str.__getitem__": ("".__getitem__, 1, 1),\n "str.__contains__": ("".__contains__, 1, 1), "str.__iter__": ("".__iter__, 0, 0), "tuple.__getitem__": (().__getitem__, 1, 1),\n "set.__len__": (set().__len__, 0, 0), "set.__contains__": (set().__contains__, 1, 1), "set.__iter__": (set().__iter__, 0, 0),\n "keys.__len__": ({}.keys().__len__, 0, 0), "keys.__contains__": ({}.keys().__contains__, 1, 1), "values.__iter__": ({}.values().__iter__, 0, 0),\n}\nfor name, (f, lo, hi) in cases.items():\n    out = []\n    trials = []\n    zeros = [(), (0,), (0, 0), (0, 0, 0), (0, 0, 0, 0)]\n    if lo > 0:\n        trials.append((zeros[lo - 1], {}))\n    trials.append((zeros[hi + 1], {}))\n    for args, kw in trials:\n        try:\n            f(*args)\n            out.append("OK")\n        except TypeError as e:\n            out.append(str(e))\n    try:\n        if lo == 0:\n            f(zz=1)\n        elif lo == 1:\n            f(0, zz=1)\n        elif lo == 2:\n            f(0, 0, zz=1)\n        else:\n            f(0, 0, 0, zz=1)\n        out.append("OK")\n    except TypeError as e:\n        out.append(str(e))\n    print(name, "|", " | ".join(out))\n')
+
+
+def test_a_starred_call_3a3() -> None:
+    """f(*value): a tuple as it is, any iterable made a tuple, anything else CPython's TypeError."""
+    same('def f(*a):\n    return a\nt = (1, 2)\nprint(f(*t), f(*[3]), f(0, *t), f(*"ab"), f(*{"k": 1}), f(*range(2)))\nclass S:\n    def __getitem__(self, i):\n        if i > 1:\n            raise IndexError\n        return i\nprint(f(*S()))\ntry:\n    f(*5)\nexcept TypeError as e:\n    print(e)\n')
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

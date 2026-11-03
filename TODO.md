@@ -350,8 +350,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            live views. C-3-01..03 pass compiled, and C-9-08 with them: `make compiled-corpus`
            18 of 76. Found on the way and fixed: `keys()`, `values()`, `items()` returned lists,
            `str(KeyError(k))` was not `repr(k)`, a lookup whose `__eq__` changed the dict raised
-           RuntimeError instead of starting again. Left: the views' set operations (refused),
-           the older C++ methods' argument-count messages.
+           RuntimeError instead of starting again. Then every C++ builtin and method words a
+           wrong argument count as CPython does for its calling convention, `f(*value)` compiles
+           (`call_args_tuple`), and `list.index` takes start and stop. Left: the views' set
+           operations (refused).
        * 3b generators (state machines) and compiled imports: C-3-04.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done.
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

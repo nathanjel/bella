@@ -165,8 +165,7 @@ file and line (spec D-06) and exits 1; a facility Bella lacks yet stops with
 ## 5. Gaps, in the order the steps close them
 
 * 3a.2, the rest: the exception classes into the prelude; `super()`; metaclasses.
-* The dict views' set operations and comparisons, `reversed` and `mapping`; argument-count
-  messages of the older C++ methods in CPython's wording (the dict's are).
+* The dict views' set operations and comparisons, `reversed` and `mapping`.
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3.
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and

@@ -207,16 +207,15 @@ Ref set_update_m(Obj self, Args a) {
     return none_ref();
 }
 Ref set_len_m(Obj self, Args a) {
-    if (a.npos != 0 || a.nkw != 0) raise_new("TypeError", "set.__len__() takes no arguments");
+    dunder_args(self, a, "__len__", 0);
     return Ref::steal(Obj::small(static_cast<std::int64_t>(set_self(self)->used)));
 }
 Ref set_contains_m(Obj self, Args a) {
-    if (a.nkw != 0 || a.npos != 1)
-        raise_new("TypeError", "set.__contains__() takes exactly one argument (" + std::to_string(a.npos) + " given)");
+    dunder_args(self, a, "__contains__", 1);
     return Ref::steal(boolean(set_contains(set_self(self), a.pos(0))));
 }
 Ref set_iter_m(Obj self, Args a) {
-    if (a.npos != 0 || a.nkw != 0) raise_new("TypeError", "set.__iter__() takes no arguments");
+    dunder_args(self, a, "__iter__", 0);
     return iter(self);
 }
 }  // namespace

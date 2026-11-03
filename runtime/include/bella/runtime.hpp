@@ -419,6 +419,8 @@ void refuse_absent_global(const Str* name);
 // What CPython keeps as `owner.name` (its kind: "wrapper_descriptor", "method_descriptor", ...),
 // or "" when CPython's type has no such attribute.
 std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name);
+// A special method's argument count, worded as CPython words it for the receiver's type.
+void dunder_args(Obj self, Args a, const char* name, std::size_t n);
 // The prelude's builtins look like CPython's (docs/emitter.md section 1): an exported function is
 // a builtin_function_or_method, never bound as a method; an exported class is immutable.
 bool presents_as_builtin(Obj f);
