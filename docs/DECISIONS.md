@@ -627,6 +627,23 @@ log RL-169 to RL-187). Defects fixed within the design; the rules they settle:
   library (C++20 modules once compile time is measured); the toy L1 emitter retires when the
   slice examples pass through L2.
 
+**2026-11-03 — typed code stays in phase 2; its types will come from annotations and guards**
+(author).
+* Until phase 2 the compiled program is an exact C++ rendering of CPython's evaluation: every
+  value boxed, every operation a protocol call, every call through the generic path. That is
+  where the plan is, not a defect. Decision 3 of `docs/l2.md` stands for phase 1.
+* When phase 2 brings types, they come from the annotations the strict type checker accepts
+  (design section 2), with exactness checked where values enter a typed function (`int` admits
+  `bool` and subclasses that override operators, so a typed version runs only for an exact `int`,
+  and the boxed body takes the rest) and Bella's own flow analysis proving what stays exact
+  inside. Unannotated code (most of the standard library) stays boxed until inference reaches it.
+  This reverses, for phase 2, decision 3's rejection of the checker's types. Rejected: Bella's
+  own inference alone (proves less, more work first); annotations as exact contracts (a
+  deviation from CPython: `f(True)` for `f(x: int)` is common).
+* No veneer: the generated code shows the operation it performs. Overloading C++ operators so
+  that boxed dispatch reads like `t3 + t5` was proposed and dropped, because it would hide the
+  very cost phase 2 removes.
+
 ## Pins
 
 | What | Value | Where |

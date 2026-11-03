@@ -409,6 +409,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Consolidate the documents (review log D-2): rewrite design sections 3-10 around the final
   decisions, keep sections 13-15 as history, and let `docs/reviews/review-log.md` carry review
   history; make each `PassSpec` status name its evidence, so that "tested" points at the tests.
+* Phase 2, decided 2026-11-03 (`docs/DECISIONS.md`): typed code. Static types from the checked
+  annotations, exactness guarded where values enter a typed function, Bella's flow analysis
+  inside; unboxed `int`/`bool`/`float`, direct calls where the binding provably never changes.
+  Until then the compiled program is an exact C++ rendering of CPython's evaluation.
 * Phase 2, decided 2026-11-02: the author's glue pass for module globals, an L2-to-L2 pass after
   `resolve-names` giving every global the closed world sees a field in one application object.
   The module dict becomes a view over the fields (insertion order, mutation counter), written in
