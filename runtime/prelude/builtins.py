@@ -220,7 +220,7 @@ def _dict_repr(self: dict[object, object]) -> str:
     """dict_repr: the entries as PyDict_Next walks them, so an entry a key's or value's repr adds
     is shown too, with no check of the size (review 2026-11-03, A9-17)."""
     _receiver(self, dict, "__repr__")
-    if not self:
+    if _dict_next(self, 0) is None:              # ma_used == 0: never a subclass's __len__ or __bool__
         return "{}"
     if not _enter(self):
         return "{...}"

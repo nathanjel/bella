@@ -694,6 +694,31 @@ def test_a_builtin_bases_fields_die_after_the_slots_in_its_clear_order() -> None
     assert _deaths() == ["x", "args"]
 
 
+def test_a_dict_subclass_instance_is_a_dict_released_last() -> None:
+    """An instance of a dict subclass holds the dict's entries itself, beside its slots and its
+    instance dict, and dies as subtype_dealloc then dict_dealloc release it: the slots, the instance
+    dict, then the entries in order, each key before its value (decision 2026-11-03; measured on
+    3.15.2: slot, attribute, value, key; case C-3-34)."""
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    builtin_dict = RefClass("dict", native=("__dict__", "__payload__"))
+    Slotted = RefClass("Slotted", (builtin_dict,), slots=("s", "__dict__"))
+    d = RefObject(Slotted)
+    O.incref(d)
+    assert d.payload is not None
+    value, key = _tagged(O.HEAP, "value"), _tagged(O.HEAP, "key")
+    d.payload.put("k", value)
+    d.payload.put(key, 1)
+    O.decref(value)                                 # the caller's temporaries end
+    O.decref(key)
+    _store(rt, d, "s", "slot")
+    _store(rt, d, "attr", "attribute")
+    assert list(rt.expose_dict(d)) == ["attr"]      # the entries are not the instance's attributes
+    O.decref(d)
+    assert _deaths() == ["slot", "attribute", "value", "key"]
+
+
 def test_a_store_that_fails_takes_no_count() -> None:
     """d[k] = v whose key comparison raises leaves v's count as it was: insertdict releases the
     value it was given before the error propagates (review 2026-11-03, A10-5)."""

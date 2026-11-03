@@ -699,6 +699,25 @@ algorithms, so a result's iteration order is CPython's.
   cycle CPython frees only in its collector, so it waits for the collector. Until then those
   locals die at the return, earlier than in CPython.
 
+**2026-11-03 — A subclass of a built-in type is that type's object** (step 3b; decided by the
+author, option A of two). An instance of a program's subclass of `dict` (then `int`, `str`,
+`tuple`, `list`) is an object of the built-in's kind whose class is the subclass, with the
+subclass's attribute storage (its slots, an instance `__dict__`) beside the built-in's data, as
+CPython lays it out. Every operation tells an object of the type (`PyDict_Check`, subclasses
+included) from exactly the type (`PyDict_CheckExact`) where CPython does, and reaches a
+subclass's overrides where CPython does. Measured on 3.15.2: `d[k]` and `d[k] = v` call the
+subclass's `__getitem__`/`__setitem__`, `dict.__getitem__` its `__missing__`, a class body
+stores through a `__prepare__`'d subclass's `__setitem__`; `update`, `{**d}`, `**d`, `copy`,
+`dict(d)` and `d | e` take the dict's own entries unless the subclass overrides `__iter__`, then
+`keys()` and `__getitem__`; `copy` and `|` return a plain dict, `fromkeys` the subclass. An `int`
+subclass's instance is a boxed int that carries its class; arithmetic on it returns plain ints.
+Release order, `subtype_dealloc` then the base's dealloc: the slots, the instance dict, then the
+built-in's data (measured: slot, attribute, the dict's entries in order, each key before its
+value). Rejected, option B: an ordinary instance holding a hidden built-in object, which every
+consumer of a real dict would have to unwrap; one that missed it would answer wrongly instead of
+refusing. Model first (`refmodel`), one type at a time, each with a conformance case: `dict` and
+`int` first, for `enum` (`_EnumDict`, `IntFlag`).
+
 ## Pins
 
 | What | Value | Where |

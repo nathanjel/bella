@@ -372,7 +372,7 @@ Ref load_name(Obj ns, Module* m, const Str* name) {
 void store_name(Obj ns, const Str* name, Ref value) { mapping_set(ns, Obj::of(name), value.get()); }
 void store_global(Module* m, const Str* name, Ref value) { dict_set(m->dict, Obj::of(name), value.get()); }
 void delete_name(Obj ns, const Str* name) {
-    if (is_kind(ns, Kind::Dict)) {
+    if (is_kind(ns, Kind::Dict) && !is_subclass_instance(ns)) {     // DELETE_NAME: an exact dict's, else __delitem__
         if (!dict_del(static_cast<Dict*>(ns.object()), Obj::of(name)))
             raise_new("NameError", "name '" + name->text + "' is not defined");
         return;
@@ -432,13 +432,15 @@ Ref textio_flush(Obj self, Args a) {
 }
 
 // ---- the C++ builtins ----
+bool overrides_builtin_len(Obj v) { return is_subclass_instance(v) && overrides_builtin(v, "__len__"); }
 Ref b_len(Obj, Args a) {
     onearg(a, "len");
     Obj v = a.pos(0);
     if (const Str* s = as_str(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
     if (is_kind(v, Kind::Tuple)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Tuple*>(v.object())->items.size())));
     if (is_kind(v, Kind::List)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<List*>(v.object())->items.size())));
-    if (is_kind(v, Kind::Dict)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(v.object())->used)));
+    if (is_kind(v, Kind::Dict) && !overrides_builtin_len(v))
+        return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(v.object())->used)));
     if (is_kind(v, Kind::DictView))
         return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(static_cast<DictView*>(v.object())->dict.object())->used)));
     if (is_kind(v, Kind::Range)) return Ref::steal(Obj::small(static_cast<Range*>(v.object())->length));
@@ -708,10 +710,35 @@ Ref list_copy_m(Obj self, Args a) {
     return l;
 }
 Ref list_len_m(Obj self, Args a) { dunder_args(self, a, "__len__", 0); return Ref::steal(Obj::small(static_cast<std::int64_t>(list_self(self)->items.size()))); }
-Ref getitem_m(Obj self, Args a) { dunder_args(self, a, "__getitem__", 1); return getitem(self, a.pos(0)); }
-Ref setitem_m(Obj self, Args a) { dunder_args(self, a, "__setitem__", 2); setitem(self, a.pos(0), a.pos(1)); return none_ref(); }
-Ref contains_m(Obj self, Args a) { dunder_args(self, a, "__contains__", 1); return compare(CmpOp::In, a.pos(0), self); }
-Ref iter_m(Obj self, Args a) { dunder_args(self, a, "__iter__", 0); return iter(self); }
+// the built-in types' own methods do the built-in's operation, never a subclass's override, which
+// may call them (dict.__getitem__(self, k) inside a __getitem__)
+Ref getitem_m(Obj self, Args a) {
+    dunder_args(self, a, "__getitem__", 1);
+    return is_kind(self, Kind::Dict) ? dict_subscript(self, a.pos(0)) : getitem(self, a.pos(0));
+}
+Ref setitem_m(Obj self, Args a) {
+    dunder_args(self, a, "__setitem__", 2);
+    if (is_kind(self, Kind::Dict)) dict_set(static_cast<Dict*>(self.object()), a.pos(0), a.pos(1));
+    else setitem(self, a.pos(0), a.pos(1));
+    return none_ref();
+}
+Ref dict_delitem_m(Obj self, Args a) {
+    dunder_args(self, a, "__delitem__", 1);
+    if (!dict_del(static_cast<Dict*>(self.object()), a.pos(0))) {
+        Ref exc = invoke(Obj::of(exception_class("KeyError")), {a.pos(0)});
+        raise(exc.get());
+    }
+    return none_ref();
+}
+Ref contains_m(Obj self, Args a) {
+    dunder_args(self, a, "__contains__", 1);
+    if (is_kind(self, Kind::Dict)) return Ref::steal(boolean(!dict_get(static_cast<Dict*>(self.object()), a.pos(0)).is_unset()));
+    return compare(CmpOp::In, a.pos(0), self);
+}
+Ref iter_m(Obj self, Args a) {
+    dunder_args(self, a, "__iter__", 0);
+    return is_kind(self, Kind::Dict) ? dict_iter(self) : iter(self);
+}
 Dict* dict_self(Obj self) { return static_cast<Dict*>(self.object()); }   // the descriptor checked the receiver
 Ref dict_get_m(Obj self, Args a) {
     clinic(a, "get", "dict.get", 1, 2);
@@ -797,7 +824,19 @@ void dict_update_arg(Obj self, Obj arg) {           // a mapping (keys()), else 
     for (std::int64_t i = 0;; ++i) {
         Ref item = for_next(it.get());
         if (is_end(item)) break;
-        Ref pair = iter(item.get());
+        // PySequence_Fast(item, "object is not iterable"), and the note _PyErr_FormatNote adds
+        Ref pair;
+        try {
+            pair = iter(item.get());
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            Ref msg = str_new("object is not iterable");
+            Ref exc = invoke(Obj::of(exception_class("TypeError")), {msg.get()});
+            Ref note = str_new("Cannot convert dictionary update sequence element #" + std::to_string(i) + " to a sequence");
+            Ref notes = list_new({note.get()});
+            setattr(exc.get(), intern("__notes__"), notes.get());
+            raise(exc.get());
+        }
         std::vector<Ref> kv;
         for (;;) {
             Ref x = for_next(pair.get());
@@ -821,7 +860,13 @@ Ref dict_update_m(Obj self, Args a) {           // dict_update_arg, then the key
 }
 Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
     clinic(a, "fromkeys", "dict.fromkeys", 1, 2);
-    if (cls.object() != Obj::of(types().dict).object()) throw NotImplemented("dict.fromkeys on a subclass of dict");
+    if (cls.object() != Obj::of(types().dict).object()) {   // a subclass: called, then PyObject_SetItem
+        Ref made = invoke(cls, {});
+        Obj value = a.npos > 1 ? a.pos(1) : None();
+        Ref it = iter(a.pos(0));
+        for (Ref k = for_next(it.get()); !is_end(k); k = for_next(it.get())) setitem(made.get(), k.get(), value);
+        return made;
+    }
     Ref out = dict_new();
     auto* d = static_cast<Dict*>(out.get().object());
     Obj value = a.npos > 1 ? a.pos(1) : None(), src = a.pos(0);
@@ -938,9 +983,16 @@ Ref c_tuple(Obj, Args a) {
     clinic(a, "tuple", "tuple", 0, 1);
     if (a.npos == 0) return tuple_new({});
     if (is_kind(a.pos(0), Kind::Tuple)) return Ref::share(a.pos(0));
-    Ref l = list_new({});
-    list_extend(l.get(), a.pos(0));
-    return list_to_tuple(l.get());
+    // PySequence_Tuple: the iterator's items, with no length hint (3.15)
+    std::vector<Obj> items;
+    Ref it = iter(a.pos(0));
+    try {
+        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) items.push_back(v.release());
+    } catch (...) {
+        for (Obj v : items) decref(v);
+        throw;
+    }
+    return tuple_steal(std::move(items));
 }
 Ref c_list(Obj, Args a) {
     clinic(a, "list", "list", 0, 1);
@@ -1048,6 +1100,7 @@ Module* make_builtins() {
     method(t.list, "__setitem__", setitem_m);
     method(t.dict, "__setitem__", setitem_m);
     method(t.dict, "__len__", dict_len_m);
+    method(t.dict, "__delitem__", dict_delitem_m);
     method(t.dict, "get", dict_get_m);
     method(t.dict, "pop", dict_pop_m);
     method(t.dict, "keys", dict_keys_m);

@@ -21,6 +21,7 @@ GetSet* instance_dict_getset();
 bool is_none(Obj v) { return v == None(); }
 
 ClassObject* as_class(Obj v);
+ClassObject* tp_base(ClassObject* c);
 
 // tp_new_wrapper's checks of T.__new__(cls, ...) (Objects/typeobject.c): the class it is given
 ClassObject* new_wrapper_class(Args a, const ClassObject* type) {
@@ -304,6 +305,27 @@ Obj object_init_fn() { return type_lookup(types().object, N("__init__")); }
                          (cpython_attribute_kind(cls, "__new__").empty() ? "" : " (CPython has it; the runtime does not yet)"));
 }
 
+// solid_base and best_base (Objects/typeobject.c): the layout a class extends is the nearest class
+// with a shape of its own (slots, or a built-in's data); tp_base is the base whose solid base is the
+// most derived of the bases'
+ClassObject* solid_base(ClassObject* c) {
+    if (c == types().object) return c;
+    bool own_shape = (!c->heap_type) || !c->own_slot_names().empty();
+    if (own_shape) return c;
+    return solid_base(c->bases.empty() ? types().object : tp_base(c));
+}
+ClassObject* tp_base(ClassObject* c) {
+    ClassObject *base = nullptr, *winner = nullptr;
+    for (ClassObject* b : c->bases) {
+        ClassObject* s = solid_base(b);
+        if (winner == nullptr || is_subclass(s, winner)) {
+            winner = s;
+            base = b;
+        }
+    }
+    return base != nullptr ? base : types().object;
+}
+
 Ref object_new(Obj, Args a) {
     if (a.npos < 1) raise_new("TypeError", "object.__new__(): not enough arguments");
     ClassObject* cls = as_class(a.pos(0));
@@ -311,6 +333,13 @@ Ref object_new(Obj, Args a) {
     if (!cls->heap_type && cls != types().object) {         // tp_new_wrapper's check, before the arguments'
         if (cpython_attribute_kind(cls, "__new__").empty()) refuse_construction(cls);
         raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe, use " + cls->name + ".__new__()");
+    }
+    if (is_subclass(cls, types().dict)) {                   // a subclass of dict: its solid base makes it
+        // tp_new_wrapper's staticbase: past the classes whose __new__ is Python's (slot_tp_new)
+        ClassObject* staticbase = cls;
+        while (!is_kind(type_lookup(staticbase, N("__new__")), Kind::Builtin) && !staticbase->bases.empty())
+            staticbase = tp_base(staticbase);
+        raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe, use " + staticbase->name + ".__new__()");
     }
     bool excess = a.npos > 1 || a.nkw > 0;
     if (excess) {
@@ -403,12 +432,15 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (bc == nullptr) raise_new("TypeError", "bases must be types");
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
-        if (!bc->heap_type && bc != types().object && bc != types().type && !is_subclass(bc, exception_class("BaseException")))
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict &&
+            !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
     }
     if (bases.empty()) bases.push_back(types().object);
-    auto* ns = static_cast<Dict*>(ns_obj.object());
+    Ref ns_copy;
+    if (is_subclass_instance(ns_obj)) ns_copy = dict_copy(static_cast<Dict*>(ns_obj.object()));   // type_new: PyDict_Copy
+    auto* ns = static_cast<Dict*>((ns_copy.get().is_unset() ? ns_obj : ns_copy.get()).object());
     ClassSpec spec{.name = name->text, .bases = bases};
     std::string qualname = name->text;
     Obj classcell, classdictcell;
@@ -582,6 +614,21 @@ void type_abstractmethods_set(Obj self, Obj value) {
     c->set_attr(N("__abstractmethods__"), value);
     c->abstract = abstract;
 }
+// dict.__new__ (dict_new): an empty dict of the class, a subclass's with its attribute storage
+// (decision 2026-11-03); its arguments are __init__'s
+Ref dict_new_m(Obj, Args a) {
+    ClassObject* cls = new_wrapper_class(a, types().dict);
+    if (cls == types().dict) return dict_new();
+    return own(new DictInstance(cls));
+}
+// dict.__init__ (dict_update_common): one positional argument, a mapping or pairs, then the
+// keywords, each inserted directly (a subclass's __setitem__ is not called)
+Ref dict_init_m(Obj self, Args a) {
+    if (a.npos > 1) raise_new("TypeError", "dict expected at most 1 argument, got " + std::to_string(a.npos));
+    if (a.npos == 1) dict_update_arg(self, a.pos(0));
+    for (std::size_t i = 0; i < a.nkw; ++i) dict_set(static_cast<Dict*>(self.object()), Obj::of(a.kwnames[i]), a.kw(i));
+    return none_ref();
+}
 Ref type_call_m(Obj self, Args a) {                // type.__call__: what calling the class does
     return type_call(as_class(self), a);
 }
@@ -654,26 +701,30 @@ Ref object_setattr(Obj self, Args a) {
     arity(a, "__setattr__", 2, 2);
     const Str* n = as_str(a.pos(0));
     if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
-    if (!is_kind(self, Kind::Instance)) throw NotImplemented("object.__setattr__ on a C++ type's object");
+    if (!is_kind(self, Kind::Instance) && !is_subclass_instance(self)) throw NotImplemented("object.__setattr__ on a C++ type's object");
     if (type_lookup(type_of(self), intern(n->text)).is_unset()) refuse_absent_data_descriptor(self, intern(n->text));
-    try {
-        bella::setattr(static_cast<Instance*>(self.object()), intern(n->text), a.pos(1));
-    } catch (const bella::AttributeError&) {
-        raise_attribute_error(self, intern(n->text), "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'");
-    }
+    with_attribute_storage(self, [&](auto* inst) {
+        try {
+            bella::setattr(inst, intern(n->text), a.pos(1));
+        } catch (const bella::AttributeError&) {
+            raise_attribute_error(self, intern(n->text), "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'");
+        }
+    });
     return none_ref();
 }
 Ref object_delattr(Obj self, Args a) {
     arity(a, "__delattr__", 1, 1);
     const Str* n = as_str(a.pos(0));
     if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
-    if (!is_kind(self, Kind::Instance)) throw NotImplemented("object.__delattr__ on a C++ type's object");
+    if (!is_kind(self, Kind::Instance) && !is_subclass_instance(self)) throw NotImplemented("object.__delattr__ on a C++ type's object");
     if (type_lookup(type_of(self), intern(n->text)).is_unset()) refuse_absent_data_descriptor(self, intern(n->text));
-    try {
-        bella::delattr(static_cast<Instance*>(self.object()), intern(n->text));
-    } catch (const bella::AttributeError&) {
-        raise_attribute_error(self, intern(n->text), "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'");
-    }
+    with_attribute_storage(self, [&](auto* inst) {
+        try {
+            bella::delattr(inst, intern(n->text));
+        } catch (const bella::AttributeError&) {
+            raise_attribute_error(self, intern(n->text), "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'");
+        }
+    });
     return none_ref();
 }
 Ref object_format(Obj self, Args a) {
@@ -687,18 +738,20 @@ Ref object_format(Obj self, Args a) {
 Ref class_of(Obj self) { return Ref::share(Obj::of(observed_type(self))); }
 void set_class_of(Obj, Obj) { throw NotImplemented("[P2+] __class__ assignment (spec section 3)"); }
 Ref instance_dict(Obj self) {
-    if (!is_kind(self, Kind::Instance)) throw NotImplemented("__dict__ of a C++ type's object");
-    return expose_dict(static_cast<Instance*>(self.object()));
+    Ref out;
+    if (!with_attribute_storage(self, [&](auto* inst) { out = expose_dict(inst); }))
+        throw NotImplemented("__dict__ of a C++ type's object");
+    return out;
 }
 void set_instance_dict(Obj self, Obj d) {
+    Ref fresh;
     if (d.is_unset()) {                          // del obj.__dict__: the dict is detached; the object starts afresh
-        Ref fresh = dict_new();
-        set_dict(static_cast<Instance*>(self.object()), static_cast<DictObject*>(fresh.get().object()));
-        return;
-    }
-    if (!is_kind(d, Kind::Dict))
+        fresh = dict_new();
+        d = fresh.get();
+    } else if (!is_kind(d, Kind::Dict)) {
         raise_new("TypeError", "__dict__ must be set to a dictionary, not a '" + type_of(d)->name + "'");
-    set_dict(static_cast<Instance*>(self.object()), static_cast<DictObject*>(d.object()));
+    }
+    with_attribute_storage(self, [&](auto* inst) { set_dict(inst, static_cast<DictObject*>(d.object())); });
 }
 
 // the getset a class that adds an instance dict gets as its __dict__ (type_new)
@@ -1003,7 +1056,7 @@ void deletable_getset(ClassObject* c, const char* name, Ref (*g)(Obj), void (*s)
 Obj cell_contents(const Ref& cell) { return static_cast<Cell*>(cell.get().object())->value; }
 
 Ref mapping_get(Obj mapping, Obj key) {
-    if (is_kind(mapping, Kind::Dict)) {
+    if (is_kind(mapping, Kind::Dict) && !is_subclass_instance(mapping)) {   // PyDict_CheckExact: else __getitem__
         Obj v = dict_get(static_cast<Dict*>(mapping.object()), key);
         return v.is_unset() ? Ref{} : Ref::share(v);
     }
@@ -1020,8 +1073,8 @@ Ref mapping_get(Obj mapping, Obj key) {
         return Ref{};
     }
 }
-void mapping_set(Obj mapping, Obj key, Obj value) {
-    if (is_kind(mapping, Kind::Dict)) dict_set(static_cast<Dict*>(mapping.object()), key, value);
+void mapping_set(Obj mapping, Obj key, Obj value) {          // STORE_NAME: an exact dict's, else __setitem__
+    if (is_kind(mapping, Kind::Dict) && !is_subclass_instance(mapping)) dict_set(static_cast<Dict*>(mapping.object()), key, value);
     else setitem(mapping, key, value);
 }
 
@@ -1063,6 +1116,8 @@ void init_types() {
     method(t.type, "__new__", type_new_builtin, Binding::Function);
     method(t.type, "__init__", type_init);
     method(t.type, "__call__", type_call_m);
+    method(t.dict, "__new__", dict_new_m, Binding::Function);
+    method(t.dict, "__init__", dict_init_m);
     {
         auto* g = new GetSet("__abstractmethods__", t.type, type_abstractmethods_get, type_abstractmethods_set);
         g->deletable = true;

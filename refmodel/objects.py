@@ -212,6 +212,16 @@ class RefDict(dict[Any, Any]):
         self[key] = value
         decref(old)
 
+    def put(self, key: Any, value: Any) -> None:
+        """insertdict for a dict's own data (a built-in base's payload): a new key's count is taken
+        with the value's; a present key keeps its key, and its old value is released last."""
+        old = self.get(key, UNSET)
+        if old is UNSET:
+            incref(key)
+        incref(value)
+        self[key] = value
+        decref(old)
+
     def delete(self, key: Any) -> None:
         decref(self.pop(key))               # a split dict stays split
 
@@ -310,15 +320,17 @@ class RefClass:
         # in the order of the type's clear function, which names the place of the dict ("__dict__").
         # A class that declares none has that of the nearest class in its MRO that does (its solid
         # base: class E(Mixin, Exception) is laid out as an exception); object's is the dict alone.
+        # "__payload__" is the built-in's own data (a dict's entries: decision 2026-11-03, a
+        # subclass of a built-in type is that type's object), which its dealloc releases last.
         self.native_declared = native is not None
         if native is not None:
             self.native: tuple[str, ...] = tuple(native)
             for n in self.native:
-                if n != "__dict__":
+                if n not in ("__dict__", "__payload__"):
                     self.attrs.setdefault(n, SlotDescriptor(n))
         else:
             self.native = next((c.native for c in self.mro[1:] if c.native_declared), ("__dict__",))
-        self.native_fields = tuple(n for n in self.native if n != "__dict__")
+        self.native_fields = tuple(n for n in self.native if n not in ("__dict__", "__payload__"))
         for n in self.native_fields:
             if n in self.slot_fields or n in self.promoted:
                 raise ValueError(f"{n!r} is a field of a built-in base")
@@ -415,6 +427,8 @@ class RefObject:
         self.alive = True
         self.tag = tag                      # a tagged object's death is logged (the oracle compares the logs)
         self.heap = cls.heap
+        # a built-in base's own data: a dict subclass's instance is a dict (its entries here)
+        self.payload: RefDict | None = RefDict() if "__payload__" in cls.native else None
 
     def dealloc(self) -> None:
         """subtype_dealloc's order: the finaliser, the __slots__ of the most-derived class first
@@ -437,6 +451,12 @@ class RefObject:
         for name in self.cls.native:
             if name == "__dict__":
                 self._release_dict()
+            elif name == "__payload__":
+                assert self.payload is not None
+                items, self.payload = list(self.payload.items()), None
+                for k, v in items:             # dict_dealloc: the entries in order, each key first
+                    decref(k)
+                    decref(v)
             else:
                 v, self.inline[name] = self.inline[name], UNSET
                 decref(v)

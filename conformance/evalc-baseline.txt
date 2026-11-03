@@ -17,6 +17,7 @@ C-3-30_traceback_entries.py
 C-3-31_exception_fields.py
 C-3-32_super_objects.py
 C-3-33_metaclasses.py
+C-3-34_dict_subclasses.py
 C-6-09_dict_callbacks.py
 C-8-02_builtins_fallthrough.py
 C-9-05_default_argument_lifetime.py

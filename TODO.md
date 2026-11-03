@@ -387,6 +387,17 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            not be set. Next: subclasses of `dict` and `int` (enum's `_EnumDict`, `IntFlag`), then
            compiled imports with `_abc` in C++ (the lock's core module; `_py_abc` needs weak
            references, 3c).
+         * Subclasses of the built-in types (decided 2026-11-03, `docs/DECISIONS.md`: the object
+           is the built-in's, with the subclass's attribute storage beside it). In order, each
+           with its case: the model (a built-in base's data released after the instance dict);
+           `object.hpp`'s attribute storage for objects that are not instances; `dict`
+           subclasses (the `dict` constructor with them, RL-220's refusal; done 2026-11-03,
+           case C-3-34, `pipeline/tests/test_compiled_builtin_subclasses.py`; found on the way:
+           the prelude's dict repr asked a subclass's `__len__`, `list(x)` never asked a Python
+           object for its length hint, `object.__setattr__` and friends knew instances only);
+           `int` subclasses
+           (the `int` constructor); `str`, `tuple`, `list` as the targets reach them. Then `types.GenericAlias`
+           (`dict[str, int]` as a base or a value: `__class_getitem__`, `__mro_entries__`).
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

@@ -114,11 +114,13 @@ const char* const BIN_NAMES[][3] = {
     {"__xor__", "__rxor__", "__ixor__"}, {"__matmul__", "__rmatmul__", "__imatmul__"}};
 // an object whose type is a class of the program's: an instance, or a class whose metaclass is one
 bool is_heap_obj(Obj v) { return (v.is_object() && v.object()->kind == Kind::Instance) || has_python_type(v); }
+// a subclass instance of a built-in whose class overrides this special method (decision 2026-11-03)
+bool overridden(Obj v, const char* name) { return is_subclass_instance(v) && overrides_builtin(v, name); }
 bool not_implemented(const Ref& r) { return r.get() == Obj::of(NOTIMPLEMENTED); }
 
 // one operand's method: a class's dunder (absent: *has false), or the C++ type's operation
 Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
-    if (is_heap_obj(self)) {
+    if (is_heap_obj(self) || overridden(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0])) {
         Ref r = call_special(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0], {other}, &has);
         return r;
     }
@@ -368,7 +370,9 @@ bool contains(Obj container, Obj item) {
         }
         return false;
     }
-    if (is_kind(container, Kind::Dict)) return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
+    if (is_kind(container, Kind::Dict) && !overridden(container, "__contains__"))
+        return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
+    if (is_kind(container, Kind::Dict)) return truth(call_special(container, "__contains__", {item}).get());
     if (is_kind(container, Kind::Set)) return set_contains(static_cast<SetObject*>(container.object()), item);
     if (const Str* s = as_str(container)) {
         const Str* sub = as_str(item);
@@ -482,7 +486,7 @@ CmpOp swapped(CmpOp op) {
     }
 }
 Ref compare_side(Obj self, Obj other, CmpOp op) {
-    if (is_heap_obj(self)) return call_special(self, cmp_name(op), {other});
+    if (is_heap_obj(self) || overridden(self, cmp_name(op))) return call_special(self, cmp_name(op), {other});
     return native_compare(op, self, other);
 }
 }  // namespace
@@ -532,12 +536,14 @@ bool truth(Obj v) {
         case Kind::Str: return static_cast<Str*>(o)->length != 0;
         case Kind::Tuple: return !static_cast<Tuple*>(o)->items.empty();
         case Kind::List: return !static_cast<List*>(o)->items.empty();
-        case Kind::Dict: return static_cast<Dict*>(o)->used != 0;
         case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
         case Kind::Range: return static_cast<Range*>(o)->length != 0;
         case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
+        case Kind::Dict:                             // a dict subclass's instance asks its class
+            if (!is_subclass_instance(v)) return static_cast<Dict*>(o)->used != 0;
+            [[fallthrough]];
         case Kind::Class:                            // a class whose metaclass is a Python class
-            if (!has_python_type(v)) return true;
+            if (o->kind == Kind::Class && !has_python_type(v)) return true;
             [[fallthrough]];
         case Kind::Instance: {
             // __bool__ (a bool, nothing else), else __len__, else true
@@ -706,8 +712,8 @@ Ref repr_of(Obj v) {
 
 Ref str_of(Obj v) {
     if (as_str(v) != nullptr) return Ref::share(v);
-    if (is_kind(v, Kind::Instance) ||
-        (has_python_type(v) && type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")))) {
+    if (is_kind(v, Kind::Instance) || ((has_python_type(v) || is_subclass_instance(v)) &&
+                                       type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")))) {
         Ref r = call_special(v, "__str__", {});
         if (as_str(r.get()) == nullptr)
             raise_new("TypeError", "__str__ returned non-string (type " + type_of(r.get())->name + ")");
@@ -723,35 +729,51 @@ bool overrides(Obj obj, const char* name) {
 }
 }  // namespace
 
-Ref getattr(Obj obj, const Str* name) {
-    if (is_kind(obj, Kind::Instance)) {
-        try {
-            return bella::getattr(static_cast<Instance*>(obj.object()), name);
-        } catch (const bella::AttributeError&) {
-            raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
-        } catch (const bella::TypeError& e) {
-            raise_new("TypeError", e.what());
-        }
+// the built-in a subclass instance is an object of (its kind's class)
+ClassObject* builtin_of(Obj v) {
+    switch (v.object()->kind) {
+        case Kind::Dict: return types().dict;
+        default: return types().object;
     }
+}
+bool overrides_builtin(Obj v, const char* name) {
+    const Str* n = intern(name);
+    return type_lookup(type_of(v), n) != type_lookup(builtin_of(v), n);
+}
+
+Ref getattr(Obj obj, const Str* name) {
+    Ref out;
+    if (with_attribute_storage(obj, [&](auto* inst) {
+            try {
+                out = bella::getattr(inst, name);
+            } catch (const bella::AttributeError&) {
+                raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+            } catch (const bella::TypeError& e) {
+                raise_new("TypeError", e.what());
+            }
+        }))
+        return out;
     if (is_kind(obj, Kind::Class)) return type_getattr(static_cast<ClassObject*>(obj.object()), name);
     if (is_kind(obj, Kind::Super)) return super_getattr(obj, name);
     return generic_getattr(obj, name);
 }
 
 void setattr(Obj obj, const Str* name, Obj value) {
-    if (is_kind(obj, Kind::Instance)) {
+    if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
         if (overrides(obj, "__setattr__")) {
             call_special(obj, "__setattr__", {Obj::of(name), value});
             return;
         }
         if (type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
-        try {
-            bella::setattr(static_cast<Instance*>(obj.object()), name, value);
-        } catch (const bella::AttributeError& e) {
-            raise_attribute_error(obj, name, std::string(e.what()).find(' ') == std::string::npos
-                                                 ? "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'"
-                                                 : std::string(e.what()));
-        }
+        with_attribute_storage(obj, [&](auto* inst) {
+            try {
+                bella::setattr(inst, name, value);
+            } catch (const bella::AttributeError& e) {
+                raise_attribute_error(obj, name, std::string(e.what()).find(' ') == std::string::npos
+                                                     ? "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'"
+                                                     : std::string(e.what()));
+            }
+        });
         return;
     }
     if (is_kind(obj, Kind::Class)) {
@@ -780,17 +802,19 @@ void setattr(Obj obj, const Str* name, Obj value) {
 }
 
 void delattr(Obj obj, const Str* name) {
-    if (is_kind(obj, Kind::Instance)) {
+    if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
         if (overrides(obj, "__delattr__")) {
             call_special(obj, "__delattr__", {Obj::of(name)});
             return;
         }
         if (type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
-        try {
-            bella::delattr(static_cast<Instance*>(obj.object()), name);
-        } catch (const bella::AttributeError&) {
-            raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
-        }
+        with_attribute_storage(obj, [&](auto* inst) {
+            try {
+                bella::delattr(inst, name);
+            } catch (const bella::AttributeError&) {
+                raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+            }
+        });
         return;
     }
     if (is_kind(obj, Kind::Class)) {
@@ -859,6 +883,20 @@ void each_index(Obj sl, std::int64_t length, F f) {
 }
 }  // namespace
 
+// dict_subscript: the value under key; a missing key is a subclass's __missing__, else KeyError
+Ref dict_subscript(Obj self, Obj key) {
+    Obj v = dict_get(static_cast<Dict*>(self.object()), key);
+    if (!v.is_unset()) return Ref::share(v);
+    if (is_subclass_instance(self))                  // !PyDict_CheckExact: _PyObject_LookupSpecial(__missing__)
+        if (Obj missing = type_lookup(type_of(self), intern("__missing__")); !missing.is_unset()) {
+            Ref m = Ref::share(missing);
+            Ref bound = descr_get(m.get(), self, Obj::of(type_of(self)));
+            return invoke(bound.get(), {key});
+        }
+    Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
+    raise(exc.get());
+}
+
 Ref getitem(Obj obj, Obj key) {
     bool slice = is_kind(key, Kind::Slice);
     if (is_kind(obj, Kind::Tuple)) {
@@ -885,14 +923,7 @@ Ref getitem(Obj obj, Obj key) {
         each_index(key, static_cast<std::int64_t>(s->length), [&](std::size_t i) { out += s->at(i); });
         return str_from_codepoints(out);
     }
-    if (is_kind(obj, Kind::Dict)) {
-        Obj v = dict_get(static_cast<Dict*>(obj.object()), key);
-        if (v.is_unset()) {
-            Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
-            raise(exc.get());
-        }
-        return Ref::share(v);
-    }
+    if (is_kind(obj, Kind::Dict) && !overridden(obj, "__getitem__")) return dict_subscript(obj, key);
     bool has = false;
     Ref r = call_special(obj, "__getitem__", {key}, &has);
     if (has) return r;
@@ -910,7 +941,7 @@ void setitem(Obj obj, Obj key, Obj value) {
         decref(old);
         return;
     }
-    if (is_kind(obj, Kind::Dict)) {
+    if (is_kind(obj, Kind::Dict) && !overridden(obj, "__setitem__")) {
         dict_set(static_cast<Dict*>(obj.object()), key, value);
         return;
     }
@@ -921,7 +952,7 @@ void setitem(Obj obj, Obj key, Obj value) {
 }
 
 void delitem(Obj obj, Obj key) {
-    if (is_kind(obj, Kind::Dict)) {
+    if (is_kind(obj, Kind::Dict) && !overridden(obj, "__delitem__")) {
         if (!dict_del(static_cast<Dict*>(obj.object()), key)) {
             Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
             raise(exc.get());
@@ -943,6 +974,12 @@ void delitem(Obj obj, Obj key) {
 }
 
 // ---- iteration ----
+Ref dict_iter(Obj self) {
+    auto* it = new Iterator(Iterator::DictKeysIt, self);
+    Ref r = own(it);
+    it->size = it->len = static_cast<std::int64_t>(static_cast<Dict*>(self.object())->used);
+    return r;
+}
 Ref iter(Obj obj) {
     if (is_kind(obj, Kind::Range)) return own(new Iterator(Iterator::RangeIt, obj));
     if (is_kind(obj, Kind::Tuple)) return own(new Iterator(Iterator::TupleIt, obj));
@@ -954,7 +991,7 @@ Ref iter(Obj obj) {
         it->size = static_cast<std::int64_t>(static_cast<SetObject*>(obj.object())->used);
         return r;
     }
-    if (is_kind(obj, Kind::Dict) || is_kind(obj, Kind::DictView)) {
+    if ((is_kind(obj, Kind::Dict) && !overridden(obj, "__iter__")) || is_kind(obj, Kind::DictView)) {
         Obj d = obj;
         Iterator::Of of = Iterator::DictKeysIt;
         if (is_kind(obj, Kind::DictView)) {
@@ -1120,16 +1157,19 @@ namespace {
 // the (key, value) pairs of a mapping: a dict's entries, else keys() and __getitem__
 template <class F>
 void each_item(Obj mapping, F f) {
-    if (is_kind(mapping, Kind::Dict)) {
+    if (is_kind(mapping, Kind::Dict) && !overridden(mapping, "__iter__")) {
         auto* d = static_cast<Dict*>(mapping.object());
         std::vector<std::pair<Ref, Ref>> items;
         for (auto& e : d->entries) if (!e.key.is_unset()) items.emplace_back(Ref::share(e.key), Ref::share(e.value));
         for (auto& [k, v] : items) f(k.get(), v.get());
         return;
     }
+    // PyMapping_Keys: keys() made a list first, then each key's __getitem__
     Ref keys = invoke(getattr(mapping, intern("keys")).get(), {});
+    std::vector<Ref> listed;
     Ref it = iter(keys.get());
-    for (Ref k = for_next(it.get()); !is_end(k); k = for_next(it.get())) {
+    for (Ref k = for_next(it.get()); !is_end(k); k = for_next(it.get())) listed.push_back(std::move(k));
+    for (Ref& k : listed) {
         Ref v = getitem(mapping, k.get());
         f(k.get(), v.get());
     }
@@ -1148,6 +1188,10 @@ std::string callable_name(Obj func) {
 Ref dict_copy(Dict* d) {
     Ref out = dict_new();
     auto* to = static_cast<Dict*>(out.get().object());
+    if (overridden(Obj::of(d), "__iter__")) {      // a subclass's own iteration: merged through keys()
+        each_item(Obj::of(d), [&](Obj k, Obj v) { dict_set(to, k, v); });
+        return out;
+    }
     if (d->used == 0) return out;
     if (d->split || d->used >= d->entries.size() * 2 / 3) {
         dict_clone_into(to, d);
@@ -1182,7 +1226,7 @@ void dict_merge_dict(Dict* mp, Dict* other) {
 
 void dict_update(Obj target, Obj mapping) {
     auto* d = static_cast<Dict*>(target.object());
-    if (is_kind(mapping, Kind::Dict)) {           // dict_merge's fast path: the stored hashes (A9-15)
+    if (is_kind(mapping, Kind::Dict) && !overridden(mapping, "__iter__")) {   // dict_merge's fast path (A9-15)
         dict_merge_dict(d, static_cast<Dict*>(mapping.object()));
         return;
     }
@@ -1208,6 +1252,36 @@ void list_append(Obj list, Obj value) {
     incref(value);
     static_cast<List*>(list.object())->items.push_back(value);
 }
+// PyObject_LengthHint, for the generic extend (list(x), tuple(x)): __len__ (a TypeError from it
+// set aside), else __length_hint__ (a TypeError or NotImplemented: no hint); only an object of a
+// Python class can tell it was asked, so only such objects are
+void length_hint(Obj v) {
+    if (!is_heap_obj(v) && !is_subclass_instance(v)) return;
+    if (!type_lookup(type_of(v), intern("__len__")).is_unset()) {
+        try {
+            Ref r = call_special(v, "__len__", {});
+            length_value(r.get());
+            return;
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        }
+    }
+    bool has = false;
+    Ref r;
+    try {
+        r = call_special(v, "__length_hint__", {}, &has);
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        return;
+    }
+    if (!has || r.get() == Obj::of(NOTIMPLEMENTED)) return;
+    std::int64_t n;
+    if (!as_int(r.get(), n))
+        raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__length_hint__() must return an int, not " +
+                                   fully_qualified_name(type_of(r.get())));
+    if (n < 0) raise_new("ValueError", "__length_hint__() should return >= 0");
+}
+
 void list_extend(Obj list, Obj value) {
     if (list == value) {                          // _list_extend: a.extend(a) and a += a repeat the list (G9 2.2)
         auto& items = static_cast<List*>(list.object())->items;
@@ -1221,6 +1295,7 @@ void list_extend(Obj list, Obj value) {
         return;
     }
     Ref it = iter(value);
+    length_hint(value);                           // list_extend_iter: the iterator first, then the hint
     for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
         static_cast<List*>(list.object())->items.push_back(v.release());
 }

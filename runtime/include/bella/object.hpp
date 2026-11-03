@@ -82,7 +82,9 @@ enum class Kind : std::uint8_t {
     Singleton, Bool, BigInt, Float, Tuple, List, Cell, PyFunction, Builtin, Method, Module,
     Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, KindCount
 };
-enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2 };
+// HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
+// class's attribute storage beside the built-in's data (DictInstance)
+enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3 };
 
 struct Object {
     ClassObject* cls = nullptr;
@@ -790,6 +792,25 @@ struct Instance : Object {
 };
 inline Instance* new_instance(ClassObject* c) { return new Instance(c); }
 
+// An instance of a program's subclass of dict (decision 2026-11-03: a subclass of a built-in type is
+// that type's object): a dict, its entries its own, with the subclass's attribute storage beside them,
+// as Instance has it (refmodel RefObject with a payload). The attribute machinery below takes either.
+struct DictInstance : DictObject {
+    std::vector<Obj> fields;
+    DictObject* dict = nullptr;
+    std::vector<const Str*> order;
+    std::int64_t tag = -1;
+    explicit DictInstance(ClassObject* c) {
+        cls = c;
+        flags |= HAS_ATTRIBUTES;
+        fields.assign(c->field_index.size(), Obj{});
+    }
+    bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
+    Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    bool has_field(const Str* n) const { return cls->field_index.contains(n); }
+};
+inline bool has_attributes(const Object* o) { return (o->flags & HAS_ATTRIBUTES) != 0; }
+
 inline bool is_instance(Obj v) { return v.is_object() && v.object()->kind == Kind::Instance; }
 // Python's rule: an object whose type has __get__ is a descriptor (a function, a property, an
 // instance of a class with __get__); with __set__ or __delete__ too, a data descriptor.
@@ -903,7 +924,8 @@ struct LookupPlan {
 // ---- the attribute machinery (refmodel Runtime) ----
 namespace detail {
 // (present, value) for the __dict__-backed storage of a name (never slots)
-inline std::pair<bool, Obj> instance_storage(Instance* obj, const Str* name) {
+template <class T>
+inline std::pair<bool, Obj> instance_storage(T* obj, const Str* name) {
     if (obj->exposed()) {
         Obj v = dict_find(obj->dict, Obj::of(name));
         return v.is_unset() ? std::pair{false, Obj{}} : std::pair{true, v};
@@ -916,7 +938,8 @@ inline std::pair<bool, Obj> instance_storage(Instance* obj, const Str* name) {
         if (Obj v = dict_find(obj->dict, Obj::of(name)); !v.is_unset()) return {true, v};
     return {false, Obj{}};
 }
-inline bool is_promoted(Instance* obj, const Str* name) {
+template <class T>
+inline bool is_promoted(T* obj, const Str* name) {
     const auto& p = obj->cls->promoted_fields;
     return std::find(p.begin(), p.end(), name) != p.end();
 }
@@ -927,7 +950,8 @@ inline Obj hook_of(ClassObject* c) {
 }  // namespace detail
 
 // Python's lookup order; the plan, and the entry to cache (if any)
-inline std::pair<LookupPlan, std::optional<CacheEntry>> plan_generic(Instance* obj, const Str* name) {
+template <class T>
+inline std::pair<LookupPlan, std::optional<CacheEntry>> plan_generic(T* obj, const Str* name) {
     ClassObject* cls = obj->cls;
     std::uint64_t version = cls->version;
     auto hit = cls->lookup(name);
@@ -963,7 +987,8 @@ inline std::pair<LookupPlan, std::optional<CacheEntry>> plan_generic(Instance* o
 }
 
 // The plan the cache alone selects; nullopt when no valid entry applies. Runs no user code.
-inline std::optional<LookupPlan> plan_cached(Instance* obj, const Str* name, const Site& site) {
+template <class T>
+inline std::optional<LookupPlan> plan_cached(T* obj, const Str* name, const Site& site) {
     ClassObject* cls = obj->cls;
     const CacheEntry* e = site.find(cls->version, name);
     if (e == nullptr) return std::nullopt;
@@ -1007,7 +1032,8 @@ inline std::optional<LookupPlan> plan_cached(Instance* obj, const Str* name, con
 // __getattr__ hook from the lookup until the operation ends; a descriptor, and its __get__, while
 // __get__ runs (released as it returns or raises, before the hook is tried). Cache entries stay
 // borrowed: these are the operation's own references (review 2026-11-02, A8-1).
-inline Ref call_attribute(Obj hook, Instance* obj, const Str* name) {
+template <class T>
+inline Ref call_attribute(Obj hook, T* obj, const Str* name) {
     if (call_attribute_hook() != nullptr) return Ref::steal(call_attribute_hook()(hook, Obj::of(obj), Obj::of(name)));
     if (hook.is_object() && hook.object()->kind == Kind::Instance) {
         ClassObject* hc = hook.object()->cls;
@@ -1021,7 +1047,8 @@ inline Ref call_attribute(Obj hook, Instance* obj, const Str* name) {
     return Ref::steal(call(hook, {Obj::of(obj), Obj::of(name)}));
 }
 
-inline Ref execute(const LookupPlan& plan, Instance* obj, const Str* name) {
+template <class T>
+inline Ref execute(const LookupPlan& plan, T* obj, const Str* name) {
     Ref hook = Ref::share(plan.hook);
     try {
         switch (plan.kind) {
@@ -1055,7 +1082,8 @@ inline Ref execute(const LookupPlan& plan, Instance* obj, const Str* name) {
     return call_attribute(hook.get(), obj, name);
 }
 
-inline Ref getattr(Instance* obj, const Str* name, Site* site = nullptr) {
+template <class T>
+inline Ref getattr(T* obj, const Str* name, Site* site = nullptr) {
     if (site != nullptr) {
         if (auto cached = plan_cached(obj, name, *site)) {
             ++site->hits;
@@ -1076,7 +1104,8 @@ inline Ref getattr(Instance* obj, const Str* name, Site* site = nullptr) {
 }
 
 // Every store keeps the new value before it releases the old one.
-inline void setattr(Instance* obj, const Str* name, Obj value) {
+template <class T>
+inline void setattr(T* obj, const Str* name, Obj value) {
     ClassObject* cls = obj->cls;
     if (auto hit = cls->lookup(name)) {
         Obj found = hit->first;
@@ -1124,7 +1153,8 @@ inline void setattr(Instance* obj, const Str* name, Obj value) {
     dict_store(obj->dict, Obj::of(name), value);
 }
 
-inline void delattr(Instance* obj, const Str* name) {
+template <class T>
+inline void delattr(T* obj, const Str* name) {
     ClassObject* cls = obj->cls;
     if (auto hit = cls->lookup(name)) {
         Obj found = hit->first;
@@ -1171,7 +1201,8 @@ inline void delattr(Instance* obj, const Str* name) {
 // vars(obj) / obj.__dict__: the promoted fields migrate once; stable identity afterwards. The dict
 // is an object of its own from here on (one count held by the object), split: it shares the
 // class's keys. Returns a new reference.
-inline Ref expose_dict(Instance* obj) {
+template <class T>
+inline Ref expose_dict(T* obj) {
     ClassObject* cls = obj->cls;
     if (!cls->has_dict) throw AttributeError("'" + cls->name + "' object has no attribute '__dict__'");
     if (obj->exposed()) return Ref::share(Obj::of(obj->dict));
@@ -1192,7 +1223,8 @@ inline Ref expose_dict(Instance* obj) {
 
 // obj.__dict__ = d: exposes first, then installs d (which may be shared); the old dict is released
 // after the new one is held.
-inline void set_dict(Instance* obj, DictObject* d) {
+template <class T>
+inline void set_dict(T* obj, DictObject* d) {
     if (!obj->cls->has_dict) throw AttributeError("'" + obj->cls->name + "' object has no attribute '__dict__'");
     expose_dict(obj);
     DictObject* old = obj->dict;
@@ -1219,7 +1251,10 @@ inline void bury(Object* o) {
     else {
         switch (o->kind) {
             case Kind::Instance: delete static_cast<Instance*>(o); break;
-            case Kind::Dict: delete static_cast<DictObject*>(o); break;
+            case Kind::Dict:
+                if (has_attributes(o)) delete static_cast<DictInstance*>(o);
+                else delete static_cast<DictObject*>(o);
+                break;
             case Kind::Function: delete static_cast<Function*>(o); break;
             case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
             case Kind::Marker: delete static_cast<Marker*>(o); break;
@@ -1244,7 +1279,8 @@ inline void empty_graveyard() {
 namespace detail {
 // A dying instance's __dict__-backed values in the class's key order, or the dict's own release
 // once it is an object of its own (RefObject._release_dict).
-inline void release_instance_dict(Instance* obj) {
+template <class T>
+inline void release_instance_dict(T* obj) {
     if (obj->exposed()) {
         DictObject* d = std::exchange(obj->dict, nullptr);
         if (d->embedded == obj) d->embedded = nullptr;   // its values are detached from the dead object
@@ -1275,39 +1311,48 @@ inline void release_instance_dict(Instance* obj) {
 }
 }  // namespace detail
 
+namespace detail {
+// subtype_dealloc's part for an object with a class's attribute storage: the finaliser, the slots
+// of the most-derived class first, then the built-in base's clear function (its fields, the dict
+// at its place); a built-in kind's own data is the caller's to release after (RefObject.dealloc)
+template <class T>
+inline void release_attributes(T* obj) {
+    if (auto fin = obj->cls->lookup(intern("__del__"))) {
+        obj->refs = 1;                          // held by the finaliser's call, so it cannot die again
+        Ref fn = Ref::share(fin->first);
+        if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));
+        else decref(call(fn.get(), {Obj::of(obj)}));
+        fn = Ref{};
+        if (obj->refs != 1) throw ModelError("resurrection by a finaliser is not modelled yet");
+        obj->refs = 0;
+    }
+    obj->flags |= DEAD;
+    if (heap().on_death) heap().on_death(obj);
+    if (heap().checking) detail::check_not_named(obj);
+    for (ClassObject* c : obj->cls->mro) {
+        // each class's slots sorted by name, as CPython sorts them when it makes the class
+        auto names = c->own_slot_names();
+        std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
+        for (const Str* s : names) decref(std::exchange(obj->field(s), Obj{}));
+    }
+    // the built-in base's clear function: its fields, the dict at its place (RefObject.dealloc)
+    if (obj->cls->native.empty()) detail::release_instance_dict(obj);
+    for (const Str* n : obj->cls->native) {
+        if (n == intern("__dict__")) detail::release_instance_dict(obj);
+        else decref(std::exchange(obj->field(n), Obj{}));
+    }
+}
+}  // namespace detail
+
 inline void dealloc(Object* o) {
     switch (o->kind) {
-        case Kind::Instance: {
-            auto* obj = static_cast<Instance*>(o);
-            if (auto fin = obj->cls->lookup(intern("__del__"))) {
-                obj->refs = 1;                          // held by the finaliser's call, so it cannot die again
-                Ref fn = Ref::share(fin->first);
-                if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));
-                else decref(call(fn.get(), {Obj::of(obj)}));
-                fn = Ref{};
-                if (obj->refs != 1) throw ModelError("resurrection by a finaliser is not modelled yet");
-                obj->refs = 0;
-            }
-            obj->flags |= DEAD;
-            if (heap().on_death) heap().on_death(obj);
-            if (heap().checking) detail::check_not_named(obj);
-            for (ClassObject* c : obj->cls->mro) {
-                // each class's slots sorted by name, as CPython sorts them when it makes the class
-                auto names = c->own_slot_names();
-                std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
-                for (const Str* s : names) decref(std::exchange(obj->field(s), Obj{}));
-            }
-            // the built-in base's clear function: its fields, the dict at its place (RefObject.dealloc)
-            if (obj->cls->native.empty()) detail::release_instance_dict(obj);
-            for (const Str* n : obj->cls->native) {
-                if (n == intern("__dict__")) detail::release_instance_dict(obj);
-                else decref(std::exchange(obj->field(n), Obj{}));
-            }
+        case Kind::Instance:
+            detail::release_attributes(static_cast<Instance*>(o));
             detail::bury(o);
             return;
-        }
         case Kind::Dict: {
             auto* d = static_cast<DictObject*>(o);
+            if (has_attributes(o)) detail::release_attributes(static_cast<DictInstance*>(o));   // then dict_dealloc
             d->flags |= DEAD;
             auto split = std::move(d->split);
             detail::release_entries(dict_take_all(d), split.get());

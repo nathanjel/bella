@@ -1,0 +1,12 @@
+{
+ "case": "C-3-34_dict_subclasses.py",
+ "clause": "C-3-34",
+ "spec": "section 3 (the data model), section 6 (dict), section 9 (lifetimes)",
+ "status": "P1",
+ "source": "decision 2026-11-03 (a subclass of a built-in type is that type's object); enum's _EnumDict",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "made: {'a': 1} Loud True True\nsetitem b\ngetitem a\ngetitem zz\nmissing zz\ncontains a\nlen\n1 0 1 None True 2\nkeys: ['a'] values: [1]\nupdate: {'a': 1} {'a': 1} {'a': 1}\ncopy: dict {'a': 1} or: dict {'a': 1, 'c': 3}\nkeys\ngetitem p\ngetitem q\nupdate: {'p': 1, 'q': 2}\nkeys\ngetitem p\ngetitem q\nmerge: {'p': 1, 'q': 2}\nkeys\ngetitem p\ngetitem q\ncopy: {'p': 1, 'q': 2}\n{1: 2, 'x': 3} Plain {'a': 0, 'b': 0} Plain True\nattribute: 5 {'attr': 5} 2\nclass body stores: ['a', 'f'] mappingproxy\ndies slot\ndies attribute\ndies value\ndies key\nend\n",
+ "stderr": "",
+ "exit_code": 0
+}

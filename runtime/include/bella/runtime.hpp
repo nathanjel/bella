@@ -262,6 +262,25 @@ bool is_exception_instance(Obj v);               // PyExceptionInstance_Check
 // a class whose metaclass is a class of the program's (a heap subclass of type): its special
 // methods come from that metaclass, as an instance's come from its class
 inline bool has_python_type(Obj v) { return v.is_object() && v.object()->kind == Kind::Class && v.object()->cls->heap_type; }
+// an object of a built-in kind whose class is a subclass of the program's (decision 2026-11-03: it
+// is the built-in's object, with the class's attribute storage: DictInstance)
+inline bool is_subclass_instance(Obj v) { return v.is_object() && has_attributes(v.object()); }
+// such an object's class overrides `name`: what its MRO finds is not the built-in's own (CPython
+// then gives the subclass a slot that calls the override: slot_mp_subscript and the others)
+bool overrides_builtin(Obj v, const char* name);
+// calls f with the attribute storage of an Instance or a DictInstance; false for other objects
+template <class F>
+bool with_attribute_storage(Obj v, F&& f) {
+    if (is_kind(v, Kind::Instance)) {
+        f(static_cast<Instance*>(v.object()));
+        return true;
+    }
+    if (is_kind(v, Kind::Dict) && has_attributes(v.object())) {
+        f(static_cast<DictInstance*>(v.object()));
+        return true;
+    }
+    return false;
+}
 // BaseException's C fields (args, __traceback__, __cause__, __context__, __suppress_context__;
 // AttributeError's name and obj, NameError's name): the object's own storage, never its __dict__
 // (refmodel RefClass native). Unset reads as absent: None to the descriptors, () for args.
@@ -369,6 +388,8 @@ void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value);   // a key
 bool dict_del(Dict* d, Obj key);
 Ref dict_new();
 Ref dict_copy(Dict* d);                                      // dict.copy() (copy_lock_held)
+Ref dict_subscript(Obj self, Obj key);                       // a dict's own d[k]: a subclass's __missing__, else KeyError
+Ref dict_iter(Obj self);                                     // a dict's own iterator (dict.__iter__)
 void dict_merge_dict(Dict* target, Dict* other);             // dict_dict_merge, override: update and {**d}
 
 // ---- names (L2 NameRef kinds) ----
