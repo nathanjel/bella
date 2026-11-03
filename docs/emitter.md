@@ -1,12 +1,11 @@
 # The C++ emitter and the runtime core (step 3 of the C++ leg)
 
-Status: step 3a.3, 2026-11-03 (3a.2 reviewed the same day: astra-low-09, gemini-4-argon-high-08,
-review log RL-188 to RL-219). `pipeline/backend/cpp.py` turns an L2 module (`docs/l2.md`) into
-one C++26 translation unit against `runtime/include/bella/runtime.hpp`; `pipeline/build.py`
-compiles it and links it with the runtime library. The slice examples (`make slice`),
-`pipeline/tests/test_compiled.py` and C-3-01..03 and 05..11 pass compiled; the corpus under the
-compiled runner is `make compiled-corpus`, against `conformance/evalc-baseline.txt` (18 of 76:
-most of the rest import modules, step 3b). The toy emitter from L1 is gone.
+Status: step 3b under way, 2026-11-03. `pipeline/backend/cpp.py` turns an L2 module (`docs/l2.md`)
+into one C++26 translation unit against `runtime/include/bella/runtime.hpp`; `pipeline/build.py`
+compiles the program's modules and links them with the runtime library. The slice examples
+(`make slice`), `pipeline/tests/test_compiled.py` and the cases of
+`conformance/evalc-baseline.txt` pass compiled (`make compiled-corpus`, 28 of 84: most of the rest
+import the standard library, which step 3b compiles next). The toy emitter from L1 is gone.
 
 ## 1. Where things live (decided 2026-11-02, `docs/DECISIONS.md`)
 
@@ -229,17 +228,82 @@ not yet anywhere: subclasses of `str`, `tuple`, `list` and the other C++ types (
 
 ## 4. Building and running
 
-`python3 pipeline/build.py --run prog.py args...` lowers the program, emits it into
-`build/compiled/<name>-<hash>/`, compiles it at `-O1` and links it with `libbella.a`, which is the
-runtime sources and the compiled prelude at `-O2`, built once per content hash (sources, prelude,
-the compiler's own Python, the flags) under a lock, so parallel builds share it. The program's
-`main` is `run_main`: the builtins module and `sys`, the prelude modules (each `__all__` goes into
-builtins), then `__main__`. At the end `__main__`'s globals are released in insertion order (as
-CPython 3.15.2 does, measured), stdout is flushed, and an uncaught exception prints CPython's
+`python3 pipeline/build.py --run prog.py args...` lowers the program and the modules it imports
+(section 4a), compiles each at `-O1` under `build/compiled/units/` and links them with `libbella.a`,
+which is the runtime sources and the compiled prelude at `-O2`, built once per content hash
+(sources, prelude, the compiler's own Python, the flags) under a lock, so parallel builds share it.
+The program's `main` is `run_main`: the builtins module and `sys`, the prelude modules (each runs
+as the module it names; an `__all__` goes into builtins), the built-in modules' specs, then
+`__main__`. At the end the modules' globals are released (section 4a), stdout is flushed, and an uncaught exception prints CPython's
 report, the chain of causes and contexts first, each traceback with file and line (spec D-06),
 the type by its qualified name and a `str()` that raises as `<exception str() failed>`
 (RL-231, RL-250), and exits 1; a facility Bella lacks yet stops with
 `bella: not implemented: ...` and exit 70, as the evaluators refuse.
+
+## 4a. Imports (step 3b; case C-8-10, and C-8-01 and C-8-04 compiled)
+
+A program is a closed world (spec section 8). `pipeline/closed_world.py` finds the program's own
+modules from its import statements at build time, as CPython's import system would find them for
+`python program.py`: a built-in or frozen module of the pinned interpreter first, then the
+program's directory (`sys.path[0]`), a package before a module, a submodule in its parent's
+directory. Each module is emitted into a namespace of its own (`bella::mod_cycpkg_0a`) and compiled
+once per content hash under `build/compiled/units/`; the main unit, generated last, holds `main()`
+and the registry (`ModuleEntry`: name, body, file, whether a package) handed to `run_main`. A kept
+example's C++ is its module's unit, without the main unit's absolute paths.
+
+The import system keeps CPython's split:
+* `runtime/src/imports.cpp` is the C half: IMPORT_NAME (`_PyEval_LazyImportName`,
+  `_PyEval_ImportName`), `builtins.__import__` (`PyImport_ImportModuleLevelObject`, `resolve_name`),
+  IMPORT_FROM with each of its messages, `import *`, the module type (`__getattr__`, the messages of
+  a partially initialised or shadowing module, `__repr__`, `__dir__`, `__dict__`, `ModuleType(...)`).
+* `runtime/prelude/bootstrap.py` is `importlib._bootstrap`: CPython's own text for `_find_and_load`,
+  `_load_unlocked`, `module_from_spec`, `_init_module_attrs`, `ModuleSpec`, `_handle_fromlist` and
+  `_module_repr`, unchanged except where a line says `bella:`. It runs as `_frozen_importlib`, so its
+  classes say so. The closed world's registry stands for `sys.meta_path`'s finders; a loader is a
+  `SourceFileLoader` (of `_frozen_importlib_external`) whose `exec_module` runs the compiled body in
+  the module's namespace; the methods that read files are refused. With one thread a module lock is
+  always this thread's own, so taking it waits for nothing. It has no frames, as importlib's are
+  removed from tracebacks.
+
+What follows from that, each as CPython: a module's namespace starts with `module_init_dict`'s five
+names, then `__path__`, `__file__`, `__builtins__` (the dict; `__main__`'s is the module); a module
+enters `sys.modules` when its body starts, leaves it if the body fails, and moves to the end when it
+finishes; a module run again after a failure is a new module object, whose functions read their
+own run's namespace (`fn->module`: the emitter keeps no module pointer per unit, and makes a unit's
+constants once); `globals()` is the innermost shown frame's module's (`FrameGuard` keeps it); an
+AttributeError leaving `getattr` without `name` and `obj` gets them
+(`set_attribute_error_context`). `ImportError` has `msg`, `name`, `path`, `name_from`, its keyword
+arguments, `str` and `repr`.
+
+At exit, on every way out but a refusal (a normal end, `sys.exit`, an uncaught exception after its
+report), each module's globals are released in insertion order, the modules in `sys.modules` order
+and then those it no longer holds, oldest first: `finalize_remove_modules` drops `sys.modules`'
+entries in that order and a module whose last count goes releases its namespace (measured on
+3.15.2; modules are immortal here, D-19, so only the namespaces are cleared, and D-07 leaves the
+order open where a module is held by another or a traceback holds `__main__`). The status is
+`_Py_HandleSystemExitAndKeyboardInterrupt`'s: a SystemExit's code, truncated to a C int.
+
+Decided here, each stated where it matters:
+* `sys.path` is `[the program's directory]` (D-18: it reflects the build); the standard library's
+  entries come with the standard library.
+* `sys.modules` starts with `sys` and `builtins`, then `__main__`; CPython's start-up modules come
+  with the standard library.
+* `sys.implementation.cache_tag` is taken as 3.15's (`cpython-315`) for `__spec__.cached`: D-16
+  changes only the implementation's name, so a program computing a `.pyc` path gets CPython's.
+* An ImportWarning has no effect while no `warnings` module is loaded: the default filters ignore
+  it and nothing else can change them (`PYTHONWARNINGS` and `-W` are not read, D-18). Once one is
+  loaded the warning is refused until warnings exist. A DeprecationWarning (`__package__ !=
+  __spec__.parent`) is refused: the default filters show it in `__main__`.
+* Importing a standard-library module (`sys.stdlib_module_names`, in the names table) that is not
+  compiled yet is refused by name; a name found nowhere is ModuleNotFoundError when the import runs
+  (C-8-04's `if False:` import never resolves). A namespace package is refused when imported.
+
+`runtime/src/str.cpp` holds the str methods the import system needs first and the standard library
+next (`find`, `split`, `partition`, `strip`, `replace` and their relatives), as `unicodeobject.c` and
+`stringlib` do them: code-point indices, `ADJUST_INDICES`, `Py_UNICODE_ISSPACE`, each calling
+convention's messages (an unexpected keyword is refused, since CPython's message may suggest one),
+and the string itself where CPython returns it (`test_str_methods_are_cpythons`: each method on
+nine strings and nine substrings with eight pairs of bounds, and each argument error).
 
 ## 5. Gaps, in the order the steps close them
 
@@ -248,7 +312,10 @@ the type by its qualified name and a `str()` that raises as `<exception str() fa
   CPython would show one).
 * The dict views' set operations and comparisons, `reversed` and `mapping`; `str %`
   formatting; `types.UnionType` (`int | str`).
-* 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
+* 3b, the rest of imports: lazy imports (PEP 810: C-8-05 to C-8-07, refused today by name), then the
+  standard library, module by module in `cli_easy_slugs`'s order (core modules in C++: `_abc`
+  first). `dir()` of names that are not all str waits for `list.sort`.
+* 3b: generators (state machines, design section 10.3): C-3-04.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3; with it,
   a caught exception keeps its frame's locals (RL-222, D-12).
 * Lines: a frame's line is its statement's first line; CPython gives the failing instruction's,
@@ -256,8 +323,8 @@ the type by its qualified name and a `str()` that raises as `<exception str() fa
   the expression positions; an inlined comprehension's line then goes to its caller's entry.
 * The constructor of `float` (refused, RL-220), `max`, `min`, `divmod`;
   `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
-  (StopIteration's `value`, SystemExit's `code`, ImportError's) are refused by name, read,
-  stored or deleted (RL-255), until those classes are built as CPython's.
+  (StopIteration's `value`, SystemExit's `code`) are refused by name, read, stored or deleted
+  (RL-255), until those classes are built as CPython's.
 * `__suppress_context__` and super's `__thisclass__`, `__self__`, `__self_class__` present as
   `getset_descriptor`s, CPython's as `member_descriptor`s, whose type the runtime has, without
   methods (RL-251, RL-254).

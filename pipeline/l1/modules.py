@@ -60,18 +60,20 @@ def lower_file(path: Path, library: bool) -> L.Module:
     return module
 
 
-class Eval1Loader(importlib.abc.Loader):
-    def __init__(self, system: ModuleSystem, path: Path) -> None:
-        self.system, self.path = system, path
+def eval1_loader(system: ModuleSystem, fullname: str, path: Path) -> importlib.machinery.SourceFileLoader:
+    """CPython's own loader for a source file, as the path finder makes it (so the module's
+    __loader__ and __spec__.loader are what a program sees under CPython: its type, name and
+    path), with exec_module replaced on the instance: it runs the module's L1 body under eval1
+    with the module's own __dict__ as globals, as CPython's loader execs its code."""
+    loader = importlib.machinery.SourceFileLoader(fullname, str(path))
 
-    def create_module(self, spec: importlib.machinery.ModuleSpec) -> types.ModuleType | None:
-        return None                                   # CPython's default module object
-
-    def exec_module(self, module: types.ModuleType) -> None:
-        lowered = self.system.lowered(self.path)
+    def exec_module(module: types.ModuleType) -> None:
+        lowered = system.lowered(path)
         # exec() of a module's code gives its globals __builtins__ (the builtins dict)
         module.__dict__.setdefault("__builtins__", vars(__import__("builtins")))
-        self.system.interp.run_in(lowered, module.__dict__)
+        system.interp.run_in(lowered, module.__dict__)
+    loader.exec_module = exec_module  # type: ignore[method-assign]  # this instance's only
+    return loader
 
 
 class ModuleSystem(importlib.abc.MetaPathFinder):
@@ -137,7 +139,7 @@ class ModuleSystem(importlib.abc.MetaPathFinder):
             source = self.closure[fullname]
             is_package = source.name == "__init__.py"
             spec = importlib.util.spec_from_file_location(
-                fullname, source, loader=Eval1Loader(self, source),  # type: ignore[arg-type]  # an importlib Loader
+                fullname, source, loader=eval1_loader(self, fullname, source),  # type: ignore[arg-type]  # CPython's own loader
                 submodule_search_locations=[str(source.parent)] if is_package else None)
             return spec
         found = importlib.machinery.PathFinder.find_spec(fullname, path)
@@ -148,7 +150,7 @@ class ModuleSystem(importlib.abc.MetaPathFinder):
             return None                               # the host's (or, in closure mode, not in the lock)
         if any(origin.is_relative_to(ROOT / own) for own in TOOLING):
             return None                               # Bella's own code, which runs eval1, stays the host's
-        found.loader = Eval1Loader(self, origin)
+        found.loader = eval1_loader(self, fullname, origin)
         return found
 
     # ---- activation -----------------------------------------------------------------------

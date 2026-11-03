@@ -9,6 +9,7 @@
 #include <string_view>
 #include <unistd.h>
 #include <unordered_map>
+#include <cstdint>
 #include <unordered_set>
 
 namespace bella {
@@ -25,6 +26,10 @@ std::unordered_map<ClassObject*, NativeFn>& constructors() {
     return table;
 }
 
+}  // namespace
+
+bool is_attribute_error(const PyError& e) { return isinstance(e.exc.get(), exception_class("AttributeError")); }
+
 Ref positional_only(Args a, const char* name, std::size_t lo, std::size_t hi) {
     if (a.nkw != 0) raise_new("TypeError", std::string(name) + "() takes no keyword arguments");
     if (a.npos < lo || a.npos > hi) {
@@ -35,6 +40,7 @@ Ref positional_only(Args a, const char* name, std::size_t lo, std::size_t hi) {
     return Ref{};
 }
 
+namespace {
 // CPython's argument checks by calling convention; each message is CPython's for that kind.
 void no_keywords(Args a, const std::string& qualname) {
     if (a.nkw != 0) raise_new("TypeError", qualname + "() takes no keyword arguments");
@@ -464,7 +470,6 @@ Ref b_format(Obj, Args a) {
     if (s != nullptr && s->length != 0) throw NotImplemented("format() with a format specification");
     return str_of(a.pos(0));
 }
-bool is_attribute_error(const PyError& e);
 // isinstance and issubclass (Objects/abstract.c): an exact type first, type's own check for a
 // class whose metaclass is type, a tuple's items in turn, else the metaclass's __instancecheck__
 // or __subclasscheck__, called bound to the class
@@ -546,7 +551,6 @@ Ref attr_name(Obj v, const char* who) {
     if (s == nullptr) raise_new("TypeError", std::string(who) + "(): attribute name must be string, not '" + type_of(v)->name + "'");
     return Ref::share(Obj::of(intern(s->text)));
 }
-bool is_attribute_error(const PyError& e) { return isinstance(e.exc.get(), exception_class("AttributeError")); }
 Ref b_getattr(Obj, Args a) {
     if (a.nkw != 0) raise_new("TypeError", "getattr() takes no keyword arguments");
     if (a.npos < 2 || a.npos > 3) raise_new("TypeError", "getattr expected 2 or 3 arguments, got " + std::to_string(a.npos));
@@ -591,6 +595,12 @@ Ref b_id(Obj, Args a) {
     Obj v = a.pos(0);
     return Ref::steal(Obj::small(static_cast<std::int64_t>(v.is_small() ? (static_cast<std::uint64_t>(v.small_value()) << 1) | 1
                                                                         : reinterpret_cast<std::uintptr_t>(v.object()) >> 1)));
+}
+Ref b_globals(Obj, Args a) {                     // globals(): the calling frame's module's namespace
+    noargs(a, "globals");                        // METH_NOARGS
+    Module* m = detail::current_module();
+    if (m == nullptr) throw NotImplemented("globals() outside any frame");
+    return Ref::share(Obj::of(m->dict));
 }
 Ref b_vars(Obj, Args a) {
     clinic(a, "vars", "vars", 0, 1);
@@ -1031,6 +1041,8 @@ void method(ClassObject* c, const char* name, NativeFn fn) {
 Module* make_builtins() {
     auto* m = new Module("builtins");
     Dict* d = m->dict;
+    put(d, "__name__", m->name.get());           // PyModule_New's names, as for sys
+    for (const char* n : {"__package__", "__loader__", "__spec__"}) put(d, n, None());
     Types& t = types();
     for (auto [name, cls, ctor] : std::initializer_list<std::tuple<const char*, ClassObject*, NativeFn>>{
              {"str", t.str, c_str}, {"type", t.type, nullptr}, {"bool", t.bool_, c_bool}, {"range", t.range, c_range},
@@ -1068,11 +1080,21 @@ Module* make_builtins() {
     put_builtin(d, "issubclass", b_issubclass);
     put_builtin(d, "id", b_id);
     put_builtin(d, "vars", b_vars);
+    put_builtin(d, "__import__", b_import);
+    put_builtin(d, "dir", b_dir);
+    put_builtin(d, "globals", b_globals);
     put(d, "slice", Obj::of(t.slice));
     put(d, "super", Obj::of(t.super_));
     put(d, "set", Obj::of(t.set));
     put(d, "frozenset", Obj::of(t.frozenset));
     method(t.str, "join", str_join);
+    for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
+             {"find", str_find_m}, {"rfind", str_rfind_m}, {"index", str_index_m}, {"rindex", str_rindex_m},
+             {"count", str_count_m}, {"startswith", str_startswith_m}, {"endswith", str_endswith_m},
+             {"partition", str_partition_m}, {"rpartition", str_rpartition_m}, {"split", str_split_m},
+             {"rsplit", str_rsplit_m}, {"strip", str_strip_m}, {"lstrip", str_lstrip_m}, {"rstrip", str_rstrip_m},
+             {"replace", str_replace_m}})
+        method(t.str, n, fn);
     for (ClassObject* c : {t.list, t.tuple, t.str, t.dict}) {
         method(c, "__getitem__", getitem_m);
         method(c, "__contains__", contains_m);
@@ -1122,13 +1144,34 @@ Module* make_builtins() {
     }
     method(t.textio, "write", textio_write);
     method(t.textio, "flush", textio_flush);
-    put(d, "__name__", m->name.get());
     return m;
+}
+
+// sys.exit(status=None, /): PyErr_SetObject(SystemExit, status): None makes it with no argument,
+// a tuple with its items, anything else with itself
+Ref sys_exit(Obj, Args a) {
+    clinic(a, "exit", "sys.exit", 0, 1);
+    Obj status = a.npos == 1 ? a.pos(0) : None();
+    Obj cls = Obj::of(exception_class("SystemExit"));
+    Ref exc;
+    if (status == None()) {
+        exc = invoke(cls, std::initializer_list<Obj>{});
+    } else if (is_kind(status, Kind::Tuple)) {
+        auto& items = static_cast<Tuple*>(status.object())->items;
+        exc = invoke(cls, Args{items.data(), items.size()});
+    } else {
+        exc = invoke(cls, {status});
+    }
+    raise(exc.get());
 }
 
 Module* make_sys(int argc, char** argv) {
     auto* m = new Module("sys");
     Dict* d = m->dict;
+    // PyModule_New's names (sys.__doc__ is CPython's docstring, absent here until it is copied);
+    // importlib._bootstrap._setup gives the module its spec and loader
+    put(d, "__name__", m->name.get());
+    for (const char* n : {"__package__", "__loader__", "__spec__"}) put(d, n, None());
     auto* out = new Native(types().textio);
     out->tag = 1;
     Ref o = own(out);
@@ -1145,6 +1188,7 @@ Module* make_sys(int argc, char** argv) {
         list_append(args.get(), s.get());
     }
     put(d, "argv", args.get());
+    put_builtin(d, "exit", sys_exit);
     // no maxsize: CPython's is 2**63 - 1, beyond the immediates, so it is refused until big ints
     return m;
 }
@@ -1165,7 +1209,6 @@ const CPythonName* cpython_find(std::string_view scope, std::string_view name) {
                                [](const CPythonName& e, std::string_view k) { return e.key < k; });
     return it != std::end(CPYTHON_NAMES) && it->key == key ? &*it : nullptr;
 }
-bool cpython_has(std::string_view scope, std::string_view name) { return cpython_find(scope, name) != nullptr; }
 std::unordered_set<const ClassObject*>& prelude_classes() {     // the prelude's builtins (property, ...)
     static std::unordered_set<const ClassObject*> classes;
     return classes;
@@ -1177,6 +1220,7 @@ void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
 }
 }  // namespace
 
+bool cpython_has(std::string_view scope, std::string_view name) { return cpython_find(scope, name) != nullptr; }
 void refuse_absent_attribute(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Module)) {
         auto* m = static_cast<Module*>(obj.object());
@@ -1216,9 +1260,11 @@ Module* builtins_module() {
     static Module* m = make_builtins();
     return m;
 }
+// PyModule_New: module_init_dict's names first, as every module's namespace starts
 Module* new_module(const char* name) {
     auto* m = new Module(name);
     put(m->dict, "__name__", m->name.get());
+    for (const char* n : {"__doc__", "__package__", "__loader__", "__spec__"}) put(m->dict, n, None());
     return m;
 }
 
@@ -1334,22 +1380,12 @@ Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list
                  std::initializer_list<const Str*> kwnames, std::initializer_list<Obj> kwvalues) {
     std::string_view name(intrinsic);
     std::vector<Obj> a(args);
-    if (name == "import_name") {
-        const Str* mod = as_str(a.at(0));
-        auto it = native_modules().find(mod->text);
-        if (it == native_modules().end()) throw NotImplemented("importing '" + mod->text + "' (step 3b: compiled imports)");
-        return Ref::share(Obj::of(it->second));
+    if (name == "import_name") return import_name(a.at(0), a.at(1), a.at(2), a.at(3), m, ns);
+    if (name == "import_from") return import_from(a.at(0), intern(as_str(a.at(1))->text));
+    if (name == "import_star") {
+        import_star(a.at(0), ns);
+        return none_ref();
     }
-    if (name == "import_from") {
-        const Str* attr = as_str(a.at(1));
-        Obj v = dict_get(static_cast<Module*>(a.at(0).object())->dict, Obj::of(attr));
-        if (v.is_unset())
-            raise_new("ImportError", "cannot import name '" + attr->text + "' from '" +
-                                         as_str(static_cast<Module*>(a.at(0).object())->name.get())->text + "'");
-        return Ref::share(v);
-    }
-    (void)ns;
-    (void)m;
     Ref f = builtin(intrinsic);
     std::size_t npos = a.size();
     a.insert(a.end(), kwvalues.begin(), kwvalues.end());
@@ -1365,6 +1401,10 @@ void detail::enter_frame() {
     }
 }
 void detail::leave_frame() noexcept { --recursion_depth(); }
+Module*& detail::current_module() {
+    static Module* m = nullptr;
+    return m;
+}
 
 // ---- the program ----
 namespace {
@@ -1472,7 +1512,10 @@ void call_finalizer(Obj fn, Obj self) {
 }
 const bool finalizer_hook_installed = (finalizer_hook() = call_finalizer, true);
 
-// at exit, __main__'s globals are released in insertion order (measured on 3.15.2)
+// At exit CPython drops sys.modules' entries in order (finalize_remove_modules), and a module
+// whose last count goes releases its namespace in insertion order (measured on 3.15.2). Modules
+// are immortal here (D-19), so each namespace is cleared in that order: the modules in
+// sys.modules, then the others the program made, oldest first (D-07: the order is unspecified).
 void clear_module(Module* m) {
     for (std::size_t i = 0; i < m->dict->entries.size(); ++i) {
         Dict::Entry& e = m->dict->entries[i];
@@ -1482,26 +1525,92 @@ void clear_module(Module* m) {
         decref(old);
     }
 }
+void clear_modules(const std::unordered_set<Module*>& runtime_own) {
+    std::vector<Module*> order;
+    std::unordered_set<Module*> seen(runtime_own);
+    Dict* modules = sys_modules();
+    for (std::size_t i = 0; i < modules->entries.size(); ++i) {
+        Obj v = modules->entries[i].value;
+        if (modules->entries[i].key.is_unset() || !is_kind(v, Kind::Module)) continue;
+        auto* m = static_cast<Module*>(v.object());
+        if (seen.insert(m).second) order.push_back(m);
+    }
+    for (Module* m : all_modules())
+        if (seen.insert(m).second) order.push_back(m);
+    for (Module* m : order) clear_module(m);
+}
+
+// _Py_HandleSystemExitAndKeyboardInterrupt: the exit status a SystemExit asks for. Its code
+// (SystemExit_init: no argument None, one argument that argument, else the args tuple): None is
+// 0, an int is that int truncated to a C int (parse_exit_code), anything else is printed, and is 1.
+int exit_status(Obj exc) {
+    Ref args = getattr(exc, intern("args"));
+    Obj code = args.get();
+    if (is_kind(code, Kind::Tuple)) {
+        auto& items = static_cast<Tuple*>(code.object())->items;
+        if (items.empty()) code = None();
+        else if (items.size() == 1) code = items[0];
+    }
+    if (code == None()) return 0;
+    std::int64_t value;
+    if (is_kind(code, Kind::Bool)) return code == boolean(true) ? 1 : 0;
+    if (as_int(code, value)) return static_cast<int>(value);
+    out_stream().flush();
+    Ref text = str_of(code);
+    err_stream().write(as_str(text.get())->text + "\n");
+    return 1;
+}
+
+// CPython's main module (pymain_run_file, add_main_module): module_init_dict's names, then
+// __builtins__ (the module), __file__, and the loader replacing the None in __loader__
+Module* make_main(const char* main_file) {
+    Module* main = new_module("__main__");
+    put(main->dict, "__builtins__", Obj::of(builtins_module()));
+    Ref file = str_new(main_file);
+    put(main->dict, "__file__", file.get());
+    dict_set(sys_modules(), Obj::of(intern("__main__")), Obj::of(main));
+    return main;
+}
 }  // namespace
 
-int run_main(int argc, char** argv, ModuleBody main_body, std::initializer_list<ModuleBody> prelude) {
+int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, std::initializer_list<PreludeModule> prelude,
+             std::span<const ModuleEntry> modules) {
     int status = 0;
+    std::unordered_set<Module*> runtime_own;
     try {
         try {
             native_modules()["builtins"] = builtins_module();
-            native_modules()["sys"] = make_sys(argc, argv);
+            Module* sys = make_sys(argc, argv);
+            native_modules()["sys"] = sys;
             init_types();
-            for (ModuleBody body : prelude) {
-                // each prelude module runs as `builtins` (its classes say so in __module__); its
-                // __all__ goes into builtins, its __intrinsics__ to the runtime only, and its
-                // __type_methods__ onto the C++ types (the containers' repr). It is given the
-                // runtime's primitives it needs (_dict_next), which no program can name.
-                Module* pm = new_module("builtins");
+            init_imports(sys);
+            std::string dir(main_file);
+            dir.resize(dir.rfind('/') == std::string::npos ? 0 : dir.rfind('/'));
+            register_modules(modules, dir.c_str());
+            runtime_own = {builtins_module(), sys};
+            Module* bootstrap = nullptr;
+            for (const PreludeModule& pm_entry : prelude) {
+                // each prelude module runs as the module it names: `builtins` (its classes say so in
+                // __module__) or `_frozen_importlib` (bootstrap.py). Its __all__ goes into builtins,
+                // its __intrinsics__ to the runtime only, and its __type_methods__ onto the C++ types
+                // (the containers' repr). It is given the runtime's primitives it needs (_dict_next,
+                // and bootstrap.py's), which no program can name.
+                Module* pm = new_module(pm_entry.name);
+                runtime_own.insert(pm);
                 {
                     Ref walk = own(new Builtin("_dict_next", i_dict_next));
                     put(pm->dict, "_dict_next", walk.get());
                 }
-                body(pm);
+                if (std::string_view(pm_entry.name) == "_frozen_importlib") {
+                    bootstrap = pm;
+                    for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
+                             {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec}, {"_bella_refuse", i_bella_refuse},
+                             {"_bella_import_warning", i_bella_import_warning}}) {
+                        Ref b = own(new Builtin(n, fn));
+                        put(pm->dict, n, b.get());
+                    }
+                }
+                pm_entry.body(pm);
                 Obj all = dict_get(pm->dict, Obj::of(intern("__all__")));
                 if (!all.is_unset())
                     for (Obj n : static_cast<List*>(all.object())->items) {
@@ -1523,28 +1632,31 @@ int run_main(int argc, char** argv, ModuleBody main_body, std::initializer_list<
                                 static_cast<ClassObject*>(cls.object())->set_attr(intern(as_str(m.key)->text), m.value);
                     }
             }
-            Module* main = new_module("__main__");
-            put(main->dict, "__builtins__", Obj::of(builtins_module()));
+            // importlib._bootstrap._setup: the built-in modules' specs and loaders
+            {
+                Ref names = tuple_new({Obj::of(intern("builtins")), Obj::of(intern("sys"))});
+                Ref setup = builtin("_setup");
+                invoke(setup.get(), {names.get()});
+            }
+            Module* main = make_main(main_file);
+            if (bootstrap != nullptr) {
+                Obj loader_class = dict_get(bootstrap->dict, Obj::of(intern("SourceFileLoader")));
+                Ref file = str_new(main_file);
+                Ref loader = invoke(loader_class, {Obj::of(intern("__main__")), file.get()});
+                put(main->dict, "__loader__", loader.get());
+            }
             main_body(main);
-            clear_module(main);
         } catch (const PyError& e) {
-            if (type_of(e.exc.get()) == exception_class("SystemExit")) {
-                Ref args = getattr(e.exc.get(), intern("args"));
-                auto& items = static_cast<Tuple*>(args.get().object())->items;
-                Obj code = items.empty() ? None() : items[0];
-                if (code == None()) status = 0;
-                else if (code.is_small()) status = static_cast<int>(code.small_value());
-                else {
-                    Ref text = str_of(code);
-                    err_stream().write(as_str(text.get())->text + "\n");
-                    status = 1;
-                }
+            if (isinstance(e.exc.get(), exception_class("SystemExit"))) {
+                status = exit_status(e.exc.get());
             } else {
                 out_stream().flush();             // CPython flushes stdout before the report (RL-227)
                 print_traceback(e.exc.get());
                 status = 1;
             }
         }
+        // every way out of the program but a refusal: the modules' globals go (spec section 9)
+        if (sys_modules() != nullptr) clear_modules(runtime_own);
     } catch (const NotImplemented& e) {
         out_stream().flush();
         err_stream().write(std::string("bella: not implemented: ") + e.what() + "\n");

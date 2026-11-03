@@ -8,7 +8,7 @@ order, and `frame.line = n` marks the source lines. The rules (docs/emitter.md):
   handler), in their number order, so C++ unwinding destroys them newest first: L2's exception
   edge (docs/l2.md section 8, decision 1). `release t` is `t = Ref{}`; a store moves its value in
   and releases the old one after the new one is stored.
-* A frame is a record and a guard (decision 5): `FrameGuard frame(code_f, a, b)` after the locals.
+* A frame is a record and a guard (decision 5): `FrameGuard frame(code_f, M, a, b)` after the locals.
 * C++ has no `finally`: the block is written out on every way out of the `try`, as CPython's
   compiler does: the normal end, the exception edge (`catch (...)`, then rethrow), and before each
   `return`, `break` or `continue` that leaves it, innermost first, with a loop's held iterator
@@ -181,7 +181,7 @@ class Emitter:
         out = [f"// {self.filename}, compiled by Bella (L2 -> C++26). Generated: do not edit.",
                '#include "bella/runtime.hpp"', "", f"namespace {self.namespace} {{",
                "namespace rt = ::bella;", "using rt::Obj;", "using rt::Ref;", "",
-               "static rt::Module* M = nullptr;           // this module"]
+               "static bool constants_made = false;      // made once, by the module's first run"]
         for text, ident in sorted(self.names.items(), key=lambda kv: kv[1]):
             out.append(f"static const rt::Str* const {ident} = rt::intern({c_string(text)});")
         if self.consts:
@@ -195,6 +195,8 @@ class Emitter:
                 out.append(f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args);")
         out.append("")
         out.append("static void init_constants() {")
+        out.append("    if (constants_made) return;")
+        out.append("    constants_made = true;")
         out += self.const_init
         out.append("}")
         out.append("")
@@ -238,20 +240,23 @@ class Emitter:
         self.vars = {n: cpp_name(n) for n in frame_locals}
         if c.kind == "module":
             head = f"rt::Ref {fn.entry}(rt::Module* m) {{"
-            self.out += [f"// the module body of {self.filename}", head, "    M = m;", "    init_constants();",
+            # a module whose body failed runs again in a new module object (spec section 8): the
+            # module pointer is the body's argument, and each function's is the one it was made in
+            self.out += [f"// the module body of {self.filename}", head, "    rt::Module* M = m;", "    init_constants();",
                          "    Obj ns = Obj::of(m->dict);"]
         elif c.kind == "classbody":
             # __build_class__ calls the body with the class namespace (runtime/prelude/build_class.py)
             self.out += [f"// the body of class {c.qualname}  ({self.filename}:{c.first_line})",
                          f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args) {{",
-                         "    (void)fn;", "    Obj ns = args.pos(0);"]
+                         "    [[maybe_unused]] rt::Module* M = fn->module;", "    Obj ns = args.pos(0);"]
         else:
             self.out += [f"// {c.kind} {c.qualname}  ({self.filename}:{c.first_line})",
-                         f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args) {{"]
+                         f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args) {{",
+                         "    [[maybe_unused]] rt::Module* M = fn->module;"]
         for n in frame_locals:
             self.out.append(f"    Ref {self.vars[n]};")
         guard = ", ".join(["", *(self.vars[n] for n in frame_locals)])
-        self.out.append(f"    rt::FrameGuard frame({fn.cname}{guard});")
+        self.out.append(f"    rt::FrameGuard frame({fn.cname}, M{guard});")
         # the frontend's variables for what CPython keeps on its stack, and a list, set or dict
         # comprehension helper's iterator (PEP 709 inlines those; a generator's is a real frame's
         # argument): dropped newest first when an exception leaves, before the frame is recorded,

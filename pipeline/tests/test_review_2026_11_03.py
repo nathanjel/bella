@@ -69,12 +69,11 @@ FOUND: list[tuple[str, str]] = [
 REFUSED = {
     "a builtin": "sorted([2, 1])",
     "an attribute of sys": "import sys\nsys.maxsize",
-    "a str method": "'a'.startswith('a')",
+    "a str method": "'a'.upper()",
     "an object method": "class C:\n    pass\nC().__sizeof__()",
     "before __getattr__": "class H:\n    def __getattr__(self, n):\n        print('hook', n)\nH().__sizeof__()",
     "a method of type": "class C:\n    pass\nC.__subclasses__()",
     "an exception method": "ValueError().add_note",
-    "a script global": "__file__",
     "a slot wrapper's repr": "print(list.__len__)",
     "a slot wrapper's type": "type([].__len__)",
 }

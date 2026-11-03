@@ -400,6 +400,20 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            with `__index__`, a subclass's reflected method did not come first for subclasses of
            built-ins); `str`, `tuple`, `list` as the targets reach them. Then `types.GenericAlias`
            (`dict[str, int]` as a base or a value: `__class_getitem__`, `__mro_entries__`).
+         * Compiled imports (decided 2026-11-03, `docs/DECISIONS.md`; `docs/emitter.md` section 4a):
+           * The program's own modules, done 2026-11-03 (case C-8-10, C-8-01 and C-8-04 compiled,
+             `pipeline/tests/test_compiled_imports.py`): the build finds them
+             (`pipeline/closed_world.py`) and compiles each as a unit; the import system is
+             `runtime/src/imports.cpp` and `runtime/prelude/bootstrap.py` (`importlib._bootstrap`'s
+             text). With them `globals()`, `dir()`, `sys.modules`, `sys.path`, `sys.exit`,
+             `ImportError`'s fields, the module type, and the first `str` methods
+             (`runtime/src/str.cpp`). Found on the way: a class's slot descriptors stood in its dict
+             in the order declared, not sorted, in the model and the header (Hypothesis found it);
+             an AttributeError leaving `getattr` had no `name` and `obj` unless the runtime raised
+             it; `sys.exit` and an uncaught exception left the modules' globals unreleased.
+           * Next: lazy imports (PEP 810, C-8-05 to C-8-07, refused by name today), then the
+             standard library in `cli_easy_slugs`'s import order, the core modules in C++ (`_abc`
+             first; `_py_abc` needs weak references, 3c).
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

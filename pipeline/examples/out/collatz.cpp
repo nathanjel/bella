@@ -6,7 +6,7 @@ namespace rt = ::bella;
 using rt::Obj;
 using rt::Ref;
 
-static rt::Module* M = nullptr;           // this module
+static bool constants_made = false;      // made once, by the module's first run
 static const rt::Str* const S_arg = rt::intern("arg");
 static const rt::Str* const S_int = rt::intern("int");
 static const rt::Str* const S_longest = rt::intern("longest");
@@ -25,6 +25,8 @@ static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args);
 static Ref f_steps(rt::PyFunction* fn, rt::Args args);
 
 static void init_constants() {
+    if (constants_made) return;
+    constants_made = true;
     K_1 = Obj::of(rt::intern("longest collatz chain below 300:"));
     K_2 = Obj::of(rt::intern("evaluation order:"));
     K_3 = Obj::of(rt::intern("n"));
@@ -33,10 +35,10 @@ static void init_constants() {
 
 // the module body of collatz.py
 rt::Ref module_body(rt::Module* m) {
-    M = m;
+    rt::Module* M = m;
     init_constants();
     Obj ns = Obj::of(m->dict);
-    rt::FrameGuard frame(code_module);
+    rt::FrameGuard frame(code_module, M);
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t20, t21, t22, t23, t24, t25, t26, t27, t28, t29, t30, t31, t32;
     frame.line = 4;
     t1 = rt::make_function(code_steps_annotate, f_steps_annotate, M, Obj{}, Obj{}, {}, Obj{});
@@ -124,9 +126,10 @@ rt::Ref module_body(rt::Module* m) {
 
 // function steps.__annotate__  (collatz.py:4)
 static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args) {
+    [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format3;
     Ref _ann4;
-    rt::FrameGuard frame(code_steps_annotate, _format3, _ann4);
+    rt::FrameGuard frame(code_steps_annotate, M, _format3, _ann4);
     rt::StackValues stack_values(_ann4, _format3);
     rt::bind(fn, args, {&_format3});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
@@ -158,9 +161,10 @@ static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args) {
 
 // function steps  (collatz.py:4)
 static Ref f_steps(rt::PyFunction* fn, rt::Args args) {
+    [[maybe_unused]] rt::Module* M = fn->module;
     Ref n;
     Ref count;
-    rt::FrameGuard frame(code_steps, n, count);
+    rt::FrameGuard frame(code_steps, M, n, count);
     rt::bind(fn, args, {&n});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
     frame.line = 5;
@@ -211,10 +215,3 @@ static Ref f_steps(rt::PyFunction* fn, rt::Args args) {
 }
 
 }  // namespace bella::m_main
-
-namespace bella::prelude_build_class { ::bella::Ref module_body(::bella::Module* m); }
-namespace bella::prelude_builtins { ::bella::Ref module_body(::bella::Module* m); }
-
-int main(int argc, char** argv) {
-    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {::bella::prelude_build_class::module_body, ::bella::prelude_builtins::module_body});
-}

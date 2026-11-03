@@ -718,6 +718,21 @@ consumer of a real dict would have to unwrap; one that missed it would answer wr
 refusing. Model first (`refmodel`), one type at a time, each with a conformance case: `dict` and
 `int` first, for `enum` (`_EnumDict`, `IntFlag`).
 
+**2026-11-03 — compiled imports keep CPython's split** (step 3b, `docs/emitter.md` section 4a; case
+C-8-10). `runtime/src/imports.cpp` is the C half (`IMPORT_NAME`, `__import__`, `IMPORT_FROM`,
+`import *`, the module type), and `runtime/prelude/bootstrap.py` is `importlib._bootstrap`, CPython's
+own text with marked changes, run as `_frozen_importlib`. The closed world's registry stands for
+`sys.meta_path`, so a `ModuleSpec` and a `SourceFileLoader` are CPython's classes, and what a module's
+namespace shows is CPython's. Rejected: the machinery in C++ alone, which would restate 600 lines of
+`_bootstrap` with their order of effects and messages, and importing a shim that keeps
+`_ModuleLock`, which needs weak references (3c) and threads for nothing a one-thread program can
+see. The build finds the program's modules statically, as CPython's finders would, and compiles each
+as a unit of its own. Taken here, for the author to overrule: `sys.path` is `[program directory]` until
+the standard library compiles (D-18 says only that it reflects the build); `__spec__.cached` uses
+3.15's `cpython-315` tag (D-16 changes only the implementation's name); an ImportWarning has no effect
+until a `warnings` module is loaded, since nothing else can change the default filters that ignore
+it, and is refused from then on.
+
 ## Pins
 
 | What | Value | Where |

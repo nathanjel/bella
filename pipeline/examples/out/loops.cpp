@@ -6,7 +6,7 @@ namespace rt = ::bella;
 using rt::Obj;
 using rt::Ref;
 
-static rt::Module* M = nullptr;           // this module
+static bool constants_made = false;      // made once, by the module's first run
 static const rt::Str* const S_gcd = rt::intern("gcd");
 static const rt::Str* const S_int = rt::intern("int");
 static const rt::Str* const S_k = rt::intern("k");
@@ -29,6 +29,8 @@ static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args);
 static Ref f_signs(rt::PyFunction* fn, rt::Args args);
 
 static void init_constants() {
+    if (constants_made) return;
+    constants_made = true;
     K_1 = Obj::of(rt::intern("never printed: the loop broke"));
     K_2 = Obj::of(rt::intern("total"));
     K_3 = Obj::of(rt::intern("gcd"));
@@ -43,10 +45,10 @@ static void init_constants() {
 
 // the module body of loops.py
 rt::Ref module_body(rt::Module* m) {
-    M = m;
+    rt::Module* M = m;
     init_constants();
     Obj ns = Obj::of(m->dict);
-    rt::FrameGuard frame(code_module);
+    rt::FrameGuard frame(code_module, M);
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t21, t22, t23, t24, t25, t26, t27, t29, t30, t31, t32, t33, t34, t35, t37, t38, t39, t40, t41, t42, t43, t44, t45, t47, t48, t49, t50, t51, t52, t53, t54, t55, t57, t58, t59, t60, t62, t63, t64, t65, t66, t67, t69, t70, t71, t72, t73, t74, t75, t76, t77, t78, t79, t80, t81, t82, t83, t84;
     frame.line = 4;
     t1 = rt::make_function(code_gcd_annotate, f_gcd_annotate, M, Obj{}, Obj{}, {}, Obj{});
@@ -271,9 +273,10 @@ rt::Ref module_body(rt::Module* m) {
 
 // function gcd.__annotate__  (loops.py:4)
 static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args) {
+    [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format6;
     Ref _ann7;
-    rt::FrameGuard frame(code_gcd_annotate, _format6, _ann7);
+    rt::FrameGuard frame(code_gcd_annotate, M, _format6, _ann7);
     rt::StackValues stack_values(_ann7, _format6);
     rt::bind(fn, args, {&_format6});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
@@ -310,10 +313,11 @@ static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args) {
 
 // function gcd  (loops.py:4)
 static Ref f_gcd(rt::PyFunction* fn, rt::Args args) {
+    [[maybe_unused]] rt::Module* M = fn->module;
     Ref a;
     Ref b;
     Ref r;
-    rt::FrameGuard frame(code_gcd, a, b, r);
+    rt::FrameGuard frame(code_gcd, M, a, b, r);
     rt::bind(fn, args, {&a, &b});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9;
     frame.line = 5;
@@ -348,9 +352,10 @@ static Ref f_gcd(rt::PyFunction* fn, rt::Args args) {
 
 // function signs.__annotate__  (loops.py:12)
 static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args) {
+    [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format9;
     Ref _ann10;
-    rt::FrameGuard frame(code_signs_annotate, _format9, _ann10);
+    rt::FrameGuard frame(code_signs_annotate, M, _format9, _ann10);
     rt::StackValues stack_values(_ann10, _format9);
     rt::bind(fn, args, {&_format9});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
@@ -387,9 +392,10 @@ static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args) {
 
 // function signs  (loops.py:12)
 static Ref f_signs(rt::PyFunction* fn, rt::Args args) {
+    [[maybe_unused]] rt::Module* M = fn->module;
     Ref a;
     Ref b;
-    rt::FrameGuard frame(code_signs, a, b);
+    rt::FrameGuard frame(code_signs, M, a, b);
     rt::bind(fn, args, {&a, &b});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t27, t28, t29, t30, t31, t32, t33, t34;
     frame.line = 13;
@@ -463,10 +469,3 @@ static Ref f_signs(rt::PyFunction* fn, rt::Args args) {
 }
 
 }  // namespace bella::m_main
-
-namespace bella::prelude_build_class { ::bella::Ref module_body(::bella::Module* m); }
-namespace bella::prelude_builtins { ::bella::Ref module_body(::bella::Module* m); }
-
-int main(int argc, char** argv) {
-    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {::bella::prelude_build_class::module_body, ::bella::prelude_builtins::module_body});
-}

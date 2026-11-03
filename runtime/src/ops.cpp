@@ -751,7 +751,28 @@ bool overrides_builtin(Obj v, const char* name) {
     return type_lookup(type_of(v), n) != type_lookup(builtin_of(v), n);
 }
 
+namespace {
+Ref getattr_impl(Obj obj, const Str* name);
+}  // namespace
+
+// PyObject_GetAttr: an AttributeError that leaves the lookup without a name and an object gets
+// both (set_attribute_error_context), as the suggestions in CPython's report read them
 Ref getattr(Obj obj, const Str* name) {
+    try {
+        return getattr_impl(obj, name);
+    } catch (const PyError& e) {
+        Obj exc = e.exc.get();
+        if (isinstance(exc, exception_class("AttributeError")) && exception_field(exc, "name").is_unset() &&
+            exception_field(exc, "obj").is_unset()) {
+            set_exception_field(exc, "name", Obj::of(name));
+            set_exception_field(exc, "obj", obj);
+        }
+        rethrow(e);
+    }
+}
+
+namespace {
+Ref getattr_impl(Obj obj, const Str* name) {
     Ref out;
     if (with_attribute_storage(obj, [&](auto* inst) {
             try {
@@ -765,8 +786,10 @@ Ref getattr(Obj obj, const Str* name) {
         return out;
     if (is_kind(obj, Kind::Class)) return type_getattr(static_cast<ClassObject*>(obj.object()), name);
     if (is_kind(obj, Kind::Super)) return super_getattr(obj, name);
+    if (is_kind(obj, Kind::Module)) return module_getattr(obj, name);
     return generic_getattr(obj, name);
 }
+}  // namespace
 
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
@@ -831,9 +854,9 @@ void delattr(Obj obj, const Str* name) {
         type_delattr(static_cast<ClassObject*>(obj.object()), name);
         return;
     }
-    if (is_kind(obj, Kind::Module)) {
+    if (is_kind(obj, Kind::Module)) {            // _PyObject_GenericSetAttrWithDict's deletion
         if (!dict_del(static_cast<Module*>(obj.object())->dict, Obj::of(name)))
-            raise_attribute_error(obj, name, "module has no attribute '" + name->text + "'");
+            raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
         return;
     }
     // a C++ type's getset (a member): deleted through its setter when it allows that (super's

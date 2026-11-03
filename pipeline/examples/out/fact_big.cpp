@@ -6,7 +6,7 @@ namespace rt = ::bella;
 using rt::Obj;
 using rt::Ref;
 
-static rt::Module* M = nullptr;           // this module
+static bool constants_made = false;      // made once, by the module's first run
 static const rt::Str* const S_factorial = rt::intern("factorial");
 static const rt::Str* const S_int = rt::intern("int");
 static const rt::Str* const S_print = rt::intern("print");
@@ -21,16 +21,18 @@ static Ref f_factorial_annotate(rt::PyFunction* fn, rt::Args args);
 static Ref f_factorial(rt::PyFunction* fn, rt::Args args);
 
 static void init_constants() {
+    if (constants_made) return;
+    constants_made = true;
     K_1 = Obj::of(rt::intern("n"));
     K_2 = Obj::of(rt::intern("return"));
 }
 
 // the module body of fact_big.py
 rt::Ref module_body(rt::Module* m) {
-    M = m;
+    rt::Module* M = m;
     init_constants();
     Obj ns = Obj::of(m->dict);
-    rt::FrameGuard frame(code_module);
+    rt::FrameGuard frame(code_module, M);
     Ref t1, t2, t3, t4, t5, t7, t8, t9, t11, t12, t13, t14, t15, t16, t17, t18, t19;
     frame.line = 5;
     t1 = rt::make_function(code_factorial_annotate, f_factorial_annotate, M, Obj{}, Obj{}, {}, Obj{});
@@ -75,9 +77,10 @@ rt::Ref module_body(rt::Module* m) {
 
 // function factorial.__annotate__  (fact_big.py:5)
 static Ref f_factorial_annotate(rt::PyFunction* fn, rt::Args args) {
+    [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format3;
     Ref _ann4;
-    rt::FrameGuard frame(code_factorial_annotate, _format3, _ann4);
+    rt::FrameGuard frame(code_factorial_annotate, M, _format3, _ann4);
     rt::StackValues stack_values(_ann4, _format3);
     rt::bind(fn, args, {&_format3});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
@@ -109,10 +112,11 @@ static Ref f_factorial_annotate(rt::PyFunction* fn, rt::Args args) {
 
 // function factorial  (fact_big.py:5)
 static Ref f_factorial(rt::PyFunction* fn, rt::Args args) {
+    [[maybe_unused]] rt::Module* M = fn->module;
     Ref n;
     Ref result;
     Ref i;
-    rt::FrameGuard frame(code_factorial, n, result, i);
+    rt::FrameGuard frame(code_factorial, M, n, result, i);
     rt::bind(fn, args, {&n});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 6;
@@ -149,10 +153,3 @@ static Ref f_factorial(rt::PyFunction* fn, rt::Args args) {
 }
 
 }  // namespace bella::m_main
-
-namespace bella::prelude_build_class { ::bella::Ref module_body(::bella::Module* m); }
-namespace bella::prelude_builtins { ::bella::Ref module_body(::bella::Module* m); }
-
-int main(int argc, char** argv) {
-    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {::bella::prelude_build_class::module_body, ::bella::prelude_builtins::module_body});
-}

@@ -731,11 +731,17 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     for (const auto& p : spec.promoted) c->promoted.push_back(intern(p));
     bool own_dict = !spec.slots || std::find(spec.slots->begin(), spec.slots->end(), "__dict__") != spec.slots->end();
     c->has_dict = own_dict || std::any_of(c->bases.begin(), c->bases.end(), [](ClassObject* b) { return b->has_dict; });
-    for (const Str* s : c->own_slot_names()) {
-        if (c->attrs.contains(s)) throw ModelError("'" + s->text + "' in __slots__ conflicts with class variable");
-        auto* d = new SlotDescriptor(s);
-        incref(d);
-        c->attrs.set(s, Obj::of(d));
+    {
+        auto own = c->own_slot_names();
+        for (const Str* s : own)
+            if (c->attrs.contains(s)) throw ModelError("'" + s->text + "' in __slots__ conflicts with class variable");
+        // type_new_slots sorts them, and tp_members' order is the class dict's (code points: UTF-8's order)
+        std::sort(own.begin(), own.end(), [](const Str* x, const Str* y) { return x->text < y->text; });
+        for (const Str* s : own) {
+            auto* d = new SlotDescriptor(s);
+            incref(d);
+            c->attrs.set(s, Obj::of(d));
+        }
     }
     auto add_unique = [](std::vector<const Str*>& out, const Str* n) {
         if (std::find(out.begin(), out.end(), n) == out.end()) out.push_back(n);

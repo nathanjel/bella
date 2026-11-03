@@ -748,6 +748,16 @@ def test_a_store_that_fails_takes_no_count() -> None:
     assert _deaths() == ["value"]
 
 
+def test_slot_descriptors_stand_in_the_class_dict_sorted() -> None:
+    """type_new_slots sorts __slots__, and the class dict takes the member descriptors in that order
+    (found by the stateful test: a class's attributes are released in its dict's order)."""
+    assert [n for n in RefClass("R", slots=("x", "k", "a")).attrs] == ["a", "k", "x"]
+
+    class R:
+        __slots__ = ("x", "k", "a")
+    assert [n for n in vars(R) if n in ("x", "k", "a")] == ["a", "k", "x"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

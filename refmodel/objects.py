@@ -308,6 +308,7 @@ class RefClass:
         for s in own_slots:
             if s in self.attrs:
                 raise ValueError(f"{s!r} in __slots__ conflicts with class variable")
+        for s in sorted(own_slots):                # type_new_slots sorts them; tp_members' order is the dict's
             self.attrs[s] = SlotDescriptor(s)
         inherited_slots = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names()))
         self.slot_fields = inherited_slots

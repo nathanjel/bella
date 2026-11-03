@@ -1174,6 +1174,60 @@ void exception_suppress_set(Obj self, Obj v) {      // a Py_T_BOOL member
     set_exception_field(self, "__suppress_context__", v);
 }
 // AttributeError's name and obj, NameError's name: _Py_T_OBJECT members (None when absent; del clears)
+// ImportError (Objects/exceptions.c): msg, name, path and name_from are members; __init__ takes
+// the last three by keyword only, and msg is the one argument when there is exactly one
+Ref import_error_init(Obj self, Args a) {
+    std::vector<Obj> items;
+    for (std::size_t i = 0; i < a.npos; ++i) {
+        incref(a.pos(i));
+        items.push_back(a.pos(i));
+    }
+    Ref args = tuple_steal(std::move(items));
+    set_exception_field(self, "args", args.get());
+    Obj name, path, name_from;
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        std::string_view n = a.kwnames[k]->text;
+        Obj* slot = n == "name" ? &name : n == "path" ? &path : n == "name_from" ? &name_from : nullptr;
+        if (slot == nullptr)        // CPython's message may suggest a keyword (_Py_CalculateSuggestions)
+            throw NotImplemented("ImportError() with an unexpected keyword argument (the suggestion in its message)");
+        *slot = a.kw(k);
+    }
+    set_exception_field(self, "name", name);
+    set_exception_field(self, "path", path);
+    set_exception_field(self, "name_from", name_from);
+    set_exception_field(self, "msg", a.npos == 1 ? a.pos(0) : Obj{});
+    return none_ref();
+}
+Ref import_error_str(Obj self, Args a) {          // ImportError_str: msg when it is exactly a str
+    Obj msg = exception_field(self, "msg");
+    if (!msg.is_unset() && is_kind(msg, Kind::Str) && type_of(msg) == types().str) return Ref::share(msg);
+    return exception_str(self, a);
+}
+Ref import_error_repr(Obj self, Args a) {         // ImportError_repr: BaseException's, then name= and path=
+    Obj name = exception_field(self, "name"), path = exception_field(self, "path");
+    if (name.is_unset() && path.is_unset()) return exception_repr(self, a);
+    Ref base = exception_repr(self, a);
+    std::string text = as_str(base.get())->text;
+    text.pop_back();
+    Ref args = exception_args(self);
+    bool hasargs = !static_cast<Tuple*>(args.get().object())->items.empty();
+    if (!name.is_unset()) {
+        if (hasargs) text += ", ";
+        text += "name=" + as_str(repr_of(name).get())->text;
+        hasargs = true;
+    }
+    if (!path.is_unset()) {
+        if (hasargs) text += ", ";
+        text += "path=" + as_str(repr_of(path).get())->text;
+    }
+    return str_new(text + ")");
+}
+Ref import_msg_get(Obj self) { return field_or_none(self, "msg"); }
+void import_msg_set(Obj self, Obj v) { set_exception_field(self, "msg", v); }
+Ref import_path_get(Obj self) { return field_or_none(self, "path"); }
+void import_path_set(Obj self, Obj v) { set_exception_field(self, "path", v); }
+Ref import_name_from_get(Obj self) { return field_or_none(self, "name_from"); }
+void import_name_from_set(Obj self, Obj v) { set_exception_field(self, "name_from", v); }
 Ref exception_name_get(Obj self) { return field_or_none(self, "name"); }
 void exception_name_set(Obj self, Obj v) { set_exception_field(self, "name", v); }
 Ref exception_obj_get(Obj self) { return field_or_none(self, "obj"); }
@@ -1323,6 +1377,16 @@ void init_types() {
     deletable_getset(exception_class("AttributeError"), "name", exception_name_get, exception_name_set);
     deletable_getset(exception_class("AttributeError"), "obj", exception_obj_get, exception_obj_set);
     deletable_getset(exception_class("NameError"), "name", exception_name_get, exception_name_set);
+    {
+        ClassObject* ie = exception_class("ImportError");
+        method(ie, "__init__", import_error_init);
+        method(ie, "__str__", import_error_str);
+        method(ie, "__repr__", import_error_repr);
+        deletable_getset(ie, "msg", import_msg_get, import_msg_set);
+        deletable_getset(ie, "name", exception_name_get, exception_name_set);
+        deletable_getset(ie, "path", import_path_get, import_path_set);
+        deletable_getset(ie, "name_from", import_name_from_get, import_name_from_set);
+    }
     // object.hpp asks whether an exception the runtime raised is an AttributeError (a property or
     // __get__ in Python raising it), so that __getattr__ is tried
     attribute_error_hook() = [] {

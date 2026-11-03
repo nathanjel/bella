@@ -180,6 +180,7 @@ struct Module : Object {
     Dict* dict;                                  // owned
     explicit Module(const char* n);
 };
+std::vector<Module*>& all_modules();             // every module made, oldest first (immortal: D-19)
 
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
     const Code* code;
@@ -321,30 +322,35 @@ void arrive(const Code& code, int line, std::uint64_t& id, PyError& e) noexcept;
 void record_frame(const Code& code, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept;
 void enter_frame();                              // RecursionError past the limit (spec D-17)
 void leave_frame() noexcept;
+Module*& current_module();                       // the innermost shown frame's module: globals()
 }
 template <std::size_t N>
 class FrameGuard {
     const Code& code_;
     std::array<Ref*, N> locals_;
     int uncaught_;
+    Module* caller_module_;                      // the module globals() saw before this frame
     std::uint64_t id_ = 0;                       // given when the frame first records an exception
 public:
     int line;
     template <class... L>
-    explicit FrameGuard(const Code& c, L&... locals)
-        : code_(c), locals_{&locals...}, uncaught_(std::uncaught_exceptions()), line(c.first_line) {
+    explicit FrameGuard(const Code& c, Module* m, L&... locals)
+        : code_(c), locals_{&locals...}, uncaught_(std::uncaught_exceptions()), caller_module_(detail::current_module()),
+          line(c.first_line) {
         detail::enter_frame();
+        if (c.shown) detail::current_module() = m;   // a frame CPython has: globals() is its module's
     }
     void arrived(PyError& e) noexcept { detail::arrive(code_, line, id_, e); }
     ~FrameGuard() {
         detail::leave_frame();
+        detail::current_module() = caller_module_;
         if (std::uncaught_exceptions() > uncaught_) detail::record_frame(code_, line, id_, locals_.data(), N);
     }
     FrameGuard(const FrameGuard&) = delete;
     FrameGuard& operator=(const FrameGuard&) = delete;
 };
 template <class... L>
-FrameGuard(const Code&, L&...) -> FrameGuard<sizeof...(L)>;
+FrameGuard(const Code&, Module*, L&...) -> FrameGuard<sizeof...(L)>;
 
 // The variables the frontend made for values CPython keeps on its stack (a `with` statement's
 // manager, a match subject, an inlined comprehension's iterator and result, ...). Declared after
@@ -533,8 +539,68 @@ void mapping_set(Obj mapping, Obj key, Obj value);
 Module* builtins_module();
 Module* new_module(const char* name);
 using ModuleBody = Ref (*)(Module* m);
-// Runs the program: the runtime, the prelude modules, then the main module; prints an uncaught
-// exception's traceback and returns the process's exit status.
-int run_main(int argc, char** argv, ModuleBody main_body, std::initializer_list<ModuleBody> prelude);
+bool is_attribute_error(const PyError& e);
+Ref positional_only(Args a, const char* name, std::size_t lo, std::size_t hi);   // a C function's arity check
+bool cpython_has(std::string_view scope, std::string_view name);                   // the names table (cpython_names.inc)
+
+// ---- str methods (runtime/src/str.cpp) ----
+Ref str_find_m(Obj self, Args a);
+Ref str_rfind_m(Obj self, Args a);
+Ref str_index_m(Obj self, Args a);
+Ref str_rindex_m(Obj self, Args a);
+Ref str_count_m(Obj self, Args a);
+Ref str_startswith_m(Obj self, Args a);
+Ref str_endswith_m(Obj self, Args a);
+Ref str_partition_m(Obj self, Args a);
+Ref str_rpartition_m(Obj self, Args a);
+Ref str_split_m(Obj self, Args a);
+Ref str_rsplit_m(Obj self, Args a);
+Ref str_strip_m(Obj self, Args a);
+Ref str_lstrip_m(Obj self, Args a);
+Ref str_rstrip_m(Obj self, Args a);
+Ref str_replace_m(Obj self, Args a);
+
+// ---- imports (runtime/src/imports.cpp; docs/emitter.md section 7) ----
+// A module the build compiled into the program: its body, the file it came from (__file__), and
+// whether it is a package (an __init__.py; __path__ is its directory). A null body is a namespace
+// package, refused when imported.
+struct ModuleEntry {
+    const char* name;
+    ModuleBody body;
+    const char* origin;
+    bool package;
+};
+void register_modules(std::span<const ModuleEntry> modules, const char* program_dir);
+const std::string& program_directory();          // sys.path[0]: the program's directory
+void init_imports(Module* sys);                  // sys.modules, with sys and builtins in it
+Dict* sys_modules();                             // the interpreter's sys.modules
+Ref import_module_level(Obj name, Obj globals, Obj locals, Obj fromlist, std::int64_t level);
+Ref import_name(Obj name, Obj fromlist, Obj level, Obj mode, Module* m, Obj ns);   // IMPORT_NAME
+Ref import_from(Obj v, const Str* name);         // IMPORT_FROM
+void import_star(Obj v, Obj locals);             // import *
+Ref module_getattr(Obj module, const Str* name); // the module type's __getattribute__
+Ref b_import(Obj, Args a);                       // builtins.__import__
+Ref b_dir(Obj, Args a);                          // builtins.dir
+Ref module_repr_m(Obj self, Args a);
+Ref module_dir_m(Obj self, Args a);
+Ref module_dict_get(Obj self);
+Ref module_new_m(Obj, Args a);
+Ref module_init_m(Obj self, Args a);
+Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
+Ref i_bella_exec(Obj, Args a);
+Ref i_bella_refuse(Obj, Args a);
+Ref i_bella_import_warning(Obj, Args a);
+
+// A module of the prelude, run before the program as the module it names (builtins, or
+// _frozen_importlib for runtime/prelude/bootstrap.py).
+struct PreludeModule {
+    const char* name;
+    ModuleBody body;
+};
+// Runs the program: the runtime, the prelude modules, then the main module (its file and the
+// modules compiled with it); prints an uncaught exception's traceback and returns the process's
+// exit status.
+int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, std::initializer_list<PreludeModule> prelude,
+             std::span<const ModuleEntry> modules);
 
 }  // namespace bella

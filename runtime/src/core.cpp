@@ -138,6 +138,11 @@ Module::Module(const char* n) : Object(Kind::Module), name(str_new(n)), dict(new
     cls = types().module;
     flags |= IMMORTAL;                           // phase 1: modules live as long as the program
     incref(dict);
+    all_modules().push_back(this);
+}
+std::vector<Module*>& all_modules() {
+    static std::vector<Module*> made;
+    return made;
 }
 Traceback::Traceback(const Code* c, int l, Ref nx) : Object(Kind::Traceback), code(c), line(l), next(std::move(nx)) {
     cls = types().traceback;
@@ -489,6 +494,7 @@ struct ExceptionClasses {
             std::optional<std::vector<std::string>> own;
             if (std::string_view(n) == "AttributeError") own = exception_fields({"obj", "name"});
             if (std::string_view(n) == "NameError") own = exception_fields({"name"});
+            if (std::string_view(n) == "ImportError") own = exception_fields({"msg", "name", "path", "name_from"});
             make(n, b, own);
         }
     }
