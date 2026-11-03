@@ -291,6 +291,7 @@ Ref object_init(Obj self, Args a) {
 
 Ref type_call(ClassObject* cls, Args a) {
     if (cls == types().type && a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(observed_type(a.pos(0))));
+    if (cls == types().super_) return super_call(a);                  // super's own vectorcall
     Obj new_attr = type_lookup(cls, N("__new__"));
     if (new_attr.is_unset()) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
     if (new_attr == object_new_fn() && !cls->heap_type && cls != types().object) refuse_construction(cls);
@@ -510,23 +511,32 @@ Ref object_init_subclass(Obj, Args a) {
     if (a.nkw != 0) raise_new("TypeError", "__init_subclass__() takes no keyword arguments");
     return none_ref();
 }
-Ref object_setattr(Obj, Args a) {
-    arity(a, "__setattr__", 3, 3);
-    const Str* n = as_str(a.pos(1));
-    if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(1))->name + "'");
-    if (!is_kind(a.pos(0), Kind::Instance)) throw NotImplemented("object.__setattr__ on a C++ type's object");
+// object.__setattr__ and __delattr__ are slot wrappers: bound like methods, the object as self
+// (found while compiling super(), which binds them: super().__setattr__(k, v))
+Ref object_setattr(Obj self, Args a) {
+    arity(a, "__setattr__", 2, 2);
+    const Str* n = as_str(a.pos(0));
+    if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
+    if (!is_kind(self, Kind::Instance)) throw NotImplemented("object.__setattr__ on a C++ type's object");
+    if (type_lookup(type_of(self), intern(n->text)).is_unset()) refuse_absent_data_descriptor(self, intern(n->text));
     try {
-        bella::setattr(static_cast<Instance*>(a.pos(0).object()), intern(n->text), a.pos(2));
+        bella::setattr(static_cast<Instance*>(self.object()), intern(n->text), a.pos(1));
     } catch (const bella::AttributeError&) {
-        raise_attribute_error(a.pos(0), intern(n->text), "'" + type_of(a.pos(0))->name + "' object has no attribute '" + n->text + "'");
+        raise_attribute_error(self, intern(n->text), "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'");
     }
     return none_ref();
 }
-Ref object_delattr(Obj, Args a) {
-    arity(a, "__delattr__", 2, 2);
-    const Str* n = as_str(a.pos(1));
-    if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(1))->name + "'");
-    delattr(a.pos(0), intern(n->text));
+Ref object_delattr(Obj self, Args a) {
+    arity(a, "__delattr__", 1, 1);
+    const Str* n = as_str(a.pos(0));
+    if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
+    if (!is_kind(self, Kind::Instance)) throw NotImplemented("object.__delattr__ on a C++ type's object");
+    if (type_lookup(type_of(self), intern(n->text)).is_unset()) refuse_absent_data_descriptor(self, intern(n->text));
+    try {
+        bella::delattr(static_cast<Instance*>(self.object()), intern(n->text));
+    } catch (const bella::AttributeError&) {
+        raise_attribute_error(self, intern(n->text), "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'");
+    }
     return none_ref();
 }
 Ref object_format(Obj self, Args a) {
@@ -879,6 +889,7 @@ void init_types() {
     done = true;
     Types& t = types();
     init_sets();
+    init_super();
     // object
     method(t.object, "__new__", object_new, Binding::Function);
     method(t.object, "__init__", object_init);

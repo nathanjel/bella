@@ -179,10 +179,18 @@ unhashable (RL-248), and an unhashable key's error names the container (RL-249).
 set comparisons are refused until they exist. `pipeline/tests/test_compiled.py` checks the
 model's scenarios compiled.
 
+`super` is a C++ type (`runtime/src/super.cpp`, case C-3-32): `super(type, obj)` checks `obj` as
+`supercheck` does, and its lookup walks the MRO of `obj`'s type after `type`, each class's own
+dict, binding what it finds with `obj` (None for a class) and that type (`super_getattro`);
+`__class__`, `__thisclass__`, `__self__` and `__self_class__` are the super's own, `super(T)` is
+unbound until `__get__`. The zero-argument form is the frontend's `super` intrinsic, given the
+`super` the function sees, its `__class__` cell and its first argument; with no frames to read,
+a `super()` the compiler does not see as such (`s = super; s()`) is refused.
+
 Still in C++ until the next step: the exception classes (the decision puts them in the prelude);
-not yet anywhere: `super()`, metaclasses other than `type`, subclasses of the C++ types other than
-`object` and the exceptions (refused by name), a class that overrides `__getattribute__` or
-assigns `__class__` (refused as \[P2+\], spec section 3).
+not yet anywhere: metaclasses other than `type`, subclasses of the C++ types other than `object`
+and the exceptions (refused by name), a class that overrides `__getattribute__` or assigns
+`__class__` (refused as \[P2+\], spec section 3).
 
 ## 4. Building and running
 
@@ -200,7 +208,7 @@ the type by its qualified name and a `str()` that raises as `<exception str() fa
 
 ## 5. Gaps, in the order the steps close them
 
-* 3a.2, the rest: the exception classes into the prelude; `super()`; metaclasses.
+* 3a.2, the rest: the exception classes into the prelude; metaclasses.
 * The dict views' set operations and comparisons, `reversed` and `mapping`; `str %`
   formatting; `types.UnionType` (`int | str`).
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
@@ -213,8 +221,11 @@ the type by its qualified name and a `str()` that raises as `<exception str() fa
   `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
   (StopIteration's `value`, SystemExit's `code`, ImportError's) are refused by name, read,
   stored or deleted (RL-255), until those classes are built as CPython's.
-* `__suppress_context__` presents as a `getset_descriptor`, CPython's as a `member_descriptor`,
-  whose type the runtime has, without methods (RL-251, RL-254).
+* `__suppress_context__` and super's `__thisclass__`, `__self__`, `__self_class__` present as
+  `getset_descriptor`s, CPython's as `member_descriptor`s, whose type the runtime has, without
+  methods (RL-251, RL-254).
+* `super()` whose first argument was deleted raises UnboundLocalError (CPython: `RuntimeError:
+  super(): arg[0] deleted`), as under `eval1` (task 4, A3's known edges).
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and
   type are refused today (RL-218); the names RL-211's table refuses, as programs need them.
 * Later: `float` beyond the digits (the wrapper of `to_chars`/`from_chars`), the `bn` copy for

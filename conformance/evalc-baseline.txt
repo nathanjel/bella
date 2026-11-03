@@ -15,6 +15,7 @@ C-3-18_class_assignment.py
 C-3-19_getattribute_override.py
 C-3-30_traceback_entries.py
 C-3-31_exception_fields.py
+C-3-32_super_objects.py
 C-6-09_dict_callbacks.py
 C-8-02_builtins_fallthrough.py
 C-9-05_default_argument_lifetime.py

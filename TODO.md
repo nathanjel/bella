@@ -370,7 +370,15 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            operation calling back into keys as CPython's (C-6-09), crashes and a hang in `list`
            methods whose `__eq__` changes the list, and `list`, `dict` and `set` hashable until
            now. Open: RL-254 (a member's type).
-       * 3b generators (state machines) and compiled imports: C-3-04.
+       * 3b generators (state machines) and compiled imports: C-3-04. First `super()` and
+         metaclasses, which the standard library needs as soon as it imports (`abc`, `enum`).
+         * `super()` done 2026-11-03 (`runtime/src/super.cpp`, case C-3-32,
+           `pipeline/tests/test_compiled_super.py`): super objects as `Objects/typeobject.c` makes
+           them, the zero-argument form through the frontend's intrinsic, eval1's scenarios
+           compiled. Found on the way: `object.__setattr__` and `__delattr__` took the object
+           among their arguments, so neither `super().__setattr__(k, v)` nor
+           `object.__setattr__(o, k, v)` worked; a free variable's NameError had no `name`;
+           deleting a C++ type's member was refused.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

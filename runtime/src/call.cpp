@@ -306,9 +306,13 @@ Ref load_fast(const Ref& slot, const char* name) {
 Ref load_deref(const Ref& cell, const char* name, bool free) {
     Obj v = static_cast<Cell*>(cell.get().object())->value;
     if (v.is_unset()) {
-        if (free)
-            raise_new("NameError", std::string("cannot access free variable '") + name +
-                                       "' where it is not associated with a value in enclosing scope");
+        if (free) {                              // format_exc_check_arg: a NameError carries the name
+            Ref msg = str_new(std::string("cannot access free variable '") + name +
+                              "' where it is not associated with a value in enclosing scope");
+            Ref exc = invoke(Obj::of(exception_class("NameError")), {msg.get()});
+            set_exception_field(exc.get(), "name", Obj::of(intern(name)));
+            raise(exc.get());
+        }
         raise_new("UnboundLocalError", std::string("cannot access local variable '") + name +
                                            "' where it is not associated with a value");
     }
@@ -955,6 +959,7 @@ Module* make_builtins() {
     put_builtin(d, "id", b_id);
     put_builtin(d, "vars", b_vars);
     put(d, "slice", Obj::of(t.slice));
+    put(d, "super", Obj::of(t.super_));
     put(d, "set", Obj::of(t.set));
     put(d, "frozenset", Obj::of(t.frozenset));
     method(t.str, "join", str_join);
@@ -1186,13 +1191,18 @@ Ref i_call_args_tuple(Obj, Args a) {             // _MAKE_CALLARGS_A_TUPLE: f(*v
     return tuple_steal(std::move(objs));
 }
 
+Ref i_super(Obj, Args a) {                       // zero-argument super() in a function
+    positional_only(a, "super", 3, 3);
+    return zero_argument_super(a.pos(0), a.pos(1), a.pos(2));
+}
+
 void register_intrinsics() {
     static bool done = false;
     if (done) return;
     done = true;
     for (auto [name, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
              {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack},
-             {"call_args_tuple", i_call_args_tuple}}) {
+             {"call_args_tuple", i_call_args_tuple}, {"super", i_super}}) {
         Ref b = own(new Builtin(name, fn));
         dict_set(intrinsics(), Obj::of(intern(name)), b.get());
     }

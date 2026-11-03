@@ -723,6 +723,7 @@ Ref getattr(Obj obj, const Str* name) {
         }
     }
     if (is_kind(obj, Kind::Class)) return type_getattr(static_cast<ClassObject*>(obj.object()), name);
+    if (is_kind(obj, Kind::Super)) return super_getattr(obj, name);
     return generic_getattr(obj, name);
 }
 
@@ -788,6 +789,15 @@ void delattr(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Module)) {
         if (!dict_del(static_cast<Module*>(obj.object())->dict, Obj::of(name)))
             raise_attribute_error(obj, name, "module has no attribute '" + name->text + "'");
+        return;
+    }
+    // a C++ type's getset (a member): deleted through its setter when it allows that (super's
+    // members say `readonly attribute`), else not writable
+    if (Obj found = type_lookup(type_of(obj), name); is_kind(found, Kind::GetSet)) {
+        auto* g = static_cast<GetSet*>(found.object());
+        if (!g->deletable)
+            raise_attribute_error(obj, name, "attribute '" + name->text + "' of '" + type_of(obj)->name + "' objects is not writable");
+        g->set(obj, Obj{});
         return;
     }
     throw NotImplemented("del of an attribute of a '" + type_of(obj)->name + "' object");

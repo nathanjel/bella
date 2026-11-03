@@ -1,0 +1,12 @@
+{
+ "case": "C-3-32_super_objects.py",
+ "clause": "C-3-32",
+ "spec": "section 3 (the data model)",
+ "status": "P1",
+ "source": "TODO task 2 (super()); step 3b of the C++ leg starts with it",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "Bottom.__init__\nLeft.__init__\nRight.__init__\nBase.__init__\nMRO: ['Bottom', 'Left', 'Right', 'Base', 'object']\nBottom>Left>Right>Base\nBottom>Base.make for Bottom Base.make for Bottom\n['Right.attr', 'Base.tool', 'Base.prop of Bottom', 'bound with Bottom and Bottom', 'Right.attr', 'Base.attr']\nfrom the class: bound with NoneType and Bottom\nsuper super Left True Bottom\n<super: <class 'Left'>, <Bottom object>>\n<super: <class 'Left'>, <Bottom object>> True Bottom\n<super: <class 'Left'>, NULL> None None\nRight>Base True\nBase.__init__\nTrue\nLeft.__init__\nBase.__init__\nsuper(1, b) TypeError\nsuper(Left, 1) TypeError\nsuper(Right, Left()) TypeError\nsuper(Left, b, 3) TypeError\nmissing: AttributeError\nstore: AttributeError\nno first argument: RuntimeError\n",
+ "stderr": "",
+ "exit_code": 0
+}

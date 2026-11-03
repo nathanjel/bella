@@ -133,6 +133,12 @@ struct DictView : Object {                       // dict.keys(), values(), items
     Obj dict;                                    // owned
     DictView(Obj d, Which w);
 };
+struct SuperObject : Object {                    // super(type, obj): each owned, Unset for NULL (superobject)
+    Obj type;                                    // the class after which the lookup starts (__thisclass__)
+    Obj obj;                                     // the instance or class it is bound to (__self__)
+    Obj obj_type;                                // obj's type, or obj when it is a class (__self_class__)
+    SuperObject();
+};
 struct Native : Object {                         // an object of a C++ type with methods (sys.stdout)
     int tag = 0;
     explicit Native(ClassObject* c) : Object(Kind::Native) { cls = c; }
@@ -189,7 +195,7 @@ struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
-        *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *mappingproxy, *slice, *iterator, *set,
+        *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator;
 };
 Types& types();
@@ -441,6 +447,10 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params);
 
 // ---- classes and special methods (runtime/src/types.cpp) ----
 void init_types();                                           // the builtin types' attributes
+void init_super();                                           // super's methods and members (super.cpp)
+Ref super_getattr(Obj su, const Str* name);                  // super_getattro
+Ref super_call(Args a);                                      // super(...): super_vectorcall
+Ref zero_argument_super(Obj super_name, Obj class_cell, Obj first);   // the `super` intrinsic
 Obj type_lookup(ClassObject* c, const Str* name);            // _PyType_Lookup: borrowed, Unset if absent
 bool is_subclass(ClassObject* c, ClassObject* base);
 bool isinstance(Obj v, ClassObject* c);

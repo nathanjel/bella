@@ -57,6 +57,7 @@ Types& types() {
         // a __slots__ member's type (object.hpp's SlotDescriptor): made a type here, or type(d) has
         // no class of its own (found while verifying RL-228's round)
         x.member_descriptor = builtin_type("member_descriptor", {x.object});
+        x.super_ = builtin_type("super", {x.object});
         x.mappingproxy = builtin_type("mappingproxy", {x.object});
         x.slice = builtin_type("slice", {x.object});
         x.iterator = builtin_type("iterator", {x.object});
@@ -168,6 +169,13 @@ bool register_deaths() {
         f->name = Ref{};
         f->qualname = Ref{};
         destroy<PyFunction>(o);
+    };
+    destroyer(Kind::Super) = [](Object* o) {
+        auto* su = static_cast<SuperObject*>(o);   // super_dealloc: obj, type, obj_type
+        decref(std::exchange(su->obj, Obj{}));
+        decref(std::exchange(su->type, Obj{}));
+        decref(std::exchange(su->obj_type, Obj{}));
+        destroy<SuperObject>(o);
     };
     destroyer(Kind::Builtin) = [](Object* o) { decref(std::exchange(static_cast<Builtin*>(o)->self, Obj{})); destroy<Builtin>(o); };
     destroyer(Kind::Method) = [](Object* o) {
