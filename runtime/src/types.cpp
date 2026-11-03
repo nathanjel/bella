@@ -239,17 +239,27 @@ namespace {
 Obj object_new_fn() { return type_lookup(types().object, N("__new__")); }
 Obj object_init_fn() { return type_lookup(types().object, N("__init__")); }
 
+// A built-in type the runtime cannot construct yet: CPython constructs it (its own __new__), or
+// says "cannot create"; either way object.__new__ is not the answer (RL-220).
+[[noreturn]] void refuse_construction(const ClassObject* cls) {
+    throw NotImplemented("creating an instance of the built-in type '" + cls->name + "'" +
+                         (cpython_attribute_kind(cls, "__new__").empty() ? "" : " (CPython has it; the runtime does not yet)"));
+}
+
 Ref object_new(Obj, Args a) {
     if (a.npos < 1) raise_new("TypeError", "object.__new__(): not enough arguments");
     ClassObject* cls = as_class(a.pos(0));
     if (cls == nullptr) raise_new("TypeError", "object.__new__(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
+    if (!cls->heap_type && cls != types().object) {         // tp_new_wrapper's check, before the arguments'
+        if (cpython_attribute_kind(cls, "__new__").empty()) refuse_construction(cls);
+        raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe, use " + cls->name + ".__new__()");
+    }
     bool excess = a.npos > 1 || a.nkw > 0;
     if (excess) {
         if (type_lookup(cls, N("__new__")) != object_new_fn())
             raise_new("TypeError", "object.__new__() takes exactly one argument (the type to instantiate)");
         if (type_lookup(cls, N("__init__")) == object_init_fn()) raise_new("TypeError", cls->name + "() takes no arguments");
     }
-    if (!cls->heap_type && cls != types().object) raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe");
     if (cls->has("__getattribute__") && type_lookup(cls, N("__getattribute__")) != type_lookup(types().object, N("__getattribute__")))
         throw NotImplemented("[P2+] a class that overrides __getattribute__ (spec section 3)");
     return own(new_instance(cls));
@@ -271,6 +281,7 @@ Ref type_call(ClassObject* cls, Args a) {
     if (cls == types().type && a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(observed_type(a.pos(0))));
     Obj new_attr = type_lookup(cls, N("__new__"));
     if (new_attr.is_unset()) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
+    if (new_attr == object_new_fn() && !cls->heap_type && cls != types().object) refuse_construction(cls);
     Ref new_fn = descr_get(new_attr, None(), Obj::of(cls));
     Ref obj = call_with_first(new_fn.get(), Obj::of(cls), a);
     if (!isinstance(obj.get(), cls)) return obj;

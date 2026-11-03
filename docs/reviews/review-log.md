@@ -7,14 +7,14 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-03:** 219 findings from seventeen reviews: 183 fixed (most in commit
+**Status on 2026-11-03:** 222 findings from seventeen reviews and one round of examples: 184 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews), 21 already done before or
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220), 21 already done before or
 because of the review, 4 planned (D-2 and D-10, accepted by the author), 2 deferred, 4 refuted
-and 5 checked with no issue. Nothing is open: the
+and 5 checked with no issue. Open: RL-221 and RL-222, a design question for the author (D-12). The
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 
 ## Reviews received
@@ -407,6 +407,18 @@ found RL-211 to RL-219.
 | RL-218 | Found while checking RL-217 | Method objects: a bound method did not read its function's attributes (`C().f.__name__` raised); `object.__new__` was `<built-in function __new__>` with `__self__` None; the prelude's `list.__repr__` and the like took any receiver; a slot wrapper (`list.__len__`) showed itself as a method descriptor | Confirmed | Fixed, one part refused | `method_getattro`'s fallback to `__func__`; `__new__` bound to its type as CPython shows it; the prelude's type methods check their receiver (tested against CPython in `runtime/tests/test_prelude.py`). The runtime holds slot wrappers as method descriptors: their repr and type are refused (the kinds come from RL-211's table) until the runtime has CPython's wrapper types (`TODO.md`) |
 | RL-219 | Found while fixing RL-207 | Generated code and string names contained `__` (`code_T____init__`, `S___init__`), which C++ reserves, and a function with a non-ASCII qualified name was named by Python's salted `hash()`, so the generated C++ changed between runs | Confirmed | Fixed | One readable mapping for these names (runs of `_` folded, a non-ASCII character as `_u` and its code point, a dunder string as `S_dunder_…`), told apart by `unique`; test `test_generated_names_are_unreserved_and_reproducible` emits under two hash seeds |
 
+### Found while writing examples (2026-11-03)
+
+Small programs written to show the compiled leg, each compared with CPython 3.15.2
+(`pipeline/build.py --run`). Refusals (`max`, `divmod`, `str %`, `2 ** 100`) are correct
+behaviour; these three are not.
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+|----|------|---------|---------|--------|------------------|
+| RL-220 | Writing examples | A built-in type the runtime has no constructor for (`int`, `float`, `dict`, `type(len)`) fell into `object.__new__` and raised a TypeError CPython does not: `int("42")` said `int() takes no arguments`, `int()` and `dict()` `object.__new__(int) is not safe`; an explicit `object.__new__(int, 1)` checked its arguments before the type and dropped CPython's `, use int.__new__()` | Confirmed | Fixed | `type_call` refuses (`bella: not implemented: creating an instance of the built-in type 'int'`); `object.__new__(X)` for a built-in `X` checks first, as `tp_new_wrapper` does, and says CPython's words when CPython's `X` has its own `__new__` (the names table), else refuses; test `test_a_builtin_type_without_a_constructor_is_refused` |
+| RL-221 | Writing examples | A frame's traceback entry is made when the exception leaves the function, with the line the frame reached by then; CPython makes it when the exception enters the frame (raised there, or arriving from a call). After a `finally` the report named the `finally`'s last line (line 6 for a `raise` on line 4), after a bare `raise` the `raise` (CPython: the original line), and `raise e` lost the original entry (CPython lists the frame twice) | Confirmed | Open: design (D-12) | `def g():` with `raise ValueError` on line 4 inside `try`, `y = 2` on line 6 in its `finally`: CPython `line 4, in g`, compiled `line 6, in g`; the same for a bare `raise` in a handler, a failed call under `finally`, a raise in a loop's `try`; `raise e`: CPython two entries for the frame, compiled one |
+| RL-222 | Found while checking RL-221 | A caught exception keeps its frame alive in CPython (the traceback entry holds the frame object, which takes the locals when the function returns); the compiled guard moves locals into an entry only when the exception leaves, so a function returning a caught exception killed its locals at the return | Confirmed | Open: design (D-12) | `def f(): a = N("a"); try: [][0] / except IndexError as e: return e`, then `e = f(); print("returned"); del e`: CPython prints `returned` before `dies a`, compiled after |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -576,8 +588,22 @@ the reduction protocol as `copy` uses it becomes \[P1\] (`__reduce_ex__`, `__red
 module stays \[P2+\]; E-05 keeps excluding programs that rely on `copyreg` internals. A
 conformance case comes first: copying unslotted, slotted and customised user classes.
 
+**D-12 When a frame enters a traceback (RL-221, RL-222).** Open, for the author. The emitter's
+decision-5 guard records a frame when an exception leaves the function, and moves the locals
+into the entry. CPython records it when the exception enters the frame (`PyTraceBack_Here` at
+the `error:` label: a raise, or a call that failed), with the line of that instruction; a bare
+`raise` and the re-raise at the end of a `finally` add nothing (`RERAISE` goes to
+`exception_unwind`); `raise e` adds a second entry. The entry holds the frame object, created on
+first need, and when the function returns or unwinds while that object is referenced, the
+locals move into it (`take_ownership`) instead of dying. Recommendation: do what CPython does.
+A raise records the current frame at its line; a guard that an exception leaves records its
+caller's frame at the caller's line (the call); the guard owns a lazily made frame object that
+entries share, and at exit moves the locals into it only if an entry still refers to it. The
+lifetimes change goes into `refmodel/objects.py` first, with a case under `conformance/cases`
+(the frame kept alive by a returned exception, in `__del__` order) and the five line programs.
+
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-220` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-223` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

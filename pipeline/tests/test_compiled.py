@@ -485,6 +485,21 @@ def test_operators_cpython_has_and_the_runtime_lacks_are_refused() -> None:
         assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr, (body, got)
 
 
+def test_a_builtin_type_without_a_constructor_is_refused() -> None:
+    """RL-220: int(), float(), dict() and type(len)() fell into object.__new__ and raised TypeErrors
+    CPython does not ("int() takes no arguments" for int("42")); they are refused. An explicit
+    object.__new__(int) is checked before its arguments, with CPython's message."""
+    if not _HAVE_CXX:
+        return
+    same('for f in (lambda: object.__new__(int), lambda: object.__new__(dict, 1), lambda: object(1)):\n    try:\n        f()\n    except TypeError as e:\n        print("TypeError", e)\nprint(type(object()).__name__, str(5), list("ab"))\n')
+    for body in ("int('42')", "int()", "dict(a=1)", "float()", "type(len)()", "object.__new__(type(len))"):
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_text(f"print('start')\ntry:\n    {body}\nexcept TypeError:\n    print('TypeError')\n", encoding="utf-8")
+            got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False)
+        assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr, (body, got)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

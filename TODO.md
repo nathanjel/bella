@@ -356,7 +356,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            built-in types: dict, set, range and slice equality were identity, `[0] * 3` and
            `{1} | {2}` raised TypeError; they are CPython's now, and an operator CPython handles
            that the runtime lacks is refused by the recorded table. Left (refused): the views'
-           set operations, `str %` formatting, `type | type`.
+           set operations, `str %` formatting, `type | type`;
+           the constructors of `int`, `float` and `dict` (they fell into `object.__new__`,
+           RL-220), `max`, `min`, `divmod`, and BigInt in the compiled `int`. Open: when a frame
+           enters a traceback and how long the entry keeps it (RL-221, RL-222, D-12).
        * 3b generators (state machines) and compiled imports: C-3-04.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done.
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
