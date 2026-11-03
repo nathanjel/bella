@@ -112,7 +112,8 @@ const char* const BIN_NAMES[][3] = {
     {"__mod__", "__rmod__", "__imod__"}, {"__pow__", "__rpow__", "__ipow__"}, {"__lshift__", "__rlshift__", "__ilshift__"},
     {"__rshift__", "__rrshift__", "__irshift__"}, {"__and__", "__rand__", "__iand__"}, {"__or__", "__ror__", "__ior__"},
     {"__xor__", "__rxor__", "__ixor__"}, {"__matmul__", "__rmatmul__", "__imatmul__"}};
-bool is_heap_obj(Obj v) { return v.is_object() && v.object()->kind == Kind::Instance; }
+// an object whose type is a class of the program's: an instance, or a class whose metaclass is one
+bool is_heap_obj(Obj v) { return (v.is_object() && v.object()->kind == Kind::Instance) || has_python_type(v); }
 bool not_implemented(const Ref& r) { return r.get() == Obj::of(NOTIMPLEMENTED); }
 
 // one operand's method: a class's dunder (absent: *has false), or the C++ type's operation
@@ -382,7 +383,7 @@ bool contains(Obj container, Obj item) {
         if (r->step > 0 ? (x < r->start || x >= r->stop) : (x > r->start || x <= r->stop)) return false;
         return (x - r->start) % r->step == 0;
     }
-    if (is_kind(container, Kind::Instance)) {
+    if (is_kind(container, Kind::Instance) || has_python_type(container)) {
         // slot_sq_contains: __contains__ = None says it is no container (G9 2.8)
         if (type_lookup(type_of(container), intern("__contains__")) == None())
             raise_new("TypeError", "'" + type_of(container)->name + "' object is not a container");
@@ -535,6 +536,9 @@ bool truth(Obj v) {
         case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
         case Kind::Range: return static_cast<Range*>(o)->length != 0;
         case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
+        case Kind::Class:                            // a class whose metaclass is a Python class
+            if (!has_python_type(v)) return true;
+            [[fallthrough]];
         case Kind::Instance: {
             // __bool__ (a bool, nothing else), else __len__, else true
             bool has = false;
@@ -645,6 +649,12 @@ Ref repr_of(Obj v) {
         case Kind::Str: return str_new(str_repr(static_cast<Str*>(o)));
         case Kind::Class: {
             auto* c = static_cast<ClassObject*>(o);
+            if (has_python_type(v) && type_lookup(type_of(v), intern("__repr__")) != type_lookup(types().type, intern("__repr__"))) {
+                Ref r = call_special(v, "__repr__", {});       // the metaclass's __repr__
+                if (as_str(r.get()) == nullptr)
+                    raise_new("TypeError", "__repr__ returned non-string (type " + type_of(r.get())->name + ")");
+                return r;
+            }
             Obj mod = Obj{};
             if (const Obj* m = c->attrs.find(intern("__module__"))) mod = *m;
             const Str* ms = as_str(mod);
@@ -696,7 +706,8 @@ Ref repr_of(Obj v) {
 
 Ref str_of(Obj v) {
     if (as_str(v) != nullptr) return Ref::share(v);
-    if (is_kind(v, Kind::Instance)) {
+    if (is_kind(v, Kind::Instance) ||
+        (has_python_type(v) && type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")))) {
         Ref r = call_special(v, "__str__", {});
         if (as_str(r.get()) == nullptr)
             raise_new("TypeError", "__str__ returned non-string (type " + type_of(r.get())->name + ")");

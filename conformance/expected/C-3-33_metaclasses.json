@@ -1,0 +1,12 @@
+{
+ "case": "C-3-33_metaclasses.py",
+ "clause": "C-3-33",
+ "spec": "section 3 (the data model)",
+ "status": "P1",
+ "source": "TODO task 2 (metaclasses); step 3b of the C++ leg (abc and enum need them)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "prepare Base [] {}\nnew Meta Base ['from_prepare', 'marker', 'shared'] {}\nset_name Base marker\ninit Base {}\nprepare Child ['Base'] {'flavour': 'child'}\nnew Meta Child ['from_prepare', 'tag'] {'flavour': 'child'}\ninit_subclass Child {'flavour': 'child'}\ninit Child {'flavour': 'child'}\nMeta True True Meta\n<Meta class Child> <Meta class Child> described Child Meta.tag of Child Base.shared 1\nmissing nonexistent 3 ['a', 'b', 'c'] True False item k True\ncall Child (5,)\nChild 5\nnew Meta Made ['x'] {}\ninit_subclass Made {}\ninit Made {}\nMade\nprepare Third [] {}\nnew SubMeta Third ['from_prepare'] {}\ninit Third {}\nprepare Mixed ['Base', 'Third'] {}\nnew SubMeta Mixed ['from_prepare'] {}\ninit_subclass Mixed {}\ninit Mixed {}\nSubMeta\nmetaclass conflict: TypeError\nsetattr on Checked x\n1 True True True False\nDirect Other\n",
+ "stderr": "",
+ "exit_code": 0
+}

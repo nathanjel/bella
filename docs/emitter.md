@@ -187,10 +187,24 @@ unbound until `__get__`. The zero-argument form is the frontend's `super` intrin
 `super` the function sees, its `__class__` cell and its first argument; with no frames to read,
 a `super()` the compiler does not see as such (`s = super; s()`) is refused.
 
+A metaclass is a class of the program's that derives from `type` (case C-3-33). `type.__new__`
+computes the winning metaclass from the bases (`_PyType_CalculateMetaclass`, a conflict a
+TypeError, another winner's own `__new__` called instead); a class whose metaclass is such a class
+takes its behaviour from it, as an instance takes its from its class (`has_python_type`): its
+`__call__` makes the instances, its data descriptors and `__setattr__`/`__delattr__` take stores,
+its `__getattr__` answers what the lookup did not find, and its special methods serve operators,
+comparisons, truth, `in`, subscripts, `repr`, `str` and `hash`. `isinstance` and `issubclass` are
+`Objects/abstract.c`'s (an exact type first, type's own check for a class whose metaclass is
+`type`, else the metaclass's `__instancecheck__`/`__subclasscheck__`), and `type` has
+`__call__`, `__setattr__`, `__delattr__`, `__instancecheck__`, `__subclasscheck__` and
+`__abstractmethods__` (which makes `object.__new__` refuse an abstract class) for metaclasses to
+reach through `super()`. A store to a class attribute CPython's `type` keeps as a descriptor the
+runtime lacks (`__type_params__`, `__basicsize__`, `__bases__`) is refused.
+
 Still in C++ until the next step: the exception classes (the decision puts them in the prelude);
-not yet anywhere: metaclasses other than `type`, subclasses of the C++ types other than `object`
-and the exceptions (refused by name), a class that overrides `__getattribute__` or assigns
-`__class__` (refused as \[P2+\], spec section 3).
+not yet anywhere: subclasses of the C++ types other than `object`, `type` and the exceptions
+(refused by name; `enum` needs `dict` and `int` subclasses), a class that overrides
+`__getattribute__` or assigns `__class__` (refused as \[P2+\], spec section 3).
 
 ## 4. Building and running
 
@@ -208,7 +222,8 @@ the type by its qualified name and a `str()` that raises as `<exception str() fa
 
 ## 5. Gaps, in the order the steps close them
 
-* 3a.2, the rest: the exception classes into the prelude; metaclasses.
+* 3a.2, the rest: the exception classes into the prelude; subclasses of `dict`, `int`, `str`,
+  `tuple` and `list` (`enum` needs the first two).
 * The dict views' set operations and comparisons, `reversed` and `mapping`; `str %`
   formatting; `types.UnionType` (`int | str`).
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.

@@ -179,30 +179,76 @@ Ref type_getattr(ClassObject* cls, const Str* name) {
     }
     if (!meta_attr.is_unset()) return descr_get(meta_attr, Obj::of(cls), Obj::of(meta));
     refuse_absent_attribute(Obj::of(cls), name);
+    // a metaclass's __getattr__ (slot_tp_getattr_hook): after type.__getattribute__ found nothing
+    if (meta->heap_type)
+        if (Obj hook = type_lookup(meta, N("__getattr__")); !hook.is_unset()) {
+            Ref h = Ref::share(hook);
+            Ref bound = descr_get(h.get(), Obj::of(cls), Obj::of(meta));
+            return invoke(bound.get(), {Obj::of(name)});
+        }
     raise_attribute_error(Obj::of(cls), name, "type object '" + cls->name + "' has no attribute '" + name->text + "'");
 }
 
-void type_setattr(ClassObject* cls, const Str* name, Obj value) {
+namespace {
+Obj type_method(const char* name) { return type_lookup(types().type, N(name)); }
+// a metaclass's own __setattr__ or __delattr__ (one that is not type's): it decides
+bool meta_overrides(ClassObject* meta, const char* name) {
+    return meta->heap_type && type_lookup(meta, N(name)) != type_method(name);
+}
+// a data descriptor of the metaclass sets or deletes (PyObject_GenericSetAttr's first step)
+bool meta_descriptor_store(ClassObject* cls, const Str* name, Obj value) {
     ClassObject* meta = type_of(Obj::of(cls));
     Obj meta_attr = type_lookup(meta, name);
-    if (!meta_attr.is_unset() && is_kind(meta_attr, Kind::GetSet)) {
+    if (meta_attr.is_unset()) return false;
+    if (is_kind(meta_attr, Kind::GetSet)) {
         auto* g = static_cast<GetSet*>(meta_attr.object());
-        if (g->set == nullptr)
+        if (g->set == nullptr || (value.is_unset() && !g->deletable))
             raise_new("AttributeError", std::string("attribute '") + g->name + "' of 'type' objects is not writable");
         g->set(Obj::of(cls), value);
-        return;
+        return true;
     }
+    if (!is_data_descriptor(meta_attr)) return false;
+    Ref desc = Ref::share(meta_attr);
+    Obj f = type_lookup(type_of(meta_attr), N(value.is_unset() ? "__delete__" : "__set__"));
+    if (f.is_unset()) raise_new("AttributeError", value.is_unset() ? "__delete__" : "__set__");
+    if (value.is_unset()) invoke(f, {desc.get(), Obj::of(cls)});
+    else invoke(f, {desc.get(), Obj::of(cls), value});
+    return true;
+}
+}  // namespace
+
+// type.__setattr__ (type_setattro): a metaclass's data descriptor, else the class's own dict
+void type_setattr_generic(ClassObject* cls, const Str* name, Obj value) {
+    if (meta_descriptor_store(cls, name, value)) return;
+    if (type_lookup(type_of(Obj::of(cls)), name).is_unset()) refuse_absent_data_descriptor(Obj::of(cls), name);
     if (immutable_type(cls))
         raise_new("TypeError", "cannot set '" + name->text + "' attribute of immutable type '" + cls->name + "'");
     cls->set_attr(name, value);                  // the new version before the old value dies (type_setattro)
 }
+void type_setattr(ClassObject* cls, const Str* name, Obj value) {
+    ClassObject* meta = type_of(Obj::of(cls));
+    if (meta_overrides(meta, "__setattr__")) {
+        call_special(Obj::of(cls), "__setattr__", {Obj::of(name), value});
+        return;
+    }
+    type_setattr_generic(cls, name, value);
+}
 
-void type_delattr(ClassObject* cls, const Str* name) {
+void type_delattr_generic(ClassObject* cls, const Str* name) {
+    if (meta_descriptor_store(cls, name, Obj{})) return;
+    if (type_lookup(type_of(Obj::of(cls)), name).is_unset()) refuse_absent_data_descriptor(Obj::of(cls), name);
     if (immutable_type(cls))
         raise_new("TypeError", "cannot delete '" + name->text + "' attribute of immutable type '" + cls->name + "'");
     if (!cls->attrs.contains(name))
         raise_attribute_error(Obj::of(cls), name, "type object '" + cls->name + "' has no attribute '" + name->text + "'");
     cls->del_attr(name);
+}
+void type_delattr(ClassObject* cls, const Str* name) {
+    if (meta_overrides(type_of(Obj::of(cls)), "__delattr__")) {
+        call_special(Obj::of(cls), "__delattr__", {Obj::of(name)});
+        return;
+    }
+    type_delattr_generic(cls, name);
 }
 
 // ---- attribute access on the C++ types' objects (PyObject_GenericGetAttr) ----
@@ -271,6 +317,22 @@ Ref object_new(Obj, Args a) {
         if (type_lookup(cls, N("__new__")) != object_new_fn())
             raise_new("TypeError", "object.__new__() takes exactly one argument (the type to instantiate)");
         if (type_lookup(cls, N("__init__")) == object_init_fn()) raise_new("TypeError", cls->name + "() takes no arguments");
+    }
+    if (cls->abstract) {                          // "', '".join(sorted(cls.__abstractmethods__))
+        const Obj* methods = cls->attrs.find(N("__abstractmethods__"));
+        if (methods == nullptr) raise_attribute_error(Obj::of(cls), N("__abstractmethods__"), "__abstractmethods__");
+        std::vector<std::string> names;
+        Ref it = iter(*methods);
+        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) {
+            const Str* n = as_str(v.get());
+            if (n == nullptr) throw NotImplemented("sorting abstract methods that are not all str");
+            names.push_back(n->text);
+        }
+        std::sort(names.begin(), names.end());       // code point order: the UTF-8 bytes' order
+        std::string joined;
+        for (const auto& n : names) joined += (joined.empty() ? "" : "', '") + n;
+        raise_new("TypeError", "Can't instantiate abstract class " + cls->name + " without an implementation for abstract method" +
+                                   (names.size() > 1 ? "s" : "") + " '" + joined + "'");
     }
     if (cls->has("__getattribute__") && type_lookup(cls, N("__getattribute__")) != type_lookup(types().object, N("__getattribute__")))
         throw NotImplemented("[P2+] a class that overrides __getattribute__ (spec section 3)");
@@ -341,7 +403,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (bc == nullptr) raise_new("TypeError", "bases must be types");
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
-        if (!bc->heap_type && bc != types().object && !is_subclass(bc, exception_class("BaseException")))
+        if (!bc->heap_type && bc != types().object && bc != types().type && !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
     }
@@ -462,14 +524,89 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
 Ref type_new_builtin(Obj, Args a) {                 // type.__new__(meta, name, bases, ns, **kw)
     if (a.npos < 1) raise_new("TypeError", "type.__new__(): not enough arguments");
     ClassObject* meta = as_class(a.pos(0));
-    if (meta == nullptr || !is_subclass(meta, types().type))
-        raise_new("TypeError", "type.__new__(X): X is not a type object");
+    if (meta == nullptr) raise_new("TypeError", "type.__new__(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
+    if (!is_subclass(meta, types().type))
+        raise_new("TypeError", "type.__new__(" + meta->name + "): " + meta->name + " is not a subtype of type");
     if (a.npos == 2 && meta == types().type && a.nkw == 0) return Ref::share(Obj::of(type_of(a.pos(1))));
     if (a.npos != 4) raise_new("TypeError", "type.__new__() takes exactly 3 arguments (" + std::to_string(a.npos - 1) + " given)");
-    if (meta != types().type) throw NotImplemented("metaclasses other than type (step 3a.2: super)");
+    if (!is_kind(a.pos(2), Kind::Tuple))
+        raise_new("TypeError", "type.__new__() argument 2 must be tuple, not " + type_of(a.pos(2))->name);
+    // _PyType_CalculateMetaclass: the most derived of meta and the bases' metaclasses; another
+    // metaclass with a __new__ of its own makes the class instead (type_new_get_bases)
+    ClassObject* winner = meta;
+    for (Obj b : static_cast<Tuple*>(a.pos(2).object())->items) {
+        ClassObject* t = type_of(b);
+        if (is_subclass(winner, t)) continue;
+        if (is_subclass(t, winner)) {
+            winner = t;
+            continue;
+        }
+        raise_new("TypeError", "metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass "
+                               "of the metaclasses of all its bases");
+    }
+    if (winner != meta) {
+        Obj winner_new = type_lookup(winner, N("__new__"));
+        if (winner_new != type_lookup(types().type, N("__new__"))) {
+            std::vector<Obj> data{Obj::of(winner)};
+            data.insert(data.end(), a.data + 1, a.data + a.npos + a.nkw);
+            Ref f = descr_get(winner_new, None(), Obj::of(winner));
+            return invoke(f.get(), Args{data.data(), a.npos, a.kwnames, a.nkw});
+        }
+        meta = winner;
+    }
     return type_new(meta, a.pos(1), a.pos(2), a.pos(3), Args{a.data + a.npos, 0, a.kwnames, a.nkw});
 }
-Ref type_init(Obj, Args) { return none_ref(); }
+Ref type_init(Obj, Args a) {                       // type_init: one argument or three; keywords only with three
+    if (a.npos == 1 && a.nkw != 0) raise_new("TypeError", "type.__init__() takes no keyword arguments");
+    if (a.npos != 1 && a.npos != 3) raise_new("TypeError", "type.__init__() takes 1 or 3 arguments");
+    return none_ref();
+}
+// type.__abstractmethods__: the class's own entry; setting it makes the class abstract or not
+// (type_set_abstractmethods), deleting it clears the flag; type itself has none
+Ref type_abstractmethods_get(Obj self) {
+    ClassObject* c = as_class(self);
+    const Obj* v = c == types().type ? nullptr : c->attrs.find(N("__abstractmethods__"));
+    if (v == nullptr) raise_attribute_error(self, N("__abstractmethods__"), "__abstractmethods__");
+    return Ref::share(*v);
+}
+void type_abstractmethods_set(Obj self, Obj value) {
+    ClassObject* c = as_class(self);
+    if (value.is_unset()) {
+        if (!c->attrs.contains(N("__abstractmethods__")))
+            raise_attribute_error(self, N("__abstractmethods__"), "__abstractmethods__");
+        c->del_attr(N("__abstractmethods__"));
+        c->abstract = false;
+        return;
+    }
+    bool abstract = truth(value);
+    c->set_attr(N("__abstractmethods__"), value);
+    c->abstract = abstract;
+}
+Ref type_call_m(Obj self, Args a) {                // type.__call__: what calling the class does
+    return type_call(as_class(self), a);
+}
+Ref type_setattr_m(Obj self, Args a) {
+    arity(a, "__setattr__", 2, 2);
+    const Str* n = as_str(a.pos(0));
+    if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
+    type_setattr_generic(as_class(self), intern(n->text), a.pos(1));
+    return none_ref();
+}
+Ref type_delattr_m(Obj self, Args a) {
+    arity(a, "__delattr__", 1, 1);
+    const Str* n = as_str(a.pos(0));
+    if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
+    type_delattr_generic(as_class(self), intern(n->text));
+    return none_ref();
+}
+Ref type_instancecheck_m(Obj self, Args a) {       // type.__instancecheck__: _PyObject_RealIsInstance
+    arity(a, "__instancecheck__", 1, 1);
+    return Ref::steal(boolean(real_isinstance(a.pos(0), self)));
+}
+Ref type_subclasscheck_m(Obj self, Args a) {       // type.__subclasscheck__: _PyObject_RealIsSubclass
+    arity(a, "__subclasscheck__", 1, 1);
+    return Ref::steal(boolean(real_issubclass(a.pos(0), self)));
+}
 Ref type_prepare(Obj, Args) { return dict_new(); }
 Ref type_mro(Obj self, Args a) {
     arity(a, "mro", 0, 0);
@@ -577,9 +714,14 @@ GetSet* instance_dict_getset() {
 // type's getsets
 ClassObject* self_class(Obj self) { return as_class(self); }
 Ref type_name(Obj self) { return str_new(self_class(self)->name); }
+// check_set_special_type_attr: a delete is refused first, then a store to an immutable type
+void check_special(ClassObject* c, Obj v, const char* name) {
+    if (v.is_unset()) raise_new("TypeError", std::string("cannot delete '") + name + "' attribute of type '" + c->name + "'");
+    if (immutable_type(c)) raise_new("TypeError", std::string("cannot set '") + name + "' attribute of immutable type '" + c->name + "'");
+}
 void set_type_name(Obj self, Obj v) {
     ClassObject* c = self_class(self);
-    if (immutable_type(c)) raise_new("TypeError", "cannot set '__name__' attribute of immutable type '" + c->name + "'");
+    check_special(c, v, "__name__");
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "can only assign string to " + c->name + ".__name__, not '" + type_of(v)->name + "'");
     c->name = s->text;
@@ -587,7 +729,7 @@ void set_type_name(Obj self, Obj v) {
 Ref type_qualname(Obj self) { return str_new(self_class(self)->qualname); }
 void set_type_qualname(Obj self, Obj v) {
     ClassObject* c = self_class(self);
-    if (immutable_type(c)) raise_new("TypeError", "cannot set '__qualname__' attribute of immutable type '" + c->name + "'");
+    check_special(c, v, "__qualname__");
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "can only assign string to " + c->name + ".__qualname__, not '" + type_of(v)->name + "'");
     c->qualname = s->text;
@@ -598,12 +740,24 @@ Ref type_module(Obj self) {
     if (const Obj* m = c->attrs.find(N("__module__"))) return Ref::share(*m);
     raise_attribute_error(self, N("__module__"), "__module__");
 }
-void set_type_module(Obj self, Obj v) { type_setattr(self_class(self), N("__module__"), v); }
+void set_type_module(Obj self, Obj v) {          // type_set_module: the class's own __module__
+    ClassObject* c = self_class(self);
+    check_special(c, v, "__module__");
+    c->set_attr(N("__module__"), v);
+}
 Ref type_doc(Obj self) {
     ClassObject* c = self_class(self);
     if (const Obj* d = c->attrs.find(N("__doc__"))) return descr_get(*d, None(), self);
     return none_ref();
 }
+// type_set_doc: a class's own __doc__, after check_set_special_type_attr
+void set_type_doc(Obj self, Obj value) {
+    ClassObject* c = self_class(self);
+    check_special(c, value, "__doc__");
+    c->set_attr(N("__doc__"), value);
+}
+// __bases__ is settable in CPython (type_set_bases, with its layout checks); not here yet
+void set_type_bases(Obj, Obj) { throw NotImplemented("assigning a class's __bases__"); }
 Ref type_dict(Obj self) { return own(new Proxy(self_class(self))); }
 Ref type_mro_attr(Obj self) {
     std::vector<Obj> items;
@@ -908,18 +1062,31 @@ void init_types() {
     // type
     method(t.type, "__new__", type_new_builtin, Binding::Function);
     method(t.type, "__init__", type_init);
+    method(t.type, "__call__", type_call_m);
+    {
+        auto* g = new GetSet("__abstractmethods__", t.type, type_abstractmethods_get, type_abstractmethods_set);
+        g->deletable = true;
+        t.type->attrs.set(N("__abstractmethods__"), Obj::of(g));
+    }
+    method(t.type, "__setattr__", type_setattr_m);
+    method(t.type, "__delattr__", type_delattr_m);
+    method(t.type, "__instancecheck__", type_instancecheck_m);
+    method(t.type, "__subclasscheck__", type_subclasscheck_m);
+    t.type->has_dict = true;                      // a class's __dict__ is type's getset: a metaclass adds none
     method(t.type, "__prepare__", type_prepare, Binding::ClassMethod);
     method(t.type, "mro", type_mro);
     method(t.type, "__repr__", type_repr);
     getset(t.type, "__name__", type_name, set_type_name);
     getset(t.type, "__qualname__", type_qualname, set_type_qualname);
     getset(t.type, "__module__", type_module, set_type_module);
-    getset(t.type, "__doc__", type_doc);
+    getset(t.type, "__doc__", type_doc, set_type_doc);
     getset(t.type, "__dict__", type_dict);
     getset(t.type, "__mro__", type_mro_attr);
-    getset(t.type, "__bases__", type_bases);
+    getset(t.type, "__bases__", type_bases, set_type_bases);
     getset(t.type, "__base__", type_base);
     getset(t.type, "__flags__", type_flags);
+    for (const char* n : {"__name__", "__qualname__", "__module__", "__doc__", "__bases__"})
+        static_cast<GetSet*>(t.type->attrs.find(N(n))->object())->deletable = true;
     // descriptors' own __get__ (and a getset's __set__ and __delete__)
     for (ClassObject* c : {t.function, t.method_descriptor, t.classmethod_descriptor, t.getset_descriptor}) method(c, "__get__", get_native);
     method(t.getset_descriptor, "__set__", getset_set);

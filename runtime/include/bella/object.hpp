@@ -611,6 +611,7 @@ struct ClassObject : Object {
     std::vector<const Str*> native_fields;
     std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
     bool has_dict = false;
+    bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
     std::shared_ptr<SharedKeys> keys;
     ClassObject() : Object(Kind::Class) { flags |= IMMORTAL; }
 

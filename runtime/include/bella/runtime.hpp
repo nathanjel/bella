@@ -259,6 +259,9 @@ ClassObject* exception_class(const char* name);
 bool exception_matches(Obj exc, Obj spec);       // except clause matching (a class or a tuple of them)
 Obj traceback_of(Obj exc);
 bool is_exception_instance(Obj v);               // PyExceptionInstance_Check
+// a class whose metaclass is a class of the program's (a heap subclass of type): its special
+// methods come from that metaclass, as an instance's come from its class
+inline bool has_python_type(Obj v) { return v.is_object() && v.object()->kind == Kind::Class && v.object()->cls->heap_type; }
 // BaseException's C fields (args, __traceback__, __cause__, __context__, __suppress_context__;
 // AttributeError's name and obj, NameError's name): the object's own storage, never its __dict__
 // (refmodel RefClass native). Unset reads as absent: None to the descriptors, () for args.
@@ -487,6 +490,8 @@ std::int64_t length_value(Obj v);                            // a __len__ result
 Ref type_call(ClassObject* cls, Args a);                     // calling a class: __new__, then __init__
 Ref type_getattr(ClassObject* cls, const Str* name);         // type_getattro
 void type_setattr(ClassObject* cls, const Str* name, Obj value);
+bool real_isinstance(Obj inst, Obj cls);                     // _PyObject_RealIsInstance (type.__instancecheck__)
+bool real_issubclass(Obj derived, Obj cls);                  // recursive_issubclass (type.__subclasscheck__)
 void type_delattr(ClassObject* cls, const Str* name);
 Ref generic_getattr(Obj obj, const Str* name);               // PyObject_GenericGetAttr, non-instances
 [[noreturn]] void raise_attribute_error(Obj obj, const Str* name, const std::string& message);

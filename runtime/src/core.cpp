@@ -348,10 +348,13 @@ std::int64_t hash_of(Obj v) {
         case Kind::DictView:                     // keys and items views are unhashable; values views hash by identity
             if (static_cast<DictView*>(o)->which != DictView::Values) raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
             [[fallthrough]];
+        case Kind::Class:                        // a metaclass's own __hash__ decides, as an instance's class's does
+            if (has_python_type(v) && type_lookup(type_of(v), intern("__hash__")) != type_lookup(types().object, intern("__hash__")))
+                break;
+            [[fallthrough]];
         case Kind::Singleton:
         case Kind::PyFunction:
-        case Kind::Builtin:
-        case Kind::Class: {
+        case Kind::Builtin: {
             // object.__hash__: the address rotated by 4 bits (_Py_HashPointer)
             auto p = reinterpret_cast<std::uintptr_t>(o);
             auto h = static_cast<std::int64_t>((p >> 4) | (p << 60));

@@ -127,6 +127,15 @@ Ref invoke(Obj f, Args a) {
         }
         case Kind::Class: {
             auto* c = static_cast<ClassObject*>(o);
+            // a metaclass's own __call__ (slot_tp_call): it makes the instances
+            if (ClassObject* meta = type_of(Obj::of(c)); meta->heap_type) {
+                Obj call = type_lookup(meta, intern("__call__"));
+                if (call != type_lookup(types().type, intern("__call__"))) {
+                    Ref held = Ref::share(call);
+                    Ref bound = descr_get(held.get(), Obj::of(c), Obj::of(meta));
+                    return invoke(bound.get(), a);
+                }
+            }
             auto it = constructors().find(c);       // a C++ type's own constructor
             if (it != constructors().end()) return it->second(Obj::of(c), a);
             return type_call(c, a);
@@ -453,20 +462,82 @@ Ref b_format(Obj, Args a) {
     if (s != nullptr && s->length != 0) throw NotImplemented("format() with a format specification");
     return str_of(a.pos(0));
 }
+bool is_attribute_error(const PyError& e);
+// isinstance and issubclass (Objects/abstract.c): an exact type first, type's own check for a
+// class whose metaclass is type, a tuple's items in turn, else the metaclass's __instancecheck__
+// or __subclasscheck__, called bound to the class
+bool object_recursive_isinstance(Obj inst, Obj cls) {
+    if (is_kind(cls, Kind::Class) && Obj::of(type_of(inst)) == cls) return true;
+    if (is_kind(cls, Kind::Class) && type_of(cls) == types().type) return real_isinstance(inst, cls);
+    if (is_kind(cls, Kind::Tuple)) {
+        for (Obj item : static_cast<Tuple*>(cls.object())->items)
+            if (object_recursive_isinstance(inst, item)) return true;
+        return false;
+    }
+    if (Obj checker = type_lookup(type_of(cls), intern("__instancecheck__")); !checker.is_unset()) {
+        Ref c = Ref::share(checker);
+        Ref bound = descr_get(c.get(), cls, Obj::of(type_of(cls)));
+        Ref r = invoke(bound.get(), {inst});
+        return truth(r.get());
+    }
+    return real_isinstance(inst, cls);
+}
+bool object_issubclass(Obj derived, Obj cls) {
+    if (is_kind(cls, Kind::Class) && type_of(cls) == types().type) return derived == cls || real_issubclass(derived, cls);
+    if (is_kind(cls, Kind::Tuple)) {
+        for (Obj item : static_cast<Tuple*>(cls.object())->items)
+            if (object_issubclass(derived, item)) return true;
+        return false;
+    }
+    if (Obj checker = type_lookup(type_of(cls), intern("__subclasscheck__")); !checker.is_unset()) {
+        Ref c = Ref::share(checker);
+        Ref bound = descr_get(c.get(), cls, Obj::of(type_of(cls)));
+        Ref r = invoke(bound.get(), {derived});
+        return truth(r.get());
+    }
+    return real_issubclass(derived, cls);
+}
+// check_class: an object with a tuple __bases__ is a class to these checks (the abstract
+// protocol, which the runtime does not have yet); anything else is not
+void check_class(Obj v, const char* message) {
+    Ref bases;
+    try {
+        bases = getattr(v, intern("__bases__"));
+    } catch (const PyError& e) {
+        if (!is_attribute_error(e)) throw;
+    }
+    if (!is_kind(bases.get(), Kind::Tuple)) raise_new("TypeError", message);
+    throw NotImplemented("isinstance and issubclass with an object that is not a class but has __bases__");
+}
+}  // namespace
+
+// _PyObject_RealIsInstance (object_isinstance): the type's MRO, or a proxy's __class__
+bool real_isinstance(Obj inst, Obj cls) {
+    if (!is_kind(cls, Kind::Class)) check_class(cls, "isinstance() arg 2 must be a type, a tuple of types, or a union");
+    auto* c = static_cast<ClassObject*>(cls.object());
+    if (isinstance(inst, c)) return true;
+    Ref icls;
+    try {
+        icls = getattr(inst, intern("__class__"));
+    } catch (const PyError& e) {
+        if (!is_attribute_error(e)) throw;
+    }
+    return is_kind(icls.get(), Kind::Class) && icls.get() != Obj::of(type_of(inst)) &&
+           is_subclass(static_cast<ClassObject*>(icls.get().object()), c);
+}
+// recursive_issubclass: two classes by their MROs; anything else must be a class first
+bool real_issubclass(Obj derived, Obj cls) {
+    if (is_kind(cls, Kind::Class) && is_kind(derived, Kind::Class))
+        return is_subclass(static_cast<ClassObject*>(derived.object()), static_cast<ClassObject*>(cls.object()));
+    if (!is_kind(derived, Kind::Class)) check_class(derived, "issubclass() arg 1 must be a class");
+    check_class(cls, "issubclass() arg 2 must be a class, a tuple of classes, or a union");
+    return false;
+}
+
+namespace {
 Ref b_isinstance(Obj, Args a) {
     clinic(a, "isinstance", "isinstance", 2, 2);
-    ClassObject* c = type_of(a.pos(0));
-    auto check = [&](Obj spec) {
-        if (!is_kind(spec, Kind::Class))
-            raise_new("TypeError", "isinstance() arg 2 must be a type, a tuple of types, or a union");
-        return std::find(c->mro.begin(), c->mro.end(), static_cast<ClassObject*>(spec.object())) != c->mro.end();
-    };
-    Obj spec = a.pos(1);
-    if (is_kind(spec, Kind::Tuple)) {
-        for (Obj s : static_cast<Tuple*>(spec.object())->items) if (check(s)) return Ref::steal(boolean(true));
-        return Ref::steal(boolean(false));
-    }
-    return Ref::steal(boolean(check(spec)));
+    return Ref::steal(boolean(object_recursive_isinstance(a.pos(0), a.pos(1))));
 }
 Ref attr_name(Obj v, const char* who) {
     const Str* s = as_str(v);
@@ -511,18 +582,7 @@ Ref b_delattr(Obj, Args a) {
 }
 Ref b_issubclass(Obj, Args a) {
     clinic(a, "issubclass", "issubclass", 2, 2);
-    if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "issubclass() arg 1 must be a class");
-    auto* c = static_cast<ClassObject*>(a.pos(0).object());
-    auto check = [&](Obj spec) {
-        if (!is_kind(spec, Kind::Class))
-            raise_new("TypeError", "issubclass() arg 2 must be a class, a tuple of classes, or a union");
-        return is_subclass(c, static_cast<ClassObject*>(spec.object()));
-    };
-    if (is_kind(a.pos(1), Kind::Tuple)) {
-        for (Obj s : static_cast<Tuple*>(a.pos(1).object())->items) if (check(s)) return Ref::steal(boolean(true));
-        return Ref::steal(boolean(false));
-    }
-    return Ref::steal(boolean(check(a.pos(1))));
+    return Ref::steal(boolean(object_issubclass(a.pos(0), a.pos(1))));
 }
 Ref b_id(Obj, Args a) {
     onearg(a, "id");
