@@ -81,6 +81,7 @@ struct Builtin : Object {
     NativeFn fn;
     Obj self;                                    // a bound method's object (owned), or Unset
     Binding binding;
+    ClassObject* owner = nullptr;                // a method's type: its receiver must be an instance of it
     Builtin(std::string n, NativeFn f, Obj s = Obj{}, Binding b = Binding::Function);
 };
 struct GetSet : Object {                         // a getset descriptor: a data descriptor in C++
@@ -123,6 +124,7 @@ struct Iterator : Object {                       // the C++ types' iterators
     enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, StrIt, DictKeysIt, SeqIt, SetIt } of;
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
+    std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
     Iterator(Of o, Obj s);
 };
 struct Native : Object {                         // an object of a C++ type with methods (sys.stdout)
@@ -142,6 +144,7 @@ struct Code {
     bool varargs;
     bool varkw;
     std::vector<const char*> varnames;           // parameters first, as co_varnames
+    const char* doc = nullptr;                   // the docstring, or none
 };
 
 struct PyFunction : Object {
@@ -200,15 +203,36 @@ ClassObject* type_of(Obj v);
 inline bool is_kind(Obj v, Kind k) { return v.is_object() && v.object()->kind == k; }
 
 // ---- exceptions ----
-struct PyError {
-    Ref exc;                                     // the exception instance
-};
+// The exception being propagated, which frame guards record frames into. A thrown or rethrown
+// PyError marks itself as the owner; when that PyError dies (caught, and its handler done) the
+// mark is cleared, so a later C++ exception that is not a Python one (a refusal) unwinds without
+// touching an exception that is dead or no longer propagating (found while fixing the order of
+// __getattr__, review 2026-11-03). A copy never owns the mark.
 namespace detail {
-inline Obj& raising() {                          // the exception being propagated (for frame guards)
+inline Obj& raising() {
     static Obj in_flight;
     return in_flight;
 }
+inline const void*& raising_owner() {
+    static const void* owner = nullptr;
+    return owner;
 }
+}
+struct PyError {
+    Ref exc;                                     // the exception instance
+    explicit PyError(Ref e) : exc(std::move(e)) {
+        detail::raising() = exc.get();
+        detail::raising_owner() = this;
+    }
+    PyError(const PyError& o) : exc(o.exc) {}
+    PyError& operator=(const PyError&) = delete;
+    ~PyError() {
+        if (detail::raising_owner() == this) {
+            detail::raising() = Obj{};
+            detail::raising_owner() = nullptr;
+        }
+    }
+};
 [[noreturn]] void raise(Obj exc);                // raise exc (an instance); the caller keeps its count
 [[noreturn]] void raise_new(const char* type, const std::string& message);
 [[noreturn]] void raise_type(Obj type_or_instance, Obj cause = Obj{}, bool has_cause = false);
@@ -216,6 +240,16 @@ ClassObject* exception_class(const char* name);
 bool exception_matches(Obj exc, Obj spec);       // except clause matching (a class or a tuple of them)
 Obj traceback_of(Obj exc);
 [[noreturn]] void reraise();                     // bare `raise`: the exception being handled
+// Inside a catch block: the caught exception goes on, as the one being propagated again (a
+// finally block or an except clause's test may have raised and caught others meanwhile).
+[[noreturn]] inline void rethrow(const PyError& e) {
+    detail::raising() = e.exc.get();
+    detail::raising_owner() = &e;
+    throw;
+}
+// An exception nothing can propagate (from a finaliser): reported on stderr as CPython reports
+// an unraisable exception, then dropped.
+void report_unraisable(const std::string& context, const PyError& e);
 // While an except clause runs, its exception is the one being handled: what a bare `raise`
 // re-raises and what a new exception records as __context__ (sys.exception()).
 class Handling {
@@ -256,6 +290,28 @@ public:
 template <class... L>
 FrameGuard(const Code&, L&...) -> FrameGuard<sizeof...(L)>;
 
+// The variables the frontend made for values CPython keeps on its stack (a `with` statement's
+// manager, a match subject, an inlined comprehension's iterator and result, ...). Declared after
+// the frame guard and before the temporaries: when an exception leaves the function they die in
+// unwinding, after the temporaries, in the order given (newest first), before the frame is
+// recorded with the real locals (review log RL-186).
+template <std::size_t N>
+class StackValues {
+    std::array<Ref*, N> values_;
+    int uncaught_;
+public:
+    template <class... L>
+    explicit StackValues(L&... values) : values_{&values...}, uncaught_(std::uncaught_exceptions()) {}
+    ~StackValues() {
+        if (std::uncaught_exceptions() > uncaught_)
+            for (Ref* v : values_) *v = Ref{};
+    }
+    StackValues(const StackValues&) = delete;
+    StackValues& operator=(const StackValues&) = delete;
+};
+template <class... L>
+StackValues(L&...) -> StackValues<sizeof...(L)>;
+
 // ---- strings ----
 Ref str_new(std::string_view utf8);                          // a new (counted) str
 Ref str_from_codepoints(std::u32string_view cps);
@@ -271,6 +327,7 @@ Ref list_new(std::initializer_list<Obj> items);
 std::int64_t hash_of(Obj v);
 Obj dict_get(Dict* d, Obj key);                              // borrowed, Unset if absent
 void dict_set(Dict* d, Obj key, Obj value);                  // takes new counts
+void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value);   // a key's stored hash, not __hash__ again
 bool dict_del(Dict* d, Obj key);
 Ref dict_new();
 
@@ -332,6 +389,7 @@ Ref build_set(std::initializer_list<Obj> items);
 void dict_update(Obj target, Obj mapping);                   // DICT_UPDATE ({**m})
 void dict_merge(Obj target, Obj mapping, Obj func);          // DICT_MERGE (f(**m)): duplicates fail
 void set_add(Obj set, Obj key);                              // takes a new count
+void set_add_hashed(Obj set, Obj key, std::int64_t hash);   // a key's stored hash
 void set_update(Obj set, Obj iterable);
 bool set_contains(SetObject* s, Obj key);
 bool set_discard(SetObject* s, Obj key);
@@ -354,6 +412,24 @@ bool is_subclass(ClassObject* c, ClassObject* base);
 bool isinstance(Obj v, ClassObject* c);
 // A special method of v's type called with v first; Unset Ref (and *found false) when the type has none.
 Ref call_special(Obj v, const char* name, std::initializer_list<Obj> args, bool* found = nullptr);
+Ref descr_get(Obj found, Obj obj, Obj type);                 // type(found).__get__(found, obj, type)
+// A name CPython has and the runtime lacks yet is refused (bella::NotImplemented), never answered
+// with AttributeError or NameError (runtime/src/cpython_names.inc, tools/cpython_names.py): an
+// attribute of a built-in class in the MRO, of a class's metatype, of sys or builtins; a global.
+void refuse_absent_attribute(Obj obj, const Str* name);
+void refuse_absent_global(const Str* name);
+// What CPython keeps as `owner.name` (its kind: "wrapper_descriptor", "method_descriptor", ...),
+// or "" when CPython's type has no such attribute.
+std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name);
+// The prelude's builtins look like CPython's (docs/emitter.md section 1): an exported function is
+// a builtin_function_or_method, never bound as a method; an exported class is immutable.
+bool presents_as_builtin(Obj f);
+bool immutable_type(const ClassObject* c);
+// type(v) and v.__class__: the runtime refuses an object it cannot present as CPython's yet (a
+// slot wrapper, which it holds as a method descriptor).
+ClassObject* observed_type(Obj v);
+std::int64_t index_value(Obj v);                             // operator.index: int, bool, __index__
+std::int64_t length_value(Obj v);                            // a __len__ result as len() and truth take it
 Ref type_call(ClassObject* cls, Args a);                     // calling a class: __new__, then __init__
 Ref type_getattr(ClassObject* cls, const Str* name);         // type_getattro
 void type_setattr(ClassObject* cls, const Str* name, Obj value);

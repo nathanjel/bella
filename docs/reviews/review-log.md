@@ -7,12 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-02:** 187 findings from fifteen reviews: 151 fixed (most in commit
+**Status on 2026-11-03:** 219 findings from seventeen reviews: 183 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews), 21 already done before or
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews), 21 already done before or
 because of the review, 4 planned (D-2 and D-10, accepted by the author), 2 deferred, 4 refuted
 and 5 checked with no issue. Nothing is open: the
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
@@ -21,6 +21,8 @@ author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01.
 
 | Date | Reviewer | File | Scope | Ran against |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 | astra-low (A9) | [2026-11-03-astra-low-09-compiled-classes-review.md](2026-11-03-astra-low-09-compiled-classes-review.md) | the C++ emitter, the runtime core and compiled classes, `d28b256..f12af86` | CPython 3.15.2, GCC 16.2.1 |
+| 2026-11-02 | gemini-4-argon-high (G8) | [2026-11-02-08-gemini-4-argon-high-cpp-emitter-review.md](2026-11-02-08-gemini-4-argon-high-cpp-emitter-review.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-02 | astra-low (A8) | [2026-11-02-astra-low-08-l2-lifetime-review.md](2026-11-02-astra-low-08-l2-lifetime-review.md) | the L2 leg, lifetimes in the model and `object.hpp`, `58bb34b..d28b256` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-02 | gemini-4-argon-high (G7) | [2026-11-02-07-gemini-4-argon-high-l2-lifetimes-review.md](2026-11-02-07-gemini-4-argon-high-l2-lifetimes-review.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-02 | astra-low (A7) | [2026-11-02-astra-low-07-eval1-semantics-review.md](2026-11-02-astra-low-07-eval1-semantics-review.md) | Gate 0 task 4 steps A1 to B and P-1 to P-3, `3d4e428..58bb34b` | CPython 3.15.2 |
@@ -360,6 +362,51 @@ RL-172, RL-180, RL-185) and during unwinding (RL-186).
 | RL-186 | Found while fixing RL-185 | When an exception left a `match` pattern, a chained assignment's failing first target, a decorator expression or an inlined comprehension, the synthetic variables outlived the handler | Confirmed: CPython drops these stack values during unwinding | Fixed, but for one order | `eval2`'s generated handlers set the synthetic variables a region stored to None after its temporaries, newest first (a construct is numbered after the ones inside it), and a list, set or dict comprehension's helper its iterator argument as well (CPython inlines them, PEP 709; a generator expression's iterator belongs to a real frame and stays). Open: CPython drops such a comprehension's iterator before its partial result; Bella drops it after, because the caller's operand still holds it while the helper unwinds. The emitter can move the iterator into the helper; `TODO.md` task 4 |
 | RL-187 | A8, verification | `make object-test` passed with the use-after-free: the random programs never mutate a class from inside its own callbacks, and the checking mode quarantines dead objects | Confirmed | Fixed | RL-169's test runs without quarantine under ASan and UBSan in `make object-test`. The oracle's R0 now declares unsorted slots, though its programs seldom observe slot deaths; C-9-08 and the model test cover RL-178 |
 
+### Compiled classes (A9, G8)
+
+All 23 of A9's findings reproduce on CPython 3.15.2 and the compiled runner (`PYTHONHASHSEED=0`).
+G8's thirteen are a subset; G8 numbered them RL-188 to RL-200 itself, and those labels are its
+own: its section numbers are mapped below. Each reviewer's program, the finally matrix and the
+programs found while verifying are `pipeline/tests/test_review_2026_11_03.py`; the 31 L2
+release-point probes now also run compiled (`pipeline/tests/test_compiled_probes.py`, 60 of 62,
+the two generator probes refused until step 3b). Running the earlier rounds' programs compiled
+found RL-211 to RL-219.
+
+| ID | From | Finding | Verdict | Status | Evidence and fix |
+| --- | --- | --- | --- | --- | --- |
+| RL-188 | A9-1, G8 2.5 | List comparison kept positions and lengths read before an element's `__eq__` ran; one that empties the list read past its end | Confirmed: invalid read under ASan at `ops.cpp:294` | Fixed | `list_richcompare` and `tuplerichcompare` as CPython writes them: a list's lengths first for `==`/`!=`, both items held while user code runs, the current lengths read at every step |
+| RL-189 | A9-2, G8 2.2 | An unbound method of a C++ type accepted a receiver of another type (`list.append(1, 2)` crashed) | Confirmed: SIGSEGV | Fixed | Every method descriptor knows its type (`Builtin::owner`); a direct call and `__get__` check the receiver with CPython's message (`descriptor 'append' for 'list' objects doesn't apply to a 'int' object`). The prelude's methods of the C++ types check theirs too (RL-218) |
+| RL-190 | A9-3, G8 2.3 | `set.discard()` and `set.remove()` read an argument that was not passed | Confirmed: SIGSEGV | Fixed | METH\_O's check on every one-argument set method; a scan of `call.cpp`, `types.cpp` and `set.cpp` found no other method reading an argument before checking the count |
+| RL-191 | A9-4 | An exception from `__del__` escaped the death that ran it: from a destructor, `std::terminate` | Confirmed: abort | Fixed | Finalisers run through a hook that reports the exception as CPython reports an unraisable one (`Exception ignored while calling deallocator <function C.__del__ at 0x…>:` and the traceback, on stderr) and drops it, keeping the exception being propagated |
+| RL-192 | A9-5, G8 2.1 | A `finally` written inline before a `return` ran inside the `try`'s own catch, so when it raised it ran a second time | Confirmed | Fixed | The emitter notes how a `try` with a `finally` was left (normal, return, break, continue, the loop's end) and jumps past it; the block runs once there and the completion goes on outward. The exception edge runs it in a catch of its own. `docs/emitter.md` section 2 |
+| RL-193 | A9-6, G8 2.8 | On the exception edge the `finally` block ran with no exception being handled: a bare `raise` there raised RuntimeError, and a new exception lost its `__context__` | Confirmed | Fixed | The edge makes the exception the one being handled (`Handling`) while the block runs, then `rt::rethrow`, which also restores the exception frame records attach to |
+| RL-194 | A9-7 | Unpacking kept its source alive until the scope ended | Confirmed | Fixed | UNPACK\_SEQUENCE pops its source: the emitter releases it after the unpack, before the targets are bound |
+| RL-195 | A9-8 | A set insertion whose comparison raised leaked the key | Confirmed: the key never died | Fixed | The table takes its count only when it stores the key |
+| RL-196 | A9-9, G8 2.4 | A duplicate base, or bases with no consistent MRO, escaped as an uncaught C++ exception | Confirmed: SIGABRT | Fixed | `type_new` checks duplicates (`duplicate base class A`) and turns a failed C3 merge into CPython's TypeError (`Cannot create a consistent method resolution order (MRO) for bases A, B`) |
+| RL-197 | A9-10 | Calling an instance used an instance attribute `__call__` | Confirmed | Fixed | `__call__` is found on the type and bound through its descriptor |
+| RL-198 | A9-11 | `list.pop` took any index that was not a small int as 0, after removing nothing yet | Confirmed | Fixed | One conversion for indices (`index_value`: int, bool, `__index__`), before the list changes |
+| RL-199 | A9-12, G8 2.9 | Set and dict iterators ignored a change of size | Confirmed | Fixed | Each iterator keeps the size it began with; a change raises CPython's RuntimeError, and keeps raising |
+| RL-200 | A9-13, G8 2.6 | Sequence ordering turned an element comparison's result into a bool | Confirmed | Fixed | The deciding comparison's result object is returned as it is (RL-188) |
+| RL-201 | A9-14, G8 2.11 | `__len__` returning a bool, or an object with `__index__`, was rejected by truth testing; `len()` and truth disagreed | Confirmed | Fixed | `len()` and truth share CPython's conversion (`length_value`: an index, never negative) |
+| RL-202 | A9-15 | Copying an exact set or dict called each key's `__hash__` again | Confirmed | Fixed | The merge paths insert with the stored hashes, as `set_merge`, `set_update_dict_keys` and `dict_merge` do |
+| RL-203 | A9-16 | A lookup in an empty dict did not hash the key | Confirmed | Fixed | The key is hashed first |
+| RL-204 | A9-17 | The dict repr took a snapshot of the items before calling the keys' and values' `repr` | Confirmed | Fixed | The prelude walks the entries as `PyDict_Next` does, through a runtime primitive (`_dict_next`) |
+| RL-205 | A9-18 | `__slots__` rejected a repeated name and accepted a name that is no identifier | Confirmed | Fixed | `type_new_visit_slots`: identifiers only (`__slots__ must be identifiers`), a repeated ordinary name accepted, `__dict__` once and only where no base has a dict. A name beyond ASCII is refused until the Unicode database |
+| RL-206 | A9-19, G8 2.12 | `classmethod` of a callable that is not a descriptor raised AttributeError | Confirmed | Fixed | `cm_descr_get` since 3.13: the prelude returns `types.MethodType(func, owner)`; `method.__new__` takes any callable |
+| RL-207 | A9-20, G8 2.10 | A Python name could collide with a name the emitter made (`ended1`, `raised1`, `self`): C++ that did not compile, or meant something else | Confirmed | Fixed | Every name the emitter makes matches one pattern, asserted where it is made; a Python name that matches it, or that C++ reserves, is escaped injectively (`py`, `_` as `_1`, a non-ASCII character as `_2` and its code point). The function parameter is `fn`, so `self` stays `self`. G8's `_l2_` prefix was not taken: C++ reserves no such prefix, but readable names stay as written |
+| RL-208 | A9-21, G8 2.7 | `NotImplemented` was true in a boolean context | Confirmed | Fixed | TypeError since 3.14 (`NotImplemented should not be used in a boolean context`) |
+| RL-209 | A9-22 | `abs()` compared with 0 and negated instead of calling `__abs__` | Confirmed | Fixed | `PyNumber_Absolute`: the int's own, else `__abs__`, else CPython's TypeError |
+| RL-210 | A9-23, G8 2.13 | Compiled functions had no docstring, so a property's `__doc__` was None too | Confirmed | Fixed | The code record carries the docstring and `make_function` sets `__doc__` from it |
+| RL-211 | Found while verifying (A8's `slot_rule.py` compiled) | A name CPython has and the runtime lacks yet was answered with NameError (`sorted`) or AttributeError (`str.startswith`, `object.__sizeof__`, `BaseException.add_note`), and `__getattr__` ran for it; a program catching those took the wrong branch | Confirmed | Fixed | `tools/cpython_names.py` records from the pinned CPython the builtins, a script's globals, `sys`, and each built-in type's own attributes (`runtime/src/cpython_names.inc`, checked by `make verify`). A lookup that finds nothing refuses such a name (`bella: not implemented: str.startswith (…)`, exit 70) before `__getattr__`, on instances (an `object.hpp` hook), classes and their metatype, C++ objects, `sys`, `builtins` and globals. A name CPython lacks too still raises |
+| RL-212 | Found with RL-211 | `sys.maxsize` was 2\*\*62 − 1 | Confirmed: CPython's is 2\*\*63 − 1 | Fixed | It is beyond the immediates, so `sys` no longer has it and RL-211 refuses it until big ints |
+| RL-213 | Found while verifying (G7's `syn_raise.py` compiled) | When an exception left a function, the frame record took the frontend's synthetic variables with the real locals: a raising list comprehension's partial result died after the handler | Confirmed: CPython drops it during unwinding (PEP 709 inlines the comprehension) | Fixed | As `eval2`'s `unwind_synthetic` (RL-186): a `StackValues` guard drops them, and a list, set or dict comprehension helper's iterator argument, newest first, after the temporaries and before the frame is recorded |
+| RL-214 | Found while verifying (A8's `exec_refs.py` compiled) | A `__getattr__` that is not a function was called with the object and the name; and it ran while the AttributeError it replaces, and so its traceback, was alive | Confirmed: TypeError from `Hook.__call__`; then a descriptor dying after the hook instead of before | Fixed | CPython's `call_attribute`: a function or method descriptor gets the object and the name, another descriptor is bound first, anything else gets the name alone. The AttributeError is dropped first, as `PyErr_Clear` does. Model first (`refmodel/objects.py`, test `test_a_getattr_hook_is_called_as_call_attribute_does`), then `object.hpp` with a runtime hook for its own callables |
+| RL-215 | Found while fixing RL-214 | The pointer to the exception being propagated, which frame guards record into, outlived the exception: a refusal unwinding later recorded frames into a dead object | Confirmed by reading: a use-after-free on any refusal after a handled exception died | Fixed | The `PyError` that is thrown or rethrown owns the mark and clears it when it dies; a copy never owns it |
+| RL-216 | Found while checking RL-211 | The C++ types had an empty `__qualname__`: `repr(int)` was `<class ''>` | Confirmed | Fixed | `object.hpp`'s `builtin_class` gives a built-in type its name as `__qualname__` |
+| RL-217 | Found while checking RL-216 | The prelude's builtins showed they were Python: `print` was a `function` (`<function print at …>`), bound as a method when stored on a class; `property` was a mutable class | Confirmed | Fixed | An exported prelude function's class is `builtin_function_or_method`: its repr, its `__self__` (the builtins module), and no binding; an exported class is immutable as a static type. The decision of 2026-11-02 implied it; `docs/emitter.md` section 1 now says it |
+| RL-218 | Found while checking RL-217 | Method objects: a bound method did not read its function's attributes (`C().f.__name__` raised); `object.__new__` was `<built-in function __new__>` with `__self__` None; the prelude's `list.__repr__` and the like took any receiver; a slot wrapper (`list.__len__`) showed itself as a method descriptor | Confirmed | Fixed, one part refused | `method_getattro`'s fallback to `__func__`; `__new__` bound to its type as CPython shows it; the prelude's type methods check their receiver (tested against CPython in `runtime/tests/test_prelude.py`). The runtime holds slot wrappers as method descriptors: their repr and type are refused (the kinds come from RL-211's table) until the runtime has CPython's wrapper types (`TODO.md`) |
+| RL-219 | Found while fixing RL-207 | Generated code and string names contained `__` (`code_T____init__`, `S___init__`), which C++ reserves, and a function with a non-ASCII qualified name was named by Python's salted `hash()`, so the generated C++ changed between runs | Confirmed | Fixed | One readable mapping for these names (runs of `_` folded, a non-ASCII character as `_u` and its code point, a dunder string as `S_dunder_…`), told apart by `unique`; test `test_generated_names_are_unreserved_and_reproducible` emits under two hash seeds |
+
 ## Open for discussion
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
@@ -532,5 +579,5 @@ conformance case comes first: copying unslotted, slotted and customised user cla
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-188` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-220` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

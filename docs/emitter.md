@@ -1,6 +1,7 @@
 # The C++ emitter and the runtime core (step 3 of the C++ leg)
 
-Status: step 3a.2, 2026-11-02. `pipeline/backend/cpp.py` turns an L2 module (`docs/l2.md`) into
+Status: step 3a.2, 2026-11-02; reviewed 2026-11-03 (astra-low-09, gemini-4-argon-high-08: review
+log RL-188 to RL-219). `pipeline/backend/cpp.py` turns an L2 module (`docs/l2.md`) into
 one C++26 translation unit against `runtime/include/bella/runtime.hpp`; `pipeline/build.py`
 compiles it and links it with the runtime library. The slice examples (`make slice`),
 `pipeline/tests/test_compiled.py` and C-3-05..11 pass compiled; the corpus under the compiled
@@ -17,23 +18,33 @@ Python in `runtime/prelude/`, compiled by Bella like any program.
 | The object model | `runtime/include/bella/object.hpp` | values (`Obj`, `Ref`), counting, classes, instances, attribute lookup, inline caches, deaths in CPython's order; tested three ways by `make object-test` |
 | Exact `int` | `runtime/include/bella/int.hpp` | the 63-bit fast paths, tested by `make int-test`; the runtime calls them and turns their C++ errors into Python exceptions |
 | The runtime core | `runtime/include/bella/runtime.hpp`, `runtime/src/*.cpp` | `str` (PEP 393), tuple, list, CPython's compact dict, hashing (SipHash-1-3 keyed as `PYTHONHASHSEED` says, `int` and `tuple` hashes as CPython's), the call protocol and argument binding, function objects and cells, modules and names, the exception carrier and frame records, iteration, operators, `sys.stdout` |
-| The prelude | `runtime/prelude/build_class.py`, `builtins.py` | `__build_class__`; `print`; `property`, `staticmethod`, `classmethod`; the `repr` of lists, tuples, dicts, sets and frozensets (installed as their `__repr__`). CPython runs each against its builtin in `runtime/tests/test_prelude.py` |
+| The prelude | `runtime/prelude/build_class.py`, `builtins.py` | `__build_class__`; `print`; `property`, `staticmethod`, `classmethod`; the `repr` of lists, tuples, dicts, sets and frozensets (installed as their `__repr__`, each checking its receiver). CPython runs each against its builtin in `runtime/tests/test_prelude.py`. What a module exports looks like CPython's builtin: a function is a `builtin_function_or_method` (its repr, its `__self__`, never bound as a method), a class is immutable (RL-217) |
 | Types and classes | `runtime/src/types.cpp`, `set.cpp` | the builtin types' attributes as getset and method descriptors; `type.__new__` and calling a class; attribute access on classes and on the C++ types' objects; special-method dispatch; `set` and `frozenset` as CPython's table (`Objects/setobject.c`), so their order is CPython's (D-05) |
 
 `object.hpp`'s `Str` is the real `str` now (PEP 393 code units beside the UTF-8 text the attribute
 code reads), and its kinds include the runtime's, whose deaths the runtime registers (`destroyer`).
 `object.hpp`'s `call` reaches every callable through the runtime's hook, so a descriptor or a
-finaliser written in Python runs from the attribute machinery.
+finaliser written in Python runs from the attribute machinery; an exception a finaliser raises is
+reported as CPython reports an unraisable one and dropped (RL-191).
+
+A name CPython has and the runtime lacks yet is refused, never answered with NameError or
+AttributeError (RL-211): `tools/cpython_names.py` records from the pinned CPython the builtins, a
+script's globals, `sys` and each built-in type's own attributes with their kinds
+(`runtime/src/cpython_names.inc`, checked by `make verify`). A lookup that finds nothing consults
+it before `__getattr__` runs: `"a".startswith("a")` stops with `bella: not implemented:
+str.startswith (…)` and exit 70, while `"a".nosuch` raises AttributeError as in CPython. The same
+table says which methods CPython keeps as slot wrappers; the runtime holds those as method
+descriptors and refuses their repr and type (RL-218).
 
 ## 2. What generated code looks like
 
 `fib.py`'s function (`pipeline/examples/out/fib.cpp`):
 
 ```cpp
-static Ref f_fib(rt::PyFunction* self, rt::Args args) {
+static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
     Ref n;
     rt::FrameGuard frame(code_fib, n);
-    rt::bind(self, args, {&n});
+    rt::bind(fn, args, {&n});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13;
     frame.line = 5;
     t1 = rt::load_fast(n, "n");
@@ -45,10 +56,13 @@ static Ref f_fib(rt::PyFunction* self, rt::Args args) {
         ...
 ```
 
-* One C++ function per code object, named after its qualified name; a module body is
-  `module_body(Module*)`. Python locals keep their names (`py_` in front where C++ reserves the
-  name or the emitter uses it); runtime calls are qualified (`rt::`), so no Python name shadows
-  them.
+* One C++ function per code object, named after its qualified name (`f_T_init` for `T.__init__`:
+  runs of `_` folded, since C++ reserves `__`; the same on every run); a module body is
+  `module_body(Module*)`, and the function object is the parameter `fn`. Python locals keep
+  their names. A name C++ reserves, or one that matches the single pattern of the emitter's own
+  names (`t3`, `fin2`, `S_x`, `code_f`, `py…`), is escaped injectively: `py`, then the name with
+  `_` written `_1` and a non-ASCII character `_2` and its code point (RL-207, RL-219). Runtime
+  calls are qualified (`rt::`), so no Python name shadows them.
 * One C++ statement per L2 statement, in L2's order; `frame.line = n` for L2's `line n`.
 * Temporaries are `Ref`s declared at the top of their region (the function, a `try` body, a
   handler, a `finally` block) in their number order, so C++ unwinding destroys them newest first:
@@ -63,12 +77,20 @@ static Ref f_fib(rt::PyFunction* self, rt::Args args) {
   none matches; a `Handling` scope makes the exception the one being handled, for a bare `raise`
   and for `__context__`. The synthetic variables a `try` body stored are set to None before the
   handlers, after the body's temporaries, as `eval2` does (review log RL-186).
-* C++ has no `finally`: the block is written out on every way out of the `try`, as CPython's
-  compiler does: the normal end, the exception edge (`catch (...)` and rethrow), and before every
-  `return`, `break` or `continue` that leaves it, innermost first. A loop's held iterator is
-  released where L2 says, after the `finally` blocks nested in the loop. `return` moves its value
-  into `ret` before the `finally` blocks run. `except ... as e`'s `e = None; del e` is a `finally`
-  of the handler.
+* C++ has no `finally`. A `try` with one gets a completion variable (`int fin2`): the normal
+  end, and every `return`, `break`, `continue` or loop end leaving the `try`, set it and jump to
+  the label after the `try`, where the block runs once, outside the `try`'s catch, and the
+  completion goes on outward (to the next `finally`, the loop, or `return ret`). The exception
+  edge is a catch of its own that runs the block with the exception as the one being handled (a
+  bare `raise` re-raises it, a new exception takes it as `__context__`) and then
+  `rt::rethrow`s it (RL-192, RL-193). A loop's held iterator is released where L2 says.
+  `except ... as e`'s `e = None; del e` cannot raise and is written inline on every way out of
+  the handler. Without a `finally` on the way, `return` releases the loops' holds and returns.
+* The frontend's synthetic variables are what CPython keeps on its stack (a `with` statement's
+  manager, a match subject, an inlined comprehension's iterator and result): when an exception
+  leaves the function, a `StackValues` guard drops them, newest first, after the temporaries and
+  before the frame guard records the real locals (RL-213, as `eval2` does, RL-186). Unpacking
+  releases its source before the targets are bound (RL-194).
 * Constants: small ints are immediates (`Obj::small(2)`), strings are interned, tuples of those
   are made when the module first runs. A constant the runtime cannot make yet (a float, bytes, an
   int beyond 62 bits) is refused where it is used, never when the module starts (P-1).
@@ -86,7 +108,7 @@ None when absent, `__hash__` None beside an `__eq__`, the object model's class
 `__set_name__` in attribute order, then the next class's `__init_subclass__` with the keywords.
 Calling a class is `type_call`: `__new__`, then `__init__` when the result is an instance.
 
-Everything is found the way CPython finds it: on the type, through the descriptor protocol.
+Lookups follow CPython's order: on the type, through the descriptor protocol.
 Functions are non-data descriptors (`function.__get__` binds), C++ methods are method descriptors,
 the type's own attributes (`__name__`, `__mro__`, `__dict__`, ...) are getset descriptors on
 `type`, and `object.hpp` counts any object whose type has `__get__` as a descriptor. Operators
@@ -96,7 +118,16 @@ unless the right operand's type is a subclass overriding the reflected one), `do
 `__len__` for truth, `__iter__` and `__next__` or the old `__getitem__` protocol for iteration,
 `__contains__` or iteration for `in`. The C++ types take part with their own operations, which
 answer NotImplemented to operands they do not know. A property or `__get__` written in Python
-that raises AttributeError falls back to `__getattr__`, as the C++ ones do.
+that raises AttributeError falls back to `__getattr__`, which is called as CPython's
+`call_attribute` calls it, after the AttributeError is dropped (RL-214).
+
+What the passing class cases show is narrower than these sentences: the first review of this
+code (2026-11-03) found 23 places where a protocol, a container algorithm or class validation
+was not yet CPython's, among them callbacks that mutate or raise, rejected calls and abrupt exits
+(review log RL-188 to RL-210). Those boundaries are tested now: every reviewer's program, a
+matrix of every way out of a `finally`, and the 31 L2 release-point probes compiled
+(`pipeline/tests/test_review_2026_11_03.py`, `test_compiled_probes.py`). A boundary no test
+covers yet is not claimed to be exact.
 
 Still in C++ until the next step: the exception classes (the decision puts them in the prelude);
 not yet anywhere: `super()`, metaclasses other than `type`, subclasses of the C++ types other than
@@ -121,6 +152,8 @@ file and line (spec D-06) and exits 1; a facility Bella lacks yet stops with
 * 3a.3: instance dicts as real dicts (`vars()`, `__dict__`): C-3-01..03.
 * 3b: generators (state machines, design section 10.3) and compiled imports: C-3-04.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3.
+* Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and
+  type are refused today (RL-218); the names RL-211's table refuses, as programs need them.
 * Later: `float` beyond the digits (the wrapper of `to_chars`/`from_chars`), the `bn` copy for
   big ints, `format` specifications, the global read caches of decision 6, the Unicode database
   for `repr` beyond Latin-1, the rest of the builtins.

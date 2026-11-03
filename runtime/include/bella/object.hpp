@@ -393,6 +393,7 @@ inline ClassObject* builtin_class(const char* name) {
     if (!c) {
         c = std::make_unique<ClassObject>();
         c->name = name;
+        c->qualname = name;                      // a built-in type's __qualname__ is its name
         c->mro = {c.get()};
     }
     return c.get();
@@ -512,12 +513,40 @@ inline bool is_data_descriptor(Obj found) {
     return found.is_object() && found.object()->cls != nullptr &&
            (found.object()->cls->has("__set__") || found.object()->cls->has("__delete__"));
 }
+// A finaliser written in Python is called by the runtime, which reports what it raises as
+// unraisable: a death never propagates an exception (review 2026-11-03, A9-4).
+using FinalizerHook = void (*)(Obj fn, Obj self);
+inline FinalizerHook& finalizer_hook() {
+    static FinalizerHook hook = nullptr;
+    return hook;
+}
+
 // Whether the exception being handled is an AttributeError the runtime raised for Python code
 // (a property or a __get__ written in Python), so that __getattr__ is tried as for this header's
 // own AttributeError. Called inside a catch block.
 using AttributeErrorHook = bool (*)();
 inline AttributeErrorHook& attribute_error_hook() {
     static AttributeErrorHook hook = nullptr;
+    return hook;
+}
+
+// A name nothing in the class or the instance provides. The runtime refuses it (bella::NotImplemented)
+// when a built-in class in the MRO has it in CPython and the runtime lacks it yet: CPython would
+// have found it, and neither __getattr__ nor AttributeError is the answer. Without the runtime,
+// this header's classes have no built-in names.
+using MissingNameHook = void (*)(Obj obj, const Str* name);
+inline MissingNameHook& missing_name_hook() {
+    static MissingNameHook hook = nullptr;
+    return hook;
+}
+
+// How slot_tp_getattr_hook calls the __getattr__ it found (CPython's call_attribute), for the
+// runtime's kinds of callable: a function or method descriptor with the object and the name,
+// another descriptor bound first and called with the name, anything else with the name alone.
+// Returns a new reference. Without it, this header's functions and instances are all there is.
+using CallAttributeHook = Obj (*)(Obj hook, Obj obj, Obj name);
+inline CallAttributeHook& call_attribute_hook() {
+    static CallAttributeHook hook = nullptr;
     return hook;
 }
 
@@ -690,15 +719,31 @@ inline std::optional<LookupPlan> plan_cached(Instance* obj, const Str* name, con
 // __getattr__ hook from the lookup until the operation ends; a descriptor, and its __get__, while
 // __get__ runs (released as it returns or raises, before the hook is tried). Cache entries stay
 // borrowed: these are the operation's own references (review 2026-11-02, A8-1).
+inline Ref call_attribute(Obj hook, Instance* obj, const Str* name) {
+    if (call_attribute_hook() != nullptr) return Ref::steal(call_attribute_hook()(hook, Obj::of(obj), Obj::of(name)));
+    if (hook.is_object() && hook.object()->kind == Kind::Instance) {
+        ClassObject* hc = hook.object()->cls;
+        if (auto get = hc->lookup(intern("__get__"))) {
+            Ref bound = Ref::steal(call(get->first, {hook, Obj::of(obj), Obj::of(obj->cls)}));
+            return Ref::steal(call(bound.get(), {Obj::of(name)}));
+        }
+        if (auto c = hc->lookup(intern("__call__"))) return Ref::steal(call(c->first, {hook, Obj::of(name)}));
+        throw TypeError("'" + hc->name + "' object is not callable");
+    }
+    return Ref::steal(call(hook, {Obj::of(obj), Obj::of(name)}));
+}
+
 inline Ref execute(const LookupPlan& plan, Instance* obj, const Str* name) {
     Ref hook = Ref::share(plan.hook);
     try {
         switch (plan.kind) {
             case Plan::Raise:
+                if (missing_name_hook() != nullptr) missing_name_hook()(Obj::of(obj), name);
                 throw AttributeError(name->text);
             case Plan::GetAttrHook: {
+                if (missing_name_hook() != nullptr) missing_name_hook()(Obj::of(obj), name);
                 Ref fn = Ref::share(plan.found);
-                return Ref::steal(call(fn.get(), {Obj::of(obj), Obj::of(name)}));
+                return call_attribute(fn.get(), obj, name);
             }
             case Plan::DataDescriptor:
             case Plan::NonDataDescriptor: {
@@ -714,11 +759,12 @@ inline Ref execute(const LookupPlan& plan, Instance* obj, const Str* name) {
         }
     } catch (const AttributeError&) {
         if (hook.get().is_unset()) throw;
-        return Ref::steal(call(hook.get(), {Obj::of(obj), Obj::of(name)}));
     } catch (...) {
         if (hook.get().is_unset() || attribute_error_hook() == nullptr || !attribute_error_hook()()) throw;
-        return Ref::steal(call(hook.get(), {Obj::of(obj), Obj::of(name)}));
     }
+    // the AttributeError is dropped before the hook runs, as slot_tp_getattr_hook's PyErr_Clear
+    // does: its traceback, and what that holds, die first
+    return call_attribute(hook.get(), obj, name);
 }
 
 inline Ref getattr(Instance* obj, const Str* name, Site* site = nullptr) {
@@ -933,7 +979,8 @@ inline void dealloc(Object* o) {
             if (auto fin = obj->cls->lookup(intern("__del__"))) {
                 obj->refs = 1;                          // held by the finaliser's call, so it cannot die again
                 Ref fn = Ref::share(fin->first);
-                decref(call(fn.get(), {Obj::of(obj)}));
+                if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));
+                else decref(call(fn.get(), {Obj::of(obj)}));
                 fn = Ref{};
                 if (obj->refs != 1) throw ModelError("resurrection by a finaliser is not modelled yet");
                 obj->refs = 0;

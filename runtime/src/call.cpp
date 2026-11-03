@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <string_view>
 #include <unistd.h>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace bella {
 
@@ -54,8 +57,13 @@ Ref invoke(Obj f, Args a) {
         case Kind::Builtin: {
             auto* b = static_cast<Builtin*>(o);
             if (b->self.is_unset() && b->binding != Binding::Function) {
-                // an unbound method descriptor called directly (str.join(sep, items)): self first
-                if (a.npos == 0) raise_new("TypeError", "unbound method " + b->name + "() needs an argument");
+                // an unbound method descriptor called directly (str.join(sep, items)): self first,
+                // an instance of the method's type (review 2026-11-03, A9-2)
+                if (a.npos == 0)
+                    raise_new("TypeError", "unbound method " + (b->owner ? b->owner->name + "." : "") + b->name + "() needs an argument");
+                if (b->owner != nullptr && !isinstance(a.pos(0), b->owner))
+                    raise_new("TypeError", "descriptor '" + b->name + "' for '" + b->owner->name + "' objects doesn't apply to a '" +
+                                               type_of(a.pos(0))->name + "' object");
                 return b->fn(a.pos(0), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
             }
             return b->fn(b->self, a);
@@ -85,13 +93,16 @@ Ref invoke(Obj f, Args a) {
         default:
             break;
     }
-    if (!type_lookup(type_of(f), intern("__call__")).is_unset()) {
-        std::vector<Obj> data{f};
-        data.insert(data.end(), a.data, a.data + a.npos + a.nkw);
-        Obj call = type_lookup(type_of(f), intern("__call__"));
+    // __call__ as found on the type and bound through its descriptor, never an instance attribute
+    // of that name (review 2026-11-03, A9-10)
+    if (Obj call = type_lookup(type_of(f), intern("__call__")); !call.is_unset()) {
         Ref hold = Ref::share(call);
-        if (is_kind(call, Kind::PyFunction)) return invoke(call, Args{data.data(), a.npos + 1, a.kwnames, a.nkw});
-        Ref bound = getattr(f, intern("__call__"));
+        if (is_kind(call, Kind::PyFunction)) {
+            std::vector<Obj> data{f};
+            data.insert(data.end(), a.data, a.data + a.npos + a.nkw);
+            return invoke(call, Args{data.data(), a.npos + 1, a.kwnames, a.nkw});
+        }
+        Ref bound = descr_get(call, f, Obj::of(type_of(f)));
         return invoke(bound.get(), a);
     }
     raise_new("TypeError", "'" + type_of(f)->name + "' object is not callable");
@@ -143,7 +154,7 @@ Ref make_function(const Code& code, Ref (*entry)(PyFunction*, Args), Module* m, 
     if (!annotate.is_unset()) f->annotate = Ref::share(annotate);
     f->name = str_new(code.name);
     f->qualname = str_new(code.qualname);
-    f->doc = none_ref();
+    f->doc = code.doc != nullptr ? str_new(code.doc) : none_ref();     // A9-23
     return r;
 }
 
@@ -287,7 +298,10 @@ namespace {
 Ref load_global(Module* m, const Str* name) {
     Obj v = dict_get(m->dict, Obj::of(name));
     if (v.is_unset()) v = dict_get(builtins_module()->dict, Obj::of(name));
-    if (v.is_unset()) raise_name_error(name);
+    if (v.is_unset()) {
+        refuse_absent_global(name);
+        raise_name_error(name);
+    }
     return Ref::share(v);
 }
 Ref load_name(Obj ns, Module* m, const Str* name) {
@@ -368,12 +382,7 @@ Ref b_len(Obj, Args a) {
     if (is_kind(v, Kind::Range)) return Ref::steal(Obj::small(static_cast<Range*>(v.object())->length));
     bool has = false;
     Ref r = call_special(v, "__len__", {}, &has);
-    if (has) {
-        if (is_kind(r.get(), Kind::Bool)) return Ref::steal(Obj::small(static_cast<BoolObject*>(r.get().object())->value));
-        if (!r.get().is_small()) raise_new("TypeError", "'" + type_of(r.get())->name + "' object cannot be interpreted as an integer");
-        if (r.get().small_value() < 0) raise_new("ValueError", "__len__() should return >= 0");
-        return r;
-    }
+    if (has) return Ref::steal(Obj::small(length_value(r.get())));     // as truth takes it (A9-14)
     raise_new("TypeError", "object of type '" + type_of(v)->name + "' has no len()");
 }
 Ref b_repr(Obj, Args a) {
@@ -486,7 +495,7 @@ Ref list_pop_m(Obj self, Args a) {
     positional_only(a, "pop", 0, 1);
     auto& items = list_self(self)->items;
     if (items.empty()) raise_new("IndexError", "pop from empty list");
-    std::int64_t i = a.npos ? (a.pos(0).is_small() ? a.pos(0).small_value() : 0) : -1;
+    std::int64_t i = a.npos ? index_value(a.pos(0)) : -1;          // bool and __index__, before any change (A9-11)
     if (i < 0) i += static_cast<std::int64_t>(items.size());
     if (i < 0 || i >= static_cast<std::int64_t>(items.size())) raise_new("IndexError", "pop index out of range");
     Obj v = items[static_cast<std::size_t>(i)];
@@ -503,8 +512,8 @@ Ref list_clear_m(Obj self, Args a) {
 Ref list_insert_m(Obj self, Args a) {
     positional_only(a, "insert", 2, 2);
     auto& items = list_self(self)->items;
-    if (!a.pos(0).is_small()) raise_new("TypeError", "'" + type_of(a.pos(0))->name + "' object cannot be interpreted as an integer");
-    std::int64_t n = static_cast<std::int64_t>(items.size()), i = a.pos(0).small_value();
+    std::int64_t i = index_value(a.pos(0));
+    std::int64_t n = static_cast<std::int64_t>(items.size());
     if (i < 0) i = std::max<std::int64_t>(0, i + n);
     if (i > n) i = n;
     incref(a.pos(1));
@@ -626,10 +635,15 @@ Ref b_hash(Obj, Args a) {
     positional_only(a, "hash", 1, 1);
     return Ref::steal(Obj::small(hash_of(a.pos(0))));
 }
-Ref b_abs(Obj, Args a) {
+Ref b_abs(Obj, Args a) {                      // PyNumber_Absolute: the int's own, else __abs__ (A9-22)
     positional_only(a, "abs", 1, 1);
-    Ref neg = compare(CmpOp::Lt, a.pos(0), Obj::small(0));
-    return truth(neg.get()) ? unary_neg(a.pos(0)) : unary_pos(a.pos(0));
+    Obj v = a.pos(0);
+    if (v.is_small()) return v.small_value() < 0 ? unary_neg(v) : Ref::share(v);
+    if (is_kind(v, Kind::Bool)) return Ref::steal(Obj::small(static_cast<BoolObject*>(v.object())->value ? 1 : 0));
+    bool has = false;
+    Ref r = call_special(v, "__abs__", {}, &has);
+    if (has) return r;
+    raise_new("TypeError", "bad operand type for abs(): '" + type_of(v)->name + "'");
 }
 Ref b_callable(Obj, Args a) {
     positional_only(a, "callable", 1, 1);
@@ -717,6 +731,7 @@ void put_builtin(Dict* d, const char* name, NativeFn fn) {
 }
 void method(ClassObject* c, const char* name, NativeFn fn) {
     auto* b = new Builtin(name, fn, Obj{}, Binding::Method);
+    b->owner = c;
     b->flags |= IMMORTAL;
     c->attrs.set(intern(name), Obj::of(b));
 }
@@ -814,7 +829,7 @@ Module* make_sys(int argc, char** argv) {
         list_append(args.get(), s.get());
     }
     put(d, "argv", args.get());
-    put(d, "maxsize", Obj::small((std::int64_t{1} << 62) - 1));
+    // no maxsize: CPython's is 2**63 - 1, beyond the immediates, so it is refused until big ints
     return m;
 }
 
@@ -822,7 +837,51 @@ std::unordered_map<std::string, Module*>& native_modules() {
     static std::unordered_map<std::string, Module*> table;
     return table;
 }
+
+// ---- names CPython has and the runtime lacks yet ----
+#include "cpython_names.inc"
+
+const CPythonName* cpython_find(std::string_view scope, std::string_view name) {
+    std::string key;
+    key.reserve(scope.size() + 1 + name.size());
+    key.append(scope).append(":").append(name);
+    auto it = std::lower_bound(std::begin(CPYTHON_NAMES), std::end(CPYTHON_NAMES), std::string_view(key),
+                               [](const CPythonName& e, std::string_view k) { return e.key < k; });
+    return it != std::end(CPYTHON_NAMES) && it->key == key ? &*it : nullptr;
+}
+bool cpython_has(std::string_view scope, std::string_view name) { return cpython_find(scope, name) != nullptr; }
+std::unordered_set<const ClassObject*>& prelude_classes() {     // the prelude's builtins (property, ...)
+    static std::unordered_set<const ClassObject*> classes;
+    return classes;
+}
+void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
+    for (const ClassObject* c : mro)
+        if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(c->name, name->text))
+            throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
+}
 }  // namespace
+
+void refuse_absent_attribute(Obj obj, const Str* name) {
+    if (is_kind(obj, Kind::Module)) {
+        auto* m = static_cast<Module*>(obj.object());
+        const std::string& mod = as_str(m->name.get())->text;
+        auto it = native_modules().find(mod);
+        if (it != native_modules().end() && it->second == m && cpython_has(mod, name->text))
+            throw NotImplemented(mod + "." + name->text + " (CPython has it; the runtime does not yet)");
+    }
+    if (is_kind(obj, Kind::Class)) refuse_in(static_cast<ClassObject*>(obj.object())->mro, name);
+    refuse_in(type_of(obj)->mro, name);
+}
+std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name) {
+    const CPythonName* e = cpython_find(owner->name, name);
+    return e != nullptr ? e->kind : std::string_view{};
+}
+bool presents_as_builtin(Obj f) { return is_kind(f, Kind::PyFunction) && f.object()->cls == types().builtin; }
+bool immutable_type(const ClassObject* c) { return !c->heap_type || prelude_classes().contains(c); }
+void refuse_absent_global(const Str* name) {
+    if (cpython_has("builtins", name->text) || cpython_has("globals", name->text))
+        throw NotImplemented("the name '" + name->text + "' (CPython has it; the runtime does not yet)");
+}
 
 Module* builtins_module() {
     static Module* m = make_builtins();
@@ -858,6 +917,16 @@ Ref i_special(Obj, Args a) {                    // _PyObject_LookupSpecial, as t
     if (get.is_unset() && !is_kind(found, Kind::PyFunction)) return Ref::share(found);
     if (is_kind(found, Kind::PyFunction)) return own(new Method(found, obj));
     return invoke(get, {found, obj, Obj::of(type_of(obj))});
+}
+Ref i_dict_next(Obj, Args a) {                   // PyDict_Next: (next position, key, value) or None
+    positional_only(a, "_dict_next", 2, 2);
+    if (!is_kind(a.pos(0), Kind::PyDict)) throw NotImplemented("_dict_next of an instance __dict__ (step 3a.3)");
+    auto* d = static_cast<Dict*>(a.pos(0).object());
+    for (std::int64_t i = index_value(a.pos(1)); i >= 0 && static_cast<std::size_t>(i) < d->entries.size(); ++i) {
+        auto& e = d->entries[static_cast<std::size_t>(i)];
+        if (!e.key.is_unset()) return tuple_new({Obj::small(i + 1), e.key, e.value});
+    }
+    return none_ref();
 }
 Ref i_set_add(Obj, Args a) {
     positional_only(a, "set_add", 2, 2);
@@ -943,6 +1012,15 @@ void detail::leave_frame() noexcept { --recursion_depth(); }
 
 // ---- the program ----
 namespace {
+void print_traceback(Obj exc);
+}  // namespace
+
+void report_unraisable(const std::string& context, const PyError& e) {
+    err_stream().write(context + ":\n");
+    print_traceback(e.exc.get());
+}
+
+namespace {
 void print_traceback(Obj exc) {
     Stream& err = err_stream();
     Obj tb = traceback_of(exc);
@@ -966,6 +1044,27 @@ void print_traceback(Obj exc) {
     err.flush();
 }
 
+// a finaliser's exception is reported and dropped; the exception being propagated, if any,
+// stays the one frame records attach to (A9-4)
+void call_finalizer(Obj fn, Obj self) {
+    Obj saved = detail::raising();
+    const void* owner = detail::raising_owner();
+    try {
+        Ref r = invoke(fn, {self});
+    } catch (const PyError& e) {
+        Ref text = repr_of(fn);
+        report_unraisable("Exception ignored while calling deallocator " + as_str(text.get())->text, e);
+    } catch (const NotImplemented& e) {          // a refusal in a finaliser still stops the program
+        out_stream().flush();
+        err_stream().write(std::string("bella: not implemented: ") + e.what() + "\n");
+        err_stream().flush();
+        std::_Exit(70);
+    }
+    detail::raising() = saved;
+    detail::raising_owner() = owner;
+}
+const bool finalizer_hook_installed = (finalizer_hook() = call_finalizer, true);
+
 // at exit, __main__'s globals are released in insertion order (measured on 3.15.2)
 void clear_module(Module* m) {
     for (std::size_t i = 0; i < m->dict->entries.size(); ++i) {
@@ -988,13 +1087,22 @@ int run_main(int argc, char** argv, ModuleBody main_body, std::initializer_list<
             for (ModuleBody body : prelude) {
                 // each prelude module runs as `builtins` (its classes say so in __module__); its
                 // __all__ goes into builtins, its __intrinsics__ to the runtime only, and its
-                // __type_methods__ onto the C++ types (the containers' repr)
+                // __type_methods__ onto the C++ types (the containers' repr). It is given the
+                // runtime's primitives it needs (_dict_next), which no program can name.
                 Module* pm = new_module("builtins");
+                {
+                    Ref walk = own(new Builtin("_dict_next", i_dict_next));
+                    put(pm->dict, "_dict_next", walk.get());
+                }
                 body(pm);
                 Obj all = dict_get(pm->dict, Obj::of(intern("__all__")));
                 if (!all.is_unset())
-                    for (Obj n : static_cast<List*>(all.object())->items)
-                        dict_set(builtins_module()->dict, n, dict_get(pm->dict, n));
+                    for (Obj n : static_cast<List*>(all.object())->items) {
+                        Obj v = dict_get(pm->dict, n);
+                        if (is_kind(v, Kind::Class)) prelude_classes().insert(static_cast<ClassObject*>(v.object()));
+                        if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;   // print is a builtin
+                        dict_set(builtins_module()->dict, n, v);
+                    }
                 Obj intr = dict_get(pm->dict, Obj::of(intern("__intrinsics__")));
                 if (!intr.is_unset())
                     for (Obj n : static_cast<List*>(intr.object())->items) dict_set(intrinsics(), n, dict_get(pm->dict, n));

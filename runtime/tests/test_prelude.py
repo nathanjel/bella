@@ -172,7 +172,7 @@ def test_property_staticmethod_classmethod_match_the_builtins() -> None:
 def test_container_repr_matches_the_builtins() -> None:
     prelude = load("builtins")
     funcs = {list: prelude._list_repr, tuple: prelude._tuple_repr, dict: prelude._dict_repr,
-             set: prelude._set_repr, frozenset: prelude._set_repr}
+             set: prelude._set_repr, frozenset: prelude._frozenset_repr}
 
     saved = builtins.repr
 
@@ -194,6 +194,21 @@ def test_container_repr_matches_the_builtins() -> None:
             assert prelude_repr(v) == saved(v), f"{saved(v)}: prelude {prelude_repr(v)}"
     finally:
         builtins.repr = saved
+
+
+def test_type_methods_check_their_receiver_a9_2() -> None:
+    """list.__repr__(5) and the like: the prelude's methods of the C++ types refuse a receiver of
+    another type with the slot wrapper's TypeError (review 2026-11-03, A9-2)."""
+    prelude = load("builtins")
+    for type_name, methods in prelude.__type_methods__.items():
+        cls = getattr(builtins, type_name)
+        for name, fn in methods.items():
+            for wrong in (5, [], (), {}, set(), frozenset()):
+                if isinstance(wrong, cls):
+                    continue
+                want = outcome(getattr(cls, name), wrong)
+                got = outcome(fn, wrong)
+                assert got == want, f"{type_name}.{name}({wrong!r}):\n  prelude {got}\n  builtin {want}"
 
 
 if __name__ == "__main__":

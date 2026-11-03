@@ -468,6 +468,39 @@ def test_a_descriptor_is_owned_while_its_get_runs_a8_1() -> None:
     assert seen == {"in get, after the delete": [], "in the hook": ["desc"]}
 
 
+def test_a_getattr_hook_is_called_as_call_attribute_does() -> None:
+    """slot_tp_getattr_hook calls a function hook with the object and the name, binds a descriptor
+    hook first, and calls any other callable with the name alone (CPython's call_attribute)."""
+    from refmodel import objects as O
+    _fresh_heap()
+    rt = Runtime()
+    calls: list[tuple[object, ...]] = []
+
+    def plain(obj: object, name: str) -> object:
+        calls.append(("function", name))
+        return 1
+
+    def call(self: object, name: str) -> object:
+        calls.append(("__call__", name))
+        return 2
+
+    def get(d: object, obj: object, cls: object) -> object:
+        def bound(name: str) -> object:
+            calls.append(("bound", obj is instance_b, name))
+            return 3
+        return bound
+
+    A = RefClass("A", attrs={"__getattr__": plain})
+    hook_c = RefObject(RefClass("Callable", attrs={"__call__": call}))
+    B = RefClass("B", attrs={"__getattr__": RefObject(make_descriptor_class("Binder", get))})
+    C = RefClass("C", attrs={"__getattr__": hook_c})
+    instance_b = RefObject(B)
+    O.incref(instance_b)
+    got = [rt.getattr(RefObject(A), "x"), rt.getattr(instance_b, "y"), rt.getattr(RefObject(C), "z")]
+    assert got == [1, 3, 2], got
+    assert calls == [("function", "x"), ("bound", True, "y"), ("__call__", "z")], calls
+
+
 def test_a_found_object_is_borrowed_and_never_read_dead_rl_20() -> None:
     """A cache entry names its found object without holding it. Replacing the class attribute
     kills the descriptor while the entry still names it; the class took a new version first, so

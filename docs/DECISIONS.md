@@ -644,6 +644,27 @@ log RL-169 to RL-187). Defects fixed within the design; the rules they settle:
   that boxed dispatch reads like `t3 + t5` was proposed and dropped, because it would hide the
   very cost phase 2 removes.
 
+**2026-11-03 — after the compiled-classes reviews** (astra-low-09, gemini-4-argon-high-08; review
+log RL-188 to RL-219; `pipeline/tests/test_review_2026_11_03.py`). Fixes that leave the design
+intact, and how they were made:
+* `finally` runs once, outside its `try`'s catch: a leaving `return`, `break`, `continue` or loop
+  end notes its completion and jumps past the `try`; the exception edge runs the block with the
+  exception being handled and rethrows it (RL-192, RL-193).
+* Names: every name the emitter makes matches one pattern; a Python name that matches it, or that
+  C++ reserves, is escaped injectively; code, function and string names are readable, contain no
+  `__`, and do not depend on the hash seed (RL-207, RL-219).
+* A name CPython has and the runtime lacks is refused, never NameError or AttributeError: a table
+  recorded from the pinned CPython (`tools/cpython_names.py`, checked by `make verify`) is
+  consulted when a lookup finds nothing, before `__getattr__` (RL-211, RL-212). The same table
+  gives the kind of each built-in attribute, so a method the runtime cannot yet present as CPython
+  does (a slot wrapper) refuses its repr and type (RL-218).
+* The prelude's exports look like CPython's builtins: a function is a `builtin_function_or_method`,
+  a class is immutable; its methods of the C++ types check their receiver (RL-217, RL-218).
+* `__getattr__` is called as CPython's `call_attribute` calls it, after the AttributeError is
+  dropped, model first (RL-214); the exception frame guards record into is owned by the `PyError`
+  that carries it (RL-215); the frontend's stack values die on a function's exception edge before
+  its frame is recorded (RL-213).
+
 ## Pins
 
 | What | Value | Where |

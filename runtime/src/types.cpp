@@ -5,6 +5,7 @@
 #include "bella/runtime.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace bella {
 
@@ -21,6 +22,7 @@ bool is_none(Obj v) { return v == None(); }
 
 void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::Method) {
     auto* f = new Builtin(name, fn, Obj{}, b);
+    f->owner = c;
     f->flags |= IMMORTAL;                        // owned by the type, which lives as long as the program
     c->attrs.set(N(name), Obj::of(f));
 }
@@ -46,6 +48,12 @@ Ref call_with_first(Obj f, Obj first, Args a) {
     return invoke(f, Args{data.data(), a.npos + 1, a.kwnames, a.nkw});
 }
 Args rest(Args a) { return Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw}; }
+bool callable_check(Obj v) {
+    if (!v.is_object()) return false;
+    Kind k = v.object()->kind;
+    return k == Kind::PyFunction || k == Kind::Builtin || k == Kind::Method || k == Kind::Class || k == Kind::Function ||
+           !type_lookup(type_of(v), intern("__call__")).is_unset();
+}
 void no_keywords(Args a, const char* who) {
     if (a.nkw != 0) raise_new("TypeError", std::string(who) + " takes no keyword arguments");
 }
@@ -62,17 +70,36 @@ void arity(Args a, const char* who, std::size_t lo, std::size_t hi) {
 // ---- descriptors ----
 // type(found).__get__(found, obj, type), with the C++ descriptors' own rules inline; obj is None
 // when the attribute is read from the class
+ClassObject* observed_type(Obj v) {
+    if (is_kind(v, Kind::Builtin)) {
+        auto* b = static_cast<Builtin*>(v.object());
+        if (b->owner != nullptr && cpython_attribute_kind(b->owner, b->name) == "wrapper_descriptor")
+            throw NotImplemented("the type of " + b->owner->name + "." + b->name + ", a slot wrapper in CPython");
+    }
+    return type_of(v);
+}
+
 Ref descr_get(Obj found, Obj obj, Obj type) {
     if (found.is_object()) {
         Object* o = found.object();
         switch (o->kind) {
             case Kind::PyFunction:
-                return is_none(obj) ? Ref::share(found) : own(new Method(found, obj));
+                return is_none(obj) || presents_as_builtin(found) ? Ref::share(found) : own(new Method(found, obj));
             case Kind::Builtin: {
                 auto* b = static_cast<Builtin*>(o);
                 if (!b->self.is_unset() || b->binding == Binding::Function) return Ref::share(found);
-                if (b->binding == Binding::ClassMethod) return own(new Builtin(b->name, b->fn, is_none(type) ? Obj::of(type_of(obj)) : type));
-                return is_none(obj) ? Ref::share(found) : own(new Builtin(b->name, b->fn, obj));
+                Ref bound;
+                if (b->binding == Binding::ClassMethod) {
+                    bound = own(new Builtin(b->name, b->fn, is_none(type) ? Obj::of(type_of(obj)) : type));
+                } else {
+                    if (is_none(obj)) return Ref::share(found);
+                    if (b->owner != nullptr && !isinstance(obj, b->owner))       // method_check (A9-2)
+                        raise_new("TypeError", "descriptor '" + b->name + "' for '" + b->owner->name + "' objects doesn't apply to a '" +
+                                                   type_of(obj)->name + "' object");
+                    bound = own(new Builtin(b->name, b->fn, obj));
+                }
+                static_cast<Builtin*>(bound.get().object())->owner = b->owner;   // how it presents itself
+                return bound;
             }
             case Kind::GetSet: {
                 auto* g = static_cast<GetSet*>(o);
@@ -135,6 +162,7 @@ Ref type_getattr(ClassObject* cls, const Str* name) {
         return descr_get(attr, None(), Obj::of(cls));
     }
     if (!meta_attr.is_unset()) return descr_get(meta_attr, Obj::of(cls), Obj::of(meta));
+    refuse_absent_attribute(Obj::of(cls), name);
     raise_attribute_error(Obj::of(cls), name, "type object '" + cls->name + "' has no attribute '" + name->text + "'");
 }
 
@@ -148,13 +176,13 @@ void type_setattr(ClassObject* cls, const Str* name, Obj value) {
         g->set(Obj::of(cls), value);
         return;
     }
-    if (!cls->heap_type)
+    if (immutable_type(cls))
         raise_new("TypeError", "cannot set '" + name->text + "' attribute of immutable type '" + cls->name + "'");
     cls->set_attr(name, value);                  // the new version before the old value dies (type_setattro)
 }
 
 void type_delattr(ClassObject* cls, const Str* name) {
-    if (!cls->heap_type)
+    if (immutable_type(cls))
         raise_new("TypeError", "cannot delete '" + name->text + "' attribute of immutable type '" + cls->name + "'");
     if (!cls->attrs.contains(name))
         raise_attribute_error(Obj::of(cls), name, "type object '" + cls->name + "' has no attribute '" + name->text + "'");
@@ -170,7 +198,7 @@ Ref generic_getattr(Obj obj, const Str* name) {
         Obj v = dict_get(static_cast<Module*>(obj.object())->dict, Obj::of(name));
         if (!v.is_unset()) return Ref::share(v);
     }
-    if (is_kind(obj, Kind::PyFunction)) {
+    if (is_kind(obj, Kind::PyFunction) && !presents_as_builtin(obj)) {
         auto* f = static_cast<PyFunction*>(obj.object());
         if (!f->dict.get().is_unset()) {
             Obj v = dict_get(static_cast<Dict*>(f->dict.get().object()), Obj::of(name));
@@ -178,6 +206,9 @@ Ref generic_getattr(Obj obj, const Str* name) {
         }
     }
     if (!found.is_unset()) return descr_get(found, obj, Obj::of(c));
+    if (is_kind(obj, Kind::Method))                  // method_getattro: the function's attributes
+        return getattr(static_cast<Method*>(obj.object())->func, name);
+    refuse_absent_attribute(obj, name);
     if (is_kind(obj, Kind::Module))
         raise_attribute_error(obj, name, "module '" + as_str(static_cast<Module*>(obj.object())->name.get())->text +
                                              "' has no attribute '" + name->text + "'");
@@ -192,7 +223,7 @@ Ref call_special(Obj v, const char* name, std::initializer_list<Obj> args, bool*
     std::vector<Obj> data{v};
     data.insert(data.end(), args.begin(), args.end());
     Ref hold = Ref::share(f);                    // the method may be replaced while it runs
-    if (is_kind(f, Kind::PyFunction) || (is_kind(f, Kind::Builtin) && static_cast<Builtin*>(f.object())->self.is_unset() &&
+    if ((is_kind(f, Kind::PyFunction) && !presents_as_builtin(f)) || (is_kind(f, Kind::Builtin) && static_cast<Builtin*>(f.object())->self.is_unset() &&
                                          static_cast<Builtin*>(f.object())->binding == Binding::Method))
         return invoke(f, Args{data.data(), data.size(), nullptr, 0});
     Ref bound = descr_get(f, v, Obj::of(type_of(v)));
@@ -233,7 +264,7 @@ Ref object_init(Obj self, Args a) {
 }  // namespace
 
 Ref type_call(ClassObject* cls, Args a) {
-    if (cls == types().type && a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(type_of(a.pos(0))));
+    if (cls == types().type && a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(observed_type(a.pos(0))));
     Obj new_attr = type_lookup(cls, N("__new__"));
     if (new_attr.is_unset()) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
     Ref new_fn = descr_get(new_attr, None(), Obj::of(cls));
@@ -243,7 +274,7 @@ Ref type_call(ClassObject* cls, Args a) {
     Obj init = type_lookup(t, N("__init__"));
     if (!init.is_unset()) {
         Ref result;
-        if (is_kind(init, Kind::PyFunction) || is_kind(init, Kind::Builtin)) {
+        if ((is_kind(init, Kind::PyFunction) && !presents_as_builtin(init)) || is_kind(init, Kind::Builtin)) {
             Ref hold = Ref::share(init);
             result = is_kind(init, Kind::Builtin) && static_cast<Builtin*>(init.object())->binding == Binding::Method
                          ? static_cast<Builtin*>(init.object())->fn(obj.get(), a)
@@ -280,6 +311,8 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     for (Obj b : static_cast<Tuple*>(bases_obj.object())->items) {
         ClassObject* bc = as_class(b);
         if (bc == nullptr) raise_new("TypeError", "bases must be types");
+        if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
+            raise_new("TypeError", "duplicate base class " + bc->name);
         if (!bc->heap_type && bc != types().object && !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
@@ -317,18 +350,27 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             Ref it = iter(slots_value);
             for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) items.push_back(std::move(v));
         }
+        // type_new_visit_slots: identifiers; __dict__ once and only where no base has a dict;
+        // a repeated ordinary name is accepted (CPython makes it twice, the last one wins)
+        bool base_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict; });
         for (Ref& item : items) {
             const Str* s = as_str(item.get());
             if (s == nullptr) raise_new("TypeError", "__slots__ items must be strings, not '" + type_of(item.get())->name + "'");
+            if (!s->ascii) throw NotImplemented("a __slots__ name beyond ASCII (identifier rules need the Unicode database)");
+            bool ident = !s->text.empty() && !std::isdigit(static_cast<unsigned char>(s->text[0])) &&
+                         std::all_of(s->text.begin(), s->text.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
+            if (!ident) raise_new("TypeError", "__slots__ must be identifiers");
             if (s->text == "__weakref__") throw NotImplemented("__weakref__ in __slots__ (step 3c: weak references)");
-            std::string m = s->text == "__dict__" ? s->text : mangle(name->text, s->text);
-            if (std::find(slots.begin(), slots.end(), m) != slots.end())
-                raise_new("TypeError", s->text == "__dict__" ? "__dict__ slot disallowed: we already got one"
-                                                             : "duplicate slot name");
+            if (s->text == "__dict__") {
+                if (base_dict || std::find(slots.begin(), slots.end(), "__dict__") != slots.end())
+                    raise_new("TypeError", "__dict__ slot disallowed: we already got one");
+                slots.push_back(s->text);
+                continue;
+            }
+            std::string m = mangle(name->text, s->text);
             for (auto& [k, v] : entries)
-                if (k->text == m && m != "__dict__")
-                    raise_new("ValueError", "'" + s->text + "' in __slots__ conflicts with class variable");
-            slots.push_back(m);
+                if (k->text == m) raise_new("ValueError", "'" + s->text + "' in __slots__ conflicts with class variable");
+            if (std::find(slots.begin(), slots.end(), m) == slots.end()) slots.push_back(m);   // A9-18
         }
         spec.slots = slots;
     }
@@ -341,14 +383,21 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     for (auto& [k, v] : spec.attrs) {
         const char* wrapper = k == "__new__" ? "staticmethod"
                               : k == "__init_subclass__" || k == "__class_getitem__" ? "classmethod" : nullptr;
-        if (wrapper != nullptr && is_kind(v, Kind::PyFunction)) {
+        if (wrapper != nullptr && is_kind(v, Kind::PyFunction) && !presents_as_builtin(v)) {
             wrapped.push_back(invoke(builtin(wrapper).get(), {v}));
             v = wrapped.back().get();
         }
     }
     if (dict_get(ns, Obj::of(N("__doc__"))).is_unset()) spec.attrs.emplace_back("__doc__", None());
     if (has_eq && !has_hash) spec.attrs.emplace_back("__hash__", None());
-    ClassObject* c = make_class(spec);
+    ClassObject* c = nullptr;
+    try {
+        c = make_class(spec);
+    } catch (const bella::TypeError&) {                     // the C3 merge failed (A9-9)
+        std::string names;
+        for (ClassObject* b : bases) names += (names.empty() ? "" : ", ") + b->name;
+        raise_new("TypeError", "Cannot create a consistent method resolution order (MRO) for bases " + names);
+    }
     c->cls = meta;
     c->qualname = qualname;
     c->heap_type = true;
@@ -461,7 +510,7 @@ Ref object_format(Obj self, Args a) {
     return str_of(self);
 }
 
-Ref class_of(Obj self) { return Ref::share(Obj::of(type_of(self))); }
+Ref class_of(Obj self) { return Ref::share(Obj::of(observed_type(self))); }
 void set_class_of(Obj, Obj) { throw NotImplemented("[P2+] __class__ assignment (spec section 3)"); }
 Ref instance_dict(Obj self) {
     if (!is_kind(self, Kind::Instance)) throw NotImplemented("__dict__ of a C++ type's object");
@@ -486,7 +535,7 @@ ClassObject* self_class(Obj self) { return as_class(self); }
 Ref type_name(Obj self) { return str_new(self_class(self)->name); }
 void set_type_name(Obj self, Obj v) {
     ClassObject* c = self_class(self);
-    if (!c->heap_type) raise_new("TypeError", "cannot set '__name__' attribute of immutable type '" + c->name + "'");
+    if (immutable_type(c)) raise_new("TypeError", "cannot set '__name__' attribute of immutable type '" + c->name + "'");
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "can only assign string to " + c->name + ".__name__, not '" + type_of(v)->name + "'");
     c->name = s->text;
@@ -494,7 +543,7 @@ void set_type_name(Obj self, Obj v) {
 Ref type_qualname(Obj self) { return str_new(self_class(self)->qualname); }
 void set_type_qualname(Obj self, Obj v) {
     ClassObject* c = self_class(self);
-    if (!c->heap_type) raise_new("TypeError", "cannot set '__qualname__' attribute of immutable type '" + c->name + "'");
+    if (immutable_type(c)) raise_new("TypeError", "cannot set '__qualname__' attribute of immutable type '" + c->name + "'");
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "can only assign string to " + c->name + ".__qualname__, not '" + type_of(v)->name + "'");
     c->qualname = s->text;
@@ -556,11 +605,25 @@ Ref fn_dict(Obj self) {
     return fn_of(self)->dict;
 }
 Ref method_func(Obj self) { return Ref::share(static_cast<Method*>(self.object())->func); }
+Ref method_new(Obj, Args a) {                    // method(func, obj): any callable bound to obj
+    Args r = rest(a);
+    arity(r, "method", 2, 2);
+    if (!callable_check(r.pos(0))) raise_new("TypeError", "first argument must be callable");
+    if (is_none(r.pos(1))) raise_new("TypeError", "instance must not be None");
+    return own(new Method(r.pos(0), r.pos(1)));
+}
 Ref method_self(Obj self) { return Ref::share(static_cast<Method*>(self.object())->self); }
-Ref builtin_name(Obj self) { return str_new(static_cast<Builtin*>(self.object())->name); }
+Ref builtin_name(Obj self) {
+    if (is_kind(self, Kind::PyFunction)) return static_cast<PyFunction*>(self.object())->name;     // the prelude's
+    return str_new(static_cast<Builtin*>(self.object())->name);
+}
 Ref builtin_self(Obj self) {
-    Obj s = static_cast<Builtin*>(self.object())->self;
-    return s.is_unset() ? none_ref() : Ref::share(s);
+    if (is_kind(self, Kind::PyFunction)) return Ref::share(Obj::of(builtins_module()));             // print.__self__
+    auto* b = static_cast<Builtin*>(self.object());
+    if (b->self.is_unset() && b->binding == Binding::Function && b->owner != nullptr &&
+        cpython_attribute_kind(b->owner, b->name) == "builtin_function_or_method")
+        return Ref::share(Obj::of(b->owner));                       // object.__new__.__self__ is object
+    return b->self.is_unset() ? none_ref() : Ref::share(b->self);
 }
 Ref cell_contents_get(Obj self) {
     Obj v = static_cast<Cell*>(self.object())->value;
@@ -756,6 +819,7 @@ void init_types() {
     getset(t.function, "__annotate__", fn_annotate);
     getset(t.function, "__dict__", fn_dict);
     getset(t.method, "__func__", method_func);
+    method(t.method, "__new__", method_new, Binding::Function);
     getset(t.method, "__self__", method_self);
     getset(t.builtin, "__name__", builtin_name);
     getset(t.builtin, "__self__", builtin_self);
@@ -793,6 +857,20 @@ void init_types() {
         } catch (...) {
             return false;
         }
+    };
+    // call_attribute: function and method descriptors take the object; other descriptors are
+    // bound; any other callable gets the name alone
+    missing_name_hook() = refuse_absent_attribute;
+    call_attribute_hook() = [](Obj hook, Obj obj, Obj name) -> Obj {
+        bool method = (is_kind(hook, Kind::PyFunction) && !presents_as_builtin(hook)) || is_kind(hook, Kind::Function) ||
+                      (is_kind(hook, Kind::Builtin) && static_cast<Builtin*>(hook.object())->self.is_unset() &&
+                       static_cast<Builtin*>(hook.object())->binding == Binding::Method);
+        if (method) return invoke(hook, {obj, name}).release();
+        if (!type_lookup(type_of(hook), intern("__get__")).is_unset()) {
+            Ref bound = descr_get(hook, obj, Obj::of(type_of(obj)));
+            return invoke(bound.get(), {name}).release();
+        }
+        return invoke(hook, {name}).release();
     };
 }
 

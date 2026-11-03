@@ -497,6 +497,23 @@ class Runtime:
         assert get is not None
         return get[0](found, obj, obj.cls)
 
+    @staticmethod
+    def _call_attribute(hook: Any, obj: RefObject, name: str) -> Any:
+        """How slot_tp_getattr_hook calls the __getattr__ it found (CPython's call_attribute): a
+        function, a method descriptor, with the object and the name; another descriptor bound by
+        its __get__, then called with the name; any other callable with the name alone (found
+        while verifying the compiled programs of review 2026-11-03)."""
+        if not isinstance(hook, RefObject):
+            return hook(obj, name)
+        get = hook.cls.lookup("__get__")
+        if get is not None:
+            bound = get[0](hook, obj, obj.cls)
+            return bound(name)
+        call = hook.cls.lookup("__call__")
+        if call is None:
+            raise TypeError(f"'{hook.cls.name}' object is not callable")
+        return call[0](hook, name)
+
     # ---- lookup as a plan ------------------------------------------------------------------
     # Review 2026-11-01 (astra-low-01 finding 4, gemini-4-argon-high bugs 2.1.1-2.1.3): lookup is
     # split into a *plan* -- which operation Python's order selects, decided without running any
@@ -613,7 +630,7 @@ class Runtime:
                 if plan.kind == _RAISE:
                     raise AttributeError(name)
                 if plan.kind == GETATTR_HOOK:
-                    return plan.found(obj, name)
+                    return self._call_attribute(plan.found, obj, name)
                 if plan.kind in (DATA_DESCRIPTOR, NON_DATA_DESCRIPTOR):
                     found = plan.found
                     incref(found)
@@ -627,7 +644,9 @@ class Runtime:
             except AttributeError:
                 if hook is None:
                     raise
-                return hook(obj, name)
+            # the AttributeError is dropped before the hook runs, as slot_tp_getattr_hook's
+            # PyErr_Clear does: its traceback, and what that holds, die first
+            return self._call_attribute(hook, obj, name)
         finally:
             decref(hook)
 

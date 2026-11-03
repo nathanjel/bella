@@ -17,16 +17,16 @@ static const rt::Str* const S_signs = rt::intern("signs");
 static const rt::Str* const S_total = rt::intern("total");
 static Obj K_1, K_2, K_3, K_4, K_5, K_6, K_7, K_8, K_9, K_10;
 
-static const rt::Code code_module{"<module>", "<module>", "loops.py", 1, 0, 0, 0, false, false, {}};
-static const rt::Code code_gcd____annotate__{"__annotate__", "gcd.__annotate__", "loops.py", 4, 1, 1, 0, false, false, {"format"}};
-static const rt::Code code_gcd{"gcd", "gcd", "loops.py", 4, 2, 0, 0, false, false, {"a", "b"}};
-static const rt::Code code_signs____annotate__{"__annotate__", "signs.__annotate__", "loops.py", 12, 1, 1, 0, false, false, {"format"}};
-static const rt::Code code_signs{"signs", "signs", "loops.py", 12, 2, 0, 0, false, false, {"a", "b"}};
+static const rt::Code code_module{"<module>", "<module>", "loops.py", 1, 0, 0, 0, false, false, {}, nullptr};
+static const rt::Code code_gcd_annotate{"__annotate__", "gcd.__annotate__", "loops.py", 4, 1, 1, 0, false, false, {"format"}, nullptr};
+static const rt::Code code_gcd{"gcd", "gcd", "loops.py", 4, 2, 0, 0, false, false, {"a", "b"}, nullptr};
+static const rt::Code code_signs_annotate{"__annotate__", "signs.__annotate__", "loops.py", 12, 1, 1, 0, false, false, {"format"}, nullptr};
+static const rt::Code code_signs{"signs", "signs", "loops.py", 12, 2, 0, 0, false, false, {"a", "b"}, nullptr};
 
-static Ref f_gcd____annotate__(rt::PyFunction* self, rt::Args args);
-static Ref f_gcd(rt::PyFunction* self, rt::Args args);
-static Ref f_signs____annotate__(rt::PyFunction* self, rt::Args args);
-static Ref f_signs(rt::PyFunction* self, rt::Args args);
+static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args);
+static Ref f_gcd(rt::PyFunction* fn, rt::Args args);
+static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args);
+static Ref f_signs(rt::PyFunction* fn, rt::Args args);
 
 static void init_constants() {
     K_1 = Obj::of(rt::intern("never printed: the loop broke"));
@@ -49,12 +49,12 @@ rt::Ref module_body(rt::Module* m) {
     rt::FrameGuard frame(code_module);
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t21, t22, t23, t24, t25, t26, t27, t29, t30, t31, t32, t33, t34, t35, t37, t38, t39, t40, t41, t42, t43, t44, t45, t47, t48, t49, t50, t51, t52, t53, t54, t55, t57, t58, t59, t60, t62, t63, t64, t65, t66, t67, t69, t70, t71, t72, t73, t74, t75, t76, t77, t78, t79, t80, t81, t82, t83, t84;
     frame.line = 4;
-    t1 = rt::make_function(code_gcd____annotate__, f_gcd____annotate__, M, Obj{}, Obj{}, {}, Obj{});
+    t1 = rt::make_function(code_gcd_annotate, f_gcd_annotate, M, Obj{}, Obj{}, {}, Obj{});
     t2 = rt::make_function(code_gcd, f_gcd, M, Obj{}, Obj{}, {}, t1.get());
     t1 = Ref{};
     rt::store_name(ns, S_gcd, std::move(t2));
     frame.line = 12;
-    t3 = rt::make_function(code_signs____annotate__, f_signs____annotate__, M, Obj{}, Obj{}, {}, Obj{});
+    t3 = rt::make_function(code_signs_annotate, f_signs_annotate, M, Obj{}, Obj{}, {}, Obj{});
     t4 = rt::make_function(code_signs, f_signs, M, Obj{}, Obj{}, {}, t3.get());
     t3 = Ref{};
     rt::store_name(ns, S_signs, std::move(t4));
@@ -270,11 +270,12 @@ rt::Ref module_body(rt::Module* m) {
 }
 
 // function gcd.__annotate__  (loops.py:4)
-static Ref f_gcd____annotate__(rt::PyFunction* self, rt::Args args) {
+static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args) {
     Ref _format6;
     Ref _ann7;
-    rt::FrameGuard frame(code_gcd____annotate__, _format6, _ann7);
-    rt::bind(self, args, {&_format6});
+    rt::FrameGuard frame(code_gcd_annotate, _format6, _ann7);
+    rt::StackValues stack_values(_ann7, _format6);
+    rt::bind(fn, args, {&_format6});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
     frame.line = 4;
     t1 = rt::load_fast(_format6, "_format6");
@@ -304,17 +305,16 @@ static Ref f_gcd____annotate__(rt::PyFunction* self, rt::Args args) {
     t11 = Ref{};
     t10 = Ref{};
     t12 = rt::load_fast(_ann7, "_ann7");
-    { Ref ret = std::move(t12);
-        return ret; }
+    return std::move(t12);
 }
 
 // function gcd  (loops.py:4)
-static Ref f_gcd(rt::PyFunction* self, rt::Args args) {
+static Ref f_gcd(rt::PyFunction* fn, rt::Args args) {
     Ref a;
     Ref b;
     Ref r;
     rt::FrameGuard frame(code_gcd, a, b, r);
-    rt::bind(self, args, {&a, &b});
+    rt::bind(fn, args, {&a, &b});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9;
     frame.line = 5;
     for (;;) {
@@ -343,16 +343,16 @@ static Ref f_gcd(rt::PyFunction* self, rt::Args args) {
     }
     frame.line = 9;
     t9 = rt::load_fast(a, "a");
-    { Ref ret = std::move(t9);
-        return ret; }
+    return std::move(t9);
 }
 
 // function signs.__annotate__  (loops.py:12)
-static Ref f_signs____annotate__(rt::PyFunction* self, rt::Args args) {
+static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args) {
     Ref _format9;
     Ref _ann10;
-    rt::FrameGuard frame(code_signs____annotate__, _format9, _ann10);
-    rt::bind(self, args, {&_format9});
+    rt::FrameGuard frame(code_signs_annotate, _format9, _ann10);
+    rt::StackValues stack_values(_ann10, _format9);
+    rt::bind(fn, args, {&_format9});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
     frame.line = 12;
     t1 = rt::load_fast(_format9, "_format9");
@@ -382,16 +382,15 @@ static Ref f_signs____annotate__(rt::PyFunction* self, rt::Args args) {
     t11 = Ref{};
     t10 = Ref{};
     t12 = rt::load_fast(_ann10, "_ann10");
-    { Ref ret = std::move(t12);
-        return ret; }
+    return std::move(t12);
 }
 
 // function signs  (loops.py:12)
-static Ref f_signs(rt::PyFunction* self, rt::Args args) {
+static Ref f_signs(rt::PyFunction* fn, rt::Args args) {
     Ref a;
     Ref b;
     rt::FrameGuard frame(code_signs, a, b);
-    rt::bind(self, args, {&a, &b});
+    rt::bind(fn, args, {&a, &b});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t27, t28, t29, t30, t31, t32, t33, t34;
     frame.line = 13;
     t1 = rt::load_global(M, S_print);
@@ -460,8 +459,7 @@ static Ref f_signs(rt::PyFunction* self, rt::Args args) {
     t33 = rt::binary(rt::BinOp::Add, t29.get(), t32.get());
     t32 = Ref{};
     t29 = Ref{};
-    { Ref ret = std::move(t33);
-        return ret; }
+    return std::move(t33);
 }
 
 }  // namespace bella::m_main

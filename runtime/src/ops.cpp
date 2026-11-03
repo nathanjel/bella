@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdio>
+#include <tuple>
 
 namespace bella {
 
@@ -283,15 +285,30 @@ bool contains(Obj container, Obj item) {
     }
     raise_new("TypeError", "argument of type '" + type_of(container)->name + "' is not a container or iterable");
 }
-bool sequence_compare(CmpOp op, const std::vector<Obj>& a, const std::vector<Obj>& b) {
-    std::size_t n = std::min(a.size(), b.size());
+// list_richcompare and tuplerichcompare (Objects/listobject.c, tupleobject.c): a list's lengths
+// first for == and !=; the first position whose items differ, the items held while user code
+// runs and the current lengths read again at every step, since __eq__ may change a list; then
+// the lengths, or the ordering of those items, whose result object is returned as it is
+// (review 2026-11-03, A9-1, A9-13).
+Ref sequence_compare(CmpOp op, Obj v, Obj w, bool lists) {
+    auto items = [&](Obj x) -> const std::vector<Obj>& {
+        return lists ? static_cast<List*>(x.object())->items : static_cast<Tuple*>(x.object())->items;
+    };
+    if (lists && items(v).size() != items(w).size() && (op == CmpOp::Eq || op == CmpOp::Ne))
+        return Ref::steal(boolean(op == CmpOp::Ne));
     std::size_t i = 0;
-    for (; i < n; ++i)
-        if (!(a[i] == b[i] || truth(compare(CmpOp::Eq, a[i], b[i]).get()))) break;
-    if (i >= n) return ordered(op, a.size(), b.size());
-    if (op == CmpOp::Eq) return false;
-    if (op == CmpOp::Ne) return true;
-    return truth(compare(op, a[i], b[i]).get());
+    for (; i < items(v).size() && i < items(w).size(); ++i) {
+        Ref vi = Ref::share(items(v)[i]), wi = Ref::share(items(w)[i]);
+        if (vi.get() == wi.get()) continue;
+        Ref eq = compare(CmpOp::Eq, vi.get(), wi.get());
+        if (!truth(eq.get())) break;
+    }
+    std::size_t vn = items(v).size(), wn = items(w).size();
+    if (i >= vn || i >= wn) return Ref::steal(boolean(ordered(op, vn, wn)));
+    if (op == CmpOp::Eq) return Ref::steal(boolean(false));
+    if (op == CmpOp::Ne) return Ref::steal(boolean(true));
+    Ref vi = Ref::share(items(v)[i]), wi = Ref::share(items(w)[i]);
+    return compare(op, vi.get(), wi.get());
 }
 }  // namespace
 
@@ -303,10 +320,8 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
     const Str* sb = as_str(b);
     if (sa != nullptr && sb != nullptr)                // code point order: UTF-8 byte order is code point order
         return Ref::steal(boolean(ordered(op, std::string_view(sa->text), std::string_view(sb->text))));
-    if (is_kind(a, Kind::Tuple) && is_kind(b, Kind::Tuple))
-        return Ref::steal(boolean(sequence_compare(op, static_cast<Tuple*>(a.object())->items, static_cast<Tuple*>(b.object())->items)));
-    if (is_kind(a, Kind::List) && is_kind(b, Kind::List))
-        return Ref::steal(boolean(sequence_compare(op, static_cast<List*>(a.object())->items, static_cast<List*>(b.object())->items)));
+    if (is_kind(a, Kind::Tuple) && is_kind(b, Kind::Tuple)) return sequence_compare(op, a, b, false);
+    if (is_kind(a, Kind::List) && is_kind(b, Kind::List)) return sequence_compare(op, a, b, true);
     if ((op == CmpOp::Eq || op == CmpOp::Ne) && a == b && !is_heap_obj(a)) return Ref::steal(boolean(op == CmpOp::Eq));
     return Ref::steal(Obj::of(NOTIMPLEMENTED));
 }
@@ -373,7 +388,10 @@ bool truth(Obj v) {
     Object* o = v.object();
     switch (o->kind) {
         case Kind::Bool: return static_cast<BoolObject*>(o)->value;
-        case Kind::Singleton: return o != NONE;
+        case Kind::Singleton:
+            if (o == NOTIMPLEMENTED)                 // TypeError since 3.14 (A9-21)
+                raise_new("TypeError", "NotImplemented should not be used in a boolean context");
+            return o != NONE;
         case Kind::Str: return static_cast<Str*>(o)->length != 0;
         case Kind::Tuple: return !static_cast<Tuple*>(o)->items.empty();
         case Kind::List: return !static_cast<List*>(o)->items.empty();
@@ -390,15 +408,33 @@ bool truth(Obj v) {
                 return static_cast<BoolObject*>(r.get().object())->value;
             }
             r = call_special(v, "__len__", {}, &has);
-            if (has) {
-                if (!r.get().is_small()) raise_new("TypeError", "'" + type_of(r.get())->name + "' object cannot be interpreted as an integer");
-                if (r.get().small_value() < 0) raise_new("ValueError", "__len__() should return >= 0");
-                return r.get().small_value() != 0;
-            }
+            if (has) return length_value(r.get()) != 0;      // as len() takes it (A9-14)
             return true;
         }
         default: return true;
     }
+}
+
+// operator.index (PyNumber_Index): an int, a bool, or an object with __index__ returning one
+std::int64_t index_value(Obj v) {
+    std::int64_t x;
+    if (as_int(v, x)) return x;
+    if (is_kind(v, Kind::Instance)) {
+        bool has = false;
+        Ref r = call_special(v, "__index__", {}, &has);
+        if (has) {
+            if (as_int(r.get(), x) && !is_kind(r.get(), Kind::Bool)) return x;
+            raise_new("TypeError", "__index__ returned non-int (type " + type_of(r.get())->name + ")");
+        }
+    }
+    raise_new("TypeError", "'" + type_of(v)->name + "' object cannot be interpreted as an integer");
+}
+
+// slot_sq_length: a __len__ result converted as an index, never negative
+std::int64_t length_value(Obj v) {
+    std::int64_t n = index_value(v);
+    if (n < 0) raise_new("ValueError", "__len__() should return >= 0");
+    return n;
 }
 
 // ---- str() and repr() ----
@@ -413,6 +449,11 @@ std::string hex(char32_t c, int digits) {
     std::string out;
     for (int i = digits - 1; i >= 0; --i) out += d[(c >> (4 * i)) & 0xF];
     return out;
+}
+std::string address(Obj v) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%p", static_cast<void*>(v.object()));
+    return buf;
 }
 std::string str_repr(const Str* s) {
     // unicode_repr: single quotes unless the text has ' and no "
@@ -463,9 +504,26 @@ Ref repr_of(Obj v) {
         }
         case Kind::Builtin: {
             auto* b = static_cast<Builtin*>(o);
+            std::string_view kind = b->owner != nullptr ? cpython_attribute_kind(b->owner, b->name) : std::string_view{};
+            if (kind == "wrapper_descriptor")            // a slot wrapper or method-wrapper in CPython
+                throw NotImplemented("the repr of " + b->owner->name + "." + b->name + ", a slot wrapper in CPython");
             if (b->self.is_unset() && b->binding != Binding::Function)
-                return str_new("<method '" + b->name + "' objects>");
+                return str_new("<method '" + b->name + "' of '" + (b->owner ? b->owner->name : "object") + "' objects>");
+            if (b->self.is_unset() && kind == "builtin_function_or_method")      // object.__new__, bound to its type
+                return str_new("<built-in method " + b->name + " of type object at " + address(Obj::of(b->owner)) + ">");
+            if (!b->self.is_unset() && !is_kind(b->self, Kind::Module))
+                return str_new("<built-in method " + b->name + " of " + type_of(b->self)->name + " object at " + address(b->self) + ">");
             return str_new("<built-in function " + b->name + ">");
+        }
+        case Kind::PyFunction:
+            if (presents_as_builtin(v))
+                return str_new("<built-in function " + as_str(static_cast<PyFunction*>(o)->name.get())->text + ">");
+            return str_new("<function " + as_str(static_cast<PyFunction*>(o)->qualname.get())->text + " at " + address(v) + ">");
+        case Kind::Method: {
+            auto* m = static_cast<Method*>(o);
+            Ref fname = getattr(m->func, intern("__qualname__"));
+            Ref self = repr_of(m->self);
+            return str_new("<bound method " + as_str(fname.get())->text + " of " + as_str(self.get())->text + ">");
         }
         case Kind::Instance: {
             Ref r = call_special(v, "__repr__", {});
@@ -545,7 +603,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
         g->set(obj, value);
         return;
     }
-    if (is_kind(obj, Kind::PyFunction)) {
+    if (is_kind(obj, Kind::PyFunction) && !presents_as_builtin(obj)) {
         Ref d = generic_getattr(obj, intern("__dict__"));
         dict_set(static_cast<Dict*>(d.get().object()), Obj::of(name), value);
         return;
@@ -583,7 +641,8 @@ void delattr(Obj obj, const Str* name) {
 namespace {
 std::size_t index_of(Obj key, std::size_t size, const char* what) {
     std::int64_t i;
-    if (!as_int(key, i))
+    if (is_kind(key, Kind::Instance)) i = index_value(key);       // __index__
+    else if (!as_int(key, i))
         raise_new("TypeError", std::string(what) + " indices must be integers or slices, not " + type_of(key)->name);
     if (i < 0) i += static_cast<std::int64_t>(size);
     if (i < 0 || i >= static_cast<std::int64_t>(size)) raise_new("IndexError", std::string(what) + " index out of range");
@@ -731,10 +790,16 @@ Ref iter(Obj obj) {
     if (is_kind(obj, Kind::Tuple)) return own(new Iterator(Iterator::TupleIt, obj));
     if (is_kind(obj, Kind::List)) return own(new Iterator(Iterator::ListIt, obj));
     if (as_str(obj) != nullptr) return own(new Iterator(Iterator::StrIt, obj));
+    if (is_kind(obj, Kind::Set)) {
+        auto* it = new Iterator(Iterator::SetIt, obj);
+        Ref r = own(it);
+        it->size = static_cast<std::int64_t>(static_cast<SetObject*>(obj.object())->used);
+        return r;
+    }
     if (is_kind(obj, Kind::PyDict)) {
         auto* it = new Iterator(Iterator::DictKeysIt, obj);
         Ref r = own(it);
-        it->pos = 0;
+        it->size = static_cast<std::int64_t>(static_cast<Dict*>(obj.object())->used);
         return r;
     }
     if (is_kind(obj, Kind::Iterator)) return Ref::share(obj);
@@ -787,9 +852,12 @@ Ref for_next(Obj itv) {
             if (static_cast<std::size_t>(it->pos) >= s->length) return finish();
             return str_from_codepoints(std::u32string(1, s->at(static_cast<std::size_t>(it->pos++))));
         }
-        case Iterator::SetIt: {                  // table order; a change of size during iteration fails
+        case Iterator::SetIt: {                  // table order; a change of size fails, and keeps failing (A9-12)
             auto* st = static_cast<SetObject*>(it->seq.object());
-            if (it->pos < 0) raise_new("RuntimeError", "Set changed size during iteration");
+            if (it->size == -2 || static_cast<std::int64_t>(st->used) != it->size) {
+                it->size = -2;
+                raise_new("RuntimeError", "Set changed size during iteration");
+            }
             while (static_cast<std::size_t>(it->pos) < st->table.size() && st->table[static_cast<std::size_t>(it->pos)].key.is_unset())
                 ++it->pos;
             if (static_cast<std::size_t>(it->pos) >= st->table.size()) return finish();
@@ -810,6 +878,10 @@ Ref for_next(Obj itv) {
         }
         case Iterator::DictKeysIt: {
             auto* d = static_cast<Dict*>(it->seq.object());
+            if (it->size == -2 || static_cast<std::int64_t>(d->used) != it->size) {
+                it->size = -2;
+                raise_new("RuntimeError", "dictionary changed size during iteration");
+            }
             while (static_cast<std::size_t>(it->pos) < d->entries.size() &&
                    d->entries[static_cast<std::size_t>(it->pos)].key.is_unset()) ++it->pos;
             if (static_cast<std::size_t>(it->pos) >= d->entries.size()) return finish();
@@ -891,9 +963,16 @@ std::string callable_name(Obj func) {
 }  // namespace
 
 void dict_update(Obj target, Obj mapping) {
-    if (!is_kind(mapping, Kind::PyDict) && type_lookup(type_of(mapping), intern("keys")).is_unset())
-        raise_new("TypeError", "'" + type_of(mapping)->name + "' object is not a mapping");
     auto* d = static_cast<Dict*>(target.object());
+    if (is_kind(mapping, Kind::PyDict)) {           // dict_merge's fast path: the stored hashes (A9-15)
+        std::vector<std::tuple<Ref, std::int64_t, Ref>> items;
+        for (auto& e : static_cast<Dict*>(mapping.object())->entries)
+            if (!e.key.is_unset()) items.emplace_back(Ref::share(e.key), e.hash, Ref::share(e.value));
+        for (auto& [k, h, v] : items) dict_set_hashed(d, k.get(), h, v.get());
+        return;
+    }
+    if (type_lookup(type_of(mapping), intern("keys")).is_unset())
+        raise_new("TypeError", "'" + type_of(mapping)->name + "' object is not a mapping");
     each_item(mapping, [&](Obj k, Obj v) { dict_set(d, k, v); });
 }
 

@@ -34,6 +34,7 @@ REFUSED = 70
 BUILD = ROOT / "build" / "compiled"
 INCLUDE = ROOT / "runtime" / "include"
 SOURCES = sorted((ROOT / "runtime" / "src").glob("*.cpp"))
+INCLUDED = sorted((ROOT / "runtime" / "src").glob("*.inc"))       # generated tables the sources include
 PRELUDE = [ROOT / "runtime" / "prelude" / "build_class.py", ROOT / "runtime" / "prelude" / "builtins.py"]   # in this order
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
@@ -81,7 +82,7 @@ class _Lock:
 
 
 def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
-    key = _key(*(s.read_bytes() for s in SOURCES), *(p.read_bytes() for p in PRELUDE), *_pipeline_bytes(),
+    key = _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED]), *(p.read_bytes() for p in PRELUDE), *_pipeline_bytes(),
                " ".join([cxx, std, *RUNTIME_FLAGS]).encode())
     out = BUILD / f"runtime-{key}"
     lib = out / "libbella.a"

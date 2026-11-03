@@ -13,12 +13,12 @@ static const rt::Str* const S_print = rt::intern("print");
 static const rt::Str* const S_range = rt::intern("range");
 static Obj K_1, K_2;
 
-static const rt::Code code_module{"<module>", "<module>", "fact_big.py", 1, 0, 0, 0, false, false, {}};
-static const rt::Code code_factorial____annotate__{"__annotate__", "factorial.__annotate__", "fact_big.py", 5, 1, 1, 0, false, false, {"format"}};
-static const rt::Code code_factorial{"factorial", "factorial", "fact_big.py", 5, 1, 0, 0, false, false, {"n"}};
+static const rt::Code code_module{"<module>", "<module>", "fact_big.py", 1, 0, 0, 0, false, false, {}, nullptr};
+static const rt::Code code_factorial_annotate{"__annotate__", "factorial.__annotate__", "fact_big.py", 5, 1, 1, 0, false, false, {"format"}, nullptr};
+static const rt::Code code_factorial{"factorial", "factorial", "fact_big.py", 5, 1, 0, 0, false, false, {"n"}, nullptr};
 
-static Ref f_factorial____annotate__(rt::PyFunction* self, rt::Args args);
-static Ref f_factorial(rt::PyFunction* self, rt::Args args);
+static Ref f_factorial_annotate(rt::PyFunction* fn, rt::Args args);
+static Ref f_factorial(rt::PyFunction* fn, rt::Args args);
 
 static void init_constants() {
     K_1 = Obj::of(rt::intern("n"));
@@ -33,7 +33,7 @@ rt::Ref module_body(rt::Module* m) {
     rt::FrameGuard frame(code_module);
     Ref t1, t2, t3, t4, t5, t7, t8, t9, t11, t12, t13, t14, t15, t16, t17, t18, t19;
     frame.line = 5;
-    t1 = rt::make_function(code_factorial____annotate__, f_factorial____annotate__, M, Obj{}, Obj{}, {}, Obj{});
+    t1 = rt::make_function(code_factorial_annotate, f_factorial_annotate, M, Obj{}, Obj{}, {}, Obj{});
     t2 = rt::make_function(code_factorial, f_factorial, M, Obj{}, Obj{}, {}, t1.get());
     t1 = Ref{};
     rt::store_name(ns, S_factorial, std::move(t2));
@@ -74,11 +74,12 @@ rt::Ref module_body(rt::Module* m) {
 }
 
 // function factorial.__annotate__  (fact_big.py:5)
-static Ref f_factorial____annotate__(rt::PyFunction* self, rt::Args args) {
+static Ref f_factorial_annotate(rt::PyFunction* fn, rt::Args args) {
     Ref _format3;
     Ref _ann4;
-    rt::FrameGuard frame(code_factorial____annotate__, _format3, _ann4);
-    rt::bind(self, args, {&_format3});
+    rt::FrameGuard frame(code_factorial_annotate, _format3, _ann4);
+    rt::StackValues stack_values(_ann4, _format3);
+    rt::bind(fn, args, {&_format3});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 5;
     t1 = rt::load_fast(_format3, "_format3");
@@ -103,17 +104,16 @@ static Ref f_factorial____annotate__(rt::PyFunction* self, rt::Args args) {
     t9 = Ref{};
     t8 = Ref{};
     t10 = rt::load_fast(_ann4, "_ann4");
-    { Ref ret = std::move(t10);
-        return ret; }
+    return std::move(t10);
 }
 
 // function factorial  (fact_big.py:5)
-static Ref f_factorial(rt::PyFunction* self, rt::Args args) {
+static Ref f_factorial(rt::PyFunction* fn, rt::Args args) {
     Ref n;
     Ref result;
     Ref i;
     rt::FrameGuard frame(code_factorial, n, result, i);
-    rt::bind(self, args, {&n});
+    rt::bind(fn, args, {&n});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 6;
     result = Ref::share(Obj::small(1));
@@ -145,8 +145,7 @@ static Ref f_factorial(rt::PyFunction* self, rt::Args args) {
     }
     frame.line = 9;
     t10 = rt::load_fast(result, "result");
-    { Ref ret = std::move(t10);
-        return ret; }
+    return std::move(t10);
 }
 
 }  // namespace bella::m_main

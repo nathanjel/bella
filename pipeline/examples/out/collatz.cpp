@@ -17,12 +17,12 @@ static const rt::Str* const S_start = rt::intern("start");
 static const rt::Str* const S_steps = rt::intern("steps");
 static Obj K_1, K_2, K_3, K_4;
 
-static const rt::Code code_module{"<module>", "<module>", "collatz.py", 1, 0, 0, 0, false, false, {}};
-static const rt::Code code_steps____annotate__{"__annotate__", "steps.__annotate__", "collatz.py", 4, 1, 1, 0, false, false, {"format"}};
-static const rt::Code code_steps{"steps", "steps", "collatz.py", 4, 1, 0, 0, false, false, {"n"}};
+static const rt::Code code_module{"<module>", "<module>", "collatz.py", 1, 0, 0, 0, false, false, {}, nullptr};
+static const rt::Code code_steps_annotate{"__annotate__", "steps.__annotate__", "collatz.py", 4, 1, 1, 0, false, false, {"format"}, nullptr};
+static const rt::Code code_steps{"steps", "steps", "collatz.py", 4, 1, 0, 0, false, false, {"n"}, nullptr};
 
-static Ref f_steps____annotate__(rt::PyFunction* self, rt::Args args);
-static Ref f_steps(rt::PyFunction* self, rt::Args args);
+static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args);
+static Ref f_steps(rt::PyFunction* fn, rt::Args args);
 
 static void init_constants() {
     K_1 = Obj::of(rt::intern("longest collatz chain below 300:"));
@@ -39,7 +39,7 @@ rt::Ref module_body(rt::Module* m) {
     rt::FrameGuard frame(code_module);
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t20, t21, t22, t23, t24, t25, t26, t27, t28, t29, t30, t31, t32;
     frame.line = 4;
-    t1 = rt::make_function(code_steps____annotate__, f_steps____annotate__, M, Obj{}, Obj{}, {}, Obj{});
+    t1 = rt::make_function(code_steps_annotate, f_steps_annotate, M, Obj{}, Obj{}, {}, Obj{});
     t2 = rt::make_function(code_steps, f_steps, M, Obj{}, Obj{}, {}, t1.get());
     t1 = Ref{};
     rt::store_name(ns, S_steps, std::move(t2));
@@ -123,11 +123,12 @@ rt::Ref module_body(rt::Module* m) {
 }
 
 // function steps.__annotate__  (collatz.py:4)
-static Ref f_steps____annotate__(rt::PyFunction* self, rt::Args args) {
+static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args) {
     Ref _format3;
     Ref _ann4;
-    rt::FrameGuard frame(code_steps____annotate__, _format3, _ann4);
-    rt::bind(self, args, {&_format3});
+    rt::FrameGuard frame(code_steps_annotate, _format3, _ann4);
+    rt::StackValues stack_values(_ann4, _format3);
+    rt::bind(fn, args, {&_format3});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 4;
     t1 = rt::load_fast(_format3, "_format3");
@@ -152,16 +153,15 @@ static Ref f_steps____annotate__(rt::PyFunction* self, rt::Args args) {
     t9 = Ref{};
     t8 = Ref{};
     t10 = rt::load_fast(_ann4, "_ann4");
-    { Ref ret = std::move(t10);
-        return ret; }
+    return std::move(t10);
 }
 
 // function steps  (collatz.py:4)
-static Ref f_steps(rt::PyFunction* self, rt::Args args) {
+static Ref f_steps(rt::PyFunction* fn, rt::Args args) {
     Ref n;
     Ref count;
     rt::FrameGuard frame(code_steps, n, count);
-    rt::bind(self, args, {&n});
+    rt::bind(fn, args, {&n});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
     frame.line = 5;
     count = Ref::share(Obj::small(0));
@@ -207,8 +207,7 @@ static Ref f_steps(rt::PyFunction* self, rt::Args args) {
     }
     frame.line = 12;
     t15 = rt::load_fast(count, "count");
-    { Ref ret = std::move(t15);
-        return ret; }
+    return std::move(t15);
 }
 
 }  // namespace bella::m_main

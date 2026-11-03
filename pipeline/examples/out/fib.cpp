@@ -14,12 +14,12 @@ static const rt::Str* const S_print = rt::intern("print");
 static const rt::Str* const S_range = rt::intern("range");
 static Obj K_1, K_2, K_3;
 
-static const rt::Code code_module{"<module>", "<module>", "fib.py", 1, 0, 0, 0, false, false, {}};
-static const rt::Code code_fib____annotate__{"__annotate__", "fib.__annotate__", "fib.py", 4, 1, 1, 0, false, false, {"format"}};
-static const rt::Code code_fib{"fib", "fib", "fib.py", 4, 1, 0, 0, false, false, {"n"}};
+static const rt::Code code_module{"<module>", "<module>", "fib.py", 1, 0, 0, 0, false, false, {}, nullptr};
+static const rt::Code code_fib_annotate{"__annotate__", "fib.__annotate__", "fib.py", 4, 1, 1, 0, false, false, {"format"}, nullptr};
+static const rt::Code code_fib{"fib", "fib", "fib.py", 4, 1, 0, 0, false, false, {"n"}, nullptr};
 
-static Ref f_fib____annotate__(rt::PyFunction* self, rt::Args args);
-static Ref f_fib(rt::PyFunction* self, rt::Args args);
+static Ref f_fib_annotate(rt::PyFunction* fn, rt::Args args);
+static Ref f_fib(rt::PyFunction* fn, rt::Args args);
 
 static void init_constants() {
     K_1 = Obj::of(rt::intern("fib(60) fits the 63-bit immediate:"));
@@ -35,7 +35,7 @@ rt::Ref module_body(rt::Module* m) {
     rt::FrameGuard frame(code_module);
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t13, t14, t15, t16, t17, t18, t19;
     frame.line = 4;
-    t1 = rt::make_function(code_fib____annotate__, f_fib____annotate__, M, Obj{}, Obj{}, {}, Obj{});
+    t1 = rt::make_function(code_fib_annotate, f_fib_annotate, M, Obj{}, Obj{}, {}, Obj{});
     t2 = rt::make_function(code_fib, f_fib, M, Obj{}, Obj{}, {}, t1.get());
     t1 = Ref{};
     rt::store_name(ns, S_fib, std::move(t2));
@@ -84,11 +84,12 @@ rt::Ref module_body(rt::Module* m) {
 }
 
 // function fib.__annotate__  (fib.py:4)
-static Ref f_fib____annotate__(rt::PyFunction* self, rt::Args args) {
+static Ref f_fib_annotate(rt::PyFunction* fn, rt::Args args) {
     Ref _format3;
     Ref _ann4;
-    rt::FrameGuard frame(code_fib____annotate__, _format3, _ann4);
-    rt::bind(self, args, {&_format3});
+    rt::FrameGuard frame(code_fib_annotate, _format3, _ann4);
+    rt::StackValues stack_values(_ann4, _format3);
+    rt::bind(fn, args, {&_format3});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 4;
     t1 = rt::load_fast(_format3, "_format3");
@@ -113,15 +114,14 @@ static Ref f_fib____annotate__(rt::PyFunction* self, rt::Args args) {
     t9 = Ref{};
     t8 = Ref{};
     t10 = rt::load_fast(_ann4, "_ann4");
-    { Ref ret = std::move(t10);
-        return ret; }
+    return std::move(t10);
 }
 
 // function fib  (fib.py:4)
-static Ref f_fib(rt::PyFunction* self, rt::Args args) {
+static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
     Ref n;
     rt::FrameGuard frame(code_fib, n);
-    rt::bind(self, args, {&n});
+    rt::bind(fn, args, {&n});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13;
     frame.line = 5;
     t1 = rt::load_fast(n, "n");
@@ -132,8 +132,7 @@ static Ref f_fib(rt::PyFunction* self, rt::Args args) {
     if (rt::test(t3)) {
         frame.line = 6;
         t4 = rt::load_fast(n, "n");
-        { Ref ret = std::move(t4);
-            return ret; }
+        return std::move(t4);
     }
     frame.line = 7;
     t5 = rt::load_global(M, S_fib);
@@ -153,8 +152,7 @@ static Ref f_fib(rt::PyFunction* self, rt::Args args) {
     t13 = rt::binary(rt::BinOp::Add, t8.get(), t12.get());
     t12 = Ref{};
     t8 = Ref{};
-    { Ref ret = std::move(t13);
-        return ret; }
+    return std::move(t13);
 }
 
 }  // namespace bella::m_main

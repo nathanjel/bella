@@ -81,10 +81,12 @@ SetObject::SetObject(bool frozen_set) : Object(Kind::Set), table(MINSIZE), froze
     cls = frozen ? types().frozenset : types().set;
 }
 
-void set_add(Obj setv, Obj key) {
+void set_add(Obj setv, Obj key) { set_add_hashed(setv, key, hash_of(key)); }
+
+// set_add_entry. The table takes its count of the key only when it stores it: a comparison that
+// raises leaves nothing behind (review 2026-11-03, A9-8); the caller holds the key meanwhile.
+void set_add_hashed(Obj setv, Obj key, std::int64_t hash) {
     auto* s = static_cast<SetObject*>(setv.object());
-    std::int64_t hash = hash_of(key);
-    incref(key);
 restart:
     std::size_t mask = s->table.size() - 1;
     std::size_t i = static_cast<std::size_t>(hash) & mask;
@@ -95,6 +97,7 @@ restart:
         for (std::size_t k = i;; ++k) {
             auto& e = s->table[k];
             if (empty(e)) {
+                incref(key);
                 if (freeslot != SIZE_MAX) {
                     ++s->used;
                     s->table[freeslot] = {key, hash};
@@ -111,10 +114,7 @@ restart:
                 Obj startkey = e.key;
                 std::size_t size = s->table.size();
                 bool eq = equal(startkey, key);
-                if (eq) {
-                    decref(key);
-                    return;
-                }
+                if (eq) return;
                 if (s->table.size() != size || s->table[k].key != startkey) goto restart;
             } else if (dummy(e) && freeslot == SIZE_MAX) {
                 freeslot = k;
@@ -139,17 +139,20 @@ bool set_discard(SetObject* s, Obj key) {
 }
 
 void set_update(Obj setv, Obj iterable) {
-    if (is_kind(iterable, Kind::Set)) {             // set_merge: the other table's order
+    if (is_kind(iterable, Kind::Set)) {             // set_merge: the other table's order and hashes (A9-15)
         auto* other = static_cast<SetObject*>(iterable.object());
         auto* s = static_cast<SetObject*>(setv.object());
         if ((s->fill + other->used) * 5 >= (s->table.size() - 1) * 3) resize(s, (s->used + other->used) * 2);
-        std::vector<SetObject::Entry> entries = other->table;
-        for (auto& e : entries) if (active(e)) incref(e.key);
-        for (auto& e : entries)
-            if (active(e)) {
-                set_add(setv, e.key);
-                decref(e.key);
-            }
+        std::vector<std::pair<Ref, std::int64_t>> entries;
+        for (auto& e : other->table) if (active(e)) entries.emplace_back(Ref::share(e.key), e.hash);
+        for (auto& [k, h] : entries) set_add_hashed(setv, k.get(), h);
+        return;
+    }
+    if (is_kind(iterable, Kind::PyDict)) {          // set_update_dict_keys: the dict's stored hashes
+        std::vector<std::pair<Ref, std::int64_t>> entries;
+        for (auto& e : static_cast<Dict*>(iterable.object())->entries)
+            if (!e.key.is_unset()) entries.emplace_back(Ref::share(e.key), e.hash);
+        for (auto& [k, h] : entries) set_add_hashed(setv, k.get(), h);
         return;
     }
     Ref it = iter(iterable);
@@ -175,19 +178,23 @@ Ref set_new_fn(Obj, Args a) {                   // __new__(cls, iterable=()): th
     if (a.npos == 2) set_update(s.get(), a.pos(1));
     return s;
 }
+void one_argument(Args a, const char* who) {        // METH_O's check (A9-3)
+    no_kw(a, who);
+    if (a.npos != 1)
+        raise_new("TypeError", std::string("set.") + who + "() takes exactly one argument (" + std::to_string(a.npos) + " given)");
+}
 Ref set_add_m(Obj self, Args a) {
-    no_kw(a, "add");
-    if (a.npos != 1) raise_new("TypeError", "set.add() takes exactly one argument (" + std::to_string(a.npos) + " given)");
+    one_argument(a, "add");
     set_add(self, a.pos(0));
     return none_ref();
 }
 Ref set_discard_m(Obj self, Args a) {
-    no_kw(a, "discard");
+    one_argument(a, "discard");
     set_discard(set_self(self), a.pos(0));
     return none_ref();
 }
 Ref set_remove_m(Obj self, Args a) {
-    no_kw(a, "remove");
+    one_argument(a, "remove");
     if (!set_discard(set_self(self), a.pos(0))) {
         Ref exc = invoke(Obj::of(exception_class("KeyError")), {a.pos(0)});
         raise(exc.get());
@@ -199,9 +206,19 @@ Ref set_update_m(Obj self, Args a) {
     for (std::size_t i = 0; i < a.npos; ++i) set_update(self, a.pos(i));
     return none_ref();
 }
-Ref set_len_m(Obj self, Args) { return Ref::steal(Obj::small(static_cast<std::int64_t>(set_self(self)->used))); }
-Ref set_contains_m(Obj self, Args a) { return Ref::steal(boolean(set_contains(set_self(self), a.pos(0)))); }
-Ref set_iter_m(Obj self, Args) { return own(new Iterator(Iterator::SetIt, self)); }
+Ref set_len_m(Obj self, Args a) {
+    if (a.npos != 0 || a.nkw != 0) raise_new("TypeError", "set.__len__() takes no arguments");
+    return Ref::steal(Obj::small(static_cast<std::int64_t>(set_self(self)->used)));
+}
+Ref set_contains_m(Obj self, Args a) {
+    if (a.nkw != 0 || a.npos != 1)
+        raise_new("TypeError", "set.__contains__() takes exactly one argument (" + std::to_string(a.npos) + " given)");
+    return Ref::steal(boolean(set_contains(set_self(self), a.pos(0))));
+}
+Ref set_iter_m(Obj self, Args a) {
+    if (a.npos != 0 || a.nkw != 0) raise_new("TypeError", "set.__iter__() takes no arguments");
+    return iter(self);
+}
 }  // namespace
 
 void init_sets() {
@@ -209,6 +226,7 @@ void init_sets() {
     for (ClassObject* c : {t.set, t.frozenset}) {
         auto add = [&](const char* name, NativeFn fn, Binding b = Binding::Method) {
             auto* f = new Builtin(name, fn, Obj{}, b);
+            f->owner = c;
             f->flags |= IMMORTAL;
             c->attrs.set(intern(name), Obj::of(f));
         };

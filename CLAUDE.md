@@ -56,7 +56,8 @@ running it, not by recollection; the conformance harness exists for that.
 make test               pytest (if installed) + refmodel self-check
 make closure            phase-1 closure vs manifest.toml  (pinned interpreter; --allow-unpinned elsewhere)
 make record             conformance expectations under the pinned CPython
-make verify             the pinned CPython reproduces every recorded expectation (fails closed)
+make verify             the pinned CPython reproduces every recorded expectation and the runtime's
+                        table of CPython's names (tools/cpython_names.py; fails closed)
 make check-conformance  RUNNER="python3 {case}" today; the compiled runner later
 make slice              CPython == eval1 == C++ on pipeline/examples
 make int-test           int.hpp vs CPython with UBSan

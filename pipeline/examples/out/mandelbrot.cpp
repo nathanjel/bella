@@ -24,12 +24,12 @@ static const rt::Str* const S_x = rt::intern("x");
 static const rt::Str* const S_y = rt::intern("y");
 static Obj K_1, K_2, K_3, K_4, K_5, K_6;
 
-static const rt::Code code_module{"<module>", "<module>", "mandelbrot.py", 1, 0, 0, 0, false, false, {}};
-static const rt::Code code_escape_time____annotate__{"__annotate__", "escape_time.__annotate__", "mandelbrot.py", 7, 1, 1, 0, false, false, {"format"}};
-static const rt::Code code_escape_time{"escape_time", "escape_time", "mandelbrot.py", 7, 3, 0, 0, false, false, {"cr", "ci", "limit"}};
+static const rt::Code code_module{"<module>", "<module>", "mandelbrot.py", 1, 0, 0, 0, false, false, {}, nullptr};
+static const rt::Code code_escape_time_annotate{"__annotate__", "escape_time.__annotate__", "mandelbrot.py", 7, 1, 1, 0, false, false, {"format"}, nullptr};
+static const rt::Code code_escape_time{"escape_time", "escape_time", "mandelbrot.py", 7, 3, 0, 0, false, false, {"cr", "ci", "limit"}, nullptr};
 
-static Ref f_escape_time____annotate__(rt::PyFunction* self, rt::Args args);
-static Ref f_escape_time(rt::PyFunction* self, rt::Args args);
+static Ref f_escape_time_annotate(rt::PyFunction* fn, rt::Args args);
+static Ref f_escape_time(rt::PyFunction* fn, rt::Args args);
 
 static void init_constants() {
     K_1 = Obj::of(rt::intern("points inside:"));
@@ -48,7 +48,7 @@ rt::Ref module_body(rt::Module* m) {
     rt::FrameGuard frame(code_module);
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28, t29, t30, t31, t32, t33, t34, t35, t36, t37, t38, t39, t40, t41, t42, t43, t44, t46, t47, t48, t49, t50;
     frame.line = 7;
-    t1 = rt::make_function(code_escape_time____annotate__, f_escape_time____annotate__, M, Obj{}, Obj{}, {}, Obj{});
+    t1 = rt::make_function(code_escape_time_annotate, f_escape_time_annotate, M, Obj{}, Obj{}, {}, Obj{});
     t2 = rt::make_function(code_escape_time, f_escape_time, M, Obj{}, Obj{}, {}, t1.get());
     t1 = Ref{};
     rt::store_name(ns, S_escape_time, std::move(t2));
@@ -186,11 +186,12 @@ rt::Ref module_body(rt::Module* m) {
 }
 
 // function escape_time.__annotate__  (mandelbrot.py:7)
-static Ref f_escape_time____annotate__(rt::PyFunction* self, rt::Args args) {
+static Ref f_escape_time_annotate(rt::PyFunction* fn, rt::Args args) {
     Ref _format3;
     Ref _ann4;
-    rt::FrameGuard frame(code_escape_time____annotate__, _format3, _ann4);
-    rt::bind(self, args, {&_format3});
+    rt::FrameGuard frame(code_escape_time_annotate, _format3, _ann4);
+    rt::StackValues stack_values(_ann4, _format3);
+    rt::bind(fn, args, {&_format3});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14;
     frame.line = 7;
     t1 = rt::load_fast(_format3, "_format3");
@@ -225,12 +226,11 @@ static Ref f_escape_time____annotate__(rt::PyFunction* self, rt::Args args) {
     t13 = Ref{};
     t12 = Ref{};
     t14 = rt::load_fast(_ann4, "_ann4");
-    { Ref ret = std::move(t14);
-        return ret; }
+    return std::move(t14);
 }
 
 // function escape_time  (mandelbrot.py:7)
-static Ref f_escape_time(rt::PyFunction* self, rt::Args args) {
+static Ref f_escape_time(rt::PyFunction* fn, rt::Args args) {
     Ref cr;
     Ref ci;
     Ref limit;
@@ -240,7 +240,7 @@ static Ref f_escape_time(rt::PyFunction* self, rt::Args args) {
     Ref zr2;
     Ref zi2;
     rt::FrameGuard frame(code_escape_time, cr, ci, limit, zr, zi, n, zr2, zi2);
-    rt::bind(self, args, {&cr, &ci, &limit});
+    rt::bind(fn, args, {&cr, &ci, &limit});
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28, t29, t30, t31, t32, t33;
     frame.line = 8;
     zr = Ref::share(Obj::small(0));
@@ -289,8 +289,7 @@ static Ref f_escape_time(rt::PyFunction* self, rt::Args args) {
             if (rt::test(t17)) {
                 frame.line = 15;
                 t18 = rt::load_fast(n, "n");
-                { Ref ret = std::move(t18);
-                    return ret; }
+                return std::move(t18);
             }
             frame.line = 16;
             t19 = rt::load_fast(zr, "zr");
@@ -329,8 +328,7 @@ static Ref f_escape_time(rt::PyFunction* self, rt::Args args) {
     }
     frame.line = 19;
     t33 = rt::load_fast(limit, "limit");
-    { Ref ret = std::move(t33);
-        return ret; }
+    return std::move(t33);
 }
 
 }  // namespace bella::m_main

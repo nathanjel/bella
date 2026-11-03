@@ -335,6 +335,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            C-3-05..11 pass compiled; `make compiled-corpus` 15 of 76 (43 of the rest import
            modules). Left for 3a.2: the exception classes into the prelude, `super()`,
            metaclasses.
+         * Reviewed 2026-11-03 (astra-low-09, gemini-4-argon-high-08; review log RL-188 to
+           RL-219, `pipeline/tests/test_review_2026_11_03.py`): 23 fixes, among them `finally`
+           running twice, finalisers' exceptions escaping a destructor, crashes on wrong
+           receivers and arities, and injective names; 9 more found by running the earlier
+           rounds' programs compiled, among them names CPython has now refused by a recorded
+           table instead of answered with NameError or AttributeError. The L2 release-point
+           probes run compiled (`test_compiled_probes.py`). Later: the slot wrappers' own types
+           (their repr and type are refused, RL-218).
          * 3a.3 dict exposure: C-3-01..03.
        * 3b generators (state machines) and compiled imports: C-3-04.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done.

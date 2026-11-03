@@ -31,9 +31,11 @@ decltype default delete do double dynamic_cast else enum explicit export extern 
 int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private protected public register
 reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this
 thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq
-final override import module main std rt Obj Ref Args self args frame ns M ret raised ended handled
+final override import module main std rt Obj Ref Args fn args frame stack_values ns M ret init_constants module_body
 """.split())
-_EMITTER_NAME = re.compile(r"^(t\d+|K_\d+|S_\w*|code_\w*|f_\w*|py_\w*|c_\w*|e\d+)$")
+# Every name the emitter makes matches this (review 2026-11-03, A9-20); a Python name that matches
+# it, or that C++ reserves, is escaped.
+_COMPILER_NAME = re.compile(r"^(t\d+|e\d+|h\d+|u\d+|fin\d+|ended\d+|raised\d+|K_\d+|S_\w*|code_\w*|f_\w*|py\w*)$")
 
 _BINARY = {"+": "Add", "-": "Sub", "*": "Mul", "/": "TrueDiv", "//": "FloorDiv", "%": "Mod", "**": "Pow",
            "<<": "LShift", ">>": "RShift", "&": "And", "|": "Or", "^": "Xor", "@": "MatMul"}
@@ -44,12 +46,13 @@ _UNARY = {"-": "unary_neg", "+": "unary_pos", "~": "unary_invert"}
 
 def cpp_name(name: str) -> str:
     """A Python identifier as a C++ one: kept as written unless C++ reserves it (a keyword, a name
-    with `__`, `_` and a capital) or the emitter uses it, then prefixed `py_`."""
-    if name in _KEYWORDS or "__" in name or re.match(r"^_[A-Z]", name) or _EMITTER_NAME.match(name):
-        return "py_" + name.replace("__", "_U_")
-    if not name.isascii():
-        return "py_" + "".join(c if c.isascii() and (c.isalnum() or c == "_") else f"_u{ord(c):x}_" for c in name)
-    return name
+    with `__` or starting `_` and a capital) or it matches a name the emitter makes; then `py`
+    followed by the name with `_` written `_1` and a non-ASCII character `_2` and six hex digits.
+    The escape is injective and never makes `__`, and a kept name never starts with `py`."""
+    if (name.isascii() and name not in _KEYWORDS and "__" not in name and not re.match(r"^_[A-Z]", name)
+            and not _COMPILER_NAME.match(name)):
+        return name
+    return "py" + "".join("_1" if c == "_" else c if c.isascii() else f"_2{ord(c):06x}" for c in name)
 
 
 def c_string(s: str) -> str:
@@ -68,12 +71,18 @@ def c_string(s: str) -> str:
     return '"' + "".join(out) + '"'
 
 
+_RETURN, _BREAK, _CONTINUE, _ENDLOOP = 1, 2, 3, 4      # how a try with a finally was left
+
+
 @dataclass
 class _Exit:
     """An enclosing construct a `return`, `break` or `continue` passes through on its way out."""
-    kind: str                                    # "finally" or "loop"
-    body: tuple[G.Stmt, ...] = ()                # the finally block
+    kind: str                                    # "finally", "cleanup" (except-as's e = None; del e) or "loop"
+    body: tuple[G.Stmt, ...] = ()                # the finally block, or the cleanup
     holds: tuple[G.Temp, ...] = ()               # a loop's held temporaries
+    ended: str | None = None                     # a loop's flag for running its else block
+    flag: str = ""                               # a finally's completion variable
+    completions: set[int] = field(default_factory=set)   # the completions that reached a finally
 
 
 @dataclass
@@ -109,8 +118,8 @@ class Emitter:
     def name(self, text: str) -> str:
         """An interned name (S_x), for attribute and global access."""
         if text not in self.names:
-            ident = re.sub(r"\W", "_", text) if text.isascii() else f"u{len(self.names)}"
-            self.names[text] = self.unique("S_" + ident)
+            dunder = len(text) > 4 and text.startswith("__") and text.endswith("__")
+            self.names[text] = self.unique("S_" + ("dunder_" if dunder else "") + _ident(text))
         return self.names[text]
 
     def const(self, value: object) -> str:
@@ -179,7 +188,7 @@ class Emitter:
         out.append("")
         for fn in self.functions:
             if fn.code.kind != "module":
-                out.append(f"static Ref {fn.entry}(rt::PyFunction* self, rt::Args args);")
+                out.append(f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args);")
         out.append("")
         out.append("static void init_constants() {")
         out += self.const_init
@@ -199,9 +208,10 @@ class Emitter:
         varargs = any(p.kind == "*args" for p in c.params)
         varkw = any(p.kind == "**kwargs" for p in c.params)
         names = [p.public or p.name for p in self.param_order(c)]
+        doc = "nullptr" if c.docstring is None else c_string(c.docstring)
         return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(self.filename)}, "
                 f"{c.first_line}, {len(positional)}, {posonly}, {len(kwonly)}, {str(varargs).lower()}, "
-                f"{str(varkw).lower()}, {{{', '.join(c_string(n) for n in names)}}}}};")
+                f"{str(varkw).lower()}, {{{', '.join(c_string(n) for n in names)}}}, {doc}}};")
 
     @staticmethod
     def param_order(c: G.Code) -> list[G.Param]:
@@ -226,27 +236,35 @@ class Emitter:
         elif c.kind == "classbody":
             # __build_class__ calls the body with the class namespace (runtime/prelude/build_class.py)
             self.out += [f"// the body of class {c.qualname}  ({self.filename}:{c.first_line})",
-                         f"static Ref {fn.entry}(rt::PyFunction* self, rt::Args args) {{",
-                         "    (void)self;", "    Obj ns = args.pos(0);"]
+                         f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args) {{",
+                         "    (void)fn;", "    Obj ns = args.pos(0);"]
         else:
             self.out += [f"// {c.kind} {c.qualname}  ({self.filename}:{c.first_line})",
-                         f"static Ref {fn.entry}(rt::PyFunction* self, rt::Args args) {{"]
+                         f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args) {{"]
         for n in frame_locals:
             self.out.append(f"    Ref {self.vars[n]};")
         guard = ", ".join(["", *(self.vars[n] for n in frame_locals)])
         self.out.append(f"    rt::FrameGuard frame({fn.cname}{guard});")
+        # the frontend's variables for what CPython keeps on its stack, and a list, set or dict
+        # comprehension helper's iterator (PEP 709 inlines those; a generator's is a real frame's
+        # argument): dropped newest first when an exception leaves, before the frame is recorded,
+        # as eval2's unwind_synthetic does (review log RL-186)
+        arguments = set() if c.kind == "generator" else {p.name for p in c.params}
+        stack = sorted((_synthetic_stored(c.body, self.hidden) | arguments) & self.hidden, key=_creation, reverse=True)
+        if stack:
+            self.out.append(f"    rt::StackValues stack_values({', '.join(self.vars[n] for n in stack)});")
         if c.kind == "classbody":
             for n in c.cellvars:
                 self.out.append(f"    {self.vars[n]} = rt::make_cell();")
             for i, n in enumerate(c.freevars):
-                self.out.append(f"    {self.vars[n]} = self->closure[{i}];")
+                self.out.append(f"    {self.vars[n]} = fn->closure[{i}];")
         elif c.kind != "module":
             if params:
-                self.out.append(f"    rt::bind(self, args, {{{', '.join('&' + self.vars[n] for n in params)}}});")
+                self.out.append(f"    rt::bind(fn, args, {{{', '.join('&' + self.vars[n] for n in params)}}});")
             else:
-                self.out.append("    rt::bind(self, args, {});")
+                self.out.append("    rt::bind(fn, args, {});")
             for i, n in enumerate(c.freevars):
-                self.out.append(f"    {self.vars[n]} = self->closure[{i}];")
+                self.out.append(f"    {self.vars[n]} = fn->closure[{i}];")
             for n in c.cellvars:
                 if n in params:
                     self.out.append(f"    {self.vars[n]} = rt::make_cell({self.vars[n]}.get());")
@@ -256,6 +274,8 @@ class Emitter:
                 self.out.append(f"    throw rt::NotImplemented({c_string(f'running the {c.kind} {c.qualname} (step 3b: generators)')});")
                 self.out.append("}")
                 return self.out
+        if _returns_through_finally(c.body):
+            self.out.append("    Ref ret;                                   // a return's value while finally blocks run")
         self.region(c.body, 1)
         if _falls_through(c.body):
             self.out.append("    return rt::none_ref();")
@@ -294,8 +314,12 @@ class Emitter:
             case G.Delete(ref):
                 self.add(indent, self.delete(ref))
             case G.Unpack(targets, value, star):
-                arr = f"u{self.fresh()}"
-                self.add(indent, f"{{ Ref {arr}[{len(targets)}]; rt::unpack({self.take_obj(value)}, {arr}, {star});")
+                # UNPACK_SEQUENCE pops its source: it dies after the unpack, before the targets
+                # are used (review 2026-11-03, A9-7)
+                arr = self.aux("u")
+                self.add(indent, f"{{ Ref {arr}[{len(targets)}]; rt::unpack({self.atom(value)}, {arr}, {star});")
+                if isinstance(value, G.Temp):
+                    self.add(indent + 1, f"t{value.n} = Ref{{}};")
                 for i, t in enumerate(targets):
                     self.add(indent + 1, f"t{t.n} = std::move({arr}[{i}]);")
                 self.add(indent, "}")
@@ -314,44 +338,36 @@ class Emitter:
                     self.block(orelse, indent + 1)
                 self.add(indent, "}")
             case G.Loop(body, holds, orelse):
-                ended = f"ended{self.fresh()}" if orelse else None
+                ended = self.aux("ended") if orelse else None
                 if ended:
                     self.add(indent, f"bool {ended} = false;")
                 self.add(indent, "for (;;) {")
-                self.exits.append(_Exit("loop", holds=holds))
-                self.loop_flags = getattr(self, "loop_flags", []) + [ended]
+                self.exits.append(_Exit("loop", holds=holds, ended=ended))
                 self.block(body, indent + 1)
                 self.exits.pop()
-                self.loop_flags.pop()
                 self.add(indent, "}")
                 if ended:
                     self.add(indent, f"if ({ended}) {{")
                     self.block(orelse, indent + 1)
                     self.add(indent, "}")
             case G.EndLoop():
-                self.leave_loop(indent)
-                flag = self.loop_flags[-1]
-                if flag:
-                    self.add(indent, f"{flag} = true;")
-                self.add(indent, "break;")
+                self.leave(_ENDLOOP, len(self.exits) - 1, indent)
             case G.Break():
-                self.leave_loop(indent)
-                self.add(indent, "break;")
+                self.leave(_BREAK, len(self.exits) - 1, indent)
             case G.Continue():
-                for ex in reversed(self.exits):
-                    if ex.kind == "loop":
-                        break
-                    self.finally_inline(ex, indent)
-                self.add(indent, "continue;")
+                self.leave(_CONTINUE, len(self.exits) - 1, indent)
             case G.Return(value):
-                self.add(indent, f"{{ Ref ret = {self.take(value)};")
-                for ex in reversed(self.exits):
-                    if ex.kind == "loop":
-                        for h in ex.holds:
-                            self.add(indent + 1, f"t{h.n} = Ref{{}};")
-                    else:
-                        self.finally_inline(ex, indent + 1)
-                self.add(indent + 1, "return ret; }")
+                if any(ex.kind == "finally" for ex in self.exits):
+                    self.add(indent, f"ret = {self.take(value)};")
+                    self.leave(_RETURN, len(self.exits) - 1, indent)
+                else:
+                    for ex in reversed(self.exits):
+                        if ex.kind == "loop":
+                            for h in ex.holds:
+                                self.add(indent, f"t{h.n} = Ref{{}};")
+                        else:
+                            self.cleanup_inline(ex, indent)
+                    self.add(indent, f"return {self.take(value)};")
             case G.Raise(exc, cause, has_cause):
                 if exc is None:
                     self.add(indent, "rt::reraise();")
@@ -362,45 +378,76 @@ class Emitter:
             case _:
                 raise Unsupported(f"the C++ emitter: statement {type(s).__name__}")
 
-    def leave_loop(self, indent: int) -> None:
-        """Break or EndLoop: the finally blocks inside the loop, then the loop's held temporaries."""
-        for ex in reversed(self.exits):
-            if ex.kind == "loop":
+    def leave(self, kind: int, start: int, indent: int) -> None:
+        """A return, break, continue or loop end on its way out, from exit `start` outward: a
+        handler's `e = None; del e` inline (it cannot raise), a loop's held temporaries released
+        where L2 says, and at the first `finally` a jump past its try with the completion noted,
+        so that the block runs once, outside the try's own catch (review 2026-11-03, A9-5)."""
+        for i in range(start, -1, -1):
+            ex = self.exits[i]
+            if ex.kind == "cleanup":
+                self.cleanup_inline(ex, indent)
+                continue
+            if ex.kind == "finally":
+                ex.completions.add(kind)
+                self.add(indent, f"{ex.flag} = {kind}; goto {ex.flag}_end;")
+                return
+            # a loop
+            if kind == _RETURN:
                 for h in ex.holds:
                     self.add(indent, f"t{h.n} = Ref{{}};")
-                return
-            self.finally_inline(ex, indent)
+                continue
+            if kind in (_BREAK, _ENDLOOP):
+                for h in ex.holds:
+                    self.add(indent, f"t{h.n} = Ref{{}};")
+            if kind == _ENDLOOP and ex.ended:
+                self.add(indent, f"{ex.ended} = true;")
+            self.add(indent, "continue;" if kind == _CONTINUE else "break;")
+            return
+        assert kind == _RETURN, "a break or continue outside a loop"
+        self.add(indent, "return ret;")
 
-    def finally_inline(self, ex: _Exit, indent: int) -> None:
-        """A finally block written out on a way out of its try (outside it, as it runs there)."""
-        saved = self.exits
-        self.exits = self.exits[: self.exits.index(ex)]
-        self.add(indent, "{")
-        self.region(ex.body, indent + 1)
-        self.add(indent, "}")
-        self.exits = saved
+    def cleanup_inline(self, ex: _Exit, indent: int) -> None:
+        if ex.kind == "cleanup":
+            for st in ex.body:
+                self.stmt(st, indent)
 
     def try_(self, s: G.Try, indent: int) -> None:
-        if s.finalbody:
-            # try/finally: the finally block on the normal path, on the exception edge, and inline
-            # before every return, break or continue that leaves the try (statement above)
-            ex = _Exit("finally", body=s.finalbody)
-            self.add(indent, "try {")
-            self.exits.append(ex)
-            self.try_handlers(G.Try(s.body, s.handlers, s.orelse), indent + 1)
-            self.exits.pop()
-            self.add(indent, "} catch (...) {")
-            self.add(indent + 1, "{")
-            self.region(s.finalbody, indent + 2)
-            self.add(indent + 1, "}")
-            self.add(indent + 1, "throw;")
-            self.add(indent, "}")
-            if _falls_through_try(s):
-                self.add(indent, "{")
-                self.region(s.finalbody, indent + 1)
-                self.add(indent, "}")
+        if not s.finalbody:
+            self.try_handlers(s, indent)
             return
-        self.try_handlers(s, indent)
+        # try/finally. The normal end, and every return, break or continue leaving the try, reach
+        # the label after it with the completion noted; the block runs there once, outside the
+        # catch, and the completion goes on outward. On the exception edge the block runs with
+        # the exception as the one being handled (a bare raise re-raises it, a new exception
+        # takes it as __context__), then it propagates (A9-5, A9-6).
+        flag = self.aux("fin")
+        ex = _Exit("finally", body=s.finalbody, flag=flag)
+        self.add(indent, "{")
+        self.add(indent + 1, f"int {flag} = 0;                            // how the try was left")
+        self.add(indent + 1, "try {")
+        self.exits.append(ex)
+        self.try_handlers(G.Try(s.body, s.handlers, s.orelse), indent + 2)
+        self.exits.pop()
+        e = self.aux("e")
+        self.add(indent + 1, f"}} catch (rt::PyError& {e}) {{")
+        for name in sorted(_synthetic_stored(s.body, self.hidden), key=_creation, reverse=True):
+            self.add(indent + 2, f"{self.vars[name]} = rt::none_ref();")   # stack values (RL-186)
+        self.add(indent + 2, f"rt::Handling {self.aux('h')}({e}.exc);")
+        self.add(indent + 2, "{")
+        self.region(s.finalbody, indent + 3)
+        self.add(indent + 2, "}")
+        self.add(indent + 2, f"rt::rethrow({e});")
+        self.add(indent + 1, "}")
+        self.add(indent + 1, f"{flag}_end:")
+        self.add(indent + 1, "{")
+        self.region(s.finalbody, indent + 2)
+        self.add(indent + 1, "}")
+        for kind in sorted(ex.completions):
+            self.add(indent + 1, f"if ({flag} == {kind}) {{")
+            self.leave(kind, len(self.exits) - 1, indent + 2)
+            self.add(indent + 1, "}")
+        self.add(indent, "}")
 
     def try_handlers(self, s: G.Try, indent: int) -> None:
         if not s.handlers:
@@ -408,20 +455,20 @@ class Emitter:
             self.region(s.body, indent + 1)
             self.add(indent, "}")
             return
-        n = self.fresh()
-        raised = f"raised{n}"
+        raised = self.aux("raised")
+        e = self.aux("e")
         if s.orelse:
             self.add(indent, f"bool {raised} = false;")
         self.add(indent, "try {")
         self.region(s.body, indent + 1)
-        self.add(indent, f"}} catch (rt::PyError& e{n}) {{")
+        self.add(indent, f"}} catch (rt::PyError& {e}) {{")
         synthetic = sorted(_synthetic_stored(s.body, self.hidden), key=_creation, reverse=True)
         for name in synthetic:                   # stack values die during unwinding (RL-186)
             self.add(indent + 1, f"{self.vars[name]} = rt::none_ref();")
         if s.orelse:
             self.add(indent + 1, f"{raised} = true;")
-        self.add(indent + 1, f"rt::Handling handling{n}(e{n}.exc);")
-        self.handlers(s.handlers, 0, f"e{n}", indent + 1)
+        self.add(indent + 1, f"rt::Handling {self.aux('h')}({e}.exc);")
+        self.handlers(s.handlers, 0, e, indent + 1)
         self.add(indent, "}")
         if s.orelse:
             self.add(indent, f"if (!{raised}) {{")
@@ -430,7 +477,7 @@ class Emitter:
 
     def handlers(self, handlers: tuple[G.Handler, ...], i: int, exc: str, indent: int) -> None:
         if i == len(handlers):
-            self.add(indent, "throw;")
+            self.add(indent, f"rt::rethrow({exc});")
             return
         h = handlers[i]
         self.add(indent, "{")
@@ -444,7 +491,7 @@ class Emitter:
         if h.name is not None:
             cleanup = (G.Store(h.name, G.Const(None)), G.Delete(h.name))
             self.add(indent + 2, self.store(h.name, f"Ref::share({exc}.exc.get())"))
-            ex = _Exit("finally", body=cleanup)
+            ex = _Exit("cleanup", body=cleanup)
             self.add(indent + 2, "try {")
             self.exits.append(ex)
             self.region(h.body, indent + 3)
@@ -468,6 +515,12 @@ class Emitter:
         self.counter += 1
         return self.counter
 
+    def aux(self, base: str) -> str:
+        """A name of the emitter's own, which no escaped Python name can be."""
+        name = f"{base}{self.fresh()}"
+        assert _COMPILER_NAME.match(name), name
+        return name
+
     # ---- names -------------------------------------------------------------------------------
 
     def take(self, a: G.Atom) -> str:
@@ -475,9 +528,6 @@ class Emitter:
         if isinstance(a, G.Temp):
             return f"std::move(t{a.n})"
         return f"Ref::share({self.const(a.value)})"
-
-    def take_obj(self, a: G.Atom) -> str:
-        return self.atom(a)
 
     def load(self, r: G.NameRef) -> str:
         match r.kind:
@@ -624,8 +674,13 @@ def _supported_constant(v: object) -> bool:
 
 
 def _ident(qualname: str) -> str:
+    """A qualified name as the readable part of a code record's or function's C++ name: the same on
+    every run (a non-ASCII character is its code point), and never with `__`, which C++ reserves
+    (review 2026-11-03, A9-20). Names this maps alike are told apart by `unique`."""
     text = qualname.replace("<locals>", "locals").replace("<lambda>", "lambda").replace("<module>", "module")
-    return re.sub(r"\W", "_", text.replace(".", "__")) if text.isascii() else f"code{abs(hash(text)) % 10**8}"
+    text = "".join(c if c.isascii() and (c.isalnum() or c == "_") else "_" if c.isascii() else f"_u{ord(c):x}_"
+                   for c in text)
+    return re.sub(r"_+", "_", text).strip("_") or "anonymous"
 
 
 def _nested_codes(body: tuple[G.Stmt, ...]) -> Iterator[G.Code]:
@@ -691,6 +746,24 @@ def _falls_through(body: tuple[G.Stmt, ...]) -> bool:
     if isinstance(last, G.Loop):
         return True                              # a loop ends by break or end-loop, then falls through
     return True
+
+
+def _returns_through_finally(body: tuple[G.Stmt, ...], in_finally: bool = False) -> bool:
+    for s in body:
+        if isinstance(s, G.Return) and in_finally:
+            return True
+        if isinstance(s, G.Try):
+            inside = in_finally or bool(s.finalbody)
+            if _returns_through_finally(s.body, inside) or _returns_through_finally(s.orelse, inside):
+                return True
+            if any(_returns_through_finally(h.body, inside) for h in s.handlers):
+                return True
+            if _returns_through_finally(s.finalbody, in_finally):
+                return True
+        elif isinstance(s, (G.If, G.IfEnd, G.Loop)):
+            if _returns_through_finally(s.body, in_finally) or _returns_through_finally(s.orelse, in_finally):
+                return True
+    return False
 
 
 def _falls_through_try(s: G.Try) -> bool:

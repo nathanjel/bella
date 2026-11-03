@@ -430,13 +430,15 @@ std::size_t usable(const Dict* d) { return d->indices.size() * 2 / 3; }
 Ref dict_new() { return own(new Dict); }
 
 Obj dict_get(Dict* d, Obj key) {
+    std::int64_t hash = hash_of(key);             // hashed even when the table is empty (A9-16)
     if (d->indices.empty()) return Obj{};
-    auto [slot, ix] = probe(d, key, hash_of(key));
+    auto [slot, ix] = probe(d, key, hash);
     return ix >= 0 ? d->entries[static_cast<std::size_t>(ix)].value : Obj{};
 }
 
-void dict_set(Dict* d, Obj key, Obj value) {
-    std::int64_t hash = hash_of(key);
+void dict_set(Dict* d, Obj key, Obj value) { dict_set_hashed(d, key, hash_of(key), value); }
+
+void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value) {
     if (d->indices.empty()) resize(d, 0);
     auto [slot, ix] = probe(d, key, hash);
     incref(value);
@@ -458,8 +460,9 @@ void dict_set(Dict* d, Obj key, Obj value) {
 }
 
 bool dict_del(Dict* d, Obj key) {
+    std::int64_t hash = hash_of(key);
     if (d->indices.empty()) return false;
-    auto [slot, ix] = probe(d, key, hash_of(key));
+    auto [slot, ix] = probe(d, key, hash);
     if (ix < 0) return false;
     auto& e = d->entries[static_cast<std::size_t>(ix)];
     d->indices[slot] = DKIX_DUMMY;
@@ -547,15 +550,12 @@ void raise(Obj exc) {
         auto [present, ctx] = detail::instance_storage(inst, intern("__context__"));
         if (!present || ctx == None()) setattr(inst, intern("__context__"), handled().back());
     }
-    detail::raising() = exc;
     throw PyError{Ref::share(exc)};
 }
 
 void reraise() {
     if (handled().empty()) raise_new("RuntimeError", "No active exception to reraise");
-    Obj exc = handled().back();
-    detail::raising() = exc;
-    throw PyError{Ref::share(exc)};
+    throw PyError{Ref::share(handled().back())};
 }
 
 Obj unsupported_constant(const char* what) { throw NotImplemented(what); }

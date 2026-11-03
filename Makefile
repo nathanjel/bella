@@ -82,6 +82,7 @@ record:
 
 verify:
 	$(PY) conformance/harness.py verify
+	$(PY) tools/cpython_names.py --check
 
 check-conformance:
 	$(PY) conformance/harness.py check --runner "$(RUNNER)"

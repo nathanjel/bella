@@ -128,6 +128,13 @@ class staticmethod:
         return self.__func__(*args, **kwargs)  # type: ignore[operator]
 
 
+def _a_function() -> None:
+    pass
+
+
+_MethodType = type(_a_function.__get__(0))      # types.MethodType: any callable bound to an object
+
+
 class classmethod:
     """Convert a function to be a class method."""
 
@@ -136,9 +143,11 @@ class classmethod:
         _wraps(self, f)
 
     def __get__(self, obj: object, owner: object = None) -> object:
+        # cm_descr_get since 3.13: a method of the callable itself, which need not be a descriptor
+        # (review 2026-11-03, A9-19)
         if owner is None:
             owner = type(obj)
-        return self.__func__.__get__(owner, type(owner))  # type: ignore[attr-defined]  # a bound method
+        return _MethodType(self.__func__, owner)
 
 
 # ---- the containers' repr, installed as list.__repr__, tuple.__repr__ and dict.__repr__ ----
@@ -163,7 +172,16 @@ def _leave(obj: object) -> None:
         i -= 1
 
 
+def _receiver(self: object, cls: type, name: str) -> None:
+    """A slot wrapper's check (wrapperdescr_call): list.__repr__(5) is a TypeError, as for the
+    C++ types' methods (review 2026-11-03, A9-2)."""
+    if not isinstance(self, cls):
+        raise TypeError("descriptor '" + name + "' requires a '" + cls.__name__ + "' object but received a '" +
+                        type(self).__name__ + "'")
+
+
 def _list_repr(self: list[object]) -> str:
+    _receiver(self, list, "__repr__")
     if not self:
         return "[]"
     if not _enter(self):
@@ -175,6 +193,7 @@ def _list_repr(self: list[object]) -> str:
 
 
 def _tuple_repr(self: tuple[object, ...]) -> str:
+    _receiver(self, tuple, "__repr__")
     if not self:
         return "()"
     if not _enter(self):
@@ -187,18 +206,49 @@ def _tuple_repr(self: tuple[object, ...]) -> str:
         _leave(self)
 
 
+try:
+    _dict_next                                   # noqa: B018  # PyDict_Next, given to this module by the compiled runtime
+except NameError:
+    def _dict_next(d: dict[object, object], i: int) -> tuple[int, object, object] | None:
+        """Run by CPython (runtime/tests/test_prelude.py): the entries as they are at each step.
+        CPython walks its entry array, deleted slots included; this walk sees no deleted slots."""
+        items = list(d.items())
+        return (i + 1, *items[i]) if i < len(items) else None
+
+
 def _dict_repr(self: dict[object, object]) -> str:
+    """dict_repr: the entries as PyDict_Next walks them, so an entry a key's or value's repr adds
+    is shown too, with no check of the size (review 2026-11-03, A9-17)."""
+    _receiver(self, dict, "__repr__")
     if not self:
         return "{}"
     if not _enter(self):
         return "{...}"
     try:
-        return "{" + ", ".join([repr(k) + ": " + repr(v) for k, v in self.items()]) + "}"
+        parts: list[str] = []
+        i = 0
+        while True:
+            entry = _dict_next(self, i)
+            if entry is None:
+                break
+            i, k, v = entry
+            parts.append(repr(k) + ": " + repr(v))
+        return "{" + ", ".join(parts) + "}"
     finally:
         _leave(self)
 
 
 def _set_repr(self: set[object]) -> str:
+    _receiver(self, set, "__repr__")
+    return _set_like_repr(self)
+
+
+def _frozenset_repr(self: frozenset[object]) -> str:
+    _receiver(self, frozenset, "__repr__")
+    return _set_like_repr(self)
+
+
+def _set_like_repr(self: set[object] | frozenset[object]) -> str:
     """set_repr: set() when empty; the type's name around the braces for a subclass and frozenset."""
     name = type(self).__name__
     if not self:
@@ -213,4 +263,4 @@ def _set_repr(self: set[object]) -> str:
 
 
 __type_methods__ = {"list": {"__repr__": _list_repr}, "tuple": {"__repr__": _tuple_repr}, "dict": {"__repr__": _dict_repr},
-                    "set": {"__repr__": _set_repr}, "frozenset": {"__repr__": _set_repr}}
+                    "set": {"__repr__": _set_repr}, "frozenset": {"__repr__": _frozenset_repr}}
