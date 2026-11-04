@@ -718,6 +718,12 @@ consumer of a real dict would have to unwrap; one that missed it would answer wr
 refusing. Model first (`refmodel`), one type at a time, each with a conformance case: `dict` and
 `int` first, for `enum` (`_EnumDict`, `IntFlag`).
 
+**2026-11-04 — the author on compiled imports' open points.** Confirmed: `sys.path` is the program's directory (D-18); an ImportWarning has no effect until a `warnings` module loads, then is refused, which is to be looked at again when warnings exist; `_abc` holds strong references until step 3c, when it takes weak ones. The implementation stays `bella`, and programs should know: `__spec__.cached` is open, with a recommendation in `docs/reviews/review-log.md`.
+
+**2026-11-04 — finalisers at exit see whole namespaces (RL-281).** `clear_modules` follows `finalize_modules`: sys's special names go, `sys.modules` is emptied, every finaliser reachable from the namespaces runs, then the namespaces are cleared. Rebinding each global to None as it went, as the first version did, made a `__del__` read its own globals as None. Without the collector, a walk from the namespaces stands for `_PyGC_CollectNoFail`; step 3c replaces it. A finaliser runs once (`RefObject.finalize`, PEP 442).
+
+**2026-11-04 — a name a built-in type has of its own is never a base's (RL-310).** A special method CPython keeps in a built-in type's dict and the runtime does not is refused where it is read, instead of answered by `object`'s. `overrides_builtin` walks the MRO for the same reason: the built-in's slot wins over a mixin after it, whether the runtime has the method yet or not.
+
 **2026-11-03 — compiled imports keep CPython's split** (step 3b, `docs/emitter.md` section 4a; case
 C-8-10). `runtime/src/imports.cpp` is the C half (`IMPORT_NAME`, `__import__`, `IMPORT_FROM`,
 `import *`, the module type), and `runtime/prelude/bootstrap.py` is `importlib._bootstrap`, CPython's

@@ -124,7 +124,7 @@ def test_stores_to_fields_cpython_has_are_refused() -> None:
     when read, never put in the __dict__ (RL-255)."""
     if shutil.which("g++") is None:
         return
-    for body in ("e = StopIteration(5)\ne.value = 6", "e = SystemExit(1)\ndel e.code"):
+    for body in ("e = StopIteration(5)\ne.value = 6", "e = StopIteration(1)\ndel e.value"):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text("print('start')\n" + body + "\nprint('not reached')\n", encoding="utf-8")

@@ -23,6 +23,16 @@ bool is_none(Obj v) { return v == None(); }
 ClassObject* as_class(Obj v);
 ClassObject* tp_base(ClassObject* c);
 
+NativeFn new_slot(ClassObject* c) {              // tp_new, as far as the runtime can tell it apart
+    Obj f = type_lookup(c, N("__new__"));
+    return is_kind(f, Kind::Builtin) ? static_cast<Builtin*>(f.object())->fn : nullptr;
+}
+ClassObject* static_base(ClassObject* c) {
+    while (!is_kind(type_lookup(c, N("__new__")), Kind::Builtin) && !c->bases.empty()) c = tp_base(c);
+    return c;
+}
+}  // namespace
+
 // tp_new_wrapper's checks of T.__new__(cls, ...) (Objects/typeobject.c): the class it is given
 ClassObject* new_wrapper_class(Args a, const ClassObject* type) {
     if (a.npos < 1) raise_new("TypeError", type->name + ".__new__(): not enough arguments");
@@ -31,7 +41,22 @@ ClassObject* new_wrapper_class(Args a, const ClassObject* type) {
         raise_new("TypeError", type->name + ".__new__(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
     if (!is_subclass(sub, const_cast<ClassObject*>(type)))
         raise_new("TypeError", type->name + ".__new__(" + sub->name + "): " + sub->name + " is not a subtype of " + type->name);
+    // tp_new_wrapper's staticbase: past the classes whose __new__ is Python's, the type whose tp_new
+    // this must be, or the call would skip a built-in base's own (object.__new__(dict))
+    ClassObject* staticbase = static_base(sub);
+    if (new_slot(staticbase) != new_slot(const_cast<ClassObject*>(type)))
+        raise_new("TypeError", type->name + ".__new__(" + sub->name + ") is not safe, use " + staticbase->name + ".__new__()");
     return sub;
+}
+
+namespace {
+
+// A built-in type's __new__ as CPython makes it (tp_new_wrapper): a function bound to the type
+void new_method(ClassObject* c, NativeFn fn) {
+    auto* f = new Builtin("__new__", fn, Obj::of(c), Binding::Function);
+    f->owner = c;
+    f->flags |= IMMORTAL;
+    c->attrs.set(N("__new__"), Obj::of(f));
 }
 
 void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::Method) {
@@ -175,6 +200,7 @@ Ref type_getattr(ClassObject* cls, const Str* name) {
     if (!meta_attr.is_unset() && is_data_descriptor(meta_attr)) return descr_get(meta_attr, Obj::of(cls), Obj::of(meta));
     Obj attr = type_lookup(cls, name);
     if (!attr.is_unset()) {
+        refuse_shadowed(cls->mro, 0, name);
         Ref hold = Ref::share(attr);
         return descr_get(attr, None(), Obj::of(cls));
     }
@@ -239,7 +265,7 @@ void type_delattr_generic(ClassObject* cls, const Str* name) {
     if (meta_descriptor_store(cls, name, Obj{})) return;
     if (type_lookup(type_of(Obj::of(cls)), name).is_unset()) refuse_absent_data_descriptor(Obj::of(cls), name);
     if (immutable_type(cls))
-        raise_new("TypeError", "cannot delete '" + name->text + "' attribute of immutable type '" + cls->name + "'");
+        raise_new("TypeError", "cannot set '" + name->text + "' attribute of immutable type '" + cls->name + "'");
     if (!cls->attrs.contains(name))
         raise_attribute_error(Obj::of(cls), name, "type object '" + cls->name + "' has no attribute '" + name->text + "'");
     cls->del_attr(name);
@@ -256,6 +282,16 @@ void type_delattr(ClassObject* cls, const Str* name) {
 Ref generic_getattr(Obj obj, const Str* name) {
     ClassObject* c = type_of(obj);
     Obj found = type_lookup(c, name);
+    if (!found.is_unset()) refuse_shadowed(c->mro, 0, name);
+    if (obj == None() && is_kind(found, Kind::Builtin)) {   // descr_get's None means no instance; here it is the instance
+        auto* b = static_cast<Builtin*>(found.object());
+        if (b->self.is_unset() && b->binding == Binding::Method) {
+            Ref bound = own(new Builtin(b->name, b->fn, obj));
+            static_cast<Builtin*>(bound.get().object())->owner = b->owner;
+            return bound;
+        }
+    }
+    if (obj == None() && is_kind(found, Kind::GetSet)) return static_cast<GetSet*>(found.object())->get(obj);
     if (!found.is_unset() && is_data_descriptor(found)) return descr_get(found, obj, Obj::of(c));
     if (is_kind(obj, Kind::Module)) {
         Obj v = dict_get(static_cast<Module*>(obj.object())->dict, Obj::of(name));
@@ -310,8 +346,13 @@ Obj object_init_fn() { return type_lookup(types().object, N("__init__")); }
 // most derived of the bases'
 ClassObject* solid_base(ClassObject* c) {
     if (c == types().object) return c;
-    bool own_shape = (!c->heap_type) || !c->own_slot_names().empty();
-    if (own_shape) return c;
+    auto slots = c->own_slot_names();
+    bool own_slots = std::any_of(slots.begin(), slots.end(), [](const Str* s) { return s->text != "__dict__"; });
+    // shape_differs: an exception type shares its base's C struct unless it adds fields
+    bool exception = is_subclass(c, exception_class("BaseException"));
+    bool own_shape = exception ? (c == exception_class("BaseException") || (!c->heap_type && c->native != c->bases[0]->native))
+                               : !c->heap_type;
+    if (own_shape || own_slots) return c;
     return solid_base(c->bases.empty() ? types().object : tp_base(c));
 }
 ClassObject* tp_base(ClassObject* c) {
@@ -330,17 +371,11 @@ Ref object_new(Obj, Args a) {
     if (a.npos < 1) raise_new("TypeError", "object.__new__(): not enough arguments");
     ClassObject* cls = as_class(a.pos(0));
     if (cls == nullptr) raise_new("TypeError", "object.__new__(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
-    if (!cls->heap_type && cls != types().object) {         // tp_new_wrapper's check, before the arguments'
+    if (!cls->heap_type && cls != types().object && new_slot(cls) == new_slot(types().object)) {  // the runtime has no __new__ of its own for it
         if (cpython_attribute_kind(cls, "__new__").empty()) refuse_construction(cls);
         raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe, use " + cls->name + ".__new__()");
     }
-    if (is_subclass(cls, types().dict) || is_subclass(cls, types().int_)) {   // a built-in base makes it
-        // tp_new_wrapper's staticbase: past the classes whose __new__ is Python's (slot_tp_new)
-        ClassObject* staticbase = cls;
-        while (!is_kind(type_lookup(staticbase, N("__new__")), Kind::Builtin) && !staticbase->bases.empty())
-            staticbase = tp_base(staticbase);
-        raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe, use " + staticbase->name + ".__new__()");
-    }
+    new_wrapper_class(a, types().object);        // tp_new_wrapper's check, before the arguments'
     bool excess = a.npos > 1 || a.nkw > 0;
     if (excess) {
         if (type_lookup(cls, N("__new__")) != object_new_fn())
@@ -382,6 +417,7 @@ Ref object_init(Obj self, Args a) {
 
 Ref type_call(ClassObject* cls, Args a) {
     if (cls == types().type && a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(observed_type(a.pos(0))));
+    if (cls == types().type && a.npos != 3) raise_new("TypeError", "type() takes 1 or 3 arguments");
     if (cls == types().super_) return super_call(a);                  // super's own vectorcall
     Obj new_attr = type_lookup(cls, N("__new__"));
     if (new_attr.is_unset()) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
@@ -419,13 +455,76 @@ std::string mangle(const std::string& cls, const std::string& name) {
     return "_" + cls.substr(i) + name;
 }
 
+namespace {
+// pmerge's error (set_mro_error): the classes at the heads of the lists left when the merge stops,
+// each once, in list order
+std::string mro_conflict(const std::vector<ClassObject*>& bases) {
+    std::vector<std::vector<ClassObject*>> lists;
+    for (ClassObject* b : bases) lists.push_back(b->mro);
+    lists.push_back(bases);
+    std::vector<std::size_t> at(lists.size(), 0);
+    for (;;) {
+        ClassObject* head = nullptr;
+        for (std::size_t i = 0; i < lists.size() && head == nullptr; ++i) {
+            if (at[i] >= lists[i].size()) continue;
+            ClassObject* candidate = lists[i][at[i]];
+            bool in_tail = false;
+            for (std::size_t j = 0; j < lists.size() && !in_tail; ++j)
+                in_tail = at[j] < lists[j].size() && std::find(lists[j].begin() + static_cast<std::ptrdiff_t>(at[j]) + 1, lists[j].end(), candidate) != lists[j].end();
+            if (!in_tail) head = candidate;
+        }
+        if (head == nullptr) break;
+        for (std::size_t i = 0; i < lists.size(); ++i)
+            if (at[i] < lists[i].size() && lists[i][at[i]] == head) ++at[i];
+    }
+    std::vector<ClassObject*> seen;
+    std::string names;
+    for (std::size_t i = 0; i < lists.size(); ++i) {
+        if (at[i] >= lists[i].size() || std::find(seen.begin(), seen.end(), lists[i][at[i]]) != seen.end()) continue;
+        seen.push_back(lists[i][at[i]]);
+        names += (names.empty() ? "" : ", ") + lists[i][at[i]]->name;
+    }
+    return names;
+}
+// mro_invoke with a custom metaclass: its mro(), a sequence made a tuple and checked (mro_check), is
+// the class's MRO (RefClass.set_mro)
+void mro_invoke(ClassObject* c) {
+    Ref result = call_special(Obj::of(c), "mro", {});
+    Ref it = iter(result.get());
+    std::vector<ClassObject*> mro;
+    std::vector<Ref> held;
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) {
+        if (!is_kind(v.get(), Kind::Class))
+            raise_new("TypeError", c->name + ".mro() returned a non-class ('" + type_of(v.get())->name + "')");
+        ClassObject* b = static_cast<ClassObject*>(v.get().object());
+        if (!is_subclass(solid_base(c), solid_base(b)))
+            raise_new("TypeError", c->name + ".mro() returned base with unsuitable layout ('" + b->name + "')");
+        mro.push_back(b);
+        held.push_back(std::move(v));
+    }
+    if (mro.empty()) raise_new("TypeError", "type MRO must not be empty");
+    c->set_mro(std::move(mro));
+}
+}  // namespace
+
 Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw) {
     const Str* name = as_str(name_obj);
     if (name == nullptr) raise_new("TypeError", "type.__new__() argument 1 must be str, not " + type_of(name_obj)->name);
     if (!is_kind(bases_obj, Kind::Tuple))
         raise_new("TypeError", "type.__new__() argument 2 must be tuple, not " + type_of(bases_obj)->name);
     if (!is_kind(ns_obj, Kind::Dict))
-        raise_new("TypeError", "type.__new__() argument 3 must be dict, not " + type_of(ns_obj)->name);
+        raise_new("TypeError", "type.__new__() argument 3 must be dict or frozendict, not " + type_of(ns_obj)->name);
+    if (name->text.find('\0') != std::string::npos) raise_new("ValueError", "type name must not contain null characters");
+    {                                            // best_base: one instance layout must extend the others
+        ClassObject* winner = nullptr;
+        for (Obj b : static_cast<Tuple*>(bases_obj.object())->items) {
+            ClassObject* bc = as_class(b);
+            if (bc == nullptr) continue;         // "bases must be types", below
+            ClassObject* candidate = solid_base(bc);
+            if (winner == nullptr || is_subclass(candidate, winner)) winner = candidate;
+            else if (!is_subclass(winner, candidate)) raise_new("TypeError", "multiple bases have instance lay-out conflict");
+        }
+    }
     std::vector<ClassObject*> bases;
     for (Obj b : static_cast<Tuple*>(bases_obj.object())->items) {
         ClassObject* bc = as_class(b);
@@ -514,19 +613,26 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             v = wrapped.back().get();
         }
     }
+    // type_new_set_module: __module__ from the globals of the frame calling type() (a class statement's
+    // namespace has its own)
+    Ref module_name;
+    if (dict_get(ns, Obj::of(N("__module__"))).is_unset())
+        if (detail::FrameRecord* frame = detail::current_frame(); frame != nullptr && frame->module != nullptr) {
+            module_name = Ref::share(dict_get(frame->module->dict, Obj::of(N("__name__"))));
+            if (!module_name.get().is_unset()) spec.attrs.emplace_back("__module__", module_name.get());
+        }
     if (dict_get(ns, Obj::of(N("__doc__"))).is_unset()) spec.attrs.emplace_back("__doc__", None());
     if (has_eq && !has_hash) spec.attrs.emplace_back("__hash__", None());
     ClassObject* c = nullptr;
     try {
         c = make_class(spec);
     } catch (const bella::TypeError&) {                     // the C3 merge failed (A9-9)
-        std::string names;
-        for (ClassObject* b : bases) names += (names.empty() ? "" : ", ") + b->name;
-        raise_new("TypeError", "Cannot create a consistent method resolution order (MRO) for bases " + names);
+        raise_new("TypeError", "Cannot create a consistent method resolution order (MRO) for bases " + mro_conflict(bases));
     }
     c->cls = meta;
     c->qualname = qualname;
     c->heap_type = true;
+    if (meta != types().type) mro_invoke(c);
     bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict; });
     if (c->has_dict && !base_has_dict) c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
     if (!classcell.is_unset()) {
@@ -540,14 +646,23 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         Ref proxy = own(new Proxy(c));
         decref(std::exchange(cell->value, proxy.release()));
     }
-    // __set_name__, in the order of the class's attributes
+    // type_new_set_names: __set_name__, in the order of the class's attributes; what it raises gets a note
     for (auto& [k, v] : c->attrs.items()) {
         bool found = false;
         Ref hold = Ref::share(v);
-        Ref r = call_special(v, "__set_name__", {Obj::of(c), Obj::of(k)}, &found);
+        try {
+            Ref r = call_special(v, "__set_name__", {Obj::of(c), Obj::of(k)}, &found);
+        } catch (const PyError& e) {
+            Ref key = repr_of(Obj::of(k));
+            add_note(e.exc.get(), "Error calling __set_name__ on '" + type_of(v)->name + "' instance " + as_str(key.get())->text + " in '" + c->name + "'");
+            throw;
+        }
     }
-    // __init_subclass__ of the next class in the MRO, bound to the new class
-    for (std::size_t i = 1; i < c->mro.size(); ++i) {
+    // __init_subclass__ of the class after this one in the MRO (super(type, type)), bound to the new class
+    auto own_place = std::find(c->mro.begin(), c->mro.end(), c);
+    if (own_place == c->mro.end())               // a metaclass's mro() left the class out: supercheck
+        raise_new("TypeError", "super(type, obj): obj (type " + c->name + ") is not an instance or subtype of type (" + c->name + ").");
+    for (std::size_t i = static_cast<std::size_t>(own_place - c->mro.begin()) + 1; i < c->mro.size(); ++i) {
         Obj f = c->mro[i]->attrs.find(N("__init_subclass__")) ? *c->mro[i]->attrs.find(N("__init_subclass__")) : Obj{};
         if (f.is_unset()) continue;
         Ref bound = descr_get(f, None(), Obj::of(c));
@@ -563,7 +678,6 @@ Ref type_new_builtin(Obj, Args a) {                 // type.__new__(meta, name, 
     if (meta == nullptr) raise_new("TypeError", "type.__new__(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
     if (!is_subclass(meta, types().type))
         raise_new("TypeError", "type.__new__(" + meta->name + "): " + meta->name + " is not a subtype of type");
-    if (a.npos == 2 && meta == types().type && a.nkw == 0) return Ref::share(Obj::of(type_of(a.pos(1))));
     if (a.npos != 4) raise_new("TypeError", "type.__new__() takes exactly 3 arguments (" + std::to_string(a.npos - 1) + " given)");
     if (!is_kind(a.pos(2), Kind::Tuple))
         raise_new("TypeError", "type.__new__() argument 2 must be tuple, not " + type_of(a.pos(2))->name);
@@ -620,6 +734,14 @@ void type_abstractmethods_set(Obj self, Obj value) {
 }
 // dict.__new__ (dict_new): an empty dict of the class, a subclass's with its attribute storage
 // (decision 2026-11-03); its arguments are __init__'s
+// list_new, tuple_new, unicode_new, bool_new: an instance of the type, its arguments its constructor's
+// (a list fills itself in __init__, so __new__ ignores them)
+Ref builtin_new_m(Obj self, Args a) {
+    ClassObject* type = as_class(self);
+    ClassObject* cls = new_wrapper_class(a, type);
+    if (cls == types().list) return list_new({});
+    return invoke(Obj::of(cls), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
+}
 Ref dict_new_m(Obj, Args a) {
     ClassObject* cls = new_wrapper_class(a, types().dict);
     if (cls == types().dict) return dict_new();
@@ -736,8 +858,8 @@ Ref number_long(Obj x) {
 Ref int_new_m(Obj, Args a) {
     ClassObject* cls = new_wrapper_class(a, types().int_);
     std::size_t npos = a.npos - 1;
-    if (npos + a.nkw > 2) {
-        if (a.nkw == 0) raise_new("TypeError", "int expected at most 2 arguments, got " + std::to_string(npos));
+    if (npos + a.nkw > 2) {                      // long_vectorcall for int itself; a subclass's goes through long_new
+        if (a.nkw == 0 && cls == types().int_) raise_new("TypeError", "int expected at most 2 arguments, got " + std::to_string(npos));
         raise_new("TypeError", "int() takes at most 2 arguments (" + std::to_string(npos + a.nkw) + " given)");
     }
     Obj x = npos >= 1 ? a.pos(1) : Obj{}, base = npos >= 2 ? a.pos(2) : Obj{};
@@ -794,7 +916,7 @@ Ref type_mro(Obj self, Args a) {
     for (ClassObject* m : c3(as_class(self))) list_append(l.get(), Obj::of(m));
     return l;
 }
-Ref type_repr(Obj self, Args) { return repr_of(self); }
+Ref type_repr(Obj self, Args) { return type_repr_of(self); }
 
 // object's methods
 Ref object_eq(Obj self, Args a) {
@@ -824,8 +946,8 @@ Ref object_repr(Obj self, Args) {
     return str_new("<" + mod + c->qualname + " object at " + buf + ">");
 }
 Ref object_str(Obj self, Args) { return repr_of(self); }
-Ref object_init_subclass(Obj, Args a) {
-    if (a.nkw != 0) raise_new("TypeError", "__init_subclass__() takes no keyword arguments");
+Ref object_init_subclass(Obj self, Args a) {
+    if (a.nkw != 0) raise_new("TypeError", as_class(self)->name + ".__init_subclass__() takes no keyword arguments");
     return none_ref();
 }
 // object.__setattr__ and __delattr__ are slot wrappers: bound like methods, the object as self
@@ -899,7 +1021,7 @@ GetSet* instance_dict_getset() {
 
 // type's getsets
 ClassObject* self_class(Obj self) { return as_class(self); }
-Ref type_name(Obj self) { return str_new(self_class(self)->name); }
+Ref type_name(Obj self) { return str_new(self_class(self)->name.substr(self_class(self)->name_prefix)); }
 // check_set_special_type_attr: a delete is refused first, then a store to an immutable type
 void check_special(ClassObject* c, Obj v, const char* name) {
     if (v.is_unset()) raise_new("TypeError", std::string("cannot delete '") + name + "' attribute of type '" + c->name + "'");
@@ -911,6 +1033,7 @@ void set_type_name(Obj self, Obj v) {
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "can only assign string to " + c->name + ".__name__, not '" + type_of(v)->name + "'");
     c->name = s->text;
+    c->name_prefix = 0;
 }
 Ref type_qualname(Obj self) { return str_new(self_class(self)->qualname); }
 void set_type_qualname(Obj self, Obj v) {
@@ -933,6 +1056,8 @@ void set_type_module(Obj self, Obj v) {          // type_set_module: the class's
 }
 Ref type_doc(Obj self) {
     ClassObject* c = self_class(self);
+    if (!c->heap_type)                           // type_get_doc: a static type's tp_doc
+        if (Obj d = cpython_doc(c->name); d != None()) return Ref::share(d);
     if (const Obj* d = c->attrs.find(N("__doc__"))) return descr_get(*d, None(), self);
     return none_ref();
 }
@@ -977,10 +1102,12 @@ void set_fn_qualname(Obj self, Obj v) {
 }
 Ref fn_doc(Obj self) { return fn_of(self)->doc; }
 void set_fn_doc(Obj self, Obj v) { fn_of(self)->doc = Ref::share(v); }
-Ref fn_module(Obj self) {
+Ref fn_module(Obj self) {                        // set from the globals when made; func.__module__ may be rebound
+    if (!fn_of(self)->module_name.get().is_unset()) return fn_of(self)->module_name;
     Obj n = dict_get(fn_of(self)->module->dict, Obj::of(N("__name__")));
     return n.is_unset() ? none_ref() : Ref::share(n);
 }
+void set_fn_module(Obj self, Obj v) { fn_of(self)->module_name = v.is_unset() ? none_ref() : Ref::share(v); }
 Ref fn_defaults(Obj self) { return fn_of(self)->defaults.get().is_unset() ? none_ref() : fn_of(self)->defaults; }
 Ref fn_kwdefaults(Obj self) { return fn_of(self)->kwdefaults.get().is_unset() ? none_ref() : fn_of(self)->kwdefaults; }
 Ref fn_annotate(Obj self) { return fn_of(self)->annotate.get().is_unset() ? none_ref() : fn_of(self)->annotate; }
@@ -1023,8 +1150,10 @@ void cell_contents_set(Obj self, Obj v) {
 
 // mappingproxy over a class's own attributes
 ClassObject* proxied(Obj self) { return static_cast<Proxy*>(self.object())->of; }
+// mappingproxy reads a dict: a key is hashed, whether it could be an attribute's name or not
 Ref proxy_getitem(Obj self, Args a) {
     arity(a, "__getitem__", 1, 1);
+    dict_key_hash(a.pos(0));
     const Str* k = as_str(a.pos(0));
     if (k != nullptr)
         if (const Obj* v = proxied(self)->attrs.find(intern(k->text))) return Ref::share(*v);
@@ -1033,11 +1162,13 @@ Ref proxy_getitem(Obj self, Args a) {
 }
 Ref proxy_contains(Obj self, Args a) {
     arity(a, "__contains__", 1, 1);
+    dict_key_hash(a.pos(0));
     const Str* k = as_str(a.pos(0));
     return Ref::steal(boolean(k != nullptr && proxied(self)->attrs.contains(intern(k->text))));
 }
 Ref proxy_get(Obj self, Args a) {
     arity(a, "get", 1, 2);
+    dict_key_hash(a.pos(0));
     const Str* k = as_str(a.pos(0));
     if (k != nullptr)
         if (const Obj* v = proxied(self)->attrs.find(intern(k->text))) return Ref::share(*v);
@@ -1067,8 +1198,8 @@ Ref slice_stop(Obj self) { return Ref::share(static_cast<SliceObject*>(self.obje
 Ref slice_step(Obj self) { return Ref::share(static_cast<SliceObject*>(self.object())->step); }
 
 // BaseException: args from __new__ and __init__, str() and repr()
-Ref exception_new(Obj, Args a) {
-    ClassObject* cls = new_wrapper_class(a, exception_class("BaseException"));
+Ref exception_new(Obj self, Args a) {
+    ClassObject* cls = new_wrapper_class(a, as_class(self));
     auto* e = new_instance(cls);
     Ref r = own(e);
     std::vector<Obj> items;
@@ -1080,8 +1211,7 @@ Ref exception_new(Obj, Args a) {
     set_exception_field(r.get(), "args", args.get());
     return r;
 }
-Ref exception_init(Obj self, Args a) {
-    if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
+void set_args(Obj self, Args a) {                // BaseException_init's args
     std::vector<Obj> items;
     for (std::size_t i = 0; i < a.npos; ++i) {
         incref(a.pos(i));
@@ -1089,8 +1219,46 @@ Ref exception_init(Obj self, Args a) {
     }
     Ref args = tuple_steal(std::move(items));
     set_exception_field(self, "args", args.get());
+}
+Ref exception_init(Obj self, Args a) {
+    if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
+    set_args(self, a);
     return none_ref();
 }
+// AttributeError_init, NameError_init: "|$OO:AttributeError" and "|$O:NameError"
+Ref attribute_error_init(Obj self, Args a) {
+    set_args(self, a);
+    Obj name, obj;
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        std::string_view n = a.kwnames[k]->text;
+        if (n == "name") name = a.kw(k);
+        else if (n == "obj") obj = a.kw(k);
+        else unexpected_keyword("AttributeError()", a.kwnames[k], {"name", "obj"});
+    }
+    set_exception_field(self, "name", name);
+    set_exception_field(self, "obj", obj);
+    return none_ref();
+}
+Ref name_error_init(Obj self, Args a) {
+    set_args(self, a);
+    Obj name;
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        if (a.kwnames[k]->text == "name") name = a.kw(k);
+        else unexpected_keyword("NameError()", a.kwnames[k], {"name"});
+    }
+    set_exception_field(self, "name", name);
+    return none_ref();
+}
+// SystemExit_init, and the member: no argument leaves it unset (None); one is that argument, more the args
+Ref system_exit_init(Obj self, Args a) {
+    if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
+    set_args(self, a);
+    if (a.npos == 1) set_exception_field(self, "code", a.pos(0));
+    else if (a.npos > 1) set_exception_field(self, "code", exception_field(self, "args"));
+    return none_ref();
+}
+Ref system_exit_code_get(Obj self) { Obj v = exception_field(self, "code"); return v.is_unset() ? none_ref() : Ref::share(v); }
+void system_exit_code_set(Obj self, Obj v) { set_exception_field(self, "code", v); }
 // what BaseException_str, KeyError_str and BaseException_repr read: the args field itself
 Ref exception_args(Obj self) {
     Obj v = exception_field(self, "args");
@@ -1177,19 +1345,12 @@ void exception_suppress_set(Obj self, Obj v) {      // a Py_T_BOOL member
 // ImportError (Objects/exceptions.c): msg, name, path and name_from are members; __init__ takes
 // the last three by keyword only, and msg is the one argument when there is exactly one
 Ref import_error_init(Obj self, Args a) {
-    std::vector<Obj> items;
-    for (std::size_t i = 0; i < a.npos; ++i) {
-        incref(a.pos(i));
-        items.push_back(a.pos(i));
-    }
-    Ref args = tuple_steal(std::move(items));
-    set_exception_field(self, "args", args.get());
+    set_args(self, a);
     Obj name, path, name_from;
     for (std::size_t k = 0; k < a.nkw; ++k) {
         std::string_view n = a.kwnames[k]->text;
         Obj* slot = n == "name" ? &name : n == "path" ? &path : n == "name_from" ? &name_from : nullptr;
-        if (slot == nullptr)        // CPython's message may suggest a keyword (_Py_CalculateSuggestions)
-            throw NotImplemented("ImportError() with an unexpected keyword argument (the suggestion in its message)");
+        if (slot == nullptr) unexpected_keyword("ImportError()", a.kwnames[k], {"name", "path", "name_from"});
         *slot = a.kw(k);
     }
     set_exception_field(self, "name", name);
@@ -1277,6 +1438,70 @@ Ref load_classdict_free(Obj mapping, const Str* name, const Ref& cell, const cha
 }
 
 // ---- the builtin types' attributes ----
+// a built-in's types.SimpleNamespace in Python (bootstrap.py): CPython's type says `types.SimpleNamespace`
+// in its messages (tp_name), and its __dict__ is a read-only member
+namespace {
+void readonly_dict(Obj, Obj) { raise_new("AttributeError", "readonly attribute"); }
+}  // namespace
+void present_as_c_types(Module* bootstrap) {
+    Obj ns = dict_get(bootstrap->dict, Obj::of(N("SimpleNamespace")));
+    if (!is_kind(ns, Kind::Class)) return;
+    auto* c = static_cast<ClassObject*>(ns.object());
+    c->name = "types.SimpleNamespace";
+    c->name_prefix = 6;
+    c->attrs.set(N("__dict__"), Obj::of(new GetSet("__dict__", c, instance_dict, readonly_dict)));
+}
+
+// _PyErr_FormatNote / BaseException.add_note: appended to __notes__, made a list if absent
+void add_note(Obj exc, const std::string& text) {
+    Ref note = str_new(text);
+    Ref notes = optional_getattr(exc, N("__notes__"));
+    if (notes.get().is_unset() || !is_kind(notes.get(), Kind::List)) {
+        notes = list_new({note.get()});
+        setattr(exc, N("__notes__"), notes.get());
+        return;
+    }
+    list_append(notes.get(), note.get());
+}
+
+// Python/suggestions.c: levenshtein_distance's costs, _Py_CalculateSuggestions' choice
+namespace {
+std::size_t edit_cost(std::string_view a, std::string_view b) {
+    constexpr std::size_t MOVE = 2, CASE = 1;
+    auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c; };
+    std::vector<std::size_t> row(b.size() + 1);
+    for (std::size_t j = 0; j <= b.size(); ++j) row[j] = j * MOVE;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        std::size_t diag = row[0];
+        row[0] = (i + 1) * MOVE;
+        for (std::size_t j = 0; j < b.size(); ++j) {
+            std::size_t sub = a[i] == b[j] ? 0 : lower(a[i]) == lower(b[j]) ? CASE : MOVE;
+            std::size_t best = std::min({diag + sub, row[j] + MOVE, row[j + 1] + MOVE});
+            diag = row[j + 1];
+            row[j + 1] = best;
+        }
+    }
+    return row[b.size()];
+}
+}  // namespace
+void unexpected_keyword(const std::string& who, const Str* name, std::initializer_list<const char*> known) {
+    const char* suggestion = nullptr;
+    std::size_t best = SIZE_MAX;
+    for (const char* item : known) {
+        std::string_view it(item);
+        if (it == name->text) continue;
+        std::size_t limit = std::min((name->text.size() + it.size() + 3) * 2 / 6, best == SIZE_MAX ? SIZE_MAX : best - 1);
+        std::size_t cost = edit_cost(name->text, it);
+        if (cost > limit) continue;
+        if (suggestion == nullptr || cost < best) {
+            suggestion = item;
+            best = cost;
+        }
+    }
+    raise_new("TypeError", who + " got an unexpected keyword argument '" + name->text + "'" +
+                               (suggestion != nullptr ? std::string(". Did you mean '") + suggestion + "'?" : ""));
+}
+
 void init_types() {
     static bool done = false;
     if (done) return;
@@ -1305,6 +1530,7 @@ void init_types() {
     method(t.type, "__call__", type_call_m);
     method(t.dict, "__new__", dict_new_m, Binding::Function);
     method(t.int_, "__new__", int_new_m, Binding::Function);
+    for (ClassObject* c : {t.list, t.tuple, t.str, t.bool_}) new_method(c, builtin_new_m);
     method(t.dict, "__init__", dict_init_m);
     {
         auto* g = new GetSet("__abstractmethods__", t.type, type_abstractmethods_get, type_abstractmethods_set);
@@ -1338,7 +1564,8 @@ void init_types() {
     getset(t.function, "__name__", fn_name, set_fn_name);
     getset(t.function, "__qualname__", fn_qualname, set_fn_qualname);
     getset(t.function, "__doc__", fn_doc, set_fn_doc);
-    getset(t.function, "__module__", fn_module);
+    getset(t.function, "__module__", fn_module, set_fn_module);
+    static_cast<GetSet*>(t.function->attrs.find(N("__module__"))->object())->deletable = true;
     getset(t.function, "__defaults__", fn_defaults);
     getset(t.function, "__kwdefaults__", fn_kwdefaults);
     getset(t.function, "__annotate__", fn_annotate);
@@ -1362,8 +1589,13 @@ void init_types() {
     getset(t.slice, "step", slice_step);
     // exceptions
     ClassObject* base = exception_class("BaseException");
-    method(base, "__new__", exception_new, Binding::Function);
+    for (ClassObject* c : exception_classes())   // each type CPython gives a __new__ of its own, its name in the errors
+        if (c == base || cpython_has(c->name, "__new__")) new_method(c, exception_new);
     method(base, "__init__", exception_init);
+    method(exception_class("AttributeError"), "__init__", attribute_error_init);
+    method(exception_class("NameError"), "__init__", name_error_init);
+    method(exception_class("SystemExit"), "__init__", system_exit_init);
+    deletable_getset(exception_class("SystemExit"), "code", system_exit_code_get, system_exit_code_set);
     method(base, "__str__", exception_str);
     method(base, "__repr__", exception_repr);
     method(base, "with_traceback", exception_with_traceback);

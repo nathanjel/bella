@@ -758,6 +758,42 @@ def test_slot_descriptors_stand_in_the_class_dict_sorted() -> None:
     assert [n for n in vars(R) if n in ("x", "k", "a")] == ["a", "k", "x"]
 
 
+def test_a_finaliser_runs_once_whoever_runs_it_first() -> None:
+    """PEP 442: the collector, or at exit the walk that stands for it (RL-281), runs a finaliser on
+    a live object; its death then does not run it again. A lone death still runs it."""
+    from refmodel import objects as O
+    _fresh_heap()
+    ran: list[str] = []
+    C = RefClass("C", attrs={"__del__": lambda self: ran.append(self.tag)})
+    collected, lone = RefObject(C, tag="collected"), RefObject(C, tag="lone")
+    O.incref(collected)
+    O.incref(lone)
+    collected.finalize()
+    collected.finalize()
+    assert ran == ["collected"]
+    alive = [collected.alive]
+    O.decref(collected)
+    alive.append(collected.alive)
+    assert ran == ["collected"] and alive == [True, False]
+    O.decref(lone)
+    assert ran == ["collected", "lone"] and not lone.alive
+
+
+def test_a_metaclass_mro_is_what_lookups_walk() -> None:
+    """mro_internal (RL-314): a replaced MRO decides lookups from then on, under a new version, so
+    a cache entry of the old order cannot match."""
+    _fresh_heap()
+    O1 = RefClass("O1", attrs={"x": "O1"})
+    O2 = RefClass("O2", attrs={"x": "O2"})
+    T = RefClass("T", (O1, O2))
+    found = T.lookup("x")
+    assert found is not None and found[0] == "O1"
+    before = T.version
+    T.set_mro([T, O2, O1, *O1.mro[1:]])
+    found = T.lookup("x")
+    assert found is not None and found[0] == "O2" and T.version != before
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

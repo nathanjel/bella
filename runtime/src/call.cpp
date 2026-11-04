@@ -241,22 +241,6 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
             extra.push_back(args.pos(i));
         }
         *slot[varargs_slot] = tuple_steal(std::move(extra));
-    } else if (args.npos > n) {
-        std::size_t ndefaults = fn->defaults.get().is_unset() ? 0 : static_cast<Tuple*>(fn->defaults.get().object())->items.size();
-        std::size_t given_kwonly = 0;
-        for (std::size_t k = 0; k < args.nkw; ++k)
-            for (std::size_t j = n; j < n + nkwonly; ++j)
-                if (args.kwnames[k]->text == c.varnames[j]) ++given_kwonly;
-        std::string takes = ndefaults ? "from " + std::to_string(n - ndefaults) + " to " + std::to_string(n) : std::to_string(n);
-        std::string plural = (ndefaults == 0 && n == 1) ? "" : "s";
-        std::string kwpart = given_kwonly ? " positional argument" + std::string(args.npos == 1 ? "" : "s") + " (and " +
-                                                std::to_string(given_kwonly) + " keyword-only argument" +
-                                                (given_kwonly == 1 ? "" : "s") + ")"
-                                          : "";
-        // too_many_positional: the keyword-only clause, then was or were (A10-13)
-        raise_new("TypeError", who + " takes " + takes + " positional argument" + plural + " but " +
-                                   std::to_string(args.npos) + kwpart + (args.npos == 1 && !given_kwonly ? " was" : " were") +
-                                   " given");
     }
     std::vector<std::string> posonly_as_kw;
     for (std::size_t k = 0; k < args.nkw; ++k) {
@@ -282,6 +266,24 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
         std::string list;
         for (std::size_t i = 0; i < posonly_as_kw.size(); ++i) list += (i ? ", '" : "'") + posonly_as_kw[i] + "'";
         raise_new("TypeError", who + " got some positional-only arguments passed as keyword arguments: " + list);
+    }
+    // initialize_locals: the keywords' errors come before too many positional arguments (RL-303)
+    if (!c.varargs && args.npos > n) {
+        std::size_t ndefaults = fn->defaults.get().is_unset() ? 0 : static_cast<Tuple*>(fn->defaults.get().object())->items.size();
+        std::size_t given_kwonly = 0;
+        for (std::size_t k = 0; k < args.nkw; ++k)
+            for (std::size_t j = n; j < n + nkwonly; ++j)
+                if (args.kwnames[k]->text == c.varnames[j]) ++given_kwonly;
+        std::string takes = ndefaults ? "from " + std::to_string(n - ndefaults) + " to " + std::to_string(n) : std::to_string(n);
+        std::string plural = (ndefaults == 0 && n == 1) ? "" : "s";
+        std::string kwpart = given_kwonly ? " positional argument" + std::string(args.npos == 1 ? "" : "s") + " (and " +
+                                                std::to_string(given_kwonly) + " keyword-only argument" +
+                                                (given_kwonly == 1 ? "" : "s") + ")"
+                                          : "";
+        // too_many_positional: the keyword-only clause, then was or were (A10-13)
+        raise_new("TypeError", who + " takes " + takes + " positional argument" + plural + " but " +
+                                   std::to_string(args.npos) + kwpart + (args.npos == 1 && !given_kwonly ? " was" : " were") +
+                                   " given");
     }
     // defaults for the positional parameters not given
     std::size_t ndefaults = 0;
@@ -808,11 +810,9 @@ Ref dict_popitem_m(Obj self, Args a) {          // the last entry; a split dict 
         raise(exc.get());
     }
     dict_unsplit(d);
-    auto it = std::find_if(d->entries.rbegin(), d->entries.rend(), [](auto& e) { return !e.key.is_unset(); });
-    Ref key = Ref::share(it->key);
-    Obj value = dict_pop(d, key.get(), it->hash);
-    Ref v = Ref::steal(value);
-    return tuple_new({key.get(), v.get()});
+    auto [key, value] = dict_take_last(d);      // by index: nothing is compared (RL-298)
+    Ref k = Ref::steal(key), v = Ref::steal(value);
+    return tuple_new({k.get(), v.get()});
 }
 Ref dict_setdefault_m(Obj self, Args a) {      // one lookup, the insert where it ended (A10-6)
     clinic(a, "setdefault", "dict.setdefault", 1, 2);
@@ -824,7 +824,9 @@ Ref dict_setdefault_m(Obj self, Args a) {      // one lookup, the insert where i
 
 void dict_update_arg(Obj self, Obj arg) {           // a mapping (keys()), else an iterable of pairs
     Dict* d = static_cast<Dict*>(self.object());
-    if (is_kind(arg, Kind::Dict) || !type_lookup(type_of(arg), intern("keys")).is_unset()) {
+    // dict_update_arg: PyObject_GetOptionalAttr(arg, keys): a __getattr__ is asked, and what it raises
+    // that is no AttributeError goes on
+    if (is_kind(arg, Kind::Dict) || !optional_getattr(arg, intern("keys")).get().is_unset()) {
         dict_update(self, arg);
         return;
     }
@@ -880,7 +882,7 @@ Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
     Obj value = a.npos > 1 ? a.pos(1) : None(), src = a.pos(0);
     // dict_dict_fromkeys and dict_set_fromkeys: an exact dict's or set's keys with their stored
     // hashes, after one resize, read from the live table; anything else is iterated and hashed
-    if (is_kind(src, Kind::Dict)) {
+    if (is_kind(src, Kind::Dict) && !is_subclass_instance(src)) {
         auto* from = static_cast<Dict*>(src.object());
         dict_resize_estimate(d, from->used);
         for (std::size_t pos = 0; pos < from->entries.size(); ++pos) {
@@ -918,8 +920,16 @@ Ref b_iter(Obj, Args a) {
 }
 Ref b_next(Obj, Args a) {
     clinic(a, "next", "next", 1, 2);
-    if (!is_kind(a.pos(0), Kind::Iterator))
-        raise_new("TypeError", "'" + type_of(a.pos(0))->name + "' object is not an iterator");
+    if (!is_kind(a.pos(0), Kind::Iterator)) {    // builtin_next: the __next__ the type has, even None
+        if (type_lookup(type_of(a.pos(0)), intern("__next__")).is_unset())
+            raise_new("TypeError", "'" + type_of(a.pos(0))->name + "' object is not an iterator");
+        try {
+            return call_special(a.pos(0), "__next__", {});
+        } catch (const PyError& e) {
+            if (a.npos < 2 || !isinstance(e.exc.get(), exception_class("StopIteration"))) throw;
+            return Ref::share(a.pos(1));
+        }
+    }
     Ref v = for_next(a.pos(0));
     if (!is_end(v)) return v;
     if (a.npos > 1) return Ref::share(a.pos(1));
@@ -1011,7 +1021,13 @@ Ref str_join(Obj self, Args a) {
     onearg(a, "str.join");
     const Str* sep = as_str(self);
     std::string out;
-    Ref it = iter(a.pos(0));
+    Ref it;
+    try {                                       // PySequence_Fast(seq, "can only join an iterable")
+        it = iter(a.pos(0));
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        raise_new("TypeError", "can only join an iterable");
+    }
     std::size_t i = 0;
     for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()), ++i) {
         const Str* s = as_str(v.get());
@@ -1040,6 +1056,7 @@ Module* make_builtins() {
     auto* m = new Module("builtins");
     Dict* d = m->dict;
     put(d, "__name__", m->name.get());           // PyModule_New's names, as for sys
+    put(d, "__doc__", cpython_doc("builtins"));
     for (const char* n : {"__package__", "__loader__", "__spec__"}) put(d, n, None());
     Types& t = types();
     for (auto [name, cls, ctor] : std::initializer_list<std::tuple<const char*, ClassObject*, NativeFn>>{
@@ -1167,9 +1184,10 @@ Ref sys_exit(Obj, Args a) {
 Module* make_sys(int argc, char** argv) {
     auto* m = new Module("sys");
     Dict* d = m->dict;
-    // PyModule_New's names (sys.__doc__ is CPython's docstring, absent here until it is copied);
+    // PyModule_New's names;
     // importlib._bootstrap._setup gives the module its spec and loader
     put(d, "__name__", m->name.get());
+    put(d, "__doc__", cpython_doc("sys"));
     for (const char* n : {"__package__", "__loader__", "__spec__"}) put(d, n, None());
     auto* out = new Native(types().textio);
     out->tag = 1;
@@ -1219,7 +1237,24 @@ void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
 }
 }  // namespace
 
+Obj cpython_doc(std::string_view name) {
+    auto it = std::lower_bound(std::begin(CPYTHON_DOCS), std::end(CPYTHON_DOCS), name,
+                               [](const CPythonDoc& e, std::string_view k) { return e.name < k; });
+    if (it == std::end(CPYTHON_DOCS) || it->name != name) return None();
+    return Obj::of(intern(it->text));
+}
+
 bool cpython_has(std::string_view scope, std::string_view name) { return cpython_find(scope, name) != nullptr; }
+// A name found on a later class of the MRO that an earlier built-in type has its own of in CPython:
+// a base's method would be the wrong answer (`(5).__lt__` is not object's), so it is refused (RL-310).
+void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, const Str* name) {
+    for (std::size_t i = from; i < mro.size(); ++i) {
+        const ClassObject* c = mro[i];
+        if (c->attrs.contains(name)) return;
+        if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(c->name, name->text))
+            throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
+    }
+}
 void refuse_absent_attribute(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Module)) {
         auto* m = static_cast<Module*>(obj.object());
@@ -1443,6 +1478,8 @@ void print_one(Stream& err, Obj exc) {
     // format_exception_only: the type's __qualname__, its module unless __main__ or builtins, and
     // _safe_string(exc, 'exception'): a str() that raises anything shows as <exception str() failed>
     std::string name = fully_qualified_name(type_of(exc));
+    if (const Obj* mod = type_of(exc)->attrs.find(intern("__module__")); mod != nullptr && as_str(*mod) == nullptr)
+        name = "<unknown>." + type_of(exc)->qualname;     // TracebackException: a __module__ that is no str
     std::string text;
     try {
         Ref str = str_of(exc);
@@ -1512,10 +1549,101 @@ void call_finalizer(Obj fn, Obj self) {
 }
 const bool finalizer_hook_installed = (finalizer_hook() = call_finalizer, true);
 
-// At exit CPython drops sys.modules' entries in order (finalize_remove_modules), and a module
-// whose last count goes releases its namespace in insertion order (measured on 3.15.2). Modules
-// are immortal here (D-19), so each namespace is cleared in that order: the modules in
-// sys.modules, then the others the program made, oldest first (D-07: the order is unspecified).
+// finalize_modules at exit. sys's special names go; sys.modules is emptied; then the collector
+// (_PyGC_CollectNoFail) finds the modules' namespaces in cycles (a dict holds a function holding the
+// dict) and runs every finaliser with the namespaces whole, so a __del__ reads its globals (RL-281).
+// Until the cycle collector exists (step 3c) a walk from the namespaces stands for it: what it reaches
+// is finalised, in the order found (D-07: unspecified), and only then are the namespaces cleared.
+// Modules are immortal here (D-19), so their namespaces are cleared in place, sys.modules' first.
+namespace {
+template <class T>
+void attribute_values(T* inst, std::vector<Obj>& todo) {
+    for (Obj v : inst->fields) todo.push_back(v);
+    if (inst->dict != nullptr) todo.push_back(Obj::of(inst->dict));
+}
+void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found) {
+    std::unordered_set<Object*> seen;
+    std::vector<Obj> todo;
+    for (Module* m : roots) todo.push_back(Obj::of(m->dict));
+    for (std::size_t next = 0; next < todo.size(); ++next) {
+        Obj v = todo[next];
+        if (!v.is_object() || !seen.insert(v.object()).second) continue;
+        Object* o = v.object();
+        if (o->kind == Kind::Class || o->cls != nullptr) todo.push_back(Obj::of(o->cls));
+        switch (o->kind) {
+            case Kind::Instance:
+                attribute_values(static_cast<Instance*>(o), todo);
+                found.push_back(Ref::share(v));
+                break;
+            case Kind::IntInstance:
+                attribute_values(static_cast<IntInstance*>(o), todo);
+                found.push_back(Ref::share(v));
+                break;
+            case Kind::Dict:
+                if (has_attributes(o)) {
+                    attribute_values(static_cast<DictInstance*>(o), todo);
+                    found.push_back(Ref::share(v));
+                }
+                for (auto& e : static_cast<Dict*>(o)->entries) {
+                    todo.push_back(e.key);
+                    todo.push_back(e.value);
+                }
+                break;
+            case Kind::Class:
+                for (auto& [k, value] : static_cast<ClassObject*>(o)->attrs.items()) todo.push_back(value);
+                break;
+            case Kind::Tuple:
+                for (Obj x : static_cast<Tuple*>(o)->items) todo.push_back(x);
+                break;
+            case Kind::List:
+                for (Obj x : static_cast<List*>(o)->items) todo.push_back(x);
+                break;
+            case Kind::Set:
+                for (auto& e : static_cast<SetObject*>(o)->table) todo.push_back(e.key);
+                break;
+            case Kind::Cell:
+                todo.push_back(static_cast<Cell*>(o)->value);
+                break;
+            case Kind::PyFunction: {
+                auto* f = static_cast<PyFunction*>(o);
+                for (const Ref* r : {&f->defaults, &f->kwdefaults, &f->annotate, &f->dict}) todo.push_back(r->get());
+                for (const Ref& r : f->closure) todo.push_back(r.get());
+                break;
+            }
+            case Kind::Method:
+                todo.push_back(static_cast<Method*>(o)->func);
+                todo.push_back(static_cast<Method*>(o)->self);
+                break;
+            case Kind::Builtin:
+                todo.push_back(static_cast<Builtin*>(o)->self);
+                break;
+            case Kind::Slice: {
+                auto* sl = static_cast<SliceObject*>(o);
+                for (Obj x : {sl->start, sl->stop, sl->step}) todo.push_back(x);
+                break;
+            }
+            case Kind::DictView:
+                todo.push_back(static_cast<DictView*>(o)->dict);
+                break;
+            case Kind::Iterator:
+                todo.push_back(static_cast<Iterator*>(o)->seq);
+                break;
+            case Kind::Super: {
+                auto* su = static_cast<SuperObject*>(o);
+                for (Obj x : {su->type, su->obj, su->obj_type}) todo.push_back(x);
+                break;
+            }
+            case Kind::Proxy:
+                todo.push_back(Obj::of(static_cast<Proxy*>(o)->of));
+                break;
+            case Kind::Module:
+                todo.push_back(Obj::of(static_cast<Module*>(o)->dict));
+                break;
+            default:
+                break;
+        }
+    }
+}
 void clear_module(Module* m) {
     for (std::size_t i = 0; i < m->dict->entries.size(); ++i) {
         Dict::Entry& e = m->dict->entries[i];
@@ -1525,6 +1653,7 @@ void clear_module(Module* m) {
         decref(old);
     }
 }
+}  // namespace
 void clear_modules(const std::unordered_set<Module*>& runtime_own) {
     std::vector<Module*> order;
     std::unordered_set<Module*> seen(runtime_own);
@@ -1537,27 +1666,45 @@ void clear_modules(const std::unordered_set<Module*>& runtime_own) {
     }
     for (Module* m : all_modules())
         if (seen.insert(m).second) order.push_back(m);
+    // finalize_modules_delete_special: what a finaliser sees of sys from here on
+    Module* sys = native_modules()["sys"];
+    for (const char* n : {"path", "argv", "ps1", "ps2", "last_exc", "last_type", "last_value", "last_traceback",
+                          "__interactivehook__", "meta_path"})
+        put(sys->dict, n, None());
+    for (auto [name, original] : std::initializer_list<std::pair<const char*, const char*>>{{"stdout", "__stdout__"}, {"stderr", "__stderr__"}})
+        put(sys->dict, name, dict_get(sys->dict, Obj::of(intern(original))));
+    shutting_down() = true;
+    dict_clear(modules);                         // finalize_clear_modules_dict; the modules live on (D-19)
+    std::vector<Ref> found;
+    finalizable_from(order, found);
+    for (Ref& r : found)
+        with_attribute_storage(r.get(), [](auto* inst) { detail::finalize_once(inst); });
+    found.clear();
     for (Module* m : order) clear_module(m);
 }
 
-// _Py_HandleSystemExitAndKeyboardInterrupt: the exit status a SystemExit asks for. Its code
-// (SystemExit_init: no argument None, one argument that argument, else the args tuple): None is
-// 0, an int is that int truncated to a C int (parse_exit_code), anything else is printed, and is 1.
+// _Py_HandleSystemExitAndKeyboardInterrupt: the exit status a SystemExit asks for: its `code`
+// attribute (a subclass may have its own), read as parse_exit_code reads it: None is 0, an int that
+// int truncated to a C int; anything else is printed, as is the exception if it has no such
+// attribute, and is 1. Nothing that goes wrong printing it changes that.
 int exit_status(Obj exc) {
-    Ref args = getattr(exc, intern("args"));
-    Obj code = args.get();
-    if (is_kind(code, Kind::Tuple)) {
-        auto& items = static_cast<Tuple*>(code.object())->items;
-        if (items.empty()) code = None();
-        else if (items.size() == 1) code = items[0];
-    }
-    if (code == None()) return 0;
-    std::int64_t value;
-    if (is_kind(code, Kind::Bool)) return code == boolean(true) ? 1 : 0;
-    if (as_int(code, value)) return static_cast<int>(value);
     out_stream().flush();
-    Ref text = str_of(code);
-    err_stream().write(as_str(text.get())->text + "\n");
+    Ref code;
+    try {
+        code = getattr(exc, intern("code"));
+    } catch (const PyError&) {
+    }
+    if (!code.get().is_unset()) {
+        if (code.get() == None()) return 0;
+        std::int64_t value;
+        if (as_int(code.get(), value)) return static_cast<int>(value);
+    }
+    try {
+        Ref text = str_of(code.get().is_unset() ? exc : code.get());
+        err_stream().write(as_str(text.get())->text);
+    } catch (const PyError&) {
+    }
+    err_stream().write("\n");
     return 1;
 }
 
@@ -1573,8 +1720,8 @@ Module* make_main(const char* main_file) {
 }
 }  // namespace
 
-int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, std::initializer_list<PreludeModule> prelude,
-             std::span<const ModuleEntry> modules) {
+int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
+             std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
     int status = 0;
     std::unordered_set<Module*> runtime_own;
     try {
@@ -1584,9 +1731,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             native_modules()["sys"] = sys;
             init_types();
             init_imports(sys);
-            std::string dir(main_file);
-            dir.resize(dir.rfind('/') == std::string::npos ? 0 : dir.rfind('/'));
-            register_modules(modules, dir.c_str());
+            register_modules(modules, program_dir);
             runtime_own = {builtins_module(), sys};
             Module* bootstrap = nullptr;
             for (const PreludeModule& pm_entry : prelude) {
@@ -1607,7 +1752,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
                              {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec},
                              {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_refuse", i_bella_refuse},
-                             {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes}}) {
+                             {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
+                             {"_bella_shutting_down", i_bella_shutting_down}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());
                     }
@@ -1634,6 +1780,14 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                                 static_cast<ClassObject*>(cls.object())->set_attr(intern(as_str(m.key)->text), m.value);
                     }
             }
+            init_slots();
+            auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own
+                if (!c->attrs.contains(intern("__doc__")))
+                    if (Obj doc = cpython_doc(c->name); doc != None()) c->set_attr(intern("__doc__"), doc);
+            };
+            for (ClassObject* c : builtin_types()) own_doc(c);
+            for (ClassObject* c : exception_classes()) own_doc(c);
+            if (bootstrap != nullptr) present_as_c_types(bootstrap);
             // importlib._bootstrap._setup: the built-in modules' specs and loaders
             {
                 Ref names = tuple_new({Obj::of(intern("builtins")), Obj::of(intern("sys"))});

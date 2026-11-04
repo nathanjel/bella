@@ -365,13 +365,20 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   the expression positions; an inlined comprehension's line then goes to its caller's entry.
 * The constructor of `float` (refused, RL-220), `max`, `min`, `divmod`;
   `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
-  (StopIteration's `value`, SystemExit's `code`) are refused by name, read, stored or deleted
-  (RL-255), until those classes are built as CPython's.
+  (StopIteration's `value`) are refused by name, read, stored or deleted (RL-255), until those
+  classes are built as CPython's.
+* A wrong answer until big ints: `hash(x)` beyond the 63-bit immediates loses its top bit (RL-321).
+* At exit a walk from the namespaces stands for the collector (RL-281), until 3c. Until then a
+  finaliser on an object no namespace reaches does not run, and no class has `__weakref__` in its
+  `__dict__` (RL-323). A special method CPython's built-in type has of its own and
+  `runtime/src/slots.cpp` lacks is refused where it is read (RL-310); so is a built-in method's
+  docstring (RL-279).
 * `__suppress_context__` and super's `__thisclass__`, `__self__`, `__self_class__` present as
   `getset_descriptor`s, CPython's as `member_descriptor`s, whose type the runtime has, without
   methods (RL-251, RL-254).
-* `super()` whose first argument was deleted raises UnboundLocalError (CPython: `RuntimeError:
-  super(): arg[0] deleted`), as under `eval1` (task 4, A3's known edges).
+* `super()` in a function that deletes its first argument is refused at build (RL-319; CPython:
+  `RuntimeError: super(): arg[0] deleted`); under `eval1` it raises UnboundLocalError (task 4, A3's
+  known edges).
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and
   type are refused today (RL-218); the names RL-211's table refuses, as programs need them.
 * Later: `float` beyond the digits (the wrapper of `to_chars`/`from_chars`), the `bn` copy for

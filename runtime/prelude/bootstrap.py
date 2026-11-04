@@ -485,6 +485,12 @@ class FrozenImporter:
         return found[1]
 
 
+def _namespace_self(name, self):
+    # bella: what a C method's descriptor checks before it runs
+    if not isinstance(self, SimpleNamespace):
+        raise TypeError(f"descriptor '{name}' requires a 'types.SimpleNamespace' object but received a '{type(self).__name__}'")
+
+
 class SimpleNamespace:
     """A simple attribute-based namespace."""
 
@@ -492,8 +498,12 @@ class SimpleNamespace:
 
     __module__ = 'types'
 
-    def __init__(self, mapping_or_iterable=_NOT_GIVEN, /, **kwargs):
-        if mapping_or_iterable is not _NOT_GIVEN:
+    def __init__(self, /, *args, **kwargs):
+        _namespace_self('__init__', self)
+        if len(args) > 1:
+            raise TypeError(f'SimpleNamespace expected at most 1 argument, got {len(args)}')
+        if args:
+            mapping_or_iterable = args[0]
             d = mapping_or_iterable if type(mapping_or_iterable) is dict else dict(mapping_or_iterable)
             for key in d:  # PyArg_ValidateKeywordArguments
                 if not isinstance(key, str):
@@ -502,6 +512,7 @@ class SimpleNamespace:
         self.__dict__.update(kwargs)
 
     def __repr__(self):
+        _namespace_self('__repr__', self)
         name = 'namespace' if type(self) is SimpleNamespace else type(self).__name__
         if self in _repr_running:  # Py_ReprEnter, by identity: __eq__ here compares contents
             return f'{name}(...)'
@@ -526,7 +537,10 @@ class SimpleNamespace:
     def __reduce__(self):
         return (type(self), (), self.__dict__)
 
-    def __replace__(self, /, **kwargs):
+    def __replace__(self, /, *args, **kwargs):
+        _namespace_self('__replace__', self)
+        if args:
+            raise TypeError('__replace__() takes no positional arguments')
         result = type(self)()
         if not isinstance(result, SimpleNamespace):
             raise TypeError(f'expect types.SimpleNamespace type, but {type(self).__name__}() returned '
@@ -596,34 +610,12 @@ def _get_cached(filename):
         return None
 
 
-class SourceFileLoader:
+class _LoaderBasics:
 
-    """Concrete implementation of SourceLoader using the file system."""
+    """Base class of common code needed by both SourceLoader and
+    SourcelessFileLoader."""
 
     __module__ = '_frozen_importlib_external'
-
-    def __init__(self, fullname, path):
-        """Cache the module name and the path to the file found by the
-        finder."""
-        self.name = fullname
-        self.path = path
-
-    def __eq__(self, other):
-        return (self.__class__ == other.__class__ and
-                self.__dict__ == other.__dict__)
-
-    def __hash__(self):
-        return hash(self.name) ^ hash(self.path)
-
-    def get_filename(self, name=None):
-        """Return the path to the source file as found by the finder."""
-        # bella: FileLoader.get_filename under _check_name
-        if name is None:
-            name = self.name
-        elif self.name != name:
-            # bella: CPython's text formats with %, which the runtime lacks yet; the same message
-            raise ImportError(f'loader for {self.name} cannot handle {name}', name=name)
-        return self.path
 
     def is_package(self, fullname):
         """Concrete implementation of InspectLoader.is_package by checking if
@@ -643,26 +635,96 @@ class SourceFileLoader:
         self.get_filename(module.__name__)
         _bella_exec(self.name, module)
 
-    def get_code(self, fullname):
-        _bella_refuse("a source loader's get_code (a compiled program has no code objects to load)")
+
+class SourceLoader(_LoaderBasics):
+
+    __module__ = '_frozen_importlib_external'
+
+    # bella: the methods below read or write files, which a compiled program does not do
+    def path_mtime(self, path):
+        _bella_refuse("a source loader's path_mtime (a compiled program has no source to read)")
+
+    def path_stats(self, path):
+        _bella_refuse("a source loader's path_stats (a compiled program has no source to read)")
+
+    def _cache_bytecode(self, source_path, cache_path, data):
+        _bella_refuse("a source loader's _cache_bytecode (a compiled program has no bytecode)")
+
+    def set_data(self, path, data):
+        """Optional method which writes data (bytes) to a file path (a str)."""
 
     def get_source(self, fullname):
         _bella_refuse("a source loader's get_source (step 3b: reading files)")
 
-    def get_data(self, path):
-        _bella_refuse("a source loader's get_data (step 3b: reading files)")
-
-    def path_stats(self, path):
-        _bella_refuse("a source loader's path_stats (step 3b: reading files)")
-
-    def source_to_code(self, data, path, *, _optimize=-1):
+    def source_to_code(self, data, path, fullname=None, *, _optimize=-1):
         _bella_refuse("a source loader's source_to_code (E-01: no compiler at runtime)")
 
-    def load_module(self, fullname):
-        _bella_refuse("a source loader's load_module (step 3b)")
+    def get_code(self, fullname):
+        _bella_refuse("a source loader's get_code (a compiled program has no code objects to load)")
 
-    def get_resource_reader(self, module):
+
+class FileLoader:
+
+    """Base file loader class which implements the loader protocol methods that
+    require file system usage."""
+
+    __module__ = '_frozen_importlib_external'
+
+    def __init__(self, fullname, path):
+        """Cache the module name and the path to the file found by the
+        finder."""
+        self.name = fullname
+        self.path = path
+
+    def __eq__(self, other):
+        return (self.__class__ == other.__class__ and
+                self.__dict__ == other.__dict__)
+
+    def __hash__(self):
+        return hash(self.name) ^ hash(self.path)
+
+    def get_filename(self, name=None):
+        """Return the path to the source file as found by the finder."""
+        # bella: under _check_name
+        if name is None:
+            name = self.name
+        elif self.name != name:
+            # bella: CPython's text formats with %, which the runtime lacks yet; the same message
+            raise ImportError(f'loader for {self.name} cannot handle {name}', name=name)
+        return self.path
+
+    def get_data(self, path):
+        """Return the data from path as raw bytes."""
+        _bella_refuse("a file loader's get_data (step 3b: reading files)")
+
+    def get_resource_reader(self, name=None):
         _bella_refuse("a source loader's get_resource_reader (importlib.resources is [P2+])")
+
+
+class SourceFileLoader(FileLoader, SourceLoader):
+
+    """Concrete implementation of SourceLoader using the file system."""
+
+    __module__ = '_frozen_importlib_external'
+
+    def path_stats(self, path):
+        """Return the metadata for the path."""
+        _bella_refuse("a source loader's path_stats (a compiled program has no source to read)")
+
+    def _cache_bytecode(self, source_path, bytecode_path, data):
+        _bella_refuse("a source loader's _cache_bytecode (a compiled program has no bytecode)")
+
+    def set_data(self, path, data, *, _mode=0):
+        """Write bytes data to a file."""
+        _bella_refuse("a source loader's set_data (a compiled program writes no bytecode)")
+
+
+# bella: they are _bootstrap_external's, whose module runs apart from this one in CPython
+for _cls in (_LoaderBasics, SourceLoader, FileLoader, SourceFileLoader):
+    for _name in _cls.__dict__:
+        _f = _cls.__dict__[_name]
+        if callable(_f):
+            _f.__module__ = '_frozen_importlib_external'
 
 
 def _spec_from_compiled(name):
@@ -692,6 +754,9 @@ def _spec_from_compiled(name):
 def _find_spec(name, path, target=None):
     """Find a module's spec."""
     # bella: the closed world's registry stands for sys.meta_path's finders (spec section 8)
+    if _bella_shutting_down():
+        # CPython: sys.meta_path is None once finalize_modules has begun
+        raise ImportError("sys.meta_path is None, Python is likely shutting down")
 
     # We check sys.modules here for the reload case.  While a passed-in
     # target will usually indicate a reload there is no guarantee, whereas

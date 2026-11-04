@@ -28,7 +28,19 @@ Cps cps_of(const Str* s) {
     for (std::size_t i = 0; i < s->length; ++i) out.push_back(s->at(i));
     return out;
 }
-Ref make(std::u32string_view cps) { return own(new Str(cps, false)); }
+Ref make(std::u32string_view cps) { return str_from_codepoints(cps); }
+// The text of a str as searches read it, nothing copied: a call costs what it scans, as CPython's
+struct Text {
+    const Str* s;
+    std::size_t size() const { return s->length; }
+    char32_t operator[](std::size_t i) const { return s->at(i); }
+};
+template <class T, class U>
+bool match_at(const T& s, const U& sub, std::int64_t at) {
+    for (std::size_t k = 0; k < sub.size(); ++k)
+        if (s[static_cast<std::size_t>(at) + k] != sub[k]) return false;
+    return true;
+}
 // a piece of the string: the string itself when it is all of an exact str
 Ref piece(Obj self, const Cps& cps, std::size_t from, std::size_t to) {
     if (from == 0 && to == cps.size() && type_of(self) == types().str) return Ref::share(self);
@@ -59,7 +71,7 @@ void check_positional(Args a, const char* name, std::size_t lo, std::size_t hi) 
 }
 const Str* str_argument(Obj v, const char* name, const char* which) {      // _PyArg_BadArgument
     const Str* s = as_str(v);
-    if (s == nullptr) raise_new("TypeError", std::string(name) + "() " + which + " must be str, not " + type_of(v)->name);
+    if (s == nullptr) raise_new("TypeError", std::string(name) + "() " + which + " must be str, not " + (v == None() ? "None" : type_of(v)->name));
     return s;
 }
 // _PyEval_SliceIndex: None keeps the default; an int, or an object with __index__
@@ -96,17 +108,18 @@ Span find_args(Args a, const char* name) {
     return s;
 }
 // any_find_slice: the index of sub in s[start:end], -1 if absent
-std::int64_t find_in(const Cps& s, const Cps& sub, std::int64_t start, std::int64_t end, int direction) {
+template <class T, class U>
+std::int64_t find_in(const T& s, const U& sub, std::int64_t start, std::int64_t end, int direction) {
     auto len = static_cast<std::int64_t>(s.size()), n = static_cast<std::int64_t>(sub.size());
     adjust_indices(start, end, len);
     if (end - start < n) return -1;
     if (n == 0) return direction > 0 ? start : end;
     if (direction > 0) {
         for (std::int64_t i = start; i + n <= end; ++i)
-            if (std::equal(sub.begin(), sub.end(), s.begin() + i)) return i;
+            if (match_at(s, sub, i)) return i;
     } else {
         for (std::int64_t i = end - n; i >= start; --i)
-            if (std::equal(sub.begin(), sub.end(), s.begin() + i)) return i;
+            if (match_at(s, sub, i)) return i;
     }
     return -1;
 }
@@ -114,19 +127,18 @@ std::int64_t find_in(const Cps& s, const Cps& sub, std::int64_t start, std::int6
 Ref find_like(Obj self, Args a, const char* name, int direction, bool raises) {
     const Str* s = self_str(self, name);
     Span sp = find_args(a, name);
-    std::int64_t r = find_in(cps_of(s), cps_of(sp.sub), sp.start, sp.end, direction);
+    std::int64_t r = find_in(Text{s}, Text{sp.sub}, sp.start, sp.end, direction);
     if (r < 0 && raises) raise_new("ValueError", "substring not found");
     return Ref::steal(Obj::small(r));
 }
 
 // tailmatch: whether s[start:end] starts (direction < 0) or ends (> 0) with sub
-bool tailmatch(const Cps& s, const Cps& sub, std::int64_t start, std::int64_t end, int direction) {
+bool tailmatch(Text s, Text sub, std::int64_t start, std::int64_t end, int direction) {
     adjust_indices(start, end, static_cast<std::int64_t>(s.size()));
     end -= static_cast<std::int64_t>(sub.size());
     if (end < start) return false;
-    if (sub.empty()) return true;
-    std::int64_t offset = direction > 0 ? end : start;
-    return std::equal(sub.begin(), sub.end(), s.begin() + offset);
+    if (sub.size() == 0) return true;
+    return match_at(s, sub, direction > 0 ? end : start);
 }
 Ref starts_ends(Obj self, Args a, const char* name, int direction) {
     const Str* s = self_str(self, name);
@@ -134,21 +146,21 @@ Ref starts_ends(Obj self, Args a, const char* name, int direction) {
     check_positional(a, name, 1, 3);
     std::int64_t start = a.npos > 1 ? slice_index(a.pos(1), 0) : 0;
     std::int64_t end = a.npos > 2 ? slice_index(a.pos(2), INT64_MAX) : INT64_MAX;
-    Cps text = cps_of(s);
+    Text text{s};
     Obj sub = a.pos(0);
     if (is_kind(sub, Kind::Tuple)) {
         for (Obj item : static_cast<Tuple*>(sub.object())->items) {
             const Str* p = as_str(item);
             if (p == nullptr)
                 raise_new("TypeError", std::string("tuple for ") + name + " must only contain str, not " + type_of(item)->name);
-            if (tailmatch(text, cps_of(p), start, end, direction)) return Ref::steal(boolean(true));
+            if (tailmatch(text, Text{p}, start, end, direction)) return Ref::steal(boolean(true));
         }
         return Ref::steal(boolean(false));
     }
     const Str* p = as_str(sub);
     if (p == nullptr)
         raise_new("TypeError", std::string(name) + " first arg must be str or a tuple of str, not " + type_of(sub)->name);
-    return Ref::steal(boolean(tailmatch(text, cps_of(p), start, end, direction)));
+    return Ref::steal(boolean(tailmatch(text, Text{p}, start, end, direction)));
 }
 
 // METH_O: (sep, /)
@@ -237,7 +249,7 @@ Ref split_like(Obj self, Args a, const char* name, int direction) {
             }
             if (i < n) {
                 while (i < n && is_space(text[i])) ++i;
-                if (i != n) parts.push_back(piece(self, text, i, n));
+                if (i != n) parts.push_back(make(std::u32string_view(text).substr(static_cast<std::size_t>(i))));   // SPLIT_ADD: a new string
             }
         } else {
             std::int64_t i = n - 1;
@@ -251,7 +263,7 @@ Ref split_like(Obj self, Args a, const char* name, int direction) {
             }
             if (i >= 0) {
                 while (i >= 0 && is_space(text[i])) --i;
-                if (i >= 0) parts.push_back(piece(self, text, 0, i + 1));
+                if (i >= 0) parts.push_back(make(std::u32string_view(text).substr(0, static_cast<std::size_t>(i + 1))));
             }
             std::reverse(parts.begin(), parts.end());
         }
@@ -315,14 +327,14 @@ Ref str_rindex_m(Obj self, Args a) { return find_like(self, a, "rindex", -1, tru
 Ref str_count_m(Obj self, Args a) {              // unicode_count_impl: non-overlapping occurrences
     const Str* s = self_str(self, "count");
     Span sp = find_args(a, "count");
-    Cps text = cps_of(s), sub = cps_of(sp.sub);
+    Text text{s}, sub{sp.sub};
     std::int64_t start = sp.start, end = sp.end;
     adjust_indices(start, end, static_cast<std::int64_t>(text.size()));
     if (end - start < static_cast<std::int64_t>(sub.size())) return Ref::steal(Obj::small(0));
-    if (sub.empty()) return Ref::steal(Obj::small(end - start + 1));
+    if (sub.size() == 0) return Ref::steal(Obj::small(end - start + 1));
     std::int64_t count = 0;
     for (std::int64_t i = start; i + static_cast<std::int64_t>(sub.size()) <= end;) {
-        if (std::equal(sub.begin(), sub.end(), text.begin() + i)) {
+        if (match_at(text, sub, i)) {
             ++count;
             i += static_cast<std::int64_t>(sub.size());
         } else {

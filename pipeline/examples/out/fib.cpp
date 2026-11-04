@@ -48,6 +48,7 @@ rt::Ref module_body(rt::Module* m) {
     t5 = rt::iter(t4.get());
     t4 = Ref{};
     for (;;) {
+        frame.line = 10;
         t6 = rt::for_next(t5.get());
         if (rt::is_end(t6)) {
             t5 = Ref{};

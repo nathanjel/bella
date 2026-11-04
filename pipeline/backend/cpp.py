@@ -36,7 +36,7 @@ decltype default delete do double dynamic_cast else enum explicit export extern 
 int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private protected public register
 reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this
 thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq
-final override import module main std rt Obj Ref Args fn args frame stack_values ns M ret init_constants module_body
+final override import module contract_assert main std rt Obj Ref Args fn args frame stack_values ns M ret init_constants module_body
 """.split())
 # Every name the emitter makes matches this (review 2026-11-03, A9-20); a Python name that matches
 # it, or that C++ reserves, is escaped.
@@ -309,7 +309,7 @@ class Emitter:
         if _returns_through_finally(c.body):
             self.out.append("    Ref ret;                                   // a return's value while finally blocks run")
         self.region(c.body, 1)
-        if _falls_through(c.body):
+        if G.falls_through(c.body):
             self.out.append("    return rt::none_ref();")
         self.out.append("}")
         return self.out
@@ -516,12 +516,13 @@ class Emitter:
         h = handlers[i]
         self.add(indent, "{")
         self.region(h.match, indent + 1) if h.match else None
+        matched = self.aux("h")
         if h.type is not None:
-            self.add(indent + 1, f"bool match = rt::exception_matches({exc}.exc.get(), t{h.type.n}.get());")
+            self.add(indent + 1, f"bool {matched} = rt::exception_matches({exc}.exc.get(), t{h.type.n}.get());")
             self.add(indent + 1, f"t{h.type.n} = Ref{{}};")
         else:
-            self.add(indent + 1, "bool match = true;")
-        self.add(indent + 1, "if (match) {")
+            self.add(indent + 1, f"bool {matched} = true;")
+        self.add(indent + 1, f"if ({matched}) {{")
         if h.name is not None:
             cleanup = (G.Store(h.name, G.Const(None)), G.Delete(h.name))
             self.add(indent + 2, self.store(h.name, f"Ref::share({exc}.exc.get())"))
@@ -535,7 +536,7 @@ class Emitter:
                 self.stmt(st, indent + 3)
             self.add(indent + 3, "throw;")
             self.add(indent + 2, "}")
-            if _falls_through(h.body):
+            if G.falls_through(h.body):
                 for st in cleanup:
                     self.stmt(st, indent + 2)
         else:
@@ -680,7 +681,7 @@ class Emitter:
             case G.ListAppend(t, v):
                 return f"rt::list_append({a(t)}, {a(v)})"
             case G.ListExtend(t, v):
-                return f"rt::list_extend({a(t)}, {a(v)})"
+                return f"rt::list_extend_star({a(t)}, {a(v)})"
             case G.ListToTuple(x):
                 return f"rt::list_to_tuple({a(x)})"
             case G.DictUpdate(t, v):
@@ -767,21 +768,6 @@ def _hidden(code: G.Code) -> frozenset[str]:
     return frozenset(n for n in hidden if isinstance(n, str)) if isinstance(hidden, frozenset) else frozenset()
 
 
-def _falls_through(body: tuple[G.Stmt, ...]) -> bool:
-    if not body:
-        return True
-    last = body[-1]
-    if isinstance(last, (G.Return, G.Raise, G.Break, G.Continue, G.EndLoop)):
-        return False
-    if isinstance(last, (G.If, G.IfEnd)):
-        return _falls_through(last.body) or _falls_through(last.orelse)
-    if isinstance(last, G.Try):
-        return _falls_through_try(last)
-    if isinstance(last, G.Loop):
-        return True                              # a loop ends by break or end-loop, then falls through
-    return True
-
-
 def _returns_through_finally(body: tuple[G.Stmt, ...], in_finally: bool = False) -> bool:
     for s in body:
         if isinstance(s, G.Return) and in_finally:
@@ -798,13 +784,6 @@ def _returns_through_finally(body: tuple[G.Stmt, ...], in_finally: bool = False)
             if _returns_through_finally(s.body, in_finally) or _returns_through_finally(s.orelse, in_finally):
                 return True
     return False
-
-
-def _falls_through_try(s: G.Try) -> bool:
-    if s.finalbody and not _falls_through(s.finalbody):
-        return False
-    paths = [_falls_through((*s.body, *s.orelse))] + [_falls_through(h.body) for h in s.handlers]
-    return any(paths)
 
 
 def emit_module(module: G.Module, namespace: str, filename: str, prelude: bool = False) -> str:

@@ -126,16 +126,35 @@ restart:
     }
 }
 
-bool set_contains(SetObject* s, Obj key) { return lookkey(s, key, set_key_hash(key)) < s->table.size(); }
+namespace {
+// set_contains, set_remove, set_discard: a set as the key is looked for as a frozenset of its items
+template <class F>
+auto with_set_key(Obj key, F f) {
+    try {
+        return f(key, set_key_hash(key));
+    } catch (const PyError& e) {
+        if (!is_kind(key, Kind::Set) || !isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+    }
+    Ref tmp = own(new SetObject(true));
+    set_update(tmp.get(), key);
+    return f(tmp.get(), set_key_hash(tmp.get()));
+}
+}  // namespace
+
+bool set_contains(SetObject* s, Obj key) {
+    return with_set_key(key, [s](Obj k, std::int64_t hash) { return lookkey(s, k, hash) < s->table.size(); });
+}
 
 bool set_discard(SetObject* s, Obj key) {
-    std::size_t k = lookkey(s, key, set_key_hash(key));
+    return with_set_key(key, [s](Obj kv, std::int64_t hash) {
+    std::size_t k = lookkey(s, kv, hash);
     if (k >= s->table.size()) return false;
     Obj old = s->table[k].key;
     s->table[k] = {Obj{}, -1};
     --s->used;
     decref(old);
     return true;
+    });
 }
 
 namespace {
@@ -178,7 +197,7 @@ void set_update(Obj setv, Obj iterable) {
         set_merge(static_cast<SetObject*>(setv.object()), static_cast<SetObject*>(iterable.object()));
         return;
     }
-    if (is_kind(iterable, Kind::Dict)) {          // set_update_dict_keys: the dict's stored hashes
+    if (is_kind(iterable, Kind::Dict) && !is_subclass_instance(iterable)) {   // PyDict_CheckExact: its stored hashes
         std::vector<std::pair<Ref, std::int64_t>> entries;
         for (auto& e : static_cast<Dict*>(iterable.object())->entries)
             if (!e.key.is_unset()) entries.emplace_back(Ref::share(e.key), e.hash);

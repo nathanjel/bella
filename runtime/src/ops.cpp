@@ -144,7 +144,8 @@ bool has_sequence_methods(Obj v) {               // a type with tp_as_sequence (
 }
 // sequence_repeat: the count through __index__; then str's, tuple's or list's repeat
 Ref repeat(Obj seq, Obj n, bool in_place) {
-    if (!n.is_small() && !is_kind(n, Kind::Bool) && (!is_heap_obj(n) || type_lookup(type_of(n), intern("__index__")).is_unset()))
+    std::int64_t exact;
+    if (!as_int(n, exact) && (!is_heap_obj(n) || type_lookup(type_of(n), intern("__index__")).is_unset()))
         raise_new("TypeError", "can't multiply sequence by non-int of type '" + type_of(n)->name + "'");
     std::int64_t count = index_value(n);
     if (const Str* s = as_str(seq)) {
@@ -264,7 +265,7 @@ Ref binary(BinOp op, Obj a, Obj b) {
 // PyNumber_InPlace*: the left operand's in-place method, then binary_op1, then the sequence step
 Ref inplace(BinOp op, Obj a, Obj b) {
     if (set_like_view(a) && set_like_operator(op)) throw NotImplemented("set operations on dict keys and items views");
-    if (is_heap_obj(a)) {
+    if (is_heap_obj(a) || overridden(a, BIN_NAMES[static_cast<int>(op)][2])) {
         bool has = false;
         Ref r = call_special(a, BIN_NAMES[static_cast<int>(op)][2], {b}, &has);
         if (has && !not_implemented(r)) return r;
@@ -390,25 +391,24 @@ bool contains(Obj container, Obj item) {
         if (r->step > 0 ? (x < r->start || x >= r->stop) : (x > r->start || x <= r->stop)) return false;
         return (x - r->start) % r->step == 0;
     }
-    if (is_kind(container, Kind::Instance) || has_python_type(container)) {
-        // slot_sq_contains: __contains__ = None says it is no container (G9 2.8)
-        if (type_lookup(type_of(container), intern("__contains__")) == None())
-            raise_new("TypeError", "'" + type_of(container)->name + "' object is not a container");
-        bool has = false;
-        Ref r = call_special(container, "__contains__", {item}, &has);
-        if (has) return truth(r.get());
-        Ref it;                                  // _PySequence_IterSearch: iter()'s TypeError is reworded
-        try {
-            it = iter(container);
-        } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
-            raise_new("TypeError", "argument of type '" + type_of(container)->name + "' is not a container or iterable");
-        }
-        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
-            if (equal(v.get())) return true;
-        return false;
+    // PySequence_Contains: the type's __contains__ (slot_sq_contains: None says it is no container,
+    // G9 2.8), else _PySequence_IterSearch, whose iter()'s TypeError is reworded; an iterator or a
+    // mappingproxy goes this way as an instance does (RL-299)
+    if (type_lookup(type_of(container), intern("__contains__")) == None())
+        raise_new("TypeError", "'" + type_of(container)->name + "' object is not a container");
+    bool has = false;
+    Ref r = call_special(container, "__contains__", {item}, &has);
+    if (has) return truth(r.get());
+    Ref it;
+    try {
+        it = iter(container);
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        raise_new("TypeError", "argument of type '" + type_of(container)->name + "' is not a container or iterable");
     }
-    raise_new("TypeError", "argument of type '" + type_of(container)->name + "' is not a container or iterable");
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+        if (equal(v.get())) return true;
+    return false;
 }
 // list_richcompare and tuplerichcompare (Objects/listobject.c, tupleobject.c): a list's lengths
 // first for == and !=; the first position whose items differ, the items held while user code
@@ -554,6 +554,8 @@ bool truth(Obj v) {
         case Kind::Instance: {
             // __bool__ (a bool, nothing else), else __len__, else true
             bool has = false;
+            if (type_lookup(type_of(v), intern("__bool__")) == None())    // slot_nb_bool (RL-306)
+                raise_new("TypeError", "'" + type_of(v)->name + "' cannot be interpreted as a boolean");
             Ref r = call_special(v, "__bool__", {}, &has);
             if (has) {
                 if (!is_kind(r.get(), Kind::Bool))
@@ -572,12 +574,14 @@ bool truth(Obj v) {
 std::int64_t index_value(Obj v) {
     std::int64_t x;
     if (as_int(v, x)) return x;
-    if (is_kind(v, Kind::Instance)) {
+    if (is_heap_obj(v)) {
         bool has = false;
         Ref r = call_special(v, "__index__", {}, &has);
-        if (has) {
-            if (as_int(r.get(), x) && !is_kind(r.get(), Kind::Bool)) return x;
-            raise_new("TypeError", "__index__ returned non-int (type " + type_of(r.get())->name + ")");
+        if (has) {                                   // _PyNumber_Index
+            if (r.get().is_small()) return r.get().small_value();
+            if (as_int(r.get(), x)) throw NotImplemented("__index__ returning a strict subclass of int (a DeprecationWarning in CPython)");
+            raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__index__() must return an int, not " +
+                                       fully_qualified_name(type_of(r.get())));
         }
     }
     raise_new("TypeError", "'" + type_of(v)->name + "' object cannot be interpreted as an integer");
@@ -652,6 +656,16 @@ std::string str_repr(const Str* s) {
 }
 }  // namespace
 
+// type_repr: type's own formatter, which a metaclass's __repr__ reaches through super()
+Ref type_repr_of(Obj v) {
+    auto* c = static_cast<ClassObject*>(v.object());
+    Obj mod = Obj{};
+    if (const Obj* m = c->attrs.find(intern("__module__"))) mod = *m;
+    const Str* ms = as_str(mod);
+    std::string prefix = ms == nullptr || ms->text == "builtins" ? "" : ms->text + ".";
+    return str_new("<class '" + prefix + c->qualname + "'>");
+}
+
 Ref repr_of(Obj v) {
     if (v.is_small()) return str_new(int_text(v.small_value()));
     Object* o = v.object();
@@ -660,18 +674,13 @@ Ref repr_of(Obj v) {
         case Kind::Singleton: return str_new(static_cast<Singleton*>(o)->repr);
         case Kind::Str: return str_new(str_repr(static_cast<Str*>(o)));
         case Kind::Class: {
-            auto* c = static_cast<ClassObject*>(o);
             if (has_python_type(v) && type_lookup(type_of(v), intern("__repr__")) != type_lookup(types().type, intern("__repr__"))) {
                 Ref r = call_special(v, "__repr__", {});       // the metaclass's __repr__
                 if (as_str(r.get()) == nullptr)
                     raise_new("TypeError", "__repr__ returned non-string (type " + type_of(r.get())->name + ")");
                 return r;
             }
-            Obj mod = Obj{};
-            if (const Obj* m = c->attrs.find(intern("__module__"))) mod = *m;
-            const Str* ms = as_str(mod);
-            std::string prefix = ms == nullptr || ms->text == "builtins" ? "" : ms->text + ".";
-            return str_new("<class '" + prefix + c->qualname + "'>");
+            return type_repr_of(v);
         }
         case Kind::IntInstance:
             if (!overridden(v, "__repr__")) return str_new(int_text(static_cast<IntInstance*>(o)->value));
@@ -680,6 +689,11 @@ Ref repr_of(Obj v) {
             auto* r = static_cast<Range*>(o);
             return str_new("range(" + int_text(r->start) + ", " + int_text(r->stop) +
                            (r->step == 1 ? "" : ", " + int_text(r->step)) + ")");
+        }
+        case Kind::Slice: {                          // slice_repr
+            auto* s = static_cast<SliceObject*>(o);
+            Ref a = repr_of(s->start), b = repr_of(s->stop), c = repr_of(s->step);
+            return str_new("slice(" + as_str(a.get())->text + ", " + as_str(b.get())->text + ", " + as_str(c.get())->text + ")");
         }
         case Kind::Builtin: {
             auto* b = static_cast<Builtin*>(o);
@@ -746,9 +760,21 @@ ClassObject* builtin_of(Obj v) {
         default: return types().object;
     }
 }
+// The MRO decides: a class before the built-in base overrides it; the built-in's own slot wins over
+// whatever comes after it, whether the runtime has the method yet or not (RL-313), and a name the
+// built-in does not define in CPython goes on to the classes after it.
 bool overrides_builtin(Obj v, const char* name) {
     const Str* n = intern(name);
-    return type_lookup(type_of(v), n) != type_lookup(builtin_of(v), n);
+    ClassObject* builtin = builtin_of(v);
+    for (ClassObject* c : type_of(v)->mro) {
+        if (c == builtin) {
+            if (c->attrs.contains(n) || cpython_has(c->name, name)) return false;
+            continue;
+        }
+        if (c == types().object) return false;
+        if (c->attrs.contains(n)) return true;
+    }
+    return false;
 }
 
 namespace {
@@ -805,6 +831,20 @@ Ref optional_getattr(Obj obj, const Str* name) {
     }
 }
 
+namespace {
+// _PyObject_GenericSetAttrWithDict on an object with no dict: a name its type has, as a getset the
+// runtime lacks or as anything else
+void read_only_attribute(Obj obj, const Str* name, Obj found) {
+    std::string_view kind;
+    for (const ClassObject* c : type_of(obj)->mro)
+        if (kind.empty()) kind = cpython_attribute_kind(c, name->text);
+    if (kind == "getset_descriptor" || kind == "member_descriptor")
+        raise_attribute_error(obj, name, "attribute '" + name->text + "' of '" + type_of(obj)->name + "' objects is not writable");
+    if (!found.is_unset() || !kind.empty())
+        raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object attribute '" + name->text + "' is read-only");
+}
+}  // namespace
+
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
         if (overrides(obj, "__setattr__")) {
@@ -828,10 +868,24 @@ void setattr(Obj obj, const Str* name, Obj value) {
         return;
     }
     if (is_kind(obj, Kind::Module)) {
+        if (name == intern("__dict__")) raise_attribute_error(obj, name, "readonly attribute");
+        if (name == intern("__class__")) {
+            if (!is_kind(value, Kind::Class))
+                raise_new("TypeError", "__class__ must be set to a class, not '" + type_of(value)->name + "' object");
+            auto* c = static_cast<ClassObject*>(value.object());
+            if (!c->heap_type || !is_subclass(c, types().module))
+                raise_new("TypeError", "__class__ assignment only supported for mutable types or ModuleType subclasses");
+            throw NotImplemented("[P2+] __class__ assignment (spec section 3)");
+        }
         dict_set(static_cast<Module*>(obj.object())->dict, Obj::of(name), value);
         return;
     }
     Obj found = type_lookup(type_of(obj), name);
+    if (name == intern("__class__")) {
+        if (!is_kind(value, Kind::Class))
+            raise_new("TypeError", "__class__ must be set to a class, not '" + type_of(value)->name + "' object");
+        if (!type_of(obj)->heap_type) raise_new("TypeError", "__class__ assignment only supported for mutable types or ModuleType subclasses");
+    }
     if (is_kind(found, Kind::GetSet)) {
         auto* g = static_cast<GetSet*>(found.object());
         if (g->set == nullptr)
@@ -844,6 +898,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
         dict_set(static_cast<Dict*>(d.get().object()), Obj::of(name), value);
         return;
     }
+    read_only_attribute(obj, name, found);
     raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text +
                                          "' and no __dict__ for setting new attributes");
 }
@@ -869,6 +924,7 @@ void delattr(Obj obj, const Str* name) {
         return;
     }
     if (is_kind(obj, Kind::Module)) {            // _PyObject_GenericSetAttrWithDict's deletion
+        if (name == intern("__dict__")) raise_attribute_error(obj, name, "readonly attribute");
         if (!dict_del(static_cast<Module*>(obj.object())->dict, Obj::of(name)))
             raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
         return;
@@ -882,18 +938,30 @@ void delattr(Obj obj, const Str* name) {
         g->set(obj, Obj{});
         return;
     }
+    read_only_attribute(obj, name, type_lookup(type_of(obj), name));
+    if (!is_kind(obj, Kind::PyFunction))
+        raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text +
+                                             "' and no __dict__ for setting new attributes");
     throw NotImplemented("del of an attribute of a '" + type_of(obj)->name + "' object");
 }
 
 // ---- items ----
 namespace {
-std::size_t index_of(Obj key, std::size_t size, const char* what) {
+// `what`: the type's name in the messages; `range_what`: where the out-of-range message differs
+// ("list assignment"). A key with __index__ is an index (_PyIndex_Check); str words it differently.
+std::size_t index_of(Obj key, std::size_t size, const char* what, const char* range_what = nullptr) {
     std::int64_t i;
-    if (is_kind(key, Kind::Instance)) i = index_value(key);       // __index__
-    else if (!as_int(key, i))
-        raise_new("TypeError", std::string(what) + " indices must be integers or slices, not " + type_of(key)->name);
+    if (!as_int(key, i)) {
+        if (!is_heap_obj(key) || type_lookup(type_of(key), intern("__index__")).is_unset()) {
+            if (std::string_view(what) == "string")
+                raise_new("TypeError", "string indices must be integers, not '" + type_of(key)->name + "'");
+            raise_new("TypeError", std::string(what) + " indices must be integers or slices, not " + type_of(key)->name);
+        }
+        i = index_value(key);
+    }
     if (i < 0) i += static_cast<std::int64_t>(size);
-    if (i < 0 || i >= static_cast<std::int64_t>(size)) raise_new("IndexError", std::string(what) + " index out of range");
+    if (i < 0 || i >= static_cast<std::int64_t>(size))
+        raise_new("IndexError", std::string(range_what != nullptr ? range_what : what) + " index out of range");
     return static_cast<std::size_t>(i);
 }
 }  // namespace
@@ -902,11 +970,13 @@ namespace {
 // PySlice_GetIndicesEx over small ints: (start, stop, step, length)
 std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length) {
     auto* s = static_cast<SliceObject*>(sl.object());
-    auto value = [](Obj v, std::int64_t dflt) {
+    auto value = [](Obj v, std::int64_t dflt) {       // _PyEval_SliceIndex
         if (v == None()) return dflt;
         std::int64_t x;
-        if (!as_int(v, x)) raise_new("TypeError", "slice indices must be integers or None or have an __index__ method");
-        return x;
+        if (as_int(v, x)) return x;
+        if (!is_heap_obj(v) || type_lookup(type_of(v), intern("__index__")).is_unset())
+            raise_new("TypeError", "slice indices must be integers or None or have an __index__ method");
+        return index_value(v);
     };
     std::int64_t step = value(s->step, 1);
     if (step == 0) raise_new("ValueError", "slice step cannot be zero");
@@ -970,6 +1040,15 @@ Ref getitem(Obj obj, Obj key) {
         each_index(key, static_cast<std::int64_t>(s->length), [&](std::size_t i) { out += s->at(i); });
         return str_from_codepoints(out);
     }
+    if (is_kind(obj, Kind::Range)) {                 // range_subscript, over small ints
+        auto* r = static_cast<Range*>(obj.object());
+        if (slice) {
+            auto [start, stop, step, n] = slice_indices(key, r->length);
+            return own(new Range(r->start + start * r->step, r->start + stop * r->step, r->step * step));
+        }
+        std::size_t i = index_of(key, static_cast<std::size_t>(r->length), "range", "range object");
+        return Ref::steal(Obj::small(r->start + static_cast<std::int64_t>(i) * r->step));
+    }
     if (is_kind(obj, Kind::Dict) && !overridden(obj, "__getitem__")) return dict_subscript(obj, key);
     bool has = false;
     Ref r = call_special(obj, "__getitem__", {key}, &has);
@@ -982,7 +1061,7 @@ void setitem(Obj obj, Obj key, Obj value) {
     if (is_kind(obj, Kind::List)) {
         if (is_kind(key, Kind::Slice)) throw NotImplemented("slice assignment to a list");
         auto& items = static_cast<List*>(obj.object())->items;
-        std::size_t i = index_of(key, items.size(), "list assignment");
+        std::size_t i = index_of(key, items.size(), "list", "list assignment");
         incref(value);
         Obj old = std::exchange(items[i], value);
         decref(old);
@@ -1008,7 +1087,32 @@ void delitem(Obj obj, Obj key) {
     }
     if (is_kind(obj, Kind::List)) {
         auto& items = static_cast<List*>(obj.object())->items;
-        std::size_t i = index_of(key, items.size(), "list assignment");
+        if (is_kind(key, Kind::Slice)) {             // list_ass_subscript with no value
+            auto [start, stop, step, n] = slice_indices(key, static_cast<std::int64_t>(items.size()));
+            if (n == 0) return;
+            if (step < 0) {                          // the same items, ascending
+                start = start + step * (n - 1);
+                step = -step;
+            }
+            std::vector<Obj> garbage;
+            std::vector<Obj> kept;
+            kept.reserve(items.size() - static_cast<std::size_t>(n));
+            for (std::int64_t i = 0, next = start, left = n; i < static_cast<std::int64_t>(items.size()); ++i) {
+                if (left > 0 && i == next) {
+                    garbage.push_back(items[static_cast<std::size_t>(i)]);
+                    next += step;
+                    --left;
+                } else {
+                    kept.push_back(items[static_cast<std::size_t>(i)]);
+                }
+            }
+            items = std::move(kept);
+            // list_ass_slice releases a contiguous run last to first; the extended loop first to last
+            if (step == 1) for (auto it = garbage.rbegin(); it != garbage.rend(); ++it) decref(*it);
+            else for (Obj v : garbage) decref(v);
+            return;
+        }
+        std::size_t i = index_of(key, items.size(), "list", "list assignment");
         Obj old = items[i];
         items.erase(items.begin() + static_cast<std::ptrdiff_t>(i));
         decref(old);
@@ -1060,7 +1164,8 @@ Ref iter(Obj obj) {
     Ref r = call_special(obj, "__iter__", {}, &has);
     if (has) {
         if (type_lookup(type_of(r.get()), intern("__next__")).is_unset() && !is_kind(r.get(), Kind::Iterator))
-            raise_new("TypeError", "iter() returned non-iterator of type '" + type_of(r.get())->name + "'");
+            raise_new("TypeError", fully_qualified_name(type_of(obj)) + ".__iter__() must return an iterator, not " +
+                                       fully_qualified_name(type_of(r.get())));
         return r;
     }
     if (!type_lookup(type_of(obj), intern("__getitem__")).is_unset()) return own(new Iterator(Iterator::SeqIt, obj));
@@ -1214,7 +1319,14 @@ void each_item(Obj mapping, F f) {
     // PyMapping_Keys: keys() made a list first, then each key's __getitem__
     Ref keys = invoke(getattr(mapping, intern("keys")).get(), {});
     std::vector<Ref> listed;
-    Ref it = iter(keys.get());
+    Ref it;
+    try {                                            // method_output_as_list
+        it = iter(keys.get());
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        raise_new("TypeError", fully_qualified_name(type_of(mapping)) + ".keys() must return an iterable, not " +
+                                   fully_qualified_name(type_of(keys.get())));
+    }
     for (Ref k = for_next(it.get()); !is_end(k); k = for_next(it.get())) listed.push_back(std::move(k));
     for (Ref& k : listed) {
         Ref v = getitem(mapping, k.get());
@@ -1327,6 +1439,20 @@ void length_hint(Obj v) {
         raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__length_hint__() must return an int, not " +
                                    fully_qualified_name(type_of(r.get())));
     if (n < 0) raise_new("ValueError", "__length_hint__() should return >= 0");
+}
+
+// LIST_EXTEND ([*x], (*x,)): iter()'s TypeError is reworded for an object with neither __iter__ nor
+// a sequence's __getitem__
+void list_extend_star(Obj list, Obj value) {
+    try {
+        list_extend(list, value);
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (is_kind(value, Kind::Iterator) || !type_lookup(type_of(value), intern("__iter__")).is_unset() ||
+            !type_lookup(type_of(value), intern("__getitem__")).is_unset())
+            throw;
+        raise_new("TypeError", "Value after * must be an iterable, not " + type_of(value)->name);
+    }
 }
 
 void list_extend(Obj list, Obj value) {

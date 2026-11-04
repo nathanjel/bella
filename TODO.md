@@ -425,8 +425,15 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              (`operator`, `ast`), a Python name spelled like a macro of the headers broke the C++
              (`ENOENT`), the harness lost a whole run to one case's timeout, and parallel builds
              could read each other's half-written source.
+           * Reviewed 2026-11-04 (G10 and eight Sonnet reviewers; `docs/reviews/review-log.md`,
+             RL-256 to RL-326; `pipeline/tests/test_review_2026_11_04.py`). Fixed among them:
+             finalisers at exit reading their globals as None, `next()` of a program's iterator,
+             `int`'s special methods, instance layout conflicts, a metaclass's `mro()`, `from pkg
+             import *`, frozenset hashed by identity. Open: RL-321 (`hash()` beyond 62 bits, big
+             ints), and `__spec__.cached` (the author's).
            * Next: the native modules, by how many cases each stops (`make compiled-corpus`): `_abc`
-             13 (strong references until 3c: no class dies before the collector exists), `_weakref`
+             13 (strong references until 3c: no class dies before the collector exists; confirmed
+             by the author 2026-11-04), `_weakref`
              5, `gc` 4, `_ast` 4, `_operator` 3, `itertools` 3; the builtins `sorted`, `enumerate`,
              `zip`, `min`, `max`; `str %`. Then start-up modules run at start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,

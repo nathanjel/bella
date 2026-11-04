@@ -74,6 +74,7 @@ Ref super_get_m(Obj self, Args a) {
     if (a.npos < 1 || a.npos > 2) raise_new("TypeError", "expected 1 or 2 arguments, got " + std::to_string(a.npos));
     SuperObject* su = su_of(self);
     Obj obj = a.pos(0);
+    if (obj == None() && (a.npos < 2 || a.pos(1) == None())) raise_new("TypeError", "__get__(None, None) is invalid");   // wrap_descr_get
     if (obj == None() || !su->obj.is_unset()) return Ref::share(self);
     return make_super(su->type, obj);
 }
@@ -119,6 +120,7 @@ Ref super_getattr(Obj self, const Str* name) {
     std::size_t i = 0;
     while (i + 1 < mro.size() && Obj::of(mro[i]) != thisclass.get()) ++i;
     for (++i; i < mro.size(); ++i) {
+        refuse_shadowed({mro[i]}, 0, name);      // a built-in base's own name the runtime lacks is no later class's
         if (const Obj* found = mro[i]->attrs.find(name)) {
             Ref res = Ref::share(*found);
             // only an instance-mode super passes its object (SF #743627)

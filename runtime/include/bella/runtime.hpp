@@ -179,6 +179,7 @@ struct PyFunction : Object {
     Ref kwdefaults;                              // a dict, or Unset
     std::vector<Ref> closure;                    // cells, in the order of co_freevars
     Ref name, qualname, doc, annotate, dict;
+    Ref module_name;                             // func.__module__ once rebound; Unset: its globals' __name__
     PyFunction(const Code* c, Ref (*e)(PyFunction*, Args), Module* m);
 };
 
@@ -278,6 +279,20 @@ inline bool is_subclass_instance(Obj v) { return v.is_object() && has_attributes
 // such an object's class overrides `name`: what its MRO finds is not the built-in's own (CPython
 // then gives the subclass a slot that calls the override: slot_mp_subscript and the others)
 bool overrides_builtin(Obj v, const char* name);
+std::vector<ClassObject*> exception_classes();
+ClassObject* new_wrapper_class(Args a, const ClassObject* type);   // tp_new_wrapper's checks
+void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, const Str* name);
+std::vector<ClassObject*>& builtin_types();      // every C++ type made at start-up
+void init_slots();                               // runtime/src/slots.cpp
+void present_as_c_types(Module* bootstrap);
+Obj cpython_doc(std::string_view name);          // a built-in module's or type's docstring (cpython_names.inc)
+bool& shutting_down();                           // finalize_modules has begun: imports fail as CPython's do
+Ref i_bella_shutting_down(Obj, Args a);
+void add_note(Obj exc, const std::string& text); // _PyErr_FormatNote
+// _PyArg_ParseTupleAndKeywords' error for a keyword it does not know, with its suggestion
+[[noreturn]] void unexpected_keyword(const std::string& who, const Str* name, std::initializer_list<const char*> known);
+Ref type_repr_of(Obj v);                         // type.__repr__ itself
+void list_extend_star(Obj list, Obj value);      // LIST_EXTEND
 // calls f with the attribute storage of an Instance or a DictInstance; false for other objects
 template <class F>
 bool with_attribute_storage(Obj v, F&& f) {
@@ -438,6 +453,8 @@ Ref builtin(const char* name);                               // the interpreter'
 // ---- operations ----
 enum class BinOp : std::uint8_t { Add, Sub, Mul, TrueDiv, FloorDiv, Mod, Pow, LShift, RShift, And, Or, Xor, MatMul };
 enum class CmpOp : std::uint8_t { Lt, Le, Eq, Ne, Gt, Ge, In, NotIn, Is, IsNot };
+Ref native_compare(CmpOp op, Obj a, Obj b);      // the C++ types' own comparison and number slots
+Ref native_binary(BinOp op, Obj a, Obj b);
 Ref binary(BinOp op, Obj a, Obj b);
 Ref inplace(BinOp op, Obj a, Obj b);
 Ref unary_neg(Obj a);
@@ -579,7 +596,7 @@ Ref str_replace_m(Obj self, Args a);
 // __file__, and whether it is a package: an __init__.py, __path__ its directory), as a source
 // file or a frozen module of CPython's; a namespace package, refused when imported; or one the
 // manifest omits, which behaves as not installed.
-enum class ModuleKind : std::uint8_t { Source, Frozen, Namespace, Omitted };
+enum class ModuleKind : std::uint8_t { Source, Frozen, Namespace, Omitted, Refused };
 struct ModuleEntry {
     const char* name;
     ModuleBody body;
@@ -624,10 +641,10 @@ struct PreludeModule {
     const char* name;
     ModuleBody body;
 };
-// Runs the program: the runtime, the prelude modules, then the main module (its file and the
-// modules compiled with it); prints an uncaught exception's traceback and returns the process's
-// exit status.
-int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, std::initializer_list<PreludeModule> prelude,
-             std::span<const ModuleEntry> modules);
+// Runs the program: the runtime, the prelude modules, then the main module (its __file__, sys.path[0]
+// and the modules compiled with it); prints an uncaught exception's traceback and returns the
+// process's exit status.
+int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
+             std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules);
 
 }  // namespace bella

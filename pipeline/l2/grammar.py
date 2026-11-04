@@ -22,6 +22,7 @@ POP_TOP). The emitter later fuses `Let` + `Release`s into calls that take their 
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from types import EllipsisType
 
@@ -496,3 +497,38 @@ class Module:
     code: Code
     source: str = field(default="<module>", compare=False)
     future: frozenset[str] = field(default=frozenset(), compare=False)
+
+
+def leaves_by(stmts: Sequence[Stmt], kind: type[Stmt]) -> bool:
+    """A statement of `kind` (Break or EndLoop) that belongs to the loop these statements are the
+    body of; a nested loop's body has its own, its `else` block is this loop's."""
+    for s in stmts:
+        if isinstance(s, kind):
+            return True
+        if isinstance(s, (If, IfEnd)) and (leaves_by(s.body, kind) or leaves_by(s.orelse, kind)):
+            return True
+        if isinstance(s, Loop) and leaves_by(s.orelse, kind):
+            return True
+        if isinstance(s, Try) and any(leaves_by(b, kind) for b in (s.body, s.orelse, s.finalbody, *(h.body for h in s.handlers))):
+            return True
+    return False
+
+
+def falls_through(stmts: Sequence[Stmt]) -> bool:
+    """Control can reach the end of these statements. Both the lowering and the emitter ask."""
+    if not stmts:
+        return True
+    last = stmts[-1]
+    if isinstance(last, (Return, Raise, Break, Continue, EndLoop)):
+        return False
+    if isinstance(last, (If, IfEnd)):
+        return falls_through(last.body) or falls_through(last.orelse)
+    if isinstance(last, Loop):
+        # a `break`, or the iterator's end and then an `else` block that falls through; a `for ...
+        # else: raise` with no `break` does not (operator.indexOf), and wf2 refuses what follows it
+        return leaves_by(last.body, Break) or (leaves_by(last.body, EndLoop) and falls_through(last.orelse))
+    if isinstance(last, Try):
+        if last.finalbody and not falls_through(last.finalbody):
+            return False
+        return (falls_through(last.body) and falls_through(last.orelse)) or any(falls_through(h.body) for h in last.handlers)
+    return True

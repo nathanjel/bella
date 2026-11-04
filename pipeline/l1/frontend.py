@@ -14,6 +14,7 @@ import sys
 import tomllib
 import warnings
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 import _ast_unparse  # type: ignore[import-not-found]  # noqa: F401  # ast.unparse imports it on first use; here, never while a program runs
@@ -654,6 +655,16 @@ def desugar_function_annotations(tree: ast.Module) -> ast.Module:
 _DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
+def _own_scope(stmts: list[ast.stmt]) -> Iterator[ast.AST]:
+    """The nodes of these statements that belong to their scope: a nested scope's body is its own."""
+    todo: list[ast.AST] = list(stmts)
+    while todo:
+        n = todo.pop()
+        yield n
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            todo.extend(ast.iter_child_nodes(n))
+
+
 def declarations(stmts: list[ast.stmt]) -> tuple[set[str], set[str]]:
     """The names a scope declares global and nonlocal: a declaration applies to the whole scope
     wherever it stands, but not to nested functions or classes (review 2026-11-01, gemini
@@ -860,7 +871,15 @@ class _ClassBodies:
                             else self.qualname(f.name))
         globals_, _ = declarations(f.body)
         params = [*f.args.posonlyargs, *f.args.args]
-        in_class = self.stack[-1][4] or self.stack[-1][0] == "class"
+        own = list(_own_scope(f.body))
+        calls_super = any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "super" and not n.args and not n.keywords for n in own)
+        if calls_super and params and any(isinstance(n, ast.Name) and n.id == params[0].arg and isinstance(n.ctx, ast.Del) for n in own):
+            # CPython's RuntimeError reads the frame's first slot; a load of it here would raise UnboundLocalError
+            raise L.Unsupported("super() in a function that deletes its first argument")
+        # a function binding __class__ itself has no such free variable: super() finds no cell
+        binds_class = any(a.arg == "__class__" for a in (*params, *f.args.kwonlyargs, f.args.vararg, f.args.kwarg) if a is not None) or \
+            any(isinstance(n, ast.Name) and n.id == "__class__" and not isinstance(n.ctx, ast.Load) for n in own)
+        in_class = (self.stack[-1][4] or self.stack[-1][0] == "class") and not binds_class
         self.stack.append(("function", f.bella_qualname, frozenset(globals_), params[0].arg if params else None, in_class))  # type: ignore[union-attr]
         f.body = self.block(f.body)
         self.stack.pop()
@@ -1605,7 +1624,9 @@ class _Comprehensions(ast.NodeTransformer):
         node.args.kw_defaults = [self.visit(d) if d is not None else None for d in node.args.kw_defaults]
         inner = _Comprehensions("function")
         node.body = inner.visit(node.body)
-        node.bella_prelude = inner.hoisted  # type: ignore[attr-defined]  # helpers, made at each call
+        # helpers, made at each call; _hoist visits a statement in a loop's body twice, and the
+        # second visit finds no comprehension left
+        node.bella_prelude = [*getattr(node, "bella_prelude", []), *inner.hoisted]  # type: ignore[attr-defined]
         return node
 
     def visit_ListComp(self, node: ast.ListComp) -> ast.AST:

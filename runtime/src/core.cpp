@@ -10,8 +10,13 @@
 namespace bella {
 
 // ---- the builtin types ----
+std::vector<ClassObject*>& builtin_types() {
+    static std::vector<ClassObject*> all;
+    return all;
+}
 ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases) {
     ClassObject* c = builtin_class(name);
+    builtin_types().push_back(c);
     c->bases = bases;
     c->mro = {c};
     for (ClassObject* b : bases)
@@ -214,8 +219,22 @@ const bool deaths_registered = register_deaths();
 }  // namespace
 
 // ---- strings ----
-Ref str_new(std::string_view utf8) { return own(new Str(std::string(utf8), false)); }
-Ref str_from_codepoints(std::u32string_view cps) { return own(new Str(cps, false)); }
+// The empty string and the one-character Latin-1 strings are one object each (unicode_empty,
+// the latin1 singletons), the literals among them too
+Ref str_new(std::string_view utf8) {
+    if (utf8.empty() || (utf8.size() == 1 && static_cast<unsigned char>(utf8[0]) < 0x80) ||
+        (utf8.size() == 2 && (static_cast<unsigned char>(utf8[0]) == 0xC2 || static_cast<unsigned char>(utf8[0]) == 0xC3)))
+        return Ref::share(Obj::of(intern(utf8)));
+    return own(new Str(std::string(utf8), false));
+}
+Ref str_from_codepoints(std::u32string_view cps) {
+    if (cps.empty() || (cps.size() == 1 && cps[0] < 0x100)) {
+        std::string utf8;
+        if (!cps.empty()) Str::append_utf8(utf8, cps[0]);
+        return Ref::share(Obj::of(intern(utf8)));
+    }
+    return own(new Str(cps, false));
+}
 const Str* as_str(Obj v) {
     if (!v.is_object() || v.object()->kind != Kind::Str) return nullptr;
     return static_cast<const Str*>(v.object());
@@ -363,12 +382,45 @@ std::int64_t hash_of(Obj v) {
                 break;
             [[fallthrough]];
         case Kind::Singleton:
+            if (o == NONE) return 0xfca86420;    // none_hash: a constant since 3.12
+            [[fallthrough]];
         case Kind::PyFunction:
         case Kind::Builtin: {
             // object.__hash__: the address rotated by 4 bits (_Py_HashPointer)
             auto p = reinterpret_cast<std::uintptr_t>(o);
             auto h = static_cast<std::int64_t>((p >> 4) | (p << 60));
             return h == -1 ? -2 : h;
+        }
+        case Kind::Set: {                        // frozenset_hash_impl; a set's __hash__ is None, below
+            auto* so = static_cast<SetObject*>(o);
+            if (!so->frozen) break;
+            auto shuffle = [](std::uint64_t h) { return ((h ^ 89869747UL) ^ (h << 16)) * 3644798167UL; };
+            std::uint64_t hash = 0;
+            for (const auto& e : so->table) hash ^= shuffle(static_cast<std::uint64_t>(e.hash));
+            if ((so->table.size() - so->fill) & 1) hash ^= shuffle(0);
+            if ((so->fill - so->used) & 1) hash ^= shuffle(static_cast<std::uint64_t>(-1));
+            hash ^= (static_cast<std::uint64_t>(so->used) + 1) * 1927868237UL;
+            hash ^= (hash >> 11) ^ (hash >> 25);
+            hash = hash * 69069U + 907133923UL;
+            if (hash == static_cast<std::uint64_t>(-1)) hash = 590923713UL;
+            return static_cast<std::int64_t>(hash);
+        }
+        case Kind::Range: {                      // range_hash: as (len, start, step), None where they do not matter
+            auto* r = static_cast<Range*>(o);
+            Ref t = tuple_new({Obj::small(r->length), r->length == 0 ? None() : Obj::small(r->start), r->length <= 1 ? None() : Obj::small(r->step)});
+            return hash_of(t.get());
+        }
+        case Kind::Slice: {                      // slice_hash: tuplehash's mixing over the three, no length
+            auto* s = static_cast<SliceObject*>(o);
+            constexpr std::uint64_t P1 = 11400714785074694791ULL, P2 = 14029467366897019727ULL, P5 = 2870177450012600261ULL;
+            std::uint64_t acc = P5;
+            for (Obj part : {s->start, s->stop, s->step}) {
+                acc += static_cast<std::uint64_t>(hash_of(part)) * P2;
+                acc = rotl(acc, 31);
+                acc *= P1;
+            }
+            if (acc == static_cast<std::uint64_t>(-1)) return 1546275796;
+            return static_cast<std::int64_t>(acc);
         }
         case Kind::Tuple: {
             // tuplehash: xxHash's mixing, as Objects/tupleobject.c
@@ -482,7 +534,7 @@ struct ExceptionClasses {
     ExceptionClasses() {
         // phase 1, step 3a: in C++ until classes compile (step 3a.2 moves them to the prelude)
         make("BaseException", nullptr, exception_fields({}));
-        for (const char* n : {"Exception", "SystemExit", "KeyboardInterrupt", "GeneratorExit"}) make(n, "BaseException");
+        for (const char* n : {"Exception", "KeyboardInterrupt", "GeneratorExit"}) make(n, "BaseException");
         for (auto [n, b] : std::initializer_list<std::pair<const char*, const char*>>{
                  {"ArithmeticError", "Exception"}, {"ZeroDivisionError", "ArithmeticError"},
                  {"OverflowError", "ArithmeticError"}, {"AssertionError", "Exception"},
@@ -499,6 +551,7 @@ struct ExceptionClasses {
             if (std::string_view(n) == "ImportError") own = exception_fields({"msg", "name", "path", "name_from"});
             make(n, b, own);
         }
+        make("SystemExit", "BaseException", exception_fields({"code"}));
     }
 };
 ExceptionClasses& exceptions() {
@@ -515,6 +568,11 @@ Ref new_exception(ClassObject* c, Ref args) {
 }  // namespace
 
 ClassObject* exception_class(const char* name) { return exceptions().by_name.at(name); }
+std::vector<ClassObject*> exception_classes() {
+    std::vector<ClassObject*> out;
+    for (auto& [n, c] : exceptions().by_name) out.push_back(c);
+    return out;
+}
 
 bool is_exception_instance(Obj v) {
     return is_kind(v, Kind::Instance) && is_subclass(v.object()->cls, exception_class("BaseException"));
@@ -581,6 +639,7 @@ Obj str_constant_cps(std::initializer_list<char32_t> cps) {
 void raise_new(const char* type, const std::string& message) {
     Ref msg = str_new(message);
     Ref exc = new_exception(exception_class(type), tuple_new({msg.get()}));
+    if (is_subclass(exception_class(type), exception_class("ImportError"))) set_exception_field(exc.get(), "msg", msg.get());
     raise(exc.get());
 }
 

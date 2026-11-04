@@ -73,6 +73,7 @@ rt::Ref module_body(rt::Module* m) {
     t6 = rt::iter(t5.get());
     t5 = Ref{};
     for (;;) {
+        frame.line = 27;
         t7 = rt::for_next(t6.get());
         if (rt::is_end(t7)) {
             t6 = Ref{};
@@ -103,6 +104,7 @@ rt::Ref module_body(rt::Module* m) {
             t17 = rt::iter(t16.get());
             t16 = Ref{};
             for (;;) {
+                frame.line = 30;
                 t18 = rt::for_next(t17.get());
                 if (rt::is_end(t18)) {
                     t17 = Ref{};
@@ -254,6 +256,7 @@ static Ref f_escape_time(rt::PyFunction* fn, rt::Args args) {
     n = Ref::share(Obj::small(0));
     frame.line = 11;
     for (;;) {
+        frame.line = 11;
         t1 = rt::load_fast(n, "n");
         t2 = rt::load_fast(limit, "limit");
         t3 = rt::compare(rt::CmpOp::Lt, t1.get(), t2.get());

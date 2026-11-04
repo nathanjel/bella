@@ -70,6 +70,7 @@ rt::Ref module_body(rt::Module* m) {
     t6 = Ref{};
     bool ended1 = false;
     for (;;) {
+        frame.line = 18;
         t8 = rt::for_next(t7.get());
         if (rt::is_end(t8)) {
             t7 = Ref{};
@@ -138,6 +139,7 @@ rt::Ref module_body(rt::Module* m) {
     frame.line = 29;
     bool ended2 = false;
     for (;;) {
+        frame.line = 29;
         t29 = rt::load_name(ns, M, S_k);
         t30 = rt::compare(rt::CmpOp::Lt, t29.get(), Obj::small(10));
         t29 = Ref{};
@@ -322,6 +324,7 @@ static Ref f_gcd(rt::PyFunction* fn, rt::Args args) {
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9;
     frame.line = 5;
     for (;;) {
+        frame.line = 5;
         t1 = rt::load_fast(b, "b");
         t2 = rt::compare(rt::CmpOp::Ne, t1.get(), Obj::small(0));
         t1 = Ref{};

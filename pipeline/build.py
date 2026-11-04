@@ -27,8 +27,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pipeline.backend.cpp import c_string, emit_module  # noqa: E402
-from pipeline.closed_world import STDLIB, ProgramModule, find_program_modules, namespace_of, omitted_modules  # noqa: E402
+from pipeline.backend.cpp import c_string, emit_module, header_macros  # noqa: E402
+from pipeline.closed_world import FROZEN, STDLIB, ProgramModule, find_program_modules, namespace_of, omitted_modules, read_source  # noqa: E402
 from pipeline.l1.frontend import lower  # noqa: E402
 from pipeline.l1.grammar import Unsupported  # noqa: E402
 from pipeline.l2 import grammar as G  # noqa: E402
@@ -59,8 +59,9 @@ def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False) ->
 
 def lowered_unit(source: str, filename: str, namespace: str) -> str:
     """to_cpp, kept under build/compiled/lowered by what decides its text: a closure's modules are
-    the same for every program that imports them, and lowering them takes seconds each time."""
-    key = _key(source.encode(), filename.encode(), namespace.encode(), *_pipeline_bytes())
+    the same for every program that imports them, and lowering them takes seconds each time. The
+    compiler's macros are part of it: they decide which names the emitter escapes."""
+    key = _key(source.encode(), filename.encode(), namespace.encode(), *_pipeline_bytes(), " ".join(sorted(header_macros())).encode())
     kept = BUILD / "lowered" / f"{namespace.replace('::', '_')}-{key}.cpp"
     if kept.exists():
         return kept.read_text(encoding="utf-8")
@@ -83,7 +84,7 @@ def _key(*parts: bytes) -> str:
 def _pipeline_bytes() -> tuple[bytes, ...]:
     """Everything that decides what a program compiles to: the compiler's own sources."""
     files = sorted((ROOT / "pipeline").rglob("*.py")) + sorted(INCLUDE.rglob("*.hpp"))
-    return tuple(f.read_bytes() for f in files if "tests" not in f.parts)
+    return tuple(f.read_bytes() for f in files if "tests" not in f.relative_to(ROOT).parts)
 
 
 def _compile(src: Path, obj: Path, flags: list[str], cxx: str, std: str) -> None:
@@ -130,8 +131,9 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
 
 
 def main_unit(main_file: Path, modules: list[ProgramModule]) -> str:
-    """main(): the runtime's start with the prelude, the main module's body and its file (its
-    __file__, whose directory is sys.path[0]), and the registry of the modules compiled with it."""
+    """main(): the runtime's start with the prelude, the main module's body, its __file__ (the
+    absolute path, a link not followed, as CPython keeps it), sys.path[0] (the directory of the
+    file a link leads to), and the registry of the modules compiled with it."""
     preludes = "\n".join(f"namespace bella::prelude_{p.stem} {{ ::bella::Ref module_body(::bella::Module* m); }}" for p, _ in PRELUDE)
     bodies = ", ".join(f"{{{c_string(name)}, ::bella::prelude_{p.stem}::module_body}}" for p, name in PRELUDE)
     decls = "\n".join(["namespace bella::m_main { ::bella::Ref module_body(::bella::Module* m); }",
@@ -146,13 +148,16 @@ def main_unit(main_file: Path, modules: list[ProgramModule]) -> str:
     known = {m.name for m in modules}
     rows = [entry(m) for m in modules]
     rows += [f"    {{{c_string(n)}, nullptr, \"\", false, ::bella::ModuleKind::Omitted}}" for n in sorted(omitted_modules() - known)]
+    # CPython finds these whatever the program's files say; one the build does not compile is refused
+    rows += [f"    {{{c_string(n)}, nullptr, \"\", false, ::bella::ModuleKind::Refused}}" for n in sorted(FROZEN - known - omitted_modules())]
     entries = ",\n".join(rows)
     table = f"static const ::bella::ModuleEntry MODULES[] = {{\n{entries}\n}};\n"
     count = len(rows)
     return ('// The main unit, compiled by Bella: the start, and the modules compiled with the program.\n'
             '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table +
             "\nint main(int argc, char** argv) {\n"
-            f"    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {c_string(str(main_file))}, {{{bodies}}},\n"
+            f"    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {c_string(os.path.abspath(main_file))},\n"
+            f"                             {c_string(str(main_file.resolve().parent))}, {{{bodies}}},\n"
             f"                             std::span<const ::bella::ModuleEntry>(MODULES, {count}));\n}}\n")
 
 
@@ -178,7 +183,7 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
     """The program's binary; `keep`: also write the main module's C++ there (the committed examples)."""
     lib = runtime_library(cxx, std)
     modules = find_program_modules(program)
-    main_cpp = to_cpp(program.read_text(encoding="utf-8"), filename, "bella::m_main")
+    main_cpp = to_cpp(read_source(program), filename, "bella::m_main")
     if keep is not None:
         keep.parent.mkdir(parents=True, exist_ok=True)
         keep.write_text(main_cpp, encoding="utf-8")
@@ -188,19 +193,19 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
             # a frozen module's code says `<frozen os>`, as CPython's does
             shown = f"<frozen {m.name}>" if m.frozen else str(m.origin or m.path)
             library = m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB)
-            units.append((lowered_unit(m.path.read_text(encoding="utf-8"), shown, namespace_of(m.name)), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS))
-    units.append((main_unit(program.resolve(), modules), f"{program.stem}-main", PROGRAM_FLAGS))
+            units.append((lowered_unit(read_source(m.path), shown, namespace_of(m.name)), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS))
+    units.append((main_unit(program, modules), f"{program.stem}-main", PROGRAM_FLAGS))
     with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
         objs = list(pool.map(lambda u: _object(u[0], u[1], cxx, std, u[2]), units))
-    key = _key(*(o.name.encode() for o in objs), lib.parent.name.encode())
+    # the runtime's debug information is most of a binary, and every program would carry a copy
+    strip = [] if os.environ.get("BELLA_KEEP_DEBUG") else ["-Wl,--strip-debug"]
+    key = _key(*(o.name.encode() for o in objs), lib.parent.name.encode(), " ".join(strip).encode())
     out = BUILD / f"{program.stem}-{key}"
     exe = out / program.stem
     if exe.exists():
         return exe
     out.mkdir(parents=True, exist_ok=True)
     tmp = str(exe) + f".{os.getpid()}.tmp"
-    # the runtime's debug information is most of a binary, and every program would carry a copy
-    strip = [] if os.environ.get("BELLA_KEEP_DEBUG") else ["-Wl,--strip-debug"]
     proc = subprocess.run([cxx, f"-std={std}", *PROGRAM_FLAGS, *strip, *map(str, objs), str(lib), "-o", tmp],
                           capture_output=True, text=True, check=False)
     if proc.returncode != 0:
@@ -235,7 +240,7 @@ def main(argv: list[str]) -> int:
         return 2
     program = Path(argv[0])
     try:
-        exe = build(program, argv[0])
+        exe = build(program, os.path.abspath(argv[0]))       # co_filename: the absolute path, as CPython 3.15 has it
     except (Unsupported, SyntaxError) as exc:
         print(f"bella: refused: {exc}", file=sys.stderr)
         return REFUSED

@@ -84,7 +84,7 @@ enum class Kind : std::uint8_t {
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
-enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3 };
+enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4 };
 
 struct Object {
     ClassObject* cls = nullptr;
@@ -499,6 +499,28 @@ inline Obj dict_pop(DictObject* d, Obj key, std::int64_t hash) {
 }
 inline Obj dict_pop(DictObject* d, Obj key) { return dict_pop(d, key, detail::key_hash(key)); }
 
+// dict_popitem: the last entry, found by its index and removed with nothing compared (lookdict_index);
+// its key and value, with their counts. The table must hold an entry and not be split.
+inline std::pair<Obj, Obj> dict_take_last(DictObject* d) {
+    std::size_t ix = d->entries.size();
+    while (d->entries[ix - 1].key.is_unset()) --ix;
+    --ix;
+    auto& e = d->entries[ix];
+    std::size_t mask = d->indices.size() - 1;
+    auto perturb = static_cast<std::uint64_t>(e.hash);
+    std::size_t i = static_cast<std::size_t>(e.hash) & mask;
+    while (d->indices[i] != static_cast<std::int64_t>(ix)) {
+        perturb >>= 5;
+        i = (i * 5 + perturb + 1) & mask;
+    }
+    d->indices[i] = detail::DKIX_DUMMY;
+    std::pair<Obj, Obj> out{std::exchange(e.key, Obj{}), std::exchange(e.value, Obj{})};
+    d->entries.resize(ix);
+    --d->used;
+    ++d->version;
+    return out;
+}
+
 // Empties d; returns its keys and values, with their counts, in insertion order.
 inline std::vector<std::pair<Obj, Obj>> dict_take_all(DictObject* d) {
     std::vector<std::pair<Obj, Obj>> out;
@@ -609,6 +631,7 @@ struct ClassObject : Object {
     // none has that of the nearest class in its MRO that does; empty, as object's: the dict alone
     // (refmodel RefClass.native)
     std::vector<const Str*> native;
+    std::size_t name_prefix = 0;                 // a type whose tp_name is dotted: __name__ is what follows the prefix
     bool native_declared = false;
     std::vector<const Str*> native_fields;
     std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
@@ -634,6 +657,11 @@ struct ClassObject : Object {
         for (ClassObject* s : subclasses) s->bump();
     }
     // type_setattro: the new value stored and the class modified before the old one is released
+    // RefClass.set_mro: a metaclass's mro(): what every lookup walks from now on, a new version as for an attribute
+    void set_mro(std::vector<ClassObject*> m) {
+        mro = std::move(m);
+        version = versions().issue();
+    }
     void set_attr(const Str* n, Obj v) {
         incref(v);
         Obj old = attrs.set(n, v);
@@ -1340,9 +1368,23 @@ namespace detail {
 // subtype_dealloc's part for an object with a class's attribute storage: the finaliser, the slots
 // of the most-derived class first, then the built-in base's clear function (its fields, the dict
 // at its place); a built-in kind's own data is the caller's to release after (RefObject.dealloc)
+// The collector's finalize_garbage for one object (RefObject.finalize): alive and named, it runs the
+// finaliser now, and its death will not run it again (PEP 442).
+template <class T>
+inline void finalize_once(T* obj) {
+    if (obj->flags & FINALIZED) return;
+    obj->flags |= FINALIZED;
+    if (auto fin = obj->cls->lookup(intern("__del__"))) {
+        Ref fn = Ref::share(fin->first);
+        if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));
+        else decref(call(fn.get(), {Obj::of(obj)}));
+    }
+}
+
 template <class T>
 inline void release_attributes(T* obj) {
-    if (auto fin = obj->cls->lookup(intern("__del__"))) {
+    auto fin = (obj->flags & FINALIZED) ? std::nullopt : obj->cls->lookup(intern("__del__"));
+    if (fin) {
         obj->refs = 1;                          // held by the finaliser's call, so it cannot die again
         Ref fn = Ref::share(fin->first);
         if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));

@@ -336,6 +336,11 @@ class RefClass:
             if n in self.slot_fields or n in self.promoted:
                 raise ValueError(f"{n!r} is a field of a built-in base")
 
+    def set_mro(self, mro: list[RefClass]) -> None:
+        """A metaclass's mro() (mro_internal): every lookup walks it, under a new version."""
+        self.mro = tuple(mro)
+        self.version = VERSIONS.issue()
+
     def _own_slot_names(self) -> tuple[str, ...]:
         return tuple(s for s in (self.slots or ()) if s != "__dict__")
 
@@ -426,10 +431,21 @@ class RefObject:
         self.exposed = False
         self.refs = 0
         self.alive = True
+        self.finalized = False              # PEP 442: its finaliser has run (finalize, or dealloc)
         self.tag = tag                      # a tagged object's death is logged (the oracle compares the logs)
         self.heap = cls.heap
         # a built-in base's own data: a dict subclass's instance is a dict (its entries here)
         self.payload: RefDict | None = RefDict() if "__payload__" in cls.native else None
+
+    def finalize(self) -> None:
+        """PEP 442: a finaliser runs once, whether the object's last count went or the collector
+        (at exit, the modules' objects while the namespaces are whole) ran it first."""
+        if self.finalized:
+            return
+        self.finalized = True
+        fin = self.cls.lookup("__del__")
+        if fin is not None:
+            fin[0](self)
 
     def dealloc(self) -> None:
         """subtype_dealloc's order: the finaliser, the __slots__ of the most-derived class first
@@ -437,9 +453,7 @@ class RefObject:
         function (BaseException_clear: the dict, args, the traceback, the cause, the context), in
         which the dict means the __dict__-backed values in the class's shared-keys order, or the
         dict's release once it is an object of its own (measured on 3.15.2)."""
-        fin = self.cls.lookup("__del__")
-        if fin is not None:
-            fin[0](self)
+        self.finalize()
         self.alive = False
         if self.tag is not None:
             self.heap.deaths.append(self.tag)

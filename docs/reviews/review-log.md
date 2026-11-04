@@ -7,20 +7,22 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-03:** 255 findings from nineteen reviews and one round of examples: 216 fixed (most in commit
+**Status on 2026-11-04:** 326 findings from twenty-one reviews and one round of examples: 277 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators), 21 already done before or
-because of the review, 4 planned (D-2 and D-10, accepted by the author), 3 deferred (RL-222 to step 3c), 4 refuted
-and 5 checked with no issue. Open: RL-225 (lines inside a statement) and RL-254 (a member's type). The
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 61 of RL-256 to RL-326 after the reviews of compiled imports), 21 already done before or
+because of the review, 4 planned (D-2 and D-10, accepted by the author), 4 deferred (RL-222 and RL-323 to step 3c), 4 refuted
+5 checked with no issue, and 7 accepted, refused or not defects (RL-269, RL-275, RL-284, RL-285, RL-289, RL-319, RL-326). Open: RL-225 (lines inside a statement), RL-254 (a member's type), RL-277 (a SyntaxError class) and RL-321 (big ints). The
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, and D-12 on 2026-11-03.
 
 ## Reviews received
 
 | Date | Reviewer | File | Scope | Ran against |
 | --- | --- | --- | --- | --- |
+| 2026-11-04 | gemini-4-argon-high (G10) | [2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md](2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md) | compiled super(), metaclasses, int/dict subclasses, imports and build caches, `e827a47..62d083b` | CPython 3.15.2, GCC 16.2.1 |
+| 2026-11-04 | eight Sonnet reviewers, one per focus area (S1), in place of astra-low, whose run failed | [2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md](2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-03 | astra-low (A10) | [2026-11-03-astra-low-10-traceback-dictionary-review.md](2026-11-03-astra-low-10-traceback-dictionary-review.md) | D-12 part 1, step 3a.3's dict, the operators and argument errors, `f12af86..e827a47` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-03 | gemini-4-argon-high (G9) | [2026-11-03-09-gemini-4-argon-high-tracebacks-dict-operators.md](2026-11-03-09-gemini-4-argon-high-tracebacks-dict-operators.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-03 | astra-low (A9) | [2026-11-03-astra-low-09-compiled-classes-review.md](2026-11-03-astra-low-09-compiled-classes-review.md) | the C++ emitter, the runtime core and compiled classes, `d28b256..f12af86` | CPython 3.15.2, GCC 16.2.1 |
@@ -474,7 +476,89 @@ Fixing them found RL-248 to RL-255.
 | RL-254 | Found while fixing RL-230 | `BaseException.__dict__['__suppress_context__']` presents as a `getset_descriptor`; CPython's is a `member_descriptor` | Confirmed | Open | Behaves as CPython's member; only its type differs. The runtime's `member_descriptor` has no methods yet (RL-251); `docs/emitter.md` section 5 |
 | RL-255 | Found while documenting RL-230 | A store to a field CPython's exception has and the runtime does not (`StopIteration(5).value = 6`) went into the instance `__dict__`; reading it was already refused | Confirmed | Fixed | `refuse_absent_data_descriptor`: a store or delete of a name no class of the runtime has, where CPython's built-in base has a member or getset (the names table), is refused as the read is. Test `test_stores_to_fields_cpython_has_are_refused` |
 
+### Compiled imports, super, metaclasses (G10, S1)
+
+G10's five findings all reproduce, and three of them were found again by S1. S1, eight Sonnet reviewers with a focus area each, did not see G10's report. Every finding was written as a program and compared with CPython 3.15.2 before anything changed (`pipeline/tests/test_review_2026_11_04.py`, 113 programs at that point, 103 differing); two of those programs were themselves wrong, using computed import names that spec section 8 keeps out of the closed world, and were rewritten. G10's labels RL-256 to RL-260 are kept. The worst of the round was introduced by this round's own range: RL-281, finalisers at exit reading their globals as None. RL-324, `next()` refusing every iterator class of a program's, was found only because a fix went near it.
+
+| ID | Source | Finding | Verdict | Status | Evidence and resolution |
+| --- | --- | --- | --- | --- | --- |
+| RL-256 | G10 2.1, S1 closure, bootstrap, imports | `from pkg import *` never compiled the submodules `__all__` names, so the import ended in AttributeError (a wrong exit status, not a refusal) | Confirmed | Fixed | `closed_world.star`: the names of a literal `__all__` (`=`, `+=`, `extend`, `append`, `insert`); a computed one takes every submodule the package has. `__import__(..., fromlist=['*'])` too |
+| RL-257 | G10 2.2, S1 closure | A dotted frozen name (`importlib.machinery`) went to the program's file; FrozenImporter takes it whatever the parent's path says | Confirmed | Fixed | Such a name never searches the program's directory. One the build does not compile is refused by name (`ModuleKind::Refused`), which also answers `import __hello__` (S1 bootstrap's suspicion) |
+| RL-258 | G10 2.3, S1 closure | `from importlib import import_module` and `import importlib as il` were not recognised by the scanner | Confirmed; not visible yet, since `importlib` itself is refused | Fixed | `_called_import`: any `import_module` by name or attribute with a literal name, and a relative name with a literal or `__package__` anchor |
+| RL-259 | G10 2.4, S1 closure | `BELLA_KEEP_DEBUG` was not in the link key, so the stripped binary came back | Confirmed | Fixed | The strip flag is in the key. `test_build_cache_keys` |
+| RL-260 | G10 2.5, S1 lowering | Two `_falls_through`, which disagreed on loops | Confirmed; only unreachable C++ came of it | Fixed | One definition, `pipeline/l2/grammar.py` `falls_through` |
+| RL-261 | S1 closure | `__import__` with `fromlist=`, `level=`, and `builtins.__import__` loaded modules the scanner never saw | Confirmed | Fixed | `_called_import` reads them, by position and by keyword |
+| RL-262 | S1 closure | A directory with no `__init__.py` named like a standard-library module (`types/`, `logging/`) made the program refuse; a regular module on a later path entry wins over a namespace package | Confirmed | Fixed | `_regular_in_stdlib` |
+| RL-263 | S1 closure | A PEP 263 cookie crashed the build with a Python traceback; a BOM was refused | Confirmed | Fixed | `read_source` uses `decode_source`; undecodable bytes are the build's refusal. `test_source_encodings` |
+| RL-264 | S1 closure | A program given by a relative path had that relative path in its frames; 3.15's `co_filename` is absolute | Confirmed | Fixed | `build.py`'s command line passes the absolute path. `test_paths_as_cpython_keeps_them` |
+| RL-265 | S1 closure | `_pipeline_bytes` tested the absolute path for a `tests` part: a checkout under a directory of that name had an empty compiler key | Confirmed by the reviewer's copies and by reading | Fixed | Tested relative to the repository |
+| RL-266 | S1 closure | The lowered-unit key left out what `header_macros()` depends on, so another `CXXSTD` reused text that no longer compiled | Confirmed | Fixed | The macro names are in the key |
+| RL-267 | S1 closure | `_forget_previous` deleted the binary built under another spelling of the same path | Confirmed | Fixed by RL-264 | Both spellings now build one binary. A rebuild under another compiler still replaces the old one, which is that function's purpose |
+| RL-268 | S1 closure | A symlinked program's `__file__` was the link's target | Confirmed | Fixed | `run_main` takes `__file__` (the link) and `sys.path[0]` (the target's directory) apart |
+| RL-269 | S1 closure | A reachable module with a SyntaxError refuses the whole build, where CPython raises at the import | Confirmed | Accepted | A clean refusal (exit 70) under decision P-1; no wrong answer |
+| RL-270 | S1 bootstrap, imports | `m.__dict__ = ...` and `m.__class__ = ...` on a module wrote ordinary entries into its namespace | Confirmed | Fixed | `readonly attribute`, and `object_set_class`'s two messages; a ModuleType subclass stays [P2+] |
+| RL-271 | S1 bootstrap | ImportErrors the runtime raises had `.msg` None | Confirmed | Fixed | `raise_new` sets it for ImportError and its subclasses |
+| RL-272 | S1 bootstrap, imports | `sys.__doc__`, `builtins.__doc__` and `type(sys).__doc__` read object's docstring or None | Confirmed | Fixed | A generated docstring table (`tools/cpython_names.py`, checked by `make verify`) gives these and every built-in type its own, so `int.__doc__` and `(5).__doc__` are CPython's. `sys` and `builtins` start with the five names CPython's do; the rest of their namespaces follow as they fill |
+| RL-273 | S1 bootstrap | `types.SimpleNamespace`: `'SimpleNamespace'` for `'types.SimpleNamespace'` in messages, a writable `__dict__`, several argument errors | Confirmed | Fixed | `ClassObject::name_prefix` (a dotted tp_name, as C types have); a read-only member; the checks a C method's descriptor makes |
+| RL-274 | S1 bootstrap | `SourceFileLoader` had no bases, and a `load_module` that 3.15 removed | Confirmed | Fixed | `_LoaderBasics`, `SourceLoader`, `FileLoader`, `SourceFileLoader` as `_bootstrap_external` has them, their functions' `__module__` included (RL-325) |
+| RL-275 | S1 bootstrap | `__package__` differing from `__spec__.parent` is refused where CPython warns | Confirmed | Accepted | A clean refusal: the DeprecationWarning shows in `__main__` and the warnings machinery is not there yet |
+| RL-276 | S1 lazy | `__lazy_import__` at module level with another globals dict was refused | Confirmed | Fixed | CPython asks only whether the calling frame is at module level |
+| RL-277 | S1 lazy | `__lazy_import__` in a function is refused where CPython raises SyntaxError | Confirmed | Open | Known gap (`docs/emitter.md` section 5): the runtime has no SyntaxError class yet |
+| RL-278 | S1 lazy | `lazy_import.resolve(1)`: the wrong TypeError text | Confirmed | Fixed | METH_NOARGS's message |
+| RL-279 | S1 lazy | `lazy_import` had no docstring, and `lz.resolve.__doc__` was object's | Confirmed | Fixed | The type's from the table. A built-in method's docstring is now refused by name, not answered by object's (RL-310's rule). The order of the type's `__dict__` is not CPython's: no program reaches it but by listing it |
+| RL-280 | S1 lazy | `[].append = 1` and `(1).real = 1`: the wrong AttributeError; `del [].append` refused | Confirmed | Fixed | `_PyObject_GenericSetAttrWithDict`'s three messages, from what the names table says the attribute is |
+| RL-281 | S1 imports | At exit a `__del__` read its own globals as None, because the runtime cleared namespaces in order; CPython's collector runs every finaliser with them whole | Confirmed; introduced by `3baa30e` | Fixed | Model first (`RefObject.finalize`: a finaliser runs once). `clear_modules` does `finalize_modules`' steps: sys's special names, `sys.modules` emptied, then every finaliser reachable from the namespaces, then the clearing. The walk stands in for the collector until step 3c. An import from a finaliser fails with CPython's message |
+| RL-282 | S1 imports | `sys.exit(obj)` whose `__str__` raises aborted the process (exit 134) | Confirmed | Fixed | `exit_status` as `_Py_HandleSystemExitAndKeyboardInterrupt`: the error is dropped, the status is 1 |
+| RL-283 | S1 imports | `SystemExit.code` refused, and the status read from `args` | Confirmed | Fixed | A native field as `SystemExit_init` sets it; the status is the `code` attribute, a subclass's too |
+| RL-284 | S1 imports | A package's `__path__` extended at run time, or a module `__getattr__` answering for `__path__`, finds nothing new | Confirmed | Not a defect | Spec section 8: nothing outside the closed world can be imported, and the answer is ModuleNotFoundError |
+| RL-285 | S1 imports | `__package__ = 'x'` in `__main__`, then a relative import | Confirmed | Not a defect | A computed import, outside the closed world (spec section 8), until the policy's registry exists |
+| RL-286 | S1 imports | `import *` with a bad `__all__` read it by subscripting; `range(3)[0]` itself raised TypeError | Confirmed | Fixed | PySequence_GetItem's messages. `range` indexes and slices, with `start`, `stop`, `step`, `index`, `count` |
+| RL-287 | S1 imports | `__import__('pkg..sub')` and `('pkg.sub.')` loaded `pkg/__init__.py` under a wrong name | Confirmed | Fixed | `find` takes no name with an empty part |
+| RL-288 | S1 imports | `module('a', name='b')` and `module(nme='n')`: the wrong errors | Confirmed | Fixed | `_PyArg_UnpackKeywords`' order |
+| RL-289 | S1 imports | The order of finalisers at exit differs after an uncaught exception | Confirmed | Not a defect | D-07: unspecified |
+| RL-290 | S1 lowering | A `try` whose body cannot complete, with an `else`, failed well-formedness on a valid program | Confirmed; from before this range | Fixed | The `else` is dropped as CPython drops it; `falls_through` is exact for it |
+| RL-291 | S1 lowering | A variable named `match` read in an `except` body broke the C++ | Confirmed | Fixed | The emitter's flag goes through `aux()` |
+| RL-292 | S1 lowering | `contract_assert`, a C++26 keyword, was not escaped | Confirmed | Fixed | In `_KEYWORDS` |
+| RL-293 | S1 lowering | From the second iteration a `while` test's or `__next__`'s traceback line was the body's last | Confirmed | Fixed | `again_at`: the loop says its line each time round |
+| RL-294 | S1 strs | `find`, `startswith` and `count` copied the whole string on each call: a scanning loop was quadratic (67 s where CPython takes 0.03 s) | Confirmed; slow, not wrong | Fixed | `find`, `rfind`, `index`, `rindex`, `count`, `startswith`, `endswith` read the string in place. The search stays naive, O(n*m) |
+| RL-295 | S1 strs | `'a'.find(None)`: `not NoneType` where CPython says `not None` | Confirmed | Fixed | `_PyArg_BadArgument` |
+| RL-296 | S1 strs | `__index__` returning a non-int: 3.14's wording; a slice ignored `__index__` altogether | Confirmed | Fixed | `%T.__index__() must return an int, not %T`, and `_PyEval_SliceIndex`. A strict subclass of int returned is refused (a DeprecationWarning in CPython) |
+| RL-297 | S1 strs | The empty string and one-character Latin-1 strings were not one object; `split` with `maxsplit=0` returned the receiver | Confirmed | Fixed | `str_new` and `str_from_codepoints` share them, as the literals are; a split's tail is a new string |
+| RL-298 | S1 remediation | `dict.popitem` looked its key up again, so an `__eq__` could remove the wrong entry | Confirmed | Fixed | `dict_take_last`: by index, nothing compared, as `lookdict_index`. The model never compared |
+| RL-299 | S1 remediation | `x in C.__dict__` and `x in iterator` raised TypeError | Confirmed | Fixed | PySequence_Contains for every kind; a mappingproxy hashes its key first |
+| RL-300 | S1 remediation | A set used as a key of `in`, `remove`, `discard` raised TypeError | Confirmed | Fixed | `with_set_key`: looked for as a frozenset, as `set_contains` does |
+| RL-301 | S1 remediation | A comprehension in a lambda in a loop: NameError | Confirmed | Fixed | `_hoist` visits such a statement twice; the second visit overwrote the lambda's prelude |
+| RL-302 | S1 remediation | `del l[:1]` raised a nonsense TypeError | Confirmed | Fixed | `list_ass_subscript`, in its two orders of release; `list indices must be...` for a bad key |
+| RL-303 | S1 remediation | Too many positional arguments was reported before a bad keyword | Confirmed | Fixed | `initialize_locals`' order |
+| RL-304 | S1 remediation | `T.__new__(X)` skipped tp_new_wrapper's checks for most types; `list.__new__(list)` failed | Confirmed | Fixed | `new_wrapper_class` is tp_new_wrapper whole; each exception type CPython gives a `__new__` has its own; list, tuple, str and bool have theirs |
+| RL-305 | S1 remediation | `AttributeError(name=, obj=)`, `NameError(name=)` rejected keywords | Confirmed | Fixed | `AttributeError_init`, `NameError_init`; an unknown keyword gets CPython's message and suggestion (`unexpected_keyword`, Python/suggestions.c) |
+| RL-306 | S1 remediation | `__bool__ = None` and `__next__ = None` gave the wrong TypeErrors | Confirmed | Fixed | `slot_nb_bool`; `builtin_next`, see RL-324 |
+| RL-307 | S1 remediation | Six wordings: `[*x]`, `''.join(x)`, `[1][obj]`, an `__iter__` returning a non-iterator, `keys()` returning a non-iterable, `dict(x)` with `__getattr__ = None` | Confirmed | Fixed | Each as CPython 3.15's source has it |
+| RL-308 | S1 remediation | A class whose `__module__` is not a str: the report said `E`, not `<unknown>.E` | Confirmed | Fixed |  |
+| RL-309 | S1 classes | `type.__repr__` called the metaclass's `__repr__`, so `super().__repr__()` in one recursed for ever | Confirmed | Fixed | `type_repr_of` |
+| RL-310 | S1 classes | `int` had no special methods of its own: `(5).__repr__()` and `super().__repr__()` were object's | Confirmed | Fixed | `runtime/src/slots.cpp`: int's, bool's, dict's, and those of str, list, tuple, set, frozenset, range, slice, None. `refuse_shadowed`: a name CPython's type has of its own, found on a later class here, is refused where it is read |
+| RL-311 | S1 classes | `__iadd__`, `__imul__`, `__ior__` of an int or dict subclass were ignored | Confirmed | Fixed |  |
+| RL-312 | S1 classes | `'ab' * K(2)` rejected an int subclass; `range(3)[K(1)]` too | Confirmed | Fixed |  |
+| RL-313 | S1 classes | A mixin after the built-in base overrode the built-in's own methods | Confirmed | Fixed | `overrides_builtin` walks the MRO: the built-in's slot wins over what follows it |
+| RL-314 | S1 classes | A metaclass's `mro()` was ignored | Confirmed | Fixed | Model first (`RefClass.set_mro`). `mro_invoke` and `mro_check` |
+| RL-315 | S1 classes | No instance layout conflict: `class J(E, F)` of int and dict subclasses was made, and failed later | Confirmed | Fixed | `best_base`; `solid_base` as `shape_differs`, so exception types without fields of their own do not conflict |
+| RL-316 | S1 classes | `set(d)`, `{*d}`, `dict.fromkeys(d)` bypassed a dict subclass's `__iter__` | Confirmed | Fixed | PyDict_CheckExact, as CPython |
+| RL-317 | S1 classes | `type(name, bases, ns)` set no `__module__` | Confirmed | Fixed | `type_new_set_module`, from the calling frame |
+| RL-318 | S1 classes | A local or parameter named `__class__` with `super()` crashed the compiler | Confirmed | Fixed | The function has no such cell: RuntimeError at run time, as CPython |
+| RL-319 | S1 classes | `del self` then `super()`: UnboundLocalError for RuntimeError | Confirmed | Refused | At build, by name: the load of a deleted local has no way to say so yet |
+| RL-320 | S1 classes | Thirteen small differences | Twelve confirmed; `build_class()` in a message not reproduced, `__build_class__` being refused by name | Fixed | `__init_subclass__`'s and `type()`'s messages, `__set_name__`'s note, MRO conflict names (`set_mro_error`), `__get__(None, None)`, a NUL in a type's name, `__index__` on a metaclass, `del int.real`, `repr(slice)` |
+| RL-321 | Found while fixing RL-300 | `hash()` of a value beyond the immediates (62 bits and a sign, about half of all str and tuple hashes) returns a truncated number | Confirmed; from before this range | Open | Needs big ints. See *Open for discussion* |
+| RL-322 | Found while fixing RL-300 | `frozenset`, `range` and `slice` hashed by identity, so two equal frozensets missed each other in a dict; `hash(None)` was an address | Confirmed | Fixed | `frozenset_hash_impl`, `range_hash`, `slice_hash`, `none_hash` |
+| RL-323 | Split from RL-274 | No class has `__weakref__` in its `__dict__`, so `list(vars(C))` differs from CPython's | Confirmed | Deferred to 3c | With weak references |
+| RL-324 | Found while fixing RL-306 | `next(obj)` raised TypeError for every iterator class of a program's | Confirmed | Fixed | `builtin_next`, a StopIteration's value kept |
+| RL-325 | Found while fixing RL-274 | A function's `__module__` could not be set or deleted, which `functools.wraps` does | Confirmed | Fixed |  |
+| RL-326 | Found while fixing RL-281 | A finaliser at exit that makes a new object with a finaliser: CPython's collector then treats the group as resurrected and never finalises it; here it dies with the namespaces | Confirmed | Not a defect | D-07; to look at again with the collector in 3c |
+
 ## Open for discussion
+
+**RL-321 `hash()` beyond the immediates (2026-11-04).** `Obj` holds 63-bit integers, and a hash is 64 bits, so `hash(x)` loses its top bit for about half of all str and tuple hashes. Inside the runtime this hardly shows: the table uses the low bits first, and a truncated `__hash__` agrees with itself. A program sees it when it prints a hash, or under a fixed `PYTHONHASHSEED` compares one with CPython's (D-14). It is an approximation, which the project's rules do not allow. The rule's answer, refusing, would stop every program whose `__hash__` calls `hash()` about half the time, at random under hash randomisation. Recommendation: keep it for now and do the `bn` port earlier than planned, which ends this and the refusals of big ints together. The author's to decide.
+
+**`__spec__.cached` and `sys.implementation.cache_tag` (2026-11-04).** The author decided the implementation stays `bella`, and that programs should know. `__spec__.cached` names a `cpython-315` `.pyc` that never exists. Nothing in the standard library opens it or decides anything by it: `runpy` passes it on, `python -m inspect --details` prints it, `ModuleSpec.__eq__` compares it. Recommendation: `sys.implementation.cache_tag = None` and `__spec__.cached = None`, CPython's own answer for an implementation without a bytecode cache (run on 3.15.2), with D-16 extended to say so. The author's to decide.
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
 recommended (design section 3, `docs/drafts/object.hpp.draft`, `refmodel/objects.py`, case
@@ -678,5 +762,5 @@ exceptions the runtime raises and catches inside itself):
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-256` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-327` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

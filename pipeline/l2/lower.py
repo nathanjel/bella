@@ -76,6 +76,11 @@ class _Code:
             self.line = line
             self.emit(G.Line(line))
 
+    def again_at(self, line: int) -> None:
+        """A point reached again from later lines: it says its line even if the code above did."""
+        self.line = 0
+        self.at(line)
+
     def ref(self, name: str, ctx: str = "load") -> G.NameRef:
         return self.scopes.ref(self.scope, name, ctx)
 
@@ -125,7 +130,7 @@ class _Code:
             params = tuple(G.Param(p.name, p.kind, p.public) for p in node.params)
             doc = node.docstring
             self.block(node.body)
-            if _falls_through(self.out):
+            if G.falls_through(self.out):
                 self.emit(G.Return(G.Const(None)))
             name = node.name
         return G.Code(
@@ -174,7 +179,7 @@ class _Code:
 
     def block(self, stmts: tuple[L.Stmt, ...]) -> None:
         for st in stmts:
-            if self.out and not _falls_through(self.out):
+            if self.out and not G.falls_through(self.out):
                 # unreachable: CPython compiles it and drops the code; its names were resolved
                 # with the rest, so only the statements go (review 2026-11-02, A8-9)
                 break
@@ -199,6 +204,7 @@ class _Code:
                 self.emit(G.If(t, self.sub(body), self.sub(orelse)))
             case L.While(test=test, body=body, orelse=orelse):
                 self.capture()
+                self.again_at(st.line)                    # each test runs at the `while` line
                 t = self.test(test)
                 self.emit(G.If(t, self.sub(body), (G.EndLoop(),)))
                 loop_body = self.captured()
@@ -207,6 +213,7 @@ class _Code:
                 source = self.expr(iterable)
                 it = source if iterator and isinstance(source, G.Temp) else self.let(G.Iter(source))
                 self.capture()
+                self.again_at(st.line)                    # each __next__ runs at the `for` line
                 v = self.let(G.ForNext(it))
                 self.capture()
                 self.assign(target, v)
@@ -232,6 +239,7 @@ class _Code:
                 c = self.expr(cause) if cause is not None else None
                 self.emit(G.Raise(e, c, cause is not None))
             case L.Try(body=body, handlers=handlers, orelse=orelse, finalbody=finalbody):
+                tried = self.sub(body)
                 lowered = []
                 for h in handlers:
                     self.capture()
@@ -243,7 +251,10 @@ class _Code:
                     match_ = self.captured()
                     name = self.ref(h.name, "store") if h.name is not None else None
                     lowered.append(G.Handler(match_, ty if isinstance(ty, G.Temp) else None, name, self.sub(h.body)))
-                self.emit(G.Try(self.sub(body), tuple(lowered), self.sub(orelse), self.sub(finalbody)))
+                # a body that never completes never reaches its `else` (CPython compiles it and
+                # drops the code, as for any statement after a return)
+                otherwise = self.sub(orelse) if G.falls_through(tried) else ()
+                self.emit(G.Try(tried, tuple(lowered), otherwise, self.sub(finalbody)))
             case L.Delete(targets=targets):
                 for tgt in targets:
                     self.delete(tgt)
@@ -521,41 +532,6 @@ class _Code:
                     flush()
         flush()
         return result if result is not None else self.let(G.BuildMap((), ()))
-
-
-def _leaves_by(stmts: list[G.Stmt], kind: type[G.Stmt]) -> bool:
-    """A statement of `kind` (Break or EndLoop) that belongs to the loop these statements are the
-    body of; a nested loop's body has its own, its `else` block is this loop's."""
-    for s in stmts:
-        if isinstance(s, kind):
-            return True
-        if isinstance(s, (G.If, G.IfEnd)) and (_leaves_by(list(s.body), kind) or _leaves_by(list(s.orelse), kind)):
-            return True
-        if isinstance(s, G.Loop) and _leaves_by(list(s.orelse), kind):
-            return True
-        if isinstance(s, G.Try) and any(_leaves_by(list(b), kind) for b in (s.body, s.orelse, s.finalbody, *(h.body for h in s.handlers))):
-            return True
-    return False
-
-
-def _falls_through(stmts: list[G.Stmt]) -> bool:
-    if not stmts:
-        return True
-    last = stmts[-1]
-    if isinstance(last, (G.Return, G.Raise, G.Break, G.Continue, G.EndLoop)):
-        return False
-    if isinstance(last, (G.If, G.IfEnd)):
-        return _falls_through(list(last.body)) or _falls_through(list(last.orelse))
-    if isinstance(last, G.Loop):
-        # a `break`, or the iterator's end and then an `else` block that falls through; a `for ...
-        # else: raise` with no `break` does not (operator.indexOf), and wf2 refuses what follows it
-        return _leaves_by(list(last.body), G.Break) or \
-            (_leaves_by(list(last.body), G.EndLoop) and _falls_through(list(last.orelse)))
-    if isinstance(last, G.Try):
-        if last.finalbody and not _falls_through(list(last.finalbody)):
-            return False
-        return (_falls_through([*last.body, *last.orelse]) or any(_falls_through(list(h.body)) for h in last.handlers))
-    return True
 
 
 @register(PassSpec(

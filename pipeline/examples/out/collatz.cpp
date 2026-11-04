@@ -56,6 +56,7 @@ rt::Ref module_body(rt::Module* m) {
     t5 = rt::iter(t4.get());
     t4 = Ref{};
     for (;;) {
+        frame.line = 17;
         t6 = rt::for_next(t5.get());
         if (rt::is_end(t6)) {
             t5 = Ref{};
@@ -171,6 +172,7 @@ static Ref f_steps(rt::PyFunction* fn, rt::Args args) {
     count = Ref::share(Obj::small(0));
     frame.line = 6;
     for (;;) {
+        frame.line = 6;
         t1 = rt::load_fast(n, "n");
         t2 = rt::compare(rt::CmpOp::Ne, t1.get(), Obj::small(1));
         t1 = Ref{};

@@ -226,6 +226,8 @@ Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_p
     positional_only(a, "_bella_find", 1, 1);
     const Str* name = as_str(a.pos(0));
     auto it = registry().find(name->text);
+    if (it != registry().end() && it->second.kind == ModuleKind::Refused)   // frozen in CPython: found whatever the path says
+        throw NotImplemented("importing '" + name->text + "' (a frozen module of CPython's the build does not compile: step 3b)");
     if (it == registry().end()) {
         if (is_stdlib_name(a.pos(0)))
             throw NotImplemented("importing '" + name->text + "' (the standard library: step 3b)");
@@ -336,6 +338,11 @@ Ref i_bella_import_warning(Obj, Args a) {        // _warnings.warn(msg, ImportWa
     import_warning(as_str(a.pos(0))->text);
     return none_ref();
 }
+bool& shutting_down() {
+    static bool down = false;
+    return down;
+}
+Ref i_bella_shutting_down(Obj, Args) { return Ref::steal(boolean(shutting_down())); }
 Ref i_bella_refuse(Obj, Args a) {                // a facility phase 1 lacks, where it would run
     positional_only(a, "_bella_refuse", 1, 1);
     throw NotImplemented(as_str(a.pos(0))->text);
@@ -503,7 +510,12 @@ void import_star(Obj v, Obj locals) {
         Ref name;
         try {
             Ref index = Ref::steal(Obj::small(pos));
-            name = getitem(all.get(), index.get());   // PySequence_GetItem
+            Obj seq = all.get();                 // PySequence_GetItem: a sequence's item, nothing else's
+            if (is_kind(seq, Kind::Dict)) raise_new("TypeError", "dict is not a sequence");
+            if (as_str(seq) == nullptr && !is_kind(seq, Kind::List) && !is_kind(seq, Kind::Tuple) && !is_kind(seq, Kind::Range) &&
+                (is_kind(seq, Kind::Set) || type_lookup(type_of(seq), N("__getitem__")).is_unset()))
+                raise_new("TypeError", "'" + type_of(seq)->name + "' object does not support indexing");
+            name = getitem(seq, index.get());
         } catch (const PyError& e) {
             if (!isinstance(e.exc.get(), exception_class("IndexError"))) throw;
             break;
@@ -797,7 +809,7 @@ Ref lazy_import_module_level(Obj name, Obj builtins, Obj globals, Obj fromlist, 
     if (level < 0) raise_new("ValueError", "level must be >= 0");
     Ref abs_name = absolute_name(name, globals, level);
     detail::FrameRecord* frame = detail::current_frame();
-    if (frame == nullptr || std::string_view(frame->code->name) != "<module>" || globals != Obj::of(frame->module->dict))
+    if (frame == nullptr || std::string_view(frame->code->name) != "<module>")   // f_globals != f_locals: the frame's, not the argument's
         throw NotImplemented("the SyntaxError \"'lazy import' is only allowed at module level\" (SyntaxError: step 3b)");
     Ref list = fromlist.is_unset() ? none_ref() : as_str(fromlist) != nullptr ? tuple_new({fromlist}) : Ref::share(fromlist);
     if (is_kind(list.get(), Kind::Tuple))        // the entire fromlist, before registering any pending imports
@@ -976,7 +988,8 @@ Ref lazy_repr_m(Obj self, Args a) {
     return str_new("<lazy_import '" + lazy_name(as_lazy(self)) + "'>");
 }
 Ref lazy_resolve_m(Obj self, Args a) {           // lazy_import.resolve(): METH_NOARGS
-    positional_only(a, "resolve", 0, 0);
+    if (a.nkw != 0) raise_new("TypeError", "lazy_import.resolve() takes no keyword arguments");
+    if (a.npos != 0) raise_new("TypeError", "lazy_import.resolve() takes no arguments (" + std::to_string(a.npos) + " given)");
     return lazy_resolve_impl(self, nullptr);
 }
 Ref lazy_new_m(Obj, Args) { raise_new("TypeError", "cannot create 'lazy_import' instances"); }
@@ -1142,12 +1155,19 @@ Ref module_init_m(Obj self, Args a) {            // module___init___impl: module
     if (a.npos > 2) raise_new("TypeError", "module() takes at most 2 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
     if (a.npos >= 1) name = a.pos(0);
     if (a.npos >= 2) doc = a.pos(1);
-    for (std::size_t k = 0; k < a.nkw; ++k) {
+    const Str* unknown = nullptr;
+    for (std::size_t k = 0; k < a.nkw; ++k) {    // _PyArg_UnpackKeywords: by name and position, then missing, then unknown
         std::string_view kn = a.kwnames[k]->text;
-        if (kn == "name" && name.is_unset()) name = a.kw(k);
-        else if (kn == "doc" && doc.is_unset()) doc = a.kw(k);
-        else raise_new("TypeError", "module() got an unexpected keyword argument '" + a.kwnames[k]->text + "'");
+        if (kn == "name" || kn == "doc") {
+            Obj& slot = kn == "name" ? name : doc;
+            if (!slot.is_unset())
+                raise_new("TypeError", "argument for module() given by name ('" + std::string(kn) + "') and position (" + (kn == "name" ? "1" : "2") + ")");
+            slot = a.kw(k);
+        } else if (unknown == nullptr) {
+            unknown = a.kwnames[k];
+        }
     }
+    if (!name.is_unset() && unknown != nullptr) unexpected_keyword("module()", unknown, {"name", "doc"});
     if (name.is_unset()) raise_new("TypeError", "module() missing required argument 'name' (pos 1)");
     if (as_str(name) == nullptr) raise_new("TypeError", "module() argument 'name' must be str, not " + type_of(name)->name);
     dict_set(m->dict, Obj::of(N("__name__")), name);
@@ -1207,6 +1227,8 @@ void init_imports(Module* sys) {
     method(lt, "__new__", lazy_new_m, Binding::Function);
     method(lt, "__repr__", lazy_repr_m);
     method(lt, "resolve", lazy_resolve_m);
+    lt->set_attr(N("__doc__"), cpython_doc("lazy_import"));
+    types().module->set_attr(N("__doc__"), cpython_doc("module"));
 }
 
 }  // namespace bella
