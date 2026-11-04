@@ -1,31 +1,42 @@
-"""The program's own modules, found at build time (spec section 8: a program is a closed world).
+"""The modules a program can import, found at build time (spec section 8: a closed world).
 
-The build compiles the entry module and every module of the program's own that an import in
-it can reach, found as CPython 3.15.2's import system finds them for `python program.py`:
+The build compiles the entry module and every module an import in it can reach, found as CPython
+3.15.2's import system finds them for `python program.py`:
 * sys.path[0] is the program's directory;
 * a built-in or frozen module of the pinned interpreter comes first (BuiltinImporter and
   FrozenImporter precede the path finder), so a file of the program's with such a name is never
   imported;
 * in a directory, a package (`name/__init__.py`) comes before a module (`name.py`), and a
   directory without `__init__.py` is a namespace package;
-* a submodule is searched in its parent package's directory.
+* a submodule is searched in its parent package's directory;
+* after the program's directory comes the standard library, as `closure.lock.json` knows it: a
+  module of status `compiled`, or a shim whose source is ours (decision P-1: a stage compiles its
+  target's whole closure). What the runtime provides (`core`, `mapped`) is not compiled here, and a
+  shim not written yet is refused by name when imported.
 
 What an import can reach is read from each module's source: every import statement in it,
 function-local and conditional ones included (an import that never runs costs only its
 compilation), each `from` name that may be a submodule, and `__import__` or
-`importlib.import_module` with a literal name. A name the program's directory does not have is
-the standard library's or not installed; the runtime refuses the first until the standard
-library compiles (step 3b) and raises ModuleNotFoundError for the second, when the import runs.
+`importlib.import_module` with a literal name. A name found nowhere is the runtime's to refuse (a
+standard-library module it does not have) or ModuleNotFoundError (one that is not installed), when
+the import runs. The manifest's omissions behave as not installed (spec section 7).
 """
 from __future__ import annotations
 
 import _imp
 import ast
+import json
+import os
 import sys
+import tomllib
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
-FIRST = frozenset(sys.builtin_module_names) | frozenset(_imp._frozen_module_names())  # type: ignore[attr-defined]  # found before sys.path
+ROOT = Path(__file__).resolve().parents[1]
+STDLIB = Path(os.path.dirname(os.__file__)).resolve()
+FROZEN = frozenset(_imp._frozen_module_names())  # type: ignore[attr-defined]  # CPython's; no stub
+FIRST = frozenset(sys.builtin_module_names) | FROZEN   # found before sys.path
 
 
 @dataclass(frozen=True)
@@ -33,6 +44,32 @@ class ProgramModule:
     name: str
     path: Path | None              # None: a namespace package (refused when imported, step 3b)
     package: bool                  # an __init__.py: its directory is __path__
+    frozen: bool = False           # CPython finds it frozen: FrozenImporter's spec, `<frozen name>` frames
+    origin: Path | None = None     # a shim's `__file__`: the standard library's file it stands for
+
+
+@cache
+def library_modules() -> dict[str, tuple[Path, Path]]:
+    """The standard-library modules the build compiles: name -> (source, the file CPython has)."""
+    data = json.loads((ROOT / "closure.lock.json").read_text(encoding="utf-8"))
+    out: dict[str, tuple[Path, Path]] = {}
+    for name, m in data["modules"].items():
+        path = m.get("path")
+        if not path:
+            continue                   # an alias a module makes itself (os.path, collections.abc), or the runtime's
+        if m["status"] == "compiled":
+            out[name] = (STDLIB / path, STDLIB / path)
+        elif m["status"] == "shim" and path.startswith("runtime/"):
+            cpython = name.replace(".", "/") + ".py"
+            out[name] = (ROOT / path, STDLIB / cpython)
+    return out
+
+
+@cache
+def omitted_modules() -> frozenset[str]:
+    """The manifest's omissions: not installed, as far as a program can tell (spec section 7)."""
+    manifest = tomllib.loads((ROOT / "manifest.toml").read_text(encoding="utf-8"))
+    return frozenset(t for targets in manifest.get("omissions", {}).values() for t in targets)
 
 
 def _package_of(name: str, package: bool) -> str | None:
@@ -88,9 +125,11 @@ def find_program_modules(program: Path) -> list[ProgramModule]:
             return None
         parent, _, tail = name.rpartition(".")
         where: Path | None
+        library_parent = False
         if parent:
             p = find(parent)
-            where = None if p is None or not p.package or p.path is None else p.path.parent
+            library_parent = p is not None and p.path is not None and (p.origin is not None or p.path.is_relative_to(STDLIB))
+            where = p.path.parent if p is not None and p.path is not None and p.package and not library_parent else None
         else:
             where = None if name in FIRST else root
         result: ProgramModule | None = None
@@ -101,6 +140,12 @@ def find_program_modules(program: Path) -> list[ProgramModule]:
                 result = ProgramModule(name, (where / f"{tail}.py").resolve(), False)
             elif (where / tail).is_dir() and tail.isidentifier():
                 result = ProgramModule(name, None, True)
+        if result is None and (not parent or library_parent):
+            library = library_modules().get(name)
+            if library is not None:
+                source, origin = library
+                result = ProgramModule(name, source.resolve(), source.name == "__init__.py" or origin.name == "__init__.py",
+                                       name in FROZEN, origin if source != origin else None)
         if result is None:
             absent.add(name)
             return None

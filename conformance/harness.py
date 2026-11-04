@@ -167,7 +167,10 @@ def mask_stderr(text: str, masked: frozenset[str] = frozenset()) -> str:
 def run_case(cmd: list[str], case: Path, masked: frozenset[str] = frozenset(),
              extra_env: dict[str, str] | None = None) -> dict[str, object]:
     env = dict(os.environ, PYTHONHASHSEED="0", PYTHONUTF8="1", PYTHONIOENCODING="utf-8", **(extra_env or {}))
-    proc = subprocess.run(cmd, cwd=CASES, capture_output=True, text=True, env=env, timeout=120, check=False)
+    try:
+        proc = subprocess.run(cmd, cwd=CASES, capture_output=True, text=True, env=env, timeout=120, check=False)
+    except subprocess.TimeoutExpired:            # this case fails; the run goes on to the others
+        return {"stdout": "", "stderr": "timed out after 120 seconds\n", "exit_code": -1}
     return {"stdout": proc.stdout, "stderr": mask_stderr(proc.stderr, masked), "exit_code": proc.returncode}
 
 

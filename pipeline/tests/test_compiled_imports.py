@@ -25,7 +25,7 @@ from pathlib import Path
 
 from conformance.harness import mask_stderr
 from pipeline.build import build
-from pipeline.closed_world import find_program_modules
+from pipeline.closed_world import STDLIB, find_program_modules
 
 
 def same(files: dict[str, str], stderr: bool = False, sort_stdout: bool = False, status: int | None = None) -> None:
@@ -332,11 +332,18 @@ def test_the_build_finds_the_programs_modules() -> None:
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_text(text, encoding="utf-8")
         (root / "main.py").write_text((root / "main.py").read_text() + "import ns.x\n", encoding="utf-8")
-        found = {m.name: (None if m.path is None else m.path.relative_to(root.resolve()).as_posix(), m.package)
-                 for m in find_program_modules(root / "main.py")}
+        modules = find_program_modules(root / "main.py")
+        found = {m.name: (m.path.relative_to(root.resolve()).as_posix() if m.path is not None else None, m.package)
+                 for m in modules if m.path is None or m.path.is_relative_to(root.resolve())}
+        library = {m.name: m for m in modules if m.path is not None and not m.path.is_relative_to(root.resolve())}
     assert found == {"a": ("a/__init__.py", True), "a.b": ("a/b.py", False), "a.sibling": ("a/sibling.py", False),
                      "c": ("c/__init__.py", True), "c.d": ("c/d.py", False), "e": ("e.py", False), "g": ("g.py", False),
                      "ns": (None, True)}, found
+    # `os` is frozen, so the program's os.py is never imported; its closure comes with it
+    assert library["os"].frozen and library["os"].path == STDLIB / "os.py" and "stat" in library
+    assert not library["types"].frozen if "types" in library else True
+    assert library["_collections_abc"].frozen and library["_collections_abc"].origin == STDLIB / "_collections_abc.py"
+    assert "os.path" not in library and "collections.abc" not in library      # aliases their parents make
 
 
 # ---- lazy imports (PEP 810; C-8-05 to C-8-07) ----
@@ -586,6 +593,80 @@ def test_a_module_namespace_with_a_placeholder() -> None:
          star_source="lazy from noisy import OTHER\n__all__ = ['OTHER']\n",
          hooks="lazy from hook_src import __getattr__, __dir__\n",
          hook_src="def __getattr__(name):\n    return 'from the lazy hook ' + name\ndef __dir__():\n    return ['b', 'a']\n")
+
+
+# ---- the standard library and the modules the runtime provides ----
+def test_a_library_and_a_builtin_module_present_as_cpythons() -> None:
+    """`types` is the standard library's own source, run compiled; `_types` is the runtime's. Paths
+    are shown from the standard library's directory (D-12: the path recorded at build)."""
+    same({"main.py": """\
+              import sys
+              import types
+              import _types
+              def path(p):
+                  return p.rpartition('/python3.15/')[2]
+              print(repr(_types), repr(_types.__spec__), _types.__package__, _types.__loader__, _types.__doc__)
+              print(path(repr(types)), path(types.__file__), types.__package__, type(types.__loader__).__name__)
+              s = types.__spec__
+              print(s.name, s.parent, s.has_location, path(s.origin), path(s.cached), s.submodule_search_locations, s.loader_state)
+              print(list(vars(_types))[:5], list(vars(types))[:7], 'FunctionType' in vars(types))
+              print([k for k in sys.modules if k in ('_types', 'types')])
+              for n in ('AsyncGeneratorType', 'BuiltinFunctionType', 'BuiltinMethodType', 'CapsuleType', 'CellType',
+                        'ClassMethodDescriptorType', 'CodeType', 'CoroutineType', 'EllipsisType', 'FrameLocalsProxyType',
+                        'FrameType', 'FunctionType', 'GeneratorType', 'GenericAlias', 'GetSetDescriptorType', 'LambdaType',
+                        'LazyImportType', 'MappingProxyType', 'MemberDescriptorType', 'MethodDescriptorType', 'MethodType',
+                        'MethodWrapperType', 'ModuleType', 'NoneType', 'NotImplementedType', 'SimpleNamespace',
+                        'TracebackType', 'UnionType', 'WrapperDescriptorType'):
+                  print(n, repr(getattr(types, n)), getattr(types, n) is getattr(_types, n))
+              def f():
+                  pass
+              class C:
+                  def m(self):
+                      pass
+              print(isinstance(f, types.FunctionType), isinstance(len, types.BuiltinFunctionType), isinstance(C().m, types.MethodType),
+                    isinstance(sys, types.ModuleType), types.ModuleType('x'), isinstance(type.__dict__, types.MappingProxyType),
+                    type(None) is types.NoneType, type(NotImplemented) is types.NotImplementedType, type(...) is types.EllipsisType)
+              print(types.get_original_bases(C))
+              """})
+
+
+def test_simple_namespace() -> None:
+    same({"main.py": """\
+              from types import SimpleNamespace as NS
+              n = NS(a=1, b='two')
+              print(n, repr(n), n.a, n.b, n == NS(a=1, b='two'), n != NS(a=1), n == 5, vars(n), type(n).__name__, type(n).__module__)
+              print(NS({'x': 1}), NS([('y', 2)], z=3), NS({'x': 1}, x=2), NS())
+              n.c = n
+              print(n)
+              del n.c, n.a
+              print(n)
+              class Sub(NS):
+                  pass
+              print(Sub(q=1), Sub(q=1) == NS(q=1), NS.__name__, NS.__qualname__, repr(NS))
+              for f in (lambda: NS(1, 2), lambda: NS({1: 2}), lambda: NS(5), lambda: hash(NS()), lambda: n.nothing):
+                  try:
+                      print(f())
+                  except (TypeError, AttributeError, ValueError) as e:
+                      print(type(e).__name__)
+              print(NS(a=1).__replace__(a=2, b=3), NS(a=1).__reduce__()[1:])
+              """})
+
+
+def test_a_missing_native_module_or_name_is_refused_and_an_omitted_one_is_not_installed() -> None:
+    if shutil.which("g++") is None:
+        return
+    for body, refused in (("import _abc", "_abc"), ("import _types\n_types.nothing_here\nprint('absent')", None),
+                          ("try:\n    import _decimal\nexcept ImportError as e:\n    print(type(e).__name__, e.name)", None),
+                          ("try:\n    import not_a_module_anywhere\nexcept ImportError as e:\n    print(type(e).__name__, e.name)", None)):
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp, "main.py")
+            main.write_text(body + "\n", encoding="utf-8")
+            got = subprocess.run([str(build(main, str(main)))], capture_output=True, text=True, check=False, cwd=tmp)
+            ref = subprocess.run([sys.executable, "-c", "import sys\nsys.modules['_decimal'] = None\n" + body], capture_output=True, text=True, check=False, cwd=tmp)
+        if refused is not None:
+            assert got.returncode == 70 and f"importing '{refused}'" in got.stderr, got
+        else:
+            assert (got.stdout, got.returncode) == (ref.stdout, ref.returncode), (body, got, ref)
 
 
 def test_slot_descriptors_stand_in_the_class_dict_sorted() -> None:

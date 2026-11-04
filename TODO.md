@@ -411,14 +411,24 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              in the order declared, not sorted, in the model and the header (Hypothesis found it);
              an AttributeError leaving `getattr` had no `name` and `obj` unless the runtime raised
              it; `sys.exit` and an uncaught exception left the modules' globals unreleased.
-           * Lazy imports (PEP 810), done 2026-11-04 (C-8-06, C-8-07; C-8-05 needs `types`; tests in
+           * Lazy imports (PEP 810), done 2026-11-04 (C-8-05 to C-8-07; tests in
              `test_compiled_imports.py`): `lazyimportobject.c` and `import.c`'s lazy half in
              `imports.cpp`, with pending submodules, `__lazy_import__`, `ImportCycleError` and
              the declaration on a resolution error. Found on the way: the first version of C-8-10
              was outside the dialect (E-04, E-06: replacing `__import__`, writing `sys.modules`);
              those paths moved to the runtime's tests, which the standard library needs.
-           * Next: the standard library in `cli_easy_slugs`'s import order, the core modules in C++
-             (`_abc` first; `_py_abc` needs weak references, 3c).
+           * The standard library's path, done 2026-11-04 (C-8-05; `types` runs compiled): the build
+             compiles a program's whole reachable closure from the lock (P-1), every one of
+             `cli_easy_slugs`'s 70-odd modules compiles, `BuiltinImporter` and `FrozenImporter` are
+             ported, `_types` is native, and the names table covers the native modules. Found on
+             the way: a `for ... else: raise` got an unreachable `return` that wf2 refused
+             (`operator`, `ast`), a Python name spelled like a macro of the headers broke the C++
+             (`ENOENT`), the harness lost a whole run to one case's timeout, and parallel builds
+             could read each other's half-written source.
+           * Next: the native modules, by how many cases each stops (`make compiled-corpus`): `_abc`
+             13 (strong references until 3c: no class dies before the collector exists), `_weakref`
+             5, `gc` 4, `_ast` 4, `_operator` 3, `itertools` 3; the builtins `sorted`, `enumerate`,
+             `zip`, `min`, `max`; `str %`. Then start-up modules run at start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

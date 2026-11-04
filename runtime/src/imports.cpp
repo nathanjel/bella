@@ -27,6 +27,7 @@ struct Compiled {
     ModuleBody body;
     std::string origin;
     bool package;
+    ModuleKind kind;
 };
 std::unordered_map<std::string, Compiled>& registry() {
     static std::unordered_map<std::string, Compiled> table;
@@ -208,7 +209,7 @@ std::string quoted(Obj v) { return as_str(repr_of(v).get())->text; }
 
 // ---- the registry the program's main unit hands over ----
 void register_modules(std::span<const ModuleEntry> modules, const char* program_dir) {
-    for (const ModuleEntry& e : modules) registry()[e.name] = Compiled{e.body, e.origin, e.package};
+    for (const ModuleEntry& e : modules) registry()[e.name] = Compiled{e.body, e.origin, e.package, e.kind};
     sys_path_0() = program_dir;
     // sys.path reflects the build (D-18): the program's directory, where the build found its
     // modules; the standard library's entries come with the standard library (step 3b)
@@ -221,19 +222,20 @@ const std::string& program_directory() { return sys_path_0(); }
 Dict* sys_modules() { return interp_modules(); }
 
 // The prelude's primitives for bootstrap.py, which no program can name.
-Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_package), or None
+Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_package, frozen), or None
     positional_only(a, "_bella_find", 1, 1);
     const Str* name = as_str(a.pos(0));
     auto it = registry().find(name->text);
     if (it == registry().end()) {
-        if (is_stdlib_name(a.pos(0)) || name->text == "_frozen_importlib" || name->text == "_frozen_importlib_external")
+        if (is_stdlib_name(a.pos(0)))
             throw NotImplemented("importing '" + name->text + "' (the standard library: step 3b)");
         return none_ref();
     }
-    if (it->second.body == nullptr)              // a namespace package: CPython's NamespaceLoader
+    if (it->second.kind == ModuleKind::Omitted) return none_ref();
+    if (it->second.kind == ModuleKind::Namespace)              // CPython's NamespaceLoader
         throw NotImplemented("importing '" + name->text + "', a namespace package (step 3b)");
     Ref origin = str_new(it->second.origin);
-    return tuple_new({origin.get(), boolean(it->second.package)});
+    return tuple_new({origin.get(), boolean(it->second.package), boolean(it->second.kind == ModuleKind::Frozen)});
 }
 Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the module's namespace
     positional_only(a, "_bella_exec", 2, 2);
@@ -248,6 +250,87 @@ Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the mo
     it->second.body(m);
     return none_ref();
 }
+// ---- the modules the runtime provides (BuiltinImporter's; manifest: core, mapped) ----
+namespace {
+Module*& bootstrap_module() {
+    static Module* m = nullptr;
+    return m;
+}
+ClassObject* no_instances_yet(const char* name, const char* module = nullptr) {
+    ClassObject* c = builtin_type(name, {types().object});
+    if (module != nullptr) {
+        Obj text = Obj::of(intern(module));
+        c->attrs.set(N("__module__"), text);
+    }
+    return c;
+}
+// _types (Modules/_typesmodule.c): the types without a builtin name. A type with no instances yet
+// (a generator, a code object: step 3b, E-02) exists as a class, as `types` needs it; what CPython
+// has of it and the runtime does not is refused by the names table.
+void fill_types(Module* m) {
+    Types& t = types();
+    Dict* d = m->dict;
+    auto put = [d](const char* n, ClassObject* c) { dict_set(d, Obj::of(N(n)), Obj::of(c)); };
+    dict_set(d, Obj::of(N("__doc__")), Obj::of(intern("Define names for built-in types.")));
+    put("AsyncGeneratorType", no_instances_yet("async_generator"));
+    put("BuiltinFunctionType", t.builtin);
+    put("BuiltinMethodType", t.builtin);
+    put("CapsuleType", no_instances_yet("PyCapsule"));
+    put("CellType", t.cell);
+    put("ClassMethodDescriptorType", t.classmethod_descriptor);
+    put("CodeType", no_instances_yet("code"));
+    put("CoroutineType", no_instances_yet("coroutine"));
+    put("EllipsisType", t.ellipsis);
+    put("FrameLocalsProxyType", no_instances_yet("FrameLocalsProxy"));
+    put("FrameType", no_instances_yet("frame"));
+    put("FunctionType", t.function);
+    put("GeneratorType", no_instances_yet("generator"));
+    put("GenericAlias", no_instances_yet("GenericAlias", "types"));
+    put("GetSetDescriptorType", t.getset_descriptor);
+    put("LambdaType", t.function);
+    put("LazyImportType", t.lazy_import);
+    put("MappingProxyType", t.mappingproxy);
+    put("MemberDescriptorType", t.member_descriptor);
+    put("MethodDescriptorType", t.method_descriptor);
+    put("MethodType", t.method);
+    put("MethodWrapperType", no_instances_yet("method-wrapper"));
+    put("ModuleType", t.module);
+    put("NoneType", t.none);
+    put("NotImplementedType", t.notimplemented);
+    dict_set(d, Obj::of(N("SimpleNamespace")), dict_get(bootstrap_module()->dict, Obj::of(N("SimpleNamespace"))));
+    put("TracebackType", t.traceback);
+    put("UnionType", no_instances_yet("Union", "typing"));
+    put("WrapperDescriptorType", no_instances_yet("wrapper_descriptor"));
+}
+struct NativeModule {
+    void (*fill)(Module*);
+    Module* made = nullptr;
+};
+std::unordered_map<std::string, NativeModule>& native_registry() {
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}};
+    return table;
+}
+}  // namespace
+void set_bootstrap_module(Module* m) { bootstrap_module() = m; }
+Ref i_bella_is_builtin(Obj, Args a) {            // _imp.is_builtin: sys and builtins, then the table
+    positional_only(a, "_bella_is_builtin", 1, 1);
+    const std::string& name = as_str(a.pos(0))->text;
+    return Ref::steal(boolean(name == "sys" || name == "builtins" || native_registry().contains(name)));
+}
+Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one module per name
+    positional_only(a, "_bella_create_builtin", 1, 1);
+    const std::string& name = as_str(a.pos(0))->text;
+    if (name == "sys") return Ref::share(Obj::of(sys_module()));
+    if (name == "builtins") return Ref::share(Obj::of(builtins_module()));
+    NativeModule& n = native_registry().at(name);
+    if (n.made == nullptr) {
+        n.made = new_module(name.c_str());
+        note_native_module(name.c_str(), n.made);
+        n.fill(n.made);
+    }
+    return Ref::share(Obj::of(n.made));
+}
+
 Ref i_bella_import_warning(Obj, Args a) {        // _warnings.warn(msg, ImportWarning): see import_warning
     positional_only(a, "_bella_import_warning", 1, 1);
     import_warning(as_str(a.pos(0))->text);

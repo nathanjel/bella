@@ -575,14 +575,17 @@ Ref str_rstrip_m(Obj self, Args a);
 Ref str_replace_m(Obj self, Args a);
 
 // ---- imports (runtime/src/imports.cpp; docs/emitter.md section 7) ----
-// A module the build compiled into the program: its body, the file it came from (__file__), and
-// whether it is a package (an __init__.py; __path__ is its directory). A null body is a namespace
-// package, refused when imported.
+// What the build knows of a module: compiled into the program (its body, the file it came from:
+// __file__, and whether it is a package: an __init__.py, __path__ its directory), as a source
+// file or a frozen module of CPython's; a namespace package, refused when imported; or one the
+// manifest omits, which behaves as not installed.
+enum class ModuleKind : std::uint8_t { Source, Frozen, Namespace, Omitted };
 struct ModuleEntry {
     const char* name;
     ModuleBody body;
     const char* origin;
     bool package;
+    ModuleKind kind;
 };
 void register_modules(std::span<const ModuleEntry> modules, const char* program_dir);
 const std::string& program_directory();          // sys.path[0]: the program's directory
@@ -604,6 +607,11 @@ Ref module_dir_m(Obj self, Args a);
 Ref module_dict_get(Obj self);
 Ref module_new_m(Obj, Args a);
 Ref module_init_m(Obj self, Args a);
+ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases);   // a C++ type's class
+void note_native_module(const char* name, Module* m);   // its absent names are refused by the table
+void set_bootstrap_module(Module* m);
+Ref i_bella_is_builtin(Obj, Args a);
+Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
 Ref i_bella_exec(Obj, Args a);
 Ref i_bella_refuse(Obj, Args a);

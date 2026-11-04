@@ -1260,6 +1260,7 @@ Module* builtins_module() {
     return m;
 }
 // PyModule_New: module_init_dict's names first, as every module's namespace starts
+void note_native_module(const char* name, Module* m) { native_modules()[name] = m; }
 Module* new_module(const char* name) {
     auto* m = new Module(name);
     put(m->dict, "__name__", m->name.get());
@@ -1602,8 +1603,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 }
                 if (std::string_view(pm_entry.name) == "_frozen_importlib") {
                     bootstrap = pm;
+                    set_bootstrap_module(pm);
                     for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
-                             {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec}, {"_bella_refuse", i_bella_refuse},
+                             {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec},
+                             {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_refuse", i_bella_refuse},
                              {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());

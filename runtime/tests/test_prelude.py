@@ -14,6 +14,7 @@ import contextlib
 import importlib.util
 import io
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -214,6 +215,54 @@ def test_type_methods_check_their_receiver_a9_2() -> None:
                 want = outcome(getattr(cls, name), wrong)
                 got = outcome(fn, wrong)
                 assert got == want, f"{type_name}.{name}({wrong!r}):\n  prelude {got}\n  builtin {want}"
+
+
+def _bootstrap(find: Any) -> Any:
+    """runtime/prelude/bootstrap.py under CPython, as `_frozen_importlib`, with the runtime's
+    primitives stood in for: what the compiled runtime gives it, for the spec it builds."""
+    source = (PRELUDE / "bootstrap.py").read_text(encoding="utf-8")
+    module = types.ModuleType("_frozen_importlib")
+    module.__dict__.update(_bella_find=find, _bella_is_builtin=lambda name: False, _bella_refuse=None, _bella_exec=None,
+                           _bella_create_builtin=None, _bella_import_warning=None, _bella_set_lazy_attributes=None)
+    exec(compile(source, "bootstrap.py", "exec"), module.__dict__)  # noqa: S102  # the module under test
+    return module
+
+
+def test_the_frozen_path_makes_cpythons_spec() -> None:
+    """`abc` is the first frozen module a compiled program will reach, and it waits for `_abc`: until
+    then this is the check of FrozenImporter's port, against CPython's own spec for a frozen module."""
+    import _imp
+    import importlib.machinery
+    assert _imp.is_frozen("stat")
+    real = importlib.machinery.FrozenImporter.find_spec("stat")
+    origin = real.loader_state.filename
+    b = _bootstrap(lambda name: (origin, False, True) if name == "stat" else None)
+    spec = b._spec_from_compiled("stat")
+    assert repr(spec).replace(" object at", "") == repr(real).replace(" object at", ""), (spec, real)
+    assert (spec.name, spec.origin, spec.parent, spec.has_location, spec.cached, spec.submodule_search_locations) == \
+        (real.name, real.origin, real.parent, real.has_location, real.cached, real.submodule_search_locations)
+    assert vars(spec.loader_state) == vars(real.loader_state)
+    assert repr(spec.loader_state) == repr(real.loader_state)
+    module = b.module_from_spec(spec)
+    ours = list(vars(module))
+    made = importlib.util.module_from_spec(real)
+    assert ours == list(vars(made)), (ours, list(vars(made)))
+    assert b._module_repr(module) == repr(made) and module.__file__ == made.__file__ and module.__package__ == made.__package__
+    assert b._find_spec("nothing_at_all", None) is None
+
+
+def test_the_source_path_makes_cpythons_spec() -> None:
+    import importlib.machinery
+    real = importlib.machinery.PathFinder.find_spec("json")
+    assert real is not None and real.origin is not None
+    b = _bootstrap(lambda name: (real.origin, True, False) if name == "json" else None)
+    spec = b._spec_from_compiled("json")
+    assert (spec.name, spec.origin, spec.parent, spec.has_location, spec.cached, spec.submodule_search_locations, spec.loader_state) == \
+        (real.name, real.origin, real.parent, real.has_location, real.cached, list(real.submodule_search_locations), real.loader_state)
+    assert (type(spec.loader).__name__, type(spec.loader).__module__, spec.loader.name, spec.loader.path) == \
+        (type(real.loader).__name__, type(real.loader).__module__, real.loader.name, real.loader.path)
+    assert spec.loader.is_package("json") and spec.loader.get_filename("json") == real.loader.get_filename("json")
+    assert b._module_repr(b.module_from_spec(spec)) == repr(importlib.util.module_from_spec(real))
 
 
 if __name__ == "__main__":

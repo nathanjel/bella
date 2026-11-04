@@ -28,7 +28,18 @@ def baseline_path(level: int | str) -> Path:
     return BASELINE if level == 1 else ROOT / "conformance" / f"eval{level}-baseline.txt"
 
 
+def prebuild() -> None:
+    """Compile each case before the harness runs it: a closure takes longer than a case's time limit
+    the first time, and the units are shared, so one case at a time spends the CPUs on one compiler
+    per unit. A case that does not build fails when the harness runs it, with the build's own words."""
+    for case in sorted(CASES.glob("*.py")):
+        if case.name[0] in "CX":
+            subprocess.run([sys.executable, str(ROOT / "pipeline" / "build.py"), case.name], capture_output=True, check=False, cwd=CASES)
+
+
 def run(level: int | str = 1) -> dict[str, bool]:
+    if level == "c":
+        prebuild()
     script = ROOT / "pipeline" / "build.py" if level == "c" else ROOT / "pipeline" / f"l{level}" / "run.py"
     runner = f"{sys.executable} {script} {'--run ' if level == 'c' else ''}{{case}}"
     proc = subprocess.run([sys.executable, str(ROOT / "conformance" / "harness.py"), "check", "--runner", runner],

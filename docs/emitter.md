@@ -4,8 +4,8 @@ Status: step 3b under way, 2026-11-03. `pipeline/backend/cpp.py` turns an L2 mod
 into one C++26 translation unit against `runtime/include/bella/runtime.hpp`; `pipeline/build.py`
 compiles the program's modules and links them with the runtime library. The slice examples
 (`make slice`), `pipeline/tests/test_compiled.py` and the cases of
-`conformance/evalc-baseline.txt` pass compiled (`make compiled-corpus`, 30 of 84: most of the rest
-import the standard library, which step 3b compiles next). The toy emitter from L1 is gone.
+`conformance/evalc-baseline.txt` pass compiled (`make compiled-corpus`, 31 of 84: most of the rest
+stop on a native module of the standard library's, which step 3b provides next). The toy emitter from L1 is gone.
 
 ## 1. Where things live (decided 2026-11-02, `docs/DECISIONS.md`)
 
@@ -242,14 +242,22 @@ the type by its qualified name and a `str()` that raises as `<exception str() fa
 
 ## 4a. Imports (step 3b; case C-8-10, and C-8-01 and C-8-04 compiled)
 
-A program is a closed world (spec section 8). `pipeline/closed_world.py` finds the program's own
-modules from its import statements at build time, as CPython's import system would find them for
+A program is a closed world (spec section 8). `pipeline/closed_world.py` finds the modules it can
+import from their import statements at build time, as CPython's import system would find them for
 `python program.py`: a built-in or frozen module of the pinned interpreter first, then the
 program's directory (`sys.path[0]`), a package before a module, a submodule in its parent's
-directory. Each module is emitted into a namespace of its own (`bella::mod_cycpkg_0a`) and compiled
-once per content hash under `build/compiled/units/`; the main unit, generated last, holds `main()`
-and the registry (`ModuleEntry`: name, body, file, whether a package) handed to `run_main`. A kept
-example's C++ is its module's unit, without the main unit's absolute paths.
+directory, then the standard library as `closure.lock.json` knows it (`compiled`, or a shim whose
+source is ours). The whole reachable closure is compiled (P-1): function-local imports count,
+and an import that never runs costs only its compilation. What the runtime provides (`core`,
+`mapped`) is not compiled, and the manifest's omissions behave as not installed. Each module is
+emitted into a namespace of its own (`bella::mod_cycpkg_0a`), lowered once per content under
+`build/compiled/lowered/` and compiled once under `build/compiled/units/`, keyed by its text, the
+headers and the flags, so a change to the runtime's sources recompiles no unit. The standard
+library's units compile at `-O0`, a fifth of the time, while speed is not a goal; the program's at
+`-O1`. The main unit, generated last, holds `main()` and the registry (`ModuleEntry`) handed to
+`run_main`. A kept example's C++ is its module's unit, without the main unit's absolute paths.
+Generated names avoid the headers' macros (`ENOENT`, `S_IFMT`), which the compiler lists. Links strip
+debug information (`BELLA_KEEP_DEBUG=1` keeps it), and a program rebuilt replaces its old binary.
 
 The import system keeps CPython's split:
 * `runtime/src/imports.cpp` is the C half: IMPORT_NAME (`_PyEval_LazyImportName`,
@@ -257,13 +265,19 @@ The import system keeps CPython's split:
   IMPORT_FROM with each of its messages, `import *`, the module type (`__getattr__`, the messages of
   a partially initialised or shadowing module, `__repr__`, `__dir__`, `__dict__`, `ModuleType(...)`).
 * `runtime/prelude/bootstrap.py` is `importlib._bootstrap`: CPython's own text for `_find_and_load`,
-  `_load_unlocked`, `module_from_spec`, `_init_module_attrs`, `ModuleSpec`, `_handle_fromlist` and
-  `_module_repr`, unchanged except where a line says `bella:`. It runs as `_frozen_importlib`, so its
-  classes say so. The closed world's registry stands for `sys.meta_path`'s finders; a loader is a
-  `SourceFileLoader` (of `_frozen_importlib_external`) whose `exec_module` runs the compiled body in
-  the module's namespace; the methods that read files are refused. With one thread a module lock is
-  always this thread's own, so taking it waits for nothing. It has no frames, as importlib's are
-  removed from tracebacks.
+  `_load_unlocked`, `module_from_spec`, `_init_module_attrs`, `ModuleSpec`, `BuiltinImporter`,
+  `FrozenImporter`, `_handle_fromlist` and `_module_repr`, unchanged except where a line says
+  `bella:`. It runs as `_frozen_importlib`, so its classes say so. The closed world's registry
+  stands for `sys.meta_path`'s finders; a source module's loader is a `SourceFileLoader` (of
+  `_frozen_importlib_external`) whose `exec_module` runs the compiled body in the module's
+  namespace, and the methods that read files are refused. A module CPython has frozen (`os`, `abc`)
+  gets `FrozenImporter`'s spec and `<frozen os>` frames. With one thread a module lock is always
+  this thread's own, so taking it waits for nothing. It has no frames, as importlib's are removed
+  from tracebacks. It also holds `types.SimpleNamespace` (`namespaceobject.c`).
+* A module the runtime provides is `BuiltinImporter`'s: `_types` so far, whose types without
+  instances yet (a generator, a code object) exist as classes. The names table lists every attribute
+  of the manifest's `core` and `mapped` built-in modules, so a name the runtime lacks is refused, not
+  an AttributeError or an ImportError a program would take for the module's answer.
 
 E-04 and E-06 exclude replacing `__import__` and writing `sys.modules` in a program's own code, and
 the linter will say so; the runtime still behaves as CPython there, since the standard library
@@ -271,7 +285,7 @@ writes `sys.modules` (`os.path`, `collections.abc`). So `pipeline/tests/test_com
 covers those paths, and case C-8-10 stays inside the dialect. What a hook alone could see of
 CPython's C code importing `_io` to read a module's file has no counterpart here.
 
-Lazy imports (PEP 810; C-8-06 and C-8-07, and C-8-05 once `types` compiles) are
+Lazy imports (PEP 810; C-8-05 to C-8-07) are
 `Objects/lazyimportobject.c` and `import.c`'s lazy half, in `imports.cpp`. A `lazy_import` object is
 a root (the absolute name, the fromlist, the builtins) or a projection (a placeholder and an
 attribute, which IMPORT_FROM makes); it remembers its declaring frame's code and line, read from
@@ -305,19 +319,22 @@ order open where a module is held by another or a traceback holds `__main__`). T
 `_Py_HandleSystemExitAndKeyboardInterrupt`'s: a SystemExit's code, truncated to a C int.
 
 Decided here, each stated where it matters:
-* `sys.path` is `[the program's directory]` (D-18: it reflects the build); the standard library's
-  entries come with the standard library.
-* `sys.modules` starts with `sys` and `builtins`, then `__main__`; CPython's start-up modules come
-  with the standard library.
+* `sys.path` is `[the program's directory]` (D-18: it reflects the build): the other entries are the
+  interpreter's search path, which a closed world does not have.
+* `sys.modules` starts with `sys` and `builtins`, then `__main__`. CPython's start-up modules (`os`,
+  `codecs`, `encodings`, `site`, ...) come when the runtime can run them at start-up, once their
+  native modules exist; until then `'os' in sys.modules` before an import answers False where
+  CPython answers True (open, in section 5).
 * `sys.implementation.cache_tag` is taken as 3.15's (`cpython-315`) for `__spec__.cached`: D-16
   changes only the implementation's name, so a program computing a `.pyc` path gets CPython's.
 * An ImportWarning has no effect while no `warnings` module is loaded: the default filters ignore
   it and nothing else can change them (`PYTHONWARNINGS` and `-W` are not read, D-18). Once one is
   loaded the warning is refused until warnings exist. A DeprecationWarning (`__package__ !=
   __spec__.parent`) is refused: the default filters show it in `__main__`.
-* Importing a standard-library module (`sys.stdlib_module_names`, in the names table) that is not
-  compiled yet is refused by name; a name found nowhere is ModuleNotFoundError when the import runs
-  (C-8-04's `if False:` import never resolves). A namespace package is refused when imported.
+* Importing a standard-library module the program does not have (`sys.stdlib_module_names`, in the
+  names table: a native module not provided yet, a shim not written yet) is refused by name; a name
+  found nowhere is ModuleNotFoundError when the import runs (C-8-04's `if False:` import never
+  resolves). A namespace package is refused when imported.
 
 `runtime/src/str.cpp` holds the str methods the import system needs first and the standard library
 next (`find`, `split`, `partition`, `strip`, `replace` and their relatives), as `unicodeobject.c` and
@@ -333,8 +350,13 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   CPython would show one).
 * The dict views' set operations and comparisons, `reversed` and `mapping`; `str %`
   formatting; `types.UnionType` (`int | str`).
-* 3b, the rest of imports: the standard library, module by module in `cli_easy_slugs`'s order (core
-  modules in C++: `_abc` first). `dir()` of names that are not all str waits for `list.sort`.
+* 3b, the standard library running: every module of a closure compiles, and what stops the corpus is
+  now the native modules, by how many cases each stops: `_abc` 13, `_weakref` 5, `gc` 4, `_ast` 4,
+  `_operator` 3, `itertools` 3, then one case each; and the builtins (`sorted`, `enumerate`, `zip`,
+  `min`, `max`, ...), `str %`, bytes and float constants. `dir()` of names that are not all str
+  waits for `list.sort`.
+* CPython's start-up modules are not imported at start-up yet, so `sys.modules` shows them only once
+  imported: a wrong answer for a program that asks before importing them, until they can run there.
 * 3b: generators (state machines, design section 10.3): C-3-04.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3; with it,
   a caught exception keeps its frame's locals (RL-222, D-12).

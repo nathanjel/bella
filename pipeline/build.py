@@ -17,16 +17,18 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from functools import cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from pipeline.backend.cpp import c_string, emit_module  # noqa: E402
-from pipeline.closed_world import ProgramModule, find_program_modules, namespace_of  # noqa: E402
+from pipeline.closed_world import STDLIB, ProgramModule, find_program_modules, namespace_of, omitted_modules  # noqa: E402
 from pipeline.l1.frontend import lower  # noqa: E402
 from pipeline.l1.grammar import Unsupported  # noqa: E402
 from pipeline.l2 import grammar as G  # noqa: E402
@@ -46,12 +48,28 @@ CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra"]
 PROGRAM_FLAGS = ["-O1", "-w"]
+LIBRARY_FLAGS = ["-O0", "-w"]      # the standard library's units: a fifth of the compile time; speed is not a goal yet
 
 
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False) -> str:
     module: G.Module = lifetimes(to_l2(lower(source, filename)))
     wf2.check(module, lifetimes=True)
     return emit_module(module, namespace, filename, prelude)
+
+
+def lowered_unit(source: str, filename: str, namespace: str) -> str:
+    """to_cpp, kept under build/compiled/lowered by what decides its text: a closure's modules are
+    the same for every program that imports them, and lowering them takes seconds each time."""
+    key = _key(source.encode(), filename.encode(), namespace.encode(), *_pipeline_bytes())
+    kept = BUILD / "lowered" / f"{namespace.replace('::', '_')}-{key}.cpp"
+    if kept.exists():
+        return kept.read_text(encoding="utf-8")
+    text = to_cpp(source, filename, namespace)
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    tmp = kept.with_name(kept.name + f".{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, kept)
+    return text
 
 
 def _key(*parts: bytes) -> str:
@@ -61,10 +79,11 @@ def _key(*parts: bytes) -> str:
     return h.hexdigest()[:16]
 
 
-def _pipeline_bytes() -> list[bytes]:
+@cache
+def _pipeline_bytes() -> tuple[bytes, ...]:
     """Everything that decides what a program compiles to: the compiler's own sources."""
     files = sorted((ROOT / "pipeline").rglob("*.py")) + sorted(INCLUDE.rglob("*.hpp"))
-    return [f.read_bytes() for f in files if "tests" not in f.parts]
+    return tuple(f.read_bytes() for f in files if "tests" not in f.parts)
 
 
 def _compile(src: Path, obj: Path, flags: list[str], cxx: str, std: str) -> None:
@@ -118,13 +137,18 @@ def main_unit(main_file: Path, modules: list[ProgramModule]) -> str:
     decls = "\n".join(["namespace bella::m_main { ::bella::Ref module_body(::bella::Module* m); }",
                        *(f"namespace {namespace_of(m.name)} {{ ::bella::Ref module_body(::bella::Module* m); }}"
                          for m in modules if m.path is not None)])
-    entries = ",\n".join(
-        f"    {{{c_string(m.name)}, {'nullptr' if m.path is None else f'::{namespace_of(m.name)}::module_body'}, "
-        f"{c_string(str(m.path) if m.path is not None else '')}, {'true' if m.package else 'false'}}}"
-        for m in modules)
-    table = (f"static const ::bella::ModuleEntry MODULES[] = {{\n{entries}\n}};\n" if modules
-             else "static const ::bella::ModuleEntry* const MODULES = nullptr;\n")
-    count = len(modules)
+    def entry(m: ProgramModule) -> str:
+        kind = "Namespace" if m.path is None else "Frozen" if m.frozen else "Source"
+        file = m.origin or m.path
+        body = "nullptr" if m.path is None else f"::{namespace_of(m.name)}::module_body"
+        return (f"    {{{c_string(m.name)}, {body}, {c_string(str(file) if file is not None else '')}, "
+                f"{'true' if m.package else 'false'}, ::bella::ModuleKind::{kind}}}")
+    known = {m.name for m in modules}
+    rows = [entry(m) for m in modules]
+    rows += [f"    {{{c_string(n)}, nullptr, \"\", false, ::bella::ModuleKind::Omitted}}" for n in sorted(omitted_modules() - known)]
+    entries = ",\n".join(rows)
+    table = f"static const ::bella::ModuleEntry MODULES[] = {{\n{entries}\n}};\n"
+    count = len(rows)
     return ('// The main unit, compiled by Bella: the start, and the modules compiled with the program.\n'
             '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table +
             "\nint main(int argc, char** argv) {\n"
@@ -132,18 +156,21 @@ def main_unit(main_file: Path, modules: list[ProgramModule]) -> str:
             f"                             std::span<const ::bella::ModuleEntry>(MODULES, {count}));\n}}\n")
 
 
-def _object(cpp: str, name: str, lib: Path, cxx: str, std: str) -> Path:
-    """A unit compiled once per content: its object file under build/compiled/units."""
-    key = _key(cpp.encode(), lib.parent.name.encode(), " ".join([cxx, std, *PROGRAM_FLAGS]).encode())
+def _object(cpp: str, name: str, cxx: str, std: str, flags: list[str] = PROGRAM_FLAGS) -> Path:
+    """A unit compiled once per content: its object file under build/compiled/units, kept across
+    changes to the runtime's sources, since it depends only on its text, the headers and the flags."""
+    key = _key(cpp.encode(), *(h.read_bytes() for h in sorted(INCLUDE.rglob("*.hpp"))), " ".join([cxx, std, *flags]).encode())
     obj = BUILD / "units" / f"{name}-{key}.o"
     if obj.exists():
         return obj
     obj.parent.mkdir(parents=True, exist_ok=True)
-    src = obj.with_suffix(".cpp")
+    # parallel builds compile the same unit: each from a file of its own, or one reads another's half
+    src = obj.with_name(f"{obj.stem}.{os.getpid()}.cpp")
     src.write_text(cpp, encoding="utf-8")
     tmp = obj.with_name(obj.name + f".{os.getpid()}.tmp")
-    _compile(src, tmp, PROGRAM_FLAGS, cxx, std)
+    _compile(src, tmp, flags, cxx, std)
     os.replace(tmp, obj)
+    src.unlink()
     return obj
 
 
@@ -155,26 +182,43 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
     if keep is not None:
         keep.parent.mkdir(parents=True, exist_ok=True)
         keep.write_text(main_cpp, encoding="utf-8")
-    units = [(main_cpp, program.stem)]
+    units = [(main_cpp, program.stem, PROGRAM_FLAGS)]
     for m in modules:
         if m.path is not None:
-            units.append((to_cpp(m.path.read_text(encoding="utf-8"), str(m.path), namespace_of(m.name)), m.name))
-    units.append((main_unit(program.resolve(), modules), f"{program.stem}-main"))
+            # a frozen module's code says `<frozen os>`, as CPython's does
+            shown = f"<frozen {m.name}>" if m.frozen else str(m.origin or m.path)
+            library = m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB)
+            units.append((lowered_unit(m.path.read_text(encoding="utf-8"), shown, namespace_of(m.name)), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS))
+    units.append((main_unit(program.resolve(), modules), f"{program.stem}-main", PROGRAM_FLAGS))
     with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
-        objs = list(pool.map(lambda u: _object(u[0], u[1], lib, cxx, std), units))
-    key = _key(*(o.name.encode() for o in objs))
+        objs = list(pool.map(lambda u: _object(u[0], u[1], cxx, std, u[2]), units))
+    key = _key(*(o.name.encode() for o in objs), lib.parent.name.encode())
     out = BUILD / f"{program.stem}-{key}"
     exe = out / program.stem
     if exe.exists():
         return exe
     out.mkdir(parents=True, exist_ok=True)
     tmp = str(exe) + f".{os.getpid()}.tmp"
-    proc = subprocess.run([cxx, f"-std={std}", *PROGRAM_FLAGS, *map(str, objs), str(lib), "-o", tmp],
+    # the runtime's debug information is most of a binary, and every program would carry a copy
+    strip = [] if os.environ.get("BELLA_KEEP_DEBUG") else ["-Wl,--strip-debug"]
+    proc = subprocess.run([cxx, f"-std={std}", *PROGRAM_FLAGS, *strip, *map(str, objs), str(lib), "-o", tmp],
                           capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         raise RuntimeError(f"{cxx} failed linking {program}:\n{proc.stderr[-4000:]}")
     os.replace(tmp, exe)
+    _forget_previous(program, out)
     return exe
+
+
+def _forget_previous(program: Path, current: Path) -> None:
+    """A program rebuilt replaces its previous binary: each change to the runtime would otherwise
+    leave one more copy of every program under build/compiled."""
+    pointer = BUILD / "last" / _key(str(program.resolve()).encode())
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    previous = pointer.read_text(encoding="utf-8") if pointer.exists() else ""
+    if previous and previous != current.name:
+        shutil.rmtree(BUILD / previous, ignore_errors=True)
+    pointer.write_text(current.name, encoding="utf-8")
 
 
 def main(argv: list[str]) -> int:

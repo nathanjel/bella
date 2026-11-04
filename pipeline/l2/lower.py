@@ -523,6 +523,21 @@ class _Code:
         return result if result is not None else self.let(G.BuildMap((), ()))
 
 
+def _leaves_by(stmts: list[G.Stmt], kind: type[G.Stmt]) -> bool:
+    """A statement of `kind` (Break or EndLoop) that belongs to the loop these statements are the
+    body of; a nested loop's body has its own, its `else` block is this loop's."""
+    for s in stmts:
+        if isinstance(s, kind):
+            return True
+        if isinstance(s, (G.If, G.IfEnd)) and (_leaves_by(list(s.body), kind) or _leaves_by(list(s.orelse), kind)):
+            return True
+        if isinstance(s, G.Loop) and _leaves_by(list(s.orelse), kind):
+            return True
+        if isinstance(s, G.Try) and any(_leaves_by(list(b), kind) for b in (s.body, s.orelse, s.finalbody, *(h.body for h in s.handlers))):
+            return True
+    return False
+
+
 def _falls_through(stmts: list[G.Stmt]) -> bool:
     if not stmts:
         return True
@@ -532,7 +547,10 @@ def _falls_through(stmts: list[G.Stmt]) -> bool:
     if isinstance(last, (G.If, G.IfEnd)):
         return _falls_through(list(last.body)) or _falls_through(list(last.orelse))
     if isinstance(last, G.Loop):
-        return True       # Break leaves it; an infinite loop without one never falls through, which is harmless
+        # a `break`, or the iterator's end and then an `else` block that falls through; a `for ...
+        # else: raise` with no `break` does not (operator.indexOf), and wf2 refuses what follows it
+        return _leaves_by(list(last.body), G.Break) or \
+            (_leaves_by(list(last.body), G.EndLoop) and _falls_through(list(last.orelse)))
     if isinstance(last, G.Try):
         if last.finalbody and not _falls_through(list(last.finalbody)):
             return False

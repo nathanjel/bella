@@ -29,6 +29,9 @@ __intrinsics__ = ["_find_and_load", "_find_and_load_lazy_submodule", "_handle_fr
 
 _bootstrap_external = None
 
+_NOT_GIVEN = object()
+_repr_running = []
+
 
 def _new_module(name):
     return type(sys)(name)
@@ -214,6 +217,28 @@ def _spec_from_module(module, loader=None, origin=None):
     return spec
 
 
+def spec_from_loader(name, loader, *, origin=None, is_package=None):
+    """Return a module spec based on various loader methods."""
+    if origin is None:
+        origin = getattr(loader, '_ORIGIN', None)
+
+    if not origin and hasattr(loader, 'get_filename'):
+        if _bootstrap_external is None:
+            raise NotImplementedError
+
+    if is_package is None:
+        if hasattr(loader, 'is_package'):
+            try:
+                is_package = loader.is_package(name)
+            except ImportError:
+                is_package = None  # aka, undefined
+        else:
+            # the default
+            is_package = False
+
+    return ModuleSpec(name, loader, origin=origin, is_package=is_package)
+
+
 def _init_module_attrs(spec, module, *, override=False):
     # The passed-in module may be not support attribute assignment,
     # in which case we simply don't set the attributes.
@@ -367,22 +392,148 @@ class BuiltinImporter:
 
     _ORIGIN = "built-in"
 
-    # bella: the runtime makes its built-in modules (sys, builtins) before any program code runs,
-    # and finds no other; the class is the loader of their specs. Its methods, which ask _imp,
-    # are refused until a program reaches them.
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
-        _bella_refuse("importlib.machinery.BuiltinImporter.find_spec (step 3b: the core modules)")
+        if _bella_is_builtin(fullname):  # bella: _imp.is_builtin
+            return spec_from_loader(fullname, cls, origin=cls._ORIGIN)
+        else:
+            return None
 
     @staticmethod
     def create_module(spec):
         """Create a built-in module"""
-        _bella_refuse("importlib.machinery.BuiltinImporter.create_module (step 3b: the core modules)")
+        # bella: _imp.create_builtin; sys.builtin_module_names is not there yet, _imp.is_builtin decides
+        if not _bella_is_builtin(spec.name):
+            raise ImportError(f'{spec.name!r} is not a built-in module',
+                              name=spec.name)
+        return _call_with_frames_removed(_bella_create_builtin, spec.name)
 
     @staticmethod
     def exec_module(module):
         """Exec a built-in module"""
-        _bella_refuse("importlib.machinery.BuiltinImporter.exec_module (step 3b: the core modules)")
+        # bella: _imp.exec_builtin: create_module made the whole of it
+
+    # bella: @_requires_builtin, written out (it needs functions' __dict__)
+    @classmethod
+    def get_code(cls, fullname):
+        """Return None as built-in modules do not have code objects."""
+        _check_builtin(fullname)
+        return None
+
+    @classmethod
+    def get_source(cls, fullname):
+        """Return None as built-in modules do not have source code."""
+        _check_builtin(fullname)
+        return None
+
+    @classmethod
+    def is_package(cls, fullname):
+        """Return False as built-in modules are never packages."""
+        _check_builtin(fullname)
+        return False
+
+
+def _check_builtin(fullname):
+    if not _bella_is_builtin(fullname):
+        raise ImportError(f'{fullname!r} is not a built-in module',
+                          name=fullname)
+
+
+class FrozenImporter:
+
+    """Meta path import for frozen modules.
+
+    All methods are either class or static methods to avoid the need to
+    instantiate the class.
+
+    """
+
+    _ORIGIN = "frozen"
+
+    # bella: a frozen module's code is compiled into the program like any other module's; what
+    # find_spec reads of _imp.find_frozen and sys._stdlib_dir, the registry says (_spec_from_compiled)
+
+    @staticmethod
+    def create_module(spec):
+        """Set __file__, if able.
+
+        NOTE: Normally this would be set by importlib.
+
+        """
+        module = _new_module(spec.name)
+        try:
+            filename = spec.loader_state.filename
+        except AttributeError:
+            pass
+        else:
+            if filename:
+                module.__file__ = filename
+        return module
+
+    @staticmethod
+    def exec_module(module):
+        name = module.__spec__.name
+        # bella: _imp.get_frozen_object and exec, the module's compiled body
+        _bella_exec(name, module)
+
+    @classmethod
+    def is_package(cls, fullname):
+        """Return True if the frozen module is a package."""
+        found = _bella_find(fullname)  # bella: _imp.is_frozen_package
+        if found is None or not found[2]:
+            raise ImportError(f'{fullname!r} is not a frozen module', name=fullname)
+        return found[1]
+
+
+class SimpleNamespace:
+    """A simple attribute-based namespace."""
+
+    # bella: Objects/namespaceobject.c in Python; the class is types.SimpleNamespace
+
+    __module__ = 'types'
+
+    def __init__(self, mapping_or_iterable=_NOT_GIVEN, /, **kwargs):
+        if mapping_or_iterable is not _NOT_GIVEN:
+            d = mapping_or_iterable if type(mapping_or_iterable) is dict else dict(mapping_or_iterable)
+            for key in d:  # PyArg_ValidateKeywordArguments
+                if not isinstance(key, str):
+                    raise TypeError('keywords must be strings')
+            self.__dict__.update(d)
+        self.__dict__.update(kwargs)
+
+    def __repr__(self):
+        name = 'namespace' if type(self) is SimpleNamespace else type(self).__name__
+        if self in _repr_running:  # Py_ReprEnter, by identity: __eq__ here compares contents
+            return f'{name}(...)'
+        _repr_running.append(self)
+        try:
+            pairs = []
+            d = self.__dict__
+            for key in list(d):
+                if isinstance(key, str) and len(key) > 0:
+                    pairs.append(f'{key}={d[key]!r}')
+            return f'{name}({", ".join(pairs)})'
+        finally:
+            _repr_running.pop()
+
+    def __eq__(self, other):
+        if isinstance(self, SimpleNamespace) and isinstance(other, SimpleNamespace):
+            return self.__dict__ == other.__dict__
+        return NotImplemented
+
+    __hash__ = None
+
+    def __reduce__(self):
+        return (type(self), (), self.__dict__)
+
+    def __replace__(self, /, **kwargs):
+        result = type(self)()
+        if not isinstance(result, SimpleNamespace):
+            raise TypeError(f'expect types.SimpleNamespace type, but {type(self).__name__}() returned '
+                            f"'{type(result).__name__}' object")
+        result.__dict__.update(self.__dict__)
+        result.__dict__.update(kwargs)
+        return result
 
 
 # bella: _bootstrap_external's source loader, as its path finder makes one for a .py file. A
@@ -515,13 +666,20 @@ class SourceFileLoader:
 
 
 def _spec_from_compiled(name):
-    """bella: what CPython's path finder returns for a source file the closed world has
-    (FileFinder.find_spec through spec_from_file_location): a spec with a location, its loader,
-    and for a package the package's directory to search."""
+    """bella: what CPython's finders return for a module the closed world has: FrozenImporter's spec
+    (find_spec), or the path finder's for a source file (FileFinder.find_spec through
+    spec_from_file_location): a spec with a location, its loader, and for a package the
+    package's directory to search."""
     found = _bella_find(name)
     if found is None:
         return None
-    origin, is_package = found
+    origin, is_package, frozen = found
+    if frozen:
+        spec = spec_from_loader(name, FrozenImporter, origin=FrozenImporter._ORIGIN, is_package=is_package)
+        spec.loader_state = SimpleNamespace(filename=origin, origname=name)
+        if is_package:
+            spec.submodule_search_locations.append(_path_split(origin)[0])
+        return spec
     spec = ModuleSpec(name, SourceFileLoader(name, origin), origin=origin)
     spec._set_fileattr = True
     if is_package:
@@ -539,7 +697,9 @@ def _find_spec(name, path, target=None):
     # target will usually indicate a reload there is no guarantee, whereas
     # sys.modules provides one.
     is_reload = name in sys.modules
-    spec = _spec_from_compiled(name)
+    spec = BuiltinImporter.find_spec(name, path, target)
+    if spec is None:
+        spec = _spec_from_compiled(name)
     if spec is not None:
         # The parent import may have already imported this module.
         if not is_reload and name in sys.modules:

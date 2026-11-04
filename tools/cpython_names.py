@@ -9,6 +9,9 @@ exit 70). This tool records, from the pinned CPython, which names exist:
 * `builtins:<name>`: the builtins module, as a script sees it;
 * `globals:<name>`: the globals CPython gives a script before it runs (`__file__`, `__builtins__`);
 * `sys:<name>`: the sys module, as a script sees it;
+* `<module>:<name>`: each attribute of the built-in modules the manifest lists as core or mapped,
+  which the runtime provides one by one: a name it lacks yet is refused, never an AttributeError
+  or an ImportError a program would take as the module's answer;
 * `stdlib:<name>`: `sys.stdlib_module_names`, the standard library's top-level modules: the
   runtime refuses importing one it does not have compiled yet (rather than answer
   ModuleNotFoundError), and words a module's errors as CPython does when the program's own module
@@ -127,8 +130,19 @@ def operators():
                     out.append(f"cmp:{a}{sym}{b}")
     return sorted(out)
 
+def native_modules(names):
+    import importlib
+    out = {}
+    for name in names:
+        try:
+            out[name] = sorted(vars(importlib.import_module(name)))
+        except ImportError:
+            pass                 # a shim's name, or a module the build's platform lacks
+    return out
+
 print(json.dumps({"builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "operators": operators(), "stdlib": sorted(sys.stdlib_module_names)}))
+                  "types": type_names(), "operators": operators(), "stdlib": sorted(sys.stdlib_module_names),
+                  "modules": native_modules(sys.argv[1:])}))
 '''
 
 
@@ -140,11 +154,14 @@ def record() -> tuple[str, list[tuple[str, str]]]:
     with tempfile.TemporaryDirectory() as tmp:
         script = Path(tmp, "probe.py")
         script.write_text(PROBE, encoding="utf-8")
-        out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, check=True, cwd=tmp)
+        lock = json.loads((PROJECT / "closure.lock.json").read_text(encoding="utf-8"))
+        native = sorted(n for n, m in lock["modules"].items() if m["status"] in ("core", "mapped") and m["kind"] == "builtin")
+        out = subprocess.run([sys.executable, str(script), *native], capture_output=True, text=True, check=True, cwd=tmp)
     data = json.loads(out.stdout)
     names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
+    names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}
     version = ".".join(map(str, sys.version_info[:3]))
     return version, sorted(names)
 

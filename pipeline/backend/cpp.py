@@ -18,9 +18,14 @@ order, and `frame.line = n` marks the source lines. The rules (docs/emitter.md):
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from functools import cache
+from pathlib import Path
 
 from pipeline.l1.grammar import Unsupported
 from pipeline.l2 import grammar as G
@@ -44,13 +49,28 @@ _COMPARE = {"<": "Lt", "<=": "Le", "==": "Eq", "!=": "Ne", ">": "Gt", ">=": "Ge"
 _UNARY = {"-": "unary_neg", "+": "unary_pos", "~": "unary_invert"}
 
 
+@cache
+def header_macros() -> frozenset[str]:
+    """The macros bella/runtime.hpp defines, its system headers' included (`ENOENT`, `errno`,
+    `S_IFMT`): a Python name spelled like one would be replaced by the preprocessor, so the
+    compiler says which they are. Without a compiler nothing will read the output."""
+    include = Path(__file__).resolve().parents[2] / "runtime" / "include"
+    cxx = os.environ.get("CXX", "g++")
+    if shutil.which(cxx) is None:
+        return frozenset()
+    proc = subprocess.run([cxx, f"-std={os.environ.get('CXXSTD', 'c++26')}", f"-I{include}", "-dM", "-E", "-x", "c++", "-"],
+                          input='#include "bella/runtime.hpp"\n', capture_output=True, text=True, check=True)
+    return frozenset(line.split()[1].partition("(")[0] for line in proc.stdout.splitlines() if line.startswith("#define "))
+
+
 def cpp_name(name: str) -> str:
-    """A Python identifier as a C++ one: kept as written unless C++ reserves it (a keyword, a name
-    with `__` or starting `_` and a capital) or it matches a name the emitter makes; then `py`
-    followed by the name with `_` written `_1` and a non-ASCII character `_2` and six hex digits.
-    The escape is injective and never makes `__`, and a kept name never starts with `py`."""
+    """A Python identifier as a C++ one: kept as written unless C++ reserves it (a keyword, a macro
+    of the headers, a name with `__` or starting `_` and a capital) or it matches a name the
+    emitter makes; then `py` followed by the name with `_` written `_1` and a non-ASCII character
+    `_2` and six hex digits. The escape is injective and never makes `__`, and a kept name never
+    starts with `py`."""
     if (name.isascii() and name not in _KEYWORDS and "__" not in name and not re.match(r"^_[A-Z]", name)
-            and not _COMPILER_NAME.match(name)):
+            and not _COMPILER_NAME.match(name) and name not in header_macros()):
         return name
     return "py" + "".join("_1" if c == "_" else c if c.isascii() else f"_2{ord(c):06x}" for c in name)
 
@@ -110,7 +130,7 @@ class Emitter:
 
     def unique(self, base: str) -> str:
         name, i = base, 1
-        while name in self.used:
+        while name in self.used or name in header_macros():   # S_IFMT is a macro of <sys/stat.h>
             i += 1
             name = f"{base}_{i}"
         self.used.add(name)

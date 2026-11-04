@@ -10,7 +10,6 @@
 namespace bella {
 
 // ---- the builtin types ----
-namespace {
 ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases) {
     ClassObject* c = builtin_class(name);
     c->bases = bases;
@@ -21,7 +20,6 @@ ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases) {
     c->cls = builtin_class("type");
     return c;
 }
-}  // namespace
 
 Types& types() {
     static Types t = [] {

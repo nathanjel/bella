@@ -23,6 +23,7 @@ C-6-09_dict_callbacks.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py
+C-8-05_lazy_import_first_use.py
 C-8-06_lazy_import_error_at_first_use.py
 C-8-07_lazy_modules_list.py
 C-8-10_import_system.py

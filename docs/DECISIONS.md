@@ -733,7 +733,9 @@ program's own code; the runtime follows CPython on those paths because the stand
 the standard library compiles (D-18 says only that it reflects the build); `__spec__.cached` uses
 3.15's `cpython-315` tag (D-16 changes only the implementation's name); an ImportWarning has no effect
 until a `warnings` module is loaded, since nothing else can change the default filters that ignore
-it, and is refused from then on.
+it, and is refused from then on. The standard library follows P-1: a program's build compiles its
+whole reachable closure, the library's units at `-O0` while speed is not a goal (a fifth of the compile
+time; the program's own stay at `-O1`).
 
 ## Pins
 
