@@ -66,7 +66,10 @@ def _method(args: tuple[object, ...], kwds: dict[str, object], cls: type, name: 
     return args[1:]
 
 
-def _new_receiver(cls: object, owner: type, shown: str) -> None:   # tp_new_wrapper's checks
+def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   # tp_new_wrapper's checks
+    if not args:
+        raise TypeError(shown + ".__new__(): not enough arguments")
+    cls = args[0]
     if not issubclass(type(cls), type):
         raise TypeError(shown + ".__new__(X): X is not a type object (" + _tp_name(cls) + ")")
     if not issubclass(cls, owner):  # type: ignore[arg-type]
@@ -143,8 +146,9 @@ def _exit_arguments(qualname: str, args: tuple[object, ...], kwds: dict[str, obj
 class lock:
     __slots__ = ("_a_locked", "__weakref__")
 
-    def __new__(cls, *args: object, **kwds: object) -> lock:   # lock_new
-        _new_receiver(cls, lock, "_thread.lock")
+    def __new__(*args: object, **kwds: object) -> lock:   # lock_new
+        _new_receiver(args, lock, "_thread.lock")
+        cls, args = args[0], args[1:]
         if kwds:
             raise TypeError("lock() takes no keyword arguments")
         if args:
@@ -222,8 +226,9 @@ def _lock_release(self: object) -> None:
 class RLock:
     __slots__ = ("_a_owner", "_b_count", "__weakref__")
 
-    def __new__(cls, *args: object, **kwds: object) -> RLock:   # rlock_new
-        _new_receiver(cls, RLock, "_thread.RLock")
+    def __new__(*args: object, **kwds: object) -> RLock:   # rlock_new
+        _new_receiver(args, RLock, "_thread.RLock")
+        cls, args = args[0], args[1:]
         if kwds:
             raise TypeError("RLock() takes no keyword arguments")
         if args:
@@ -346,8 +351,9 @@ class _local:                                    # one thread has one dict, the 
 
     __slots__ = ("_a_self_reference", "__dict__", "__weakref__")
 
-    def __new__(cls, *args: object, **kwds: object) -> _local:   # local_new
-        _new_receiver(cls, _local, "_thread._local")
+    def __new__(*args: object, **kwds: object) -> _local:   # local_new
+        _new_receiver(args, _local, "_thread._local")
+        cls, args = args[0], args[1:]
         if cls.__init__ is object.__init__ and (args or kwds):
             raise TypeError("Initialization arguments are not supported")
         from _weakref import ref
@@ -376,8 +382,9 @@ _DONE = 2
 class _ThreadHandle:
     __slots__ = ("_a_ident", "_b_state")
 
-    def __new__(cls, *args: object, **kwds: object) -> _ThreadHandle:
-        _new_receiver(cls, _ThreadHandle, "_thread._ThreadHandle")
+    def __new__(*args: object, **kwds: object) -> _ThreadHandle:
+        _new_receiver(args, _ThreadHandle, "_thread._ThreadHandle")
+        cls, args = args[0], args[1:]
         self = object.__new__(cls)
         self._a_ident = 0
         self._b_state = _NOT_STARTED

@@ -312,6 +312,7 @@ Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tupl
 void fill_itertools(Module* m);                   // runtime/src/imports.cpp, running runtime/prelude/itertools.py
 void fill_operator(Module* m);                    // and runtime/prelude/_operator.py
 void fill_thread(Module* m);                      // and runtime/prelude/_thread.py
+void fill_collections(Module* m);                 // and runtime/prelude/_collections.py
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);
@@ -333,6 +334,7 @@ Ref bytes_concat(Obj a, Obj b);
 void bytes_iadd(Obj a, Obj b);
 Ref bytes_repeat(Obj self, std::int64_t count, bool in_place);
 Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
+Ref sequence_fast(Obj v, const char* message);   // PySequence_Fast: a list or tuple itself, else a list of its items
 std::string utf8_with_errors(Obj text, const char* errors);   // what a text stream writes (UTF-8 mode, D-15)
 std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length,    // PySlice_Unpack and AdjustIndices: start, stop, step, count
                                           const char* message = "slice indices must be integers or have an __index__ method");
@@ -721,6 +723,7 @@ Ref positional_only(Args a, const char* name, std::size_t lo, std::size_t hi);  
 bool cpython_has(std::string_view scope, std::string_view name);                   // the names table (cpython_names.inc)
 
 // ---- str methods (runtime/src/str.cpp) ----
+Ref str_maketrans_m(Obj, Args a);
 Ref str_find_m(Obj self, Args a);
 Ref str_rfind_m(Obj self, Args a);
 Ref str_index_m(Obj self, Args a);

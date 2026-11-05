@@ -26,6 +26,7 @@ C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py
 C-6-04_sorted_stable_key_once.py
+C-6-08_dict_mutation_during_iteration.py
 C-6-09_dict_callbacks.py
 C-6-10_big_ints.py
 C-6-11_frozendict_itself.py
@@ -34,6 +35,7 @@ C-7-19_abc.py
 C-7-20_itertools.py
 C-7-21_operator.py
 C-7-22_thread_primitives.py
+C-7-23_deque_and_defaultdict.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

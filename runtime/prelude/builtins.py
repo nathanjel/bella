@@ -7,6 +7,7 @@ function is checked against CPython directly, before Bella compiles it.
 import sys
 
 __all__ = ["print", "property", "staticmethod", "classmethod"]
+__intrinsics__ = ["_enter", "_leave"]            # Py_ReprEnter and Py_ReprLeave, for the built-in modules written in Python
 
 
 def print(*args: object, sep: object = " ", end: object = "\n", file: object = None, flush: object = False) -> None:

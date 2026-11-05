@@ -1246,6 +1246,10 @@ Module* make_builtins() {
     put(d, "set", Obj::of(t.set));
     put(d, "frozenset", Obj::of(t.frozenset));
     method(t.str, "join", str_join);
+    auto* maketrans = new Builtin("maketrans", str_maketrans_m, Obj{}, Binding::Function);   // a static method
+    maketrans->owner = t.str;
+    maketrans->flags |= IMMORTAL;
+    t.str->attrs.set(intern("maketrans"), Obj::of(maketrans));
     for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
              {"find", str_find_m}, {"rfind", str_rfind_m}, {"index", str_index_m}, {"rindex", str_rindex_m},
              {"count", str_count_m}, {"isascii", str_isascii_m}, {"startswith", str_startswith_m}, {"endswith", str_endswith_m},

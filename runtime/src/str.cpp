@@ -320,6 +320,42 @@ Ref strip_like(Obj self, Args a, const char* name, int which) {
 }
 }  // namespace
 
+Ref str_maketrans_m(Obj, Args a) {               // unicode_maketrans_impl(x, y=NULL, z=NULL, /), a static method
+    clinic(a, "maketrans", "maketrans", 1, 3);
+    Ref out = dict_new();
+    auto* made = static_cast<Dict*>(out.get().object());
+    auto ord = [](const Str* s, std::size_t i) { return int_from_i64(static_cast<std::int64_t>(s->at(i))); };
+    Obj x = a.pos(0);
+    if (a.npos > 1) {
+        const Str* first = as_str(x);
+        const Str* second = as_str(a.pos(1));
+        if (second == nullptr) raise_new("TypeError", "maketrans() argument 2 must be str, not " + type_of(a.pos(1))->name);
+        const Str* third = nullptr;
+        if (a.npos > 2) {
+            third = as_str(a.pos(2));
+            if (third == nullptr) raise_new("TypeError", "maketrans() argument 3 must be str, not " + type_of(a.pos(2))->name);
+        }
+        if (first == nullptr) raise_new("TypeError", "first maketrans argument must be a string if there is a second argument");
+        if (first->length != second->length) raise_new("ValueError", "the first two maketrans arguments must have equal length");
+        for (std::size_t i = 0; i < first->length; ++i) dict_set(made, ord(first, i).get(), ord(second, i).get());
+        if (third != nullptr)
+            for (std::size_t i = 0; i < third->length; ++i) dict_set(made, ord(third, i).get(), None());
+        return out;
+    }
+    if (!is_exact_dict(x)) raise_new("TypeError", "if you give only one argument to maketrans it must be a dict");
+    for (auto& e : static_cast<Dict*>(x.object())->entries) {
+        if (e.key.is_unset()) continue;
+        if (const Str* key = as_str(e.key)) {
+            if (key->length != 1) raise_new("ValueError", "string keys in translate table must be of length 1");
+            dict_set(made, ord(key, 0).get(), e.value);
+        } else if (is_int(e.key)) {
+            dict_set(made, e.key, e.value);
+        } else {
+            raise_new("TypeError", "keys in translate table must be strings or integers");
+        }
+    }
+    return out;
+}
 Ref str_find_m(Obj self, Args a) { return find_like(self, a, "find", 1, false); }
 Ref str_rfind_m(Obj self, Args a) { return find_like(self, a, "rfind", -1, false); }
 Ref str_index_m(Obj self, Args a) { return find_like(self, a, "index", 1, true); }

@@ -652,6 +652,7 @@ struct ClassObject : Object {
     bool has_dict = false;
     bool has_weakref = false;                    // room for weak references (RefClass.has_weakref)
     bool dict_without_getset = false;            // _thread._local: a subclass still gets a __dict__ of its own to show
+    bool sequence_slots = false;                 // a C type written in Python, with sq_concat and sq_item and no number slots
     bool weak_proxy = false;                     // weakref.ProxyType and its kin: attribute access goes to the target
     bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
     bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited

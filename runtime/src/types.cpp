@@ -199,6 +199,12 @@ Ref descriptor_qualname(Obj self) {              // descr_get_qualname: the type
     Ref owner = getattr(Obj::of(descriptor_owner(self)), N("__qualname__"));
     return str_new(as_str(owner.get())->text + "." + descriptor_text(self));
 }
+// descr_setcheck: a getset's __set__ and __delete__ take what its __get__ takes
+void check_descriptor_applies(Obj self, Obj obj) {
+    ClassObject* owner = descriptor_owner(self);
+    if (!isinstance(obj, owner))
+        raise_new("TypeError", "descriptor '" + descriptor_text(self) + "' for '" + owner->name + "' objects doesn't apply to a '" + type_of(obj)->name + "' object");
+}
 Ref getset_set(Obj self, Args a) {
     arity(a, "__set__", 2, 2);
     if (is_kind(self, Kind::SlotDescriptor)) {   // member_set: the field itself, whatever the class's __setattr__ does
@@ -211,6 +217,7 @@ Ref getset_set(Obj self, Args a) {
         return none_ref();
     }
     auto* g = static_cast<GetSet*>(self.object());
+    check_descriptor_applies(self, a.pos(0));
     if (g->set == nullptr) {
         if (g->cls == types().member_descriptor) raise_new("AttributeError", "readonly attribute");
         raise_new("AttributeError", std::string("attribute '") + g->name + "' of '" + g->owner->name + "' objects is not writable");
@@ -231,6 +238,7 @@ Ref getset_delete(Obj self, Args a) {
         return none_ref();
     }
     auto* g = static_cast<GetSet*>(self.object());
+    check_descriptor_applies(self, a.pos(0));
     if (g->set == nullptr) {                     // getset_set: no setter, for storing and deleting alike
         if (g->cls == types().member_descriptor) raise_new("AttributeError", "readonly attribute");
         raise_new("AttributeError", std::string("attribute '") + g->name + "' of '" + g->owner->name + "' objects is not writable");

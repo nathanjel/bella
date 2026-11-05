@@ -137,8 +137,21 @@ bool is_heap_obj(Obj v) { return (v.is_object() && v.object()->kind == Kind::Ins
 bool overridden(Obj v, const char* name) { return is_subclass_instance(v) && overrides_builtin(v, name); }
 bool not_implemented(const Ref& r) { return r.get() == Obj::of(NOTIMPLEMENTED); }
 
+// a method a C type has as a sequence slot, where the C has no number slot: the first class to name it says
+bool sequence_slot_of(Obj v, const char* name) {
+    if (!v.is_object()) return false;
+    const Str* n = intern(name);
+    for (ClassObject* c : type_of(v)->mro)
+        if (c->attrs.contains(n)) return c->sequence_slots;
+    return false;
+}
+
 // one operand's method: a class's dunder (absent: *has false), or the C++ type's operation
 Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
+    if ((op == BinOp::Add || op == BinOp::Mul) && sequence_slot_of(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0])) {
+        has = false;
+        return Ref{};
+    }
     if (is_heap_obj(self) || overridden(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0])) {
         Ref r = call_special(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0], {other}, &has);
         return r;
@@ -205,6 +218,17 @@ Ref repeat(Obj seq, Obj n, bool in_place) {
 // PyNumber_Add's and PyNumber_Multiply's sequence step, once both number slots declined: the left
 // operand's concatenation (+= extends a list), or repetition by either operand
 Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
+    if (op == BinOp::Add && sequence_slot_of(a, in_place ? "__iadd__" : "__add__")) return call_special(a, in_place ? "__iadd__" : "__add__", {b});
+    if (op == BinOp::Mul) {                          // sequence_repeat, on the first operand with a slot
+        const char* name = in_place ? "__imul__" : "__mul__";
+        Obj seq = sequence_slot_of(a, name) ? a : !repeatable(a) && sequence_slot_of(b, "__mul__") ? b : Obj{};
+        if (!seq.is_unset()) {
+            Obj n = seq == a ? b : a;
+            if (type_lookup(type_of(n), intern("__index__")).is_unset())
+                raise_new("TypeError", "can't multiply sequence by non-int of type '" + type_of(n)->name + "'");
+            return call_special(seq, seq == a ? name : "__mul__", {n});
+        }
+    }
     if (op == BinOp::Add) {
         if (is_bytes_like(a)) {
             if (in_place && is_kind(a, Kind::ByteArray)) {
@@ -330,7 +354,8 @@ Ref binary(BinOp op, Obj a, Obj b) {
 // PyNumber_InPlace*: the left operand's in-place method, then binary_op1, then the sequence step
 Ref inplace(BinOp op, Obj a, Obj b) {
     if (set_like_view(a) && set_like_operator(op)) throw NotImplemented("set operations on dict keys and items views");
-    if (is_heap_obj(a) || overridden(a, BIN_NAMES[static_cast<int>(op)][2])) {
+    if ((is_heap_obj(a) || overridden(a, BIN_NAMES[static_cast<int>(op)][2])) &&
+        !((op == BinOp::Add || op == BinOp::Mul) && sequence_slot_of(a, BIN_NAMES[static_cast<int>(op)][2]))) {
         bool has = false;
         Ref r = call_special(a, BIN_NAMES[static_cast<int>(op)][2], {b}, &has);
         if (has && !not_implemented(r)) return r;
@@ -1056,9 +1081,17 @@ void raise_delete_failed(Obj obj, const Str* name, const std::string& what) {
     raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
 }
 
+// a field of a C type written in Python, which the C type does not show: no subclass's __setattr__ runs when
+// its own code stores one (a name CPython's type has, as GenericAlias's __parameters__, is a program's to set)
+static bool native_slot(Obj obj, const Str* name) {
+    Obj found = type_lookup(type_of(obj), name);
+    if (!is_kind(found, Kind::SlotDescriptor)) return false;
+    auto* owner = static_cast<SlotDescriptor*>(found.object())->owner;
+    return immutable_type(owner) && cpython_attribute_kind(owner, name->text.c_str()).empty();
+}
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
-        if (overrides(obj, "__setattr__")) {
+        if (overrides(obj, "__setattr__") && !native_slot(obj, name)) {
             call_special(obj, "__setattr__", {Obj::of(name), value});
             return;
         }
@@ -1230,7 +1263,16 @@ Ref dict_subscript(Obj self, Obj key) {
     raise(exc.get());
 }
 
+// PyObject_GetItem and its kin on a type with sq_item alone: the key must be an index, and an index that does
+// not fit is an IndexError here, where the slot wrapper itself says OverflowError
+static void check_sequence_key(Obj obj, Obj key, const char* name) {
+    if (!sequence_slot_of(obj, name)) return;
+    if (type_lookup(type_of(key), intern("__index__")).is_unset())
+        raise_new("TypeError", "sequence index must be integer, not '" + type_of(key)->name + "'");
+    index_value(key, "IndexError");
+}
 Ref getitem(Obj obj, Obj key) {
+    check_sequence_key(obj, key, "__getitem__");
     bool slice = is_kind(key, Kind::Slice);
     if (is_kind(obj, Kind::Tuple)) {
         auto& items = static_cast<Tuple*>(obj.object())->items;
@@ -1276,9 +1318,67 @@ Ref getitem(Obj obj, Obj key) {
     raise_new("TypeError", "'" + type_of(obj)->name + "' object is not subscriptable");
 }
 
+Ref sequence_fast(Obj v, const char* message) {
+    if (is_kind(v, Kind::List) || is_kind(v, Kind::Tuple)) return Ref::share(v);
+    Ref it;
+    try {
+        it = iter(v);
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        raise_new("TypeError", message);
+    }
+    Ref items = list_new({});
+    list_extend(items.get(), it.get());
+    return items;
+}
+
+// list_ass_subscript with a value. What goes out dies once the list is whole again: a slice's items last to
+// first (list_ass_slice), an extended slice's first to last. The slice's bounds are read before the value is
+// iterated and fitted to the list as that left it.
+static void list_assign_slice(Obj obj, Obj key, Obj value) {
+    auto& items = static_cast<List*>(obj.object())->items;
+    auto size = static_cast<std::int64_t>(items.size());
+    auto bounds = slice_indices(key, size);
+    Ref seq;
+    if (value == obj) {                          // a[::-1] = a
+        seq = list_new({});
+        list_extend(seq.get(), obj);
+    } else {
+        seq = sequence_fast(value, "must assign iterable to extended slice");
+    }
+    if (static_cast<std::int64_t>(items.size()) != size) bounds = slice_indices(key, static_cast<std::int64_t>(items.size()));
+    auto [start, stop, step, n] = bounds;
+    const std::vector<Obj>& in = is_kind(seq.get(), Kind::List) ? static_cast<List*>(seq.get().object())->items : static_cast<Tuple*>(seq.get().object())->items;
+    std::vector<Obj> garbage;
+    if (step == 1) {
+        stop = std::max(stop, start);
+        auto low = items.begin() + start, high = items.begin() + stop;
+        garbage.assign(low, high);
+        for (Obj v : in) incref(v);
+        std::vector<Obj> added(in);              // `in` may be a list that a finaliser changes later
+        items.erase(low, high);
+        items.insert(items.begin() + start, added.begin(), added.end());
+        for (auto it = garbage.rbegin(); it != garbage.rend(); ++it) decref(*it);
+        return;
+    }
+    if (static_cast<std::int64_t>(in.size()) != n)
+        raise_new("ValueError", "attempt to assign sequence of size " + std::to_string(in.size()) + " to extended slice of size " + std::to_string(n));
+    garbage.reserve(static_cast<std::size_t>(n));
+    for (std::int64_t i = 0, k = start; i < n; ++i, k += step) {
+        Obj v = in[static_cast<std::size_t>(i)];
+        incref(v);
+        garbage.push_back(std::exchange(items[static_cast<std::size_t>(k)], v));
+    }
+    for (Obj old : garbage) decref(old);
+}
+
 void setitem(Obj obj, Obj key, Obj value) {
+    check_sequence_key(obj, key, "__setitem__");
     if (is_kind(obj, Kind::List)) {
-        if (is_kind(key, Kind::Slice)) throw NotImplemented("slice assignment to a list");
+        if (is_kind(key, Kind::Slice)) {
+            list_assign_slice(obj, key, value);
+            return;
+        }
         auto& items = static_cast<List*>(obj.object())->items;
         std::size_t i = index_of(key, items.size(), "list", "list assignment");
         incref(value);
@@ -1297,6 +1397,7 @@ void setitem(Obj obj, Obj key, Obj value) {
 }
 
 void delitem(Obj obj, Obj key) {
+    check_sequence_key(obj, key, "__delitem__");
     if (is_dict(obj) && !overridden(obj, "__delitem__")) {
         if (!dict_del(static_cast<Dict*>(obj.object()), key)) {
             Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});

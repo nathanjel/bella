@@ -108,20 +108,6 @@ std::vector<Obj>& sequence_items(const Ref& seq) {
     return is_kind(seq.get(), Kind::List) ? static_cast<List*>(seq.get().object())->items : static_cast<Tuple*>(seq.get().object())->items;
 }
 
-Ref sequence_fast(Obj v, const char* message) {  // PySequence_Fast
-    if (is_kind(v, Kind::List) || is_kind(v, Kind::Tuple)) return Ref::share(v);
-    Ref it;
-    try {
-        it = iter(v);
-    } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
-        raise_new("TypeError", message);
-    }
-    Ref items = list_new({});
-    list_extend(items.get(), it.get());
-    return items;
-}
-
 void compute_abstract_methods(Obj self) {
     Ref abstracts = own(new SetObject(true));
     // Stage 1: direct abstract methods; a list, as __isabstractmethod__ can change the namespace

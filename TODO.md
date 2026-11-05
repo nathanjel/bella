@@ -469,13 +469,19 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              compensation and `tuple.index` and `count`.
            * `_thread` done (C-7-22, `runtime/prelude/_thread.py`): one thread, and what would need another stops
              by name. `threading` itself is the standard library's, still to import.
-           * Next: see the survey (`make compiled-corpus`).
+           * `_collections` done but for `OrderedDict`, which stops by name (C-7-23, `runtime/prelude/_collections.py`),
+             with `list` slice assignment and `str.maketrans`.
+           * Next, what the survey and a walk of the built-ins' names found: `set`'s methods; `str`'s methods with
+             `format` and `%`, ASCII first; subclasses of `tuple`, `list` and `str` (`namedtuple`); `complex`;
+             `_heapq`; `object.__getstate__` and `copyreg`; generators, which stop `Counter.__eq__` and every
+             generator expression, and stop more as these go; `_ast` 6, `_stat` 6, `gc` 4.
              Generators are refused where they run (`weakref`'s iteration, a generator expression), and
              stop more once these are past. Then start-up modules run at start-up.
        * 3c, its first half done: weak references and resurrection (C-9-03, C-9-04, C-9-10), in the model
          first (`RefWeak`, the oracle's `weak_new`, `revive`), then the header and `_weakref`.
        * 3c, what is left: the cycle collector, `gc`, model first: C-3-12, C-9-01, C-9-02, C-9-07; it
-         replaces the exit walk. `_abc` takes real weak references then, which only the collector can tell
+         replaces the exit walk, which today finalises a list's items first to last and in breadth-first
+         order, where CPython's teardown releases what it can by reference count. `_abc` takes real weak references then, which only the collector can tell
          from today's strong ones (a class is in a cycle with its own mro). With it, a caught exception
          keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

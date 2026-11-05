@@ -437,6 +437,14 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   special case, `__dict__`, is in `getattr_impl`, because a program's `__getattribute__` is [P2+] and the prelude's
   would be refused with it. It keeps the weak reference to itself that the C's dummy keeps, since a program can
   count it, in a slot taken out of the class's namespace.
+* `_collections` (`runtime/prelude/_collections.py`, C-7-23): a deque is a list kept right to left, so that a list's
+  death, last to first, is a deque's, left to right, and with free cells below for appends on the right. `_d_state`
+  counts what the C's `state` counts, since that is what an iterator watches. The C has only sequence slots here, so
+  `ClassObject::sequence_slots` keeps `d + x` asking `x.__radd__` first, and says what `d["a"]` and `d * "a"` say,
+  where a direct `d.__getitem__("a")` says what a slot wrapper does. `OrderedDict` stops by name until
+  `Objects/odictobject.c` is written, and `deque.__sizeof__` for good reason: it counts the C's blocks.
+* A field of a C type written in Python is stored without a subclass's `__setattr__`, whichever class it is
+  (`native_slot` in `ops.cpp`).
 * `float` (`runtime/src/float.cpp`, C-6-12): the object is a double, and a subclass's instance adds an attribute
   storage as `IntInstance` does. The digits are libstdc++'s (`make float-diff`), and everything around them is the C's.
   What is not finished: a negative float to a fractional power stops by name until `complex`; `float()` of a str

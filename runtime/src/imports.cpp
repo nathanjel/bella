@@ -22,6 +22,7 @@ namespace bella {
 namespace prelude_itertools { Ref module_body(Module* m); }   // runtime/prelude/itertools.py
 namespace prelude_operator { Ref module_body(Module* m); }    // runtime/prelude/_operator.py
 namespace prelude_thread { Ref module_body(Module* m); }      // runtime/prelude/_thread.py
+namespace prelude_collections { Ref module_body(Module* m); } // runtime/prelude/_collections.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -320,7 +321,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_weakref", {fill_weakref}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_weakref", {fill_weakref}}};
     return table;
 }
 }  // namespace
@@ -460,6 +461,67 @@ void fill_thread(Module* m) {
     local->attrs.set(N("__getattribute__"), Obj::of(getattribute));
     auto* handle = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("_ThreadHandle"))).object());
     handle->attrs.set(N("ident"), Obj::of(new GetSet("ident", handle, handle_ident, nullptr)));
+}
+// Py_ReprEnter and Py_ReprLeave: one list, with the containers' own (builtins.py)
+Ref i_repr_enter(Obj, Args a) {
+    positional_only(a, "_repr_enter", 1, 1);
+    return invoke(builtin("_enter").get(), {a.pos(0)});
+}
+Ref i_repr_leave(Obj, Args a) {
+    positional_only(a, "_repr_leave", 1, 1);
+    return invoke(builtin("_leave").get(), {a.pos(0)});
+}
+// _count_elements' fast path: each key hashed once, whatever its __hash__ does
+Ref i_count_element(Obj, Args a) {
+    positional_only(a, "_count_element", 2, 2);
+    Obj key = a.pos(1);
+    std::int64_t h = hash_of(key);
+    auto* d = static_cast<Dict*>(a.pos(0).object());
+    Obj old = dict_find(d, key, h);
+    Ref one = int_from_i64(1);
+    if (old.is_unset()) {
+        dict_set_hashed(d, key, h, one.get());
+    } else {
+        Ref held = Ref::share(old);
+        Ref sum = binary(BinOp::Add, held.get(), one.get());
+        dict_set_hashed(d, key, h, sum.get());
+    }
+    return none_ref();
+}
+Ref deque_maxlen(Obj self) {                     // deque_get_maxlen
+    Ref bound = getattr(self, N("_c_maxlen"));
+    return bound.get().is_small() && bound.get().small_value() < 0 ? none_ref() : bound;
+}
+Ref factory_get(Obj self) {                      // a T_OBJECT member: None when there is none
+    Ref value = optional_getattr(self, N("_a_factory"));
+    return value.get().is_unset() ? none_ref() : value;
+}
+void factory_set(Obj self, Obj value) {
+    if (!value.is_unset()) {
+        setattr(self, N("_a_factory"), value);
+    } else if (!optional_getattr(self, N("_a_factory")).get().is_unset()) {
+        delattr(self, N("_a_factory"));
+    }
+}
+Ref getter_doc(Obj self) { return getattr(self, N("_b_doc")); }
+void getter_doc_set(Obj self, Obj value) {
+    setattr(self, N("_b_doc"), value.is_unset() ? None() : value);
+}
+void fill_collections(Module* m) {               // its types are named for `collections`, the module that shows them
+    fill_in_python(m, "_collections", "collections", prelude_collections::module_body,
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_bella_refuse", i_bella_refuse}, {"_count_element", i_count_element},
+                    {"_repr_enter", i_repr_enter}, {"_repr_leave", i_repr_leave}});
+    auto cls = [&](const char* n) { return static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N(n))).object()); };
+    cls("deque")->sequence_slots = true;
+    auto member = [](ClassObject* c, const char* name, Ref (*get)(Obj), void (*set)(Obj, Obj)) {
+        auto* g = new GetSet(name, c, get, set);
+        g->cls = types().member_descriptor;
+        g->deletable = true;
+        c->attrs.set(N(name), Obj::of(g));
+    };
+    cls("deque")->attrs.set(N("maxlen"), Obj::of(new GetSet("maxlen", cls("deque"), deque_maxlen, nullptr)));
+    member(cls("defaultdict"), "default_factory", factory_get, factory_set);
+    member(cls("_tuplegetter"), "__doc__", getter_doc, getter_doc_set);
 }
 void fill_operator(Module* m) {                  // its types are named for `operator`, the module that shows them
     fill_in_python(m, "_operator", "operator", prelude_operator::module_body,
