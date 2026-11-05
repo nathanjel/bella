@@ -77,7 +77,7 @@ def type_names():
     def gen():
         yield 1
     samples = [iter([]), iter(()), iter(""), iter("é"), iter({}), iter({}.values()), iter({}.items()),
-               iter(set()), iter(range(1)), iter(Seq()), reversed([]), {}.keys(), {}.values(), {}.items(),
+               iter(set()), iter(range(1)), iter(range(2**64)), iter(Seq()), reversed([]), {}.keys(), {}.values(), {}.items(),
                outer, outer().__closure__[0], outer.__code__, type.__dict__, [].append, list.append,
                dict.__dict__["fromkeys"], type.__dict__["__name__"], object.__init__, object().__init__,
                sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int])]
@@ -153,7 +153,7 @@ def docs():
     out = {"sys": sys.__doc__, "builtins": builtins.__doc__}
     samples = [v for v in [*vars(builtins).values(), *vars(types).values()] if isinstance(v, type)]
     samples += [type(iter([])), type(iter(())), type(iter("")), type({}.keys()), type({}.values()), type({}.items()), type(iter({})),
-                type(iter(set())), type(iter(range(1))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout)]
+                type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout)]
     for t in samples:
         if isinstance(t.__doc__, str):
             out.setdefault(t.__name__, t.__doc__)

@@ -170,7 +170,8 @@ Ref absolute_name(Obj name, Obj globals, std::int64_t level) {
 
 std::int64_t level_value(Obj level) {             // PyLong_AsInt
     std::int64_t v;
-    if (!as_int(level, v)) raise_new("TypeError", "'" + type_of(level)->name + "' object cannot be interpreted as an integer");
+    if (is_int(level) && !int_fits_i64(level, v)) raise_new("OverflowError", "Python int too large to convert to C int");
+    if (!int_fits_i64(level, v)) raise_new("TypeError", "'" + type_of(level)->name + "' object cannot be interpreted as an integer");
     if (v < INT32_MIN || v > INT32_MAX) raise_new("OverflowError", "Python int too large to convert to C int");
     return v;
 }

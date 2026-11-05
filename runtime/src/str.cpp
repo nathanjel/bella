@@ -81,7 +81,7 @@ std::int64_t slice_index(Obj v, std::int64_t dflt) {
     if (as_int(v, x)) return x;
     if (type_lookup(type_of(v), intern("__index__")).is_unset())
         raise_new("TypeError", "slice indices must be integers or have an __index__ method");
-    return index_value(v);
+    return clipped_index(v);
 }
 void adjust_indices(std::int64_t& start, std::int64_t& end, std::int64_t len) {   // ADJUST_INDICES
     if (end > len) end = len;
@@ -224,7 +224,7 @@ void split_args(Args a, const char* name, Obj& sep, std::int64_t& maxsplit) {
         given[j] = a.kw(k);
     }
     sep = given[0].is_unset() ? None() : given[0];
-    maxsplit = given[1].is_unset() ? -1 : index_value(given[1]);
+    maxsplit = given[1].is_unset() ? -1 : ssize_arg(given[1]);
 }
 Ref split_like(Obj self, Args a, const char* name, int direction) {
     const Str* s = self_str(self, name);
@@ -367,7 +367,7 @@ Ref str_replace_m(Obj self, Args a) {
     }
     const Str* old = str_argument(given[0], "replace", "argument 1");
     const Str* rep = str_argument(given[1], "replace", "argument 2");
-    std::int64_t count = given[2].is_unset() ? -1 : index_value(given[2]);
+    std::int64_t count = given[2].is_unset() ? -1 : ssize_arg(given[2]);
     Cps text = cps_of(s), from = cps_of(old), to = cps_of(rep);
     if (count < 0) count = INT64_MAX;
     bool exact = type_of(self) == types().str;

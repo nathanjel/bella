@@ -48,6 +48,7 @@ Types& types() {
         x.method = builtin_type("method", {x.object});
         x.range = builtin_type("range", {x.object});
         x.range_iterator = builtin_type("range_iterator", {x.object});
+        x.longrange_iterator = builtin_type("longrange_iterator", {x.object});
         x.tuple_iterator = builtin_type("tuple_iterator", {x.object});
         x.list_iterator = builtin_type("list_iterator", {x.object});
         x.list_reverseiterator = builtin_type("list_reverseiterator", {x.object});
@@ -122,12 +123,16 @@ Method::Method(Obj f, Obj s) : Object(Kind::Method), func(f), self(s) {
 }
 Range::Range(std::int64_t a, std::int64_t b, std::int64_t c) : Object(Kind::Range), start(a), stop(b), step(c) {
     cls = types().range;
-    if (c > 0) length = a < b ? (b - a - 1) / c + 1 : 0;
-    else length = a > b ? (a - b - 1) / -c + 1 : 0;
+    using Wide = __int128;                       // two 64-bit bounds can be 2**64 apart
+    Wide n = 0;
+    if (c > 0 && a < b) n = (Wide{b} - a - 1) / c + 1;
+    else if (c < 0 && a > b) n = (Wide{a} - b - 1) / -Wide{c} + 1;
+    length = static_cast<std::int64_t>(n);       // range_from_ints makes sure that it fits
 }
 Iterator::Iterator(Of o, Obj s) : Object(Kind::Iterator), of(o), seq(s) {
     switch (o) {
         case RangeIt: cls = types().range_iterator; break;
+        case LongRangeIt: cls = types().longrange_iterator; break;
         case TupleIt: cls = types().tuple_iterator; break;
         case ListIt: cls = types().list_iterator; break;
         case ListRevIt: cls = types().list_reverseiterator; break;
@@ -205,6 +210,7 @@ bool register_deaths() {
         destroy<Method>(o);
     };
     destroyer(Kind::Range) = [](Object* o) { destroy<Range>(o); };
+    destroyer(Kind::BigInt) = [](Object* o) { destroy<BigInt>(o); };
     destroyer(Kind::Iterator) = [](Object* o) { decref(std::exchange(static_cast<Iterator*>(o)->seq, Obj{})); destroy<Iterator>(o); };
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::Traceback) = [](Object* o) {
@@ -361,15 +367,15 @@ std::int64_t hash_small(std::int64_t v) {
     return h == -1 ? -2 : h;
 }
 
-// CPython's hash, as far as 64 bits go; hash_of below makes it fit
+// CPython's hash
 std::int64_t full_hash(Obj v) {
     if (v.is_small()) return hash_small(v.small_value());
     Object* o = v.object();
     switch (o->kind) {
         case Kind::IntInstance:                  // an int subclass: its value's hash, unless it has its own
-            if (type_lookup(o->cls, intern("__hash__")) == type_lookup(types().int_, intern("__hash__")))
-                return hash_small(static_cast<IntInstance*>(o)->value);
+            if (type_lookup(o->cls, intern("__hash__")) == type_lookup(types().int_, intern("__hash__"))) return big_hash(v);
             break;
+        case Kind::BigInt: return big_hash(v);
         case Kind::Bool: return static_cast<BoolObject*>(o)->value ? 1 : 0;
         case Kind::Str: {
             auto* s = static_cast<Str*>(o);
@@ -427,8 +433,10 @@ std::int64_t full_hash(Obj v) {
             return static_cast<std::int64_t>(hash);
         }
         case Kind::Range: {                      // range_hash: as (len, start, step), None where they do not matter
-            auto* r = static_cast<Range*>(o);
-            Ref t = tuple_new({Obj::small(r->length), r->length == 0 ? None() : Obj::small(r->start), r->length <= 1 ? None() : Obj::small(r->step)});
+            Ref n = range_length_big(v), start = range_field(v, 0), step = range_field(v, 2);
+            std::int64_t len = -1;
+            int_fits_i64(n.get(), len);
+            Ref t = tuple_new({n.get(), len == 0 ? None() : start.get(), len == 0 || len == 1 ? None() : step.get()});
             return hash_of(t.get());
         }
         case Kind::Slice: {                      // slice_hash: tuplehash's mixing over the three, no length
@@ -466,23 +474,18 @@ std::int64_t full_hash(Obj v) {
     Obj h = type_lookup(type_of(v), intern("__hash__"));
     if (!h.is_unset() && h != None()) {
         Ref r = call_special(v, "__hash__", {});
-        if (r.get().is_small()) {
-            std::int64_t x = r.get().small_value();
-            return x == -1 ? -2 : x;
-        }
-        if (is_kind(r.get(), Kind::Bool)) return static_cast<BoolObject*>(r.get().object())->value ? 1 : 0;
-        if (is_kind(r.get(), Kind::IntInstance)) return static_cast<IntInstance*>(r.get().object())->value;
-        raise_new("TypeError", "__hash__ method should return an integer");
+        if (!is_int(r.get())) raise_new("TypeError", "__hash__ method should return an integer");
+        // slot_tp_hash: what fits a hash is the hash, so x.__hash__() returning hash(y) hashes as y; beyond that, long_hash
+        std::int64_t x;
+        return int_fits_i64(r.get(), x) ? x : big_hash(r.get());
     }
     raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
 }
 }  // namespace
 
-// A hash here is what an int here can hold, 63 bits (D-22). All of them are made to fit at this one
-// point, so that hash(x), a __hash__ that returns it, and the tables holding x all see one number.
 std::int64_t hash_of(Obj v) {
-    std::int64_t h = Obj::small(full_hash(v)).small_value();
-    return h == -1 ? -2 : h;
+    std::int64_t h = full_hash(v);
+    return h == -1 ? -2 : h;                     // -1 is reserved for errors
 }
 
 // ---- the dict: object.hpp's compact dict, with Python's hash and == for its keys ----

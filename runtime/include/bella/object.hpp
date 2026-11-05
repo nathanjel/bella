@@ -852,11 +852,13 @@ struct DictInstance : DictObject {
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
-// An instance of a program's subclass of int: its value (an int's, within the immediates' range;
-// the big ints come with the bn port) and the subclass's attribute storage. Its value is no object,
-// so it dies as an instance does (decision 2026-11-03).
+// An instance of a program's subclass of int: its value and the subclass's attribute storage. The
+// value is an immediate's, or, beyond them, limbs and a sign (value is then 0; bigint.cpp reads them).
+// It is no object, so it dies as an instance does (decision 2026-11-03).
 struct IntInstance : Object {
     std::int64_t value;
+    std::vector<std::uint64_t> limbs;
+    bool negative = false;
     std::vector<Obj> fields;
     DictObject* dict = nullptr;
     std::vector<const Str*> order;

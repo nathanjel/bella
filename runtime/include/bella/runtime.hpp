@@ -121,11 +121,18 @@ struct Method : Object {                         // a bound method: func and sel
     Method(Obj f, Obj s);
 };
 struct Range : Object {
-    std::int64_t start, stop, step, length;
+    std::int64_t start, stop, step, length;      // all four fit 64 bits: rangeobject.c's fast case
+    bool big = false;                            // one does not: these hold the four, and length is clipped
+    Ref bstart, bstop, bstep, blength;           // (bigint.cpp; range_field and range_length_big read either)
     Range(std::int64_t a, std::int64_t b, std::int64_t c);
 };
+struct BigInt : Object {                         // an int outside the immediates: never one that fits them
+    bool negative;
+    std::vector<std::uint64_t> limbs;            // the magnitude, low limb first, no zero limb on top
+    BigInt(bool neg, std::vector<std::uint64_t> mag);
+};
 struct Iterator : Object {                       // the C++ types' iterators
-    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, ListRevIt, StrIt, BytesIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
+    enum Of : std::uint8_t { RangeIt, LongRangeIt, TupleIt, ListIt, ListRevIt, StrIt, BytesIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
     std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
@@ -213,7 +220,7 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 // ---- the builtin types and singletons (made at start-up) ----
 struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
-        *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *tuple_iterator,
+        *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
         *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
@@ -459,7 +466,50 @@ Ref list_new(std::initializer_list<Obj> items);
 std::int64_t hash_of(Obj v);
 inline constexpr std::int64_t SMALL_MIN = -(std::int64_t{1} << 62);   // the int immediates' range
 inline constexpr std::int64_t SMALL_MAX = (std::int64_t{1} << 62) - 1;
-bool as_int(Obj v, std::int64_t& out);                       // an int's value (PyLong_Check: a subclass's too)
+
+// ---- int, whatever its size (runtime/src/bigint.cpp; the immediates' arithmetic is int.hpp) ----
+// as_int (below) answers for an int that is an immediate's size; is_int for every int.
+enum class BinOp : std::uint8_t;
+bool is_int(Obj v);                              // PyLong_Check
+bool int_fits_i64(Obj v, std::int64_t& out);     // an int within 64 bits, and its value
+Ref big_from_i64(std::int64_t v);
+inline Ref int_from_i64(std::int64_t v) {        // an exact int
+    return v >= SMALL_MIN && v <= SMALL_MAX ? Ref::steal(Obj::small(v)) : big_from_i64(v);
+}
+bool int_is_negative(Obj v);
+bool int_is_zero(Obj v);
+Ref int_index_of(Obj v);                         // PyNumber_Index (runtime/src/ops.cpp)
+std::int64_t clipped_index(Obj v);               // PyNumber_AsSsize_t(v, NULL), a slice bound's reading
+Ref big_binary(BinOp op, Obj a, Obj b);          // every binary operator, on any two ints
+Ref big_negate(Obj v);
+Ref big_absolute(Obj v);
+Ref big_invert(Obj v);
+Ref big_plain(Obj v);                            // the value as an exact int
+Ref big_divmod(Obj a, Obj b);
+Ref big_pow_mod(Obj a, Obj b, Obj mod);          // pow(a, b, mod) on three ints
+int big_compare(Obj a, Obj b);                   // -1, 0, 1
+std::int64_t big_hash(Obj v);                    // long_hash
+std::string big_text(Obj v);                     // str(v), under the limit of digits
+Ref int_round(Obj self, Obj ndigits);            // int.__round__; ndigits may be unset or None
+int max_str_digits();                            // sys.get_int_max_str_digits()
+Ref int_from_digits(bool negative, std::string_view digits, int base);   // digits valid for the base, no underscores
+Obj big_int_constant(const char* text);          // a generated program's literal, decimal or 0x; the caller keeps it
+void fill_int_builtins(Dict* builtins);
+void fill_int_sys(Dict* sys);
+void init_bigint();
+// a range's three fields and its length as ints, either kind of range; `which` is 0 start, 1 stop, 2 step
+Ref range_from_ints(Obj start, Obj stop, Obj step);   // range_new, from three exact ints
+Ref range_field(Obj self, int which);
+Ref range_length_big(Obj self);
+Ref range_item(Obj self, Obj index);             // compute_range_item, index an exact int
+Ref range_slice(Obj self, Obj slice);            // compute_slice
+bool range_contains_int(Obj self, Obj item);     // range_contains_long
+bool range_equal(Obj a, Obj b);                  // range_equals
+std::string big_range_repr(Obj self);
+Ref range_iter(Obj self);                        // range_iter: range_iterator, or longrange_iterator past 64 bits
+Ref big_range_reversed(Obj self);
+Ref long_range_next(std::vector<Obj>& state);    // [the next value, the step, how many are left]; unset at the end
+bool as_int(Obj v, std::int64_t& out);                       // an int within the immediates, a bool, a subclass's: its value
 // a key's hash for a dict or a set: an unhashable key's TypeError names the container, as
 // dict_unhashable_type and set_unhashable_type word it ("cannot use 'list' as a dict key (...)")
 std::int64_t dict_key_hash(Obj key);
@@ -595,7 +645,11 @@ void note_prelude_class(const ClassObject* c);    // a class the prelude writes 
 // type(v) and v.__class__: the runtime refuses an object it cannot present as CPython's yet (a
 // slot wrapper, which it holds as a method descriptor).
 ClassObject* observed_type(Obj v);
-std::int64_t index_value(Obj v);                             // operator.index: int, bool, __index__
+// PyNumber_AsSsize_t(v, overflow): int, bool, __index__; beyond 64 bits it raises that exception
+std::int64_t index_value(Obj v, const char* overflow = "OverflowError");
+// a clinic's argument: Py_ssize_t and int, whose OverflowError words it their own way (_PyNumber_Index, PyLong_AsSsize_t, PyLong_AsInt)
+std::int64_t ssize_arg(Obj v);
+int c_int_arg(Obj v);
 std::int64_t length_value(Obj v);                            // a __len__ result as len() and truth take it
 Ref type_call(ClassObject* cls, Args a);                     // calling a class: __new__, then __init__
 Ref type_getattr(ClassObject* cls, const Str* name);         // type_getattro

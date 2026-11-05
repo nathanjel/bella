@@ -15,7 +15,7 @@ Python in `runtime/prelude/`, compiled by Bella like any program.
 | Part | Where | What |
 | --- | --- | --- |
 | The object model | `runtime/include/bella/object.hpp` | values (`Obj`, `Ref`), counting, classes, instances, attribute lookup, inline caches, deaths in CPython's order; tested three ways by `make object-test` |
-| Exact `int` | `runtime/include/bella/int.hpp` | the 63-bit fast paths, tested by `make int-test`; the runtime calls them and turns their C++ errors into Python exceptions |
+| Exact `int` | `runtime/include/bella/int.hpp`, `runtime/src/bigint.cpp`, `runtime/src/bn.inc` | the 63-bit fast paths, tested by `make int-test`, which say when a result does not fit; then the Python layer in `bigint.cpp` over a copy of SEL's `bn` (case C-6-10) |
 | The runtime core | `runtime/include/bella/runtime.hpp`, `runtime/src/*.cpp` | `str` (PEP 393), tuple, list, CPython's compact dict, hashing (SipHash-1-3 keyed as `PYTHONHASHSEED` says, `int` and `tuple` hashes as CPython's), the call protocol and argument binding, function objects and cells, modules and names, the exception carrier and frame records, iteration, operators, `sys.stdout` |
 | The prelude | `runtime/prelude/build_class.py`, `builtins.py` | `__build_class__`; `print`; `property`, `staticmethod`, `classmethod`; the `repr` of lists, tuples, dicts, sets and frozensets (installed as their `__repr__`, each checking its receiver). CPython runs each against its builtin in `runtime/tests/test_prelude.py`. What a module exports looks like CPython's builtin: a function is a `builtin_function_or_method` (its repr, its `__self__`, never bound as a method), a class is immutable (RL-217) |
 | Types and classes | `runtime/src/types.cpp`, `set.cpp` | the builtin types' attributes as getset and method descriptors; `type.__new__` and calling a class; attribute access on classes and on the C++ types' objects; special-method dispatch; `set` and `frozenset` as CPython's table (`Objects/setobject.c`), so their order is CPython's (D-05) |
@@ -218,8 +218,17 @@ operation that takes one (`as_int`, PyLong_Check), the fast paths that skip the 
 ints only (`as_exact_int`), and its class's overrides come first where CPython's would (a subclass's
 reflected method before the int's). `int()` is `long_new_impl`: `PyNumber_Long` (an int as
 itself, `__int__`, `__index__`, a str) and `PyLong_FromString`'s rules for an ASCII str (a str
-beyond ASCII is refused: its digits and spaces need the Unicode database); a value beyond the
-immediates is refused (the bn port).
+beyond ASCII is refused: its digits and spaces need the Unicode database).
+
+An int outside the immediates is a `BigInt` (`Kind::BigInt`, class `int`), and a value that fits
+an immediate is never one. `as_int` still answers only for an immediate's size, so that the fast
+paths stay as they were; a path that takes every int asks `is_int` and reads through `IntView`
+(an immediate, a bool, a `BigInt`, an `IntInstance` with limbs). An index has CPython's three
+readings: `index_value` raises what the caller names ("cannot fit 'X' into an index-sized
+integer"), `clipped_index` clips as a slice's bounds do, and `ssize_arg` and `c_int_arg` are a
+clinic argument's, worded as `PyLong_AsSsize_t` and `PyLong_AsInt` word it. A `range` keeps four
+machine words while they fit (rangeobject.c's fast case); otherwise four ints, and its iterator
+is `longrange_iterator` exactly when CPython's is.
 
 Still in C++ until the next step: the exception classes (the decision puts them in the prelude);
 not yet anywhere: subclasses of `str`, `tuple`, `list` and the other C++ types (refused by name),
@@ -363,12 +372,17 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * Lines: a frame's line is its statement's first line; CPython gives the failing instruction's,
   which differs inside a statement that spans lines (RL-225). The frontend and L2 would carry
   the expression positions; an inlined comprehension's line then goes to its caller's entry.
-* The constructor of `float` (refused, RL-220), `max`, `min`, `divmod`;
+* The constructor of `float` (refused, RL-220);
   `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
   (StopIteration's `value`) are refused by name, read, stored or deleted (RL-255), until those
   classes are built as CPython's.
-* A hash has 63 bits until `hash()` can return a big int (D-22, RL-321): deterministic under a
-  seed and one number wherever it is read, but CPython's own value only when it fits.
+* A `BigInt` holds its limbs in a `std::vector` and `bn` returns vectors, two allocations for each
+  result, where the design has the limbs inline in the object. That is a speed matter and comes
+  with the first measurement that asks; the numbers are the same.
+* `1 << n` for `n` beyond 2**40 and a power of more than 2**40 bits are refused by name: where
+  CPython has no such limit, memory decides, and it would answer with a MemoryError or a result.
+* A constant CPython's compiler folds (`2**64`) is computed here at each evaluation, so `f() is f()`
+  differs for it as for a tuple of constants; a literal is one object per module, as CPython's are.
 * `_abc` holds classes where CPython holds weak references, until 3c (the author, 2026-11-04):
   `_get_dump` refuses a set with entries, and a metaclass's `__hash__` runs at each look-up where
   CPython's reference keeps the first answer. `__abc_tpflags__` is taken and checked, and its bits
@@ -408,8 +422,7 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   known edges).
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and
   type are refused today (RL-218); the names RL-211's table refuses, as programs need them.
-* Later: `float` beyond the digits (the wrapper of `to_chars`/`from_chars`), the `bn` copy for
-  big ints, `format` specifications, the global read caches of decision 6, the Unicode database
+* Later: `float` beyond the digits (the wrapper of `to_chars`/`from_chars`), `format` specifications, the global read caches of decision 6, the Unicode database
   for `repr` beyond Latin-1, the rest of the builtins.
 * Speed is not a goal yet: everything is boxed and every call binds generically, so the compiled
   `fib` takes about twice CPython's time. Phase 2's types change that.

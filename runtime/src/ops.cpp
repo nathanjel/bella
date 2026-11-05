@@ -9,7 +9,8 @@
 
 namespace bella {
 
-// an int's value (PyLong_Check): an immediate, a bool, or an int subclass's instance
+// an int's value when it is an immediate's size: an immediate, a bool, or an int subclass's instance
+// holding one. A big int answers false here, and is_int true: a path that takes every int asks is_int.
 bool as_int(Obj v, std::int64_t& out) {
     if (v.is_small()) {
         out = v.small_value();
@@ -20,7 +21,9 @@ bool as_int(Obj v, std::int64_t& out) {
         return true;
     }
     if (is_kind(v, Kind::IntInstance)) {
-        out = static_cast<IntInstance*>(v.object())->value;
+        auto* i = static_cast<IntInstance*>(v.object());
+        if (!i->limbs.empty()) return false;
+        out = i->value;
         return true;
     }
     return false;
@@ -28,11 +31,6 @@ bool as_int(Obj v, std::int64_t& out) {
 namespace {
 // an int whose type is the runtime's (an immediate or a bool): what may skip the dispatch
 bool as_exact_int(Obj v, std::int64_t& out) { return !is_kind(v, Kind::IntInstance) && as_int(v, out); }
-
-Ref small(std::int64_t v) {
-    if (v < SMALL_MIN || v > SMALL_MAX) throw NotImplemented("BigInt: a result left the 63-bit immediate range");
-    return Ref::steal(Obj::small(v));
-}
 
 [[noreturn]] void unsupported(const char* sym, Obj a, Obj b) {
     raise_new("TypeError", std::string("unsupported operand type(s) for ") + sym + ": '" + type_of(a)->name + "' and '" +
@@ -58,35 +56,47 @@ const char* symbol(BinOp op) {
     return "?";
 }
 
-// int.hpp holds the int semantics, differentially tested against CPython (make int-test); its
-// C++ errors become the Python exceptions they stand for
+// int.hpp holds the immediates' semantics, differentially tested against CPython (make int-test); its
+// C++ errors become the Python exceptions they stand for. A result it cannot hold, and a negative
+// power, are bigint.cpp's.
 Ref int_binary(BinOp op, std::int64_t a, std::int64_t b, bool both_bool) {
-    Int x = Int::from_small(a), y = Int::from_small(b);
+    Int x = Int::from_small(a), y = Int::from_small(b), r;
+    bool fits = true;
     try {
         switch (op) {
-            case BinOp::Add: return small(int_add(x, y).small());
-            case BinOp::Sub: return small(int_sub(x, y).small());
-            case BinOp::Mul: return small(int_mul(x, y).small());
-            case BinOp::FloorDiv: return small(int_floordiv(x, y).small());
-            case BinOp::Mod: return small(int_mod(x, y).small());
-            case BinOp::Pow: return small(int_pow(x, y).small());
-            case BinOp::LShift: return small(int_lshift(x, y).small());
-            case BinOp::RShift: return small(int_rshift(x, y).small());
-            case BinOp::And: return both_bool ? Ref::steal(boolean((a & b) != 0)) : small(int_and(x, y).small());
-            case BinOp::Or: return both_bool ? Ref::steal(boolean((a | b) != 0)) : small(int_or(x, y).small());
-            case BinOp::Xor: return both_bool ? Ref::steal(boolean((a ^ b) != 0)) : small(int_xor(x, y).small());
+            case BinOp::Add: fits = try_add(x, y, r); break;
+            case BinOp::Sub: fits = try_sub(x, y, r); break;
+            case BinOp::Mul: fits = try_mul(x, y, r); break;
+            case BinOp::FloorDiv: fits = try_floordiv(x, y, r); break;
+            case BinOp::Mod: r = int_mod(x, y); break;
+            case BinOp::Pow: fits = b >= 0 && try_pow(x, y, r); break;
+            case BinOp::LShift: fits = try_lshift(x, y, r); break;
+            case BinOp::RShift: r = int_rshift(x, y); break;
+            case BinOp::And:
+                if (both_bool) return Ref::steal(boolean((a & b) != 0));
+                r = int_and(x, y);
+                break;
+            case BinOp::Or:
+                if (both_bool) return Ref::steal(boolean((a | b) != 0));
+                r = int_or(x, y);
+                break;
+            case BinOp::Xor:
+                if (both_bool) return Ref::steal(boolean((a ^ b) != 0));
+                r = int_xor(x, y);
+                break;
             case BinOp::TrueDiv:
                 if (b == 0) raise_new("ZeroDivisionError", "division by zero");
                 throw NotImplemented("float: int / int");
             case BinOp::MatMul:
-                break;
+                raise_new("TypeError", std::string("unsupported operand type(s) for ") + symbol(op) + ": 'int' and 'int'");
         }
     } catch (const bella::ZeroDivisionError& e) {
         raise_new("ZeroDivisionError", e.what());
     } catch (const bella::ValueError& e) {
         raise_new("ValueError", e.what());
     }
-    raise_new("TypeError", std::string("unsupported operand type(s) for ") + symbol(op) + ": 'int' and 'int'");
+    if (fits) return Ref::steal(Obj::small(r.small()));
+    return big_binary(op, Obj::small(a), Obj::small(b));
 }
 
 Ref concat_str(const Str* a, const Str* b) { return str_new(a->text + b->text); }
@@ -99,6 +109,7 @@ Ref concat_str(const Str* a, const Str* b) { return str_new(a->text + b->text); 
 Ref native_binary(BinOp op, Obj a, Obj b) {
     std::int64_t x, y;
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
+    if (op != BinOp::MatMul && is_int(a) && is_int(b)) return big_binary(op, a, b);
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
     if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // dict_or: a copy, updated
         Ref out = dict_copy(static_cast<Dict*>(a.object()));
@@ -144,8 +155,7 @@ bool has_sequence_methods(Obj v) {               // a type with tp_as_sequence (
 }
 // sequence_repeat: the count through __index__; then str's, tuple's or list's repeat
 Ref repeat(Obj seq, Obj n, bool in_place) {
-    std::int64_t exact;
-    if (!as_int(n, exact) && (!is_heap_obj(n) || type_lookup(type_of(n), intern("__index__")).is_unset()))
+    if (!is_int(n) && (!is_heap_obj(n) || type_lookup(type_of(n), intern("__index__")).is_unset()))
         raise_new("TypeError", "can't multiply sequence by non-int of type '" + type_of(n)->name + "'");
     std::int64_t count = index_value(n);
     if (is_bytes_like(seq)) return bytes_repeat(seq, count, in_place);
@@ -236,7 +246,7 @@ bool set_like_operator(BinOp op) { return op == BinOp::And || op == BinOp::Or ||
 // list.__add__ and the others: sq_concat and sq_repeat (wrap_binaryfunc, wrap_indexargfunc), which
 // raise for an operand they cannot take; only the `+` and `*` operators try its reflected method
 Ref sequence_concat(Obj self, Obj other) { return sequence_op(BinOp::Add, self, other, false); }
-Ref sequence_repeat(Obj self, Obj count) { return repeat(self, Obj::small(index_value(count)), false); }
+Ref sequence_repeat(Obj self, Obj count) { return repeat(self, int_from_i64(index_value(count)).get(), false); }
 
 // binary_op1: the operands' number slots, NotImplemented when both decline
 Ref binary_op1(BinOp op, Obj a, Obj b) {
@@ -313,18 +323,21 @@ Ref unary_special(Obj a, const char* dunder, const char* sym) {
 
 Ref unary_neg(Obj a) {
     std::int64_t x;
-    if (as_int(a, x) && !overridden(a, "__neg__")) return small(int_neg(Int::from_small(x)).small());
+    if (as_int(a, x) && !overridden(a, "__neg__")) return int_from_i64(-x);
+    if (is_int(a) && !overridden(a, "__neg__")) return big_negate(a);
     return unary_special(a, "__neg__", "-");
 }
 Ref unary_pos(Obj a) {
     std::int64_t x;
-    if (as_int(a, x) && !overridden(a, "__pos__")) return small(x);
+    if (as_int(a, x) && !overridden(a, "__pos__")) return int_from_i64(x);
+    if (is_int(a) && !overridden(a, "__pos__")) return big_plain(a);
     return unary_special(a, "__pos__", "+");
 }
 Ref unary_invert(Obj a) {
     std::int64_t x;
     if (is_kind(a, Kind::Bool)) throw NotImplemented("~ on a bool (a DeprecationWarning in CPython 3.15)");
-    if (as_int(a, x) && !overridden(a, "__invert__")) return small(~x);
+    if (as_int(a, x) && !overridden(a, "__invert__")) return int_from_i64(~x);
+    if (is_int(a) && !overridden(a, "__invert__")) return big_invert(a);
     return unary_special(a, "__invert__", "~");
 }
 
@@ -398,12 +411,12 @@ bool contains(Obj container, Obj item) {
             raise_new("TypeError", "'in <string>' requires string as left operand, not " + type_of(item)->name);
         return s->text.find(sub->text) != std::string::npos;
     }
-    if (is_kind(container, Kind::Range)) {
-        auto* r = static_cast<Range*>(container.object());
-        std::int64_t x;
-        if (!as_int(item, x)) throw NotImplemented("`in` on a range with a value that is not an int");
-        if (r->step > 0 ? (x < r->start || x >= r->stop) : (x > r->start || x <= r->stop)) return false;
-        return (x - r->start) % r->step == 0;
+    if (is_kind(container, Kind::Range)) {           // range_contains: arithmetic for an exact int or a bool, else the search
+        if (item.is_small() || is_kind(item, Kind::Bool) || is_kind(item, Kind::BigInt)) return range_contains_int(container, item);
+        Ref it = iter(container);
+        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+            if (equal(v.get())) return true;
+        return false;
     }
     // PySequence_Contains: the type's __contains__ (slot_sq_contains: None says it is no container,
     // G9 2.8), else _PySequence_IterSearch, whose iter()'s TypeError is reworded; an iterator or a
@@ -455,6 +468,7 @@ Ref sequence_compare(CmpOp op, Obj v, Obj w, bool lists) {
 Ref native_compare(CmpOp op, Obj a, Obj b) {
     std::int64_t x, y;
     if (as_int(a, x) && as_int(b, y)) return Ref::steal(boolean(ordered(op, x, y)));
+    if (is_int(a) && is_int(b)) return Ref::steal(boolean(ordered(op, big_compare(a, b), 0)));
     const Str* sa = as_str(a);
     const Str* sb = as_str(b);
     if (sa != nullptr && sb != nullptr)                // code point order: UTF-8 byte order is code point order
@@ -470,10 +484,7 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
     if ((is_kind(a, Kind::ByteArray) && is_bytes_like(b)) || (is_kind(a, Kind::Bytes) && is_kind(b, Kind::Bytes))) return bytes_compare(op, a, b);
     if (is_kind(a, Kind::Range) && is_kind(b, Kind::Range)) {   // range_richcompare: == and != only
         if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
-        auto *r0 = static_cast<Range*>(a.object()), *r1 = static_cast<Range*>(b.object());
-        bool eq = r0 == r1 || (r0->length == r1->length &&
-                               (r0->length == 0 || (r0->start == r1->start && (r0->length == 1 || r0->step == r1->step))));
-        return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
+        return Ref::steal(boolean((a == b || range_equal(a, b)) == (op == CmpOp::Eq)));
     }
     if (is_kind(a, Kind::Slice) && is_kind(b, Kind::Slice)) {   // slice_richcompare: as (start, stop, step)
         auto *s0 = static_cast<SliceObject*>(a.object()), *s1 = static_cast<SliceObject*>(b.object());
@@ -563,9 +574,10 @@ bool truth(Obj v) {
         case Kind::ByteArray: return !bytes_data(v).empty();
         case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
         case Kind::Range: return static_cast<Range*>(o)->length != 0;
+        case Kind::BigInt: return true;
         case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
         case Kind::IntInstance:
-            if (!overridden(v, "__bool__")) return static_cast<IntInstance*>(o)->value != 0;
+            if (!overridden(v, "__bool__")) return !int_is_zero(v);
             return truth(call_special(v, "__bool__", {}).get());
         case Kind::Dict:                             // a dict subclass's instance asks its class
             if (!is_subclass_instance(v)) return static_cast<Dict*>(o)->used != 0;
@@ -592,28 +604,53 @@ bool truth(Obj v) {
     }
 }
 
-// operator.index (PyNumber_Index): an int, a bool, or an object with __index__ returning one
-std::int64_t index_value(Obj v) {
-    std::int64_t x;
-    if (as_int(v, x)) return x;
+// PyNumber_Index: an int as an exact int, or what __index__ returns
+Ref int_index_of(Obj v) {
+    if (v.is_small() || is_kind(v, Kind::BigInt)) return Ref::share(v);
+    if (is_int(v)) return big_plain(v);
     if (is_heap_obj(v)) {
         bool has = false;
         Ref r = call_special(v, "__index__", {}, &has);
         if (has) {                                   // _PyNumber_Index
-            if (r.get().is_small()) return r.get().small_value();
-            if (as_int(r.get(), x)) throw NotImplemented("__index__ returning a strict subclass of int (a DeprecationWarning in CPython)");
+            if (r.get().is_small() || is_kind(r.get(), Kind::BigInt)) return r;
+            if (is_int(r.get())) throw NotImplemented("__index__ returning a strict subclass of int (a DeprecationWarning in CPython)");
             raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__index__() must return an int, not " +
                                        fully_qualified_name(type_of(r.get())));
         }
     }
     raise_new("TypeError", "'" + type_of(v)->name + "' object cannot be interpreted as an integer");
 }
+std::int64_t index_value(Obj v, const char* overflow) {
+    std::int64_t x;
+    if (as_int(v, x)) return x;
+    Ref i = int_index_of(v);
+    if (int_fits_i64(i.get(), x)) return x;
+    raise_new(overflow, "cannot fit '" + type_of(v)->name + "' into an index-sized integer");
+}
+std::int64_t ssize_arg(Obj v) {
+    Ref i = int_index_of(v);
+    std::int64_t x;
+    if (!int_fits_i64(i.get(), x)) raise_new("OverflowError", "Python int too large to convert to C ssize_t");
+    return x;
+}
+int c_int_arg(Obj v) {
+    Ref i = int_index_of(v);
+    std::int64_t x;
+    if (!int_fits_i64(i.get(), x) || x < INT32_MIN || x > INT32_MAX) raise_new("OverflowError", "Python int too large to convert to C int");
+    return static_cast<int>(x);
+}
+std::int64_t clipped_index(Obj v) {
+    Ref i = int_index_of(v);
+    std::int64_t x;
+    if (int_fits_i64(i.get(), x)) return x;
+    return int_is_negative(i.get()) ? INT64_MIN : INT64_MAX;
+}
 
 // slot_sq_length: a __len__ result converted as an index, never negative
 std::int64_t length_value(Obj v) {
-    std::int64_t n = index_value(v);
-    if (n < 0) raise_new("ValueError", "__len__() should return >= 0");
-    return n;
+    Ref i = int_index_of(v);
+    if (int_is_negative(i.get())) raise_new("ValueError", "__len__() should return >= 0");
+    return index_value(i.get());
 }
 
 // dict_equal: the same size, and each of a's entries found in b with an equal value; a's entries
@@ -708,12 +745,18 @@ Ref repr_of(Obj v) {
         case Kind::Bytes:
         case Kind::ByteArray: return bytes_repr(v);
         case Kind::IntInstance:
-            if (!overridden(v, "__repr__")) return str_new(int_text(static_cast<IntInstance*>(o)->value));
+            if (!overridden(v, "__repr__")) return str_new(big_text(v));
             break;
+        case Kind::BigInt: return str_new(big_text(v));
         case Kind::Range: {
             auto* r = static_cast<Range*>(o);
+            if (r->big) return str_new(big_range_repr(v));
             return str_new("range(" + int_text(r->start) + ", " + int_text(r->stop) +
                            (r->step == 1 ? "" : ", " + int_text(r->step)) + ")");
+        }
+        case Kind::GetSet: {                         // getset_repr, member_repr
+            auto* g = static_cast<GetSet*>(o);
+            return str_new(std::string(o->cls == types().member_descriptor ? "<member '" : "<attribute '") + g->name + "' of '" + g->owner->name + "' objects>");
         }
         case Kind::Slice: {                          // slice_repr
             auto* s = static_cast<SliceObject*>(o);
@@ -1031,12 +1074,12 @@ namespace {
 std::size_t index_of(Obj key, std::size_t size, const char* what, const char* range_what = nullptr) {
     std::int64_t i;
     if (!as_int(key, i)) {
-        if (!is_heap_obj(key) || type_lookup(type_of(key), intern("__index__")).is_unset()) {
+        if (!is_int(key) && (!is_heap_obj(key) || type_lookup(type_of(key), intern("__index__")).is_unset())) {
             if (std::string_view(what) == "string")
                 raise_new("TypeError", "string indices must be integers, not '" + type_of(key)->name + "'");
             raise_new("TypeError", std::string(what) + " indices must be integers or slices, not " + type_of(key)->name);
         }
-        i = index_value(key);
+        i = index_value(key, "IndexError");
     }
     if (i < 0) i += static_cast<std::int64_t>(size);
     if (i < 0 || i >= static_cast<std::int64_t>(size))
@@ -1054,12 +1097,15 @@ std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length, const cha
         if (v == None()) return dflt;
         std::int64_t x;
         if (as_int(v, x)) return x;
-        if (!is_heap_obj(v) || type_lookup(type_of(v), intern("__index__")).is_unset())
+        if (!is_int(v) && (!is_heap_obj(v) || type_lookup(type_of(v), intern("__index__")).is_unset()))
             raise_new("TypeError", message);
-        return index_value(v);
+        return clipped_index(v);
     };
     std::int64_t step = value(s->step, 1);
     if (step == 0) raise_new("ValueError", "slice step cannot be zero");
+    // PySlice_Unpack guards `step = -step`; a walk over a sequence cannot tell a step beyond its
+    // length from another, so this one also leaves room for `k += step` past the end
+    step = std::clamp(step, -SMALL_MAX, SMALL_MAX);
     std::int64_t lower = step < 0 ? -1 : 0, upper = step < 0 ? length - 1 : length;
     auto clamp = [&](Obj v, std::int64_t dflt) {
         if (v == None()) return dflt;
@@ -1122,14 +1168,11 @@ Ref getitem(Obj obj, Obj key) {
         return str_from_codepoints(out);
     }
     if (is_bytes_like(obj)) return bytes_getitem(obj, key);
-    if (is_kind(obj, Kind::Range)) {                 // range_subscript, over small ints
-        auto* r = static_cast<Range*>(obj.object());
-        if (slice) {
-            auto [start, stop, step, n] = slice_indices(key, r->length, "slice indices must be integers or None or have an __index__ method");
-            return own(new Range(r->start + start * r->step, r->start + stop * r->step, r->step * step));
-        }
-        std::size_t i = index_of(key, static_cast<std::size_t>(r->length), "range", "range object");
-        return Ref::steal(Obj::small(r->start + static_cast<std::int64_t>(i) * r->step));
+    if (is_kind(obj, Kind::Range)) {                 // range_subscript
+        if (slice) return range_slice(obj, key);
+        if (!is_int(key) && (!is_heap_obj(key) || type_lookup(type_of(key), intern("__index__")).is_unset()))
+            raise_new("TypeError", "range indices must be integers or slices, not " + type_of(key)->name);
+        return range_item(obj, int_index_of(key).get());
     }
     if (is_kind(obj, Kind::Dict) && !overridden(obj, "__getitem__")) return dict_subscript(obj, key);
     bool has = false;
@@ -1219,7 +1262,7 @@ Ref dict_iter(Obj self) {
     return r;
 }
 Ref iter(Obj obj) {
-    if (is_kind(obj, Kind::Range)) return own(new Iterator(Iterator::RangeIt, obj));
+    if (is_kind(obj, Kind::Range)) return range_iter(obj);
     if (is_kind(obj, Kind::Tuple)) return own(new Iterator(Iterator::TupleIt, obj));
     if (is_kind(obj, Kind::List)) return own(new Iterator(Iterator::ListIt, obj));
     if (as_str(obj) != nullptr) return own(new Iterator(Iterator::StrIt, obj));
@@ -1280,7 +1323,13 @@ Ref for_next(Obj itv) {
         case Iterator::RangeIt: {
             auto* r = static_cast<Range*>(it->seq.object());
             if (it->pos >= r->length) return finish();
-            return Ref::steal(Obj::small(r->start + r->step * it->pos++));
+            auto at = static_cast<std::uint64_t>(r->start) + static_cast<std::uint64_t>(r->step) * static_cast<std::uint64_t>(it->pos++);
+            return int_from_i64(static_cast<std::int64_t>(at));   // range_iter has seen that each value fits
+        }
+        case Iterator::LongRangeIt: {
+            Ref v = long_range_next(static_cast<List*>(it->seq.object())->items);
+            if (v.get().is_unset()) return finish();
+            return v;
         }
         case Iterator::TupleIt: {
             auto& items = static_cast<Tuple*>(it->seq.object())->items;
@@ -1533,7 +1582,8 @@ void length_hint(Obj v) {
     }
     if (!has || r.get() == Obj::of(NOTIMPLEMENTED)) return;
     std::int64_t n;
-    if (!as_int(r.get(), n))
+    if (is_int(r.get()) && !int_fits_i64(r.get(), n)) raise_new("OverflowError", "Python int too large to convert to C ssize_t");
+    if (!int_fits_i64(r.get(), n))
         raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__length_hint__() must return an int, not " +
                                    fully_qualified_name(type_of(r.get())));
     if (n < 0) raise_new("ValueError", "__length_hint__() should return >= 0");

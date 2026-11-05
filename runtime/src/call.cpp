@@ -464,11 +464,16 @@ Ref b_len(Obj, Args a) {
         return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(v.object())->used)));
     if (is_kind(v, Kind::DictView))
         return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(static_cast<DictView*>(v.object())->dict.object())->used)));
-    if (is_kind(v, Kind::Range)) return Ref::steal(Obj::small(static_cast<Range*>(v.object())->length));
+    if (is_kind(v, Kind::Range)) {
+        std::int64_t n;
+        Ref length = range_length_big(v);
+        if (!int_fits_i64(length.get(), n)) raise_new("OverflowError", "Python int too large to convert to C ssize_t");
+        return length;
+    }
     if (is_bytes_like(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(bytes_data(v).size())));
     bool has = false;
     Ref r = call_special(v, "__len__", {}, &has);
-    if (has) return Ref::steal(Obj::small(length_value(r.get())));     // as truth takes it (A9-14)
+    if (has) return int_from_i64(length_value(r.get()));     // as truth takes it (A9-14)
     raise_new("TypeError", "object of type '" + type_of(v)->name + "' has no len()");
 }
 Ref b_repr(Obj, Args a) {
@@ -635,7 +640,7 @@ Ref list_extend_m(Obj self, Args a) { onearg(a, "list.extend"); list_extend(self
 Ref list_pop_m(Obj self, Args a) {
     clinic(a, "pop", "list.pop", 0, 1);
     auto& items = list_self(self)->items;
-    std::int64_t i = a.npos ? index_value(a.pos(0)) : -1;          // the argument converted first (A9-11, G9 2.10)
+    std::int64_t i = a.npos ? ssize_arg(a.pos(0)) : -1;          // the argument converted first (A9-11, G9 2.10)
     if (items.empty()) raise_new("IndexError", "pop from empty list");
     if (i < 0) i += static_cast<std::int64_t>(items.size());
     if (i < 0 || i >= static_cast<std::int64_t>(items.size())) raise_new("IndexError", "pop index out of range");
@@ -653,7 +658,7 @@ Ref list_clear_m(Obj self, Args a) {
 Ref list_insert_m(Obj self, Args a) {
     clinic(a, "insert", "list.insert", 2, 2);
     auto& items = list_self(self)->items;
-    std::int64_t i = index_value(a.pos(0));
+    std::int64_t i = ssize_arg(a.pos(0));
     std::int64_t n = static_cast<std::int64_t>(items.size());
     if (i < 0) i = std::max<std::int64_t>(0, i + n);
     if (i > n) i = n;
@@ -677,10 +682,9 @@ Ref list_index_m(Obj self, Args a) {              // list_index_impl: start and 
     auto bound = [&](std::size_t k, std::int64_t dflt) {
         if (a.npos <= k) return dflt;
         Obj v = a.pos(k);
-        if (!v.is_small() && !is_kind(v, Kind::Bool) &&
-            (!is_kind(v, Kind::Instance) || type_lookup(type_of(v), intern("__index__")).is_unset()))
+        if (!is_int(v) && (!is_kind(v, Kind::Instance) || type_lookup(type_of(v), intern("__index__")).is_unset()))
             raise_new("TypeError", "slice indices must be integers or have an __index__ method");
-        std::int64_t x = index_value(v);
+        std::int64_t x = clipped_index(v);
         auto n = static_cast<std::int64_t>(items.size());
         if (x < 0) x = std::max<std::int64_t>(x + n, 0);
         return x;
@@ -953,18 +957,14 @@ Ref b_next(Obj, Args a) {
 }
 Ref b_hash(Obj, Args a) {
     onearg(a, "hash");
-    return Ref::steal(Obj::small(hash_of(a.pos(0))));
+    return int_from_i64(hash_of(a.pos(0)));
 }
 Ref b_abs(Obj, Args a) {                      // PyNumber_Absolute: the int's own, else __abs__ (A9-22)
     onearg(a, "abs");
     Obj v = a.pos(0);
     if (v.is_small()) return v.small_value() < 0 ? unary_neg(v) : Ref::share(v);
     if (is_kind(v, Kind::Bool)) return Ref::steal(Obj::small(static_cast<BoolObject*>(v.object())->value ? 1 : 0));
-    if (is_kind(v, Kind::IntInstance) && !overrides_builtin(v, "__abs__")) {   // an int subclass: int's abs, a plain int
-        std::int64_t x = static_cast<IntInstance*>(v.object())->value;
-        Ref plain = Ref::steal(Obj::small(x));
-        return x < 0 ? unary_neg(plain.get()) : plain;
-    }
+    if (is_kind(v, Kind::BigInt) || (is_kind(v, Kind::IntInstance) && !overrides_builtin(v, "__abs__"))) return big_absolute(v);   // an int subclass: int's abs, as an exact int
     bool has = false;
     Ref r = call_special(v, "__abs__", {}, &has);
     if (has) return r;
@@ -992,8 +992,9 @@ Ref b_ord(Obj, Args a) {
 }
 Ref b_chr(Obj, Args a) {
     onearg(a, "chr");
-    std::int64_t c = index_value(a.pos(0));      // PyLong_AsLongAndOverflow: an int, a bool, or __index__
-    if (c < 0 || c > 0x10FFFF) raise_new("ValueError", "chr() arg not in range(0x110000)");
+    Ref value = int_index_of(a.pos(0));          // PyLong_AsLongAndOverflow: an int, a bool, or __index__
+    std::int64_t c;
+    if (!int_fits_i64(value.get(), c) || c < 0 || c > 0x10FFFF) raise_new("ValueError", "chr() arg not in range(0x110000)");
     return str_from_codepoints(std::u32string(1, static_cast<char32_t>(c)));
 }
 
@@ -1026,11 +1027,11 @@ Ref c_bool(Obj, Args a) {
 }
 Ref c_range(Obj, Args a) {
     clinic(a, "range", "range", 1, 3);
-    std::int64_t v[3] = {0, 0, 1};
-    for (std::size_t i = 0; i < a.npos; ++i) v[i] = index_value(a.pos(i));   // range_new: PyNumber_Index
-    if (a.npos == 1) { v[1] = v[0]; v[0] = 0; }
-    if (v[2] == 0) raise_new("ValueError", "range() arg 3 must not be zero");
-    return own(new Range(v[0], v[1], v[2]));
+    // range_from_array: PyNumber_Index on start, stop, step in that order
+    Ref start = a.npos == 1 ? Ref::steal(Obj::small(0)) : int_index_of(a.pos(0));
+    Ref stop = int_index_of(a.pos(a.npos == 1 ? 0 : 1));
+    Ref step = a.npos == 3 ? int_index_of(a.pos(2)) : Ref::steal(Obj::small(1));
+    return range_from_ints(start.get(), stop.get(), step.get());
 }
 Ref c_tuple(Obj, Args a) {
     clinic(a, "tuple", "tuple", 0, 1);
@@ -1118,6 +1119,7 @@ Module* make_builtins() {
     put(d, "Ellipsis", Obj::of(ELLIPSIS));
     put_builtin(d, "len", b_len);
     put_builtin(d, "sorted", b_sorted);
+    fill_int_builtins(d);
     put_builtin(d, "repr", b_repr);
     put_builtin(d, "format", b_format);
     put_builtin(d, "isinstance", b_isinstance);
@@ -1246,7 +1248,8 @@ Module* make_sys(int argc, char** argv) {
     }
     put(d, "argv", args.get());
     put_builtin(d, "exit", sys_exit);
-    // no maxsize: CPython's is 2**63 - 1, beyond the immediates, so it is refused until big ints
+    put(d, "maxsize", int_from_i64(INT64_MAX).get());
+    fill_int_sys(d);
     return m;
 }
 
@@ -1414,7 +1417,7 @@ Ref i_lookup_special(Obj, Args a) {              // _PyObject_LookupSpecial: the
 }
 Ref i_number_index(Obj, Args a) {                // PyNumber_Index
     positional_only(a, "_number_index", 1, 1);
-    return Ref::steal(Obj::small(index_value(a.pos(0))));
+    return int_index_of(a.pos(0));
 }
 namespace {
 Ref i_dict_next(Obj, Args a) {                   // PyDict_Next: (next position, key, value) or None
@@ -1785,8 +1788,9 @@ int exit_status(Obj exc) {
     }
     if (!code.get().is_unset()) {
         if (code.get() == None()) return 0;
+        // parse_exit_code: (int)PyLong_AsLongLong, and -1 for what that cannot hold
         std::int64_t value;
-        if (as_int(code.get(), value)) return static_cast<int>(value);
+        if (is_int(code.get())) return int_fits_i64(code.get(), value) ? static_cast<int>(value) : -1;
     }
     try {
         Ref text = str_of(code.get().is_unset() ? exc : code.get());
@@ -1874,6 +1878,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     }
             }
             init_slots();
+            init_bigint();
             adopt_functions(builtins_module());
             adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own

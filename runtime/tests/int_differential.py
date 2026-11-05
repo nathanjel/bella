@@ -5,9 +5,11 @@
 
 Generates operand pairs (random plus every edge of the 63-bit immediate range), computes the
 expected results in Python, builds a small C++ driver, and compares. A result outside the
-immediate range is expected to be reported as "promote" by the runtime until BigInt exists
-(the driver prints that word when NotImplemented is thrown). Review round two checked 1,156
-such cases on the corrected floor/mod paths; this keeps the check in CI.
+immediate range is expected to be reported as "promote" (the driver prints that word when
+NotImplemented is thrown): the runtime asks try_add and its kin, on which these stand, and takes
+such a result to runtime/src/bigint.cpp, which pipeline/tests/test_big_ints.py compares with
+CPython. Review round two checked 1,156 such cases on the corrected floor/mod paths; this keeps
+the check in CI.
 """
 from __future__ import annotations
 

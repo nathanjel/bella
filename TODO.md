@@ -87,8 +87,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   gate on its slice of the manifest (design section 11). This task is 1a's first path. The toy
   emitter refuses, rather than invents, what it cannot represent.
 * Today: `make slice` runs `pipeline/examples/*.py` through parse → L1 → `eval1` and through
-  the toy C++ emitter; 4 integer programs (Mandelbrot among them, `docs/measurements.md`) agree
-  with CPython and `fact_big.py` is XFAIL on the missing BigInt. The target programs are chosen
+  the toy C++ emitter; 5 integer programs (Mandelbrot among them, `docs/measurements.md`) agree
+  with CPython, `fact_big.py` since the big ints. The target programs are chosen
   (author, 2026-11-01) and recorded: six under `targets/`, an easy and a tricky one per shape
   (`docs/targets.md` has the comparison and the recommendation), their libraries vendored at
   pinned commits, recorded on 3.15.2 and identical under two hash seeds and under the phase-1
@@ -358,7 +358,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            that the runtime lacks is refused by the recorded table. Left (refused): the views'
            set operations, `str %` formatting, `type | type`;
            the constructors of `int`, `float` and `dict` (they fell into `object.__new__`,
-           RL-220), `max`, `min`, `divmod`, and BigInt in the compiled `int`. Then D-12: a frame
+           RL-220). Then D-12: a frame
            enters a traceback where the exception arrives, the prelude and inlined comprehensions
            have no frames, and the report prints the chain (RL-221, RL-223 to RL-227, C-3-30);
            lines inside a multi-line statement are the statement's (RL-225, open).
@@ -451,11 +451,17 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * `list.sort` and `sorted` done (C-3-38, `runtime/src/sort.cpp`, powersort line for line,
              since a `__lt__` can see which pairs are compared), and `reversed`, `enumerate`, `zip`,
              `map`, `filter`, `min`, `max`, `sum`, `any`, `all` (`runtime/prelude/iterating.py`).
-             `reversed` of a dict, `iter(callable, sentinel)`, and `bin`, `hex`, `oct`, `ascii`,
-             `divmod`, `pow`, `round` stop by name.
-           * Next, by how many cases each stops (`make compiled-corpus`): big ints 12 (`1 << 1000` in
-             `_collections_abc`), `_weakref` 5, `gc` 4, `_ast` 3, `str %` 2, `_operator` 2,
-             `itertools` 2, `_stat` 2. Then start-up modules run at start-up.
+             `reversed` of a dict, `iter(callable, sentinel)` and `ascii` stop by name.
+           * Big ints done (C-6-10, `runtime/src/bigint.cpp` on a copy of SEL's `bn`): every operator
+             at every size, floor semantics, two's complement, CPython's hashes (D-22 ended), text in
+             every base with the limit of digits, the three readings of an index, `range` past 64
+             bits with `longrange_iterator`, a subclass holding a big value, `bin`, `oct`, `hex`,
+             `divmod`, `pow`, `round`, `to_bytes`, `from_bytes`, `slice.indices`, `sys.maxsize`.
+             Measured against CPython on numbers each program draws, past each of `bn`'s changes
+             of algorithm, and under ASan and UBSan. Inline limbs wait for a measurement that asks.
+           * Next, by how many cases each stops (`make compiled-corpus`): `frozendict` 10 (the name
+             `_collections_abc` reads), `_weakref` 5, `_ast` 4, `gc` 4, `_operator` 3, `_stat` 3,
+             `itertools` 3, `str %` 2, floats 3. Then start-up modules run at start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

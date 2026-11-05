@@ -770,47 +770,11 @@ Ref dict_init_m(Obj self, Args a) {
     return none_ref();
 }
 // ---- int() (long_new_impl, PyNumber_Long, PyLong_FromString) ----
-Ref int_ref(std::int64_t v) {                     // an exact int within the immediates (the bn port: the rest)
-    if (v < SMALL_MIN || v > SMALL_MAX) throw NotImplemented("BigInt: a result left the 63-bit immediate range");
-    return Ref::steal(Obj::small(v));
-}
+Ref int_ref(std::int64_t v) { return int_from_i64(v); }
 // PyLong_FromString on an ASCII str: whitespace around it (Py_ISSPACE), a sign, the base's prefix,
 // single underscores between digits; a ValueError names the base given and the string's repr
-Ref int_from_str(const Str* s, std::int64_t base);
-// PyLong_FromString on a bytes-like object's octets: ASCII digits and spaces, and a message showing it
-Ref int_from_bytes(Obj x, std::int64_t base) {
-    const std::string b = bytes_data(x);
-    bool usable = std::none_of(b.begin(), b.end(), [](char c) { auto u = static_cast<unsigned char>(c); return u >= 0x80 || (u >= 0x1C && u <= 0x1F); });
-    auto invalid = [&]() {
-        Ref copy = bytes_new(b);                 // shown as bytes, whichever it was
-        Ref r = bytes_repr(copy.get());
-        const Str* rs = as_str(r.get());
-        std::u32string shown;
-        for (std::size_t k = 0; k < std::min<std::size_t>(rs->length, 200); ++k) shown += rs->at(k);
-        Ref cut = str_from_codepoints(shown);
-        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + as_str(cut.get())->text);
-    };
-    if (!usable) invalid();
-    Ref text = str_new(b);
-    try {
-        return int_from_str(as_str(text.get()), base);
-    } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("ValueError"))) throw;
-    }
-    invalid();
-    return Ref{};
-}
-Ref int_from_str(const Str* s, std::int64_t base) {
-    if (!s->ascii) throw NotImplemented("int() of a str beyond ASCII (its digits and spaces need the Unicode database)");
-    const std::string& t = s->text;
-    auto invalid = [&]() -> Ref {
-        Ref r = repr_of(Obj::of(s));
-        const Str* rs = as_str(r.get());
-        std::u32string shown;                       // %.200R: the repr, cut at 200 code points
-        for (std::size_t k = 0; k < std::min<std::size_t>(rs->length, 200); ++k) shown += rs->at(k);
-        Ref cut = str_from_codepoints(shown);
-        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + as_str(cut.get())->text);
-    };
+template <class Invalid>
+Ref int_from_text(const std::string& t, std::int64_t base, Invalid invalid) {
     auto space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
     std::size_t i = 0, n = t.size();
     while (i < n && space(t[i])) ++i;
@@ -853,39 +817,64 @@ Ref int_from_str(const Str* s, std::int64_t base) {
     while (i < n && space(t[i])) ++i;
     if (i != n) invalid();                          // anything else after the digits (a NUL included)
     bool binary_base = (b & (b - 1)) == 0;
-    if (!binary_base && digits > 640 && digits > 4300)
-        raise_new("ValueError", "Exceeds the limit (4300 digits) for integer string conversion: value has " + std::to_string(digits) +
-                                    " digits; use sys.set_int_max_str_digits() to increase the limit");
-    __int128 v = 0;
-    for (std::size_t k = start; k < end; ++k) {
-        if (t[k] == '_') continue;
-        v = v * b + digit(t[k]);
-        if (v > (static_cast<__int128>(1) << 62)) throw NotImplemented("BigInt: int() of a str beyond the 63-bit immediate range");
-    }
-    if (error_if_nonzero && v != 0) {
-        base = 0;
+    int limit = max_str_digits();
+    if (!binary_base && digits > 640 && limit > 0 && digits > static_cast<std::size_t>(limit))
+        raise_new("ValueError", "Exceeds the limit (" + std::to_string(limit) + " digits) for integer string conversion: value has " +
+                                    std::to_string(digits) + " digits; use sys.set_int_max_str_digits() to increase the limit");
+    std::string clean;
+    clean.reserve(digits);
+    for (std::size_t k = start; k < end; ++k)
+        if (t[k] != '_') clean += t[k];
+    Ref value = int_from_digits(negative, clean, static_cast<int>(b));
+    if (error_if_nonzero && !int_is_zero(value.get())) {
         invalid();
     }
-    return int_ref(static_cast<std::int64_t>(negative ? -v : v));
+    return value;
 }
 
+Ref int_from_str(const Str* s, std::int64_t base) {
+    if (!s->ascii) throw NotImplemented("int() of a str beyond ASCII (its digits and spaces need the Unicode database)");
+    return int_from_text(s->text, base, [&]() -> Ref {
+        Ref r = repr_of(Obj::of(s));
+        const Str* rs = as_str(r.get());
+        std::u32string shown;                       // %.200R: the repr, cut at 200 code points
+        for (std::size_t k = 0; k < std::min<std::size_t>(rs->length, 200); ++k) shown += rs->at(k);
+        Ref cut = str_from_codepoints(shown);
+        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + as_str(cut.get())->text);
+    });
+}
+// PyLong_FromString on a bytes-like object's octets: ASCII digits and spaces, and a message showing it
+Ref int_from_bytes(Obj x, std::int64_t base) {
+    const std::string b = bytes_data(x);
+    bool usable = std::none_of(b.begin(), b.end(), [](char c) { auto u = static_cast<unsigned char>(c); return u >= 0x80 || (u >= 0x1C && u <= 0x1F); });
+    auto invalid = [&]() -> Ref {
+        Ref copy = bytes_new(b);                 // shown as bytes, whichever it was
+        Ref r = bytes_repr(copy.get());
+        const Str* rs = as_str(r.get());
+        std::u32string shown;
+        for (std::size_t k = 0; k < std::min<std::size_t>(rs->length, 200); ++k) shown += rs->at(k);
+        Ref cut = str_from_codepoints(shown);
+        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + as_str(cut.get())->text);
+    };
+    if (!usable) invalid();
+    return int_from_text(b, base, invalid);
+}
 // PyNumber_Long: an int as itself (a subclass's value as an exact int), __int__, __index__, a str
 Ref number_long(Obj x) {
-    std::int64_t v;
-    if (x.is_small()) return Ref::share(x);
+    if (x.is_small() || is_kind(x, Kind::BigInt)) return Ref::share(x);
     bool python = is_kind(x, Kind::Instance) || is_subclass_instance(x) || has_python_type(x);
     if (python && !type_lookup(type_of(x), N("__int__")).is_unset() &&
         !(is_subclass_instance(x) && !overrides_builtin(x, "__int__"))) {
         Ref r = call_special(x, "__int__", {});
-        if (!as_int(r.get(), v))
+        if (!is_int(r.get()))
             raise_new("TypeError", fully_qualified_name(type_of(x)) + ".__int__() must return an int, not " +
                                        fully_qualified_name(type_of(r.get())));
-        if (!r.get().is_small())                 // CPython copies a strict subclass's value with a DeprecationWarning
+        if (!r.get().is_small() && !is_kind(r.get(), Kind::BigInt))   // CPython copies a strict subclass's value with a DeprecationWarning
             throw NotImplemented("__int__ returning an instance of a subclass of int (a DeprecationWarning in CPython)");
-        return int_ref(v);
+        return r;
     }
-    if (as_int(x, v)) return int_ref(v);          // a bool, an int subclass's instance: nb_int, an exact copy
-    if (python && !type_lookup(type_of(x), N("__index__")).is_unset()) return int_ref(index_value(x));
+    if (is_int(x)) return big_plain(x);           // a bool, an int subclass's instance: nb_int, an exact copy
+    if (python && !type_lookup(type_of(x), N("__index__")).is_unset()) return int_index_of(x);
     if (const Str* s = as_str(x)) return int_from_str(s, 10);
     if (is_bytes_like(x)) return int_from_bytes(x, 10);
     if (is_kind(x, Kind::Float)) throw NotImplemented("int() of a float");
@@ -913,14 +902,19 @@ Ref int_new_m(Obj, Args a) {
     } else if (base.is_unset()) {
         value = number_long(x);
     } else {
-        std::int64_t b = index_value(base);
+        std::int64_t b = clipped_index(base);         // PyNumber_AsSsize_t(obase, NULL)
         if ((b != 0 && b < 2) || b > 36) raise_new("ValueError", "int() base must be >= 2 and <= 36, or 0");
         const Str* s = as_str(x);
         if (s == nullptr && !is_bytes_like(x)) raise_new("TypeError", "int() can't convert non-string with explicit base");
         value = s != nullptr ? int_from_str(s, b) : int_from_bytes(x, b);
     }
     if (cls == types().int_) return value;
-    return own(new IntInstance(cls, value.get().small_value()));
+    if (value.get().is_small()) return own(new IntInstance(cls, value.get().small_value()));
+    auto* big = static_cast<BigInt*>(value.get().object());
+    auto* instance = new IntInstance(cls, 0);
+    instance->limbs = big->limbs;
+    instance->negative = big->negative;
+    return own(instance);
 }
 
 Ref type_call_m(Obj self, Args a) {                // type.__call__: what calling the class does
@@ -1784,9 +1778,11 @@ void init_types() {
     method(t.mappingproxy, "__eq__", proxy_eq);
     method(t.mappingproxy, "__ne__", proxy_ne);
     method(t.slice, "__new__", slice_new, Binding::Function);
-    getset(t.slice, "start", slice_start);
-    getset(t.slice, "stop", slice_stop);
-    getset(t.slice, "step", slice_step);
+    for (auto [name, get] : std::initializer_list<std::pair<const char*, Ref (*)(Obj)>>{{"start", slice_start}, {"stop", slice_stop}, {"step", slice_step}}) {
+        auto* m = new GetSet(name, t.slice, get, nullptr);   // PyMemberDef in CPython, as range's are
+        m->cls = t.member_descriptor;
+        t.slice->attrs.set(N(name), Obj::of(m));
+    }
     // exceptions
     ClassObject* base = exception_class("BaseException");
     for (ClassObject* c : exception_classes())   // each type CPython gives a __new__ of its own, its name in the errors

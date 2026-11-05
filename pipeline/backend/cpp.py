@@ -159,7 +159,9 @@ class Emitter:
         if type(value) is int:
             if -(1 << 62) <= value < (1 << 62):
                 return f"Obj::small({value}{'LL' if abs(value) > 2**31 else ''})"
-            return f"rt::unsupported_constant({c_string(f'an int literal beyond 62 bits: {value}')})"
+            # a literal CPython reads is within 4300 decimal digits; a hex one need not be
+            text = str(value) if value.bit_length() < 14000 else hex(value)
+            return self.lazy(("int", value), f'rt::big_int_constant("{text}")')
         if type(value) is str:
             # a NUL inside: the literal's length given, or the string would end there
             text = (f"std::string_view({c_string(value)}, {len(value.encode('utf-8', 'surrogatepass'))})" if "\0" in value
@@ -711,7 +713,7 @@ def _supported_constant(v: object) -> bool:
     if v is None or v is Ellipsis or type(v) in (bool, str, bytes):
         return True
     if type(v) is int:
-        return -(1 << 62) <= v < (1 << 62)
+        return True
     return type(v) is tuple and all(_supported_constant(x) for x in v)
 
 

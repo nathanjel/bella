@@ -23,15 +23,6 @@ const char* cmp_name(CmpOp op) {
     }
 }
 Ref not_implemented() { return Ref::steal(Obj::of(NOTIMPLEMENTED)); }
-std::int64_t int_self(Obj self) {
-    std::int64_t x = 0;
-    as_int(self, x);
-    return x;
-}
-Ref exact(std::int64_t v) {
-    if (v < SMALL_MIN || v > SMALL_MAX) throw NotImplemented("BigInt: a result left the 63-bit immediate range");
-    return Ref::steal(Obj::small(v));
-}
 
 template <CmpOp op>
 Ref cmp_slot(Obj self, Args a) {
@@ -42,55 +33,51 @@ Ref cmp_slot(Obj self, Args a) {
 template <BinOp op, bool reflected>
 Ref int_slot(Obj self, Args a) {
     wrapper_args(a, "__add__", 1);
-    std::int64_t x;
-    if (!as_int(a.pos(0), x)) return not_implemented();
+    if (!is_int(a.pos(0))) return not_implemented();
     return reflected ? native_binary(op, a.pos(0), self) : native_binary(op, self, a.pos(0));
 }
 template <bool reflected>
 Ref int_pow(Obj self, Args a) {                  // __pow__(value, mod=None)
     if (a.nkw != 0) raise_new("TypeError", "wrapper __pow__() takes no keyword arguments");
     if (a.npos < 1 || a.npos > 2) raise_new("TypeError", "expected 1 or 2 arguments, got " + std::to_string(a.npos));
-    if (a.npos == 2 && a.pos(1) != None()) throw NotImplemented("pow() with a modulus");
-    std::int64_t x;
-    if (!as_int(a.pos(0), x)) return not_implemented();
+    if (!is_int(a.pos(0))) return not_implemented();
+    if (a.npos == 2 && a.pos(1) != None()) {         // long_pow with a modulus; wrap_ternaryfunc_r swaps the first two
+        if (!is_int(a.pos(1))) return not_implemented();
+        return reflected ? big_pow_mod(a.pos(0), self, a.pos(1)) : big_pow_mod(self, a.pos(0), a.pos(1));
+    }
     return reflected ? native_binary(BinOp::Pow, a.pos(0), self) : native_binary(BinOp::Pow, self, a.pos(0));
 }
 template <bool reflected>
 Ref int_divmod(Obj self, Args a) {
     wrapper_args(a, "__divmod__", 1);
-    std::int64_t x;
-    if (!as_int(a.pos(0), x)) return not_implemented();
-    Obj l = reflected ? a.pos(0) : self, r = reflected ? self : a.pos(0);
-    Ref q = native_binary(BinOp::FloorDiv, l, r), m = native_binary(BinOp::Mod, l, r);
-    return tuple_new({q.get(), m.get()});
+    if (!is_int(a.pos(0))) return not_implemented();
+    return reflected ? big_divmod(a.pos(0), self) : big_divmod(self, a.pos(0));
 }
-Ref int_neg(Obj self, Args a) { wrapper_args(a, "__neg__", 0); return exact(-int_self(self)); }
-Ref int_pos(Obj self, Args a) { wrapper_args(a, "__pos__", 0); return exact(int_self(self)); }
-Ref int_abs(Obj self, Args a) { wrapper_args(a, "__abs__", 0); std::int64_t x = int_self(self); return exact(x < 0 ? -x : x); }
-Ref int_invert(Obj self, Args a) { wrapper_args(a, "__invert__", 0); return exact(~int_self(self)); }
-Ref int_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(int_self(self) != 0)); }
-Ref int_int(Obj self, Args a) { wrapper_args(a, "__int__", 0); return exact(int_self(self)); }
-Ref int_index(Obj self, Args a) { wrapper_args(a, "__index__", 0); return exact(int_self(self)); }
+Ref int_neg(Obj self, Args a) { wrapper_args(a, "__neg__", 0); return big_negate(self); }
+Ref int_pos(Obj self, Args a) { wrapper_args(a, "__pos__", 0); return big_plain(self); }
+Ref int_abs(Obj self, Args a) { wrapper_args(a, "__abs__", 0); return big_absolute(self); }
+Ref int_invert(Obj self, Args a) { wrapper_args(a, "__invert__", 0); return big_invert(self); }
+Ref int_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(!int_is_zero(self))); }
+Ref int_int(Obj self, Args a) { wrapper_args(a, "__int__", 0); return big_plain(self); }
+Ref int_index(Obj self, Args a) { wrapper_args(a, "__index__", 0); return big_plain(self); }
 Ref int_trunc(Obj self, Args a) {                // __trunc__, __floor__, __ceil__: METH_NOARGS
     if (a.npos != 0 || a.nkw != 0) raise_new("TypeError", "int method takes no arguments (" + std::to_string(a.npos) + " given)");
-    return exact(int_self(self));
+    return big_plain(self);
 }
-Ref int_round(Obj self, Args a) {                // long_round: with no digits, the int
-    if (a.npos != 0 || a.nkw != 0) throw NotImplemented("int.__round__ with a number of digits");
-    return exact(int_self(self));
+Ref int_round_m(Obj self, Args a) {              // long_round(self, ndigits=None, /)
+    clinic(a, "__round__", "int.__round__", 0, 1);
+    return int_round(self, a.npos == 1 ? a.pos(0) : Obj{});
 }
 Ref int_repr(Obj self, Args a) {
     wrapper_args(a, "__repr__", 0);
-    Ref value = exact(int_self(self));
-    return repr_of(value.get());
+    return str_new(big_text(self));
 }
 Ref int_hash(Obj self, Args a) {
     wrapper_args(a, "__hash__", 0);
-    Ref value = exact(int_self(self));
-    return Ref::steal(Obj::small(hash_of(value.get())));
+    return int_from_i64(big_hash(self));
 }
 Ref own_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return repr_of(self); }
-Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return Ref::steal(Obj::small(hash_of(self))); }
+Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
 Ref own_iter(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return iter(self); }
 Ref own_contains(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return compare(CmpOp::In, a.pos(0), self); }
@@ -106,9 +93,12 @@ Ref list_reversed(Obj self, Args a) {
 Ref range_reversed(Obj self, Args a) {           // range_reverse: the iterator of the same values backwards
     noargs(a, "range.__reversed__");
     auto* r = static_cast<Range*>(self.object());
-    std::int64_t last = r->start + (r->length - 1) * r->step;
-    Ref back = own(new Range(last, r->start - r->step, -r->step));
-    return iter(back.get());
+    // the int version if each of start, stop, step, -step, start-step and the length is a C long
+    if (r->big || r->step == INT64_MIN || (r->step > 0 ? r->start < INT64_MIN + r->step : r->start > INT64_MAX + r->step))
+        return big_range_reversed(self);
+    auto last = static_cast<std::uint64_t>(r->start) + static_cast<std::uint64_t>(r->length - 1) * static_cast<std::uint64_t>(r->step);
+    Ref back = own(new Range(static_cast<std::int64_t>(last), r->start - r->step, -r->step));
+    return own(new Iterator(Iterator::RangeIt, back.get()));
 }
 Ref own_len(Obj self, Args a) {
     wrapper_args(a, "__len__", 0);
@@ -135,23 +125,32 @@ Ref dict_ior_slot(Obj self, Args a) {
 
 // range: start, stop, step, and the sequence methods (Objects/rangeobject.c)
 Range* range_of(Obj v) { return static_cast<Range*>(v.object()); }
-Ref range_start(Obj self) { return exact(range_of(self)->start); }
-Ref range_stop(Obj self) { return exact(range_of(self)->stop); }
-Ref range_step(Obj self) { return exact(range_of(self)->step); }
+Ref range_start(Obj self) { return range_field(self, 0); }
+Ref range_stop(Obj self) { return range_field(self, 1); }
+Ref range_step(Obj self) { return range_field(self, 2); }
+bool exact_or_bool(Obj v) { return v.is_small() || is_kind(v, Kind::Bool) || is_kind(v, Kind::BigInt); }
 Ref range_count(Obj self, Args a) {
     if (a.npos != 1 || a.nkw != 0) raise_new("TypeError", "range.count() takes exactly one argument (" + std::to_string(a.npos) + " given)");
-    return Ref::steal(Obj::small(truth(compare(CmpOp::In, a.pos(0), self).get()) ? 1 : 0));
+    if (exact_or_bool(a.pos(0))) return Ref::steal(Obj::small(range_contains_int(self, a.pos(0)) ? 1 : 0));
+    std::int64_t n = 0;                          // _PySequence_IterSearch: a subclass's __eq__ may say anything
+    Ref it = iter(self);
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+        if (truth(compare(CmpOp::Eq, v.get(), a.pos(0)).get())) ++n;
+    return int_from_i64(n);
 }
 Ref range_index(Obj self, Args a) {
     if (a.npos != 1 || a.nkw != 0) raise_new("TypeError", "range.index() takes exactly one argument (" + std::to_string(a.npos) + " given)");
-    std::int64_t x;
-    auto* r = range_of(self);
-    if (!as_int(a.pos(0), x)) throw NotImplemented("range.index of a value that is not an int");
-    if (!truth(compare(CmpOp::In, a.pos(0), self).get())) {
-        Ref text = repr_of(a.pos(0));
-        raise_new("ValueError", as_str(text.get())->text + " is not in range");
+    Obj x = a.pos(0);
+    if (exact_or_bool(x)) {
+        if (!range_contains_int(self, x)) raise_new("ValueError", "range.index(x): x not in range");
+        Ref start = range_field(self, 0), step = range_field(self, 2);
+        return big_binary(BinOp::FloorDiv, big_binary(BinOp::Sub, x, start.get()).get(), step.get());
     }
-    return exact((x - r->start) / r->step);
+    std::int64_t n = 0;
+    Ref it = iter(self);
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()), ++n)
+        if (truth(compare(CmpOp::Eq, v.get(), x).get())) return int_from_i64(n);
+    raise_new("ValueError", "sequence.index(x): x not in sequence");
 }
 
 void slot(ClassObject* c, const char* name, NativeFn fn) {
@@ -211,7 +210,7 @@ void init_slots() {
     slot(i, "__trunc__", int_trunc);
     slot(i, "__floor__", int_trunc);
     slot(i, "__ceil__", int_trunc);
-    slot(i, "__round__", int_round);
+    slot(i, "__round__", int_round_m);
     slot(i, "__repr__", int_repr);
     slot(i, "__hash__", int_hash);
     // bool's own: its repr, and & | ^ that keep a bool
@@ -258,7 +257,9 @@ void init_slots() {
         slot(c, "__rxor__", set_slot<BinOp::Xor, true>);
     }
     ClassObject* r = t.range;
-    auto member = [r](const char* name, Ref (*get)(Obj)) { r->attrs.set(intern(name), Obj::of(new GetSet(name, r, get, nullptr))); };
+    auto member = [r](const char* name, Ref (*get)(Obj)) { auto* m = new GetSet(name, r, get, nullptr);
+        m->cls = types().member_descriptor;
+        r->attrs.set(intern(name), Obj::of(m)); };
     member("start", range_start);
     member("stop", range_stop);
     member("step", range_step);

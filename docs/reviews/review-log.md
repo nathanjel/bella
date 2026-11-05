@@ -576,7 +576,7 @@ A11 is Codex astra-low on `62d083b..0081164`. All four findings reproduce on `dd
 
 ## Open for discussion
 
-**RL-321 `hash()` beyond the immediates: decided 2026-11-05.** The author accepted 63-bit hashes "as long as it's deterministic and functions as hash in general"; the second half was not true yet and now is (RL-321's row, D-22).
+**RL-321 `hash()` beyond the immediates: decided 2026-11-05.** The author accepted 63-bit hashes "as long as it's deterministic and functions as hash in general"; the second half was not true yet and now is (RL-321's row, D-22). Ended the same day: the big-int port lets `hash()` return any int, so a hash is CPython's own and D-22 is gone (`docs/DECISIONS.md`).
 
 **`__spec__.cached` and `sys.implementation.cache_tag`: decided 2026-11-05.** None, as recommended, with D-16 extended: a compiled program has no bytecode cache and says so. `sys.implementation` itself is still refused by name; it comes with `sys.version_info` in the start-up work, with `cache_tag = None`. Test `test_no_bytecode_cache_d_16`.
 

@@ -67,8 +67,8 @@ FOUND: list[tuple[str, str]] = [
 
 # CPython has these names; the runtime refuses them rather than answer NameError or AttributeError.
 REFUSED = {
-    "a builtin": "divmod(1, 2)",
-    "an attribute of sys": "import sys\nsys.maxsize",
+    "a builtin": "ascii(1)",
+    "an attribute of sys": "import sys\nsys.version_info",
     "a str method": "'a'.upper()",
     "an object method": "class C:\n    pass\nC().__sizeof__()",
     "before __getattr__": "class H:\n    def __getattr__(self, n):\n        print('hook', n)\nH().__sizeof__()",

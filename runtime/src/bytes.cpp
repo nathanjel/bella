@@ -45,18 +45,18 @@ std::string_view buffer_of(Obj arg) {             // PyObject_GetBuffer
     raise_new("TypeError", "a bytes-like object is required, not '" + type_of(arg)->name + "'");
 }
 bool has_index(Obj v) {                           // _PyIndex_Check
-    std::int64_t x;
-    return as_int(v, x) || !type_lookup(type_of(v), N("__index__")).is_unset();
+    return is_int(v) || !type_lookup(type_of(v), N("__index__")).is_unset();
 }
 int byte_value(Obj item, const char* message = "byte must be in range(0, 256)") {   // _getbytevalue
-    std::int64_t v = index_value(item);
-    if (v < 0 || v > 255) raise_new("ValueError", message);
+    Ref value = int_index_of(item);
+    std::int64_t v;
+    if (!int_fits_i64(value.get(), v) || v < 0 || v > 255) raise_new("ValueError", message);
     return static_cast<int>(v);
 }
 std::int64_t slice_arg(Obj v, std::int64_t dflt) {   // _PyEval_SliceIndex
     if (v == None()) return dflt;
     if (!has_index(v)) raise_new("TypeError", "slice indices must be integers or have an __index__ method");
-    return index_value(v);
+    return clipped_index(v);
 }
 
 // ---- the range a find, count or tailmatch works on (ADJUST_INDICES) ----
@@ -233,10 +233,10 @@ void split_args(Obj self, Args a, const char* name, Obj& sep, std::int64_t& maxs
     (void)self;
     if (a.npos + a.nkw > 2) raise_new("TypeError", std::string(name) + "() takes at most 2 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
     sep = a.npos > 0 ? a.pos(0) : None();
-    maxsplit = a.npos > 1 ? index_value(a.pos(1)) : -1;
+    maxsplit = a.npos > 1 ? ssize_arg(a.pos(1)) : -1;
     for (std::size_t k = 0; k < a.nkw; ++k) {
         if (a.kwnames[k] == N("sep") && a.npos < 1) sep = a.kw(k);
-        else if (a.kwnames[k] == N("maxsplit") && a.npos < 2) maxsplit = index_value(a.kw(k));
+        else if (a.kwnames[k] == N("maxsplit") && a.npos < 2) maxsplit = ssize_arg(a.kw(k));
         else unexpected_keyword(std::string(name) + "()", a.kwnames[k], {"sep", "maxsplit"});
     }
     if (maxsplit < 0) maxsplit = INT64_MAX;
@@ -385,9 +385,9 @@ Ref join_m(Obj self, Args a) {                    // stringlib_bytes_join
 Ref replace_m(Obj self, Args a) {                 // stringlib_replace
     if (a.npos < 2) raise_new("TypeError", "replace() takes at least 2 positional arguments (" + std::to_string(a.npos) + " given)");
     if (a.npos + a.nkw > 3) raise_new("TypeError", "replace() takes at most 3 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
-    std::int64_t count = a.npos == 3 ? index_value(a.pos(2)) : -1;
+    std::int64_t count = a.npos == 3 ? ssize_arg(a.pos(2)) : -1;
     for (std::size_t k = 0; k < a.nkw; ++k) {
-        if (a.kwnames[k] == N("count") && a.npos < 3) count = index_value(a.kw(k));
+        if (a.kwnames[k] == N("count") && a.npos < 3) count = ssize_arg(a.kw(k));
         else unexpected_keyword("replace()", a.kwnames[k], {"count"});
     }
     std::string from(buffer_of(a.pos(0))), to(buffer_of(a.pos(1)));
@@ -436,7 +436,7 @@ template <int how>                                // 0 left, 1 right, 2 centre
 Ref pad_m(Obj self, Args a) {
     const char* name = how == 0 ? "ljust" : how == 1 ? "rjust" : "center";
     clinic(a, name, who(self, name), 1, 2);
-    std::int64_t width = index_value(a.pos(0));
+    std::int64_t width = ssize_arg(a.pos(0));
     char fill = a.npos > 1 ? fill_argument(a.pos(1), name) : ' ';
     auto len = static_cast<std::int64_t>(bytes_data(self).size());
     if (width <= len) return self_or_copy(self);
@@ -448,7 +448,7 @@ Ref pad_m(Obj self, Args a) {
 }
 Ref zfill_m(Obj self, Args a) {
     onearg(a, who(self, "zfill"));
-    std::int64_t width = index_value(a.pos(0));
+    std::int64_t width = ssize_arg(a.pos(0));
     const std::string& s = bytes_data(self);
     auto fill = width - static_cast<std::int64_t>(s.size());
     if (fill <= 0) return self_or_copy(self);
@@ -463,9 +463,9 @@ Ref zfill_m(Obj self, Args a) {
 }
 Ref expandtabs_m(Obj self, Args a) {
     if (a.npos + a.nkw > 1) raise_new("TypeError", "expandtabs() takes at most 1 argument (" + std::to_string(a.npos + a.nkw) + " given)");
-    std::int64_t tabsize = a.npos == 1 ? index_value(a.pos(0)) : 8;
+    std::int64_t tabsize = a.npos == 1 ? c_int_arg(a.pos(0)) : 8;
     for (std::size_t k = 0; k < a.nkw; ++k) {
-        if (a.kwnames[k] == N("tabsize") && a.npos == 0) tabsize = index_value(a.kw(k));
+        if (a.kwnames[k] == N("tabsize") && a.npos == 0) tabsize = c_int_arg(a.kw(k));
         else unexpected_keyword("expandtabs()", a.kwnames[k], {"tabsize"});
     }
     const std::string& s = bytes_data(self);
@@ -541,10 +541,10 @@ Ref maketrans_m(Obj, Args a) {
 Ref hex_m(Obj self, Args a) {                     // _Py_strhex_with_sep
     if (a.npos + a.nkw > 2) raise_new("TypeError", "hex() takes at most 2 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
     Obj sep = a.npos > 0 ? a.pos(0) : Obj{};
-    std::int64_t per = a.npos > 1 ? index_value(a.pos(1)) : 1;
+    std::int64_t per = a.npos > 1 ? ssize_arg(a.pos(1)) : 1;
     for (std::size_t k = 0; k < a.nkw; ++k) {
         if (a.kwnames[k] == N("sep") && a.npos < 1) sep = a.kw(k);
-        else if (a.kwnames[k] == N("bytes_per_sep") && a.npos < 2) per = index_value(a.kw(k));
+        else if (a.kwnames[k] == N("bytes_per_sep") && a.npos < 2) per = ssize_arg(a.kw(k));
         else unexpected_keyword("hex()", a.kwnames[k], {"sep", "bytes_per_sep"});
     }
     char sep_char = 0;
@@ -1049,7 +1049,7 @@ std::string assigned_values(Obj values) {         // bytearray_ass_subscript's v
 bool is_slice(Obj v) { return is_kind(v, Kind::Slice); }
 std::size_t byte_index(Obj key, std::size_t size, const char* range_message, const char* type_message) {
     if (!has_index(key)) raise_new("TypeError", std::string(type_message) + " indices must be integers or slices, not " + type_of(key)->name);
-    std::int64_t i = index_value(key);
+    std::int64_t i = index_value(key, "IndexError");
     if (i < 0) i += static_cast<std::int64_t>(size);
     if (i < 0 || i >= static_cast<std::int64_t>(size)) raise_new("IndexError", range_message);
     return static_cast<std::size_t>(i);
@@ -1132,7 +1132,7 @@ Ref extend_m(Obj self, Args a) {
 }
 Ref insert_m(Obj self, Args a) {
     clinic(a, "insert", "bytearray.insert", 2, 2);
-    std::int64_t i = index_value(a.pos(0));
+    std::int64_t i = ssize_arg(a.pos(0));
     int v = byte_value(a.pos(1));
     std::string& s = bytes_data(self);
     auto n = static_cast<std::int64_t>(s.size());
@@ -1143,7 +1143,7 @@ Ref insert_m(Obj self, Args a) {
 }
 Ref pop_m(Obj self, Args a) {
     clinic(a, "pop", "bytearray.pop", 0, 1);
-    std::int64_t i = a.npos == 1 ? index_value(a.pos(0)) : -1;
+    std::int64_t i = a.npos == 1 ? ssize_arg(a.pos(0)) : -1;
     std::string& s = bytes_data(self);
     if (s.empty()) raise_new("IndexError", "pop from empty bytearray");
     auto n = static_cast<std::int64_t>(s.size());
@@ -1178,7 +1178,7 @@ Ref copy_m(Obj self, Args a) {
 }
 Ref resize_m(Obj self, Args a) {
     onearg(a, "bytearray.resize");
-    std::int64_t size = index_value(a.pos(0));
+    std::int64_t size = ssize_arg(a.pos(0));
     if (size < 0) raise_new("ValueError", "Can only resize to positive sizes, got " + std::to_string(size));
     bytes_data(self).resize(static_cast<std::size_t>(size), '\0');
     return none_ref();
@@ -1242,9 +1242,7 @@ void set_unicode_args(Obj self, Args a) {
     set_exception_field(self, "args", args.get());
 }
 std::int64_t size_argument(Obj v) {
-    std::int64_t x;
-    if (!as_int(v, x)) raise_new("TypeError", "'" + type_of(v)->name + "' object cannot be interpreted as an integer");
-    return x;
+    return index_value(v);
 }
 Ref unicode_error_init(Obj self, Args a, const char* name, bool decode) {
     if (a.nkw != 0) raise_new("TypeError", std::string(name) + "() takes no keyword arguments");
@@ -1387,7 +1385,7 @@ bool bytes_contains(Obj self, Obj item) {         // _Py_bytes_contains
     bool number = has_index(item);
     if (number) {
         try {
-            v = index_value(item);
+            v = clipped_index(item);                  // PyNumber_AsSsize_t(arg, NULL)
         } catch (const PyError&) {
             number = false;
         }
