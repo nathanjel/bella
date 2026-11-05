@@ -1131,8 +1131,8 @@ ClassObject* self_class(Obj self) { return as_class(self); }
 Ref type_name(Obj self) { return str_new(self_class(self)->name.substr(self_class(self)->name_prefix)); }
 // check_set_special_type_attr: a delete is refused first, then a store to an immutable type
 void check_special(ClassObject* c, Obj v, const char* name) {
-    if (v.is_unset()) raise_new("TypeError", std::string("cannot delete '") + name + "' attribute of type '" + c->name + "'");
     if (immutable_type(c)) raise_new("TypeError", std::string("cannot set '") + name + "' attribute of immutable type '" + c->name + "'");
+    if (v.is_unset()) raise_new("TypeError", std::string("cannot delete '") + name + "' attribute of type '" + c->name + "'");
 }
 void set_type_name(Obj self, Obj v) {
     ClassObject* c = self_class(self);
@@ -1635,6 +1635,24 @@ void present_as_c_types(Module* bootstrap) {
         if (cpython_has(t->name, "__class_getitem__")) method(t, "__class_getitem__", class_getitem, Binding::ClassMethod);
 }
 
+// What a class statement leaves that a type written in C does not have; the layout is held elsewhere
+void forget_python_origin(ClassObject* c) {
+    for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__"})
+        if (c->attrs.contains(N(n))) c->del_attr(N(n));
+}
+// A class the prelude writes for a type a built-in module has in C: its tp_name, its place in the
+// names table, what the table says it cannot be (a base), its docstring and its __class_getitem__.
+void present_native_class(ClassObject* c, const std::string& module) {
+    std::string short_name = c->name;
+    c->name = module + "." + short_name;
+    c->name_prefix = module.size() + 1;
+    note_prelude_class(c);
+    c->final_type = cpython_has("final", c->name);
+    forget_python_origin(c);
+    if (Obj doc = cpython_doc(short_name); doc != None()) c->set_attr(N("__doc__"), doc);
+    if (cpython_has(short_name, "__class_getitem__")) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
+}
+
 // _PyErr_FormatNote / BaseException.add_note: appended to __notes__, made a list if absent
 void add_note(Obj exc, const std::string& text) {
     Ref note = str_new(text);
@@ -1667,22 +1685,25 @@ std::size_t edit_cost(std::string_view a, std::string_view b) {
     return row[b.size()];
 }
 }  // namespace
-void unexpected_keyword(const std::string& who, const Str* name, std::initializer_list<const char*> known) {
-    const char* suggestion = nullptr;
+std::string keyword_suggestion(const std::string& name, const std::vector<std::string>& known) {
+    std::string suggestion;
     std::size_t best = SIZE_MAX;
-    for (const char* item : known) {
-        std::string_view it(item);
-        if (it == name->text) continue;
-        std::size_t limit = std::min((name->text.size() + it.size() + 3) * 2 / 6, best == SIZE_MAX ? SIZE_MAX : best - 1);
-        std::size_t cost = edit_cost(name->text, it);
+    for (const std::string& it : known) {
+        if (it == name) continue;
+        std::size_t limit = std::min((name.size() + it.size() + 3) * 2 / 6, best == SIZE_MAX ? SIZE_MAX : best - 1);
+        std::size_t cost = edit_cost(name, it);
         if (cost > limit) continue;
-        if (suggestion == nullptr || cost < best) {
-            suggestion = item;
+        if (suggestion.empty() || cost < best) {
+            suggestion = it;
             best = cost;
         }
     }
+    return suggestion;
+}
+void unexpected_keyword(const std::string& who, const Str* name, std::initializer_list<const char*> known) {
+    std::string suggestion = keyword_suggestion(name->text, std::vector<std::string>(known.begin(), known.end()));
     raise_new("TypeError", who + " got an unexpected keyword argument '" + name->text + "'" +
-                               (suggestion != nullptr ? std::string(". Did you mean '") + suggestion + "'?" : ""));
+                               (!suggestion.empty() ? ". Did you mean '" + suggestion + "'?" : ""));
 }
 
 void init_types() {

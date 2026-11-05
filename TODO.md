@@ -462,8 +462,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * `frozendict` done (C-6-11; C-6-05 reaches it through `copy`, which needs `_weakref`), and
              with it `dict.__reversed__` and the views' (`reversed` of a dict stopped by name until
              now). Set operations on dict views still stop by name.
-           * Next, by how many cases each stops (`make compiled-corpus`): `itertools` 13 (`collections`
-             imports it), `_weakref` 5, `_ast` 4, `gc` 4, `_operator` 3, `_stat` 3, `str %` 2, floats 3.
+           * `itertools` done (C-7-20, `runtime/prelude/itertools.py`): the first built-in module written
+             in Python, compiled with the prelude and run at the first import.
+           * Next, by how many cases each stops (`make compiled-corpus`): `_operator` 14 (`collections`
+             imports it), `_ast` 6, `_weakref` 5, `gc` 4, `_stat` 3, `str %` 2, floats 3.
              Then start-up modules run at start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).

@@ -45,6 +45,9 @@ INCLUDED = sorted((ROOT / "runtime" / "src").glob("*.inc"))       # generated ta
 PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT / "runtime" / "prelude" / "builtins.py", "builtins"),
            (ROOT / "runtime" / "prelude" / "iterating.py", "builtins"),
            (ROOT / "runtime" / "prelude" / "bootstrap.py", "_frozen_importlib")]
+# built-in modules CPython writes in C and this runtime in Python: compiled with the prelude, run at the
+# first import (runtime/src/imports.cpp)
+NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py"]
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra"]
@@ -112,7 +115,8 @@ class _Lock:
 
 
 def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
-    key = _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED]), *(p.read_bytes() for p, _ in PRELUDE), *_pipeline_bytes(),
+    key = _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED]), *(p.read_bytes() for p, _ in PRELUDE),
+               *(p.read_bytes() for p in NATIVE_IN_PYTHON), *_pipeline_bytes(),
                " ".join([cxx, std, *RUNTIME_FLAGS]).encode())
     out = BUILD / f"runtime-{key}"
     lib = out / "libbella.a"
@@ -121,7 +125,7 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
             return lib
         out.mkdir(parents=True, exist_ok=True)
         units = list(SOURCES)
-        for p, _ in PRELUDE:
+        for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON]:
             cpp = out / f"prelude_{p.stem}.cpp"
             cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem}", prelude=True),
                            encoding="utf-8")

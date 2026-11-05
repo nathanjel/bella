@@ -13,6 +13,7 @@
 #include <unordered_map>
 
 namespace bella {
+namespace prelude_itertools { Ref module_body(Module* m); }   // runtime/prelude/itertools.py
 
 // defined below, with the lazy imports
 void clear_lazy_submodule(const std::string& name, bool bind);
@@ -310,10 +311,53 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}};
     return table;
 }
 }  // namespace
+// ---- a built-in module written in Python (pipeline/build.py, NATIVE_IN_PYTHON) ----
+namespace {
+// _PyObject_IsUniquelyReferenced of what an attribute holds: the attribute's count, and this read's
+Ref i_held_once(Obj, Args a) {
+    positional_only(a, "_held_once", 2, 2);
+    Ref value = getattr(a.pos(0), intern(as_str(a.pos(1))->text));
+    return Ref::steal(boolean(value.get().is_object() && value.get().object()->refs == 2));
+}
+Ref i_tuple_set(Obj, Args a) {                   // PyTuple_SET_ITEM and the Py_DECREF of what was there
+    positional_only(a, "_tuple_set", 3, 3);
+    auto& slot = static_cast<Tuple*>(a.pos(0).object())->items[static_cast<std::size_t>(a.pos(1).small_value())];
+    incref(a.pos(2));
+    decref(std::exchange(slot, a.pos(2)));
+    return none_ref();
+}
+Ref i_keyword_suggestion(Obj, Args a) {
+    positional_only(a, "_keyword_suggestion", 2, 2);
+    std::vector<std::string> known;
+    for (Obj n : static_cast<Tuple*>(a.pos(0).object())->items) known.push_back(as_str(n)->text);
+    std::string s = keyword_suggestion(as_str(a.pos(1))->text, known);
+    return s.empty() ? none_ref() : str_new(s);
+}
+}  // namespace
+// The file runs in a namespace of its own, which its functions keep as their globals, so that the
+// module a program sees has CPython's names and nothing else; nothing clears that namespace at exit.
+void fill_itertools(Module* m) {
+    Module* ns = new_module("itertools");
+    forget_module(ns);
+    for (auto [name, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
+             {"_number_index", i_number_index}, {"_held_once", i_held_once}, {"_tuple_set", i_tuple_set}, {"_keyword_suggestion", i_keyword_suggestion}}) {
+        Ref b = own(new Builtin(name, fn));
+        dict_set(ns->dict, Obj::of(N(name)), b.get());
+    }
+    prelude_itertools::module_body(ns);
+    for (Obj n : static_cast<List*>(dict_get(ns->dict, Obj::of(N("__all__"))).object())->items) {
+        Obj v = dict_get(ns->dict, n);
+        if (is_kind(v, Kind::Class)) present_native_class(static_cast<ClassObject*>(v.object()), "itertools");
+        if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;
+        dict_set(m->dict, n, v);
+    }
+    if (Obj doc = cpython_doc("itertools"); doc != None()) dict_set(m->dict, Obj::of(N("__doc__")), doc);
+}
+
 void set_bootstrap_module(Module* m) { bootstrap_module() = m; }
 Ref i_bella_is_builtin(Obj, Args a) {            // _imp.is_builtin: sys and builtins, then the table
     positional_only(a, "_bella_is_builtin", 1, 1);

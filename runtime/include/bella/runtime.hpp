@@ -206,6 +206,7 @@ struct Module : Object {
     Dict* dict;                                  // owned
     explicit Module(const char* n);
 };
+void forget_module(const Module* m);             // the runtime's own: cleared by nothing at exit
 std::vector<Module*>& all_modules();             // every module made, oldest first (immortal: D-19)
 
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
@@ -307,6 +308,10 @@ Ref i_lookup_special(Obj, Args a);               // builtins.py's primitives
 Ref i_number_index(Obj, Args a);
 Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tuple
 Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
+void fill_itertools(Module* m);                   // runtime/src/imports.cpp, running runtime/prelude/itertools.py
+void forget_python_origin(ClassObject* c);
+void present_native_class(ClassObject* c, const std::string& module);   // a class of the prelude as the module's C type
+std::string keyword_suggestion(const std::string& name, const std::vector<std::string>& known);   // _Py_CalculateSuggestions; "" for none
 void fill_abc(Module* m);                        // runtime/src/abc.cpp: the module _abc
 // runtime/src/bytes.cpp: bytes, bytearray and the codecs
 void init_bytes();

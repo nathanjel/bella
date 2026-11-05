@@ -1180,7 +1180,7 @@ Module* make_builtins() {
     for (const char* n : {"BaseException", "Exception", "SystemExit", "KeyboardInterrupt", "GeneratorExit",
                           "ArithmeticError", "ZeroDivisionError", "OverflowError", "AssertionError", "AttributeError",
                           "LookupError", "IndexError", "KeyError", "NameError", "UnboundLocalError", "RuntimeError",
-                          "NotImplementedError", "RecursionError", "StopIteration", "TypeError", "ValueError",
+                          "NotImplementedError", "RecursionError", "MemoryError", "StopIteration", "TypeError", "ValueError",
                           "ImportError", "ModuleNotFoundError", "ImportCycleError", "UnicodeError", "UnicodeEncodeError",
                           "UnicodeDecodeError", "UnicodeTranslateError"})
         put(d, n, Obj::of(exception_class(n)));
@@ -1347,6 +1347,8 @@ std::unordered_map<std::string, Module*>& native_modules() {
 // ---- names CPython has and the runtime lacks yet ----
 #include "cpython_names.inc"
 
+// the table knows a built-in type by __name__, which is the part of its name after the module's
+std::string_view table_name(const ClassObject* c) { return std::string_view(c->name).substr(c->name_prefix); }
 const CPythonName* cpython_find(std::string_view scope, std::string_view name) {
     std::string key;
     key.reserve(scope.size() + 1 + name.size());
@@ -1361,7 +1363,7 @@ std::unordered_set<const ClassObject*>& prelude_classes() {     // the prelude's
 }
 void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
     for (const ClassObject* c : mro)
-        if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(c->name, name->text))
+        if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(table_name(c), name->text))
             throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
 }
 }  // namespace
@@ -1400,7 +1402,7 @@ void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, con
     for (std::size_t i = from; i < mro.size(); ++i) {
         const ClassObject* c = mro[i];
         if (c->attrs.contains(name)) return;
-        if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(c->name, name->text))
+        if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(table_name(c), name->text))
             throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
     }
 }
@@ -1425,7 +1427,7 @@ void refuse_absent_data_descriptor(Obj obj, const Str* name) {
 }
 std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name) {
     if (!immutable_type(owner)) return {};       // a program's class named after a built-in is not that built-in
-    const CPythonName* e = cpython_find(owner->name, name);
+    const CPythonName* e = cpython_find(table_name(owner), name);
     return e != nullptr ? e->kind : std::string_view{};
 }
 bool presents_as_builtin(Obj f) { return is_kind(f, Kind::PyFunction) && f.object()->cls == types().builtin; }
@@ -1946,7 +1948,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 if (!all.is_unset())
                     for (Obj n : static_cast<List*>(all.object())->items) {
                         Obj v = dict_get(pm->dict, n);
-                        if (is_kind(v, Kind::Class)) prelude_classes().insert(static_cast<ClassObject*>(v.object()));
+                        if (is_kind(v, Kind::Class)) {
+                            prelude_classes().insert(static_cast<ClassObject*>(v.object()));
+                            forget_python_origin(static_cast<ClassObject*>(v.object()));
+                        }
                         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;   // print is a builtin
                         dict_set(builtins_module()->dict, n, v);
                     }

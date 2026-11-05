@@ -81,7 +81,8 @@ def type_names():
                outer, outer().__closure__[0], outer.__code__, type.__dict__, [].append, list.append,
                dict.__dict__["fromkeys"], type.__dict__["__name__"], object.__init__, object().__init__,
                sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int])]
-    for v in [*vars(builtins).values(), *vars(types).values()]:
+    import itertools
+    for v in [*vars(builtins).values(), *vars(types).values(), *vars(itertools).values()]:
         add(v)
     for s in samples:
         add(type(s))
@@ -150,8 +151,9 @@ def native_modules(names):
 
 def docs():
     """The docstrings of the built-in modules a program has from the start, and of the built-in types."""
-    out = {"sys": sys.__doc__, "builtins": builtins.__doc__}
-    samples = [v for v in [*vars(builtins).values(), *vars(types).values()] if isinstance(v, type)]
+    import itertools
+    out = {"sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__}
+    samples = [v for v in [*vars(builtins).values(), *vars(types).values(), *vars(itertools).values()] if isinstance(v, type)]
     samples += [type(iter([])), type(iter(())), type(iter("")), type({}.keys()), type({}.values()), type({}.items()), type(iter({})),
                 type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout)]
     for t in samples:

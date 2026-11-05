@@ -165,6 +165,7 @@ Module::Module(const char* n) : Object(Kind::Module), name(str_new(n)), dict(new
     incref(dict);
     all_modules().push_back(this);
 }
+void forget_module(const Module* m) { std::erase(all_modules(), m); }
 std::vector<Module*>& all_modules() {
     static std::vector<Module*> made;
     return made;
@@ -633,7 +634,7 @@ struct ExceptionClasses {
                  {"AttributeError", "Exception"}, {"LookupError", "Exception"}, {"IndexError", "LookupError"},
                  {"KeyError", "LookupError"}, {"NameError", "Exception"}, {"UnboundLocalError", "NameError"},
                  {"RuntimeError", "Exception"}, {"NotImplementedError", "RuntimeError"},
-                 {"RecursionError", "RuntimeError"}, {"StopIteration", "Exception"}, {"TypeError", "Exception"},
+                 {"RecursionError", "RuntimeError"}, {"MemoryError", "Exception"}, {"StopIteration", "Exception"}, {"TypeError", "Exception"},
                  {"ValueError", "Exception"}, {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"},
                  {"ImportCycleError", "ImportError"},
                  {"UnicodeError", "ValueError"}, {"UnicodeEncodeError", "UnicodeError"},

@@ -55,6 +55,7 @@ C-7-15_unicodedata.py
 C-7-17_gettext_catalogue.py
 C-7-18_collections_abc_types.py
 C-7-19_abc.py
+C-7-20_itertools.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-03_locals_detached.py

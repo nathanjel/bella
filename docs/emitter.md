@@ -220,6 +220,15 @@ reflected method before the int's). `int()` is `long_new_impl`: `PyNumber_Long` 
 itself, `__int__`, `__index__`, a str) and `PyLong_FromString`'s rules for an ASCII str (a str
 beyond ASCII is refused: its digits and spaces need the Unicode database).
 
+A built-in module may be written in Python: `itertools` (case C-7-20) is `runtime/prelude/itertools.py`,
+compiled with the prelude and run at the first import (`NATIVE_IN_PYTHON` in `pipeline/build.py`,
+`fill_itertools` in `runtime/src/imports.cpp`). It runs in a namespace of its own, which its functions
+keep as their globals, and the module a program sees gets only what `__all__` names; the classes
+present themselves as C types (`present_native_class`: the module's name in `tp_name`, the names
+table, final or not, the docstring). It is written from the C line by line, down to when things die:
+two primitives (`_held_once`, `_tuple_set`) let a result tuple be recycled when nothing else holds
+it, which is what keeps the last items alive until the next step.
+
 A `frozendict` is a dict: `Kind::Dict`, the same table, views and iterators, with its own class and
 the flag `FROZEN_DICT` (case C-6-11). What reads a dict therefore reads it, as CPython's `PyAnyDict`
 paths do, and what writes one asks `is_dict` (`PyDict_Check`) or `is_exact_dict`, so a frozendict
@@ -385,6 +394,12 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * A `BigInt` holds its limbs in a `std::vector` and `bn` returns vectors, two allocations for each
   result, where the design has the limbs inline in the object. That is a speed matter and comes
   with the first measurement that asks; the numbers are the same.
+* A class written in the prelude for a C type (`zip`, `itertools.chain`) is less than one in three ways
+  no program should meet: its `__next__` is a function and not a slot wrapper, so its messages for
+  wrong arguments are a function's; its slots' private names can be read; and
+  `object.__new__(itertools.chain)` makes an empty one where CPython refuses.
+* A request for an array of more than 2**40 words in `itertools` is a MemoryError at once: what the C
+  would fail to allocate, the Python would first try to fill.
 * Set operations and comparisons on `dict_keys` and `dict_items` and their `.mapping` are refused by
   name, for a frozendict's views as for a dict's. A container's `__repr__` is a function of the
   prelude, so `{}.__repr__(1)` says what a function says about its arguments, not what a slot
