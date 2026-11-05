@@ -108,8 +108,9 @@ Ref concat_str(const Str* a, const Str* b) { return str_new(a->text + b->text); 
 // declined (sequence_op below), as PyNumber_Add and PyNumber_Multiply do.
 Ref native_binary(BinOp op, Obj a, Obj b) {
     std::int64_t x, y;
+    if (op == BinOp::MatMul) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // no built-in type has nb_matrix_multiply
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
-    if (op != BinOp::MatMul && is_int(a) && is_int(b)) return big_binary(op, a, b);
+    if (is_int(a) && is_int(b)) return big_binary(op, a, b);
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
     if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // frozendict_or, _PyDict_Or: a copy, updated
         if (is_exact_frozendict(a)) {
@@ -252,10 +253,33 @@ bool set_like_operator(BinOp op) { return op == BinOp::And || op == BinOp::Or ||
 Ref sequence_concat(Obj self, Obj other) { return sequence_op(BinOp::Add, self, other, false); }
 Ref sequence_repeat(Obj self, Obj count) { return repeat(self, int_from_i64(index_value(count)).get(), false); }
 
+// PySequence_Concat(s, o) and PySequence_InPlaceConcat: a sequence type's own, else nb_add or
+// nb_inplace_add if s is a sequence (a class with only __add__), never the reflected sequence path
+Ref binary_op1(BinOp op, Obj a, Obj b);
+Ref i_sequence_concat(Obj, Args a) {
+    positional_only(a, "_sequence_concat", 3, 3);
+    Obj s = a.pos(0), o = a.pos(1);
+    bool in_place = truth(a.pos(2));
+    if (repeatable(s)) return sequence_op(BinOp::Add, s, o, in_place);
+    auto sequence = [](Obj v) {                  // PySequence_Check
+        return !is_kind(v, Kind::Dict) && !is_kind(v, Kind::Proxy) && !type_lookup(type_of(v), intern("__getitem__")).is_unset();
+    };
+    if (sequence(s) && sequence(o)) {            // both appear to be sequences
+        if (in_place && is_heap_obj(s)) {
+            bool has = false;
+            Ref r = call_special(s, "__iadd__", {o}, &has);
+            if (has && !not_implemented(r)) return r;
+        }
+        Ref r = binary_op1(BinOp::Add, s, o);
+        if (!not_implemented(r)) return r;
+    }
+    raise_new("TypeError", "'" + type_of(s)->name + "' object can't be concatenated");
+}
+
 // binary_op1: the operands' number slots, NotImplemented when both decline
 Ref binary_op1(BinOp op, Obj a, Obj b) {
     std::int64_t x, y;
-    if (as_exact_int(a, x) && as_exact_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
+    if (op != BinOp::MatMul && as_exact_int(a, x) && as_exact_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (!is_heap_obj(a) && !is_heap_obj(b) && !is_subclass_instance(a) && !is_subclass_instance(b)) return native_binary(op, a, b);
     ClassObject *ta = type_of(a), *tb = type_of(b);
     const char* rname = BIN_NAMES[static_cast<int>(op)][1];
@@ -309,7 +333,7 @@ Ref inplace(BinOp op, Obj a, Obj b) {
     if (!not_implemented(r)) return r;
     r = sequence_op(op, a, b, true);
     if (!not_implemented(r)) return r;
-    std::string sym = std::string(symbol(op)) + "=";
+    std::string sym = op == BinOp::Pow ? "**=" : std::string(symbol(op)) + "=";
     refuse_unimplemented_operator("iop", a, sym, b);
     unsupported(sym.c_str(), a, b);
 }
@@ -1633,7 +1657,7 @@ void length_hint(Obj v) {
     if (!int_fits_i64(r.get(), n))
         raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__length_hint__() must return an int, not " +
                                    fully_qualified_name(type_of(r.get())));
-    if (n < 0) raise_new("ValueError", "__length_hint__() should return >= 0");
+    if (n < 0) raise_new("ValueError", fully_qualified_name(type_of(v)) + ".__length_hint__() must return a non-negative int");
 }
 
 // LIST_EXTEND ([*x], (*x,)): iter()'s TypeError is reworded for an object with neither __iter__ nor

@@ -309,6 +309,8 @@ Ref i_number_index(Obj, Args a);
 Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tuple
 Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
 void fill_itertools(Module* m);                   // runtime/src/imports.cpp, running runtime/prelude/itertools.py
+void fill_operator(Module* m);                    // and runtime/prelude/_operator.py
+Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 void forget_python_origin(ClassObject* c);
 void present_native_class(ClassObject* c, const std::string& module);   // a class of the prelude as the module's C type
 std::string keyword_suggestion(const std::string& name, const std::vector<std::string>& known);   // _Py_CalculateSuggestions; "" for none
@@ -696,6 +698,7 @@ Ref str_rfind_m(Obj self, Args a);
 Ref str_index_m(Obj self, Args a);
 Ref str_rindex_m(Obj self, Args a);
 Ref str_count_m(Obj self, Args a);
+Ref str_isascii_m(Obj self, Args a);
 Ref str_startswith_m(Obj self, Args a);
 Ref str_endswith_m(Obj self, Args a);
 Ref str_partition_m(Obj self, Args a);

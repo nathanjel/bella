@@ -14,6 +14,7 @@
 
 namespace bella {
 namespace prelude_itertools { Ref module_body(Module* m); }   // runtime/prelude/itertools.py
+namespace prelude_operator { Ref module_body(Module* m); }    // runtime/prelude/_operator.py
 
 // defined below, with the lazy imports
 void clear_lazy_submodule(const std::string& name, bool bind);
@@ -311,7 +312,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}};
     return table;
 }
 }  // namespace
@@ -340,22 +341,32 @@ Ref i_keyword_suggestion(Obj, Args a) {
 }  // namespace
 // The file runs in a namespace of its own, which its functions keep as their globals, so that the
 // module a program sees has CPython's names and nothing else; nothing clears that namespace at exit.
-void fill_itertools(Module* m) {
-    Module* ns = new_module("itertools");
+namespace {
+void fill_in_python(Module* m, const char* name, const char* types_module, Ref (*body)(Module*),
+                    std::initializer_list<std::pair<const char*, NativeFn>> primitives) {
+    Module* ns = new_module(name);
     forget_module(ns);
-    for (auto [name, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
-             {"_number_index", i_number_index}, {"_held_once", i_held_once}, {"_tuple_set", i_tuple_set}, {"_keyword_suggestion", i_keyword_suggestion}}) {
-        Ref b = own(new Builtin(name, fn));
-        dict_set(ns->dict, Obj::of(N(name)), b.get());
+    for (auto [primitive, fn] : primitives) {
+        Ref b = own(new Builtin(primitive, fn));
+        dict_set(ns->dict, Obj::of(N(primitive)), b.get());
     }
-    prelude_itertools::module_body(ns);
+    body(ns);
     for (Obj n : static_cast<List*>(dict_get(ns->dict, Obj::of(N("__all__"))).object())->items) {
         Obj v = dict_get(ns->dict, n);
-        if (is_kind(v, Kind::Class)) present_native_class(static_cast<ClassObject*>(v.object()), "itertools");
+        if (is_kind(v, Kind::Class)) present_native_class(static_cast<ClassObject*>(v.object()), types_module);
         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;
         dict_set(m->dict, n, v);
     }
-    if (Obj doc = cpython_doc("itertools"); doc != None()) dict_set(m->dict, Obj::of(N("__doc__")), doc);
+    if (Obj doc = cpython_doc(name); doc != None()) dict_set(m->dict, Obj::of(N("__doc__")), doc);
+}
+}  // namespace
+void fill_itertools(Module* m) {
+    fill_in_python(m, "itertools", "itertools", prelude_itertools::module_body,
+                   {{"_number_index", i_number_index}, {"_held_once", i_held_once}, {"_tuple_set", i_tuple_set}, {"_keyword_suggestion", i_keyword_suggestion}});
+}
+void fill_operator(Module* m) {                  // its types are named for `operator`, the module that shows them
+    fill_in_python(m, "_operator", "operator", prelude_operator::module_body,
+                   {{"_number_index", i_number_index}, {"_lookup_special", i_lookup_special}, {"_sequence_concat", i_sequence_concat}});
 }
 
 void set_bootstrap_module(Module* m) { bootstrap_module() = m; }

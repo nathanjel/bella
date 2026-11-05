@@ -220,9 +220,9 @@ reflected method before the int's). `int()` is `long_new_impl`: `PyNumber_Long` 
 itself, `__int__`, `__index__`, a str) and `PyLong_FromString`'s rules for an ASCII str (a str
 beyond ASCII is refused: its digits and spaces need the Unicode database).
 
-A built-in module may be written in Python: `itertools` (case C-7-20) is `runtime/prelude/itertools.py`,
-compiled with the prelude and run at the first import (`NATIVE_IN_PYTHON` in `pipeline/build.py`,
-`fill_itertools` in `runtime/src/imports.cpp`). It runs in a namespace of its own, which its functions
+A built-in module may be written in Python: `itertools` (case C-7-20) is `runtime/prelude/itertools.py`
+and `_operator` (case C-7-21) `runtime/prelude/_operator.py`, compiled with the prelude and run at the first import (`NATIVE_IN_PYTHON` in `pipeline/build.py`,
+`fill_in_python` in `runtime/src/imports.cpp`). It runs in a namespace of its own, which its functions
 keep as their globals, and the module a program sees gets only what `__all__` names; the classes
 present themselves as C types (`present_native_class`: the module's name in `tp_name`, the names
 table, final or not, the docstring). It is written from the C line by line, down to when things die:

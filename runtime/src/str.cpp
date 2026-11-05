@@ -343,6 +343,10 @@ Ref str_count_m(Obj self, Args a) {              // unicode_count_impl: non-over
     }
     return Ref::steal(Obj::small(count));
 }
+Ref str_isascii_m(Obj self, Args a) {             // unicode_isascii_impl
+    noargs(a, "str.isascii");
+    return Ref::steal(boolean(self_str(self, "isascii")->ascii));
+}
 Ref str_startswith_m(Obj self, Args a) { return starts_ends(self, a, "startswith", -1); }
 Ref str_endswith_m(Obj self, Args a) { return starts_ends(self, a, "endswith", 1); }
 Ref str_partition_m(Obj self, Args a) { return partition_like(self, a, "partition", 1); }

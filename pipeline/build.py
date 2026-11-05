@@ -47,7 +47,7 @@ PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT 
            (ROOT / "runtime" / "prelude" / "bootstrap.py", "_frozen_importlib")]
 # built-in modules CPython writes in C and this runtime in Python: compiled with the prelude, run at the
 # first import (runtime/src/imports.cpp)
-NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py"]
+NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runtime" / "prelude" / "_operator.py"]
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra"]
@@ -127,7 +127,7 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
         units = list(SOURCES)
         for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON]:
             cpp = out / f"prelude_{p.stem}.cpp"
-            cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem}", prelude=True),
+            cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem.lstrip('_')}", prelude=True),
                            encoding="utf-8")
             units.append(cpp)
         objs = [out / f"{u.stem}.o" for u in units]

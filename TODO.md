@@ -464,9 +464,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              now). Set operations on dict views still stop by name.
            * `itertools` done (C-7-20, `runtime/prelude/itertools.py`): the first built-in module written
              in Python, compiled with the prelude and run at the first import.
-           * Next, by how many cases each stops (`make compiled-corpus`): `_operator` 14 (`collections`
-             imports it), `_ast` 6, `_weakref` 5, `gc` 4, `_stat` 3, `str %` 2, floats 3.
-             Then start-up modules run at start-up.
+           * `_operator` done (C-7-21, `runtime/prelude/_operator.py`), so `operator` is the standard library's.
+           * Next, by how many cases each stops (`make compiled-corpus`): `_weakref` 16 (`collections`,
+             `copy` and `functools` import it: step 3c below), `_ast` 6, `_stat` 6, `gc` 4, `str %` 2,
+             floats 3. Then start-up modules run at start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

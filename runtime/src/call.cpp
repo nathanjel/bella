@@ -1220,7 +1220,7 @@ Module* make_builtins() {
     method(t.str, "join", str_join);
     for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
              {"find", str_find_m}, {"rfind", str_rfind_m}, {"index", str_index_m}, {"rindex", str_rindex_m},
-             {"count", str_count_m}, {"startswith", str_startswith_m}, {"endswith", str_endswith_m},
+             {"count", str_count_m}, {"isascii", str_isascii_m}, {"startswith", str_startswith_m}, {"endswith", str_endswith_m},
              {"partition", str_partition_m}, {"rpartition", str_rpartition_m}, {"split", str_split_m},
              {"rsplit", str_rsplit_m}, {"strip", str_strip_m}, {"lstrip", str_lstrip_m}, {"rstrip", str_rstrip_m},
              {"replace", str_replace_m}})

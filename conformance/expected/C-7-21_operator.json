@@ -1,0 +1,12 @@
+{
+ "case": "C-7-21_operator.py",
+ "clause": "C-7-21",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7 (operator is in the phase-1 closure), Modules/_operator.c",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "9 5 14 3 1 49 28 1 2 7 5 -7 7 7 -8 -8 False True 7 False True False False True True True True True False\n9 5 14 3 1 49 28 1 2 7 5 18446744073709551617 1267650600228229401496703205376 18446744073709551616\n2 True 2 1 [1, 2] ab (1, 2) b'ab' 2 9 2 [2, 1]\nTrue True True [9, 3, 1, 2, 3] (1, 2) None None [9, 3, 1, 2, 3]\n3 True False [1, 2] 2 True True True <built-in function add> builtin_function_or_method _operator operator itemgetter\nTypeError TypeError TypeError TypeError TypeError TypeError TypeError ZeroDivisionError TypeError TypeError TypeError TypeError TypeError ValueError TypeError TypeError TypeError TypeError TypeError\nTrue False False True False\nadd add iadd TypeError TypeError add iadd\n5 9 TypeError ValueError OverflowError\noperator.itemgetter(1) operator.itemgetter(1, 2) 2 (2, 1) 1 (5,) (5, 6)\noperator.attrgetter('x') operator.attrgetter('x', 'B.y') 1 2 (1, 2) ('B.y',)\noperator.methodcaller('count') operator.methodcaller('count', 'a', 1) operator.methodcaller('m', x=1) 2 ['a', 'b c'] ('count', 'a')\nTypeError TypeError TypeError IndexError TypeError TypeError AttributeError TypeError TypeError AttributeError TypeError TypeError\n[(1, 'b'), (2, 'a')] ['a', 'bb'] [4, 6]\n",
+ "stderr": "",
+ "exit_code": 0
+}
