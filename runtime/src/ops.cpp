@@ -512,6 +512,8 @@ Ref compare_side(Obj self, Obj other, CmpOp op) {
 }
 }  // namespace
 
+Ref compare_one_side(Obj self, Obj other, CmpOp op) { return compare_side(self, other, op); }
+
 // do_richcompare: a subclass's reflected method first, then the left operand's, then the
 // reflected; == and != fall back to identity, the orderings fail
 Ref compare(CmpOp op, Obj a, Obj b) {
@@ -1289,6 +1291,11 @@ Ref for_next(Obj itv) {
             auto& items = static_cast<List*>(it->seq.object())->items;
             if (static_cast<std::size_t>(it->pos) >= items.size()) return finish();
             return Ref::share(items[static_cast<std::size_t>(it->pos++)]);
+        }
+        case Iterator::ListRevIt: {                  // listreviter_next: the list as it is at each step
+            auto& items = static_cast<List*>(it->seq.object())->items;
+            if (it->pos < 0 || static_cast<std::size_t>(it->pos) >= items.size()) { it->pos = -1; return finish(); }
+            return Ref::share(items[static_cast<std::size_t>(it->pos--)]);
         }
         case Iterator::BytesIt: {                    // a bytearray's as it is at each step
             const std::string& s = bytes_data(it->seq);

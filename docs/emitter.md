@@ -375,6 +375,9 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   have no reader until `match` is compiled, when subclasses inherit them and `register` passes
   them on.
 * `type.__subclasses__` of a built-in type is refused: CPython's list names classes of its own.
+* `enumerate`, `zip`, `map`, `filter` and `reversed` are written in Python (`runtime/prelude/iterating.py`):
+  their `__reduce__` stops by name, `dir()` shows CPython's names, and `reversed` of a dict stops by name
+  (`dict.__reversed__`). A float in `sum` cannot arise until floats exist; its compensated sum comes with them.
 * `bytes` and `bytearray`: `%`, a class derived from them, the codecs UTF-16 and UTF-32 and the
   `namereplace` handler stop by name; `codecs.register_error` has nothing to register with until
   `_codecs` is written. `memoryview` and the buffer protocol are \[P2+\].

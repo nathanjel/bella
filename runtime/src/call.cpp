@@ -1117,6 +1117,7 @@ Module* make_builtins() {
     put(d, "NotImplemented", Obj::of(NOTIMPLEMENTED));
     put(d, "Ellipsis", Obj::of(ELLIPSIS));
     put_builtin(d, "len", b_len);
+    put_builtin(d, "sorted", b_sorted);
     put_builtin(d, "repr", b_repr);
     put_builtin(d, "format", b_format);
     put_builtin(d, "isinstance", b_isinstance);
@@ -1399,6 +1400,23 @@ Ref i_special(Obj, Args a) {                    // _PyObject_LookupSpecial, as t
     if (is_kind(found, Kind::PyFunction)) return own(new Method(found, obj));
     return invoke(get, {found, obj, Obj::of(type_of(obj))});
 }
+}  // namespace
+Ref i_lookup_special(Obj, Args a) {              // _PyObject_LookupSpecial: the bound method in a tuple, or ()
+    positional_only(a, "_lookup_special", 2, 2);
+    const Str* name = intern(as_str(a.pos(1))->text);
+    Obj found = type_lookup(type_of(a.pos(0)), name);
+    if (found.is_unset()) {
+        refuse_absent_attribute(a.pos(0), name);  // CPython's type has it and the runtime lacks it: never "absent"
+        return tuple_new({});
+    }
+    Ref bound = descr_get(found, a.pos(0), Obj::of(type_of(a.pos(0))));
+    return tuple_new({bound.get()});
+}
+Ref i_number_index(Obj, Args a) {                // PyNumber_Index
+    positional_only(a, "_number_index", 1, 1);
+    return Ref::steal(Obj::small(index_value(a.pos(0))));
+}
+namespace {
 Ref i_dict_next(Obj, Args a) {                   // PyDict_Next: (next position, key, value) or None
     positional_only(a, "_dict_next", 2, 2);
     if (!is_kind(a.pos(0), Kind::Dict)) raise_new("TypeError", "_dict_next() needs a dict");
@@ -1816,6 +1834,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 {
                     Ref walk = own(new Builtin("_dict_next", i_dict_next));
                     put(pm->dict, "_dict_next", walk.get());
+                    Ref lookup = own(new Builtin("_lookup_special", i_lookup_special));
+                    put(pm->dict, "_lookup_special", lookup.get());
+                    Ref index = own(new Builtin("_number_index", i_number_index));
+                    put(pm->dict, "_number_index", index.get());
                 }
                 if (std::string_view(pm_entry.name) == "_frozen_importlib") {
                     bootstrap = pm;

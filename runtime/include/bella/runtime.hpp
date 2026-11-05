@@ -125,7 +125,7 @@ struct Range : Object {
     Range(std::int64_t a, std::int64_t b, std::int64_t c);
 };
 struct Iterator : Object {                       // the C++ types' iterators
-    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, StrIt, BytesIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
+    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, ListRevIt, StrIt, BytesIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
     std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
@@ -217,7 +217,7 @@ struct Types {
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
         *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
-        *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview;
+        *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator;
 };
 Types& types();
 extern Singleton* const NONE;
@@ -294,6 +294,10 @@ ClassObject* new_wrapper_class(Args a, const ClassObject* type);   // tp_new_wra
 void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, const Str* name);
 std::vector<ClassObject*>& builtin_types();      // every C++ type made at start-up
 void init_slots();                               // runtime/src/slots.cpp
+Ref list_sort_m(Obj self, Args a);               // runtime/src/sort.cpp
+Ref b_sorted(Obj, Args a);
+Ref i_lookup_special(Obj, Args a);               // builtins.py's primitives
+Ref i_number_index(Obj, Args a);
 Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tuple
 Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
 void fill_abc(Module* m);                        // runtime/src/abc.cpp: the module _abc
@@ -492,6 +496,7 @@ enum class BinOp : std::uint8_t { Add, Sub, Mul, TrueDiv, FloorDiv, Mod, Pow, LS
 enum class CmpOp : std::uint8_t { Lt, Le, Eq, Ne, Gt, Ge, In, NotIn, Is, IsNot };
 Ref native_compare(CmpOp op, Obj a, Obj b);      // the C++ types' own comparison and number slots
 Ref bytes_compare(CmpOp op, Obj a, Obj b);
+Ref compare_one_side(Obj self, Obj other, CmpOp op);   // one operand's method alone: NotImplemented if it declines
 Ref native_binary(BinOp op, Obj a, Obj b);
 Ref binary(BinOp op, Obj a, Obj b);
 Ref inplace(BinOp op, Obj a, Obj b);

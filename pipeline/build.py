@@ -43,6 +43,7 @@ SOURCES = sorted((ROOT / "runtime" / "src").glob("*.cpp"))
 INCLUDED = sorted((ROOT / "runtime" / "src").glob("*.inc"))       # generated tables the sources include
 # the prelude's modules, in this order, each run as the module it names (runtime/src/call.cpp, run_main)
 PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT / "runtime" / "prelude" / "builtins.py", "builtins"),
+           (ROOT / "runtime" / "prelude" / "iterating.py", "builtins"),
            (ROOT / "runtime" / "prelude" / "bootstrap.py", "_frozen_importlib")]
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")

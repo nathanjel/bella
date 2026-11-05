@@ -28,6 +28,7 @@ C-3-34_dict_subclasses.py
 C-3-35_int_constructor_and_subclasses.py
 C-3-36_generic_alias.py
 C-3-37_bytes.py
+C-3-38_iteration_builtins.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

@@ -97,6 +97,19 @@ Ref own_contains(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return 
 Ref own_getitem(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return getitem(self, a.pos(0)); }
 Ref own_add(Obj self, Args a) { wrapper_args(a, "__add__", 1); return sequence_concat(self, a.pos(0)); }
 Ref own_mul(Obj self, Args a) { wrapper_args(a, "__mul__", 1); return sequence_repeat(self, a.pos(0)); }
+Ref list_reversed(Obj self, Args a) {
+    noargs(a, "list.__reversed__");
+    Ref it = own(new Iterator(Iterator::ListRevIt, self));
+    static_cast<Iterator*>(it.get().object())->pos = static_cast<std::int64_t>(static_cast<List*>(self.object())->items.size()) - 1;
+    return it;
+}
+Ref range_reversed(Obj self, Args a) {           // range_reverse: the iterator of the same values backwards
+    noargs(a, "range.__reversed__");
+    auto* r = static_cast<Range*>(self.object());
+    std::int64_t last = r->start + (r->length - 1) * r->step;
+    Ref back = own(new Range(last, r->start - r->step, -r->step));
+    return iter(back.get());
+}
 Ref own_len(Obj self, Args a) {
     wrapper_args(a, "__len__", 0);
     Ref len = builtin("len");
@@ -229,6 +242,9 @@ void init_slots() {
         slot(c, "__rmul__", own_mul);
     }
     for (ClassObject* c : {t.str, t.range, t.slice, t.none, t.bytes, t.bytearray}) slot(c, "__repr__", own_repr);
+    slot(t.list, "__reversed__", list_reversed);
+    slot(t.range, "__reversed__", range_reversed);
+    slot(t.list, "sort", list_sort_m);
     slot(t.none, "__bool__", own_bool);
     slot(t.none, "__hash__", own_hash);
     for (ClassObject* c : {t.set, t.frozenset}) {

@@ -448,10 +448,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              and the UTF-8, ASCII, Latin-1 and utf-8-sig codecs with CPython's error ranges and
              handlers. Left, each stopping by name: `%` (with `str %`), a class derived from them
              (with `str`'s and `list`'s), the codecs UTF-16 and UTF-32, `namereplace`.
-           * Next, by how many cases each stops (`make compiled-corpus`): the builtin `reversed` 10,
-             `_weakref` 5, `gc` 4, `_ast` 3, `sorted` 2, `str %` 2, `_operator` 2, `itertools` 2,
-             `_stat` 2; the builtins `enumerate`, `zip`, `min`, `max`. Then start-up modules run at
-             start-up.
+           * `list.sort` and `sorted` done (C-3-38, `runtime/src/sort.cpp`, powersort line for line,
+             since a `__lt__` can see which pairs are compared), and `reversed`, `enumerate`, `zip`,
+             `map`, `filter`, `min`, `max`, `sum`, `any`, `all` (`runtime/prelude/iterating.py`).
+             `reversed` of a dict, `iter(callable, sentinel)`, and `bin`, `hex`, `oct`, `ascii`,
+             `divmod`, `pow`, `round` stop by name.
+           * Next, by how many cases each stops (`make compiled-corpus`): big ints 12 (`1 << 1000` in
+             `_collections_abc`), `_weakref` 5, `gc` 4, `_ast` 3, `str %` 2, `_operator` 2,
+             `itertools` 2, `_stat` 2. Then start-up modules run at start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
