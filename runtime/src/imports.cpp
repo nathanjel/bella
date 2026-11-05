@@ -15,6 +15,7 @@
 namespace bella {
 namespace prelude_itertools { Ref module_body(Module* m); }   // runtime/prelude/itertools.py
 namespace prelude_operator { Ref module_body(Module* m); }    // runtime/prelude/_operator.py
+namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
 void clear_lazy_submodule(const std::string& name, bool bind);
@@ -312,7 +313,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_weakref", {fill_weakref}}};
     return table;
 }
 }  // namespace
@@ -353,7 +354,8 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
     body(ns);
     for (Obj n : static_cast<List*>(dict_get(ns->dict, Obj::of(N("__all__"))).object())->items) {
         Obj v = dict_get(ns->dict, n);
-        if (is_kind(v, Kind::Class)) present_native_class(static_cast<ClassObject*>(v.object()), types_module);
+        if (is_kind(v, Kind::Class) && static_cast<ClassObject*>(v.object())->name_prefix == 0)   // a class may have two names
+            present_native_class(static_cast<ClassObject*>(v.object()), types_module);
         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;
         dict_set(m->dict, n, v);
     }
@@ -363,6 +365,57 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
 void fill_itertools(Module* m) {
     fill_in_python(m, "itertools", "itertools", prelude_itertools::module_body,
                    {{"_number_index", i_number_index}, {"_held_once", i_held_once}, {"_tuple_set", i_tuple_set}, {"_keyword_suggestion", i_keyword_suggestion}});
+}
+// _weakref's primitives: the object model's lists (object.hpp), as the prelude's file reads them
+namespace {
+WeakKind weak_kind_of(Obj k) { return static_cast<WeakKind>(k.small_value()); }
+Ref i_weak_supported(Obj, Args a) {              // _PyType_SUPPORTS_WEAKREFS
+    positional_only(a, "_weak_supported", 1, 1);
+    return Ref::steal(boolean(type_of(a.pos(0))->has_weakref));
+}
+Ref i_weak_basic(Obj, Args a) {
+    positional_only(a, "_weak_basic", 2, 2);
+    Object* found = weak_basic(a.pos(0).object(), weak_kind_of(a.pos(1)));
+    return found == nullptr ? none_ref() : Ref::share(Obj::of(found));
+}
+Ref i_weak_link(Obj, Args a) {
+    positional_only(a, "_weak_link", 4, 4);
+    weak_link(a.pos(0).object(), a.pos(1).object(), a.pos(2) == None() ? Obj{} : a.pos(2), weak_kind_of(a.pos(3)));
+    return none_ref();
+}
+Ref i_weak_get(Obj, Args a) {
+    positional_only(a, "_weak_get", 1, 1);
+    if (!a.pos(0).is_object()) return none_ref();
+    WeakRecord* r = weak_record(a.pos(0).object());
+    return r == nullptr || r->target == nullptr ? none_ref() : Ref::share(Obj::of(r->target));
+}
+Ref weak_callback_member(Obj self) {
+    WeakRecord* r = weak_record(self.object());
+    return r == nullptr || r->callback == 0 ? none_ref() : Ref::share(Obj::of(reinterpret_cast<const Object*>(r->callback)));
+}
+Ref i_weak_list(Obj, Args a) {
+    positional_only(a, "_weak_list", 1, 1);
+    Ref out = list_new({});
+    if (a.pos(0).is_object())
+        if (auto* list = weak_list(a.pos(0).object()))
+            for (WeakRecord* r : *list)
+                if (r->holder->refs > 0) list_append(out.get(), Obj::of(r->holder));
+    return out;
+}
+}  // namespace
+void fill_weakref(Module* m) {                   // the types are named for `weakref`, as CPython's are
+    fill_in_python(m, "_weakref", "weakref", prelude_weakref::module_body,
+                   {{"_number_index", i_number_index}, {"_lookup_special", i_lookup_special}, {"_tp_name", i_tp_name}, {"_weak_supported", i_weak_supported},
+                    {"_weak_basic", i_weak_basic}, {"_weak_link", i_weak_link}, {"_weak_get", i_weak_get}, {"_weak_list", i_weak_list}});
+    for (const char* n : {"ProxyType", "CallableProxyType"}) {
+        auto* c = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N(n))).object());
+        c->forwards_attributes = true;
+        c->weak_proxy = true;
+    }
+    auto* ref = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("ReferenceType"))).object());
+    auto* member = new GetSet("__callback__", ref, weak_callback_member, nullptr);   // PyMemberDef in CPython
+    member->cls = types().member_descriptor;
+    ref->attrs.set(N("__callback__"), Obj::of(member));
 }
 void fill_operator(Module* m) {                  // its types are named for `operator`, the module that shows them
     fill_in_python(m, "_operator", "operator", prelude_operator::module_body,

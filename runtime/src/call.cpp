@@ -1180,7 +1180,7 @@ Module* make_builtins() {
     for (const char* n : {"BaseException", "Exception", "SystemExit", "KeyboardInterrupt", "GeneratorExit",
                           "ArithmeticError", "ZeroDivisionError", "OverflowError", "AssertionError", "AttributeError",
                           "LookupError", "IndexError", "KeyError", "NameError", "UnboundLocalError", "RuntimeError",
-                          "NotImplementedError", "RecursionError", "MemoryError", "StopIteration", "TypeError", "ValueError",
+                          "NotImplementedError", "RecursionError", "MemoryError", "ReferenceError", "StopIteration", "TypeError", "ValueError",
                           "ImportError", "ModuleNotFoundError", "ImportCycleError", "UnicodeError", "UnicodeEncodeError",
                           "UnicodeDecodeError", "UnicodeTranslateError"})
         put(d, n, Obj::of(exception_class(n)));
@@ -1728,6 +1728,25 @@ void call_finalizer(Obj fn, Obj self) {
     detail::raising_owner() = owner;
 }
 const bool finalizer_hook_installed = (finalizer_hook() = call_finalizer, true);
+// handle_callback: what a weak reference's callback raises is reported, and goes no further
+void call_weakref_callback(Obj fn, Obj holder) {
+    Obj saved = detail::raising();
+    const void* owner = detail::raising_owner();
+    try {
+        Ref r = invoke(fn, {holder});
+    } catch (const PyError& e) {
+        Ref text = repr_of(fn);
+        report_unraisable("Exception ignored while calling weakref callback " + as_str(text.get())->text, e);
+    } catch (const NotImplemented& e) {          // a refusal in a callback still stops the program
+        out_stream().flush();
+        err_stream().write(std::string("bella: not implemented: ") + e.what() + "\n");
+        err_stream().flush();
+        std::_Exit(70);
+    }
+    detail::raising() = saved;
+    detail::raising_owner() = owner;
+}
+const bool weakref_hook_installed = (weakref_callback_hook() = call_weakref_callback, true);
 
 // finalize_modules at exit. sys's special names go; sys.modules is emptied; then the collector
 // (_PyGC_CollectNoFail) finds the modules' namespaces in cycles (a dict holds a function holding the
@@ -1741,8 +1760,7 @@ void attribute_values(T* inst, std::vector<Obj>& todo) {
     for (Obj v : inst->fields) todo.push_back(v);
     if (inst->dict != nullptr) todo.push_back(Obj::of(inst->dict));
 }
-void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found) {
-    std::unordered_set<Object*> seen;
+void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found, std::unordered_set<Object*>& seen) {
     std::vector<Obj> todo;
     for (Module* m : roots) todo.push_back(Obj::of(m->dict));
     for (std::size_t next = 0; next < todo.size(); ++next) {
@@ -1856,7 +1874,24 @@ void clear_modules(const std::unordered_set<Module*>& runtime_own) {
     shutting_down() = true;
     dict_clear(modules);                         // finalize_clear_modules_dict; the modules live on (D-19)
     std::vector<Ref> found;
-    finalizable_from(order, found);
+    std::unordered_set<Object*> reached;
+    finalizable_from(order, found, reached);
+    // handle_weakrefs: a reference with a callback to what the collector found is cleared first; one it
+    // found too never has its callback called, and one without a callback lasts until the object is freed
+    std::vector<std::pair<Ref, Ref>> callbacks;
+    for (Object* target : reached) {
+        auto* list = weak_list(target);
+        if (list == nullptr) continue;
+        std::vector<WeakRecord*> records = *list;
+        for (WeakRecord* r : records) {
+            if (r->callback == 0) continue;
+            Ref fn = Ref::steal(Obj::of(reinterpret_cast<const Object*>(std::exchange(r->callback, 0))));
+            weak_unlink(r);
+            if (!reached.contains(r->holder) && r->holder->refs > 0) callbacks.emplace_back(Ref::share(Obj::of(r->holder)), std::move(fn));
+        }
+    }
+    for (auto& [holder, fn] : callbacks) call_weakref_callback(fn.get(), holder.get());
+    callbacks.clear();
     for (Ref& r : found)
         with_attribute_storage(r.get(), [](auto* inst) { detail::finalize_once(inst); });
     found.clear();
@@ -1930,6 +1965,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_lookup_special", lookup.get());
                     Ref index = own(new Builtin("_number_index", i_number_index));
                     put(pm->dict, "_number_index", index.get());
+                    Ref sequence = own(new Builtin("_sequence_check", i_sequence_check));
+                    put(pm->dict, "_sequence_check", sequence.get());
+                    Ref tp_name = own(new Builtin("_tp_name", i_tp_name));
+                    put(pm->dict, "_tp_name", tp_name.get());
                 }
                 if (std::string_view(pm_entry.name) == "_frozen_importlib") {
                     bootstrap = pm;
@@ -1951,6 +1990,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                         if (is_kind(v, Kind::Class)) {
                             prelude_classes().insert(static_cast<ClassObject*>(v.object()));
                             forget_python_origin(static_cast<ClassObject*>(v.object()));
+                            static_cast<ClassObject*>(v.object())->has_weakref = cpython_has("weakref", static_cast<ClassObject*>(v.object())->name);
                         }
                         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;   // print is a builtin
                         dict_set(builtins_module()->dict, n, v);

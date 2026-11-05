@@ -18,6 +18,7 @@ ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases) {
     ClassObject* c = builtin_class(name);
     builtin_types().push_back(c);
     c->final_type = cpython_has("final", name);
+    c->has_weakref = cpython_has("weakref", name);
     c->bases = bases;
     c->mro = {c};
     for (ClassObject* b : bases)
@@ -375,6 +376,10 @@ std::int64_t hash_small(std::int64_t v) {
     return h == -1 ? -2 : h;
 }
 
+std::int64_t pointer_hash(const void* o) {        // _Py_HashPointer: the address rotated by 4 bits
+    auto p = reinterpret_cast<std::uintptr_t>(o);
+    return static_cast<std::int64_t>((p >> 4) | (p << 60));
+}
 // CPython's hash
 std::int64_t full_hash(Obj v) {
     if (v.is_small()) return hash_small(v.small_value());
@@ -425,9 +430,18 @@ std::int64_t full_hash(Obj v) {
             [[fallthrough]];
         case Kind::PyFunction:
         case Kind::Builtin: {
+            if (o->kind == Kind::Builtin && !static_cast<Builtin*>(o)->self.is_unset()) {   // meth_hash
+                auto* b = static_cast<Builtin*>(o);
+                auto h = pointer_hash(b->self.is_object() ? b->self.object() : nullptr) ^ pointer_hash(reinterpret_cast<const void*>(b->fn));
+                return h == -1 ? -2 : h;
+            }
             // object.__hash__: the address rotated by 4 bits (_Py_HashPointer)
-            auto p = reinterpret_cast<std::uintptr_t>(o);
-            auto h = static_cast<std::int64_t>((p >> 4) | (p << 60));
+            auto h = pointer_hash(o);
+            return h == -1 ? -2 : h;
+        }
+        case Kind::Method: {                     // method_hash: its object's address, and its function's hash
+            auto* m = static_cast<Method*>(o);
+            auto h = pointer_hash(m->self.is_object() ? m->self.object() : nullptr) ^ hash_of(m->func);
             return h == -1 ? -2 : h;
         }
         case Kind::Set: {                        // frozenset_hash_impl; a set's __hash__ is None, below
@@ -612,6 +626,7 @@ struct ExceptionClasses {
         std::vector<ClassObject*> bases;
         if (base != nullptr) bases.push_back(by_name.at(base));
         ClassObject* c = make_class({.name = name, .bases = bases, .native = std::move(native)});
+        c->has_weakref = cpython_has("weakref", name);
         if (base == nullptr) {                     // BaseException derives from object
             c->bases = {types().object};
             c->mro = {c, types().object};
@@ -634,7 +649,7 @@ struct ExceptionClasses {
                  {"AttributeError", "Exception"}, {"LookupError", "Exception"}, {"IndexError", "LookupError"},
                  {"KeyError", "LookupError"}, {"NameError", "Exception"}, {"UnboundLocalError", "NameError"},
                  {"RuntimeError", "Exception"}, {"NotImplementedError", "RuntimeError"},
-                 {"RecursionError", "RuntimeError"}, {"MemoryError", "Exception"}, {"StopIteration", "Exception"}, {"TypeError", "Exception"},
+                 {"RecursionError", "RuntimeError"}, {"MemoryError", "Exception"}, {"ReferenceError", "Exception"}, {"StopIteration", "Exception"}, {"TypeError", "Exception"},
                  {"ValueError", "Exception"}, {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"},
                  {"ImportCycleError", "ImportError"},
                  {"UnicodeError", "ValueError"}, {"UnicodeEncodeError", "UnicodeError"},

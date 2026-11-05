@@ -11,10 +11,19 @@ __all__ = ["reversed", "enumerate", "zip", "map", "filter", "min", "max", "sum",
 try:
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial, given by the compiled runtime
     _number_index                                # noqa: B018  # PyNumber_Index
+    _sequence_check                              # noqa: B018  # PySequence_Check
+    _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
 except NameError:
     import operator
 
     _number_index = operator.index
+
+    def _sequence_check(obj: object) -> bool:
+        return not isinstance(obj, dict) and hasattr(type(obj), "__getitem__")
+
+    def _tp_name(obj: object) -> str:
+        t = type(obj)
+        return t.__name__ if t.__module__ in ("builtins", "__main__") else t.__module__ + "." + t.__name__
 
     def _lookup_special(obj: object, name: str) -> tuple[object, ...]:
         """Run by CPython (runtime/tests/test_prelude.py): the bound special method in a tuple, or ()."""
@@ -42,8 +51,8 @@ class reversed:
             if found[0] is None:
                 raise TypeError("'" + type(seq).__name__ + "' object is not reversible")
             return found[0]()  # type: ignore[operator]
-        if issubclass(type(seq), dict) or not _lookup_special(seq, "__getitem__"):   # PySequence_Check
-            raise TypeError("'" + type(seq).__name__ + "' object is not reversible")
+        if not _sequence_check(seq):
+            raise TypeError("'" + _tp_name(seq) + "' object is not reversible")
         self = object.__new__(cls)
         self._index = len(seq) - 1  # type: ignore[arg-type]
         self._seq = seq

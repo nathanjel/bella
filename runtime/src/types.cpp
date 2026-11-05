@@ -169,16 +169,20 @@ Ref get_native(Obj self, Args a) {             // __get__ of the C++ descriptors
 Ref getset_set(Obj self, Args a) {
     arity(a, "__set__", 2, 2);
     auto* g = static_cast<GetSet*>(self.object());
-    if (g->set == nullptr)
+    if (g->set == nullptr) {
+        if (g->cls == types().member_descriptor) raise_new("AttributeError", "readonly attribute");
         raise_new("AttributeError", std::string("attribute '") + g->name + "' of '" + g->owner->name + "' objects is not writable");
+    }
     g->set(a.pos(0), a.pos(1));
     return none_ref();
 }
 Ref getset_delete(Obj self, Args a) {
     arity(a, "__delete__", 1, 1);
     auto* g = static_cast<GetSet*>(self.object());
-    if (g->set == nullptr)                       // getset_set: no setter, for storing and deleting alike
+    if (g->set == nullptr) {                     // getset_set: no setter, for storing and deleting alike
+        if (g->cls == types().member_descriptor) raise_new("AttributeError", "readonly attribute");
         raise_new("AttributeError", std::string("attribute '") + g->name + "' of '" + g->owner->name + "' objects is not writable");
+    }
     if (g->deletable) {
         g->set(a.pos(0), Obj{});
         return none_ref();
@@ -510,6 +514,20 @@ void mro_invoke(ClassObject* c) {
 }
 }  // namespace
 
+Ref first_weakref(Obj self) {                     // subtype_getweakref: the head of the list
+    if (!type_of(self)->has_weakref) raise_new("AttributeError", "This object has no __weakref__");
+    if (auto* list = weak_list(self.object()); list != nullptr && !list->empty()) return Ref::share(Obj::of(list->front()->holder));
+    return none_ref();
+}
+GetSet* weakref_getset() {                        // CPython's belongs to object, whichever class it is put in
+    static GetSet* g = [] {
+        auto* d = new GetSet("__weakref__", types().object, first_weakref, nullptr);
+        d->flags |= IMMORTAL;
+        return d;
+    }();
+    return g;
+}
+
 Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw) {
     const Str* name = as_str(name_obj);
     if (name == nullptr) raise_new("TypeError", "type.__new__() argument 1 must be str, not " + type_of(name_obj)->name);
@@ -585,7 +603,13 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             bool ident = !s->text.empty() && !std::isdigit(static_cast<unsigned char>(s->text[0])) &&
                          std::all_of(s->text.begin(), s->text.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
             if (!ident) raise_new("TypeError", "__slots__ must be identifiers");
-            if (s->text == "__weakref__") throw NotImplemented("__weakref__ in __slots__ (step 3c: weak references)");
+            if (s->text == "__weakref__") {          // may_add_weak: no base with room
+                bool base_weak = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_weakref; });
+                if (base_weak || std::find(slots.begin(), slots.end(), "__weakref__") != slots.end())
+                    raise_new("TypeError", "__weakref__ slot disallowed: we already got one");
+                slots.push_back(s->text);
+                continue;
+            }
             if (s->text == "__dict__") {
                 if (base_dict || std::find(slots.begin(), slots.end(), "__dict__") != slots.end())
                     raise_new("TypeError", "__dict__ slot disallowed: we already got one");
@@ -597,9 +621,9 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
                 if (k->text == m) raise_new("ValueError", "'" + s->text + "' in __slots__ conflicts with class variable");
             if (std::find(slots.begin(), slots.end(), m) == slots.end()) slots.push_back(m);   // A9-18
         }
-        // an int subclass's instances have a variable size: only __dict__ (and __weakref__) may be slots
+        // an int subclass's instances have a variable size: only __dict__ may be a slot
         bool int_based = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_); });
-        if (int_based && std::any_of(slots.begin(), slots.end(), [](const std::string& n) { return n != "__dict__"; }))
+        if (int_based && std::any_of(slots.begin(), slots.end(), [](const std::string& n) { return n != "__dict__" && n != "__weakref__"; }))
             raise_new("TypeError", "arbitrary __slots__ not supported for subtype of 'int'");
         spec.slots = slots;
     }
@@ -635,18 +659,24 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     c->qualname = qualname;
     c->heap_type = true;
     bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict; });
+    // type_ready's order: the getsets (__dict__, __weakref__) and only then the members. The room for weak
+    // references comes by itself unless the object has a variable size, as an int's has; a slot asks for it there
+    std::vector<std::pair<const Str*, Ref>> members;
+    for (auto& [k, v] : c->attrs.items())
+        if (is_kind(v, Kind::SlotDescriptor)) members.emplace_back(k, Ref::steal(c->attrs.pop(k)));
     if (c->has_dict && !base_has_dict && !c->attrs.contains(N("__dict__")))    // the class body's stands
         c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
+    bool base_has_weak = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_weakref; });
+    bool asked_weak = c->slots && std::find(c->slots->begin(), c->slots->end(), N("__weakref__")) != c->slots->end();
+    if (!base_has_weak && !asked_weak && std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_); }))
+        c->has_weakref = false;
+    if (c->has_weakref && !base_has_weak && !c->attrs.contains(N("__weakref__")))
+        c->attrs.set(N("__weakref__"), Obj::of(weakref_getset()));
     // A metaclass's mro() is the first code that can see the class, and may keep a view of its dict:
-    // from here each insertion goes through set_attr. The members go in after it, as type_ready's do.
-    if (meta != types().type) {
-        std::vector<std::pair<const Str*, Ref>> members;
-        for (auto& [k, v] : c->attrs.items())
-            if (is_kind(v, Kind::SlotDescriptor)) members.emplace_back(k, Ref::steal(c->attrs.pop(k)));
-        mro_invoke(c);
-        for (auto& [k, v] : members)
-            if (!c->attrs.contains(k)) c->set_attr(k, v.get());
-    }
+    // from here each insertion goes through set_attr.
+    if (meta != types().type) mro_invoke(c);
+    for (auto& [k, v] : members)
+        if (!c->attrs.contains(k)) c->set_attr(k, v.get());
     if (!c->attrs.contains(N("__doc__"))) c->set_attr(N("__doc__"), None());   // type_dict_set_doc: after the getsets
     if (has_eq && !has_hash) c->set_attr(N("__hash__"), None());               // type_ready_set_hash: then __hash__
     if (!classcell.is_unset()) {
@@ -964,7 +994,6 @@ void merge_class_dict(Obj names, Obj aclass) {
         if (c == types().type) dict_set(d, Obj::of(N("__abstractmethods__")), None());   // left out of the table: most classes raise
         if (table.empty())
             for (auto& [k, v] : c->attrs.items()) dict_set(d, Obj::of(k), None());
-        if (c->heap_type && !immutable_type(c) && !c->slots) dict_set(d, Obj::of(N("__weakref__")), None());
         for (ClassObject* base : c->bases) merge_class_dict(names, Obj::of(base));
         return;
     }
@@ -1626,6 +1655,7 @@ void present_as_c_types(Module* bootstrap) {
     ga->name_prefix = 6;
     ga->forwards_attributes = true;
     note_prelude_class(ga);
+    ga->has_weakref = cpython_has("weakref", "GenericAlias");
     auto* ga_iterator = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("generic_alias_iterator"))).object());
     note_prelude_class(ga_iterator);
     ga_iterator->final_type = true;
@@ -1649,6 +1679,7 @@ void present_native_class(ClassObject* c, const std::string& module) {
     note_prelude_class(c);
     c->final_type = cpython_has("final", c->name);
     forget_python_origin(c);
+    c->has_weakref = cpython_has("weakref", short_name);
     if (Obj doc = cpython_doc(short_name); doc != None()) c->set_attr(N("__doc__"), doc);
     if (cpython_has(short_name, "__class_getitem__")) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
 }
@@ -1768,9 +1799,11 @@ void init_types() {
     for (const char* n : {"__name__", "__qualname__", "__module__", "__doc__", "__bases__"})
         static_cast<GetSet*>(t.type->attrs.find(N(n))->object())->deletable = true;
     // descriptors' own __get__ (and a getset's __set__ and __delete__)
-    for (ClassObject* c : {t.function, t.method_descriptor, t.classmethod_descriptor, t.getset_descriptor}) method(c, "__get__", get_native);
-    method(t.getset_descriptor, "__set__", getset_set);
-    method(t.getset_descriptor, "__delete__", getset_delete);
+    for (ClassObject* c : {t.function, t.method_descriptor, t.classmethod_descriptor, t.getset_descriptor, t.member_descriptor}) method(c, "__get__", get_native);
+    for (ClassObject* c : {t.getset_descriptor, t.member_descriptor}) {
+        method(c, "__set__", getset_set);
+        method(c, "__delete__", getset_delete);
+    }
     // functions, methods, cells
     getset(t.function, "__name__", fn_name, set_fn_name);
     getset(t.function, "__qualname__", fn_qualname, set_fn_qualname);

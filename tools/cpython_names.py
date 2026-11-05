@@ -52,12 +52,15 @@ GLOBALS = sorted(globals())                     # before the probe binds anythin
 import abc, builtins, json, sys, types
 
 FINAL = set()
+WEAKREF = set()
 
 def type_names():
     found = {}
     def add(t):
         if isinstance(t, type):
             found.setdefault(t.__name__, {}).update({n: type(v).__name__ for n, v in vars(t).items()})
+            if t.__weakrefoffset__:              # _PyType_SUPPORTS_WEAKREFS, by __name__ as the table knows a type
+                WEAKREF.add(t.__name__)
             if not t.__flags__ & (1 << 10):      # Py_TPFLAGS_BASETYPE
                 FINAL.add(t.__qualname__ if t.__module__ == "builtins" else t.__module__ + "." + t.__qualname__)
     class Probe:
@@ -81,8 +84,8 @@ def type_names():
                outer, outer().__closure__[0], outer.__code__, type.__dict__, [].append, list.append,
                dict.__dict__["fromkeys"], type.__dict__["__name__"], object.__init__, object().__init__,
                sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int])]
-    import itertools, _operator
-    for v in [*vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values()]:
+    import itertools, _operator, _weakref
+    for v in [*vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_weakref).values()]:
         add(v)
     for s in samples:
         add(type(s))
@@ -151,9 +154,9 @@ def native_modules(names):
 
 def docs():
     """The docstrings of the built-in modules a program has from the start, and of the built-in types."""
-    import itertools, _operator
-    out = {"sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__}
-    samples = [v for v in [*vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values()] if isinstance(v, type)]
+    import itertools, _operator, _weakref
+    out = {"sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_weakref": _weakref.__doc__}
+    samples = [v for v in [*vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_weakref).values()] if isinstance(v, type)]
     samples += [type(iter([])), type(iter(())), type(iter("")), type({}.keys()), type({}.values()), type({}.items()), type(iter({})),
                 type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout)]
     for t in samples:
@@ -162,7 +165,7 @@ def docs():
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "final": sorted(FINAL), "operators": operators(), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "operators": operators(), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:])}))
 '''
 
@@ -179,7 +182,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
         native = sorted(n for n, m in lock["modules"].items() if m["status"] in ("core", "mapped") and m["kind"] == "builtin")
         out = subprocess.run([sys.executable, str(script), *native], capture_output=True, text=True, check=True, cwd=tmp)
     data = json.loads(out.stdout)
-    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final") for n in data[scope]}
+    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}

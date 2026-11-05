@@ -84,7 +84,7 @@ enum class Kind : std::uint8_t {
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
-enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4, FROZEN_DICT = 1u << 5 };
+enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4, FROZEN_DICT = 1u << 5, HAS_WEAKREFS = 1u << 6, WEAK_REFERENCE = 1u << 7 };
 
 struct Object {
     ClassObject* cls = nullptr;
@@ -98,6 +98,16 @@ struct Object {
 };
 
 // ---- the heap: what the checks see (live classes validate entries; sites hold them) ----
+// A weak reference (RefWeak, Objects/weakrefobject.c): the record of an object flagged WEAK_REFERENCE.
+// Any object can be one, so that a class of the runtime's can present it, with a subclass's storage
+// or without. The lists are off to the side: the header has no room for one, and few objects have any.
+enum class WeakKind : std::uint8_t { BasicRef, BasicProxy, Other };
+struct WeakRecord {
+    Object* holder;                             // the reference object; it has its own count
+    Object* target;                             // not counted; null once the target has died
+    std::uintptr_t callback;                    // an Obj's word, owned; 0: none or already taken
+    WeakKind kind;
+};
 struct Heap {
     std::vector<ClassObject*> classes;          // live classes
     std::vector<Site*> sites;
@@ -105,6 +115,8 @@ struct Heap {
     bool quarantine = false;
     std::vector<Object*> graveyard;             // quarantined dead objects
     std::function<void(Object*)> on_death;      // called as an object dies, after its finaliser
+    std::unordered_map<const Object*, std::vector<WeakRecord*>> weak_lists;   // a target's, in CPython's order
+    std::unordered_map<const Object*, WeakRecord*> weak_records;              // a holder's
 };
 inline Heap& heap() {
     static Heap h;
@@ -637,6 +649,8 @@ struct ClassObject : Object {
     std::vector<const Str*> native_fields;
     std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
     bool has_dict = false;
+    bool has_weakref = false;                    // room for weak references (RefClass.has_weakref)
+    bool weak_proxy = false;                     // weakref.ProxyType and its kin: attribute access goes to the target
     bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
     bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited
     bool final_type = false;                     // a built-in type a class cannot derive from (no Py_TPFLAGS_BASETYPE)
@@ -648,7 +662,7 @@ struct ClassObject : Object {
 
     std::vector<const Str*> own_slot_names() const {
         std::vector<const Str*> out;
-        if (slots) for (const Str* s : *slots) if (s != intern("__dict__")) out.push_back(s);
+        if (slots) for (const Str* s : *slots) if (s != intern("__dict__") && s != intern("__weakref__")) out.push_back(s);
         return out;
     }
     // lookup along the MRO: (found, owner) or nullopt
@@ -768,6 +782,8 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     for (const auto& p : spec.promoted) c->promoted.push_back(intern(p));
     bool own_dict = !spec.slots || std::find(spec.slots->begin(), spec.slots->end(), "__dict__") != spec.slots->end();
     c->has_dict = own_dict || std::any_of(c->bases.begin(), c->bases.end(), [](ClassObject* b) { return b->has_dict; });
+    bool own_weak = !spec.slots || std::find(spec.slots->begin(), spec.slots->end(), "__weakref__") != spec.slots->end();
+    c->has_weakref = own_weak || std::any_of(c->bases.begin(), c->bases.end(), [](ClassObject* b) { return b->has_weakref; });
     c->forwards_attributes = std::any_of(c->bases.begin(), c->bases.end(), [](ClassObject* b) { return b->forwards_attributes; });
     {
         auto own = c->own_slot_names();
@@ -1378,6 +1394,100 @@ inline void release_instance_dict(T* obj) {
 }
 }  // namespace detail
 
+// ---- weak references ----
+inline FinalizerHook& weakref_callback_hook() {  // handle_callback: runs it, and reports what it raises
+    static FinalizerHook hook = nullptr;
+    return hook;
+}
+inline std::vector<WeakRecord*>* weak_list(const Object* target) {
+    if (!(target->flags & HAS_WEAKREFS)) return nullptr;
+    auto it = heap().weak_lists.find(target);
+    return it == heap().weak_lists.end() ? nullptr : &it->second;
+}
+inline WeakRecord* weak_record(const Object* holder) {
+    if (!(holder->flags & WEAK_REFERENCE)) return nullptr;
+    auto it = heap().weak_records.find(holder);
+    return it == heap().weak_records.end() ? nullptr : it->second;
+}
+// the shared reference of that kind, if the object has one (get_basic_refs)
+inline Object* weak_basic(const Object* target, WeakKind kind) {
+    auto* list = weak_list(target);
+    if (list == nullptr) return nullptr;
+    for (WeakRecord* r : *list) {
+        if (r->kind == kind) return r->holder;
+        if (r->kind == WeakKind::Other) break;
+    }
+    return nullptr;
+}
+// insert_weakref: the basic reference at the head, the basic proxy after it, any other after those
+inline void weak_link(Object* holder, Object* target, Obj callback, WeakKind kind) {
+    auto* record = new WeakRecord{holder, target, reinterpret_cast<std::uintptr_t>(callback.is_unset() ? nullptr : callback.object()), kind};
+    if (!callback.is_unset()) incref(callback);
+    holder->flags |= WEAK_REFERENCE;
+    target->flags |= HAS_WEAKREFS;
+    heap().weak_records[holder] = record;
+    auto& list = heap().weak_lists[target];
+    auto at = list.begin();
+    if (kind != WeakKind::BasicRef) {
+        while (at != list.end() && (*at)->kind == WeakKind::BasicRef) ++at;
+        if (kind == WeakKind::Other)
+            while (at != list.end() && (*at)->kind == WeakKind::BasicProxy) ++at;
+    }
+    list.insert(at, record);
+}
+inline void weak_unlink(WeakRecord* r) {          // clear_weakref_lock_held: out of its target's list
+    if (r->target == nullptr) return;
+    auto it = heap().weak_lists.find(r->target);
+    if (it != heap().weak_lists.end()) {
+        std::erase(it->second, r);
+        if (it->second.empty()) {
+            r->target->flags &= static_cast<std::uint16_t>(~HAS_WEAKREFS);
+            heap().weak_lists.erase(it);
+        }
+    }
+    r->target = nullptr;
+}
+// weakref_dealloc: a reference that dies leaves the list, and its callback is released, never called
+inline void weak_holder_dies(Object* holder) {
+    auto it = heap().weak_records.find(holder);
+    if (it == heap().weak_records.end()) return;
+    WeakRecord* r = it->second;
+    heap().weak_records.erase(it);
+    weak_unlink(r);
+    std::uintptr_t callback = std::exchange(r->callback, 0);
+    delete r;
+    if (callback != 0) decref(Obj::of(reinterpret_cast<const Object*>(callback)));
+}
+// PyObject_ClearWeakRefs (RefObject.clear_weakrefs): the basic references with no callback; each of
+// the rest cleared and held, unless it is dying; the callbacks in list order; the holds last to first
+inline void clear_weakrefs(Object* target) {
+    std::vector<WeakRecord*> list = std::move(heap().weak_lists[target]);
+    heap().weak_lists.erase(target);
+    target->flags &= static_cast<std::uint16_t>(~HAS_WEAKREFS);
+    std::vector<std::pair<Object*, std::uintptr_t>> pending;
+    for (WeakRecord* r : list) {
+        r->target = nullptr;
+        if (r->kind != WeakKind::Other) continue;
+        std::uintptr_t callback = std::exchange(r->callback, 0);
+        if (r->holder->refs > 0) {
+            incref(r->holder);
+            pending.emplace_back(r->holder, callback);
+        } else if (callback != 0) {
+            decref(Obj::of(reinterpret_cast<const Object*>(callback)));
+        }
+    }
+    for (auto& [holder, callback] : pending) {
+        if (callback == 0) continue;
+        Obj fn = Obj::of(reinterpret_cast<const Object*>(callback));
+        if (weakref_callback_hook() != nullptr) weakref_callback_hook()(fn, Obj::of(holder));
+        else decref(call(fn, {Obj::of(holder)}));
+    }
+    for (auto it = pending.rbegin(); it != pending.rend(); ++it) {   // the C's tuple dies: its items last to first
+        if (it->second != 0) decref(Obj::of(reinterpret_cast<const Object*>(it->second)));
+        decref(it->first);
+    }
+}
+
 namespace detail {
 // subtype_dealloc's part for an object with a class's attribute storage: the finaliser, the slots
 // of the most-derived class first, then the built-in base's clear function (its fields, the dict
@@ -1395,21 +1505,23 @@ inline void finalize_once(T* obj) {
     }
 }
 
+// Returns false when the finaliser left a count: the object lives on, its finaliser spent (PEP 442).
 template <class T>
-inline void release_attributes(T* obj) {
+inline bool release_attributes(T* obj) {
     auto fin = (obj->flags & FINALIZED) ? std::nullopt : obj->cls->lookup(intern("__del__"));
+    obj->flags |= FINALIZED;
     if (fin) {
         obj->refs = 1;                          // held by the finaliser's call, so it cannot die again
         Ref fn = Ref::share(fin->first);
         if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));
         else decref(call(fn.get(), {Obj::of(obj)}));
         fn = Ref{};
-        if (obj->refs != 1) throw ModelError("resurrection by a finaliser is not modelled yet");
-        obj->refs = 0;
+        if (--obj->refs != 0) return false;
     }
     obj->flags |= DEAD;
     if (heap().on_death) heap().on_death(obj);
     if (heap().checking) detail::check_not_named(obj);
+    if (obj->flags & HAS_WEAKREFS) clear_weakrefs(obj);
     for (ClassObject* c : obj->cls->mro) {
         // each class's slots sorted by name, as CPython sorts them when it makes the class
         auto names = c->own_slot_names();
@@ -1422,22 +1534,25 @@ inline void release_attributes(T* obj) {
         if (n == intern("__dict__")) detail::release_instance_dict(obj);
         else decref(std::exchange(obj->field(n), Obj{}));
     }
+    return true;
 }
 }  // namespace detail
 
 inline void dealloc(Object* o) {
     switch (o->kind) {
         case Kind::Instance:
-            detail::release_attributes(static_cast<Instance*>(o));
+            if (!detail::release_attributes(static_cast<Instance*>(o))) return;
+            if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
             detail::bury(o);
             return;
         case Kind::IntInstance:
-            detail::release_attributes(static_cast<IntInstance*>(o));
+            if (!detail::release_attributes(static_cast<IntInstance*>(o))) return;
+            if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
             detail::bury(o);
             return;
         case Kind::Dict: {
             auto* d = static_cast<DictObject*>(o);
-            if (has_attributes(o)) detail::release_attributes(static_cast<DictInstance*>(o));   // then dict_dealloc
+            if (has_attributes(o) && !detail::release_attributes(static_cast<DictInstance*>(o))) return;   // then dict_dealloc
             d->flags |= DEAD;
             auto split = std::move(d->split);
             detail::release_entries(dict_take_all(d), split.get());
@@ -1445,6 +1560,8 @@ inline void dealloc(Object* o) {
             return;
         }
         default:
+            if (o->flags & HAS_WEAKREFS) clear_weakrefs(o);
+            if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
             if (Destroyer d = destroyer(o->kind)) {
                 o->flags |= DEAD;
                 d(o);

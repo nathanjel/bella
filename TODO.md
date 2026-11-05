@@ -465,11 +465,16 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * `itertools` done (C-7-20, `runtime/prelude/itertools.py`): the first built-in module written
              in Python, compiled with the prelude and run at the first import.
            * `_operator` done (C-7-21, `runtime/prelude/_operator.py`), so `operator` is the standard library's.
-           * Next, by how many cases each stops (`make compiled-corpus`): `_weakref` 16 (`collections`,
-             `copy` and `functools` import it: step 3c below), `_ast` 6, `_stat` 6, `gc` 4, `str %` 2,
-             floats 3. Then start-up modules run at start-up.
-       * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
-         a caught exception keeps its frame's locals (RL-222, decided with D-12).
+           * Next, by how many cases each stops (`make compiled-corpus`): `_thread` 11 (`functools` and
+             `reprlib`), `_ast` 6, `_stat` 6, `complex` 3 (`copy` names the type), `str %` 2, floats 3.
+             Generators are refused where they run (`weakref`'s iteration, a generator expression), and
+             stop more once these are past. Then start-up modules run at start-up.
+       * 3c, its first half done: weak references and resurrection (C-9-03, C-9-04, C-9-10), in the model
+         first (`RefWeak`, the oracle's `weak_new`, `revive`), then the header and `_weakref`.
+       * 3c, what is left: the cycle collector, `gc`, model first: C-3-12, C-9-01, C-9-02, C-9-07; it
+         replaces the exit walk. `_abc` takes real weak references then, which only the collector can tell
+         from today's strong ones (a class is in a cycle with its own mro). With it, a caught exception
+         keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
     design's level table says every L2 expression carries the oracle's type. Closes in phase 2,
     when a pass produces `Fact.TYPES` (none does today, so none can require it). Until then no

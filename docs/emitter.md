@@ -229,6 +229,18 @@ table, final or not, the docstring). It is written from the C line by line, down
 two primitives (`_held_once`, `_tuple_set`) let a result tuple be recycled when nothing else holds
 it, which is what keeps the last items alive until the next step.
 
+A weak reference is an object with a record off to the side (`WeakRecord` in `object.hpp`, step 3c): the
+header has no room for a list and few objects have one, so the flags `HAS_WEAKREFS` and `WEAK_REFERENCE`
+say to look. Any object can hold the record, so `weakref.ref` (`runtime/prelude/_weakref.py`) is a class
+of the prelude, with a subclass's storage from the object model. A proxy's attribute access is forwarded
+by the runtime (`ClassObject::weak_proxy`), and everything else by its methods, as the C's slots do.
+Which types have room is the names table's (`weakref:` rows, from `__weakrefoffset__`); a class has it as
+it has a dict, unless `__slots__` leaves it out or the object has a variable size (an int's, where a
+slot asks for it). A finaliser that leaves a count on its object stops the disposal (PEP 442), so an object
+can die twice over: `release_attributes` says which. At exit the walk that stands for the collector
+handles weak references as the collector does: one with a callback is cleared before any finaliser,
+and its callback runs only if the walk did not reach the reference too.
+
 A `frozendict` is a dict: `Kind::Dict`, the same table, views and iterators, with its own class and
 the flag `FROZEN_DICT` (case C-6-11). What reads a dict therefore reads it, as CPython's `PyAnyDict`
 paths do, and what writes one asks `is_dict` (`PyDict_Check`) or `is_exact_dict`, so a frozendict

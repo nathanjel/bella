@@ -47,6 +47,11 @@ struct World {
     std::vector<ClassObject*> made;                   // every class this world made, to dispose of
     ClassObject* tracked;
     std::vector<std::string> deaths;
+    std::vector<Object*> weaks;                       // the program's weak references: one count each
+    std::vector<Object*> reviver_weaks;
+    std::vector<Instance*> kept;                      // what a finaliser kept
+    std::unordered_map<const Object*, int> reviver_number;
+    int weak_numbers = 0, revivals = 0;
 
     World() {
         tracked = cls({.name = "Tracked"});
@@ -73,6 +78,10 @@ struct World {
             forget(o);
             decref(o);
         }
+        for (auto it = kept.rbegin(); it != kept.rend(); ++it) decref(*it);
+        kept.clear();
+        for (Object* w : weaks) decref(w);
+        for (Object* w : reviver_weaks) decref(w);
         // newest first: a subclass dies before its bases, which it holds (as CPython frees them)
         for (auto it = made.rbegin(); it != made.rend(); ++it) (*it)->dispose();
     }
@@ -122,6 +131,7 @@ struct World {
         if (v.is_unset()) return "None";
         Object* o = v.object();
         if (o->kind == Kind::Marker) return static_cast<Marker*>(o)->text;
+        if (auto it = reviver_number.find(o); it != reviver_number.end()) return "('R', " + std::to_string(it->second) + ")";
         if (o->kind == Kind::Instance) {
             std::int64_t tag = static_cast<Instance*>(o)->tag;
             if (tag >= 0) return "('T', 't" + std::to_string(tag) + "')";
@@ -272,6 +282,87 @@ struct World {
                 objects[i] = held(new_instance(old->cls));
                 decref(old);
                 return "('value', None)";
+            }
+            if (op == "weak_new") {
+                std::size_t i; std::string with;
+                in >> i >> with;
+                Object* target = objects[i];
+                int number = weak_numbers++;
+                if (!objects[i]->cls->has_weakref) throw TypeError("cannot create weak reference");
+                if (with == "False") {
+                    if (Object* shared = weak_basic(target, WeakKind::BasicRef)) {
+                        std::size_t at = static_cast<std::size_t>(std::find(weaks.begin(), weaks.end(), shared) - weaks.begin());
+                        return "('value', " + std::to_string(at) + ")";
+                    }
+                    Object* holder = marker("weak").object();
+                    weak_link(holder, target, Obj{}, WeakKind::BasicRef);
+                    weaks.push_back(holder);
+                    return "('value', -1)";
+                }
+                auto* callback = native([this, number](std::span<const Obj> a) -> Obj {
+                    bool dead = weak_record(a[0].object())->target == nullptr;
+                    deaths.push_back("('cb', " + std::to_string(number) + ", " + (dead ? "True" : "False") + ")");
+                    return Obj::small(0);
+                });
+                Object* holder = marker("weak").object();
+                weak_link(holder, target, Obj::of(callback), WeakKind::Other);
+                weaks.push_back(holder);
+                return "('value', -1)";
+            }
+            if (op == "weak_call") {
+                std::size_t i;
+                in >> i;
+                if (i >= weaks.size()) return "('value', None)";
+                Object* target = weak_record(weaks[i])->target;
+                if (target == nullptr) return "('value', 'dead')";
+                for (std::size_t k = 0; k < objects.size(); ++k)
+                    if (objects[k] == target) return "('value', " + std::to_string(k) + ")";
+                return "('value', 'elsewhere')";
+            }
+            if (op == "weak_drop") {
+                std::size_t i;
+                in >> i;
+                if (i >= weaks.size()) return "('value', None)";
+                Object* w = weaks[i];
+                weaks.erase(weaks.begin() + static_cast<std::ptrdiff_t>(i));
+                decref(w);
+                return "('value', None)";
+            }
+            if (op == "revive") {
+                std::size_t i; std::string name, v;
+                in >> i >> name >> v;
+                int number = revivals++;
+                auto* fin = native([this, number](std::span<const Obj> a) -> Obj {
+                    deaths.push_back("('fin', " + std::to_string(number) + ")");
+                    auto* o = static_cast<Instance*>(a[0].object());
+                    incref(o);
+                    kept.push_back(o);
+                    return Obj::small(0);
+                });
+                ClassObject* c = cls({.name = "Reviver", .slots = std::vector<std::string>{"value", "__weakref__"}, .attrs = {{"__del__", Obj::of(fin)}}});
+                Instance* vm = new_instance(c);
+                reviver_number[vm] = number;
+                Ref hold = Ref::share(Obj::of(vm));
+                Ref held = Ref::steal(value(v));
+                setattr(vm, intern("value"), held.get());
+                held = Ref{};
+                Object* holder = marker("weak").object();
+                weak_link(holder, vm, Obj{}, WeakKind::BasicRef);
+                reviver_weaks.push_back(holder);
+                setattr(objects[i], intern(name), hold.get());
+                return "('value', None)";
+            }
+            if (op == "release_kept") {
+                std::vector<Instance*> going = std::move(kept);
+                kept.clear();
+                for (auto it = going.rbegin(); it != going.rend(); ++it) decref(*it);
+                std::string out = "('value', [";
+                bool first = true;
+                for (Object* w : reviver_weaks) {
+                    out += std::string(first ? "" : ", ") + (weak_record(w)->target == nullptr ? "True" : "False");
+                    first = false;
+                }
+                return out + "])";
             }
             if (op == "recreate_class") {
                 int variant;

@@ -37,6 +37,9 @@ C-8-05_lazy_import_first_use.py
 C-8-06_lazy_import_error_at_first_use.py
 C-8-07_lazy_modules_list.py
 C-8-10_import_system.py
+C-9-03_refcount_disposal_order.py
+C-9-04_refcount_resurrection_keeps_weakref.py
 C-9-05_default_argument_lifetime.py
 C-9-08_attribute_value_lifetimes.py
 C-9-09_finalisers_at_exit.py
+C-9-10_weakref_objects.py

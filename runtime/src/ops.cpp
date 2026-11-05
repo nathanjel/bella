@@ -253,6 +253,20 @@ bool set_like_operator(BinOp op) { return op == BinOp::And || op == BinOp::Or ||
 Ref sequence_concat(Obj self, Obj other) { return sequence_op(BinOp::Add, self, other, false); }
 Ref sequence_repeat(Obj self, Obj count) { return repeat(self, int_from_i64(index_value(count)).get(), false); }
 
+// PySequence_Check: a class's __getitem__ gives it sq_item; a mapping's mp_subscript does not
+static bool sequence_check(Obj v) {
+    if (is_kind(v, Kind::Dict) || is_kind(v, Kind::Proxy)) return false;
+    if (v.is_object() && v.object()->cls->weak_proxy) return false;
+    return !type_lookup(type_of(v), intern("__getitem__")).is_unset();
+}
+Ref i_tp_name(Obj, Args a) {                      // a class's tp_name: its module's name in it, for a C type that has one
+    positional_only(a, "_tp_name", 1, 1);
+    return str_new(type_of(a.pos(0))->name);
+}
+Ref i_sequence_check(Obj, Args a) {
+    positional_only(a, "_sequence_check", 1, 1);
+    return Ref::steal(boolean(sequence_check(a.pos(0))));
+}
 // PySequence_Concat(s, o) and PySequence_InPlaceConcat: a sequence type's own, else nb_add or
 // nb_inplace_add if s is a sequence (a class with only __add__), never the reflected sequence path
 Ref binary_op1(BinOp op, Obj a, Obj b);
@@ -261,10 +275,7 @@ Ref i_sequence_concat(Obj, Args a) {
     Obj s = a.pos(0), o = a.pos(1);
     bool in_place = truth(a.pos(2));
     if (repeatable(s)) return sequence_op(BinOp::Add, s, o, in_place);
-    auto sequence = [](Obj v) {                  // PySequence_Check
-        return !is_kind(v, Kind::Dict) && !is_kind(v, Kind::Proxy) && !type_lookup(type_of(v), intern("__getitem__")).is_unset();
-    };
-    if (sequence(s) && sequence(o)) {            // both appear to be sequences
+    if (sequence_check(s) && sequence_check(o)) {   // both appear to be sequences
         if (in_place && is_heap_obj(s)) {
             bool has = false;
             Ref r = call_special(s, "__iadd__", {o}, &has);
@@ -513,6 +524,20 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
     if (is_kind(a, Kind::Range) && is_kind(b, Kind::Range)) {   // range_richcompare: == and != only
         if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
         return Ref::steal(boolean((a == b || range_equal(a, b)) == (op == CmpOp::Eq)));
+    }
+    if (is_kind(a, Kind::Method) && is_kind(b, Kind::Method)) {   // method_richcompare: == and != only
+        if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+        auto *m0 = static_cast<Method*>(a.object()), *m1 = static_cast<Method*>(b.object());
+        Ref same = compare(CmpOp::Eq, m0->func, m1->func);
+        bool eq = (m0->func == m1->func || truth(same.get())) && m0->self == m1->self;
+        return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
+    }
+    if (is_kind(a, Kind::Builtin) && is_kind(b, Kind::Builtin) && !static_cast<Builtin*>(a.object())->self.is_unset() &&
+        !static_cast<Builtin*>(b.object())->self.is_unset()) {   // meth_richcompare: the same function of the same object
+        if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+        auto *b0 = static_cast<Builtin*>(a.object()), *b1 = static_cast<Builtin*>(b.object());
+        bool eq = b0->fn == b1->fn && b0->self == b1->self;
+        return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
     }
     if (is_kind(a, Kind::Slice) && is_kind(b, Kind::Slice)) {   // slice_richcompare: as (start, stop, step)
         auto *s0 = static_cast<SliceObject*>(a.object()), *s1 = static_cast<SliceObject*>(b.object());
@@ -784,7 +809,8 @@ Ref repr_of(Obj v) {
         }
         case Kind::GetSet: {                         // getset_repr, member_repr
             auto* g = static_cast<GetSet*>(o);
-            return str_new(std::string(o->cls == types().member_descriptor ? "<member '" : "<attribute '") + g->name + "' of '" + g->owner->name + "' objects>");
+            std::string shown = std::string(o->cls == types().member_descriptor ? "<member '" : "<attribute '") + g->name + "'";
+            return str_new(g->owner == types().object ? shown + ">" : shown + " of '" + g->owner->name + "' objects>");   // descr_repr
         }
         case Kind::Slice: {                          // slice_repr
             auto* s = static_cast<SliceObject*>(o);
@@ -920,6 +946,12 @@ Ref instance_member(Obj obj, const Str* name) {
     return out;
 }
 Ref getattr_impl(Obj obj, const Str* name) {
+    if (obj.is_object() && obj.object()->cls->weak_proxy) {   // proxy_getattr
+        WeakRecord* r = weak_record(obj.object());
+        if (r == nullptr || r->target == nullptr) raise_new("ReferenceError", "weakly-referenced object no longer exists");
+        Ref target = Ref::share(Obj::of(r->target));
+        return getattr(target.get(), name);
+    }
     if (obj.is_object() && obj.object()->cls->forwards_attributes && !alias_keeps(name)) {
         Ref origin = instance_member(obj, intern("__origin__"));
         return getattr(origin.get(), name);
@@ -961,6 +993,14 @@ Ref i_bella_ga_get(Obj, Args a) {                // bootstrap.py's: a generic al
     return instance_member(a.pos(0), intern(as_str(a.pos(1))->text));
 }
 
+// a getset with no setter says "not writable"; a member (PyMemberDef) "readonly attribute"
+static std::string not_writable(Obj obj, const Str* name) {
+    Obj found = type_lookup(type_of(obj), name);
+    if (found.is_object() && found.object()->cls == types().member_descriptor) return "readonly attribute";
+    std::string owner = is_kind(found, Kind::GetSet) ? static_cast<GetSet*>(found.object())->owner->name : type_of(obj)->name;
+    return "attribute '" + name->text + "' of '" + owner + "' objects is not writable";
+}
+
 // PyObject_GetOptionalAttr: a module answers without raising (_Py_module_getattro_impl with
 // suppress, which treats a pending lazy submodule and a resolving placeholder differently);
 // anything else raises, and an AttributeError means absent
@@ -982,7 +1022,7 @@ void read_only_attribute(Obj obj, const Str* name, Obj found) {
     for (const ClassObject* c : type_of(obj)->mro)
         if (kind.empty()) kind = cpython_attribute_kind(c, name->text);
     if (kind == "getset_descriptor" || kind == "member_descriptor")
-        raise_attribute_error(obj, name, "attribute '" + name->text + "' of '" + type_of(obj)->name + "' objects is not writable");
+        raise_attribute_error(obj, name, not_writable(obj, name));
     if (!found.is_unset() || !kind.empty())
         raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object attribute '" + name->text + "' is read-only");
 }
@@ -1039,7 +1079,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(found, Kind::GetSet)) {
         auto* g = static_cast<GetSet*>(found.object());
         if (g->set == nullptr)
-            raise_attribute_error(obj, name, "attribute '" + name->text + "' of '" + type_of(obj)->name + "' objects is not writable");
+            raise_attribute_error(obj, name, not_writable(obj, name));
         g->set(obj, value);
         return;
     }
@@ -1084,7 +1124,7 @@ void delattr(Obj obj, const Str* name) {
     if (Obj found = type_lookup(type_of(obj), name); is_kind(found, Kind::GetSet)) {
         auto* g = static_cast<GetSet*>(found.object());
         if (!g->deletable)
-            raise_attribute_error(obj, name, "attribute '" + name->text + "' of '" + type_of(obj)->name + "' objects is not writable");
+            raise_attribute_error(obj, name, not_writable(obj, name));
         g->set(obj, Obj{});
         return;
     }

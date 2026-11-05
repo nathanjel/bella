@@ -843,3 +843,67 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+def test_a_finaliser_that_keeps_its_object_leaves_it_whole() -> None:
+    """Spec section 9, C-9-04: the object lives on with its weak references and its fields, its finaliser
+    spent; the second release runs no finaliser, and clears the references before the fields go."""
+    from refmodel import objects as O
+    _fresh_heap()
+    log: list[str] = []
+    kept: list[RefObject] = []
+
+    def keep(self: RefObject) -> None:
+        log.append("finaliser")
+        O.incref(self)
+        kept.append(self)
+
+    C = RefClass("C", slots=("v", "__weakref__"), attrs={"__del__": keep})
+    V = RefClass("V")
+    o, value = RefObject(C), RefObject(V, tag="value")
+    O.incref(o)
+    O.incref(value)
+    Runtime().setattr(o, "v", value)
+    O.decref(value)
+    plain = O.weak_ref(o)
+    with_callback = O.weak_ref(o, lambda w: log.append(f"callback, dead={w() is None}"))
+    O.decref(o)
+    seen = (o.alive, plain() is o, with_callback() is o, list(log), list(kept), list(O.HEAP.deaths))
+    assert seen == (True, True, True, ["finaliser"], [o], [])
+    log.clear()
+    O.decref(kept.pop())
+    assert (o.alive, plain(), with_callback(), log, O.HEAP.deaths) == (False, None, None, ["callback, dead=True"], ["value"])
+
+
+def test_a_list_of_weak_references_is_in_cpythons_order() -> None:
+    """The basic reference is shared and first; the others come newest first, and their callbacks in that
+    order; one that dies before its target leaves the list and is never called; a class has room for
+    weak references as it has for a dict, unless __slots__ leaves it out."""
+    from refmodel import objects as O
+    _fresh_heap()
+    log: list[str] = []
+    C = RefClass("C")
+    o = RefObject(C)
+    O.incref(o)
+
+    def named(n: str) -> Callable[[object], None]:
+        return lambda w: log.append(n)
+
+    first, second, gone = O.weak_ref(o, named("first")), O.weak_ref(o, named("second")), O.weak_ref(o, named("gone"))
+    basic = O.weak_ref(o)
+    assert O.weak_ref(o) is basic and basic.refs == 2 and o.weakrefs == [basic, gone, second, first]
+    O.decref(gone)
+    assert list(o.weakrefs) == [basic, second, first]
+    O.decref(o)
+    assert (log, basic(), first(), o.weakrefs) == (["second", "first"], None, None, [])
+    S = RefClass("S", slots=("x",))
+    W = RefClass("W", (S,), slots=("__weakref__",))
+    try:
+        O.weak_ref(RefObject(S))
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("a class with __slots__ and no __weakref__ has no room for one")
+    w = RefObject(W)
+    O.incref(w)
+    assert O.weak_ref(w)() is w

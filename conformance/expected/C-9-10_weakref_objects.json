@@ -1,0 +1,12 @@
+{
+ "case": "C-9-10_weakref_objects.py",
+ "clause": "C-9-10",
+ "spec": "section 9",
+ "status": "P1",
+ "source": "dialect specification section 9, Objects/weakrefobject.c, Modules/_weakref.c",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "True True True True ReferenceType weakref None True 1 True True True True False False\nFalse False True True True True\n['second dead=True', 'first dead=True'] None None None False True True True TypeError TypeError\nno error TypeError no error no error TypeError no error TypeError no error no error TypeError\nno error no error no error no error no error no error no error no error no error\nTypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError\nTypeError TypeError no error no error TypeError\n['__dict__', '__doc__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'm'] ['__doc__', '__firstlineno__', '__module__', '__slots__', '__static_attributes__', 'x'] ['__doc__', '__firstlineno__', '__module__', '__slots__', '__static_attributes__', '__weakref__', 'x'] ['__dict__', '__doc__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__'] ['__doc__', '__firstlineno__', '__module__', '__slots__', '__static_attributes__'] ['__dict__', '__doc__', '__firstlineno__', '__module__', '__static_attributes__'] ['__weakref__', 'x', '__doc__'] True False None AttributeError AttributeError\n['ReferenceType', 'ProxyType', 'Named', 'Sub', 'Sub', 'ReferenceType'] 6 True 5 True True False True True {} True True\n['subcb dead=True', 'one dead=True'] None None None None\nProxyType weakref True True True True True 1 2 add radd neg False 3 True getitem ['a', 'b'] as str True 2 True False\niadd 8 8 False\nFalse TypeError TypeError TypeError TypeError TypeError TypeError\nReferenceError ReferenceError ReferenceError ReferenceError ReferenceError ReferenceError ReferenceError ReferenceError ReferenceError ReferenceError TypeError ProxyType\n['del'] True True 2\n['callback dead=True', 'value'] None None\n[{'a': 1}, 5] Keeps\n[]\n2 2 2 True A True True True\n1 1 1 KeyError gone\nm True True True True False WeakMethod\nNone True\n['live'] TypeError TypeError\n",
+ "stderr": "",
+ "exit_code": 0
+}

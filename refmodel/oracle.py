@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import functools
 import random
+import weakref
 from dataclasses import dataclass, field
 from typing import Any
 
 from refmodel import objects as O
-from refmodel.objects import ModelError, RefClass, RefObject, Runtime, Site, decref, incref, make_descriptor_class
+from refmodel.objects import ModelError, RefClass, RefObject, RefWeak, Runtime, Site, decref, incref, weak_ref, make_descriptor_class
 
 NAMES: tuple[str, ...] = ("x", "y", "z", "s", "t", "w", "cv", "g1", "attr", "k")
 RUNTIME_CLASS = 6                     # index in World.classes of the class recreate_class replaces
@@ -48,7 +49,9 @@ class Tagged:
 
 
 def _norm(v: Any) -> Any:
-    """Tagged values compare by tag on both sides."""
+    """Tagged values compare by tag on both sides, and an object that revives by its number."""
+    if hasattr(v, "revival"):
+        return ("R", v.revival)
     if isinstance(v, (RefObject, Tagged)) and getattr(v, "tag", None) is not None:
         return ("T", v.tag)
     if isinstance(v, (list, tuple)):
@@ -88,6 +91,14 @@ class World:
         self.last_deaths: list[Any] = []
         self.tags = 0
         self.tracked_m = RefClass("Tracked")
+        self.weaks: list[tuple[RefWeak, Any]] = []
+        self.weaks_m: list[RefWeak] = []
+        self.weaks_r: list[Any] = []
+        self.weak_numbers = 0
+        self.revivals = 0
+        self.kept_m: list[RefObject] = []
+        self.kept_r: list[Any] = []
+        self.reviver_weaks: list[tuple[RefWeak, Any]] = []
         self.rt = Runtime()
         # ---- model classes -----------------------------------------------------------------
         A = RefClass("A", promoted=("x", "y"), attrs={"cv": 10})
@@ -254,6 +265,121 @@ class World:
         del m, r
         return ("value", None), ("value", None)
 
+    def op_weak_new(self, obj_i: int, with_callback: bool) -> tuple[Outcome, Outcome]:
+        """A weak reference to an object of the program's, kept by the program: which one it is, since
+        a reference with no callback is shared, or that this class has no room for one."""
+        m, r = self.objects[obj_i]
+        number = self.weak_numbers
+        self.weak_numbers += 1
+        log_m, log_r = self.heap.deaths, self.real_deaths
+
+        def callback_m(w: RefWeak) -> None:
+            log_m.append(("cb", number, w() is None))
+
+        def callback_r(w: Any) -> None:
+            log_r.append(("cb", number, w() is None))
+
+        def known(found: Any, side: int) -> int:
+            for i, pair in enumerate(self.weaks):
+                if pair[side] is found:
+                    return i
+            return -1
+
+        def model() -> int:
+            w = weak_ref(m, callback_m if with_callback else None)
+            i = known(w, 0)
+            if i >= 0:
+                decref(w)
+                return i
+            self.weaks_m.append(w)
+            return -1
+
+        def real() -> int:
+            w = weakref.ref(r, callback_r if with_callback else None)
+            i = known(w, 1)
+            if i >= 0:
+                return i
+            self.weaks_r.append(w)
+            return -1
+
+        om, orr = _outcome(model), _outcome(real)
+        if om == ("value", -1) and orr == ("value", -1):
+            self.weaks.append((self.weaks_m.pop(), self.weaks_r.pop()))
+        return om, orr
+
+    def op_weak_call(self, weak_i: int) -> tuple[Outcome, Outcome]:
+        """What it resolves to: which of the program's objects, or nothing."""
+        if weak_i >= len(self.weaks):
+            return ("value", None), ("value", None)
+        wm, wr = self.weaks[weak_i]
+
+        def which(found: Any, side: int) -> Any:
+            if found is None:
+                return "dead"
+            for i, pair in enumerate(self.objects):
+                if pair[side] is found:
+                    return i
+            return "elsewhere"
+        return ("value", which(wm(), 0)), ("value", which(wr(), 1))
+
+    def op_weak_drop(self, weak_i: int) -> tuple[Outcome, Outcome]:
+        """The program drops it: a reference that dies never has its callback called."""
+        if weak_i >= len(self.weaks):
+            return ("value", None), ("value", None)
+        wm, wr = self.weaks.pop(weak_i)
+        decref(wm)
+        del wm, wr
+        return ("value", None), ("value", None)
+
+    def op_revive(self, obj_i: int, name: str, tagged: tuple[str, str]) -> tuple[Outcome, Outcome]:
+        """An attribute holds a new object whose finaliser keeps it, with a tagged value of its own. Its
+        finaliser runs once; its weak reference, its value and its death wait for the second release."""
+        m, r = self.objects[obj_i]
+        tag = tagged[1]
+        number = self.revivals
+        self.revivals += 1
+        log_m, log_r, kept_m, kept_r = self.heap.deaths, self.real_deaths, self.kept_m, self.kept_r
+
+        def fin_m(obj: RefObject) -> None:
+            log_m.append(("fin", number))
+            incref(obj)
+            kept_m.append(obj)
+
+        class Real:
+            __slots__ = ("value", "__weakref__")
+            revival = number
+
+            def __del__(self) -> None:
+                log_r.append(("fin", number))
+                kept_r.append(self)
+
+        cm = RefClass("Reviver", slots=("value", "__weakref__"), attrs={"__del__": fin_m})
+        vm = RefObject(cm)
+        vm.revival = number  # type: ignore[attr-defined]
+        incref(vm)
+        held = RefObject(self.tracked_m, tag=tag)
+        incref(held)
+        vr = Real()
+        vr.value = Tagged(tag, self.real_deaths)  # type: ignore[attr-defined]
+        self.rt.setattr(vm, "value", held)
+        decref(held)
+        self.reviver_weaks.append((weak_ref(vm), weakref.ref(vr)))
+        om = _outcome(functools.partial(self.rt.setattr, m, name, vm))
+        decref(vm)
+        orr = _outcome(functools.partial(setattr, r, name, vr))
+        del vr
+        return om, orr
+
+    def op_release_kept(self) -> tuple[Outcome, Outcome]:
+        """The second release: no finaliser now, and the weak reference goes before the value."""
+        kept_m, self.kept_m[:] = list(self.kept_m), []
+        for v in reversed(kept_m):                 # list_clear: last to first
+            decref(v)
+        del kept_m
+        self.kept_r.clear()
+        return (("value", [w[0]() is None for w in self.reviver_weaks]),
+                ("value", [w[1]() is None for w in self.reviver_weaks]))
+
     def _forget(self, m: RefObject, r: Any) -> None:
         for pair in self.descriptors:
             decref(pair.store_m.pop(id(m), None))
@@ -412,6 +538,16 @@ class World:
             return ("recreate_class", rng.randrange(RUNTIME_VARIANTS))
         if roll < 0.05:
             return ("drop", rng.randrange(n_obj))
+        if roll < 0.09:
+            return ("weak_new", rng.randrange(n_obj), rng.random() < 0.6)
+        if roll < 0.11:
+            return ("weak_call", rng.randrange(8))
+        if roll < 0.12:
+            return ("weak_drop", rng.randrange(8))
+        if roll < 0.135:
+            return ("revive", rng.randrange(n_obj), rng.choice(NAMES), self.new_tag())
+        if roll < 0.15:
+            return ("release_kept",)
         if roll < 0.30:
             return ("get", rng.randrange(n_obj), rng.choice(NAMES), rng.random() < 0.2)
         if roll < 0.58:

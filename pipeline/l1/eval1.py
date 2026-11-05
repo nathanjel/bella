@@ -767,7 +767,10 @@ class Interpreter:
             self.block(s.finalbody, scope)
             return
         self.block(s.finalbody, scope)
-        raise pending
+        try:
+            raise pending
+        finally:
+            pending = None  # its traceback holds this frame: no cycle, or what a handler held waits for the host's collector
 
     def _handler(self, s: L.Try, exc: BaseException, scope: Scope) -> L.Handler | None:
         for h in s.handlers:
@@ -918,6 +921,7 @@ class Interpreter:
                         if handler.name:
                             self.store(handler.name, None, scope)
                             self.delete(handler.name, scope)
+                        del inner  # as pending below: its traceback holds this frame
             else:
                 yield from self.gblock(s.orelse, scope)
         except L.Refused:
@@ -931,7 +935,10 @@ class Interpreter:
             yield from self.gblock(s.finalbody, scope)
             return
         yield from self.gblock(s.finalbody, scope)
-        raise pending
+        try:
+            raise pending
+        finally:
+            pending = None  # as in try_stmt
 
     def gexpr(self, e: L.Expr, scope: Scope) -> Any:
         try:

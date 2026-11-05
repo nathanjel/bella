@@ -45,8 +45,14 @@ What is modelled (design document, section 3, as revised by review rounds two an
   header relies on: no entry that a live class's version still validates names an object that
   dies, and no cached lookup reads a dead ``found``.
 
+* Weak references and resurrection (step 3c, Objects/weakrefobject.c, PEP 442): an object's
+  ``weakrefs`` are its list in CPython's order (the basic reference first, then the others, the
+  newest first); ``dealloc`` runs the finaliser holding one count, and a count left over means the
+  object lives on with its weak references, its finaliser spent; otherwise the list is cleared and
+  the callbacks run, each with its reference held, before any slot or the dict is released.
+
 What is not modelled yet: ``__setattr__``/``__delattr__``/``__getattribute__`` overrides,
-``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, weak references,
+``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, the cycle collector,
 and classes as counted objects (a class dies only by ``RefClass.dispose``; its cycles are the
 collector's, spec D-04). Each is a TODO with a conformance case first.
 """
@@ -145,14 +151,14 @@ HEAP = Heap()
 
 
 def incref(v: Any) -> None:
-    if isinstance(v, (RefObject, RefDict)):
+    if isinstance(v, (RefObject, RefDict, RefWeak)):
         if not v.alive:
             raise ModelError(f"a reference to a dead {v!r} was taken")
         v.refs += 1
 
 
 def decref(v: Any) -> None:
-    if isinstance(v, (RefObject, RefDict)):
+    if isinstance(v, (RefObject, RefDict, RefWeak)):
         if v.refs <= 0:
             raise ModelError(f"{v!r} released more often than it was held")
         v.refs -= 1
@@ -305,7 +311,9 @@ class RefClass:
         # inherited layout capability (spec, section 3)
         own_dict = (slots is None) or ("__dict__" in slots)
         self.has_dict: bool = own_dict or any(b.has_dict for b in self.bases)
-        own_slots = tuple(s for s in (self.slots or ()) if s != "__dict__")
+        own_weak = (slots is None) or ("__weakref__" in slots)
+        self.has_weakref: bool = own_weak or any(b.has_weakref for b in self.bases)
+        own_slots = tuple(s for s in (self.slots or ()) if s not in ("__dict__", "__weakref__"))
         for s in own_slots:
             if s in self.attrs:
                 raise ValueError(f"{s!r} in __slots__ conflicts with class variable")
@@ -454,10 +462,32 @@ class RefObject:
         self.refs = 0
         self.alive = True
         self.finalized = False              # PEP 442: its finaliser has run (finalize, or dealloc)
+        self.weakrefs: list[RefWeak] = []   # CPython's order: the basic reference, then the newest first
         self.tag = tag                      # a tagged object's death is logged (the oracle compares the logs)
         self.heap = cls.heap
         # a built-in base's own data: a dict subclass's instance is a dict (its entries here)
         self.payload: RefDict | None = RefDict() if "__payload__" in cls.native else None
+
+    def clear_weakrefs(self) -> None:
+        """PyObject_ClearWeakRefs: the basic references go first, with no callback; each of the rest is
+        cleared, and held while the object is given no chance to be reached through it; a reference
+        already dying has no callback called; then the callbacks in list order, and the holds are
+        released last to first, as the tuple that holds them in the C is."""
+        while self.weakrefs and self.weakrefs[0].basic:
+            self.weakrefs.pop(0).target = None
+        pending: list[tuple[RefWeak, Any]] = []
+        for w in self.weakrefs:
+            w.target = None
+            callback, w.callback = w.callback, None
+            if w.refs > 0:
+                incref(w)
+                pending.append((w, callback))
+        self.weakrefs = []
+        for w, callback in pending:
+            if callback is not None:
+                callback(w)
+        for w, _ in reversed(pending):
+            decref(w)
 
     def finalize(self) -> None:
         """PEP 442: a finaliser runs once, whether the object's last count went or the collector
@@ -475,11 +505,17 @@ class RefObject:
         function (BaseException_clear: the dict, args, the traceback, the cause, the context), in
         which the dict means the __dict__-backed values in the class's shared-keys order, or the
         dict's release once it is an object of its own (measured on 3.15.2)."""
-        self.finalize()
+        if not self.finalized:                  # PyObject_CallFinalizerFromDealloc: the call holds a count
+            self.refs = 1
+            self.finalize()
+            self.refs -= 1
+            if self.refs > 0:                   # resurrected: it lives on, with its weak references
+                return
         self.alive = False
         if self.tag is not None:
             self.heap.deaths.append(self.tag)
         self.heap.died(self)
+        self.clear_weakrefs()
         for c in self.cls.mro:
             for name in sorted(c._own_slot_names()):     # CPython sorts each class's slots (type_new)
                 v = self.inline.get(name, UNSET)
@@ -518,6 +554,46 @@ class RefObject:
 
     def __repr__(self) -> str:
         return f"<RefObject of {self.cls.name}" + (f" {self.tag}>" if self.tag is not None else ">")
+
+
+class RefWeak:
+    """A weak reference: a count of its own and a target it does not count. `target` is None once the
+    target has died; `basic` is the one reference of an object with no callback, which is shared."""
+
+    def __init__(self, target: RefObject, callback: Any) -> None:
+        self.target: RefObject | None = target
+        self.callback = callback
+        self.basic = callback is None
+        self.refs = 0
+        self.alive = True
+
+    def __call__(self) -> RefObject | None:
+        return self.target
+
+    def dealloc(self) -> None:
+        """weakref_dealloc: it leaves its target's list, and its callback is never called."""
+        self.alive = False
+        if self.target is not None:
+            self.target.weakrefs.remove(self)
+            self.target = None
+        self.callback = None
+
+
+def weak_ref(target: RefObject, callback: Any = None) -> RefWeak:
+    """get_or_create_weakref: a new count on the shared basic reference if there is one; else a new
+    one, the basic at the head of the list and any other right after it, so the newest comes first."""
+    if not target.cls.has_weakref:
+        raise TypeError(f"cannot create weak reference to '{target.cls.name}' object")
+    if callback is None and target.weakrefs and target.weakrefs[0].basic:
+        incref(target.weakrefs[0])
+        return target.weakrefs[0]
+    w = RefWeak(target, callback)
+    incref(w)
+    if w.basic or not target.weakrefs or not target.weakrefs[0].basic:
+        target.weakrefs.insert(0, w)
+    else:
+        target.weakrefs.insert(1, w)
+    return w
 
 
 # ---------------------------------------------------------------------------------------------

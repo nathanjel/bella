@@ -310,7 +310,10 @@ Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tupl
 Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
 void fill_itertools(Module* m);                   // runtime/src/imports.cpp, running runtime/prelude/itertools.py
 void fill_operator(Module* m);                    // and runtime/prelude/_operator.py
+void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
+Ref i_sequence_check(Obj, Args a);
+Ref i_tp_name(Obj, Args a);
 void forget_python_origin(ClassObject* c);
 void present_native_class(ClassObject* c, const std::string& module);   // a class of the prelude as the module's C type
 std::string keyword_suggestion(const std::string& name, const std::vector<std::string>& known);   // _Py_CalculateSuggestions; "" for none

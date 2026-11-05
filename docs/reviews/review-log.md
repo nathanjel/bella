@@ -7,13 +7,13 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-05:** 333 findings from twenty-three reviews and one round of examples: 285 fixed (most in commit
+**Status on 2026-11-05:** 333 findings from twenty-three reviews and one round of examples: 286 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports, RL-327 to RL-333 after A11), 21 already done before or
-because of the review, 4 planned (D-2 and D-10, accepted by the author), 4 deferred (RL-222 and RL-323 to step 3c), 4 refuted
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports, RL-327 to RL-333 after A11, RL-323 with weak references), 21 already done before or
+because of the review, 4 planned (D-2 and D-10, accepted by the author), 3 deferred (RL-222 to step 3c), 4 refuted
 5 checked with no issue, and 7 accepted, refused or not defects (RL-269, RL-275, RL-284, RL-285, RL-289, RL-319, RL-326). Open: RL-225 (lines inside a statement), RL-254 (a member's type) and RL-277 (a SyntaxError class). The
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, and D-12 on 2026-11-03.
 
@@ -551,7 +551,7 @@ G10's five findings all reproduce, and three of them were found again by S1. S1,
 | RL-320 | S1 classes | Thirteen small differences | Twelve confirmed; `build_class()` in a message not reproduced, `__build_class__` being refused by name | Fixed | `__init_subclass__`'s and `type()`'s messages, `__set_name__`'s note, MRO conflict names (`set_mro_error`), `__get__(None, None)`, a NUL in a type's name, `__index__` on a metaclass, `del int.real`, `repr(slice)` |
 | RL-321 | Found while fixing RL-300 | `hash()` of a value beyond the immediates (62 bits and a sign, about half of all str and tuple hashes) returns a truncated number, and the tables used another | Confirmed; from before this range. A proxy key whose `__hash__` returns `hash(s)` missed `s` 2014 times in 4000 | Fixed; the width accepted (D-22, the author, 2026-11-05) | `hash_of` fits every hash at one point, so `hash()`, `__hash__`, tuples, frozensets and the tables agree; values stay 63 bits until `hash()` can return a big int. Tests `RL-321-*`, `test_a_hash_is_deterministic_d_22` |
 | RL-322 | Found while fixing RL-300 | `frozenset`, `range` and `slice` hashed by identity, so two equal frozensets missed each other in a dict; `hash(None)` was an address | Confirmed | Fixed | `frozenset_hash_impl`, `range_hash`, `slice_hash`, `none_hash` |
-| RL-323 | Split from RL-274 | No class has `__weakref__` in its `__dict__`, so `list(vars(C))` differs from CPython's | Confirmed | Deferred to 3c | With weak references |
+| RL-323 | Split from RL-274 | No class has `__weakref__` in its `__dict__`, so `list(vars(C))` differs from CPython's | Confirmed | Fixed | With weak references (C-9-10): the getset goes in with `__dict__`, before the class's members, in type_ready's order |
 | RL-324 | Found while fixing RL-306 | `next(obj)` raised TypeError for every iterator class of a program's | Confirmed | Fixed | `builtin_next`, a StopIteration's value kept |
 | RL-325 | Found while fixing RL-274 | A function's `__module__` could not be set or deleted, which `functools.wraps` does | Confirmed | Fixed |  |
 | RL-326 | Found while fixing RL-281 | A finaliser at exit that makes a new object with a finaliser: CPython's collector then treats the group as resurrected and never finalises it; here it dies with the namespaces | Confirmed | Not a defect | D-07; to look at again with the collector in 3c |
