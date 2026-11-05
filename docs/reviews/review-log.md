@@ -7,14 +7,14 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-04:** 326 findings from twenty-one reviews and one round of examples: 277 fixed (most in commit
+**Status on 2026-11-05:** 326 findings from twenty-one reviews and one round of examples: 278 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 61 of RL-256 to RL-326 after the reviews of compiled imports), 21 already done before or
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports), 21 already done before or
 because of the review, 4 planned (D-2 and D-10, accepted by the author), 4 deferred (RL-222 and RL-323 to step 3c), 4 refuted
-5 checked with no issue, and 7 accepted, refused or not defects (RL-269, RL-275, RL-284, RL-285, RL-289, RL-319, RL-326). Open: RL-225 (lines inside a statement), RL-254 (a member's type), RL-277 (a SyntaxError class) and RL-321 (big ints). The
+5 checked with no issue, and 7 accepted, refused or not defects (RL-269, RL-275, RL-284, RL-285, RL-289, RL-319, RL-326). Open: RL-225 (lines inside a statement), RL-254 (a member's type) and RL-277 (a SyntaxError class). The
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, and D-12 on 2026-11-03.
 
 ## Reviews received
@@ -547,7 +547,7 @@ G10's five findings all reproduce, and three of them were found again by S1. S1,
 | RL-318 | S1 classes | A local or parameter named `__class__` with `super()` crashed the compiler | Confirmed | Fixed | The function has no such cell: RuntimeError at run time, as CPython |
 | RL-319 | S1 classes | `del self` then `super()`: UnboundLocalError for RuntimeError | Confirmed | Refused | At build, by name: the load of a deleted local has no way to say so yet |
 | RL-320 | S1 classes | Thirteen small differences | Twelve confirmed; `build_class()` in a message not reproduced, `__build_class__` being refused by name | Fixed | `__init_subclass__`'s and `type()`'s messages, `__set_name__`'s note, MRO conflict names (`set_mro_error`), `__get__(None, None)`, a NUL in a type's name, `__index__` on a metaclass, `del int.real`, `repr(slice)` |
-| RL-321 | Found while fixing RL-300 | `hash()` of a value beyond the immediates (62 bits and a sign, about half of all str and tuple hashes) returns a truncated number | Confirmed; from before this range | Open | Needs big ints. See *Open for discussion* |
+| RL-321 | Found while fixing RL-300 | `hash()` of a value beyond the immediates (62 bits and a sign, about half of all str and tuple hashes) returns a truncated number, and the tables used another | Confirmed; from before this range. A proxy key whose `__hash__` returns `hash(s)` missed `s` 2014 times in 4000 | Fixed; the width accepted (D-22, the author, 2026-11-05) | `hash_of` fits every hash at one point, so `hash()`, `__hash__`, tuples, frozensets and the tables agree; values stay 63 bits until `hash()` can return a big int. Tests `RL-321-*`, `test_a_hash_is_deterministic_d_22` |
 | RL-322 | Found while fixing RL-300 | `frozenset`, `range` and `slice` hashed by identity, so two equal frozensets missed each other in a dict; `hash(None)` was an address | Confirmed | Fixed | `frozenset_hash_impl`, `range_hash`, `slice_hash`, `none_hash` |
 | RL-323 | Split from RL-274 | No class has `__weakref__` in its `__dict__`, so `list(vars(C))` differs from CPython's | Confirmed | Deferred to 3c | With weak references |
 | RL-324 | Found while fixing RL-306 | `next(obj)` raised TypeError for every iterator class of a program's | Confirmed | Fixed | `builtin_next`, a StopIteration's value kept |
@@ -556,9 +556,9 @@ G10's five findings all reproduce, and three of them were found again by S1. S1,
 
 ## Open for discussion
 
-**RL-321 `hash()` beyond the immediates (2026-11-04).** `Obj` holds 63-bit integers, and a hash is 64 bits, so `hash(x)` loses its top bit for about half of all str and tuple hashes. Inside the runtime this hardly shows: the table uses the low bits first, and a truncated `__hash__` agrees with itself. A program sees it when it prints a hash, or under a fixed `PYTHONHASHSEED` compares one with CPython's (D-14). It is an approximation, which the project's rules do not allow. The rule's answer, refusing, would stop every program whose `__hash__` calls `hash()` about half the time, at random under hash randomisation. Recommendation: keep it for now and do the `bn` port earlier than planned, which ends this and the refusals of big ints together. The author's to decide.
+**RL-321 `hash()` beyond the immediates: decided 2026-11-05.** The author accepted 63-bit hashes "as long as it's deterministic and functions as hash in general"; the second half was not true yet and now is (RL-321's row, D-22).
 
-**`__spec__.cached` and `sys.implementation.cache_tag` (2026-11-04).** The author decided the implementation stays `bella`, and that programs should know. `__spec__.cached` names a `cpython-315` `.pyc` that never exists. Nothing in the standard library opens it or decides anything by it: `runpy` passes it on, `python -m inspect --details` prints it, `ModuleSpec.__eq__` compares it. Recommendation: `sys.implementation.cache_tag = None` and `__spec__.cached = None`, CPython's own answer for an implementation without a bytecode cache (run on 3.15.2), with D-16 extended to say so. The author's to decide.
+**`__spec__.cached` and `sys.implementation.cache_tag`: decided 2026-11-05.** None, as recommended, with D-16 extended: a compiled program has no bytecode cache and says so. `sys.implementation` itself is still refused by name; it comes with `sys.version_info` in the start-up work, with `cache_tag = None`. Test `test_no_bytecode_cache_d_16`.
 
 **D-1 Class versions from one global counter (RL-23).** Decided 2026-11-01: accepted as
 recommended (design section 3, `docs/drafts/object.hpp.draft`, `refmodel/objects.py`, case

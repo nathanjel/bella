@@ -22,7 +22,8 @@ print("namespace:", list(vars(imppkg.plain))[:8])
 print("package namespace:", list(vars(imppkg))[:8])
 spec = imppkg.plain.__spec__
 print("spec:", type(spec).__name__, type(spec).__module__, spec.name, spec.parent, spec.has_location, spec.origin == imppkg.plain.__file__)
-print("cached:", spec.cached is not None and spec.cached.endswith("/__pycache__/plain.cpython-315.pyc"))
+# D-16: None in a compiled program (pipeline/tests/test_compiled_imports.py); its path under CPython
+print("cached:", spec.cached is None or spec.cached.endswith("/__pycache__/plain.cpython-315.pyc"))
 loader: object = imppkg.plain.__loader__
 print("loader:", type(loader).__name__, type(loader).__module__, loader is spec.loader,
       vars(loader)["name"], vars(loader)["path"] == spec.origin)

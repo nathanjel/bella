@@ -718,7 +718,9 @@ consumer of a real dict would have to unwrap; one that missed it would answer wr
 refusing. Model first (`refmodel`), one type at a time, each with a conformance case: `dict` and
 `int` first, for `enum` (`_EnumDict`, `IntFlag`).
 
-**2026-11-04 — the author on compiled imports' open points.** Confirmed: `sys.path` is the program's directory (D-18); an ImportWarning has no effect until a `warnings` module loads, then is refused, which is to be looked at again when warnings exist; `_abc` holds strong references until step 3c, when it takes weak ones. The implementation stays `bella`, and programs should know: `__spec__.cached` is open, with a recommendation in `docs/reviews/review-log.md`.
+**2026-11-04 — the author on compiled imports' open points.** Confirmed: `sys.path` is the program's directory (D-18); an ImportWarning has no effect until a `warnings` module loads, then is refused, which is to be looked at again when warnings exist; `_abc` holds strong references until step 3c, when it takes weak ones. The implementation stays `bella`, and programs should know.
+
+**2026-11-05 — the author on the two left open.** `__spec__.cached` and `sys.implementation.cache_tag` are None (D-16 extended), as recommended. `hash()` keeps 63 bits "as long as it's deterministic and functions as hash in general", so the big-int port stays where it is planned; D-22 records it. The condition was not met when it was given: a `__hash__` returning `hash(s)` gave a number the table did not use for `s`, and a proxy key missed half the time. Every hash now fits at one point (`hash_of`), so all readers see one number.
 
 **2026-11-04 — finalisers at exit see whole namespaces (RL-281).** `clear_modules` follows `finalize_modules`: sys's special names go, `sys.modules` is emptied, every finaliser reachable from the namespaces runs, then the namespaces are cleared. Rebinding each global to None as it went, as the first version did, made a `__del__` read its own globals as None. Without the collector, a walk from the namespaces stands for `_PyGC_CollectNoFail`; step 3c replaces it. A finaliser runs once (`RefObject.finalize`, PEP 442).
 
@@ -736,8 +738,8 @@ see. The build finds the program's modules statically, as CPython's finders woul
 as a unit of its own. E-04 and E-06 keep replacing `__import__` and writing `sys.modules` out of a
 program's own code; the runtime follows CPython on those paths because the standard library writes
 `sys.modules`, and the case stays inside the dialect. Taken here, for the author to overrule: `sys.path` is `[program directory]` until
-the standard library compiles (D-18 says only that it reflects the build); `__spec__.cached` uses
-3.15's `cpython-315` tag (D-16 changes only the implementation's name); an ImportWarning has no effect
+the standard library compiles (D-18 says only that it reflects the build); `__spec__.cached` used
+3.15's `cpython-315` tag (overruled 2026-11-05: None, D-16); an ImportWarning has no effect
 until a `warnings` module is loaded, since nothing else can change the default filters that ignore
 it, and is refused from then on. The standard library follows P-1: a program's build compiles its
 whole reachable closure, the library's units at `-O0` while speed is not a goal (a fifth of the compile

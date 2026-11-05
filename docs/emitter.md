@@ -325,8 +325,8 @@ Decided here, each stated where it matters:
   `codecs`, `encodings`, `site`, ...) come when the runtime can run them at start-up, once their
   native modules exist; until then `'os' in sys.modules` before an import answers False where
   CPython answers True (open, in section 5).
-* `sys.implementation.cache_tag` is taken as 3.15's (`cpython-315`) for `__spec__.cached`: D-16
-  changes only the implementation's name, so a program computing a `.pyc` path gets CPython's.
+* `__spec__.cached` is None and `cache_from_source` raises NotImplementedError, what CPython does
+  with `sys.implementation.cache_tag` None (D-16): a compiled program has no bytecode cache.
 * An ImportWarning has no effect while no `warnings` module is loaded: the default filters ignore
   it and nothing else can change them (`PYTHONWARNINGS` and `-W` are not read, D-18). Once one is
   loaded the warning is refused until warnings exist. A DeprecationWarning (`__package__ !=

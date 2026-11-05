@@ -562,12 +562,6 @@ def _path_split(path):
     return path[:i], path[i + 1:]
 
 
-def _path_join(*path_parts):
-    """Replacement for os.path.join()."""
-    return '/'.join([part.rstrip('/')
-                     for part in path_parts if part])
-
-
 def cache_from_source(path, debug_override=None, *, optimization=None):
     """Given the path to a .py file, return the path to its .pyc file.
 
@@ -586,16 +580,10 @@ def cache_from_source(path, debug_override=None, *, optimization=None):
     If sys.implementation.cache_tag is None then NotImplementedError is raised.
 
     """
-    if debug_override is not None or optimization is not None:
-        _bella_refuse("importlib.util.cache_from_source with debug_override or optimization (step 3b)")
-    head, tail = _path_split(path)
-    base, sep, rest = tail.rpartition('.')
-    # bella: sys.implementation.cache_tag is 3.15's (D-16 changes only the implementation's name),
-    # sys.flags.optimize is 0 and sys.pycache_prefix is None
-    tag = 'cpython-315'
-    almost_filename = ''.join([(base if base else rest), sep, tag])
-    filename = almost_filename + '.pyc'
-    return _path_join(head, '__pycache__', filename)
+    if debug_override is not None:
+        _bella_refuse("importlib.util.cache_from_source with debug_override: DeprecationWarning (step 3b)")
+    # bella: sys.implementation.cache_tag is None (D-16): a compiled program has no bytecode cache
+    raise NotImplementedError('sys.implementation.cache_tag is None')
 
 
 def _get_cached(filename):

@@ -429,8 +429,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              RL-256 to RL-326; `pipeline/tests/test_review_2026_11_04.py`). Fixed among them:
              finalisers at exit reading their globals as None, `next()` of a program's iterator,
              `int`'s special methods, instance layout conflicts, a metaclass's `mro()`, `from pkg
-             import *`, frozenset hashed by identity. Open: RL-321 (`hash()` beyond 62 bits, big
-             ints), and `__spec__.cached` (the author's).
+             import *`, frozenset hashed by identity. Decided by the author 2026-11-05: hashes
+             keep 63 bits (D-22, the `bn` port stays where it is planned) and `__spec__.cached`
+             is None (D-16); `sys.implementation` comes with `sys.version_info`, `cache_tag` None.
            * Next: the native modules, by how many cases each stops (`make compiled-corpus`): `_abc`
              13 (strong references until 3c: no class dies before the collector exists; confirmed
              by the author 2026-11-04), `_weakref`

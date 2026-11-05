@@ -258,8 +258,9 @@ def test_the_source_path_makes_cpythons_spec() -> None:
     assert real is not None and real.origin is not None
     b = _bootstrap(lambda name: (real.origin, True, False) if name == "json" else None)
     spec = b._spec_from_compiled("json")
-    assert (spec.name, spec.origin, spec.parent, spec.has_location, spec.cached, spec.submodule_search_locations, spec.loader_state) == \
-        (real.name, real.origin, real.parent, real.has_location, real.cached, list(real.submodule_search_locations), real.loader_state)
+    assert (spec.name, spec.origin, spec.parent, spec.has_location, spec.submodule_search_locations, spec.loader_state) == \
+        (real.name, real.origin, real.parent, real.has_location, list(real.submodule_search_locations), real.loader_state)
+    assert spec.cached is None and real.cached is not None       # D-16: no bytecode cache
     assert (type(spec.loader).__name__, type(spec.loader).__module__, spec.loader.name, spec.loader.path) == \
         (type(real.loader).__name__, type(real.loader).__module__, real.loader.name, real.loader.path)
     assert spec.loader.is_package("json") and spec.loader.get_filename("json") == real.loader.get_filename("json")

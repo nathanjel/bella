@@ -608,7 +608,7 @@ def test_a_library_and_a_builtin_module_present_as_cpythons() -> None:
               print(repr(_types), repr(_types.__spec__), _types.__package__, _types.__loader__, _types.__doc__)
               print(path(repr(types)), path(types.__file__), types.__package__, type(types.__loader__).__name__)
               s = types.__spec__
-              print(s.name, s.parent, s.has_location, path(s.origin), path(s.cached), s.submodule_search_locations, s.loader_state)
+              print(s.name, s.parent, s.has_location, path(s.origin), s.submodule_search_locations, s.loader_state)
               print(list(vars(_types))[:5], list(vars(types))[:7], 'FunctionType' in vars(types))
               print([k for k in sys.modules if k in ('_types', 'types')])
               for n in ('AsyncGeneratorType', 'BuiltinFunctionType', 'BuiltinMethodType', 'CapsuleType', 'CellType',

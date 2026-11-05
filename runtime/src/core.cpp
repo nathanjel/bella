@@ -351,9 +351,9 @@ std::int64_t hash_small(std::int64_t v) {
     if (v < 0) h = -h;
     return h == -1 ? -2 : h;
 }
-}  // namespace
 
-std::int64_t hash_of(Obj v) {
+// CPython's hash, as far as 64 bits go; hash_of below makes it fit
+std::int64_t full_hash(Obj v) {
     if (v.is_small()) return hash_small(v.small_value());
     Object* o = v.object();
     switch (o->kind) {
@@ -450,9 +450,18 @@ std::int64_t hash_of(Obj v) {
             return x == -1 ? -2 : x;
         }
         if (is_kind(r.get(), Kind::Bool)) return static_cast<BoolObject*>(r.get().object())->value ? 1 : 0;
+        if (is_kind(r.get(), Kind::IntInstance)) return static_cast<IntInstance*>(r.get().object())->value;
         raise_new("TypeError", "__hash__ method should return an integer");
     }
     raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
+}
+}  // namespace
+
+// A hash here is what an int here can hold, 63 bits (D-22). All of them are made to fit at this one
+// point, so that hash(x), a __hash__ that returns it, and the tables holding x all see one number.
+std::int64_t hash_of(Obj v) {
+    std::int64_t h = Obj::small(full_hash(v)).small_value();
+    return h == -1 ? -2 : h;
 }
 
 // ---- the dict: object.hpp's compact dict, with Python's hash and == for its keys ----

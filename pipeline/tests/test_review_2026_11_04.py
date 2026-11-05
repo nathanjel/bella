@@ -41,6 +41,10 @@ FINDINGS: list[tuple[str, str, str]] = [
     ('RL-279', 'lazy_docs', "lazy import sys\nH = [globals()['sys']]\nprint(type(H[0]).__doc__)\nprint(H[0].__doc__)\n"),
     ('RL-280', 'read_only_builtin_attribute', "for v, name in (([], 'append'), ('', 'find'), ({}, 'get'), ((), 'count'), (set(), 'add')):\n    try:\n        setattr(v, name, 1)\n    except AttributeError as e:\n        print(e)\n    try:\n        delattr(v, name)\n    except AttributeError as e:\n        print(e)\ntry:\n    [].nothing = 1\nexcept AttributeError as e:\n    print(e)\n"),
     ('RL-280', 'read_only_int_real', "try:\n    (1).real = 1\nexcept AttributeError as e:\n    print(e)\ntry:\n    (1).__class__ = int\nexcept TypeError as e:\n    print(e)\n"),
+    # ---- a hash is one number wherever it is read (D-22)
+    ('RL-321', 'hash_of_a_proxy_key', "class K:\n    def __init__(self, s):\n        self.s = s\n    def __hash__(self):\n        return hash(self.s)\n    def __eq__(self, other):\n        return self.s == other\nfound = missed = 0\nfor i in range(2000):\n    s = 'key' + str(i)\n    for ok in ({s: i}.get(K(s)) == i, {K(s): i}.get(s) == i, K(s) in {s}, s in {K(s)}, hash((K(s), 1)) == hash((s, 1)), hash(frozenset({K(s)})) == hash(frozenset({s}))):\n        if ok:\n            found += 1\n        else:\n            missed += 1\nprint(found, missed)\n"),
+    ('RL-321', 'hash_of_a_hash_is_stable', "values = ['key' + str(i) for i in range(2000)]\nbad = 0\nfor v in values:\n    if hash(v) != hash(v) or hash(v) == -1:\n        bad += 1\nprint(bad, len({hash(v) for v in values}))\nprint(hash(''), hash(0), hash(-1), hash(True), hash(None))\n"),
+    ('RL-321', 'hash_returns_an_int_subclass', "class I(int):\n    pass\nclass K:\n    def __init__(self, v):\n        self.v = v\n    def __hash__(self):\n        return self.v\nprint(hash(K(I(5))), hash(K(I(-1))), hash(K(True)), hash(K(-1)))\n"),
     # ---- sys.exit, SystemExit
     ('RL-282', 'exit_str_raises', "import sys\nclass X:\n    def __str__(self):\n        raise ValueError('no str')\nprint('before')\nsys.exit(X())\n"),
     ('RL-283', 'exit_code_attribute_subclass', "class E(SystemExit):\n    code = 13\n    def __init__(self):\n        pass\nraise E()\n"),
@@ -263,6 +267,49 @@ def test_a_frozen_name_is_not_a_program_file() -> None:
         assert not any(m.name == "importlib.machinery" and m.path is not None and m.path.is_relative_to(Path(tmp).resolve()) for m in find_program_modules(main))
         got = subprocess.run([str(build(main, str(main)))], capture_output=True, text=True, check=False, cwd=tmp)
     assert got.stdout == "user importlib\n" and got.returncode == 70 and "importlib.machinery" in got.stderr, got
+
+
+def _compiled(tmp: str, text: str, seed: str = "0") -> str:
+    main = Path(tmp, "main.py")
+    main.write_text(text, encoding="utf-8")
+    got = subprocess.run([str(build(main, str(main)))], capture_output=True, text=True, check=False,
+                         env=dict(os.environ, PYTHONHASHSEED=seed), cwd=tmp)
+    assert got.returncode == 0, got
+    return got.stdout
+
+
+def test_a_hash_is_deterministic_d_22() -> None:
+    """Under one seed two runs agree on every hash, and a hash that fits is CPython's own."""
+    if shutil.which("g++") is None:
+        return
+    text = "for s in ('', 'a', 'key1', 'key2', 'key3', 'key4', 'key5', 'key6', 'key7', 'key8'):\n    print(s, hash(s))\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        ours = _compiled(tmp, text)
+        assert ours == _compiled(tmp, text)
+        ref = subprocess.run([sys.executable, "main.py"], capture_output=True, text=True, check=False,
+                             env=dict(os.environ, PYTHONHASHSEED="0"), cwd=tmp)
+    fitted = 0
+    for mine, theirs in zip(ours.splitlines(), ref.stdout.splitlines(), strict=True):
+        m, t = int(mine.rpartition(" ")[2]), int(theirs.rpartition(" ")[2])
+        if -2**62 <= t < 2**62:
+            assert m == t
+            fitted += 1
+        else:
+            assert (m ^ t) & (2**63 - 1) == 0            # all but the top bit, which is a copy of the next
+    assert fitted > 1
+
+
+def test_no_bytecode_cache_d_16() -> None:
+    """A compiled program has no .pyc: `__spec__.cached` is None, as under CPython with no cache tag."""
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "mod.py").write_text("X = 1\n", encoding="utf-8")
+        Path(tmp, "pkg").mkdir()
+        Path(tmp, "pkg", "__init__.py").write_text("", encoding="utf-8")
+        got = _compiled(tmp, "import mod\nimport pkg\nimport types\nprint(mod.__spec__.cached, pkg.__spec__.cached, types.__spec__.cached)\n"
+                             "mod.__spec__.cached = 'x'\nprint(mod.__spec__.cached)\n")
+    assert got == "None None None\nx\n"
 
 
 def test_del_of_the_first_argument_with_super_is_refused() -> None:
