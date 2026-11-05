@@ -22,6 +22,7 @@ exit 70). This tool records, from the pinned CPython, which names exist:
   ordering, as not supported between the instances); `==` and `!=` count when a type's own
   method decides, not the identity fallback. The runtime refuses a handled operation it does
   not implement, rather than raise the TypeError CPython would not.
+* `final:<tp_name>`: the built-in types a class cannot derive from (no Py_TPFLAGS_BASETYPE);
 * `<type>:<name>`: each built-in type's own attributes (its `__dict__`), keyed by `__name__`, with
   the kind of object CPython keeps there (`wrapper_descriptor`, `method_descriptor`, ...), which
   says how the attribute presents itself; the runtime walks a class's MRO, so a name is recorded
@@ -48,13 +49,17 @@ OUT = PROJECT / "runtime" / "src" / "cpython_names.inc"
 # Run as a script by the interpreter being recorded: the names a compiled program could reach.
 PROBE = r'''
 GLOBALS = sorted(globals())                     # before the probe binds anything
-import builtins, json, sys, types
+import abc, builtins, json, sys, types
+
+FINAL = set()
 
 def type_names():
     found = {}
     def add(t):
         if isinstance(t, type):
             found.setdefault(t.__name__, {}).update({n: type(v).__name__ for n, v in vars(t).items()})
+            if not t.__flags__ & (1 << 10):      # Py_TPFLAGS_BASETYPE
+                FINAL.add(t.__qualname__ if t.__module__ == "builtins" else t.__module__ + "." + t.__qualname__)
     class Probe:
         pass
     class Seq:
@@ -80,6 +85,8 @@ def type_names():
         add(v)
     for s in samples:
         add(type(s))
+    if not type(abc.ABC._abc_impl).__flags__ & (1 << 10):
+        FINAL.add("_abc._abc_data")
     # type's attributes as a class reads them: a getset that raises for a plain class is left out
     found["type"] = {n: k for n, k in found["type"].items() if hasattr(Probe, n)}
     return found
@@ -152,7 +159,7 @@ def docs():
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "operators": operators(), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "final": sorted(FINAL), "operators": operators(), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:])}))
 '''
 
@@ -169,7 +176,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
         native = sorted(n for n, m in lock["modules"].items() if m["status"] in ("core", "mapped") and m["kind"] == "builtin")
         out = subprocess.run([sys.executable, str(script), *native], capture_output=True, text=True, check=True, cwd=tmp)
     data = json.loads(out.stdout)
-    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib") for n in data[scope]}
+    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}

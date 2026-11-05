@@ -489,7 +489,9 @@ CmpOp swapped(CmpOp op) {
     }
 }
 Ref compare_side(Obj self, Obj other, CmpOp op) {
-    if (is_heap_obj(self) || overridden(self, cmp_name(op))) return call_special(self, cmp_name(op), {other});
+    if (is_heap_obj(self) || overridden(self, cmp_name(op)) ||
+        (is_kind(self, Kind::Proxy) && (op == CmpOp::Eq || op == CmpOp::Ne)))
+        return call_special(self, cmp_name(op), {other});
     return native_compare(op, self, other);
 }
 }  // namespace
@@ -735,8 +737,9 @@ Ref repr_of(Obj v) {
 
 Ref str_of(Obj v) {
     if (as_str(v) != nullptr) return Ref::share(v);
-    if (is_kind(v, Kind::Instance) || ((has_python_type(v) || is_subclass_instance(v)) &&
-                                       type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")))) {
+    if (is_kind(v, Kind::Instance) || is_kind(v, Kind::Proxy) ||
+        ((has_python_type(v) || is_subclass_instance(v)) &&
+         type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")))) {
         Ref r = call_special(v, "__str__", {});
         if (as_str(r.get()) == nullptr)
             raise_new("TypeError", "__str__ returned non-string (type " + type_of(r.get())->name + ")");

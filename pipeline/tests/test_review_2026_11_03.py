@@ -72,7 +72,7 @@ REFUSED = {
     "a str method": "'a'.upper()",
     "an object method": "class C:\n    pass\nC().__sizeof__()",
     "before __getattr__": "class H:\n    def __getattr__(self, n):\n        print('hook', n)\nH().__sizeof__()",
-    "a method of type": "class C:\n    pass\nC.__subclasses__()",
+    "a member of type": "class C:\n    pass\nC.__basicsize__",
     "an exception method": "ValueError().add_note",
     "a slot wrapper's repr": "print(list.__len__)",
     "a slot wrapper's type": "type([].__len__)",

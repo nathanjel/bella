@@ -794,6 +794,50 @@ def test_a_metaclass_mro_is_what_lookups_walk() -> None:
     assert found is not None and found[0] == "O2" and T.version != before
 
 
+def test_a_view_of_a_class_dict_changes_no_death() -> None:
+    """The dict behind `C.__dict__.items()` follows the class, in its order, and holds a second
+    count that is always dropped first: with or without it a value dies at the same moment, and a
+    finaliser reads the class as already changed."""
+    from refmodel import objects as O
+
+    def story(with_view: bool) -> list[object]:
+        _fresh_heap()
+        log: list[object] = []
+        K = RefClass("K", attrs={"a": 1})
+        V = RefClass("V", attrs={"__del__": lambda self: log.append((self.tag, "dies", sorted(K.attrs)))})
+        if with_view:
+            assert K.class_dict() == {"a": 1}
+        for name in ("x", "y"):
+            v = RefObject(V, tag=name)
+            O.incref(v)
+            K.set_attr(name, v)
+            O.decref(v)
+            log.append(("set", name))
+        K.set_attr("x", 2)
+        log.append("replaced x")
+        K.del_attr("y")
+        log.append("deleted y")
+        z = RefObject(V, tag="z")
+        O.incref(z)
+        K.set_attr("z", z)
+        O.decref(z)
+        K.dispose()
+        log.append("disposed")
+        if with_view:
+            assert K.dict_view is None
+        return log
+
+    assert story(True) == story(False)
+    _fresh_heap()
+    K = RefClass("K", attrs={"a": 1, "b": 2})
+    view = K.class_dict()
+    K.del_attr("a")
+    K.set_attr("c", 3)
+    K.set_attr("a", 4)
+    K.set_attr("b", 5)
+    assert list(view.items()) == list(K.attrs.items()) == [("b", 5), ("c", 3), ("a", 4)]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

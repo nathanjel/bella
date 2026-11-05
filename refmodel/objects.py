@@ -290,6 +290,7 @@ class RefClass:
         self.attrs: dict[str, Any] = dict(attrs or {})
         for v in self.attrs.values():
             incref(v)
+        self.dict_view: dict[str, Any] | None = None     # class_dict
         self.version = VERSIONS.issue()
         # the shared keys of its instances' dicts, in CPython's order: the compiler's sorted
         # __static_attributes__, then each name the first time any instance stores it
@@ -361,6 +362,16 @@ class RefClass:
         return None
 
     # -- mutation: every change gives this class and all subclasses new versions --------------
+    def class_dict(self) -> dict[str, Any]:
+        """The dict behind views of `__dict__`, made at the first one. CPython's class has one dict;
+        here it holds a second count of each value, always dropped before attrs' own, so attrs
+        alone decides when a value dies and no finaliser can tell the two apart."""
+        if self.dict_view is None:
+            self.dict_view = dict(self.attrs)
+            for v in self.dict_view.values():
+                incref(v)
+        return self.dict_view
+
     def set_attr(self, name: str, value: Any) -> None:
         """type_setattro: the new value stored and the class modified before the old value is
         released, so a finaliser it runs already sees the new version."""
@@ -368,6 +379,11 @@ class RefClass:
         incref(value)
         self.attrs[name] = value
         self.bump()
+        if self.dict_view is not None:
+            incref(value)
+            stale = self.dict_view.get(name)
+            self.dict_view[name] = value
+            decref(stale)
         decref(old)
 
     def del_attr(self, name: str) -> None:
@@ -375,6 +391,8 @@ class RefClass:
             raise AttributeError(name)
         old = self.attrs.pop(name)
         self.bump()
+        if self.dict_view is not None:
+            decref(self.dict_view.pop(name))
         decref(old)
 
     def bump(self) -> None:
@@ -398,6 +416,10 @@ class RefClass:
         self.attrs.clear()
         for v in values:
             decref(v)
+        if self.dict_view is not None:
+            for v in self.dict_view.values():
+                decref(v)
+            self.dict_view = None
 
     def __repr__(self) -> str:
         return f"<RefClass {self.name} v{self.version}>"

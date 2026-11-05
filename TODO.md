@@ -432,11 +432,17 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              import *`, frozenset hashed by identity. Decided by the author 2026-11-05: hashes
              keep 63 bits (D-22, the `bn` port stays where it is planned) and `__spec__.cached`
              is None (D-16); `sys.implementation` comes with `sys.version_info`, `cache_tag` None.
-           * Next: the native modules, by how many cases each stops (`make compiled-corpus`): `_abc`
-             13 (strong references until 3c: no class dies before the collector exists; confirmed
-             by the author 2026-11-04), `_weakref`
-             5, `gc` 4, `_ast` 4, `_operator` 3, `itertools` 3; the builtins `sorted`, `enumerate`,
-             `zip`, `min`, `max`; `str %`. Then start-up modules run at start-up.
+           * `_abc` done (C-7-19, `runtime/src/abc.cpp`): the frozen `abc` runs compiled on it, with
+             strong references until 3c (confirmed by the author 2026-11-04). With it, views of a
+             class's `__dict__`, `type.__subclasses__`, `object.__subclasshook__`,
+             `__isabstractmethod__`, a built-in function's `__module__` and `__qualname__`, and the
+             types a class cannot derive from (`final:` in the names table). When `match` is
+             compiled, read the bits `__abc_tpflags__` carries: inherited, and passed on by
+             `register` (`_PyType_SetFlagsRecursive`).
+           * Next, by how many cases each stops (`make compiled-corpus`): subscripting a class
+             (`__class_getitem__`, `types.GenericAlias`) 10, `_weakref` 5, `gc` 4, `_ast` 3,
+             `_operator` 2, `itertools` 2, `_stat` 2; the builtins `sorted`, `enumerate`, `zip`,
+             `min`, `max`; `str %`. Then start-up modules run at start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the

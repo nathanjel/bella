@@ -36,6 +36,29 @@ def print(*args: object, sep: object = " ", end: object = "\n", file: object = N
         file.flush()  # type: ignore[attr-defined]
 
 
+class _IsAbstractMethod:
+    """__isabstractmethod__ of property, staticmethod and classmethod: a read-only getset, true when
+    one of the object's callables is abstract (_PyObject_IsAbstract)."""
+
+    def __init__(self, owner: str, *callables: str) -> None:
+        self._owner = owner
+        self._callables = callables
+
+    def __get__(self, obj: object, owner: object = None) -> object:
+        if obj is None:
+            return self
+        for name in self._callables:
+            if getattr(getattr(obj, name), "__isabstractmethod__", False):
+                return True
+        return False
+
+    def __set__(self, obj: object, value: object) -> None:
+        raise AttributeError("attribute '__isabstractmethod__' of '" + self._owner + "' objects is not writable")
+
+    def __delete__(self, obj: object) -> None:
+        raise AttributeError("attribute '__isabstractmethod__' of '" + self._owner + "' objects is not writable")
+
+
 class property:
     """Property attribute.
 
@@ -51,6 +74,8 @@ class property:
 The descriptor of Objects/descrobject.c in Python: its messages, its name from __set_name__ or
 the getter, and the getter's docstring taken over and given up as property_copy does.
 """
+
+    __isabstractmethod__ = _IsAbstractMethod("property", "fget", "fset", "fdel")
 
     def __init__(self, fget: object = None, fset: object = None, fdel: object = None, doc: object = None) -> None:
         self.fget = fget
@@ -117,6 +142,8 @@ def _wraps(wrapper: object, f: object) -> None:
 class staticmethod:
     """Convert a function to be a static method."""
 
+    __isabstractmethod__ = _IsAbstractMethod("staticmethod", "__func__")
+
     def __init__(self, f: object) -> None:
         self.__func__ = f
         _wraps(self, f)
@@ -137,6 +164,8 @@ _MethodType = type(_a_function.__get__(0))      # types.MethodType: any callable
 
 class classmethod:
     """Convert a function to be a class method."""
+
+    __isabstractmethod__ = _IsAbstractMethod("classmethod", "__func__")
 
     def __init__(self, f: object) -> None:
         self.__func__ = f

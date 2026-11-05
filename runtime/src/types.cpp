@@ -531,6 +531,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (bc == nullptr) raise_new("TypeError", "bases must be types");
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
+        if (cpython_has("final", bc->name)) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
         if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().int_ &&
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
@@ -621,8 +622,6 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             module_name = Ref::share(dict_get(frame->module->dict, Obj::of(N("__name__"))));
             if (!module_name.get().is_unset()) spec.attrs.emplace_back("__module__", module_name.get());
         }
-    if (dict_get(ns, Obj::of(N("__doc__"))).is_unset()) spec.attrs.emplace_back("__doc__", None());
-    if (has_eq && !has_hash) spec.attrs.emplace_back("__hash__", None());
     ClassObject* c = nullptr;
     try {
         c = make_class(spec);
@@ -634,7 +633,10 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     c->heap_type = true;
     if (meta != types().type) mro_invoke(c);
     bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict; });
-    if (c->has_dict && !base_has_dict) c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
+    if (c->has_dict && !base_has_dict && !c->attrs.contains(N("__dict__")))    // type_add_getset: the class body's stands
+        c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
+    if (!c->attrs.contains(N("__doc__"))) c->attrs.set(N("__doc__"), None());   // type_dict_set_doc: after the getsets
+    if (has_eq && !has_hash) c->attrs.set(N("__hash__"), None());               // type_ready_set_hash: then __hash__
     if (!classcell.is_unset()) {
         if (!is_kind(classcell, Kind::Cell))
             raise_new("TypeError", "__classcell__ must be a nonlocal cell, not " + type_of(classcell)->name);
@@ -910,6 +912,20 @@ Ref type_subclasscheck_m(Obj self, Args a) {       // type.__subclasscheck__: _P
     return Ref::steal(boolean(real_issubclass(a.pos(0), self)));
 }
 Ref type_prepare(Obj, Args) { return dict_new(); }
+Ref object_subclasshook(Obj, Args a) {
+    onearg(a, "object.__subclasshook__");
+    return Ref::steal(Obj::of(NOTIMPLEMENTED));
+}
+// type.__subclasses__: the direct subclasses, oldest first. A built-in type's answer names the
+// interpreter's own classes too, which a compiled program does not have.
+Ref type_subclasses(Obj self, Args a) {
+    ClassObject* c = as_class(self);
+    noargs(a, c->qualname + ".__subclasses__");
+    if (!c->heap_type) throw NotImplemented("the subclasses of the built-in type '" + c->name + "': CPython's list names its own classes");
+    Ref l = list_new({});
+    for (ClassObject* s : c->subclasses) list_append(l.get(), Obj::of(s));
+    return l;
+}
 Ref type_mro(Obj self, Args a) {
     arity(a, "mro", 0, 0);
     Ref l = list_new({});
@@ -1045,7 +1061,10 @@ void set_type_qualname(Obj self, Obj v) {
 }
 Ref type_module(Obj self) {
     ClassObject* c = self_class(self);
-    if (!c->heap_type) return str_new("builtins");
+    if (!c->heap_type) {                         // a built-in type's module: its tp_name's prefix, else builtins
+        const Obj* m = c->attrs.find(N("__module__"));
+        return m != nullptr && as_str(*m) != nullptr ? Ref::share(*m) : str_new("builtins");
+    }
     if (const Obj* m = c->attrs.find(N("__module__"))) return Ref::share(*m);
     raise_attribute_error(self, N("__module__"), "__module__");
 }
@@ -1132,10 +1151,31 @@ Ref builtin_name(Obj self) {
 Ref builtin_self(Obj self) {
     if (is_kind(self, Kind::PyFunction)) return Ref::share(Obj::of(builtins_module()));             // print.__self__
     auto* b = static_cast<Builtin*>(self.object());
+    if (b->home != nullptr) return Ref::share(Obj::of(b->home));
     if (b->self.is_unset() && b->binding == Binding::Function && b->owner != nullptr &&
         cpython_attribute_kind(b->owner, b->name) == "builtin_function_or_method")
         return Ref::share(Obj::of(b->owner));                       // object.__new__.__self__ is object
     return b->self.is_unset() ? none_ref() : Ref::share(b->self);
+}
+Ref builtin_qualname(Obj self) {                 // meth_get__qualname__
+    Ref name = builtin_name(self);
+    Ref bound = builtin_self(self);
+    if (bound.get() == None() || is_kind(bound.get(), Kind::Module)) return name;
+    Obj owner = is_kind(bound.get(), Kind::Class) ? bound.get() : Obj::of(type_of(bound.get()));
+    Ref qualname = getattr(owner, N("__qualname__"));
+    return str_new(as_str(qualname.get())->text + "." + as_str(name.get())->text);
+}
+Ref builtin_module(Obj self) {                   // m_module: None for a method, and once deleted
+    if (is_kind(self, Kind::PyFunction)) return fn_module(self);    // the prelude's print
+    auto* b = static_cast<Builtin*>(self.object());
+    return b->module_name.get().is_unset() ? none_ref() : Ref::share(b->module_name.get());
+}
+void set_builtin_module(Obj self, Obj value) {
+    if (is_kind(self, Kind::PyFunction)) {
+        set_fn_module(self, value);
+        return;
+    }
+    static_cast<Builtin*>(self.object())->module_name = value.is_unset() ? Ref{} : Ref::share(value);
 }
 Ref cell_contents_get(Obj self) {
     Obj v = static_cast<Cell*>(self.object())->value;
@@ -1175,15 +1215,38 @@ Ref proxy_get(Obj self, Args a) {
     return a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
 }
 Ref proxy_len(Obj self, Args) { return Ref::steal(Obj::small(static_cast<std::int64_t>(proxied(self)->attrs.size()))); }
-Ref proxy_keys(Obj self, Args) {
-    Ref l = list_new({});
-    for (auto& [k, v] : proxied(self)->attrs.items()) list_append(l.get(), Obj::of(k));
-    return l;
+// What a program reaches through the proxy's dict: the class's dict, live (ClassObject::dict_view)
+Obj class_dict(Obj self) {
+    ClassObject* c = proxied(self);
+    if (c->dict_view == nullptr) {
+        Ref d = dict_new();
+        for (auto& [k, v] : c->attrs.items()) dict_set(static_cast<Dict*>(d.get().object()), Obj::of(k), v);
+        c->dict_view = static_cast<Dict*>(d.release().object());
+    }
+    return Obj::of(c->dict_view);
 }
-Ref proxy_iter(Obj self, Args a) {
-    Ref keys = proxy_keys(self, a);
-    return iter(keys.get());
+Ref proxy_mapping_call(Obj self, const char* name) {   // mappingproxy_keys and the others: the mapping's own method
+    Ref f = getattr(class_dict(self), N(name));
+    return invoke(f.get(), {});
 }
+Ref proxy_keys(Obj self, Args a) { noargs(a, "mappingproxy.keys"); return proxy_mapping_call(self, "keys"); }
+Ref proxy_values(Obj self, Args a) { noargs(a, "mappingproxy.values"); return proxy_mapping_call(self, "values"); }
+Ref proxy_items(Obj self, Args a) { noargs(a, "mappingproxy.items"); return proxy_mapping_call(self, "items"); }
+Ref proxy_copy(Obj self, Args a) { noargs(a, "mappingproxy.copy"); return proxy_mapping_call(self, "copy"); }
+Ref proxy_iter(Obj self, Args a) { dunder_args(self, a, "__iter__", 0); return iter(class_dict(self)); }
+Ref proxy_repr(Obj self, Args a) {
+    dunder_args(self, a, "__repr__", 0);
+    Ref text = repr_of(class_dict(self));
+    return str_new("mappingproxy(" + as_str(text.get())->text + ")");
+}
+Ref proxy_str(Obj self, Args a) { dunder_args(self, a, "__str__", 0); return str_of(class_dict(self)); }
+Ref proxy_hash(Obj self, Args a) {               // mappingproxy_hash: the mapping's, and a dict has none
+    dunder_args(self, a, "__hash__", 0);
+    return Ref::steal(Obj::small(hash_of(class_dict(self))));
+}
+// mappingproxy_richcompare: the mapping against the other, for == and != only
+Ref proxy_eq(Obj self, Args a) { dunder_args(self, a, "__eq__", 1); return compare(CmpOp::Eq, class_dict(self), a.pos(0)); }
+Ref proxy_ne(Obj self, Args a) { dunder_args(self, a, "__ne__", 1); return compare(CmpOp::Ne, class_dict(self), a.pos(0)); }
 
 // slices
 Ref slice_new(Obj, Args a) {                   // __new__(cls, ...): the class comes first
@@ -1544,6 +1607,8 @@ void init_types() {
     t.type->has_dict = true;                      // a class's __dict__ is type's getset: a metaclass adds none
     method(t.type, "__prepare__", type_prepare, Binding::ClassMethod);
     method(t.type, "mro", type_mro);
+    method(t.type, "__subclasses__", type_subclasses);
+    method(t.object, "__subclasshook__", object_subclasshook, Binding::ClassMethod);
     method(t.type, "__repr__", type_repr);
     getset(t.type, "__name__", type_name, set_type_name);
     getset(t.type, "__qualname__", type_qualname, set_type_qualname);
@@ -1575,6 +1640,12 @@ void init_types() {
     getset(t.method, "__self__", method_self);
     getset(t.builtin, "__name__", builtin_name);
     getset(t.builtin, "__self__", builtin_self);
+    getset(t.builtin, "__qualname__", builtin_qualname);
+    {
+        auto* g = new GetSet("__module__", t.builtin, builtin_module, set_builtin_module);
+        g->deletable = true;
+        t.builtin->attrs.set(N("__module__"), Obj::of(g));
+    }
     getset(t.cell, "cell_contents", cell_contents_get, cell_contents_set);
     // mappingproxy, slice
     method(t.mappingproxy, "__getitem__", proxy_getitem);
@@ -1582,7 +1653,15 @@ void init_types() {
     method(t.mappingproxy, "get", proxy_get);
     method(t.mappingproxy, "__len__", proxy_len);
     method(t.mappingproxy, "keys", proxy_keys);
+    method(t.mappingproxy, "values", proxy_values);
+    method(t.mappingproxy, "items", proxy_items);
+    method(t.mappingproxy, "copy", proxy_copy);
     method(t.mappingproxy, "__iter__", proxy_iter);
+    method(t.mappingproxy, "__repr__", proxy_repr);
+    method(t.mappingproxy, "__str__", proxy_str);
+    method(t.mappingproxy, "__hash__", proxy_hash);
+    method(t.mappingproxy, "__eq__", proxy_eq);
+    method(t.mappingproxy, "__ne__", proxy_ne);
     method(t.slice, "__new__", slice_new, Binding::Function);
     getset(t.slice, "start", slice_start);
     getset(t.slice, "stop", slice_stop);

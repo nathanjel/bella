@@ -309,7 +309,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}};
     return table;
 }
 }  // namespace
@@ -329,6 +329,7 @@ Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one mod
         n.made = new_module(name.c_str());
         note_native_module(name.c_str(), n.made);
         n.fill(n.made);
+        adopt_functions(n.made);
     }
     return Ref::share(Obj::of(n.made));
 }

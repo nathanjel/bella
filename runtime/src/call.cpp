@@ -45,14 +45,6 @@ namespace {
 void no_keywords(Args a, const std::string& qualname) {
     if (a.nkw != 0) raise_new("TypeError", qualname + "() takes no keyword arguments");
 }
-void noargs(Args a, const std::string& qualname) {                     // METH_NOARGS
-    no_keywords(a, qualname);
-    if (a.npos != 0) raise_new("TypeError", qualname + "() takes no arguments (" + std::to_string(a.npos) + " given)");
-}
-void onearg(Args a, const std::string& qualname) {                     // METH_O
-    no_keywords(a, qualname);
-    if (a.npos != 1) raise_new("TypeError", qualname + "() takes exactly one argument (" + std::to_string(a.npos) + " given)");
-}
 void check_positional(Args a, const std::string& name, std::size_t lo, std::size_t hi) {   // _PyArg_CheckPositional
     auto plural = [](std::size_t n) { return n == 1 ? " argument" : " arguments"; };
     if (a.npos < lo)
@@ -62,11 +54,19 @@ void check_positional(Args a, const std::string& name, std::size_t lo, std::size
         raise_new("TypeError", name + " expected " + (lo == hi ? "" : "at most ") + std::to_string(hi) + plural(hi) +
                                    ", got " + std::to_string(a.npos));
 }
+}  // namespace
+void noargs(Args a, const std::string& qualname) {
+    no_keywords(a, qualname);
+    if (a.npos != 0) raise_new("TypeError", qualname + "() takes no arguments (" + std::to_string(a.npos) + " given)");
+}
+void onearg(Args a, const std::string& qualname) {
+    no_keywords(a, qualname);
+    if (a.npos != 1) raise_new("TypeError", qualname + "() takes exactly one argument (" + std::to_string(a.npos) + " given)");
+}
 void clinic(Args a, const std::string& name, const std::string& qualname, std::size_t lo, std::size_t hi) {
     no_keywords(a, qualname);
     check_positional(a, name, lo, hi);
 }
-}  // namespace
 
 // A special method's arguments, worded as CPython words them for the receiver's type: a slot
 // wrapper ("expected 0 arguments, got 1"), or a method (METH_O, METH_NOARGS) named by its type.
@@ -498,6 +498,7 @@ bool object_recursive_isinstance(Obj inst, Obj cls) {
     }
     return real_isinstance(inst, cls);
 }
+}  // namespace
 bool object_issubclass(Obj derived, Obj cls) {
     if (is_kind(cls, Kind::Class) && type_of(cls) == types().type) return derived == cls || real_issubclass(derived, cls);
     if (is_kind(cls, Kind::Tuple)) {
@@ -513,6 +514,7 @@ bool object_issubclass(Obj derived, Obj cls) {
     }
     return real_issubclass(derived, cls);
 }
+namespace {
 // check_class: an object with a tuple __bases__ is a class to these checks (the abstract
 // protocol, which the runtime does not have yet); anything else is not
 void check_class(Obj v, const char* message) {
@@ -1237,6 +1239,17 @@ void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
 }
 }  // namespace
 
+void adopt_functions(Module* m) {
+    Obj name = dict_get(m->dict, Obj::of(intern("__name__")));
+    auto& entries = m->dict->entries;
+    for (auto& e : entries) {
+        if (e.key.is_unset() || !is_kind(e.value, Kind::Builtin)) continue;
+        auto* b = static_cast<Builtin*>(e.value.object());
+        if (b->owner != nullptr || !b->self.is_unset() || b->home != nullptr) continue;
+        b->home = m;
+        b->module_name = Ref::share(name);
+    }
+}
 Obj cpython_doc(std::string_view name) {
     auto it = std::lower_bound(std::begin(CPYTHON_DOCS), std::end(CPYTHON_DOCS), name,
                                [](const CPythonDoc& e, std::string_view k) { return e.name < k; });
@@ -1781,6 +1794,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     }
             }
             init_slots();
+            adopt_functions(builtins_module());
+            adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own
                 if (!c->attrs.contains(intern("__doc__")))
                     if (Obj doc = cpython_doc(c->name); doc != None()) c->set_attr(intern("__doc__"), doc);

@@ -141,6 +141,7 @@ auto with_set_key(Obj key, F f) {
 }
 }  // namespace
 
+bool set_contains_hashed(SetObject* s, Obj key, std::int64_t hash) { return lookkey(s, key, hash) < s->table.size(); }
 bool set_contains(SetObject* s, Obj key) {
     return with_set_key(key, [s](Obj k, std::int64_t hash) { return lookkey(s, k, hash) < s->table.size(); });
 }

@@ -80,7 +80,7 @@ enum class Kind : std::uint8_t {
     Str, Dict, Class, Instance, Function, SlotDescriptor, Marker,
     // the runtime's own objects (bella/runtime.hpp): their deaths go through destroyer(kind)
     Singleton, Bool, BigInt, Float, Tuple, List, Cell, PyFunction, Builtin, Method, Module,
-    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, IntInstance, LazyImport, KindCount
+    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, IntInstance, LazyImport, AbcData, KindCount
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
@@ -637,6 +637,9 @@ struct ClassObject : Object {
     std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
     bool has_dict = false;
     bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
+    // attrs as a dict, made when a program first asks for a view of __dict__ (class_dict) and kept
+    // equal to attrs from then on; its counts are dropped first, so attrs decides when a value dies
+    DictObject* dict_view = nullptr;
     std::shared_ptr<SharedKeys> keys;
     ClassObject() : Object(Kind::Class) { flags |= IMMORTAL; }
 
@@ -666,12 +669,14 @@ struct ClassObject : Object {
         incref(v);
         Obj old = attrs.set(n, v);
         bump();
+        if (dict_view != nullptr) dict_store(dict_view, Obj::of(n), v);
         decref(old);
     }
     void del_attr(const Str* n) {
         if (!attrs.contains(n)) throw AttributeError(n->text);
         Obj old = attrs.pop(n);
         bump();
+        if (dict_view != nullptr) decref(dict_pop(dict_view, Obj::of(n)));
         decref(old);
     }
     void unregister() {
@@ -682,6 +687,7 @@ struct ClassObject : Object {
     void dispose() {
         unregister();
         for (auto& [k, v] : attrs.take_all()) decref(v);
+        if (dict_view != nullptr) decref(Obj::of(std::exchange(dict_view, nullptr)));
     }
 };
 

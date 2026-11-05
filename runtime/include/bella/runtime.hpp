@@ -81,6 +81,8 @@ struct Builtin : Object {
     Obj self;                                    // a bound method's object (owned), or Unset
     Binding binding;
     ClassObject* owner = nullptr;                // a method's type: its receiver must be an instance of it
+    Module* home = nullptr;                      // a module's function: its __self__ (m_self)
+    Ref module_name;                             // its __module__ (m_module), a member a program can set
     Builtin(std::string n, NativeFn f, Obj s = Obj{}, Binding b = Binding::Function);
 };
 struct GetSet : Object {                         // a getset descriptor: a data descriptor in C++
@@ -284,6 +286,13 @@ ClassObject* new_wrapper_class(Args a, const ClassObject* type);   // tp_new_wra
 void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, const Str* name);
 std::vector<ClassObject*>& builtin_types();      // every C++ type made at start-up
 void init_slots();                               // runtime/src/slots.cpp
+void fill_abc(Module* m);                        // runtime/src/abc.cpp: the module _abc
+void adopt_functions(Module* m);                 // the module's functions say it is theirs (__self__, __module__)
+bool object_issubclass(Obj derived, Obj cls);    // PyObject_IsSubclass
+// CPython's argument checks by calling convention, each with its message
+void noargs(Args a, const std::string& qualname);                     // METH_NOARGS
+void onearg(Args a, const std::string& qualname);                     // METH_O
+void clinic(Args a, const std::string& name, const std::string& qualname, std::size_t lo, std::size_t hi);
 void present_as_c_types(Module* bootstrap);
 Obj cpython_doc(std::string_view name);          // a built-in module's or type's docstring (cpython_names.inc)
 bool& shutting_down();                           // finalize_modules has begun: imports fail as CPython's do
@@ -497,6 +506,7 @@ void set_add(Obj set, Obj key);                              // takes a new coun
 void set_add_hashed(Obj set, Obj key, std::int64_t hash);   // a key's stored hash
 void set_update(Obj set, Obj iterable);
 bool set_contains(SetObject* s, Obj key);
+bool set_contains_hashed(SetObject* s, Obj key, std::int64_t hash);
 bool set_discard(SetObject* s, Obj key);
 Ref set_binary(BinOp op, Obj a, Obj b);                      // | & - ^ of sets and frozensets, else NotImplemented
 Ref set_inplace(BinOp op, Obj a, Obj b);                     // |= &= -= ^= of a set

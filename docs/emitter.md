@@ -367,7 +367,17 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
   (StopIteration's `value`) are refused by name, read, stored or deleted (RL-255), until those
   classes are built as CPython's.
-* A wrong answer until big ints: `hash(x)` beyond the 63-bit immediates loses its top bit (RL-321).
+* A hash has 63 bits until `hash()` can return a big int (D-22, RL-321): deterministic under a
+  seed and one number wherever it is read, but CPython's own value only when it fits.
+* `_abc` holds classes where CPython holds weak references, until 3c (the author, 2026-11-04):
+  `_get_dump` refuses a set with entries, and a metaclass's `__hash__` runs at each look-up where
+  CPython's reference keeps the first answer. `__abc_tpflags__` is taken and checked, and its bits
+  have no reader until `match` is compiled, when subclasses inherit them and `register` passes
+  them on.
+* `type.__subclasses__` of a built-in type is refused: CPython's list names classes of its own.
+* A class's `__dict__` is not a dict: the first view (`keys`, `values`, `items`, `iter`, `copy`)
+  makes one that follows the class (`ClassObject::dict_view`, `RefClass.class_dict`). Set operations
+  on views and comparing them stay refused for every dict.
 * At exit a walk from the namespaces stands for the collector (RL-281), until 3c. Until then a
   finaliser on an object no namespace reaches does not run, and no class has `__weakref__` in its
   `__dict__` (RL-323). A special method CPython's built-in type has of its own and

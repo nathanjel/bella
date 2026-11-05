@@ -147,6 +147,20 @@ def descriptor_story(prop: Any, sm: Any, cm: Any) -> list[object]:
             out.append(("AttributeError", str(e)))
     del c.x
     out.append(hasattr(c, "_x"))
+
+    def abstract() -> None:
+        pass
+
+    abstract.__isabstractmethod__ = True  # type: ignore[attr-defined]
+    out += [prop(abstract).__isabstractmethod__, prop(getx, abstract).__isabstractmethod__, prop(getx, setx, abstract).__isabstractmethod__,
+            prop(getx, setx, delx).__isabstractmethod__, prop().__isabstractmethod__, sm(abstract).__isabstractmethod__,
+            sm(getx).__isabstractmethod__, cm(abstract).__isabstractmethod__, cm(getx).__isabstractmethod__]
+    for kind, name in ((prop, "property"), (sm, "staticmethod"), (cm, "classmethod")):
+        for act in (lambda v: setattr(v, "__isabstractmethod__", True), lambda v: delattr(v, "__isabstractmethod__")):
+            try:
+                act(kind(getx))
+            except AttributeError as e:
+                out.append((name, str(e)))
     wrapped = C.__dict__["twice"]
     out += [wrapped.__func__ is wrapped.__wrapped__, wrapped.__name__, C.__dict__["who"].__func__.__name__]
     q = C.x.setter(setx)
