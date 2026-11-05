@@ -117,6 +117,10 @@ Ref dict_or_slot(Obj self, Args a) {
     if (!is_kind(a.pos(0), Kind::Dict)) return not_implemented();
     return reflected ? native_binary(BinOp::Or, a.pos(0), self) : native_binary(BinOp::Or, self, a.pos(0));
 }
+Ref frozendict_hash_slot(Obj self, Args a) {     // a subclass's __hash__ may ask for this one by name
+    wrapper_args(a, "__hash__", 0);
+    return int_from_i64(frozendict_hash(self));
+}
 Ref dict_ior_slot(Obj self, Args a) {
     wrapper_args(a, "__ior__", 1);
     dict_update_arg(self, a.pos(0));
@@ -227,6 +231,11 @@ void init_slots() {
     slot(d, "__or__", dict_or_slot<false>);
     slot(d, "__ror__", dict_or_slot<true>);
     slot(d, "__ior__", dict_ior_slot);
+    ClassObject* fd = t.frozendict;
+    comparisons(fd);
+    slot(fd, "__or__", dict_or_slot<false>);
+    slot(fd, "__ror__", dict_or_slot<true>);
+    slot(fd, "__hash__", frozendict_hash_slot);
     for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.slice, t.bytes, t.bytearray}) comparisons(c);
     for (ClassObject* c : {t.str, t.tuple, t.range, t.frozenset, t.slice, t.bytes}) slot(c, "__hash__", own_hash);
     for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.bytes, t.bytearray}) {

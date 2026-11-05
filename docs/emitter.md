@@ -220,6 +220,12 @@ reflected method before the int's). `int()` is `long_new_impl`: `PyNumber_Long` 
 itself, `__int__`, `__index__`, a str) and `PyLong_FromString`'s rules for an ASCII str (a str
 beyond ASCII is refused: its digits and spaces need the Unicode database).
 
+A `frozendict` is a dict: `Kind::Dict`, the same table, views and iterators, with its own class and
+the flag `FROZEN_DICT` (case C-6-11). What reads a dict therefore reads it, as CPython's `PyAnyDict`
+paths do, and what writes one asks `is_dict` (`PyDict_Check`) or `is_exact_dict`, so a frozendict
+falls through to the generic path and its TypeError. It is filled only while it is being made;
+a subclass's instance is a `DictInstance` with the flag. `frozen_hash` is CPython's `ma_hash`.
+
 An int outside the immediates is a `BigInt` (`Kind::BigInt`, class `int`), and a value that fits
 an immediate is never one. `as_int` still answers only for an immediate's size, so that the fast
 paths stay as they were; a path that takes every int asks `is_int` and reads through `IntView`
@@ -379,6 +385,12 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * A `BigInt` holds its limbs in a `std::vector` and `bn` returns vectors, two allocations for each
   result, where the design has the limbs inline in the object. That is a speed matter and comes
   with the first measurement that asks; the numbers are the same.
+* Set operations and comparisons on `dict_keys` and `dict_items` and their `.mapping` are refused by
+  name, for a frozendict's views as for a dict's. A container's `__repr__` is a function of the
+  prelude, so `{}.__repr__(1)` says what a function says about its arguments, not what a slot
+  wrapper says.
+* Hashing nested frozendicts stops with RecursionError at a depth of 10000: CPython's limit there
+  is the C stack, which no program can know.
 * `1 << n` for `n` beyond 2**40 and a power of more than 2**40 bits are refused by name: where
   CPython has no such limit, memory decides, and it would answer with a MemoryError or a result.
 * A constant CPython's compiler folds (`2**64`) is computed here at each evaluation, so `f() is f()`

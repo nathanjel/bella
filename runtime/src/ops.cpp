@@ -111,8 +111,12 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (op != BinOp::MatMul && is_int(a) && is_int(b)) return big_binary(op, a, b);
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
-    if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // dict_or: a copy, updated
-        Ref out = dict_copy(static_cast<Dict*>(a.object()));
+    if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // frozendict_or, _PyDict_Or: a copy, updated
+        if (is_exact_frozendict(a)) {
+            if (static_cast<Dict*>(a.object())->used == 0 && is_exact_frozendict(b)) return Ref::share(b);
+            if (!is_subclass_instance(b) && static_cast<Dict*>(b.object())->used == 0) return Ref::share(a);
+        }
+        Ref out = is_frozendict(a) ? frozendict_copy(a) : dict_copy(static_cast<Dict*>(a.object()));
         dict_update_arg(out.get(), b);
         return out;
     }
@@ -150,7 +154,7 @@ bool set_like_view(Obj v) { return is_kind(v, Kind::DictView) && static_cast<Dic
 namespace {
 bool repeatable(Obj v) { return as_str(v) != nullptr || is_kind(v, Kind::List) || is_kind(v, Kind::Tuple) || is_bytes_like(v); }
 bool has_sequence_methods(Obj v) {               // a type with tp_as_sequence (every class has one)
-    return repeatable(v) || is_heap_obj(v) || is_kind(v, Kind::Dict) || is_kind(v, Kind::Set) || is_kind(v, Kind::Range) ||
+    return repeatable(v) || (is_heap_obj(v) && type_of(v)->heap_type) || is_kind(v, Kind::Dict) || is_kind(v, Kind::Set) || is_kind(v, Kind::Range) ||
            is_kind(v, Kind::DictView);
 }
 // sequence_repeat: the count through __index__; then str's, tuple's or list's repeat
@@ -297,7 +301,7 @@ Ref inplace(BinOp op, Obj a, Obj b) {
         Ref r = set_inplace(op, a, b);
         if (!not_implemented(r)) return r;
     }
-    if (op == BinOp::Or && is_kind(a, Kind::Dict)) {   // dict_ior: any mapping or pairs
+    if (op == BinOp::Or && is_dict(a)) {               // dict_ior: any mapping or pairs
         dict_update_arg(a, b);
         return Ref::share(a);
     }
@@ -824,7 +828,7 @@ bool overrides(Obj obj, const char* name) {
 // the built-in a subclass instance is an object of (its kind's class)
 ClassObject* builtin_of(Obj v) {
     switch (v.object()->kind) {
-        case Kind::Dict: return types().dict;
+        case Kind::Dict: return is_frozendict(v) ? types().frozendict : types().dict;
         case Kind::IntInstance: return types().int_;
         default: return types().object;
     }
@@ -1197,7 +1201,7 @@ void setitem(Obj obj, Obj key, Obj value) {
         decref(old);
         return;
     }
-    if (is_kind(obj, Kind::Dict) && !overridden(obj, "__setitem__")) {
+    if (is_dict(obj) && !overridden(obj, "__setitem__")) {
         dict_set(static_cast<Dict*>(obj.object()), key, value);
         return;
     }
@@ -1208,7 +1212,7 @@ void setitem(Obj obj, Obj key, Obj value) {
 }
 
 void delitem(Obj obj, Obj key) {
-    if (is_kind(obj, Kind::Dict) && !overridden(obj, "__delitem__")) {
+    if (is_dict(obj) && !overridden(obj, "__delitem__")) {
         if (!dict_del(static_cast<Dict*>(obj.object()), key)) {
             Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
             raise(exc.get());
@@ -1251,7 +1255,12 @@ void delitem(Obj obj, Obj key) {
     bool has = false;
     call_special(obj, "__delitem__", {key}, &has);
     if (has) return;
-    raise_new("TypeError", "'" + type_of(obj)->name + "' object doesn't support item deletion");
+    // PyObject_DelItem: an index goes to PySequence_DelItem, which words it otherwise
+    if (has_sequence_methods(obj) && (is_int(key) || (is_heap_obj(key) && !type_lookup(type_of(key), intern("__index__")).is_unset()))) {
+        index_value(key, "IndexError");
+        raise_new("TypeError", "'" + type_of(obj)->name + "' object doesn't support item deletion");
+    }
+    raise_new("TypeError", "'" + type_of(obj)->name + "' object does not support item deletion");
 }
 
 // ---- iteration ----
@@ -1259,6 +1268,14 @@ Ref dict_iter(Obj self) {
     auto* it = new Iterator(Iterator::DictKeysIt, self);
     Ref r = own(it);
     it->size = it->len = static_cast<std::int64_t>(static_cast<Dict*>(self.object())->used);
+    return r;
+}
+Ref dict_reversed(Obj d, int which) {
+    auto* it = new Iterator(which == 0 ? Iterator::DictRevKeysIt : which == 1 ? Iterator::DictRevValuesIt : Iterator::DictRevItemsIt, d);
+    Ref r = own(it);
+    auto* table = static_cast<Dict*>(d.object());
+    it->pos = static_cast<std::int64_t>(table->entries.size()) - 1;
+    it->size = it->len = static_cast<std::int64_t>(table->used);
     return r;
 }
 Ref iter(Obj obj) {
@@ -1380,6 +1397,24 @@ Ref for_next(Obj itv) {
                 throw;
             }
         }
+        case Iterator::DictRevKeysIt:                // dictreviter_iter_lock_held
+        case Iterator::DictRevValuesIt:
+        case Iterator::DictRevItemsIt: {
+            auto* d = static_cast<Dict*>(it->seq.object());
+            if (it->size == -2 || static_cast<std::int64_t>(d->used) != it->size) {
+                it->size = -2;
+                raise_new("RuntimeError", "dictionary changed size during iteration");
+            }
+            std::int64_t i = std::min(it->pos, static_cast<std::int64_t>(d->entries.size()) - 1);
+            while (i >= 0 && d->entries[static_cast<std::size_t>(i)].key.is_unset()) --i;
+            if (i < 0) return finish();
+            it->pos = i - 1;
+            --it->len;
+            auto& e = d->entries[static_cast<std::size_t>(i)];
+            if (it->of == Iterator::DictRevKeysIt) return Ref::share(e.key);
+            if (it->of == Iterator::DictRevValuesIt) return Ref::share(e.value);
+            return tuple_new({e.key, e.value});
+        }
         case Iterator::DictKeysIt:
         case Iterator::DictValuesIt:
         case Iterator::DictItemsIt: {
@@ -1480,17 +1515,29 @@ void each_item(Obj mapping, F f) {
         f(k.get(), v.get());
     }
 }
-std::string callable_name(Obj func) {
-    if (is_kind(func, Kind::PyFunction)) return as_str(static_cast<PyFunction*>(func.object())->qualname.get())->text + "()";
+std::string callable_name(Obj func) {            // _PyObject_FunctionStr
     if (is_kind(func, Kind::Builtin)) return static_cast<Builtin*>(func.object())->name + "()";
-    if (is_kind(func, Kind::Class)) return static_cast<ClassObject*>(func.object())->name + "()";
-    return type_of(func)->name + " object";
+    Ref qualname = optional_getattr(func, intern("__qualname__"));
+    if (qualname.get().is_unset()) return as_str(str_of(func).get())->text;
+    std::string q = as_str(str_of(qualname.get()).get())->text;
+    Ref module = optional_getattr(func, intern("__module__"));
+    if (!module.get().is_unset() && module.get() != None()) {
+        const Str* m = as_str(module.get());
+        if (m == nullptr || m->text != "builtins") return as_str(str_of(module.get()).get())->text + "." + q + "()";
+    }
+    return q + "()";
 }
 }  // namespace
 
 // dict.copy() (copy_lock_held): an empty dict's copy is new; a split dict's shares its keys; a
 // combined one at most a third deleted is cloned, table and all; any other is merged into a new
 // dict, which compacts it. Only the merge compares keys.
+Ref frozendict_copy(Obj v) {
+    Ref out = dict_copy(static_cast<Dict*>(v.object()));
+    out.get().object()->cls = types().frozendict;
+    out.get().object()->flags |= FROZEN_DICT;
+    return out;
+}
 Ref dict_copy(Dict* d) {
     Ref out = dict_new();
     auto* to = static_cast<Dict*>(out.get().object());

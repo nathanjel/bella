@@ -132,7 +132,7 @@ struct BigInt : Object {                         // an int outside the immediate
     BigInt(bool neg, std::vector<std::uint64_t> mag);
 };
 struct Iterator : Object {                       // the C++ types' iterators
-    enum Of : std::uint8_t { RangeIt, LongRangeIt, TupleIt, ListIt, ListRevIt, StrIt, BytesIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
+    enum Of : std::uint8_t { DictRevKeysIt, DictRevValuesIt, DictRevItemsIt, RangeIt, LongRangeIt, TupleIt, ListIt, ListRevIt, StrIt, BytesIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
     std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
@@ -220,7 +220,7 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 // ---- the builtin types and singletons (made at start-up) ----
 struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
-        *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
+        *dict, *cell, *function, *builtin, *method, *frozendict, *dict_reversekeyiterator, *dict_reversevalueiterator, *dict_reverseitemiterator, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
         *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
@@ -512,7 +512,18 @@ Ref long_range_next(std::vector<Obj>& state);    // [the next value, the step, h
 bool as_int(Obj v, std::int64_t& out);                       // an int within the immediates, a bool, a subclass's: its value
 // a key's hash for a dict or a set: an unhashable key's TypeError names the container, as
 // dict_unhashable_type and set_unhashable_type word it ("cannot use 'list' as a dict key (...)")
-std::int64_t dict_key_hash(Obj key);
+std::int64_t dict_key_hash(Obj key, const Dict* into = nullptr);   // its TypeError names a frozendict when it is one
+// A frozendict is a dict (Kind::Dict, the same table, views and iterators) with a flag and its own
+// class, so that what reads a dict reads it. What writes one asks is_dict (PyDict_Check) or
+// is_exact_dict (PyDict_CheckExact); a frozendict is filled only while it is being made.
+inline bool is_frozendict(Obj v) { return is_kind(v, Kind::Dict) && (v.object()->flags & FROZEN_DICT) != 0; }
+inline bool is_dict(Obj v) { return is_kind(v, Kind::Dict) && (v.object()->flags & FROZEN_DICT) == 0; }
+inline bool is_exact_dict(Obj v) { return is_dict(v) && !has_attributes(v.object()); }
+inline bool is_exact_frozendict(Obj v) { return is_frozendict(v) && !has_attributes(v.object()); }
+Ref frozendict_empty(ClassObject* cls);          // to be filled by its maker; a subclass's has attributes
+Ref frozendict_copy(Obj v);                      // anydict_copy: an exact frozendict of v's items
+std::int64_t frozendict_hash(Obj v);
+Ref dict_reversed(Obj d, int which);             // dictiter_new(PyDictRevIter*_Type): 0 keys, 1 values, 2 items
 std::int64_t set_key_hash(Obj key);
 std::string fully_qualified_name(const ClassObject* c);     // %T: module.qualname, bare for builtins and __main__
 Obj dict_get(Dict* d, Obj key);                              // borrowed, Unset if absent

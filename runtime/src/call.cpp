@@ -117,9 +117,13 @@ Ref invoke(Obj f, Args a) {
                         raise_new("TypeError", "descriptor '" + b->name + "' of '" + b->owner->name + "' object needs an argument");
                     raise_new("TypeError", "unbound method " + (b->owner ? b->owner->name + "." : "") + b->name + "() needs an argument");
                 }
-                if (b->owner != nullptr && !isinstance(a.pos(0), b->owner))
+                if (b->owner != nullptr && !isinstance(a.pos(0), b->owner)) {
+                    if (cpython_attribute_kind(b->owner, b->name) == "wrapper_descriptor")   // wrapperdescr_call
+                        raise_new("TypeError", "descriptor '" + b->name + "' requires a '" + b->owner->name + "' object but received a '" +
+                                                   type_of(a.pos(0))->name + "'");
                     raise_new("TypeError", "descriptor '" + b->name + "' for '" + b->owner->name + "' objects doesn't apply to a '" +
                                                type_of(a.pos(0))->name + "' object");
+                }
                 return b->fn(a.pos(0), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
             }
             return b->fn(b->self, a);
@@ -391,7 +395,7 @@ Ref load_name(Obj ns, Module* m, const Str* name) {
 void store_name(Obj ns, const Str* name, Ref value) { mapping_set(ns, Obj::of(name), value.get()); }
 void store_global(Module* m, const Str* name, Ref value) { dict_set(m->dict, Obj::of(name), value.get()); }
 void delete_name(Obj ns, const Str* name) {
-    if (is_kind(ns, Kind::Dict) && !is_subclass_instance(ns)) {     // DELETE_NAME: an exact dict's, else __delitem__
+    if (is_exact_dict(ns)) {                         // DELETE_NAME: an exact dict's, else __delitem__
         if (!dict_del(static_cast<Dict*>(ns.object()), Obj::of(name)))
             raise_new("NameError", "name '" + name->text + "' is not defined");
         return;
@@ -798,6 +802,54 @@ Ref dict_values_m(Obj self, Args a) {
     noargs(a, "dict.values");
     return own(new DictView(self, DictView::Values));
 }
+Ref dict_reversed_m(Obj self, Args a) {
+    noargs(a, "dict.__reversed__");
+    return dict_reversed(self, 0);
+}
+Ref view_reversed_m(Obj self, Args a) {
+    noargs(a, type_of(self)->name + ".__reversed__");
+    auto* view = static_cast<DictView*>(self.object());
+    return dict_reversed(view->dict, view->which == DictView::Keys ? 0 : view->which == DictView::Values ? 1 : 2);
+}
+// frozendict's own names for what it shares with dict: the receiver's check and the messages say so
+Ref frozendict_get_m(Obj self, Args a) {
+    clinic(a, "get", "frozendict.get", 1, 2);
+    Obj v = dict_get(static_cast<Dict*>(self.object()), a.pos(0));
+    return !v.is_unset() ? Ref::share(v) : a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
+}
+Ref frozendict_keys_m(Obj self, Args a) {
+    noargs(a, "frozendict.keys");
+    return own(new DictView(self, DictView::Keys));
+}
+Ref frozendict_items_m(Obj self, Args a) {
+    noargs(a, "frozendict.items");
+    return own(new DictView(self, DictView::Items));
+}
+Ref frozendict_values_m(Obj self, Args a) {
+    noargs(a, "frozendict.values");
+    return own(new DictView(self, DictView::Values));
+}
+Ref frozendict_reversed_m(Obj self, Args a) {
+    noargs(a, "frozendict.__reversed__");
+    return dict_reversed(self, 0);
+}
+Ref frozendict_copy_m(Obj self, Args a) {        // frozendict_copy_impl
+    noargs(a, "frozendict.copy");
+    return is_exact_frozendict(self) ? Ref::share(self) : frozendict_copy(self);
+}
+Ref frozendict_getnewargs_m(Obj self, Args a) {  // frozendict_getnewargs: (dict(self),)
+    noargs(a, "frozendict.__getnewargs__");
+    Ref plain = invoke(Obj::of(types().dict), {self});
+    return tuple_new({plain.get()});
+}
+Ref c_frozendict(Obj, Args a) {                  // frozendict_vectorcall
+    if (a.npos > 1) raise_new("TypeError", "frozendict expected at most 1 argument, got " + std::to_string(a.npos));
+    if (a.npos == 1 && a.nkw == 0 && is_exact_frozendict(a.pos(0))) return Ref::share(a.pos(0));
+    Ref self = frozendict_empty(types().frozendict);
+    if (a.npos == 1) dict_update_arg(self.get(), a.pos(0));
+    for (std::size_t i = 0; i < a.nkw; ++i) dict_set(static_cast<Dict*>(self.get().object()), Obj::of(a.kwnames[i]), a.kw(i));
+    return self;
+}
 Ref view_len_m(Obj self, Args a) {
     dunder_args(self, a, "__len__", 0);
     return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(static_cast<DictView*>(self.object())->dict.object())->used)));
@@ -887,18 +939,30 @@ Ref dict_update_m(Obj self, Args a) {           // dict_update_arg, then the key
     for (std::size_t i = 0; i < a.nkw; ++i) dict_set(d, Obj::of(a.kwnames[i]), a.kw(i));
     return none_ref();
 }
-Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
-    clinic(a, "fromkeys", "dict.fromkeys", 1, 2);
-    if (cls.object() != Obj::of(types().dict).object()) {   // a subclass: called, then PyObject_SetItem
-        Ref made = invoke(cls, {});
-        Obj value = a.npos > 1 ? a.pos(1) : None();
-        Ref it = iter(a.pos(0));
-        for (Ref k = for_next(it.get()); !is_end(k); k = for_next(it.get())) setitem(made.get(), k.get(), value);
-        return made;
-    }
-    Ref out = dict_new();
-    auto* d = static_cast<Dict*>(out.get().object());
+// _PyDict_FromKeys, for dict and for frozendict. A class that makes a frozendict gets a copy filled
+// and called with it, since what it made cannot be changed: cls(fd)
+Ref fromkeys_impl(Obj cls, Args a) {
     Obj value = a.npos > 1 ? a.pos(1) : None(), src = a.pos(0);
+    Ref out;
+    bool need_copy = false;
+    if (cls == Obj::of(types().frozendict)) {
+        out = frozendict_empty(types().frozendict);
+    } else {
+        out = invoke(cls, {});
+        if (is_frozendict(out.get())) {
+            need_copy = true;
+            Ref copy = frozendict_empty(types().frozendict);
+            dict_update_arg(copy.get(), out.get());
+            out = std::move(copy);
+        }
+    }
+    auto done = [&]() -> Ref { return need_copy ? invoke(cls, {out.get()}) : std::move(out); };
+    if (!is_exact_dict(out.get()) && !is_exact_frozendict(out.get())) {   // a subclass's: PyObject_SetItem
+        Ref it = iter(src);
+        for (Ref k = for_next(it.get()); !is_end(k); k = for_next(it.get())) setitem(out.get(), k.get(), value);
+        return out;
+    }
+    auto* d = static_cast<Dict*>(out.get().object());
     // dict_dict_fromkeys and dict_set_fromkeys: an exact dict's or set's keys with their stored
     // hashes, after one resize, read from the live table; anything else is iterated and hashed
     if (is_kind(src, Kind::Dict) && !is_subclass_instance(src)) {
@@ -910,7 +974,7 @@ Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
             Ref k = Ref::share(from->entries[pos].key);
             dict_set_hashed(d, k.get(), hash, value);
         }
-        return out;
+        return done();
     }
     if (is_kind(src, Kind::Set)) {
         auto* from = static_cast<SetObject*>(src.object());
@@ -921,7 +985,7 @@ Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
             Ref k = Ref::share(from->table[pos].key);
             dict_set_hashed(d, k.get(), hash, value);
         }
-        return out;
+        return done();
     }
     Ref it = iter(src);
     for (;;) {
@@ -929,7 +993,15 @@ Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict
         if (is_end(k)) break;
         dict_set(d, k.get(), value);
     }
-    return out;
+    return done();
+}
+Ref dict_fromkeys_m(Obj cls, Args a) {          // a classmethod: cls is dict or a subclass
+    clinic(a, "fromkeys", "dict.fromkeys", 1, 2);
+    return fromkeys_impl(cls, a);
+}
+Ref frozendict_fromkeys_m(Obj cls, Args a) {
+    clinic(a, "fromkeys", "frozendict.fromkeys", 1, 2);
+    return fromkeys_impl(cls, a);
 }
 
 Ref b_iter(Obj, Args a) {
@@ -1100,7 +1172,7 @@ Module* make_builtins() {
     for (auto [name, cls, ctor] : std::initializer_list<std::tuple<const char*, ClassObject*, NativeFn>>{
              {"str", t.str, c_str}, {"type", t.type, nullptr}, {"bool", t.bool_, c_bool}, {"range", t.range, c_range},
              {"tuple", t.tuple, c_tuple}, {"list", t.list, c_list}, {"int", t.int_, nullptr},
-             {"object", t.object, nullptr}, {"dict", t.dict, nullptr}, {"float", t.float_, nullptr},
+             {"object", t.object, nullptr}, {"dict", t.dict, nullptr}, {"frozendict", t.frozendict, c_frozendict}, {"float", t.float_, nullptr},
              {"bytes", t.bytes, nullptr}, {"bytearray", t.bytearray, nullptr}, {"memoryview", t.memoryview, c_memoryview}}) {
         put(d, name, Obj::of(cls));
         if (ctor != nullptr) constructors()[cls] = ctor;
@@ -1153,7 +1225,7 @@ Module* make_builtins() {
              {"rsplit", str_rsplit_m}, {"strip", str_strip_m}, {"lstrip", str_lstrip_m}, {"rstrip", str_rstrip_m},
              {"replace", str_replace_m}})
         method(t.str, n, fn);
-    for (ClassObject* c : {t.list, t.tuple, t.str, t.dict}) {
+    for (ClassObject* c : {t.list, t.tuple, t.str, t.dict, t.frozendict}) {
         method(c, "__getitem__", getitem_m);
         method(c, "__contains__", contains_m);
         method(c, "__iter__", iter_m);
@@ -1184,9 +1256,19 @@ Module* make_builtins() {
     method(t.dict, "keys", dict_keys_m);
     method(t.dict, "items", dict_items_m);
     method(t.dict, "values", dict_values_m);
+    method(t.dict, "__reversed__", dict_reversed_m);
+    method(t.frozendict, "__len__", dict_len_m);
+    method(t.frozendict, "get", frozendict_get_m);
+    method(t.frozendict, "keys", frozendict_keys_m);
+    method(t.frozendict, "items", frozendict_items_m);
+    method(t.frozendict, "values", frozendict_values_m);
+    method(t.frozendict, "__reversed__", frozendict_reversed_m);
+    method(t.frozendict, "copy", frozendict_copy_m);
+    method(t.frozendict, "__getnewargs__", frozendict_getnewargs_m);
     for (ClassObject* v : {t.dict_keys, t.dict_values, t.dict_items}) {
         method(v, "__len__", view_len_m);
         method(v, "__iter__", view_iter_m);
+        method(v, "__reversed__", view_reversed_m);
         if (v != t.dict_values) method(v, "__contains__", view_contains_m);
     }
     method(t.dict, "clear", dict_clear_m);
@@ -1199,6 +1281,10 @@ Module* make_builtins() {
         b->owner = t.dict;
         b->flags |= IMMORTAL;
         t.dict->attrs.set(intern("fromkeys"), Obj::of(b));
+        auto* f = new Builtin("fromkeys", frozendict_fromkeys_m, Obj{}, Binding::ClassMethod);
+        f->owner = t.frozendict;
+        f->flags |= IMMORTAL;
+        t.frozendict->attrs.set(intern("fromkeys"), Obj::of(f));
     }
     method(t.textio, "write", textio_write);
     method(t.textio, "flush", textio_flush);

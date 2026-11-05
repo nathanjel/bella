@@ -249,6 +249,18 @@ def _dict_repr(self: dict[object, object]) -> str:
     """dict_repr: the entries as PyDict_Next walks them, so an entry a key's or value's repr adds
     is shown too, with no check of the size (review 2026-11-03, A9-17)."""
     _receiver(self, dict, "__repr__")
+    return _anydict_repr(self)
+
+
+def _frozendict_repr(self: frozendict[object, object]) -> str:
+    """frozendict_repr: the type's name around what a dict shows, or nothing when it is empty."""
+    _receiver(self, frozendict, "__repr__")
+    if _dict_next(self, 0) is None:
+        return type(self).__name__ + "()"
+    return type(self).__name__ + "(" + _anydict_repr(self) + ")"
+
+
+def _anydict_repr(self: dict[object, object] | frozendict[object, object]) -> str:
     if _dict_next(self, 0) is None:              # ma_used == 0: never a subclass's __len__ or __bool__
         return "{}"
     if not _enter(self):
@@ -323,5 +335,6 @@ def _view_repr(self: object) -> str:
 
 __type_methods__: dict[object, dict[str, object]] = {
     "list": {"__repr__": _list_repr}, "tuple": {"__repr__": _tuple_repr}, "dict": {"__repr__": _dict_repr},
+    "frozendict": {"__repr__": _frozendict_repr},
     "set": {"__repr__": _set_repr}, "frozenset": {"__repr__": _frozenset_repr},
     _dict_keys: {"__repr__": _keys_repr}, _dict_values: {"__repr__": _values_repr}, _dict_items: {"__repr__": _items_repr}}

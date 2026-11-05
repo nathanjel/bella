@@ -446,7 +446,7 @@ def test_dict_view_set_operations_are_refused_3a3() -> None:
     """What the views cannot do yet stops the program (exit 70), never answers wrongly."""
     if not _HAVE_CXX:
         return
-    for op in ("d.keys() & {'a'}", "d.items() | set()", "d.keys() == {'a'}", "d.keys().isdisjoint([])", "reversed(d.keys())"):
+    for op in ("d.keys() & {'a'}", "d.items() | set()", "d.keys() == {'a'}", "d.keys().isdisjoint([])"):
         src = f"d = {{'a': 1}}\nprint('start')\nprint({op})\n"
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")

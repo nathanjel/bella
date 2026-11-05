@@ -534,7 +534,7 @@ void import_star(Obj v, Obj locals) {
         }
         if (skip_leading_underscores && !s->text.empty() && s->text[0] == '_') continue;
         Ref value = getattr(v, intern(s->text));
-        if (is_kind(locals, Kind::Dict) && !is_subclass_instance(locals)) dict_set(static_cast<Dict*>(locals.object()), name.get(), value.get());
+        if (is_exact_dict(locals)) dict_set(static_cast<Dict*>(locals.object()), name.get(), value.get());
         else setitem(locals, name.get(), value.get());
     }
 }
@@ -962,7 +962,7 @@ Ref lazy_reify(Obj placeholder, const Str* name, Obj ns) {
     Ref held = Ref::share(placeholder);
     Ref imported;
     Ref value = lazy_resolve_impl(placeholder, &imported);
-    if (is_kind(ns, Kind::Dict) && !is_subclass_instance(ns)) {
+    if (is_exact_dict(ns)) {
         Dict* d = static_cast<Dict*>(ns.object());
         if (!replace_if(d, name, placeholder, value.get()) && !imported.get().is_unset())
             lazy_replace_child(placeholder, name, d, imported.get(), value.get());

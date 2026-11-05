@@ -42,6 +42,7 @@ Types& types() {
         x.tuple = builtin_type("tuple", {x.object});
         x.list = builtin_type("list", {x.object});
         x.dict = builtin_type("dict", {x.object});
+        x.frozendict = builtin_type("frozendict", {x.object});
         x.cell = builtin_type("cell", {x.object});
         x.function = builtin_type("function", {x.object});
         x.builtin = builtin_type("builtin_function_or_method", {x.object});
@@ -76,6 +77,9 @@ Types& types() {
         x.set = builtin_type("set", {x.object});
         x.frozenset = builtin_type("frozenset", {x.object});
         x.set_iterator = builtin_type("set_iterator", {x.object});
+        x.dict_reversekeyiterator = builtin_type("dict_reversekeyiterator", {x.object});
+        x.dict_reversevalueiterator = builtin_type("dict_reversevalueiterator", {x.object});
+        x.dict_reverseitemiterator = builtin_type("dict_reverseitemiterator", {x.object});
         x.dict_keys = builtin_type("dict_keys", {x.object});
         x.dict_values = builtin_type("dict_values", {x.object});
         x.dict_items = builtin_type("dict_items", {x.object});
@@ -138,6 +142,9 @@ Iterator::Iterator(Of o, Obj s) : Object(Kind::Iterator), of(o), seq(s) {
         case ListRevIt: cls = types().list_reverseiterator; break;
         case StrIt: cls = types().str_iterator; break;
         case BytesIt: cls = is_kind(s, Kind::ByteArray) ? types().bytearray_iterator : types().bytes_iterator; break;
+        case DictRevKeysIt: cls = types().dict_reversekeyiterator; break;
+        case DictRevValuesIt: cls = types().dict_reversevalueiterator; break;
+        case DictRevItemsIt: cls = types().dict_reverseitemiterator; break;
         case DictKeysIt: cls = types().dict_keyiterator; break;
         case DictValuesIt: cls = types().dict_valueiterator; break;
         case DictItemsIt: cls = types().dict_itemiterator; break;
@@ -376,6 +383,10 @@ std::int64_t full_hash(Obj v) {
             if (type_lookup(o->cls, intern("__hash__")) == type_lookup(types().int_, intern("__hash__"))) return big_hash(v);
             break;
         case Kind::BigInt: return big_hash(v);
+        case Kind::Dict:                         // a frozendict, unless its class has its own
+            if ((o->flags & FROZEN_DICT) != 0 && type_lookup(o->cls, intern("__hash__")) == type_lookup(types().frozendict, intern("__hash__")))
+                return frozendict_hash(v);
+            break;
         case Kind::Bool: return static_cast<BoolObject*>(o)->value ? 1 : 0;
         case Kind::Str: {
             auto* s = static_cast<Str*>(o);
@@ -488,6 +499,41 @@ std::int64_t hash_of(Obj v) {
     return h == -1 ? -2 : h;                     // -1 is reserved for errors
 }
 
+// frozendict_hash: the pairs' hashes as a tuple's, mixed as a frozenset's, so the order does not
+// matter; cached. A value may be a frozendict, so the descent is guarded: CPython's guard is the C
+// stack, whose size no program can know, and this one is at a depth that fits a stack of 8 MB.
+std::int64_t frozendict_hash(Obj v) {
+    auto* d = static_cast<Dict*>(v.object());
+    if (d->frozen_hash != -1) return d->frozen_hash;
+    constexpr std::uint64_t P1 = 11400714785074694791ULL, P2 = 14029467366897019727ULL, P5 = 2870177450012600261ULL;
+    static int depth = 0;
+    if (depth >= 10000) raise_new("RecursionError", "maximum recursion depth exceeded while hashing a frozendict");
+    struct Depth {
+        Depth() { ++depth; }
+        ~Depth() { --depth; }
+    } guard;
+    std::uint64_t hash = 0;
+    for (std::size_t i = 0; i < d->entries.size(); ++i) {
+        const auto& e = d->entries[i];
+        if (e.key.is_unset()) continue;
+        std::uint64_t acc = P5;
+        for (auto lane : {static_cast<std::uint64_t>(e.hash), static_cast<std::uint64_t>(hash_of(e.value))}) {
+            acc += lane * P2;
+            acc = rotl(acc, 31);
+            acc *= P1;
+        }
+        acc += 2 ^ (P5 ^ 3527539UL);
+        if (acc == static_cast<std::uint64_t>(-1)) acc = 1546275796;
+        hash ^= ((acc ^ 89869747UL) ^ (acc << 16)) * 3644798167UL;
+    }
+    hash ^= (static_cast<std::uint64_t>(d->used) + 1) * 1927868237UL;
+    hash ^= (hash >> 11) ^ (hash >> 25);
+    hash = hash * 69069U + 907133923UL;
+    if (hash == static_cast<std::uint64_t>(-1)) hash = 590923713UL;
+    d->frozen_hash = static_cast<std::int64_t>(hash);
+    return d->frozen_hash;
+}
+
 // ---- the dict: object.hpp's compact dict, with Python's hash and == for its keys ----
 namespace {
 bool keys_equal(Obj a, Obj b) {
@@ -502,6 +548,17 @@ const bool key_hooks_installed = (key_hash_hook() = hash_of, key_eq_hook() = key
 }  // namespace
 
 Ref dict_new() { return own(new Dict); }
+Ref frozendict_empty(ClassObject* cls) {
+    DictObject* d;
+    if (cls == types().frozendict) {
+        d = new Dict;
+        d->cls = cls;
+    } else {
+        d = new DictInstance(cls);
+    }
+    d->flags |= FROZEN_DICT;
+    return own(d);
+}
 
 std::string fully_qualified_name(const ClassObject* c) {
     if (const Obj* mod = c->attrs.find(intern("__module__")))
@@ -521,14 +578,16 @@ std::int64_t container_hash(Obj key, const char* as) {
     }
 }
 }  // namespace
-std::int64_t dict_key_hash(Obj key) { return container_hash(key, "dict key"); }
+std::int64_t dict_key_hash(Obj key, const Dict* into) {
+    return container_hash(key, into != nullptr && (into->flags & FROZEN_DICT) != 0 ? "frozendict key" : "dict key");
+}
 std::int64_t set_key_hash(Obj key) { return container_hash(key, "set element"); }
 
 Obj dict_get(Dict* d, Obj key) {
-    std::int64_t hash = dict_key_hash(key);       // hashed even when the table is empty (A9-16)
+    std::int64_t hash = dict_key_hash(key, d);    // hashed even when the table is empty (A9-16)
     return dict_find(d, key, hash);
 }
-void dict_set(Dict* d, Obj key, Obj value) { dict_store(d, key, dict_key_hash(key), value); }
+void dict_set(Dict* d, Obj key, Obj value) { dict_store(d, key, dict_key_hash(key, d), value); }
 void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value) { dict_store(d, key, hash, value); }
 bool dict_del(Dict* d, Obj key) {
     Obj v = dict_pop(d, key, dict_key_hash(key));

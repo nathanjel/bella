@@ -84,7 +84,7 @@ enum class Kind : std::uint8_t {
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
-enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4 };
+enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4, FROZEN_DICT = 1u << 5 };
 
 struct Object {
     ClassObject* cls = nullptr;
@@ -305,6 +305,7 @@ struct DictObject : Object {
     std::uint64_t layout = 0;                    // changes when the table is rebuilt: a lookup restarts
     std::shared_ptr<SharedKeys> split;           // the class keys it shares, or null: an ordinary dict
     const Object* embedded = nullptr;            // the live object whose values these are (exposure)
+    std::int64_t frozen_hash = -1;               // a frozendict's hash once asked (ma_hash); -1: not yet
     DictObject();
     void note_key(const Str* n) {
         if (split && !split->note(n)) split.reset();   // the keys are full: an ordinary dict from now on

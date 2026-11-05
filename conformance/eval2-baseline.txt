@@ -39,6 +39,7 @@ C-6-07_hash_seed_zero.py
 C-6-08_dict_mutation_during_iteration.py
 C-6-09_dict_callbacks.py
 C-6-10_big_ints.py
+C-6-11_frozendict_itself.py
 C-7-01_hash_and_hmac_surface.py
 C-7-02_traceback_formats_module_not_found.py
 C-7-05_core_data_collections_itertools_functools.py

@@ -535,7 +535,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
         if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
-        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().int_ &&
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().int_ &&
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
@@ -761,6 +761,15 @@ Ref dict_new_m(Obj, Args a) {
     if (cls == types().dict) return dict_new();
     return own(new DictInstance(cls));
 }
+// frozendict_new: filled here, since nothing can fill it later (a program's __init__ cannot)
+Ref frozendict_new_m(Obj, Args a) {
+    ClassObject* cls = new_wrapper_class(a, types().frozendict);
+    if (a.npos > 2) raise_new("TypeError", "frozendict expected at most 1 argument, got " + std::to_string(a.npos - 1));
+    Ref self = frozendict_empty(cls);
+    if (a.npos == 2) dict_update_arg(self.get(), a.pos(1));
+    for (std::size_t i = 0; i < a.nkw; ++i) dict_set(static_cast<Dict*>(self.get().object()), Obj::of(a.kwnames[i]), a.kw(i));
+    return self;
+}
 // dict.__init__ (dict_update_common): one positional argument, a mapping or pairs, then the
 // keywords, each inserted directly (a subclass's __setitem__ is not called)
 Ref dict_init_m(Obj self, Args a) {
@@ -977,7 +986,7 @@ Ref object_dir(Obj self, Args a) {               // object___dir___impl
     noargs(a, "object.__dir__");
     // the prelude's property keeps in its dict what CPython keeps in C fields
     Ref dict = immutable_type(type_of(self)) ? Ref{} : optional_getattr(self, N("__dict__"));
-    Ref names = is_kind(dict.get(), Kind::Dict) ? dict_copy(static_cast<Dict*>(dict.get().object())) : dict_new();
+    Ref names = is_dict(dict.get()) ? dict_copy(static_cast<Dict*>(dict.get().object())) : dict_new();
     Ref itsclass = optional_getattr(self, N("__class__"));
     if (!itsclass.get().is_unset()) merge_class_dict(names.get(), itsclass.get());
     return dict_keys_list(names.get());
@@ -1101,7 +1110,7 @@ void set_instance_dict(Obj self, Obj d) {
     if (d.is_unset()) {                          // del obj.__dict__: the dict is detached; the object starts afresh
         fresh = dict_new();
         d = fresh.get();
-    } else if (!is_kind(d, Kind::Dict)) {
+    } else if (!is_dict(d)) {
         raise_new("TypeError", "__dict__ must be set to a dictionary, not a '" + type_of(d)->name + "'");
     }
     with_attribute_storage(self, [&](auto* inst) { set_dict(inst, static_cast<DictObject*>(d.object())); });
@@ -1567,7 +1576,7 @@ Ref mapping_get(Obj mapping, Obj key) {
     }
 }
 void mapping_set(Obj mapping, Obj key, Obj value) {          // STORE_NAME: an exact dict's, else __setitem__
-    if (is_kind(mapping, Kind::Dict) && !is_subclass_instance(mapping)) dict_set(static_cast<Dict*>(mapping.object()), key, value);
+    if (is_exact_dict(mapping)) dict_set(static_cast<Dict*>(mapping.object()), key, value);
     else setitem(mapping, key, value);
 }
 
@@ -1704,6 +1713,7 @@ void init_types() {
     method(t.type, "__init__", type_init);
     method(t.type, "__call__", type_call_m);
     method(t.dict, "__new__", dict_new_m, Binding::Function);
+    method(t.frozendict, "__new__", frozendict_new_m, Binding::Function);
     method(t.int_, "__new__", int_new_m, Binding::Function);
     for (ClassObject* c : {t.list, t.tuple, t.str, t.bool_}) new_method(c, builtin_new_m);
     method(t.dict, "__init__", dict_init_m);
