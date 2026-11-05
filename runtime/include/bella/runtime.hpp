@@ -18,6 +18,7 @@
 #include "bella/object.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <exception>
 #include <initializer_list>
@@ -366,6 +367,10 @@ bool with_attribute_storage(Obj v, F&& f) {
         f(static_cast<IntInstance*>(v.object()));
         return true;
     }
+    if (is_kind(v, Kind::FloatInstance)) {
+        f(static_cast<FloatInstance*>(v.object()));
+        return true;
+    }
     return false;
 }
 // BaseException's C fields (args, __traceback__, __cause__, __context__, __suppress_context__;
@@ -498,6 +503,24 @@ Ref big_plain(Obj v);                            // the value as an exact int
 Ref big_divmod(Obj a, Obj b);
 Ref big_pow_mod(Obj a, Obj b, Obj mod);          // pow(a, b, mod) on three ints
 int big_compare(Obj a, Obj b);                   // -1, 0, 1
+double int_as_double(Obj v);                     // PyLong_AsDouble, correctly rounded (bigint.cpp)
+Ref int_from_double(double v);                   // PyLong_FromDouble
+Ref int_true_divide(Obj a, Obj b);               // long_true_divide, correctly rounded
+// ---- float (runtime/src/float.cpp) ----
+inline bool is_float(Obj v) { return is_kind(v, Kind::Float) || is_kind(v, Kind::FloatInstance); }   // PyFloat_Check
+inline double float_value(Obj v) { return static_cast<const Float*>(v.object())->value; }
+inline std::int64_t pointer_hash(const void* o) {   // _Py_HashPointer: the address rotated by 4 bits
+    auto p = reinterpret_cast<std::uintptr_t>(o);
+    return static_cast<std::int64_t>((p >> 4) | (p << 60));
+}
+Ref float_ref(double v);                         // an exact float
+Obj float_constant(double v);                    // a module's constant: it keeps the count
+std::string float_text(double v);                // float_repr
+Ref float_binary(BinOp op, Obj a, Obj b);        // nb_add and its kin: an int on either side, NotImplemented for the rest
+Ref float_divmod(Obj a, Obj b);
+std::int64_t float_hash(Obj self);               // _Py_HashDouble
+double float_as_double(Obj op);                  // PyFloat_AsDouble
+void init_float();
 std::int64_t big_hash(Obj v);                    // long_hash
 std::string big_text(Obj v);                     // str(v), under the limit of digits
 Ref int_round(Obj self, Obj ndigits);            // int.__round__; ndigits may be unset or None
@@ -569,6 +592,7 @@ Ref native_compare(CmpOp op, Obj a, Obj b);      // the C++ types' own compariso
 Ref bytes_compare(CmpOp op, Obj a, Obj b);
 Ref compare_one_side(Obj self, Obj other, CmpOp op);   // one operand's method alone: NotImplemented if it declines
 Ref native_binary(BinOp op, Obj a, Obj b);
+Ref float_compare(CmpOp op, Obj a, Obj b);       // float_richcompare; a is the float
 Ref binary(BinOp op, Obj a, Obj b);
 Ref inplace(BinOp op, Obj a, Obj b);
 Ref unary_neg(Obj a);

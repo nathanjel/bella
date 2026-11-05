@@ -85,8 +85,7 @@ Ref int_binary(BinOp op, std::int64_t a, std::int64_t b, bool both_bool) {
                 r = int_xor(x, y);
                 break;
             case BinOp::TrueDiv:
-                if (b == 0) raise_new("ZeroDivisionError", "division by zero");
-                throw NotImplemented("float: int / int");
+                return int_true_divide(int_from_i64(a).get(), int_from_i64(b).get());
             case BinOp::MatMul:
                 raise_new("TypeError", std::string("unsupported operand type(s) for ") + symbol(op) + ": 'int' and 'int'");
         }
@@ -111,6 +110,7 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (op == BinOp::MatMul) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // no built-in type has nb_matrix_multiply
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (is_int(a) && is_int(b)) return big_binary(op, a, b);
+    if (is_float(a) || is_float(b)) return float_binary(op, a, b);
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
     if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // frozendict_or, _PyDict_Or: a copy, updated
         if (is_exact_frozendict(a)) {
@@ -144,6 +144,7 @@ Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
         return r;
     }
     has = true;
+    if (is_int(self) && is_float(other)) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // an int's slots know ints; the float answers from its side
     return reflected ? native_binary(op, other, self) : native_binary(op, self, other);
 }
 }  // namespace
@@ -320,7 +321,9 @@ Ref binary(BinOp op, Obj a, Obj b) {
     if (!not_implemented(r)) return r;
     r = sequence_op(op, a, b, false);
     if (!not_implemented(r)) return r;
-    refuse_unimplemented_operator("binop", a, symbol(op), b);
+    // a class's own method that declined has answered for that operand; the table speaks of the built-ins
+    if (!overridden(a, BIN_NAMES[static_cast<int>(op)][0]) && !overridden(b, BIN_NAMES[static_cast<int>(op)][1]))
+        refuse_unimplemented_operator("binop", a, symbol(op), b);
     unsupported(symbol(op), a, b);
 }
 
@@ -362,12 +365,14 @@ Ref unary_special(Obj a, const char* dunder, const char* sym) {
 
 Ref unary_neg(Obj a) {
     std::int64_t x;
+    if (is_float(a) && !overridden(a, "__neg__")) return float_ref(-float_value(a));
     if (as_int(a, x) && !overridden(a, "__neg__")) return int_from_i64(-x);
     if (is_int(a) && !overridden(a, "__neg__")) return big_negate(a);
     return unary_special(a, "__neg__", "-");
 }
 Ref unary_pos(Obj a) {
     std::int64_t x;
+    if (is_float(a) && !overridden(a, "__pos__")) return is_kind(a, Kind::Float) ? Ref::share(a) : float_ref(float_value(a));   // float_float
     if (as_int(a, x) && !overridden(a, "__pos__")) return int_from_i64(x);
     if (is_int(a) && !overridden(a, "__pos__")) return big_plain(a);
     return unary_special(a, "__pos__", "+");
@@ -508,6 +513,7 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
     std::int64_t x, y;
     if (as_int(a, x) && as_int(b, y)) return Ref::steal(boolean(ordered(op, x, y)));
     if (is_int(a) && is_int(b)) return Ref::steal(boolean(ordered(op, big_compare(a, b), 0)));
+    if (is_float(a)) return float_compare(op, a, b);
     const Str* sa = as_str(a);
     const Str* sb = as_str(b);
     if (sa != nullptr && sb != nullptr)                // code point order: UTF-8 byte order is code point order
@@ -631,6 +637,10 @@ bool truth(Obj v) {
         case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
         case Kind::IntInstance:
             if (!overridden(v, "__bool__")) return !int_is_zero(v);
+            return truth(call_special(v, "__bool__", {}).get());
+        case Kind::Float: return static_cast<Float*>(o)->value != 0.0;
+        case Kind::FloatInstance:
+            if (!overridden(v, "__bool__")) return static_cast<Float*>(o)->value != 0.0;
             return truth(call_special(v, "__bool__", {}).get());
         case Kind::Dict:                             // a dict subclass's instance asks its class
             if (!is_subclass_instance(v)) return static_cast<Dict*>(o)->used != 0;
@@ -801,6 +811,10 @@ Ref repr_of(Obj v) {
             if (!overridden(v, "__repr__")) return str_new(big_text(v));
             break;
         case Kind::BigInt: return str_new(big_text(v));
+        case Kind::FloatInstance:
+            if (overridden(v, "__repr__")) break;
+            [[fallthrough]];
+        case Kind::Float: return str_new(float_text(float_value(v)));
         case Kind::Range: {
             auto* r = static_cast<Range*>(o);
             if (r->big) return str_new(big_range_repr(v));
@@ -880,6 +894,7 @@ ClassObject* builtin_of(Obj v) {
     switch (v.object()->kind) {
         case Kind::Dict: return is_frozendict(v) ? types().frozendict : types().dict;
         case Kind::IntInstance: return types().int_;
+        case Kind::FloatInstance: return types().float_;
         default: return types().object;
     }
 }

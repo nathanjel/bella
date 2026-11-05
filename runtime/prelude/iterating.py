@@ -330,6 +330,10 @@ With two or more positional arguments, return the largest argument."""
     return _min_max("max", args, kwds, False)
 
 
+_LONG_MAX = 9223372036854775807
+_LONG_MIN = -9223372036854775808
+
+
 def sum(*args: object, **kwds: object) -> object:   # builtin_sum_impl
     """Return the sum of a 'start' value (default: 0) plus an iterable of numbers
 
@@ -353,6 +357,38 @@ may reject non-numeric types."""
         raise TypeError("sum() can't sum bytes [use b''.join(seq) instead]")
     if issubclass(type(result), bytearray):
         raise TypeError("sum() can't sum bytearray [use b''.join(seq) instead]")
+    # builtin_sum_impl's stages: exact ints in a C long; then floats, compensated, with ints in a C long
+    # among them; then anything, with plain +. What ends a stage ends it for good.
+    if type(result) is int and _LONG_MIN <= result <= _LONG_MAX:
+        for item in it:
+            if (type(item) is int or type(item) is bool) and _LONG_MIN <= item and item <= _LONG_MAX and (
+                    item <= _LONG_MAX - result if result >= 0 else item >= _LONG_MIN - result):
+                result = result + int(item)
+                continue
+            result = result + item  # type: ignore[operator]
+            break
+        else:
+            return result
+    if type(result) is float:
+        hi, lo = result, 0.0
+        for item in it:
+            if type(item) is float:
+                x = item
+            elif issubclass(type(item), int) and _LONG_MIN <= int.__index__(item) <= _LONG_MAX:  # type: ignore[arg-type]
+                x = float(int.__index__(item))  # type: ignore[arg-type]
+            else:
+                if lo and lo - lo == 0.0:        # finite: the sign of a negative zero and an infinity survive
+                    hi = hi + lo
+                result = hi + item  # type: ignore[operator]
+                break
+            t = hi + x                           # cs_add, Neumaier's improved Kahan-Babuska
+            if abs(hi) >= abs(x):
+                lo += (hi - t) + x
+            else:
+                lo += (x - t) + hi
+            hi = t
+        else:
+            return hi + lo if lo and lo - lo == 0.0 else hi
     for item in it:
         result = result + item  # type: ignore[operator]
     return result

@@ -220,6 +220,7 @@ bool register_deaths() {
     };
     destroyer(Kind::Range) = [](Object* o) { destroy<Range>(o); };
     destroyer(Kind::BigInt) = [](Object* o) { destroy<BigInt>(o); };
+    destroyer(Kind::Float) = [](Object* o) { destroy<Float>(o); };
     destroyer(Kind::Iterator) = [](Object* o) { decref(std::exchange(static_cast<Iterator*>(o)->seq, Obj{})); destroy<Iterator>(o); };
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::Traceback) = [](Object* o) {
@@ -376,10 +377,6 @@ std::int64_t hash_small(std::int64_t v) {
     return h == -1 ? -2 : h;
 }
 
-std::int64_t pointer_hash(const void* o) {        // _Py_HashPointer: the address rotated by 4 bits
-    auto p = reinterpret_cast<std::uintptr_t>(o);
-    return static_cast<std::int64_t>((p >> 4) | (p << 60));
-}
 // CPython's hash
 std::int64_t full_hash(Obj v) {
     if (v.is_small()) return hash_small(v.small_value());
@@ -389,6 +386,10 @@ std::int64_t full_hash(Obj v) {
             if (type_lookup(o->cls, intern("__hash__")) == type_lookup(types().int_, intern("__hash__"))) return big_hash(v);
             break;
         case Kind::BigInt: return big_hash(v);
+        case Kind::FloatInstance:                // as an int subclass's
+            if (type_lookup(o->cls, intern("__hash__")) != type_lookup(types().float_, intern("__hash__"))) break;
+            return float_hash(v);
+        case Kind::Float: return float_hash(v);
         case Kind::Dict:                         // a frozendict, unless its class has its own
             if ((o->flags & FROZEN_DICT) != 0 && type_lookup(o->cls, intern("__hash__")) == type_lookup(types().frozendict, intern("__hash__")))
                 return frozendict_hash(v);

@@ -166,6 +166,13 @@ Ref get_native(Obj self, Args a) {             // __get__ of the C++ descriptors
     if (is_none(obj) && is_none(type)) raise_new("TypeError", "__get__(None, None) is invalid");
     return descr_get(self, obj, type);
 }
+Ref descriptor_name(Obj self) { return str_new(static_cast<GetSet*>(self.object())->name); }
+Ref descriptor_objclass(Obj self) { return Ref::share(Obj::of(static_cast<GetSet*>(self.object())->owner)); }
+Ref descriptor_qualname(Obj self) {              // descr_get_qualname: the type's qualified name, a dot, its own
+    auto* g = static_cast<GetSet*>(self.object());
+    Ref owner = getattr(Obj::of(g->owner), N("__qualname__"));
+    return str_new(as_str(owner.get())->text + "." + g->name);
+}
 Ref getset_set(Obj self, Args a) {
     arity(a, "__set__", 2, 2);
     auto* g = static_cast<GetSet*>(self.object());
@@ -553,7 +560,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
         if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
-        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().int_ &&
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().int_ && bc != types().float_ &&
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
@@ -913,10 +920,10 @@ Ref number_long(Obj x) {
         return r;
     }
     if (is_int(x)) return big_plain(x);           // a bool, an int subclass's instance: nb_int, an exact copy
+    if (is_float(x)) return int_from_double(float_value(x));   // float_int, its nb_int
     if (python && !type_lookup(type_of(x), N("__index__")).is_unset()) return int_index_of(x);
     if (const Str* s = as_str(x)) return int_from_str(s, 10);
     if (is_bytes_like(x)) return int_from_bytes(x, 10);
-    if (is_kind(x, Kind::Float)) throw NotImplemented("int() of a float");
     raise_new("TypeError", "int() argument must be a string, a bytes-like object or a real number, not '" + type_of(x)->name + "'");
 }
 
@@ -1803,6 +1810,14 @@ void init_types() {
     for (ClassObject* c : {t.getset_descriptor, t.member_descriptor}) {
         method(c, "__set__", getset_set);
         method(c, "__delete__", getset_delete);
+        auto member = [&](const char* name, Ref (*get)(Obj)) {   // descr_members: read-only members
+            auto* g = new GetSet(name, c, get, nullptr);
+            g->cls = t.member_descriptor;
+            c->attrs.set(N(name), Obj::of(g));
+        };
+        member("__name__", descriptor_name);
+        member("__objclass__", descriptor_objclass);
+        c->attrs.set(N("__qualname__"), Obj::of(new GetSet("__qualname__", c, descriptor_qualname, nullptr)));   // descr_getset
     }
     // functions, methods, cells
     getset(t.function, "__name__", fn_name, set_fn_name);

@@ -76,6 +76,34 @@ Ref int_hash(Obj self, Args a) {
     wrapper_args(a, "__hash__", 0);
     return int_from_i64(big_hash(self));
 }
+Ref int_float(Obj self, Args a) { wrapper_args(a, "__float__", 0); return float_ref(int_as_double(self)); }
+// float's slots: an int on either side, NotImplemented for the rest; the reflected form swaps them
+template <BinOp op, bool reflected>
+Ref float_slot(Obj self, Args a) {
+    wrapper_args(a, "__add__", 1);
+    return reflected ? float_binary(op, a.pos(0), self) : float_binary(op, self, a.pos(0));
+}
+template <bool reflected>
+Ref float_pow_slot(Obj self, Args a) {           // wrap_ternaryfunc: __pow__(value, mod=None)
+    if (a.nkw != 0) raise_new("TypeError", std::string("wrapper ") + (reflected ? "__rpow__" : "__pow__") + "() takes no keyword arguments");
+    if (a.npos < 1 || a.npos > 2) raise_new("TypeError", "expected 1 or 2 arguments, got " + std::to_string(a.npos));
+    if (a.npos == 2 && a.pos(1) != None()) raise_new("TypeError", "pow() 3rd argument not allowed unless all arguments are integers");
+    return reflected ? float_binary(BinOp::Pow, a.pos(0), self) : float_binary(BinOp::Pow, self, a.pos(0));
+}
+template <bool reflected>
+Ref float_divmod_slot(Obj self, Args a) {
+    wrapper_args(a, "__divmod__", 1);
+    return reflected ? float_divmod(a.pos(0), self) : float_divmod(self, a.pos(0));
+}
+Ref float_self(Obj self) { return is_kind(self, Kind::Float) ? Ref::share(self) : float_ref(float_value(self)); }   // float_float
+Ref float_neg(Obj self, Args a) { wrapper_args(a, "__neg__", 0); return float_ref(-float_value(self)); }
+Ref float_pos(Obj self, Args a) { wrapper_args(a, "__pos__", 0); return float_self(self); }
+Ref float_abs(Obj self, Args a) { wrapper_args(a, "__abs__", 0); return float_ref(std::fabs(float_value(self))); }
+Ref float_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(float_value(self) != 0.0)); }
+Ref float_int(Obj self, Args a) { wrapper_args(a, "__int__", 0); return int_from_double(float_value(self)); }
+Ref float_float(Obj self, Args a) { wrapper_args(a, "__float__", 0); return float_self(self); }
+Ref float_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return str_new(float_text(float_value(self))); }
+Ref float_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(float_hash(self)); }
 Ref own_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return repr_of(self); }
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
@@ -215,8 +243,35 @@ void init_slots() {
     slot(i, "__floor__", int_trunc);
     slot(i, "__ceil__", int_trunc);
     slot(i, "__round__", int_round_m);
+    slot(i, "__float__", int_float);
     slot(i, "__repr__", int_repr);
     slot(i, "__hash__", int_hash);
+    ClassObject* fl = t.float_;
+    comparisons(fl);
+    slot(fl, "__add__", float_slot<BinOp::Add, false>);
+    slot(fl, "__radd__", float_slot<BinOp::Add, true>);
+    slot(fl, "__sub__", float_slot<BinOp::Sub, false>);
+    slot(fl, "__rsub__", float_slot<BinOp::Sub, true>);
+    slot(fl, "__mul__", float_slot<BinOp::Mul, false>);
+    slot(fl, "__rmul__", float_slot<BinOp::Mul, true>);
+    slot(fl, "__truediv__", float_slot<BinOp::TrueDiv, false>);
+    slot(fl, "__rtruediv__", float_slot<BinOp::TrueDiv, true>);
+    slot(fl, "__floordiv__", float_slot<BinOp::FloorDiv, false>);
+    slot(fl, "__rfloordiv__", float_slot<BinOp::FloorDiv, true>);
+    slot(fl, "__mod__", float_slot<BinOp::Mod, false>);
+    slot(fl, "__rmod__", float_slot<BinOp::Mod, true>);
+    slot(fl, "__pow__", float_pow_slot<false>);
+    slot(fl, "__rpow__", float_pow_slot<true>);
+    slot(fl, "__divmod__", float_divmod_slot<false>);
+    slot(fl, "__rdivmod__", float_divmod_slot<true>);
+    slot(fl, "__neg__", float_neg);
+    slot(fl, "__pos__", float_pos);
+    slot(fl, "__abs__", float_abs);
+    slot(fl, "__bool__", float_bool);
+    slot(fl, "__int__", float_int);
+    slot(fl, "__float__", float_float);
+    slot(fl, "__repr__", float_repr);
+    slot(fl, "__hash__", float_hash_slot);
     // bool's own: its repr, and & | ^ that keep a bool
     ClassObject* b = t.bool_;
     slot(b, "__repr__", own_repr);

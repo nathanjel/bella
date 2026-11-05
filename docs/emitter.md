@@ -118,8 +118,8 @@ static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
   before the frame guard records the real locals (RL-213, as `eval2` does, RL-186). Unpacking
   releases its source before the targets are bound (RL-194).
 * Constants: small ints are immediates (`Obj::small(2)`), strings are interned, tuples of those
-  are made when the module first runs. A constant the runtime cannot make yet (a float, bytes, an
-  int beyond 62 bits) is refused where it is used, never when the module starts (P-1).
+  are made when the module first runs. A float is a C++ hexadecimal literal, its exact bits. A constant the runtime
+  cannot make yet is refused where it is used, never when the module starts (P-1).
 
 ## 3. Classes (step 3a.2)
 
@@ -389,7 +389,7 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * 3b, the standard library running: every module of a closure compiles, and what stops the corpus is
   now the native modules, by how many cases each stops: `_abc` 13, `_weakref` 5, `gc` 4, `_ast` 4,
   `_operator` 3, `itertools` 3, then one case each; and the builtins (`sorted`, `enumerate`, `zip`,
-  `min`, `max`, ...), `str %`, bytes and float constants. `dir()` of names that are not all str
+  `min`, `max`, ...), `str %`. `dir()` of names that are not all str
   waits for `list.sort`.
 * CPython's start-up modules are not imported at start-up yet, so `sys.modules` shows them only once
   imported: a wrong answer for a program that asks before importing them, until they can run there.
@@ -399,8 +399,7 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * Lines: a frame's line is its statement's first line; CPython gives the failing instruction's,
   which differs inside a statement that spans lines (RL-225). The frontend and L2 would carry
   the expression positions; an inlined comprehension's line then goes to its caller's entry.
-* The constructor of `float` (refused, RL-220);
-  `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
+* `__notes__` in an uncaught exception's report (refused). The other exceptions' own fields
   (StopIteration's `value`) are refused by name, read, stored or deleted (RL-255), until those
   classes are built as CPython's.
 * A `BigInt` holds its limbs in a `std::vector` and `bn` returns vectors, two allocations for each
@@ -430,7 +429,12 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * `type.__subclasses__` of a built-in type is refused: CPython's list names classes of its own.
 * `enumerate`, `zip`, `map`, `filter` and `reversed` are written in Python (`runtime/prelude/iterating.py`):
   their `__reduce__` stops by name, `dir()` shows CPython's names, and `reversed` of a dict stops by name
-  (`dict.__reversed__`). A float in `sum` cannot arise until floats exist; its compensated sum comes with them.
+  (`dict.__reversed__`). `sum` keeps `builtin_sum_impl`'s stages, since which of them an item ends decides how a
+  later float is rounded: exact ints in a C long, then floats compensated with ints in a C long among them, then `+`.
+* `float` (`runtime/src/float.cpp`, C-6-12): the object is a double, and a subclass's instance adds an attribute
+  storage as `IntInstance` does. The digits are libstdc++'s (`make float-diff`), and everything around them is the C's.
+  What is not finished: a negative float to a fractional power stops by name until `complex`; `float()` of a str
+  beyond ASCII stops by name until the Unicode database; `format` with a specification stops by name for every type.
 * `bytes` and `bytearray`: `%`, a class derived from them, the codecs UTF-16 and UTF-32 and the
   `namereplace` handler stop by name; `codecs.register_error` has nothing to register with until
   `_codecs` is written. `memoryview` and the buffer protocol are \[P2+\].
@@ -461,7 +465,7 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   known edges).
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and
   type are refused today (RL-218); the names RL-211's table refuses, as programs need them.
-* Later: `float` beyond the digits (the wrapper of `to_chars`/`from_chars`), `format` specifications, the global read caches of decision 6, the Unicode database
+* Later: `format` specifications, the global read caches of decision 6, the Unicode database
   for `repr` beyond Latin-1, the rest of the builtins.
 * Speed is not a goal yet: everything is boxed and every call binds generically, so the compiled
   `fib` takes about twice CPython's time. Phase 2's types change that.

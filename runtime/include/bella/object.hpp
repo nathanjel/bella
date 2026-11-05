@@ -80,7 +80,7 @@ enum class Kind : std::uint8_t {
     Str, Dict, Class, Instance, Function, SlotDescriptor, Marker,
     // the runtime's own objects (bella/runtime.hpp): their deaths go through destroyer(kind)
     Singleton, Bool, BigInt, Float, Tuple, List, Cell, PyFunction, Builtin, Method, Module,
-    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, IntInstance, LazyImport, AbcData, Bytes, ByteArray, KindCount
+    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, IntInstance, FloatInstance, LazyImport, AbcData, Bytes, ByteArray, KindCount
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
@@ -889,6 +889,27 @@ struct IntInstance : Object {
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
+// A float, and an instance of a program's subclass of float: as IntInstance, with a value that is the same
+// field in both.
+struct Float : Object {
+    double value;
+    explicit Float(double v) : Object(Kind::Float), value(v) {}
+};
+struct FloatInstance : Float {
+    std::vector<Obj> fields;
+    DictObject* dict = nullptr;
+    std::vector<const Str*> order;
+    std::int64_t tag = -1;
+    FloatInstance(ClassObject* c, double v) : Float(v) {
+        kind = Kind::FloatInstance;
+        cls = c;
+        flags |= HAS_ATTRIBUTES;
+        fields.assign(c->field_index.size(), Obj{});
+    }
+    bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
+    Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    bool has_field(const Str* n) const { return cls->field_index.contains(n); }
+};
 inline bool has_attributes(const Object* o) { return (o->flags & HAS_ATTRIBUTES) != 0; }
 
 inline bool is_instance(Obj v) { return v.is_object() && v.object()->kind == Kind::Instance; }
@@ -1338,6 +1359,7 @@ inline void bury(Object* o) {
                 else delete static_cast<DictObject*>(o);
                 break;
             case Kind::IntInstance: delete static_cast<IntInstance*>(o); break;
+            case Kind::FloatInstance: delete static_cast<FloatInstance*>(o); break;
             case Kind::Function: delete static_cast<Function*>(o); break;
             case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
             case Kind::Marker: delete static_cast<Marker*>(o); break;
@@ -1547,6 +1569,11 @@ inline void dealloc(Object* o) {
             return;
         case Kind::IntInstance:
             if (!detail::release_attributes(static_cast<IntInstance*>(o))) return;
+            if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
+            detail::bury(o);
+            return;
+        case Kind::FloatInstance:
+            if (!detail::release_attributes(static_cast<FloatInstance*>(o))) return;
             if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
             detail::bury(o);
             return;

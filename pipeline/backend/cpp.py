@@ -18,6 +18,7 @@ order, and `frame.line = n` marks the source lines. The rules (docs/emitter.md):
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -171,6 +172,10 @@ class Emitter:
                              else f"rt::str_constant_cps({{{', '.join(f'char32_t{{{ord(c):#x}}}' for c in value)}}})")
         if type(value) is bytes:
             return self.lazy(("bytes", value), f"rt::bytes_constant({c_bytes(value)}, {len(value)})")
+        if type(value) is float:
+            # a hexadecimal literal is the value's exact bits; the key tells 0.0 from -0.0
+            text = "HUGE_VAL" if value == math.inf else value.hex()
+            return self.lazy(("float", value.hex()), f"rt::float_constant({text})")
         if type(value) is tuple and all(_supported_constant(v) for v in value):
             items = ", ".join(self.const(v) for v in value)
             return self.lazy(("tuple", value), f"rt::tuple_new({{{items}}}).release()")
@@ -710,7 +715,7 @@ class Emitter:
 
 
 def _supported_constant(v: object) -> bool:
-    if v is None or v is Ellipsis or type(v) in (bool, str, bytes):
+    if v is None or v is Ellipsis or type(v) in (bool, str, bytes, float):
         return True
     if type(v) is int:
         return True

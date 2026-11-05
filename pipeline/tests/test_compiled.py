@@ -497,7 +497,7 @@ def test_a_builtin_type_without_a_constructor_is_refused() -> None:
         return
     same('for f in (lambda: object.__new__(int), lambda: object.__new__(dict, 1), lambda: object(1)):\n    try:\n        f()\n    except TypeError as e:\n        print("TypeError", e)\nprint(type(object()).__name__, str(5), list("ab"), dict(a=1), int("42"), int())\n')
     same("for f in (lambda: type(len)(), lambda: object.__new__(type(len)), lambda: type(iter([]))(), lambda: type({}.keys())()):\n    try:\n        f()\n    except TypeError as e:\n        print(e)\n")
-    for body in ("float()",):
+    for body in ("type(...)()",):                # float() was the example, until it had its own (C-6-12)
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"print('start')\ntry:\n    {body}\nexcept TypeError:\n    print('TypeError')\n", encoding="utf-8")

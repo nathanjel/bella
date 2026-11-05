@@ -731,6 +731,34 @@ Ref list_count_m(Obj self, Args a) {             // list_count_impl: the live li
     }
     return Ref::steal(Obj::small(n));
 }
+Ref tuple_index_m(Obj self, Args a) {             // tuple_index_impl: start and stop as slice indices
+    clinic(a, "index", "tuple.index", 1, 3);
+    const auto& items = static_cast<Tuple*>(self.object())->items;
+    auto n = static_cast<std::int64_t>(items.size());
+    auto bound = [&](std::size_t k, std::int64_t dflt) {
+        if (a.npos <= k) return dflt;
+        Obj v = a.pos(k);
+        if (!is_int(v) && type_lookup(type_of(v), intern("__index__")).is_unset())
+            raise_new("TypeError", "slice indices must be integers or have an __index__ method");
+        return clipped_index(v);
+    };
+    std::int64_t start = bound(1, 0), stop = bound(2, n);
+    if (start < 0) start = std::max<std::int64_t>(start + n, 0);
+    if (stop < 0) stop += n;
+    else if (stop > n) stop = n;
+    for (std::int64_t i = start; i < stop; ++i) {
+        Obj v = items[static_cast<std::size_t>(i)];
+        if (v == a.pos(0) || truth(compare(CmpOp::Eq, v, a.pos(0)).get())) return Ref::steal(Obj::small(i));
+    }
+    raise_new("ValueError", "tuple.index(x): x not in tuple");
+}
+Ref tuple_count_m(Obj self, Args a) {             // tuple_count_impl
+    onearg(a, "tuple.count");
+    std::int64_t n = 0;
+    for (Obj v : static_cast<Tuple*>(self.object())->items)
+        if (v == a.pos(0) || truth(compare(CmpOp::Eq, v, a.pos(0)).get())) ++n;
+    return Ref::steal(Obj::small(n));
+}
 Ref list_reverse_m(Obj self, Args a) {
     noargs(a, "list.reverse");
     std::reverse(list_self(self)->items.begin(), list_self(self)->items.end());
@@ -1245,6 +1273,8 @@ Module* make_builtins() {
     method(t.list, "index", list_index_m);
     method(t.list, "remove", list_remove_m);
     method(t.list, "count", list_count_m);
+    method(t.tuple, "index", tuple_index_m);
+    method(t.tuple, "count", tuple_count_m);
     method(t.list, "reverse", list_reverse_m);
     method(t.list, "copy", list_copy_m);
     method(t.list, "__setitem__", setitem_m);
@@ -1777,6 +1807,10 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                 attribute_values(static_cast<IntInstance*>(o), todo);
                 found.push_back(Ref::share(v));
                 break;
+            case Kind::FloatInstance:
+                attribute_values(static_cast<FloatInstance*>(o), todo);
+                found.push_back(Ref::share(v));
+                break;
             case Kind::Dict:
                 if (has_attributes(o)) {
                     attribute_values(static_cast<DictInstance*>(o), todo);
@@ -2010,6 +2044,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             }
             init_slots();
             init_bigint();
+            init_float();
             adopt_functions(builtins_module());
             adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own

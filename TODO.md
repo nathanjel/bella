@@ -465,8 +465,11 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * `itertools` done (C-7-20, `runtime/prelude/itertools.py`): the first built-in module written
              in Python, compiled with the prelude and run at the first import.
            * `_operator` done (C-7-21, `runtime/prelude/_operator.py`), so `operator` is the standard library's.
+           * `float` done (C-6-12, `runtime/src/float.cpp`), with `int / int`, `int ** negative`, `sum`'s
+             compensation and `tuple.index` and `count`.
            * Next, by how many cases each stops (`make compiled-corpus`): `_thread` 11 (`functools` and
-             `reprlib`), `_ast` 6, `_stat` 6, `complex` 3 (`copy` names the type), `str %` 2, floats 3.
+             `reprlib`; `TIMEOUT_MAX` is a float, hence floats first), `_ast` 6, `_stat` 6, `complex` 3
+             (`copy` names the type), `str %` 2.
              Generators are refused where they run (`weakref`'s iteration, a generator expression), and
              stop more once these are past. Then start-up modules run at start-up.
        * 3c, its first half done: weak references and resurrection (C-9-03, C-9-04, C-9-10), in the model

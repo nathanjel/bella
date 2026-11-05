@@ -22,6 +22,9 @@
 #define SEL_BN_ADX 0
 #endif
 
+#include <cfloat>
+#include <cmath>
+
 #include "bella/runtime.hpp"
 
 namespace bella {
@@ -116,10 +119,7 @@ std::pair<Ref, Ref> floor_divmod(Obj a, Obj b) {
 std::size_t bit_length_of(bn::Span m) { return m.empty() ? 0 : bn::bit_len(m); }
 Ref power(Obj a, Obj b) {                        // long_pow without a modulus
     IntView x(a), e(b);
-    if (e.neg) {
-        if (x.zero()) raise_new("ZeroDivisionError", "zero to a negative power");
-        throw NotImplemented("int ** negative exponent returns float");
-    }
+    if (e.neg) return float_binary(BinOp::Pow, a, b);   // long_pow's negative exponent: float_pow, of both as doubles
     std::size_t bits = bit_length_of(e.mag);
     bool base_is_unit = x.mag.empty() || (x.mag.size() == 1 && x.mag[0] == 1);
     if (!base_is_unit && (bits > 40 || static_cast<u128>(bit_length_of(x.mag) - 1) * (e.mag.empty() ? 0 : e.mag[0]) > (u128{1} << 40)))
@@ -288,12 +288,80 @@ Ref big_binary(BinOp op, Obj a, Obj b) {
         case BinOp::LShift: return left_shift(a, b);
         case BinOp::RShift: return right_shift(a, b);
         case BinOp::And: case BinOp::Or: case BinOp::Xor: return bitwise(op, a, b);
-        case BinOp::TrueDiv:
-            if (IntView(b).zero()) raise_new("ZeroDivisionError", "division by zero");
-            throw NotImplemented("float: int / int");
+        case BinOp::TrueDiv: return int_true_divide(a, b);
         default: break;
     }
     raise_new("TypeError", "unsupported operand type(s): 'int' and 'int'");
+}
+// PyLong_AsDouble, rounded half to even: the top 64 bits with a sticky bit below them round as the whole does
+double int_as_double(Obj v) {
+    IntView x(v);
+    std::size_t bits = bit_length_of(x.mag);
+    if (bits > DBL_MAX_EXP) raise_new("OverflowError", "int too large to convert to float");
+    double d = 0.0;
+    if (bits <= 64) {
+        d = x.mag.empty() ? 0.0 : static_cast<double>(x.mag[0]);
+    } else {
+        std::size_t drop = bits - 64;
+        bn::Nat top = bn::shr(x.mag, drop);
+        bool sticky = !bn::trimmed(bn::low_bits(x.mag, drop)).empty();
+        d = std::ldexp(static_cast<double>(top[0] | (sticky ? 1 : 0)), static_cast<int>(drop));
+    }
+    if (std::isinf(d)) raise_new("OverflowError", "int too large to convert to float");
+    return x.neg ? -d : d;
+}
+Ref int_from_double(double v) {                  // PyLong_FromDouble: its truncation
+    if (std::isinf(v)) raise_new("OverflowError", "cannot convert float infinity to integer");
+    if (std::isnan(v)) raise_new("ValueError", "cannot convert float NaN to integer");
+    double t = std::trunc(v);
+    if (std::fabs(t) < 0x1p62) return int_from_i64(static_cast<std::int64_t>(t));
+    int e = 0;
+    double m = std::frexp(std::fabs(t), &e);
+    auto mantissa = static_cast<std::uint64_t>(std::ldexp(m, DBL_MANT_DIG));
+    const std::array<std::uint64_t, 1> one{mantissa};
+    bn::Nat shifted = bn::shl(one, static_cast<std::size_t>(e - DBL_MANT_DIG));
+    bn::normalize(shifted);
+    return make_int(t < 0, std::move(shifted));
+}
+Ref int_true_divide(Obj a, Obj b) {              // long_true_divide: exact until the last step
+    IntView x(a), y(b);
+    if (y.zero()) raise_new("ZeroDivisionError", "division by zero");
+    bool negate = x.neg != y.neg;
+    auto signed_zero = [&] { return float_ref(negate ? -0.0 : 0.0); };
+    if (x.zero()) return signed_zero();
+    std::size_t a_bits = bit_length_of(x.mag), b_bits = bit_length_of(y.mag);
+    if (a_bits <= DBL_MANT_DIG && b_bits <= DBL_MANT_DIG) {   // both exact as doubles: the division rounds correctly
+        double q = static_cast<double>(x.mag[0]) / static_cast<double>(y.mag[0]);
+        return float_ref(negate ? -q : q);
+    }
+    auto overflow = []() -> Ref { raise_new("OverflowError", "integer division result too large for a float"); };
+    auto diff = static_cast<std::int64_t>(a_bits) - static_cast<std::int64_t>(b_bits);
+    if (diff > DBL_MAX_EXP) return overflow();
+    if (diff < DBL_MIN_EXP - DBL_MANT_DIG - 1) return signed_zero();
+    std::int64_t shift = std::max<std::int64_t>(diff, DBL_MIN_EXP) - DBL_MANT_DIG - 2;
+    bool inexact = false;
+    bn::Nat scaled;
+    if (shift <= 0) {
+        scaled = bn::shl(x.mag, static_cast<std::size_t>(-shift));
+    } else {
+        scaled = bn::shr(x.mag, static_cast<std::size_t>(shift));
+        inexact = !bn::trimmed(bn::low_bits(x.mag, static_cast<std::size_t>(shift))).empty();
+    }
+    auto [q, r] = bn::div_rem(scaled, y.mag, nullptr);
+    bn::normalize(q);
+    bn::normalize(r);
+    if (!r.empty()) inexact = true;
+    std::uint64_t low = q.empty() ? 0 : q[0];    // at most DBL_MANT_DIG + 3 bits
+    auto x_bits = static_cast<std::int64_t>(std::bit_width(low));
+    std::int64_t extra_bits = std::max<std::int64_t>(x_bits, DBL_MIN_EXP - shift) - DBL_MANT_DIG;
+    std::uint64_t mask = std::uint64_t{1} << (extra_bits - 1);
+    std::uint64_t value = low | (inexact ? 1 : 0);
+    if ((value & mask) != 0 && (value & (3 * mask - 1)) != 0) value += mask;
+    value &= ~(2 * mask - 1);
+    auto dx = static_cast<double>(value);
+    if (shift + x_bits >= DBL_MAX_EXP && (shift + x_bits > DBL_MAX_EXP || dx == std::ldexp(1.0, static_cast<int>(x_bits)))) return overflow();
+    double result = std::ldexp(dx, static_cast<int>(shift));
+    return float_ref(negate ? -result : result);
 }
 Ref big_negate(Obj v) { IntView x(v); return make_int(!x.neg, nat(x.mag)); }
 Ref big_absolute(Obj v) { IntView x(v); return make_int(false, nat(x.mag)); }
@@ -423,6 +491,8 @@ Ref b_pow(Obj, Args a) {                         // builtin_pow_impl: pow(base, 
     bool found = false;
     Ref r = call_special(given[0], "__pow__", {given[1], given[2]}, &found);
     if (found && r.get() != Obj::of(NOTIMPLEMENTED)) return r;
+    if (is_float(given[1]) || is_float(given[2]))   // but a built-in's slot takes its turn: float_pow says no for all three
+        raise_new("TypeError", "pow() 3rd argument not allowed unless all arguments are integers");
     raise_new("TypeError", "unsupported operand type(s) for ** or pow(): '" + type_of(given[0])->name + "', '" + type_of(given[1])->name + "', '" + type_of(given[2])->name + "'");
 }
 Ref b_round(Obj, Args a) {                       // builtin_round_impl
