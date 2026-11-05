@@ -655,7 +655,7 @@ def test_simple_namespace() -> None:
 def test_a_missing_native_module_or_name_is_refused_and_an_omitted_one_is_not_installed() -> None:
     if shutil.which("g++") is None:
         return
-    for body, refused in (("import _thread", "_thread"), ("import _types\n_types.nothing_here\nprint('absent')", None),
+    for body, refused in (("import _stat", "_stat"), ("import _types\n_types.nothing_here\nprint('absent')", None),
                           ("try:\n    import _decimal\nexcept ImportError as e:\n    print(type(e).__name__, e.name)", None),
                           ("try:\n    import not_a_module_anywhere\nexcept ImportError as e:\n    print(type(e).__name__, e.name)", None)):
         with tempfile.TemporaryDirectory() as tmp:

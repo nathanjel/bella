@@ -195,7 +195,7 @@ struct PyFunction : Object {
     Ref defaults;                                // a tuple, or Unset
     Ref kwdefaults;                              // a dict, or Unset
     std::vector<Ref> closure;                    // cells, in the order of co_freevars
-    Ref name, qualname, doc, annotate, dict;
+    Ref name, qualname, doc, annotate, dict, type_params;
     Ref module_name;                             // func.__module__ once rebound; Unset: its globals' __name__
     PyFunction(const Code* c, Ref (*e)(PyFunction*, Args), Module* m);
 };
@@ -311,6 +311,7 @@ Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tupl
 Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
 void fill_itertools(Module* m);                   // runtime/src/imports.cpp, running runtime/prelude/itertools.py
 void fill_operator(Module* m);                    // and runtime/prelude/_operator.py
+void fill_thread(Module* m);                      // and runtime/prelude/_thread.py
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);
@@ -776,6 +777,7 @@ std::string_view native_module_name(const Module* m);   // empty for any other m
 void set_bootstrap_module(Module* m);
 Ref i_bella_ga_get(Obj, Args a);
 Ref object_getattribute(Obj self, Args a);
+Ref instance_dict_of(Obj self);                  // the __dict__ of a class's instance, by its getset
 Ref i_bella_is_builtin(Obj, Args a);
 Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives

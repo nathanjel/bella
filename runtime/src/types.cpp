@@ -118,6 +118,10 @@ ClassObject* observed_type(Obj v) {
     return type_of(v);
 }
 
+void check_member_applies(const SlotDescriptor* d, Obj obj) {   // descr_check
+    if (!isinstance(obj, d->owner))
+        raise_new("TypeError", "descriptor '" + d->name->text + "' for '" + d->owner->name + "' objects doesn't apply to a '" + type_of(obj)->name + "' object");
+}
 Ref descr_get(Obj found, Obj obj, Obj type) {
     if (found.is_object()) {
         Object* o = found.object();
@@ -148,6 +152,18 @@ Ref descr_get(Obj found, Obj obj, Obj type) {
                                                "' objects doesn't apply to a '" + type_of(obj)->name + "' object");
                 return g->get(obj);
             }
+            case Kind::SlotDescriptor: {             // member_get
+                auto* d = static_cast<SlotDescriptor*>(o);
+                if (is_none(obj)) return Ref::share(found);
+                check_member_applies(d, obj);
+                Ref out;
+                with_attribute_storage(obj, [&](auto* inst) {
+                    Obj v = inst->field(d->name);
+                    if (v.is_unset()) raise_attribute_error(obj, d->name, "'" + fully_qualified_name(type_of(obj)) + "' object has no attribute '" + d->name->text + "'");
+                    out = Ref::share(v);
+                });
+                return out;
+            }
             default:
                 break;
         }
@@ -159,22 +175,41 @@ Ref descr_get(Obj found, Obj obj, Obj type) {
 }
 
 namespace {
-Ref get_native(Obj self, Args a) {             // __get__ of the C++ descriptors
-    arity(a, "__get__", 1, 2);
+Ref get_native(Obj self, Args a) {             // __get__ of the C++ descriptors (wrap_descr_get)
+    if (a.nkw != 0) raise_new("TypeError", "wrapper __get__() takes no keyword arguments");
+    if (a.npos < 1) raise_new("TypeError", "__get__ expected at least 1 argument, got 0");
+    if (a.npos > 2) raise_new("TypeError", "__get__ expected at most 2 arguments, got " + std::to_string(a.npos));
     Obj obj = a.pos(0);
     Obj type = a.npos > 1 ? a.pos(1) : None();
     if (is_none(obj) && is_none(type)) raise_new("TypeError", "__get__(None, None) is invalid");
     return descr_get(self, obj, type);
 }
-Ref descriptor_name(Obj self) { return str_new(static_cast<GetSet*>(self.object())->name); }
-Ref descriptor_objclass(Obj self) { return Ref::share(Obj::of(static_cast<GetSet*>(self.object())->owner)); }
+// a member is a __slots__ member (object.hpp's) or a C++ getset presented as one
+std::string descriptor_text(Obj self) {
+    if (is_kind(self, Kind::SlotDescriptor)) return static_cast<SlotDescriptor*>(self.object())->name->text;
+    return static_cast<GetSet*>(self.object())->name;
+}
+ClassObject* descriptor_owner(Obj self) {
+    if (is_kind(self, Kind::SlotDescriptor)) return static_cast<SlotDescriptor*>(self.object())->owner;
+    return static_cast<GetSet*>(self.object())->owner;
+}
+Ref descriptor_name(Obj self) { return str_new(descriptor_text(self)); }
+Ref descriptor_objclass(Obj self) { return Ref::share(Obj::of(descriptor_owner(self))); }
 Ref descriptor_qualname(Obj self) {              // descr_get_qualname: the type's qualified name, a dot, its own
-    auto* g = static_cast<GetSet*>(self.object());
-    Ref owner = getattr(Obj::of(g->owner), N("__qualname__"));
-    return str_new(as_str(owner.get())->text + "." + g->name);
+    Ref owner = getattr(Obj::of(descriptor_owner(self)), N("__qualname__"));
+    return str_new(as_str(owner.get())->text + "." + descriptor_text(self));
 }
 Ref getset_set(Obj self, Args a) {
     arity(a, "__set__", 2, 2);
+    if (is_kind(self, Kind::SlotDescriptor)) {   // member_set: the field itself, whatever the class's __setattr__ does
+        auto* d = static_cast<SlotDescriptor*>(self.object());
+        check_member_applies(d, a.pos(0));
+        with_attribute_storage(a.pos(0), [&](auto* inst) {
+            incref(a.pos(1));
+            decref(std::exchange(inst->field(d->name), a.pos(1)));
+        });
+        return none_ref();
+    }
     auto* g = static_cast<GetSet*>(self.object());
     if (g->set == nullptr) {
         if (g->cls == types().member_descriptor) raise_new("AttributeError", "readonly attribute");
@@ -184,7 +219,17 @@ Ref getset_set(Obj self, Args a) {
     return none_ref();
 }
 Ref getset_delete(Obj self, Args a) {
-    arity(a, "__delete__", 1, 1);
+    if (a.nkw != 0) raise_new("TypeError", "wrapper __delete__() takes no keyword arguments");
+    if (a.npos != 1) raise_new("TypeError", "expected 1 argument, got " + std::to_string(a.npos));   // wrap_descr_delete
+    if (is_kind(self, Kind::SlotDescriptor)) {
+        auto* d = static_cast<SlotDescriptor*>(self.object());
+        check_member_applies(d, a.pos(0));
+        with_attribute_storage(a.pos(0), [&](auto* inst) {
+            if (inst->field(d->name).is_unset()) raise_attribute_error(a.pos(0), d->name, d->name->text);
+            decref(std::exchange(inst->field(d->name), Obj{}));
+        });
+        return none_ref();
+    }
     auto* g = static_cast<GetSet*>(self.object());
     if (g->set == nullptr) {                     // getset_set: no setter, for storing and deleting alike
         if (g->cls == types().member_descriptor) raise_new("AttributeError", "readonly attribute");
@@ -412,7 +457,8 @@ Ref object_new(Obj, Args a) {
         raise_new("TypeError", "Can't instantiate abstract class " + cls->name + " without an implementation for abstract method" +
                                    (names.size() > 1 ? "s" : "") + " '" + joined + "'");
     }
-    if (cls->has("__getattribute__") && type_lookup(cls, N("__getattribute__")) != type_lookup(types().object, N("__getattribute__")))
+    if (cls->has("__getattribute__") && type_lookup(cls, N("__getattribute__")) != type_lookup(types().object, N("__getattribute__")) &&
+        !is_kind(type_lookup(cls, N("__getattribute__")), Kind::Builtin))   // _thread._local's is no program's
         throw NotImplemented("[P2+] a class that overrides __getattribute__ (spec section 3)");
     return own(new_instance(cls));
 }
@@ -602,7 +648,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         }
         // type_new_visit_slots: identifiers; __dict__ once and only where no base has a dict;
         // a repeated ordinary name is accepted (CPython makes it twice, the last one wins)
-        bool base_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict; });
+        bool base_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict && !b->dict_without_getset; });
         for (Ref& item : items) {
             const Str* s = as_str(item.get());
             if (s == nullptr) raise_new("TypeError", "__slots__ items must be strings, not '" + type_of(item.get())->name + "'");
@@ -665,13 +711,16 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     c->cls = meta;
     c->qualname = qualname;
     c->heap_type = true;
-    bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict; });
+    bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict && !b->dict_without_getset; });
     // type_ready's order: the getsets (__dict__, __weakref__) and only then the members. The room for weak
     // references comes by itself unless the object has a variable size, as an int's has; a slot asks for it there
     std::vector<std::pair<const Str*, Ref>> members;
     for (auto& [k, v] : c->attrs.items())
         if (is_kind(v, Kind::SlotDescriptor)) members.emplace_back(k, Ref::steal(c->attrs.pop(k)));
-    if (c->has_dict && !base_has_dict && !c->attrs.contains(N("__dict__")))    // the class body's stands
+    bool slots_refuse_dict = c->slots && std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->dict_without_getset; }) &&
+                             std::find(c->slots->begin(), c->slots->end(), N("__dict__")) == c->slots->end();
+    c->dict_without_getset = slots_refuse_dict;
+    if (c->has_dict && !base_has_dict && !slots_refuse_dict && !c->attrs.contains(N("__dict__")))    // the class body's stands
         c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
     bool base_has_weak = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_weakref; });
     bool asked_weak = c->slots && std::find(c->slots->begin(), c->slots->end(), N("__weakref__")) != c->slots->end();
@@ -1021,7 +1070,7 @@ Ref dict_keys_list(Obj names) {
 Ref object_dir(Obj self, Args a) {               // object___dir___impl
     noargs(a, "object.__dir__");
     // the prelude's property keeps in its dict what CPython keeps in C fields
-    Ref dict = immutable_type(type_of(self)) ? Ref{} : optional_getattr(self, N("__dict__"));
+    Ref dict = immutable_type(type_of(self)) && !type_of(self)->dict_without_getset ? Ref{} : optional_getattr(self, N("__dict__"));
     Ref names = is_dict(dict.get()) ? dict_copy(static_cast<Dict*>(dict.get().object())) : dict_new();
     Ref itsclass = optional_getattr(self, N("__class__"));
     if (!itsclass.get().is_unset()) merge_class_dict(names.get(), itsclass.get());
@@ -1257,6 +1306,16 @@ void set_fn_module(Obj self, Obj v) { fn_of(self)->module_name = v.is_unset() ? 
 Ref fn_defaults(Obj self) { return fn_of(self)->defaults.get().is_unset() ? none_ref() : fn_of(self)->defaults; }
 Ref fn_kwdefaults(Obj self) { return fn_of(self)->kwdefaults.get().is_unset() ? none_ref() : fn_of(self)->kwdefaults; }
 Ref fn_annotate(Obj self) { return fn_of(self)->annotate.get().is_unset() ? none_ref() : fn_of(self)->annotate; }
+void set_fn_annotate(Obj self, Obj v) {          // function___annotate___set_impl
+    if (v.is_unset()) raise_new("TypeError", "__annotate__ cannot be deleted");
+    if (v != None() && !callable_check(v)) raise_new("TypeError", "__annotate__ must be callable or None");
+    fn_of(self)->annotate = Ref::share(v);
+}
+Ref fn_type_params(Obj self) { return fn_of(self)->type_params.get().is_unset() ? tuple_new({}) : fn_of(self)->type_params; }
+void set_fn_type_params(Obj self, Obj v) {       // function___type_params___set_impl
+    if (v.is_unset() || !is_kind(v, Kind::Tuple)) raise_new("TypeError", "__type_params__ must be set to a tuple");
+    fn_of(self)->type_params = Ref::share(v);
+}
 Ref fn_dict(Obj self) {
     if (fn_of(self)->dict.get().is_unset()) fn_of(self)->dict = dict_new();
     return fn_of(self)->dict;
@@ -1673,8 +1732,9 @@ void present_as_c_types(Module* bootstrap) {
 }
 
 // What a class statement leaves that a type written in C does not have; the layout is held elsewhere
+Ref instance_dict_of(Obj self) { return instance_dict_getset()->get(self); }
 void forget_python_origin(ClassObject* c) {
-    for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__"})
+    for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__", "__weakref__"})   // a C type's list has no getset
         if (c->attrs.contains(N(n))) c->del_attr(N(n));
 }
 // A class the prelude writes for a type a built-in module has in C: its tp_name, its place in the
@@ -1827,7 +1887,10 @@ void init_types() {
     static_cast<GetSet*>(t.function->attrs.find(N("__module__"))->object())->deletable = true;
     getset(t.function, "__defaults__", fn_defaults);
     getset(t.function, "__kwdefaults__", fn_kwdefaults);
-    getset(t.function, "__annotate__", fn_annotate);
+    getset(t.function, "__type_params__", fn_type_params, set_fn_type_params);
+    static_cast<GetSet*>(t.function->attrs.find(N("__type_params__"))->object())->deletable = true;
+    getset(t.function, "__annotate__", fn_annotate, set_fn_annotate);
+    static_cast<GetSet*>(t.function->attrs.find(N("__annotate__"))->object())->deletable = true;
     getset(t.function, "__dict__", fn_dict);
     getset(t.method, "__func__", method_func);
     method(t.method, "__new__", method_new, Binding::Function);

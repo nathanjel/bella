@@ -431,6 +431,12 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   their `__reduce__` stops by name, `dir()` shows CPython's names, and `reversed` of a dict stops by name
   (`dict.__reversed__`). `sum` keeps `builtin_sum_impl`'s stages, since which of them an item ends decides how a
   later float is rounded: exact ints in a C long, then floats compensated with ints in a C long among them, then `+`.
+* `_thread` (`runtime/prelude/_thread.py`, C-7-22) has one thread to tell apart. A timed wait on a lock the thread
+  holds sleeps out its timeout and says no; an untimed one, a thread's creation, `interrupt_main`, `set_name` and the
+  struct sequence `_ExceptHookArgs` stop by name. `_local` is an instance with its dict: `local_getattro`'s one
+  special case, `__dict__`, is in `getattr_impl`, because a program's `__getattribute__` is [P2+] and the prelude's
+  would be refused with it. It keeps the weak reference to itself that the C's dummy keeps, since a program can
+  count it, in a slot taken out of the class's namespace.
 * `float` (`runtime/src/float.cpp`, C-6-12): the object is a double, and a subclass's instance adds an attribute
   storage as `IntInstance` does. The digits are libstdc++'s (`make float-diff`), and everything around them is the C's.
   What is not finished: a negative float to a fractional power stops by name until `complex`; `float()` of a str

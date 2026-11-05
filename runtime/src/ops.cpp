@@ -815,6 +815,10 @@ Ref repr_of(Obj v) {
             if (overridden(v, "__repr__")) break;
             [[fallthrough]];
         case Kind::Float: return str_new(float_text(float_value(v)));
+        case Kind::SlotDescriptor: {             // member_repr
+            auto* d = static_cast<SlotDescriptor*>(o);
+            return str_new("<member '" + d->name->text + "' of '" + d->owner->name + "' objects>");
+        }
         case Kind::Range: {
             auto* r = static_cast<Range*>(o);
             if (r->big) return str_new(big_range_repr(v));
@@ -961,6 +965,8 @@ Ref instance_member(Obj obj, const Str* name) {
     return out;
 }
 Ref getattr_impl(Obj obj, const Str* name) {
+    if (obj.is_object() && obj.object()->cls->dict_without_getset && name == intern("__dict__"))   // local_getattro
+        return instance_dict_of(obj);
     if (obj.is_object() && obj.object()->cls->weak_proxy) {   // proxy_getattr
         WeakRecord* r = weak_record(obj.object());
         if (r == nullptr || r->target == nullptr) raise_new("ReferenceError", "weakly-referenced object no longer exists");

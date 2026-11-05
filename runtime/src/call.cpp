@@ -579,34 +579,34 @@ Ref b_isinstance(Obj, Args a) {
     clinic(a, "isinstance", "isinstance", 2, 2);
     return Ref::steal(boolean(object_recursive_isinstance(a.pos(0), a.pos(1))));
 }
-Ref attr_name(Obj v, const char* who) {
+Ref attr_name(Obj v) {
     const Str* s = as_str(v);
-    if (s == nullptr) raise_new("TypeError", std::string(who) + "(): attribute name must be string, not '" + type_of(v)->name + "'");
+    if (s == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(v)->name + "'");
     return Ref::share(Obj::of(intern(s->text)));
 }
 Ref b_getattr(Obj, Args a) {
     if (a.nkw != 0) raise_new("TypeError", "getattr() takes no keyword arguments");
     if (a.npos < 2 || a.npos > 3) raise_new("TypeError", "getattr expected 2 or 3 arguments, got " + std::to_string(a.npos));
-    Ref n = attr_name(a.pos(1), "getattr");
+    Ref n = attr_name(a.pos(1));
     if (a.npos == 2) return getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
     Ref v = optional_getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
     return v.get().is_unset() ? Ref::share(a.pos(2)) : v;
 }
 Ref b_hasattr(Obj, Args a) {
     clinic(a, "hasattr", "hasattr", 2, 2);
-    Ref n = attr_name(a.pos(1), "hasattr");
+    Ref n = attr_name(a.pos(1));
     Ref v = optional_getattr(a.pos(0), static_cast<const Str*>(n.get().object()));
     return Ref::steal(boolean(!v.get().is_unset()));
 }
 Ref b_setattr(Obj, Args a) {
     clinic(a, "setattr", "setattr", 3, 3);
-    Ref n = attr_name(a.pos(1), "setattr");
+    Ref n = attr_name(a.pos(1));
     setattr(a.pos(0), static_cast<const Str*>(n.get().object()), a.pos(2));
     return none_ref();
 }
 Ref b_delattr(Obj, Args a) {
     clinic(a, "delattr", "delattr", 2, 2);
-    Ref n = attr_name(a.pos(1), "delattr");
+    Ref n = attr_name(a.pos(1));
     delattr(a.pos(0), static_cast<const Str*>(n.get().object()));
     return none_ref();
 }

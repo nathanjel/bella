@@ -602,6 +602,7 @@ struct Function : Object {
 
 struct SlotDescriptor : Object {                     // a real __slots__ member: a data descriptor
     const Str* name;
+    ClassObject* owner = nullptr;                    // the class it was made for: what it says it applies to
     explicit SlotDescriptor(const Str* n);
 };
 
@@ -650,6 +651,7 @@ struct ClassObject : Object {
     std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
     bool has_dict = false;
     bool has_weakref = false;                    // room for weak references (RefClass.has_weakref)
+    bool dict_without_getset = false;            // _thread._local: a subclass still gets a __dict__ of its own to show
     bool weak_proxy = false;                     // weakref.ProxyType and its kin: attribute access goes to the target
     bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
     bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited
@@ -793,6 +795,7 @@ inline ClassObject* make_class(const ClassSpec& spec) {
         std::sort(own.begin(), own.end(), [](const Str* x, const Str* y) { return x->text < y->text; });
         for (const Str* s : own) {
             auto* d = new SlotDescriptor(s);
+            d->owner = c;
             incref(d);
             c->attrs.set(s, Obj::of(d));
         }

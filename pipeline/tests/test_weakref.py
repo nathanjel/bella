@@ -611,6 +611,71 @@ h = Holder()
 h.t = T()
 print("end of the program")
 """),
+    ('a_member_descriptor', SHOW + r"""
+class C:
+    __slots__ = ("x", "_C__p", "__q")
+    def __setattr__(self, n, v):
+        print("setattr", n)
+        object.__setattr__(self, n, v)
+    def __delattr__(self, n):
+        print("delattr", n)
+        object.__delattr__(self, n)
+class D(C):
+    pass
+class E:
+    pass
+d = C.__dict__["x"]
+c = C()
+show(lambda: d.__set__(c, 1))
+show(lambda: c.x)
+show(lambda: d.__get__(c))
+show(lambda: d.__get__(c, C))
+show(lambda: d.__get__(None, C) is d)
+show(lambda: d.__get__(c, None))
+show(lambda: d.__get__(None, None))
+show(lambda: d.__name__)
+show(lambda: d.__qualname__)
+show(lambda: d.__objclass__)
+show(lambda: repr(d))
+show(lambda: type(d).__name__)
+show(lambda: d.__delete__(c))
+show(lambda: d.__get__(c))
+show(lambda: c.x)
+show(lambda: d.__delete__(c))
+show(lambda: d.__set__(1, 1))
+show(lambda: d.__get__(1))
+show(lambda: d.__delete__(1))
+show(lambda: d.__set__(E(), 1))
+show(lambda: d.__get__(E()))
+show(lambda: setattr(d, "__name__", "a"))
+show(lambda: setattr(d, "__objclass__", int))
+show(lambda: setattr(d, "__qualname__", "a"))
+show(lambda: d.__set__(c))
+show(lambda: d.__get__())
+show(lambda: d.__delete__())
+sub = D()
+show(lambda: d.__set__(sub, 2))
+show(lambda: d.__get__(sub))
+show(lambda: D.x is d)
+show(lambda: c.__class__.x.__get__(sub))
+show(lambda: C.__dict__["_C__q"].__name__)
+show(lambda: C.__dict__["_C__p"].__qualname__)
+class Holder:
+    __slots__ = ("v",)
+class Noisy:
+    def __del__(self):
+        print("del noisy")
+h = Holder()
+Holder.v.__set__(h, Noisy())
+Holder.v.__set__(h, 1)
+print("replaced")
+Holder.v.__set__(h, Noisy())
+Holder.v.__delete__(h)
+print("deleted")
+show(lambda: range.start.__name__)
+show(lambda: range.start.__objclass__)
+show(lambda: slice.step.__qualname__)
+"""),
 ]
 
 

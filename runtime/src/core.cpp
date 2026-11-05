@@ -199,6 +199,7 @@ bool register_deaths() {
         f->dict = Ref{};
         for (Ref& c : f->closure) c = Ref{};
         f->annotate = Ref{};
+        f->type_params = Ref{};
         f->name = Ref{};
         f->qualname = Ref{};
         destroy<PyFunction>(o);

@@ -5,6 +5,12 @@
 // import.c calls into importlib._bootstrap, this calls the prelude's copy of it
 // (runtime/prelude/bootstrap.py): _find_and_load and _handle_fromlist. The finder is the closed
 // world's registry of compiled modules (spec section 8), which the program's main unit hands over.
+#include <pthread.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <cerrno>
+
 #include "bella/runtime.hpp"
 
 #include <algorithm>
@@ -15,6 +21,7 @@
 namespace bella {
 namespace prelude_itertools { Ref module_body(Module* m); }   // runtime/prelude/itertools.py
 namespace prelude_operator { Ref module_body(Module* m); }    // runtime/prelude/_operator.py
+namespace prelude_thread { Ref module_body(Module* m); }      // runtime/prelude/_thread.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -313,7 +320,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_weakref", {fill_weakref}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_weakref", {fill_weakref}}};
     return table;
 }
 }  // namespace
@@ -416,6 +423,43 @@ void fill_weakref(Module* m) {                   // the types are named for `wea
     auto* member = new GetSet("__callback__", ref, weak_callback_member, nullptr);   // PyMemberDef in CPython
     member->cls = types().member_descriptor;
     ref->attrs.set(N("__callback__"), Obj::of(member));
+}
+// the one thread, and the wait that no other thread can end
+Ref i_thread_ident(Obj, Args a) {
+    positional_only(a, "_thread_ident", 0, 0);
+    return int_from_i64(static_cast<std::int64_t>(pthread_self()));
+}
+Ref i_native_thread_id(Obj, Args a) {
+    positional_only(a, "_native_thread_id", 0, 0);
+    return int_from_i64(gettid());
+}
+Ref i_sleep_ns(Obj, Args a) {
+    positional_only(a, "_sleep_ns", 1, 1);
+    std::int64_t ns = clipped_index(a.pos(0));
+    timespec left{.tv_sec = static_cast<time_t>(ns / 1000000000), .tv_nsec = static_cast<long>(ns % 1000000000)};
+    while (nanosleep(&left, &left) != 0 && errno == EINTR) {
+    }
+    return none_ref();
+}
+Ref handle_ident(Obj self) { return getattr(self, N("_a_ident")); }
+Ref local_getattribute(Obj self, Args a) {       // local_getattro: the rest is the generic path's
+    if (a.npos == 1 && a.nkw == 0 && as_str(a.pos(0)) != nullptr && as_str(a.pos(0))->text == "__dict__") return instance_dict_of(self);
+    return object_getattribute(self, a);
+}
+void fill_thread(Module* m) {
+    fill_in_python(m, "_thread", "_thread", prelude_thread::module_body,
+                   {{"_number_index", i_number_index}, {"_sequence_check", i_sequence_check}, {"_tp_name", i_tp_name}, {"_thread_ident", i_thread_ident},
+                    {"_native_thread_id", i_native_thread_id}, {"_sleep_ns", i_sleep_ns}, {"_bella_refuse", i_bella_refuse}});
+    auto* local = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("_local"))).object());
+    Ref dict_getset = Ref::steal(local->attrs.pop(N("__dict__")));   // local_getattro answers for __dict__: the type has no getset
+    Ref self_reference = Ref::steal(local->attrs.pop(N("_a_self_reference")));
+    local->dict_without_getset = true;
+    auto* getattribute = new Builtin("__getattribute__", local_getattribute, Obj{}, Binding::Method);
+    getattribute->owner = local;
+    getattribute->flags |= IMMORTAL;
+    local->attrs.set(N("__getattribute__"), Obj::of(getattribute));
+    auto* handle = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("_ThreadHandle"))).object());
+    handle->attrs.set(N("ident"), Obj::of(new GetSet("ident", handle, handle_ident, nullptr)));
 }
 void fill_operator(Module* m) {                  // its types are named for `operator`, the module that shows them
     fill_in_python(m, "_operator", "operator", prelude_operator::module_body,

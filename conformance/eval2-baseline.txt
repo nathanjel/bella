@@ -58,6 +58,7 @@ C-7-18_collections_abc_types.py
 C-7-19_abc.py
 C-7-20_itertools.py
 C-7-21_operator.py
+C-7-22_thread_primitives.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-03_locals_detached.py
