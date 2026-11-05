@@ -17,6 +17,7 @@ std::vector<ClassObject*>& builtin_types() {
 ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases) {
     ClassObject* c = builtin_class(name);
     builtin_types().push_back(c);
+    c->final_type = cpython_has("final", name);
     c->bases = bases;
     c->mro = {c};
     for (ClassObject* b : bases)

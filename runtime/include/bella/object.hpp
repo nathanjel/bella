@@ -638,6 +638,7 @@ struct ClassObject : Object {
     bool has_dict = false;
     bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
     bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited
+    bool final_type = false;                     // a built-in type a class cannot derive from (no Py_TPFLAGS_BASETYPE)
     // attrs as a dict, made when a program first asks for a view of __dict__ (class_dict) and kept
     // equal to attrs from then on; its counts are dropped first, so attrs decides when a value dies
     DictObject* dict_view = nullptr;

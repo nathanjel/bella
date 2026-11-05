@@ -533,7 +533,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (bc == nullptr) raise_new("TypeError", "bases must be types");
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
-        if (cpython_has("final", bc->name)) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
+        if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
         if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().int_ &&
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
@@ -633,12 +633,21 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     c->cls = meta;
     c->qualname = qualname;
     c->heap_type = true;
-    if (meta != types().type) mro_invoke(c);
     bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict; });
-    if (c->has_dict && !base_has_dict && !c->attrs.contains(N("__dict__")))    // type_add_getset: the class body's stands
+    if (c->has_dict && !base_has_dict && !c->attrs.contains(N("__dict__")))    // the class body's stands
         c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
-    if (!c->attrs.contains(N("__doc__"))) c->attrs.set(N("__doc__"), None());   // type_dict_set_doc: after the getsets
-    if (has_eq && !has_hash) c->attrs.set(N("__hash__"), None());               // type_ready_set_hash: then __hash__
+    // A metaclass's mro() is the first code that can see the class, and may keep a view of its dict:
+    // from here each insertion goes through set_attr. The members go in after it, as type_ready's do.
+    if (meta != types().type) {
+        std::vector<std::pair<const Str*, Ref>> members;
+        for (auto& [k, v] : c->attrs.items())
+            if (is_kind(v, Kind::SlotDescriptor)) members.emplace_back(k, Ref::steal(c->attrs.pop(k)));
+        mro_invoke(c);
+        for (auto& [k, v] : members)
+            if (!c->attrs.contains(k)) c->set_attr(k, v.get());
+    }
+    if (!c->attrs.contains(N("__doc__"))) c->set_attr(N("__doc__"), None());   // type_dict_set_doc: after the getsets
+    if (has_eq && !has_hash) c->set_attr(N("__hash__"), None());               // type_ready_set_hash: then __hash__
     if (!classcell.is_unset()) {
         if (!is_kind(classcell, Kind::Cell))
             raise_new("TypeError", "__classcell__ must be a nonlocal cell, not " + type_of(classcell)->name);
@@ -982,12 +991,16 @@ Ref type_mro(Obj self, Args a) {
 Ref type_repr(Obj self, Args) { return type_repr_of(self); }
 
 // object's methods
+void one_argument(Args a, const char* name) {    // wrap_binaryfunc: check_num_args
+    if (a.nkw != 0) raise_new("TypeError", std::string("wrapper ") + name + "() takes no keyword arguments");
+    if (a.npos != 1) raise_new("TypeError", "expected 1 argument, got " + std::to_string(a.npos));
+}
 Ref object_eq(Obj self, Args a) {
-    arity(a, "__eq__", 1, 1);
+    one_argument(a, "__eq__");
     return Ref::steal(self == a.pos(0) ? boolean(true) : Obj::of(NOTIMPLEMENTED));
 }
 Ref object_ne(Obj self, Args a) {             // inverts __eq__ unless it returned NotImplemented
-    arity(a, "__ne__", 1, 1);
+    one_argument(a, "__ne__");
     Ref r = call_special(self, "__eq__", {a.pos(0)});
     if (r.get() == Obj::of(NOTIMPLEMENTED)) return r;
     return Ref::steal(boolean(!truth(r.get())));
@@ -1584,7 +1597,9 @@ void present_as_c_types(Module* bootstrap) {
     ga->name_prefix = 6;
     ga->forwards_attributes = true;
     note_prelude_class(ga);
-    note_prelude_class(static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("generic_alias_iterator"))).object()));
+    auto* ga_iterator = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("generic_alias_iterator"))).object());
+    note_prelude_class(ga_iterator);
+    ga_iterator->final_type = true;
     getset(ga, "__parameters__", ga_parameters);
     getset(ga, "__typing_unpacked_tuple_args__", ga_unpacked_tuple_args);
     for (ClassObject* t : builtin_types())

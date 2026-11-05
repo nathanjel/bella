@@ -95,8 +95,8 @@ Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::ste
 Ref own_iter(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return iter(self); }
 Ref own_contains(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return compare(CmpOp::In, a.pos(0), self); }
 Ref own_getitem(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return getitem(self, a.pos(0)); }
-Ref own_add(Obj self, Args a) { wrapper_args(a, "__add__", 1); return binary(BinOp::Add, self, a.pos(0)); }
-Ref own_mul(Obj self, Args a) { wrapper_args(a, "__mul__", 1); return binary(BinOp::Mul, self, a.pos(0)); }
+Ref own_add(Obj self, Args a) { wrapper_args(a, "__add__", 1); return sequence_concat(self, a.pos(0)); }
+Ref own_mul(Obj self, Args a) { wrapper_args(a, "__mul__", 1); return sequence_repeat(self, a.pos(0)); }
 Ref own_len(Obj self, Args a) {
     wrapper_args(a, "__len__", 0);
     Ref len = builtin("len");
@@ -143,8 +143,7 @@ Ref range_index(Obj self, Args a) {
 
 void slot(ClassObject* c, const char* name, NativeFn fn) {
     if (c->attrs.contains(intern(name))) return;
-    auto* f = new Builtin(name, fn);
-    f->binding = Binding::Method;
+    auto* f = new Builtin(name, fn, Obj{}, Binding::Method);   // its class comes from its binding: this one binds
     f->owner = c;
     f->flags |= IMMORTAL;
     c->attrs.set(intern(name), Obj::of(f));

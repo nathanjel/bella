@@ -92,14 +92,15 @@ Ref call_method(Obj self, const char* name, std::initializer_list<Obj> args) {  
 
 Ref mapping_items(Obj ns) {                      // PyMapping_Items, method_output_as_list
     Ref out = call_method(ns, "items", {});
+    Ref it;
     try {
-        Ref it = iter(out.get());
+        it = iter(out.get());
     } catch (const PyError& e) {
         if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
         raise_new("TypeError", type_of(ns)->name + ".items() must return an iterable, not " + type_of(out.get())->name);
     }
     Ref items = list_new({});
-    list_extend(items.get(), out.get());
+    list_extend(items.get(), it.get());
     return items;
 }
 
@@ -109,14 +110,15 @@ std::vector<Obj>& sequence_items(const Ref& seq) {
 
 Ref sequence_fast(Obj v, const char* message) {  // PySequence_Fast
     if (is_kind(v, Kind::List) || is_kind(v, Kind::Tuple)) return Ref::share(v);
-    Ref items = list_new({});
+    Ref it;
     try {
-        Ref it = iter(v);
+        it = iter(v);
     } catch (const PyError& e) {
         if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
         raise_new("TypeError", message);
     }
-    list_extend(items.get(), v);
+    Ref items = list_new({});
+    list_extend(items.get(), it.get());
     return items;
 }
 

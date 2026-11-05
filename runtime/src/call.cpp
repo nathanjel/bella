@@ -1301,13 +1301,20 @@ void refuse_absent_data_descriptor(Obj obj, const Str* name) {
     }
 }
 std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name) {
+    if (!immutable_type(owner)) return {};       // a program's class named after a built-in is not that built-in
     const CPythonName* e = cpython_find(owner->name, name);
     return e != nullptr ? e->kind : std::string_view{};
 }
 bool presents_as_builtin(Obj f) { return is_kind(f, Kind::PyFunction) && f.object()->cls == types().builtin; }
 bool immutable_type(const ClassObject* c) { return !c->heap_type || prelude_classes().contains(c); }
 void refuse_unimplemented_operator(const char* scope, Obj a, const std::string& sym, Obj b) {
-    auto name = [](Obj v) { return is_kind(v, Kind::Instance) ? std::string("instance") : type_of(v)->name; };
+    // an instance, or the built-in type under its class: a program's classes have no row, whatever their names
+    auto name = [](Obj v) {
+        if (is_kind(v, Kind::Instance)) return std::string("instance");
+        for (const ClassObject* c : type_of(v)->mro)
+            if (!c->heap_type) return c->name;
+        return type_of(v)->name;
+    };
     if (cpython_has(scope, name(a) + sym + name(b)))
         throw NotImplemented("'" + type_of(a)->name + "' " + sym + " '" + type_of(b)->name + "' (CPython has it; the runtime does not yet)");
 }

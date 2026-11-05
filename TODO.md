@@ -441,6 +441,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              `register` (`_PyType_SetFlagsRecursive`).
            * Subscripting a class and `types.GenericAlias` done (C-3-36), and `dir()` of a class or
              an object. `types.UnionType` (`X | Y`) is refused until it is written.
+           * Reviewed 2026-11-05 (A11, RL-327 to RL-333; `pipeline/tests/test_review_2026_11_05.py`).
+             Fixed among them: no special method from `slots.cpp` bound through a subclass instance
+             (`E(1).__add__(2)`), and a program's class named after a built-in read that built-in's rows.
            * Next, by how many cases each stops (`make compiled-corpus`): `bytes` constants 11,
              `_weakref` 5, `gc` 4, `_ast` 3, `_operator` 2, `itertools` 2, `_stat` 2; the builtins
              `sorted`, `enumerate`, `zip`, `min`, `max`; `str %`. Then start-up modules run at

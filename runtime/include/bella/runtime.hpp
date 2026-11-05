@@ -286,6 +286,8 @@ ClassObject* new_wrapper_class(Args a, const ClassObject* type);   // tp_new_wra
 void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, const Str* name);
 std::vector<ClassObject*>& builtin_types();      // every C++ type made at start-up
 void init_slots();                               // runtime/src/slots.cpp
+Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tuple
+Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
 void fill_abc(Module* m);                        // runtime/src/abc.cpp: the module _abc
 std::vector<std::string_view> cpython_names_of(std::string_view scope);   // the names table's rows under a scope
 void adopt_functions(Module* m);                 // the module's functions say it is theirs (__self__, __module__)

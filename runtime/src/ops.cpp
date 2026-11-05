@@ -225,6 +225,11 @@ Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
 bool set_like_operator(BinOp op) { return op == BinOp::And || op == BinOp::Or || op == BinOp::Sub || op == BinOp::Xor; }
 }  // namespace
 
+// list.__add__ and the others: sq_concat and sq_repeat (wrap_binaryfunc, wrap_indexargfunc), which
+// raise for an operand they cannot take; only the `+` and `*` operators try its reflected method
+Ref sequence_concat(Obj self, Obj other) { return sequence_op(BinOp::Add, self, other, false); }
+Ref sequence_repeat(Obj self, Obj count) { return repeat(self, Obj::small(index_value(count)), false); }
+
 // binary_op1: the operands' number slots, NotImplemented when both decline
 Ref binary_op1(BinOp op, Obj a, Obj b) {
     std::int64_t x, y;

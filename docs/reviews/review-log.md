@@ -7,12 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-05:** 326 findings from twenty-one reviews and one round of examples: 278 fixed (most in commit
+**Status on 2026-11-05:** 333 findings from twenty-two reviews and one round of examples: 285 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports), 21 already done before or
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports, RL-327 to RL-333 after A11), 21 already done before or
 because of the review, 4 planned (D-2 and D-10, accepted by the author), 4 deferred (RL-222 and RL-323 to step 3c), 4 refuted
 5 checked with no issue, and 7 accepted, refused or not defects (RL-269, RL-275, RL-284, RL-285, RL-289, RL-319, RL-326). Open: RL-225 (lines inside a statement), RL-254 (a member's type) and RL-277 (a SyntaxError class). The
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, and D-12 on 2026-11-03.
@@ -21,6 +21,7 @@ author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, 
 
 | Date | Reviewer | File | Scope | Ran against |
 | --- | --- | --- | --- | --- |
+| 2026-11-05 | Codex astra-low (A11) | [2026-11-05-astra-low-11-abc-views-builtin-names.md](2026-11-05-astra-low-11-abc-views-builtin-names.md) | `62d083b..0081164`: the fixes of the last review, D-22, `_abc`, class dict views | CPython 3.15.2 and compiled, in a separate checkout |
 | 2026-11-04 | gemini-4-argon-high (G10) | [2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md](2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md) | compiled super(), metaclasses, int/dict subclasses, imports and build caches, `e827a47..62d083b` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-04 | eight Sonnet reviewers, one per focus area (S1), in place of astra-low, whose run failed | [2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md](2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-03 | astra-low (A10) | [2026-11-03-astra-low-10-traceback-dictionary-review.md](2026-11-03-astra-low-10-traceback-dictionary-review.md) | D-12 part 1, step 3a.3's dict, the operators and argument errors, `f12af86..e827a47` | CPython 3.15.2, GCC 16.2.1 |
@@ -553,6 +554,20 @@ G10's five findings all reproduce, and three of them were found again by S1. S1,
 | RL-324 | Found while fixing RL-306 | `next(obj)` raised TypeError for every iterator class of a program's | Confirmed | Fixed | `builtin_next`, a StopIteration's value kept |
 | RL-325 | Found while fixing RL-274 | A function's `__module__` could not be set or deleted, which `functools.wraps` does | Confirmed | Fixed |  |
 | RL-326 | Found while fixing RL-281 | A finaliser at exit that makes a new object with a finaliser: CPython's collector then treats the group as resurrected and never finalises it; here it dies with the namespaces | Confirmed | Not a defect | D-07; to look at again with the collector in 3c |
+
+### Class dict views, built-in names (A11)
+
+A11 is Codex astra-low on `62d083b..0081164`. All four findings reproduce on `dd187f7`. Probing the classes they belong to found three more, RL-332 the worst of them: A11 reports `[].__add__`, and running every special method against subclass instances showed none from `slots.cpp` bound at all. Tests `pipeline/tests/test_review_2026_11_05.py`.
+
+| ID | Source | Finding | Verdict | Status | Evidence and resolution |
+| --- | --- | --- | --- | --- | --- |
+| RL-327 | A11 #1 | A program's class named after a final built-in cannot be subclassed | Confirmed (`0081164`, mine): `class range: ...; class C(range)` raised TypeError | Fixed | `ClassObject::final_type`, set when a built-in type is made, so a name a program can also use decides nothing |
+| RL-328 | A11 #2 | A view of a class's dict kept from `mro()` misses `__doc__`, `__hash__` and `__dict__` | Confirmed (`0081164`, mine). `C.__dict__` itself missed them afterwards too, since it reads the same dict | Fixed | From `mro()` on, every insertion goes through `set_attr` |
+| RL-329 | A11 #3 | `[].__add__(R())` tries `R.__radd__`; so do str's and tuple's, and `__mul__`, `__rmul__` | Confirmed (RL-310, `e55e561`). `__mul__` also worded a non-index operand as the operator does | Fixed | `sequence_concat` and `sequence_repeat`: sq_concat and sq_repeat, as `wrap_binaryfunc` and `wrap_indexargfunc` call them. Every method of the built-in types against a reflecting operand now matches |
+| RL-330 | A11 #4 | `_abc_init` iterates what `items()` returns twice, and each item twice | Confirmed (`0081164`, mine) | Fixed | One iterator, kept, as `PyMapping_Items` and `PySequence_Fast` do |
+| RL-331 | Found on RL-327 | The same name-keyed look-up elsewhere: `class list(dict)`, `+ 1` was refused where CPython raises TypeError; a method's argument message read the table by a program's class name | Confirmed (`refuse_unimplemented_operator` from before this range) | Fixed | The row is the built-in under the class; `cpython_attribute_kind` answers nothing for a program's class |
+| RL-332 | Found on RL-329 | No special method from `slots.cpp` binds through a subclass instance: `E(1).__add__(2)`, `D().__eq__(x)` raise TypeError | Confirmed (RL-310, `e55e561`); the operators work, so the corpus never showed it | Fixed | `slot()` made a plain function and set its binding afterwards, and a Builtin's class comes from its binding at construction, so it had no `__get__` |
+| RL-333 | Found on RL-328 | What `mro()` sees of the class: CPython has `__dict__` there and not the slots' members; this had the reverse | Confirmed (RL-314, `e55e561`), measured on 3.15.2 | Fixed | `__dict__` goes in first; the members leave for the call and return after it, in order |
 
 ## Open for discussion
 

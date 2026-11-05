@@ -80,7 +80,7 @@ def type_names():
                iter(set()), iter(range(1)), iter(Seq()), reversed([]), {}.keys(), {}.values(), {}.items(),
                outer, outer().__closure__[0], outer.__code__, type.__dict__, [].append, list.append,
                dict.__dict__["fromkeys"], type.__dict__["__name__"], object.__init__, object().__init__,
-               sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__]
+               sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int])]
     for v in [*vars(builtins).values(), *vars(types).values()]:
         add(v)
     for s in samples:
