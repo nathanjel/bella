@@ -7,7 +7,7 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-05:** 333 findings from twenty-two reviews and one round of examples: 285 fixed (most in commit
+**Status on 2026-11-05:** 333 findings from twenty-three reviews and one round of examples: 285 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
@@ -21,6 +21,7 @@ author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, 
 
 | Date | Reviewer | File | Scope | Ran against |
 | --- | --- | --- | --- | --- |
+| 2026-11-05 | gemini-high (G11) | [2026-11-05-11-gemini-high-abc-hash-fixes.md](2026-11-05-11-gemini-high-abc-hash-fixes.md) | asked for `62d083b..0081164`; no findings | this checkout: its line numbers are those of `365e55e`, not of the range |
 | 2026-11-05 | Codex astra-low (A11) | [2026-11-05-astra-low-11-abc-views-builtin-names.md](2026-11-05-astra-low-11-abc-views-builtin-names.md) | `62d083b..0081164`: the fixes of the last review, D-22, `_abc`, class dict views | CPython 3.15.2 and compiled, in a separate checkout |
 | 2026-11-04 | gemini-4-argon-high (G10) | [2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md](2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md) | compiled super(), metaclasses, int/dict subclasses, imports and build caches, `e827a47..62d083b` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-04 | eight Sonnet reviewers, one per focus area (S1), in place of astra-low, whose run failed | [2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md](2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
@@ -554,6 +555,10 @@ G10's five findings all reproduce, and three of them were found again by S1. S1,
 | RL-324 | Found while fixing RL-306 | `next(obj)` raised TypeError for every iterator class of a program's | Confirmed | Fixed | `builtin_next`, a StopIteration's value kept |
 | RL-325 | Found while fixing RL-274 | A function's `__module__` could not be set or deleted, which `functools.wraps` does | Confirmed | Fixed |  |
 | RL-326 | Found while fixing RL-281 | A finaliser at exit that makes a new object with a finaliser: CPython's collector then treats the group as resurrected and never finalises it; here it dies with the namespaces | Confirmed | Not a defect | D-07; to look at again with the collector in 3c |
+
+### What G11's clean report covers
+
+G11 reports no defects in `62d083b..0081164`, so it has nothing to reproduce. It read and ran this checkout, not that range: all its line citations (`types.cpp` 536, 971, 977, 1213, `object.hpp` 644, 670) are those of `365e55e`, which has the fixes for A11's findings, and none are those of `0081164`. So it is no evidence about `0081164`, and it does not contradict A11: its "slots.cpp correctly handle instances of built-in types and their subclasses" is false at `0081164` (RL-332) and true where it ran. It is read as a clean pass over those areas at `365e55e`. Its last probe, a `property` subclass whose `__init__` does not call `super()`, stops with a clean refusal of `property.fget`, which is not a finding. A review run in the working checkout should from now on be given a checkout of its end commit, as A11 made itself.
 
 ### Class dict views, built-in names (A11)
 
