@@ -444,9 +444,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * Reviewed 2026-11-05 (A11, RL-327 to RL-333; `pipeline/tests/test_review_2026_11_05.py`).
              Fixed among them: no special method from `slots.cpp` bound through a subclass instance
              (`E(1).__add__(2)`), and a program's class named after a built-in read that built-in's rows.
-           * Next, by how many cases each stops (`make compiled-corpus`): `bytes` constants 11,
-             `_weakref` 5, `gc` 4, `_ast` 3, `_operator` 2, `itertools` 2, `_stat` 2; the builtins
-             `sorted`, `enumerate`, `zip`, `min`, `max`; `str %`. Then start-up modules run at
+           * `bytes` and `bytearray` done (C-3-37, `runtime/src/bytes.cpp`): every method but `%`,
+             and the UTF-8, ASCII, Latin-1 and utf-8-sig codecs with CPython's error ranges and
+             handlers. Left, each stopping by name: `%` (with `str %`), a class derived from them
+             (with `str`'s and `list`'s), the codecs UTF-16 and UTF-32, `namereplace`.
+           * Next, by how many cases each stops (`make compiled-corpus`): the builtin `reversed` 10,
+             `_weakref` 5, `gc` 4, `_ast` 3, `sorted` 2, `str %` 2, `_operator` 2, `itertools` 2,
+             `_stat` 2; the builtins `enumerate`, `zip`, `min`, `max`. Then start-up modules run at
              start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).

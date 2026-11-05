@@ -75,6 +75,11 @@ def cpp_name(name: str) -> str:
     return "py" + "".join("_1" if c == "_" else c if c.isascii() else f"_2{ord(c):06x}" for c in name)
 
 
+def c_bytes(b: bytes) -> str:
+    """A C++ string literal holding these octets: three octal digits, so what follows cannot join them."""
+    return '"' + "".join(chr(c) if 32 <= c < 127 and chr(c) not in '\\"?' else f"\\{c:03o}" for c in b) + '"'
+
+
 def c_string(s: str) -> str:
     """A C++ string literal holding s as UTF-8."""
     out = []
@@ -161,7 +166,9 @@ class Emitter:
                     else c_string(value))
             return self.lazy(("str", value), f"Obj::of(rt::intern({text}))" if value.isascii() or
                              not any(0xD800 <= ord(c) <= 0xDFFF for c in value)
-                             else f"rt::str_constant_cps({{{', '.join(f'U{ord(c):#x}' for c in value)}}})")
+                             else f"rt::str_constant_cps({{{', '.join(f'char32_t{{{ord(c):#x}}}' for c in value)}}})")
+        if type(value) is bytes:
+            return self.lazy(("bytes", value), f"rt::bytes_constant({c_bytes(value)}, {len(value)})")
         if type(value) is tuple and all(_supported_constant(v) for v in value):
             items = ", ".join(self.const(v) for v in value)
             return self.lazy(("tuple", value), f"rt::tuple_new({{{items}}}).release()")
@@ -701,7 +708,7 @@ class Emitter:
 
 
 def _supported_constant(v: object) -> bool:
-    if v is None or v is Ellipsis or type(v) in (bool, str):
+    if v is None or v is Ellipsis or type(v) in (bool, str, bytes):
         return True
     if type(v) is int:
         return -(1 << 62) <= v < (1 << 62)

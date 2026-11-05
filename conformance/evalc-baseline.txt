@@ -20,6 +20,7 @@ C-3-33_metaclasses.py
 C-3-34_dict_subclasses.py
 C-3-35_int_constructor_and_subclasses.py
 C-3-36_generic_alias.py
+C-3-37_bytes.py
 C-6-09_dict_callbacks.py
 C-7-19_abc.py
 C-8-01_partially_initialised_module.py

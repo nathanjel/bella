@@ -215,20 +215,20 @@ void init_slots() {
     slot(d, "__or__", dict_or_slot<false>);
     slot(d, "__ror__", dict_or_slot<true>);
     slot(d, "__ior__", dict_ior_slot);
-    for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.slice}) comparisons(c);
-    for (ClassObject* c : {t.str, t.tuple, t.range, t.frozenset, t.slice}) slot(c, "__hash__", own_hash);
-    for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset}) {
+    for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.slice, t.bytes, t.bytearray}) comparisons(c);
+    for (ClassObject* c : {t.str, t.tuple, t.range, t.frozenset, t.slice, t.bytes}) slot(c, "__hash__", own_hash);
+    for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.bytes, t.bytearray}) {
         slot(c, "__len__", own_len);
         slot(c, "__iter__", own_iter);
         slot(c, "__contains__", own_contains);
     }
-    for (ClassObject* c : {t.str, t.list, t.tuple, t.range}) slot(c, "__getitem__", own_getitem);
-    for (ClassObject* c : {t.str, t.list, t.tuple}) {
+    for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.bytes, t.bytearray}) slot(c, "__getitem__", own_getitem);
+    for (ClassObject* c : {t.str, t.list, t.tuple, t.bytes, t.bytearray}) {
         slot(c, "__add__", own_add);
         slot(c, "__mul__", own_mul);
         slot(c, "__rmul__", own_mul);
     }
-    for (ClassObject* c : {t.str, t.range, t.slice, t.none}) slot(c, "__repr__", own_repr);
+    for (ClassObject* c : {t.str, t.range, t.slice, t.none, t.bytes, t.bytearray}) slot(c, "__repr__", own_repr);
     slot(t.none, "__bool__", own_bool);
     slot(t.none, "__hash__", own_hash);
     for (ClassObject* c : {t.set, t.frozenset}) {

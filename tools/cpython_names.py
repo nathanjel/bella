@@ -96,7 +96,8 @@ def operators():
     import operator as op
     class Instance:
         pass
-    reps = {"int": lambda: 3, "bool": lambda: True, "str": lambda: "a%s", "tuple": lambda: (1,), "list": lambda: [1],
+    reps = {"int": lambda: 3, "bool": lambda: True, "str": lambda: "a%s", "bytes": lambda: b"a%s", "bytearray": lambda: bytearray(b"a%s"),
+            "tuple": lambda: (1,), "list": lambda: [1],
             "dict": lambda: {1: 2}, "set": lambda: {1}, "frozenset": lambda: frozenset({1}), "NoneType": lambda: None,
             "range": lambda: range(2), "slice": lambda: slice(1), "float": lambda: 1.5, "dict_keys": lambda: {1: 2}.keys(),
             "dict_values": lambda: {1: 2}.values(), "dict_items": lambda: {1: 2}.items(), "type": lambda: int,

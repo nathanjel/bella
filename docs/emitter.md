@@ -375,6 +375,11 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   have no reader until `match` is compiled, when subclasses inherit them and `register` passes
   them on.
 * `type.__subclasses__` of a built-in type is refused: CPython's list names classes of its own.
+* `bytes` and `bytearray`: `%`, a class derived from them, the codecs UTF-16 and UTF-32 and the
+  `namereplace` handler stop by name; `codecs.register_error` has nothing to register with until
+  `_codecs` is written. `memoryview` and the buffer protocol are \[P2+\].
+* A tuple of constants is built where it is evaluated: `f() is f()` for `def f(): return (1, 'a')` is
+  True under CPython, which folds it into one constant, and False here.
 * `types.GenericAlias` is written in Python (`bootstrap.py`), so `vars(types.GenericAlias)` shows a
   `__setattr__`, `__delattr__`, `__reduce_ex__` and a slot `_ga_parameters` CPython's lacks, and its
   methods are functions, where CPython's are slot wrappers and method descriptors. `X | Y` with an

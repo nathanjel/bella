@@ -65,6 +65,11 @@ Types& types() {
         x.lazy_import = builtin_type("lazy_import", {x.object});
         x.mappingproxy = builtin_type("mappingproxy", {x.object});
         x.slice = builtin_type("slice", {x.object});
+        x.bytes = builtin_type("bytes", {x.object});
+        x.bytearray = builtin_type("bytearray", {x.object});
+        x.bytes_iterator = builtin_type("bytes_iterator", {x.object});
+        x.bytearray_iterator = builtin_type("bytearray_iterator", {x.object});
+        x.memoryview = builtin_type("memoryview", {x.object});
         x.iterator = builtin_type("iterator", {x.object});
         x.set = builtin_type("set", {x.object});
         x.frozenset = builtin_type("frozenset", {x.object});
@@ -125,6 +130,7 @@ Iterator::Iterator(Of o, Obj s) : Object(Kind::Iterator), of(o), seq(s) {
         case TupleIt: cls = types().tuple_iterator; break;
         case ListIt: cls = types().list_iterator; break;
         case StrIt: cls = types().str_iterator; break;
+        case BytesIt: cls = is_kind(s, Kind::ByteArray) ? types().bytearray_iterator : types().bytes_iterator; break;
         case DictKeysIt: cls = types().dict_keyiterator; break;
         case DictValuesIt: cls = types().dict_valueiterator; break;
         case DictItemsIt: cls = types().dict_itemiterator; break;
@@ -375,6 +381,18 @@ std::int64_t full_hash(Obj v) {
             }
             return s->hash;
         }
+        case Kind::Bytes: {                      // bytes_hash: the same SipHash as a str of the same units
+            auto* b = static_cast<BytesObject*>(o);
+            if (b->hash == -1) {
+                if (b->data.empty()) b->hash = 0;
+                else {
+                    auto h = static_cast<std::int64_t>(siphash13(secret().k0, secret().k1,
+                        reinterpret_cast<const unsigned char*>(b->data.data()), b->data.size()));
+                    b->hash = h == -1 ? -2 : h;
+                }
+            }
+            return b->hash;
+        }
         case Kind::DictView:                     // keys and items views are unhashable; values views hash by identity
             if (static_cast<DictView*>(o)->which != DictView::Values) raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
             [[fallthrough]];
@@ -554,11 +572,14 @@ struct ExceptionClasses {
                  {"RecursionError", "RuntimeError"}, {"StopIteration", "Exception"}, {"TypeError", "Exception"},
                  {"ValueError", "Exception"}, {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"},
                  {"ImportCycleError", "ImportError"},
-                 {"UnicodeError", "ValueError"}}) {
+                 {"UnicodeError", "ValueError"}, {"UnicodeEncodeError", "UnicodeError"},
+                 {"UnicodeDecodeError", "UnicodeError"}, {"UnicodeTranslateError", "UnicodeError"}}) {
             std::optional<std::vector<std::string>> own;
             if (std::string_view(n) == "AttributeError") own = exception_fields({"obj", "name"});
             if (std::string_view(n) == "NameError") own = exception_fields({"name"});
             if (std::string_view(n) == "ImportError") own = exception_fields({"msg", "name", "path", "name_from"});
+            if (std::string_view(n).starts_with("Unicode") && std::string_view(n) != "UnicodeError")
+                own = exception_fields({"encoding", "object", "start", "end", "reason"});
             make(n, b, own);
         }
         make("SystemExit", "BaseException", exception_fields({"code"}));

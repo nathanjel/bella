@@ -441,7 +441,9 @@ Ref textio_write(Obj self, Args a) {
     onearg(a, "TextIOWrapper.write");
     const Str* s = as_str(a.pos(0));
     if (s == nullptr) raise_new("TypeError", "write() argument must be str, not " + type_of(a.pos(0))->name);
-    stream_of(self).write(s->text);
+    // UTF-8 mode (D-15): all of it encoded before any of it is written, and a surrogate as the stream's errors say
+    if (s->ascii) stream_of(self).write(s->text);
+    else stream_of(self).write(utf8_with_errors(a.pos(0), static_cast<Native*>(self.object())->tag == 2 ? "backslashreplace" : "surrogateescape"));
     return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
 }
 Ref textio_flush(Obj self, Args a) {
@@ -463,6 +465,7 @@ Ref b_len(Obj, Args a) {
     if (is_kind(v, Kind::DictView))
         return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(static_cast<DictView*>(v.object())->dict.object())->used)));
     if (is_kind(v, Kind::Range)) return Ref::steal(Obj::small(static_cast<Range*>(v.object())->length));
+    if (is_bytes_like(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(bytes_data(v).size())));
     bool has = false;
     Ref r = call_special(v, "__len__", {}, &has);
     if (has) return Ref::steal(Obj::small(length_value(r.get())));     // as truth takes it (A9-14)
@@ -480,7 +483,13 @@ Ref b_format(Obj, Args a) {
         raise_new("TypeError", "format() argument 2 must be str, not " + type_of(spec)->name);
     if (is_kind(a.pos(0), Kind::Instance) || (is_subclass_instance(a.pos(0)) && overrides_builtin(a.pos(0), "__format__")))
         return call_special(a.pos(0), "__format__", {spec.is_unset() ? str_new("").get() : spec});
-    if (s != nullptr && s->length != 0) throw NotImplemented("format() with a format specification");
+    if (s != nullptr && s->length != 0) {        // object.__format__ takes no specification; a type's own may
+        for (const ClassObject* c : type_of(a.pos(0))->mro) {
+            if (c == types().object) raise_new("TypeError", "unsupported format string passed to " + type_of(a.pos(0))->name + ".__format__");
+            if (!cpython_attribute_kind(c, "__format__").empty()) break;
+        }
+        throw NotImplemented("format() with a format specification");
+    }
     return str_of(a.pos(0));
 }
 // isinstance and issubclass (Objects/abstract.c): an exact type first, type's own check for a
@@ -970,6 +979,11 @@ Ref b_callable(Obj, Args a) {
 }
 Ref b_ord(Obj, Args a) {
     onearg(a, "ord");
+    if (is_bytes_like(a.pos(0))) {
+        const std::string& b = bytes_data(a.pos(0));
+        if (b.size() != 1) raise_new("TypeError", "ord() expected a character, but string of length " + std::to_string(b.size()) + " found");
+        return Ref::steal(Obj::small(static_cast<unsigned char>(b[0])));
+    }
     const Str* s = as_str(a.pos(0));
     if (s == nullptr) raise_new("TypeError", "ord() expected string of length 1, but " + type_of(a.pos(0))->name + " found");
     if (s->length != 1)
@@ -984,11 +998,28 @@ Ref b_chr(Obj, Args a) {
 }
 
 // constructors of the C++ types
-Ref c_str(Obj, Args a) {
-    if (a.nkw != 0) throw NotImplemented("str() with keywords (encoding, errors)");
-    if (a.npos > 1) throw NotImplemented("str(bytes, encoding)");
-    return a.npos == 0 ? str_new("") : str_of(a.pos(0));
+Ref c_str(Obj, Args a) {                         // unicode_new_impl
+    if (a.npos + a.nkw > 3) raise_new("TypeError", "str expected at most 3 arguments, got " + std::to_string(a.npos + a.nkw));
+    Obj x = a.npos > 0 ? a.pos(0) : Obj{}, encoding = a.npos > 1 ? a.pos(1) : Obj{}, errors = a.npos > 2 ? a.pos(2) : Obj{};
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        const Str* name = a.kwnames[k];
+        Obj* slot = name == intern("object") ? &x : name == intern("encoding") ? &encoding : name == intern("errors") ? &errors : nullptr;
+        if (slot == nullptr) unexpected_keyword("str()", name, {"object", "encoding", "errors"});
+        if (!slot->is_unset())
+            raise_new("TypeError", "argument for str() given by name ('" + name->text + "') and position (" +
+                                       std::to_string(name == intern("object") ? 1 : name == intern("encoding") ? 2 : 3) + ")");
+        *slot = a.kw(k);
+    }
+    if (!encoding.is_unset() && as_str(encoding) == nullptr)
+        raise_new("TypeError", "str() argument 'encoding' must be str, not " + type_of(encoding)->name);
+    if (!errors.is_unset() && as_str(errors) == nullptr)
+        raise_new("TypeError", "str() argument 'errors' must be str, not " + type_of(errors)->name);
+    if (x.is_unset()) return str_new("");
+    if (encoding.is_unset() && errors.is_unset()) return str_of(x);
+    if (as_str(x) != nullptr) raise_new("TypeError", "decoding str is not supported");
+    return str_from_bytes(x, encoding, errors);
 }
+Ref c_memoryview(Obj, Args) { throw NotImplemented("[P2+] memoryview and the buffer protocol (spec section 3)"); }
 Ref c_bool(Obj, Args a) {
     clinic(a, "bool", "bool", 0, 1);
     return Ref::steal(boolean(a.npos == 1 && truth(a.pos(0))));
@@ -1068,7 +1099,8 @@ Module* make_builtins() {
     for (auto [name, cls, ctor] : std::initializer_list<std::tuple<const char*, ClassObject*, NativeFn>>{
              {"str", t.str, c_str}, {"type", t.type, nullptr}, {"bool", t.bool_, c_bool}, {"range", t.range, c_range},
              {"tuple", t.tuple, c_tuple}, {"list", t.list, c_list}, {"int", t.int_, nullptr},
-             {"object", t.object, nullptr}, {"dict", t.dict, nullptr}, {"float", t.float_, nullptr}}) {
+             {"object", t.object, nullptr}, {"dict", t.dict, nullptr}, {"float", t.float_, nullptr},
+             {"bytes", t.bytes, nullptr}, {"bytearray", t.bytearray, nullptr}, {"memoryview", t.memoryview, c_memoryview}}) {
         put(d, name, Obj::of(cls));
         if (ctor != nullptr) constructors()[cls] = ctor;
     }
@@ -1076,7 +1108,8 @@ Module* make_builtins() {
                           "ArithmeticError", "ZeroDivisionError", "OverflowError", "AssertionError", "AttributeError",
                           "LookupError", "IndexError", "KeyError", "NameError", "UnboundLocalError", "RuntimeError",
                           "NotImplementedError", "RecursionError", "StopIteration", "TypeError", "ValueError",
-                          "ImportError", "ModuleNotFoundError", "ImportCycleError", "UnicodeError"})
+                          "ImportError", "ModuleNotFoundError", "ImportCycleError", "UnicodeError", "UnicodeEncodeError",
+                          "UnicodeDecodeError", "UnicodeTranslateError"})
         put(d, n, Obj::of(exception_class(n)));
     put(d, "None", None());
     put(d, "True", boolean(true));

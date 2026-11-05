@@ -137,7 +137,7 @@ Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
 bool set_like_view(Obj v) { return is_kind(v, Kind::DictView) && static_cast<DictView*>(v.object())->which != DictView::Values; }
 
 namespace {
-bool repeatable(Obj v) { return as_str(v) != nullptr || is_kind(v, Kind::List) || is_kind(v, Kind::Tuple); }
+bool repeatable(Obj v) { return as_str(v) != nullptr || is_kind(v, Kind::List) || is_kind(v, Kind::Tuple) || is_bytes_like(v); }
 bool has_sequence_methods(Obj v) {               // a type with tp_as_sequence (every class has one)
     return repeatable(v) || is_heap_obj(v) || is_kind(v, Kind::Dict) || is_kind(v, Kind::Set) || is_kind(v, Kind::Range) ||
            is_kind(v, Kind::DictView);
@@ -148,6 +148,7 @@ Ref repeat(Obj seq, Obj n, bool in_place) {
     if (!as_int(n, exact) && (!is_heap_obj(n) || type_lookup(type_of(n), intern("__index__")).is_unset()))
         raise_new("TypeError", "can't multiply sequence by non-int of type '" + type_of(n)->name + "'");
     std::int64_t count = index_value(n);
+    if (is_bytes_like(seq)) return bytes_repeat(seq, count, in_place);
     if (const Str* s = as_str(seq)) {
         if (count <= 0) return str_new("");
         if (count == 1) return Ref::share(seq);
@@ -189,6 +190,13 @@ Ref repeat(Obj seq, Obj n, bool in_place) {
 // operand's concatenation (+= extends a list), or repetition by either operand
 Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
     if (op == BinOp::Add) {
+        if (is_bytes_like(a)) {
+            if (in_place && is_kind(a, Kind::ByteArray)) {
+                bytes_iadd(a, b);
+                return Ref::share(a);
+            }
+            return bytes_concat(a, b);
+        }
         if (is_kind(a, Kind::List)) {
             if (in_place) {
                 list_extend(a, b);
@@ -217,7 +225,7 @@ Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
         }
     }
     if (op == BinOp::Mul) {
-        if (repeatable(a)) return repeat(a, b, in_place && is_kind(a, Kind::List));
+        if (repeatable(a)) return repeat(a, b, in_place && (is_kind(a, Kind::List) || is_kind(a, Kind::ByteArray)));
         if ((!in_place || !has_sequence_methods(a)) && repeatable(b)) return repeat(b, a, false);
     }
     return Ref::steal(Obj::of(NOTIMPLEMENTED));
@@ -383,6 +391,7 @@ bool contains(Obj container, Obj item) {
         return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
     if (is_kind(container, Kind::Dict)) return truth(call_special(container, "__contains__", {item}).get());
     if (is_kind(container, Kind::Set)) return set_contains(static_cast<SetObject*>(container.object()), item);
+    if (is_bytes_like(container)) return bytes_contains(container, item);
     if (const Str* s = as_str(container)) {
         const Str* sub = as_str(item);
         if (sub == nullptr)
@@ -457,6 +466,8 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
         return Ref::steal(boolean(dict_equal(static_cast<Dict*>(a.object()), static_cast<Dict*>(b.object())) == (op == CmpOp::Eq)));
     }
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_compare(op, a, b);
+    // bytes_richcompare takes bytes alone, so a bytearray answers from its side; bytearray_richcompare takes either
+    if ((is_kind(a, Kind::ByteArray) && is_bytes_like(b)) || (is_kind(a, Kind::Bytes) && is_kind(b, Kind::Bytes))) return bytes_compare(op, a, b);
     if (is_kind(a, Kind::Range) && is_kind(b, Kind::Range)) {   // range_richcompare: == and != only
         if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
         auto *r0 = static_cast<Range*>(a.object()), *r1 = static_cast<Range*>(b.object());
@@ -546,6 +557,8 @@ bool truth(Obj v) {
         case Kind::Str: return static_cast<Str*>(o)->length != 0;
         case Kind::Tuple: return !static_cast<Tuple*>(o)->items.empty();
         case Kind::List: return !static_cast<List*>(o)->items.empty();
+        case Kind::Bytes:
+        case Kind::ByteArray: return !bytes_data(v).empty();
         case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
         case Kind::Range: return static_cast<Range*>(o)->length != 0;
         case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
@@ -656,6 +669,7 @@ std::string str_repr(const Str* s) {
         else if (c < 0x7f) out += static_cast<char>(c);
         else if (c <= 0xA0 || c == 0xAD) out += "\\x" + hex(c, 2);      // Latin-1's non-printable code points
         else if (c < 0x100) Str::append_utf8(out, c);
+        else if (c >= 0xD800 && c <= 0xDFFF) out += "\\u" + hex(c, 4);   // a surrogate: never printable, whatever the database says
         else throw NotImplemented("repr() of text beyond Latin-1 needs the Unicode database (unicodedata, D-8)");
     }
     out += quote;
@@ -689,6 +703,8 @@ Ref repr_of(Obj v) {
             }
             return type_repr_of(v);
         }
+        case Kind::Bytes:
+        case Kind::ByteArray: return bytes_repr(v);
         case Kind::IntInstance:
             if (!overridden(v, "__repr__")) return str_new(int_text(static_cast<IntInstance*>(o)->value));
             break;
@@ -1029,14 +1045,15 @@ std::size_t index_of(Obj key, std::size_t size, const char* what, const char* ra
 
 namespace {
 // PySlice_GetIndicesEx over small ints: (start, stop, step, length)
-std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length) {
+}  // namespace
+std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length, const char* message) {
     auto* s = static_cast<SliceObject*>(sl.object());
-    auto value = [](Obj v, std::int64_t dflt) {       // _PyEval_SliceIndex
+    auto value = [message](Obj v, std::int64_t dflt) {   // _PyEval_SliceIndex
         if (v == None()) return dflt;
         std::int64_t x;
         if (as_int(v, x)) return x;
         if (!is_heap_obj(v) || type_lookup(type_of(v), intern("__index__")).is_unset())
-            raise_new("TypeError", "slice indices must be integers or None or have an __index__ method");
+            raise_new("TypeError", message);
         return index_value(v);
     };
     std::int64_t step = value(s->step, 1);
@@ -1054,6 +1071,7 @@ std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length) {
     if (step < 0 ? stop < start : start < stop) n = step < 0 ? (start - stop - 1) / -step + 1 : (stop - start - 1) / step + 1;
     return {start, stop, step, n};
 }
+namespace {
 template <class F>
 void each_index(Obj sl, std::int64_t length, F f) {
     auto [start, stop, step, n] = slice_indices(sl, length);
@@ -1101,10 +1119,11 @@ Ref getitem(Obj obj, Obj key) {
         each_index(key, static_cast<std::int64_t>(s->length), [&](std::size_t i) { out += s->at(i); });
         return str_from_codepoints(out);
     }
+    if (is_bytes_like(obj)) return bytes_getitem(obj, key);
     if (is_kind(obj, Kind::Range)) {                 // range_subscript, over small ints
         auto* r = static_cast<Range*>(obj.object());
         if (slice) {
-            auto [start, stop, step, n] = slice_indices(key, r->length);
+            auto [start, stop, step, n] = slice_indices(key, r->length, "slice indices must be integers or None or have an __index__ method");
             return own(new Range(r->start + start * r->step, r->start + stop * r->step, r->step * step));
         }
         std::size_t i = index_of(key, static_cast<std::size_t>(r->length), "range", "range object");
@@ -1202,6 +1221,7 @@ Ref iter(Obj obj) {
     if (is_kind(obj, Kind::Tuple)) return own(new Iterator(Iterator::TupleIt, obj));
     if (is_kind(obj, Kind::List)) return own(new Iterator(Iterator::ListIt, obj));
     if (as_str(obj) != nullptr) return own(new Iterator(Iterator::StrIt, obj));
+    if (is_bytes_like(obj)) return own(new Iterator(Iterator::BytesIt, obj));
     if (is_kind(obj, Kind::Set)) {
         auto* it = new Iterator(Iterator::SetIt, obj);
         Ref r = own(it);
@@ -1269,6 +1289,11 @@ Ref for_next(Obj itv) {
             auto& items = static_cast<List*>(it->seq.object())->items;
             if (static_cast<std::size_t>(it->pos) >= items.size()) return finish();
             return Ref::share(items[static_cast<std::size_t>(it->pos++)]);
+        }
+        case Iterator::BytesIt: {                    // a bytearray's as it is at each step
+            const std::string& s = bytes_data(it->seq);
+            if (static_cast<std::size_t>(it->pos) >= s.size()) return finish();
+            return Ref::steal(Obj::small(static_cast<unsigned char>(s[static_cast<std::size_t>(it->pos++)])));
         }
         case Iterator::StrIt: {
             auto* s = static_cast<Str*>(it->seq.object());

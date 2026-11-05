@@ -12,6 +12,8 @@
 //
 // What this does not do yet raises bella::NotImplemented naming it, never an approximation.
 #pragma once
+#include <array>
+
 #include "bella/int.hpp"
 #include "bella/object.hpp"
 
@@ -123,7 +125,7 @@ struct Range : Object {
     Range(std::int64_t a, std::int64_t b, std::int64_t c);
 };
 struct Iterator : Object {                       // the C++ types' iterators
-    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, StrIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
+    enum Of : std::uint8_t { RangeIt, TupleIt, ListIt, StrIt, BytesIt, DictKeysIt, DictValuesIt, DictItemsIt, SeqIt, SetIt } of;
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
     std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
@@ -149,6 +151,11 @@ struct SuperObject : Object {                    // super(type, obj): each owned
     Obj obj;                                     // the instance or class it is bound to (__self__)
     Obj obj_type;                                // obj's type, or obj when it is a class (__self_class__)
     SuperObject();
+};
+struct BytesObject : Object {                    // bytes and bytearray: their octets; a bytearray's change
+    std::string data;
+    std::int64_t hash = -1;                      // a bytes's, once computed
+    BytesObject(Kind k, std::string d);
 };
 struct Native : Object {                         // an object of a C++ type with methods (sys.stdout)
     int tag = 0;
@@ -209,7 +216,8 @@ struct Types {
         *dict, *cell, *function, *builtin, *method, *range, *range_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
         *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
-        *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator;
+        *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
+        *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview;
 };
 Types& types();
 extern Singleton* const NONE;
@@ -289,6 +297,22 @@ void init_slots();                               // runtime/src/slots.cpp
 Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tuple
 Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
 void fill_abc(Module* m);                        // runtime/src/abc.cpp: the module _abc
+// runtime/src/bytes.cpp: bytes, bytearray and the codecs
+void init_bytes();
+bool is_bytes_like(Obj v);
+std::string& bytes_data(Obj v);
+Ref bytes_new(std::string_view s);
+Obj bytes_constant(const char* data, std::size_t size);   // a module's constant: it keeps the count
+Ref bytes_repr(Obj v);
+Ref bytes_getitem(Obj self, Obj key);
+bool bytes_contains(Obj self, Obj item);
+Ref bytes_concat(Obj a, Obj b);
+void bytes_iadd(Obj a, Obj b);
+Ref bytes_repeat(Obj self, std::int64_t count, bool in_place);
+Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
+std::string utf8_with_errors(Obj text, const char* errors);   // what a text stream writes (UTF-8 mode, D-15)
+std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length,    // PySlice_Unpack and AdjustIndices: start, stop, step, count
+                                          const char* message = "slice indices must be integers or have an __index__ method");
 std::vector<std::string_view> cpython_names_of(std::string_view scope);   // the names table's rows under a scope
 void adopt_functions(Module* m);                 // the module's functions say it is theirs (__self__, __module__)
 bool object_issubclass(Obj derived, Obj cls);    // PyObject_IsSubclass
@@ -467,6 +491,7 @@ Ref builtin(const char* name);                               // the interpreter'
 enum class BinOp : std::uint8_t { Add, Sub, Mul, TrueDiv, FloorDiv, Mod, Pow, LShift, RShift, And, Or, Xor, MatMul };
 enum class CmpOp : std::uint8_t { Lt, Le, Eq, Ne, Gt, Ge, In, NotIn, Is, IsNot };
 Ref native_compare(CmpOp op, Obj a, Obj b);      // the C++ types' own comparison and number slots
+Ref bytes_compare(CmpOp op, Obj a, Obj b);
 Ref native_binary(BinOp op, Obj a, Obj b);
 Ref binary(BinOp op, Obj a, Obj b);
 Ref inplace(BinOp op, Obj a, Obj b);

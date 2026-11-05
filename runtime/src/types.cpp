@@ -339,8 +339,9 @@ Obj object_init_fn() { return type_lookup(types().object, N("__init__")); }
 // A built-in type the runtime cannot construct yet: CPython constructs it (its own __new__), or
 // says "cannot create"; either way object.__new__ is not the answer (RL-220).
 [[noreturn]] void refuse_construction(const ClassObject* cls) {
-    throw NotImplemented("creating an instance of the built-in type '" + cls->name + "'" +
-                         (cpython_attribute_kind(cls, "__new__").empty() ? "" : " (CPython has it; the runtime does not yet)"));
+    if (cpython_attribute_kind(cls, "__new__").empty())   // no tp_new of its own on object: Py_TPFLAGS_DISALLOW_INSTANTIATION
+        raise_new("TypeError", "cannot create '" + cls->name + "' instances");
+    throw NotImplemented("creating an instance of the built-in type '" + cls->name + "' (CPython has it; the runtime does not yet)");
 }
 
 // solid_base and best_base (Objects/typeobject.c): the layout a class extends is the nearest class
@@ -775,6 +776,30 @@ Ref int_ref(std::int64_t v) {                     // an exact int within the imm
 }
 // PyLong_FromString on an ASCII str: whitespace around it (Py_ISSPACE), a sign, the base's prefix,
 // single underscores between digits; a ValueError names the base given and the string's repr
+Ref int_from_str(const Str* s, std::int64_t base);
+// PyLong_FromString on a bytes-like object's octets: ASCII digits and spaces, and a message showing it
+Ref int_from_bytes(Obj x, std::int64_t base) {
+    const std::string b = bytes_data(x);
+    bool usable = std::none_of(b.begin(), b.end(), [](char c) { auto u = static_cast<unsigned char>(c); return u >= 0x80 || (u >= 0x1C && u <= 0x1F); });
+    auto invalid = [&]() {
+        Ref copy = bytes_new(b);                 // shown as bytes, whichever it was
+        Ref r = bytes_repr(copy.get());
+        const Str* rs = as_str(r.get());
+        std::u32string shown;
+        for (std::size_t k = 0; k < std::min<std::size_t>(rs->length, 200); ++k) shown += rs->at(k);
+        Ref cut = str_from_codepoints(shown);
+        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + as_str(cut.get())->text);
+    };
+    if (!usable) invalid();
+    Ref text = str_new(b);
+    try {
+        return int_from_str(as_str(text.get()), base);
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("ValueError"))) throw;
+    }
+    invalid();
+    return Ref{};
+}
 Ref int_from_str(const Str* s, std::int64_t base) {
     if (!s->ascii) throw NotImplemented("int() of a str beyond ASCII (its digits and spaces need the Unicode database)");
     const std::string& t = s->text;
@@ -862,6 +887,7 @@ Ref number_long(Obj x) {
     if (as_int(x, v)) return int_ref(v);          // a bool, an int subclass's instance: nb_int, an exact copy
     if (python && !type_lookup(type_of(x), N("__index__")).is_unset()) return int_ref(index_value(x));
     if (const Str* s = as_str(x)) return int_from_str(s, 10);
+    if (is_bytes_like(x)) return int_from_bytes(x, 10);
     if (is_kind(x, Kind::Float)) throw NotImplemented("int() of a float");
     raise_new("TypeError", "int() argument must be a string, a bytes-like object or a real number, not '" + type_of(x)->name + "'");
 }
@@ -890,8 +916,8 @@ Ref int_new_m(Obj, Args a) {
         std::int64_t b = index_value(base);
         if ((b != 0 && b < 2) || b > 36) raise_new("ValueError", "int() base must be >= 2 and <= 36, or 0");
         const Str* s = as_str(x);
-        if (s == nullptr) raise_new("TypeError", "int() can't convert non-string with explicit base");
-        value = int_from_str(s, b);
+        if (s == nullptr && !is_bytes_like(x)) raise_new("TypeError", "int() can't convert non-string with explicit base");
+        value = s != nullptr ? int_from_str(s, b) : int_from_bytes(x, b);
     }
     if (cls == types().int_) return value;
     return own(new IntInstance(cls, value.get().small_value()));
@@ -1662,6 +1688,7 @@ void init_types() {
     done = true;
     Types& t = types();
     init_sets();
+    init_bytes();
     init_super();
     // object
     method(t.object, "__new__", object_new, Binding::Function);
