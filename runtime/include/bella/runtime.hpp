@@ -287,6 +287,7 @@ void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, con
 std::vector<ClassObject*>& builtin_types();      // every C++ type made at start-up
 void init_slots();                               // runtime/src/slots.cpp
 void fill_abc(Module* m);                        // runtime/src/abc.cpp: the module _abc
+std::vector<std::string_view> cpython_names_of(std::string_view scope);   // the names table's rows under a scope
 void adopt_functions(Module* m);                 // the module's functions say it is theirs (__self__, __module__)
 bool object_issubclass(Obj derived, Obj cls);    // PyObject_IsSubclass
 // CPython's argument checks by calling convention, each with its message
@@ -294,6 +295,7 @@ void noargs(Args a, const std::string& qualname);                     // METH_NO
 void onearg(Args a, const std::string& qualname);                     // METH_O
 void clinic(Args a, const std::string& name, const std::string& qualname, std::size_t lo, std::size_t hi);
 void present_as_c_types(Module* bootstrap);
+Ref generic_alias(Obj origin, Obj args);          // Py_GenericAlias (the class is bootstrap.py's)
 Obj cpython_doc(std::string_view name);          // a built-in module's or type's docstring (cpython_names.inc)
 bool& shutting_down();                           // finalize_modules has begun: imports fail as CPython's do
 Ref i_bella_shutting_down(Obj, Args a);
@@ -557,6 +559,7 @@ void dunder_args(Obj self, Args a, const char* name, std::size_t n);
 // a builtin_function_or_method, never bound as a method; an exported class is immutable.
 bool presents_as_builtin(Obj f);
 bool immutable_type(const ClassObject* c);
+void note_prelude_class(const ClassObject* c);    // a class the prelude writes in Python for one CPython has in C
 // type(v) and v.__class__: the runtime refuses an object it cannot present as CPython's yet (a
 // slot wrapper, which it holds as a method descriptor).
 ClassObject* observed_type(Obj v);
@@ -570,6 +573,7 @@ bool real_issubclass(Obj derived, Obj cls);                  // recursive_issubc
 void type_delattr(ClassObject* cls, const Str* name);
 Ref generic_getattr(Obj obj, const Str* name);               // PyObject_GenericGetAttr, non-instances
 [[noreturn]] void raise_attribute_error(Obj obj, const Str* name, const std::string& message);
+[[noreturn]] void raise_delete_failed(Obj obj, const Str* name, const std::string& what);
 Ref load_classdict(Obj mapping, Module* m, const Str* name); // LOAD_FROM_DICT_OR_GLOBALS
 Ref load_classdict_free(Obj mapping, const Str* name, const Ref& cell, const char* text);
 Obj cell_contents(const Ref& cell);                          // borrowed; Unset when empty
@@ -636,7 +640,10 @@ Ref module_new_m(Obj, Args a);
 Ref module_init_m(Obj self, Args a);
 ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases);   // a C++ type's class
 void note_native_module(const char* name, Module* m);   // its absent names are refused by the table
+std::string_view native_module_name(const Module* m);   // empty for any other module
 void set_bootstrap_module(Module* m);
+Ref i_bella_ga_get(Obj, Args a);
+Ref object_getattribute(Obj self, Args a);
 Ref i_bella_is_builtin(Obj, Args a);
 Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives

@@ -177,6 +177,8 @@ Ref getset_set(Obj self, Args a) {
 Ref getset_delete(Obj self, Args a) {
     arity(a, "__delete__", 1, 1);
     auto* g = static_cast<GetSet*>(self.object());
+    if (g->set == nullptr)                       // getset_set: no setter, for storing and deleting alike
+        raise_new("AttributeError", std::string("attribute '") + g->name + "' of '" + g->owner->name + "' objects is not writable");
     if (g->deletable) {
         g->set(a.pos(0), Obj{});
         return none_ref();
@@ -912,6 +914,51 @@ Ref type_subclasscheck_m(Obj self, Args a) {       // type.__subclasscheck__: _P
     return Ref::steal(boolean(real_issubclass(a.pos(0), self)));
 }
 Ref type_prepare(Obj, Args) { return dict_new(); }
+// merge_class_dict: a class's names and its bases', for dir(). A built-in type has CPython's whole
+// list in the names table, where the runtime has only those it has written; __weakref__ is a name
+// every class has that makes room for it, though its dict has none until step 3c (RL-323).
+void merge_class_dict(Obj names, Obj aclass) {
+    auto* d = static_cast<Dict*>(names.object());
+    if (ClassObject* c = as_class(aclass)) {
+        std::vector<std::string_view> table;
+        if (immutable_type(c)) table = cpython_names_of(std::string_view(c->name).substr(c->name_prefix));
+        for (std::string_view n : table) dict_set(d, Obj::of(intern(n)), None());
+        if (c == types().type) dict_set(d, Obj::of(N("__abstractmethods__")), None());   // left out of the table: most classes raise
+        if (table.empty())
+            for (auto& [k, v] : c->attrs.items()) dict_set(d, Obj::of(k), None());
+        if (c->heap_type && !immutable_type(c) && !c->slots) dict_set(d, Obj::of(N("__weakref__")), None());
+        for (ClassObject* base : c->bases) merge_class_dict(names, Obj::of(base));
+        return;
+    }
+    Ref classdict = optional_getattr(aclass, N("__dict__"));   // an object a lying __class__ names
+    if (!classdict.get().is_unset()) dict_update(names, classdict.get());
+    Ref bases = optional_getattr(aclass, N("__bases__"));
+    if (bases.get().is_unset()) return;
+    Ref it = iter(bases.get());
+    for (Ref base = for_next(it.get()); !is_end(base); base = for_next(it.get())) merge_class_dict(names, base.get());
+}
+Ref dict_keys_list(Obj names) {
+    Ref out = list_new({});
+    auto* d = static_cast<Dict*>(names.object());
+    for (const auto& e : d->entries)
+        if (!e.key.is_unset()) list_append(out.get(), e.key);
+    return out;
+}
+Ref object_dir(Obj self, Args a) {               // object___dir___impl
+    noargs(a, "object.__dir__");
+    // the prelude's property keeps in its dict what CPython keeps in C fields
+    Ref dict = immutable_type(type_of(self)) ? Ref{} : optional_getattr(self, N("__dict__"));
+    Ref names = is_kind(dict.get(), Kind::Dict) ? dict_copy(static_cast<Dict*>(dict.get().object())) : dict_new();
+    Ref itsclass = optional_getattr(self, N("__class__"));
+    if (!itsclass.get().is_unset()) merge_class_dict(names.get(), itsclass.get());
+    return dict_keys_list(names.get());
+}
+Ref type_dir(Obj self, Args a) {                 // type___dir___impl
+    noargs(a, "type.__dir__");
+    Ref names = dict_new();
+    merge_class_dict(names.get(), self);
+    return dict_keys_list(names.get());
+}
 Ref object_subclasshook(Obj, Args a) {
     onearg(a, "object.__subclasshook__");
     return Ref::steal(Obj::of(NOTIMPLEMENTED));
@@ -977,8 +1024,10 @@ Ref object_setattr(Obj self, Args a) {
     with_attribute_storage(self, [&](auto* inst) {
         try {
             bella::setattr(inst, intern(n->text), a.pos(1));
-        } catch (const bella::AttributeError&) {
-            raise_attribute_error(self, intern(n->text), "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'");
+        } catch (const bella::AttributeError& e) {
+            raise_attribute_error(self, intern(n->text), std::string(e.what()).find(' ') == std::string::npos
+                                                             ? "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'"
+                                                             : std::string(e.what()));
         }
     });
     return none_ref();
@@ -992,8 +1041,8 @@ Ref object_delattr(Obj self, Args a) {
     with_attribute_storage(self, [&](auto* inst) {
         try {
             bella::delattr(inst, intern(n->text));
-        } catch (const bella::AttributeError&) {
-            raise_attribute_error(self, intern(n->text), "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'");
+        } catch (const bella::AttributeError& e) {
+            raise_delete_failed(self, intern(n->text), e.what());
         }
     });
     return none_ref();
@@ -1505,14 +1554,41 @@ Ref load_classdict_free(Obj mapping, const Str* name, const Ref& cell, const cha
 // in its messages (tp_name), and its __dict__ is a read-only member
 namespace {
 void readonly_dict(Obj, Obj) { raise_new("AttributeError", "readonly attribute"); }
+Module*& bootstrap_of_types() {
+    static Module* m = nullptr;
+    return m;
+}
+Ref bootstrap_call(const char* name, Obj arg) {
+    return invoke(dict_get(bootstrap_of_types()->dict, Obj::of(N(name))), {arg});
+}
+Ref ga_parameters(Obj self) { return bootstrap_call("_ga_parameters", self); }
+Ref ga_unpacked_tuple_args(Obj self) { return bootstrap_call("_ga_unpacked_tuple_args", self); }
+Ref class_getitem(Obj self, Args a) {            // Py_GenericAlias as a built-in type's __class_getitem__
+    onearg(a, as_class(self)->qualname + ".__class_getitem__");
+    return generic_alias(self, a.pos(0));
+}
 }  // namespace
+Ref generic_alias(Obj origin, Obj args) {
+    return invoke(dict_get(bootstrap_of_types()->dict, Obj::of(N("GenericAlias"))), {origin, args});
+}
 void present_as_c_types(Module* bootstrap) {
+    bootstrap_of_types() = bootstrap;
     Obj ns = dict_get(bootstrap->dict, Obj::of(N("SimpleNamespace")));
     if (!is_kind(ns, Kind::Class)) return;
     auto* c = static_cast<ClassObject*>(ns.object());
     c->name = "types.SimpleNamespace";
     c->name_prefix = 6;
     c->attrs.set(N("__dict__"), Obj::of(new GetSet("__dict__", c, instance_dict, readonly_dict)));
+    auto* ga = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("GenericAlias"))).object());
+    ga->name = "types.GenericAlias";
+    ga->name_prefix = 6;
+    ga->forwards_attributes = true;
+    note_prelude_class(ga);
+    note_prelude_class(static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("generic_alias_iterator"))).object()));
+    getset(ga, "__parameters__", ga_parameters);
+    getset(ga, "__typing_unpacked_tuple_args__", ga_unpacked_tuple_args);
+    for (ClassObject* t : builtin_types())
+        if (cpython_has(t->name, "__class_getitem__")) method(t, "__class_getitem__", class_getitem, Binding::ClassMethod);
 }
 
 // _PyErr_FormatNote / BaseException.add_note: appended to __notes__, made a list if absent
@@ -1609,6 +1685,9 @@ void init_types() {
     method(t.type, "mro", type_mro);
     method(t.type, "__subclasses__", type_subclasses);
     method(t.object, "__subclasshook__", object_subclasshook, Binding::ClassMethod);
+    method(t.object, "__dir__", object_dir);
+    method(t.object, "__getattribute__", object_getattribute);
+    method(t.type, "__dir__", type_dir);
     method(t.type, "__repr__", type_repr);
     getset(t.type, "__name__", type_name, set_type_name);
     getset(t.type, "__qualname__", type_qualname, set_type_qualname);

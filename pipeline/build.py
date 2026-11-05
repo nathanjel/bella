@@ -47,7 +47,10 @@ PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT 
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra"]
-PROGRAM_FLAGS = ["-O1", "-w"]
+# -fno-tree-pta: GCC 16's -O1 is super-linear on a long function full of temporaries with destructors.
+# A 3143-line module body took over 25 minutes and 24 MB; without the analysis, 15 seconds and 1.2 MB,
+# with no measurable cost at run time (fib and an object, dict and exception workload, within noise).
+PROGRAM_FLAGS = ["-O1", "-w", "-fno-tree-pta"]
 LIBRARY_FLAGS = ["-O0", "-w"]      # the standard library's units: a fifth of the compile time; speed is not a goal yet
 
 

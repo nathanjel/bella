@@ -375,6 +375,15 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   have no reader until `match` is compiled, when subclasses inherit them and `register` passes
   them on.
 * `type.__subclasses__` of a built-in type is refused: CPython's list names classes of its own.
+* `types.GenericAlias` is written in Python (`bootstrap.py`), so `vars(types.GenericAlias)` shows a
+  `__setattr__`, `__delattr__`, `__reduce_ex__` and a slot `_ga_parameters` CPython's lacks, and its
+  methods are functions, where CPython's are slot wrappers and method descriptors. `X | Y` with an
+  alias is refused until `types.UnionType` exists.
+* `object.__getattribute__` of a class, or of an object whose class has `__getattr__`, is refused:
+  the instances' path runs the hook and cannot yet skip it.
+* `dir()` and `__dir__` list a built-in type's names from the table of CPython's, so `dir(x)` is
+  exact; a direct `x.__dir__()` has them in the table's order, which `dir()` sorts away. A class's
+  `__weakref__` is listed though its dict lacks it (RL-323).
 * A class's `__dict__` is not a dict: the first view (`keys`, `values`, `items`, `iter`, `copy`)
   makes one that follows the class (`ClassObject::dict_view`, `RefClass.class_dict`). Set operations
   on views and comparing them stay refused for every dict.

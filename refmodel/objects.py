@@ -887,6 +887,8 @@ class Runtime:
             obj.order.remove(name)
             decref(old)
             return
+        if not cls.has_dict:
+            raise AttributeError(f"'{cls.name}' object has no attribute '{name}' and no __dict__ for setting new attributes")
         raise AttributeError(name)
 
     def expose_dict(self, obj: RefObject) -> RefDict:

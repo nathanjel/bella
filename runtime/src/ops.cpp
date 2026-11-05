@@ -801,7 +801,35 @@ Ref getattr(Obj obj, const Str* name) {
 }
 
 namespace {
+// ga_getattro: what types.GenericAlias keeps for itself; attr_exceptions and attr_blocked
+bool alias_keeps(const Str* name) {
+    static const std::vector<const Str*> kept = [] {
+        std::vector<const Str*> out;
+        for (const char* n : {"__class__", "__origin__", "__args__", "__unpacked__", "__parameters__", "__typing_unpacked_tuple_args__",
+                              "__mro_entries__", "__reduce_ex__", "__reduce__", "__bases__", "__copy__", "__deepcopy__"})
+            out.push_back(intern(n));
+        return out;
+    }();
+    return std::find(kept.begin(), kept.end(), name) != kept.end();
+}
+Ref instance_member(Obj obj, const Str* name) {
+    Ref out;
+    with_attribute_storage(obj, [&](auto* inst) {
+        try {
+            out = bella::getattr(inst, name);
+        } catch (const bella::AttributeError&) {
+            raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+        } catch (const bella::TypeError& e) {
+            raise_new("TypeError", e.what());
+        }
+    });
+    return out;
+}
 Ref getattr_impl(Obj obj, const Str* name) {
+    if (obj.is_object() && obj.object()->cls->forwards_attributes && !alias_keeps(name)) {
+        Ref origin = instance_member(obj, intern("__origin__"));
+        return getattr(origin.get(), name);
+    }
     Ref out;
     if (with_attribute_storage(obj, [&](auto* inst) {
             try {
@@ -820,6 +848,24 @@ Ref getattr_impl(Obj obj, const Str* name) {
     return generic_getattr(obj, name);
 }
 }  // namespace
+
+// object.__getattribute__: PyObject_GenericGetAttr, so never a class's __getattr__, which the
+// instances' path runs and has no way to skip yet
+Ref object_getattribute(Obj self, Args a) {
+    if (a.nkw != 0) raise_new("TypeError", "wrapper __getattribute__() takes no keyword arguments");
+    if (a.npos != 1) raise_new("TypeError", "expected 1 argument, got " + std::to_string(a.npos));
+    const Str* n = as_str(a.pos(0));
+    if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
+    if (is_kind(self, Kind::Class)) throw NotImplemented("object.__getattribute__ of a class");
+    if (!type_lookup(type_of(self), intern("__getattr__")).is_unset())
+        throw NotImplemented("object.__getattribute__ of an object whose class has __getattr__");
+    if (is_kind(self, Kind::Instance) || is_subclass_instance(self)) return instance_member(self, intern(n->text));
+    return generic_getattr(self, intern(n->text));
+}
+Ref i_bella_ga_get(Obj, Args a) {                // bootstrap.py's: a generic alias's own member
+    positional_only(a, "_bella_ga_get", 2, 2);
+    return instance_member(a.pos(0), intern(as_str(a.pos(1))->text));
+}
 
 // PyObject_GetOptionalAttr: a module answers without raising (_Py_module_getattro_impl with
 // suppress, which treats a pending lazy submodule and a resolving placeholder differently);
@@ -847,6 +893,13 @@ void read_only_attribute(Obj obj, const Str* name, Obj found) {
         raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object attribute '" + name->text + "' is read-only");
 }
 }  // namespace
+
+// a delete the header refused: its own words when it has them; member_delete says the name alone
+void raise_delete_failed(Obj obj, const Str* name, const std::string& what) {
+    if (what.find(' ') != std::string::npos) raise_attribute_error(obj, name, what);
+    if (is_kind(type_lookup(type_of(obj), name), Kind::SlotDescriptor)) raise_attribute_error(obj, name, name->text);
+    raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+}
 
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
@@ -916,8 +969,8 @@ void delattr(Obj obj, const Str* name) {
         with_attribute_storage(obj, [&](auto* inst) {
             try {
                 bella::delattr(inst, name);
-            } catch (const bella::AttributeError&) {
-                raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+            } catch (const bella::AttributeError& e) {
+                raise_delete_failed(obj, name, e.what());
             }
         });
         return;
@@ -1056,7 +1109,12 @@ Ref getitem(Obj obj, Obj key) {
     bool has = false;
     Ref r = call_special(obj, "__getitem__", {key}, &has);
     if (has) return r;
-    if (is_kind(obj, Kind::Class)) throw NotImplemented("subscripting a class (__class_getitem__)");
+    if (is_kind(obj, Kind::Class)) {                 // PyObject_GetItem
+        if (obj == Obj::of(types().type)) return generic_alias(obj, key);   // type[int], but not str[int]
+        Ref meth = optional_getattr(obj, intern("__class_getitem__"));
+        if (!meth.get().is_unset() && meth.get() != None()) return invoke(meth.get(), {key});
+        raise_new("TypeError", "type '" + static_cast<ClassObject*>(obj.object())->name + "' is not subscriptable");
+    }
     raise_new("TypeError", "'" + type_of(obj)->name + "' object is not subscriptable");
 }
 

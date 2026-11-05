@@ -238,7 +238,7 @@ def _bootstrap(find: Any) -> Any:
     module = types.ModuleType("_frozen_importlib")
     module.__dict__.update(_bella_find=find, _bella_is_builtin=lambda name: False, _bella_refuse=None, _bella_exec=None,
                            _bella_create_builtin=None, _bella_import_warning=None, _bella_set_lazy_attributes=None,
-                           _bella_shutting_down=lambda: False)
+                           _bella_shutting_down=lambda: False, _bella_ga_get=object.__getattribute__)
     exec(compile(source, "bootstrap.py", "exec"), module.__dict__)  # noqa: S102  # the module under test
     return module
 

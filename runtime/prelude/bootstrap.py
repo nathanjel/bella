@@ -485,6 +485,329 @@ class FrozenImporter:
         return found[1]
 
 
+# ---- types.GenericAlias ----
+
+# bella: Objects/genericaliasobject.c in Python; present_as_c_types names it types.GenericAlias and
+# gives it __parameters__ and __typing_unpacked_tuple_args__ as getsets. Its tp_getattro, which
+# passes every other name on to the origin, is the runtime's (getattr_impl): a program's class
+# overriding __getattribute__ is [P2+], and a read here would find this class's own __doc__.
+
+_ga_absent = object()
+_ga_get = _bella_ga_get                          # a member, read past that forwarding
+_ga_set = object.__setattr__
+_GA_OWN = ('__class__', '__origin__', '__args__', '__unpacked__', '__parameters__',
+           '__typing_unpacked_tuple_args__', '__mro_entries__', '__reduce_ex__', '__reduce__')
+
+
+def _ga_check(value, kind):
+    # bella: PyTuple_Check and the others read the type, never __class__
+    return issubclass(type(value), kind)
+
+
+def _ga_type_name(value):
+    # bella: %T, PyType_GetFullyQualifiedName
+    t = type(value)
+    return t.__qualname__ if t.__module__ in ('builtins', '__main__') else t.__module__ + '.' + t.__qualname__
+
+
+def _ga_index(params, item):
+    i = 0
+    for p in params:
+        if p is item:
+            return i
+        i += 1
+    return -1
+
+
+def _typing_type_repr(p):
+    """_Py_typing_type_repr."""
+    if p is ...:
+        return '...'
+    if p is type(None):
+        return 'None'
+    if hasattr(p, '__origin__') and hasattr(p, '__args__'):
+        return repr(p)                                 # it looks like a GenericAlias
+    qualname = getattr(p, '__qualname__', _ga_absent)
+    if qualname is _ga_absent:
+        return repr(p)
+    module = getattr(p, '__module__', None)
+    if module is None:
+        return repr(p)
+    if _ga_check(module, str) and module == 'builtins':
+        return str(qualname)                           # builtins don't need a module name
+    return str(module) + '.' + str(qualname)
+
+
+def _make_parameters(args):
+    """_Py_make_parameters."""
+    parameters = []
+
+    def add(item):
+        if _ga_index(parameters, item) < 0:
+            parameters.append(item)
+
+    for t in tuple(args):
+        if _ga_check(t, type):                         # not __parameters__ of a bare Python class
+            continue
+        if hasattr(t, '__typing_subst__'):
+            add(t)
+            continue
+        subparams = getattr(t, '__parameters__', _ga_absent)
+        if subparams is _ga_absent and (_ga_check(t, tuple) or _ga_check(t, list)):
+            subparams = _make_parameters(t)            # lists and tuples, recursively
+        if subparams is not _ga_absent and _ga_check(subparams, tuple):
+            for t2 in subparams:
+                add(t2)
+    return tuple(parameters)
+
+
+def _ga_has_iter(param):
+    # bella: Py_TYPE(param)->tp_iter: a TypeVarTuple
+    for c in type(param).__mro__:
+        if '__iter__' in vars(c):
+            return True
+    return False
+
+
+def _subs_tvars(obj, params, argitems):
+    """subs_tvars: list[T] with params (T, S) and argitems (str, int) is list[str]."""
+    subparams = getattr(obj, '__parameters__', _ga_absent)
+    if subparams is _ga_absent or not _ga_check(subparams, tuple) or not subparams:
+        return obj
+    subargs = []
+    for arg in subparams:
+        iparam = _ga_index(params, arg)
+        if iparam >= 0:
+            param = params[iparam]
+            arg = argitems[iparam]
+            if _ga_has_iter(param) and _ga_check(arg, tuple):
+                subargs.extend(arg)
+                continue
+        subargs.append(arg)
+    return obj[tuple(subargs)]
+
+
+def _is_unpacked_typevartuple(arg):
+    if _ga_check(arg, type):
+        return False
+    return bool(getattr(arg, '__typing_is_unpacked_typevartuple__', False))
+
+
+def _unpacked_tuple_args(arg):
+    if _ga_check(arg, GenericAlias) and _ga_get(arg, '__unpacked__') and _ga_get(arg, '__origin__') is tuple:
+        return _ga_get(arg, '__args__')
+    result = getattr(arg, '__typing_unpacked_tuple_args__', None)
+    return result
+
+
+def _unpack_args(item):
+    newargs = []
+    for one in (item if _ga_check(item, tuple) else (item,)):
+        if not _ga_check(one, type):
+            subargs = _unpacked_tuple_args(one)
+            if subargs is not None and _ga_check(subargs, tuple) and not (subargs and subargs[-1] is ...):
+                newargs.extend(subargs)
+                continue
+        newargs.append(one)
+    return tuple(newargs)
+
+
+def _subs_parameters(self, args, parameters, item):
+    """_Py_subs_parameters: t = dict[T, list[S]]; t[str, int] has the new args (str, list[int])."""
+    nparams = len(parameters)
+    if nparams == 0:
+        raise TypeError(repr(self) + ' is not a generic class')
+    item = _unpack_args(item)
+    for param in parameters:
+        prepare = getattr(param, '__typing_prepare_subst__', None)
+        if prepare is not None:
+            item = prepare(self, item if _ga_check(item, tuple) else (item,))
+    argitems = item if _ga_check(item, tuple) else (item,)
+    nitems = len(argitems)
+    if nitems != nparams:
+        raise TypeError(f"Too {'many' if nitems > nparams else 'few'} arguments for {self!r}; "
+                        f'actual {nitems}, expected {nparams}')
+    newargs = []
+    for arg in tuple(args):
+        if _ga_check(arg, type):
+            newargs.append(arg)
+            continue
+        if _ga_check(arg, tuple) or _ga_check(arg, list):      # recursively, in lists and tuples
+            subargs = _subs_parameters(self, arg, parameters, item)
+            newargs.append(subargs if _ga_check(arg, tuple) else list(subargs))
+            continue
+        unpack = _is_unpacked_typevartuple(arg)
+        subst = getattr(arg, '__typing_subst__', _ga_absent)
+        if subst is not _ga_absent:
+            iparam = _ga_index(parameters, arg)
+            if iparam < 0:                             # stale: it gained __typing_subst__ later
+                raise TypeError(f'argument {arg!r} with __typing_subst__ was not found in __parameters__')
+            new = subst(argitems[iparam])
+        else:
+            new = _subs_tvars(arg, parameters, argitems)
+        if unpack:
+            if not _ga_check(new, tuple):
+                raise TypeError(f'expected __typing_subst__ of {_ga_type_name(arg)} objects to return a tuple, '
+                                f'not {_ga_type_name(new)}')
+            newargs.extend(new)
+        else:
+            newargs.append(new)
+    return tuple(newargs)
+
+
+def _ga_parameters(self):
+    parameters = _ga_get(self, '_ga_parameters')
+    if parameters is None:
+        parameters = _make_parameters(_ga_get(self, '__args__'))
+        _ga_set(self, '_ga_parameters', parameters)
+    return parameters
+
+
+def _ga_unpacked_tuple_args(self):
+    if _ga_get(self, '__unpacked__') and _ga_get(self, '__origin__') is tuple:
+        return _ga_get(self, '__args__')
+    return None
+
+
+def _ga_make(cls, origin, args, starred=False):
+    """setup_ga, and Py_GenericAlias with cls GenericAlias."""
+    self = object.__new__(cls)
+    _ga_set(self, '__origin__', origin)
+    _ga_set(self, '__args__', args if _ga_check(args, tuple) else (args,))
+    _ga_set(self, '__unpacked__', starred)
+    _ga_set(self, '_ga_parameters', None)
+    return self
+
+
+class generic_alias_iterator:
+
+    __module__ = 'builtins'
+    __slots__ = ('_ga_obj',)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        obj = self._ga_obj
+        self._ga_obj = None
+        if obj is None:
+            raise StopIteration
+        return _ga_make(GenericAlias, _ga_get(obj, '__origin__'), _ga_get(obj, '__args__'), True)
+
+    def __reduce__(self):
+        return (iter, (self._ga_obj,) if self._ga_obj is not None else ((),))
+
+
+class GenericAlias:
+    """Represent a PEP 585 generic type
+
+For example, for t = list[int], t.__origin__ is list and t.__args__
+is (int,)."""
+
+    __module__ = 'types'
+    __slots__ = ('__origin__', '__args__', '__unpacked__', '_ga_parameters')
+
+    def __new__(cls, *args, **kwds):
+        if kwds:
+            raise TypeError('GenericAlias() takes no keyword arguments')
+        if len(args) != 2:
+            raise TypeError(f'GenericAlias expected 2 arguments, got {len(args)}')
+        return _ga_make(cls, args[0], args[1])
+
+    def __setattr__(self, name, value):
+        # bella: the members are read-only, and the parameters' slot is not CPython's to show
+        if name in ('__origin__', '__args__', '__unpacked__'):
+            raise AttributeError('readonly attribute')
+        if name == '_ga_parameters':
+            raise AttributeError(f"'types.GenericAlias' object has no attribute '{name}' and no __dict__ for setting new attributes")
+        _ga_set(self, name, value)
+
+    def __delattr__(self, name):
+        if name in ('__origin__', '__args__', '__unpacked__'):
+            raise AttributeError('readonly attribute')
+        if name == '_ga_parameters':
+            raise AttributeError(f"'types.GenericAlias' object has no attribute '{name}' and no __dict__ for setting new attributes")
+        object.__delattr__(self, name)
+
+    def __repr__(self):
+        parts = []
+        for p in _ga_get(self, '__args__'):
+            if type(p) is list:                        # a ParamSpec's list of type arguments
+                parts.append('[' + ', '.join([_typing_type_repr(x) for x in p]) + ']')
+            else:
+                parts.append(_typing_type_repr(p))
+        inner = ', '.join(parts) if parts else '()'    # tuple[()]
+        star = '*' if _ga_get(self, '__unpacked__') else ''
+        return star + _typing_type_repr(_ga_get(self, '__origin__')) + '[' + inner + ']'
+
+    def __getitem__(self, item):
+        newargs = _subs_parameters(self, _ga_get(self, '__args__'), _ga_parameters(self), item)
+        return _ga_make(GenericAlias, _ga_get(self, '__origin__'), newargs, _ga_get(self, '__unpacked__'))
+
+    def __hash__(self):
+        return hash(_ga_get(self, '__origin__')) ^ hash(_ga_get(self, '__args__'))
+
+    def __call__(self, /, *args, **kwds):
+        obj = _ga_get(self, '__origin__')(*args, **kwds)
+        try:
+            obj.__orig_class__ = self
+        except (AttributeError, TypeError):
+            pass
+        return obj
+
+    def __eq__(self, other):
+        if not _ga_check(other, GenericAlias):
+            return NotImplemented
+        if _ga_get(self, '__unpacked__') != _ga_get(other, '__unpacked__'):
+            return False
+        a, b = _ga_get(self, '__origin__'), _ga_get(other, '__origin__')
+        if not (a is b or a == b):                     # PyObject_RichCompareBool
+            return False
+        return _ga_get(self, '__args__') == _ga_get(other, '__args__')
+
+    def __ne__(self, other):
+        if not _ga_check(other, GenericAlias):
+            return NotImplemented
+        return GenericAlias.__eq__(self, other) is not True
+
+    def __mro_entries__(self, bases, /):
+        return (_ga_get(self, '__origin__'),)
+
+    def __instancecheck__(self, instance, /):
+        raise TypeError('isinstance() argument 2 cannot be a parameterized generic')
+
+    def __subclasscheck__(self, subclass, /):
+        raise TypeError('issubclass() argument 2 cannot be a parameterized generic')
+
+    def __reduce__(self):
+        origin, args = _ga_get(self, '__origin__'), _ga_get(self, '__args__')
+        if _ga_get(self, '__unpacked__'):
+            return (next, (iter(_ga_make(GenericAlias, origin, args)),))
+        return (type(self), (origin, args))
+
+    def __reduce_ex__(self, protocol, /):
+        # bella: object.__reduce_ex__, which asks a class's own __reduce__
+        return type(self).__reduce__(self)
+
+    def __dir__(self):
+        names = dir(_ga_get(self, '__origin__'))
+        for name in _GA_OWN:
+            if name not in names:
+                names.append(name)
+        return names
+
+    def __iter__(self):
+        it = object.__new__(generic_alias_iterator)
+        it._ga_obj = self
+        return it
+
+    def __or__(self, other):
+        _bella_refuse('X | Y with a generic alias: types.UnionType (step 3b)')
+
+    def __ror__(self, other):
+        _bella_refuse('X | Y with a generic alias: types.UnionType (step 3b)')
+
+
 def _namespace_self(name, self):
     # bella: what a C method's descriptor checks before it runs
     if not isinstance(self, SimpleNamespace):

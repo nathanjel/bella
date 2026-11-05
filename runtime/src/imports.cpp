@@ -287,7 +287,7 @@ void fill_types(Module* m) {
     put("FrameType", no_instances_yet("frame"));
     put("FunctionType", t.function);
     put("GeneratorType", no_instances_yet("generator"));
-    put("GenericAlias", no_instances_yet("GenericAlias", "types"));
+    dict_set(d, Obj::of(N("GenericAlias")), dict_get(bootstrap_module()->dict, Obj::of(N("GenericAlias"))));
     put("GetSetDescriptorType", t.getset_descriptor);
     put("LambdaType", t.function);
     put("LazyImportType", t.lazy_import);
@@ -1137,8 +1137,14 @@ Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the
     Module* m = as_module(self, "__dir__");
     Ref dirfunc = resolved_dict_item(m->dict, N("__dir__"));
     if (!dirfunc.get().is_unset()) return invoke(dirfunc.get(), {});
-    Ref keys = list_new({});
+    Ref names = dict_new();                      // a native module has CPython's names, whichever it has written
+    auto* d = static_cast<Dict*>(names.get().object());
     for (auto& e : m->dict->entries)
+        if (!e.key.is_unset()) dict_set(d, e.key, None());
+    if (std::string_view native = native_module_name(m); !native.empty())
+        for (std::string_view n : cpython_names_of(native)) dict_set(d, Obj::of(intern(n)), None());
+    Ref keys = list_new({});
+    for (auto& e : d->entries)
         if (!e.key.is_unset()) list_append(keys.get(), e.key);
     return keys;
 }

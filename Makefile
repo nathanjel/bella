@@ -14,7 +14,7 @@ XDIST    = $(shell $(PY) -c "import xdist" 2>/dev/null && echo "-n $(JOBS)")
 CHECKS   = lint test verify probes slice int-test float-diff object-test targets-check staging-check \
            eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2
 
-.PHONY: help test selftest closure record verify check-conformance probes slice int-test float-diff object-test \
+.PHONY: help prune-builds test selftest closure record verify check-conformance probes slice int-test float-diff object-test \
         object-test-lockstep object-test-sanitized object-test-reentrancy targets-record targets-check targets-closure \
         staging-check eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2 lint check checks clean
 
@@ -126,6 +126,12 @@ targets-check:
 targets-closure:
 	$(PY) tools/closure.py --all-targets
 
+# Every test builds from a fresh temporary path, so nothing replaces its program: a run of `make check`
+# left about 20 GB here. All of it is derived, and comes back when a build needs it.
+prune-builds:
+	@find build/compiled -mindepth 1 -maxdepth 1 -type d -name '*-*' -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+	@find build/compiled/units -type f -mtime +7 -delete 2>/dev/null || true
+
 lint:
 	$(PY) -m ruff check . && $(PY) -m mypy
 	# dialect programs: the input contract of design section 2 (strict, no explicit Any)
@@ -134,6 +140,7 @@ lint:
 	MYPYPATH=targets/vendor $(PY) -m mypy --disallow-any-explicit --follow-imports=silent targets/drivers
 
 check:
+	$(MAKE) --no-print-directory prune-builds
 	$(MAKE) --no-print-directory closure
 	$(MAKE) --no-print-directory targets-closure
 	$(MAKE) --no-print-directory -j$(JOBS) --output-sync=target checks

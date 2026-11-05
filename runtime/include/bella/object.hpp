@@ -637,6 +637,7 @@ struct ClassObject : Object {
     std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
     bool has_dict = false;
     bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
+    bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited
     // attrs as a dict, made when a program first asks for a view of __dict__ (class_dict) and kept
     // equal to attrs from then on; its counts are dropped first, so attrs decides when a value dies
     DictObject* dict_view = nullptr;
@@ -765,6 +766,7 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     for (const auto& p : spec.promoted) c->promoted.push_back(intern(p));
     bool own_dict = !spec.slots || std::find(spec.slots->begin(), spec.slots->end(), "__dict__") != spec.slots->end();
     c->has_dict = own_dict || std::any_of(c->bases.begin(), c->bases.end(), [](ClassObject* b) { return b->has_dict; });
+    c->forwards_attributes = std::any_of(c->bases.begin(), c->bases.end(), [](ClassObject* b) { return b->forwards_attributes; });
     {
         auto own = c->own_slot_names();
         for (const Str* s : own)
@@ -1253,6 +1255,8 @@ inline void delattr(T* obj, const Str* name) {
         decref(old);
         return;
     }
+    if (!cls->has_dict)
+        throw AttributeError("'" + cls->name + "' object has no attribute '" + name->text + "' and no __dict__ for setting new attributes");
     throw AttributeError(name->text);
 }
 

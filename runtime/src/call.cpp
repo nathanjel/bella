@@ -112,7 +112,11 @@ Ref invoke(Obj f, Args a) {
                 // an unbound method descriptor called directly (str.join(sep, items)): self first,
                 // an instance of the method's type (review 2026-11-03, A9-2)
                 if (a.npos == 0)
+                {
+                    if (b->owner != nullptr && cpython_attribute_kind(b->owner, b->name) == "wrapper_descriptor")   // wrapperdescr_call
+                        raise_new("TypeError", "descriptor '" + b->name + "' of '" + b->owner->name + "' object needs an argument");
                     raise_new("TypeError", "unbound method " + (b->owner ? b->owner->name + "." : "") + b->name + "() needs an argument");
+                }
                 if (b->owner != nullptr && !isinstance(a.pos(0), b->owner))
                     raise_new("TypeError", "descriptor '" + b->name + "' for '" + b->owner->name + "' objects doesn't apply to a '" +
                                                type_of(a.pos(0))->name + "' object");
@@ -1258,6 +1262,15 @@ Obj cpython_doc(std::string_view name) {
 }
 
 bool cpython_has(std::string_view scope, std::string_view name) { return cpython_find(scope, name) != nullptr; }
+void note_prelude_class(const ClassObject* c) { prelude_classes().insert(c); }
+std::vector<std::string_view> cpython_names_of(std::string_view scope) {   // its rows, in the table's order
+    std::string prefix = std::string(scope) + ":";
+    std::vector<std::string_view> out;
+    auto it = std::lower_bound(std::begin(CPYTHON_NAMES), std::end(CPYTHON_NAMES), std::string_view(prefix),
+                               [](const CPythonName& row, std::string_view key) { return row.key < key; });
+    for (; it != std::end(CPYTHON_NAMES) && it->key.starts_with(prefix); ++it) out.push_back(it->key.substr(prefix.size()));
+    return out;
+}
 // A name found on a later class of the MRO that an earlier built-in type has its own of in CPython:
 // a base's method would be the wrong answer (`(5).__lt__` is not object's), so it is refused (RL-310).
 void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, const Str* name) {
@@ -1309,6 +1322,11 @@ Module* builtins_module() {
 }
 // PyModule_New: module_init_dict's names first, as every module's namespace starts
 void note_native_module(const char* name, Module* m) { native_modules()[name] = m; }
+std::string_view native_module_name(const Module* m) {
+    for (const auto& [name, module] : native_modules())
+        if (module == m) return name;
+    return {};
+}
 Module* new_module(const char* name) {
     auto* m = new Module(name);
     put(m->dict, "__name__", m->name.get());
@@ -1766,7 +1784,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                              {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec},
                              {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_refuse", i_bella_refuse},
                              {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
-                             {"_bella_shutting_down", i_bella_shutting_down}}) {
+                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());
                     }

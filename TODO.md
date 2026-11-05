@@ -439,10 +439,12 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              types a class cannot derive from (`final:` in the names table). When `match` is
              compiled, read the bits `__abc_tpflags__` carries: inherited, and passed on by
              `register` (`_PyType_SetFlagsRecursive`).
-           * Next, by how many cases each stops (`make compiled-corpus`): subscripting a class
-             (`__class_getitem__`, `types.GenericAlias`) 10, `_weakref` 5, `gc` 4, `_ast` 3,
-             `_operator` 2, `itertools` 2, `_stat` 2; the builtins `sorted`, `enumerate`, `zip`,
-             `min`, `max`; `str %`. Then start-up modules run at start-up.
+           * Subscripting a class and `types.GenericAlias` done (C-3-36), and `dir()` of a class or
+             an object. `types.UnionType` (`X | Y`) is refused until it is written.
+           * Next, by how many cases each stops (`make compiled-corpus`): `bytes` constants 11,
+             `_weakref` 5, `gc` 4, `_ast` 3, `_operator` 2, `itertools` 2, `_stat` 2; the builtins
+             `sorted`, `enumerate`, `zip`, `min`, `max`; `str %`. Then start-up modules run at
+             start-up.
        * 3c the cycle collector and weak references, model first: C-3-12; task 3 done. With it,
          a caught exception keeps its frame's locals (RL-222, decided with D-12).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
