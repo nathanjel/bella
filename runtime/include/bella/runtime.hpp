@@ -320,6 +320,7 @@ void fill_collections(Module* m);                 // and runtime/prelude/_collec
 void fill_string(Module* m);                      // and runtime/prelude/_string.py
 void fill_stat(Module* m);                        // and runtime/prelude/_stat.py
 void fill_functools(Module* m);                   // and runtime/prelude/_functools.py
+void fill_errno(Module* m);                       // and runtime/prelude/errno.py
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);

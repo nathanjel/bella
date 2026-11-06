@@ -1262,8 +1262,15 @@ Module* make_builtins() {
                           "LookupError", "IndexError", "KeyError", "NameError", "UnboundLocalError", "RuntimeError",
                           "NotImplementedError", "RecursionError", "MemoryError", "ReferenceError", "StopIteration", "TypeError", "ValueError",
                           "ImportError", "ModuleNotFoundError", "ImportCycleError", "UnicodeError", "UnicodeEncodeError",
-                          "UnicodeDecodeError", "UnicodeTranslateError"})
+                          "UnicodeDecodeError", "UnicodeTranslateError", "OSError", "BlockingIOError", "ConnectionError", "ChildProcessError",
+                          "BrokenPipeError", "ConnectionAbortedError", "ConnectionRefusedError", "ConnectionResetError", "FileExistsError", "FileNotFoundError",
+                          "IsADirectoryError", "NotADirectoryError", "InterruptedError", "PermissionError", "ProcessLookupError", "TimeoutError", "SyntaxError",
+                          "IndentationError", "TabError", "_IncompleteInputError", "StopAsyncIteration", "EOFError", "PythonFinalizationError", "FloatingPointError",
+                          "SystemError", "BufferError", "Warning", "UserWarning", "DeprecationWarning", "PendingDeprecationWarning", "SyntaxWarning", "RuntimeWarning",
+                          "FutureWarning", "ImportWarning", "UnicodeWarning", "BytesWarning", "EncodingWarning", "ResourceWarning"})
         put(d, n, Obj::of(exception_class(n)));
+    put(d, "EnvironmentError", Obj::of(exception_class("OSError")));
+    put(d, "IOError", Obj::of(exception_class("OSError")));
     put(d, "None", None());
     put(d, "True", boolean(true));
     put(d, "False", boolean(false));

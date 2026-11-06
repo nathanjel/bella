@@ -688,11 +688,23 @@ struct ExceptionClasses {
                  {"ValueError", "Exception"}, {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"},
                  {"ImportCycleError", "ImportError"},
                  {"UnicodeError", "ValueError"}, {"UnicodeEncodeError", "UnicodeError"},
-                 {"UnicodeDecodeError", "UnicodeError"}, {"UnicodeTranslateError", "UnicodeError"}}) {
+                 {"UnicodeDecodeError", "UnicodeError"}, {"UnicodeTranslateError", "UnicodeError"},
+                 {"OSError", "Exception"}, {"BlockingIOError", "OSError"}, {"ConnectionError", "OSError"}, {"ChildProcessError", "OSError"},
+                 {"BrokenPipeError", "ConnectionError"}, {"ConnectionAbortedError", "ConnectionError"}, {"ConnectionRefusedError", "ConnectionError"},
+                 {"ConnectionResetError", "ConnectionError"}, {"FileExistsError", "OSError"}, {"FileNotFoundError", "OSError"}, {"IsADirectoryError", "OSError"},
+                 {"NotADirectoryError", "OSError"}, {"InterruptedError", "OSError"}, {"PermissionError", "OSError"}, {"ProcessLookupError", "OSError"},
+                 {"TimeoutError", "OSError"}, {"SyntaxError", "Exception"}, {"IndentationError", "SyntaxError"}, {"TabError", "IndentationError"},
+                 {"_IncompleteInputError", "SyntaxError"}, {"StopAsyncIteration", "Exception"}, {"EOFError", "Exception"}, {"PythonFinalizationError", "RuntimeError"},
+                 {"FloatingPointError", "ArithmeticError"}, {"SystemError", "Exception"}, {"BufferError", "Exception"}, {"Warning", "Exception"},
+                 {"UserWarning", "Warning"}, {"DeprecationWarning", "Warning"}, {"PendingDeprecationWarning", "Warning"}, {"SyntaxWarning", "Warning"},
+                 {"RuntimeWarning", "Warning"}, {"FutureWarning", "Warning"}, {"ImportWarning", "Warning"}, {"UnicodeWarning", "Warning"}, {"BytesWarning", "Warning"},
+                 {"EncodingWarning", "Warning"}, {"ResourceWarning", "Warning"}}) {
             std::optional<std::vector<std::string>> own;
             if (std::string_view(n) == "AttributeError") own = exception_fields({"obj", "name"});
             if (std::string_view(n) == "NameError") own = exception_fields({"name"});
             if (std::string_view(n) == "ImportError") own = exception_fields({"msg", "name", "path", "name_from"});
+            if (std::string_view(n) == "OSError") own = exception_fields({"errno", "strerror", "filename", "filename2", "written"});
+            if (std::string_view(n) == "SyntaxError") own = exception_fields({"msg", "filename", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line", "_metadata"});
             if (std::string_view(n).starts_with("Unicode") && std::string_view(n) != "UnicodeError")
                 own = exception_fields({"encoding", "object", "start", "end", "reason"});
             make(n, b, own);

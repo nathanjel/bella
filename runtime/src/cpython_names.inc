@@ -6414,6 +6414,7 @@ static constexpr CPythonDoc CPYTHON_DOCS[] = {
     {"dropwhile", "Drop items from the iterable while predicate(item) is true.\n\nAfterwards, return every element until the iterable is exhausted."},
     {"ellipsis", "The type of the Ellipsis singleton."},
     {"enumerate", "Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."},
+    {"errno", "This module makes available standard errno system symbols.\n\nThe value of each symbol is the corresponding integer value,\ne.g., on most systems, errno.ENOENT equals the integer 2.\n\nThe dictionary errno.errorcode maps numeric codes to symbol names,\ne.g., errno.errorcode[2] could be the string 'ENOENT'.\n\nSymbols that are not relevant to the underlying system are not defined.\n\nTo map error codes to error messages, use the function os.strerror(),\ne.g. os.strerror(2) could return 'No such file or directory'."},
     {"filter", "Return an iterator yielding those items of iterable for which\nfunction(item) is true.  If function is None, return the items that\nare true."},
     {"filterfalse", "Return those items of iterable for which function(item) is false.\n\nIf function is None, return the items that are false."},
     {"float", "Convert a string or number to a floating-point number, if possible."},

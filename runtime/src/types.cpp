@@ -1568,6 +1568,207 @@ Ref system_exit_init(Obj self, Args a) {
     else if (a.npos > 1) set_exception_field(self, "code", exception_field(self, "args"));
     return none_ref();
 }
+// ---- OSError (Objects/exceptions.c) ----
+ClassObject* os_error() { return exception_class("OSError"); }
+// oserror_use_init: a subclass with an __init__ of its own and OSError's __new__ gets its arguments there
+bool oserror_use_init(const ClassObject* type) {
+    auto* c = const_cast<ClassObject*>(type);
+    return type_lookup(c, N("__init__")) != type_lookup(os_error(), N("__init__")) && type_lookup(c, N("__new__")) == type_lookup(os_error(), N("__new__"));
+}
+struct OsArgs {
+    Obj myerrno, strerror, filename, filename2;
+};
+OsArgs oserror_parse_args(std::span<const Obj> args) {   // ignored on this platform, the fourth: winerror
+    OsArgs out;
+    if (args.size() >= 2 && args.size() <= 5) {
+        out.myerrno = args[0];
+        out.strerror = args[1];
+        if (args.size() > 2) out.filename = args[2];
+        if (args.size() > 4) out.filename2 = args[4];
+    }
+    return out;
+}
+bool number_check(Obj v) {                       // PyNumber_Check
+    ClassObject* c = type_of(v);
+    return is_complex(v) || !type_lookup(c, N("__index__")).is_unset() || !type_lookup(c, N("__int__")).is_unset() || !type_lookup(c, N("__float__")).is_unset();
+}
+void oserror_init(Obj self, std::span<const Obj> args, const OsArgs& given) {
+    Ref kept = tuple_copy(args);
+    if (!given.filename.is_unset() && given.filename != None()) {
+        if (type_of(self) == exception_class("BlockingIOError") && number_check(given.filename)) {   // its third argument: the characters written
+            std::int64_t written = index_value(given.filename, "ValueError");
+            Ref value = int_from_i64(written);
+            set_exception_field(self, "written", value.get());
+        } else {
+            set_exception_field(self, "filename", given.filename);
+            if (!given.filename2.is_unset() && given.filename2 != None()) set_exception_field(self, "filename2", given.filename2);
+            if (args.size() >= 2 && args.size() <= 5) kept = tuple_copy(args.subspan(0, 2));   // only the first two, for compatibility
+        }
+    }
+    if (!given.myerrno.is_unset()) set_exception_field(self, "errno", given.myerrno);
+    if (!given.strerror.is_unset()) set_exception_field(self, "strerror", given.strerror);
+    set_exception_field(self, "args", kept.get());
+}
+ClassObject* errno_class(std::int64_t code) {    // errnomap
+    switch (code) {
+        case EAGAIN: case EALREADY: case EINPROGRESS: return exception_class("BlockingIOError");
+        case EPIPE: case ESHUTDOWN: return exception_class("BrokenPipeError");
+        case ECHILD: return exception_class("ChildProcessError");
+        case ECONNABORTED: return exception_class("ConnectionAbortedError");
+        case ECONNREFUSED: return exception_class("ConnectionRefusedError");
+        case ECONNRESET: return exception_class("ConnectionResetError");
+        case EEXIST: return exception_class("FileExistsError");
+        case ENOENT: return exception_class("FileNotFoundError");
+        case EISDIR: return exception_class("IsADirectoryError");
+        case ENOTDIR: return exception_class("NotADirectoryError");
+        case EINTR: return exception_class("InterruptedError");
+        case EACCES: case EPERM: return exception_class("PermissionError");
+        case ESRCH: return exception_class("ProcessLookupError");
+        case ETIMEDOUT: return exception_class("TimeoutError");
+        default: return nullptr;
+    }
+}
+Ref oserror_new(Obj, Args a) {                   // OSError_new
+    ClassObject* type = new_wrapper_class(a, os_error());
+    std::span<const Obj> args(a.data + 1, a.npos - 1);
+    OsArgs given;
+    bool use_init = oserror_use_init(type);
+    if (!use_init) {
+        if (a.nkw != 0) raise_new("TypeError", type->name + "() takes no keyword arguments");
+        given = oserror_parse_args(args);
+        std::int64_t code = 0;
+        if (!given.myerrno.is_unset() && is_int(given.myerrno) && type == os_error() && int_fits_i64(given.myerrno, code))
+            if (ClassObject* found = errno_class(code)) type = found;
+    }
+    Ref self = own(new_instance(type));
+    if (!use_init) {
+        oserror_init(self.get(), args, given);
+    } else {
+        Ref empty = tuple_new({});
+        set_exception_field(self.get(), "args", empty.get());
+    }
+    return self;
+}
+Ref oserror_init_m(Obj self, Args a) {           // OSError_init: all done in __new__, unless a subclass said otherwise
+    if (!oserror_use_init(type_of(self))) return none_ref();
+    if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
+    std::span<const Obj> args(a.data, a.npos);
+    oserror_init(self, args, oserror_parse_args(args));
+    return none_ref();
+}
+Ref or_none(Obj v) { return v.is_unset() ? none_ref() : Ref::share(v); }
+std::string shown_str(Obj v) { Ref s = str_of(v); return as_str(s.get())->text; }
+std::string shown_repr(Obj v) { Ref s = repr_of(v); return as_str(s.get())->text; }
+bool field_set(Obj v) { return !v.is_unset() && v != None(); }
+Ref exception_str(Obj self, Args);
+Ref exception_args(Obj self);
+void no_wrapper_args(Args a, const char* name) {  // wrapper_call, check_num_args
+    if (a.nkw != 0) raise_new("TypeError", std::string("wrapper ") + name + "() takes no keyword arguments");
+    if (a.npos != 0) raise_new("TypeError", "expected 0 arguments, got " + std::to_string(a.npos));
+}
+Ref oserror_str(Obj self, Args a) {              // OSError_str
+    no_wrapper_args(a, "__str__");
+    Obj filename = exception_field(self, "filename"), filename2 = exception_field(self, "filename2");
+    Obj myerrno = exception_field(self, "errno"), strerror = exception_field(self, "strerror");
+    if (!filename.is_unset()) {
+        std::string head = "[Errno " + shown_str(or_none(myerrno).get()) + "] " + shown_str(or_none(strerror).get()) + ": " + shown_repr(filename);
+        if (!filename2.is_unset()) head += " -> " + shown_repr(filename2);
+        return str_new(head);
+    }
+    if (!myerrno.is_unset() && !strerror.is_unset()) return str_new("[Errno " + shown_str(myerrno) + "] " + shown_str(strerror));
+    return exception_str(self, a);
+}
+Ref oserror_reduce(Obj self, Args a) {           // OSError_reduce
+    noargs(a, "OSError.__reduce__");
+    Ref args = exception_args(self);
+    Obj filename = exception_field(self, "filename"), filename2 = exception_field(self, "filename2");
+    auto& items = static_cast<Tuple*>(args.get().object())->items;
+    if (items.size() == 2 && !filename.is_unset()) {
+        if (!filename2.is_unset()) args = tuple_new({items[0], items[1], filename, None(), filename2});
+        else args = tuple_new({items[0], items[1], filename});
+    }
+    Ref cls = Ref::share(Obj::of(type_of(self)));
+    bool has_dict = false;
+    with_attribute_storage(self, [&](auto* inst) { has_dict = inst->dict != nullptr || inst->exposed() || !inst->order.empty(); });
+    if (has_dict) {
+        Ref d = getattr(self, N("__dict__"));
+        return tuple_new({cls.get(), args.get(), d.get()});
+    }
+    return tuple_new({cls.get(), args.get()});
+}
+Ref traceback_lineno(Obj self) { return int_from_i64(static_cast<Traceback*>(self.object())->line); }
+Ref oserror_written_get(Obj self) {
+    Obj v = exception_field(self, "written");
+    if (v.is_unset()) raise_new("AttributeError", "characters_written");
+    return Ref::share(v);
+}
+void oserror_written_set(Obj self, Obj v) {
+    if (v.is_unset()) {
+        if (exception_field(self, "written").is_unset()) raise_new("AttributeError", "characters_written");
+        set_exception_field(self, "written", Obj{});
+        return;
+    }
+    Ref value = int_from_i64(index_value(v, "ValueError"));
+    set_exception_field(self, "written", value.get());
+}
+// _Py_T_OBJECT members: unset reads None, and del unsets. Named as the field, by template
+template <const char* const& Name>
+Ref member_get(Obj self) { return or_none(exception_field(self, Name)); }
+template <const char* const& Name>
+void member_set(Obj self, Obj v) { set_exception_field(self, Name, v); }
+#define BELLA_FIELD(ident, text) constexpr const char* const ident = text;
+BELLA_FIELD(F_ERRNO, "errno") BELLA_FIELD(F_STRERROR, "strerror") BELLA_FIELD(F_FILENAME, "filename") BELLA_FIELD(F_FILENAME2, "filename2")
+BELLA_FIELD(F_MSG, "msg") BELLA_FIELD(F_LINENO, "lineno") BELLA_FIELD(F_OFFSET, "offset") BELLA_FIELD(F_TEXT, "text") BELLA_FIELD(F_END_LINENO, "end_lineno")
+BELLA_FIELD(F_END_OFFSET, "end_offset") BELLA_FIELD(F_PRINT, "print_file_and_line") BELLA_FIELD(F_METADATA, "_metadata")
+#undef BELLA_FIELD
+// ---- SyntaxError ----
+Ref syntax_error_init(Obj self, Args a) {        // SyntaxError_init
+    if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
+    set_args(self, a);
+    if (a.npos >= 1) set_exception_field(self, "msg", a.pos(0));
+    if (a.npos == 2) {
+        Ref info = invoke(Obj::of(types().tuple), {a.pos(1)});
+        auto& items = static_cast<Tuple*>(info.get().object())->items;
+        if (items.size() < 4) raise_new("TypeError", "function takes at least 4 arguments (" + std::to_string(items.size()) + " given)");
+        if (items.size() > 7) raise_new("TypeError", "function takes at most 7 arguments (" + std::to_string(items.size()) + " given)");
+        set_exception_field(self, "filename", items[0]);
+        set_exception_field(self, "lineno", items[1]);
+        set_exception_field(self, "offset", items[2]);
+        set_exception_field(self, "text", items[3]);
+        set_exception_field(self, "end_lineno", items.size() > 4 ? items[4] : Obj{});
+        set_exception_field(self, "end_offset", items.size() > 5 ? items[5] : Obj{});
+        set_exception_field(self, "_metadata", items.size() > 6 ? items[6] : Obj{});
+        if (items.size() == 5) raise_new("TypeError", "end_offset must be provided when end_lineno is provided");
+    }
+    return none_ref();
+}
+Ref syntax_error_str(Obj self, Args a) {         // SyntaxError_str
+    no_wrapper_args(a, "__str__");
+    Obj filename = exception_field(self, "filename"), lineno = exception_field(self, "lineno"), msg = exception_field(self, "msg");
+    std::string base;
+    bool has_file = !filename.is_unset() && as_str(filename) != nullptr;
+    if (has_file) {                              // my_basename
+        const std::string& whole = as_str(filename)->text;
+        std::size_t slash = whole.rfind('/');
+        base = slash == std::string::npos ? whole : whole.substr(slash + 1);
+    }
+    bool have_lineno = !lineno.is_unset() && (lineno.is_small() || is_kind(lineno, Kind::BigInt));
+    std::string shown = shown_str(or_none(msg).get());
+    if (!has_file && !have_lineno) return str_new(shown);
+    std::int64_t line = -1;
+    if (have_lineno && !int_fits_i64(lineno, line)) line = -1;   // PyLong_AsLongAndOverflow: -1 on overflow
+    if (has_file && have_lineno) return str_new(shown + " (" + base + ", line " + std::to_string(line) + ")");
+    if (has_file) return str_new(shown + " (" + base + ")");
+    return str_new(shown + " (line " + std::to_string(line) + ")");
+}
+// none_new, notimplemented_new, ellipsis_new: the one there is, and no arguments
+template <int Which>
+Ref singleton_new(Obj, Args a) {
+    ClassObject* owner = Which == 0 ? types().none : Which == 1 ? types().notimplemented : types().ellipsis;
+    new_wrapper_class(a, owner);
+    if (a.npos > 1 || a.nkw != 0) raise_new("TypeError", std::string(Which == 0 ? "NoneType" : Which == 1 ? "NotImplementedType" : "EllipsisType") + " takes no arguments");
+    return Ref::share(Which == 0 ? None() : Which == 1 ? Obj::of(NOTIMPLEMENTED) : Obj::of(ELLIPSIS));
+}
 // StopIteration_init, and the member: its first argument, or None
 Ref stop_iteration_init(Obj self, Args a) {
     if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
@@ -2071,6 +2272,41 @@ void init_types() {
     method(exception_class("NameError"), "__init__", name_error_init);
     method(exception_class("SystemExit"), "__init__", system_exit_init);
     deletable_getset(exception_class("SystemExit"), "code", system_exit_code_get, system_exit_code_set);
+    {
+        auto* lineno = new GetSet("tb_lineno", t.traceback, traceback_lineno, nullptr);
+        t.traceback->attrs.set(N("tb_lineno"), Obj::of(lineno));
+        ClassObject* os = os_error();
+        method(os, "__new__", oserror_new, Binding::Function);
+        method(os, "__init__", oserror_init_m);
+        method(os, "__str__", oserror_str);
+        method(os, "__reduce__", oserror_reduce);
+        auto member = [](ClassObject* c, const char* name, Ref (*g)(Obj), void (*s)(Obj, Obj)) {
+            auto* d = new GetSet(name, c, g, s);
+            d->cls = types().member_descriptor;
+            d->deletable = true;
+            c->attrs.set(N(name), Obj::of(d));
+        };
+        member(os, "errno", member_get<F_ERRNO>, member_set<F_ERRNO>);
+        member(os, "strerror", member_get<F_STRERROR>, member_set<F_STRERROR>);
+        member(os, "filename", member_get<F_FILENAME>, member_set<F_FILENAME>);
+        member(os, "filename2", member_get<F_FILENAME2>, member_set<F_FILENAME2>);
+        deletable_getset(os, "characters_written", oserror_written_get, oserror_written_set);
+        ClassObject* sy = exception_class("SyntaxError");
+        method(sy, "__init__", syntax_error_init);
+        method(sy, "__str__", syntax_error_str);
+        member(sy, "msg", member_get<F_MSG>, member_set<F_MSG>);
+        member(sy, "filename", member_get<F_FILENAME>, member_set<F_FILENAME>);
+        member(sy, "lineno", member_get<F_LINENO>, member_set<F_LINENO>);
+        member(sy, "offset", member_get<F_OFFSET>, member_set<F_OFFSET>);
+        member(sy, "text", member_get<F_TEXT>, member_set<F_TEXT>);
+        member(sy, "end_lineno", member_get<F_END_LINENO>, member_set<F_END_LINENO>);
+        member(sy, "end_offset", member_get<F_END_OFFSET>, member_set<F_END_OFFSET>);
+        member(sy, "print_file_and_line", member_get<F_PRINT>, member_set<F_PRINT>);
+        member(sy, "_metadata", member_get<F_METADATA>, member_set<F_METADATA>);
+        method(t.none, "__new__", singleton_new<0>, Binding::Function);
+        method(t.notimplemented, "__new__", singleton_new<1>, Binding::Function);
+        method(t.ellipsis, "__new__", singleton_new<2>, Binding::Function);
+    }
     method(exception_class("StopIteration"), "__init__", stop_iteration_init);
     deletable_getset(exception_class("StopIteration"), "value", stop_iteration_value_get, stop_iteration_value_set);
     static_cast<GetSet*>(exception_class("StopIteration")->attrs.find(N("value"))->object())->cls = types().member_descriptor;

@@ -26,6 +26,7 @@ namespace prelude_collections { Ref module_body(Module* m); } // runtime/prelude
 namespace prelude_string { Ref module_body(Module* m); }      // runtime/prelude/_string.py
 namespace prelude_stat { Ref module_body(Module* m); }        // runtime/prelude/_stat.py
 namespace prelude_functools { Ref module_body(Module* m); }   // runtime/prelude/_functools.py
+namespace prelude_errno { Ref module_body(Module* m); }       // runtime/prelude/errno.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -324,7 +325,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"_weakref", {fill_weakref}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"_weakref", {fill_weakref}}};
     return table;
 }
 }  // namespace
@@ -591,6 +592,7 @@ void fill_functools(Module* m) {
     g->deletable = true;
     key->attrs.set(N("obj"), Obj::of(g));
 }
+void fill_errno(Module* m) { fill_in_python(m, "errno", "", prelude_errno::module_body, {}); }
 void fill_stat(Module* m) { fill_in_python(m, "_stat", "", prelude_stat::module_body, {{"_number_index", i_number_index}}); }
 void fill_string(Module* m) {
     fill_in_python(m, "_string", "", prelude_string::module_body,
