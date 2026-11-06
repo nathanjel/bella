@@ -1603,3 +1603,140 @@ def _setup(builtin_names):
                 continue
             spec = _spec_from_module(module, loader)
             _init_module_attrs(spec, module)
+
+
+# ---- structseq (Objects/structseq.c): a type of named tuples for the modules written in Python
+
+def _bella_structseq(name, module, fields, visible, settle=None):
+    """`fields` in order, None for one with no name; the first `visible` are the tuple's. CPython names the type's
+    constructor `structseq` in its messages. What makes the result look as C makes it is _bella_structseq_finish.
+    `settle(items, past)`: what a type's own tp_new does to a new one after the common part (statresult_new)."""
+    shown = module + "." + name
+    named = [f for f in fields if f is not None]
+    total = len(fields)
+    unnamed = total - len(named)
+
+    def make(front, past):
+        made = tuple.__new__(cls, front)
+        _bella_structseq_fill(made, tuple(past))
+        return made
+
+    def receiver(args, method):                  # a method descriptor's
+        if not args:
+            raise TypeError("unbound method " + name + "." + method + "() needs an argument")
+        if not issubclass(type(args[0]), cls):
+            raise TypeError("descriptor '" + method + "' for '" + shown + "' objects doesn't apply to a '" + type(args[0]).__name__ + "' object")
+
+    def __new__(*args, **kwds):                  # tp_new_wrapper, then structseq_new_impl
+        if not args:
+            raise TypeError(shown + ".__new__(): not enough arguments")
+        wanted = args[0]
+        if not issubclass(type(wanted), type):
+            raise TypeError(shown + ".__new__(X): X is not a type object (" + type(wanted).__name__ + ")")
+        if not issubclass(wanted, cls):
+            raise TypeError(shown + ".__new__(" + wanted.__name__ + "): " + wanted.__name__ + " is not a subtype of " + shown)
+        rest = args[1:]
+        given = len(rest) + len(kwds)
+        if given > 2:
+            raise TypeError("structseq() takes at most 2 " + ("keyword " if not rest else "") + "arguments (" + str(given) + " given)")
+        for key in kwds:
+            if key not in ("sequence", "dict"):
+                suggestion = _bella_keyword_suggestion(("sequence", "dict"), key)
+                raise TypeError("structseq() got an unexpected keyword argument '" + key + "'" + ("" if suggestion is None else ". Did you mean '" + suggestion + "'?"))
+        if rest and "sequence" in kwds:
+            raise TypeError("argument for structseq() given by name ('sequence') and position (1)")
+        if len(rest) > 1 and "dict" in kwds:
+            raise TypeError("argument for structseq() given by name ('dict') and position (2)")
+        if not rest and "sequence" not in kwds:
+            raise TypeError("structseq() missing required argument 'sequence' (pos 1)")
+        arg = rest[0] if rest else kwds["sequence"]
+        if len(rest) > 1:
+            extra, has_extra = rest[1], True
+        elif "dict" in kwds:
+            extra, has_extra = kwds["dict"], True
+        else:
+            extra, has_extra = None, False
+        try:                                     # PySequence_Fast: only a failure to iterate has its words
+            it = iter(arg)
+        except TypeError:
+            raise TypeError("constructor requires a sequence") from None
+        items = list(it)
+        if has_extra and not issubclass(type(extra), dict):
+            raise TypeError(shown + "() takes a dict as second arg, if any")
+        size = len(items)
+        if visible != total:
+            if size < visible:
+                raise TypeError(shown + "() takes an at least " + str(visible) + "-sequence (" + str(size) + "-sequence given)")
+            if size > total:
+                raise TypeError(shown + "() takes an at most " + str(total) + "-sequence (" + str(size) + "-sequence given)")
+        elif size != visible:
+            raise TypeError(shown + "() takes a " + str(visible) + "-sequence (" + str(size) + "-sequence given)")
+        past = items[visible:]
+        if has_extra and len(extra) > 0:
+            found = 0
+            for field in fields[size:]:
+                if field in extra:
+                    found += 1
+                    past.append(extra[field])
+                else:
+                    past.append(None)
+            if len(extra) > found:
+                raise TypeError(shown + "() got duplicate or unexpected field name(s)")
+        else:
+            past += [None] * (total - size)
+        if settle is not None:
+            settle(items, past)
+        return make(items[:visible], past)
+
+    def __repr__(*args, **kwds):                 # wrapper_call, then structseq_repr
+        if not args:
+            raise TypeError("descriptor '__repr__' of '" + shown + "' object needs an argument")
+        if not issubclass(type(args[0]), cls):
+            raise TypeError("descriptor '__repr__' requires a '" + shown + "' object but received a '" + type(args[0]).__name__ + "'")
+        if kwds:
+            raise TypeError("wrapper __repr__() takes no keyword arguments")
+        if len(args) != 1:
+            raise TypeError("expected 0 arguments, got " + str(len(args) - 1))
+        values = tuple.__iter__(args[0])
+        return shown + "(" + ", ".join([field + "=" + repr(next(values)) for field in named[:visible]]) + ")"
+
+    def __reduce__(*args, **kwds):               # structseq_reduce
+        receiver(args, "__reduce__")
+        if kwds:
+            raise TypeError(name + ".__reduce__() takes no keyword arguments")
+        if len(args) != 1:
+            raise TypeError(name + ".__reduce__() takes no arguments (" + str(len(args) - 1) + " given)")
+        past = {}
+        for field, value in zip(fields[visible:], _bella_structseq_hidden(args[0])):
+            past[field] = value
+        return (cls, (tuple(tuple.__iter__(args[0])), past))
+
+    def __replace__(*args, **kwds):              # structseq_replace
+        receiver(args, "__replace__")
+        if len(args) != 1:
+            raise TypeError("__replace__() takes no positional arguments")
+        if unnamed > 0:
+            raise TypeError("__replace__() is not supported for " + shown + " because it has unnamed field(s)")
+        values = [*tuple.__iter__(args[0]), *_bella_structseq_hidden(args[0])]
+        for i, field in enumerate(fields):
+            if field in kwds:
+                values[i] = kwds.pop(field)
+        if kwds:
+            raise TypeError("Got unexpected field name(s): " + repr(list(kwds)))
+        return make(values[:visible], values[visible:])
+
+    body = {"__new__": __new__, "__repr__": __repr__, "__reduce__": __reduce__, "__replace__": __replace__}
+    for method in body.values():
+        method.__qualname__ = name + "." + method.__name__
+    for field in named:                          # where the members go, in CPython's order
+        body[field] = None
+    body["__doc__"] = None
+    body["__module__"] = module
+    body["n_sequence_fields"] = visible
+    body["n_fields"] = total
+    body["n_unnamed_fields"] = unnamed
+    body["__match_args__"] = tuple([f for f in fields[:visible] if f is not None])
+    body["__slots__"] = ("_s_past",)
+    cls = type(name, (tuple,), body)
+    _bella_structseq_finish(cls, module, fields)
+    return cls

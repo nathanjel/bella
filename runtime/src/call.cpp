@@ -1090,6 +1090,28 @@ Ref sys_exc_info(Obj, Args a) {                   // sys_exc_info_impl: (type, v
     Ref tb = getattr(exc, intern("__traceback__"));
     return tuple_new({Obj::of(type_of(exc)), exc, tb.get()});
 }
+Ref sys_audit(Obj, Args a) {                      // sys_audit: no hook can be added yet (sys.addaudithook stops by name), so no event is looked at
+    if (a.nkw != 0) raise_new("TypeError", "sys.audit() takes no keyword arguments");
+    if (a.npos == 0) raise_new("TypeError", "audit expected at least 1 argument, got 0");
+    const Str* event = as_str(a.pos(0));
+    if (event == nullptr) raise_new("TypeError", "audit() argument 1 must be str, not " + type_of(a.pos(0))->name);
+    Ref encode = getattr(a.pos(0), intern("encode"));    // the argument's conversion: a surrogate fails it
+    invoke(encode.get(), {});
+    if (event->text.find('\0') != std::string::npos) raise_new("ValueError", "embedded null character");
+    return none_ref();
+}
+Ref sys_get_cpu_count_config(Obj, Args a) {       // -X cpu_count and PYTHON_CPU_COUNT are an interpreter's; a compiled program has no such option
+    noargs(a, "sys._get_cpu_count_config");
+    return int_from_i64(-1);
+}
+Ref sys_getfilesystemencoding(Obj, Args a) {      // UTF-8 mode, as PEP 686 has it for the pin: no locale changes it here
+    noargs(a, "sys.getfilesystemencoding");
+    return Ref::share(Obj::of(intern("utf-8")));
+}
+Ref sys_getfilesystemencodeerrors(Obj, Args a) {
+    noargs(a, "sys.getfilesystemencodeerrors");
+    return Ref::share(Obj::of(intern("surrogateescape")));
+}
 Ref sys_intern(Obj, Args a) {                     // sys_intern_impl: the str every equal one gives; a str subclass's cannot be
     onearg(a, "sys.intern");
     const Str* s = as_str(a.pos(0));
@@ -1439,6 +1461,17 @@ Module* make_sys(int argc, char** argv) {
     put_builtin(d, "exception", sys_exception);
     put_builtin(d, "_getframemodulename", sys_getframemodulename);
     put(d, "maxsize", int_from_i64(INT64_MAX).get());
+    put(d, "platform", Obj::of(intern("linux")));
+    put_builtin(d, "audit", sys_audit);
+    put_builtin(d, "_get_cpu_count_config", sys_get_cpu_count_config);
+    {                                            // the pin's: a name here says CPython has it, and an import of one the runtime lacks stops by name
+        std::vector<Obj> names;
+        for (std::string_view n : cpython_names_of("builtin_module")) names.push_back(Obj::of(intern(std::string(n))));
+        Ref t = tuple_steal(std::move(names));
+        put(d, "builtin_module_names", t.get());
+    }
+    put_builtin(d, "getfilesystemencoding", sys_getfilesystemencoding);
+    put_builtin(d, "getfilesystemencodeerrors", sys_getfilesystemencodeerrors);
     fill_int_sys(d);
     return m;
 }
@@ -1488,6 +1521,13 @@ Obj cpython_doc(std::string_view name) {
                                [](const CPythonDoc& e, std::string_view k) { return e.name < k; });
     if (it == std::end(CPYTHON_DOCS) || it->name != name) return None();
     return Obj::of(intern(it->text));
+}
+
+std::optional<std::string_view> cpython_doc_text(std::string_view name) {
+    auto it = std::lower_bound(std::begin(CPYTHON_DOCS), std::end(CPYTHON_DOCS), name,
+                               [](const CPythonDoc& e, std::string_view k) { return e.name < k; });
+    if (it == std::end(CPYTHON_DOCS) || it->name != name) return std::nullopt;
+    return it->text;
 }
 
 bool cpython_has(std::string_view scope, std::string_view name) { return cpython_find(scope, name) != nullptr; }
@@ -1558,6 +1598,10 @@ Module* builtins_module() {
 }
 // PyModule_New: module_init_dict's names first, as every module's namespace starts
 void note_native_module(const char* name, Module* m) { native_modules()[name] = m; }
+Module* native_module_named(const std::string& name) {
+    auto it = native_modules().find(name);
+    return it == native_modules().end() ? nullptr : it->second;
+}
 std::string_view native_module_name(const Module* m) {
     for (const auto& [name, module] : native_modules())
         if (module == m) return name;
@@ -2094,7 +2138,9 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                              {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec},
                              {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_refuse", i_bella_refuse},
                              {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
-                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_new_instance", i_bella_new_instance}, {"_bella_caller_module", i_bella_caller_module}}) {
+                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_new_instance", i_bella_new_instance}, {"_bella_caller_module", i_bella_caller_module},
+                             {"_bella_structseq_finish", i_bella_structseq_finish}, {"_bella_structseq_fill", i_bella_structseq_fill}, {"_bella_structseq_hidden", i_bella_structseq_hidden},
+                             {"_bella_keyword_suggestion", i_keyword_suggestion}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());
                     }

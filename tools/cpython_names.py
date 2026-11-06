@@ -22,6 +22,7 @@ exit 70). This tool records, from the pinned CPython, which names exist:
   ordering, as not supported between the instances); `==` and `!=` count when a type's own
   method decides, not the identity fallback. The runtime refuses a handled operation it does
   not implement, rather than raise the TypeError CPython would not.
+* `builtin_module:<name>`: `sys.builtin_module_names`, which the runtime gives as the pin's;
 * `final:<tp_name>`: the built-in types a class cannot derive from (no Py_TPFLAGS_BASETYPE);
 * `<type>:<name>`: each built-in type's own attributes (its `__dict__`), keyed by `__name__`, with
   the kind of object CPython keeps there (`wrapper_descriptor`, `method_descriptor`, ...), which
@@ -84,8 +85,8 @@ def type_names():
                outer, outer().__closure__[0], outer.__code__, type.__dict__, [].append, list.append,
                dict.__dict__["fromkeys"], type.__dict__["__name__"], object.__init__, object().__init__,
                sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int])]
-    import itertools, _collections, _functools, _operator, _stat, _string, _thread, _weakref
-    for v in [*vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()]:
+    import itertools, posix, _collections, _functools, _operator, _stat, _string, _thread, _weakref
+    for v in [*vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()]:
         add(v)
     for s in samples:
         add(type(s))
@@ -154,9 +155,13 @@ def native_modules(names):
 
 def docs():
     """The docstrings of the built-in modules a program has from the start, and of the built-in types."""
-    import errno, itertools, _collections, _functools, _operator, _stat, _string, _thread, _weakref
-    out = {"sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
-    samples = [v for v in [*vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()] if isinstance(v, type)]
+    import errno, itertools, posix, _collections, _functools, _operator, _stat, _string, _thread, _weakref
+    out = {"posix": posix.__doc__, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
+    for module in (builtins, sys, errno, itertools, posix, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
+        for v in vars(module).values():           # their functions', as `<__module__>.<__name__>`, "" for none (no built-in's is empty)
+            if isinstance(v, types.BuiltinFunctionType) and isinstance(v.__module__, str):
+                out[v.__module__ + "." + v.__name__] = v.__doc__ or ""
+    samples = [v for v in [*vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()] if isinstance(v, type)]
     samples += [type(iter([])), type(iter(())), type(iter("")), type({}.keys()), type({}.values()), type({}.items()), type(iter({})),
                 type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout)]
     for t in samples:
@@ -165,7 +170,7 @@ def docs():
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "operators": operators(), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:])}))
 '''
 
@@ -182,7 +187,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
         native = sorted(n for n, m in lock["modules"].items() if m["status"] in ("core", "mapped") and m["kind"] == "builtin")
         out = subprocess.run([sys.executable, str(script), *native], capture_output=True, text=True, check=True, cwd=tmp)
     data = json.loads(out.stdout)
-    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref") for n in data[scope]}
+    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "builtin_module") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}

@@ -1374,13 +1374,28 @@ Ref builtin_name(Obj self) {
     return str_new(static_cast<Builtin*>(self.object())->name);
 }
 Ref builtin_self(Obj self) {
-    if (is_kind(self, Kind::PyFunction)) return Ref::share(Obj::of(builtins_module()));             // print.__self__
+    if (is_kind(self, Kind::PyFunction)) {       // the prelude's: print.__self__, posix.stat.__self__
+        Ref module = fn_module(self);
+        if (const Str* s = as_str(module.get()))
+            if (Module* home = native_module_named(s->text)) return Ref::share(Obj::of(home));
+        return Ref::share(Obj::of(builtins_module()));
+    }
     auto* b = static_cast<Builtin*>(self.object());
     if (b->home != nullptr) return Ref::share(Obj::of(b->home));
     if (b->self.is_unset() && b->binding == Binding::Function && b->owner != nullptr &&
         cpython_attribute_kind(b->owner, b->name) == "builtin_function_or_method")
         return Ref::share(Obj::of(b->owner));                       // object.__new__.__self__ is object
     return b->self.is_unset() ? none_ref() : Ref::share(b->self);
+}
+Ref builtin_module(Obj self);
+Ref builtin_doc(Obj self) {                      // from the table, for the ones written in Python as for those in C++; a method's waits
+    Ref module = builtin_module(self), name = builtin_name(self);
+    if (const Str* m = as_str(module.get()))
+        if (auto text = cpython_doc_text(m->text + "." + as_str(name.get())->text)) {
+            if (text->empty()) return none_ref();
+            return Ref::share(Obj::of(intern(std::string(*text))));
+        }
+    throw NotImplemented("builtin_function_or_method.__doc__ of '" + as_str(name.get())->text + "' (CPython has it; the runtime does not yet)");
 }
 Ref builtin_qualname(Obj self) {                 // meth_get__qualname__
     Ref name = builtin_name(self);
@@ -2060,6 +2075,46 @@ Ref i_bella_new_instance(Obj, Args a) {
 // What a class statement leaves that a type written in C does not have; the layout is held elsewhere
 Ref instance_dict_of(Obj self) { return instance_dict_getset()->get(self); }
 Ref int_from_number(Obj x) { return number_long(x); }
+void present_native_class(ClassObject* c, const std::string& module);
+// Objects/structseq.c, under bootstrap.py's _bella_structseq: the fields of the sequence are the tuple's, those past it a
+// tuple in the one slot the class declares; a member reads either, by the field's place
+namespace {
+Tuple* structseq_past(Obj self) { return static_cast<Tuple*>(static_cast<TupleInstance*>(self.object())->fields[0].object()); }
+template <std::size_t I>
+Ref structseq_member(Obj self) {
+    auto& items = static_cast<Tuple*>(self.object())->items;
+    return Ref::share(I < items.size() ? items[I] : structseq_past(self)->items[I - items.size()]);
+}
+template <std::size_t... I>
+constexpr std::array<Ref (*)(Obj), sizeof...(I)> structseq_members(std::index_sequence<I...>) { return {structseq_member<I>...}; }
+}  // namespace
+Ref i_bella_structseq_finish(Obj, Args a) {      // (cls, module, fields)
+    positional_only(a, "_bella_structseq_finish", 3, 3);
+    static constexpr auto members = structseq_members(std::make_index_sequence<32>{});
+    auto* c = as_class(a.pos(0));
+    present_native_class(c, as_str(a.pos(1))->text);
+    c->del_attr(N("_s_past"));
+    auto& fields = static_cast<List*>(a.pos(2).object())->items;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (fields[i] == None()) continue;
+        const Str* name = intern(as_str(fields[i])->text);
+        auto* g = new GetSet(name->text.c_str(), c, members.at(i), nullptr);
+        g->cls = types().member_descriptor;
+        c->attrs.set(name, Obj::of(g));
+    }
+    return none_ref();
+}
+Ref i_bella_structseq_fill(Obj, Args a) {        // (made, past)
+    positional_only(a, "_bella_structseq_fill", 2, 2);
+    incref(a.pos(1));
+    decref(std::exchange(static_cast<TupleInstance*>(a.pos(0).object())->fields[0], a.pos(1)));
+    return none_ref();
+}
+Ref i_bella_structseq_hidden(Obj, Args a) {
+    positional_only(a, "_bella_structseq_hidden", 1, 1);
+    return Ref::share(Obj::of(structseq_past(a.pos(0))));
+}
+Ref i_structseq(Obj, Args a) { return invoke(dict_get(bootstrap_of_types()->dict, Obj::of(N("_bella_structseq"))), a); }
 void forget_python_origin(ClassObject* c) {
     for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__", "__weakref__"})   // a C type's list has no getset
         if (c->attrs.contains(N(n))) c->del_attr(N(n));
@@ -2235,6 +2290,7 @@ void init_types() {
     getset(t.builtin, "__name__", builtin_name);
     getset(t.builtin, "__self__", builtin_self);
     getset(t.builtin, "__qualname__", builtin_qualname);
+    getset(t.builtin, "__doc__", builtin_doc);
     {
         auto* g = new GetSet("__module__", t.builtin, builtin_module, set_builtin_module);
         g->deletable = true;

@@ -27,6 +27,7 @@ namespace prelude_string { Ref module_body(Module* m); }      // runtime/prelude
 namespace prelude_stat { Ref module_body(Module* m); }        // runtime/prelude/_stat.py
 namespace prelude_functools { Ref module_body(Module* m); }   // runtime/prelude/_functools.py
 namespace prelude_errno { Ref module_body(Module* m); }       // runtime/prelude/errno.py
+namespace prelude_posix { Ref module_body(Module* m); }       // runtime/prelude/posix.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -325,7 +326,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"_weakref", {fill_weakref}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_weakref", {fill_weakref}}};
     return table;
 }
 }  // namespace
@@ -344,6 +345,7 @@ Ref i_tuple_set(Obj, Args a) {                   // PyTuple_SET_ITEM and the Py_
     decref(std::exchange(slot, a.pos(2)));
     return none_ref();
 }
+}  // namespace
 Ref i_keyword_suggestion(Obj, Args a) {
     positional_only(a, "_keyword_suggestion", 2, 2);
     std::vector<std::string> known;
@@ -351,7 +353,6 @@ Ref i_keyword_suggestion(Obj, Args a) {
     std::string s = keyword_suggestion(as_str(a.pos(1))->text, known);
     return s.empty() ? none_ref() : str_new(s);
 }
-}  // namespace
 // The file runs in a namespace of its own, which its functions keep as their globals, so that the
 // module a program sees has CPython's names and nothing else; nothing clears that namespace at exit.
 namespace {
@@ -591,6 +592,12 @@ void fill_functools(Module* m) {
     g->cls = types().member_descriptor;
     g->deletable = true;
     key->attrs.set(N("obj"), Obj::of(g));
+}
+void fill_posix(Module* m) {
+    fill_in_python(m, "posix", "posix", prelude_posix::module_body,
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_structseq", i_structseq}, {"_sys", i_posix_sys}});
+    dict_set(m->dict, Obj::of(N("error")), Obj::of(exception_class("OSError")));
+    static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("DirEntry"))).object())->disallow_instantiation = true;
 }
 void fill_errno(Module* m) { fill_in_python(m, "errno", "", prelude_errno::module_body, {}); }
 void fill_stat(Module* m) { fill_in_python(m, "_stat", "", prelude_stat::module_body, {{"_number_index", i_number_index}}); }

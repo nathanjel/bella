@@ -321,6 +321,13 @@ void fill_string(Module* m);                      // and runtime/prelude/_string
 void fill_stat(Module* m);                        // and runtime/prelude/_stat.py
 void fill_functools(Module* m);                   // and runtime/prelude/_functools.py
 void fill_errno(Module* m);                       // and runtime/prelude/errno.py
+void fill_posix(Module* m);                       // and runtime/prelude/posix.py, runtime/src/posix.cpp
+Ref i_posix_sys(Obj, Args a);                     // posix.py's: its system calls, by name
+Ref i_structseq(Obj, Args a);                     // a prelude module's: bootstrap.py's _bella_structseq
+Ref i_bella_structseq_finish(Obj, Args a);        // bootstrap.py's: makes a type of named tuples look as C makes it
+Ref i_bella_structseq_fill(Obj, Args a);          // bootstrap.py's: the fields past the sequence
+Ref i_bella_structseq_hidden(Obj, Args a);
+Ref i_keyword_suggestion(Obj, Args a);            // _Py_CalculateSuggestions, for a prelude's messages
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);
@@ -377,6 +384,8 @@ bool tuple_contains(Obj container, Obj item);
 Ref type_or(Obj a, Obj b);                        // _Py_union_type_or (bootstrap.py's)
 inline bool is_union(Obj v) { return v.is_object() && v.object()->cls == types().union_; }   // _PyUnion_Check
 Ref i_bella_new_instance(Obj, Args a);            // bootstrap.py's: an instance of a C type that has no __new__
+Module* native_module_named(const std::string& name);   // a built-in module the program has, or nullptr
+std::optional<std::string_view> cpython_doc_text(std::string_view name);   // a row of the docstrings' table, if any
 Obj cpython_doc(std::string_view name);          // a built-in module's or type's docstring (cpython_names.inc)
 bool& shutting_down();                           // finalize_modules has begun: imports fail as CPython's do
 Ref i_bella_shutting_down(Obj, Args a);
