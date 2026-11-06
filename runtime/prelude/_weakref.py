@@ -21,6 +21,7 @@ try:
     _weak_link                                   # noqa: B018  # init_weakref and insert_weakref
     _weak_get                                    # noqa: B018  # _PyWeakref_GET_REF, None when dead
     _weak_list                                   # noqa: B018  # the object's list, in order
+    _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -28,6 +29,7 @@ except NameError:
     def _missing(*args: object) -> Any:
         raise ImportError("this file needs the runtime's primitives")
 
+    _bella_new_instance: Callable[..., Any] = _missing
     _number_index: Callable[..., int] = _missing
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
     _tp_name: Callable[..., str] = _missing
@@ -67,7 +69,7 @@ def _get_or_create(cls: type, ob: object, callback: object) -> object:   # get_o
             found = _weak_basic(ob, kind)
             if found is not None:
                 return found
-    self = object.__new__(cls)
+    self = _bella_new_instance(cls)
     _weak_link(self, ob, callback, kind)
     return self
 
@@ -250,10 +252,6 @@ def _proxy_repr(self: object) -> str:
     return "<weakproxy at " + hex(id(self)) + "; to '" + _qualified(type(obj)) + "' at " + hex(id(obj)) + ">"
 
 
-def _proxy_new(cls: type, *args: object, **kwds: object) -> object:   # no tp_new
-    raise TypeError("cannot create 'weakref." + cls.__name__ + "' instances")
-
-
 def _proxy_setattr(self: object, name: str, value: object) -> None:
     setattr(_unwrap(self), name, value)
 
@@ -310,7 +308,7 @@ def _proxy_call(self: object, *args: object, **kwds: object) -> object:
 
 
 _PROXY_NAMESPACE: dict[str, object] = {
-    "__module__": "weakref", "__slots__": (), "__new__": _proxy_new, "__repr__": _proxy_repr,
+    "__module__": "weakref", "__slots__": (), "__repr__": _proxy_repr,
     "__setattr__": _proxy_setattr, "__delattr__": _proxy_delattr,
     "__str__": _unary(str), "__bool__": _unary(bool), "__len__": _proxy_len, "__contains__": _proxy_contains,
     "__getitem__": _binary(lambda a, b: a[b]), "__setitem__": _proxy_setitem, "__delitem__": _proxy_delitem,

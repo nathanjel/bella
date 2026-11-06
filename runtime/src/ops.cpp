@@ -580,7 +580,7 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
         !static_cast<Builtin*>(b.object())->self.is_unset()) {   // meth_richcompare: the same function of the same object
         if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
         auto *b0 = static_cast<Builtin*>(a.object()), *b1 = static_cast<Builtin*>(b.object());
-        bool eq = b0->fn == b1->fn && b0->self == b1->self;
+        bool eq = b0->fn == b1->fn && b0->written.get() == b1->written.get() && b0->self == b1->self;
         return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
     }
     if (is_kind(a, Kind::Slice) && is_kind(b, Kind::Slice)) {   // slice_richcompare: as (start, stop, step)
@@ -837,6 +837,11 @@ Ref type_repr_of(Obj v) {
 }
 
 // tp_repr, whatever it gives; what asks for a str says which method failed to give one
+// descr_repr: of object's own, the name alone
+static std::string descr_repr(const char* kind, const std::string& name, const ClassObject* owner) {
+    if (owner == nullptr || owner == types().object) return std::string("<") + kind + " '" + name + "'>";
+    return std::string("<") + kind + " '" + name + "' of '" + owner->name + "' objects>";
+}
 Ref repr_unchecked(Obj v) {
     if (v.is_small()) return str_new(int_text(v.small_value()));
     Object* o = v.object();
@@ -890,10 +895,13 @@ Ref repr_unchecked(Obj v) {
         case Kind::Builtin: {
             auto* b = static_cast<Builtin*>(o);
             std::string_view kind = b->owner != nullptr ? cpython_attribute_kind(b->owner, b->name) : std::string_view{};
-            if (kind == "wrapper_descriptor")            // a slot wrapper or method-wrapper in CPython
+            if (b->cls == types().wrapper_descriptor) return str_new(descr_repr("slot wrapper", b->name, b->owner));
+            if (b->cls == types().method_wrapper)        // wrapper_repr
+                return str_new("<method-wrapper '" + b->name + "' of " + type_of(b->self)->name + " object at " + address(b->self) + ">");
+            if (kind == "wrapper_descriptor")            // made some other way than method(): no such object yet
                 throw NotImplemented("the repr of " + b->owner->name + "." + b->name + ", a slot wrapper in CPython");
             if (b->self.is_unset() && b->binding != Binding::Function)
-                return str_new("<method '" + b->name + "' of '" + (b->owner ? b->owner->name : "object") + "' objects>");
+                return str_new(descr_repr("method", b->name, b->owner));
             if (b->self.is_unset() && kind == "builtin_function_or_method")      // object.__new__, bound to its type
                 return str_new("<built-in method " + b->name + " of type object at " + address(Obj::of(b->owner)) + ">");
             if (!b->self.is_unset() && !is_kind(b->self, Kind::Module))

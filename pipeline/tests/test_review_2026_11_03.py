@@ -74,8 +74,8 @@ REFUSED = {
     "before __getattr__": "class H:\n    def __getattr__(self, n):\n        print('hook', n)\nH().__sizeof__()",
     "a member of type": "class C:\n    pass\nC.__basicsize__",
     "an exception method": "ValueError().add_note",
-    "a slot wrapper's repr": "print(list.__len__)",
-    "a slot wrapper's type": "type([].__len__)",
+    "a slot wrapper's docstring": "print(list.__len__.__doc__)",
+    "a bound slot wrapper's docstring": "[].__len__.__doc__",
 }
 
 

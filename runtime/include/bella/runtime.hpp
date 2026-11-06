@@ -82,6 +82,7 @@ struct Builtin : Object {
     ClassObject* owner = nullptr;                // a method's type: its receiver must be an instance of it
     Module* home = nullptr;                      // a module's function: its __self__ (m_self)
     Ref module_name;                             // its __module__ (m_module), a member a program can set
+    Ref written;                                 // a C type's method the prelude writes in Python: what runs (fn is not called)
     Builtin(std::string n, NativeFn f, Obj s = Obj{}, Binding b = Binding::Function);
 };
 struct GetSet : Object {                         // a getset descriptor: a data descriptor in C++
@@ -227,7 +228,7 @@ struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *frozendict, *dict_reversekeyiterator, *dict_reversevalueiterator, *dict_reverseitemiterator, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_, *complex_, *union_, *generator,
-        *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
+        *method_descriptor, *classmethod_descriptor, *wrapper_descriptor, *method_wrapper, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
         *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator;
 };
@@ -325,8 +326,11 @@ void fill_posix(Module* m);                       // and runtime/prelude/posix.p
 Ref i_posix_sys(Obj, Args a);                     // posix.py's: its system calls, by name
 Ref i_structseq(Obj, Args a);                     // a prelude module's: bootstrap.py's _bella_structseq
 Ref i_bella_structseq_finish(Obj, Args a);        // bootstrap.py's: makes a type of named tuples look as C makes it
-Ref i_bella_structseq_fill(Obj, Args a);          // bootstrap.py's: the fields past the sequence
+Ref i_bella_structseq_make(Obj, Args a);          // bootstrap.py's: (cls, items, past), one of them
 Ref i_bella_structseq_hidden(Obj, Args a);
+Ref call_builtin(Builtin* b, Obj self, Args a);   // a built-in's call: fn, or what the prelude wrote
+void check_classmethod_type(const Builtin* b, Obj type);   // classmethod_get's checks of what it binds to
+void present_methods(ClassObject* c);             // a prelude's class: its methods are what the names table says
 Ref i_keyword_suggestion(Obj, Args a);            // _Py_CalculateSuggestions, for a prelude's messages
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp

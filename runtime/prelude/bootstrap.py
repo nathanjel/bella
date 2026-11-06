@@ -671,7 +671,7 @@ def _ga_unpacked_tuple_args(self):
 
 def _ga_make(cls, origin, args, starred=False):
     """setup_ga, and Py_GenericAlias with cls GenericAlias."""
-    self = object.__new__(cls)
+    self = _bella_new_instance(cls)
     _ga_set(self, '__origin__', origin)
     _ga_set(self, '__args__', args if _ga_check(args, tuple) else (args,))
     _ga_set(self, '__unpacked__', starred)
@@ -803,7 +803,7 @@ is (int,)."""
         return names
 
     def __iter__(self):
-        it = object.__new__(generic_alias_iterator)
+        it = _bella_new_instance(generic_alias_iterator)
         it._ga_obj = self
         return it
 
@@ -840,7 +840,7 @@ Create a unique sentinel object with the given name."""
         given = kwds.get('repr')
         if given is not None and not _ga_check(given, str):
             raise TypeError(f"sentinel() argument 'repr' must be str or None, not {_ga_type_name(given)}")
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         _ga_set(self, '_s_name', name)
         _ga_set(self, '_s_module', _bella_caller_module())
         _ga_set(self, '_s_repr', given)
@@ -1616,11 +1616,6 @@ def _bella_structseq(name, module, fields, visible, settle=None):
     total = len(fields)
     unnamed = total - len(named)
 
-    def make(front, past):
-        made = tuple.__new__(cls, front)
-        _bella_structseq_fill(made, tuple(past))
-        return made
-
     def receiver(args, method):                  # a method descriptor's
         if not args:
             raise TypeError("unbound method " + name + "." + method + "() needs an argument")
@@ -1686,7 +1681,7 @@ def _bella_structseq(name, module, fields, visible, settle=None):
             past += [None] * (total - size)
         if settle is not None:
             settle(items, past)
-        return make(items[:visible], past)
+        return _bella_structseq_make(cls, items[:visible], past)
 
     def __repr__(*args, **kwds):                 # wrapper_call, then structseq_repr
         if not args:
@@ -1723,7 +1718,7 @@ def _bella_structseq(name, module, fields, visible, settle=None):
                 values[i] = kwds.pop(field)
         if kwds:
             raise TypeError("Got unexpected field name(s): " + repr(list(kwds)))
-        return make(values[:visible], values[visible:])
+        return _bella_structseq_make(cls, values[:visible], values[visible:])
 
     body = {"__new__": __new__, "__repr__": __repr__, "__reduce__": __reduce__, "__replace__": __replace__}
     for method in body.values():

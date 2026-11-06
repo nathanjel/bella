@@ -17,6 +17,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index, given by the runtime
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial
     _sequence_concat                             # noqa: B018  # PySequence_Concat, PySequence_InPlaceConcat
+    _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -24,6 +25,7 @@ except NameError:
     def _missing(*args: object) -> Any:
         raise ImportError("this file needs the runtime's primitives")
 
+    _bella_new_instance: Callable[..., Any] = _missing
     _number_index: Callable[..., int] = _missing
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
     _sequence_concat: Callable[..., object] = _missing
@@ -369,7 +371,7 @@ class itemgetter:
             item = args[0]
         else:
             item = args
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._item = item
         self._nitems = nitems
         return self
@@ -416,7 +418,7 @@ class attrgetter:
             if not issubclass(type(item), str):
                 raise TypeError("attribute name must be a string")
             names.append(tuple(item.split(".")) if "." in item else item)  # type: ignore[attr-defined, operator]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._attr = tuple(names)
         self._nattrs = nattrs
         return self
@@ -468,7 +470,7 @@ class methodcaller:
         name = args[0]
         if not issubclass(type(name), str):
             raise TypeError("method name must be a string")
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._c_kwds = kwds
         self._a_name = name
         self._b_args = args[1:]

@@ -113,9 +113,13 @@ Ref invoke(Obj f, Args a) {
                 // an instance of the method's type (review 2026-11-03, A9-2)
                 if (a.npos == 0)
                 {
-                    if (b->owner != nullptr && cpython_attribute_kind(b->owner, b->name) == "wrapper_descriptor")   // wrapperdescr_call
+                    if (b->owner != nullptr && (b->binding == Binding::ClassMethod || cpython_attribute_kind(b->owner, b->name) == "wrapper_descriptor"))   // wrapperdescr_call, classmethoddescr_call
                         raise_new("TypeError", "descriptor '" + b->name + "' of '" + b->owner->name + "' object needs an argument");
-                    raise_new("TypeError", "unbound method " + (b->owner ? b->owner->name + "." : "") + b->name + "() needs an argument");
+                    raise_new("TypeError", "unbound method " + (b->owner ? b->owner->name.substr(b->owner->name_prefix) + "." : "") + b->name + "() needs an argument");
+                }
+                if (b->binding == Binding::ClassMethod && b->owner != nullptr) {   // classmethoddescr_call: bound to the first argument, a type
+                    check_classmethod_type(b, a.pos(0));
+                    return call_builtin(b, a.pos(0), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
                 }
                 if (b->owner != nullptr && !isinstance(a.pos(0), b->owner)) {
                     if (cpython_attribute_kind(b->owner, b->name) == "wrapper_descriptor")   // wrapperdescr_call
@@ -124,9 +128,9 @@ Ref invoke(Obj f, Args a) {
                     raise_new("TypeError", "descriptor '" + b->name + "' for '" + b->owner->name + "' objects doesn't apply to a '" +
                                                type_of(a.pos(0))->name + "' object");
                 }
-                return b->fn(a.pos(0), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
+                return call_builtin(b, a.pos(0), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
             }
-            return b->fn(b->self, a);
+            return call_builtin(b, b->self, a);
         }
         case Kind::Method: {
             auto* m = static_cast<Method*>(o);
@@ -2130,6 +2134,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_sequence_check", sequence.get());
                     Ref tp_name = own(new Builtin("_tp_name", i_tp_name));
                     put(pm->dict, "_tp_name", tp_name.get());
+                    Ref alloc = own(new Builtin("_bella_new_instance", i_bella_new_instance));
+                    put(pm->dict, "_bella_new_instance", alloc.get());
                 }
                 if (std::string_view(pm_entry.name) == "_frozen_importlib") {
                     bootstrap = pm;
@@ -2138,8 +2144,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                              {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec},
                              {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_refuse", i_bella_refuse},
                              {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
-                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_new_instance", i_bella_new_instance}, {"_bella_caller_module", i_bella_caller_module},
-                             {"_bella_structseq_finish", i_bella_structseq_finish}, {"_bella_structseq_fill", i_bella_structseq_fill}, {"_bella_structseq_hidden", i_bella_structseq_hidden},
+                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_caller_module", i_bella_caller_module},
+                             {"_bella_structseq_finish", i_bella_structseq_finish}, {"_bella_structseq_make", i_bella_structseq_make}, {"_bella_structseq_hidden", i_bella_structseq_hidden},
                              {"_bella_keyword_suggestion", i_keyword_suggestion}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());
@@ -2158,6 +2164,9 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;   // print is a builtin
                         dict_set(builtins_module()->dict, n, v);
                     }
+                if (!all.is_unset())                 // now that the builtins have what a class's __new__ is wrapped in
+                    for (Obj n : static_cast<List*>(all.object())->items)
+                        if (Obj v = dict_get(pm->dict, n); is_kind(v, Kind::Class)) present_methods(static_cast<ClassObject*>(v.object()));
                 Obj intr = dict_get(pm->dict, Obj::of(intern("__intrinsics__")));
                 if (!intr.is_unset())
                     for (Obj n : static_cast<List*>(intr.object())->items) dict_set(intrinsics(), n, dict_get(pm->dict, n));
@@ -2176,6 +2185,15 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             init_float();
             init_complex();
             init_generator();
+            for (ClassObject* c : builtin_types())    // every file's methods made, those that are slot wrappers say so
+                for (auto& [name, v] : c->attrs.items())
+                    if (is_kind(v, Kind::Builtin)) {
+                        auto* b = static_cast<Builtin*>(v.object());
+                        if (b->self.is_unset() && b->binding == Binding::Method && cpython_attribute_kind(c, name->text) == "wrapper_descriptor") {
+                            b->cls = types().wrapper_descriptor;
+                            if (b->owner == nullptr) b->owner = c;
+                        }
+                    }
             adopt_functions(builtins_module());
             adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own

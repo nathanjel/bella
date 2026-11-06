@@ -63,6 +63,8 @@ Types& types() {
         x.textio = builtin_type("TextIOWrapper", {x.object});
         x.method_descriptor = builtin_type("method_descriptor", {x.object});
         x.classmethod_descriptor = builtin_type("classmethod_descriptor", {x.object});
+        x.wrapper_descriptor = builtin_type("wrapper_descriptor", {x.object});
+        x.method_wrapper = builtin_type("method-wrapper", {x.object});
         x.getset_descriptor = builtin_type("getset_descriptor", {x.object});
         // a __slots__ member's type (object.hpp's SlotDescriptor): made a type here, or type(d) has
         // no class of its own (found while verifying RL-228's round)
@@ -464,7 +466,7 @@ std::int64_t full_hash(Obj v) {
         case Kind::Builtin: {
             if (o->kind == Kind::Builtin && !static_cast<Builtin*>(o)->self.is_unset()) {   // meth_hash
                 auto* b = static_cast<Builtin*>(o);
-                auto h = pointer_hash(b->self.is_object() ? b->self.object() : nullptr) ^ pointer_hash(reinterpret_cast<const void*>(b->fn));
+                auto h = pointer_hash(b->self.is_object() ? b->self.object() : nullptr) ^ pointer_hash(b->written.get().is_object() ? static_cast<const void*>(b->written.get().object()) : reinterpret_cast<const void*>(b->fn));
                 return h == -1 ? -2 : h;
             }
             // object.__hash__: the address rotated by 4 bits (_Py_HashPointer)

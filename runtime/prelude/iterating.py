@@ -13,9 +13,11 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _sequence_check                              # noqa: B018  # PySequence_Check
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
+    _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
 except NameError:
     import operator
 
+    _bella_new_instance = object.__new__
     _number_index = operator.index
 
     def _sequence_check(obj: object) -> bool:
@@ -53,7 +55,7 @@ class reversed:
             return found[0]()  # type: ignore[operator]
         if not _sequence_check(seq):
             raise TypeError("'" + _tp_name(seq) + "' object is not reversible")
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._index = len(seq) - 1  # type: ignore[arg-type]
         self._seq = seq
         return self
@@ -130,7 +132,7 @@ enumerate is useful for obtaining an indexed list:
         else:
             raise TypeError("enumerate() takes at most 2 arguments (" + str(total) + " given)")
         iterable = args[0] if nargs else kwds["iterable"]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._count = _number_index(start)
         self._it = iter(iterable)  # type: ignore[call-overload]
         return self
@@ -188,7 +190,7 @@ raise a ValueError.
     def __new__(cls, *args: object, **kwds: object) -> object:   # zip_new
         strict = _strict_argument(kwds, "zip")
         its = [iter(a) for a in args]  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._its = tuple(its)
         self._strict = strict
         return self
@@ -227,7 +229,7 @@ raise a ValueError."""
         if len(args) < 2:
             raise TypeError("map() must have at least two arguments.")
         its = [iter(a) for a in args[1:]]  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._func = args[0]
         self._its = tuple(its)
         self._strict = strict
@@ -263,7 +265,7 @@ is true. If function is None, return the items that are true."""
         if len(args) != 2:
             raise TypeError("filter expected 2 arguments, got " + str(len(args)))
         it = iter(args[1])  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._func = args[0]
         self._it = it
         return self

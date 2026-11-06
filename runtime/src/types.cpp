@@ -2,6 +2,7 @@
 // and method descriptors, type.__new__ and calling a class, attribute access on classes and on the
 // C++ types' objects, and special-method dispatch. CPython's Objects/typeobject.c is the reference
 // for each rule; the order of effects follows it.
+#include <unordered_set>
 #include "bella/runtime.hpp"
 
 #include <algorithm>
@@ -23,9 +24,11 @@ bool is_none(Obj v) { return v == None(); }
 ClassObject* as_class(Obj v);
 ClassObject* tp_base(ClassObject* c);
 
-NativeFn new_slot(ClassObject* c) {              // tp_new, as far as the runtime can tell it apart
+const void* new_slot(ClassObject* c) {           // tp_new, as far as the runtime can tell it apart
     Obj f = type_lookup(c, N("__new__"));
-    return is_kind(f, Kind::Builtin) ? static_cast<Builtin*>(f.object())->fn : nullptr;
+    if (!is_kind(f, Kind::Builtin)) return nullptr;
+    auto* b = static_cast<Builtin*>(f.object());
+    return b->written.get().is_object() ? static_cast<const void*>(b->written.get().object()) : reinterpret_cast<const void*>(b->fn);
 }
 ClassObject* static_base(ClassObject* c) {
     while (!is_kind(type_lookup(c, N("__new__")), Kind::Builtin) && !c->bases.empty()) c = tp_base(c);
@@ -62,6 +65,7 @@ void new_method(ClassObject* c, NativeFn fn) {
 void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::Method) {
     auto* f = new Builtin(name, fn, Obj{}, b);
     f->owner = c;
+    if (b == Binding::Method && cpython_attribute_kind(c, name) == "wrapper_descriptor") f->cls = types().wrapper_descriptor;
     f->flags |= IMMORTAL;                        // owned by the type, which lives as long as the program
     c->attrs.set(N(name), Obj::of(f));
 }
@@ -112,10 +116,55 @@ void arity(Args a, const char* who, std::size_t lo, std::size_t hi) {
 ClassObject* observed_type(Obj v) {
     if (is_kind(v, Kind::Builtin)) {
         auto* b = static_cast<Builtin*>(v.object());
-        if (b->owner != nullptr && cpython_attribute_kind(b->owner, b->name) == "wrapper_descriptor")
+        if (b->owner != nullptr && b->cls != types().wrapper_descriptor && b->cls != types().method_wrapper &&
+            cpython_attribute_kind(b->owner, b->name) == "wrapper_descriptor")   // made some other way than method(): no such object yet
             throw NotImplemented("the type of " + b->owner->name + "." + b->name + ", a slot wrapper in CPython");
     }
     return type_of(v);
+}
+
+// wrapper_call and the slot's wrap_*: what a slot wrapper checks before the method runs, for a method written in Python
+static void wrapper_checks(const std::string& name, Args a) {
+    if (name == "__init__" || name == "__call__") return;   // PyWrapperFlag_KEYWORDS, and any number of arguments
+    if (a.nkw != 0) raise_new("TypeError", "wrapper " + name + "() takes no keyword arguments");
+    static const std::unordered_set<std::string_view> unary{"__iter__", "__next__", "__repr__", "__str__", "__hash__", "__len__", "__bool__", "__neg__", "__pos__",
+                                                            "__abs__", "__invert__", "__int__", "__float__", "__index__"};
+    static const std::unordered_set<std::string_view> ternary{"__setitem__", "__setattr__", "__set__"};
+    static const std::unordered_set<std::string_view> variable{"__get__", "__pow__", "__rpow__", "__ipow__"};
+    if (variable.contains(name)) return;
+    if (ternary.contains(name)) {                // wrap_sq_setitem and the others: PyArg_UnpackTuple
+        if (a.npos != 2) raise_new("TypeError", name + " expected 2 arguments, got " + std::to_string(a.npos));
+        return;
+    }
+    std::size_t expected = unary.contains(name) ? 0 : 1;
+    if (a.npos != expected)
+        raise_new("TypeError", "expected " + std::to_string(expected) + " argument" + (expected == 1 ? "" : "s") + ", got " + std::to_string(a.npos));
+}
+Ref call_builtin(Builtin* b, Obj self, Args a) {
+    Obj written = b->written.get();
+    if (written.is_unset()) return b->fn(self, a);
+    if (b->cls == types().wrapper_descriptor || b->cls == types().method_wrapper) wrapper_checks(b->name, a);
+    if (self.is_unset()) {                       // a __new__: tp_new_wrapper's checks, then the type as the first argument
+        new_wrapper_class(a, b->owner);
+        return invoke(written, a);
+    }
+    auto data = with_first(self, a);
+    return invoke(written, Args{data.data(), a.npos + 1, a.kwnames, a.nkw});
+}
+void check_classmethod_type(const Builtin* b, Obj type) {
+    if (!is_kind(type, Kind::Class))
+        raise_new("TypeError", "descriptor '" + b->name + "' for type '" + b->owner->name + "' needs a type, not a '" + type_of(type)->name + "' as arg 2");
+    if (!is_subclass(static_cast<ClassObject*>(type.object()), b->owner))
+        raise_new("TypeError", "descriptor '" + b->name + "' requires a subtype of '" + b->owner->name + "' but received '" + static_cast<ClassObject*>(type.object())->name + "'");
+}
+// A method bound to its receiver: what binding makes of a descriptor, in the kind CPython makes
+static Ref bind_builtin(Builtin* b, Obj receiver) {
+    Ref bound = own(new Builtin(b->name, b->fn, receiver));
+    auto* made = static_cast<Builtin*>(bound.get().object());
+    made->owner = b->owner;                      // how it presents itself
+    made->written = b->written;
+    if (b->cls == types().wrapper_descriptor) made->cls = types().method_wrapper;
+    return bound;
 }
 
 void check_member_applies(const SlotDescriptor* d, Obj obj) {   // descr_check
@@ -131,18 +180,16 @@ Ref descr_get(Obj found, Obj obj, Obj type) {
             case Kind::Builtin: {
                 auto* b = static_cast<Builtin*>(o);
                 if (!b->self.is_unset() || b->binding == Binding::Function) return Ref::share(found);
-                Ref bound;
                 if (b->binding == Binding::ClassMethod) {
-                    bound = own(new Builtin(b->name, b->fn, is_none(type) ? Obj::of(type_of(obj)) : type));
-                } else {
-                    if (is_none(obj)) return Ref::share(found);
-                    if (b->owner != nullptr && !isinstance(obj, b->owner))       // method_check (A9-2)
-                        raise_new("TypeError", "descriptor '" + b->name + "' for '" + b->owner->name + "' objects doesn't apply to a '" +
-                                                   type_of(obj)->name + "' object");
-                    bound = own(new Builtin(b->name, b->fn, obj));
+                    Obj bound_to = is_none(type) ? Obj::of(type_of(obj)) : type;
+                    if (b->owner != nullptr) check_classmethod_type(b, bound_to);
+                    return bind_builtin(b, bound_to);
                 }
-                static_cast<Builtin*>(bound.get().object())->owner = b->owner;   // how it presents itself
-                return bound;
+                if (is_none(obj)) return Ref::share(found);
+                if (b->owner != nullptr && !isinstance(obj, b->owner))       // method_check (A9-2)
+                    raise_new("TypeError", "descriptor '" + b->name + "' for '" + b->owner->name + "' objects doesn't apply to a '" +
+                                               type_of(obj)->name + "' object");
+                return bind_builtin(b, obj);
             }
             case Kind::GetSet: {
                 auto* g = static_cast<GetSet*>(o);
@@ -351,11 +398,7 @@ Ref generic_getattr(Obj obj, const Str* name) {
     if (!found.is_unset()) refuse_shadowed(c->mro, 0, name);
     if (obj == None() && is_kind(found, Kind::Builtin)) {   // descr_get's None means no instance; here it is the instance
         auto* b = static_cast<Builtin*>(found.object());
-        if (b->self.is_unset() && b->binding == Binding::Method) {
-            Ref bound = own(new Builtin(b->name, b->fn, obj));
-            static_cast<Builtin*>(bound.get().object())->owner = b->owner;
-            return bound;
-        }
+        if (b->self.is_unset() && b->binding == Binding::Method) return bind_builtin(b, obj);
     }
     if (obj == None() && is_kind(found, Kind::GetSet)) return static_cast<GetSet*>(found.object())->get(obj);
     if (!found.is_unset() && is_data_descriptor(found)) return descr_get(found, obj, Obj::of(c));
@@ -501,7 +544,7 @@ Ref type_call(ClassObject* cls, Args a) {
         if ((is_kind(init, Kind::PyFunction) && !presents_as_builtin(init)) || is_kind(init, Kind::Builtin)) {
             Ref hold = Ref::share(init);
             result = is_kind(init, Kind::Builtin) && static_cast<Builtin*>(init.object())->binding == Binding::Method
-                         ? static_cast<Builtin*>(init.object())->fn(obj.get(), a)
+                         ? call_builtin(static_cast<Builtin*>(init.object()), obj.get(), a)
                          : call_with_first(init, obj.get(), a);
         } else {
             Ref bound = descr_get(init, obj.get(), Obj::of(t));
@@ -1387,6 +1430,17 @@ Ref builtin_self(Obj self) {
         return Ref::share(Obj::of(b->owner));                       // object.__new__.__self__ is object
     return b->self.is_unset() ? none_ref() : Ref::share(b->self);
 }
+Ref builtin_objclass(Obj self) {                 // wrapper_objclass, descr_get's member
+    auto* b = static_cast<Builtin*>(self.object());
+    if (b->owner == nullptr) throw NotImplemented("__objclass__ of a method that does not know its type");
+    return Ref::share(Obj::of(b->owner));
+}
+Ref builtin_descr_qualname(Obj self) {           // descr_get_qualname, wrapper_qualname: the type's, a dot, its own
+    auto* b = static_cast<Builtin*>(self.object());
+    Ref owner = builtin_objclass(self);
+    Ref qualname = getattr(owner.get(), N("__qualname__"));
+    return str_new(as_str(qualname.get())->text + "." + b->name);
+}
 Ref builtin_module(Obj self);
 Ref builtin_doc(Obj self) {                      // from the table, for the ones written in Python as for those in C++; a method's waits
     Ref module = builtin_module(self), name = builtin_name(self);
@@ -1674,7 +1728,6 @@ Ref oserror_init_m(Obj self, Args a) {           // OSError_init: all done in __
 Ref or_none(Obj v) { return v.is_unset() ? none_ref() : Ref::share(v); }
 std::string shown_str(Obj v) { Ref s = str_of(v); return as_str(s.get())->text; }
 std::string shown_repr(Obj v) { Ref s = repr_of(v); return as_str(s.get())->text; }
-bool field_set(Obj v) { return !v.is_unset() && v != None(); }
 Ref exception_str(Obj self, Args);
 Ref exception_args(Obj self);
 void no_wrapper_args(Args a, const char* name) {  // wrapper_call, check_num_args
@@ -2018,14 +2071,18 @@ void present_as_c_types(Module* bootstrap) {
     c->name = "types.SimpleNamespace";
     c->name_prefix = 6;
     c->attrs.set(N("__dict__"), Obj::of(new GetSet("__dict__", c, instance_dict, readonly_dict)));
+    note_prelude_class(c);
+    present_methods(c);
     auto* ga = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("GenericAlias"))).object());
     ga->name = "types.GenericAlias";
     ga->name_prefix = 6;
     ga->forwards_attributes = true;
     note_prelude_class(ga);
+    present_methods(ga);
     ga->has_weakref = cpython_has("weakref", "GenericAlias");
     auto* ga_iterator = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("generic_alias_iterator"))).object());
     note_prelude_class(ga_iterator);
+    present_methods(ga_iterator);
     ga_iterator->final_type = true;
     getset(ga, "__parameters__", ga_parameters);
     getset(ga, "__typing_unpacked_tuple_args__", ga_unpacked_tuple_args);
@@ -2038,6 +2095,7 @@ void present_as_c_types(Module* bootstrap) {
     un->final_type = cpython_has("final", un->name);
     un->has_weakref = cpython_has("weakref", "Union");
     un->disallow_instantiation = true;
+    present_methods(un);
     un->mapping_getitem = true;
     forget_python_origin(un);
     getset(un, "__name__", union_name);
@@ -2050,6 +2108,7 @@ void present_as_c_types(Module* bootstrap) {
     se->final_type = cpython_has("final", "sentinel");
     se->has_weakref = cpython_has("weakref", "sentinel");
     forget_python_origin(se);
+    present_methods(se);
     se->del_attr(N("__module__"));
     if (Obj doc = cpython_doc("sentinel"); doc != None()) se->set_attr(N("__doc__"), doc);
     for (auto [name, get, set] : std::initializer_list<std::tuple<const char*, Ref (*)(Obj), void (*)(Obj, Obj)>>{
@@ -2069,7 +2128,9 @@ Ref type_or(Obj a, Obj b) {
 }
 Ref i_bella_new_instance(Obj, Args a) {
     positional_only(a, "_bella_new_instance", 1, 1);
-    return own(new_instance(as_class(a.pos(0))));
+    ClassObject* c = as_class(a.pos(0));
+    if (c == nullptr) raise_new("TypeError", "_bella_new_instance(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
+    return own(new_instance(c));
 }
 
 // What a class statement leaves that a type written in C does not have; the layout is held elsewhere
@@ -2104,17 +2165,61 @@ Ref i_bella_structseq_finish(Obj, Args a) {      // (cls, module, fields)
     }
     return none_ref();
 }
-Ref i_bella_structseq_fill(Obj, Args a) {        // (made, past)
-    positional_only(a, "_bella_structseq_fill", 2, 2);
-    incref(a.pos(1));
-    decref(std::exchange(static_cast<TupleInstance*>(a.pos(0).object())->fields[0], a.pos(1)));
-    return none_ref();
+Ref i_bella_structseq_make(Obj, Args a) {        // (cls, items, past), lists: PyStructSequence_New and the filling
+    positional_only(a, "_bella_structseq_make", 3, 3);
+    auto* made = new TupleInstance(as_class(a.pos(0)));
+    Ref r = own(made);
+    for (Obj v : static_cast<List*>(a.pos(1).object())->items) {
+        incref(v);
+        made->items.push_back(v);
+    }
+    Ref past = tuple_copy(static_cast<List*>(a.pos(2).object())->items);
+    made->fields[0] = past.release();
+    return r;
 }
 Ref i_bella_structseq_hidden(Obj, Args a) {
     positional_only(a, "_bella_structseq_hidden", 1, 1);
     return Ref::share(Obj::of(structseq_past(a.pos(0))));
 }
 Ref i_structseq(Obj, Args a) { return invoke(dict_get(bootstrap_of_types()->dict, Obj::of(N("_bella_structseq"))), a); }
+// The methods of a C type the prelude writes in Python are what the names table says, as a built-in type's own are, so that
+// type(), repr(), binding and the receiver's check see one kind of thing; what runs is the prelude's function. The file's other
+// functions, which have no row, stay as they are: they are its own.
+static Ref generic_new(Obj self, Args a) {        // PyType_GenericNew, under tp_new_wrapper: the arguments are __init__'s
+    return own(new_instance(new_wrapper_class(a, as_class(self))));
+}
+void present_methods(ClassObject* c) {
+    if (!c->attrs.contains(N("__new__")) && cpython_attribute_kind(c, "__new__") == "builtin_function_or_method") new_method(c, generic_new);   // its type has a tp_new of its own
+    Obj staticmethod = dict_get(builtins_module()->dict, Obj::of(N("staticmethod")));
+    Obj classmethod = dict_get(builtins_module()->dict, Obj::of(N("classmethod")));
+    for (auto& [name, v] : c->attrs.items()) {
+        std::string_view kind = cpython_attribute_kind(c, name->text);
+        if (is_kind(v, Kind::Builtin)) {         // one the file's C++ made for it
+            auto* made = static_cast<Builtin*>(v.object());
+            if (made->self.is_unset() && made->binding == Binding::Method && kind == "wrapper_descriptor") made->cls = types().wrapper_descriptor;
+            continue;
+        }
+        Ref written;
+        Binding binding = Binding::Method;
+        if (is_kind(v, Kind::PyFunction) && (kind == "wrapper_descriptor" || kind == "method_descriptor")) {
+            written = Ref::share(v);
+        } else if (!staticmethod.is_unset() && type_of(v) == as_class(staticmethod) && kind == "builtin_function_or_method") {
+            written = getattr(v, N("__func__"));
+            binding = Binding::Function;
+        } else if (!classmethod.is_unset() && type_of(v) == as_class(classmethod) && kind == "classmethod_descriptor") {
+            written = getattr(v, N("__func__"));
+            binding = Binding::ClassMethod;
+        } else {
+            continue;
+        }
+        auto* b = new Builtin(name->text, nullptr, Obj{}, binding);
+        b->owner = c;
+        b->written = std::move(written);
+        b->flags |= IMMORTAL;
+        if (kind == "wrapper_descriptor") b->cls = types().wrapper_descriptor;
+        decref(c->attrs.set(name, Obj::of(b)));
+    }
+}
 void forget_python_origin(ClassObject* c) {
     for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__", "__weakref__"})   // a C type's list has no getset
         if (c->attrs.contains(N(n))) c->del_attr(N(n));
@@ -2128,6 +2233,7 @@ void present_native_class(ClassObject* c, const std::string& module) {
     note_prelude_class(c);
     c->final_type = cpython_has("final", c->name);
     forget_python_origin(c);
+    present_methods(c);
     c->has_weakref = cpython_has("weakref", short_name);
     if (Obj doc = cpython_doc(short_name); doc != None()) c->set_attr(N("__doc__"), doc);
     if (cpython_has(short_name, "__class_getitem__")) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
@@ -2249,7 +2355,18 @@ void init_types() {
     for (const char* n : {"__name__", "__qualname__", "__module__", "__doc__", "__bases__"})
         static_cast<GetSet*>(t.type->attrs.find(N(n))->object())->deletable = true;
     // descriptors' own __get__ (and a getset's __set__ and __delete__)
-    for (ClassObject* c : {t.function, t.method_descriptor, t.classmethod_descriptor, t.getset_descriptor, t.member_descriptor}) method(c, "__get__", get_native);
+    for (ClassObject* c : {t.function, t.method_descriptor, t.classmethod_descriptor, t.wrapper_descriptor, t.getset_descriptor, t.member_descriptor}) method(c, "__get__", get_native);
+    for (ClassObject* c : {t.method_descriptor, t.classmethod_descriptor, t.wrapper_descriptor, t.method_wrapper}) {   // descr_members, descr_getset, wrapper_getsets
+        auto member = [&](const char* name, Ref (*get)(Obj)) {
+            auto* g = new GetSet(name, c, get, nullptr);
+            if (c != t.method_wrapper) g->cls = t.member_descriptor;
+            c->attrs.set(N(name), Obj::of(g));
+        };
+        member("__name__", builtin_name);
+        member("__objclass__", builtin_objclass);
+        getset(c, "__qualname__", builtin_descr_qualname);
+    }
+    getset(t.method_wrapper, "__self__", builtin_self);
     for (ClassObject* c : {t.getset_descriptor, t.member_descriptor}) {
         method(c, "__set__", getset_set);
         method(c, "__delete__", getset_delete);

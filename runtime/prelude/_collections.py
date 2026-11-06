@@ -18,6 +18,7 @@ try:
     _count_element                               # noqa: B018  # _count_elements' fast path: one hash for each key
     _repr_enter                                  # noqa: B018  # Py_ReprEnter: false when it is in there already
     _repr_leave                                  # noqa: B018  # Py_ReprLeave
+    _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -25,6 +26,7 @@ except NameError:
     def _missing(*args: object) -> Any:
         raise ImportError("this file needs the runtime's primitives")
 
+    _bella_new_instance: Callable[..., Any] = _missing
     _number_index: Callable[..., int] = _missing
     _tp_name: Callable[..., str] = _missing
     _count_element: Callable[..., None] = _missing
@@ -301,7 +303,7 @@ class deque:
     def __new__(*args: object, **kwds: object) -> deque:   # deque_new: the arguments are __init__'s
         _new_receiver(args, deque, "collections.deque")
         cls, args = args[0], args[1:]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._a_items = []
         self._b_start = 0
         self._c_maxlen = -1
@@ -651,7 +653,7 @@ def _d_repeat(self: object, n: int) -> object:   # deque_repeat
 
 
 def _make_iterator(cls: type, target: object) -> object:   # deque_iter, deque___reversed___impl
-    it = object.__new__(cls)
+    it = _bella_new_instance(cls)
     it._a_deque = target  # type: ignore[attr-defined]
     it._b_position = 0  # type: ignore[attr-defined]
     it._c_counter = _d_size(target)  # type: ignore[attr-defined]
@@ -854,7 +856,7 @@ class _tuplegetter:
             raise TypeError("_tuplegetter() takes no keyword arguments")
         if len(args) != 2:
             raise TypeError("_tuplegetter expected 2 arguments, got " + str(len(args)))
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._a_index = _clinic_ssize(args[0])
         self._b_doc = args[1]
         return self

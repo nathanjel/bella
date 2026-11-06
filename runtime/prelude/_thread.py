@@ -21,6 +21,7 @@ try:
     _native_thread_id                            # noqa: B018  # PyThread_get_thread_native_id
     _sleep_ns                                    # noqa: B018  # a wait no other thread can end
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
+    _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -28,6 +29,7 @@ except NameError:
     def _missing(*args: object) -> Any:
         raise ImportError("this file needs the runtime's primitives")
 
+    _bella_new_instance: Callable[..., Any] = _missing
     _number_index: Callable[..., int] = _missing
     _sequence_check: Callable[..., bool] = _missing
     _tp_name: Callable[..., str] = _missing
@@ -153,7 +155,7 @@ class lock:
             raise TypeError("lock() takes no keyword arguments")
         if args:
             raise TypeError("lock() takes no positional arguments")
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._a_locked = False
         return self
 
@@ -233,7 +235,7 @@ class RLock:
             raise TypeError("RLock() takes no keyword arguments")
         if args:
             raise TypeError("RLock() takes no positional arguments")
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._a_owner = 0
         self._b_count = 0
         return self
@@ -357,7 +359,7 @@ class _local:                                    # one thread has one dict, the 
         if cls.__init__ is object.__init__ and (args or kwds):
             raise TypeError("Initialization arguments are not supported")
         from _weakref import ref
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         _local_slot.__set__(self, ref(self))     # the reference local_new's dummy keeps: a program can count it
         return self
 
@@ -385,7 +387,7 @@ class _ThreadHandle:
     def __new__(*args: object, **kwds: object) -> _ThreadHandle:
         _new_receiver(args, _ThreadHandle, "_thread._ThreadHandle")
         cls, args = args[0], args[1:]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._a_ident = 0
         self._b_state = _NOT_STARTED
         return self

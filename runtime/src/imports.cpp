@@ -312,14 +312,14 @@ void fill_types(Module* m) {
     put("MemberDescriptorType", t.member_descriptor);
     put("MethodDescriptorType", t.method_descriptor);
     put("MethodType", t.method);
-    put("MethodWrapperType", no_instances_yet("method-wrapper"));
+    put("MethodWrapperType", t.method_wrapper);
     put("ModuleType", t.module);
     put("NoneType", t.none);
     put("NotImplementedType", t.notimplemented);
     dict_set(d, Obj::of(N("SimpleNamespace")), dict_get(bootstrap_module()->dict, Obj::of(N("SimpleNamespace"))));
     put("TracebackType", t.traceback);
     dict_set(d, Obj::of(N("UnionType")), dict_get(bootstrap_module()->dict, Obj::of(N("Union"))));
-    put("WrapperDescriptorType", no_instances_yet("wrapper_descriptor"));
+    put("WrapperDescriptorType", t.wrapper_descriptor);
 }
 struct NativeModule {
     void (*fill)(Module*);
@@ -360,6 +360,10 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
                     std::initializer_list<std::pair<const char*, NativeFn>> primitives) {
     Module* ns = new_module(name);
     forget_module(ns);
+    {                                            // tp_alloc: what a type's __new__ makes its instance with, in every such file
+        Ref alloc = own(new Builtin("_bella_new_instance", i_bella_new_instance));
+        dict_set(ns->dict, Obj::of(N("_bella_new_instance")), alloc.get());
+    }
     for (auto [primitive, fn] : primitives) {
         Ref b = own(new Builtin(primitive, fn));
         dict_set(ns->dict, Obj::of(N(primitive)), b.get());
@@ -424,6 +428,7 @@ void fill_weakref(Module* m) {                   // the types are named for `wea
         auto* c = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N(n))).object());
         c->forwards_attributes = true;
         c->weak_proxy = true;
+        c->disallow_instantiation = true;        // no tp_new: only proxy() makes one
     }
     auto* ref = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("ReferenceType"))).object());
     auto* member = new GetSet("__callback__", ref, weak_callback_member, nullptr);   // PyMemberDef in CPython
@@ -464,6 +469,7 @@ void fill_thread(Module* m) {
     getattribute->owner = local;
     getattribute->flags |= IMMORTAL;
     local->attrs.set(N("__getattribute__"), Obj::of(getattribute));
+    present_methods(local);
     auto* handle = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("_ThreadHandle"))).object());
     handle->attrs.set(N("ident"), Obj::of(new GetSet("ident", handle, handle_ident, nullptr)));
 }

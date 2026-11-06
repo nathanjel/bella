@@ -12,6 +12,7 @@ try:
     _field_split                                 # noqa: B018  # field_name_split, with no auto numbering
     _field_next                                  # noqa: B018  # fieldnameiter_next, from a position
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
+    _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -19,6 +20,7 @@ except NameError:
     def _missing(*args: object) -> Any:
         raise ImportError("this file needs the runtime's primitives")
 
+    _bella_new_instance: Callable[..., Any] = _missing
     _markup_next: Callable[..., Any] = _missing
     _field_split: Callable[..., Any] = _missing
     _field_next: Callable[..., Any] = _missing
@@ -66,7 +68,7 @@ def _text_argument(args: tuple[object, ...], kwds: dict[str, object], name: str)
 
 
 def formatter_parser(*args: object, **kwds: object) -> object:
-    it = object.__new__(formatteriterator)
+    it = _bella_new_instance(formatteriterator)
     it._a_text = _text_argument(args, kwds, "formatter_parser")
     it._b_position = 0
     return it
@@ -75,7 +77,7 @@ def formatter_parser(*args: object, **kwds: object) -> object:
 def formatter_field_name_split(*args: object, **kwds: object) -> object:
     text = _text_argument(args, kwds, "formatter_field_name_split")
     first, where = _field_split(text)
-    it = object.__new__(fieldnameiterator)
+    it = _bella_new_instance(fieldnameiterator)
     it._a_text = text
     it._b_position = where
     return first, it

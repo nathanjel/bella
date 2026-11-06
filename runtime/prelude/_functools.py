@@ -108,7 +108,7 @@ Used as a placeholder for partial arguments."""
             raise TypeError("PlaceholderType takes no arguments")
         if _the_placeholder is not None:
             return _the_placeholder
-        return object.__new__(args[0])  # type: ignore[arg-type]
+        return _bella_new_instance(args[0])  # type: ignore[arg-type]
 
     def __repr__(*args: object, **kwds: object) -> str:
         _wrapper(args, kwds, _PlaceholderType, "__repr__", 0)
@@ -157,7 +157,7 @@ and keywords."""
             pto_kw = func.keywords  # type: ignore[attr-defined]
             pto_phcount = func._p_phcount  # type: ignore[attr-defined]
             func = func.func  # type: ignore[attr-defined]
-        self = object.__new__(cls)  # type: ignore[arg-type]
+        self = _bella_new_instance(cls)  # type: ignore[arg-type]
         _set(self, "func", func)
         phcount = 0
         for i in range(new_nargs - 1):
@@ -525,7 +525,7 @@ cache_info_type:    namedtuple class with the fields:
             kind = "uncached" if maxsize == 0 else "bounded"
         else:
             raise TypeError("maxsize should be integer or None")
-        self = object.__new__(cls)  # type: ignore[arg-type]
+        self = _bella_new_instance(cls)  # type: ignore[arg-type]
         root = _Link()
         root.prev = root
         root.next = root

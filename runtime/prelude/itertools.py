@@ -24,6 +24,7 @@ try:
     _held_once                                   # noqa: B018  # _PyObject_IsUniquelyReferenced of an attribute's value
     _tuple_set                                   # noqa: B018  # PyTuple_SET_ITEM, on a tuple nothing else holds
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
+    _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -31,6 +32,7 @@ except NameError:
     def _missing(*args: object) -> Any:
         raise ImportError("this file needs the runtime's primitives")
 
+    _bella_new_instance: Callable[..., Any] = _missing
     _number_index: Callable[..., int] = _missing
     _held_once: Callable[..., bool] = _missing
     _tuple_set: Callable[..., None] = _missing
@@ -145,7 +147,7 @@ class batched:
         if n < 1:
             raise ValueError("n must be at least one")
         it = iter(iterable)  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._batch_size = n
         self._it = it
         self._strict = strict
@@ -193,7 +195,7 @@ class pairwise:
         _new_no_keywords(cls, pairwise, "pairwise", kwds)
         _positional("pairwise", args, 1, 1)
         it = iter(args[0])  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._it = it
         self._old = _ABSENT
         self._result = tuple([None, None])       # its own, to be recycled: a constant could not be
@@ -243,7 +245,7 @@ class groupby:
 
     def __new__(cls, *args: object, **kwds: object) -> object:
         iterable, key = _unpack("groupby", args, kwds, ("iterable", "key"), 1, 2)
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._c_tgtkey = _ABSENT
         self._d_currkey = _ABSENT
         self._e_currvalue = _ABSENT
@@ -291,7 +293,7 @@ def _groupby_step(gbo: object) -> bool:          # groupby_step: False at the en
 
 
 def _grouper_create(parent: object, tgtkey: object) -> object:
-    self = object.__new__(_grouper)
+    self = _bella_new_instance(_grouper)
     self._parent = parent
     self._tgtkey = tgtkey
     parent._f_currgrouper = id(self)  # type: ignore[attr-defined]  # a borrowed pointer in the C: compared, never followed
@@ -391,7 +393,7 @@ def _data_getitem(data: object, i: int) -> object:    # teedataobject_getitem_lo
 
 
 def _new_data(it: object) -> object:             # teedataobject_newinternal
-    self = object.__new__(_tee_dataobject)
+    self = _bella_new_instance(_tee_dataobject)
     self._running = False
     self._numread = 0
     self._c_nextlink = None
@@ -429,7 +431,7 @@ class _tee:
             raise TypeError("_tee.__copy__() takes no keyword arguments")
         if args:
             raise TypeError("_tee.__copy__() takes no arguments (" + str(len(args)) + " given)")
-        new = object.__new__(type(self))
+        new = _bella_new_instance(type(self))
         new._dataobj = self._dataobj
         new._index = self._index
         return new
@@ -439,7 +441,7 @@ def _tee_from_iterable(iterable: object) -> object:   # tee_fromiterable
     it = iter(iterable)  # type: ignore[call-overload]
     if issubclass(type(it), _tee):
         return _tee.__copy__(it)
-    new = object.__new__(_tee)
+    new = _bella_new_instance(_tee)
     new._dataobj = _new_data(it)
     new._index = 0
     return new
@@ -474,7 +476,7 @@ class cycle:
         _new_no_keywords(cls, cycle, "cycle", kwds)
         _positional("cycle", args, 1, 1)
         it = iter(args[0])  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._it = it
         self._saved = []
         self._index = -1
@@ -513,7 +515,7 @@ class dropwhile:
         _new_no_keywords(cls, dropwhile, "dropwhile", kwds)
         _positional("dropwhile", args, 2, 2)
         it = iter(args[1])  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._func = args[0]
         self._it = it
         self._start = False
@@ -541,7 +543,7 @@ class takewhile:
         _new_no_keywords(cls, takewhile, "takewhile", kwds)
         _positional("takewhile", args, 2, 2)
         it = iter(args[1])  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._func = args[0]
         self._it = it
         self._stop = False
@@ -568,7 +570,7 @@ class starmap:
         _new_no_keywords(cls, starmap, "starmap", kwds)
         _positional("starmap", args, 2, 2)
         it = iter(args[1])  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._func = args[0]
         self._it = it
         return self
@@ -590,7 +592,7 @@ class filterfalse:
         _new_no_keywords(cls, filterfalse, "filterfalse", kwds)
         _positional("filterfalse", args, 2, 2)
         it = iter(args[1])  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._func = args[0]
         self._it = it
         return self
@@ -616,7 +618,7 @@ class compress:
         data, selectors = _unpack("compress", args, kwds, ("data", "selectors"), 2, 2)
         data_it = iter(data)  # type: ignore[call-overload]
         selectors_it = iter(selectors)  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._data = data_it
         self._selectors = selectors_it
         return self
@@ -677,7 +679,7 @@ class islice:
         if step < 1:
             raise ValueError("Step for islice() must be a positive integer or None.")
         it = iter(seq)  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._it = it
         self._next = start
         self._stop = stop
@@ -755,7 +757,7 @@ class chain:
 
 
 def _chain_new(cls: type, source: object) -> object:   # chain_new_internal
-    self = object.__new__(cls)
+    self = _bella_new_instance(cls)
     self._source = source
     self._active = None
     return self
@@ -778,7 +780,7 @@ class product:
             raise OverflowError("repeat argument too large")
         _room_for(nargs * repeat)
         pools = [tuple(a) for a in args[:nargs]]  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._pools = tuple(pools) * repeat if nargs else ()
         self._indices = [0] * len(self._pools)
         self._result = None
@@ -829,7 +831,7 @@ class combinations:
         r = _nonnegative(r_arg, "r")
         pool = tuple(iterable)  # type: ignore[call-overload]
         _room_for(r)
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._pool = pool
         self._indices = list(range(r))
         self._result = None
@@ -878,7 +880,7 @@ class combinations_with_replacement:
         r = _nonnegative(r_arg, "r")
         pool = tuple(iterable)  # type: ignore[call-overload]
         _room_for(r)
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._pool = pool
         self._indices = [0] * r
         self._result = None
@@ -934,7 +936,7 @@ class permutations:
         if r < 0:
             raise ValueError("r must be non-negative")
         _room_for(r)
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._pool = pool
         self._indices = list(range(n))
         self._cycles = [n - i for i in range(r)]
@@ -998,7 +1000,7 @@ class accumulate:
     def __new__(cls, *args: object, **kwds: object) -> object:
         iterable, binop, initial = _unpack("accumulate", args, kwds, ("iterable", "func", "initial"), 1, 2)
         it = iter(iterable)  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._a_binop = None if binop is _ABSENT else binop
         self._b_total = _ABSENT
         self._c_it = it
@@ -1047,7 +1049,7 @@ class count:
             long_cnt = None
         else:
             cnt = _SSIZE_MAX
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._cnt = cnt
         self._long_cnt = long_cnt
         self._long_step = long_step
@@ -1095,7 +1097,7 @@ class repeat:
             cnt = _ssize(times)
             if cnt < 0:                          # the times argument given: never endless
                 cnt = 0
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._element = element
         self._cnt = cnt
         return self
@@ -1138,7 +1140,7 @@ class zip_longest:
                 raise TypeError("zip_longest() got an unexpected keyword argument")
             fillvalue = kwds["fillvalue"]
         its = [iter(a) for a in args]  # type: ignore[call-overload]
-        self = object.__new__(cls)
+        self = _bella_new_instance(cls)
         self._a_ittuple = its                    # a tuple in the C, whose slots it empties
         self._tuplesize = len(args)
         self._numactive = len(args)
