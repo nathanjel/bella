@@ -671,8 +671,10 @@ void fill_int_sys(Dict* sys) {
     put_function(sys, "set_int_max_str_digits", set_digits);
     put_function(sys, "get_int_max_str_digits", get_digits);
 }
+std::string int_in_base(Obj v, int base) { return in_base(v, base); }
 void init_bigint() {
     ClassObject* i = types().int_;
+    method(i, "__format__", int_format_dunder);
     method(types().slice, "indices", slice_indices_m);
     method(i, "conjugate", plain_m);
     method(i, "bit_length", bit_length_m);

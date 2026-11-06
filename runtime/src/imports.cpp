@@ -23,6 +23,7 @@ namespace prelude_itertools { Ref module_body(Module* m); }   // runtime/prelude
 namespace prelude_operator { Ref module_body(Module* m); }    // runtime/prelude/_operator.py
 namespace prelude_thread { Ref module_body(Module* m); }      // runtime/prelude/_thread.py
 namespace prelude_collections { Ref module_body(Module* m); } // runtime/prelude/_collections.py
+namespace prelude_string { Ref module_body(Module* m); }      // runtime/prelude/_string.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -321,7 +322,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_weakref", {fill_weakref}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_weakref", {fill_weakref}}};
     return table;
 }
 }  // namespace
@@ -522,6 +523,10 @@ void fill_collections(Module* m) {               // its types are named for `col
     cls("deque")->attrs.set(N("maxlen"), Obj::of(new GetSet("maxlen", cls("deque"), deque_maxlen, nullptr)));
     member(cls("defaultdict"), "default_factory", factory_get, factory_set);
     member(cls("_tuplegetter"), "__doc__", getter_doc, getter_doc_set);
+}
+void fill_string(Module* m) {
+    fill_in_python(m, "_string", "", prelude_string::module_body,
+                   {{"_markup_next", i_markup_next}, {"_field_split", i_field_split}, {"_field_next", i_field_next}, {"_tp_name", i_tp_name}});
 }
 void fill_operator(Module* m) {                  // its types are named for `operator`, the module that shows them
     fill_in_python(m, "_operator", "operator", prelude_operator::module_body,

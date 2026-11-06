@@ -314,6 +314,7 @@ void fill_itertools(Module* m);                   // runtime/src/imports.cpp, ru
 void fill_operator(Module* m);                    // and runtime/prelude/_operator.py
 void fill_thread(Module* m);                      // and runtime/prelude/_thread.py
 void fill_collections(Module* m);                 // and runtime/prelude/_collections.py
+void fill_string(Module* m);                      // and runtime/prelude/_string.py
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);
@@ -335,6 +336,19 @@ Ref bytes_concat(Obj a, Obj b);
 void bytes_iadd(Obj a, Obj b);
 Ref bytes_repeat(Obj self, std::int64_t count, bool in_place);
 Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
+// ---- format (runtime/src/format.cpp) ----
+Ref object_format(Obj obj, const Str* spec);      // PyObject_Format
+Ref ascii_of(Obj v);                              // PyObject_ASCII
+Ref str_format_m(Obj self, Args a);
+Ref str_format_map_m(Obj self, Args a);
+Ref str_format_dunder(Obj self, Args a);
+Ref int_format_dunder(Obj self, Args a);
+Ref float_format_dunder(Obj self, Args a);
+Ref i_markup_next(Obj, Args a);
+Ref i_field_split(Obj, Args a);
+Ref i_field_next(Obj, Args a);
+Ref number_float(Obj o);                          // PyNumber_Float
+std::string int_in_base(Obj v, int base);         // bases 2, 8, 16, with the prefix
 Ref build_folded_set(std::initializer_list<Obj> items);   // a set display CPython folds to a frozenset constant
 Ref sequence_fast(Obj v, const char* message);   // PySequence_Fast: a list or tuple itself, else a list of its items
 std::string utf8_with_errors(Obj text, const char* errors);   // what a text stream writes (UTF-8 mode, D-15)

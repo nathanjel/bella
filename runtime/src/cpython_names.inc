@@ -6331,6 +6331,7 @@ static constexpr CPythonDoc CPYTHON_DOCS[] = {
     {"_collections", "High performance data structures.\n- deque:        ordered collection accessible from endpoints only\n- defaultdict:  dict subclass with a default value factory\n"},
     {"_local", "Thread-local data"},
     {"_operator", "Operator interface.\n\nThis module exports a set of functions implemented in C corresponding\nto the intrinsic operators of Python.  For example, operator.add(x, y)\nis equivalent to the expression x+y.  The function names are those\nused for special methods; variants without leading and trailing\n'__' are also provided for convenience."},
+    {"_string", "string helper module"},
     {"_tee", "Iterator wrapped to make it copyable."},
     {"_tee_dataobject", "teedataobject(iterable, values, next, /)\n--\n\nData container common to multiple tee objects."},
     {"_thread", "This module provides primitive operations to write multi-threaded programs.\nThe 'threading' module provides a more convenient interface."},

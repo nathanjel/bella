@@ -1183,9 +1183,10 @@ Ref object_delattr(Obj self, Args a) {
     return none_ref();
 }
 Ref object_format(Obj self, Args a) {
-    arity(a, "__format__", 1, 1);
+    onearg(a, "object.__format__");
     const Str* spec = as_str(a.pos(0));
-    if (spec != nullptr && spec->length != 0)
+    if (spec == nullptr) raise_new("TypeError", "__format__() argument must be str, not " + (a.pos(0) == None() ? std::string("None") : type_of(a.pos(0))->name));
+    if (spec->length != 0)
         raise_new("TypeError", "unsupported format string passed to " + type_of(self)->name + ".__format__");
     return str_of(self);
 }

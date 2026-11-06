@@ -226,19 +226,6 @@ void check_float_result(Obj o, Obj res) {
     throw NotImplemented("__float__ returning an instance of a subclass of float (a DeprecationWarning in CPython)");
 }
 
-Ref number_float(Obj o) {                        // PyNumber_Float
-    if (is_kind(o, Kind::Float)) return Ref::share(o);
-    if (has_special(o, "__float__")) {
-        Ref res = call_special(o, "__float__", {});
-        check_float_result(o, res.get());
-        return res;
-    }
-    if (has_special(o, "__index__")) {
-        Ref i = int_index_of(o);
-        return float_ref(int_as_double(i.get()));
-    }
-    return float_from_string(o);
-}
 Ref float_new_impl(Obj x) {                      // float_new_impl for float itself
     if (x.is_unset()) return float_ref(0.0);
     if (is_kind(x, Kind::Str)) return float_from_string(x);
@@ -493,13 +480,6 @@ Ref getformat_m(Obj, Args a) {
     if (s->text != "double" && s->text != "float") raise_new("ValueError", "__getformat__() argument 1 must be 'double' or 'float'");
     return str_new("IEEE, little-endian");
 }
-Ref format_m(Obj self, Args a) {                 // float___format___impl
-    onearg(a, "float.__format__");
-    const Str* s = as_str(a.pos(0));
-    if (s == nullptr) raise_new("TypeError", "__format__() argument must be str, not " + type_of(a.pos(0))->name);
-    if (s->length != 0) throw NotImplemented("format() with a format specification");
-    return str_of(self);
-}
 Ref real_get(Obj self) { return exact_copy(self); }
 Ref imag_get(Obj) { return float_ref(0.0); }
 void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::Method) {
@@ -510,6 +490,19 @@ void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::
 }
 }  // namespace
 
+Ref number_float(Obj o) {                        // PyNumber_Float
+    if (is_kind(o, Kind::Float)) return Ref::share(o);
+    if (has_special(o, "__float__")) {
+        Ref res = call_special(o, "__float__", {});
+        check_float_result(o, res.get());
+        return res;
+    }
+    if (has_special(o, "__index__")) {
+        Ref i = int_index_of(o);
+        return float_ref(int_as_double(i.get()));
+    }
+    return float_from_string(o);
+}
 Ref float_ref(double v) {
     auto* f = new Float(v);
     f->cls = types().float_;
@@ -673,7 +666,7 @@ void init_float() {
     method(f, "__floor__", floor_m);
     method(f, "__ceil__", ceil_m);
     method(f, "__getnewargs__", getnewargs_m);
-    method(f, "__format__", format_m);
+    method(f, "__format__", float_format_dunder);
     method(f, "__getformat__", getformat_m, Binding::ClassMethod);
     method(f, "conjugate", conjugate_m);
     method(f, "is_integer", is_integer_m);

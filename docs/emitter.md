@@ -454,7 +454,11 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * `float` (`runtime/src/float.cpp`, C-6-12): the object is a double, and a subclass's instance adds an attribute
   storage as `IntInstance` does. The digits are libstdc++'s (`make float-diff`), and everything around them is the C's.
   What is not finished: a negative float to a fractional power stops by name until `complex`; `float()` of a str
-  beyond ASCII stops by name until the Unicode database; `format` with a specification stops by name for every type.
+  beyond ASCII stops by name until the Unicode database.
+* The format mini-language and `str.format` (`runtime/src/format.cpp`, C-6-15) follow `unicode_formatter.c` and
+  `unicode_format.h`, and `PyOS_double_to_string`'s layout around `<charconv>`'s digits (what `_Py_dg_dtoa` gives is
+  worked out from them in `dtoa_digits`). A character beyond ASCII where a number may be stops by name, since whether
+  it is a digit needs the Unicode database. `n` groups as the C locale does, not at all: the runtime never leaves it.
 * `bytes` and `bytearray`: `%`, a class derived from them, the codecs UTF-16 and UTF-32 and the
   `namereplace` handler stop by name; `codecs.register_error` has nothing to register with until
   `_codecs` is written. `memoryview` and the buffer protocol are \[P2+\].
@@ -485,7 +489,7 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   known edges).
 * Later: the slot wrappers' own types (`wrapper_descriptor`, `method-wrapper`), whose repr and
   type are refused today (RL-218); the names RL-211's table refuses, as programs need them.
-* Later: `format` specifications, the global read caches of decision 6, the Unicode database
+* Later: the global read caches of decision 6, the Unicode database
   for `repr` beyond Latin-1, the rest of the builtins.
 * Speed is not a goal yet: everything is boxed and every call binds generically, so the compiled
   `fib` takes about twice CPython's time. Phase 2's types change that.

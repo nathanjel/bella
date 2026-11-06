@@ -487,19 +487,13 @@ Ref b_repr(Obj, Args a) {
 Ref b_format(Obj, Args a) {
     clinic(a, "format", "format", 1, 2);
     Obj spec = a.npos > 1 ? a.pos(1) : Obj{};
-    const Str* s = spec.is_unset() ? nullptr : as_str(spec);
-    if (!spec.is_unset() && s == nullptr)
-        raise_new("TypeError", "format() argument 2 must be str, not " + type_of(spec)->name);
-    if (is_kind(a.pos(0), Kind::Instance) || (is_subclass_instance(a.pos(0)) && overrides_builtin(a.pos(0), "__format__")))
-        return call_special(a.pos(0), "__format__", {spec.is_unset() ? str_new("").get() : spec});
-    if (s != nullptr && s->length != 0) {        // object.__format__ takes no specification; a type's own may
-        for (const ClassObject* c : type_of(a.pos(0))->mro) {
-            if (c == types().object) raise_new("TypeError", "unsupported format string passed to " + type_of(a.pos(0))->name + ".__format__");
-            if (!cpython_attribute_kind(c, "__format__").empty()) break;
-        }
-        throw NotImplemented("format() with a format specification");
-    }
-    return str_of(a.pos(0));
+    const Str* s = spec.is_unset() ? intern("") : as_str(spec);
+    if (s == nullptr) raise_new("TypeError", "format() argument 2 must be str, not " + (spec == None() ? std::string("None") : type_of(spec)->name));
+    return object_format(a.pos(0), s);
+}
+Ref b_ascii(Obj, Args a) {
+    onearg(a, "ascii");
+    return ascii_of(a.pos(0));
 }
 // isinstance and issubclass (Objects/abstract.c): an exact type first, type's own check for a
 // class whose metaclass is type, a tuple's items in turn, else the metaclass's __instancecheck__
@@ -1222,6 +1216,7 @@ Module* make_builtins() {
     fill_int_builtins(d);
     put_builtin(d, "repr", b_repr);
     put_builtin(d, "format", b_format);
+    put_builtin(d, "ascii", b_ascii);
     put_builtin(d, "isinstance", b_isinstance);
     put_builtin(d, "iter", b_iter);
     put_builtin(d, "next", b_next);
@@ -1256,7 +1251,8 @@ Module* make_builtins() {
              {"partition", str_partition_m}, {"rpartition", str_rpartition_m}, {"split", str_split_m},
              {"rsplit", str_rsplit_m}, {"strip", str_strip_m}, {"lstrip", str_lstrip_m}, {"rstrip", str_rstrip_m},
              {"replace", str_replace_m}, {"lower", str_lower_m}, {"casefold", str_casefold_m}, {"upper", str_upper_m}, {"swapcase", str_swapcase_m}, {"capitalize", str_capitalize_m}, {"title", str_title_m}, {"isalpha", str_isalpha_m}, {"isalnum", str_isalnum_m}, {"isdigit", str_isdigit_m}, {"isdecimal", str_isdecimal_m}, {"isnumeric", str_isnumeric_m}, {"isspace", str_isspace_m}, {"isprintable", str_isprintable_m}, {"isidentifier", str_isidentifier_m}, {"islower", str_islower_m}, {"isupper", str_isupper_m}, {"istitle", str_istitle_m}, {"center", str_center_m}, {"ljust", str_ljust_m}, {"rjust", str_rjust_m}, {"zfill", str_zfill_m}, {"removeprefix", str_removeprefix_m}, {"removesuffix", str_removesuffix_m}, {"splitlines", str_splitlines_m}, {"expandtabs", str_expandtabs_m}, {"translate", str_translate_m},
-             {"__getnewargs__", str_getnewargs_m}, {"__str__", str_str_m}})
+             {"__getnewargs__", str_getnewargs_m}, {"__str__", str_str_m}, {"format", str_format_m}, {"format_map", str_format_map_m},
+             {"__format__", str_format_dunder}})
         method(t.str, n, fn);
     for (ClassObject* c : {t.list, t.tuple, t.str, t.dict, t.frozendict}) {
         method(c, "__getitem__", getitem_m);
