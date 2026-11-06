@@ -51,11 +51,6 @@ def _refused(src: str, reason: str) -> None:
     assert got.returncode == 70 and reason in got.stderr, got
 
 
-def test_a_union_of_aliases_is_refused_until_it_exists() -> None:
-    _refused("print(list[int] | None)\n", "types.UnionType")
-    _refused("print(None | list[int])\n", "types.UnionType")
-
-
 def test_getattribute_past_a_getattr_is_refused() -> None:
     """The instances' path runs __getattr__ and cannot yet skip it, as object.__getattribute__ must."""
     _refused("class C:\n    def __getattr__(self, n):\n        return 1\nprint(object.__getattribute__(C(), 'x'))\n", "__getattr__")
@@ -78,6 +73,5 @@ def test_as_cpython(program: tuple[str, str]) -> None:
 if __name__ == "__main__":
     for item in PROGRAMS:
         test_as_cpython(item)
-    test_a_union_of_aliases_is_refused_until_it_exists()
     test_getattribute_past_a_getattr_is_refused()
     test_a_program_overriding_getattribute_stays_refused()

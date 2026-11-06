@@ -116,6 +116,8 @@ Ref str_rmod_slot(Obj self, Args a) {            // wrap_binaryfunc_r: a left op
     return str_mod(a.pos(0), self);
 }
 Ref own_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return repr_of(self); }
+Ref type_or_slot(Obj self, Args a) { wrapper_args(a, "__or__", 1); return type_or(self, a.pos(0)); }
+Ref type_ror_slot(Obj self, Args a) { wrapper_args(a, "__ror__", 1); return type_or(a.pos(0), self); }
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
 Ref own_iter(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return iter(self); }
@@ -257,6 +259,8 @@ void init_slots() {
     slot(i, "__float__", int_float);
     slot(i, "__repr__", int_repr);
     slot(i, "__hash__", int_hash);
+    slot(t.type, "__or__", type_or_slot);
+    slot(t.type, "__ror__", type_ror_slot);
     slot(t.str, "__mod__", str_mod_slot);
     slot(t.str, "__rmod__", str_rmod_slot);
     ClassObject* fl = t.float_;

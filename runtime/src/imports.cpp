@@ -315,7 +315,7 @@ void fill_types(Module* m) {
     put("NotImplementedType", t.notimplemented);
     dict_set(d, Obj::of(N("SimpleNamespace")), dict_get(bootstrap_module()->dict, Obj::of(N("SimpleNamespace"))));
     put("TracebackType", t.traceback);
-    put("UnionType", no_instances_yet("Union", "typing"));
+    dict_set(d, Obj::of(N("UnionType")), dict_get(bootstrap_module()->dict, Obj::of(N("Union"))));
     put("WrapperDescriptorType", no_instances_yet("wrapper_descriptor"));
 }
 struct NativeModule {

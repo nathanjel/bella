@@ -655,6 +655,8 @@ struct ClassObject : Object {
     bool sequence_slots = false;                 // a C type written in Python, with sq_concat and sq_item and no number slots
     bool weak_proxy = false;                     // weakref.ProxyType and its kin: attribute access goes to the target
     bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
+    bool mapping_getitem = false;                // a C type written in Python whose __getitem__ is mp_subscript alone: no sq_item
+    bool disallow_instantiation = false;         // Py_TPFLAGS_DISALLOW_INSTANTIATION, of a C type written in Python
     bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited
     bool final_type = false;                     // a built-in type a class cannot derive from (no Py_TPFLAGS_BASETYPE)
     // attrs as a dict, made when a program first asks for a view of __dict__ (class_dict) and kept

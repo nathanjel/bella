@@ -501,6 +501,10 @@ Ref b_ascii(Obj, Args a) {
 bool object_recursive_isinstance(Obj inst, Obj cls) {
     if (is_kind(cls, Kind::Class) && Obj::of(type_of(inst)) == cls) return true;
     if (is_kind(cls, Kind::Class) && type_of(cls) == types().type) return real_isinstance(inst, cls);
+    if (is_union(cls)) {                         // its args, as a tuple
+        Ref args = getattr(cls, intern("__args__"));
+        return object_recursive_isinstance(inst, args.get());
+    }
     if (is_kind(cls, Kind::Tuple)) {
         for (Obj item : static_cast<Tuple*>(cls.object())->items)
             if (object_recursive_isinstance(inst, item)) return true;
@@ -517,6 +521,10 @@ bool object_recursive_isinstance(Obj inst, Obj cls) {
 }  // namespace
 bool object_issubclass(Obj derived, Obj cls) {
     if (is_kind(cls, Kind::Class) && type_of(cls) == types().type) return derived == cls || real_issubclass(derived, cls);
+    if (is_union(cls)) {                         // its args, as a tuple
+        Ref args = getattr(cls, intern("__args__"));
+        return object_issubclass(derived, args.get());
+    }
     if (is_kind(cls, Kind::Tuple)) {
         for (Obj item : static_cast<Tuple*>(cls.object())->items)
             if (object_issubclass(derived, item)) return true;
@@ -1578,7 +1586,7 @@ Ref i_call_args_tuple(Obj, Args a) {             // _MAKE_CALLARGS_A_TUPLE: f(*v
     Obj v = a.pos(0);
     if (is_kind(v, Kind::Tuple)) return Ref::share(v);
     // _Py_Check_ArgsIterable: an __iter__, or a sequence's __getitem__
-    if (type_lookup(type_of(v), intern("__iter__")).is_unset() && type_lookup(type_of(v), intern("__getitem__")).is_unset() &&
+    if (type_lookup(type_of(v), intern("__iter__")).is_unset() && !has_sq_item(v) &&
         !is_kind(v, Kind::List) && !is_kind(v, Kind::Dict) && !is_kind(v, Kind::Set) && !is_kind(v, Kind::Range) &&
         !is_kind(v, Kind::Iterator) && !is_kind(v, Kind::DictView) && as_str(v) == nullptr)
         raise_new("TypeError", "Value after * must be an iterable, not " + type_of(v)->name);
@@ -2016,7 +2024,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                              {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec},
                              {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_refuse", i_bella_refuse},
                              {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
-                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}}) {
+                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_new_instance", i_bella_new_instance}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());
                     }

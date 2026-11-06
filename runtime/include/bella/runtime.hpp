@@ -224,7 +224,7 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *frozendict, *dict_reversekeyiterator, *dict_reversevalueiterator, *dict_reverseitemiterator, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
-        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_, *complex_,
+        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_, *complex_, *union_,
         *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
         *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator;
@@ -366,6 +366,9 @@ void onearg(Args a, const std::string& qualname);                     // METH_O
 void clinic(Args a, const std::string& name, const std::string& qualname, std::size_t lo, std::size_t hi);
 void present_as_c_types(Module* bootstrap);
 Ref generic_alias(Obj origin, Obj args);          // Py_GenericAlias (the class is bootstrap.py's)
+Ref type_or(Obj a, Obj b);                        // _Py_union_type_or (bootstrap.py's)
+inline bool is_union(Obj v) { return v.is_object() && v.object()->cls == types().union_; }   // _PyUnion_Check
+Ref i_bella_new_instance(Obj, Args a);            // bootstrap.py's: an instance of a C type that has no __new__
 Obj cpython_doc(std::string_view name);          // a built-in module's or type's docstring (cpython_names.inc)
 bool& shutting_down();                           // finalize_modules has begun: imports fail as CPython's do
 Ref i_bella_shutting_down(Obj, Args a);
@@ -700,6 +703,7 @@ Ref super_getattr(Obj su, const Str* name);                  // super_getattro
 Ref super_call(Args a);                                      // super(...): super_vectorcall
 Ref zero_argument_super(Obj super_name, Obj class_cell, Obj first);   // the `super` intrinsic
 Obj type_lookup(ClassObject* c, const Str* name);            // _PyType_Lookup: borrowed, Unset if absent
+inline bool has_sq_item(Obj v) { return !type_of(v)->mapping_getitem && !type_lookup(type_of(v), intern("__getitem__")).is_unset(); }   // what iter() may fall back on
 bool is_subclass(ClassObject* c, ClassObject* base);
 bool isinstance(Obj v, ClassObject* c);
 // A special method of v's type called with v first; Unset Ref (and *found false) when the type has none.

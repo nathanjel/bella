@@ -770,6 +770,12 @@ is (int,)."""
             return NotImplemented
         return GenericAlias.__eq__(self, other) is not True
 
+    def __or__(self, other):
+        return _union_type_or(self, other)
+
+    def __ror__(self, other):
+        return _union_type_or(other, self)
+
     def __mro_entries__(self, bases, /):
         return (_ga_get(self, '__origin__'),)
 
@@ -801,11 +807,253 @@ is (int,)."""
         it._ga_obj = self
         return it
 
-    def __or__(self, other):
-        _bella_refuse('X | Y with a generic alias: types.UnionType (step 3b)')
 
-    def __ror__(self, other):
-        _bella_refuse('X | Y with a generic alias: types.UnionType (step 3b)')
+# ---- typing.Union ----
+
+# bella: Objects/unionobject.c in Python; present_as_c_types names it typing.Union, has no __new__ of its own to show
+# (make_union alone makes one, as _bella_new_instance), and gives it __name__, __qualname__, __origin__ and
+# __parameters__ as getsets. type.__or__ and type.__ror__ are the runtime's and come here, as _union_type_or.
+
+_union_set = object.__setattr__
+_UNION_OWN = ('_union_hashable', '_union_unhashable', '_union_params')
+
+
+def _is_unionable(obj):
+    """is_unionable; the runtime has no type alias or sentinel to ask about yet."""
+    return obj is None or _ga_check(obj, type) or _ga_check(obj, GenericAlias) or type(obj) is Union
+
+
+def _union_type_check(arg, msg):
+    """type_check: the unionable ones without asking typing, which has the last word on the rest."""
+    if arg is None:
+        return type(None)
+    if _is_unionable(arg):
+        return arg
+    import typing
+    return typing._type_check(arg, msg)
+
+
+class _UnionBuilder:
+    """unionbuilder."""
+
+    __slots__ = ('args', 'hashable', 'unhashable', 'checked')
+
+    def __init__(self, checked):
+        self.args = []
+        self.hashable = set()
+        self.unhashable = None
+        self.checked = checked
+
+    def add_unchecked(self, arg):
+        try:
+            hash(arg)
+            hashable = True
+        except BaseException:                          # the C clears whatever it was
+            hashable = False
+        if hashable:
+            if arg in self.hashable:
+                return
+            self.hashable.add(arg)
+        elif self.unhashable is None:
+            self.unhashable = [arg]
+        else:
+            if arg in self.unhashable:
+                return
+            self.unhashable.append(arg)
+        self.args.append(arg)
+
+    def add_tuple(self, items):
+        for item in items:
+            self.add(item)
+
+    def add(self, arg):
+        if arg is None:
+            arg = type(None)
+        elif type(arg) is Union:
+            self.add_tuple(arg.__args__)
+            return
+        if self.checked:
+            self.add_unchecked(_union_type_check(arg, 'Union[arg, ...]: each arg must be a type.'))
+        else:
+            self.add_unchecked(arg)
+
+    def make(self):                                    # make_union
+        n = len(self.args)
+        if n == 0:
+            raise TypeError('Cannot take a Union of no types.')
+        if n == 1:
+            return self.args[0]
+        result = _bella_new_instance(Union)
+        _union_set(result, '__args__', tuple(self.args))
+        _union_set(result, '_union_hashable', frozenset(self.hashable))
+        _union_set(result, '_union_unhashable', None if self.unhashable is None else tuple(self.unhashable))
+        _union_set(result, '_union_params', None)
+        return result
+
+
+def _union_type_or(a, b):
+    """_Py_union_type_or: unchecked, because is_unionable said so."""
+    if not _is_unionable(a) or not _is_unionable(b):
+        return NotImplemented
+    ub = _UnionBuilder(False)
+    ub.add(a)
+    ub.add(b)
+    return ub.make()
+
+
+def _union_from_tuple(args):
+    """_Py_union_from_tuple."""
+    ub = _UnionBuilder(True)
+    if type(args) is tuple:
+        ub.add_tuple(args)
+    else:
+        ub.add(args)
+    return ub.make()
+
+
+def _union_nb_or(a, b):
+    ub = _UnionBuilder(True)
+    ub.add(a)
+    ub.add(b)
+    return ub.make()
+
+
+def _union_parameters(self):
+    parameters = self._union_params
+    if parameters is None:                             # union_init_parameters: once
+        parameters = _make_parameters(self.__args__)
+        _union_set(self, '_union_params', parameters)
+    return parameters
+
+
+def _unions_equal(a, b):
+    """unions_equal."""
+    ha, hb = a._union_hashable, b._union_hashable
+    if not (ha is hb or ha == hb):
+        return False
+    ua, ub = a._union_unhashable, b._union_unhashable
+    if ua is not None and ub is not None:
+        if len(ua) != len(ub):
+            return False
+        for arg in ua:
+            if arg not in ub:
+                return False
+        for arg in ub:
+            if arg not in ua:
+                return False
+    elif ua is not None or ub is not None:
+        return False
+    return True
+
+
+def _union_wrapper(args, kwds, name, n):
+    """A slot wrapper's checks: the receiver's type, wrapper_call, check_num_args."""
+    if not args:
+        raise TypeError(f"descriptor '{name}' of 'typing.Union' object needs an argument")
+    if type(args[0]) is not Union:
+        raise TypeError(f"descriptor '{name}' requires a 'typing.Union' object but received a '{_ga_type_name(args[0])}'")
+    if kwds:
+        raise TypeError(f'wrapper {name}() takes no keyword arguments')
+    if len(args) - 1 != n:
+        raise TypeError(f"expected {n} argument{'' if n == 1 else 's'}, got {len(args) - 1}")
+
+
+class Union:
+    """Represent a union type
+
+E.g. for int | str"""
+
+    __module__ = 'typing'
+    __slots__ = ('__args__',) + _UNION_OWN
+
+    def __setattr__(*args, **kwds):
+        _union_wrapper(args, kwds, '__setattr__', 2)
+        self, name, value = args
+        if name == '__args__':
+            raise AttributeError('readonly attribute')
+        if name in _UNION_OWN:
+            raise AttributeError(f"'typing.Union' object has no attribute '{name}' and no __dict__ for setting new attributes")
+        _union_set(self, name, value)
+
+    def __delattr__(*args, **kwds):
+        _union_wrapper(args, kwds, '__delattr__', 1)
+        self, name = args
+        if name == '__args__':
+            raise AttributeError('readonly attribute')
+        if name in _UNION_OWN:
+            raise AttributeError(f"'typing.Union' object has no attribute '{name}' and no __dict__ for setting new attributes")
+        object.__delattr__(self, name)
+
+    def __repr__(*args, **kwds):
+        _union_wrapper(args, kwds, '__repr__', 0)
+        return ' | '.join([_typing_type_repr(p) for p in args[0].__args__])
+
+    def __hash__(*args, **kwds):
+        _union_wrapper(args, kwds, '__hash__', 0)
+        self = args[0]
+        unhashable = self._union_unhashable
+        if unhashable is not None:
+            for arg in unhashable:                     # an error from one of them, if it can
+                hash(arg)
+            raise TypeError(f'union contains {len(unhashable)} unhashable elements')
+        return hash(self._union_hashable)
+
+    def __eq__(*args, **kwds):
+        _union_wrapper(args, kwds, '__eq__', 1)
+        if type(args[1]) is not Union:
+            return NotImplemented
+        return _unions_equal(args[0], args[1])
+
+    def __ne__(*args, **kwds):
+        _union_wrapper(args, kwds, '__ne__', 1)
+        if type(args[1]) is not Union:
+            return NotImplemented
+        return not _unions_equal(args[0], args[1])
+
+    def __lt__(*args, **kwds):
+        _union_wrapper(args, kwds, '__lt__', 1)
+        return NotImplemented
+
+    def __le__(*args, **kwds):
+        _union_wrapper(args, kwds, '__le__', 1)
+        return NotImplemented
+
+    def __gt__(*args, **kwds):
+        _union_wrapper(args, kwds, '__gt__', 1)
+        return NotImplemented
+
+    def __ge__(*args, **kwds):
+        _union_wrapper(args, kwds, '__ge__', 1)
+        return NotImplemented
+
+    def __getitem__(*args, **kwds):
+        _union_wrapper(args, kwds, '__getitem__', 1)
+        self, item = args
+        return _union_from_tuple(_subs_parameters(self, self.__args__, _union_parameters(self), item))
+
+    def __or__(*args, **kwds):
+        _union_wrapper(args, kwds, '__or__', 1)
+        return _union_nb_or(args[0], args[1])
+
+    def __ror__(*args, **kwds):
+        _union_wrapper(args, kwds, '__ror__', 1)
+        return _union_nb_or(args[1], args[0])
+
+    def __mro_entries__(*args, **kwds):
+        if kwds:
+            raise TypeError('Union.__mro_entries__() takes no keyword arguments')
+        if len(args) != 2:
+            raise TypeError(f'Union.__mro_entries__() takes exactly one argument ({len(args) - 1} given)')
+        raise TypeError(f'Cannot subclass {args[0]!r}')
+
+    @classmethod
+    def __class_getitem__(*args, **kwds):
+        """Create a union containing the given types"""
+        if kwds:
+            raise TypeError('Union.__class_getitem__() takes no keyword arguments')
+        if len(args) != 2:
+            raise TypeError(f'Union.__class_getitem__() takes exactly one argument ({len(args) - 1} given)')
+        return _union_from_tuple(args[1])
 
 
 def _namespace_self(name, self):

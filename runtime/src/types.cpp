@@ -438,6 +438,7 @@ Ref object_new(Obj, Args a) {
     if (a.npos < 1) raise_new("TypeError", "object.__new__(): not enough arguments");
     ClassObject* cls = as_class(a.pos(0));
     if (cls == nullptr) raise_new("TypeError", "object.__new__(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
+    if (cls->disallow_instantiation) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
     if (!cls->heap_type && cls != types().object && new_slot(cls) == new_slot(types().object)) {  // the runtime has no __new__ of its own for it
         if (cpython_attribute_kind(cls, "__new__").empty()) refuse_construction(cls);
         raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe, use " + cls->name + ".__new__()");
@@ -489,7 +490,7 @@ Ref type_call(ClassObject* cls, Args a) {
     if (cls == types().super_) return super_call(a);                  // super's own vectorcall
     Obj new_attr = type_lookup(cls, N("__new__"));
     if (new_attr.is_unset()) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
-    if (new_attr == object_new_fn() && !cls->heap_type && cls != types().object) refuse_construction(cls);
+    if (new_attr == object_new_fn() && (!cls->heap_type || cls->disallow_instantiation) && cls != types().object) refuse_construction(cls);
     Ref new_fn = descr_get(new_attr, None(), Obj::of(cls));
     Ref obj = call_with_first(new_fn.get(), Obj::of(cls), a);
     if (!isinstance(obj.get(), cls)) return obj;
@@ -1709,6 +1710,9 @@ Ref bootstrap_call(const char* name, Obj arg) {
 }
 Ref ga_parameters(Obj self) { return bootstrap_call("_ga_parameters", self); }
 Ref ga_unpacked_tuple_args(Obj self) { return bootstrap_call("_ga_unpacked_tuple_args", self); }
+Ref union_name(Obj) { return str_new("Union"); }
+Ref union_origin(Obj) { return Ref::share(Obj::of(types().union_)); }
+Ref union_parameters(Obj self) { return bootstrap_call("_union_parameters", self); }
 Ref class_getitem(Obj self, Args a) {            // Py_GenericAlias as a built-in type's __class_getitem__
     onearg(a, as_class(self)->qualname + ".__class_getitem__");
     return generic_alias(self, a.pos(0));
@@ -1717,6 +1721,7 @@ Ref class_getitem(Obj self, Args a) {            // Py_GenericAlias as a built-i
 Ref generic_alias(Obj origin, Obj args) {
     return invoke(dict_get(bootstrap_of_types()->dict, Obj::of(N("GenericAlias"))), {origin, args});
 }
+void forget_python_origin(ClassObject* c);
 void present_as_c_types(Module* bootstrap) {
     bootstrap_of_types() = bootstrap;
     Obj ns = dict_get(bootstrap->dict, Obj::of(N("SimpleNamespace")));
@@ -1738,6 +1743,30 @@ void present_as_c_types(Module* bootstrap) {
     getset(ga, "__typing_unpacked_tuple_args__", ga_unpacked_tuple_args);
     for (ClassObject* t : builtin_types())
         if (cpython_has(t->name, "__class_getitem__")) method(t, "__class_getitem__", class_getitem, Binding::ClassMethod);
+    auto* un = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("Union"))).object());
+    un->name = "typing.Union";
+    un->name_prefix = 7;
+    note_prelude_class(un);
+    un->final_type = cpython_has("final", un->name);
+    un->has_weakref = cpython_has("weakref", "Union");
+    un->disallow_instantiation = true;
+    un->mapping_getitem = true;
+    forget_python_origin(un);
+    getset(un, "__name__", union_name);
+    getset(un, "__qualname__", union_name);
+    getset(un, "__origin__", union_origin);
+    getset(un, "__parameters__", union_parameters);
+    types().union_ = un;
+    auto* builder = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("_UnionBuilder"))).object());
+    note_prelude_class(builder);
+}
+Ref type_or(Obj a, Obj b) {
+    Ref fn = Ref::share(dict_get(bootstrap_of_types()->dict, Obj::of(N("_union_type_or"))));
+    return invoke(fn.get(), {a, b});
+}
+Ref i_bella_new_instance(Obj, Args a) {
+    positional_only(a, "_bella_new_instance", 1, 1);
+    return own(new_instance(as_class(a.pos(0))));
 }
 
 // What a class statement leaves that a type written in C does not have; the layout is held elsewhere

@@ -111,6 +111,7 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (is_int(a) && is_int(b)) return big_binary(op, a, b);
     if (op == BinOp::Mod && as_str(a) != nullptr) return str_mod(a, b);   // unicode_mod, whatever b is
+    if (op == BinOp::Or && (is_kind(a, Kind::Class) || is_kind(b, Kind::Class))) return type_or(a, b);   // type_or, on either side
     if (is_complex(a) || is_complex(b)) return complex_binary(op, a, b);
     if (is_float(a) || is_float(b)) return float_binary(op, a, b);
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
@@ -161,6 +162,7 @@ Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
     has = true;
     if (is_int(self) && is_float(other)) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // an int's slots know ints; the float answers from its side
     if ((is_int(self) || is_float(self)) && is_complex(other)) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // and a complex from its own
+    if (op == BinOp::Or && is_kind(other, Kind::Class) && !is_kind(self, Kind::Class)) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // type_or is a class's slot
     return reflected ? native_binary(op, other, self) : native_binary(op, self, other);
 }
 }  // namespace
@@ -285,7 +287,7 @@ Ref sequence_repeat(Obj self, Obj count) { return repeat(self, int_from_i64(inde
 static bool sequence_check(Obj v) {
     if (is_kind(v, Kind::Dict) || is_kind(v, Kind::Proxy)) return false;
     if (v.is_object() && v.object()->cls->weak_proxy) return false;
-    return !type_lookup(type_of(v), intern("__getitem__")).is_unset();
+    return has_sq_item(v);
 }
 Ref i_tp_name(Obj, Args a) {                      // a class's tp_name: its module's name in it, for a C type that has one
     positional_only(a, "_tp_name", 1, 1);
@@ -1521,7 +1523,7 @@ Ref iter(Obj obj) {
                                        fully_qualified_name(type_of(r.get())));
         return r;
     }
-    if (!type_lookup(type_of(obj), intern("__getitem__")).is_unset()) return own(new Iterator(Iterator::SeqIt, obj));
+    if (has_sq_item(obj)) return own(new Iterator(Iterator::SeqIt, obj));
     raise_new("TypeError", "'" + type_of(obj)->name + "' object is not iterable");
 }
 
@@ -1848,8 +1850,7 @@ void list_extend_star(Obj list, Obj value) {
         list_extend(list, value);
     } catch (const PyError& e) {
         if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
-        if (is_kind(value, Kind::Iterator) || !type_lookup(type_of(value), intern("__iter__")).is_unset() ||
-            !type_lookup(type_of(value), intern("__getitem__")).is_unset())
+        if (is_kind(value, Kind::Iterator) || !type_lookup(type_of(value), intern("__iter__")).is_unset() || has_sq_item(value))
             throw;
         raise_new("TypeError", "Value after * must be an iterable, not " + type_of(value)->name);
     }

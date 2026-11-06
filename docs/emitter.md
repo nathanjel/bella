@@ -454,6 +454,9 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * `float` (`runtime/src/float.cpp`, C-6-12): the object is a double, and a subclass's instance adds an attribute
   storage as `IntInstance` does. The digits are libstdc++'s (`make float-diff`), and everything around them is the C's.
   What is not finished: `float()` of a str beyond ASCII stops by name until the Unicode database.
+* `typing.Union` (`runtime/prelude/bootstrap.py`, C-3-39) follows `Objects/unionobject.c` beside GenericAlias. Two flags on
+  the class say what a C type written in Python cannot otherwise say: `disallow_instantiation` (no `tp_new`) and
+  `mapping_getitem` (a `__getitem__` that is `mp_subscript` alone, so `iter()` of one is an error).
 * `complex` (`runtime/src/complex.cpp`, C-6-17) follows `Objects/complexobject.c`, with the mixed real forms and Annex G's
   recoveries, and shares float's digits. `sum()` has its stage. `complex()` of a part that is itself a complex, and
   `__complex__` returning a subclass's instance, warn in the C and stop by name until `warnings`.

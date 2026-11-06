@@ -476,7 +476,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * The format mini-language, `str.format`, `format_map` and `_string` done (C-6-15, `runtime/src/format.cpp`).
            * `str %` done (C-6-16, `runtime/src/format.cpp`).
            * `complex` done (C-6-17, `runtime/src/complex.cpp`).
-           * Next, what the survey and a walk of the built-ins' names found: `bytes %`; subclasses of `tuple`, `list` and `str` (`namedtuple`);
+           * `typing.Union` done (C-3-39, `runtime/prelude/bootstrap.py`): `int | str`, and `isinstance` of one. `|` with what is not unionable asks `typing`; a program that has not imported it stops by name, as it is not in its closure. `vars()` of a C type written in Python still lists its private slots and its own `__new__`, and lacks `__getattribute__`.
+           * Next, what the survey and a walk of the built-ins' names found: `bytes %`; subclasses of `tuple`, `list` and `str` (`namedtuple`); `_functools` (which `copy` stops at now), `_typing` (`typing`, and the `type_params` intrinsic);
              `_heapq`; `object.__getstate__` and `copyreg`; generators, which stop `Counter.__eq__` and every
              generator expression, and stop more as these go; `_ast` 6, `posix` 6 (`_stat` done, C-7-24; `os` is what stops them), `gc` 4.
              Generators are refused where they run (`weakref`'s iteration, a generator expression), and
