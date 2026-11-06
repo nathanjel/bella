@@ -636,6 +636,7 @@ GetSet* weakref_getset() {                        // CPython's belongs to object
 Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw) {
     const Str* name = as_str(name_obj);
     if (name == nullptr) raise_new("TypeError", "type.__new__() argument 1 must be str, not " + type_of(name_obj)->name);
+    if (!is_exact_str(name_obj)) throw NotImplemented("a class named by a subclass of str (CPython has it; the runtime does not yet)");
     if (!is_kind(bases_obj, Kind::Tuple))
         raise_new("TypeError", "type.__new__() argument 2 must be tuple, not " + type_of(bases_obj)->name);
     if (!is_kind(ns_obj, Kind::Dict))
@@ -658,7 +659,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
         if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
-        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().float_ &&
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().str && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().float_ &&
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
@@ -675,6 +676,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     for (auto& e : ns->entries) {
         if (e.key.is_unset()) continue;
         const Str* k = as_str(e.key);
+        if (k != nullptr && !is_exact_str(e.key)) throw NotImplemented("a subclass of str as a name in a class's namespace (CPython has it; the runtime does not yet)");
         if (k == nullptr) throw NotImplemented("a class namespace with a key that is not a str");
         if (k->text == "__qualname__") {
             const Str* q = as_str(e.value);
@@ -908,6 +910,14 @@ Ref tuple_new_m(Obj, Args a) {                   // tuple_new_impl, and tuple_su
         instance->items.push_back(v);
     }
     return r;
+}
+Ref str_new_m(Obj, Args a) {                     // unicode_new, unicode_subtype_new: the text of what str() gives, in a new one
+    ClassObject* cls = new_wrapper_class(a, types().str);
+    Args rest{a.data + 1, a.npos - 1, a.kwnames, a.nkw};
+    if (rest.npos + rest.nkw > 3) raise_new("TypeError", std::string("str() takes at most 3 ") + (rest.npos == 0 ? "keyword " : "") + "arguments (" + std::to_string(rest.npos + rest.nkw) + " given)");   // not through unicode_vectorcall
+    Ref made = invoke(Obj::of(types().str), rest);
+    if (cls == types().str) return made;
+    return own(new StrInstance(cls, as_str(made.get())->text));
 }
 Ref dict_new_m(Obj, Args a) {
     ClassObject* cls = new_wrapper_class(a, types().dict);
@@ -2401,6 +2411,7 @@ void init_types() {
     method(t.int_, "__new__", int_new_m, Binding::Function);
     for (ClassObject* c : {t.list, t.str, t.bool_}) new_method(c, builtin_new_m);
     new_method(t.tuple, tuple_new_m);
+    new_method(t.str, str_new_m);
     method(t.dict, "__init__", dict_init_m);
     {
         auto* g = new GetSet("__abstractmethods__", t.type, type_abstractmethods_get, type_abstractmethods_set);

@@ -1768,7 +1768,81 @@ def desugar_listcomp(tree: ast.Module) -> ast.Module:
     return ast.fix_missing_locations(tree)
 
 
+def _simple_format_arg(fmt: str, pos: int, arg: ast.expr) -> tuple[ast.FormattedValue | None, int]:
+    """simple_format_arg_parse and parse_format (Python/ast_preprocess.c): a conversion an f-string can say, or None."""
+    def take(at: int) -> str | None:
+        return fmt[at] if at < len(fmt) else None
+    ljust = False
+    ch = take(pos)
+    while ch is not None and ch in "-+ #0":
+        ljust = ljust or ch == "-"
+        pos += 1
+        ch = take(pos)
+    width = prec = -1
+    if ch is not None and ch in "123456789":
+        width = int(ch)
+        pos += 1
+        ch = take(pos)
+        for _ in range(2):
+            if ch is None or not "0" <= ch <= "9":
+                break
+            width = width * 10 + int(ch)
+            pos += 1
+            ch = take(pos)
+    if ch == ".":
+        pos += 1
+        ch = take(pos)
+        prec = 0
+        for _ in range(3):
+            if ch is None or not "0" <= ch <= "9":
+                break
+            prec = prec * 10 + int(ch)
+            pos += 1
+            ch = take(pos)
+    if ch not in ("s", "r", "a"):
+        return None, pos
+    spec = (">" if not ljust and width > 0 else "") + (str(width) if width >= 0 else "") + (f".{prec}" if prec >= 0 else "")
+    return ast.FormattedValue(value=arg, conversion=ord(ch), format_spec=ast.Constant(spec) if spec else None), pos + 1
+
+
+def _optimize_format(fmt: str, elts: list[ast.expr]) -> ast.JoinedStr | None:
+    """optimize_format (Python/ast_preprocess.c): a constant format and a tuple display are compiled as the f-string they say."""
+    pos = 0
+    count = 0
+    parts: list[ast.expr] = []
+    while True:
+        start = pos
+        while pos < len(fmt):                    # parse_literal
+            if fmt[pos] != "%":
+                pos += 1
+            elif pos + 1 < len(fmt) and fmt[pos + 1] == "%":
+                pos += 2
+            else:
+                break
+        if pos != start:
+            parts.append(ast.Constant(fmt[start:pos].replace("%%", "%")))
+        if pos >= len(fmt):
+            break
+        if count >= len(elts):                   # more format units than items
+            return None
+        field, pos = _simple_format_arg(fmt, pos + 1, elts[count])
+        count += 1
+        if field is None:
+            return None
+        parts.append(field)
+    return None if count < len(elts) else ast.JoinedStr(values=parts)
+
+
 class _FString(ast.NodeTransformer):
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        self.generic_visit(node)
+        if (isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str)
+                and isinstance(node.right, ast.Tuple) and not any(isinstance(e, ast.Starred) for e in node.right.elts)):
+            joined = _optimize_format(node.left.value, node.right.elts)
+            if joined is not None:
+                return self.visit_JoinedStr(_copy_loc(joined, node))
+        return node
+
     def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.AST:
         self.generic_visit(node)
         parts: list[ast.expr] = []
@@ -1787,6 +1861,8 @@ class _FString(ast.NodeTransformer):
                 parts.append(ast.Call(func=_intrinsic("format"), args=[value, spec], keywords=[]))
             else:
                 raise L.Unsupported(f"f-string part {type(v).__name__}")
+        if len(parts) == 1:                      # codegen_joined_str: BUILD_STRING only for more than one, so a format's str subclass stays
+            return ast.fix_missing_locations(_copy_loc(parts[0], node))
         joined = ast.Call(
             func=ast.Attribute(value=ast.Constant(""), attr="join", ctx=ast.Load()),
             args=[ast.Tuple(elts=parts, ctx=ast.Load())], keywords=[])
@@ -1818,7 +1894,7 @@ class _TemplateStr(_FString):
     name="desugar-fstring", source=Level.L0, target=Level.L0,
     produces=frozenset({Fact.NO_FSTRINGS}),
     obligations=(
-        Obligation("wf", "output contains no JoinedStr or TemplateStr node"),
+        Obligation("wf", "output contains no JoinedStr or TemplateStr node, nor a % a constant format and a tuple display make into one (optimize_format)"),
         Obligation("semantics", "each replacement field is format(conversion(value), spec) evaluated left to right, joined in order"),
         Obligation("terminates", "one rewrite per JoinedStr"),
     ),

@@ -213,7 +213,7 @@ void check_float_result(Obj o, Obj res) {
 
 Ref float_new_impl(Obj x) {                      // float_new_impl for float itself
     if (x.is_unset()) return float_ref(0.0);
-    if (is_kind(x, Kind::Str)) return float_from_string(x);
+    if (is_kind(x, Kind::Str) && type_lookup(type_of(x), intern("__float__")).is_unset()) return float_from_string(x);
     return number_float(x);
 }
 Ref float_new_m(Obj, Args a) {                   // float.__new__(cls, x=0, /)

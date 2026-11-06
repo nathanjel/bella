@@ -340,6 +340,7 @@ namespace detail {
 constexpr std::int64_t DKIX_EMPTY = -1, DKIX_DUMMY = -2;
 constexpr int PERTURB_SHIFT = 5;
 inline bool is_str(Obj v) { return v.is_object() && v.object()->kind == Kind::Str; }
+inline bool is_exact_str_key(Obj v) { return is_str(v) && !(v.object()->flags & HAS_ATTRIBUTES); }   // PyUnicode_CheckExact: a split table holds no other
 inline std::int64_t key_hash(Obj k) {
     if (key_hash_hook() != nullptr) return key_hash_hook()(k);
     if (k.is_small()) return k.small_value() == -1 ? -2 : k.small_value();
@@ -458,7 +459,7 @@ inline Obj dict_find(DictObject* d, Obj key) { return dict_find(d, key, detail::
 // its count (Unset if the key is new, which goes to the end). A key that is not a str makes a
 // split dict ordinary; a new str key joins its shared keys while there is room.
 inline Obj dict_put(DictObject* d, Obj key, std::int64_t hash, Obj value) {
-    if (d->split && !detail::is_str(key)) d->split.reset();
+    if (d->split && !detail::is_exact_str_key(key)) d->split.reset();
     if (d->indices.empty()) detail::rebuild(d, 0);
     auto [slot, ix] = detail::probe(d, key, hash);
     ++d->version;
@@ -482,7 +483,7 @@ inline void dict_store(DictObject* d, Obj key, std::int64_t hash, Obj value) {
 // dict.setdefault(key, dflt): one lookup; a missing key is inserted where it was looked for
 // (dict_setdefault_ref_lock_held). Returns the value now under key, borrowed.
 inline Obj dict_setdefault(DictObject* d, Obj key, std::int64_t hash, Obj dflt) {
-    if (d->split && !detail::is_str(key)) d->split.reset();
+    if (d->split && !detail::is_exact_str_key(key)) d->split.reset();
     if (d->indices.empty()) detail::rebuild(d, 0);
     auto [slot, ix] = detail::probe(d, key, hash);
     if (ix >= 0) return d->entries[static_cast<std::size_t>(ix)].value;
@@ -929,6 +930,22 @@ struct TupleInstance : Tuple {
     std::vector<const Str*> order;
     std::int64_t tag = -1;
     explicit TupleInstance(ClassObject* c) {
+        cls = c;
+        flags |= HAS_ATTRIBUTES;
+        fields.assign(c->field_index.size(), Obj{});
+    }
+    bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
+    Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    bool has_field(const Str* n) const { return cls->field_index.contains(n); }
+};
+// An instance of a program's subclass of str: kind stays Str, as PyUnicode_Check says yes of it, and the attribute storage is beside the
+// text. What reads the text needs no change; what only an exact str does asks is_exact_str; what a subclass may override asks first.
+struct StrInstance : Str {
+    std::vector<Obj> fields;
+    DictObject* dict = nullptr;
+    std::vector<const Str*> order;
+    std::int64_t tag = -1;
+    StrInstance(ClassObject* c, std::string text) : Str(std::move(text), false) {
         cls = c;
         flags |= HAS_ATTRIBUTES;
         fields.assign(c->field_index.size(), Obj{});
@@ -1408,6 +1425,7 @@ inline void bury(Object* o) {
             case Kind::IntInstance: delete static_cast<IntInstance*>(o); break;
             case Kind::FloatInstance: delete static_cast<FloatInstance*>(o); break;
             case Kind::ComplexInstance: delete static_cast<ComplexInstance*>(o); break;
+            case Kind::Str: delete static_cast<StrInstance*>(o); break;   // an exact str's death is its destroyer's
             case Kind::Tuple: delete static_cast<TupleInstance*>(o); break;   // an exact tuple's death is its destroyer's
             case Kind::Function: delete static_cast<Function*>(o); break;
             case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
@@ -1640,8 +1658,17 @@ inline void dealloc(Object* o) {
             detail::bury(o);
             return;
         }
+        case Kind::Str:
+            if (has_attributes(o)) {                 // subtype_dealloc; a str has nothing of its own to let go
+                auto* s = static_cast<StrInstance*>(o);
+                if (!detail::release_attributes(s)) return;
+                if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
+                detail::bury(o);
+                return;
+            }
+            [[fallthrough]];
         case Kind::Tuple:
-            if (has_attributes(o)) {                 // subtype_dealloc, then tuple_dealloc's items, last to first
+            if (o->kind == Kind::Tuple && has_attributes(o)) {   // subtype_dealloc, then tuple_dealloc's items, last to first
                 auto* t = static_cast<TupleInstance*>(o);
                 if (!detail::release_attributes(t)) return;
                 if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);

@@ -563,7 +563,7 @@ Ref float_format_dunder(Obj self, Args a) { return float_format_field(self, spec
 
 Ref object_format(Obj obj, const Str* spec) {     // PyObject_Format
     if (spec->length == 0) {
-        if (is_kind(obj, Kind::Str)) return Ref::share(obj);
+        if (is_exact_str(obj)) return Ref::share(obj);
         if (obj.is_small() || is_kind(obj, Kind::BigInt)) return str_of(obj);
     }
     Obj found = type_lookup(type_of(obj), intern("__format__"));
@@ -810,8 +810,14 @@ Ref build_string(const SubString& input, Obj args, Obj kwargs, int depth, AutoNu
     SubString literal, field_name, format_spec;
     bool field_present = false, needs_expanding = false;
     char32_t conversion = 0;
+    Ref only;                                    // the one field that is all there is: _PyUnicodeWriter_WriteStr, by reference
+    std::size_t fields = 0;
+    bool literals = false;
     while (iter.next(literal, field_present, field_name, format_spec, conversion, needs_expanding) == 2) {
-        if (literal.end != literal.start) out.append(*literal.str, literal.start, literal.end - literal.start);
+        if (literal.end != literal.start) {
+            literals = true;
+            out.append(*literal.str, literal.start, literal.end - literal.start);
+        }
         if (!field_present) continue;
         Ref field = get_field_object(field_name, args, kwargs, auto_number);
         if (conversion != 0) field = convert_field(field.get(), conversion);
@@ -819,7 +825,10 @@ Ref build_string(const SubString& input, Obj args, Obj kwargs, int depth, AutoNu
         Ref rendered = object_format(field.get(), as_str(spec.get()));
         const Str* text = as_str(rendered.get());
         for (std::size_t i = 0; i < text->length; ++i) out += text->at(i);
+        only = rendered;
+        ++fields;
     }
+    if (fields == 1 && !literals) return only;
     return str_from_codepoints(out);
 }
 Ref do_string_format(const Str* self, Obj args, Obj kwargs) {
@@ -843,13 +852,17 @@ Ref str_format_m(Obj self, Args a) {              // METH_VARARGS | METH_KEYWORD
         kwargs = dict_new();
         for (std::size_t k = 0; k < a.nkw; ++k) dict_set(static_cast<Dict*>(kwargs.get().object()), Obj::of(a.kwnames[k]), a.kw(k));
     }
-    return do_string_format(s, args.get(), kwargs.get());
+    Ref result = do_string_format(s, args.get(), kwargs.get());
+    if (!s->text.empty() && s->text.find_first_of("{}") == std::string::npos) return Ref::share(self);   // all of it one literal, written by reference
+    return result;
 }
 Ref str_format_map_m(Obj self, Args a) {
     onearg(a, "str.format_map");
     const Str* s = as_str(self);
     if (s == nullptr) raise_new("TypeError", "descriptor 'format_map' for 'str' objects doesn't apply to a '" + type_of(self)->name + "' object");
-    return do_string_format(s, Obj{}, a.pos(0));
+    Ref result = do_string_format(s, Obj{}, a.pos(0));
+    if (!s->text.empty() && s->text.find_first_of("{}") == std::string::npos) return Ref::share(self);
+    return result;
 }
 
 // ---- str % args (Objects/unicode_format.c) ----
@@ -1098,8 +1111,10 @@ struct Percent {
         std::snprintf(code, sizeof code, "%04X", static_cast<unsigned>(arg.ch));
         raise_new("ValueError", "stray % at position " + at + " or unexpected format character U+" + code + " at position " + here);
     }
+    Ref last_text;                               // what the last conversion gave
     void output(PercentArg& arg, Obj value) {    // unicode_format_arg_output
         const Str* s = as_str(value);
+        last_text = Ref::share(value);
         char32_t fill = arg.sign && (arg.flags & F_ZERO) != 0 ? U'0' : U' ';
         auto len = static_cast<std::int64_t>(s->length);
         Cps text = cps_of(s);
@@ -1204,6 +1219,9 @@ Ref str_mod(Obj format, Obj args) {              // PyUnicode_Format
     if (ctx.argidx < ctx.arglen && ctx.dict.is_unset())
         raise_new("TypeError", "not all arguments converted during string formatting (required " + std::to_string(ctx.arglen < 0 ? 0 : ctx.argidx) +
                                    ", got " + std::to_string(ctx.arglen < 0 ? 1 : ctx.arglen) + ")");
+    // _PyUnicodeWriter_WriteStr: what is the whole result is written by reference, so it comes back as itself, of a subclass too
+    if (!ctx.fmt.empty() && ctx.fmt.find(U'%') == Cps::npos) return Ref::share(format);
+    if (ctx.fmt.size() == 2 && !ctx.last_text.get().is_unset()) return ctx.last_text;
     return str_from_codepoints(ctx.out);
 }
 

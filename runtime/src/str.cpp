@@ -15,6 +15,8 @@ namespace bella {
 namespace {
 using Cps = std::u32string;
 
+Ref unchanged(Obj self) { return is_exact_str(self) ? Ref::share(self) : str_new(as_str(self)->text); }   // unicode_result_unchanged
+
 const Str* self_str(Obj self, const char* method) {
     const Str* s = as_str(self);
     if (s == nullptr)
@@ -43,7 +45,7 @@ bool match_at(const T& s, const U& sub, std::int64_t at) {
 }
 // a piece of the string: the string itself when it is all of an exact str
 Ref piece(Obj self, const Cps& cps, std::size_t from, std::size_t to) {
-    if (from == 0 && to == cps.size() && type_of(self) == types().str) return Ref::share(self);
+    if (from == 0 && to == cps.size() && is_exact_str(self)) return Ref::share(self);
     return make(std::u32string_view(cps).substr(from, to - from));
 }
 
@@ -182,9 +184,8 @@ Ref partition_like(Obj self, Args a, const char* name, int direction) {
     if (cut.empty()) raise_new("ValueError", "empty separator");
     std::int64_t at = find_in(text, cut, 0, INT64_MAX, direction);
     if (at < 0) {
-        Ref whole = piece(self, text, 0, text.size());
-        return direction > 0 ? tuple_new({whole.get(), empty.get(), empty.get()})
-                             : tuple_new({empty.get(), empty.get(), whole.get()});
+        return direction > 0 ? tuple_new({self, empty.get(), empty.get()})   // stringlib's: the object itself, of a subclass too
+                             : tuple_new({empty.get(), empty.get(), self});
     }
     auto pos = static_cast<std::size_t>(at);
     Ref before = piece(self, text, 0, pos), after = piece(self, text, pos + cut.size(), text.size());
@@ -371,7 +372,7 @@ Ref justify(Obj self, Args a) {                  // center, ljust, rjust: (width
     std::int64_t width = ssize_arg(a.pos(0));
     char32_t fill = a.npos == 2 ? fill_character(a.pos(1)) : U' ';
     auto length = static_cast<std::int64_t>(s->length);
-    if (length >= width) return Ref::share(self);
+    if (length >= width) return unchanged(self);
     std::int64_t margin = width - length;
     std::int64_t left = mode == 0 ? margin / 2 + (margin & width & 1) : mode < 0 ? 0 : margin;
     return padded(s, static_cast<std::size_t>(left), static_cast<std::size_t>(margin - left), fill);
@@ -489,7 +490,7 @@ Ref str_zfill_m(Obj self, Args a) {              // unicode_zfill_impl: METH_O
     onearg(a, "str.zfill");
     const Str* s = self_str(self, "zfill");
     std::int64_t width = ssize_arg(a.pos(0));
-    if (static_cast<std::int64_t>(s->length) >= width) return Ref::share(self);
+    if (static_cast<std::int64_t>(s->length) >= width) return unchanged(self);
     auto fill = static_cast<std::size_t>(width - static_cast<std::int64_t>(s->length));
     std::u32string out(fill, U'0');
     for (std::size_t i = 0; i < s->length; ++i) out += s->at(i);
@@ -504,7 +505,7 @@ Ref str_removeprefix_m(Obj self, Args a) {
     const Str* s = self_str(self, "removeprefix");
     const Str* p = as_str(a.pos(0));
     if (p == nullptr) raise_new("TypeError", "removeprefix() argument must be str, not " + (a.pos(0) == None() ? std::string("None") : type_of(a.pos(0))->name));
-    if (p->text.empty() || !s->text.starts_with(p->text)) return Ref::share(self);
+    if (p->text.empty() || !s->text.starts_with(p->text)) return unchanged(self);
     return str_new(std::string_view(s->text).substr(p->text.size()));
 }
 Ref str_removesuffix_m(Obj self, Args a) {
@@ -512,7 +513,7 @@ Ref str_removesuffix_m(Obj self, Args a) {
     const Str* s = self_str(self, "removesuffix");
     const Str* p = as_str(a.pos(0));
     if (p == nullptr) raise_new("TypeError", "removesuffix() argument must be str, not " + (a.pos(0) == None() ? std::string("None") : type_of(a.pos(0))->name));
-    if (p->text.empty() || !s->text.ends_with(p->text)) return Ref::share(self);
+    if (p->text.empty() || !s->text.ends_with(p->text)) return unchanged(self);
     return str_new(std::string_view(s->text).substr(0, s->text.size() - p->text.size()));
 }
 Ref str_splitlines_m(Obj self, Args a) {         // unicode_splitlines_impl(keepends=False)
@@ -579,7 +580,7 @@ Ref str_expandtabs_m(Obj self, Args a) {         // unicode_expandtabs_impl(tabs
             if (ch == U'\n' || ch == U'\r') line_pos = 0;
         }
     }
-    return found ? str_from_codepoints(out) : Ref::share(self);
+    return found ? str_from_codepoints(out) : unchanged(self);
 }
 Ref str_translate_m(Obj self, Args a) {          // _PyUnicode_TranslateCharmap with "ignore"
     onearg(a, "str.translate");
@@ -644,7 +645,7 @@ Ref str_str_m(Obj self, Args a) {                // object_str: a wrapper, of a 
     if (a.nkw != 0) raise_new("TypeError", "wrapper __str__() takes no keyword arguments");
     if (a.npos != 0) raise_new("TypeError", "expected 0 arguments, got " + std::to_string(a.npos));
     if (as_str(self) == nullptr) raise_new("TypeError", "descriptor '__str__' requires a 'str' object but received a '" + type_of(self)->name + "'");
-    return Ref::share(self);
+    return unchanged(self);
 }
 Ref str_maketrans_m(Obj, Args a) {               // unicode_maketrans_impl(x, y=NULL, z=NULL, /), a static method
     clinic(a, "maketrans", "str.maketrans", 1, 3);

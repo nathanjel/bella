@@ -98,7 +98,13 @@ Ref int_binary(BinOp op, std::int64_t a, std::int64_t b, bool both_bool) {
     return big_binary(op, Obj::small(a), Obj::small(b));
 }
 
-Ref concat_str(const Str* a, const Str* b) { return str_new(a->text + b->text); }
+Ref concat_str(Obj a, Obj b) {                   // PyUnicode_Concat: with an empty one, PyUnicode_FromObject of the other
+    const Str* sa = as_str(a);
+    const Str* sb = as_str(b);
+    if (sb->text.empty()) return is_exact_str(a) ? Ref::share(a) : str_new(sa->text);
+    if (sa->text.empty()) return is_exact_str(b) ? Ref::share(b) : str_new(sb->text);
+    return str_new(sa->text + sb->text);
+}
 }  // namespace
 
 // The C++ types' own binary operations: NotImplemented when the operands are not theirs.
@@ -185,7 +191,7 @@ Ref repeat(Obj seq, Obj n, bool in_place) {
     if (is_bytes_like(seq)) return bytes_repeat(seq, count, in_place);
     if (const Str* s = as_str(seq)) {
         if (count <= 0) return str_new("");
-        if (count == 1) return Ref::share(seq);
+        if (count == 1) return is_exact_str(seq) ? Ref::share(seq) : str_new(s->text);   // unicode_result_unchanged
         if (s->text.size() * static_cast<std::size_t>(count) > (std::size_t{1} << 32)) throw NotImplemented("a str of more than 2**32 bytes");
         std::string out;
         out.reserve(s->text.size() * static_cast<std::size_t>(count));
@@ -265,10 +271,10 @@ Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
             for (Obj v : static_cast<Tuple*>(b.object())->items) { incref(v); items.push_back(v); }
             return tuple_steal(std::move(items));
         }
-        if (const Str* sa = as_str(a)) {
+        if (as_str(a) != nullptr) {
             const Str* sb = as_str(b);
             if (sb == nullptr) raise_new("TypeError", "can only concatenate str (not \"" + type_of(b)->name + "\") to str");
-            return concat_str(sa, sb);
+            return concat_str(a, b);
         }
     }
     if (op == BinOp::Mul) {
@@ -450,6 +456,13 @@ bool tuple_items_contain(Obj container, Obj item) {   // tuple_contains: the ite
         if (v == item || truth(compare(CmpOp::Eq, v, item).get())) return true;
     return false;
 }
+}  // namespace
+bool str_contains(Obj self, Obj item) {
+    const Str* sub = as_str(item);
+    if (sub == nullptr) raise_new("TypeError", "'in <string>' requires string as left operand, not " + type_of(item)->name);
+    return as_str(self)->text.find(sub->text) != std::string::npos;
+}
+namespace {
 bool contains(Obj container, Obj item) {
     auto equal = [&](Obj v) { return v == item || truth(compare(CmpOp::Eq, v, item).get()); };
     if (is_kind(container, Kind::DictView)) {    // dictkeys_contains, dictitems_contains; values by iteration
@@ -486,12 +499,7 @@ bool contains(Obj container, Obj item) {
     if (is_kind(container, Kind::Dict)) return truth(call_special(container, "__contains__", {item}).get());
     if (is_kind(container, Kind::Set)) return set_contains(static_cast<SetObject*>(container.object()), item);
     if (is_bytes_like(container)) return bytes_contains(container, item);
-    if (const Str* s = as_str(container)) {
-        const Str* sub = as_str(item);
-        if (sub == nullptr)
-            raise_new("TypeError", "'in <string>' requires string as left operand, not " + type_of(item)->name);
-        return s->text.find(sub->text) != std::string::npos;
-    }
+    if (as_str(container) != nullptr && !overridden(container, "__contains__")) return str_contains(container, item);
     if (is_kind(container, Kind::Range)) {           // range_contains: arithmetic for an exact int or a bool, else the search
         if (item.is_small() || is_kind(item, Kind::Bool) || is_kind(item, Kind::BigInt)) return range_contains_int(container, item);
         Ref it = iter(container);
@@ -683,7 +691,9 @@ bool truth(Obj v) {
             if (o == NOTIMPLEMENTED)                 // TypeError since 3.14 (A9-21)
                 raise_new("TypeError", "NotImplemented should not be used in a boolean context");
             return o != NONE;
-        case Kind::Str: return static_cast<Str*>(o)->length != 0;
+        case Kind::Str:
+            if (!overridden(v, "__bool__") && !overridden(v, "__len__")) return static_cast<Str*>(o)->length != 0;
+            return truth_by_methods(v);
         case Kind::Tuple:
             if (!is_subclass_instance(v)) return !static_cast<Tuple*>(o)->items.empty();
             if (!overridden(v, "__bool__") && !overridden(v, "__len__")) return !static_cast<Tuple*>(o)->items.empty();
@@ -846,13 +856,16 @@ static std::string descr_repr(const char* kind, const std::string& name, const C
     if (owner == nullptr || owner == types().object) return std::string("<") + kind + " '" + name + "'>";
     return std::string("<") + kind + " '" + name + "' of '" + owner->name + "' objects>";
 }
+std::string str_repr_of(const Str* s) { return str_repr(s); }
 Ref repr_unchecked(Obj v) {
     if (v.is_small()) return str_new(int_text(v.small_value()));
     Object* o = v.object();
     switch (o->kind) {
         case Kind::Bool: return str_new(static_cast<BoolObject*>(o)->value ? "True" : "False");
         case Kind::Singleton: return str_new(static_cast<Singleton*>(o)->repr);
-        case Kind::Str: return str_new(str_repr(static_cast<Str*>(o)));
+        case Kind::Str:
+            if (overridden(v, "__repr__")) return call_special(v, "__repr__", {});
+            return str_new(str_repr(static_cast<Str*>(o)));
         case Kind::Class: {
             if (has_python_type(v) && type_lookup(type_of(v), intern("__repr__")) != type_lookup(types().type, intern("__repr__"))) {
                 return call_special(v, "__repr__", {});        // the metaclass's __repr__
@@ -939,7 +952,7 @@ Ref repr_of(Obj v) {                             // PyObject_Repr
     return r;
 }
 Ref str_of(Obj v) {                              // PyObject_Str
-    if (as_str(v) != nullptr) return Ref::share(v);
+    if (is_exact_str(v)) return Ref::share(v);
     bool own_str = is_kind(v, Kind::Instance) || is_kind(v, Kind::Proxy) ||
                    ((has_python_type(v) || is_subclass_instance(v)) &&
                     type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")));
@@ -958,6 +971,7 @@ bool overrides(Obj obj, const char* name) {
 
 // the built-in a subclass instance is an object of (its kind's class)
 ClassObject* builtin_of(Obj v) {
+    if (is_kind(v, Kind::Str)) return types().str;
     switch (v.object()->kind) {
         case Kind::Dict: return is_frozendict(v) ? types().frozendict : types().dict;
         case Kind::IntInstance: return types().int_;
@@ -1326,6 +1340,24 @@ Ref tuple_subscript(Obj obj, Obj key) {          // tuple_subscript: the items, 
     }
     return tuple_steal(std::move(out));
 }
+static bool slice_is_forward(Obj key) {           // a slice with all the items has the step 1 or -1, by its length alone; the first is the same
+    auto* s = static_cast<SliceObject*>(key.object());
+    if (s->step == None()) return true;
+    Ref step = int_index_of(s->step);
+    std::int64_t value = 0;
+    return int_fits_i64(step.get(), value) && value == 1;
+}
+Ref str_subscript(Obj self, Obj key) {
+    const Str* s = as_str(self);
+    if (!is_kind(key, Kind::Slice)) {
+        std::size_t i = index_of(key, s->length, "string");
+        return str_from_codepoints(std::u32string(1, s->at(i)));
+    }
+    std::u32string out;
+    each_index(key, static_cast<std::int64_t>(s->length), [&](std::size_t i) { out += s->at(i); });
+    if (out.size() == s->length && is_exact_str(self) && slice_is_forward(key)) return Ref::share(self);   // unicode_result_unchanged
+    return str_from_codepoints(out);
+}
 Ref getitem(Obj obj, Obj key) {
     check_sequence_key(obj, key, "__getitem__");
     bool slice = is_kind(key, Kind::Slice);
@@ -1338,15 +1370,7 @@ Ref getitem(Obj obj, Obj key) {
         each_index(key, static_cast<std::int64_t>(items.size()), [&](std::size_t i) { incref(items[i]); l->items.push_back(items[i]); });
         return r;
     }
-    if (const Str* s = as_str(obj)) {
-        if (!slice) {
-            std::size_t i = index_of(key, s->length, "string");
-            return str_from_codepoints(std::u32string(1, s->at(i)));
-        }
-        std::u32string out;
-        each_index(key, static_cast<std::int64_t>(s->length), [&](std::size_t i) { out += s->at(i); });
-        return str_from_codepoints(out);
-    }
+    if (as_str(obj) != nullptr && !overridden(obj, "__getitem__")) return str_subscript(obj, key);
     if (is_bytes_like(obj)) return bytes_getitem(obj, key);
     if (is_kind(obj, Kind::Range)) {                 // range_subscript
         if (slice) return range_slice(obj, key);
@@ -1517,7 +1541,7 @@ Ref iter(Obj obj) {
     if (is_kind(obj, Kind::Range)) return range_iter(obj);
     if (is_kind(obj, Kind::Tuple) && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::TupleIt, obj));
     if (is_kind(obj, Kind::List)) return own(new Iterator(Iterator::ListIt, obj));
-    if (as_str(obj) != nullptr) return own(new Iterator(Iterator::StrIt, obj));
+    if (as_str(obj) != nullptr && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::StrIt, obj));
     if (is_bytes_like(obj)) return own(new Iterator(Iterator::BytesIt, obj));
     if (is_kind(obj, Kind::Set)) {
         auto* it = new Iterator(Iterator::SetIt, obj);
@@ -1838,6 +1862,7 @@ void dict_merge(Obj target, Obj mapping, Obj func) {
     each_item(mapping, [&](Obj k, Obj v) {
         const Str* name = as_str(k);
         if (name == nullptr) raise_new("TypeError", "keywords must be strings");
+        if (!is_exact_str(k)) throw NotImplemented("a subclass of str as a keyword's name (CPython has it; the runtime does not yet)");
         if (!dict_get(d, k).is_unset())
             raise_new("TypeError", callable_name(func) + " got multiple values for keyword argument '" + name->text + "'");
         dict_set(d, k, v);

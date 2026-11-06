@@ -123,6 +123,13 @@ Ref tuple_iter_slot(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return o
 Ref tuple_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int_from_i64(static_cast<std::int64_t>(static_cast<Tuple*>(self.object())->items.size())); }
 Ref type_or_slot(Obj self, Args a) { wrapper_args(a, "__or__", 1); return type_or(self, a.pos(0)); }
 Ref type_ror_slot(Obj self, Args a) { wrapper_args(a, "__ror__", 1); return type_or(a.pos(0), self); }
+// str's own: its text, whatever a subclass says
+Ref str_repr_slot(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return str_new(str_repr_of(as_str(self))); }
+Ref str_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(str_hash(as_str(self))); }
+Ref str_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int_from_i64(static_cast<std::int64_t>(as_str(self)->length)); }
+Ref str_iter_slot(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return own(new Iterator(Iterator::StrIt, self)); }
+Ref str_contains_slot(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return Ref::steal(boolean(str_contains(self, a.pos(0)))); }
+Ref str_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return str_subscript(self, a.pos(0)); }
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
 Ref own_iter(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return iter(self); }
@@ -319,19 +326,25 @@ void init_slots() {
     slot(fd, "__ror__", dict_or_slot<true>);
     slot(fd, "__hash__", frozendict_hash_slot);
     for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.slice, t.bytes, t.bytearray}) comparisons(c);
-    for (ClassObject* c : {t.str, t.tuple, t.range, t.frozenset, t.slice, t.bytes}) slot(c, "__hash__", own_hash);
-    for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.bytes, t.bytearray}) {
+    for (ClassObject* c : {t.tuple, t.range, t.frozenset, t.slice, t.bytes}) slot(c, "__hash__", own_hash);
+    for (ClassObject* c : {t.list, t.tuple, t.range, t.set, t.frozenset, t.bytes, t.bytearray}) {
         slot(c, "__len__", own_len);
         slot(c, "__iter__", own_iter);
         slot(c, "__contains__", own_contains);
     }
-    for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.bytes, t.bytearray}) slot(c, "__getitem__", own_getitem);
+    for (ClassObject* c : {t.list, t.tuple, t.range, t.bytes, t.bytearray}) slot(c, "__getitem__", own_getitem);
+    slot(t.str, "__repr__", str_repr_slot);
+    slot(t.str, "__hash__", str_hash_slot);
+    slot(t.str, "__len__", str_len_slot);
+    slot(t.str, "__iter__", str_iter_slot);
+    slot(t.str, "__contains__", str_contains_slot);
+    slot(t.str, "__getitem__", str_getitem_slot);
     for (ClassObject* c : {t.str, t.list, t.tuple, t.bytes, t.bytearray}) {
         slot(c, "__add__", own_add);
         slot(c, "__mul__", own_mul);
         slot(c, "__rmul__", own_mul);
     }
-    for (ClassObject* c : {t.str, t.range, t.slice, t.none, t.bytes, t.bytearray}) slot(c, "__repr__", own_repr);
+    for (ClassObject* c : {t.range, t.slice, t.none, t.bytes, t.bytearray}) slot(c, "__repr__", own_repr);
     slot(t.list, "__reversed__", list_reversed);
     slot(t.range, "__reversed__", range_reversed);
     slot(t.list, "sort", list_sort_m);

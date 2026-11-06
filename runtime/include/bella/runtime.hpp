@@ -299,6 +299,11 @@ inline bool has_python_type(Obj v) { return v.is_object() && v.object()->kind ==
 // an object of a built-in kind whose class is a subclass of the program's (decision 2026-11-03: it
 // is the built-in's object, with the class's attribute storage: DictInstance)
 inline bool is_subclass_instance(Obj v) { return v.is_object() && has_attributes(v.object()); }
+std::int64_t str_hash(const Str* s);              // unicode_hash
+std::string str_repr_of(const Str* s);            // unicode_repr
+Ref str_subscript(Obj self, Obj key);             // unicode_subscript
+bool str_contains(Obj self, Obj item);            // PyUnicode_Contains
+inline bool is_exact_str(Obj v) { return is_kind(v, Kind::Str) && !has_attributes(v.object()); }   // PyUnicode_CheckExact
 inline bool is_exact_tuple(Obj v) { return is_kind(v, Kind::Tuple) && !has_attributes(v.object()); }   // PyTuple_CheckExact
 // such an object's class overrides `name`: what its MRO finds is not the built-in's own (CPython
 // then gives the subclass a slot that calls the override: slot_mp_subscript and the others)
@@ -428,6 +433,10 @@ bool with_attribute_storage(Obj v, F&& f) {
     }
     if (is_kind(v, Kind::Tuple) && has_attributes(v.object())) {
         f(static_cast<TupleInstance*>(v.object()));
+        return true;
+    }
+    if (is_kind(v, Kind::Str) && has_attributes(v.object())) {
+        f(static_cast<StrInstance*>(v.object()));
         return true;
     }
     if (is_kind(v, Kind::ComplexInstance)) {

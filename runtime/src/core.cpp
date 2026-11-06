@@ -428,18 +428,9 @@ std::int64_t full_hash(Obj v) {
                 return frozendict_hash(v);
             break;
         case Kind::Bool: return static_cast<BoolObject*>(o)->value ? 1 : 0;
-        case Kind::Str: {
-            auto* s = static_cast<Str*>(o);
-            if (s->hash == -1) {
-                if (s->length == 0) s->hash = 0;
-                else {
-                    auto h = static_cast<std::int64_t>(siphash13(secret().k0, secret().k1,
-                        reinterpret_cast<const unsigned char*>(s->units.data()), s->units.size()));
-                    s->hash = h == -1 ? -2 : h;
-                }
-            }
-            return s->hash;
-        }
+        case Kind::Str:
+            if (has_attributes(o) && type_lookup(o->cls, intern("__hash__")) != type_lookup(types().str, intern("__hash__"))) break;
+            return str_hash(static_cast<Str*>(o));
         case Kind::Bytes: {                      // bytes_hash: the same SipHash as a str of the same units
             auto* b = static_cast<BytesObject*>(o);
             if (b->hash == -1) {
@@ -546,6 +537,17 @@ std::int64_t tuple_hash(const Tuple* t) {
     if (acc == static_cast<std::uint64_t>(-1)) return 1546275796;
     return static_cast<std::int64_t>(acc);
 }
+std::int64_t str_hash(const Str* s) {             // unicode_hash, whatever a subclass says
+    if (s->hash == -1) {
+        if (s->length == 0) s->hash = 0;
+        else {
+            auto h = static_cast<std::int64_t>(siphash13(secret().k0, secret().k1,
+                reinterpret_cast<const unsigned char*>(s->units.data()), s->units.size()));
+            s->hash = h == -1 ? -2 : h;
+        }
+    }
+    return s->hash;
+}
 std::int64_t hash_of(Obj v) {
     std::int64_t h = full_hash(v);
     return h == -1 ? -2 : h;                     // -1 is reserved for errors
@@ -590,9 +592,7 @@ std::int64_t frozendict_hash(Obj v) {
 namespace {
 bool keys_equal(Obj a, Obj b) {
     if (a == b) return true;
-    const Str* sa = as_str(a);
-    const Str* sb = as_str(b);
-    if (sa != nullptr && sb != nullptr) return sa->text == sb->text;
+    if (is_exact_str(a) && is_exact_str(b)) return as_str(a)->text == as_str(b)->text;   // unicode_eq; a subclass's __eq__ may have a say
     Ref r = compare(CmpOp::Eq, a, b);
     return truth(r.get());
 }

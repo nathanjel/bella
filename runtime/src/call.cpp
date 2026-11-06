@@ -203,6 +203,7 @@ Ref call_ex(Obj f, Obj args, Obj kwargs) {
             if (e.key.is_unset()) continue;
             const Str* k = as_str(e.key);
             if (k == nullptr) raise_new("TypeError", "keywords must be strings");
+            if (!is_exact_str(e.key)) throw NotImplemented("a subclass of str as a keyword's name (CPython has it; the runtime does not yet)");
             names.push_back(k);
             data.push_back(e.value);
         }
@@ -466,7 +467,7 @@ bool overrides_builtin_len(Obj v) { return is_subclass_instance(v) && overrides_
 Ref b_len(Obj, Args a) {
     onearg(a, "len");
     Obj v = a.pos(0);
-    if (const Str* s = as_str(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
+    if (const Str* s = as_str(v); s != nullptr && !overrides_builtin_len(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
     if (is_kind(v, Kind::Tuple) && !overrides_builtin_len(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Tuple*>(v.object())->items.size())));
     if (is_kind(v, Kind::List)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<List*>(v.object())->items.size())));
     if (is_kind(v, Kind::Dict) && !overrides_builtin_len(v))
@@ -589,6 +590,9 @@ Ref b_isinstance(Obj, Args a) {
 Ref attr_name(Obj v) {
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(v)->name + "'");
+    if (!is_exact_str(v) && (type_lookup(type_of(v), intern("__hash__")) != type_lookup(types().str, intern("__hash__")) ||
+                             type_lookup(type_of(v), intern("__eq__")) != type_lookup(types().str, intern("__eq__"))))
+        throw NotImplemented("an attribute name of a subclass of str with a __hash__ or __eq__ of its own (CPython has it; the runtime does not yet)");
     return Ref::share(Obj::of(intern(s->text)));
 }
 Ref b_getattr(Obj, Args a) {
@@ -608,6 +612,8 @@ Ref b_hasattr(Obj, Args a) {
 Ref b_setattr(Obj, Args a) {
     clinic(a, "setattr", "setattr", 3, 3);
     Ref n = attr_name(a.pos(1));
+    if (as_str(a.pos(1)) != nullptr && !is_exact_str(a.pos(1)))   // CPython's dict keeps the object as its key
+        throw NotImplemented("storing an attribute by a name of a subclass of str (CPython has it; the runtime does not yet)");
     setattr(a.pos(0), static_cast<const Str*>(n.get().object()), a.pos(2));
     return none_ref();
 }
@@ -1121,6 +1127,7 @@ Ref sys_intern(Obj, Args a) {                     // sys_intern_impl: the str ev
     onearg(a, "sys.intern");
     const Str* s = as_str(a.pos(0));
     if (s == nullptr) raise_new("TypeError", "intern() argument must be str, not " + fully_qualified_name(type_of(a.pos(0))));
+    if (!is_exact_str(a.pos(0))) raise_new("TypeError", "can't intern " + type_of(a.pos(0))->name);
     return Ref::share(Obj::of(intern(std::string_view(s->text))));
 }
 // the module of the function that called: sentinelobject.c's caller(); the prelude has no frames of CPython's
@@ -1179,7 +1186,8 @@ Ref b_chr(Obj, Args a) {
 
 // constructors of the C++ types
 Ref c_str(Obj, Args a) {                         // unicode_new_impl
-    if (a.npos + a.nkw > 3) raise_new("TypeError", "str expected at most 3 arguments, got " + std::to_string(a.npos + a.nkw));
+    if (a.nkw == 0 && a.npos > 3) raise_new("TypeError", "str expected at most 3 arguments, got " + std::to_string(a.npos));   // unicode_vectorcall
+    if (a.npos + a.nkw > 3) raise_new("TypeError", std::string("str() takes at most 3 ") + (a.npos == 0 ? "keyword " : "") + "arguments (" + std::to_string(a.npos + a.nkw) + " given)");   // unicode_new, past it
     Obj x = a.npos > 0 ? a.pos(0) : Obj{}, encoding = a.npos > 1 ? a.pos(1) : Obj{}, errors = a.npos > 2 ? a.pos(2) : Obj{};
     for (std::size_t k = 0; k < a.nkw; ++k) {
         const Str* name = a.kwnames[k];
@@ -1246,14 +1254,17 @@ Ref str_join(Obj self, Args a) {
         raise_new("TypeError", "can only join an iterable");
     }
     std::size_t i = 0;
+    Ref first;
     for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()), ++i) {
         const Str* s = as_str(v.get());
         if (s == nullptr)
             raise_new("TypeError", "sequence item " + std::to_string(i) + ": expected str instance, " +
                                        type_of(v.get())->name + " found");
         if (i > 0) out += sep->text;
+        else first = Ref::share(v.get());
         out += s->text;
     }
+    if (i == 1 && is_exact_str(first.get())) return first;   // /* Fast path: only one item */
     return str_new(out);
 }
 
@@ -1349,7 +1360,7 @@ Module* make_builtins() {
              {"__getnewargs__", str_getnewargs_m}, {"__str__", str_str_m}, {"format", str_format_m}, {"format_map", str_format_map_m},
              {"__format__", str_format_dunder}})
         method(t.str, n, fn);
-    for (ClassObject* c : {t.list, t.str, t.dict, t.frozendict}) {      // tuple's are slot wrappers (slots.cpp)
+    for (ClassObject* c : {t.list, t.dict, t.frozendict}) {      // tuple's and str's are slot wrappers (slots.cpp)
         method(c, "__getitem__", getitem_m);
         method(c, "__contains__", contains_m);
         method(c, "__iter__", iter_m);
@@ -1957,6 +1968,12 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                 break;
             case Kind::Class:
                 for (auto& [k, value] : static_cast<ClassObject*>(o)->attrs.items()) todo.push_back(value);
+                break;
+            case Kind::Str:
+                if (has_attributes(o)) {
+                    attribute_values(static_cast<StrInstance*>(o), todo);
+                    found.push_back(Ref::share(v));
+                }
                 break;
             case Kind::Tuple:
                 if (has_attributes(o)) {
