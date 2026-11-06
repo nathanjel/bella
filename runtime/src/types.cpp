@@ -1468,6 +1468,7 @@ Ref builtin_name(Obj self) {
 Ref builtin_self(Obj self) {
     if (is_kind(self, Kind::PyFunction)) {       // the prelude's: print.__self__, posix.stat.__self__
         Ref module = fn_module(self);
+        if (module.get() == None()) return none_ref();   // the error handlers of _codecs: made with no module and no self
         if (const Str* s = as_str(module.get()))
             if (Module* home = native_module_named(s->text)) return Ref::share(Obj::of(home));
         return Ref::share(Obj::of(builtins_module()));
@@ -1493,8 +1494,9 @@ Ref builtin_descr_qualname(Obj self) {           // descr_get_qualname, wrapper_
 Ref builtin_module(Obj self);
 Ref builtin_doc(Obj self) {                      // from the table, for the ones written in Python as for those in C++; a method's waits
     Ref module = builtin_module(self), name = builtin_name(self);
-    if (const Str* m = as_str(module.get()))
-        if (auto text = cpython_doc_text(m->text + "." + as_str(name.get())->text)) {
+    const Str* m = as_str(module.get());
+    if (m != nullptr || module.get() == None())      // the table's rows are <__module__>.<__name__>, "" for None (the error handlers of _codecs)
+        if (auto text = cpython_doc_text((m == nullptr ? "" : m->text) + "." + as_str(name.get())->text)) {
             if (text->empty()) return none_ref();
             return Ref::share(Obj::of(intern(std::string(*text))));
         }
@@ -1935,6 +1937,20 @@ Ref exception_with_traceback(Obj self, Args a) {
     arity(a, "with_traceback", 1, 1);
     exception_traceback_set(self, a.pos(0));
     return Ref::share(self);
+}
+Ref exception_add_note(Obj self, Args a) {        // BaseException.add_note: __notes__ as the instance answers for it, a list made when it has none
+    arity(a, "add_note", 1, 1);
+    Obj note = a.pos(0);
+    if (as_str(note) == nullptr) raise_new("TypeError", "add_note() argument must be str, not " + type_of(note)->name);
+    Ref notes = optional_getattr(self, N("__notes__"));
+    if (notes.get().is_unset()) {
+        notes = list_new({});
+        setattr(self, N("__notes__"), notes.get());
+    } else if (!is_kind(notes.get(), Kind::List)) {
+        raise_new("TypeError", "Cannot add note: __notes__ is not a list");
+    }
+    list_append(notes.get(), note);
+    return none_ref();
 }
 Ref field_or_none(Obj self, const char* name) {
     Obj v = exception_field(self, name);
@@ -2616,6 +2632,7 @@ void init_types() {
     method(base, "__str__", exception_str);
     method(base, "__repr__", exception_repr);
     method(base, "with_traceback", exception_with_traceback);
+    method(base, "add_note", exception_add_note);
     method(exception_class("KeyError"), "__str__", key_error_str);
     base->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
     deletable_getset(base, "args", exception_args_get, exception_args_set);

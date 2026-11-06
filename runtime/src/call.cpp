@@ -2370,6 +2370,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 Ref setup = builtin("_setup");
                 invoke(setup.get(), {names.get()});
             }
+            ensure_codecs();                     // _PyCodec_InitRegistry: the registry, then `encodings` imported, which registers its search
+            invoke(codec_hooks().start.get(), {});
             Module* main = make_main(main_file);
             if (bootstrap != nullptr) {
                 Obj loader_class = dict_get(bootstrap->dict, Obj::of(intern("SourceFileLoader")));

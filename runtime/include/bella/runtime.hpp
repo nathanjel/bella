@@ -376,6 +376,11 @@ Ref bytes_concat(Obj a, Obj b);
 void bytes_iadd(Obj a, Obj b);
 Ref bytes_repeat(Obj self, std::int64_t count, bool in_place);
 Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
+struct CodecHooks { Ref text_encode, text_decode, unknown_handler, start; };   // what _codecs.py gives the runtime (Python/codecs.c's entry points)
+CodecHooks& codec_hooks();
+void ensure_codecs();                             // _codecs has run, and the hooks are set
+Ref i_codecs_call(Obj, Args a);                   // _codecs.py's: the codecs here, by name
+void fill_codecs(Module* m);                      // and runtime/prelude/_codecs.py
 // ---- format (runtime/src/format.cpp) ----
 Ref object_format(Obj obj, const Str* spec);      // PyObject_Format
 Ref str_mod(Obj format, Obj args);                // PyUnicode_Format

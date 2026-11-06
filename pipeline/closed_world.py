@@ -77,6 +77,17 @@ def library_modules() -> dict[str, tuple[Path, Path]]:
 
 
 @cache
+def startup_modules() -> tuple[str, ...]:
+    """What the runtime imports before the program's first line, as CPython's start-up does (_PyCodec_InitRegistry): `encodings`, what
+    its body imports, and the phase-1 codecs its search function finds by a computed name (the manifest's [dynamic.encodings])."""
+    manifest = tomllib.loads((ROOT / "manifest.toml").read_text(encoding="utf-8"))
+    found = ["encodings", "codecs", "encodings.aliases"]
+    for names in manifest.get("dynamic", {}).get("encodings", {}).values():
+        found.extend(names)
+    return tuple(found)
+
+
+@cache
 def omitted_modules() -> frozenset[str]:
     """The manifest's omissions: not installed, as far as a program can tell (spec section 7)."""
     manifest = tomllib.loads((ROOT / "manifest.toml").read_text(encoding="utf-8"))
@@ -281,6 +292,11 @@ def find_program_modules(program: Path) -> list[ProgramModule]:
         done += 1
         if m.path is not None:
             scan(m.path, m.name, m.package)
+    # the start-up modules themselves, after the program's own closure is complete, so that what they would import later (codecs.open's
+    # `warnings`, and the world behind it) is not compiled into every program: a lazy import of theirs the program does not reach otherwise
+    # stops by name, as any uncompiled module does
+    for name in startup_modules():
+        find(name)
     return queue
 
 

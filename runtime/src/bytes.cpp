@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <optional>
 #include <string>
 
 #include "bella/runtime.hpp"
@@ -608,58 +609,46 @@ Ref fromhex_m(Obj cls, Args a) {                  // _PyBytes_FromHex
 }
 
 // ---- codecs ----
-enum class Codec { Utf8, Ascii, Latin1, Utf8Sig, NotWritten, Unknown };
-const char* codec_name(Codec c) { return c == Codec::Ascii ? "ascii" : c == Codec::Latin1 ? "latin-1" : "utf-8"; }
-// encodings.normalize_encoding and encodings.aliases, for the phase-1 codecs (manifest [dynamic.encodings])
-Codec find_codec(const std::string& name) {
-    std::string norm;
-    bool pending = false;
+// The registry is _codecs.py's (Python/codecs.c); these are the hooks it gives the runtime when it has run: _PyCodec_EncodeText,
+// _PyCodec_DecodeText, PyCodec_LookupError for a name the codecs here have no code for, and _PyCodec_InitRegistry's end.
+enum class Codec { Utf8, Ascii, Latin1, Utf16, Utf32, Registry };
+// the shortcuts of PyUnicode_Decode and PyUnicode_AsEncodedString: _Py_normalize_encoding into ten characters, then these names alone
+Codec fast_codec(const std::string& name) {
+    std::string lower;
+    bool punct = false;
     for (char c : name) {
         if (is_alnum(c) || c == '.') {
-            if (pending && !norm.empty()) norm += '_';
-            norm += to_lower(c);
-            pending = false;
+            if (punct && !lower.empty()) lower += '_';
+            punct = false;
+            lower += to_lower(c);
+            if (lower.size() > 10) return Codec::Registry;
         } else {
-            pending = true;
+            punct = true;
         }
     }
-    auto any = [&](std::initializer_list<const char*> names) {
-        return std::any_of(names.begin(), names.end(), [&](const char* n) { return norm == n; });
-    };
-    if (any({"utf_8", "utf8", "u8", "utf", "cp65001", "utf8_ucs2", "utf8_ucs4"})) return Codec::Utf8;
-    if (any({"ascii", "646", "ansi_x3.4_1968", "ansi_x3_4_1968", "ansi_x3.4_1986", "cp367", "csascii", "ibm367", "iso646_us",
-             "iso_646.irv_1991", "iso_ir_6", "us", "us_ascii"})) return Codec::Ascii;
-    if (any({"latin_1", "8859", "cp819", "csisolatin1", "ibm819", "iso8859", "iso8859_1", "iso_8859_1", "iso_8859_1_1987",
-             "iso_ir_100", "l1", "latin", "latin1"})) return Codec::Latin1;
-    if (any({"utf_8_sig"})) return Codec::Utf8Sig;
-    if (any({"utf_16", "u16", "utf16", "utf_16_be", "unicodebigunmarked", "utf_16be", "utf_16_le", "unicodelittleunmarked", "utf_16le",
-             "utf_32", "u32", "utf32", "utf_32_be", "utf_32be", "utf_32_le", "utf_32le"})) return Codec::NotWritten;
-    return Codec::Unknown;
+    std::string_view l = lower;
+    if (l.starts_with("utf")) {
+        l.remove_prefix(3);
+        if (l.starts_with("_")) l.remove_prefix(1);
+        if (l == "8") return Codec::Utf8;
+        if (l == "16") return Codec::Utf16;
+        if (l == "32") return Codec::Utf32;
+        return Codec::Registry;
+    }
+    if (l == "ascii" || l == "us_ascii") return Codec::Ascii;
+    if (l == "latin1" || l == "latin_1" || l == "iso_8859_1" || l == "iso8859_1") return Codec::Latin1;
+    return Codec::Registry;
 }
-bool binary_codec(const std::string& name) {      // encodings.aliases: a codec with _is_text_encoding False
-    std::string norm;
-    for (char c : name) norm += c == '-' ? '_' : to_lower(c);
-    for (const char* n : {"base64", "base_64", "base64_codec", "bz2", "bz2_codec", "hex", "hex_codec", "quopri", "quoted_printable",
-                          "quotedprintable", "quopri_codec", "rot13", "rot_13", "uu", "uu_codec", "zip", "zlib", "zlib_codec"})
-        if (norm == n) return true;
-    return false;
-}
-Codec codec_for(const std::string& name, const char* verb = "encode") {
-    if (name.find('\0') != std::string::npos) raise_new("ValueError", "embedded null character");
-    Codec c = find_codec(name);
-    if (c == Codec::Unknown && binary_codec(name))
-        raise_new("LookupError", "'" + name + "' is not a text encoding; use codecs." + verb + "() to handle arbitrary codecs");
-    if (c == Codec::Unknown) raise_new("LookupError", "unknown encoding: " + name);
-    if (c == Codec::NotWritten) throw NotImplemented("the codec '" + name + "' (phase 1; not written yet)");
-    return c;
+void no_null(const std::string& text) {           // a C string: clinic's str converter
+    if (text.find('\0') != std::string::npos) raise_new("ValueError", "embedded null character");
 }
 [[noreturn]] void unknown_handler(const std::string& errors) {
     if (errors == "namereplace") throw NotImplemented("the error handler namereplace (it needs the Unicode database)");
+    if (!codec_hooks().unknown_handler.get().is_unset()) {   // the registry: LookupError, or a handler the program registered
+        Ref name = str_new(errors);
+        invoke(codec_hooks().unknown_handler.get(), {name.get()});
+    }
     raise_new("LookupError", "unknown error handler name '" + errors + "'");
-}
-bool handler_known(const std::string& e) {
-    return e == "strict" || e == "ignore" || e == "replace" || e == "backslashreplace" || e == "surrogateescape" ||
-           e == "surrogatepass" || e == "xmlcharrefreplace";
 }
 void put_utf8(std::string& out, char32_t c) {
     if (c < 0x80) out += static_cast<char>(c);
@@ -823,16 +812,21 @@ std::size_t decode_fallback(std::u32string& out, std::string_view s, std::size_t
     if (errors != "strict" && errors != "surrogatepass") unknown_handler(errors);
     raise_decode_error(encoding, s, start, end, reason);
 }
-Ref decode_utf8(std::string_view s, const std::string& errors) {
+Ref decode_utf8(std::string_view s, const std::string& errors, std::size_t* consumed = nullptr) {
     std::u32string out;
     std::size_t i = 0;
     while (i < s.size()) {
         Utf8Step step = utf8_step(s, i);
         if (step.error == 0) { out += step.c; i += step.width; continue; }
+        if (consumed != nullptr) {                // PyUnicode_DecodeUTF8Stateful: a sequence the data ends inside waits for more, a truncated surrogate too
+            if (step.error == 5) break;
+            if (step.error == 2 && u(s[i]) == 0xED && s.size() - i == 2 && u(s[i + 1]) >= 0xA0 && u(s[i + 1]) <= 0xBF) break;
+        }
         std::size_t end = step.error == 5 ? s.size() : step.error == 1 ? i + 1 : i + static_cast<std::size_t>(step.error) - 1;
         const char* reason = step.error == 5 ? "unexpected end of data" : step.error == 1 ? "invalid start byte" : "invalid continuation byte";
         i = decode_fallback(out, s, i, end, errors, "utf-8", reason);
     }
+    if (consumed != nullptr) *consumed = i;
     return str_from_codepoints(out);
 }
 Ref decode_ascii(std::string_view s, const std::string& errors) {
@@ -849,31 +843,50 @@ Ref decode_latin1(std::string_view s) {
     for (char c : s) out += static_cast<char32_t>(u(c));
     return str_from_codepoints(out);
 }
-Ref decode_with(std::string_view s, const std::string& encoding, const std::string& errors) {
-    switch (codec_for(encoding, "decode")) {
-        case Codec::Ascii: return decode_ascii(s, errors);
-        case Codec::Latin1: return decode_latin1(s);
-        case Codec::Utf8Sig:
-            return decode_utf8(s.starts_with("\xEF\xBB\xBF") ? s.substr(3) : s, errors);
-        default: return decode_utf8(s, errors);
-    }
+// the registry's hook with (value, encoding, errors or None): errors is a C string CPython leaves NULL when it was not given
+Ref registry_call(const Ref& hook, Obj value, const std::string& encoding, const std::string* errors) {
+    ensure_codecs();
+    Ref enc = str_new(encoding);
+    Ref err = errors == nullptr ? none_ref() : str_new(*errors);
+    return invoke(hook.get(), {value, enc.get(), err.get()});
 }
-std::string encode_with(Obj text, const std::string& encoding, const std::string& errors) {
-    const Str* s = as_str(text);
-    switch (codec_for(encoding)) {
-        case Codec::Ascii: return encode_ucs1(s, text, 128, errors);
-        case Codec::Latin1: return encode_ucs1(s, text, 256, errors);
-        case Codec::Utf8Sig: return "\xEF\xBB\xBF" + encode_utf8(s, text, errors);
-        default: return encode_utf8(s, text, errors);
+Ref decode_with(std::string_view s, const std::string* encoding, const std::string* errors) {   // PyUnicode_Decode
+    if (s.empty()) return str_new("");
+    const std::string e = errors == nullptr ? "strict" : *errors;
+    if (encoding == nullptr) return decode_utf8(s, e);
+    switch (fast_codec(*encoding)) {
+        case Codec::Utf8: return decode_utf8(s, e);
+        case Codec::Ascii: return decode_ascii(s, e);
+        case Codec::Latin1: return decode_latin1(s);
+        case Codec::Utf16: throw NotImplemented("the codec 'utf-16' (phase 1; not written yet)");
+        case Codec::Utf32: throw NotImplemented("the codec 'utf-32' (phase 1; not written yet)");
+        case Codec::Registry: break;
     }
+    Ref data = bytes_new(s);
+    return registry_call(codec_hooks().text_decode, data.get(), *encoding, errors);
+}
+Ref encode_with(Obj text, const std::string* encoding, const std::string* errors) {   // PyUnicode_AsEncodedString
+    const Str* s = as_str(text);
+    const std::string e = errors == nullptr ? "strict" : *errors;
+    if (encoding == nullptr) return bytes_new(encode_utf8(s, text, e));
+    switch (fast_codec(*encoding)) {
+        case Codec::Utf8: return bytes_new(encode_utf8(s, text, e));
+        case Codec::Ascii: return bytes_new(encode_ucs1(s, text, 128, e));
+        case Codec::Latin1: return bytes_new(encode_ucs1(s, text, 256, e));
+        case Codec::Utf16: throw NotImplemented("the codec 'utf-16' (phase 1; not written yet)");
+        case Codec::Utf32: throw NotImplemented("the codec 'utf-32' (phase 1; not written yet)");
+        case Codec::Registry: break;
+    }
+    return registry_call(codec_hooks().text_encode, text, *encoding, errors);
 }
 std::string text_argument(Obj v, const std::string& function, const char* name) {
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", function + "() argument '" + name + "' must be str, not " + type_of(v)->name);
+    no_null(s->text);
     return s->text;
 }
-// (encoding='utf-8', errors='strict'), by position or by name
-void codec_args(Args a, const std::string& function, std::string& encoding, std::string& errors) {
+// (encoding='utf-8', errors='strict'), by position or by name; one not given stays unset, as the C string stays NULL
+void codec_args(Args a, const std::string& function, std::optional<std::string>& encoding, std::optional<std::string>& errors) {
     if (a.npos > 2) raise_new("TypeError", function + "() takes at most 2 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
     if (a.npos > 0) encoding = text_argument(a.pos(0), function, "encoding");
     if (a.npos > 1) errors = text_argument(a.pos(1), function, "errors");
@@ -884,15 +897,15 @@ void codec_args(Args a, const std::string& function, std::string& encoding, std:
     }
 }
 Ref decode_m(Obj self, Args a) {
-    std::string encoding = "utf-8", errors = "strict";
-    codec_args(a, is_bytearray(self) ? "decode" : "decode", encoding, errors);
+    std::optional<std::string> encoding, errors;
+    codec_args(a, "decode", encoding, errors);
     std::string copy = bytes_data(self);
-    return decode_with(copy, encoding, errors);
+    return decode_with(copy, encoding ? &*encoding : nullptr, errors ? &*errors : nullptr);
 }
 Ref str_encode_m(Obj self, Args a) {
-    std::string encoding = "utf-8", errors = "strict";
+    std::optional<std::string> encoding, errors;
     codec_args(a, "encode", encoding, errors);
-    return bytes_new(encode_with(self, encoding, errors));
+    return encode_with(self, encoding ? &*encoding : nullptr, errors ? &*errors : nullptr);
 }
 
 // ---- construction ----
@@ -913,12 +926,18 @@ SourceArgs source_args(Args a, const char* function) {
     }
     if (!out.encoding.is_unset() && as_str(out.encoding) == nullptr)
         raise_new("TypeError", std::string(function) + "() argument 'encoding' must be str, not " + type_of(out.encoding)->name);
+    if (!out.encoding.is_unset()) no_null(as_str(out.encoding)->text);
     if (!out.errors.is_unset() && as_str(out.errors) == nullptr)
         raise_new("TypeError", std::string(function) + "() argument 'errors' must be str, not " + type_of(out.errors)->name);
+    if (!out.errors.is_unset()) no_null(as_str(out.errors)->text);
     return out;
 }
 std::string encoded_source(const SourceArgs& s) {
-    return encode_with(s.source, s.encoding.is_unset() ? "utf-8" : as_str(s.encoding)->text, s.errors.is_unset() ? "strict" : as_str(s.errors)->text);
+    std::optional<std::string> encoding, errors;
+    if (!s.encoding.is_unset()) encoding = as_str(s.encoding)->text;
+    if (!s.errors.is_unset()) errors = as_str(s.errors)->text;
+    Ref made = encode_with(s.source, encoding ? &*encoding : nullptr, errors ? &*errors : nullptr);
+    return bytes_data(made.get());
 }
 std::string from_iterator(Obj it, const char* range_message) {
     std::string out;
@@ -1366,6 +1385,16 @@ void unicode_getset(ClassObject* c, const char* name) {
 }  // namespace
 
 // ---- what the operators and the rest of the runtime call ----
+CodecHooks& codec_hooks() {
+    static CodecHooks hooks;
+    return hooks;
+}
+void ensure_codecs() {
+    if (!codec_hooks().text_encode.get().is_unset()) return;
+    Ref name = str_new("_codecs");
+    import_module_level(name.get(), Obj{}, Obj{}, Obj{}, 0);
+    if (codec_hooks().text_encode.get().is_unset()) throw NotImplemented("the codec registry (_codecs gave the runtime no hooks)");
+}
 Ref bytes_new(std::string_view s) {               // an empty one, and each of one byte, is one object (bytes_empty, characters)
     if (s.size() > 1) return own(new BytesObject(Kind::Bytes, std::string(s)));
     static std::array<Ref, 257> shared;
@@ -1468,7 +1497,10 @@ Ref str_from_bytes(Obj source, Obj encoding, Obj errors) {   // str(b, encoding,
     if (!is_bytes_like(source))
         raise_new("TypeError", "decoding to str: need a bytes-like object, " + type_of(source)->name + " found");
     std::string copy = bytes_data(source);
-    return decode_with(copy, encoding.is_unset() ? "utf-8" : as_str(encoding)->text, errors.is_unset() ? "strict" : as_str(errors)->text);
+    std::optional<std::string> enc, err;
+    if (!encoding.is_unset()) no_null(enc.emplace(as_str(encoding)->text));
+    if (!errors.is_unset()) no_null(err.emplace(as_str(errors)->text));
+    return decode_with(copy, enc ? &*enc : nullptr, err ? &*err : nullptr);
 }
 
 std::string utf8_with_errors(Obj text, const char* errors) { return encode_utf8(as_str(text), text, errors); }
@@ -1570,7 +1602,47 @@ void init_bytes() {
     unicode_getset<2>(trans, "start");
     unicode_getset<3>(trans, "end");
     unicode_getset<4>(trans, "reason");
-    (void)handler_known;
+}
+
+// ---- _codecs.py's primitive: the codecs here, by name, and what it keeps of an exception ----
+Ref i_codecs_call(Obj, Args a) {
+    const std::string& name = as_str(a.pos(0))->text;
+    Args r{a.data + 1, a.npos - 1, nullptr, 0};
+    if (name == "decode") {                      // (codec, bytes, errors or None, final): (str, consumed)
+        std::string data = bytes_data(r.pos(1));
+        std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
+        bool final = truth(r.pos(3));
+        const std::string& codec = as_str(r.pos(0))->text;
+        std::size_t consumed = data.size();
+        Ref text = codec == "utf-8" ? decode_utf8(data, errors, final ? nullptr : &consumed)
+                 : codec == "ascii" ? decode_ascii(data, errors) : decode_latin1(data);
+        return tuple_new({text.get(), Obj::small(static_cast<std::int64_t>(consumed))});
+    }
+    if (name == "encode") {                      // (codec, str, errors or None): bytes
+        const std::string& codec = as_str(r.pos(0))->text;
+        std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
+        const Str* s = as_str(r.pos(1));
+        return bytes_new(codec == "utf-8" ? encode_utf8(s, r.pos(1), errors) : encode_ucs1(s, r.pos(1), codec == "ascii" ? 128 : 256, errors));
+    }
+    if (name == "buffer") return bytes_new(buffer_of(r.pos(0)));   // PyObject_GetBuffer: the bytes of a bytes-like object
+    if (name == "field") {                       // (exc, name, default): what the exception holds, raw
+        Obj v = exception_field(r.pos(0), as_str(r.pos(1))->text.c_str());
+        return Ref::share(v.is_unset() ? r.pos(2) : v);
+    }
+    if (name == "builtin") {                     // PyCFunction_NewEx(def, NULL, NULL): a built-in function of no module
+        r.pos(0).object()->cls = types().builtin;
+        setattr(r.pos(0), N("__module__"), None());
+        return none_ref();
+    }
+    if (name == "refuse") throw NotImplemented(as_str(r.pos(0))->text);
+    if (name == "hooks") {                       // (text_encode, text_decode, unknown_handler, start)
+        codec_hooks().text_encode = Ref::share(r.pos(0));
+        codec_hooks().text_decode = Ref::share(r.pos(1));
+        codec_hooks().unknown_handler = Ref::share(r.pos(2));
+        codec_hooks().start = Ref::share(r.pos(3));
+        return none_ref();
+    }
+    throw NotImplemented("_codecs primitive " + name);
 }
 
 }  // namespace bella
