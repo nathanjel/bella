@@ -1742,6 +1742,7 @@ void present_as_c_types(Module* bootstrap) {
 
 // What a class statement leaves that a type written in C does not have; the layout is held elsewhere
 Ref instance_dict_of(Obj self) { return instance_dict_getset()->get(self); }
+Ref int_from_number(Obj x) { return number_long(x); }
 void forget_python_origin(ClassObject* c) {
     for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__", "__weakref__"})   // a C type's list has no getset
         if (c->attrs.contains(N(n))) c->del_attr(N(n));

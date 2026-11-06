@@ -69,7 +69,7 @@ FOUND: list[tuple[str, str]] = [
 REFUSED = {
     "a builtin": "locals()",
     "an attribute of sys": "import sys\nsys.version_info",
-    "a str method": "'a' % ()",
+    "a str method": "'é'.upper()",
     "an object method": "class C:\n    pass\nC().__sizeof__()",
     "before __getattr__": "class H:\n    def __getattr__(self, n):\n        print('hook', n)\nH().__sizeof__()",
     "a member of type": "class C:\n    pass\nC.__basicsize__",

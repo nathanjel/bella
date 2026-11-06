@@ -110,6 +110,7 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (op == BinOp::MatMul) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // no built-in type has nb_matrix_multiply
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (is_int(a) && is_int(b)) return big_binary(op, a, b);
+    if (op == BinOp::Mod && as_str(a) != nullptr) return str_mod(a, b);   // unicode_mod, whatever b is
     if (is_float(a) || is_float(b)) return float_binary(op, a, b);
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
     if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // frozendict_or, _PyDict_Or: a copy, updated

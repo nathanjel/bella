@@ -476,10 +476,10 @@ def test_operators_on_builtin_types_are_cpythons() -> None:
 
 
 def test_operators_cpython_has_and_the_runtime_lacks_are_refused() -> None:
-    """str % (formatting), type | type, a keys view compared as a set: refused, never TypeError."""
+    """bytes % (formatting), type | type, a keys view compared as a set: refused, never TypeError."""
     if not _HAVE_CXX:
         return
-    for body in ("print('%d' % 5)", "print(int | str)", "print({1: 2}.keys() == {1})", "class C:\n    pass\nprint('%s' % C())"):
+    for body in ("print(b'%d' % 5)", "print(int | str)", "print({1: 2}.keys() == {1})", "class C:\n    pass\nprint(b'%s' % C())"):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text("print('start')\n" + body + "\n", encoding="utf-8")

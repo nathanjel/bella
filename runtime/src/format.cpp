@@ -790,6 +790,360 @@ Ref str_format_map_m(Obj self, Args a) {
     return do_string_format(s, Obj{}, a.pos(0));
 }
 
+// ---- str % args (Objects/unicode_format.c) ----
+namespace {
+constexpr int F_LJUST = 1, F_SIGN = 2, F_BLANK = 4, F_ALT = 8, F_ZERO = 16;
+struct PercentArg {
+    char32_t ch = 0;
+    int flags = 0;
+    std::int64_t width = -1;
+    int prec = -1;
+    bool sign = false;
+    std::int64_t fmtstart = 0;
+    Ref key;
+};
+// PyMapping_Check: mp_subscript, which a C type with sq_item alone has not
+bool mapping_check(Obj v) {
+    if (!v.is_object() && !v.is_small()) return false;
+    if (type_lookup(type_of(v), intern("__getitem__")).is_unset()) return false;
+    for (ClassObject* c : type_of(v)->mro)
+        if (c->attrs.contains(intern("__getitem__"))) return !c->sequence_slots;
+    return true;
+}
+struct Percent {
+    Cps fmt;
+    std::int64_t fmtcnt = 0, fmtpos = 0;
+    std::int64_t arglen = 0, argidx = 0;
+    Ref args;
+    Obj dict;
+    Cps out;
+
+    char32_t read() const { return fmt[static_cast<std::size_t>(fmtpos)]; }
+    [[noreturn]] void error(const PercentArg& arg, const char* exc, const std::string& message) const {   // FORMAT_ERROR
+        if (!arg.key.get().is_unset()) {
+            Ref shown = repr_of(arg.key.get());
+            raise_new(exc, "format argument " + as_str(shown.get())->text + ": " + message);
+        }
+        if (argidx >= 0) raise_new(exc, "format argument " + std::to_string(argidx) + ": " + message);
+        raise_new(exc, "format argument: " + message);
+    }
+    Obj next_arg(bool allow_one) {               // unicode_format_getnextarg
+        std::int64_t index = argidx;
+        if (index < arglen && (allow_one || arglen >= 0)) {
+            ++argidx;
+            if (arglen >= 0) return static_cast<Tuple*>(args.get().object())->items[static_cast<std::size_t>(index)];
+            if (allow_one) return args.get();
+        }
+        raise_new("TypeError", "not enough arguments for format string (got " + std::to_string(arglen < 0 ? 1 : arglen) + ")");
+    }
+    void parse(PercentArg& arg) {                // unicode_format_arg_parse
+        if (arg.ch == U'(') {
+            if (dict.is_unset()) raise_new("TypeError", "format requires a mapping, not " + fully_qualified_name(type_of(args.get())));
+            ++fmtpos;
+            --fmtcnt;
+            std::int64_t keystart = fmtpos;
+            int pcount = 1;
+            while (pcount > 0 && --fmtcnt >= 0) {
+                arg.ch = read();
+                if (arg.ch == U')') --pcount;
+                else if (arg.ch == U'(') ++pcount;
+                ++fmtpos;
+            }
+            std::int64_t keylen = fmtpos - keystart - 1;
+            if (fmtcnt < 0 || pcount > 0) raise_new("ValueError", "stray % or incomplete format key at position " + std::to_string(arg.fmtstart));
+            arg.key = str_from_codepoints(std::u32string_view(fmt).substr(static_cast<std::size_t>(keystart), static_cast<std::size_t>(keylen)));
+            args = getitem(dict, arg.key.get());
+            arglen = -3;
+            argidx = -4;
+        } else if (arglen < -1) {
+            raise_new("ValueError", "format requires a parenthesised mapping key at position " + std::to_string(arg.fmtstart));
+        }
+        while (--fmtcnt >= 0) {                  // flags
+            arg.ch = read();
+            ++fmtpos;
+            if (arg.ch == U'-') arg.flags |= F_LJUST;
+            else if (arg.ch == U'+') arg.flags |= F_SIGN;
+            else if (arg.ch == U' ') arg.flags |= F_BLANK;
+            else if (arg.ch == U'#') arg.flags |= F_ALT;
+            else if (arg.ch == U'0') arg.flags |= F_ZERO;
+            else break;
+        }
+        if (arg.ch == U'*') {                    // width
+            if (arglen < -1) raise_new("ValueError", "* cannot be used with a parenthesised mapping key at position " + std::to_string(arg.fmtstart));
+            Obj v = next_arg(false);
+            if (!is_int(v)) error(arg, "TypeError", "* requires int, not " + fully_qualified_name(type_of(v)));
+            std::int64_t width = 0;
+            if (!as_int(v, width)) {             // beyond an immediate: PyLong_AsSsize_t
+                Ref big = int_from_i64(INT64_MAX);
+                Ref small = int_from_i64(INT64_MIN);
+                if (big_compare(v, big.get()) > 0 || big_compare(v, small.get()) < 0) error(arg, "OverflowError", "too big for width");
+                width = clipped_index(v);
+            }
+            arg.width = width;
+            if (arg.width < 0) {
+                if (arg.width == INT64_MIN) error(arg, "OverflowError", "too big for width");
+                arg.flags |= F_LJUST;
+                arg.width = -arg.width;
+            }
+            if (--fmtcnt >= 0) {
+                arg.ch = read();
+                ++fmtpos;
+            }
+        } else if (arg.ch >= U'0' && arg.ch <= U'9') {
+            arg.width = static_cast<std::int64_t>(arg.ch) - '0';
+            while (--fmtcnt >= 0) {
+                arg.ch = read();
+                ++fmtpos;
+                if (arg.ch < U'0' || arg.ch > U'9') break;
+                std::int64_t digit = static_cast<std::int64_t>(arg.ch) - '0';
+                if (arg.width > (INT64_MAX - digit) / 10) raise_new("ValueError", "width too big at position " + std::to_string(arg.fmtstart));
+                arg.width = arg.width * 10 + digit;
+            }
+        }
+        if (arg.ch == U'.') {                    // precision
+            arg.prec = 0;
+            if (--fmtcnt >= 0) {
+                arg.ch = read();
+                ++fmtpos;
+            }
+            if (arg.ch == U'*') {
+                if (arglen < -1) raise_new("ValueError", "* cannot be used with a parenthesised mapping key at position " + std::to_string(arg.fmtstart));
+                Obj v = next_arg(false);
+                if (!is_int(v)) error(arg, "TypeError", "* requires int, not " + fully_qualified_name(type_of(v)));
+                std::int64_t prec = 0;
+                if (!as_int(v, prec) || prec > INT_MAX || prec < INT_MIN) error(arg, "OverflowError", "too big for precision");
+                arg.prec = prec < 0 ? 0 : static_cast<int>(prec);
+                if (--fmtcnt >= 0) {
+                    arg.ch = read();
+                    ++fmtpos;
+                }
+            } else if (arg.ch >= U'0' && arg.ch <= U'9') {
+                arg.prec = static_cast<int>(arg.ch) - '0';
+                while (--fmtcnt >= 0) {
+                    arg.ch = read();
+                    ++fmtpos;
+                    if (arg.ch < U'0' || arg.ch > U'9') break;
+                    int digit = static_cast<int>(arg.ch) - '0';
+                    if (arg.prec > (INT_MAX - digit) / 10) raise_new("ValueError", "precision too big at position " + std::to_string(arg.fmtstart));
+                    arg.prec = arg.prec * 10 + digit;
+                }
+            }
+        }
+        if (fmtcnt >= 0 && (arg.ch == U'h' || arg.ch == U'l' || arg.ch == U'L')) {   // ignored
+            if (--fmtcnt >= 0) {
+                arg.ch = read();
+                ++fmtpos;
+            }
+        }
+        if (fmtcnt < 0) raise_new("ValueError", "stray % at position " + std::to_string(arg.fmtstart));
+    }
+    Ref format_long(Obj v, PercentArg& arg) {    // mainformatlong, _PyUnicode_FormatLong
+        auto type = static_cast<char>(arg.ch);
+        auto wrong_type = [&]() {
+            if (type == 'o' || type == 'x' || type == 'X') error(arg, "TypeError", std::string("%") + type + " requires an integer, not " + fully_qualified_name(type_of(v)));
+            error(arg, "TypeError", std::string("%") + type + " requires a real number, not " + fully_qualified_name(type_of(v)));
+        };
+        ClassObject* cls = type_of(v);
+        bool number = is_int(v) || is_float(v);
+        for (const char* name : {"__index__", "__int__", "__float__"})
+            if (!type_lookup(cls, intern(name)).is_unset()) number = true;
+        if (!number) wrong_type();
+        Ref iobj;
+        if (is_int(v)) {
+            iobj = Ref::share(v);
+        } else {
+            try {
+                iobj = type == 'o' || type == 'x' || type == 'X' ? int_index_of(v) : int_from_number(v);
+            } catch (const PyError& e) {
+                if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+                wrong_type();
+            }
+        }
+        if (arg.prec > INT_MAX - 3) raise_new("OverflowError", "precision too large");
+        int base = type == 'o' ? 8 : type == 'x' || type == 'X' ? 16 : 10;
+        std::string text = base == 10 ? big_text(iobj.get()) : int_in_base(iobj.get(), base);
+        bool alt = (arg.flags & F_ALT) != 0;
+        bool sign = text[0] == '-';
+        std::string prefix = sign ? "-" : "";
+        std::string_view rest = std::string_view(text).substr(sign ? 1 : 0);
+        if (base != 10) {
+            if (alt) prefix += rest.substr(0, 2);
+            rest.remove_prefix(2);
+        }
+        std::string body(rest);
+        if (arg.prec > static_cast<int>(body.size())) body.insert(0, static_cast<std::size_t>(arg.prec) - body.size(), '0');
+        std::string result = prefix + body;
+        if (type == 'X') for (char& c : result) if (c >= 'a' && c <= 'x') c = static_cast<char>(c - 32);
+        return str_new(result);
+    }
+    Ref format_float(Obj v, PercentArg& arg) {   // formatfloat
+        double x = 0.0;
+        try {
+            x = float_as_double(v);
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            error(arg, "TypeError", std::string("%") + static_cast<char>(arg.ch) + " requires a real number, not " + fully_qualified_name(type_of(v)));
+        }
+        int prec = arg.prec < 0 ? 6 : arg.prec;
+        return str_new(double_to_string(x, static_cast<char>(arg.ch), prec, (arg.flags & F_ALT) != 0 ? DTSF_ALT : 0));
+    }
+    char32_t format_char(Obj v, PercentArg& arg) {   // formatchar
+        if (const Str* s = as_str(v)) {
+            if (s->length == 1) return s->at(0);
+            error(arg, "TypeError", "%c requires an integer or a unicode character, not a string of length " + std::to_string(s->length));
+        }
+        Ref index;
+        try {
+            index = int_index_of(v);
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            error(arg, "TypeError", "%c requires an integer or a unicode character, not " + fully_qualified_name(type_of(v)));
+        }
+        std::int64_t x = 0;
+        if (!as_int(index.get(), x) || x < 0 || x > 0x10FFFF) error(arg, "OverflowError", "%c argument not in range(0x110000)");
+        return static_cast<char32_t>(x);
+    }
+    Ref format_one(PercentArg& arg) {            // unicode_format_arg_format
+        Obj v = next_arg(true);
+        switch (arg.ch) {
+            case U's': return str_of(v);
+            case U'r': return repr_of(v);
+            case U'a': return ascii_of(v);
+            case U'i': case U'd': case U'u': case U'o': case U'x': case U'X': {
+                Ref r = format_long(v, arg);
+                arg.sign = true;
+                return r;
+            }
+            case U'e': case U'E': case U'f': case U'F': case U'g': case U'G': {
+                Ref r = format_float(v, arg);
+                arg.sign = true;
+                return r;
+            }
+            case U'c': {
+                char32_t ch = format_char(v, arg);
+                return str_from_codepoints(std::u32string_view(&ch, 1));
+            }
+            default: break;
+        }
+        std::string at = std::to_string(arg.fmtstart), here = std::to_string(fmtpos - 1);
+        if (arg.ch < 128 && ((arg.ch >= U'a' && arg.ch <= U'z') || (arg.ch >= U'A' && arg.ch <= U'Z')))
+            raise_new("ValueError", std::string("unsupported format %") + static_cast<char>(arg.ch) + " at position " + at);
+        if (arg.ch == U'\'') raise_new("ValueError", "stray % at position " + at + " or unexpected format character \"'\" at position " + here);
+        if (arg.ch >= 32 && arg.ch < 127)
+            raise_new("ValueError", "stray % at position " + at + " or unexpected format character '" + static_cast<char>(arg.ch) + "' at position " + here);
+        if (arg.ch > 127) throw NotImplemented("a format character beyond ASCII in a % format's error (whether it is printable needs the Unicode database)");
+        char code[8];
+        std::snprintf(code, sizeof code, "%04X", static_cast<unsigned>(arg.ch));
+        raise_new("ValueError", "stray % at position " + at + " or unexpected format character U+" + code + " at position " + here);
+    }
+    void output(PercentArg& arg, Obj value) {    // unicode_format_arg_output
+        const Str* s = as_str(value);
+        char32_t fill = arg.sign && (arg.flags & F_ZERO) != 0 ? U'0' : U' ';
+        auto len = static_cast<std::int64_t>(s->length);
+        Cps text = cps_of(s);
+        if ((arg.width == -1 || arg.width <= len) && (arg.prec == -1 || arg.prec >= len) && (arg.flags & (F_SIGN | F_BLANK)) == 0) {
+            out += text;
+            return;
+        }
+        if ((arg.ch == U's' || arg.ch == U'r' || arg.ch == U'a') && arg.prec >= 0 && len > arg.prec) len = arg.prec;
+        std::int64_t pindex = 0;
+        char32_t signchar = 0;
+        if (arg.sign) {
+            char32_t ch = text[0];
+            if (ch == U'-' || ch == U'+') {
+                signchar = ch;
+                --len;
+                ++pindex;
+            } else if ((arg.flags & F_SIGN) != 0) {
+                signchar = U'+';
+            } else if ((arg.flags & F_BLANK) != 0) {
+                signchar = U' ';
+            } else {
+                arg.sign = false;
+            }
+        }
+        if (arg.width < len) arg.width = len;
+        if (arg.sign) {
+            if (fill != U' ') out += signchar;
+            if (arg.width > len) --arg.width;
+        }
+        bool prefixed = (arg.flags & F_ALT) != 0 && (arg.ch == U'x' || arg.ch == U'X' || arg.ch == U'o');
+        if (prefixed) {
+            if (fill != U' ') {
+                out += U'0';
+                out += arg.ch;
+                pindex += 2;
+            }
+            arg.width -= 2;
+            if (arg.width < 0) arg.width = 0;
+            len -= 2;
+        }
+        if (arg.width > len && (arg.flags & F_LJUST) == 0) {
+            out.append(static_cast<std::size_t>(arg.width - len), fill);
+            arg.width = len;
+        }
+        if (fill == U' ') {
+            if (arg.sign) out += signchar;
+            if (prefixed) {
+                out += U'0';
+                out += arg.ch;
+                pindex += 2;
+            }
+        }
+        if (len > 0) out.append(text, static_cast<std::size_t>(pindex), static_cast<std::size_t>(len));
+        if (arg.width > len) out.append(static_cast<std::size_t>(arg.width - len), U' ');
+    }
+    void one_argument() {                        // unicode_format_arg
+        PercentArg arg;
+        arg.ch = read();
+        if (arg.ch == U'%') {
+            ++fmtpos;
+            --fmtcnt;
+            out += U'%';
+            return;
+        }
+        arg.fmtstart = fmtpos - 1;
+        parse(arg);
+        Ref str = format_one(arg);
+        output(arg, str.get());
+        if (!dict.is_unset() && argidx < arglen) raise_new("TypeError", "not all arguments converted during string formatting");
+    }
+};
+}  // namespace
+
+Ref str_mod(Obj format, Obj args) {              // PyUnicode_Format
+    Percent ctx;
+    ctx.fmt = cps_of(as_str(format));
+    ctx.fmtcnt = static_cast<std::int64_t>(ctx.fmt.size());
+    if (is_kind(args, Kind::Tuple)) {
+        ctx.arglen = static_cast<std::int64_t>(static_cast<Tuple*>(args.object())->items.size());
+        ctx.argidx = 0;
+    } else {
+        ctx.arglen = -1;
+        ctx.argidx = -2;
+    }
+    if (mapping_check(args) && !is_kind(args, Kind::Tuple) && as_str(args) == nullptr) ctx.dict = args;
+    ctx.args = Ref::share(args);
+    while (--ctx.fmtcnt >= 0) {
+        if (ctx.read() != U'%') {
+            std::int64_t start = ctx.fmtpos++;
+            while (ctx.fmtcnt >= 0 && ctx.fmtpos < static_cast<std::int64_t>(ctx.fmt.size()) && ctx.read() != U'%') {
+                ++ctx.fmtpos;
+                --ctx.fmtcnt;
+            }
+            if (ctx.fmtcnt < 0) --ctx.fmtpos;
+            ctx.out.append(ctx.fmt, static_cast<std::size_t>(start), static_cast<std::size_t>(ctx.fmtpos - start));
+        } else {
+            ++ctx.fmtpos;
+            ctx.one_argument();
+        }
+    }
+    if (ctx.argidx < ctx.arglen && ctx.dict.is_unset())
+        raise_new("TypeError", "not all arguments converted during string formatting (required " + std::to_string(ctx.arglen < 0 ? 0 : ctx.argidx) +
+                                   ", got " + std::to_string(ctx.arglen < 0 ? 1 : ctx.arglen) + ")");
+    return str_from_codepoints(ctx.out);
+}
+
 // PyObject_ASCII: the repr, and what is beyond ASCII in it escaped
 Ref ascii_of(Obj v) {
     Ref r = repr_of(v);

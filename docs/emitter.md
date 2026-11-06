@@ -455,6 +455,8 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   storage as `IntInstance` does. The digits are libstdc++'s (`make float-diff`), and everything around them is the C's.
   What is not finished: a negative float to a fractional power stops by name until `complex`; `float()` of a str
   beyond ASCII stops by name until the Unicode database.
+* `str %` (`runtime/src/format.cpp`, C-6-16) follows `Objects/unicode_format.c`, with what counts as a mapping
+  (`PyMapping_Check`, so `"x" % []` is `"x"`) and 3.15's messages that name the argument at fault. `bytes %` stops by name.
 * The format mini-language and `str.format` (`runtime/src/format.cpp`, C-6-15) follow `unicode_formatter.c` and
   `unicode_format.h`, and `PyOS_double_to_string`'s layout around `<charconv>`'s digits (what `_Py_dg_dtoa` gives is
   worked out from them in `dtoa_digits`). A character beyond ASCII where a number may be stops by name, since whether

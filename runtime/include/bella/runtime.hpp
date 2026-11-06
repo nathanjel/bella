@@ -338,6 +338,8 @@ Ref bytes_repeat(Obj self, std::int64_t count, bool in_place);
 Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
 // ---- format (runtime/src/format.cpp) ----
 Ref object_format(Obj obj, const Str* spec);      // PyObject_Format
+Ref str_mod(Obj format, Obj args);                // PyUnicode_Format
+Ref int_from_number(Obj x);                       // PyNumber_Long
 Ref ascii_of(Obj v);                              // PyObject_ASCII
 Ref str_format_m(Obj self, Args a);
 Ref str_format_map_m(Obj self, Args a);

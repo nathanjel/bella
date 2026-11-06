@@ -104,6 +104,17 @@ Ref float_int(Obj self, Args a) { wrapper_args(a, "__int__", 0); return int_from
 Ref float_float(Obj self, Args a) { wrapper_args(a, "__float__", 0); return float_self(self); }
 Ref float_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return str_new(float_text(float_value(self))); }
 Ref float_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(float_hash(self)); }
+Ref str_mod_slot(Obj self, Args a) {             // unicode_mod: wrap_binaryfunc_l
+    wrapper_args(a, "__mod__", 1);
+    if (as_str(self) == nullptr) raise_new("TypeError", "descriptor '__mod__' requires a 'str' object but received a '" + type_of(self)->name + "'");
+    return str_mod(self, a.pos(0));
+}
+Ref str_rmod_slot(Obj self, Args a) {            // wrap_binaryfunc_r: a left operand that is no str declines
+    wrapper_args(a, "__rmod__", 1);
+    if (as_str(self) == nullptr) raise_new("TypeError", "descriptor '__rmod__' requires a 'str' object but received a '" + type_of(self)->name + "'");
+    if (as_str(a.pos(0)) == nullptr) return not_implemented();
+    return str_mod(a.pos(0), self);
+}
 Ref own_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return repr_of(self); }
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
@@ -246,6 +257,8 @@ void init_slots() {
     slot(i, "__float__", int_float);
     slot(i, "__repr__", int_repr);
     slot(i, "__hash__", int_hash);
+    slot(t.str, "__mod__", str_mod_slot);
+    slot(t.str, "__rmod__", str_rmod_slot);
     ClassObject* fl = t.float_;
     comparisons(fl);
     slot(fl, "__add__", float_slot<BinOp::Add, false>);
