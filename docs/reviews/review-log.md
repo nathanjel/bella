@@ -7,12 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-05:** 333 findings from twenty-three reviews and one round of examples: 286 fixed (most in commit
+**Status on 2026-11-06:** 346 findings from twenty-five reviews and one round of examples: 299 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports, RL-327 to RL-333 after A11, RL-323 with weak references), 21 already done before or
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports, RL-327 to RL-333 after A11, RL-334 to RL-346 after G12 and A12, RL-323 with weak references), 21 already done before or
 because of the review, 4 planned (D-2 and D-10, accepted by the author), 3 deferred (RL-222 to step 3c), 4 refuted
 5 checked with no issue, and 7 accepted, refused or not defects (RL-269, RL-275, RL-284, RL-285, RL-289, RL-319, RL-326). Open: RL-225 (lines inside a statement), RL-254 (a member's type) and RL-277 (a SyntaxError class). The
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, and D-12 on 2026-11-03.
@@ -23,6 +23,8 @@ author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, 
 | --- | --- | --- | --- | --- |
 | 2026-11-05 | gemini-high (G11) | [2026-11-05-11-gemini-high-abc-hash-fixes.md](2026-11-05-11-gemini-high-abc-hash-fixes.md) | asked for `62d083b..0081164`; no findings | this checkout: its line numbers are those of `365e55e`, not of the range |
 | 2026-11-05 | Codex astra-low (A11) | [2026-11-05-astra-low-11-abc-views-builtin-names.md](2026-11-05-astra-low-11-abc-views-builtin-names.md) | `62d083b..0081164`: the fixes of the last review, D-22, `_abc`, class dict views | CPython 3.15.2 and compiled, in a separate checkout |
+| 2026-11-06 | gemini-3.8-flash-high (G12) | [2026-11-06-gemini-flash-12-exceptions-os-c-types-re-sys.md](2026-11-06-gemini-flash-12-exceptions-os-c-types-re-sys.md) | `d46c55b..1dab41b`: exceptions, `posix`, C types' methods, reduce, `__flags__`, str subclasses, `re`, `sys` and the earlier commits; four findings, RL-334 to RL-337 | `1dab41b`, in the main checkout |
+| 2026-11-06 | Codex astra-low (A12) | [2026-11-06-astra-low-12-c-types-reduce-flags-str-re.md](2026-11-06-astra-low-12-c-types-reduce-flags-str-re.md) | five commits of `d46c55b..1dab41b`, narrowed after the provider's filter stopped a run on the whole range; five findings, RL-338 to RL-342 | `1dab41b`, in a separate checkout |
 | 2026-11-04 | gemini-4-argon-high (G10) | [2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md](2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md) | compiled super(), metaclasses, int/dict subclasses, imports and build caches, `e827a47..62d083b` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-04 | eight Sonnet reviewers, one per focus area (S1), in place of astra-low, whose run failed | [2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md](2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-03 | astra-low (A10) | [2026-11-03-astra-low-10-traceback-dictionary-review.md](2026-11-03-astra-low-10-traceback-dictionary-review.md) | D-12 part 1, step 3a.3's dict, the operators and argument errors, `f12af86..e827a47` | CPython 3.15.2, GCC 16.2.1 |
@@ -574,6 +576,26 @@ A11 is Codex astra-low on `62d083b..0081164`. All four findings reproduce on `dd
 | RL-332 | Found on RL-329 | No special method from `slots.cpp` binds through a subclass instance: `E(1).__add__(2)`, `D().__eq__(x)` raise TypeError | Confirmed (RL-310, `e55e561`); the operators work, so the corpus never showed it | Fixed | `slot()` made a plain function and set its binding afterwards, and a Builtin's class comes from its binding at construction, so it had no `__get__` |
 | RL-333 | Found on RL-328 | What `mro()` sees of the class: CPython has `__dict__` there and not the slots' members; this had the reverse | Confirmed (RL-314, `e55e561`), measured on 3.15.2 | Fixed | `__dict__` goes in first; the members leave for the call and return after it, in order |
 
+### Calls, `sys`, `re`'s buffers, what a subclass overrides (G12, A12)
+
+G12 is gemini-3.8-flash-high on `d46c55b..1dab41b`; A12 is Codex astra-low on five of those commits, because the provider's filter stopped its run on the whole range. All nine findings reproduce on `1dab41b` against 3.15.2. A12 #4 and a suspicion from reading G12 #3 are the same defect. Each fix is in `pipeline/tests/test_review_2026_11_06.py`, where its program and what stands around it run against CPython.
+
+| ID | Source | Finding | Verdict | Status | Evidence and resolution |
+| --- | --- | --- | --- | --- | --- |
+| RL-334 | G12 #1 | `f.__defaults__` longer than the parameters: `n - ndefaults` wraps, so `f()` says a required argument is missing, and too many arguments reports "from 18446744073709551614" | Confirmed: `def f(x)`, `(10, 20)`, CPython 20. The wording by reading | Fixed | `first_default` signed, as `initialize_locals`'s `m`; `too_many_positional` says what CPython says |
+| RL-335 | G12 #2 | `sys.getsizeof(o, default)` ignores the default | Confirmed (`1dab41b`, mine): `__sizeof__ = None` raised TypeError, CPython 42 | Fixed | A TypeError, subclasses too, is the default; other exceptions pass, with or without one |
+| RL-336 | G12 #3 | `iter(f, s)` lets `f`'s StopIteration out with what it carries | Confirmed (`a6309a4`, mine): `args (42,)`, CPython `()` | Fixed | `PyErr_Clear`, and a new one |
+| RL-337 | G12 #4 | `sys.exit(T((1, 2)))` loses the tuple subclass | Confirmed (`1dab41b`, mine). Wider than reported: a plain tuple lost its identity too, `e.args is t` | Fixed | `args` is the tuple itself, `code` too with more than one item, as `_PyErr_CreateException` and `SystemExit_init` leave them. G12's account, that nothing is unpacked, is not the mechanism: one item still makes `code` that item |
+| RL-338 | A12 #1 | A scanner over a bytearray does not hold its buffer, so the bytearray resizes under it | Confirmed (`a6309a4`, mine): `b.append(98)` passed, CPython BufferError | Fixed | `BytesObject::exports`, the check in every path that changes size (`PyByteArray_Resize`'s rule: the same size is no change; `take_bytes` asks outright). A scanner holds it through `_BufferHold`, released when it goes. Nothing else takes an export yet |
+| RL-339 | A12 #2 | `"abc"[::Step()]` calls `__index__` twice | Confirmed (`10254b5`, mine) | Fixed | The slice is read once, and those indices decide whether the string comes back unchanged |
+| RL-340 | A12 #3 | `__reduce_ex__` asks a tuple subclass for its overridden `__len__` | Confirmed (`cbc3477`, mine): ValueError, CPython accepts | Fixed | `tuple.__len__`, as `PyTuple_GET_SIZE` |
+| RL-341 | A12 #4 | `iter(f, s)` misses the identity test, so a NaN or a never-equal sentinel never stops | Confirmed (`a6309a4`, mine) | Fixed | `is` first, as `PyObject_RichCompareBool`; an `__eq__` that raises leaves the iterator as it was |
+| RL-342 | A12 #5 | `s.__mul__ == s.__rmul__`: two method wrappers over one function compare equal | Confirmed (`cbc3477`, mine), `(1).__add__ == (1).__radd__` was right already | Fixed | `wrapper_richcompare`: the same descriptor, by owner and name |
+| RL-343 | Found on RL-338 | A `re.sub` callback could resize the bytearray being scanned | Confirmed (`a6309a4`, mine): `b'clearedcleared'`, CPython `b'BufferErrorBufferError'` with the clear refused | Fixed | `_subx` holds the export until it ends, also when the callback raises |
+| RL-344 | Found on RL-340 | The same overridable look-ups elsewhere: `__getnewargs_ex__`'s dict, `stat_result`'s dict, `_sre.compile`'s `groupindex` and `indexgroup` | Confirmed on `1dab41b`, each against CPython: `__newobj__` for `__newobj_ex__`, `st_atime` 7 for 1.5, IndexError for a group that exists | Fixed | `dict.__len__`, `dict.get`, `tuple.__len__` and so on, as the C does. The same change for `__slotnames__` and the template's list is not reachable yet: subclassing `list` stops by name |
+| RL-345 | Found on RL-342 | `p.match == p.prefixmatch` compared unequal: one C function under two names | Confirmed (`a6309a4`, mine): False, CPython True | Fixed | `match = prefixmatch` in `Pattern` and `SRE_Scanner` |
+| RL-346 | Found on RL-335 | `__sizeof__` returning `2 ** 70` gave that number; `-(2 ** 70)` raised ValueError. CPython raises OverflowError for both | Confirmed (`1dab41b`, mine) | Fixed | `PyLong_AsSsize_t`'s check before the sign. The pre-header in the value differs from CPython (16 for 32 on a class with a dict) and is not a finding: `sys.getsizeof` values are an implementation detail (dialect spec, section 2's table) |
+
 ## Open for discussion
 
 **RL-321 `hash()` beyond the immediates: decided 2026-11-05.** The author accepted 63-bit hashes "as long as it's deterministic and functions as hash in general"; the second half was not true yet and now is (RL-321's row, D-22). Ended the same day: the big-int port lets `hash()` return any int, so a hash is CPython's own and D-22 is gone (`docs/DECISIONS.md`).
@@ -782,5 +804,5 @@ exceptions the runtime raises and catches inside itself):
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-327` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-347` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

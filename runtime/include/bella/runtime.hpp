@@ -165,6 +165,7 @@ struct SuperObject : Object {                    // super(type, obj): each owned
 struct BytesObject : Object {                    // bytes and bytearray: their octets; a bytearray's change
     std::string data;
     std::int64_t hash = -1;                      // a bytes's, once computed
+    std::int64_t exports = 0;                    // a bytearray's ob_exports: while it is not 0 it cannot change size (re's scanner holds one)
     BytesObject(Kind k, std::string d);
 };
 struct Native : Object {                         // an object of a C++ type with methods (sys.stdout)

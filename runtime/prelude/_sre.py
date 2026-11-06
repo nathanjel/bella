@@ -149,8 +149,8 @@ def compile(*args: object, **kwds: object) -> object:  # noqa: A001  # _sre_comp
     self._a_pattern = pattern
     self._b_flags = flag_bits
     self._c_groups = group_count
-    self._d_groupindex = groupindex if len(groupindex) > 0 else None
-    self._e_indexgroup = indexgroup if self._d_groupindex is not None and len(indexgroup) > 0 else None
+    self._d_groupindex = groupindex if dict.__len__(groupindex) > 0 else None  # type: ignore[arg-type]
+    self._e_indexgroup = indexgroup if self._d_groupindex is not None and tuple.__len__(indexgroup) > 0 else None  # type: ignore[arg-type]
     self._f_code = words
     self._g_isbytes = isbytes
     _sre_call("validate", words, group_count)
@@ -165,7 +165,7 @@ def template(*args: object, **kwds: object) -> object:  # _sre_template_impl
     chunks = args[1]
     if not issubclass(type(chunks), list):
         raise TypeError("template() argument 2 must be list, not " + type(chunks).__name__)
-    n = len(chunks)  # type: ignore[arg-type]
+    n = list.__len__(chunks)  # type: ignore[arg-type]
     if n & 1 == 0 or n < 1:
         raise TypeError("invalid template")
     self = _bella_new_instance(SRE_Template)
@@ -304,27 +304,31 @@ def _subx(self: object, name: str, repl: object, string: object, count: int, sub
     n = i = 0
     start = 0
     must_advance = False
-    while not count or n < count:
-        marks = _run(self, string, 0, endpos, start, must_advance, 2)
-        if marks is None:
-            break
-        b = marks[0]  # type: ignore[index]
-        e = marks[1]  # type: ignore[index]
-        if i < b:
-            out.append(_sre_call("slice", string, i, b))
-        if kind != 0:
-            match = _new_match(self, string, 0, endpos, marks)  # type: ignore[arg-type]
-            item = _expand(filter_object, match) if kind == 1 else filter_object(match)  # type: ignore[operator]
-        else:
-            item = filter_object
-        if item is not None:
-            out.append(item)
-        i = e
-        n += 1
-        must_advance = e == b
-        start = e
-    if i < endpos:
-        out.append(_sre_call("slice", string, i, endpos))
+    _sre_call("export", string, 1)               # state_init holds the buffer until state_fini: a callback cannot resize what is being scanned
+    try:
+        while not count or n < count:
+            marks = _run(self, string, 0, endpos, start, must_advance, 2)
+            if marks is None:
+                break
+            b = marks[0]  # type: ignore[index]
+            e = marks[1]  # type: ignore[index]
+            if i < b:
+                out.append(_sre_call("slice", string, i, b))
+            if kind != 0:
+                match = _new_match(self, string, 0, endpos, marks)  # type: ignore[arg-type]
+                item = _expand(filter_object, match) if kind == 1 else filter_object(match)  # type: ignore[operator]
+            else:
+                item = filter_object
+            if item is not None:
+                out.append(item)
+            i = e
+            n += 1
+            must_advance = e == b
+            start = e
+        if i < endpos:
+            out.append(_sre_call("slice", string, i, endpos))
+    finally:
+        _sre_call("export", string, -1)
     joiner = _sre_call("slice", string, 0, 0)
     if not out:
         item = joiner
@@ -359,8 +363,7 @@ class Pattern:
     def prefixmatch(*args: object, **kwds: object) -> object:  # noqa: N805
         return _matched(args[0], "prefixmatch", 0, args[1:], kwds)
 
-    def match(*args: object, **kwds: object) -> object:  # noqa: N805
-        return _matched(args[0], "prefixmatch", 0, args[1:], kwds)
+    match = prefixmatch                          # one C function under two names, so bound they compare equal
 
     def fullmatch(*args: object, **kwds: object) -> object:  # noqa: N805
         return _matched(args[0], "fullmatch", 1, args[1:], kwds)
@@ -497,7 +500,7 @@ def _getindex(self: object, index: object) -> int:   # match_getindex
     else:
         groupindex = self._c_pattern._d_groupindex  # type: ignore[attr-defined]
         if groupindex is not None:
-            found = groupindex.get(index, _ABSENT)
+            found = dict.get(groupindex, index, _ABSENT)
             if found is not _ABSENT and issubclass(type(found), int):
                 i = found
     if i < 0 or i >= self._g_groups:  # type: ignore[attr-defined]
@@ -546,8 +549,8 @@ class Match:
     @property
     def lastgroup(self) -> object:
         names = self._c_pattern._e_indexgroup
-        if names is not None and 0 <= self._f_lastindex < len(names):
-            return names[self._f_lastindex]
+        if names is not None and 0 <= self._f_lastindex < tuple.__len__(names):
+            return tuple.__getitem__(names, self._f_lastindex)
         return None
 
     @property
@@ -585,7 +588,7 @@ class Match:
         groupindex = self._c_pattern._d_groupindex  # type: ignore[attr-defined]
         if groupindex is None:
             return out
-        for key in groupindex:
+        for key in dict.__iter__(groupindex):
             out[key] = _getslice_by_index(self, _getindex(self, key), value)
         return out
 
@@ -641,6 +644,10 @@ def _new_scanner(pattern: object, string: object, pos: int, endpos: int) -> obje
     self._e_start = pos
     self._f_must_advance = False
     self._g_executing = False
+    hold = _BufferHold()
+    hold._string = string
+    _sre_call("export", string, 1)
+    self._h_hold = hold
     return self
 
 
@@ -662,8 +669,17 @@ def _scan(self: object, mode: int) -> object:    # _sre_SRE_Scanner_search_impl
         self._g_executing = False  # type: ignore[attr-defined]
 
 
+class _BufferHold:
+    """What a scanner keeps of its bytes-like string, as its SRE_STATE keeps the buffer: released when the scanner goes (state_fini)."""
+
+    __slots__ = ("_string",)
+
+    def __del__(self) -> None:
+        _sre_call("export", self._string, -1)
+
+
 class SRE_Scanner:  # noqa: N801
-    __slots__ = ("_a_pattern", "_b_string", "_c_pos", "_d_endpos", "_e_start", "_f_must_advance", "_g_executing")
+    __slots__ = ("_a_pattern", "_b_string", "_c_pos", "_d_endpos", "_e_start", "_f_must_advance", "_g_executing", "_h_hold")
 
     @property
     def pattern(self) -> object:
@@ -673,9 +689,7 @@ class SRE_Scanner:  # noqa: N801
         _scanner_args("prefixmatch", args, kwds)
         return _scan(args[0], 0)
 
-    def match(*args: object, **kwds: object) -> object:  # noqa: N805
-        _scanner_args("prefixmatch", args, kwds)
-        return _scan(args[0], 0)
+    match = prefixmatch
 
     def search(*args: object, **kwds: object) -> object:  # noqa: N805
         _scanner_args("search", args, kwds)

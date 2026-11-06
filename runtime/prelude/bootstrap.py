@@ -1668,15 +1668,15 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
         elif size != visible:
             raise TypeError(shown + "() takes a " + str(visible) + "-sequence (" + str(size) + "-sequence given)")
         past = items[visible:]
-        if has_extra and len(extra) > 0:
+        if has_extra and dict.__len__(extra) > 0:   # the dict itself: PyDict_GET_SIZE, PyDict_GetItemStringRef
             found = 0
             for field in fields[size:]:
-                if field in extra:
+                if dict.__contains__(extra, field):
                     found += 1
-                    past.append(extra[field])
+                    past.append(dict.__getitem__(extra, field))
                 else:
                     past.append(None)
-            if len(extra) > found:
+            if dict.__len__(extra) > found:
                 raise TypeError(shown + "() got duplicate or unexpected field name(s)")
         else:
             past += [None] * (total - size)
@@ -1791,17 +1791,17 @@ def _getstate_default(obj, required):            # object_getstate_default
     slotnames = _get_slotnames(cls)
     if required and layout == 1:
         raise TypeError("cannot pickle '" + _bella_tp_name_of(cls) + "' object")
-    if slotnames is not None and len(slotnames) > 0:
+    if slotnames is not None and list.__len__(slotnames) > 0:
         slots = {}
-        size = len(slotnames)
+        size = list.__len__(slotnames)
         i = 0
         while i < size:
-            name = slotnames[i]
+            name = list.__getitem__(slotnames, i)
             try:
                 slots[name] = getattr(obj, name)
             except AttributeError:               # It is not an error if the attribute is not present
                 pass
-            if size != len(slotnames):           # it is stored on the class, so it may mutate
+            if size != list.__len__(slotnames):  # it is stored on the class, so it may mutate
                 raise RuntimeError("__slotnames__ changed size during iteration")
             i += 1
         if len(slots) > 0:
@@ -1822,8 +1822,8 @@ def _get_new_arguments(obj):                     # _PyObject_GetNewArguments
         newargs = found[0]()
         if not issubclass(type(newargs), tuple):
             raise TypeError("__getnewargs_ex__ should return a tuple, not '" + _tp_name(newargs) + "'")
-        if len(newargs) != 2:
-            raise ValueError("__getnewargs_ex__ should return a tuple of length 2, not " + str(len(newargs)))
+        if tuple.__len__(newargs) != 2:          # PyTuple_GET_SIZE: what the tuple holds, whatever a subclass says
+            raise ValueError("__getnewargs_ex__ should return a tuple of length 2, not " + str(tuple.__len__(newargs)))
         args = tuple.__getitem__(newargs, 0)
         kwargs = tuple.__getitem__(newargs, 1)
         if not issubclass(type(args), tuple):
@@ -1847,7 +1847,7 @@ def _reduce_newobj(obj):                         # reduce_newobj
     args, kwargs = _get_new_arguments(obj)
     import copyreg
     hasargs = args is not None
-    if kwargs is None or len(kwargs) == 0:
+    if kwargs is None or dict.__len__(kwargs) == 0:
         newobj = copyreg.__newobj__
         newargs = (cls, *(tuple.__iter__(args) if hasargs else ()))
     elif args is not None:

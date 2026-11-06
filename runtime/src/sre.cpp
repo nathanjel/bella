@@ -1021,6 +1021,10 @@ Ref i_validate(Obj, Args a) {                    // _validate: (code bytes, grou
     if (_validate_outer(program, program + size, i64_of(a.pos(1))) != 0) raise_new("RuntimeError", "invalid SRE code");
     return none_ref();
 }
+Ref i_export(Obj, Args a) {                      // (string, +1 or -1): PyObject_GetBuffer and PyBuffer_Release, which only a bytearray notices
+    if (is_kind(a.pos(0), Kind::ByteArray)) static_cast<BytesObject*>(a.pos(0).object())->exports += i64_of(a.pos(1));
+    return none_ref();
+}
 Ref i_unicode_lower(Obj, Args a) { return int_from_i64(sre_lower_unicode(static_cast<unsigned int>(i64_of(a.pos(0))))); }
 Ref i_unicode_upper(Obj, Args a) { return int_from_i64(sre_upper_unicode(static_cast<unsigned int>(i64_of(a.pos(0))))); }
 }  // namespace
@@ -1034,6 +1038,7 @@ Ref i_sre_call(Obj, Args a) {                    // _sre_call(name, ...)
     if (name == "has_backslash") return i_has_backslash(Obj{}, rest);
     if (name == "code") return i_code(Obj{}, rest);
     if (name == "validate") return i_validate(Obj{}, rest);
+    if (name == "export") return i_export(Obj{}, rest);
     if (name == "lower") return i_unicode_lower(Obj{}, rest);
     if (name == "upper") return i_unicode_upper(Obj{}, rest);
     throw NotImplemented("_sre primitive " + name);

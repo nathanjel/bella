@@ -48,17 +48,16 @@ class callable_iterator:                         # iter(callable, sentinel): Obj
     def __next__(self) -> object:                # calliter_iternext
         if self._callable is None:
             raise StopIteration
+        stopped = False
         try:
             result = self._callable()
-        except StopIteration:
-            self._callable = None
-            self._sentinel = None
-            raise
-        if self._sentinel == result:
-            self._callable = None
-            self._sentinel = None
-            raise StopIteration
-        return result
+        except StopIteration:                    # PyErr_Clear: what it carried goes, and next() raises a new one
+            stopped = True
+        if not stopped and self._sentinel is not result and not self._sentinel == result:   # PyObject_RichCompareBool: the same object is equal
+            return result
+        self._callable = None
+        self._sentinel = None
+        raise StopIteration
 
 
 def _callable_iterator(function: object, sentinel: object) -> object:

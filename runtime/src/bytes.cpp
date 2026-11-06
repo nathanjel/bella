@@ -981,8 +981,15 @@ Ref bytearray_new_m(Obj self, Args a) {           // tp_new: an empty one; __ini
     new_wrapper_class(a, static_cast<ClassObject*>(self.object()));
     return new_bytearray("");
 }
+void not_exported(Obj self) {                     // _canresize
+    if (static_cast<BytesObject*>(self.object())->exports > 0) raise_new("BufferError", "Existing exports of data: object cannot be re-sized");
+}
+void can_resize(Obj self, std::size_t size) {     // as PyByteArray_Resize asks it: the same size is no change
+    if (static_cast<BytesObject*>(self.object())->data.size() != size) not_exported(self);
+}
 Ref bytearray_init_m(Obj self, Args a) {          // bytearray___init___impl
     SourceArgs s = source_args(a, "bytearray");
+    can_resize(self, 0);                         // Empty previous contents (yes, do this first of all!)
     std::string& out = bytes_data(self);
     if ((!s.encoding.is_unset() || !s.errors.is_unset()) && s.source.is_unset())
         raise_new("TypeError", !s.encoding.is_unset() ? "encoding without a string argument" : "errors without a string argument");
@@ -1009,12 +1016,14 @@ Ref bytearray_init_m(Obj self, Args a) {          // bytearray___init___impl
         }
         if (is_count) {
             if (size < 0) raise_new("ValueError", "negative count");
+            can_resize(self, static_cast<std::size_t>(size));
             out.assign(static_cast<std::size_t>(size), '\0');
             return none_ref();
         }
     }
     if (is_bytes_like(x)) {
         std::string copy = bytes_data(x);
+        can_resize(self, copy.size());
         out = std::move(copy);
         return none_ref();
     }
@@ -1027,6 +1036,7 @@ Ref bytearray_init_m(Obj self, Args a) {          // bytearray___init___impl
         raise_new("TypeError", "cannot convert '" + type_of(x)->name + "' object to bytearray");
     }
     std::string made = from_iterator(it.get(), "byte must be in range(0, 256)");
+    can_resize(self, made.size());
     out = std::move(made);
     return none_ref();
 }
@@ -1069,6 +1079,7 @@ Ref setitem_m(Obj self, Args a) {
     auto [start, stop, step, n] = slice_indices(a.pos(0), static_cast<std::int64_t>(s.size()));
     if (step == 1) {
         if (stop < start) stop = start;
+        can_resize(self, s.size() - static_cast<std::size_t>(stop - start) + values.size());
         s.replace(static_cast<std::size_t>(start), static_cast<std::size_t>(stop - start), values);
         return none_ref();
     }
@@ -1081,11 +1092,14 @@ Ref delitem_m(Obj self, Args a) {
     dunder_args(self, a, "__delitem__", 1);
     std::string& s = bytes_data(self);
     if (!is_slice(a.pos(0))) {
-        s.erase(byte_index(a.pos(0), s.size(), "bytearray index out of range", "bytearray"), 1);
+        std::size_t at = byte_index(a.pos(0), s.size(), "bytearray index out of range", "bytearray");
+        can_resize(self, s.size() - 1);
+        s.erase(at, 1);
         return none_ref();
     }
     auto [start, stop, step, n] = slice_indices(a.pos(0), static_cast<std::int64_t>(s.size()));
     if (n == 0) return none_ref();
+    can_resize(self, s.size() - static_cast<std::size_t>(n));
     if (step < 0) {
         start = start + step * (n - 1);
         step = -step;
@@ -1102,6 +1116,7 @@ Ref delitem_m(Obj self, Args a) {
 Ref append_m(Obj self, Args a) {
     onearg(a, "bytearray.append");
     int v = byte_value(a.pos(0));
+    can_resize(self, bytes_data(self).size() + 1);
     bytes_data(self) += static_cast<char>(v);
     return none_ref();
 }
@@ -1110,6 +1125,7 @@ Ref extend_m(Obj self, Args a) {
     Obj x = a.pos(0);
     if (is_bytes_like(x)) {
         std::string copy = bytes_data(x);
+        can_resize(self, bytes_data(self).size() + copy.size());
         bytes_data(self) += copy;
         return none_ref();
     }
@@ -1128,6 +1144,7 @@ Ref extend_m(Obj self, Args a) {
         if (as_str(x) == nullptr || !isinstance(e.exc.get(), exception_class("TypeError"))) throw;
         raise_new("TypeError", "expected iterable of integers; got: 'str'");
     }
+    can_resize(self, bytes_data(self).size() + more.size());
     bytes_data(self) += more;
     return none_ref();
 }
@@ -1139,6 +1156,7 @@ Ref insert_m(Obj self, Args a) {
     auto n = static_cast<std::int64_t>(s.size());
     if (i < 0) { i += n; if (i < 0) i = 0; }
     if (i > n) i = n;
+    can_resize(self, s.size() + 1);
     s.insert(static_cast<std::size_t>(i), 1, static_cast<char>(v));
     return none_ref();
 }
@@ -1151,6 +1169,7 @@ Ref pop_m(Obj self, Args a) {
     if (i < 0) i += n;
     if (i < 0 || i >= n) raise_new("IndexError", "pop index out of range");
     int v = u(s[static_cast<std::size_t>(i)]);
+    can_resize(self, s.size() - 1);
     s.erase(static_cast<std::size_t>(i), 1);
     return small(v);
 }
@@ -1160,6 +1179,7 @@ Ref remove_m(Obj self, Args a) {
     std::string& s = bytes_data(self);
     std::size_t at = s.find(static_cast<char>(v));
     if (at == std::string::npos) raise_new("ValueError", "value not found in bytearray");
+    can_resize(self, s.size() - 1);
     s.erase(at, 1);
     return none_ref();
 }
@@ -1170,6 +1190,7 @@ Ref reverse_m(Obj self, Args a) {
 }
 Ref clear_m(Obj self, Args a) {
     noargs(a, "bytearray.clear");
+    can_resize(self, 0);
     bytes_data(self).clear();
     return none_ref();
 }
@@ -1181,6 +1202,7 @@ Ref resize_m(Obj self, Args a) {
     onearg(a, "bytearray.resize");
     std::int64_t size = ssize_arg(a.pos(0));
     if (size < 0) raise_new("ValueError", "Can only resize to positive sizes, got " + std::to_string(size));
+    can_resize(self, static_cast<std::size_t>(size));
     bytes_data(self).resize(static_cast<std::size_t>(size), '\0');
     return none_ref();
 }
@@ -1192,6 +1214,7 @@ Ref take_bytes_m(Obj self, Args a) {              // bytearray.take_bytes(n=None
     std::int64_t n = a.npos == 0 || a.pos(0) == None() ? size : index_value(a.pos(0));
     if (n < 0) n += size;
     if (n < 0 || n > size) raise_new("IndexError", "can't take " + std::to_string(n) + " bytes outside size " + std::to_string(size));
+    not_exported(self);                          // asked outright, whatever n is
     Ref out = bytes_new(std::string_view(s).substr(0, static_cast<std::size_t>(n)));
     s.erase(0, static_cast<std::size_t>(n));
     return out;
@@ -1422,6 +1445,7 @@ void bytes_iadd(Obj a, Obj b) {
     if (!is_bytes_like(b) && type_lookup(type_of(b), N("__buffer__")).is_unset())
         raise_new("TypeError", "can't concat " + type_of(b)->name + " to bytearray");
     std::string copy(buffer_of(b));
+    can_resize(a, bytes_data(a).size() + copy.size());
     bytes_data(a) += copy;
 }
 Ref bytes_repeat(Obj self, std::int64_t count, bool in_place) {
@@ -1434,6 +1458,7 @@ Ref bytes_repeat(Obj self, std::int64_t count, bool in_place) {
         for (std::int64_t i = 0; i < count; ++i) out += s;
     }
     if (in_place) {
+        can_resize(self, out.size());
         bytes_data(self) = std::move(out);
         return Ref::share(self);
     }

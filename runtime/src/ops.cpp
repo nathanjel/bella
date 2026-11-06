@@ -590,6 +590,8 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
         if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
         auto *b0 = static_cast<Builtin*>(a.object()), *b1 = static_cast<Builtin*>(b.object());
         bool eq = b0->fn == b1->fn && b0->written.get() == b1->written.get() && b0->self == b1->self;
+        if (b0->cls == types().method_wrapper || b1->cls == types().method_wrapper)   // wrapper_richcompare: the same descriptor, which one C function may serve twice
+            eq = eq && b0->cls == b1->cls && b0->owner == b1->owner && b0->name == b1->name;
         return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
     }
     if (is_kind(a, Kind::Slice) && is_kind(b, Kind::Slice)) {   // slice_richcompare: as (start, stop, step)
@@ -1342,22 +1344,16 @@ Ref tuple_subscript(Obj obj, Obj key) {          // tuple_subscript: the items, 
     }
     return tuple_steal(std::move(out));
 }
-static bool slice_is_forward(Obj key) {           // a slice with all the items has the step 1 or -1, by its length alone; the first is the same
-    auto* s = static_cast<SliceObject*>(key.object());
-    if (s->step == None()) return true;
-    Ref step = int_index_of(s->step);
-    std::int64_t value = 0;
-    return int_fits_i64(step.get(), value) && value == 1;
-}
 Ref str_subscript(Obj self, Obj key) {
     const Str* s = as_str(self);
     if (!is_kind(key, Kind::Slice)) {
         std::size_t i = index_of(key, s->length, "string");
         return str_from_codepoints(std::u32string(1, s->at(i)));
     }
+    auto [start, stop, step, n] = slice_indices(key, static_cast<std::int64_t>(s->length));
+    if (start == 0 && step == 1 && n == static_cast<std::int64_t>(s->length) && is_exact_str(self)) return Ref::share(self);   // unicode_result_unchanged
     std::u32string out;
-    each_index(key, static_cast<std::int64_t>(s->length), [&](std::size_t i) { out += s->at(i); });
-    if (out.size() == s->length && is_exact_str(self) && slice_is_forward(key)) return Ref::share(self);   // unicode_result_unchanged
+    for (std::int64_t i = 0, k = start; i < n; ++i, k += step) out += s->at(static_cast<std::size_t>(k));
     return str_from_codepoints(out);
 }
 Ref getitem(Obj obj, Obj key) {

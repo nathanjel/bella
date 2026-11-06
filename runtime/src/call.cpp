@@ -291,7 +291,8 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
         for (std::size_t k = 0; k < args.nkw; ++k)
             for (std::size_t j = n; j < n + nkwonly; ++j)
                 if (args.kwnames[k]->text == c.varnames[j]) ++given_kwonly;
-        std::string takes = ndefaults ? "from " + std::to_string(n - ndefaults) + " to " + std::to_string(n) : std::to_string(n);
+        // too_many_positional's atleast: co_argcount - defcount, which is negative when __defaults__ was given more than there are parameters
+        std::string takes = ndefaults ? "from " + std::to_string(static_cast<std::int64_t>(n) - static_cast<std::int64_t>(ndefaults)) + " to " + std::to_string(n) : std::to_string(n);
         std::string plural = (ndefaults == 0 && n == 1) ? "" : "s";
         std::string kwpart = given_kwonly ? " positional argument" + std::string(args.npos == 1 ? "" : "s") + " (and " +
                                                 std::to_string(given_kwonly) + " keyword-only argument" +
@@ -310,9 +311,11 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
         ndefaults = defaults->size();
     }
     std::vector<std::string> missing;
+    // initialize_locals' m = co_argcount - defcount, signed: defaults line up with the last parameters, and those past the first are never reached
+    const std::int64_t first_default = static_cast<std::int64_t>(n) - static_cast<std::int64_t>(ndefaults);
     for (std::size_t i = args.npos; i < n; ++i) {
         if (!slot[i]->get().is_unset()) continue;
-        if (i >= n - ndefaults) *slot[i] = Ref::share((*defaults)[i - (n - ndefaults)]);
+        if (static_cast<std::int64_t>(i) >= first_default) *slot[i] = Ref::share((*defaults)[static_cast<std::size_t>(static_cast<std::int64_t>(i) - first_default)]);
         else missing.push_back(c.varnames[i]);
     }
     if (!missing.empty())
@@ -1156,12 +1159,18 @@ Ref sys_getsizeof(Obj, Args a) {                  // sys_getsizeof, _PySys_GetSi
         if (a.kwnames[k]->text != "object" && a.kwnames[k]->text != "default") unexpected_keyword("getsizeof()", a.kwnames[k], {"object", "default"});
     Obj method = object.is_object() ? type_lookup(type_of(object), intern("__sizeof__")) : Obj{};
     if (method.is_unset()) return int_from_i64(64);
-    (void)fallback;
-    bool has = false;
-    Ref size = call_special(object, "__sizeof__", {}, &has);
-    if (!is_int(size.get())) raise_new("TypeError", "an integer is required");   // PyLong_AsSsize_t
-    if (int_is_negative(size.get())) raise_new("ValueError", "__sizeof__() should return >= 0");
-    return big_binary(BinOp::Add, size.get(), int_from_i64(16).get());
+    try {
+        bool has = false;
+        Ref size = call_special(object, "__sizeof__", {}, &has);
+        if (!is_int(size.get())) raise_new("TypeError", "an integer is required");   // PyLong_AsSsize_t
+        std::int64_t fits = 0;
+        if (!int_fits_i64(size.get(), fits)) raise_new("OverflowError", "Python int too large to convert to C ssize_t");
+        if (fits < 0) raise_new("ValueError", "__sizeof__() should return >= 0");
+        return big_binary(BinOp::Add, size.get(), int_from_i64(16).get());
+    } catch (const PyError& e) {                 // a TypeError, when a default was given, is the default
+        if (fallback.is_unset() || !isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+    }
+    return Ref::share(fallback);
 }
 Ref sys_audit(Obj, Args a) {                      // sys_audit: no hook can be added yet (sys.addaudithook stops by name), so no event is looked at
     if (a.nkw != 0) raise_new("TypeError", "sys.audit() takes no keyword arguments");
@@ -1503,6 +1512,8 @@ Ref sys_exit(Obj, Args a) {
     } else if (is_kind(status, Kind::Tuple)) {
         auto& items = static_cast<Tuple*>(status.object())->items;
         exc = invoke(cls, Args{items.data(), items.size()});
+        set_exception_field(exc.get(), "args", status);   // _PyErr_CreateException calls with the tuple itself: it is args, and code when it has more than one
+        if (items.size() > 1) set_exception_field(exc.get(), "code", status);
     } else {
         exc = invoke(cls, {status});
     }
