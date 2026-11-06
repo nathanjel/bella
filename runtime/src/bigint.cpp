@@ -491,8 +491,14 @@ Ref b_pow(Obj, Args a) {                         // builtin_pow_impl: pow(base, 
     bool found = false;
     Ref r = call_special(given[0], "__pow__", {given[1], given[2]}, &found);
     if (found && r.get() != Obj::of(NOTIMPLEMENTED)) return r;
-    if (is_float(given[1]) || is_float(given[2]))   // but a built-in's slot takes its turn: float_pow says no for all three
-        raise_new("TypeError", "pow() 3rd argument not allowed unless all arguments are integers");
+    for (Obj other : {given[1], given[2]}) {        // but a built-in's slot takes its turn: float_pow says no for all three, complex_pow if it may
+        if (is_complex(other)) {
+            Ref power = complex_power(given[0], given[1], given[2]);
+            if (power.get() != Obj::of(NOTIMPLEMENTED)) return power;
+        } else if (is_float(other)) {
+            raise_new("TypeError", "pow() 3rd argument not allowed unless all arguments are integers");
+        }
+    }
     raise_new("TypeError", "unsupported operand type(s) for ** or pow(): '" + type_of(given[0])->name + "', '" + type_of(given[1])->name + "', '" + type_of(given[2])->name + "'");
 }
 Ref b_round(Obj, Args a) {                       // builtin_round_impl

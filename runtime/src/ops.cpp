@@ -111,6 +111,7 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (is_int(a) && is_int(b)) return big_binary(op, a, b);
     if (op == BinOp::Mod && as_str(a) != nullptr) return str_mod(a, b);   // unicode_mod, whatever b is
+    if (is_complex(a) || is_complex(b)) return complex_binary(op, a, b);
     if (is_float(a) || is_float(b)) return float_binary(op, a, b);
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
     if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // frozendict_or, _PyDict_Or: a copy, updated
@@ -159,6 +160,7 @@ Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
     }
     has = true;
     if (is_int(self) && is_float(other)) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // an int's slots know ints; the float answers from its side
+    if ((is_int(self) || is_float(self)) && is_complex(other)) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // and a complex from its own
     return reflected ? native_binary(op, other, self) : native_binary(op, self, other);
 }
 }  // namespace
@@ -392,6 +394,7 @@ Ref unary_special(Obj a, const char* dunder, const char* sym) {
 Ref unary_neg(Obj a) {
     std::int64_t x;
     if (is_float(a) && !overridden(a, "__neg__")) return float_ref(-float_value(a));
+    if (is_complex(a) && !overridden(a, "__neg__")) return complex_ref(-static_cast<Complex*>(a.object())->real, -static_cast<Complex*>(a.object())->imag);
     if (as_int(a, x) && !overridden(a, "__neg__")) return int_from_i64(-x);
     if (is_int(a) && !overridden(a, "__neg__")) return big_negate(a);
     return unary_special(a, "__neg__", "-");
@@ -399,6 +402,8 @@ Ref unary_neg(Obj a) {
 Ref unary_pos(Obj a) {
     std::int64_t x;
     if (is_float(a) && !overridden(a, "__pos__")) return is_kind(a, Kind::Float) ? Ref::share(a) : float_ref(float_value(a));   // float_float
+    if (is_complex(a) && !overridden(a, "__pos__"))    // complex_pos
+        return is_kind(a, Kind::Complex) ? Ref::share(a) : complex_ref(static_cast<Complex*>(a.object())->real, static_cast<Complex*>(a.object())->imag);
     if (as_int(a, x) && !overridden(a, "__pos__")) return int_from_i64(x);
     if (is_int(a) && !overridden(a, "__pos__")) return big_plain(a);
     return unary_special(a, "__pos__", "+");
@@ -540,6 +545,7 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
     if (as_int(a, x) && as_int(b, y)) return Ref::steal(boolean(ordered(op, x, y)));
     if (is_int(a) && is_int(b)) return Ref::steal(boolean(ordered(op, big_compare(a, b), 0)));
     if (is_float(a)) return float_compare(op, a, b);
+    if (is_complex(a)) return complex_compare(op, a, b);
     const Str* sa = as_str(a);
     const Str* sb = as_str(b);
     if (sa != nullptr && sb != nullptr)                // code point order: UTF-8 byte order is code point order
@@ -667,6 +673,10 @@ bool truth(Obj v) {
         case Kind::Float: return static_cast<Float*>(o)->value != 0.0;
         case Kind::FloatInstance:
             if (!overridden(v, "__bool__")) return static_cast<Float*>(o)->value != 0.0;
+            return truth(call_special(v, "__bool__", {}).get());
+        case Kind::Complex: return complex_truth(v);
+        case Kind::ComplexInstance:
+            if (!overridden(v, "__bool__")) return complex_truth(v);
             return truth(call_special(v, "__bool__", {}).get());
         case Kind::Dict:                             // a dict subclass's instance asks its class
             if (!is_subclass_instance(v)) return static_cast<Dict*>(o)->used != 0;
@@ -841,6 +851,13 @@ Ref repr_of(Obj v) {
             if (overridden(v, "__repr__")) break;
             [[fallthrough]];
         case Kind::Float: return str_new(float_text(float_value(v)));
+        case Kind::ComplexInstance:
+            if (overridden(v, "__repr__")) break;
+            [[fallthrough]];
+        case Kind::Complex: {
+            auto* c = static_cast<Complex*>(o);
+            return str_new(complex_text(c->real, c->imag));
+        }
         case Kind::SlotDescriptor: {             // member_repr
             auto* d = static_cast<SlotDescriptor*>(o);
             return str_new("<member '" + d->name->text + "' of '" + d->owner->name + "' objects>");
@@ -925,6 +942,7 @@ ClassObject* builtin_of(Obj v) {
         case Kind::Dict: return is_frozendict(v) ? types().frozendict : types().dict;
         case Kind::IntInstance: return types().int_;
         case Kind::FloatInstance: return types().float_;
+        case Kind::ComplexInstance: return types().complex_;
         default: return types().object;
     }
 }

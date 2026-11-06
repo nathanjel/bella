@@ -176,6 +176,10 @@ class Emitter:
             # a hexadecimal literal is the value's exact bits; the key tells 0.0 from -0.0
             text = "HUGE_VAL" if value == math.inf else value.hex()
             return self.lazy(("float", value.hex()), f"rt::float_constant({text})")
+        if type(value) is complex:
+            # a literal's parts: 0.0 and a non-negative number, perhaps an infinity
+            parts = ", ".join("HUGE_VAL" if part == math.inf else part.hex() for part in (value.real, value.imag))
+            return self.lazy(("complex", (value.real.hex(), value.imag.hex())), f"rt::complex_constant({parts})")
         if type(value) is tuple and all(_supported_constant(v) for v in value):
             items = ", ".join(self.const(v) for v in value)
             return self.lazy(("tuple", value), f"rt::tuple_new({{{items}}}).release()")
@@ -715,7 +719,7 @@ class Emitter:
 
 
 def _supported_constant(v: object) -> bool:
-    if v is None or v is Ellipsis or type(v) in (bool, str, bytes, float):
+    if v is None or v is Ellipsis or type(v) in (bool, str, bytes, float, complex):
         return True
     if type(v) is int:
         return True

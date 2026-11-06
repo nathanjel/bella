@@ -36,6 +36,7 @@ Types& types() {
         x.int_ = builtin_type("int", {x.object});
         x.bool_ = builtin_type("bool", {x.int_});
         x.float_ = builtin_type("float", {x.object});
+        x.complex_ = builtin_type("complex", {x.object});
         x.str = builtin_type("str", {x.object});
         x.none = builtin_type("NoneType", {x.object});
         x.notimplemented = builtin_type("NotImplementedType", {x.object});
@@ -222,6 +223,7 @@ bool register_deaths() {
     destroyer(Kind::Range) = [](Object* o) { destroy<Range>(o); };
     destroyer(Kind::BigInt) = [](Object* o) { destroy<BigInt>(o); };
     destroyer(Kind::Float) = [](Object* o) { destroy<Float>(o); };
+    destroyer(Kind::Complex) = [](Object* o) { destroy<Complex>(o); };
     destroyer(Kind::Iterator) = [](Object* o) { decref(std::exchange(static_cast<Iterator*>(o)->seq, Obj{})); destroy<Iterator>(o); };
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::Traceback) = [](Object* o) {
@@ -391,6 +393,10 @@ std::int64_t full_hash(Obj v) {
             if (type_lookup(o->cls, intern("__hash__")) != type_lookup(types().float_, intern("__hash__"))) break;
             return float_hash(v);
         case Kind::Float: return float_hash(v);
+        case Kind::ComplexInstance:              // as a float subclass's
+            if (type_lookup(o->cls, intern("__hash__")) != type_lookup(types().complex_, intern("__hash__"))) break;
+            return complex_hash(v);
+        case Kind::Complex: return complex_hash(v);
         case Kind::Dict:                         // a frozendict, unless its class has its own
             if ((o->flags & FROZEN_DICT) != 0 && type_lookup(o->cls, intern("__hash__")) == type_lookup(types().frozendict, intern("__hash__")))
                 return frozendict_hash(v);

@@ -71,7 +71,7 @@ Ref float_pow(double iv, double iw) {            // float_pow, whose special cas
         return float_ref(odd ? iv : 0.0);
     }
     if (iv < 0.0) {
-        if (iw != std::floor(iw)) throw NotImplemented("a negative float to a fractional power, which is a complex");
+        if (iw != std::floor(iw)) return complex_power(float_ref(iv).get(), float_ref(iw).get(), None());   // nb_power of complex
         iv = -iv;
         negate_result = odd_integer(iw);
     }
@@ -179,22 +179,7 @@ double parse_double(const char* s, const char* last, const char*& end) {
 
 // _Py_string_to_number_with_underscores around float_from_string_inner
 Ref float_from_text(const std::string& given, Obj shown) {
-    std::string text;
-    if (std::strchr(given.c_str(), '_') != nullptr) {
-        char prev = '\0';
-        for (char c : given) {
-            if (c == '_') {
-                if (!(prev >= '0' && prev <= '9')) cannot_convert(shown);
-            } else {
-                text += c;
-                if (prev == '_' && !(c >= '0' && c <= '9')) cannot_convert(shown);
-            }
-            prev = c;
-        }
-        if (prev == '_') cannot_convert(shown);
-    } else {
-        text = given;
-    }
+    std::string text = without_underscores(given, "float", shown);
     auto space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };   // Py_ISSPACE
     const char* s = text.data();
     const char* last = s + text.size();
@@ -612,13 +597,35 @@ Ref float_compare(CmpOp op, Obj a, Obj b) {
     return Ref::steal(boolean(ordered_double(op, c, 0)));
 }
 
-std::int64_t float_hash(Obj self) {              // _Py_HashDouble
+std::int64_t float_hash(Obj self) { return double_hash(float_value(self), self.object()); }
+double string_to_double(const char* s, const char* last, const char*& end) { return parse_double(s, last, end); }
+std::string without_underscores(const std::string& given, const char* what, Obj shown) {
+    if (std::strchr(given.c_str(), '_') == nullptr) return given;
+    auto wrong = [&] {
+        Ref r = repr_of(shown);
+        raise_new("ValueError", std::string("could not convert string to ") + what + ": " + as_str(r.get())->text);
+    };
+    std::string text;
+    char prev = '\0';
+    for (char c : given) {
+        if (c == '\0') wrong();                  // no embedded NUL once there is an underscore
+        if (c == '_') {                          // only after a digit, and before one
+            if (!(prev >= '0' && prev <= '9')) wrong();
+        } else {
+            text += c;
+            if (prev == '_' && !(c >= '0' && c <= '9')) wrong();
+        }
+        prev = c;
+    }
+    if (prev == '_') wrong();
+    return text;
+}
+std::int64_t double_hash(double v, const void* instance) {   // _Py_HashDouble
     constexpr int BITS = 61;
     constexpr std::uint64_t MODULUS = (std::uint64_t{1} << BITS) - 1;
-    double v = float_value(self);
     if (!std::isfinite(v)) {
         if (std::isinf(v)) return v > 0 ? 314159 : -314159;
-        std::int64_t h = pointer_hash(self.object());
+        std::int64_t h = pointer_hash(instance);
         return h == -1 ? -2 : h;
     }
     int e = 0;

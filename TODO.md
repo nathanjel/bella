@@ -475,7 +475,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * `str`'s methods done on ASCII text (C-6-14); beyond ASCII, what needs the Unicode database stops by name.
            * The format mini-language, `str.format`, `format_map` and `_string` done (C-6-15, `runtime/src/format.cpp`).
            * `str %` done (C-6-16, `runtime/src/format.cpp`).
-           * Next, what the survey and a walk of the built-ins' names found: `bytes %`; subclasses of `tuple`, `list` and `str` (`namedtuple`); `complex`;
+           * `complex` done (C-6-17, `runtime/src/complex.cpp`).
+           * Next, what the survey and a walk of the built-ins' names found: `bytes %`; subclasses of `tuple`, `list` and `str` (`namedtuple`);
              `_heapq`; `object.__getstate__` and `copyreg`; generators, which stop `Counter.__eq__` and every
              generator expression, and stop more as these go; `_ast` 6, `posix` 6 (`_stat` done, C-7-24; `os` is what stops them), `gc` 4.
              Generators are refused where they run (`weakref`'s iteration, a generator expression), and

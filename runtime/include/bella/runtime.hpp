@@ -224,7 +224,7 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *frozendict, *dict_reversekeyiterator, *dict_reversevalueiterator, *dict_reverseitemiterator, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
-        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_,
+        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_, *complex_,
         *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
         *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator;
@@ -393,6 +393,10 @@ bool with_attribute_storage(Obj v, F&& f) {
         f(static_cast<FloatInstance*>(v.object()));
         return true;
     }
+    if (is_kind(v, Kind::ComplexInstance)) {
+        f(static_cast<ComplexInstance*>(v.object()));
+        return true;
+    }
     return false;
 }
 // BaseException's C fields (args, __traceback__, __cause__, __context__, __suppress_context__;
@@ -541,8 +545,22 @@ std::string float_text(double v);                // float_repr
 Ref float_binary(BinOp op, Obj a, Obj b);        // nb_add and its kin: an int on either side, NotImplemented for the rest
 Ref float_divmod(Obj a, Obj b);
 std::int64_t float_hash(Obj self);               // _Py_HashDouble
+std::int64_t double_hash(double v, const void* instance);   // _Py_HashDouble(inst, v)
+double string_to_double(const char* s, const char* last, const char*& end);   // PyOS_string_to_double on [s, last), no error: `end` says where it stopped
+std::string without_underscores(const std::string& given, const char* what, Obj shown);   // _Py_string_to_number_with_underscores's check
 double float_as_double(Obj op);                  // PyFloat_AsDouble
 void init_float();
+// ---- complex (runtime/src/complex.cpp) ----
+inline bool is_complex(Obj v) { return is_kind(v, Kind::Complex) || is_kind(v, Kind::ComplexInstance); }   // PyComplex_Check
+Ref complex_ref(double real, double imag);       // an exact complex
+Obj complex_constant(double real, double imag);  // a module's constant: it keeps the count
+bool complex_truth(Obj v);                       // complex_bool
+std::int64_t complex_hash(Obj self);
+Ref complex_binary(BinOp op, Obj v, Obj w);      // complex_add and its kin, either operand the complex; NotImplemented for the rest
+Ref complex_power(Obj v, Obj w, Obj z);          // complex_pow
+std::string complex_text(double real, double imag);   // complex_repr (format.cpp)
+Ref complex_format_dunder(Obj self, Args a);     // (format.cpp)
+void init_complex();
 std::int64_t big_hash(Obj v);                    // long_hash
 std::string big_text(Obj v);                     // str(v), under the limit of digits
 Ref int_round(Obj self, Obj ndigits);            // int.__round__; ndigits may be unset or None
@@ -615,6 +633,7 @@ Ref bytes_compare(CmpOp op, Obj a, Obj b);
 Ref compare_one_side(Obj self, Obj other, CmpOp op);   // one operand's method alone: NotImplemented if it declines
 Ref native_binary(BinOp op, Obj a, Obj b);
 Ref float_compare(CmpOp op, Obj a, Obj b);       // float_richcompare; a is the float
+Ref complex_compare(CmpOp op, Obj v, Obj w);     // complex_richcompare, v the complex
 Ref binary(BinOp op, Obj a, Obj b);
 Ref inplace(BinOp op, Obj a, Obj b);
 Ref unary_neg(Obj a);

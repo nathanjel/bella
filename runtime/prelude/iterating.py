@@ -334,6 +334,19 @@ _LONG_MAX = 9223372036854775807
 _LONG_MIN = -9223372036854775808
 
 
+def _cs_add(hi: float, lo: float, x: float) -> tuple[float, float]:   # cs_add, Neumaier's improved Kahan-Babuska
+    t = hi + x
+    if abs(hi) >= abs(x):
+        lo += (hi - t) + x
+    else:
+        lo += (x - t) + hi
+    return t, lo
+
+
+def _cs_to_double(hi: float, lo: float) -> float:   # cs_to_double
+    return hi + lo if lo and lo - lo == 0.0 else hi  # finite: the sign of a negative zero and an infinity survive
+
+
 def sum(*args: object, **kwds: object) -> object:   # builtin_sum_impl
     """Return the sum of a 'start' value (default: 0) plus an iterable of numbers
 
@@ -358,7 +371,8 @@ may reject non-numeric types."""
     if issubclass(type(result), bytearray):
         raise TypeError("sum() can't sum bytearray [use b''.join(seq) instead]")
     # builtin_sum_impl's stages: exact ints in a C long; then floats, compensated, with ints in a C long
-    # among them; then anything, with plain +. What ends a stage ends it for good.
+    # among them; then complex numbers, compensated in each part, with ints and floats among them; then
+    # anything, with plain +. What ends a stage ends it for good.
     if type(result) is int and _LONG_MIN <= result <= _LONG_MAX:
         for item in it:
             if (type(item) is int or type(item) is bool) and _LONG_MIN <= item and item <= _LONG_MAX and (
@@ -389,6 +403,22 @@ may reject non-numeric types."""
             hi = t
         else:
             return hi + lo if lo and lo - lo == 0.0 else hi
+    if type(result) is complex:
+        re_hi, re_lo = result.real, 0.0
+        im_hi, im_lo = result.imag, 0.0
+        for item in it:
+            if type(item) is complex:
+                re_hi, re_lo = _cs_add(re_hi, re_lo, item.real)
+                im_hi, im_lo = _cs_add(im_hi, im_lo, item.imag)
+            elif issubclass(type(item), int):
+                re_hi, re_lo = _cs_add(re_hi, re_lo, float(int.__index__(item)))  # type: ignore[arg-type]
+            elif issubclass(type(item), float):
+                re_hi, re_lo = _cs_add(re_hi, re_lo, float.__float__(item))  # type: ignore[arg-type]
+            else:
+                result = complex(_cs_to_double(re_hi, re_lo), _cs_to_double(im_hi, im_lo)) + item  # type: ignore[operator]
+                break
+        else:
+            return complex(_cs_to_double(re_hi, re_lo), _cs_to_double(im_hi, im_lo))
     for item in it:
         result = result + item  # type: ignore[operator]
     return result

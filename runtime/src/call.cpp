@@ -1194,7 +1194,7 @@ Module* make_builtins() {
     for (auto [name, cls, ctor] : std::initializer_list<std::tuple<const char*, ClassObject*, NativeFn>>{
              {"str", t.str, c_str}, {"type", t.type, nullptr}, {"bool", t.bool_, c_bool}, {"range", t.range, c_range},
              {"tuple", t.tuple, c_tuple}, {"list", t.list, c_list}, {"int", t.int_, nullptr},
-             {"object", t.object, nullptr}, {"dict", t.dict, nullptr}, {"frozendict", t.frozendict, c_frozendict}, {"float", t.float_, nullptr},
+             {"object", t.object, nullptr}, {"dict", t.dict, nullptr}, {"frozendict", t.frozendict, c_frozendict}, {"float", t.float_, nullptr}, {"complex", t.complex_, nullptr},
              {"bytes", t.bytes, nullptr}, {"bytearray", t.bytearray, nullptr}, {"memoryview", t.memoryview, c_memoryview}}) {
         put(d, name, Obj::of(cls));
         if (ctor != nullptr) constructors()[cls] = ctor;
@@ -1812,6 +1812,10 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                 attribute_values(static_cast<FloatInstance*>(o), todo);
                 found.push_back(Ref::share(v));
                 break;
+            case Kind::ComplexInstance:
+                attribute_values(static_cast<ComplexInstance*>(o), todo);
+                found.push_back(Ref::share(v));
+                break;
             case Kind::Dict:
                 if (has_attributes(o)) {
                     attribute_values(static_cast<DictInstance*>(o), todo);
@@ -2046,6 +2050,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             init_slots();
             init_bigint();
             init_float();
+            init_complex();
             adopt_functions(builtins_module());
             adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own

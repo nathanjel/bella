@@ -418,6 +418,23 @@ Ref format_long_field(Obj value, const FormatSpec& f) {   // format_long_interna
     return number_field(f, sign_char, prefix, view, false, "", Cps(), f.type == U'X');
 }
 
+// a number's text, parsed for its sign, digits, fraction and remainder (parse_number), then laid out
+Ref float_text_field(std::string_view view, const FormatSpec& f) {
+    char32_t sign_char = 0;
+    if (view[0] == '-') {
+        sign_char = U'-';
+        view.remove_prefix(1);
+    }
+    auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+    std::size_t pos = 0;
+    while (pos < view.size() && is_digit(view[pos])) ++pos;
+    std::string_view digits = view.substr(0, pos);
+    bool has_decimal = pos < view.size() && view[pos] == '.';
+    if (has_decimal) ++pos;
+    std::size_t frac_start = pos;
+    while (pos < view.size() && is_digit(view[pos])) ++pos;
+    return number_field(f, sign_char, "", digits, has_decimal, view.substr(frac_start, pos - frac_start), widen(view.substr(pos)), false);
+}
 Ref format_float_field(double val, const FormatSpec& f) {   // format_float_internal
     if (f.precision > INT_MAX) raise_new("ValueError", "precision too big");
     auto precision = static_cast<int>(f.precision);
@@ -441,24 +458,51 @@ Ref format_float_field(double val, const FormatSpec& f) {   // format_float_inte
     else if (type == U'r') type = U'g';
     std::string buf = double_to_string(val, static_cast<char>(type), precision, flags);
     if (add_pct) buf += '%';
-    std::string_view view = buf;
-    char32_t sign_char = 0;
-    if (view[0] == '-') {
-        sign_char = U'-';
-        view.remove_prefix(1);
+    return float_text_field(buf, f);
+}
+Ref format_complex_field(double re, double im, const FormatSpec& format) {   // format_complex_internal
+    if (format.precision > INT_MAX) raise_new("ValueError", "precision too big");
+    auto precision = static_cast<int>(format.precision);
+    if (format.fill == U'0') raise_new("ValueError", "Zero padding is not allowed in complex format specifier");
+    if (format.align == U'=') raise_new("ValueError", "'=' alignment flag is not allowed in complex format specifier");
+    int flags = 0, default_precision = 6;
+    char32_t type = format.type;
+    bool add_parens = false, skip_re = false;
+    if (format.alternate) flags |= DTSF_ALT;
+    if (format.no_neg_0) flags |= DTSF_NO_NEG_0;
+    if (type == 0) {                             // like str(self)
+        type = U'r';
+        default_precision = 0;
+        if (re == 0.0 && std::copysign(1.0, re) == 1.0) skip_re = true;
+        else add_parens = true;
     }
-    auto is_digit = [](char c) { return c >= '0' && c <= '9'; };     // parse_number
-    std::size_t pos = 0;
-    while (pos < view.size() && is_digit(view[pos])) ++pos;
-    std::string_view digits = view.substr(0, pos);
-    bool has_decimal = pos < view.size() && view[pos] == '.';
-    if (has_decimal) ++pos;
-    std::size_t frac_start = pos;
-    while (pos < view.size() && is_digit(view[pos])) ++pos;
-    return number_field(f, sign_char, "", digits, has_decimal, view.substr(frac_start, pos - frac_start), widen(view.substr(pos)), false);
+    if (type == U'n') type = U'g';
+    if (precision < 0) precision = default_precision;
+    else if (type == U'r') type = U'g';
+    FormatSpec part = format;                    // the padding comes after both are composed
+    part.fill = 0;
+    part.align = U'<';
+    part.width = -1;
+    Cps re_text = cps_of(as_str(float_text_field(double_to_string(re, static_cast<char>(type), precision, flags), part).get()));
+    if (!skip_re) part.sign = U'+';              // the imaginary part's sign always, unless it is all there is
+    Cps im_text = cps_of(as_str(float_text_field(double_to_string(im, static_cast<char>(type), precision, flags), part).get()));
+    Cps body;
+    if (add_parens) body += U'(';
+    if (!skip_re) body += re_text;
+    body += im_text;
+    body += U'j';
+    if (add_parens) body += U')';
+    auto nchars = static_cast<std::int64_t>(body.size());   // calc_padding
+    std::int64_t total = format.width >= 0 ? std::max(nchars, format.width) : nchars;
+    std::int64_t lpad = format.align == U'>' ? total - nchars : format.align == U'^' ? (total - nchars) / 2 : 0;
+    std::int64_t rpad = total - nchars - lpad;
+    Cps out(static_cast<std::size_t>(lpad), format.fill);
+    out += body;
+    out.append(static_cast<std::size_t>(rpad), format.fill);
+    return str_from_codepoints(out);
 }
 
-// the three __format__s: (format_spec, /)
+// the __format__s: (format_spec, /)
 const Str* spec_argument(Args a, const char* qualname) {
     onearg(a, qualname);
     const Str* spec = as_str(a.pos(0));
@@ -495,6 +539,24 @@ Ref float_format_field(Obj self, const Str* spec) {   // _PyFloat_FormatAdvanced
         default: unknown_type(f.type, type_of(self));
     }
 }
+Ref complex_format_field(Obj self, const Str* spec) {   // _PyComplex_FormatAdvancedWriter
+    if (spec->length == 0) return str_of(self);
+    FormatSpec f = parse_spec(self, spec, 0, U'>');
+    switch (f.type) {
+        case 0: case U'e': case U'E': case U'f': case U'F': case U'g': case U'G': case U'n': {
+            auto* c = static_cast<const Complex*>(self.object());
+            return format_complex_field(c->real, c->imag, f);
+        }
+        default: unknown_type(f.type, type_of(self));
+    }
+}
+std::string complex_text(double real, double imag) {   // complex_repr
+    std::string im = double_to_string(imag, 'r', 0, 0);
+    if (real == 0.0 && std::copysign(1.0, real) == 1.0) return im + "j";
+    if (im[0] != '-') im.insert(0, 1, '+');      // Py_DTSF_SIGN
+    return "(" + double_to_string(real, 'r', 0, 0) + im + "j)";
+}
+Ref complex_format_dunder(Obj self, Args a) { return complex_format_field(self, spec_argument(a, "complex.__format__")); }
 Ref str_format_dunder(Obj self, Args a) { return str_format_field(self, spec_argument(a, "str.__format__")); }
 Ref int_format_dunder(Obj self, Args a) { return int_format_field(self, spec_argument(a, "int.__format__")); }
 Ref float_format_dunder(Obj self, Args a) { return float_format_field(self, spec_argument(a, "float.__format__")); }

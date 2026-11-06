@@ -453,8 +453,10 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   (`native_slot` in `ops.cpp`).
 * `float` (`runtime/src/float.cpp`, C-6-12): the object is a double, and a subclass's instance adds an attribute
   storage as `IntInstance` does. The digits are libstdc++'s (`make float-diff`), and everything around them is the C's.
-  What is not finished: a negative float to a fractional power stops by name until `complex`; `float()` of a str
-  beyond ASCII stops by name until the Unicode database.
+  What is not finished: `float()` of a str beyond ASCII stops by name until the Unicode database.
+* `complex` (`runtime/src/complex.cpp`, C-6-17) follows `Objects/complexobject.c`, with the mixed real forms and Annex G's
+  recoveries, and shares float's digits. `sum()` has its stage. `complex()` of a part that is itself a complex, and
+  `__complex__` returning a subclass's instance, warn in the C and stop by name until `warnings`.
 * `str %` (`runtime/src/format.cpp`, C-6-16) follows `Objects/unicode_format.c`, with what counts as a mapping
   (`PyMapping_Check`, so `"x" % []` is `"x"`) and 3.15's messages that name the argument at fault. `bytes %` stops by name.
 * The format mini-language and `str.format` (`runtime/src/format.cpp`, C-6-15) follow `unicode_formatter.c` and
