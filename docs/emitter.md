@@ -443,6 +443,9 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   `ClassObject::sequence_slots` keeps `d + x` asking `x.__radd__` first, and says what `d["a"]` and `d * "a"` say,
   where a direct `d.__getitem__("a")` says what a slot wrapper does. `OrderedDict` stops by name until
   `Objects/odictobject.c` is written, and `deque.__sizeof__` for good reason: it counts the C's blocks.
+* `str`'s case operations and predicates (`runtime/src/str.cpp`, C-6-14) know ASCII. A str beyond it stops by name
+  in each of them, until the Unicode database (D-8). What needs no tables takes any text: padding, `splitlines`,
+  `expandtabs`, `translate`, whose lookups a mapping can count, so the ASCII path's memory of its answers is the C's.
 * A set display: which ones CPython folds to a frozenset constant is the pinned compiler's answer, asked in the
   frontend (`_folded_set_display`), and the answer shows, since the constant's table decides the order the set
   iterates in. `for x in {1, 2, 3}` iterates the constant itself; a display elsewhere is updated from it.

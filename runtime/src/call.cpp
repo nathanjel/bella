@@ -1255,7 +1255,8 @@ Module* make_builtins() {
              {"count", str_count_m}, {"isascii", str_isascii_m}, {"startswith", str_startswith_m}, {"endswith", str_endswith_m},
              {"partition", str_partition_m}, {"rpartition", str_rpartition_m}, {"split", str_split_m},
              {"rsplit", str_rsplit_m}, {"strip", str_strip_m}, {"lstrip", str_lstrip_m}, {"rstrip", str_rstrip_m},
-             {"replace", str_replace_m}})
+             {"replace", str_replace_m}, {"lower", str_lower_m}, {"casefold", str_casefold_m}, {"upper", str_upper_m}, {"swapcase", str_swapcase_m}, {"capitalize", str_capitalize_m}, {"title", str_title_m}, {"isalpha", str_isalpha_m}, {"isalnum", str_isalnum_m}, {"isdigit", str_isdigit_m}, {"isdecimal", str_isdecimal_m}, {"isnumeric", str_isnumeric_m}, {"isspace", str_isspace_m}, {"isprintable", str_isprintable_m}, {"isidentifier", str_isidentifier_m}, {"islower", str_islower_m}, {"isupper", str_isupper_m}, {"istitle", str_istitle_m}, {"center", str_center_m}, {"ljust", str_ljust_m}, {"rjust", str_rjust_m}, {"zfill", str_zfill_m}, {"removeprefix", str_removeprefix_m}, {"removesuffix", str_removesuffix_m}, {"splitlines", str_splitlines_m}, {"expandtabs", str_expandtabs_m}, {"translate", str_translate_m},
+             {"__getnewargs__", str_getnewargs_m}, {"__str__", str_str_m}})
         method(t.str, n, fn);
     for (ClassObject* c : {t.list, t.tuple, t.str, t.dict, t.frozendict}) {
         method(c, "__getitem__", getitem_m);

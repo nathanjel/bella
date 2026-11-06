@@ -320,8 +320,334 @@ Ref strip_like(Obj self, Args a, const char* name, int which) {
 }
 }  // namespace
 
+// ---- what needs the case and category tables, on ASCII text; beyond it, the Unicode database stops by name ----
+namespace {
+const Str* ascii_only(Obj self, const char* method) {
+    const Str* s = self_str(self, method);
+    if (!s->ascii) throw NotImplemented(std::string("str.") + method + " of a str beyond ASCII (it needs the Unicode database)");
+    return s;
+}
+bool is_lower(char c) { return c >= 'a' && c <= 'z'; }
+bool is_upper(char c) { return c >= 'A' && c <= 'Z'; }
+char to_lower(char c) { return is_upper(c) ? static_cast<char>(c + 32) : c; }
+char to_upper(char c) { return is_lower(c) ? static_cast<char>(c - 32) : c; }
+bool is_digit(char c) { return c >= '0' && c <= '9'; }
+template <class F>
+Ref mapped(Obj self, Args a, const char* method, F f) {   // METH_NOARGS, one new str
+    noargs(a, std::string("str.") + method);
+    const Str* s = ascii_only(self, method);
+    std::string out = s->text;
+    f(out);
+    return str_new(out);
+}
+template <class F>
+Ref every(Obj self, Args a, const char* method, F f) {    // a predicate true of every character, and false of none at all
+    noargs(a, std::string("str.") + method);
+    const Str* s = ascii_only(self, method);
+    if (s->text.empty()) return Ref::steal(boolean(false));
+    return Ref::steal(boolean(std::all_of(s->text.begin(), s->text.end(), f)));
+}
+bool is_ascii_space(char c) { return c == ' ' || (c >= '\t' && c <= '\r') || (c >= '\x1c' && c <= '\x1f'); }
+// the fill character's converter, convert_uc
+char32_t fill_character(Obj v) {
+    const Str* s = as_str(v);
+    if (s == nullptr) raise_new("TypeError", "The fill character must be a unicode character, not " + type_of(v)->name);
+    if (s->length != 1) raise_new("TypeError", "The fill character must be exactly one character long");
+    return s->at(0);
+}
+Ref padded(const Str* s, std::size_t left, std::size_t right, char32_t fill) {   // pad
+    std::size_t total = left + s->length + right;
+    if (total > (std::size_t{1} << 32)) throw NotImplemented("a str of more than 2**32 characters");
+    std::u32string out(left, fill);
+    for (std::size_t i = 0; i < s->length; ++i) out += s->at(i);
+    out.append(right, fill);
+    return str_from_codepoints(out);
+}
+template <int mode>
+Ref justify(Obj self, Args a) {                  // center, ljust, rjust: (width, fillchar=' ', /)
+    const char* method = mode == 0 ? "center" : mode < 0 ? "ljust" : "rjust";
+    clinic(a, method, std::string("str.") + method, 1, 2);
+    const Str* s = self_str(self, method);
+    std::int64_t width = ssize_arg(a.pos(0));
+    char32_t fill = a.npos == 2 ? fill_character(a.pos(1)) : U' ';
+    auto length = static_cast<std::int64_t>(s->length);
+    if (length >= width) return Ref::share(self);
+    std::int64_t margin = width - length;
+    std::int64_t left = mode == 0 ? margin / 2 + (margin & width & 1) : mode < 0 ? 0 : margin;
+    return padded(s, static_cast<std::size_t>(left), static_cast<std::size_t>(margin - left), fill);
+}
+// PyMapping_GetOptionalItem and charmaptranslate_lookup: a LookupError means "as it is"
+enum class Translated { AsItIs, Deleted, Char, Text };
+Translated translate_lookup(char32_t c, Obj mapping, Ref& item, char32_t& replace) {
+    Ref key = int_from_i64(static_cast<std::int64_t>(c));
+    try {
+        item = getitem(mapping, key.get());
+    } catch (const PyError& e) {
+        if (!isinstance(e.exc.get(), exception_class("LookupError"))) throw;
+        item = Ref{};
+        return Translated::AsItIs;
+    }
+    if (item.get() == None()) return Translated::Deleted;
+    if (is_int(item.get())) {
+        std::int64_t value = 0;
+        // PyLong_AsLong says -1 of what it cannot hold, and this error replaces its own
+        if (!as_int(item.get(), value) || value < 0 || value > 0x10FFFF) raise_new("ValueError", "character mapping must be in range(0x110000)");
+        replace = static_cast<char32_t>(value);
+        return Translated::Char;
+    }
+    if (as_str(item.get()) != nullptr) return Translated::Text;
+    raise_new("TypeError", "character mapping must return integer, None or str");
+}
+}  // namespace
+
+Ref str_lower_m(Obj self, Args a) {
+    return mapped(self, a, "lower", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_lower); });
+}
+Ref str_casefold_m(Obj self, Args a) {
+    return mapped(self, a, "casefold", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_lower); });
+}
+Ref str_upper_m(Obj self, Args a) {
+    return mapped(self, a, "upper", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_upper); });
+}
+Ref str_swapcase_m(Obj self, Args a) {
+    return mapped(self, a, "swapcase", [](std::string& t) {
+        std::transform(t.begin(), t.end(), t.begin(), [](char c) { return is_upper(c) ? to_lower(c) : to_upper(c); });
+    });
+}
+Ref str_capitalize_m(Obj self, Args a) {
+    return mapped(self, a, "capitalize", [](std::string& t) {
+        for (std::size_t i = 0; i < t.size(); ++i) t[i] = i == 0 ? to_upper(t[i]) : to_lower(t[i]);
+    });
+}
+Ref str_title_m(Obj self, Args a) {              // do_title: a letter after a cased one is lowered
+    return mapped(self, a, "title", [](std::string& t) {
+        bool previous_is_cased = false;
+        for (char& c : t) {
+            c = previous_is_cased ? to_lower(c) : to_upper(c);
+            previous_is_cased = is_lower(c) || is_upper(c);
+        }
+    });
+}
+Ref str_isalpha_m(Obj self, Args a) { return every(self, a, "isalpha", [](char c) { return is_lower(c) || is_upper(c); }); }
+Ref str_isalnum_m(Obj self, Args a) { return every(self, a, "isalnum", [](char c) { return is_lower(c) || is_upper(c) || is_digit(c); }); }
+Ref str_isdigit_m(Obj self, Args a) { return every(self, a, "isdigit", is_digit); }
+Ref str_isdecimal_m(Obj self, Args a) { return every(self, a, "isdecimal", is_digit); }
+Ref str_isnumeric_m(Obj self, Args a) { return every(self, a, "isnumeric", is_digit); }
+Ref str_isspace_m(Obj self, Args a) { return every(self, a, "isspace", is_ascii_space); }
+Ref str_isprintable_m(Obj self, Args a) {        // true of nothing at all
+    noargs(a, "str.isprintable");
+    const Str* s = ascii_only(self, "isprintable");
+    return Ref::steal(boolean(std::all_of(s->text.begin(), s->text.end(), [](char c) { return c >= ' ' && c <= '~'; })));
+}
+Ref str_isidentifier_m(Obj self, Args a) {
+    noargs(a, "str.isidentifier");
+    const Str* s = ascii_only(self, "isidentifier");
+    if (s->text.empty() || is_digit(s->text[0])) return Ref::steal(boolean(false));
+    return Ref::steal(boolean(std::all_of(s->text.begin(), s->text.end(), [](char c) { return is_lower(c) || is_upper(c) || is_digit(c) || c == '_'; })));
+}
+Ref str_islower_m(Obj self, Args a) {
+    noargs(a, "str.islower");
+    const Str* s = ascii_only(self, "islower");
+    bool cased = false;
+    for (char c : s->text) {
+        if (is_upper(c)) return Ref::steal(boolean(false));
+        cased = cased || is_lower(c);
+    }
+    return Ref::steal(boolean(cased));
+}
+Ref str_isupper_m(Obj self, Args a) {
+    noargs(a, "str.isupper");
+    const Str* s = ascii_only(self, "isupper");
+    bool cased = false;
+    for (char c : s->text) {
+        if (is_lower(c)) return Ref::steal(boolean(false));
+        cased = cased || is_upper(c);
+    }
+    return Ref::steal(boolean(cased));
+}
+Ref str_istitle_m(Obj self, Args a) {
+    noargs(a, "str.istitle");
+    const Str* s = ascii_only(self, "istitle");
+    bool cased = false, previous_is_cased = false;
+    for (char c : s->text) {
+        if (is_upper(c)) {
+            if (previous_is_cased) return Ref::steal(boolean(false));
+            previous_is_cased = cased = true;
+        } else if (is_lower(c)) {
+            if (!previous_is_cased) return Ref::steal(boolean(false));
+            previous_is_cased = cased = true;
+        } else {
+            previous_is_cased = false;
+        }
+    }
+    return Ref::steal(boolean(cased));
+}
+Ref str_center_m(Obj self, Args a) { return justify<0>(self, a); }
+Ref str_ljust_m(Obj self, Args a) { return justify<-1>(self, a); }
+Ref str_rjust_m(Obj self, Args a) { return justify<1>(self, a); }
+Ref str_zfill_m(Obj self, Args a) {              // unicode_zfill_impl: METH_O
+    onearg(a, "str.zfill");
+    const Str* s = self_str(self, "zfill");
+    std::int64_t width = ssize_arg(a.pos(0));
+    if (static_cast<std::int64_t>(s->length) >= width) return Ref::share(self);
+    auto fill = static_cast<std::size_t>(width - static_cast<std::int64_t>(s->length));
+    std::u32string out(fill, U'0');
+    for (std::size_t i = 0; i < s->length; ++i) out += s->at(i);
+    if (out[fill] == U'+' || out[fill] == U'-') {   // the sign goes first
+        out[0] = out[fill];
+        out[fill] = U'0';
+    }
+    return str_from_codepoints(out);
+}
+Ref str_removeprefix_m(Obj self, Args a) {
+    onearg(a, "str.removeprefix");
+    const Str* s = self_str(self, "removeprefix");
+    const Str* p = as_str(a.pos(0));
+    if (p == nullptr) raise_new("TypeError", "removeprefix() argument must be str, not " + (a.pos(0) == None() ? std::string("None") : type_of(a.pos(0))->name));
+    if (p->text.empty() || !s->text.starts_with(p->text)) return Ref::share(self);
+    return str_new(std::string_view(s->text).substr(p->text.size()));
+}
+Ref str_removesuffix_m(Obj self, Args a) {
+    onearg(a, "str.removesuffix");
+    const Str* s = self_str(self, "removesuffix");
+    const Str* p = as_str(a.pos(0));
+    if (p == nullptr) raise_new("TypeError", "removesuffix() argument must be str, not " + (a.pos(0) == None() ? std::string("None") : type_of(a.pos(0))->name));
+    if (p->text.empty() || !s->text.ends_with(p->text)) return Ref::share(self);
+    return str_new(std::string_view(s->text).substr(0, s->text.size() - p->text.size()));
+}
+Ref str_splitlines_m(Obj self, Args a) {         // unicode_splitlines_impl(keepends=False)
+    const Str* s = self_str(self, "splitlines");
+    std::size_t total = a.npos + a.nkw;
+    if (total > 1) raise_new("TypeError", std::string("splitlines() takes at most 1 ") + (a.npos != 0 ? "" : "keyword ") + "argument (" + std::to_string(total) + " given)");
+    bool keepends = false;
+    if (a.npos == 1) keepends = truth(a.pos(0));
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        if (a.kwnames[k]->text != "keepends") raise_new("TypeError", "splitlines() got an unexpected keyword argument '" + a.kwnames[k]->text + "'");
+        keepends = truth(a.kw(k));
+    }
+    auto is_break = [](char32_t c) {             // Py_UNICODE_ISLINEBREAK
+        return c == U'\n' || c == U'\v' || c == U'\f' || c == U'\r' || c == 0x1c || c == 0x1d || c == 0x1e || c == 0x85 || c == 0x2028 || c == 0x2029;
+    };
+    Ref out = list_new({});
+    std::size_t n = s->length;
+    std::u32string line;
+    for (std::size_t i = 0; i < n;) {
+        std::size_t j = i;
+        while (i < n && !is_break(s->at(i))) ++i;
+        std::size_t eol = i;
+        if (i < n) {
+            i += s->at(i) == U'\r' && i + 1 < n && s->at(i + 1) == U'\n' ? 2 : 1;
+            if (keepends) eol = i;
+        }
+        if (j == 0 && eol == n) {                // no line break, or one line whole: the object itself
+            list_append(out.get(), self);
+            break;
+        }
+        line.clear();
+        for (std::size_t k = j; k < eol; ++k) line += s->at(k);
+        Ref item = str_from_codepoints(line);
+        list_append(out.get(), item.get());
+    }
+    return out;
+}
+Ref str_expandtabs_m(Obj self, Args a) {         // unicode_expandtabs_impl(tabsize=8)
+    const Str* s = self_str(self, "expandtabs");
+    std::size_t total = a.npos + a.nkw;
+    if (total > 1) raise_new("TypeError", std::string("expandtabs() takes at most 1 ") + (a.npos != 0 ? "" : "keyword ") + "argument (" + std::to_string(total) + " given)");
+    Obj given = a.npos == 1 ? a.pos(0) : Obj{};
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        if (a.kwnames[k]->text != "tabsize") raise_new("TypeError", "expandtabs() got an unexpected keyword argument '" + a.kwnames[k]->text + "'");
+        given = a.kw(k);
+    }
+    int tabsize = given.is_unset() ? 8 : c_int_arg(given);
+    bool found = false;
+    std::int64_t line_pos = 0;
+    std::u32string out;
+    for (std::size_t i = 0; i < s->length; ++i) {
+        char32_t ch = s->at(i);
+        if (ch == U'\t') {
+            found = true;
+            if (tabsize > 0) {
+                std::int64_t incr = tabsize - (line_pos % tabsize);
+                if (static_cast<std::int64_t>(out.size()) + incr > (std::int64_t{1} << 32)) throw NotImplemented("a str of more than 2**32 characters");
+                line_pos += incr;
+                out.append(static_cast<std::size_t>(incr), U' ');
+            }
+        } else {
+            ++line_pos;
+            out += ch;
+            if (ch == U'\n' || ch == U'\r') line_pos = 0;
+        }
+    }
+    return found ? str_from_codepoints(out) : Ref::share(self);
+}
+Ref str_translate_m(Obj self, Args a) {          // _PyUnicode_TranslateCharmap with "ignore"
+    onearg(a, "str.translate");
+    const Str* s = self_str(self, "translate");
+    Obj mapping = a.pos(0);
+    std::u32string out;
+    std::size_t i = 0, n = s->length;
+    Ref item;
+    char32_t replace = 0;
+    if (s->ascii) {                              // unicode_fast_translate: an answer it can keep, it keeps
+        unsigned char table[128];
+        std::fill(std::begin(table), std::end(table), 0xff);
+        bool all = true;
+        for (; i < n; ++i) {
+            auto ch = static_cast<unsigned char>(s->text[i]);
+            if (table[ch] == 0xff) {
+                Translated t = translate_lookup(ch, mapping, item, replace);
+                if (t == Translated::Deleted) table[ch] = 0xfe;
+                else if (t == Translated::AsItIs) table[ch] = ch;
+                else if (t == Translated::Char && replace <= 127) table[ch] = static_cast<unsigned char>(replace);
+                else if (t == Translated::Text && as_str(item.get())->length == 1 && as_str(item.get())->at(0) <= 127) table[ch] = static_cast<unsigned char>(as_str(item.get())->at(0));
+                else {
+                    all = false;
+                    break;
+                }
+            }
+            if (table[ch] == 0xfe) continue;
+            out += static_cast<char32_t>(table[ch]);
+        }
+        if (all) return str_from_codepoints(out);
+    }
+    while (i < n) {
+        Translated t = translate_lookup(s->at(i), mapping, item, replace);
+        if (t == Translated::AsItIs) {
+            out += s->at(i);
+        } else if (t == Translated::Char) {
+            out += replace;
+        } else if (t == Translated::Text) {
+            const Str* text = as_str(item.get());
+            for (std::size_t k = 0; k < text->length; ++k) out += text->at(k);
+        } else {                                 // deleted, with every deleted character after it
+            ++i;
+            while (i < n) {
+                Ref x;
+                char32_t ignored = 0;
+                if (translate_lookup(s->at(i), mapping, x, ignored) != Translated::Deleted) break;
+                ++i;
+            }
+            continue;
+        }
+        ++i;
+    }
+    return str_from_codepoints(out);
+}
+Ref str_getnewargs_m(Obj self, Args a) {
+    noargs(a, "str.__getnewargs__");
+    self_str(self, "__getnewargs__");
+    Ref copy = str_new(as_str(self)->text);
+    return tuple_new({copy.get()});
+}
+Ref str_str_m(Obj self, Args a) {                // object_str: a wrapper, of a str itself
+    if (a.nkw != 0) raise_new("TypeError", "wrapper __str__() takes no keyword arguments");
+    if (a.npos != 0) raise_new("TypeError", "expected 0 arguments, got " + std::to_string(a.npos));
+    if (as_str(self) == nullptr) raise_new("TypeError", "descriptor '__str__' requires a 'str' object but received a '" + type_of(self)->name + "'");
+    return Ref::share(self);
+}
 Ref str_maketrans_m(Obj, Args a) {               // unicode_maketrans_impl(x, y=NULL, z=NULL, /), a static method
-    clinic(a, "maketrans", "maketrans", 1, 3);
+    clinic(a, "maketrans", "str.maketrans", 1, 3);
     Ref out = dict_new();
     auto* made = static_cast<Dict*>(out.get().object());
     auto ord = [](const Str* s, std::size_t i) { return int_from_i64(static_cast<std::int64_t>(s->at(i))); };
@@ -346,12 +672,12 @@ Ref str_maketrans_m(Obj, Args a) {               // unicode_maketrans_impl(x, y=
     for (auto& e : static_cast<Dict*>(x.object())->entries) {
         if (e.key.is_unset()) continue;
         if (const Str* key = as_str(e.key)) {
-            if (key->length != 1) raise_new("ValueError", "string keys in translate table must be of length 1");
+            if (key->length != 1) raise_new("ValueError", "string keys in translatetable must be of length 1");   // as the C has it
             dict_set(made, ord(key, 0).get(), e.value);
         } else if (is_int(e.key)) {
             dict_set(made, e.key, e.value);
         } else {
-            raise_new("TypeError", "keys in translate table must be strings or integers");
+            raise_new("TypeError", "keys in translate table mustbe strings or integers");   // as the C has it
         }
     }
     return out;

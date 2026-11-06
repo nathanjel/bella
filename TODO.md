@@ -472,8 +472,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * `_collections` done but for `OrderedDict`, which stops by name (C-7-23, `runtime/prelude/_collections.py`),
              with `list` slice assignment and `str.maketrans`.
            * `set`'s and `frozenset`'s named methods done (C-6-13).
-           * Next, what the survey and a walk of the built-ins' names found: `str`'s methods with
-             `format` and `%`, ASCII first; subclasses of `tuple`, `list` and `str` (`namedtuple`); `complex`;
+           * `str`'s methods done on ASCII text (C-6-14); beyond ASCII, what needs the Unicode database stops by name.
+           * Next, what the survey and a walk of the built-ins' names found: `format` specifications, `str.format`,
+             `str %` and `_string`; subclasses of `tuple`, `list` and `str` (`namedtuple`); `complex`;
              `_heapq`; `object.__getstate__` and `copyreg`; generators, which stop `Counter.__eq__` and every
              generator expression, and stop more as these go; `_ast` 6, `_stat` 6, `gc` 4.
              Generators are refused where they run (`weakref`'s iteration, a generator expression), and
