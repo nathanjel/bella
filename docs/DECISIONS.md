@@ -864,3 +864,5 @@ time; the program's own stay at `-O1`).
 
 **2026-11-06 — the `sys` surface (C-7-28), and D-21 pending.** Section 7's list did not name `sys.base_prefix`, which `gettext` reads when it imports, nor `sys.executable`, which `argparse` reads, and a compiled program has no installation to answer from. Deviation D-21 is proposed, status pending: the program for `sys.executable`, the directory above it for the prefixes, and `3.15.2 (bella) [GCC ...]` for `sys.version`, which `platform`'s pattern still parses. For the author to confirm or change.
 
+**2026-11-06 — D-21 accepted.** The author confirmed D-21 as proposed, with a lint rule in place of none: `bella-lint` flags a read of `sys.executable`, because a program that starts `[sys.executable, "-m", ...]` or `[sys.executable, "-c", ...]` would start itself, not an interpreter. `sys.version_info` stays the pin's, so version checks are not flagged.
+

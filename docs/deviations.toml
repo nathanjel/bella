@@ -133,7 +133,7 @@ expires = "phase 2 (revisit)"
 
 [deviations.D-21]
 summary = "a compiled program has no CPython installation: sys.executable is the program, sys.prefix, base_prefix, exec_prefix and base_exec_prefix the directory above the one it is in, and sys.version says bella and the compiler (sys.version_info is the pin's)"
-status = "pending"
-lint = "no"
-note = "gettext, a P1 module, reads sys.base_prefix when it imports and argparse reads sys.executable, neither in the spec's sys surface; proposed 2026-11-06, for the author to confirm"
+status = "accepted"
+lint = "yes"
+note = "gettext, a P1 module, reads sys.base_prefix when it imports and argparse reads sys.executable, neither in the spec's sys surface; proposed and accepted by the author 2026-11-06, with the lint rule: a read of sys.executable is flagged, since a program that starts [sys.executable, '-m', ...] or [sys.executable, '-c', ...] starts itself, not an interpreter"
 
