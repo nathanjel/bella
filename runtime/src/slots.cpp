@@ -116,6 +116,11 @@ Ref str_rmod_slot(Obj self, Args a) {            // wrap_binaryfunc_r: a left op
     return str_mod(a.pos(0), self);
 }
 Ref own_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return repr_of(self); }
+Ref tuple_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(tuple_hash(static_cast<Tuple*>(self.object()))); }
+Ref tuple_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return tuple_subscript(self, a.pos(0)); }
+Ref tuple_contains_slot(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return Ref::steal(boolean(tuple_contains(self, a.pos(0)))); }
+Ref tuple_iter_slot(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return own(new Iterator(Iterator::TupleIt, self)); }
+Ref tuple_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int_from_i64(static_cast<std::int64_t>(static_cast<Tuple*>(self.object())->items.size())); }
 Ref type_or_slot(Obj self, Args a) { wrapper_args(a, "__or__", 1); return type_or(self, a.pos(0)); }
 Ref type_ror_slot(Obj self, Args a) { wrapper_args(a, "__ror__", 1); return type_or(a.pos(0), self); }
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
@@ -259,6 +264,11 @@ void init_slots() {
     slot(i, "__float__", int_float);
     slot(i, "__repr__", int_repr);
     slot(i, "__hash__", int_hash);
+    slot(t.tuple, "__hash__", tuple_hash_slot);
+    slot(t.tuple, "__len__", tuple_len_slot);
+    slot(t.tuple, "__getitem__", tuple_getitem_slot);
+    slot(t.tuple, "__contains__", tuple_contains_slot);
+    slot(t.tuple, "__iter__", tuple_iter_slot);
     slot(t.type, "__or__", type_or_slot);
     slot(t.type, "__ror__", type_ror_slot);
     slot(t.str, "__mod__", str_mod_slot);

@@ -224,14 +224,15 @@ def _list_repr(self: list[object]) -> str:
 
 def _tuple_repr(self: tuple[object, ...]) -> str:
     _receiver(self, tuple, "__repr__")
-    if not self:
+    items = list(tuple.__iter__(self))           # the items, whatever a subclass says
+    if not items:
         return "()"
     if not _enter(self):
         return "(...)"
     try:
-        if len(self) == 1:
-            return "(" + repr(self[0]) + ",)"
-        return "(" + ", ".join([repr(x) for x in self]) + ")"
+        if len(items) == 1:
+            return "(" + repr(items[0]) + ",)"
+        return "(" + ", ".join([repr(x) for x in items]) + ")"
     finally:
         _leave(self)
 

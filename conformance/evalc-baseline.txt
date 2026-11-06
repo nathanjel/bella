@@ -23,6 +23,7 @@ C-3-36_generic_alias.py
 C-3-37_bytes.py
 C-3-38_iteration_builtins.py
 C-3-39_union_types.py
+C-3-40_tuple_subclasses.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

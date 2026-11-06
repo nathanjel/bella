@@ -554,7 +554,7 @@ std::int64_t minrun_next(MergeState* ms) {
 
 // The pre-sort check: only what decides between the compares that differ
 void choose_compare(MergeState& ms, const Obj* keys, std::int64_t size) {
-    auto non_empty_tuple = [](Obj k) { return is_kind(k, Kind::Tuple) && !static_cast<Tuple*>(k.object())->items.empty(); };
+    auto non_empty_tuple = [](Obj k) { return is_exact_tuple(k) && !static_cast<Tuple*>(k.object())->items.empty(); };
     bool in_tuples = non_empty_tuple(keys[0]);
     ClassObject* key_type = type_of(in_tuples ? static_cast<Tuple*>(keys[0].object())->items[0] : keys[0]);
     bool same_type = true;

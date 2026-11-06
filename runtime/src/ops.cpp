@@ -192,10 +192,10 @@ Ref repeat(Obj seq, Obj n, bool in_place) {
         for (std::int64_t i = 0; i < count; ++i) out += s->text;
         return str_new(out);
     }
-    if (is_kind(seq, Kind::Tuple)) {                // tuple_repeat: the same tuple when empty or once
+    if (is_kind(seq, Kind::Tuple)) {                // tuple_repeat: an exact tuple itself when empty or once
         auto& items = static_cast<Tuple*>(seq.object())->items;
-        if (items.empty() || count == 1) return Ref::share(seq);
-        if (count <= 0) return tuple_steal({});
+        if ((items.empty() || count == 1) && is_exact_tuple(seq)) return Ref::share(seq);
+        if (items.empty() || count <= 0) return tuple_steal({});
         if (items.size() * static_cast<std::size_t>(count) > (std::size_t{1} << 28)) throw NotImplemented("a tuple of more than 2**28 items");
         std::vector<Obj> out;
         for (std::int64_t i = 0; i < count; ++i) for (Obj v : items) { incref(v); out.push_back(v); }
@@ -256,8 +256,10 @@ Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
             return r;
         }
         if (is_kind(a, Kind::Tuple)) {
+            if (static_cast<Tuple*>(a.object())->items.empty() && is_exact_tuple(b)) return Ref::share(b);
             if (!is_kind(b, Kind::Tuple))
                 raise_new("TypeError", "can only concatenate tuple (not \"" + type_of(b)->name + "\") to tuple");
+            if (static_cast<Tuple*>(b.object())->items.empty() && is_exact_tuple(a)) return Ref::share(a);
             std::vector<Obj> items;
             for (Obj v : static_cast<Tuple*>(a.object())->items) { incref(v); items.push_back(v); }
             for (Obj v : static_cast<Tuple*>(b.object())->items) { incref(v); items.push_back(v); }
@@ -443,6 +445,11 @@ bool ordered(CmpOp op, const T& a, const T& b) {
         default: return false;
     }
 }
+bool tuple_items_contain(Obj container, Obj item) {   // tuple_contains: the items, whatever a subclass says
+    for (Obj v : static_cast<Tuple*>(container.object())->items)
+        if (v == item || truth(compare(CmpOp::Eq, v, item).get())) return true;
+    return false;
+}
 bool contains(Obj container, Obj item) {
     auto equal = [&](Obj v) { return v == item || truth(compare(CmpOp::Eq, v, item).get()); };
     if (is_kind(container, Kind::DictView)) {    // dictkeys_contains, dictitems_contains; values by iteration
@@ -465,10 +472,7 @@ bool contains(Obj container, Obj item) {
             if (equal(v.get())) return true;
         }
     }
-    if (is_kind(container, Kind::Tuple)) {
-        for (Obj v : static_cast<Tuple*>(container.object())->items) if (equal(v)) return true;
-        return false;
-    }
+    if (is_kind(container, Kind::Tuple) && !overridden(container, "__contains__")) return tuple_items_contain(container, item);
     if (is_kind(container, Kind::List)) {
         auto& items = static_cast<List*>(container.object())->items;
         for (std::size_t i = 0; i < items.size(); ++i) {   // list_contains: each item held, also when == raises
@@ -651,6 +655,21 @@ Ref compare(CmpOp op, Obj a, Obj b) {
                                "' and '" + type_of(b)->name + "'");
 }
 
+// __bool__ (a bool, nothing else), else __len__, else true
+static bool truth_by_methods(Obj v) {
+    bool has = false;
+    if (type_lookup(type_of(v), intern("__bool__")) == None())    // slot_nb_bool (RL-306)
+        raise_new("TypeError", "'" + type_of(v)->name + "' cannot be interpreted as a boolean");
+    Ref r = call_special(v, "__bool__", {}, &has);
+    if (has) {
+        if (!is_kind(r.get(), Kind::Bool))
+            raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__bool__() must return a bool, not " + fully_qualified_name(type_of(r.get())));
+        return static_cast<BoolObject*>(r.get().object())->value;
+    }
+    r = call_special(v, "__len__", {}, &has);
+    if (has) return length_value(r.get()) != 0;      // as len() takes it (A9-14)
+    return true;
+}
 bool truth(Obj v) {
     if (v.is_small()) return v.small_value() != 0;
     Object* o = v.object();
@@ -661,7 +680,10 @@ bool truth(Obj v) {
                 raise_new("TypeError", "NotImplemented should not be used in a boolean context");
             return o != NONE;
         case Kind::Str: return static_cast<Str*>(o)->length != 0;
-        case Kind::Tuple: return !static_cast<Tuple*>(o)->items.empty();
+        case Kind::Tuple:
+            if (!is_subclass_instance(v)) return !static_cast<Tuple*>(o)->items.empty();
+            if (!overridden(v, "__bool__") && !overridden(v, "__len__")) return !static_cast<Tuple*>(o)->items.empty();
+            return truth_by_methods(v);
         case Kind::List: return !static_cast<List*>(o)->items.empty();
         case Kind::Bytes:
         case Kind::ByteArray: return !bytes_data(v).empty();
@@ -671,36 +693,22 @@ bool truth(Obj v) {
         case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
         case Kind::IntInstance:
             if (!overridden(v, "__bool__")) return !int_is_zero(v);
-            return truth(call_special(v, "__bool__", {}).get());
+            return truth_by_methods(v);
         case Kind::Float: return static_cast<Float*>(o)->value != 0.0;
         case Kind::FloatInstance:
             if (!overridden(v, "__bool__")) return static_cast<Float*>(o)->value != 0.0;
-            return truth(call_special(v, "__bool__", {}).get());
+            return truth_by_methods(v);
         case Kind::Complex: return complex_truth(v);
         case Kind::ComplexInstance:
             if (!overridden(v, "__bool__")) return complex_truth(v);
-            return truth(call_special(v, "__bool__", {}).get());
+            return truth_by_methods(v);
         case Kind::Dict:                             // a dict subclass's instance asks its class
             if (!is_subclass_instance(v)) return static_cast<Dict*>(o)->used != 0;
             [[fallthrough]];
         case Kind::Class:                            // a class whose metaclass is a Python class
             if (o->kind == Kind::Class && !has_python_type(v)) return true;
             [[fallthrough]];
-        case Kind::Instance: {
-            // __bool__ (a bool, nothing else), else __len__, else true
-            bool has = false;
-            if (type_lookup(type_of(v), intern("__bool__")) == None())    // slot_nb_bool (RL-306)
-                raise_new("TypeError", "'" + type_of(v)->name + "' cannot be interpreted as a boolean");
-            Ref r = call_special(v, "__bool__", {}, &has);
-            if (has) {
-                if (!is_kind(r.get(), Kind::Bool))
-                    raise_new("TypeError", "__bool__ should return bool, returned " + type_of(r.get())->name);
-                return static_cast<BoolObject*>(r.get().object())->value;
-            }
-            r = call_special(v, "__len__", {}, &has);
-            if (has) return length_value(r.get()) != 0;      // as len() takes it (A9-14)
-            return true;
-        }
+        case Kind::Instance: return truth_by_methods(v);
         default: return true;
     }
 }
@@ -827,7 +835,8 @@ Ref type_repr_of(Obj v) {
     return str_new("<class '" + prefix + c->qualname + "'>");
 }
 
-Ref repr_of(Obj v) {
+// tp_repr, whatever it gives; what asks for a str says which method failed to give one
+Ref repr_unchecked(Obj v) {
     if (v.is_small()) return str_new(int_text(v.small_value()));
     Object* o = v.object();
     switch (o->kind) {
@@ -836,10 +845,7 @@ Ref repr_of(Obj v) {
         case Kind::Str: return str_new(str_repr(static_cast<Str*>(o)));
         case Kind::Class: {
             if (has_python_type(v) && type_lookup(type_of(v), intern("__repr__")) != type_lookup(types().type, intern("__repr__"))) {
-                Ref r = call_special(v, "__repr__", {});       // the metaclass's __repr__
-                if (as_str(r.get()) == nullptr)
-                    raise_new("TypeError", "__repr__ returned non-string (type " + type_of(r.get())->name + ")");
-                return r;
+                return call_special(v, "__repr__", {});        // the metaclass's __repr__
             }
             return type_repr_of(v);
         }
@@ -903,12 +909,7 @@ Ref repr_of(Obj v) {
             Ref self = repr_of(m->self);
             return str_new("<bound method " + as_str(fname.get())->text + " of " + as_str(self.get())->text + ">");
         }
-        case Kind::Instance: {
-            Ref r = call_special(v, "__repr__", {});
-            if (as_str(r.get()) == nullptr)
-                raise_new("TypeError", "__repr__ returned non-string (type " + type_of(r.get())->name + ")");
-            return r;
-        }
+        case Kind::Instance: return call_special(v, "__repr__", {});
         default: break;
     }
     // the containers' repr is the prelude's (installed as their __repr__), as are the rest
@@ -918,17 +919,21 @@ Ref repr_of(Obj v) {
     throw NotImplemented("repr() of '" + type_of(v)->name + "' objects");
 }
 
-Ref str_of(Obj v) {
+Ref repr_of(Obj v) {                             // PyObject_Repr
+    Ref r = repr_unchecked(v);
+    if (as_str(r.get()) == nullptr)
+        raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__repr__() must return a str, not " + fully_qualified_name(type_of(r.get())));
+    return r;
+}
+Ref str_of(Obj v) {                              // PyObject_Str
     if (as_str(v) != nullptr) return Ref::share(v);
-    if (is_kind(v, Kind::Instance) || is_kind(v, Kind::Proxy) ||
-        ((has_python_type(v) || is_subclass_instance(v)) &&
-         type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")))) {
-        Ref r = call_special(v, "__str__", {});
-        if (as_str(r.get()) == nullptr)
-            raise_new("TypeError", "__str__ returned non-string (type " + type_of(r.get())->name + ")");
-        return r;
-    }
-    return repr_of(v);
+    bool own_str = is_kind(v, Kind::Instance) || is_kind(v, Kind::Proxy) ||
+                   ((has_python_type(v) || is_subclass_instance(v)) &&
+                    type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")));
+    Ref r = own_str ? call_special(v, "__str__", {}) : repr_unchecked(v);
+    if (as_str(r.get()) == nullptr)
+        raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__str__() must return a str, not " + fully_qualified_name(type_of(r.get())));
+    return r;
 }
 
 // ---- attributes ----
@@ -945,6 +950,7 @@ ClassObject* builtin_of(Obj v) {
         case Kind::IntInstance: return types().int_;
         case Kind::FloatInstance: return types().float_;
         case Kind::ComplexInstance: return types().complex_;
+        case Kind::Tuple: return types().tuple;
         default: return types().object;
     }
 }
@@ -1292,16 +1298,23 @@ static void check_sequence_key(Obj obj, Obj key, const char* name) {
         raise_new("TypeError", "sequence index must be integer, not '" + type_of(key)->name + "'");
     index_value(key, "IndexError");
 }
+bool tuple_contains(Obj container, Obj item) { return tuple_items_contain(container, item); }
+Ref tuple_subscript(Obj obj, Obj key) {          // tuple_subscript: the items, whatever a subclass says
+    auto& items = static_cast<Tuple*>(obj.object())->items;
+    if (!is_kind(key, Kind::Slice)) return Ref::share(items[index_of(key, items.size(), "tuple")]);
+    auto [start, stop, step, n] = slice_indices(key, static_cast<std::int64_t>(items.size()));
+    if (start == 0 && step == 1 && n == static_cast<std::int64_t>(items.size()) && is_exact_tuple(obj)) return Ref::share(obj);
+    std::vector<Obj> out;
+    for (std::int64_t i = 0, k = start; i < n; ++i, k += step) {
+        incref(items[static_cast<std::size_t>(k)]);
+        out.push_back(items[static_cast<std::size_t>(k)]);
+    }
+    return tuple_steal(std::move(out));
+}
 Ref getitem(Obj obj, Obj key) {
     check_sequence_key(obj, key, "__getitem__");
     bool slice = is_kind(key, Kind::Slice);
-    if (is_kind(obj, Kind::Tuple)) {
-        auto& items = static_cast<Tuple*>(obj.object())->items;
-        if (!slice) return Ref::share(items[index_of(key, items.size(), "tuple")]);
-        std::vector<Obj> out;
-        each_index(key, static_cast<std::int64_t>(items.size()), [&](std::size_t i) { incref(items[i]); out.push_back(items[i]); });
-        return tuple_steal(std::move(out));
-    }
+    if (is_kind(obj, Kind::Tuple) && !overridden(obj, "__getitem__")) return tuple_subscript(obj, key);
     if (is_kind(obj, Kind::List)) {
         auto& items = static_cast<List*>(obj.object())->items;
         if (!slice) return Ref::share(items[index_of(key, items.size(), "list")]);
@@ -1340,7 +1353,7 @@ Ref getitem(Obj obj, Obj key) {
 }
 
 Ref sequence_fast(Obj v, const char* message) {
-    if (is_kind(v, Kind::List) || is_kind(v, Kind::Tuple)) return Ref::share(v);
+    if (is_kind(v, Kind::List) || is_exact_tuple(v)) return Ref::share(v);
     Ref it;
     try {
         it = iter(v);
@@ -1487,7 +1500,7 @@ Ref dict_reversed(Obj d, int which) {
 }
 Ref iter(Obj obj) {
     if (is_kind(obj, Kind::Range)) return range_iter(obj);
-    if (is_kind(obj, Kind::Tuple)) return own(new Iterator(Iterator::TupleIt, obj));
+    if (is_kind(obj, Kind::Tuple) && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::TupleIt, obj));
     if (is_kind(obj, Kind::List)) return own(new Iterator(Iterator::ListIt, obj));
     if (as_str(obj) != nullptr) return own(new Iterator(Iterator::StrIt, obj));
     if (is_bytes_like(obj)) return own(new Iterator(Iterator::BytesIt, obj));
@@ -1651,7 +1664,7 @@ Ref for_next(Obj itv) {
 
 void unpack(Obj value, std::span<Ref> targets, int star) {
     std::vector<Ref> items;
-    if (is_kind(value, Kind::Tuple) || is_kind(value, Kind::List)) {
+    if (is_exact_tuple(value) || is_kind(value, Kind::List)) {
         auto& src = is_kind(value, Kind::Tuple) ? static_cast<Tuple*>(value.object())->items
                                                 : static_cast<List*>(value.object())->items;
         for (Obj v : src) items.push_back(Ref::share(v));

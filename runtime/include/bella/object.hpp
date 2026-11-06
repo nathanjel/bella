@@ -916,6 +916,26 @@ struct FloatInstance : Float {
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
+// A tuple, and an instance of a program's subclass of tuple. Its kind stays Tuple, as PyTuple_Check says
+// yes of it; what only an exact tuple does asks is_exact_tuple, and what a subclass may override asks first.
+struct Tuple : Object {                          // owns one count of each item
+    std::vector<Obj> items;
+    Tuple();
+};
+struct TupleInstance : Tuple {
+    std::vector<Obj> fields;
+    DictObject* dict = nullptr;
+    std::vector<const Str*> order;
+    std::int64_t tag = -1;
+    explicit TupleInstance(ClassObject* c) {
+        cls = c;
+        flags |= HAS_ATTRIBUTES;
+        fields.assign(c->field_index.size(), Obj{});
+    }
+    bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
+    Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    bool has_field(const Str* n) const { return cls->field_index.contains(n); }
+};
 // A complex, and an instance of a program's subclass of complex: as Float and FloatInstance.
 struct Complex : Object {
     double real, imag;
@@ -1387,6 +1407,7 @@ inline void bury(Object* o) {
             case Kind::IntInstance: delete static_cast<IntInstance*>(o); break;
             case Kind::FloatInstance: delete static_cast<FloatInstance*>(o); break;
             case Kind::ComplexInstance: delete static_cast<ComplexInstance*>(o); break;
+            case Kind::Tuple: delete static_cast<TupleInstance*>(o); break;   // an exact tuple's death is its destroyer's
             case Kind::Function: delete static_cast<Function*>(o); break;
             case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
             case Kind::Marker: delete static_cast<Marker*>(o); break;
@@ -1618,6 +1639,16 @@ inline void dealloc(Object* o) {
             detail::bury(o);
             return;
         }
+        case Kind::Tuple:
+            if (has_attributes(o)) {                 // subtype_dealloc, then tuple_dealloc's items, last to first
+                auto* t = static_cast<TupleInstance*>(o);
+                if (!detail::release_attributes(t)) return;
+                if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
+                for (auto it = t->items.rbegin(); it != t->items.rend(); ++it) decref(std::exchange(*it, Obj{}));
+                detail::bury(o);
+                return;
+            }
+            [[fallthrough]];
         default:
             if (o->flags & HAS_WEAKREFS) clear_weakrefs(o);
             if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);

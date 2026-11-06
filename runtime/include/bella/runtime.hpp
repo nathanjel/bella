@@ -62,10 +62,6 @@ struct BoolObject : Object {
     bool value;
     BoolObject(ClassObject* c, bool v) : Object(Kind::Bool), value(v) { cls = c; flags |= IMMORTAL; }
 };
-struct Tuple : Object {                          // owns one count of each item
-    std::vector<Obj> items;
-    Tuple();
-};
 struct List : Object {
     std::vector<Obj> items;
     List();
@@ -296,6 +292,7 @@ inline bool has_python_type(Obj v) { return v.is_object() && v.object()->kind ==
 // an object of a built-in kind whose class is a subclass of the program's (decision 2026-11-03: it
 // is the built-in's object, with the class's attribute storage: DictInstance)
 inline bool is_subclass_instance(Obj v) { return v.is_object() && has_attributes(v.object()); }
+inline bool is_exact_tuple(Obj v) { return is_kind(v, Kind::Tuple) && !has_attributes(v.object()); }   // PyTuple_CheckExact
 // such an object's class overrides `name`: what its MRO finds is not the built-in's own (CPython
 // then gives the subclass a slot that calls the override: slot_mp_subscript and the others)
 bool overrides_builtin(Obj v, const char* name);
@@ -366,6 +363,8 @@ void onearg(Args a, const std::string& qualname);                     // METH_O
 void clinic(Args a, const std::string& name, const std::string& qualname, std::size_t lo, std::size_t hi);
 void present_as_c_types(Module* bootstrap);
 Ref generic_alias(Obj origin, Obj args);          // Py_GenericAlias (the class is bootstrap.py's)
+Ref tuple_subscript(Obj obj, Obj key);            // tuple's own, whatever a subclass says
+bool tuple_contains(Obj container, Obj item);
 Ref type_or(Obj a, Obj b);                        // _Py_union_type_or (bootstrap.py's)
 inline bool is_union(Obj v) { return v.is_object() && v.object()->cls == types().union_; }   // _PyUnion_Check
 Ref i_bella_new_instance(Obj, Args a);            // bootstrap.py's: an instance of a C type that has no __new__
@@ -377,6 +376,8 @@ void add_note(Obj exc, const std::string& text); // _PyErr_FormatNote
 [[noreturn]] void unexpected_keyword(const std::string& who, const Str* name, std::initializer_list<const char*> known);
 Ref type_repr_of(Obj v);                         // type.__repr__ itself
 void list_extend_star(Obj list, Obj value);      // LIST_EXTEND
+void length_hint(Obj v);                         // PyObject_LengthHint, where a program's class can tell it was asked
+Ref repr_unchecked(Obj v);                       // tp_repr, whatever it gives
 // calls f with the attribute storage of an Instance or a DictInstance; false for other objects
 template <class F>
 bool with_attribute_storage(Obj v, F&& f) {
@@ -394,6 +395,10 @@ bool with_attribute_storage(Obj v, F&& f) {
     }
     if (is_kind(v, Kind::FloatInstance)) {
         f(static_cast<FloatInstance*>(v.object()));
+        return true;
+    }
+    if (is_kind(v, Kind::Tuple) && has_attributes(v.object())) {
+        f(static_cast<TupleInstance*>(v.object()));
         return true;
     }
     if (is_kind(v, Kind::ComplexInstance)) {
@@ -548,6 +553,7 @@ std::string float_text(double v);                // float_repr
 Ref float_binary(BinOp op, Obj a, Obj b);        // nb_add and its kin: an int on either side, NotImplemented for the rest
 Ref float_divmod(Obj a, Obj b);
 std::int64_t float_hash(Obj self);               // _Py_HashDouble
+std::int64_t tuple_hash(const Tuple* t);         // tuple_hash: the items, whatever a subclass says
 std::int64_t double_hash(double v, const void* instance);   // _Py_HashDouble(inst, v)
 double string_to_double(const char* s, const char* last, const char*& end);   // PyOS_string_to_double on [s, last), no error: `end` says where it stopped
 std::string without_underscores(const std::string& given, const char* what, Obj shown);   // _Py_string_to_number_with_underscores's check

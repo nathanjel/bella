@@ -462,7 +462,7 @@ Ref b_len(Obj, Args a) {
     onearg(a, "len");
     Obj v = a.pos(0);
     if (const Str* s = as_str(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
-    if (is_kind(v, Kind::Tuple)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Tuple*>(v.object())->items.size())));
+    if (is_kind(v, Kind::Tuple) && !overrides_builtin_len(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Tuple*>(v.object())->items.size())));
     if (is_kind(v, Kind::List)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<List*>(v.object())->items.size())));
     if (is_kind(v, Kind::Dict) && !overrides_builtin_len(v))
         return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(v.object())->used)));
@@ -753,6 +753,11 @@ Ref tuple_index_m(Obj self, Args a) {             // tuple_index_impl: start and
         if (v == a.pos(0) || truth(compare(CmpOp::Eq, v, a.pos(0)).get())) return Ref::steal(Obj::small(i));
     }
     raise_new("ValueError", "tuple.index(x): x not in tuple");
+}
+Ref tuple_getnewargs_m(Obj self, Args a) {        // tuple___getnewargs___impl: the items as a tuple, an exact one itself
+    noargs(a, "tuple.__getnewargs__");
+    Ref whole = is_exact_tuple(self) ? Ref::share(self) : tuple_copy(static_cast<Tuple*>(self.object())->items);
+    return tuple_new({whole.get()});
 }
 Ref tuple_count_m(Obj self, Args a) {             // tuple_count_impl
     onearg(a, "tuple.count");
@@ -1138,7 +1143,7 @@ Ref c_range(Obj, Args a) {
 Ref c_tuple(Obj, Args a) {
     clinic(a, "tuple", "tuple", 0, 1);
     if (a.npos == 0) return tuple_new({});
-    if (is_kind(a.pos(0), Kind::Tuple)) return Ref::share(a.pos(0));
+    if (is_exact_tuple(a.pos(0))) return Ref::share(a.pos(0));
     // PySequence_Tuple: the iterator's items, with no length hint (3.15)
     std::vector<Obj> items;
     Ref it = iter(a.pos(0));
@@ -1262,7 +1267,7 @@ Module* make_builtins() {
              {"__getnewargs__", str_getnewargs_m}, {"__str__", str_str_m}, {"format", str_format_m}, {"format_map", str_format_map_m},
              {"__format__", str_format_dunder}})
         method(t.str, n, fn);
-    for (ClassObject* c : {t.list, t.tuple, t.str, t.dict, t.frozendict}) {
+    for (ClassObject* c : {t.list, t.str, t.dict, t.frozendict}) {      // tuple's are slot wrappers (slots.cpp)
         method(c, "__getitem__", getitem_m);
         method(c, "__contains__", contains_m);
         method(c, "__iter__", iter_m);
@@ -1284,6 +1289,7 @@ Module* make_builtins() {
     method(t.list, "count", list_count_m);
     method(t.tuple, "index", tuple_index_m);
     method(t.tuple, "count", tuple_count_m);
+    method(t.tuple, "__getnewargs__", tuple_getnewargs_m);
     method(t.list, "reverse", list_reverse_m);
     method(t.list, "copy", list_copy_m);
     method(t.list, "__setitem__", setitem_m);
@@ -1584,7 +1590,7 @@ Obj missing_sentinel() {
 Ref i_call_args_tuple(Obj, Args a) {             // _MAKE_CALLARGS_A_TUPLE: f(*value)
     positional_only(a, "call_args_tuple", 1, 1);
     Obj v = a.pos(0);
-    if (is_kind(v, Kind::Tuple)) return Ref::share(v);
+    if (is_exact_tuple(v)) return Ref::share(v);
     // _Py_Check_ArgsIterable: an __iter__, or a sequence's __getitem__
     if (type_lookup(type_of(v), intern("__iter__")).is_unset() && !has_sq_item(v) &&
         !is_kind(v, Kind::List) && !is_kind(v, Kind::Dict) && !is_kind(v, Kind::Set) && !is_kind(v, Kind::Range) &&
@@ -1838,6 +1844,10 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                 for (auto& [k, value] : static_cast<ClassObject*>(o)->attrs.items()) todo.push_back(value);
                 break;
             case Kind::Tuple:
+                if (has_attributes(o)) {
+                    attribute_values(static_cast<TupleInstance*>(o), todo);
+                    found.push_back(Ref::share(v));
+                }
                 for (Obj x : static_cast<Tuple*>(o)->items) todo.push_back(x);
                 break;
             case Kind::List:

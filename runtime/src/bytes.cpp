@@ -355,7 +355,7 @@ Ref partition_m(Obj self, Args a) {
 Ref join_m(Obj self, Args a) {                    // stringlib_bytes_join
     onearg(a, who(self, "join"));
     Ref seq;
-    if (is_kind(a.pos(0), Kind::List) || is_kind(a.pos(0), Kind::Tuple)) {
+    if (is_kind(a.pos(0), Kind::List) || is_exact_tuple(a.pos(0))) {
         seq = Ref::share(a.pos(0));
     } else {
         Ref it;
@@ -974,6 +974,7 @@ Ref bytes_new_m(Obj self, Args a) {               // bytes_new_impl
         if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
         raise_new("TypeError", "cannot convert '" + type_of(x)->name + "' object to bytes");
     }
+    length_hint(x);                              // _PyBytes_FromIterator: the iterator first, then the hint
     return bytes_new(from_iterator(it.get(), "bytes must be in range(0, 256)"));
 }
 Ref bytearray_new_m(Obj self, Args a) {           // tp_new: an empty one; __init__ fills it

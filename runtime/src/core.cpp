@@ -485,22 +485,9 @@ std::int64_t full_hash(Obj v) {
             if (acc == static_cast<std::uint64_t>(-1)) return 1546275796;
             return static_cast<std::int64_t>(acc);
         }
-        case Kind::Tuple: {
-            // tuplehash: xxHash's mixing, as Objects/tupleobject.c
-            const auto& items = static_cast<Tuple*>(o)->items;
-            constexpr std::uint64_t P1 = 11400714785074694791ULL, P2 = 14029467366897019727ULL,
-                                    P5 = 2870177450012600261ULL;
-            std::uint64_t acc = P5;
-            for (Obj item : items) {
-                auto lane = static_cast<std::uint64_t>(hash_of(item));
-                acc += lane * P2;
-                acc = rotl(acc, 31);
-                acc *= P1;
-            }
-            acc += items.size() ^ (P5 ^ 3527539UL);
-            if (acc == static_cast<std::uint64_t>(-1)) return 1546275796;
-            return static_cast<std::int64_t>(acc);
-        }
+        case Kind::Tuple:
+            if (has_attributes(o) && type_lookup(o->cls, intern("__hash__")) != type_lookup(types().tuple, intern("__hash__"))) break;
+            return tuple_hash(static_cast<Tuple*>(o));
         default:
             break;
     }
@@ -517,6 +504,22 @@ std::int64_t full_hash(Obj v) {
 }
 }  // namespace
 
+std::int64_t tuple_hash(const Tuple* t) {
+    // tuplehash: xxHash's mixing, as Objects/tupleobject.c
+    const auto& items = t->items;
+    constexpr std::uint64_t P1 = 11400714785074694791ULL, P2 = 14029467366897019727ULL,
+                            P5 = 2870177450012600261ULL;
+    std::uint64_t acc = P5;
+    for (Obj item : items) {
+        auto lane = static_cast<std::uint64_t>(hash_of(item));
+        acc += lane * P2;
+        acc = rotl(acc, 31);
+        acc *= P1;
+    }
+    acc += items.size() ^ (P5 ^ 3527539UL);
+    if (acc == static_cast<std::uint64_t>(-1)) return 1546275796;
+    return static_cast<std::int64_t>(acc);
+}
 std::int64_t hash_of(Obj v) {
     std::int64_t h = full_hash(v);
     return h == -1 ? -2 : h;                     // -1 is reserved for errors

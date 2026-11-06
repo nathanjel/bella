@@ -454,6 +454,10 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
 * `float` (`runtime/src/float.cpp`, C-6-12): the object is a double, and a subclass's instance adds an attribute
   storage as `IntInstance` does. The digits are libstdc++'s (`make float-diff`), and everything around them is the C's.
   What is not finished: `float()` of a str beyond ASCII stops by name until the Unicode database.
+* A subclass of `tuple` (C-3-40) is a `TupleInstance`, whose kind stays `Tuple` as `PyTuple_Check` says yes of it: what reads
+  the items directly (`%`, `isinstance`, `except`, `startswith`, comparison, hash) needs no change, what only an exact tuple does
+  asks `is_exact_tuple` (unpacking, `*`, `tuple(x)`, `sequence_fast`, sort's tuple compare), and what a subclass may override
+  asks `overridden` first. tuple's own wrappers (`slots.cpp`) read the items whatever the subclass says.
 * `typing.Union` (`runtime/prelude/bootstrap.py`, C-3-39) follows `Objects/unionobject.c` beside GenericAlias. Two flags on
   the class say what a C type written in Python cannot otherwise say: `disallow_instantiation` (no `tp_new`) and
   `mapping_getitem` (a `__getitem__` that is `mp_subscript` alone, so `iter()` of one is an error).

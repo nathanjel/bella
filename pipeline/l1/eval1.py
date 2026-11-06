@@ -1485,7 +1485,7 @@ def _unwrap(exc: BaseException) -> BaseException:
 def _matches(exc: BaseException, spec: Any) -> bool:
     """An except clause: _PyEval_CheckExceptTypeValid, then PyErr_GivenExceptionMatches (by the
     MRO, not __subclasscheck__)."""
-    classes = spec if isinstance(spec, tuple) else (spec,)
+    classes = tuple(tuple.__iter__(spec)) if isinstance(spec, tuple) else (spec,)   # the items, whatever a subclass says
     for c in classes:
         if not (isinstance(c, type) and BaseException in c.__mro__):
             raise TypeError("catching classes that do not inherit from BaseException is not allowed")

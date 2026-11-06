@@ -615,7 +615,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
         if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
-        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().int_ && bc != types().complex_ && bc != types().float_ &&
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().float_ &&
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
@@ -733,7 +733,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
     bool base_has_weak = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_weakref; });
     bool asked_weak = c->slots && std::find(c->slots->begin(), c->slots->end(), N("__weakref__")) != c->slots->end();
-    if (!base_has_weak && !asked_weak && std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_); }))
+    if (!base_has_weak && !asked_weak && std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_) || is_subclass(b, types().tuple); }))   // tp_itemsize
         c->has_weakref = false;
     if (c->has_weakref && !base_has_weak && !c->attrs.contains(N("__weakref__")))
         c->attrs.set(N("__weakref__"), Obj::of(weakref_getset()));
@@ -850,6 +850,19 @@ Ref builtin_new_m(Obj self, Args a) {
     ClassObject* cls = new_wrapper_class(a, type);
     if (cls == types().list) return list_new({});
     return invoke(Obj::of(cls), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
+}
+Ref tuple_new_m(Obj, Args a) {                   // tuple_new_impl, and tuple_subtype_new for a subclass
+    ClassObject* cls = new_wrapper_class(a, types().tuple);
+    Args rest{a.data + 1, a.npos - 1, a.kwnames, a.nkw};
+    Ref made = invoke(Obj::of(types().tuple), rest);
+    if (cls == types().tuple) return made;
+    auto* instance = new TupleInstance(cls);
+    Ref r = own(instance);
+    for (Obj v : static_cast<Tuple*>(made.get().object())->items) {
+        incref(v);
+        instance->items.push_back(v);
+    }
+    return r;
 }
 Ref dict_new_m(Obj, Args a) {
     ClassObject* cls = new_wrapper_class(a, types().dict);
@@ -1144,7 +1157,7 @@ Ref object_repr(Obj self, Args) {
     std::snprintf(buf, sizeof buf, "%p", static_cast<void*>(self.object()));
     return str_new("<" + mod + c->qualname + " object at " + buf + ">");
 }
-Ref object_str(Obj self, Args) { return repr_of(self); }
+Ref object_str(Obj self, Args) { return repr_unchecked(self); }   // object_str: tp_repr itself; PyObject_Str checks what comes back
 Ref object_init_subclass(Obj self, Args a) {
     if (a.nkw != 0) raise_new("TypeError", as_class(self)->name + ".__init_subclass__() takes no keyword arguments");
     return none_ref();
@@ -1873,7 +1886,8 @@ void init_types() {
     method(t.dict, "__new__", dict_new_m, Binding::Function);
     method(t.frozendict, "__new__", frozendict_new_m, Binding::Function);
     method(t.int_, "__new__", int_new_m, Binding::Function);
-    for (ClassObject* c : {t.list, t.tuple, t.str, t.bool_}) new_method(c, builtin_new_m);
+    for (ClassObject* c : {t.list, t.str, t.bool_}) new_method(c, builtin_new_m);
+    new_method(t.tuple, tuple_new_m);
     method(t.dict, "__init__", dict_init_m);
     {
         auto* g = new GetSet("__abstractmethods__", t.type, type_abstractmethods_get, type_abstractmethods_set);
