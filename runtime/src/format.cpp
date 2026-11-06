@@ -1173,6 +1173,7 @@ struct Percent {
 };
 }  // namespace
 
+bool is_mapping(Obj v) { return mapping_check(v); }
 Ref str_mod(Obj format, Obj args) {              // PyUnicode_Format
     Percent ctx;
     ctx.fmt = cps_of(as_str(format));

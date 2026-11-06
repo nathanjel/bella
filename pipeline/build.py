@@ -16,21 +16,27 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import marshal
 import os
+import re
 import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pipeline.backend.cpp import c_string, emit_module, header_macros  # noqa: E402
+from pipeline.backend.cpp import c_bytes, c_string, emit_module, header_macros  # noqa: E402
 from pipeline.closed_world import FROZEN, STDLIB, ProgramModule, find_program_modules, namespace_of, omitted_modules, read_source  # noqa: E402
+from pipeline.l1 import grammar as L  # noqa: E402
 from pipeline.l1.frontend import lower  # noqa: E402
 from pipeline.l1.grammar import Unsupported  # noqa: E402
+from pipeline.l1.staged import features, source_text  # noqa: E402
 from pipeline.l2 import grammar as G  # noqa: E402
 from pipeline.l2 import wf as wf2  # noqa: E402
 from pipeline.l2.lifetimes import lifetimes  # noqa: E402
@@ -65,21 +71,23 @@ PROGRAM_FLAGS = ["-O1", "-w", "-fno-tree-pta", *FP_FLAGS]
 LIBRARY_FLAGS = ["-O0", "-w", *FP_FLAGS]      # the standard library's units: a fifth of the compile time; speed is not a goal yet
 
 
-def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False) -> str:
-    module: G.Module = lifetimes(to_l2(lower(source, filename)))
+def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mode: str = "exec",
+           future: frozenset[str] = frozenset()) -> str:
+    module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future)))
     wf2.check(module, lifetimes=True)
     return emit_module(module, namespace, filename, prelude)
 
 
-def lowered_unit(source: str, filename: str, namespace: str) -> str:
+def lowered_unit(source: str, filename: str, namespace: str, mode: str = "exec", future: frozenset[str] = frozenset()) -> str:
     """to_cpp, kept under build/compiled/lowered by what decides its text: a closure's modules are
     the same for every program that imports them, and lowering them takes seconds each time. The
     compiler's macros are part of it: they decide which names the emitter escapes."""
-    key = _key(source.encode(), filename.encode(), namespace.encode(), *_pipeline_bytes(), " ".join(sorted(header_macros())).encode())
+    key = _key(source.encode(), filename.encode(), namespace.encode(), mode.encode(), " ".join(sorted(future)).encode(), *_pipeline_bytes(),
+               " ".join(sorted(header_macros())).encode())
     kept = BUILD / "lowered" / f"{namespace.replace('::', '_')}-{key}.cpp"
     if kept.exists():
         return kept.read_text(encoding="utf-8")
-    text = to_cpp(source, filename, namespace)
+    text = to_cpp(source, filename, namespace, mode=mode, future=future)
     kept.parent.mkdir(parents=True, exist_ok=True)
     tmp = kept.with_name(kept.name + f".{os.getpid()}.tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -145,7 +153,97 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
     return lib
 
 
-def main_unit(main_file: Path, modules: list[ProgramModule]) -> str:
+# ---- staged texts (docs/staging.md): what the dry runs recorded, compiled into the program ----
+# A program's own text runs only if the dry run saw it, and the dry run runs its module body: a program that cannot
+# have one is spared that. What a dry run of it fails on is the program's own to say, when it runs.
+_MAY_STAGE = re.compile(r"\b(?:exec|eval|compile|namedtuple|NamedTuple|dataclass|make_dataclass)\b")
+
+
+@dataclass(frozen=True)
+class StagedRow:
+    site: str
+    kind: str
+    source: bytes
+    is_bytes: bool
+    namespace: str | None                # None: it does not lower yet, and `why` says so
+    why: str
+    text: str
+    future: frozenset[str]
+
+
+@cache
+def _stdlib_artefact() -> dict[str, Any]:
+    from pipeline.staging import run as staging  # noqa: PLC0415  # the dry run's machinery, for the builds that need it
+    path = staging.stdlib_artefact(staging.phase1_blocked()).with_suffix(".bin")
+    with path.open("rb") as f:
+        artefact: dict[str, Any] = marshal.load(f)
+    return artefact
+
+
+def _program_artefact(program: Path) -> dict[str, Any] | None:
+    from pipeline.staging import run as staging  # noqa: PLC0415
+    try:
+        path = staging.program_artefact(program, None, staging.phase1_blocked()).with_suffix(".bin")
+    except SystemExit:
+        return None
+    with path.open("rb") as f:
+        artefact: dict[str, Any] = marshal.load(f)
+    return artefact
+
+
+def staged_tables(program: Path, modules: list[ProgramModule]) -> tuple[list[StagedRow], dict[str, str], dict[str, str]]:
+    """The texts of the sites this program has, and the sites' own refusals."""
+    names = {m.name for m in modules}
+    own = [read_source(program), *(read_source(m.path) for m in modules if m.path is not None and not m.frozen and m.origin is None
+                                   and not m.path.is_relative_to(STDLIB))]
+    artefacts = [_stdlib_artefact()] if names else []
+    if any(_MAY_STAGE.search(text) for text in own):
+        made = _program_artefact(program)
+        if made is not None:
+            artefacts.append(made)
+    names |= {"__main__"}
+    rows: dict[tuple[str, str, str | bytes], StagedRow] = {}
+    refused: dict[str, str] = {}
+    unstaged: dict[str, str] = {}
+    for artefact in artefacts:
+        for (site, kind, source), (_code, flags) in artefact["texts"].items():
+            if site.partition(":")[0] not in names or (site, kind, source) in rows:
+                continue
+            given = source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source
+            future = features(flags)
+            text = source_text(kind, source)
+            name = "bella::staged_" + _key(kind.encode(), given, " ".join(sorted(future)).encode())
+            try:
+                lowered_unit(text, "<string>", name, kind, future)
+                rows[(site, kind, source)] = StagedRow(site, kind, given, isinstance(source, bytes), name, "", text, future)
+            except (L.Unsupported, L.DialectError, SyntaxError, wf2.WellFormednessError) as exc:
+                rows[(site, kind, source)] = StagedRow(site, kind, given, isinstance(source, bytes), None, f"{type(exc).__name__}: {exc}", text, future)
+        refused.update({s: m for s, m in artefact["refused"].items() if s.partition(":")[0] in names})
+        unstaged.update({s: m for s, m in artefact["unstaged"].items() if s.partition(":")[0] in names})
+    return list(rows.values()), refused, unstaged
+
+
+def _staged_cpp(rows: list[StagedRow], refused: dict[str, str], unstaged: dict[str, str]) -> tuple[str, str]:
+    """Its declarations and tables, and the line of main() that registers them."""
+    if not rows and not refused and not unstaged:
+        return "", ""
+    decls = sorted({f"namespace {r.namespace} {{ ::bella::Ref module_body(::bella::Module* m); }}" for r in rows if r.namespace})
+    body = [f"    {{{c_string(r.site)}, {c_string(r.kind)}, {c_bytes(r.source)}, {len(r.source)}, {'true' if r.is_bytes else 'false'}, "
+            f"{'::' + r.namespace + '::module_body' if r.namespace else 'nullptr'}, {c_string(r.why)}}}" for r in rows]
+    def sites(name: str, table: dict[str, str]) -> tuple[str, str]:
+        if not table:
+            return "", "{}"
+        items = ",\n".join(f"    {{{c_string(s)}, {c_string(m)}}}" for s, m in sorted(table.items()))
+        return f"static const ::bella::StagedSite {name}[] = {{\n{items}\n}};\n", f"std::span<const ::bella::StagedSite>({name}, {len(table)})"
+    refused_table, refused_span = sites("STAGED_REFUSED", refused)
+    unstaged_table, unstaged_span = sites("STAGED_UNSTAGED", unstaged)
+    texts = "static const ::bella::StagedText STAGED[] = {\n" + ",\n".join(body) + "\n};\n" if rows else ""
+    texts_span = f"std::span<const ::bella::StagedText>(STAGED, {len(rows)})" if rows else "{}"
+    return ("\n".join(decls) + "\n" + texts + refused_table + unstaged_table,
+            f"    ::bella::register_staged({texts_span}, {refused_span}, {unstaged_span});\n")
+
+
+def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, str] = ("", "")) -> str:
     """main(): the runtime's start with the prelude, the main module's body, its __file__ (the
     absolute path, a link not followed, as CPython keeps it), sys.path[0] (the directory of the
     file a link leads to), and the registry of the modules compiled with it."""
@@ -169,8 +267,8 @@ def main_unit(main_file: Path, modules: list[ProgramModule]) -> str:
     table = f"static const ::bella::ModuleEntry MODULES[] = {{\n{entries}\n}};\n"
     count = len(rows)
     return ('// The main unit, compiled by Bella: the start, and the modules compiled with the program.\n'
-            '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table +
-            "\nint main(int argc, char** argv) {\n"
+            '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + staged[0] +
+            "\nint main(int argc, char** argv) {\n" + staged[1] +
             f"    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {c_string(os.path.abspath(main_file))},\n"
             f"                             {c_string(str(main_file.resolve().parent))}, {{{bodies}}},\n"
             f"                             std::span<const ::bella::ModuleEntry>(MODULES, {count}));\n}}\n")
@@ -209,7 +307,11 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
             shown = f"<frozen {m.name}>" if m.frozen else str(m.origin or m.path)
             library = m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB)
             units.append((lowered_unit(read_source(m.path), shown, namespace_of(m.name)), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS))
-    units.append((main_unit(program, modules), f"{program.stem}-main", PROGRAM_FLAGS))
+    rows, refused, unstaged = staged_tables(program, modules)
+    for name in sorted({r.namespace for r in rows if r.namespace}):
+        row = next(r for r in rows if r.namespace == name)
+        units.append((lowered_unit(row.text, "<string>", name, row.kind, row.future), name.rpartition("::")[2], LIBRARY_FLAGS))
+    units.append((main_unit(program, modules, _staged_cpp(rows, refused, unstaged)), f"{program.stem}-main", PROGRAM_FLAGS))
     with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
         objs = list(pool.map(lambda u: _object(u[0], u[1], cxx, std, u[2]), units))
     # the runtime's debug information is most of a binary, and every program would carry a copy

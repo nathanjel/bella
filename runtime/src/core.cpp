@@ -160,12 +160,23 @@ DictView::DictView(Obj d, Which w) : Object(Kind::DictView), which(w), dict(d) {
     incref(dict);
 }
 PyFunction::PyFunction(const Code* c, Ref (*e)(PyFunction*, Args), Module* m)
-    : Object(Kind::PyFunction), code(c), entry(e), module(m) { cls = types().function; }
+    : Object(Kind::PyFunction), code(c), entry(e), module(m) {
+    cls = types().function;
+    incref(static_cast<Object*>(m));
+}
 Module::Module(const char* n) : Object(Kind::Module), name(str_new(n)), dict(new Dict) {
     cls = types().module;
     flags |= IMMORTAL;                           // phase 1: modules live as long as the program
     incref(dict);
     all_modules().push_back(this);
+}
+Module::Module(Dict* globals, Dict* given_builtins) : Object(Kind::Module), name(str_new("<string>")), dict(globals) {
+    cls = types().module;
+    incref(dict);
+    if (given_builtins != builtins_module()->dict) {
+        builtins = given_builtins;
+        incref(builtins);
+    }
 }
 void forget_module(const Module* m) { std::erase(all_modules(), m); }
 std::vector<Module*>& all_modules() {
@@ -192,8 +203,18 @@ bool register_deaths() {
     destroyer(Kind::Tuple) = [](Object* o) { release_backwards(static_cast<Tuple*>(o)->items); destroy<Tuple>(o); };
     destroyer(Kind::List) = [](Object* o) { release_backwards(static_cast<List*>(o)->items); destroy<List>(o); };
     destroyer(Kind::Cell) = [](Object* o) { decref(std::exchange(static_cast<Cell*>(o)->value, Obj{})); destroy<Cell>(o); };
+    destroyer(Kind::Module) = [](Object* o) {     // a staged text's: the program's modules are immortal
+        auto* m = static_cast<Module*>(o);
+        Dict* d = std::exchange(m->dict, nullptr);
+        Dict* b = std::exchange(m->builtins, nullptr);
+        decref(d);
+        if (b != nullptr) decref(b);
+        m->name = Ref{};
+        destroy<Module>(o);
+    };
     destroyer(Kind::PyFunction) = [](Object* o) {
-        auto* f = static_cast<PyFunction*>(o);     // func_clear's order
+        auto* f = static_cast<PyFunction*>(o);     // func_clear's order: its globals first
+        decref(static_cast<Object*>(f->module));
         f->defaults = Ref{};
         f->kwdefaults = Ref{};
         f->doc = Ref{};

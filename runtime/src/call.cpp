@@ -377,11 +377,11 @@ Ref load_global(Module* m, const Str* name) {
     Dict* ns = m->dict;
     Obj v = dict_get(ns, Obj::of(name));
     if (v.is_unset()) {
-        ns = builtins_module()->dict;
+        ns = m->builtins != nullptr ? m->builtins : builtins_module()->dict;
         v = dict_get(ns, Obj::of(name));
     }
     if (v.is_unset()) {
-        refuse_absent_global(name);
+        if (m->builtins == nullptr) refuse_absent_global(name);
         raise_name_error(name);
     }
     if (is_kind(v, Kind::LazyImport)) return lazy_reify(v, name, Obj::of(ns));
@@ -1077,6 +1077,29 @@ Ref b_abs(Obj, Args a) {                      // PyNumber_Absolute: the int's ow
     if (has) return r;
     raise_new("TypeError", "bad operand type for abs(): '" + type_of(v)->name + "'");
 }
+Ref sys_intern(Obj, Args a) {                     // sys_intern_impl: the str every equal one gives; a str subclass's cannot be
+    onearg(a, "sys.intern");
+    const Str* s = as_str(a.pos(0));
+    if (s == nullptr) raise_new("TypeError", "intern() argument must be str, not " + fully_qualified_name(type_of(a.pos(0))));
+    return Ref::share(Obj::of(intern(std::string_view(s->text))));
+}
+Ref sys_getframemodulename(Obj, Args a) {         // sys__getframemodulename_impl: the function's __module__ at that depth
+    std::vector<Obj> given;
+    if (a.npos > 1 || a.npos + a.nkw > 1) raise_new("TypeError", "_getframemodulename() takes at most 1 argument (" + std::to_string(a.npos + a.nkw) + " given)");
+    Obj depth_arg = a.npos == 1 ? a.pos(0) : a.nkw == 1 ? a.kw(0) : Obj::small(0);
+    if (a.nkw == 1 && a.kwnames[0]->text != "depth") throw NotImplemented("_getframemodulename() with an unexpected keyword argument (the suggestion in its message)");
+    std::int64_t depth = clipped_index(depth_arg);
+    detail::FrameRecord* f = detail::current_frame();
+    while (f != nullptr && !f->code->shown) f = f->caller;
+    while (f != nullptr && depth-- > 0) {
+        f = f->caller;
+        while (f != nullptr && !f->code->shown) f = f->caller;
+    }
+    if (f == nullptr) return none_ref();
+    if (f->code->module_rebound) throw NotImplemented("sys._getframemodulename of a frame whose function's __module__ was rebound");
+    Obj name = dict_get(f->module->dict, Obj::of(intern("__name__")));
+    return name.is_unset() ? none_ref() : Ref::share(name);
+}
 Ref b_callable(Obj, Args a) {
     onearg(a, "callable");
     Kind k = a.pos(0).is_object() ? a.pos(0).object()->kind : Kind::Bool;
@@ -1225,6 +1248,9 @@ Module* make_builtins() {
     put(d, "NotImplemented", Obj::of(NOTIMPLEMENTED));
     put(d, "Ellipsis", Obj::of(ELLIPSIS));
     put_builtin(d, "len", b_len);
+    put_builtin(d, "eval", b_eval);
+    put_builtin(d, "exec", b_exec);
+    put_builtin(d, "compile", b_compile);
     put_builtin(d, "sorted", b_sorted);
     fill_int_builtins(d);
     put_builtin(d, "repr", b_repr);
@@ -1379,6 +1405,8 @@ Module* make_sys(int argc, char** argv) {
     }
     put(d, "argv", args.get());
     put_builtin(d, "exit", sys_exit);
+    put_builtin(d, "intern", sys_intern);
+    put_builtin(d, "_getframemodulename", sys_getframemodulename);
     put(d, "maxsize", int_from_i64(INT64_MAX).get());
     fill_int_sys(d);
     return m;

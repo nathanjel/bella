@@ -183,6 +183,7 @@ struct Code {
     // false for code CPython runs without a frame of its own: the prelude (C functions there)
     // and an inlined comprehension (PEP 709); such a frame never enters a traceback (RL-223/224)
     bool shown = true;
+    mutable bool module_rebound = false;         // a function of this code had its __module__ rebound: a frame's name is no longer its globals'
 };
 
 struct PyFunction : Object {
@@ -202,7 +203,9 @@ using Dict = DictObject;                         // object.hpp's: every dict, an
 struct Module : Object {
     Ref name;
     Dict* dict;                                  // owned
+    Dict* builtins = nullptr;                    // a staged text's, when not the builtins module's own (owned)
     explicit Module(const char* n);
+    Module(Dict* globals, Dict* given_builtins); // a text's frame, which lives as its functions do: not a module of the program's
 };
 void forget_module(const Module* m);             // the runtime's own: cleared by nothing at exit
 std::vector<Module*>& all_modules();             // every module made, oldest first (immortal: D-19)
@@ -337,6 +340,7 @@ Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
 // ---- format (runtime/src/format.cpp) ----
 Ref object_format(Obj obj, const Str* spec);      // PyObject_Format
 Ref str_mod(Obj format, Obj args);                // PyUnicode_Format
+bool is_mapping(Obj v);                           // PyMapping_Check
 Ref int_from_number(Obj x);                       // PyNumber_Long
 Ref ascii_of(Obj v);                              // PyObject_ASCII
 Ref str_format_m(Obj self, Args a);
@@ -818,6 +822,25 @@ Ref str_rstrip_m(Obj self, Args a);
 Ref str_replace_m(Obj self, Args a);
 
 // ---- imports (runtime/src/imports.cpp; docs/emitter.md section 7) ----
+// A text the staging dry run recorded, compiled by the build (runtime/src/staged.cpp): `body` is null when it
+// does not lower yet, and `why` says so. A site's own refusals come from the artefact too.
+struct StagedText {
+    const char* site;
+    const char* kind;
+    const char* source;
+    std::size_t length;
+    bool bytes;
+    Ref (*body)(Module*);
+    const char* why;
+};
+struct StagedSite {
+    const char* site;
+    const char* message;
+};
+void register_staged(std::span<const StagedText> texts, std::span<const StagedSite> refused, std::span<const StagedSite> unstaged);
+Ref b_eval(Obj, Args a);
+Ref b_exec(Obj, Args a);
+Ref b_compile(Obj, Args a);
 // What the build knows of a module: compiled into the program (its body, the file it came from:
 // __file__, and whether it is a package: an __init__.py, __path__ its directory), as a source
 // file or a frozen module of CPython's; a namespace package, refused when imported; or one the

@@ -1325,9 +1325,25 @@ Ref fn_module(Obj self) {                        // set from the globals when ma
     Obj n = dict_get(fn_of(self)->module->dict, Obj::of(N("__name__")));
     return n.is_unset() ? none_ref() : Ref::share(n);
 }
-void set_fn_module(Obj self, Obj v) { fn_of(self)->module_name = v.is_unset() ? none_ref() : Ref::share(v); }
+void set_fn_module(Obj self, Obj v) {
+    fn_of(self)->module_name = v.is_unset() ? none_ref() : Ref::share(v);
+    fn_of(self)->code->module_rebound = true;
+}
 Ref fn_defaults(Obj self) { return fn_of(self)->defaults.get().is_unset() ? none_ref() : fn_of(self)->defaults; }
 Ref fn_kwdefaults(Obj self) { return fn_of(self)->kwdefaults.get().is_unset() ? none_ref() : fn_of(self)->kwdefaults; }
+Ref fn_globals(Obj self) { return Ref::share(Obj::of(fn_of(self)->module->dict)); }
+Ref fn_builtins(Obj self) {
+    Module* m = fn_of(self)->module;
+    return Ref::share(Obj::of(m->builtins != nullptr ? m->builtins : builtins_module()->dict));
+}
+void set_fn_defaults(Obj self, Obj v) {          // func_set_defaults: None and del mean none at all
+    if (!v.is_unset() && v != None() && !is_kind(v, Kind::Tuple)) raise_new("TypeError", "__defaults__ must be set to a tuple object");
+    fn_of(self)->defaults = v.is_unset() || v == None() ? Ref{} : Ref::share(v);
+}
+void set_fn_kwdefaults(Obj self, Obj v) {        // func_set_kwdefaults
+    if (!v.is_unset() && v != None() && !is_kind(v, Kind::Dict)) raise_new("TypeError", "__kwdefaults__ must be set to a dict object");
+    fn_of(self)->kwdefaults = v.is_unset() || v == None() ? Ref{} : Ref::share(v);
+}
 Ref fn_annotate(Obj self) { return fn_of(self)->annotate.get().is_unset() ? none_ref() : fn_of(self)->annotate; }
 void set_fn_annotate(Obj self, Obj v) {          // function___annotate___set_impl
     if (v.is_unset()) raise_new("TypeError", "__annotate__ cannot be deleted");
@@ -1938,8 +1954,17 @@ void init_types() {
     getset(t.function, "__doc__", fn_doc, set_fn_doc);
     getset(t.function, "__module__", fn_module, set_fn_module);
     static_cast<GetSet*>(t.function->attrs.find(N("__module__"))->object())->deletable = true;
-    getset(t.function, "__defaults__", fn_defaults);
-    getset(t.function, "__kwdefaults__", fn_kwdefaults);
+    for (auto [name, get] : std::initializer_list<std::pair<const char*, Ref (*)(Obj)>>{{"__globals__", fn_globals}, {"__builtins__", fn_builtins}}) {
+        auto* m = new GetSet(name, t.function, get, nullptr);
+        m->cls = types().member_descriptor;
+        t.function->attrs.set(N(name), Obj::of(m));
+    }
+    for (auto [name, get, set] : std::initializer_list<std::tuple<const char*, Ref (*)(Obj), void (*)(Obj, Obj)>>{
+             {"__defaults__", fn_defaults, set_fn_defaults}, {"__kwdefaults__", fn_kwdefaults, set_fn_kwdefaults}}) {
+        auto* g = new GetSet(name, t.function, get, set);
+        g->deletable = true;
+        t.function->attrs.set(N(name), Obj::of(g));
+    }
     getset(t.function, "__type_params__", fn_type_params, set_fn_type_params);
     static_cast<GetSet*>(t.function->attrs.find(N("__type_params__"))->object())->deletable = true;
     getset(t.function, "__annotate__", fn_annotate, set_fn_annotate);

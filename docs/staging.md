@@ -130,6 +130,11 @@ call it.
     dataclasses:_FuncBuilder.add_fns_to_class:499 of a text the dry run did not stage`.
   * A dataclass made inside a function is refused only when no identical text was staged. That
     is the rule; `bella-lint` warns about such definitions (S-3).
+* **In a compiled program** (`runtime/src/staged.cpp`, `staged_tables` in `pipeline/build.py`) each recorded text of a site in the
+  program's closure is lowered through L2 and compiled into the binary, one unit per distinct text. A hit runs its body in a
+  `Module` made for the call, as long-lived as its functions: its globals are the dict given, and its builtins are what that
+  dict's `__builtins__` said at that moment, as `_PyEval_BuiltinsFromGlobals` does. A program's own module body is only dry-run
+  when its source could stage anything; otherwise its texts miss and stop with E-01, as any unstaged text does.
 * **Policy refusals.** A function in the manifest's `[refused]` table is refused when it is
   called, malformed input included (`gettext.c2py("bad")` is refused, not a catchable
   `ValueError`), and whether or not its text was staged. C-7-16 needs the latter: the dry run of

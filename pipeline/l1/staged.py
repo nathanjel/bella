@@ -39,7 +39,7 @@ def flags_of(names: frozenset[str]) -> int:
     return out & _FUTURE_MASK
 
 
-def _text(kind: str, source: str | bytes) -> str:
+def source_text(kind: str, source: str | bytes) -> str:
     """What exec, eval or compile compiles: bytes decoded by their declaration (PEP 263), and
     eval's leading spaces and tabs stripped."""
     if isinstance(source, bytes):
@@ -80,7 +80,7 @@ class Staged:
     def _lower(kind: str, source: str | bytes, flags: int) -> L.Module | str:
         """The text as L1, or why it does not lower (a refusal when it is reached)."""
         try:
-            module = lower(_text(kind, source), "<string>", mode="eval" if kind == "eval" else "exec",
+            module = lower(source_text(kind, source), "<string>", mode="eval" if kind == "eval" else "exec",
                            inherit_future=features(flags))
             check(module, frozenset({"__file__"}), strict=False)
             return module
