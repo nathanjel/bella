@@ -6,6 +6,8 @@ runtime/tests/test_prelude.py against the builtins it stands for.
 """
 
 __all__ = ["reversed", "enumerate", "zip", "map", "filter", "min", "max", "sum", "any", "all"]
+__intrinsics__ = ["_callable_iterator"]
+__hidden_classes__ = ["callable_iterator"]       # a type of the builtins that is no name of theirs
 
 
 try:
@@ -35,6 +37,37 @@ except NameError:
                 get = getattr(type(found), "__get__", None)
                 return (found if get is None else get(found, obj, type(obj)),)
         return ()
+
+
+class callable_iterator:                         # iter(callable, sentinel): Objects/iterobject.c, calliterobject
+    __slots__ = ("_callable", "_sentinel")
+
+    def __iter__(self) -> object:
+        return self
+
+    def __next__(self) -> object:                # calliter_iternext
+        if self._callable is None:
+            raise StopIteration
+        try:
+            result = self._callable()
+        except StopIteration:
+            self._callable = None
+            self._sentinel = None
+            raise
+        if self._sentinel == result:
+            self._callable = None
+            self._sentinel = None
+            raise StopIteration
+        return result
+
+
+def _callable_iterator(function: object, sentinel: object) -> object:
+    if not callable(function):
+        raise TypeError("iter(v, w): v must be callable")
+    made = _bella_new_instance(callable_iterator)
+    made._callable = function
+    made._sentinel = sentinel
+    return made
 
 
 class reversed:

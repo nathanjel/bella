@@ -585,8 +585,8 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
         return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
     }
     if (is_kind(a, Kind::Builtin) && is_kind(b, Kind::Builtin) &&
-        (a.object()->cls == types().builtin || a.object()->cls == types().method_wrapper) &&
-        (b.object()->cls == types().builtin || b.object()->cls == types().method_wrapper)) {   // meth_richcompare, wrapper_richcompare: the same function of the same object
+        (a.object()->cls == types().builtin || a.object()->cls == types().builtin_method || a.object()->cls == types().method_wrapper) &&
+        (b.object()->cls == types().builtin || b.object()->cls == types().builtin_method || b.object()->cls == types().method_wrapper)) {   // meth_richcompare, wrapper_richcompare: the same function of the same object
         if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
         auto *b0 = static_cast<Builtin*>(a.object()), *b1 = static_cast<Builtin*>(b.object());
         bool eq = b0->fn == b1->fn && b0->written.get() == b1->written.get() && b0->self == b1->self;
@@ -832,8 +832,9 @@ std::string str_repr(const Str* s) {
         else if (c < 0x7f) out += static_cast<char>(c);
         else if (c <= 0xA0 || c == 0xAD) out += "\\x" + hex(c, 2);      // Latin-1's non-printable code points
         else if (c < 0x100) Str::append_utf8(out, c);
-        else if (c >= 0xD800 && c <= 0xDFFF) out += "\\u" + hex(c, 4);   // a surrogate: never printable, whatever the database says
-        else throw NotImplemented("repr() of text beyond Latin-1 needs the Unicode database (unicodedata, D-8)");
+        else if (unicode_is_printable(c)) Str::append_utf8(out, c);
+        else if (c > 0xFFFF) out += "\\U" + hex(c, 8);
+        else out += "\\u" + hex(c, 4);
     }
     out += quote;
     return out;

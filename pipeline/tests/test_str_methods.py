@@ -70,7 +70,6 @@ REFUSED = (
     ('"é".isnumeric()', "str.isnumeric"),
     ('"é".isspace()', "str.isspace"),
     ('"é".isprintable()', "str.isprintable"),
-    ('"é".isidentifier()', "str.isidentifier"),
     ('"é".islower()', "str.islower"),
     ('"é".isupper()', "str.isupper"),
     ('"é".istitle()', "str.istitle"),

@@ -28,6 +28,7 @@ namespace prelude_stat { Ref module_body(Module* m); }        // runtime/prelude
 namespace prelude_functools { Ref module_body(Module* m); }   // runtime/prelude/_functools.py
 namespace prelude_errno { Ref module_body(Module* m); }       // runtime/prelude/errno.py
 namespace prelude_posix { Ref module_body(Module* m); }       // runtime/prelude/posix.py
+namespace prelude_sre { Ref module_body(Module* m); }         // runtime/prelude/_sre.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -326,7 +327,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_weakref", {fill_weakref}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}};
     return table;
 }
 }  // namespace
@@ -598,6 +599,10 @@ void fill_functools(Module* m) {
     g->cls = types().member_descriptor;
     g->deletable = true;
     key->attrs.set(N("obj"), Obj::of(g));
+}
+void fill_sre(Module* m) {
+    fill_in_python(m, "_sre", "_sre", prelude_sre::module_body,
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sre_call", i_sre_call}, {"_present", i_present_c_class}});
 }
 void fill_posix(Module* m) {
     fill_in_python(m, "posix", "posix", prelude_posix::module_body,

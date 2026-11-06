@@ -65,6 +65,7 @@ Types& types() {
         x.classmethod_descriptor = builtin_type("classmethod_descriptor", {x.object});
         x.wrapper_descriptor = builtin_type("wrapper_descriptor", {x.object});
         x.method_wrapper = builtin_type("method-wrapper", {x.object});
+        x.builtin_method = builtin_type("builtin_method", {x.builtin});
         x.getset_descriptor = builtin_type("getset_descriptor", {x.object});
         // a __slots__ member's type (object.hpp's SlotDescriptor): made a type here, or type(d) has
         // no class of its own (found while verifying RL-228's round)

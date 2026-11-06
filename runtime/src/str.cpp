@@ -442,9 +442,12 @@ Ref str_isprintable_m(Obj self, Args a) {        // true of nothing at all
 }
 Ref str_isidentifier_m(Obj self, Args a) {
     noargs(a, "str.isidentifier");
-    const Str* s = ascii_only(self, "isidentifier");
-    if (s->text.empty() || is_digit(s->text[0])) return Ref::steal(boolean(false));
-    return Ref::steal(boolean(std::all_of(s->text.begin(), s->text.end(), [](char c) { return is_lower(c) || is_upper(c) || is_digit(c) || c == '_'; })));
+    const Str* s = self_str(self, "isidentifier");   // PyUnicode_IsIdentifier
+    if (s->length == 0) return Ref::steal(boolean(false));
+    if (s->at(0) != U'_' && !unicode_is_xid_start(s->at(0))) return Ref::steal(boolean(false));
+    for (std::size_t i = 1; i < s->length; ++i)
+        if (!unicode_is_xid_continue(s->at(i))) return Ref::steal(boolean(false));
+    return Ref::steal(boolean(true));
 }
 Ref str_islower_m(Obj self, Args a) {
     noargs(a, "str.islower");

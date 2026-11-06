@@ -83,6 +83,7 @@ struct Builtin : Object {
     Module* home = nullptr;                      // a module's function: its __self__ (m_self)
     Ref module_name;                             // its __module__ (m_module), a member a program can set
     Ref written;                                 // a C type's method the prelude writes in Python: what runs (fn is not called)
+    bool bound_cmethod = false;                  // METH_METHOD in C: bound, a builtin_method (PyCMethod_Type)
     Builtin(std::string n, NativeFn f, Obj s = Obj{}, Binding b = Binding::Function);
 };
 struct GetSet : Object {                         // a getset descriptor: a data descriptor in C++
@@ -228,7 +229,7 @@ struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *frozendict, *dict_reversekeyiterator, *dict_reversevalueiterator, *dict_reverseitemiterator, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_, *complex_, *union_, *generator,
-        *method_descriptor, *classmethod_descriptor, *wrapper_descriptor, *method_wrapper, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
+        *method_descriptor, *classmethod_descriptor, *wrapper_descriptor, *method_wrapper, *builtin_method, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
         *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator;
 };
@@ -327,6 +328,18 @@ void fill_string(Module* m);                      // and runtime/prelude/_string
 void fill_stat(Module* m);                        // and runtime/prelude/_stat.py
 void fill_functools(Module* m);                   // and runtime/prelude/_functools.py
 void fill_errno(Module* m);                       // and runtime/prelude/errno.py
+bool unicode_is_decimal(std::uint32_t ch);        // runtime/src/unicode.cpp: Py_UNICODE_ISDECIMAL and its kin
+bool unicode_is_space(std::uint32_t ch);
+bool unicode_is_linebreak(std::uint32_t ch);
+bool unicode_is_alnum(std::uint32_t ch);
+bool unicode_is_printable(std::uint32_t ch);
+bool unicode_is_xid_start(std::uint32_t ch);
+bool unicode_is_xid_continue(std::uint32_t ch);
+std::uint32_t unicode_to_lower(std::uint32_t ch);
+std::uint32_t unicode_to_upper(std::uint32_t ch);
+void fill_sre(Module* m);                         // and runtime/prelude/_sre.py, runtime/src/sre.cpp
+Ref i_sre_call(Obj, Args a);                      // _sre.py's: the engine, by name
+Ref i_present_c_class(Obj, Args a);               // a prelude's: (cls, module) a type with no instances from Python, named for the module
 void fill_posix(Module* m);                       // and runtime/prelude/posix.py, runtime/src/posix.cpp
 Ref i_posix_sys(Obj, Args a);                     // posix.py's: its system calls, by name
 Ref i_structseq(Obj, Args a);                     // a prelude module's: bootstrap.py's _bella_structseq

@@ -164,6 +164,7 @@ static Ref bind_builtin(Builtin* b, Obj receiver) {
     made->owner = b->owner;                      // how it presents itself
     made->written = b->written;
     if (b->cls == types().wrapper_descriptor) made->cls = types().method_wrapper;
+    if (b->bound_cmethod) made->cls = types().builtin_method;
     return bound;
 }
 
@@ -2176,6 +2177,16 @@ Ref type_or(Obj a, Obj b) {
     Ref fn = Ref::share(dict_get(bootstrap_of_types()->dict, Obj::of(N("_union_type_or"))));
     return invoke(fn.get(), {a, b});
 }
+Ref i_present_c_class(Obj, Args a) {             // (cls, module): named for the module, made by the module's functions alone
+    positional_only(a, "_present", 4, 4);        // (cls, module, its __getitem__ is mp_subscript alone, its METH_METHOD methods)
+    ClassObject* c = as_class(a.pos(0));
+    present_native_class(c, as_str(a.pos(1))->text);
+    c->disallow_instantiation = true;
+    c->mapping_getitem = truth(a.pos(2));
+    for (Obj n : static_cast<Tuple*>(a.pos(3).object())->items)
+        if (const Obj* m = c->attrs.find(intern(as_str(n)->text)); m != nullptr && is_kind(*m, Kind::Builtin)) static_cast<Builtin*>(m->object())->bound_cmethod = true;
+    return none_ref();
+}
 Ref i_bella_new_instance(Obj, Args a) {
     positional_only(a, "_bella_new_instance", 1, 1);
     ClassObject* c = as_class(a.pos(0));
@@ -2272,6 +2283,19 @@ static void object_method_written(Module* bootstrap, const char* name, const cha
     b->flags |= IMMORTAL;
     types().object->attrs.set(intern(name), Obj::of(b));
 }
+// A property the prelude writes where the C has a member or a getset: the descriptor the names table says, reading it. GetSet has a plain
+// function, so a pool of them, each with the Python getter of its place
+namespace {
+std::vector<Ref>& python_getters() {
+    static std::vector<Ref> pool;
+    return pool;
+}
+template <std::size_t I>
+Ref python_getter(Obj self) { return invoke(python_getters()[I].get(), {self}); }
+template <std::size_t... I>
+constexpr std::array<Ref (*)(Obj), sizeof...(I)> python_getter_table(std::index_sequence<I...>) { return {python_getter<I>...}; }
+constexpr auto PYTHON_GETTERS = python_getter_table(std::make_index_sequence<64>{});
+}  // namespace
 static Ref generic_new(Obj self, Args a) {        // PyType_GenericNew, under tp_new_wrapper: the arguments are __init__'s
     return own(new_instance(new_wrapper_class(a, as_class(self))));
 }
@@ -2284,6 +2308,17 @@ void present_methods(ClassObject* c) {
         if (is_kind(v, Kind::Builtin)) {         // one the file's C++ made for it
             auto* made = static_cast<Builtin*>(v.object());
             if (made->self.is_unset() && made->binding == Binding::Method && kind == "wrapper_descriptor") made->cls = types().wrapper_descriptor;
+            continue;
+        }
+        if (Obj property = dict_get(builtins_module()->dict, Obj::of(N("property")));
+            !property.is_unset() && type_of(v) == as_class(property) && (kind == "member_descriptor" || kind == "getset_descriptor")) {
+            Ref getter = getattr(v, N("fget")), setter = getattr(v, N("fset"));
+            if (getter.get() == None() || setter.get() != None()) throw NotImplemented("a prelude's property with no getter or with a setter: " + name->text);
+            if (python_getters().size() == PYTHON_GETTERS.size()) throw NotImplemented("more properties in the prelude than the pool of getters holds");
+            auto* g = new GetSet(name->text.c_str(), c, PYTHON_GETTERS[python_getters().size()], nullptr);
+            python_getters().push_back(std::move(getter));
+            if (kind == "member_descriptor") g->cls = types().member_descriptor;
+            decref(c->attrs.set(name, Obj::of(g)));
             continue;
         }
         Ref written;

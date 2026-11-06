@@ -1052,7 +1052,7 @@ Ref frozendict_fromkeys_m(Obj cls, Args a) {
 
 Ref b_iter(Obj, Args a) {
     clinic(a, "iter", "iter", 1, 2);
-    if (a.npos == 2) throw NotImplemented("iter(callable, sentinel)");
+    if (a.npos == 2) return invoke(builtin("_callable_iterator").get(), {a.pos(0), a.pos(1)});
     return iter(a.pos(0));
 }
 Ref b_next(Obj, Args a) {
@@ -2189,6 +2189,16 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                         }
                         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;   // print is a builtin
                         dict_set(builtins_module()->dict, n, v);
+                    }
+                if (Obj hidden = dict_get(pm->dict, Obj::of(intern("__hidden_classes__"))); !hidden.is_unset())
+                    for (Obj n : static_cast<List*>(hidden.object())->items) {
+                        auto* c = static_cast<ClassObject*>(dict_get(pm->dict, n).object());
+                        prelude_classes().insert(c);
+                        forget_python_origin(c);
+                        present_methods(c);
+                        c->final_type = cpython_has("final", c->name);
+                        c->has_weakref = cpython_has("weakref", c->name);
+                        c->disallow_instantiation = cpython_attribute_kind(c, "__new__").empty();
                     }
                 if (!all.is_unset())                 // now that the builtins have what a class's __new__ is wrapped in
                     for (Obj n : static_cast<List*>(all.object())->items)

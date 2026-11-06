@@ -83,6 +83,7 @@ record:
 verify:
 	$(PY) conformance/harness.py verify
 	$(PY) tools/cpython_names.py --check
+	$(PY) tools/unicode_tables.py --check
 
 check-conformance:
 	$(PY) conformance/harness.py check --runner "$(RUNNER)"
