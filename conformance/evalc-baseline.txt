@@ -40,6 +40,7 @@ C-7-20_itertools.py
 C-7-21_operator.py
 C-7-22_thread_primitives.py
 C-7-23_deque_and_defaultdict.py
+C-7-24_stat.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

@@ -49,7 +49,8 @@ PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT 
 # first import (runtime/src/imports.cpp)
 NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runtime" / "prelude" / "_operator.py",
                     ROOT / "runtime" / "prelude" / "_weakref.py", ROOT / "runtime" / "prelude" / "_thread.py",
-                    ROOT / "runtime" / "prelude" / "_collections.py", ROOT / "runtime" / "prelude" / "_string.py"]
+                    ROOT / "runtime" / "prelude" / "_collections.py", ROOT / "runtime" / "prelude" / "_string.py",
+                    ROOT / "runtime" / "prelude" / "_stat.py"]
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra"]

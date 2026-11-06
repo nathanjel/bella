@@ -315,6 +315,7 @@ void fill_operator(Module* m);                    // and runtime/prelude/_operat
 void fill_thread(Module* m);                      // and runtime/prelude/_thread.py
 void fill_collections(Module* m);                 // and runtime/prelude/_collections.py
 void fill_string(Module* m);                      // and runtime/prelude/_string.py
+void fill_stat(Module* m);                        // and runtime/prelude/_stat.py
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);

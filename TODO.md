@@ -477,7 +477,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * `str %` done (C-6-16, `runtime/src/format.cpp`).
            * Next, what the survey and a walk of the built-ins' names found: `bytes %`; subclasses of `tuple`, `list` and `str` (`namedtuple`); `complex`;
              `_heapq`; `object.__getstate__` and `copyreg`; generators, which stop `Counter.__eq__` and every
-             generator expression, and stop more as these go; `_ast` 6, `_stat` 6, `gc` 4.
+             generator expression, and stop more as these go; `_ast` 6, `posix` 6 (`_stat` done, C-7-24; `os` is what stops them), `gc` 4.
              Generators are refused where they run (`weakref`'s iteration, a generator expression), and
              stop more once these are past. Then start-up modules run at start-up.
        * 3c, its first half done: weak references and resurrection (C-9-03, C-9-04, C-9-10), in the model
