@@ -393,7 +393,16 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   waits for `list.sort`.
 * CPython's start-up modules are not imported at start-up yet, so `sys.modules` shows them only once
   imported: a wrong answer for a program that asks before importing them, until they can run there.
-* 3b: generators (state machines, design section 10.3): C-3-04.
+* 3b: generators (state machines, design section 10.3): C-3-04, C-3-15, C-3-29, C-3-41. A generator function is two C++
+  functions: the one the program calls binds the arguments into a new `rt::Generator` and returns it; the other is one
+  resume, a `switch (gen1->pc)` whose `case` labels sit at the yields. A case label may be inside an `if` or a loop, and
+  whatever a yield crosses lives in `gen1->slots`, never on the C++ stack: a region that yields has its temporaries there.
+  But C++ cannot jump into a try block or back into a handler, so a `try` that yields has no C++ try of its own. One try
+  around the switch catches everything, and `cur1`, the row of a table written with the body, says where each exception
+  goes on and what it drops first, as CPython's exception table does. A handler's exception is kept in `gen1->errors[row]`
+  and pushed on the handled stack explicitly. A `try` with no yield in it is emitted as in any function. The frame's
+  handled exceptions leave the stack at each yield and return at each resume (`gi_exc_state`), and what a suspended frame
+  holds dies when `gen_die` closes it, as `gen_dealloc` does.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3; with it,
   a caught exception keeps its frame's locals (RL-222, D-12).
 * Lines: a frame's line is its statement's first line; CPython gives the failing instruction's,

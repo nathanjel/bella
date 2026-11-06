@@ -37,6 +37,7 @@ Types& types() {
         x.bool_ = builtin_type("bool", {x.int_});
         x.float_ = builtin_type("float", {x.object});
         x.complex_ = builtin_type("complex", {x.object});
+        x.generator = builtin_type("generator", {x.object});
         x.str = builtin_type("str", {x.object});
         x.none = builtin_type("NoneType", {x.object});
         x.notimplemented = builtin_type("NotImplementedType", {x.object});
@@ -245,6 +246,7 @@ bool register_deaths() {
     destroyer(Kind::BigInt) = [](Object* o) { destroy<BigInt>(o); };
     destroyer(Kind::Float) = [](Object* o) { destroy<Float>(o); };
     destroyer(Kind::Complex) = [](Object* o) { destroy<Complex>(o); };
+    destroyer(Kind::Generator) = [](Object* o) { gen_die(o); };
     destroyer(Kind::Iterator) = [](Object* o) { decref(std::exchange(static_cast<Iterator*>(o)->seq, Obj{})); destroy<Iterator>(o); };
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::Traceback) = [](Object* o) {
@@ -681,7 +683,7 @@ struct ExceptionClasses {
                  {"AttributeError", "Exception"}, {"LookupError", "Exception"}, {"IndexError", "LookupError"},
                  {"KeyError", "LookupError"}, {"NameError", "Exception"}, {"UnboundLocalError", "NameError"},
                  {"RuntimeError", "Exception"}, {"NotImplementedError", "RuntimeError"},
-                 {"RecursionError", "RuntimeError"}, {"MemoryError", "Exception"}, {"ReferenceError", "Exception"}, {"StopIteration", "Exception"}, {"TypeError", "Exception"},
+                 {"RecursionError", "RuntimeError"}, {"MemoryError", "Exception"}, {"ReferenceError", "Exception"}, {"TypeError", "Exception"},
                  {"ValueError", "Exception"}, {"ImportError", "Exception"}, {"ModuleNotFoundError", "ImportError"},
                  {"ImportCycleError", "ImportError"},
                  {"UnicodeError", "ValueError"}, {"UnicodeEncodeError", "UnicodeError"},
@@ -695,6 +697,7 @@ struct ExceptionClasses {
             make(n, b, own);
         }
         make("SystemExit", "BaseException", exception_fields({"code"}));
+        make("StopIteration", "Exception", exception_fields({"value"}));
     }
 };
 ExceptionClasses& exceptions() {
@@ -733,6 +736,7 @@ std::vector<Obj>& handled() {                    // the exceptions being handled
 }
 }  // namespace
 
+std::vector<Obj>& handled_exceptions() { return handled(); }
 Handling::Handling(const Ref& exc) {
     incref(exc.get());
     handled().push_back(exc.get());

@@ -1077,6 +1077,19 @@ Ref b_abs(Obj, Args a) {                      // PyNumber_Absolute: the int's ow
     if (has) return r;
     raise_new("TypeError", "bad operand type for abs(): '" + type_of(v)->name + "'");
 }
+Ref sys_exception(Obj, Args a) {                  // sys_exception_impl: what is being handled, innermost first
+    noargs(a, "sys.exception");
+    const auto& stack = handled_exceptions();
+    return stack.empty() ? none_ref() : Ref::share(stack.back());
+}
+Ref sys_exc_info(Obj, Args a) {                   // sys_exc_info_impl: (type, value, traceback)
+    noargs(a, "sys.exc_info");
+    const auto& stack = handled_exceptions();
+    if (stack.empty()) return tuple_new({None(), None(), None()});
+    Obj exc = stack.back();
+    Ref tb = getattr(exc, intern("__traceback__"));
+    return tuple_new({Obj::of(type_of(exc)), exc, tb.get()});
+}
 Ref sys_intern(Obj, Args a) {                     // sys_intern_impl: the str every equal one gives; a str subclass's cannot be
     onearg(a, "sys.intern");
     const Str* s = as_str(a.pos(0));
@@ -1406,6 +1419,8 @@ Module* make_sys(int argc, char** argv) {
     put(d, "argv", args.get());
     put_builtin(d, "exit", sys_exit);
     put_builtin(d, "intern", sys_intern);
+    put_builtin(d, "exc_info", sys_exc_info);
+    put_builtin(d, "exception", sys_exception);
     put_builtin(d, "_getframemodulename", sys_getframemodulename);
     put(d, "maxsize", int_from_i64(INT64_MAX).get());
     fill_int_sys(d);
@@ -2097,6 +2112,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             init_bigint();
             init_float();
             init_complex();
+            init_generator();
             adopt_functions(builtins_module());
             adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own

@@ -223,7 +223,7 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *frozendict, *dict_reversekeyiterator, *dict_reversevalueiterator, *dict_reverseitemiterator, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
-        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_, *complex_, *union_,
+        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_, *complex_, *union_, *generator,
         *method_descriptor, *classmethod_descriptor, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
         *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator;
@@ -821,6 +821,47 @@ Ref str_lstrip_m(Obj self, Args a);
 Ref str_rstrip_m(Obj self, Args a);
 Ref str_replace_m(Obj self, Args a);
 
+// ---- generators (runtime/src/generator.cpp; the emitter's `generator` writes the bodies) ----
+enum class GenState : std::uint8_t { Created, Suspended, Executing, Finished };
+constexpr int GEN_RETURNED = -1;                 // g->pc when the body has returned
+struct Generator : Object {
+    const Code* code;
+    Module* module;
+    Ref (*resume)(Generator*);                   // the state machine: from `pc` to the next yield, or the end
+    std::vector<Ref> slots;                      // what must outlive a resume: the frame's locals, then its temporaries
+    std::vector<int> ints;                       // the completions and flags the body keeps
+    std::vector<std::unique_ptr<PyError>> errors;   // the exception each handler row caught, while it runs
+    int pc = 0;                                  // where the next resume goes on
+    int handler = 0;                             // the row of the handler table that an exception here goes to
+    int line;
+    GenState state = GenState::Created;
+    bool delegate_ended = false;
+    bool thrown_unstarted = false;               // throw() before the first instruction: what it raises leaves as it is
+    GenState state_before_resume = GenState::Created;
+    std::size_t handling = 0;                    // how many of handled() are this frame's, while it runs
+    std::vector<Obj> handled;                    // and those it keeps while suspended (gi_exc_state; owned)
+    Ref function;                                // f_funcobj
+    Ref name, qualname;
+    Ref sent;                                    // what send() passes back
+    Ref pending;                                 // what throw() raises at the resume point
+    Ref delegate;                                // yield from's iterator
+    Ref delegate_shown;                          // what gi_yieldfrom says when it has no iterator of its own to show
+    Generator(PyFunction* fn, const Code& c, Ref (*r)(Generator*), std::size_t nslots, std::size_t nints, std::size_t nerrors);
+};
+Ref make_generator(PyFunction* fn, const Code& c, Ref (*r)(Generator*), std::size_t nslots, std::size_t nints, std::size_t nerrors);
+Ref gen_next(Obj gen);                           // gen_iternext: unset when it ended with None
+Ref gen_close(Generator* g);
+void gen_raise_pending(Generator* g);            // the top of each resume, inside the body's try
+void gen_delegate_to(Generator* g, Obj iterable);   // GET_YIELD_FROM_ITER
+Ref gen_delegate_step(Generator* g);             // SEND
+[[noreturn]] void gen_uncaught(Generator* g, PyError& e);   // an exception leaving the frame: PEP 479
+void gen_caught(Generator* g, int k, const PyError& e);
+void gen_handling_push(Generator* g, int k);
+void gen_handling_pop(Generator* g, int k);
+[[noreturn]] void gen_rethrow(Generator* g, int k);
+void gen_die(Object* o);
+void init_generator();
+std::vector<Obj>& handled_exceptions();          // the exceptions being handled, innermost last (exc_info)
 // ---- imports (runtime/src/imports.cpp; docs/emitter.md section 7) ----
 // A text the staging dry run recorded, compiled by the build (runtime/src/staged.cpp): `body` is null when it
 // does not lower yet, and `why` says so. A site's own refusals come from the artefact too.

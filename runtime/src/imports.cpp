@@ -300,7 +300,7 @@ void fill_types(Module* m) {
     put("FrameLocalsProxyType", no_instances_yet("FrameLocalsProxy"));
     put("FrameType", no_instances_yet("frame"));
     put("FunctionType", t.function);
-    put("GeneratorType", no_instances_yet("generator"));
+    put("GeneratorType", t.generator);
     dict_set(d, Obj::of(N("GenericAlias")), dict_get(bootstrap_module()->dict, Obj::of(N("GenericAlias"))));
     put("GetSetDescriptorType", t.getset_descriptor);
     put("LambdaType", t.function);

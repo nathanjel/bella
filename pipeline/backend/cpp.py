@@ -41,7 +41,7 @@ final override import module contract_assert main std rt Obj Ref Args fn args fr
 """.split())
 # Every name the emitter makes matches this (review 2026-11-03, A9-20); a Python name that matches
 # it, or that C++ reserves, is escaped.
-_COMPILER_NAME = re.compile(r"^(t\d+|e\d+|h\d+|u\d+|fin\d+|ended\d+|raised\d+|K_\d+|S_\w*|code_\w*|f_\w*|py\w*)$")
+_COMPILER_NAME = re.compile(r"^(t\d+|e\d+|h\d+|u\d+|gen1|cur1|fin\d+|ended\d+|raised\d+|after\d+|K_\d+|S_\w*|code_\w*|f_\w*|py\w*)$")
 
 _BINARY = {"+": "Add", "-": "Sub", "*": "Mul", "/": "TrueDiv", "//": "FloorDiv", "%": "Mod", "**": "Pow",
            "<<": "LShift", ">>": "RShift", "&": "And", "|": "Or", "^": "Xor", "@": "MatMul"}
@@ -109,6 +109,16 @@ class _Exit:
     ended: str | None = None                     # a loop's flag for running its else block
     flag: str = ""                               # a finally's completion variable
     completions: set[int] = field(default_factory=set)   # the completions that reached a finally
+    restore: int = 0                             # a generator's: the handler row outside this construct
+    row: int = 0                                 # a generator's: the row whose exception is being handled
+
+
+@dataclass
+class _Row:
+    """A generator's handler table: where an exception arriving under this row goes on, and what it drops first."""
+    pc: int
+    parent: int
+    clears: tuple[str, ...] = ()
 
 
 @dataclass
@@ -273,6 +283,7 @@ class Emitter:
         self.exits: list[_Exit] = []
         self.hidden = _hidden(c)
         self.counter = 0
+        self.flat = False
         params = [p.name for p in self.param_order(c)]
         frame_locals = [*c.varnames, *(n for n in c.cellvars if n not in c.varnames), *c.freevars]
         self.vars = {n: cpp_name(n) for n in frame_locals}
@@ -287,6 +298,8 @@ class Emitter:
             self.out += [f"// the body of class {c.qualname}  ({self.filename}:{c.first_line})",
                          f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args) {{",
                          "    [[maybe_unused]] rt::Module* M = fn->module;", "    Obj ns = args.pos(0);"]
+        elif c.kind == "generator":
+            return self.generator(fn, frame_locals, params)
         else:
             self.out += [f"// {c.kind} {c.qualname}  ({self.filename}:{c.first_line})",
                          f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args) {{",
@@ -320,7 +333,7 @@ class Emitter:
                     self.out.append(f"    {self.vars[n]} = rt::make_cell({self.vars[n]}.get());")
                 else:
                     self.out.append(f"    {self.vars[n]} = rt::make_cell();")
-            if c.kind in ("generator", "coroutine", "async generator"):
+            if c.kind in ("coroutine", "async generator"):
                 self.out.append(f"    throw rt::NotImplemented({c_string(f'running the {c.kind} {c.qualname} (step 3b: generators)')});")
                 self.out.append("}")
                 return self.out
@@ -332,6 +345,276 @@ class Emitter:
         self.out.append("}")
         return self.out
 
+    # ---- generators: the state machine (design section 10.3; docs/emitter.md) --------------------------
+
+    def generator(self, fn: _Function, frame_locals: list[str], params: list[str]) -> list[str]:
+        """Two functions. The one the program calls binds the arguments into a new generator, as RETURN_GENERATOR leaves
+        them. The other is one resume: a `switch` on where the last one stopped, with `case` labels at the yields. A case
+        label may sit inside an `if` or a loop, and nothing a yield crosses lives on the C++ stack, but C++ cannot jump
+        into a try block or back into a handler: so a try whose code yields has no C++ try of its own. A single try
+        around the switch catches everything, and `cur1`, the row of the table for where execution is, says where each
+        exception goes on, as CPython's exception table does. A try that does not yield is emitted as in any function."""
+        c = fn.code
+        self.flat = True
+        self.slots: dict[str, int] = {}
+        self.int_slots: list[str] = []
+        self.rows: dict[int, _Row] = {}
+        self.synthetic_names: set[str] = set()
+        self.next_pc = 0
+        self.cur = 0
+        for n in frame_locals:
+            self.slot(self.vars[n])
+        if _returns_through_finally(c.body):
+            self.slot("ret")
+        self.region(c.body, 4)
+        if G.falls_through(c.body):
+            self.add(4, "gen1->pc = rt::GEN_RETURNED;")
+            self.add(4, "return rt::none_ref();")
+        body = self.out
+        stack = sorted(_synthetic_stored(c.body, self.hidden) & self.hidden, key=_creation, reverse=True)
+        temps = sorted((n for n in self.slots if _TEMP.match(n)), key=lambda n: int(n[1:]), reverse=True)
+        guard = ", ".join(["", *(self.vars[n] for n in frame_locals)])
+        out = [f"// generator {c.qualname}  ({self.filename}:{c.first_line}): one resume",
+               f"static Ref {fn.entry}_resume(rt::Generator* gen1) {{",
+               "    [[maybe_unused]] rt::Module* M = gen1->module;"]
+        out += [f"    Ref& {name} = gen1->slots[{i}];" for name, i in self.slots.items()]
+        out += [f"    int& {name} = gen1->ints[{i}];" for i, name in enumerate(self.int_slots)]
+        out += ["    [[maybe_unused]] int& cur1 = gen1->handler;",
+                f"    rt::FrameGuard frame({fn.cname}, M{guard});",
+                "    frame.line = gen1->line;",
+                "    for (;;) {",
+                "        try {",
+                "            rt::gen_raise_pending(gen1);",
+                "            switch (gen1->pc) {",
+                "            case 0:;"]
+        out += body
+        out += ["            }",
+                "            __builtin_unreachable();",
+                "        } catch (rt::PyError& e1) {",
+                "            frame.arrived(e1);"]
+        if self.rows:
+            out.append("            switch (cur1) {")
+            for k, row in sorted(self.rows.items()):
+                out.append(f"            case {k}:")
+                out += [f"                {name} = rt::none_ref();" if name in self.synthetic_names else f"                {name} = Ref{{}};" for name in row.clears]
+                out += [f"                rt::gen_caught(gen1, {k}, e1);",
+                        f"                gen1->pc = {row.pc};",
+                        f"                cur1 = {row.parent};",
+                        "                continue;"]
+            out += ["            default:", "                break;", "            }"]
+        out += [f"            {name} = Ref{{}};" for name in temps]
+        out += [f"            {self.vars[name]} = Ref{{}};" for name in stack]
+        out += ["            gen1->pc = rt::GEN_RETURNED;",
+                "            rt::gen_uncaught(gen1, e1);",
+                "        }",
+                "    }",
+                "}",
+                f"// the generator function {c.qualname}: its call makes the generator",
+                f"static Ref {fn.entry}(rt::PyFunction* fn, rt::Args args) {{",
+                "    [[maybe_unused]] rt::Module* M = fn->module;",
+                f"    Ref made = rt::make_generator(fn, {fn.cname}, {fn.entry}_resume, {len(self.slots)}, {len(self.int_slots)}, {len(self.rows) + 1});",
+                "    auto* gen1 = static_cast<rt::Generator*>(made.get().object());"]
+        out += [f"    Ref& {self.vars[n]} = gen1->slots[{self.slots[self.vars[n]]}];" for n in frame_locals]
+        out.append(f"    rt::FrameGuard frame({fn.cname}, M);")
+        out.append(f"    rt::bind(fn, args, {{{', '.join('&' + self.vars[n] for n in params)}}});")
+        out += [f"    {self.vars[n]} = fn->closure[{i}];" for i, n in enumerate(c.freevars)]
+        for n in c.cellvars:
+            out.append(f"    {self.vars[n]} = rt::make_cell({self.vars[n]}.get());" if n in params else f"    {self.vars[n]} = rt::make_cell();")
+        out += ["    return made;", "}"]
+        return out
+
+    def slot(self, name: str) -> str:
+        self.slots.setdefault(name, len(self.slots))
+        return name
+
+    def new_pc(self) -> int:
+        self.next_pc += 1
+        return self.next_pc
+
+    def new_row(self, parent: int, clears: tuple[str, ...]) -> int:
+        k = len(self.rows) + 1
+        self.rows[k] = _Row(self.new_pc(), parent, clears)
+        return k
+
+    def clears_of(self, body: tuple[G.Stmt, ...]) -> tuple[str, ...]:
+        """What an exception leaving these statements drops, as unwinding would: the temporaries newest first, then the
+        frontend's variables for what CPython keeps on its stack (review log RL-186)."""
+        for n in _all_assigned(body):
+            self.slot(f"t{n}")
+        temps = [f"t{n}" for n in sorted(_all_assigned(body), reverse=True)]
+        synthetic = [self.vars[n] for n in sorted(_synthetic_stored(body, self.hidden), key=_creation, reverse=True)]
+        self.synthetic_names |= set(synthetic)
+        return (*temps, *synthetic)
+
+    def yield_(self, value: G.Atom, after: str, indent: int) -> None:
+        pc = self.new_pc()
+        self.add(indent, f"gen1->pc = {pc}; gen1->line = frame.line;")
+        self.add(indent, f"return {self.take(value)};")
+        self.add(indent, f"case {pc}:;")
+        self.add(indent, after)
+
+    def yield_from(self, value: G.Atom, after: str, indent: int) -> None:
+        pc = self.new_pc()
+        self.add(indent, f"rt::gen_delegate_to(gen1, {self.atom(value)});")
+        if isinstance(value, G.Temp):            # GET_YIELD_FROM_ITER consumes it: the iterator is what the frame holds
+            self.add(indent, f"t{value.n} = Ref{{}};")
+        self.add(indent, f"gen1->pc = {pc}; gen1->line = frame.line;")
+        self.add(indent, f"case {pc}:;")
+        self.add(indent, "{")
+        self.add(indent + 1, "Ref step = rt::gen_delegate_step(gen1);")
+        self.add(indent + 1, "if (!rt::is_end(step)) return step;")
+        self.add(indent, "}")
+        self.add(indent, after)
+
+    def gen_return(self, value: str, indent: int) -> None:
+        self.add(indent, "gen1->pc = rt::GEN_RETURNED;")
+        self.add(indent, f"return {value};")
+
+    def enter_row(self, row: int, indent: int) -> None:
+        self.cur = row
+        self.add(indent, f"cur1 = {row};")
+
+    def flat_try(self, s: G.Try, indent: int) -> None:
+        if s.finalbody:
+            self.flat_finally(s, indent)
+        else:
+            self.flat_handlers(s, indent)
+
+    def flat_finally(self, s: G.Try, indent: int) -> None:
+        """As `try_`: the normal end and every jump out reach the label with the completion noted, the block runs there
+        once, and the exception edge has its own copy, run with the exception as the one being handled."""
+        parent = self.cur
+        flag = self.aux("fin")
+        self.int_slots.append(flag)
+        after = self.aux("after")
+        row = self.new_row(parent, self.clears_of(s.body + tuple(st for h in s.handlers for st in (*h.match, *h.body)) + s.orelse))
+        ex = _Exit("finally", body=s.finalbody, flag=flag, restore=parent)
+        self.add(indent, f"{flag} = 0;")
+        self.enter_row(row, indent)
+        self.exits.append(ex)
+        self.flat_handlers(G.Try(s.body, s.handlers, s.orelse), indent)
+        self.exits.pop()
+        self.add(indent, f"{flag}_end:;")
+        self.cur = parent
+        self.add(indent, f"cur1 = {parent};")
+        self.add(indent, "{")
+        self.region(s.finalbody, indent + 1)
+        self.add(indent, "}")
+        for kind in sorted(ex.completions):
+            self.add(indent, f"if ({flag} == {kind}) {{")
+            self.leave(kind, len(self.exits) - 1, indent + 1)
+            self.add(indent, "}")
+        self.add(indent, f"goto {after};")
+        # the exception edge
+        self.add(indent, f"case {self.rows[row].pc}:;")
+        inner = self.new_row(parent, self.clears_of(s.finalbody))
+        self.add(indent, f"rt::gen_handling_push(gen1, {row});")
+        self.enter_row(inner, indent)
+        self.exits.append(_Exit("handling", row=row, restore=parent))
+        self.add(indent, "{")
+        self.region(s.finalbody, indent + 1)
+        self.add(indent, "}")
+        self.exits.pop()
+        self.cur = parent
+        self.add(indent, f"cur1 = {parent};")
+        self.add(indent, f"{{ rt::Ref keep = gen1->errors[{row}]->exc; std::uint64_t recorded = gen1->errors[{row}]->recorded; rt::gen_handling_pop(gen1, {row}); throw rt::PyError(std::move(keep), recorded); }}")
+        self.add(indent, f"case {self.rows[inner].pc}:;")
+        self.add(indent, f"rt::gen_handling_pop(gen1, {row});")
+        self.add(indent, f"rt::gen_rethrow(gen1, {inner});")
+        self.add(indent, f"{after}:;")
+
+    def flat_handlers(self, s: G.Try, indent: int) -> None:
+        if not s.handlers:
+            self.add(indent, "{")
+            self.region(s.body, indent + 1)
+            self.add(indent, "}")
+            return
+        parent = self.cur
+        after = self.aux("after")
+        row = self.new_row(parent, self.clears_of(s.body))
+        self.enter_row(row, indent)
+        self.exits.append(_Exit("flat", restore=parent))
+        self.add(indent, "{")
+        self.region(s.body, indent + 1)
+        self.add(indent, "}")
+        self.exits.pop()
+        self.cur = parent
+        self.add(indent, f"cur1 = {parent};")
+        if s.orelse:
+            self.add(indent, "{")
+            self.region(s.orelse, indent + 1)
+            self.add(indent, "}")
+        self.add(indent, f"goto {after};")
+        # an exception arrived: the handlers run with it as the one being handled
+        self.add(indent, f"case {self.rows[row].pc}:;")
+        matching = tuple(f"t{n}" for n in sorted({n for h in s.handlers for n in _assigned(h.match)}, reverse=True))
+        inner = self.new_row(parent, (*matching, *self.clears_of(tuple(st for h in s.handlers for st in h.body))))
+        self.add(indent, f"rt::gen_handling_push(gen1, {row});")
+        self.enter_row(inner, indent)
+        self.exits.append(_Exit("handling", row=row, restore=parent))
+        self.flat_chain(s.handlers, 0, row, indent)
+        self.exits.pop()
+        self.cur = parent
+        self.add(indent, f"rt::gen_handling_pop(gen1, {row});")
+        self.add(indent, f"cur1 = {parent};")
+        self.add(indent, f"goto {after};")
+        self.add(indent, f"case {self.rows[inner].pc}:;")
+        self.add(indent, f"rt::gen_handling_pop(gen1, {row});")
+        self.add(indent, f"rt::gen_rethrow(gen1, {inner});")
+        self.add(indent, f"{after}:;")
+
+    def flat_chain(self, handlers: tuple[G.Handler, ...], i: int, row: int, indent: int) -> None:
+        """`handlers`, where the exception is gen1's for the row. None matching: it goes on, as the handlers' own would."""
+        exc = f"gen1->errors[{row}]->exc"
+        if i == len(handlers):
+            self.add(indent, f"throw rt::PyError(gen1->errors[{row}]->exc, gen1->errors[{row}]->recorded);")
+            return
+        h = handlers[i]
+        self.add(indent, "{")
+        for n in _assigned(h.match):             # a case label may follow in this block: nothing on the C++ stack
+            self.slot(f"t{n}")
+        self.block(h.match, indent + 1)
+        if h.type is not None:
+            self.add(indent + 1, f"if (rt::exception_matches({exc}.get(), t{h.type.n}.get())) {{")
+            self.add(indent + 2, f"t{h.type.n} = Ref{{}};")
+        else:
+            self.add(indent + 1, "if (true) {")
+        if h.name is not None:
+            cleanup = (G.Store(h.name, G.Const(None)), G.Delete(h.name))
+            self.add(indent + 2, self.store(h.name, f"Ref::share({exc}.get())"))
+            parent = self.cur
+            named = self.new_row(parent, self.clears_of(h.body))
+            self.enter_row(named, indent + 2)
+            self.exits.append(_Exit("flat", restore=parent))
+            self.exits.append(_Exit("cleanup", body=cleanup))
+            self.add(indent + 2, "{")
+            self.region(h.body, indent + 3)
+            self.add(indent + 2, "}")
+            self.exits.pop()
+            self.exits.pop()
+            self.cur = parent
+            self.add(indent + 2, f"cur1 = {parent};")
+            done = self.aux("after")
+            if G.falls_through(h.body):
+                for st in cleanup:
+                    self.stmt(st, indent + 2)
+                self.add(indent + 2, f"goto {done};")
+            self.add(indent + 2, f"case {self.rows[named].pc}:;")
+            for st in cleanup:
+                self.stmt(st, indent + 2)
+            self.add(indent + 2, f"rt::gen_rethrow(gen1, {named});")
+            self.add(indent + 2, f"{done}:;")
+        else:
+            self.add(indent + 2, "{")
+            self.region(h.body, indent + 3)
+            self.add(indent + 2, "}")
+        self.add(indent + 1, "} else {")
+        if h.type is not None:
+            self.add(indent + 2, f"t{h.type.n} = Ref{{}};")
+        self.flat_chain(handlers, i + 1, row, indent + 2)
+        self.add(indent + 1, "}")
+        self.add(indent, "}")
+
     # ---- statements ------------------------------------------------------------------------------
 
     def add(self, indent: int, text: str) -> None:
@@ -340,7 +623,10 @@ class Emitter:
     def region(self, body: tuple[G.Stmt, ...], indent: int) -> None:
         """A block that owns its temporaries: declared here, so unwinding destroys them."""
         temps = sorted(_assigned(body))
-        if temps:
+        if temps and self.flat and _yields(body):
+            for n in temps:
+                self.slot(f"t{n}")
+        elif temps:
             self.add(indent, "Ref " + ", ".join(f"t{n}" for n in temps) + ";")
         self.block(body, indent)
 
@@ -353,6 +639,14 @@ class Emitter:
         match s:
             case G.Line(n):
                 self.add(indent, f"frame.line = {n};")
+            case G.Let(t, G.Yield(value)) if self.flat:
+                self.yield_(value, f"t{t.n} = std::move(gen1->sent);", indent)
+            case G.Do(G.Yield(value)) if self.flat:
+                self.yield_(value, "gen1->sent = Ref{};", indent)
+            case G.Let(t, G.YieldFrom(value)) if self.flat:
+                self.yield_from(value, f"t{t.n} = std::move(gen1->sent);", indent)
+            case G.Do(G.YieldFrom(value)) if self.flat:
+                self.yield_from(value, "gen1->sent = Ref{};", indent)
             case G.Let(t, op):
                 self.add(indent, f"t{t.n} = {self.op(op)};")
             case G.Do(op):
@@ -389,7 +683,10 @@ class Emitter:
                 self.add(indent, "}")
             case G.Loop(body, holds, orelse):
                 ended = self.aux("ended") if orelse else None
-                if ended:
+                if ended and self.flat:
+                    self.int_slots.append(ended)
+                    self.add(indent, f"{ended} = 0;")
+                elif ended:
                     self.add(indent, f"bool {ended} = false;")
                 self.add(indent, "for (;;) {")
                 self.exits.append(_Exit("loop", holds=holds, ended=ended))
@@ -417,7 +714,10 @@ class Emitter:
                                 self.add(indent, f"t{h.n} = Ref{{}};")
                         else:
                             self.cleanup_inline(ex, indent)
-                    self.add(indent, f"return {self.take(value)};")
+                    if self.flat:
+                        self.gen_return(self.take(value), indent)
+                    else:
+                        self.add(indent, f"return {self.take(value)};")
             case G.Raise(exc, cause, has_cause):
                 if exc is None:
                     self.add(indent, "rt::reraise();")
@@ -435,7 +735,7 @@ class Emitter:
         so that the block runs once, outside the try's own catch (review 2026-11-03, A9-5)."""
         for i in range(start, -1, -1):
             ex = self.exits[i]
-            if ex.kind == "cleanup":
+            if ex.kind in ("cleanup", "flat", "handling"):
                 self.cleanup_inline(ex, indent)
                 continue
             if ex.kind == "finally":
@@ -455,14 +755,33 @@ class Emitter:
             self.add(indent, "continue;" if kind == _CONTINUE else "break;")
             return
         assert kind == _RETURN, "a break or continue outside a loop"
-        self.add(indent, "return ret;")
+        if self.flat:
+            self.gen_return("std::move(ret)", indent)
+        else:
+            self.add(indent, "return ret;")
 
     def cleanup_inline(self, ex: _Exit, indent: int) -> None:
         if ex.kind == "cleanup":
             for st in ex.body:
                 self.stmt(st, indent)
+        elif ex.kind == "flat":                  # a generator's try, left by a jump: its row no longer applies
+            self.add(indent, f"cur1 = {ex.restore};")
+        elif ex.kind == "handling":              # and a handler's: the exception is no longer being handled
+            self.add(indent, f"rt::gen_handling_pop(gen1, {ex.row});")
+            self.add(indent, f"cur1 = {ex.restore};")
 
     def try_(self, s: G.Try, indent: int) -> None:
+        if self.flat and _yields((s,)):
+            self.flat_try(s, indent)
+            return
+        if self.flat:                            # a case label may follow: what it declares stays in a block of its own
+            self.add(indent, "{")
+            self.plain_try(s, indent + 1)
+            self.add(indent, "}")
+            return
+        self.plain_try(s, indent)
+
+    def plain_try(self, s: G.Try, indent: int) -> None:
         if not s.finalbody:
             self.try_handlers(s, indent)
             return
@@ -747,6 +1066,42 @@ def _nested_codes(body: tuple[G.Stmt, ...]) -> Iterator[G.Code]:
             for h in s.handlers:
                 yield from _nested_codes(h.match)
                 yield from _nested_codes(h.body)
+
+
+_TEMP = re.compile(r"^t\d+$")
+
+
+def _yields(body: tuple[G.Stmt, ...]) -> bool:
+    """These statements suspend the generator somewhere, a function they make being another's."""
+    for s in body:
+        match s:
+            case G.Let(_, G.Yield() | G.YieldFrom()) | G.Do(G.Yield() | G.YieldFrom()):
+                return True
+            case G.If() | G.IfEnd() | G.Loop():
+                if _yields(s.body) or _yields(s.orelse):
+                    return True
+            case G.Try():
+                if _yields(s.body) or _yields(s.orelse) or _yields(s.finalbody):
+                    return True
+                if any(_yields(h.match) or _yields(h.body) for h in s.handlers):
+                    return True
+    return False
+
+
+def _all_assigned(body: tuple[G.Stmt, ...]) -> set[int]:
+    """The temporaries these statements assign that live in a generator's slots, a region that does not yield being its
+    own (its temporaries are on the C++ stack, and unwinding drops them)."""
+    if not _yields(body):
+        return set()
+    out = _assigned(body)
+    for s in body:
+        if isinstance(s, (G.If, G.IfEnd, G.Loop)):
+            out |= _all_assigned(s.body) | _all_assigned(s.orelse)
+        elif isinstance(s, G.Try):
+            out |= _all_assigned(s.body) | _all_assigned(s.orelse) | _all_assigned(s.finalbody)
+            for h in s.handlers:
+                out |= _all_assigned(h.match) | _all_assigned(h.body)
+    return out
 
 
 def _assigned(body: tuple[G.Stmt, ...]) -> set[int]:

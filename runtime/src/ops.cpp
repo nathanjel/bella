@@ -1165,6 +1165,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
         return;
     }
     if (is_kind(obj, Kind::PyFunction) && !presents_as_builtin(obj)) {
+        refuse_absent_data_descriptor(obj, name);   // a field of the C type the runtime lacks is no attribute to make (RL-255)
         Ref d = generic_getattr(obj, intern("__dict__"));
         dict_set(static_cast<Dict*>(d.get().object()), Obj::of(name), value);
         return;
@@ -1209,6 +1210,7 @@ void delattr(Obj obj, const Str* name) {
         g->set(obj, Obj{});
         return;
     }
+    if (is_kind(obj, Kind::PyFunction) && type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
     read_only_attribute(obj, name, type_lookup(type_of(obj), name));
     if (!is_kind(obj, Kind::PyFunction))
         raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text +
@@ -1541,6 +1543,14 @@ Ref iter(Obj obj) {
 }
 
 Ref for_next(Obj itv) {
+    if (is_kind(itv, Kind::Generator)) {         // gen_iternext, without a StopIteration when it ended with None
+        try {
+            return gen_next(itv);
+        } catch (const PyError& e) {
+            if (isinstance(e.exc.get(), exception_class("StopIteration"))) return Ref{};
+            throw;
+        }
+    }
     if (!is_kind(itv, Kind::Iterator)) {
         // __next__; StopIteration ends the loop and is consumed here, as FOR_ITER consumes it
         bool has = false;

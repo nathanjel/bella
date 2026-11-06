@@ -120,11 +120,11 @@ def test_report(report: str) -> None:
 
 
 def test_stores_to_fields_cpython_has_are_refused() -> None:
-    """A field of CPython's exception that the runtime lacks is refused when stored or deleted, as
-    when read, never put in the __dict__ (RL-255)."""
+    """A field of CPython's type that the runtime lacks is refused when stored or deleted, as when
+    read, never put in the __dict__ (RL-255; StopIteration.value was the example until it arrived)."""
     if shutil.which("g++") is None:
         return
-    for body in ("e = StopIteration(5)\ne.value = 6", "e = StopIteration(1)\ndel e.value"):
+    for body in ("def f():\n    pass\nf.__code__ = 6", "def f():\n    pass\ndel f.__code__"):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text("print('start')\n" + body + "\nprint('not reached')\n", encoding="utf-8")

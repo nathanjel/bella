@@ -3,6 +3,7 @@ C-2-02_chained_comparison_rich_results.py
 C-3-01_dict_outlives_owner.py
 C-3-02_dict_replacement.py
 C-3-03_dict_sharing.py
+C-3-04_stopiteration_subclass.py
 C-3-05_descriptor_class_mutation.py
 C-3-06_instance_shadows_class_attribute.py
 C-3-07_slots_and_dict_capability.py
@@ -11,8 +12,10 @@ C-3-09_getattr_after_attributeerror.py
 C-3-10_attribute_hooks_run_once.py
 C-3-11_class_attribute_becomes_descriptor.py
 C-3-14_comprehension_unpacking.py
+C-3-15_generator_close_and_throw.py
 C-3-18_class_assignment.py
 C-3-19_getattribute_override.py
+C-3-29_generators_and_comprehensions.py
 C-3-30_traceback_entries.py
 C-3-31_exception_fields.py
 C-3-32_super_objects.py
@@ -24,6 +27,7 @@ C-3-37_bytes.py
 C-3-38_iteration_builtins.py
 C-3-39_union_types.py
 C-3-40_tuple_subclasses.py
+C-3-41_generator_state_machine.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py
@@ -40,6 +44,7 @@ C-6-14_str_methods.py
 C-6-15_format.py
 C-6-16_percent_format.py
 C-6-17_complex.py
+C-7-18_collections_abc_types.py
 C-7-19_abc.py
 C-7-20_itertools.py
 C-7-21_operator.py
@@ -56,6 +61,7 @@ C-8-10_import_system.py
 C-9-03_refcount_disposal_order.py
 C-9-04_refcount_resurrection_keeps_weakref.py
 C-9-05_default_argument_lifetime.py
+C-9-06_generator_closed_on_last_reference.py
 C-9-08_attribute_value_lifetimes.py
 C-9-09_finalisers_at_exit.py
 C-9-10_weakref_objects.py

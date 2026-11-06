@@ -1545,6 +1545,15 @@ Ref system_exit_init(Obj self, Args a) {
     else if (a.npos > 1) set_exception_field(self, "code", exception_field(self, "args"));
     return none_ref();
 }
+// StopIteration_init, and the member: its first argument, or None
+Ref stop_iteration_init(Obj self, Args a) {
+    if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
+    set_args(self, a);
+    set_exception_field(self, "value", a.npos > 0 ? a.pos(0) : None());
+    return none_ref();
+}
+Ref stop_iteration_value_get(Obj self) { Obj v = exception_field(self, "value"); return v.is_unset() ? none_ref() : Ref::share(v); }
+void stop_iteration_value_set(Obj self, Obj v) { set_exception_field(self, "value", v); }
 Ref system_exit_code_get(Obj self) { Obj v = exception_field(self, "code"); return v.is_unset() ? none_ref() : Ref::share(v); }
 void system_exit_code_set(Obj self, Obj v) { set_exception_field(self, "code", v); }
 // what BaseException_str, KeyError_str and BaseException_repr read: the args field itself
@@ -2012,6 +2021,9 @@ void init_types() {
     method(exception_class("NameError"), "__init__", name_error_init);
     method(exception_class("SystemExit"), "__init__", system_exit_init);
     deletable_getset(exception_class("SystemExit"), "code", system_exit_code_get, system_exit_code_set);
+    method(exception_class("StopIteration"), "__init__", stop_iteration_init);
+    deletable_getset(exception_class("StopIteration"), "value", stop_iteration_value_get, stop_iteration_value_set);
+    static_cast<GetSet*>(exception_class("StopIteration")->attrs.find(N("value"))->object())->cls = types().member_descriptor;
     method(base, "__str__", exception_str);
     method(base, "__repr__", exception_repr);
     method(base, "with_traceback", exception_with_traceback);

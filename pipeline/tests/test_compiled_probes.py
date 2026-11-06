@@ -18,7 +18,6 @@ from pipeline.build import build
 from pipeline.tests.test_l2_probes import PRELUDE, TEMPLATES, program
 
 CASES = [(kind, in_function) for kind in TEMPLATES for in_function in (False, True)]
-REFUSED_UNTIL_3B = {"generator closed on last reference"}
 
 
 def pytest_generate_tests(metafunc: Any) -> None:
@@ -36,9 +35,6 @@ def test_compiled_release_point(kind: str, in_function: bool) -> None:
         ref = subprocess.run([sys.executable, str(prog)], capture_output=True, text=True, check=False)
         got = subprocess.run([str(build(prog, "probe.py"))], capture_output=True, text=True, check=False)
     where = "in a function" if in_function else "at module level"
-    if kind in REFUSED_UNTIL_3B:
-        assert got.returncode == 70 and "step 3b" in got.stderr, (kind, where, got.returncode, got.stderr)
-        return
     assert (got.stdout, got.returncode) == (ref.stdout, ref.returncode), (
         f"{kind} ({where}):\n--- compiled\n{got.stdout}{got.stderr}--- cpython\n{ref.stdout}")
 
