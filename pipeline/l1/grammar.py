@@ -190,7 +190,10 @@ class TupleLit(Expr):
 
 @dataclass(frozen=True)
 class SetLit(Expr):
+    """`folded`: CPython makes this display a frozenset constant and updates an empty set from it, and the
+    table that leaves, so the order the set iterates in, is not the one inserting the items would."""
     items: tuple[Expr, ...]
+    folded: bool = False
 
 
 @dataclass(frozen=True)

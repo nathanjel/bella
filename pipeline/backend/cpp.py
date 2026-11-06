@@ -686,8 +686,8 @@ class Emitter:
                 return f"rt::build_tuple({{{', '.join(map(a, items))}}})"
             case G.BuildMap(keys, values):
                 return f"rt::build_map({{{', '.join(map(a, keys))}}}, {{{', '.join(map(a, values))}}})"
-            case G.BuildSet(items):
-                return f"rt::build_set({{{', '.join(map(a, items))}}})"
+            case G.BuildSet(items, folded):
+                return f"rt::{'build_folded_set' if folded else 'build_set'}({{{', '.join(map(a, items))}}})"
             case G.SetAdd(t, v):
                 return f"rt::set_add({a(t)}, {a(v)})"
             case G.SetUpdate(t, v):

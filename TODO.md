@@ -471,7 +471,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              by name. `threading` itself is the standard library's, still to import.
            * `_collections` done but for `OrderedDict`, which stops by name (C-7-23, `runtime/prelude/_collections.py`),
              with `list` slice assignment and `str.maketrans`.
-           * Next, what the survey and a walk of the built-ins' names found: `set`'s methods; `str`'s methods with
+           * `set`'s and `frozenset`'s named methods done (C-6-13).
+           * Next, what the survey and a walk of the built-ins' names found: `str`'s methods with
              `format` and `%`, ASCII first; subclasses of `tuple`, `list` and `str` (`namedtuple`); `complex`;
              `_heapq`; `object.__getstate__` and `copyreg`; generators, which stop `Counter.__eq__` and every
              generator expression, and stop more as these go; `_ast` 6, `_stat` 6, `gc` 4.

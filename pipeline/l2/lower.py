@@ -464,23 +464,23 @@ class _Code:
 
     def display(self, e: L.ListLit | L.TupleLit | L.SetLit) -> G.Temp:
         kind = "set" if isinstance(e, L.SetLit) else "tuple" if isinstance(e, L.TupleLit) else "list"
-        return self.display_items(e.items, kind)
+        return self.display_items(e.items, kind, isinstance(e, L.SetLit) and e.folded)
 
-    def display_items(self, items: tuple[L.Expr, ...], kind: str) -> G.Temp:
+    def display_items(self, items: tuple[L.Expr, ...], kind: str, folded: bool = False) -> G.Temp:
         """starunpack_helper: with no starred item and at most 30 items, every item is evaluated
         before the container is built; otherwise it is built at the first starred item (or empty,
         when big) and each later item is added as it is evaluated; a tuple is made from the list."""
         big = len(items) > STACK_USE_GUIDELINE
         if not big and not any(isinstance(x, L.Starred) for x in items):
             values = tuple(self.expr(x) for x in items)
-            op = G.BuildSet(values) if kind == "set" else G.BuildTuple(values) if kind == "tuple" else G.BuildList(values)
+            op = G.BuildSet(values, folded) if kind == "set" else G.BuildTuple(values) if kind == "tuple" else G.BuildList(values)
             return self.let(op)
         pending: list[G.Atom] = []
         built: G.Temp | None = (self.let(G.BuildSet(()) if kind == "set" else G.BuildList(()))) if big else None
         for x in items:
             if isinstance(x, L.Starred):
                 if built is None:
-                    built = self.let(G.BuildSet(tuple(pending)) if kind == "set" else G.BuildList(tuple(pending)))
+                    built = self.let(G.BuildSet(tuple(pending), folded) if kind == "set" else G.BuildList(tuple(pending)))
                 value = self.expr(x.value)
                 self.emit(G.Do(G.SetUpdate(built, value) if kind == "set" else G.ListExtend(built, value)))
             else:

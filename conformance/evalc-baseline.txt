@@ -31,6 +31,7 @@ C-6-09_dict_callbacks.py
 C-6-10_big_ints.py
 C-6-11_frozendict_itself.py
 C-6-12_float_itself.py
+C-6-13_set_methods.py
 C-7-19_abc.py
 C-7-20_itertools.py
 C-7-21_operator.py

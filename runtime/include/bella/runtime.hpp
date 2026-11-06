@@ -113,6 +113,7 @@ struct SetObject : Object {
     };
     std::vector<Entry> table;
     std::size_t fill = 0, used = 0;
+    std::size_t finger = 0;                      // where set.pop looks next
     bool frozen;
     explicit SetObject(bool frozen_set);
 };
@@ -334,6 +335,7 @@ Ref bytes_concat(Obj a, Obj b);
 void bytes_iadd(Obj a, Obj b);
 Ref bytes_repeat(Obj self, std::int64_t count, bool in_place);
 Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
+Ref build_folded_set(std::initializer_list<Obj> items);   // a set display CPython folds to a frozenset constant
 Ref sequence_fast(Obj v, const char* message);   // PySequence_Fast: a list or tuple itself, else a list of its items
 std::string utf8_with_errors(Obj text, const char* errors);   // what a text stream writes (UTF-8 mode, D-15)
 std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length,    // PySlice_Unpack and AdjustIndices: start, stop, step, count

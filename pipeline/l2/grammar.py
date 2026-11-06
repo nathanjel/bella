@@ -234,6 +234,7 @@ class BuildTuple(Op):
 @dataclass(frozen=True)
 class BuildSet(Op):
     items: tuple[Atom, ...]
+    folded: bool = False                         # from a display CPython folds to a frozenset constant (L.SetLit)
 
 
 @dataclass(frozen=True)

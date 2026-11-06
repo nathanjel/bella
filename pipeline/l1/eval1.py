@@ -1153,13 +1153,21 @@ class Interpreter:
         big = len(e.items) > _STACK_USE_GUIDELINE
         if not big and not any(isinstance(x, L.Starred) for x in e.items):
             values = [self.expr(x, scope) for x in e.items]
+            if isinstance(e, L.SetLit) and e.folded:   # BUILD_SET 0, a frozenset constant, SET_UPDATE
+                folded: set[Any] = set()
+                folded.update(frozenset(values))
+                return folded
             return set(values) if is_set else tuple(values) if isinstance(e, L.TupleLit) else values
         pending: list[Any] = []
         built: Any = (set() if is_set else []) if big else None
         for x in e.items:
             if isinstance(x, L.Starred):
                 if built is None:
-                    built = set(pending) if is_set else list(pending)
+                    if isinstance(e, L.SetLit) and e.folded:
+                        built = set()
+                        built.update(frozenset(pending))
+                    else:
+                        built = set(pending) if is_set else list(pending)
                 value = self.expr(x.value, scope)
                 if is_set:
                     built.update(value)                 # _PySet_Update: its own errors

@@ -9,6 +9,7 @@ from __future__ import annotations
 import __future__
 import ast
 import dataclasses
+import dis
 import itertools
 import sys
 import tomllib
@@ -137,6 +138,23 @@ def _annotate_function(entries: list[tuple[str, ast.expr, int | None]], conditio
     fn.bella_public = {fmt: "format"}  # type: ignore[attr-defined]
     fn.bella_annotation = True  # type: ignore[attr-defined]
     return ast.fix_missing_locations(_copy_loc(fn, line))
+
+
+def _set_display_ops(node: ast.Set) -> list[str]:
+    code = compile(ast.Expression(node), "<set display>", "eval")
+    return [i.opname for i in dis.get_instructions(code) if i.opname not in ("RESUME", "NOT_TAKEN")]
+
+
+def _folded_set_display(node: ast.Set) -> bool:
+    """Whether CPython's optimizer folds this display, or its items before the first star: BUILD_SET 0, a frozenset
+    constant, SET_UPDATE. Which expressions it folds is its own business (-1, 2**3, `not 1`, tuples of those), so the
+    pinned compiler is asked; the items lower as they would anyway, since what it folds has no effect to observe."""
+    return len(node.elts) >= 3 and _set_display_ops(node)[:3] == ["BUILD_SET", "LOAD_CONST", "SET_UPDATE"]
+
+
+def _set_display_is_a_constant(node: ast.Set) -> bool:
+    """A display wholly folded: where GET_ITER comes next, the optimizer drops the set and iterates the constant."""
+    return len(node.elts) >= 3 and _set_display_ops(node) == ["BUILD_SET", "LOAD_CONST", "SET_UPDATE", "RETURN_VALUE"]
 
 
 class _Annotations:
@@ -1959,7 +1977,11 @@ class _ToL1:
         if isinstance(s, ast.While):
             return L.While(ln, self.truth(s.test), self.block(s.body), self.block(s.orelse))
         if isinstance(s, ast.For):
-            return L.For(ln, self.target(s.target), self.expr(s.iter), self.block(s.body), self.block(s.orelse),
+            iterable = self.expr(s.iter)
+            if isinstance(s.iter, ast.Set) and _set_display_is_a_constant(s.iter):
+                assert isinstance(iterable, L.SetLit)
+                iterable = L.Call(ln, L.Intrinsic(ln, "frozenset"), (L.TupleLit(ln, iterable.items),))
+            return L.For(ln, self.target(s.target), iterable, self.block(s.body), self.block(s.orelse),
                          iterator=bool(getattr(s, "bella_iterator", False)))
         if isinstance(s, ast.Break):
             return L.Break(ln)
@@ -2144,7 +2166,9 @@ class _ToL1:
         if isinstance(e, (ast.List, ast.Tuple, ast.Set)):
             items = tuple(L.Starred(x.lineno, self.expr(x.value)) if isinstance(x, ast.Starred) else self.expr(x)
                           for x in e.elts)
-            return (L.ListLit if isinstance(e, ast.List) else L.TupleLit if isinstance(e, ast.Tuple) else L.SetLit)(ln, items)
+            if isinstance(e, ast.Set):
+                return L.SetLit(ln, items, _folded_set_display(e))
+            return (L.ListLit if isinstance(e, ast.List) else L.TupleLit)(ln, items)
         if isinstance(e, ast.Dict):
             return L.DictLit(ln, tuple(self.expr(k) if k is not None else None for k in e.keys),
                              tuple(self.expr(v) for v in e.values))

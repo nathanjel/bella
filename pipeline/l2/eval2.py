@@ -70,6 +70,13 @@ class AuditError(AssertionError):
 class _Runtime:
     """One per module: its namespace (the globals of every function it defines) and the helpers."""
 
+    @staticmethod
+    def folded_set(items: tuple[object, ...]) -> set[object]:
+        """BUILD_SET 0, a frozenset constant, SET_UPDATE: the display's table is not what inserting would leave."""
+        built: set[object] = set()
+        built.update(frozenset(items))
+        return built
+
     def __init__(self, interp: Interpreter, g: dict[str, Any]) -> None:
         self.interp = interp
         self.G = g
@@ -420,7 +427,9 @@ class _Translator:
                 return f"[{', '.join(map(a, items))}]"
             case G.BuildTuple(items):
                 return f"({', '.join(map(a, items))}{',' if len(items) == 1 else ''})"
-            case G.BuildSet(items):
+            case G.BuildSet(items, folded):
+                if folded:
+                    return f"{R}.folded_set(({', '.join(map(a, items))},))"
                 return f"{{{', '.join(map(a, items))}}}" if items else f"{R}.set()"
             case G.BuildMap(keys, values):
                 return "{" + ", ".join(f"{a(k)}: {a(v)}" for k, v in zip(keys, values, strict=True)) + "}"

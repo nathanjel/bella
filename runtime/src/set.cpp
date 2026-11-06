@@ -98,7 +98,11 @@ restart:
             auto& e = s->table[k];
             if (empty(e)) {
                 incref(key);
-                if (freeslot != SIZE_MAX) {
+                if (freeslot != SIZE_MAX) {      // the last dummy it passed (set_add_entry_takeref)
+                    if (!dummy(s->table[freeslot])) {
+                        decref(key);
+                        goto restart;
+                    }
                     ++s->used;
                     s->table[freeslot] = {key, hash};
                     return;
@@ -116,7 +120,7 @@ restart:
                 bool eq = equal(startkey, key);
                 if (eq) return;
                 if (s->table.size() != size || s->table[k].key != startkey) goto restart;
-            } else if (dummy(e) && freeslot == SIZE_MAX) {
+            } else if (dummy(e)) {
                 freeslot = k;
             }
             if (probes-- == 0) break;
@@ -199,6 +203,10 @@ void set_update(Obj setv, Obj iterable) {
         return;
     }
     if (is_kind(iterable, Kind::Dict) && !is_subclass_instance(iterable)) {   // PyDict_CheckExact: its stored hashes
+        // set_update_dict_lock_held: one big resize at the start, which decides the table
+        auto* so = static_cast<SetObject*>(setv.object());
+        std::size_t incoming = static_cast<Dict*>(iterable.object())->used;
+        if ((so->fill + incoming) * 5 >= (so->table.size() - 1) * 3) resize(so, (so->used + incoming) * 2);
         std::vector<std::pair<Ref, std::int64_t>> entries;
         for (auto& e : static_cast<Dict*>(iterable.object())->entries)
             if (!e.key.is_unset()) entries.emplace_back(Ref::share(e.key), e.hash);
@@ -233,6 +241,7 @@ void clear_set(SetObject* s) {                   // set_clear_internal: emptied 
     std::vector<SetObject::Entry> old = std::move(s->table);
     s->table.assign(MINSIZE, SetObject::Entry{});
     s->fill = s->used = 0;
+    s->finger = 0;
     for (auto& e : old) if (active(e)) decref(e.key);
 }
 // set_next over a live table: each key held while user code may run
@@ -255,38 +264,88 @@ Ref intersection(Obj sov, Obj otherv) {
     });
     return result;
 }
-void difference_update(Obj sov, Obj otherv) {
-    if (sov == otherv) return clear_set(as_set(sov));
-    each_entry(as_set(otherv), [&](Obj key, std::int64_t hash) {
-        discard_entry(as_set(sov), key, hash);
-        return true;
-    });
-}
-Ref difference(Obj sov, Obj otherv) {
-    SetObject *so = as_set(sov), *other = as_set(otherv);
-    if ((so->used >> 2) > other->used) {
-        Ref r = copy_set(sov);
-        difference_update(r.get(), otherv);
-        return r;
+// the iterable's side of set_intersection: stops once the result is as large as so
+Ref intersection_any(Obj sov, Obj otherv) {
+    if (sov == otherv || is_kind(otherv, Kind::Set)) return intersection(sov, otherv);
+    Ref result = new_set_like(sov);
+    SetObject* so = as_set(sov);
+    Ref it = iter(otherv);
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) {
+        std::int64_t hash = hash_of(v.get());    // PyObject_Hash, in its plain words
+        if (contains_entry(so, v.get(), hash)) {
+            set_add_hashed(result.get(), v.get(), hash);
+            if (as_set(result.get())->used >= so->used) break;
+        }
     }
+    return result;
+}
+// set_contains_key and set_discard_key: a set as a key is an error here, as `in` does not make it
+bool contains_key(SetObject* s, Obj key) { return contains_entry(s, key, set_key_hash(key)); }
+void difference_update(Obj sov, Obj otherv) {    // set_difference_update_internal
+    if (sov == otherv) return clear_set(as_set(sov));
+    SetObject* so = as_set(sov);
+    if (is_kind(otherv, Kind::Set)) {
+        Ref other = (as_set(otherv)->used >> 3) > so->used ? intersection(sov, otherv) : Ref::share(otherv);
+        each_entry(as_set(other.get()), [&](Obj key, std::int64_t hash) {
+            discard_entry(so, key, hash);
+            return true;
+        });
+    } else {
+        Ref it = iter(otherv);
+        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) discard_entry(so, v.get(), set_key_hash(v.get()));
+    }
+    if (so->fill - so->used <= (so->table.size() - 1) / 4) return;    // more than a quarter are dummies: resized away
+    resize(so, so->used > 50000 ? so->used * 2 : so->used * 4);
+}
+bool plain_dict(Obj v) { return is_exact_dict(v) || is_exact_frozendict(v); }   // PyAnyDict_CheckExact
+Ref copy_and_difference(Obj sov, Obj otherv) {
+    Ref r = copy_set(sov);
+    difference_update(r.get(), otherv);
+    return r;
+}
+Ref difference(Obj sov, Obj otherv) {            // set_difference_untracked
+    SetObject* so = as_set(sov);
+    std::size_t other_size = 0;
+    if (is_kind(otherv, Kind::Set)) other_size = as_set(otherv)->used;
+    else if (plain_dict(otherv)) other_size = static_cast<Dict*>(otherv.object())->used;
+    else return copy_and_difference(sov, otherv);
+    if ((so->used >> 2) > other_size) return copy_and_difference(sov, otherv);
     Ref result = new_set_like(sov);
     each_entry(so, [&](Obj key, std::int64_t hash) {
-        if (!contains_entry(other, key, hash)) set_add_hashed(result.get(), key, hash);
+        bool found = is_kind(otherv, Kind::Set) ? contains_entry(as_set(otherv), key, hash)
+                                                : !dict_find(static_cast<Dict*>(otherv.object()), key, hash).is_unset();
+        if (!found) set_add_hashed(result.get(), key, hash);
         return true;
     });
     return result;
 }
-void symmetric_difference_update(Obj sov, Obj otherv) {
-    if (sov == otherv) return clear_set(as_set(sov));
-    each_entry(as_set(otherv), [&](Obj key, std::int64_t hash) {
+void symmetric_difference_update_set(Obj sov, SetObject* other) {
+    each_entry(other, [&](Obj key, std::int64_t hash) {
         if (!discard_entry(as_set(sov), key, hash)) set_add_hashed(sov, key, hash);
         return true;
     });
 }
-Ref symmetric_difference(Obj sov, Obj otherv) {
+void symmetric_difference_update(Obj sov, Obj otherv) {
+    if (sov == otherv) return clear_set(as_set(sov));
+    if (plain_dict(otherv)) {                    // set_symmetric_difference_update_dict: _PyDict_Next, live
+        auto* d = static_cast<Dict*>(otherv.object());
+        for (std::size_t pos = 0; pos < d->entries.size(); ++pos) {
+            if (d->entries[pos].key.is_unset()) continue;
+            Ref key = Ref::share(d->entries[pos].key);
+            std::int64_t hash = d->entries[pos].hash;
+            if (!discard_entry(as_set(sov), key.get(), hash)) set_add_hashed(sov, key.get(), hash);
+        }
+        return;
+    }
+    if (is_kind(otherv, Kind::Set)) return symmetric_difference_update_set(sov, as_set(otherv));
+    Ref other = new_set_like(sov);
+    set_update(other.get(), otherv);
+    symmetric_difference_update_set(sov, as_set(other.get()));
+}
+Ref symmetric_difference(Obj sov, Obj otherv) {  // set_symmetric_difference_impl
     Ref result = new_set_like(sov);
-    set_merge(as_set(result.get()), as_set(otherv));
-    symmetric_difference_update(result.get(), sov);
+    set_update(result.get(), otherv);
+    symmetric_difference_update_set(result.get(), as_set(sov));
     return result;
 }
 bool issubset(SetObject* so, SetObject* other) {
@@ -294,6 +353,11 @@ bool issubset(SetObject* so, SetObject* other) {
     bool all = true;
     each_entry(so, [&](Obj key, std::int64_t hash) { return all = contains_entry(other, key, hash); });
     return all;
+}
+void swap_bodies(SetObject* a, SetObject* b) {   // set_swap_bodies; a finger stays where it is
+    std::swap(a->table, b->table);
+    std::swap(a->fill, b->fill);
+    std::swap(a->used, b->used);
 }
 }  // namespace
 
@@ -317,10 +381,7 @@ Ref set_inplace(BinOp op, Obj a, Obj b) {         // a set's own; a frozenset ha
         case BinOp::Or: set_merge(as_set(a), as_set(b)); break;
         case BinOp::And: {                       // set_intersection_update: the bodies are swapped
             Ref tmp = intersection(a, b);
-            SetObject *so = as_set(a), *t = as_set(tmp.get());
-            std::swap(so->table, t->table);
-            std::swap(so->fill, t->fill);
-            std::swap(so->used, t->used);
+            swap_bodies(as_set(a), as_set(tmp.get()));
             break;
         }
         case BinOp::Sub: difference_update(a, b); break;
@@ -343,6 +404,13 @@ Ref set_compare(CmpOp op, Obj v, Obj w) {         // set_richcompare
     }
 }
 
+Ref build_folded_set(std::initializer_list<Obj> items) {   // BUILD_SET 0, a frozenset constant, SET_UPDATE
+    Ref constant = own(new SetObject(true));
+    for (Obj v : items) set_add(constant.get(), v);
+    Ref out = own(new SetObject(false));
+    set_update(out.get(), constant.get());
+    return out;
+}
 Ref build_set(std::initializer_list<Obj> items) {
     Ref s = own(new SetObject(false));
     for (Obj v : items) set_add(s.get(), v);
@@ -354,13 +422,133 @@ SetObject* set_self(Obj v) { return static_cast<SetObject*>(v.object()); }
 void no_kw(Args a, const char* who) {
     if (a.nkw != 0) raise_new("TypeError", std::string(who) + "() takes no keyword arguments");
 }
-Ref set_new_fn(Obj, Args a) {                   // __new__(cls, iterable=()): the class comes first
+Ref set_new_fn(Obj, Args a) {                   // set_new: the arguments are __init__'s
+    new_wrapper_class(a, types().set);
+    return own(new SetObject(false));
+}
+Ref set_init_m(Obj self, Args a) {              // set_init
     no_kw(a, "set");
-    if (a.npos > 2) raise_new("TypeError", "set expected at most 1 argument, got " + std::to_string(a.npos - 1));
-    bool frozen = static_cast<ClassObject*>(a.pos(0).object()) == types().frozenset;
-    Ref s = own(new SetObject(frozen));
+    if (a.npos > 1) raise_new("TypeError", type_of(self)->name + " expected at most 1 argument, got " + std::to_string(a.npos));
+    if (set_self(self)->fill != 0) clear_set(set_self(self));
+    if (a.npos == 1) set_update(self, a.pos(0));
+    return none_ref();
+}
+Ref frozenset_new_fn(Obj, Args a) {             // frozenset_new, make_new_frozenset
+    new_wrapper_class(a, types().frozenset);
+    no_kw(a, "frozenset");
+    if (a.npos > 2) raise_new("TypeError", "frozenset expected at most 1 argument, got " + std::to_string(a.npos - 1));
+    if (a.npos == 2 && is_kind(a.pos(1), Kind::Set) && set_self(a.pos(1))->frozen) return Ref::share(a.pos(1));
+    Ref s = own(new SetObject(true));
     if (a.npos == 2) set_update(s.get(), a.pos(1));
     return s;
+}
+std::string named(Obj self, const char* name) { return type_of(self)->name + "." + name; }
+Ref set_copy_m(Obj self, Args a) {              // set_copy_impl, frozenset_copy_impl
+    noargs(a, named(self, "copy"));
+    return set_self(self)->frozen ? Ref::share(self) : copy_set(self);
+}
+Ref set_clear_m(Obj self, Args a) {
+    noargs(a, named(self, "clear"));
+    clear_set(set_self(self));
+    return none_ref();
+}
+Ref set_pop_m(Obj self, Args a) {               // set_pop_impl
+    noargs(a, named(self, "pop"));
+    SetObject* so = set_self(self);
+    if (so->used == 0) raise_new("KeyError", "pop from an empty set");
+    std::size_t mask = so->table.size() - 1, i = so->finger & mask;
+    while (!active(so->table[i])) i = i == mask ? 0 : i + 1;
+    Obj key = so->table[i].key;
+    so->table[i] = {Obj{}, -1};
+    --so->used;
+    so->finger = i + 1;
+    return Ref::steal(key);
+}
+void many(Obj self, Args a, const char* name) { // METH_FASTCALL with *others
+    if (a.nkw != 0) raise_new("TypeError", named(self, name) + "() takes no keyword arguments");
+}
+Ref set_union_m(Obj self, Args a) {             // set_union_impl
+    many(self, a, "union");
+    Ref result = copy_set(self);
+    for (std::size_t i = 0; i < a.npos; ++i)
+        if (a.pos(i) != self) set_update(result.get(), a.pos(i));
+    return result;
+}
+Ref intersection_multi(Obj self, Args a) {      // set_intersection_multi_impl
+    if (a.npos == 0) return copy_set(self);
+    Ref result = Ref::share(self);
+    for (std::size_t i = 0; i < a.npos; ++i) result = intersection_any(result.get(), a.pos(i));
+    return result;
+}
+Ref set_intersection_m(Obj self, Args a) {
+    many(self, a, "intersection");
+    return intersection_multi(self, a);
+}
+Ref set_intersection_update_m(Obj self, Args a) {
+    many(self, a, "intersection_update");
+    Ref tmp = intersection_multi(self, a);
+    if (tmp.get() != self) swap_bodies(set_self(self), set_self(tmp.get()));
+    return none_ref();
+}
+Ref set_difference_m(Obj self, Args a) {        // set_difference_multi_impl
+    many(self, a, "difference");
+    if (a.npos == 0) return copy_set(self);
+    Ref result = difference(self, a.pos(0));
+    for (std::size_t i = 1; i < a.npos; ++i) difference_update(result.get(), a.pos(i));
+    return result;
+}
+Ref set_difference_update_m(Obj self, Args a) {
+    many(self, a, "difference_update");
+    for (std::size_t i = 0; i < a.npos; ++i) difference_update(self, a.pos(i));
+    return none_ref();
+}
+Ref set_symmetric_difference_m(Obj self, Args a) {
+    onearg(a, named(self, "symmetric_difference"));
+    return symmetric_difference(self, a.pos(0));
+}
+Ref set_symmetric_difference_update_m(Obj self, Args a) {
+    onearg(a, named(self, "symmetric_difference_update"));
+    symmetric_difference_update(self, a.pos(0));
+    return none_ref();
+}
+Ref set_isdisjoint_m(Obj self, Args a) {        // set_isdisjoint_impl
+    onearg(a, named(self, "isdisjoint"));
+    Obj other = a.pos(0);
+    SetObject* so = set_self(self);
+    if (other == self) return Ref::steal(boolean(so->used == 0));
+    if (is_kind(other, Kind::Set)) {
+        SetObject* o = set_self(other);
+        if (o->used > so->used) std::swap(so, o);
+        bool disjoint = true;
+        each_entry(o, [&](Obj key, std::int64_t hash) { return disjoint = !contains_entry(so, key, hash); });
+        return Ref::steal(boolean(disjoint));
+    }
+    Ref it = iter(other);
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+        if (contains_key(so, v.get())) return Ref::steal(boolean(false));
+    return Ref::steal(boolean(true));
+}
+Ref set_issubset_m(Obj self, Args a) {          // set_issubset_impl
+    onearg(a, named(self, "issubset"));
+    if (!is_kind(a.pos(0), Kind::Set)) {
+        Ref tmp = intersection_any(self, a.pos(0));
+        return Ref::steal(boolean(set_self(tmp.get())->used == set_self(self)->used));
+    }
+    return Ref::steal(boolean(issubset(set_self(self), set_self(a.pos(0)))));
+}
+Ref set_issuperset_m(Obj self, Args a) {        // set_issuperset_impl
+    onearg(a, named(self, "issuperset"));
+    if (is_kind(a.pos(0), Kind::Set)) return Ref::steal(boolean(issubset(set_self(a.pos(0)), set_self(self))));
+    Ref it = iter(a.pos(0));
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+        if (!contains_key(set_self(self), v.get())) return Ref::steal(boolean(false));
+    return Ref::steal(boolean(true));
+}
+template <BinOp op>
+Ref set_inplace_m(Obj self, Args a) {           // __ior__ and its kin: nb_inplace_or
+    const char* name = op == BinOp::Or ? "__ior__" : op == BinOp::And ? "__iand__" : op == BinOp::Sub ? "__isub__" : "__ixor__";
+    dunder_args(self, a, name, 1);
+    return set_inplace(op, self, a.pos(0));
 }
 void one_argument(Args a, const char* who) {        // METH_O's check (A9-3)
     no_kw(a, who);
@@ -413,7 +601,15 @@ void init_sets() {
             f->flags |= IMMORTAL;
             c->attrs.set(intern(name), Obj::of(f));
         };
-        add("__new__", set_new_fn, Binding::Function);
+        add("__new__", c == t.set ? set_new_fn : frozenset_new_fn, Binding::Function);
+        add("copy", set_copy_m);
+        add("union", set_union_m);
+        add("intersection", set_intersection_m);
+        add("difference", set_difference_m);
+        add("symmetric_difference", set_symmetric_difference_m);
+        add("isdisjoint", set_isdisjoint_m);
+        add("issubset", set_issubset_m);
+        add("issuperset", set_issuperset_m);
         add("__len__", set_len_m);
         add("__contains__", set_contains_m);
         add("__iter__", set_iter_m);
@@ -422,6 +618,16 @@ void init_sets() {
             add("discard", set_discard_m);
             add("remove", set_remove_m);
             add("update", set_update_m);
+            add("__init__", set_init_m);
+            add("clear", set_clear_m);
+            add("pop", set_pop_m);
+            add("intersection_update", set_intersection_update_m);
+            add("difference_update", set_difference_update_m);
+            add("symmetric_difference_update", set_symmetric_difference_update_m);
+            add("__ior__", set_inplace_m<BinOp::Or>);
+            add("__iand__", set_inplace_m<BinOp::And>);
+            add("__isub__", set_inplace_m<BinOp::Sub>);
+            add("__ixor__", set_inplace_m<BinOp::Xor>);
         }
     }
     destroyer(Kind::Set) = [](Object* o) {
