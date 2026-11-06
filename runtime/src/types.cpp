@@ -798,6 +798,8 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         Ref proxy = own(new Proxy(c));
         decref(std::exchange(cell->value, proxy.release()));
     }
+    // inherit_patma_flags: the first base in the MRO with either
+    for (std::size_t i = 1; i < c->mro.size() && c->collection_flags == 0; ++i) c->collection_flags = collection_flags_of(c->mro[i]);
     // type_new_set_names: __set_name__, in the order of the class's attributes; what it raises gets a note
     for (auto& [k, v] : c->attrs.items()) {
         bool found = false;
@@ -1347,7 +1349,41 @@ Ref type_base(Obj self) {
     if (c == types().object) return none_ref();
     return Ref::share(Obj::of(c->bases.empty() ? types().object : c->bases[0]));
 }
-Ref type_flags(Obj self) { return Ref::steal(Obj::small(self_class(self)->heap_type ? (1 << 9) : 0)); }
+// type.__flags__. A type written in C has the pin's, from the names table. A program's class has what a class that says nothing has
+// on its first base written in C (the table's heapflags:), less the dict and the weak reference its __slots__ leave out, with its
+// collection and abstract bits; a __call__ of its own takes the vectorcall away (update_one_slot).
+Ref type_flags(Obj self) {
+    ClassObject* c = self_class(self);
+    if (immutable_type(c)) {
+        auto flags = cpython_type_number("flags", c);
+        if (!flags) throw NotImplemented("the __flags__ of '" + c->name + "' (CPython has it; the runtime does not yet)");
+        return int_from_i64(*flags);
+    }
+    ClassObject* base = c;
+    while (!immutable_type(base)) base = tp_base(base);
+    auto inherited = cpython_type_number("heapflags", base);
+    if (!inherited) throw NotImplemented("the __flags__ of a subclass of '" + base->name + "' (CPython has it; the runtime does not yet)");
+    constexpr std::int64_t INLINE_VALUES = 1 << 2, MANAGED_WEAKREF = 1 << 3, MANAGED_DICT = 1 << 4, COLLECTION = (1 << 5) | (1 << 6), VECTORCALL = 1 << 11, ABSTRACT = 1 << 20;
+    std::int64_t flags = *inherited;
+    if (!c->has_dict) flags &= ~(MANAGED_DICT | INLINE_VALUES);
+    if (!c->has_weakref) flags &= ~MANAGED_WEAKREF;
+    flags = (flags & ~COLLECTION) | c->collection_flags;
+    if (c->abstract) flags |= ABSTRACT;
+    if (type_lookup(c, N("__call__")) != type_lookup(base, N("__call__"))) flags &= ~VECTORCALL;
+    return int_from_i64(flags);
+}
+}  // namespace
+std::uint8_t collection_flags_of(const ClassObject* c) {
+    if (!immutable_type(c)) return c->collection_flags;
+    auto flags = cpython_type_number("flags", c);
+    return flags ? static_cast<std::uint8_t>(*flags & ((1 << 5) | (1 << 6))) : 0;
+}
+void set_collection_flag_recursive(ClassObject* child, std::uint8_t flag) {
+    if (immutable_type(child) || child->collection_flags == flag) return;
+    child->collection_flags = flag;
+    for (ClassObject* grandchild : child->subclasses) set_collection_flag_recursive(grandchild, flag);
+}
+namespace {
 
 // function, method and cell attributes
 PyFunction* fn_of(Obj self) { return static_cast<PyFunction*>(self.object()); }
@@ -2392,7 +2428,11 @@ void init_types() {
     getset(t.type, "__mro__", type_mro_attr);
     getset(t.type, "__bases__", type_bases, set_type_bases);
     getset(t.type, "__base__", type_base);
-    getset(t.type, "__flags__", type_flags);
+    {
+        auto* g = new GetSet("__flags__", t.type, type_flags, nullptr);
+        g->cls = t.member_descriptor;
+        t.type->attrs.set(N("__flags__"), Obj::of(g));
+    }
     for (const char* n : {"__name__", "__qualname__", "__module__", "__doc__", "__bases__"})
         static_cast<GetSet*>(t.type->attrs.find(N(n))->object())->deletable = true;
     // descriptors' own __get__ (and a getset's __set__ and __delete__)

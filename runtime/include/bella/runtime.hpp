@@ -393,6 +393,9 @@ Ref type_or(Obj a, Obj b);                        // _Py_union_type_or (bootstra
 inline bool is_union(Obj v) { return v.is_object() && v.object()->cls == types().union_; }   // _PyUnion_Check
 Ref i_bella_new_instance(Obj, Args a);            // bootstrap.py's: an instance of a C type that has no __new__
 Module* native_module_named(const std::string& name);   // a built-in module the program has, or nullptr
+std::optional<std::int64_t> cpython_type_number(std::string_view scope, const ClassObject* c);   // flags:, heapflags: of a type written in C
+std::uint8_t collection_flags_of(const ClassObject* c);   // tp_flags & (Py_TPFLAGS_SEQUENCE | Py_TPFLAGS_MAPPING)
+void set_collection_flag_recursive(ClassObject* child, std::uint8_t flag);   // Modules/_abc.c
 std::optional<std::string_view> cpython_doc_text(std::string_view name);   // a row of the docstrings' table, if any
 Obj cpython_doc(std::string_view name);          // a built-in module's or type's docstring (cpython_names.inc)
 bool& shutting_down();                           // finalize_modules has begun: imports fail as CPython's do

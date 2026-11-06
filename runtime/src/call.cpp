@@ -3,6 +3,7 @@
 // (bella/runtime.hpp).
 #include "bella/runtime.hpp"
 
+#include <charconv>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -1527,6 +1528,13 @@ Obj cpython_doc(std::string_view name) {
     return Obj::of(intern(it->text));
 }
 
+std::optional<std::int64_t> cpython_type_number(std::string_view scope, const ClassObject* c) {
+    const CPythonName* e = cpython_find(scope, table_name(c));
+    if (e == nullptr) return std::nullopt;
+    std::int64_t value = 0;
+    std::from_chars(e->kind.data(), e->kind.data() + e->kind.size(), value);
+    return value;
+}
 std::optional<std::string_view> cpython_doc_text(std::string_view name) {
     auto it = std::lower_bound(std::begin(CPYTHON_DOCS), std::end(CPYTHON_DOCS), name,
                                [](const CPythonDoc& e, std::string_view k) { return e.name < k; });

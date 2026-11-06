@@ -153,6 +153,7 @@ Ref a_abc_init(Obj, Args a) {
         constexpr std::int64_t SEQUENCE = 1 << 5, MAPPING = 1 << 6;
         if (flags.get().is_small() && (flags.get().small_value() & (SEQUENCE | MAPPING)) == (SEQUENCE | MAPPING))
             raise_new("TypeError", "__abc_tpflags__ cannot be both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING");
+        if (flags.get().is_small()) c->collection_flags |= static_cast<std::uint8_t>(flags.get().small_value() & (SEQUENCE | MAPPING));
     }
     return none_ref();
 }
@@ -168,6 +169,9 @@ Ref a_abc_register(Obj, Args a) {
     Ref impl = get_impl(self);
     add_to_weak_set(data_of(impl)->registry, subclass);
     ++invalidation_counter;                      // the negative caches are out of date
+    if (is_kind(self, Kind::Class))              // Set Py_TPFLAGS_SEQUENCE or Py_TPFLAGS_MAPPING flag
+        if (std::uint8_t flag = collection_flags_of(static_cast<ClassObject*>(self.object())); flag != 0)
+            set_collection_flag_recursive(static_cast<ClassObject*>(subclass.object()), flag);
     return Ref::share(subclass);
 }
 

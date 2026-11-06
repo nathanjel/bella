@@ -654,6 +654,7 @@ struct ClassObject : Object {
     bool dict_without_getset = false;            // _thread._local: a subclass still gets a __dict__ of its own to show
     bool sequence_slots = false;                 // a C type written in Python, with sq_concat and sq_item and no number slots
     bool weak_proxy = false;                     // weakref.ProxyType and its kin: attribute access goes to the target
+    std::uint8_t collection_flags = 0;           // a program's class: Py_TPFLAGS_SEQUENCE, Py_TPFLAGS_MAPPING (what match and __flags__ read)
     bool abstract = false;                       // Py_TPFLAGS_IS_ABSTRACT: set by __abstractmethods__, not inherited
     bool mapping_getitem = false;                // a C type written in Python whose __getitem__ is mp_subscript alone: no sq_item
     bool disallow_instantiation = false;         // Py_TPFLAGS_DISALLOW_INSTANTIATION, of a C type written in Python

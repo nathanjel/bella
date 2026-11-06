@@ -22,6 +22,7 @@ exit 70). This tool records, from the pinned CPython, which names exist:
   ordering, as not supported between the instances); `==` and `!=` count when a type's own
   method decides, not the identity fallback. The runtime refuses a handled operation it does
   not implement, rather than raise the TypeError CPython would not.
+* `flags:<name>`, `heapflags:<name>`: a type's tp_flags in the kind column, and those of a class that says nothing on it as its base;
 * `itemsize:<name>`, `state:<name>`: the built-in types with items in the object, and those with C fields past what object has, by
   which object.__getstate__ and __reduce_ex__ refuse what they could not bring back;
 * `builtin_module:<name>`: `sys.builtin_module_names`, which the runtime gives as the pin's;
@@ -56,6 +57,8 @@ import abc, builtins, json, sys, types
 
 FINAL = set()
 WEAKREF = set()
+FLAGS = {}
+HEAPFLAGS = {}
 ITEMSIZE = set()
 STATE = set()
 
@@ -66,6 +69,12 @@ def type_names():
             found.setdefault(t.__name__, {}).update({n: type(v).__name__ for n, v in vars(t).items()})
             if t.__weakrefoffset__:              # _PyType_SUPPORTS_WEAKREFS, by __name__ as the table knows a type
                 WEAKREF.add(t.__name__)
+            FLAGS[t.__name__] = str(t.__flags__)
+            if t.__flags__ & (1 << 10) and t.__name__ not in HEAPFLAGS:   # what a class that says nothing has, on this base
+                try:
+                    HEAPFLAGS[t.__name__] = str(type("Z", (t,), {}).__flags__)
+                except Exception:
+                    pass
             if t.__itemsize__:                   # object_getstate_default's tests, for a type written in C
                 ITEMSIZE.add(t.__name__)
             elif not t.__flags__ & (1 << 9) and t.__basicsize__ > object.__basicsize__ + (8 if t.__dictoffset__ and not t.__flags__ & (1 << 4) else 0) + (8 if t.__weakrefoffset__ > 0 else 0):
@@ -178,7 +187,7 @@ def docs():
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:])}))
 '''
 
@@ -198,6 +207,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
     names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "itemsize", "state", "builtin_module") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
+    names |= {(f"{scope}:{t}", value) for scope in ("flags", "heapflags") for t, value in data[scope].items()}
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}
     version = ".".join(map(str, sys.version_info[:3]))
     return version, sorted(names), sorted(data["docs"].items())

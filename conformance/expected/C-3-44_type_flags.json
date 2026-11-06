@@ -1,0 +1,12 @@
+{
+ "case": "C-3-44_type_flags.py",
+ "clause": "C-3-44",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Objects/typeobject.c (type_new_alloc, inherit_special, inherit_patma_flags), Modules/_abc.c",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "A 0x561c int\nB 0x561c int\nS 0x5600 int\nS2 0x5600 int\nS3 0x561c int\nSD 0x5614 int\nSW 0x5608 int\nSB 0x561c int\nSl 0x5600 int\nD 0x2040565c int\nDS 0x20405640 int\nT 0x4405630 int\nT2 0x4405620 int\nI 0x1405610 int\nI2 0x1405600 int\nF 0x40561c int\nC 0x561c int\nE 0x40005608 int\nE2 0x40005600 int\nOS 0x40005608 int\nM 0x80805e00 int\nMC 0x80805600 int\nMS 0x80805e00 int\nWithMeta 0x561c int\nX 0x10561c int\nXC 0x561c int\nXs 0x5600 int\nSq 0x563c int\nMp 0x565c int\nReg 0x563c int\nRegChild 0x563c int\nRegM 0x563c int\nBoth 0x563c int\nBoth2 0x565c int\nMarked 0x563c int\nMarkedChild 0x563c int\nPlain2 0x561c int\nWithCall 0x561c int\nWithGet 0x561c int\nWithDel 0x561c int\nWithMatch 0x561c int\nDeqSub 0x5634 int\nDD 0x2040565c int\nPart 0x5e00 int\nProp 0x561c int\nABC 0x5600 int\nABCMeta 0x80805e00 int\nSequence 0x105620 int\nMapping 0x105640 int\nSet 0x105600 int\nHashable 0x105600 int\nobject 0x1502\ntype 0x80805d02\nint 0x1401502\nbool 0x1401102\nstr 0x10401502\nbytes 0x8401502\nbytearray 0x401502\nfloat 0x401502\ncomplex 0x1502\nlist 0x2405522\ntuple 0x4405522\ndict 0x20405542\nset 0x405502\nfrozenset 0x405502\nrange 0x1122\nslice 0x5102\nproperty 0x5502\nstaticmethod 0x5502\nclassmethod 0x5502\nsuper 0x5502\nNoneType 0x1102\nNotImplementedType 0x1102\nellipsis 0x1102\nBaseException 0x40005502\nException 0x40005502\nOSError 0x40005502\nValueError 0x40005502\nStopIteration 0x40005502\nbuiltin_function_or_method 0x5982\nfunction 0x25902\nlist_iterator 0x5182\nmodule 0x5502\nmap 0x5502\nzip 0x5502\nfilter 0x5502\nenumerate 0x5502\nreversed 0x5502\nwrapper_descriptor 0x25182\nmethod-wrapper 0x5182\nmethod_descriptor 0x25982\nbuiltin_function_or_method 0x5982\ndict_keys 0x5182\ndict_keyiterator 0x5182\ncount 0x5700\nchain 0x5700\ndeque 0x5720\ndefaultdict 0x20405740\npartial 0x5f00\nstat_result 0x4405220\nterminal_size 0x4405220\nlock 0x5308\nRLock 0x5708\n_local 0x5700\nSimpleNamespace 0x5502\nGenericAlias 0x5d02\nUnion 0x5182\nmappingproxy 0x5142\ncell 0x5102\nmodule 0x5502\ngenerator 0x5182\nTrue True False __flags__ member_descriptor\nAttributeError\nTypeError\n0x563c False False\n0x563c 0x563c\n0x563c 0x565c 0x563c 0x563c\n0x1401502\n0x563c\n",
+ "stderr": "",
+ "exit_code": 0
+}
