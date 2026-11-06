@@ -53,12 +53,16 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "_stat.py"]
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
-RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra"]
+# -ffp-contract=off: a*b + c is two operations with two roundings, as the reference computes it. A compiler that
+# may fuse them gives -0.0 + 0.0 another sign and rounds a subnormal differently (the runner's g++ did, in complex
+# division; -mfma reproduces it): the program's numbers must not depend on what the compiler's target has.
+FP_FLAGS = ["-ffp-contract=off"]
+RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra", *FP_FLAGS]
 # -fno-tree-pta: GCC 16's -O1 is super-linear on a long function full of temporaries with destructors.
 # A 3143-line module body took over 25 minutes and 24 MB; without the analysis, 15 seconds and 1.2 MB,
 # with no measurable cost at run time (fib and an object, dict and exception workload, within noise).
-PROGRAM_FLAGS = ["-O1", "-w", "-fno-tree-pta"]
-LIBRARY_FLAGS = ["-O0", "-w"]      # the standard library's units: a fifth of the compile time; speed is not a goal yet
+PROGRAM_FLAGS = ["-O1", "-w", "-fno-tree-pta", *FP_FLAGS]
+LIBRARY_FLAGS = ["-O0", "-w", *FP_FLAGS]      # the standard library's units: a fifth of the compile time; speed is not a goal yet
 
 
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False) -> str:
