@@ -15,6 +15,7 @@ C-3-14_comprehension_unpacking.py
 C-3-15_generator_close_and_throw.py
 C-3-18_class_assignment.py
 C-3-19_getattribute_override.py
+C-3-20_copy_protocol.py
 C-3-29_generators_and_comprehensions.py
 C-3-30_traceback_entries.py
 C-3-31_exception_fields.py
@@ -29,6 +30,7 @@ C-3-39_union_types.py
 C-3-40_tuple_subclasses.py
 C-3-41_generator_state_machine.py
 C-3-42_c_types_present_their_methods.py
+C-3-43_object_reduce.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

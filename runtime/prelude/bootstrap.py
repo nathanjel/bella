@@ -1735,3 +1735,142 @@ def _bella_structseq(name, module, fields, visible, settle=None):
     cls = type(name, (tuple,), body)
     _bella_structseq_finish(cls, module, fields)
     return cls
+
+
+# ---- what object says to whoever would copy an instance (Objects/typeobject.c)
+
+_ABSENT_SLOT = object()
+
+
+def _get_slotnames(cls):                         # _PyType_GetSlotNames
+    found = type.__dict__["__dict__"].__get__(cls).get("__slotnames__", _ABSENT_SLOT)
+    if found is not _ABSENT_SLOT:
+        if found is not None and not issubclass(type(found), list):
+            raise TypeError(_bella_tp_name_of(cls) + ".__slotnames__ should be a list or None, not " + _tp_name(found))
+        return found
+    import copyreg
+    names = copyreg._slotnames(cls)
+    if names is not None and not issubclass(type(names), list):
+        raise TypeError("copyreg._slotnames didn't return a list or None")
+    return names
+
+
+def _getstate_default(obj, required):            # object_getstate_default
+    cls = type(obj)
+    layout = _bella_pickle_layout(cls)           # 2: tp_itemsize; 1: a C type's fields, which neither dict nor slots hold
+    if required and layout == 2:
+        raise TypeError("cannot pickle " + _bella_tp_name_of(cls) + " objects")
+    state = _bella_instance_dict(obj)
+    slotnames = _get_slotnames(cls)
+    if required and layout == 1:
+        raise TypeError("cannot pickle '" + _bella_tp_name_of(cls) + "' object")
+    if slotnames is not None and len(slotnames) > 0:
+        slots = {}
+        size = len(slotnames)
+        i = 0
+        while i < size:
+            name = slotnames[i]
+            try:
+                slots[name] = getattr(obj, name)
+            except AttributeError:               # It is not an error if the attribute is not present
+                pass
+            if size != len(slotnames):           # it is stored on the class, so it may mutate
+                raise RuntimeError("__slotnames__ changed size during iteration")
+            i += 1
+        if len(slots) > 0:
+            state = (state, slots)
+    return state
+
+
+def _getstate(obj, required):                    # object_getstate
+    getstate = obj.__getstate__
+    if type(getstate) is type(len) and getstate.__self__ is obj and type(obj).__getstate__ is object.__dict__["__getstate__"]:
+        return _getstate_default(obj, required)  # not overridden: pass the required argument
+    return getstate()
+
+
+def _get_new_arguments(obj):                     # _PyObject_GetNewArguments
+    found = _lookup_special(obj, "__getnewargs_ex__")
+    if found:
+        newargs = found[0]()
+        if not issubclass(type(newargs), tuple):
+            raise TypeError("__getnewargs_ex__ should return a tuple, not '" + _tp_name(newargs) + "'")
+        if len(newargs) != 2:
+            raise ValueError("__getnewargs_ex__ should return a tuple of length 2, not " + str(len(newargs)))
+        args = tuple.__getitem__(newargs, 0)
+        kwargs = tuple.__getitem__(newargs, 1)
+        if not issubclass(type(args), tuple):
+            raise TypeError("first item of the tuple returned by __getnewargs_ex__ must be a tuple, not '" + _tp_name(args) + "'")
+        if not issubclass(type(kwargs), dict):
+            raise TypeError("second item of the tuple returned by __getnewargs_ex__ must be a dict, not '" + _tp_name(kwargs) + "'")
+        return args, kwargs
+    found = _lookup_special(obj, "__getnewargs__")
+    if found:
+        args = found[0]()
+        if not issubclass(type(args), tuple):
+            raise TypeError("__getnewargs__ should return a tuple, not '" + _tp_name(args) + "'")
+        return args, None
+    return None, None
+
+
+def _reduce_newobj(obj):                         # reduce_newobj
+    cls = type(obj)
+    if _bella_no_tp_new(cls):
+        raise TypeError("cannot pickle '" + _bella_tp_name_of(cls) + "' object")
+    args, kwargs = _get_new_arguments(obj)
+    import copyreg
+    hasargs = args is not None
+    if kwargs is None or len(kwargs) == 0:
+        newobj = copyreg.__newobj__
+        newargs = (cls, *(tuple.__iter__(args) if hasargs else ()))
+    elif args is not None:
+        newobj = copyreg.__newobj_ex__
+        newargs = (cls, args, kwargs)
+    else:
+        raise SystemError("bad argument to internal function")
+    state = _getstate(obj, not (hasargs or issubclass(cls, list) or issubclass(cls, dict)))
+    listitems = iter(obj) if issubclass(cls, list) else None     # _PyObject_GetItemsIter
+    dictitems = iter(obj.items()) if issubclass(cls, dict) else None
+    return (newobj, newargs, state, listitems, dictitems)
+
+
+def _common_reduce(obj, proto):                  # _common_reduce
+    if proto >= 2:
+        return _reduce_newobj(obj)
+    import copyreg
+    return copyreg._reduce_ex(obj, proto)
+
+
+def _object_reduce_ex(*args, **kwds):            # object___reduce___ex___impl: METH_O, with its int
+    obj = args[0]
+    if kwds:
+        raise TypeError("object.__reduce_ex__() takes no keyword arguments")
+    if len(args) != 2:
+        raise TypeError("object.__reduce_ex__() takes exactly one argument (" + str(len(args) - 1) + " given)")
+    proto = _number_index(args[1])
+    if not -2147483648 <= proto <= 2147483647:
+        raise OverflowError("Python int too large to convert to C int")
+    try:
+        reduce = obj.__reduce__
+    except AttributeError:
+        return _common_reduce(obj, proto)
+    if type(obj).__reduce__ is not object.__dict__["__reduce__"]:   # overridden
+        return reduce()
+    return _common_reduce(obj, proto)
+
+
+def _object_reduce(*args, **kwds):               # object___reduce___impl
+    if kwds:
+        raise TypeError("object.__reduce__() takes no keyword arguments")
+    if len(args) != 1:
+        raise TypeError("object.__reduce__() takes no arguments (" + str(len(args) - 1) + " given)")
+    return _common_reduce(args[0], 0)
+
+
+def _object_getstate(*args, **kwds):             # object___getstate___impl
+    if kwds:
+        raise TypeError("object.__getstate__() takes no keyword arguments")
+    if len(args) != 1:
+        raise TypeError("object.__getstate__() takes no arguments (" + str(len(args) - 1) + " given)")
+    return _getstate_default(args[0], False)
+

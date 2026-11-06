@@ -75,7 +75,7 @@ REFUSED = {
     "utf_16": ("'a'.encode('utf-16')\n", "the codec 'utf-16'"),
     "utf_32_decode": ("b''.decode('utf-32-le')\n", "the codec 'utf-32-le'"),
     "namereplace": ("'\\xe9'.encode('ascii', 'namereplace')\n", "namereplace"),
-    "pickling": ("b''.__reduce__()\n", "__reduce__"),
+    "pickling": ("bytearray(b'').__reduce__()\n", "__reduce__"),
     "sizeof": ("bytearray().__sizeof__()\n", "__sizeof__"),
 }
 

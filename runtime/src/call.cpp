@@ -2145,7 +2145,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                              {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_refuse", i_bella_refuse},
                              {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
                              {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_caller_module", i_bella_caller_module},
-                             {"_bella_structseq_finish", i_bella_structseq_finish}, {"_bella_structseq_make", i_bella_structseq_make}, {"_bella_structseq_hidden", i_bella_structseq_hidden},
+                             {"_bella_structseq_finish", i_bella_structseq_finish}, {"_bella_structseq_make", i_bella_structseq_make}, {"_bella_pickle_layout", i_bella_pickle_layout}, {"_bella_no_tp_new", i_bella_no_tp_new},
+                             {"_bella_tp_name_of", i_bella_tp_name_of}, {"_bella_instance_dict", i_bella_instance_dict}, {"_bella_structseq_hidden", i_bella_structseq_hidden},
                              {"_bella_keyword_suggestion", i_keyword_suggestion}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());

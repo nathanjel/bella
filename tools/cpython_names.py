@@ -22,6 +22,8 @@ exit 70). This tool records, from the pinned CPython, which names exist:
   ordering, as not supported between the instances); `==` and `!=` count when a type's own
   method decides, not the identity fallback. The runtime refuses a handled operation it does
   not implement, rather than raise the TypeError CPython would not.
+* `itemsize:<name>`, `state:<name>`: the built-in types with items in the object, and those with C fields past what object has, by
+  which object.__getstate__ and __reduce_ex__ refuse what they could not bring back;
 * `builtin_module:<name>`: `sys.builtin_module_names`, which the runtime gives as the pin's;
 * `final:<tp_name>`: the built-in types a class cannot derive from (no Py_TPFLAGS_BASETYPE);
 * `<type>:<name>`: each built-in type's own attributes (its `__dict__`), keyed by `__name__`, with
@@ -54,6 +56,8 @@ import abc, builtins, json, sys, types
 
 FINAL = set()
 WEAKREF = set()
+ITEMSIZE = set()
+STATE = set()
 
 def type_names():
     found = {}
@@ -62,6 +66,10 @@ def type_names():
             found.setdefault(t.__name__, {}).update({n: type(v).__name__ for n, v in vars(t).items()})
             if t.__weakrefoffset__:              # _PyType_SUPPORTS_WEAKREFS, by __name__ as the table knows a type
                 WEAKREF.add(t.__name__)
+            if t.__itemsize__:                   # object_getstate_default's tests, for a type written in C
+                ITEMSIZE.add(t.__name__)
+            elif not t.__flags__ & (1 << 9) and t.__basicsize__ > object.__basicsize__ + (8 if t.__dictoffset__ and not t.__flags__ & (1 << 4) else 0) + (8 if t.__weakrefoffset__ > 0 else 0):
+                STATE.add(t.__name__)
             if not t.__flags__ & (1 << 10):      # Py_TPFLAGS_BASETYPE
                 FINAL.add(t.__qualname__ if t.__module__ == "builtins" else t.__module__ + "." + t.__qualname__)
     class Probe:
@@ -170,7 +178,7 @@ def docs():
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:])}))
 '''
 
@@ -187,7 +195,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
         native = sorted(n for n, m in lock["modules"].items() if m["status"] in ("core", "mapped") and m["kind"] == "builtin")
         out = subprocess.run([sys.executable, str(script), *native], capture_output=True, text=True, check=True, cwd=tmp)
     data = json.loads(out.stdout)
-    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "builtin_module") for n in data[scope]}
+    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "itemsize", "state", "builtin_module") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}

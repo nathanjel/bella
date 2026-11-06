@@ -2063,6 +2063,7 @@ Ref generic_alias(Obj origin, Obj args) {
     return invoke(dict_get(bootstrap_of_types()->dict, Obj::of(N("GenericAlias"))), {origin, args});
 }
 void forget_python_origin(ClassObject* c);
+static void object_method_written(Module* bootstrap, const char* name, const char* written);
 void present_as_c_types(Module* bootstrap) {
     bootstrap_of_types() = bootstrap;
     Obj ns = dict_get(bootstrap->dict, Obj::of(N("SimpleNamespace")));
@@ -2119,6 +2120,9 @@ void present_as_c_types(Module* bootstrap) {
         se->attrs.set(N(name), Obj::of(g));
     }
     dict_set(builtins_module()->dict, Obj::of(N("sentinel")), Obj::of(se));
+    object_method_written(bootstrap, "__reduce_ex__", "_object_reduce_ex");
+    object_method_written(bootstrap, "__reduce__", "_object_reduce");
+    object_method_written(bootstrap, "__getstate__", "_object_getstate");
     auto* builder = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("_UnionBuilder"))).object());
     note_prelude_class(builder);
 }
@@ -2185,6 +2189,43 @@ Ref i_structseq(Obj, Args a) { return invoke(dict_get(bootstrap_of_types()->dict
 // The methods of a C type the prelude writes in Python are what the names table says, as a built-in type's own are, so that
 // type(), repr(), binding and the receiver's check see one kind of thing; what runs is the prelude's function. The file's other
 // functions, which have no row, stay as they are: they are its own.
+Ref i_bella_pickle_layout(Obj, Args a) {         // _PyObject's itemsize and basicsize tests, by the first type written in C
+    positional_only(a, "_bella_pickle_layout", 1, 1);
+    ClassObject* c = static_base(as_class(a.pos(0)));
+    std::string name = c->name.substr(c->name_prefix);
+    return int_from_i64(cpython_has("itemsize", name) ? 2 : cpython_has("state", name) ? 1 : 0);
+}
+Ref i_bella_no_tp_new(Obj, Args a) {             // tp_new is NULL: a static type with object for its base and no __new__ of its own
+    positional_only(a, "_bella_no_tp_new", 1, 1);
+    for (ClassObject* c : as_class(a.pos(0))->mro) {
+        if (c == types().object) return Ref::steal(boolean(false));
+        if (c->heap_type && !immutable_type(c)) continue;
+        if (!cpython_attribute_kind(c, "__new__").empty()) return Ref::steal(boolean(false));
+        if (tp_base(c) == types().object) return Ref::steal(boolean(true));
+    }
+    return Ref::steal(boolean(false));
+}
+Ref i_bella_tp_name_of(Obj, Args a) {
+    positional_only(a, "_bella_tp_name_of", 1, 1);
+    return str_new(as_class(a.pos(0))->name);
+}
+Ref i_bella_instance_dict(Obj, Args a) {         // the dict, or None when it is empty or there is none (_PyObject_IsInstanceDictEmpty)
+    positional_only(a, "_bella_instance_dict", 1, 1);
+    Obj self = a.pos(0);
+    bool empty = true;
+    if (!with_attribute_storage(self, [&](auto* inst) { empty = inst->order.empty() && inst->dict == nullptr; })) return none_ref();
+    if (empty) return none_ref();
+    Ref d = instance_dict_of(self);
+    return truth(d.get()) ? d : none_ref();
+}
+// object's methods that are written in bootstrap.py
+static void object_method_written(Module* bootstrap, const char* name, const char* written) {
+    auto* b = new Builtin(name, nullptr, Obj{}, Binding::Method);
+    b->owner = types().object;
+    b->written = Ref::share(dict_get(bootstrap->dict, Obj::of(intern(written))));
+    b->flags |= IMMORTAL;
+    types().object->attrs.set(intern(name), Obj::of(b));
+}
 static Ref generic_new(Obj self, Args a) {        // PyType_GenericNew, under tp_new_wrapper: the arguments are __init__'s
     return own(new_instance(new_wrapper_class(a, as_class(self))));
 }
@@ -2476,9 +2517,9 @@ void init_types() {
         member(sy, "end_offset", member_get<F_END_OFFSET>, member_set<F_END_OFFSET>);
         member(sy, "print_file_and_line", member_get<F_PRINT>, member_set<F_PRINT>);
         member(sy, "_metadata", member_get<F_METADATA>, member_set<F_METADATA>);
-        method(t.none, "__new__", singleton_new<0>, Binding::Function);
-        method(t.notimplemented, "__new__", singleton_new<1>, Binding::Function);
-        method(t.ellipsis, "__new__", singleton_new<2>, Binding::Function);
+        new_method(t.none, singleton_new<0>);
+        new_method(t.notimplemented, singleton_new<1>);
+        new_method(t.ellipsis, singleton_new<2>);
     }
     method(exception_class("StopIteration"), "__init__", stop_iteration_init);
     deletable_getset(exception_class("StopIteration"), "value", stop_iteration_value_get, stop_iteration_value_set);

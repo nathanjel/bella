@@ -576,8 +576,9 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
         bool eq = (m0->func == m1->func || truth(same.get())) && m0->self == m1->self;
         return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
     }
-    if (is_kind(a, Kind::Builtin) && is_kind(b, Kind::Builtin) && !static_cast<Builtin*>(a.object())->self.is_unset() &&
-        !static_cast<Builtin*>(b.object())->self.is_unset()) {   // meth_richcompare: the same function of the same object
+    if (is_kind(a, Kind::Builtin) && is_kind(b, Kind::Builtin) &&
+        (a.object()->cls == types().builtin || a.object()->cls == types().method_wrapper) &&
+        (b.object()->cls == types().builtin || b.object()->cls == types().method_wrapper)) {   // meth_richcompare, wrapper_richcompare: the same function of the same object
         if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
         auto *b0 = static_cast<Builtin*>(a.object()), *b1 = static_cast<Builtin*>(b.object());
         bool eq = b0->fn == b1->fn && b0->written.get() == b1->written.get() && b0->self == b1->self;
@@ -648,6 +649,9 @@ Ref compare(CmpOp op, Obj a, Obj b) {
         r = compare_side(b, a, swapped(op));
         if (!not_implemented(r)) return r;
     }
+    if ((op == CmpOp::Eq || op == CmpOp::Ne) && (presents_as_builtin(a) || presents_as_builtin(b)) && a.is_object() && b.is_object() &&
+        a.object()->cls == types().builtin && b.object()->cls == types().builtin)   // the prelude's print and another built-in function
+        return Ref::steal(boolean((a == b) == (op == CmpOp::Eq)));
     refuse_unimplemented_operator("cmp", a, symbol(op), b);
     if (op == CmpOp::Eq) return Ref::steal(boolean(a == b));
     if (op == CmpOp::Ne) return Ref::steal(boolean(a != b));
