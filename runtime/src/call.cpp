@@ -20,7 +20,10 @@ int& recursion_depth() {
     static int depth = 0;
     return depth;
 }
-constexpr int RECURSION_LIMIT = 1000;            // sys.getrecursionlimit()'s default (spec D-17)
+int& recursion_limit() {                         // D-17: sys.setrecursionlimit's; 1000 is CPython's default
+    static int limit = 1000;
+    return limit;
+}
 
 std::unordered_map<ClassObject*, NativeFn>& constructors() {
     static std::unordered_map<ClassObject*, NativeFn> table;
@@ -1101,6 +1104,65 @@ Ref sys_exc_info(Obj, Args a) {                   // sys_exc_info_impl: (type, v
     Ref tb = getattr(exc, intern("__traceback__"));
     return tuple_new({Obj::of(type_of(exc)), exc, tb.get()});
 }
+Ref sys_getrecursionlimit(Obj, Args a) {
+    noargs(a, "sys.getrecursionlimit");
+    return int_from_i64(recursion_limit());
+}
+Ref sys_setrecursionlimit(Obj, Args a) {          // sys_setrecursionlimit_impl
+    onearg(a, "sys.setrecursionlimit");
+    Ref index = int_index_of(a.pos(0));
+    std::int64_t limit = 0;
+    if (!int_fits_i64(index.get(), limit) || limit > INT32_MAX || limit < INT32_MIN) raise_new("OverflowError", "Python int too large to convert to C int");
+    if (limit < 1) raise_new("ValueError", "recursion limit must be greater or equal than 1");
+    if (recursion_depth() >= limit)
+        raise_new("RecursionError", "cannot set the recursion limit to " + std::to_string(limit) + " at the recursion depth " + std::to_string(recursion_depth()) + ": the limit is too low");
+    recursion_limit() = static_cast<int>(limit);
+    return none_ref();
+}
+double& switch_interval() {
+    static double value = 0.005;
+    return value;
+}
+Ref sys_getswitchinterval(Obj, Args a) {
+    noargs(a, "sys.getswitchinterval");
+    return float_ref(switch_interval());
+}
+Ref sys_setswitchinterval(Obj, Args a) {          // sys_setswitchinterval_impl: nothing switches yet, and the value is kept
+    onearg(a, "sys.setswitchinterval");
+    double interval = float_as_double(a.pos(0));
+    if (interval <= 0.0) raise_new("ValueError", "switch interval must be strictly positive");
+    switch_interval() = interval;
+    return none_ref();
+}
+Ref sys_is_finalizing(Obj, Args a) {
+    noargs(a, "sys.is_finalizing");
+    return Ref::steal(boolean(shutting_down()));
+}
+Ref sys_getdefaultencoding(Obj, Args a) {
+    noargs(a, "sys.getdefaultencoding");
+    return Ref::share(Obj::of(intern("utf-8")));
+}
+Ref sys_getsizeof(Obj, Args a) {                  // sys_getsizeof, _PySys_GetSizeOf: the value is the runtime's own (the specification's "unobservable value")
+    if (a.npos + a.nkw == 0) raise_new("TypeError", "getsizeof() missing required argument 'object' (pos 1)");
+    if (a.npos + a.nkw > 2) raise_new("TypeError", "getsizeof() takes at most 2 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
+    Obj object = a.npos > 0 ? a.pos(0) : Obj{}, fallback = a.npos > 1 ? a.pos(1) : Obj{};
+    for (std::size_t k = 0; k < a.nkw; ++k) {
+        const std::string& name = a.kwnames[k]->text;
+        if (name == "object") object = a.kw(k);
+        else if (name == "default") fallback = a.kw(k);
+    }
+    if (object.is_unset()) raise_new("TypeError", "getsizeof() missing required argument 'object' (pos 1)");
+    for (std::size_t k = 0; k < a.nkw; ++k)
+        if (a.kwnames[k]->text != "object" && a.kwnames[k]->text != "default") unexpected_keyword("getsizeof()", a.kwnames[k], {"object", "default"});
+    Obj method = object.is_object() ? type_lookup(type_of(object), intern("__sizeof__")) : Obj{};
+    if (method.is_unset()) return int_from_i64(64);
+    (void)fallback;
+    bool has = false;
+    Ref size = call_special(object, "__sizeof__", {}, &has);
+    if (!is_int(size.get())) raise_new("TypeError", "an integer is required");   // PyLong_AsSsize_t
+    if (int_is_negative(size.get())) raise_new("ValueError", "__sizeof__() should return >= 0");
+    return big_binary(BinOp::Add, size.get(), int_from_i64(16).get());
+}
 Ref sys_audit(Obj, Args a) {                      // sys_audit: no hook can be added yet (sys.addaudithook stops by name), so no event is looked at
     if (a.nkw != 0) raise_new("TypeError", "sys.audit() takes no keyword arguments");
     if (a.npos == 0) raise_new("TypeError", "audit expected at least 1 argument, got 0");
@@ -1471,12 +1533,49 @@ Module* make_sys(int argc, char** argv) {
         list_append(args.get(), s.get());
     }
     put(d, "argv", args.get());
+    {
+        Ref original = list_new({});
+        for (Obj v : static_cast<List*>(args.get().object())->items) list_append(original.get(), v);
+        put(d, "orig_argv", original.get());
+    }
     put_builtin(d, "exit", sys_exit);
     put_builtin(d, "intern", sys_intern);
     put_builtin(d, "exc_info", sys_exc_info);
     put_builtin(d, "exception", sys_exception);
     put_builtin(d, "_getframemodulename", sys_getframemodulename);
     put(d, "maxsize", int_from_i64(INT64_MAX).get());
+    put_builtin(d, "getrecursionlimit", sys_getrecursionlimit);
+    put_builtin(d, "setrecursionlimit", sys_setrecursionlimit);
+    put_builtin(d, "getswitchinterval", sys_getswitchinterval);
+    put_builtin(d, "setswitchinterval", sys_setswitchinterval);
+    put_builtin(d, "is_finalizing", sys_is_finalizing);
+    put_builtin(d, "getdefaultencoding", sys_getdefaultencoding);
+    put_builtin(d, "getsizeof", sys_getsizeof);
+    put(d, "hexversion", int_from_i64(51315440).get());
+    put(d, "api_version", int_from_i64(1013).get());
+    put(d, "maxunicode", int_from_i64(1114111).get());
+    put(d, "byteorder", Obj::of(intern("little")));
+    put(d, "float_repr_style", Obj::of(intern("short")));
+    put(d, "platlibdir", Obj::of(intern("lib")));
+    put(d, "abiflags", Obj::of(intern("")));
+    put(d, "dont_write_bytecode", Ref::steal(boolean(false)).get());
+    put(d, "pycache_prefix", None());
+    put(d, "version", str_new("3.15.2 (bella) [GCC " __VERSION__ "]").get());
+    put(d, "copyright", cpython_doc("sys.copyright"));
+    {
+        Ref empty = list_new({});
+        put(d, "warnoptions", empty.get());
+        Ref options = dict_new();
+        put(d, "_xoptions", options.get());
+        std::string executable(4096, '\0');         // D-21: there is no installation; a program is where it is
+        ssize_t got = readlink("/proc/self/exe", executable.data(), executable.size());
+        executable.resize(got < 0 ? 0 : static_cast<std::size_t>(got));
+        std::string prefix = executable;
+        for (int i = 0; i < 2; ++i) prefix = prefix.substr(0, prefix.empty() ? 0 : std::min(prefix.rfind('/'), prefix.size()));
+        Ref exe = str_new(executable), root = str_new(prefix);
+        put(d, "executable", exe.get());
+        for (const char* n : {"prefix", "base_prefix", "exec_prefix", "base_exec_prefix"}) put(d, n, root.get());
+    }
     put(d, "platform", Obj::of(intern("linux")));
     put_builtin(d, "audit", sys_audit);
     put_builtin(d, "_get_cpu_count_config", sys_get_cpu_count_config);
@@ -1781,7 +1880,7 @@ Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list
 
 // ---- frames ----
 void detail::enter_frame() {
-    if (++recursion_depth() > RECURSION_LIMIT) {
+    if (++recursion_depth() > recursion_limit()) {
         --recursion_depth();
         raise_new("RecursionError", "maximum recursion depth exceeded");
     }
@@ -2239,6 +2338,21 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             for (ClassObject* c : builtin_types()) own_doc(c);
             for (ClassObject* c : exception_classes()) own_doc(c);
             if (bootstrap != nullptr) present_as_c_types(bootstrap);
+            if (bootstrap != nullptr) {                   // sys's named tuples, which are made in Python
+                char buffer[64] = "";
+                confstr(_CS_GNU_LIBPTHREAD_VERSION, buffer, sizeof buffer);
+                std::int64_t randomized = 1;              // config.use_hash_seed == 0 || config.hash_seed != 0
+                if (const char* seed = std::getenv("PYTHONHASHSEED"); seed != nullptr && *seed != '\0' && std::string_view(seed) != "random" && std::strtoul(seed, nullptr, 10) == 0) randomized = 0;
+                Ref version = str_new(buffer), flag = int_from_i64(randomized);
+                Ref surface = invoke(dict_get(bootstrap->dict, Obj::of(intern("_bella_sys_surface"))), {version.get(), flag.get()});
+                auto* sys_dict = native_modules()["sys"]->dict;
+                Ref names = list_new({});
+                for (std::string_view n : cpython_names_of("stdlib")) list_append(names.get(), Obj::of(intern(std::string(n))));
+                Ref stdlib = invoke(Obj::of(types().frozenset), {names.get()});
+                put(sys_dict, "stdlib_module_names", stdlib.get());
+                for (auto& e : static_cast<Dict*>(surface.get().object())->entries)
+                    if (!e.key.is_unset()) dict_set(sys_dict, e.key, e.value);
+            }
             // importlib._bootstrap._setup: the built-in modules' specs and loaders
             {
                 Ref names = tuple_new({Obj::of(intern("builtins")), Obj::of(intern("sys"))});

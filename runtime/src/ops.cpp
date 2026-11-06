@@ -848,6 +848,7 @@ Ref type_repr_of(Obj v) {
     if (const Obj* m = c->attrs.find(intern("__module__"))) mod = *m;
     const Str* ms = as_str(mod);
     std::string prefix = ms == nullptr || ms->text == "builtins" ? "" : ms->text + ".";
+    if (ms == nullptr && c->name_prefix > 0 && immutable_type(c)) prefix = c->name.substr(0, c->name_prefix);   // its tp_name's
     return str_new("<class '" + prefix + c->qualname + "'>");
 }
 

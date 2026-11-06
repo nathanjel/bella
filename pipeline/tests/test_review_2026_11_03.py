@@ -68,7 +68,7 @@ FOUND: list[tuple[str, str]] = [
 # CPython has these names; the runtime refuses them rather than answer NameError or AttributeError.
 REFUSED = {
     "a builtin": "locals()",
-    "an attribute of sys": "import sys\nsys.version_info",
+    "an attribute of sys": "import sys\nsys.getallocatedblocks",
     "a str method": "'é'.upper()",
     "an object method": "class C:\n    pass\nC().__sizeof__()",
     "before __getattr__": "class H:\n    def __getattr__(self, n):\n        print('hook', n)\nH().__sizeof__()",

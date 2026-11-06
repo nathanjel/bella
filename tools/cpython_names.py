@@ -103,7 +103,7 @@ def type_names():
                dict.__dict__["fromkeys"], type.__dict__["__name__"], object.__init__, object().__init__,
                sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int])]
     import itertools, posix, re, _collections, _functools, _operator, _sre, _stat, _string, _thread, _weakref
-    for v in [re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(_sre).values(), *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()]:
+    for v in [type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(_sre).values(), *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()]:
         add(v)
     for s in samples:
         add(type(s))
@@ -173,12 +173,12 @@ def native_modules(names):
 def docs():
     """The docstrings of the built-in modules a program has from the start, and of the built-in types."""
     import errno, itertools, posix, re, _collections, _functools, _operator, _sre, _stat, _string, _thread, _weakref
-    out = {"posix": posix.__doc__, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
+    out = {"posix": posix.__doc__, "sys.copyright": sys.copyright, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
     for module in (builtins, sys, errno, itertools, posix, _sre, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
         for v in vars(module).values():           # their functions', as `<__module__>.<__name__>`, "" for none (no built-in's is empty)
             if isinstance(v, types.BuiltinFunctionType) and isinstance(v.__module__, str):
                 out[v.__module__ + "." + v.__name__] = v.__doc__ or ""
-    samples = [v for v in [re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()] if isinstance(v, type)]
+    samples = [v for v in [type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()] if isinstance(v, type)]
     samples += [type(iter([])), type(iter(())), type(iter("")), type({}.keys()), type({}.values()), type({}.items()), type(iter({})),
                 type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout)]
     for t in samples:

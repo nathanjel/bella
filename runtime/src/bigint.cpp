@@ -631,7 +631,7 @@ Ref set_digits(Obj, Args a) {                    // sys.set_int_max_str_digits(m
     return none_ref();
 }
 Ref get_digits(Obj, Args a) {
-    noargs(a, "get_int_max_str_digits");
+    noargs(a, "sys.get_int_max_str_digits");
     return int_from_i64(max_str_digits_setting());
 }
 void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::Method) {

@@ -529,6 +529,7 @@ Ref object_init(Obj self, Args a) {
 }  // namespace
 
 Ref type_call(ClassObject* cls, Args a) {
+    if (cls->disallow_instantiation) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
     if (cls == types().type && a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(observed_type(a.pos(0))));
     if (cls == types().type && a.npos != 3) raise_new("TypeError", "type() takes 1 or 3 arguments");
     if (cls == types().super_) return super_call(a);                  // super's own vectorcall
@@ -1318,7 +1319,8 @@ Ref type_module(Obj self) {
     ClassObject* c = self_class(self);
     if (immutable_type(c)) {                     // a C type's module: its tp_name's prefix, else builtins
         const Obj* m = c->attrs.find(N("__module__"));
-        return m != nullptr && as_str(*m) != nullptr ? Ref::share(*m) : str_new("builtins");
+        if (m != nullptr && as_str(*m) != nullptr) return Ref::share(*m);
+        return str_new(c->name_prefix > 0 ? c->name.substr(0, c->name_prefix - 1) : "builtins");
     }
     if (const Obj* m = c->attrs.find(N("__module__"))) return Ref::share(*m);
     raise_attribute_error(self, N("__module__"), "__module__");
@@ -2210,12 +2212,13 @@ Ref structseq_member(Obj self) {
 template <std::size_t... I>
 constexpr std::array<Ref (*)(Obj), sizeof...(I)> structseq_members(std::index_sequence<I...>) { return {structseq_member<I>...}; }
 }  // namespace
-Ref i_bella_structseq_finish(Obj, Args a) {      // (cls, module, fields)
-    positional_only(a, "_bella_structseq_finish", 3, 3);
+Ref i_bella_structseq_finish(Obj, Args a) {      // (cls, module, fields, has_new)
+    positional_only(a, "_bella_structseq_finish", 4, 4);
     static constexpr auto members = structseq_members(std::make_index_sequence<32>{});
     auto* c = as_class(a.pos(0));
     present_native_class(c, as_str(a.pos(1))->text);
     c->del_attr(N("_s_past"));
+    c->disallow_instantiation = !truth(a.pos(3));
     auto& fields = static_cast<List*>(a.pos(2).object())->items;
     for (std::size_t i = 0; i < fields.size(); ++i) {
         if (fields[i] == None()) continue;

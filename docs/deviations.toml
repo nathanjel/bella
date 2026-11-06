@@ -130,3 +130,10 @@ lint = "partial"
 observable = "measured on 3.15.2 with the omitted modules blocked: algorithms_available lacks md5-sha1, ripemd160, sha512_224, sha512_256 and sm3; get_archive_formats and get_unpack_formats list 3 formats instead of 6; repr(date.isocalendar()) is IsoCalendarDate(...) instead of datetime.IsoCalendarDate(...), found when the staging replay ran every case in the phase-1 configuration (docs/staging.md)"
 note = "review log D-6, decided 2026-11-01. Lint flags pbkdf2_hmac, scrypt, algorithms_available, the missing archive format names, and codec names given as literals outside the phase-1 set; a computed codec name cannot be linted. Providing pbkdf2_hmac and scrypt in the runtime is a later task (TODO.md)"
 expires = "phase 2 (revisit)"
+
+[deviations.D-21]
+summary = "a compiled program has no CPython installation: sys.executable is the program, sys.prefix, base_prefix, exec_prefix and base_exec_prefix the directory above the one it is in, and sys.version says bella and the compiler (sys.version_info is the pin's)"
+status = "pending"
+lint = "no"
+note = "gettext, a P1 module, reads sys.base_prefix when it imports and argparse reads sys.executable, neither in the spec's sys surface; proposed 2026-11-06, for the author to confirm"
+
