@@ -708,7 +708,8 @@ bool truth(Obj v) {
         case Kind::Class:                            // a class whose metaclass is a Python class
             if (o->kind == Kind::Class && !has_python_type(v)) return true;
             [[fallthrough]];
-        case Kind::Instance: return truth_by_methods(v);
+        case Kind::Instance:
+        case Kind::Proxy: return truth_by_methods(v);
         default: return true;
     }
 }

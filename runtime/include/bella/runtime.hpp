@@ -96,9 +96,12 @@ struct SliceObject : Object {                    // slice(start, stop, step), ea
     Obj start, stop, step;
     SliceObject(Obj a, Obj b, Obj c);
 };
+// types.MappingProxyType(mapping) holds the mapping and asks it; a class's __dict__ has no dict to hold
 struct Proxy : Object {                          // a mappingproxy over a class's own attributes
     ClassObject* of;
+    Ref mapping;                                 // what MappingProxyType was given: `of` is then null
     explicit Proxy(ClassObject* c);
+    explicit Proxy(Obj given);
 };
 // CPython's set table (Objects/setobject.c): linear probes, then perturbation; deleted entries
 // are dummies; iteration in table order, which D-05 matches for value-hashed elements
@@ -316,6 +319,7 @@ void fill_thread(Module* m);                      // and runtime/prelude/_thread
 void fill_collections(Module* m);                 // and runtime/prelude/_collections.py
 void fill_string(Module* m);                      // and runtime/prelude/_string.py
 void fill_stat(Module* m);                        // and runtime/prelude/_stat.py
+void fill_functools(Module* m);                   // and runtime/prelude/_functools.py
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);

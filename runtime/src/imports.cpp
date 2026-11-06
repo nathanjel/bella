@@ -25,6 +25,7 @@ namespace prelude_thread { Ref module_body(Module* m); }      // runtime/prelude
 namespace prelude_collections { Ref module_body(Module* m); } // runtime/prelude/_collections.py
 namespace prelude_string { Ref module_body(Module* m); }      // runtime/prelude/_string.py
 namespace prelude_stat { Ref module_body(Module* m); }        // runtime/prelude/_stat.py
+namespace prelude_functools { Ref module_body(Module* m); }   // runtime/prelude/_functools.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -323,7 +324,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_weakref", {fill_weakref}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"_weakref", {fill_weakref}}};
     return table;
 }
 }  // namespace
@@ -524,6 +525,71 @@ void fill_collections(Module* m) {               // its types are named for `col
     cls("deque")->attrs.set(N("maxlen"), Obj::of(new GetSet("maxlen", cls("deque"), deque_maxlen, nullptr)));
     member(cls("defaultdict"), "default_factory", factory_get, factory_set);
     member(cls("_tuplegetter"), "__doc__", getter_doc, getter_doc_set);
+}
+// _functools's primitives
+Ref i_has_dict(Obj, Args a) {                    // the C's self->dict is not NULL: an attribute set, or __dict__ asked for
+    positional_only(a, "_has_dict", 1, 1);
+    bool has = false;
+    with_attribute_storage(a.pos(0), [&](auto* inst) { has = inst->dict != nullptr || inst->exposed() || !inst->order.empty(); });
+    return Ref::steal(boolean(has));
+}
+Ref i_method_new(Obj, Args a) {                  // PyMethod_New
+    positional_only(a, "_method_new", 2, 2);
+    return own(new Method(a.pos(0), a.pos(1)));
+}
+Ref i_hash_of(Obj, Args a) {
+    positional_only(a, "_hash_of", 1, 1);
+    return int_from_i64(hash_of(a.pos(0)));
+}
+Ref i_get_hashed(Obj, Args a) {                  // (dict, key, hash, default)
+    positional_only(a, "_get_hashed", 4, 4);
+    std::int64_t h = 0;
+    int_fits_i64(a.pos(2), h);
+    Obj found = dict_find(static_cast<Dict*>(a.pos(0).object()), a.pos(1), h);
+    return Ref::share(found.is_unset() ? a.pos(3) : found);
+}
+Ref i_set_hashed(Obj, Args a) {                  // (dict, key, hash, value)
+    positional_only(a, "_set_hashed", 4, 4);
+    std::int64_t h = 0;
+    int_fits_i64(a.pos(2), h);
+    dict_set_hashed(static_cast<Dict*>(a.pos(0).object()), a.pos(1), h, a.pos(3));
+    return none_ref();
+}
+Ref i_pop_hashed(Obj, Args a) {                  // (dict, key, hash, default)
+    positional_only(a, "_pop_hashed", 4, 4);
+    std::int64_t h = 0;
+    int_fits_i64(a.pos(2), h);
+    Obj found = dict_pop(static_cast<Dict*>(a.pos(0).object()), a.pos(1), h);
+    if (found.is_unset()) return Ref::share(a.pos(3));
+    return Ref::steal(found);
+}
+Ref i_is_callable(Obj, Args a) {                 // PyCallable_Check
+    positional_only(a, "_is_callable", 1, 1);
+    Obj v = a.pos(0);
+    Kind k = v.is_object() ? v.object()->kind : Kind::Bool;
+    if (k == Kind::PyFunction || k == Kind::Builtin || k == Kind::Method || k == Kind::Class || k == Kind::Function) return Ref::steal(boolean(true));
+    return Ref::steal(boolean(!type_lookup(type_of(v), N("__call__")).is_unset()));
+}
+Ref key_obj_get(Obj self) {                      // keyobject's member: unset reads as None, and del unsets it
+    Ref v = optional_getattr(self, N("_k_obj"));
+    return v.get().is_unset() ? none_ref() : v;
+}
+void key_obj_set(Obj self, Obj value) {
+    if (!value.is_unset()) setattr(self, N("_k_obj"), value);
+    else if (!optional_getattr(self, N("_k_obj")).get().is_unset()) delattr(self, N("_k_obj"));
+}
+void fill_functools(Module* m) {
+    fill_in_python(m, "_functools", "functools", prelude_functools::module_body,
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_repr_enter", i_repr_enter}, {"_repr_leave", i_repr_leave},
+                    {"_bella_new_instance", i_bella_new_instance}, {"_has_dict", i_has_dict}, {"_method_new", i_method_new}, {"_hash_of", i_hash_of},
+                    {"_get_hashed", i_get_hashed}, {"_set_hashed", i_set_hashed}, {"_pop_hashed", i_pop_hashed}, {"_is_callable", i_is_callable}});
+    auto* key = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("KeyWrapper"))).object());
+    key->disallow_instantiation = true;
+    dict_del(m->dict, Obj::of(N("KeyWrapper")));   // it is no name of the module's
+    auto* g = new GetSet("obj", key, key_obj_get, key_obj_set);
+    g->cls = types().member_descriptor;
+    g->deletable = true;
+    key->attrs.set(N("obj"), Obj::of(g));
 }
 void fill_stat(Module* m) { fill_in_python(m, "_stat", "", prelude_stat::module_body, {{"_number_index", i_number_index}}); }
 void fill_string(Module* m) {

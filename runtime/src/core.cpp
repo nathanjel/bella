@@ -123,6 +123,7 @@ SliceObject::SliceObject(Obj a, Obj b, Obj c) : Object(Kind::Slice), start(a), s
     incref(step);
 }
 Proxy::Proxy(ClassObject* c) : Object(Kind::Proxy), of(c) { cls = types().mappingproxy; }
+Proxy::Proxy(Obj given) : Object(Kind::Proxy), of(nullptr), mapping(Ref::share(given)) { cls = types().mappingproxy; }
 Method::Method(Obj f, Obj s) : Object(Kind::Method), func(f), self(s) {
     cls = types().method;
     incref(func);

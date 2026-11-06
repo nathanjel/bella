@@ -33,6 +33,7 @@ C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py
 C-6-04_sorted_stable_key_once.py
 C-6-05_frozendict.py
+C-6-06_sentinel.py
 C-6-07_hash_seed_zero.py
 C-6-08_dict_mutation_during_iteration.py
 C-6-09_dict_callbacks.py
@@ -51,6 +52,7 @@ C-7-21_operator.py
 C-7-22_thread_primitives.py
 C-7-23_deque_and_defaultdict.py
 C-7-24_stat.py
+C-7-25_functools.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

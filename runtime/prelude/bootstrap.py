@@ -808,6 +808,64 @@ is (int,)."""
         return it
 
 
+# ---- sentinel ----
+
+# bella: Objects/sentinelobject.c in Python; present_as_c_types puts it in builtins, and gives it __name__ and __module__
+# as members, which a class statement cannot have, since a class has those of its own.
+
+class sentinel:
+    """sentinel(name, /, *, repr=None)
+--
+
+Create a unique sentinel object with the given name."""
+
+    __slots__ = ('_s_name', '_s_module', '_s_repr')
+
+    def __new__(*args, **kwds):                        # sentinel_new_impl
+        if not args:
+            raise TypeError('sentinel.__new__(): not enough arguments')
+        cls = args[0]
+        if not _ga_check(cls, type):
+            raise TypeError(f'sentinel.__new__(X): X is not a type object ({_ga_type_name(cls)})')
+        if not issubclass(cls, sentinel):
+            raise TypeError(f'sentinel.__new__({cls.__name__}): {cls.__name__} is not a subtype of sentinel')
+        for key in kwds:
+            if key != 'repr':
+                raise TypeError(f"sentinel() got an unexpected keyword argument '{key}'")
+        if len(args) != 2:
+            raise TypeError(f'sentinel() takes exactly 1 positional argument ({len(args) - 1} given)')
+        name = args[1]
+        if not _ga_check(name, str):
+            raise TypeError(f'sentinel() argument 1 must be str, not {_ga_type_name(name)}')
+        given = kwds.get('repr')
+        if given is not None and not _ga_check(given, str):
+            raise TypeError(f"sentinel() argument 'repr' must be str or None, not {_ga_type_name(given)}")
+        self = object.__new__(cls)
+        _ga_set(self, '_s_name', name)
+        _ga_set(self, '_s_module', _bella_caller_module())
+        _ga_set(self, '_s_repr', given)
+        return self
+
+    def __repr__(self):
+        given = self._s_repr
+        return self._s_name if given is None else given
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo, /):
+        return self
+
+    def __reduce__(self):
+        return self._s_name
+
+    def __or__(self, other):
+        return _union_type_or(self, other)
+
+    def __ror__(self, other):
+        return _union_type_or(other, self)
+
+
 # ---- typing.Union ----
 
 # bella: Objects/unionobject.c in Python; present_as_c_types names it typing.Union, has no __new__ of its own to show
@@ -819,8 +877,8 @@ _UNION_OWN = ('_union_hashable', '_union_unhashable', '_union_params')
 
 
 def _is_unionable(obj):
-    """is_unionable; the runtime has no type alias or sentinel to ask about yet."""
-    return obj is None or _ga_check(obj, type) or _ga_check(obj, GenericAlias) or type(obj) is Union
+    """is_unionable; the runtime has no type alias to ask about yet."""
+    return obj is None or _ga_check(obj, type) or type(obj) is sentinel or _ga_check(obj, GenericAlias) or type(obj) is Union
 
 
 def _union_type_check(arg, msg):

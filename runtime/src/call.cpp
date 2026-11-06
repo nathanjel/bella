@@ -1096,6 +1096,15 @@ Ref sys_intern(Obj, Args a) {                     // sys_intern_impl: the str ev
     if (s == nullptr) raise_new("TypeError", "intern() argument must be str, not " + fully_qualified_name(type_of(a.pos(0))));
     return Ref::share(Obj::of(intern(std::string_view(s->text))));
 }
+// the module of the function that called: sentinelobject.c's caller(); the prelude has no frames of CPython's
+Ref i_bella_caller_module(Obj, Args) {
+    detail::FrameRecord* f = detail::current_frame();
+    while (f != nullptr && !f->code->shown) f = f->caller;
+    if (f == nullptr) return none_ref();
+    if (f->code->module_rebound) throw NotImplemented("sentinel() in a function whose __module__ was rebound");
+    Obj name = dict_get(f->module->dict, Obj::of(intern("__name__")));
+    return name.is_unset() ? none_ref() : Ref::share(name);
+}
 Ref sys_getframemodulename(Obj, Args a) {         // sys__getframemodulename_impl: the function's __module__ at that depth
     std::vector<Obj> given;
     if (a.npos > 1 || a.npos + a.nkw > 1) raise_new("TypeError", "_getframemodulename() takes at most 1 argument (" + std::to_string(a.npos + a.nkw) + " given)");
@@ -1932,7 +1941,8 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                 break;
             }
             case Kind::Proxy:
-                todo.push_back(Obj::of(static_cast<Proxy*>(o)->of));
+                if (static_cast<Proxy*>(o)->of != nullptr) todo.push_back(Obj::of(static_cast<Proxy*>(o)->of));
+                else todo.push_back(static_cast<Proxy*>(o)->mapping.get());
                 break;
             case Kind::Module:
                 todo.push_back(Obj::of(static_cast<Module*>(o)->dict));
@@ -2077,7 +2087,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                              {"_bella_find", i_bella_find}, {"_bella_exec", i_bella_exec},
                              {"_bella_is_builtin", i_bella_is_builtin}, {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_refuse", i_bella_refuse},
                              {"_bella_import_warning", i_bella_import_warning}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
-                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_new_instance", i_bella_new_instance}}) {
+                             {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_ga_get", i_bella_ga_get}, {"_bella_new_instance", i_bella_new_instance}, {"_bella_caller_module", i_bella_caller_module}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());
                     }

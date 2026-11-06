@@ -1260,7 +1260,7 @@ void set_type_qualname(Obj self, Obj v) {
 }
 Ref type_module(Obj self) {
     ClassObject* c = self_class(self);
-    if (!c->heap_type) {                         // a built-in type's module: its tp_name's prefix, else builtins
+    if (immutable_type(c)) {                     // a C type's module: its tp_name's prefix, else builtins
         const Obj* m = c->attrs.find(N("__module__"));
         return m != nullptr && as_str(*m) != nullptr ? Ref::share(*m) : str_new("builtins");
     }
@@ -1415,9 +1415,23 @@ void cell_contents_set(Obj self, Obj v) {
 
 // mappingproxy over a class's own attributes
 ClassObject* proxied(Obj self) { return static_cast<Proxy*>(self.object())->of; }
+Obj proxy_mapping(Obj self) { return static_cast<Proxy*>(self.object())->mapping.get(); }
+Ref proxy_new(Obj, Args a) {                     // mappingproxy_new_impl
+    ClassObject* cls = new_wrapper_class(a, types().mappingproxy);
+    (void)cls;
+    std::size_t npos = a.npos - 1;
+    if (npos + a.nkw > 1) raise_new("TypeError", "mappingproxy() takes at most 1 argument (" + std::to_string(npos + a.nkw) + " given)");
+    Obj mapping = npos == 1 ? a.pos(1) : Obj{};
+    if (a.nkw == 1 && a.kwnames[0]->text == "mapping") mapping = a.kw(0);
+    if (mapping.is_unset()) raise_new("TypeError", "mappingproxy() missing required argument 'mapping' (pos 1)");
+    if (!is_mapping(mapping) || is_kind(mapping, Kind::List) || is_kind(mapping, Kind::Tuple))
+        raise_new("TypeError", "mappingproxy() argument must be a mapping, not " + type_of(mapping)->name);
+    return own(new Proxy(mapping));
+}
 // mappingproxy reads a dict: a key is hashed, whether it could be an attribute's name or not
 Ref proxy_getitem(Obj self, Args a) {
     arity(a, "__getitem__", 1, 1);
+    if (proxied(self) == nullptr) return getitem(proxy_mapping(self), a.pos(0));
     dict_key_hash(a.pos(0));
     const Str* k = as_str(a.pos(0));
     if (k != nullptr)
@@ -1427,22 +1441,31 @@ Ref proxy_getitem(Obj self, Args a) {
 }
 Ref proxy_contains(Obj self, Args a) {
     arity(a, "__contains__", 1, 1);
+    if (proxied(self) == nullptr) return compare(CmpOp::In, a.pos(0), proxy_mapping(self));
     dict_key_hash(a.pos(0));
     const Str* k = as_str(a.pos(0));
     return Ref::steal(boolean(k != nullptr && proxied(self)->attrs.contains(intern(k->text))));
 }
 Ref proxy_get(Obj self, Args a) {
     arity(a, "get", 1, 2);
+    if (proxied(self) == nullptr) {              // mappingproxy_get: the mapping's own
+        Ref f = getattr(proxy_mapping(self), N("get"));
+        return a.npos > 1 ? invoke(f.get(), {a.pos(0), a.pos(1)}) : invoke(f.get(), {a.pos(0), None()});
+    }
     dict_key_hash(a.pos(0));
     const Str* k = as_str(a.pos(0));
     if (k != nullptr)
         if (const Obj* v = proxied(self)->attrs.find(intern(k->text))) return Ref::share(*v);
     return a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
 }
-Ref proxy_len(Obj self, Args) { return Ref::steal(Obj::small(static_cast<std::int64_t>(proxied(self)->attrs.size()))); }
+Ref proxy_len(Obj self, Args) {
+    if (proxied(self) == nullptr) return call_special(proxy_mapping(self), "__len__", {});
+    return Ref::steal(Obj::small(static_cast<std::int64_t>(proxied(self)->attrs.size())));
+}
 // What a program reaches through the proxy's dict: the class's dict, live (ClassObject::dict_view)
 Obj class_dict(Obj self) {
     ClassObject* c = proxied(self);
+    if (c == nullptr) return proxy_mapping(self);
     if (c->dict_view == nullptr) {
         Ref d = dict_new();
         for (auto& [k, v] : c->attrs.items()) dict_set(static_cast<Dict*>(d.get().object()), Obj::of(k), v);
@@ -1705,7 +1728,7 @@ Ref mapping_get(Obj mapping, Obj key) {
         Obj v = dict_get(static_cast<Dict*>(mapping.object()), key);
         return v.is_unset() ? Ref{} : Ref::share(v);
     }
-    if (is_kind(mapping, Kind::Proxy)) {
+    if (is_kind(mapping, Kind::Proxy) && proxied(mapping) != nullptr) {
         const Str* k = as_str(key);
         if (k == nullptr) return Ref{};
         const Obj* v = proxied(mapping)->attrs.find(intern(k->text));
@@ -1748,6 +1771,17 @@ Ref bootstrap_call(const char* name, Obj arg) {
 }
 Ref ga_parameters(Obj self) { return bootstrap_call("_ga_parameters", self); }
 Ref ga_unpacked_tuple_args(Obj self) { return bootstrap_call("_ga_unpacked_tuple_args", self); }
+Ref sentinel_name_get(Obj self) { return getattr(self, N("_s_name")); }
+Ref sentinel_module_get(Obj self) {
+    Ref v = optional_getattr(self, N("_s_module"));
+    if (v.get().is_unset()) raise_attribute_error(self, N("__module__"), "'sentinel' object has no attribute '__module__'");
+    return v;
+}
+void sentinel_module_set(Obj self, Obj v) {
+    if (!v.is_unset()) setattr(self, N("_s_module"), v);
+    else if (optional_getattr(self, N("_s_module")).get().is_unset()) raise_attribute_error(self, N("__module__"), "__module__");
+    else delattr(self, N("_s_module"));
+}
 Ref union_name(Obj) { return str_new("Union"); }
 Ref union_origin(Obj) { return Ref::share(Obj::of(types().union_)); }
 Ref union_parameters(Obj self) { return bootstrap_call("_union_parameters", self); }
@@ -1795,6 +1829,21 @@ void present_as_c_types(Module* bootstrap) {
     getset(un, "__origin__", union_origin);
     getset(un, "__parameters__", union_parameters);
     types().union_ = un;
+    auto* se = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("sentinel"))).object());
+    note_prelude_class(se);
+    se->final_type = cpython_has("final", "sentinel");
+    se->has_weakref = cpython_has("weakref", "sentinel");
+    forget_python_origin(se);
+    se->del_attr(N("__module__"));
+    if (Obj doc = cpython_doc("sentinel"); doc != None()) se->set_attr(N("__doc__"), doc);
+    for (auto [name, get, set] : std::initializer_list<std::tuple<const char*, Ref (*)(Obj), void (*)(Obj, Obj)>>{
+             {"__name__", sentinel_name_get, nullptr}, {"__module__", sentinel_module_get, sentinel_module_set}}) {
+        auto* g = new GetSet(name, se, get, set);
+        g->cls = types().member_descriptor;
+        g->deletable = set != nullptr;
+        se->attrs.set(N(name), Obj::of(g));
+    }
+    dict_set(builtins_module()->dict, Obj::of(N("sentinel")), Obj::of(se));
     auto* builder = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("_UnionBuilder"))).object());
     note_prelude_class(builder);
 }
@@ -1992,6 +2041,7 @@ void init_types() {
     }
     getset(t.cell, "cell_contents", cell_contents_get, cell_contents_set);
     // mappingproxy, slice
+    method(t.mappingproxy, "__new__", proxy_new, Binding::Function);
     method(t.mappingproxy, "__getitem__", proxy_getitem);
     method(t.mappingproxy, "__contains__", proxy_contains);
     method(t.mappingproxy, "get", proxy_get);
