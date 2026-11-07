@@ -15,7 +15,7 @@ jobs:
         run: docker run --rm bella sh -c 'cp closure.lock.json /tmp/committed.json && make closure && cmp closure.lock.json /tmp/committed.json'
       - name: make targets-closure (and the committed target closures and increments are current)
         run: docker run --rm bella sh -c 'cp -r targets/closure /tmp/tc && cp targets/closure-summary.json /tmp/tcs.json && make targets-closure && diff -r /tmp/tc targets/closure && cmp /tmp/tcs.json targets/closure-summary.json'
-      - name: make checks (lint test verify probes slice int-test float-diff object-test targets-check staging-check eval1-corpus eval2-corpus targets-eval1 targets-eval2, at once)
+      - name: make checks (lint test verify probes slice int-test float-diff object-test targets-check staging-check eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2 targets-compiled, at once)
         run: docker run --rm bella make checks
       - name: Keep the probe report
         if: always()

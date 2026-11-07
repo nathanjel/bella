@@ -528,7 +528,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   tokens and verifies one CPython signed (review log RL-71 to RL-86).
 * Done when (the gate of 1a.1): `cli_easy_slugs` prints the recorded output under CPython 3.15.2, `eval1` and the
   compiled binary (`make targets-check TARGET_RUNNER=...` passes for it), and the generated C++
-  is committed under `pipeline/examples/out/`.
+  is committed under `pipeline/examples/out/`. **Reached 2026-11-07**: `make targets-compiled` (the third leg, in
+  `make check` and CI) builds the driver with `pipeline/build.py --run` and compares the bytes; the compiled
+  `cli_easy_slugs` agrees with the recording. The next gates: 1a.2 `service_easy_tokens` stops at `_json`, 1a.3
+  `data_easy_sales` at `_csv`.
 
 ## 5. ~~Staging prototype~~ Done 2026-11-01 (`docs/staging.md`; S-1 to S-5 wait on the author)
 

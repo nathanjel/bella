@@ -12,11 +12,11 @@ JOBS    ?= $(shell nproc 2>/dev/null || echo 4)
 export BELLA_JOBS ?= $(JOBS)
 XDIST    = $(shell $(PY) -c "import xdist" 2>/dev/null && echo "-n $(JOBS)")
 CHECKS   = lint test verify probes slice int-test float-diff object-test targets-check staging-check \
-           eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2
+           eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2 targets-compiled
 
 .PHONY: help prune-builds test selftest closure record verify check-conformance probes slice int-test float-diff object-test \
         object-test-lockstep object-test-sanitized object-test-reentrancy targets-record targets-check targets-closure \
-        staging-check eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2 lint check checks clean
+        staging-check eval1-corpus eval2-corpus compiled-corpus targets-eval1 targets-eval2 targets-compiled lint check checks clean
 
 help:
 	@echo "make test              pytest (refmodel, pipeline, validation, tools) + refmodel self-check"
@@ -37,6 +37,7 @@ help:
 	@echo "make compiled-corpus   the corpus compiled through L2 into C++ (pipeline/build.py); conformance/evalc-baseline.txt"
 	@echo "make targets-eval1     the easy three under eval1, each with its whole closure lowered (the gates' second leg)"
 	@echo "make targets-eval2     the easy three through L2 under eval2, each with its whole closure"
+	@echo "make targets-compiled  the compiled binaries against the recordings (gate 1a.1: cli_easy_slugs)"
 	@echo "make targets-closure   each target's closure and the phase-1 increments -> targets/closure*"
 	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
 	@echo "make check             everything above (what CI runs): the closures, then the rest at once (JOBS=$(JOBS))"
@@ -73,6 +74,11 @@ EVAL2_RUNNER = $(subst /l1/run.py,/l2/run.py,$(EVAL1_RUNNER))
 targets-eval2:
 	$(PY) targets/run_targets.py check --target cli_easy_slugs --target service_easy_tokens --target data_easy_sales \
 	  --runner "$(EVAL2_RUNNER)"
+
+# the compiled binaries (the gates' third leg): pipeline/build.py builds each driver once (cached) and runs it; 1a.1's target today
+COMPILED_RUNNER = $(shell $(PY) -c "import sys; print(sys.executable)") -P $(CURDIR)/pipeline/build.py --run {driver} {argv}
+targets-compiled:
+	$(PY) targets/run_targets.py check --target cli_easy_slugs --runner "$(COMPILED_RUNNER)"
 
 staging-check:
 	$(PY) pipeline/staging/check.py
