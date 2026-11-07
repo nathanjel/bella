@@ -940,12 +940,16 @@ class Runtime:
                     raise AttributeError("__delete__")
                 deleter[0](found, obj)
                 return
-        # a delete through a split dict inserts the name into the shared keys before it finds the
-        # attribute missing (_PyObject_StoreInstanceAttribute): a failed `del obj.y` moves y in the
-        # release order of every later instance (found by the Hypothesis machine, measured on 3.15.2)
+        # a delete through the object's inline values inserts the name into the shared keys before it
+        # finds the attribute missing (_PyObject_StoreInstanceAttribute): a failed `del obj.y` moves y
+        # in the release order of every later instance (found by the Hypothesis machine, measured on
+        # 3.15.2). Once the dict is detached from the object (obj.__dict__ = d, the same dict too:
+        # _PyObject_SetManagedDict), a delete goes through the dict and a missing name is just missing
+        # (found by the machine again, 2026-11-07)
         if obj.exposed:
             assert obj.dict is not None
-            obj.dict.note_key(name)
+            if obj.dict.owner is obj:
+                obj.dict.note_key(name)
             if name not in obj.dict:
                 raise AttributeError(name)
             decref(obj.dict.pop(name))

@@ -1338,10 +1338,11 @@ inline void delattr(T* obj, const Str* name) {
             return;
         }
     }
-    // a delete through a split dict inserts the name into the shared keys before it finds the
-    // attribute missing (_PyObject_StoreInstanceAttribute)
+    // a delete through the object's inline values inserts the name into the shared keys before it finds the attribute missing
+    // (_PyObject_StoreInstanceAttribute); once the dict is detached from the object (obj.__dict__ = d, _PyObject_SetManagedDict), a
+    // delete goes through the dict and a missing name is just missing (refmodel Runtime.delattr)
     if (obj->exposed()) {
-        obj->dict->note_key(name);
+        if (obj->dict->embedded == obj) obj->dict->note_key(name);
         Obj old = dict_pop(obj->dict, Obj::of(name));
         if (old.is_unset()) throw AttributeError(name->text);
         decref(old);
