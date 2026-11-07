@@ -229,7 +229,7 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
         *dict, *cell, *function, *builtin, *method, *frozendict, *dict_reversekeyiterator, *dict_reversevalueiterator, *dict_reverseitemiterator, *range, *range_iterator, *longrange_iterator, *tuple_iterator,
-        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *textio, *float_, *complex_, *union_, *generator,
+        *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *float_, *complex_, *union_, *generator,
         *method_descriptor, *classmethod_descriptor, *wrapper_descriptor, *method_wrapper, *builtin_method, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
         *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator;
@@ -485,6 +485,8 @@ void set_exception_field(Obj exc, const char* name, Obj value);   // the new val
 // an unraisable exception, then dropped.
 void report_unraisable(const std::string& context, const PyError& e);
 void report_unraisable(const std::string& context, Obj exc);   // the same, for an exception a prelude caught
+void write_stderr(const std::string& text);       // PyFile_WriteString to sys.stderr: nothing when it is None, errors ignored
+bool flush_std_stream(const char* name, bool report = false);   // flush_std_files' half for sys.stdout or sys.stderr: false when its flush raised, reported as ignored if asked
 // While an except clause runs, its exception is the one being handled: what a bare `raise`
 // re-raises and what a new exception records as __context__ (sys.exception()).
 class Handling {

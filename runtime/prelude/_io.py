@@ -3471,15 +3471,16 @@ def text_encoding(*args: object, **kwds: object) -> object:
     return args[0]
 
 
-def _std_stream(fd: int, name: str, mode: str, errors: str) -> object:
+def _std_stream(fd: int, name: str, mode: str, encoding: str, errors: str) -> object:
     """create_stdio (Python/pylifecycle.c): open(fd, mode, -1, closefd=False), the raw named, line buffering on a tty and for stderr,
-    then a TextIOWrapper with UTF-8 (D-15), the errors given and newline "\n", with its mode set."""
+    then a TextIOWrapper with the encoding and errors the configuration chose (PYTHONIOENCODING, else UTF-8 by D-15) and newline "\n",
+    with its mode set."""
     buf = open(fd, mode, -1, None, None, None, False)
     raw = buf.raw  # type: ignore[attr-defined]
     raw.name = name
     isatty = True if raw.isatty() else False
     line_buffering = isatty or fd == 2
-    stream = TextIOWrapper(buf, "utf-8", errors, "\n", line_buffering, False)
+    stream = TextIOWrapper(buf, encoding, errors, "\n", line_buffering, False)
     stream.mode = mode[:1]  # type: ignore[attr-defined]
     return stream
 

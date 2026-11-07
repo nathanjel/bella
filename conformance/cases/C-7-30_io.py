@@ -8,6 +8,7 @@ checks, what closing and detaching leave, and the module's own names."""
 # ruff: noqa: ANN001, ANN002, ANN003, ANN201, ANN202, ANN204, B018, B023, E402, E501, E731, PLR0133, SIM115, SLF001, UP015
 import io
 import os
+import sys
 
 
 def failed(f):  # type: ignore[no-untyped-def]
@@ -147,4 +148,13 @@ through = io.BufferedReader(raw_obj, 4)
 print(through.read(2), through.readline(), through.peek(1), through.read(), through.read(), raw_obj.calls, raw_obj.read(2), failed(lambda: through.seek(0)), failed(lambda: through.tell()), through.readable(), through.writable(), through.seekable(), repr(through).split(" ")[0], failed(lambda: through.name), through.close(), through.closed, raw_obj.closed)  # type: ignore[func-returns-value,no-untyped-call]
 rw = io.BufferedRWPair(Raw(b"in\n"), io.BytesIO(), 8)  # type: ignore[assignment,no-untyped-call]
 print(rw.read(2), rw.write(b"out"), rw.readable(), rw.writable(), rw.closed, rw.isatty(), rw.flush(), rw.close(), rw.closed, failed(lambda: rw.read()))  # type: ignore[arg-type,func-returns-value,no-untyped-call]
+out, err, inp = sys.stdout, sys.stderr, sys.stdin
+print(type(out).__name__, type(out).__module__, repr(out), out.name, out.mode, out.encoding, out.errors, out.newlines, out.write_through, out.closed, out.fileno(), out.readable(), out.writable(), out.seekable(), vars(out), repr(out.buffer), repr(out.buffer.raw), vars(out.buffer.raw), out.buffer.raw.closefd, out.buffer.raw.mode, sys.__stdout__ is out)  # type: ignore[union-attr]
+print(repr(err), err.errors, err.line_buffering, err.fileno(), repr(inp), inp.errors, inp.mode, inp.encoding, inp.readable(), inp.buffer.raw.mode, sys.__stdin__ is inp, sys.__stderr__ is err, sorted(n for n in dir(sys) if "std" in n))  # type: ignore[union-attr]
+print(out.write("direct\n"), out.buffer.write(b"bytes\n"), out.flush(), out.buffer.raw.write(b"raw\n"))  # type: ignore[union-attr]
+sys.stdout = io.StringIO()
+print("captured", 1, 2)
+captured = sys.stdout.getvalue()
+sys.stdout = out
+print(repr(captured), "\udcff".encode("utf-8", "surrogateescape"))
 os.remove(path)

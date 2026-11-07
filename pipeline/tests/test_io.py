@@ -3,6 +3,7 @@ through every layer, a raw object of the program's under a BufferedReader, and w
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -119,6 +120,64 @@ print(m(lambda: through.read(2)), m(lambda: through.readline()), m(lambda: throu
 print(m(lambda: through.seek(0)), m(lambda: through.tell()), through.readable(), through.writable(), through.seekable(), repr(through).split(" ")[0], m(lambda: through.name), through.close(), through.closed, raw_obj.closed)
 """
 
+STANDARD_STREAMS = r"""
+import sys, io
+out = sys.stdout
+print(type(out).__name__, type(out).__module__, repr(out), out.name, out.mode, out.encoding, out.errors, out.newlines, out.line_buffering, out.write_through, out.closed, out.fileno(), out.isatty(), out.readable(), out.writable(), out.seekable(), vars(out), repr(out.buffer), repr(out.buffer.raw), vars(out.buffer.raw), out.buffer.raw.closefd, out.buffer.raw.mode, sys.__stdout__ is out)
+err = sys.stderr
+print(repr(err), err.errors, err.line_buffering, err.write_through, err.fileno(), repr(sys.stdin), sys.stdin.errors, sys.stdin.mode, sys.stdin.encoding, sys.stdin.readable(), sys.stdin.buffer.raw.mode, sys.__stdin__ is sys.stdin, sys.__stderr__ is sys.stderr, sorted(n for n in dir(sys) if "std" in n))
+print(out.write("direct\n"), out.buffer.write(b"bytes\n"), out.flush(), out.buffer.raw.write(b"raw\n"))
+sys.stdout = io.StringIO()
+print("captured", 1, 2)
+captured = sys.stdout.getvalue()
+sys.stdout = out
+print(repr(captured))
+print("to stderr", file=sys.stderr)
+sys.stderr.write("partial")
+sys.stderr.write(" line\n")
+print("\udcff".encode("utf-8", "surrogateescape"), "\udcff" in "a\udcffb")
+class Boom:
+    def __repr__(self): raise ValueError("no repr")
+def failing():
+    raise KeyError("k")
+try:
+    failing()
+except KeyError as e:
+    print("caught", repr(e))
+print("before exit")
+sys.exit("the exit message")
+"""
+
+EXITS = (r"""
+import sys
+print("line one")
+sys.stdout.write("no newline yet")
+def deep():
+    raise ValueError("boom")
+deep()
+""", r"""
+import sys
+print("a")
+sys.stderr = None
+raise RuntimeError("unseen")
+""", r"""
+import sys, io
+class Bad(io.StringIO):
+    def flush(self):
+        raise OSError("cannot flush")
+print("start")
+sys.stdout = Bad()
+print("into bad")
+""", r"""
+import sys
+sys.stdout.write("pending without newline")
+sys.exit(3)
+""", r"""
+import sys
+sys.stdout.write("pending")
+sys.exit("message on stderr")
+""")
+
 
 def test_bases_and_memory_streams() -> None:
     same(BASES_AND_MEMORY)
@@ -130,6 +189,23 @@ def test_files_through_every_layer() -> None:
 
 def test_a_raw_object_of_the_program() -> None:
     same(RAW_OF_THE_PROGRAM)
+
+
+def test_the_standard_streams() -> None:
+    same(STANDARD_STREAMS)
+
+
+def test_what_leaves_the_program() -> None:
+    """The exit status and both streams' text: a traceback goes through sys.stderr, a failing flush at the end is exit status 120."""
+    for src in EXITS:
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_text(src, encoding="utf-8")
+            ref = subprocess.run([sys.executable, "-P", str(prog)], capture_output=True, text=True, check=False, cwd=tmp)
+            got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, cwd=tmp)
+        expected = "\n".join(line for line in ref.stderr.splitlines() if not line.startswith("    ") and not line.startswith("  File"))
+        actual = "\n".join(line for line in got.stderr.splitlines() if not line.startswith("  File"))
+        assert (got.stdout, got.returncode, actual) == (ref.stdout, ref.returncode, expected), (src, got, ref)
 
 
 def test_what_is_absent_stops_by_name() -> None:
@@ -148,4 +224,6 @@ if __name__ == "__main__":
     test_bases_and_memory_streams()
     test_files_through_every_layer()
     test_a_raw_object_of_the_program()
+    test_the_standard_streams()
+    test_what_leaves_the_program()
     test_what_is_absent_stops_by_name()

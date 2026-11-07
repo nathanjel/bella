@@ -60,7 +60,6 @@ Types& types() {
         x.dict_keyiterator = builtin_type("dict_keyiterator", {x.object});
         x.module = builtin_type("module", {x.object});
         x.traceback = builtin_type("traceback", {x.object});
-        x.textio = builtin_type("TextIOWrapper", {x.object});
         x.method_descriptor = builtin_type("method_descriptor", {x.object});
         x.classmethod_descriptor = builtin_type("classmethod_descriptor", {x.object});
         x.wrapper_descriptor = builtin_type("wrapper_descriptor", {x.object});

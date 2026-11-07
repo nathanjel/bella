@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string_view>
+#include <fcntl.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <cstdint>
@@ -451,22 +452,48 @@ Stream& err_stream() {
     static Stream s{2, {}, true};
     return s;
 }
-Stream& stream_of(Obj self) { return static_cast<Native*>(self.object())->tag == 2 ? err_stream() : out_stream(); }
+}  // namespace
 
-Ref textio_write(Obj self, Args a) {
-    onearg(a, "TextIOWrapper.write");
-    const Str* s = as_str(a.pos(0));
-    if (s == nullptr) raise_new("TypeError", "write() argument must be str, not " + type_of(a.pos(0))->name);
-    // UTF-8 mode (D-15): all of it encoded before any of it is written, and a surrogate as the stream's errors say
-    if (s->ascii) stream_of(self).write(s->text);
-    else stream_of(self).write(utf8_with_errors(a.pos(0), static_cast<Native*>(self.object())->tag == 2 ? "backslashreplace" : "surrogateescape"));
-    return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
+// ---- sys.stdout and sys.stderr as the program has them: what CPython's reports and flushes go through ----
+namespace {
+Obj std_stream(const char* name) {               // Unset when sys has no such name
+    Module* sys = native_module_named("sys");
+    if (sys == nullptr) return Obj{};
+    return dict_get(sys->dict, Obj::of(intern(name)));
 }
-Ref textio_flush(Obj self, Args a) {
-    noargs(a, "TextIOWrapper.flush");
-    stream_of(self).flush();
-    return none_ref();
+}  // namespace
+void write_stderr(const std::string& text) {
+    Obj f = std_stream("stderr");
+    if (f.is_unset()) { err_stream().write(text); return; }   // "lost sys.stderr": the C stream has it
+    if (f == None()) return;
+    try {
+        Ref s = str_new(text);
+        Ref w = getattr(f, intern("write"));
+        invoke(w.get(), {s.get()});
+    } catch (const PyError&) {
+    }
 }
+bool flush_std_stream(const char* name, bool report) {   // a closed file is left alone, as file_is_closed says
+    Obj f = std_stream(name);
+    if (f.is_unset() || f == None()) return true;
+    try {
+        Ref closed = getattr(f, intern("closed"));
+        if (truth(closed.get())) return true;
+        Ref fl = getattr(f, intern("flush"));
+        invoke(fl.get(), {});
+        return true;
+    } catch (const PyError& e) {
+        if (report) report_unraisable(std::string("Exception ignored while flushing sys.") + name, e);
+        return false;
+    }
+}
+namespace {
+struct ErrSink {                                 // the report's writer: sys.stderr
+    void write(std::string_view s) { write_stderr(std::string(s)); }
+    void flush() { flush_std_stream("stderr"); }
+};
+}  // namespace
+namespace {
 
 // ---- the C++ builtins ----
 bool overrides_builtin_len(Obj v) { return is_subclass_instance(v) && overrides_builtin(v, "__len__"); }
@@ -1495,8 +1522,6 @@ Module* make_builtins() {
         f->flags |= IMMORTAL;
         t.frozendict->attrs.set(intern("fromkeys"), Obj::of(f));
     }
-    method(t.textio, "write", textio_write);
-    method(t.textio, "flush", textio_flush);
     return m;
 }
 
@@ -1528,16 +1553,7 @@ Module* make_sys(int argc, char** argv) {
     put(d, "__name__", m->name.get());
     put(d, "__doc__", cpython_doc("sys"));
     for (const char* n : {"__package__", "__loader__", "__spec__"}) put(d, n, None());
-    auto* out = new Native(types().textio);
-    out->tag = 1;
-    Ref o = own(out);
-    put(d, "stdout", o.get());
-    put(d, "__stdout__", o.get());
-    auto* err = new Native(types().textio);
-    err->tag = 2;
-    Ref e = own(err);
-    put(d, "stderr", e.get());
-    put(d, "__stderr__", e.get());
+    // stdin, stdout and stderr come when _io has: create_stdio, at the start
     Ref args = list_new({});
     for (int i = 0; i < argc; ++i) {
         Ref s = str_new(argv[i]);
@@ -1908,11 +1924,11 @@ void print_traceback(Obj exc);
 }  // namespace
 
 void report_unraisable(const std::string& context, const PyError& e) {
-    err_stream().write(context + ":\n");
+    write_stderr(context + ":\n");
     print_traceback(e.exc.get());
 }
 void report_unraisable(const std::string& context, Obj exc) {
-    err_stream().write(context + ":\n");
+    write_stderr(context + ":\n");
     print_traceback(exc);
 }
 
@@ -1929,7 +1945,7 @@ Ref report_attr(Obj exc, const char* name) {
 }
 
 // One exception of the report: its traceback, then `Type: message`.
-void print_one(Stream& err, Obj exc) {
+void print_one(ErrSink& err, Obj exc) {
     Obj tb = traceback_of(exc);
     if (is_kind(tb, Kind::Traceback)) {
         err.write("Traceback (most recent call last):\n");
@@ -1985,7 +2001,7 @@ void print_traceback(Obj exc) {
         chain.emplace_back(why, std::move(e));
         e = std::move(next);
     }
-    Stream& err = err_stream();
+    ErrSink err;
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         if (it->first != nullptr) err.write(it->first);
         print_one(err, it->second.get());
@@ -2138,9 +2154,8 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                 if (static_cast<Proxy*>(o)->of != nullptr) todo.push_back(Obj::of(static_cast<Proxy*>(o)->of));
                 else todo.push_back(static_cast<Proxy*>(o)->mapping.get());
                 break;
-            case Kind::Module:
-                todo.push_back(Obj::of(static_cast<Module*>(o)->dict));
-                break;
+            case Kind::Module:                   // every module of the program's is a root already; the runtime's own (sys with its
+                break;                           // standard streams, builtins) stay alive until the end, as CPython's do
             default:
                 break;
         }
@@ -2157,6 +2172,9 @@ void clear_module(Module* m) {
 }
 }  // namespace
 void clear_modules(const std::unordered_set<Module*>& runtime_own) {
+    // The finalisers run in sys.modules' order, __main__'s first (finalize_remove_modules, measured on 3.15.2); the namespaces are
+    // then cleared the other way round (finalize_modules_clear_weaklist), the last module imported first, so that what the
+    // program's modules use while they go (the standard streams, their codec) is still whole; one no longer in sys.modules goes first
     std::vector<Module*> order;
     std::unordered_set<Module*> seen(runtime_own);
     Dict* modules = sys_modules();
@@ -2166,14 +2184,20 @@ void clear_modules(const std::unordered_set<Module*>& runtime_own) {
         auto* m = static_cast<Module*>(v.object());
         if (seen.insert(m).second) order.push_back(m);
     }
+    std::vector<Module*> clearing;
     for (Module* m : all_modules())
-        if (seen.insert(m).second) order.push_back(m);
+        if (seen.insert(m).second) {
+            order.push_back(m);
+            clearing.push_back(m);
+        }
+    for (auto it = order.rbegin(); it != order.rend(); ++it)
+        if (std::find(clearing.begin(), clearing.end(), *it) == clearing.end()) clearing.push_back(*it);
     // finalize_modules_delete_special: what a finaliser sees of sys from here on
     Module* sys = native_modules()["sys"];
     for (const char* n : {"path", "argv", "ps1", "ps2", "last_exc", "last_type", "last_value", "last_traceback",
                           "__interactivehook__", "meta_path"})
         put(sys->dict, n, None());
-    for (auto [name, original] : std::initializer_list<std::pair<const char*, const char*>>{{"stdout", "__stdout__"}, {"stderr", "__stderr__"}})
+    for (auto [name, original] : std::initializer_list<std::pair<const char*, const char*>>{{"stdin", "__stdin__"}, {"stdout", "__stdout__"}, {"stderr", "__stderr__"}})
         put(sys->dict, name, dict_get(sys->dict, Obj::of(intern(original))));
     shutting_down() = true;
     dict_clear(modules);                         // finalize_clear_modules_dict; the modules live on (D-19)
@@ -2199,7 +2223,7 @@ void clear_modules(const std::unordered_set<Module*>& runtime_own) {
     for (Ref& r : found)
         with_attribute_storage(r.get(), [](auto* inst) { detail::finalize_once(inst); });
     found.clear();
-    for (Module* m : order) clear_module(m);
+    for (Module* m : clearing) clear_module(m);
 }
 
 // _Py_HandleSystemExitAndKeyboardInterrupt: the exit status a SystemExit asks for: its `code`
@@ -2207,7 +2231,7 @@ void clear_modules(const std::unordered_set<Module*>& runtime_own) {
 // int truncated to a C int; anything else is printed, as is the exception if it has no such
 // attribute, and is 1. Nothing that goes wrong printing it changes that.
 int exit_status(Obj exc) {
-    out_stream().flush();
+    flush_std_stream("stdout");
     Ref code;
     try {
         code = getattr(exc, intern("code"));
@@ -2221,10 +2245,10 @@ int exit_status(Obj exc) {
     }
     try {
         Ref text = str_of(code.get().is_unset() ? exc : code.get());
-        err_stream().write(as_str(text.get())->text);
+        write_stderr(as_str(text.get())->text);
     } catch (const PyError&) {
     }
-    err_stream().write("\n");
+    write_stderr("\n");
     return 1;
 }
 
@@ -2381,6 +2405,36 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 import_module_level(io_name.get(), Obj{}, Obj{}, Obj{}, 0);
                 if (!io_hooks().open.get().is_unset()) put(builtins_module()->dict, "open", io_hooks().open.get());
             }
+            {                                    // create_stdio: the three descriptors as _io objects; one that is not open is None (is_valid_fd)
+                auto* sys_dict = native_modules()["sys"]->dict;
+                // config_init_stdio_encoding: PYTHONIOENCODING is "encoding[:errors]"; an encoding alone makes the errors strict, and
+                // what it leaves unset is UTF-8 (D-15) with surrogateescape; stderr's errors are always backslashreplace
+                std::string encoding = "utf-8", errors = "surrogateescape";
+                if (const char* opt = std::getenv("PYTHONIOENCODING"); opt != nullptr && *opt != '\0') {
+                    std::string_view given(opt);
+                    std::size_t colon = given.find(':');
+                    std::string_view enc = given.substr(0, colon), err = colon == std::string_view::npos ? std::string_view{} : given.substr(colon + 1);
+                    if (!enc.empty()) {
+                        encoding = std::string(enc);
+                        errors = "strict";
+                    }
+                    if (!err.empty()) errors = std::string(err);
+                }
+                auto make = [&](int fd, const char* name, const char* mode, const std::string& errs) -> Ref {
+                    if (fcntl(fd, F_GETFD) < 0) return none_ref();
+                    Ref fdo = int_from_i64(fd), n = str_new(name), m = str_new(mode), enc = str_new(encoding), e = str_new(errs);
+                    return invoke(io_hooks().std_stream.get(), {fdo.get(), n.get(), m.get(), enc.get(), e.get()});
+                };
+                Ref in = make(0, "<stdin>", "rb", errors);
+                put(sys_dict, "stdin", in.get());
+                put(sys_dict, "__stdin__", in.get());
+                Ref out = make(1, "<stdout>", "wb", errors);
+                put(sys_dict, "stdout", out.get());
+                put(sys_dict, "__stdout__", out.get());
+                Ref err = make(2, "<stderr>", "wb", "backslashreplace");
+                put(sys_dict, "stderr", err.get());
+                put(sys_dict, "__stderr__", err.get());
+            }
             Module* main = make_main(main_file);
             if (bootstrap != nullptr) {
                 Obj loader_class = dict_get(bootstrap->dict, Obj::of(intern("SourceFileLoader")));
@@ -2393,15 +2447,25 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             if (isinstance(e.exc.get(), exception_class("SystemExit"))) {
                 status = exit_status(e.exc.get());
             } else {
-                out_stream().flush();             // CPython flushes stdout before the report (RL-227)
+                flush_std_stream("stdout");      // CPython flushes stdout before the report (RL-227)
                 print_traceback(e.exc.get());
                 status = 1;
             }
         }
-        // every way out of the program but a refusal: the modules' globals go (spec section 9)
-        if (sys_modules() != nullptr) clear_modules(runtime_own);
+        // Py_FinalizeEx: flush_std_files, whose failure is exit status 120 (reported as an exception ignored),
+        // then every way out of the program but a refusal: the modules' globals go (spec section 9)
+        if (sys_modules() != nullptr) {
+            if (!flush_std_stream("stdout", true)) status = 120;
+            if (!flush_std_stream("stderr", false)) status = 120;
+            clear_modules(runtime_own);
+            if (!flush_std_stream("stdout", true)) status = 120;   // again, for what the finalisers printed
+            if (!flush_std_stream("stderr", false)) status = 120;
+        }
     } catch (const NotImplemented& e) {
-        out_stream().flush();
+        try {
+            flush_std_stream("stdout");
+        } catch (const NotImplemented&) {
+        }
         err_stream().write(std::string("bella: not implemented: ") + e.what() + "\n");
         err_stream().flush();
         return 70;
