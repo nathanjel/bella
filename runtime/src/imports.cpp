@@ -37,6 +37,7 @@ namespace prelude_locale { Ref module_body(Module* m); }      // runtime/prelude
 namespace prelude_zlib { Ref module_body(Module* m); }        // runtime/prelude/zlib.py
 namespace prelude_ast { Ref module_body(Module* m); }         // runtime/prelude/_ast.py
 namespace prelude_typing { Ref module_body(Module* m); }      // runtime/prelude/_typing.py
+namespace prelude_json { Ref module_body(Module* m); }        // runtime/prelude/_json.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -353,7 +354,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}};
     return table;
 }
 }  // namespace
@@ -701,6 +702,9 @@ Ref i_bella_class_set(Obj, Args a) {             // a store into a type's dict a
     if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "_bella_class_set() needs a class");
     static_cast<ClassObject*>(a.pos(0).object())->set_attr(intern(as_str(a.pos(1))->text), a.pos(2));
     return none_ref();
+}
+void fill_json(Module* m) {
+    fill_in_python(m, "_json", "_json", prelude_json::module_body, {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}});
 }
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,

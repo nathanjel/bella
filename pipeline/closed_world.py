@@ -215,9 +215,19 @@ def _regular_in_stdlib(name: str) -> bool:
     return spec is not None and spec.origin is not None
 
 
+def search_roots(program: Path) -> list[Path]:
+    """Where a top-level module of the program's own is looked for, in sys.path's order: the program's directory, then
+    PYTHONPATH's entries as CPython reads them when the build runs (a vendored package's directory, targets/run_targets.py)."""
+    roots = [program.resolve().parent]
+    for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
+        if entry:
+            roots.append(Path(entry).resolve())
+    return roots
+
+
 def find_program_modules(program: Path) -> list[ProgramModule]:
     """Every module of the program's own an import can reach, in the order they were found."""
-    root = program.resolve().parent
+    roots = search_roots(program)
     found: dict[str, ProgramModule] = {}
     absent: set[str] = set()
     queue: list[ProgramModule] = []
@@ -231,24 +241,25 @@ def find_program_modules(program: Path) -> list[ProgramModule]:
             absent.add(name)                   # no file has an empty name: ModuleNotFoundError when imported
             return None
         parent, _, tail = name.rpartition(".")
-        where: Path | None
+        wheres: list[Path] = []
         library_parent = False
         if parent:
             p = find(parent)
             library_parent = p is not None and p.path is not None and (p.origin is not None or p.path.is_relative_to(STDLIB))
-            where = p.path.parent if p is not None and p.path is not None and p.package and not library_parent else None
-            if name in FIRST:
-                where = None                   # FrozenImporter takes a dotted name whatever its parent's path says
-        else:
-            where = None if name in FIRST else root
+            if p is not None and p.path is not None and p.package and not library_parent and name not in FIRST:
+                wheres = [p.path.parent]       # FrozenImporter takes a dotted name whatever its parent's path says
+        elif name not in FIRST:
+            wheres = roots
         result: ProgramModule | None = None
-        if where is not None:
+        for where in wheres:
             if (where / tail / "__init__.py").is_file():
                 result = ProgramModule(name, (where / tail / "__init__.py").resolve(), True)
             elif (where / f"{tail}.py").is_file():
                 result = ProgramModule(name, (where / f"{tail}.py").resolve(), False)
             elif (where / tail).is_dir() and tail.isidentifier() and (parent or not _regular_in_stdlib(tail)):
                 result = ProgramModule(name, None, True)
+            if result is not None:
+                break
         if result is None and (not parent or library_parent or name in FROZEN):
             library = library_modules().get(name)
             if library is not None:

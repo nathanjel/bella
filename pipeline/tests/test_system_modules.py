@@ -1,4 +1,4 @@
-"""pwd, grp, _locale, zlib, _ast, _typing and the t-string types, compiled, against CPython: the messages the cases do not compare, the conversions'
+"""pwd, grp, _locale, zlib, _ast, _typing, _json and the t-string types, compiled, against CPython: the messages the cases do not compare, the conversions'
 edges, and what stops by name. The locale facts are the C locale's and C.UTF-8's; what reads the environment's locale is the same environment on
 both sides."""
 from __future__ import annotations
@@ -97,6 +97,43 @@ m = sentinel("M")
 print(hash(m) == object.__hash__(m), m == m, m != m, {m: 1}[m], m == sentinel("M"))
 """
 
+JSON = r"""
+import json, _json
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e) + ("  notes=" + repr(e.__notes__) if getattr(e, "__notes__", None) else "")
+class Foo: pass
+class S(str): pass
+class I(int):
+    def __repr__(self): return "I!"
+class F(float):
+    def __repr__(self): return "F!"
+class D(dict): pass
+print(m(lambda: _json.scanstring(1, 0)), m(lambda: _json.scanstring("abc")), m(lambda: _json.scanstring("abc", "x")), m(lambda: _json.scanstring("abc", 5)), m(lambda: _json.scanstring("abc", -1)), m(lambda: _json.scanstring('"abc', 1)), _json.scanstring('"a\\u00e9\\ud83d\\ude00b"x', 1), m(lambda: _json.scanstring('"a\\ud83dq"', 1)), m(lambda: _json.scanstring('"a\\x"', 1)), m(lambda: _json.scanstring('"a\\u12"', 1)), m(lambda: _json.scanstring('"a\\u12zz"', 1)), m(lambda: _json.scanstring('"a\nb"', 1)), _json.scanstring('"a\nb"', 1, False), m(lambda: _json.scanstring("abc", 0, 1, 2)), m(lambda: _json.scanstring(pystr="abc", end=0)))
+print(_json.encode_basestring_ascii('a"\\/\b\f\n\r\t\x01\x7f\x80é😀'), _json.encode_basestring('a"\\/\b\f\n\r\t\x01\x7f\x80é😀'), m(lambda: _json.encode_basestring_ascii(1)), m(lambda: _json.encode_basestring(b"a")), m(lambda: _json.encode_basestring_ascii()), m(lambda: _json.encode_basestring("a", "b")), _json.encode_basestring_ascii(S("x")), type(_json.encode_basestring_ascii(S("x"))).__name__, _json.encode_basestring(S("é")), type(_json.encode_basestring(S("é"))).__name__, _json.encode_basestring_ascii(""), _json.encode_basestring(""))
+print(m(lambda: _json.make_scanner()), m(lambda: _json.make_scanner(1)), type(_json.make_scanner(context=json.JSONDecoder())).__name__, m(lambda: _json.make_scanner(json.JSONDecoder(), 2)), m(lambda: _json.make_encoder()), m(lambda: _json.make_encoder(1, 2, 3, 4, "a", "b", 1, 1, 1)), m(lambda: _json.make_encoder(None, 2, 3, 4, 5, "b", 1, 1, 1)), type(_json.make_encoder(None, 2, 3, 4, "a", "b", 1, 1, 1)).__name__, m(lambda: _json.make_encoder(None, 2, 3, 4, "a", "b", 1, 1)), type(_json.make_encoder(markers=None, default=2, encoder=3, indent=4, key_separator="a", item_separator="b", sort_keys=1, skipkeys=1, allow_nan=1)).__name__)
+s = json.JSONDecoder().scan_once
+print(m(lambda: s()), m(lambda: s(1, 0)), m(lambda: s("1", "x")), m(lambda: s("1", -1)), m(lambda: s("1", 5)), m(lambda: s("", 0)), s("12 ", 0), s(" 12", 1), m(lambda: s(" 12", 0)), s('"a"', 0), s("[1, 2]", 0), s("{}", 0), s('{"a": {"b": [1.5, -2e3, 1E+2, 0, -0, 0.0, 10]}}', 0), m(lambda: s("[1,]", 0)), m(lambda: s('{"a":1,}', 0)), m(lambda: s("[1 2]", 0)), m(lambda: s('{"a" 1}', 0)), m(lambda: s('{a:1}', 0)), m(lambda: s("[", 0)), m(lambda: s("{", 0)), m(lambda: s("-", 0)), m(lambda: s("-x", 0)), s("01", 0), s("1.", 0), s("1e", 0), s("1e5x", 0), s("1.5e-3", 0), s("NaN", 0), s("-Infinity", 0), s("Infinity", 0), m(lambda: s("nul", 0)), s("truex", 0), s(string="false", idx=0), m(lambda: s("1" * 5000, 0)))
+d = json.JSONDecoder(parse_float=lambda x: ("f", x), parse_int=lambda x: ("i", x), parse_constant=lambda x: ("c", x), object_hook=lambda o: ("o", sorted(o)), object_pairs_hook=None, strict=False)
+print(d.scan_once('[1, 2.5, NaN, {"k": "v\n"}, -1e1]', 0), json.loads('{"a": 1, "a": 2}'), type(json.loads("1")), m(lambda: json.loads("")), m(lambda: json.loads("[1] x")), m(lambda: json.loads('{"a": }')), m(lambda: json.loads("﻿[]")), json.loads(b'[1]'), json.loads(bytearray(b'[1]')), m(lambda: json.loads(1)), repr(json.loads('"\\ud800"')), repr(json.loads('"\\ud800\\u0041"')), json.loads(' \t\n\r[1]\n'), json.JSONDecoder(object_pairs_hook=lambda p: p).decode('{"b": 1, "a": 2}'))
+print(json.dumps({"a": [1, 2.5, True, None, "x"], "b": {"c": (1,)}}), json.dumps([1.0, 1e100, 1e16, 1e-7, 0.1, -0.0, 1e22]), json.dumps("é😀"), json.dumps("é😀", ensure_ascii=False), json.dumps({1: 2, 2.5: 3, True: 4, None: 5, False: 6, "s": 7}), m(lambda: json.dumps({(1, 2): 3})), json.dumps({(1, 2): 3}, skipkeys=True), json.dumps({"b": 1, "a": 2}, sort_keys=True), m(lambda: json.dumps({"b": 1, 2: 2}, sort_keys=True)), m(lambda: json.dumps(float("nan"), allow_nan=False)), json.dumps([float("nan"), float("inf"), -float("inf")]), m(lambda: json.dumps(Foo())), m(lambda: json.dumps([Foo()])), m(lambda: json.dumps({"k": Foo()})), m(lambda: json.dumps({"k": [1, {"z": Foo()}]})), json.dumps(Foo(), default=lambda o: {"foo": 1}), json.dumps(S("x")), json.dumps([I(5), F(2.5)]), json.dumps({I(5): F(2.5)}), json.dumps(D(a=1)), json.dumps({}), json.dumps([]), json.dumps(()), json.dumps({"a": {}, "b": []}, indent=2), json.dumps([1, [2, [3]]], indent="\t"), json.dumps({"a": 1}, indent=0), json.dumps([1, 2], separators=(",", ":")), json.dumps({"a": 1, "b": 2}, indent=1, separators=(" ;", " = ")), json.dumps(123456789012345678901234567890), json.dumps(-0.0), json.dumps(1e300 * 1e300), json.dumps(True), json.dumps(None))
+l = []; l.append(l)
+dd = {}; dd["x"] = dd
+print(m(lambda: json.dumps(l)), m(lambda: json.dumps(dd)), m(lambda: json.dumps({"a": [dd]})), m(lambda: json.JSONEncoder(check_circular=False).encode([1])), m(lambda: json.dumps([Foo()], default=lambda o: o)), json.JSONEncoder().encode("s"), list(json.JSONEncoder().iterencode([1, "a", {"b": 2.5}])), list(json.JSONEncoder(indent=1).iterencode({"a": [1]})), json.JSONEncoder(default=lambda o: list(o)).encode({1, 2} if False else (1, 2)), m(lambda: json.dumps([1], indent=1.5)), json.dumps({"k": "v"}, indent=None), m(lambda: json.dumps("x", cls=None)))
+enc = _json.make_encoder(None, lambda o: "D", lambda s: "E", None, ": ", ", ", False, False, True)
+print(enc([1, "a", {"b": None}, Foo()], 0), m(lambda: enc("x")), m(lambda: enc("x", "y")), m(lambda: enc(obj="x", _current_indent_level=0)), m(lambda: _json.make_encoder(None, lambda o: "D", lambda s: 5, None, ": ", ", ", False, False, True)(["a"], 0)), m(lambda: _json.make_encoder(None, lambda o: "D", lambda s: 5, None, ": ", ", ", False, False, True)([1], 0)), enc.markers, enc.indent, enc.key_separator, enc.item_separator, enc.sort_keys, enc.skipkeys, type(enc.default).__name__, m(lambda: setattr(enc, "indent", 1)), m(lambda: enc.allow_nan))
+sc = _json.make_scanner(json.JSONDecoder()); print(sc.strict, sc.object_hook, sc.object_pairs_hook, sc.array_hook, sc.parse_float, sc.parse_int, type(sc.parse_constant).__name__, m(lambda: setattr(sc, "strict", 0)), type(sc).__name__, type(sc).__module__, type(enc).__module__, repr(type(sc)), m(lambda: type(sc)()), _json.__doc__, sorted(n for n in dir(_json) if not n.startswith("__")))
+class M(dict):
+    def items(self): return [("z", 1), ("y", 2)]
+class M2(dict):
+    def items(self): return [("z",)]
+class M3(dict):
+    def items(self): return [(1, 2), ("a", 3)]
+print(json.dumps(M(a=1)), m(lambda: json.dumps(M2(a=1))), json.dumps(M3(a=1)), m(lambda: json.dumps(M3(a=1), sort_keys=True)), json.dumps({"b": 1, "a": 2}, sort_keys=True, indent=1), json.dumps({"a": 1}, indent=3, separators=(",", ":")))
+"""
+
 AST_NODES = r"""
 import _ast, ast
 def m(f):
@@ -137,6 +174,11 @@ def test_exec_with_a_locals_mapping_offsets_and_sentinel() -> None:
     same(EXEC_LOCALS_AND_OFFSETS)
 
 
+def test_json() -> None:
+    """_json's scanner and encoder: the messages the case does not compare."""
+    same(JSON)
+
+
 def test_typing_objects() -> None:
     """typing's C types and PEP 695's intrinsics: the messages the case does not compare."""
     same(TYPING_OBJECTS)
@@ -159,5 +201,6 @@ if __name__ == "__main__":
     test_the_t_string_types()
     test_ast_nodes()
     test_typing_objects()
+    test_json()
     test_exec_with_a_locals_mapping_offsets_and_sentinel()
     test_what_is_absent_stops_by_name()
