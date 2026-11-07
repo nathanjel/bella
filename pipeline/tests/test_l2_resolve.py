@@ -55,11 +55,12 @@ def differences(path: Path) -> list[str]:
         if not hs or len(hs) != 1 or len(ss) != 1 or ss[0].kind == "module":
             continue
         h, s = hs[0], ss[0]
-        if q.endswith("__annotate__") or "<generic parameters" in q or "<genexpr>" in q or h.co_flags & 0x380:
-            continue                     # annotate (hidden parameter name), PEP 695, async bodies
+        if q.endswith("__annotate__") or "<generic parameters" in q or "<genexpr>" in q or h.co_flags & 0x380 or h.co_varnames[:1] == (".format",):
+            continue                     # annotate and a type parameter's lazy function (hidden parameter name), PEP 695, async bodies
+        # a generic class's body captures the type parameters' tuple: CPython's hidden `.type_params`, the frontend's synthetic name
         ours = (() if s.kind == "class" else tuple(n for n in s.varnames if n not in s.synthetic),
-                tuple(n for n in s.cellvars if n not in s.synthetic), s.freevars)
-        cpython = (() if s.kind == "class" else h.co_varnames, h.co_cellvars, h.co_freevars)
+                tuple(n for n in s.cellvars if n not in s.synthetic), tuple(n for n in s.freevars if n not in s.synthetic))
+        cpython = (() if s.kind == "class" else h.co_varnames, h.co_cellvars, tuple(n for n in h.co_freevars if not n.startswith(".")))
         if ours == cpython:
             continue
         if any(getattr(c.node, "kind", "") in ("coroutine", "async generator") for c in s.children):

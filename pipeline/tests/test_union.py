@@ -51,7 +51,7 @@ for fn in (lambda: int | 1, lambda: 1 | int, lambda: int | "a", lambda: "a" | in
 REFUSED = (
     ("(int | str) | 1", "importing '"),
     ("1 | (int | str)", "importing '"),
-    ("import types\ntypes.UnionType[int, 'a']", "importing '"),
+    ("import types\ntypes.UnionType[int, 'a']", "compile()"),      # typing compiles the forward reference eagerly (_make_forward_ref)
 )
 
 

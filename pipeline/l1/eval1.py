@@ -1510,6 +1510,10 @@ def _pep695(kind: str, args: list[Any], module_name: str) -> Any:
         # the alias's __qualname__ is its value function's (co_qualname): the thunk's, which the
         # frontend named after the alias where it stands (a class, a function)
         code = _requalify(code, text.split()[1].split("[")[0], ns["__bella_v__"].__qualname__)
+    # a parameter's lazy bound, constraints or default is a function named after the parameter, with the qualname of the
+    # place it stands (outer.<locals>.T): the frontend's thunk has it; the oracle's text, compiled at top level, does not
+    for thunk in thunks:
+        code = _requalify(code, thunk.__name__, thunk.__qualname__)
     exec(code, ns)  # noqa: S102  # CPython makes the objects
     made = ns["__bella_tp__"] if kind != "typealias" else ns[text.split()[1].split("[")[0]]
     if kind == "type_params":

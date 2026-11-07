@@ -425,10 +425,22 @@ class _TypeParams:
             case.body = self.block(case.body)
         return [s]
 
-    def thunk(self, expr: ast.expr, in_class: bool) -> tuple[str, ast.FunctionDef]:
-        name = _tmp("lazy")
-        fn = ast.FunctionDef(name=name, args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
-                             body=[ast.Return(expr)], decorator_list=[], returns=None, type_params=[])
+    def thunk(self, expr: ast.expr, in_class: bool, shown: str = "") -> tuple[str, ast.FunctionDef]:
+        """A lazy expression's function as 3.15.2 compiles one (codegen_setup_annotations_scope for a type parameter's bound,
+        constraints or default and an alias's value): one positional parameter, the format, 1 by default, refused above
+        VALUE_WITH_FAKE_GLOBALS; it is what evaluate_bound, evaluate_default and evaluate_value hand out, named after the
+        parameter or alias (`shown`) and stored under a name of its own."""
+        name, fmt = _tmp("lazy"), _tmp("format")
+        body: list[ast.stmt] = [
+            ast.If(test=ast.Compare(left=ast.Name(id=fmt, ctx=ast.Load()), ops=[ast.Gt()], comparators=[ast.Constant(2)]),
+                   body=[ast.Raise(exc=_intrinsic("NotImplementedError"), cause=None)], orelse=[]),
+            ast.Return(expr)]
+        fn = ast.FunctionDef(name=shown or name, args=ast.arguments(posonlyargs=[ast.arg(arg=fmt)], args=[], kwonlyargs=[], kw_defaults=[],
+                                                                    defaults=[ast.Constant(1)]),
+                             body=body, decorator_list=[], returns=None, type_params=[])
+        if shown:
+            fn.bella_store = name  # type: ignore[attr-defined]
+        fn.bella_public = {fmt: "format"}  # type: ignore[attr-defined]
         fn.bella_annotation = True  # type: ignore[attr-defined]
         fn.bella_classdict = in_class  # type: ignore[attr-defined]
         return name, ast.fix_missing_locations(_copy_loc(fn, expr))
@@ -440,8 +452,8 @@ class _TypeParams:
         defs: list[ast.stmt] = []
         names: list[str] = []
 
-        def call(e: ast.expr) -> str:
-            name, fn = self.thunk(e, in_class)
+        def call(e: ast.expr, shown: str) -> str:
+            name, fn = self.thunk(e, in_class, shown)
             defs.append(fn)
             names.append(name)
             return f"__bella_{len(names) - 1}__()"
@@ -449,9 +461,11 @@ class _TypeParams:
             if isinstance(tp, ast.TypeVar):
                 text = tp.name
                 if isinstance(tp.bound, ast.Tuple):
-                    text += ": (" + "".join(call(c) + ", " for c in tp.bound.elts) + ")"
+                    # one lazy function for the whole tuple, as CPython compiles the constraints (evaluate_constraints is it);
+                    # the text keeps the tuple display the grammar wants
+                    text += ": (*" + call(tp.bound, tp.name) + ",)"
                 elif tp.bound is not None:
-                    text += ": " + call(tp.bound)
+                    text += ": " + call(tp.bound, tp.name)
             elif isinstance(tp, ast.TypeVarTuple):
                 text = "*" + tp.name
             else:
@@ -460,7 +474,7 @@ class _TypeParams:
             if tp.default_value is not None:
                 text += " = " + ("*" if isinstance(tp, ast.TypeVarTuple) else "") + call(
                     tp.default_value.value if isinstance(tp, ast.TypeVarTuple) and isinstance(tp.default_value, ast.Starred)
-                    else tp.default_value)
+                    else tp.default_value, tp.name)
             parts.append(text)
         return ", ".join(parts), defs, names
 
@@ -499,10 +513,9 @@ class _TypeParams:
         in_class = self.scopes[-1] == "class"
         assert isinstance(s.name, ast.Name)
         name = s.name.id
-        value_name, value_fn = self.thunk(s.value, in_class)
         # the value's function is named after the alias, as CPython's is: the alias takes its
         # __qualname__ from it (_Py_make_typealias; review 2026-11-02, G6 2.3.3)
-        value_fn.name, value_fn.bella_store = name, value_name  # type: ignore[attr-defined]
+        value_name, value_fn = self.thunk(s.value, in_class, name)
         text, defs, thunks = self.params_text(s.type_params, in_class)
         made = ast.Call(func=_intrinsic("typealias"),
                         args=[ast.Constant(f"type {name}[{text}] = __bella_v__()" if s.type_params else f"type {name} = __bella_v__()"),

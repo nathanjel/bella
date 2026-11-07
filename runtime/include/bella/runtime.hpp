@@ -386,6 +386,8 @@ void fill_grp(Module* m);                         // runtime/prelude/grp.py over
 void fill_locale(Module* m);                      // runtime/prelude/_locale.py over posix.cpp
 void fill_zlib(Module* m);                        // runtime/prelude/zlib.py: its shape; the functions stop by name (L-02)
 void fill_ast(Module* m);                         // runtime/prelude/_ast.py: the node classes, presented as ast's
+void fill_typing(Module* m);                      // runtime/prelude/_typing.py: typing's C types and PEP 695's intrinsics
+Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
 void ensure_codecs();                             // _codecs has run, and the hooks are set
@@ -993,6 +995,7 @@ Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
 Ref i_bella_exec(Obj, Args a);
 Ref i_bella_refuse(Obj, Args a);
+Ref i_bella_caller_module(Obj, Args a);                      // caller(): the nearest program frame's module name
 Ref i_bella_import_warning(Obj, Args a);
 Ref i_bella_set_lazy_attributes(Obj, Args a);
 

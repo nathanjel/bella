@@ -876,9 +876,18 @@ _union_set = object.__setattr__
 _UNION_OWN = ('_union_hashable', '_union_unhashable', '_union_params')
 
 
+_typealias_type = None                           # typing.TypeAliasType, once _typing has made it
+
+
+def _set_typealias_type(t):
+    global _typealias_type
+    _typealias_type = t
+
+
 def _is_unionable(obj):
-    """is_unionable; the runtime has no type alias to ask about yet."""
-    return obj is None or _ga_check(obj, type) or type(obj) is sentinel or _ga_check(obj, GenericAlias) or type(obj) is Union
+    """is_unionable"""
+    return obj is None or _ga_check(obj, type) or type(obj) is sentinel or _ga_check(obj, GenericAlias) or type(obj) is Union \
+        or (_typealias_type is not None and type(obj) is _typealias_type)
 
 
 def _union_type_check(arg, msg):

@@ -1,4 +1,4 @@
-"""pwd, grp, _locale, zlib, _ast and the t-string types, compiled, against CPython: the messages the cases do not compare, the conversions'
+"""pwd, grp, _locale, zlib, _ast, _typing and the t-string types, compiled, against CPython: the messages the cases do not compare, the conversions'
 edges, and what stops by name. The locale facts are the C locale's and C.UTF-8's; what reads the environment's locale is the same environment on
 both sides."""
 from __future__ import annotations
@@ -44,6 +44,28 @@ import string.templatelib
 print(string.templatelib.convert(1, "r"), string.templatelib.convert("a", None), m(lambda: string.templatelib.convert(1, "x")), string.templatelib._template_unpickle(("a", "b"), (Interpolation(1, "x"),)), m(lambda: string.templatelib._template_unpickle(1)))
 """
 
+TYPING_OBJECTS = r"""
+import typing, annotationlib
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+def f[T: int, *Ts, **P = [int], U: (str, bytes) = str](x: T) -> T: return x
+T, Ts, P, U = f.__type_params__
+print(type(T.evaluate_bound).__name__, T.evaluate_bound.__qualname__, T.evaluate_bound.__name__, m(lambda: T.evaluate_bound()), m(lambda: T.evaluate_bound(1)), m(lambda: T.evaluate_bound(2)), m(lambda: T.evaluate_bound(3)), m(lambda: T.evaluate_bound(4)), T.evaluate_bound.__module__, T.evaluate_bound.__defaults__, T.evaluate_bound.__kwdefaults__)
+print(T.__bound__, T.evaluate_constraints, U.evaluate_constraints(1), U.__constraints__, U.evaluate_default(1), U.__default__, P.__default__, P.evaluate_default.__name__, Ts.evaluate_default, Ts.__default__, T.has_default(), U.has_default(), repr(T), repr(Ts), repr(P), T.__module__, T.__infer_variance__, T.__covariant__, m(lambda: vars(T)), m(lambda: T.__dict__), T.__name__, U.evaluate_constraints.__qualname__)
+type A[X] = list[X]
+type B = int | str
+print(A, A.__name__, A.__qualname__, A.__module__, A.__type_params__, A.__parameters__, A.__value__, A.evaluate_value.__name__, A.evaluate_value.__qualname__, m(lambda: A.evaluate_value(1)), m(lambda: A.evaluate_value(4)), A[int], m(lambda: B[int]), B | None, m(lambda: B()), repr(B), B.__value__, type(A), list(A), m(lambda: A.__module__ == "__main__"), A.__reduce__(), A.__module__)
+class C[T2]: pass
+print(C.__type_params__, C.__orig_bases__, C.__mro__, C.__parameters__, C[int], m(lambda: C[int, str]), typing.Generic, typing.Generic.__module__, type(typing.Generic).__name__, typing.Generic.__mro__, type(typing.Generic()).__name__, m(lambda: typing.Generic[int]), typing.Generic[C.__type_params__[0]], type(typing.Generic.__class_getitem__).__name__)
+E = typing.TypeVar("E", bound=int, default=str)
+print(E.evaluate_bound, E.evaluate_bound(1), E.evaluate_bound(4), E.evaluate_default, type(E.evaluate_bound), type(E.evaluate_bound).__module__, m(lambda: type(E.evaluate_bound)()), E.__module__, repr(E), typing.TypeVar("F", covariant=True), typing.TypeVar("G", contravariant=True), typing.TypeVar("H", infer_variance=True), m(lambda: typing.TypeVar("I", covariant=True, contravariant=True)), m(lambda: typing.TypeVar("I", covariant=True, infer_variance=True)), m(lambda: typing.TypeVar("I", int)), m(lambda: typing.TypeVar("I", int, str, bound=int)), m(lambda: typing.TypeVar(1)), m(lambda: typing.TypeVar("J", bound=1)), typing.TypeVar("K", bound=None).__bound__, m(lambda: typing.TypeVar()), m(lambda: typing.TypeVar("L", nope=1)), E | None, typing.NoDefault, type(typing.NoDefault), m(lambda: type(typing.NoDefault)()), m(lambda: type(typing.NoDefault)(1)), typing.NoDefault.__reduce__(), m(lambda: type("S", (E,), {})), E.__reduce__(), type(E.__mro_entries__).__name__)
+import _typing
+print(_typing.Union is typing.Union, _typing._idfunc, _typing._idfunc(5), m(lambda: _typing._idfunc()), _typing.__doc__, sorted(n for n in dir(_typing) if not n.startswith("__")), typing.TypeAliasType("N", int), typing.TypeAliasType("N", int, type_params=(T,)).__type_params__, m(lambda: typing.TypeAliasType("N", int, type_params=[T])), m(lambda: typing.TypeAliasType("N", int, type_params=(U, T))), typing.TypeAliasType("N", int, qualname="Q.N").__qualname__, m(lambda: typing.TypeAliasType("N", int, qualname=1)), typing.TypeAliasType("N", int).__module__, typing.TypeAliasType("N", int).evaluate_value)
+"""
+
 AST_NODES = r"""
 import _ast, ast
 def m(f):
@@ -78,9 +100,15 @@ def test_ast_nodes() -> None:
     same(AST_NODES)
 
 
+def test_typing_objects() -> None:
+    """typing's C types and PEP 695's intrinsics: the messages the case does not compare."""
+    same(TYPING_OBJECTS)
+
+
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.compress(b'a')", "zlib"), ("import zlib\nzlib.ZLIB_VERSION", "ZLIB_VERSION"), ("import ast\nast.parse('1')", "compile()"),
-             ("import ast\nast.expr()", "abstract AST node class"), ("import ast\nast.dump(ast.Constant(1))", "typealias"))
+             ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
+             ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "__closure__"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
@@ -93,4 +121,5 @@ if __name__ == "__main__":
     test_pwd_grp_locale_zlib()
     test_the_t_string_types()
     test_ast_nodes()
+    test_typing_objects()
     test_what_is_absent_stops_by_name()

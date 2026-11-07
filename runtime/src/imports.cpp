@@ -36,6 +36,7 @@ namespace prelude_grp { Ref module_body(Module* m); }         // runtime/prelude
 namespace prelude_locale { Ref module_body(Module* m); }      // runtime/prelude/_locale.py
 namespace prelude_zlib { Ref module_body(Module* m); }        // runtime/prelude/zlib.py
 namespace prelude_ast { Ref module_body(Module* m); }         // runtime/prelude/_ast.py
+namespace prelude_typing { Ref module_body(Module* m); }      // runtime/prelude/_typing.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -334,7 +335,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}};
     return table;
 }
 }  // namespace
@@ -377,10 +378,24 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(ns->dict, Obj::of(N(primitive)), b.get());
     }
     body(ns);
+    if (Obj intr = dict_get(ns->dict, Obj::of(N("__intrinsics__"))); !intr.is_unset())   // what the runtime calls by name, not the module's
+        for (Obj n : static_cast<List*>(intr.object())->items) dict_set(intrinsics(), n, dict_get(ns->dict, n));
+    if (Obj hidden = dict_get(ns->dict, Obj::of(N("__hidden_classes__"))); !hidden.is_unset())   // a C type of no module's namespace
+        for (Obj n : static_cast<List*>(hidden.object())->items) {                               // (_typing._ConstEvaluator): its own module
+            auto* c = static_cast<ClassObject*>(dict_get(ns->dict, n).object());
+            const Obj* own = c->attrs.find(N("__module__"));
+            present_native_class(c, own != nullptr && as_str(*own) != nullptr ? as_str(*own)->text : std::string(types_module));
+            c->disallow_instantiation = cpython_attribute_kind(c, "__new__").empty();
+        }
     for (Obj n : static_cast<List*>(dict_get(ns->dict, Obj::of(N("__all__"))).object())->items) {
         Obj v = dict_get(ns->dict, n);
-        if (is_kind(v, Kind::Class) && !c_type(static_cast<ClassObject*>(v.object())))   // a class may have two names
-            present_native_class(static_cast<ClassObject*>(v.object()), types_module);
+        if (is_kind(v, Kind::Class) && !c_type(static_cast<ClassObject*>(v.object()))) {   // a class may have two names
+            auto* c = static_cast<ClassObject*>(v.object());
+            const Obj* own = c->attrs.find(N("__module__"));   // the class statement's __module__ is the file's name; the type's is its tp_name's
+            if (own != nullptr && as_str(*own) != nullptr && as_str(*own)->text == name && std::string_view(name) != types_module)
+                c->set_attr(N("__module__"), Obj::of(intern(types_module)));
+            present_native_class(c, types_module);
+        }
         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;
         dict_set(m->dict, n, v);
     }
@@ -655,6 +670,25 @@ void fill_locale(Module* m) {
 }
 void fill_zlib(Module* m) { fill_in_python(m, "zlib", "zlib", prelude_zlib::module_body, {{"_bella_refuse", i_bella_refuse}}); }
 void fill_ast(Module* m) { fill_in_python(m, "_ast", "ast", prelude_ast::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
+Ref i_bella_bootstrap(Obj, Args a) {             // a call of _frozen_importlib's function by name: what the prelude shares with bootstrap.py
+    if (a.npos < 1 || a.nkw != 0) raise_new("TypeError", "_bella_bootstrap() takes a name and positional arguments");
+    Obj fn = dict_get(bootstrap_module()->dict, Obj::of(intern(as_str(a.pos(0))->text)));
+    if (fn.is_unset()) raise_new("SystemError", "no " + as_str(a.pos(0))->text + " in _frozen_importlib");
+    std::vector<Obj> rest;
+    for (std::size_t i = 1; i < a.npos; ++i) rest.push_back(a.pos(i));
+    return invoke(fn, Args{rest.data(), rest.size(), nullptr, 0});
+}
+Ref i_bella_class_set(Obj, Args a) {             // a store into a type's dict as C makes one: a member a class statement cannot declare (__qualname__)
+    positional_only(a, "_bella_class_set", 3, 3);
+    if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "_bella_class_set() needs a class");
+    static_cast<ClassObject*>(a.pos(0).object())->set_attr(intern(as_str(a.pos(1))->text), a.pos(2));
+    return none_ref();
+}
+void fill_typing(Module* m) {
+    fill_in_python(m, "_typing", "typing", prelude_typing::module_body,
+                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_bella_caller_module", i_bella_caller_module},
+                    {"_bella_class_set", i_bella_class_set}, {"_bella_bootstrap", i_bella_bootstrap}});
+}
 void fill_posix(Module* m) {
     fill_in_python(m, "posix", "posix", prelude_posix::module_body,
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_structseq", i_structseq}, {"_sys", i_posix_sys}});

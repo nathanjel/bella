@@ -839,6 +839,10 @@ Ref type_new_builtin(Obj, Args a) {                 // type.__new__(meta, name, 
     if (a.npos != 4) raise_new("TypeError", "type.__new__() takes exactly 3 arguments (" + std::to_string(a.npos - 1) + " given)");
     if (!is_kind(a.pos(2), Kind::Tuple))
         raise_new("TypeError", "type.__new__() argument 2 must be tuple, not " + type_of(a.pos(2))->name);
+    // type_new_get_bases: a base that is no type but has __mro_entries__ is the class statement's business (types.new_class)
+    for (Obj b : static_cast<Tuple*>(a.pos(2).object())->items)
+        if (!is_kind(b, Kind::Class) && !optional_getattr(b, N("__mro_entries__")).get().is_unset())
+            raise_new("TypeError", "type() doesn't support MRO entry resolution; use types.new_class()");
     // _PyType_CalculateMetaclass: the most derived of meta and the bases' metaclasses; another
     // metaclass with a __new__ of its own makes the class instead (type_new_get_bases)
     ClassObject* winner = meta;
@@ -2445,18 +2449,21 @@ void forget_python_origin(ClassObject* c) {
 void present_native_class(ClassObject* c, const std::string& module) {
     std::string short_name = c->name;
     const Obj* own_module = c->attrs.find(N("__module__"));
-    std::string full = (own_module != nullptr && as_str(*own_module) != nullptr ? as_str(*own_module)->text : module) + "." + short_name;
-    if (!cpython_has("shortname", full)) {      // tp_name: "module.Name" for a static type and a spec's, the bare name for a type C made
-        c->name = module + "." + short_name;     // with type() (ast's nodes, io.UnsupportedOperation), whose module is its __module__
-        c->name_prefix = module.size() + 1;
+    std::string says = own_module != nullptr && as_str(*own_module) != nullptr ? as_str(*own_module)->text : module;
+    if (says != "builtins" && !cpython_has("shortname", says + "." + short_name)) {
+        c->name = module + "." + short_name;     // tp_name: "module.Name" for a static type and a spec's; the bare name for a type of
+        c->name_prefix = module.size() + 1;      // builtins (NoDefaultType) and one C made with type() (ast's nodes, io.UnsupportedOperation)
     }
     note_prelude_class(c);
     c->final_type = cpython_has("final", c->name);
     forget_python_origin(c);
+    if (c->attrs.contains(N("__dict__")) && cpython_attribute_kind(c, "__dict__").empty())   // a managed dict without a __dict__ (typing.TypeVar)
+        c->del_attr(N("__dict__"));
     present_methods(c);
     c->has_weakref = cpython_has("weakref", c->name);
     if (Obj doc = cpython_doc(c->name); doc != None()) c->set_attr(N("__doc__"), doc);
-    if (cpython_has(c->name, "__class_getitem__")) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
+    if (cpython_has(c->name, "__class_getitem__") && !c->attrs.contains(N("__class_getitem__")))   // Py_GenericAlias, unless the class has its own
+        method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
 }
 
 // _PyErr_FormatNote / BaseException.add_note: appended to __notes__, made a list if absent

@@ -16,6 +16,9 @@ C-3-15_generator_close_and_throw.py
 C-3-18_class_assignment.py
 C-3-19_getattribute_override.py
 C-3-20_copy_protocol.py
+C-3-25_calls_and_parameters.py
+C-3-27_class_statements.py
+C-3-28_unpacking_and_displays.py
 C-3-29_generators_and_comprehensions.py
 C-3-30_traceback_entries.py
 C-3-31_exception_fields.py
@@ -66,6 +69,7 @@ C-7-28_sys_surface.py
 C-7-29_codecs.py
 C-7-30_io.py
 C-7-31_passwd_locale.py
+C-7-33_typing_objects.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

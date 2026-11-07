@@ -1228,6 +1228,7 @@ Ref sys_intern(Obj, Args a) {                     // sys_intern_impl: the str ev
     if (!is_exact_str(a.pos(0))) raise_new("TypeError", "can't intern " + type_of(a.pos(0))->name);
     return Ref::share(Obj::of(intern(std::string_view(s->text))));
 }
+}  // namespace
 // the module of the function that called: sentinelobject.c's caller(); the prelude has no frames of CPython's
 Ref i_bella_caller_module(Obj, Args) {
     detail::FrameRecord* f = detail::current_frame();
@@ -1237,6 +1238,7 @@ Ref i_bella_caller_module(Obj, Args) {
     Obj name = dict_get(f->module->dict, Obj::of(intern("__name__")));
     return name.is_unset() ? none_ref() : Ref::share(name);
 }
+namespace {
 Ref sys_getframemodulename(Obj, Args a) {         // sys__getframemodulename_impl: the function's __module__ at that depth
     std::vector<Obj> given;
     if (a.npos > 1 || a.npos + a.nkw > 1) raise_new("TypeError", "_getframemodulename() takes at most 1 argument (" + std::to_string(a.npos + a.nkw) + " given)");
@@ -1769,6 +1771,7 @@ Module* new_module(const char* name) {
 }
 
 namespace {
+}  // namespace
 Dict* intrinsics() {                           // what the prelude gives the runtime, not the program
     static Dict* d = [] {
         auto* x = new Dict;
@@ -1777,6 +1780,7 @@ Dict* intrinsics() {                           // what the prelude gives the run
     }();
     return d;
 }
+namespace {
 }  // namespace
 
 namespace {
@@ -1888,6 +1892,14 @@ Ref builtin(const char* name) {
     register_intrinsics();
     Obj v = dict_get(intrinsics(), Obj::of(intern(name)));
     if (v.is_unset()) v = dict_get(builtins_module()->dict, Obj::of(intern(name)));
+    if (v.is_unset()) {                          // PEP 695's intrinsics are _typing's (Objects/typevarobject.c), imported at first use
+        for (const char* pep695 : {"type_params", "generic_class", "typealias", "set_type_params"})
+            if (std::string_view(name) == pep695) {
+                Ref module_name = str_new("_typing");
+                import_module_level(module_name.get(), Obj{}, Obj{}, Obj{}, 0);   // its __intrinsics__ register themselves
+                v = dict_get(intrinsics(), Obj::of(intern(name)));
+            }
+    }
     if (v.is_unset()) throw NotImplemented(std::string("the intrinsic '") + name + "'");
     return Ref::share(v);
 }
