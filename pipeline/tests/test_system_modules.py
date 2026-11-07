@@ -145,7 +145,7 @@ def test_typing_objects() -> None:
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.compress(b'a')", "zlib"), ("import zlib\nzlib.ZLIB_VERSION", "ZLIB_VERSION"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
-             ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "__closure__"))
+             ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")

@@ -477,14 +477,33 @@ bool flush_std_stream(const char* name, bool report) {   // a closed file is lef
     Obj f = std_stream(name);
     if (f.is_unset() || f == None()) return true;
     try {
-        Ref closed = getattr(f, intern("closed"));
-        if (truth(closed.get())) return true;
+        bool closed = false;
+        try {                                    // file_is_closed: no `closed`, or one that cannot be tested, means open (A13 #2)
+            Ref c = getattr(f, intern("closed"));
+            closed = truth(c.get());
+        } catch (const PyError&) {
+        }
+        if (closed) return true;
         Ref fl = getattr(f, intern("flush"));
         invoke(fl.get(), {});
         return true;
     } catch (const PyError& e) {
         if (report) report_unraisable(std::string("Exception ignored while flushing sys.") + name, e);
         return false;
+    }
+}
+// pythonrun.c's flush_io, once the main module has run (before an uncaught exception's report, RL-227): sys.stderr, then sys.stdout,
+// each flushed whatever its `closed` says, a failure cleared; Py_FinalizeEx's flush_std_files follows, so a replacement stream's flush
+// runs twice as CPython runs it (A13 #2)
+void flush_io() {
+    for (const char* name : {"stderr", "stdout"}) {
+        Obj f = std_stream(name);
+        if (f.is_unset() || f == None()) continue;
+        try {
+            Ref fl = getattr(f, intern("flush"));
+            invoke(fl.get(), {});
+        } catch (const PyError&) {
+        }
     }
 }
 namespace {
@@ -2253,7 +2272,6 @@ void clear_modules(const std::unordered_set<Module*>& runtime_own) {
 // int truncated to a C int; anything else is printed, as is the exception if it has no such
 // attribute, and is 1. Nothing that goes wrong printing it changes that.
 int exit_status(Obj exc) {
-    flush_std_stream("stdout");
     Ref code;
     try {
         code = getattr(exc, intern("code"));
@@ -2471,11 +2489,12 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 put(main->dict, "__loader__", loader.get());
             }
             main_body(main);
+            flush_io();
         } catch (const PyError& e) {
+            flush_io();                          // before the report (RL-227)
             if (isinstance(e.exc.get(), exception_class("SystemExit"))) {
                 status = exit_status(e.exc.get());
             } else {
-                flush_std_stream("stdout");      // CPython flushes stdout before the report (RL-227)
                 print_traceback(e.exc.get());
                 status = 1;
             }

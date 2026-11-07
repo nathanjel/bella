@@ -76,7 +76,7 @@ def _repr_depth(self: object, depth: int) -> str:   # ast_repr_max_depth
     name = type(self).__name__
     if depth <= 0:
         return name + "(...)"
-    if self in _in_repr:
+    if any(entry is self for entry in _in_repr):   # Py_ReprEnter: by identity, never by __eq__ (A13 #7, G13 #3)
         return name + "(...)"
     fields = type(self)._fields  # type: ignore[attr-defined]
     if len(fields) == 0:

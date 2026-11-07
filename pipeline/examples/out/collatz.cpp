@@ -17,9 +17,9 @@ static const rt::Str* const S_start = rt::intern("start");
 static const rt::Str* const S_steps = rt::intern("steps");
 static Obj K_1, K_2, K_3, K_4;
 
-static const rt::Code code_module{"<module>", "<module>", "collatz.py", 1, 0, 0, 0, false, false, {}, nullptr};
-static const rt::Code code_steps_annotate{"__annotate__", "steps.__annotate__", "collatz.py", 4, 1, 1, 0, false, false, {"format"}, nullptr};
-static const rt::Code code_steps{"steps", "steps", "collatz.py", 4, 1, 0, 0, false, false, {"n"}, nullptr};
+static const rt::Code code_module{"<module>", "<module>", "collatz.py", 1, 0, 0, 0, false, false, {}, nullptr, true, {}, {}, 0};
+static const rt::Code code_steps_annotate{"__annotate__", "steps.__annotate__", "collatz.py", 4, 1, 1, 0, false, false, {"format"}, nullptr, true, {}, {}, 3};
+static const rt::Code code_steps{"steps", "steps", "collatz.py", 4, 1, 0, 0, false, false, {"n", "count"}, nullptr, true, {}, {}, 3};
 
 static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args);
 static Ref f_steps(rt::PyFunction* fn, rt::Args args);

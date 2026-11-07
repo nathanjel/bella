@@ -193,7 +193,7 @@ class TemplateIter:
         if self._from_strings:
             self._from_strings = False
             item = next(self._stringsiter)
-            if len(item) == 0:
+            if str.__len__(item) == 0:           # PyUnicode_GET_LENGTH: the string's own length, not a subclass's __len__ (A13 #6)
                 item = next(self._interpolationsiter)
                 self._from_strings = True
             return item

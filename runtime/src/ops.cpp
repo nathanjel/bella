@@ -929,6 +929,11 @@ Ref repr_unchecked(Obj v) {
                 return str_new("<built-in method " + b->name + " of " + type_of(b->self)->name + " object at " + address(b->self) + ">");
             return str_new("<built-in function " + b->name + ">");
         }
+        case Kind::CodeKind: {                   // code_repr
+            const Code* c = static_cast<CodeObject*>(o)->code;
+            return str_new(std::string("<code object ") + c->name + " at " + address(v) + ", file \"" + c->filename + "\", line " +
+                           std::to_string(c->first_line) + ">");
+        }
         case Kind::PyFunction:
             if (presents_as_builtin(v))
                 return str_new("<built-in function " + as_str(static_cast<PyFunction*>(o)->name.get())->text + ">");
@@ -1714,8 +1719,17 @@ void unpack(Obj value, std::span<Ref> targets, int star) {
                                                 : static_cast<List*>(value.object())->items;
         for (Obj v : src) items.push_back(Ref::share(v));
     } else {
-        // unpack_iterable: without a star, as many items as targets and one more to tell "too many"
-        Ref it = iter(value);
+        // unpack_iterable: without a star, as many items as targets and one more to tell "too many"; a value with no
+        // __iter__ that is no sequence either says so instead of iter()'s message
+        Ref it;
+        try {
+            it = iter(value);
+        } catch (const PyError& e) {
+            if (isinstance(e.exc.get(), exception_class("TypeError")) && type_lookup(type_of(value), intern("__iter__")).is_unset()
+                && !sequence_check(value))
+                raise_new("TypeError", "cannot unpack non-iterable " + type_of(value)->name + " object");
+            throw;
+        }
         std::size_t limit = star < 0 ? targets.size() + 1 : SIZE_MAX;
         while (items.size() < limit) {
             Ref v = for_next(it.get());
@@ -1728,7 +1742,13 @@ void unpack(Obj value, std::span<Ref> targets, int star) {
         if (items.size() < n)
             raise_new("ValueError", "not enough values to unpack (expected " + std::to_string(n) + ", got " +
                                         std::to_string(items.size()) + ")");
-        if (items.size() > n) raise_new("ValueError", "too many values to unpack (expected " + std::to_string(n) + ")");
+        if (items.size() > n) {                  // an exact list, tuple or dict tells how many it had
+            std::size_t have = is_exact_tuple(value) ? static_cast<Tuple*>(value.object())->items.size()
+                               : is_kind(value, Kind::List) && !has_attributes(value.object()) ? static_cast<List*>(value.object())->items.size()
+                               : is_exact_dict(value) ? static_cast<Dict*>(value.object())->used : 0;
+            if (have > n) raise_new("ValueError", "too many values to unpack (expected " + std::to_string(n) + ", got " + std::to_string(have) + ")");
+            raise_new("ValueError", "too many values to unpack (expected " + std::to_string(n) + ")");
+        }
         for (std::size_t i = 0; i < n; ++i) targets[i] = std::move(items[i]);
         return;
     }

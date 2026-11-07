@@ -265,6 +265,13 @@ Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_p
     Ref origin = str_new(it->second.origin);
     return tuple_new({origin.get(), boolean(it->second.package), boolean(it->second.kind == ModuleKind::Frozen)});
 }
+// what the annotationlib shim asks the runtime (`_bella`, docs/staging.md S-1): the second entry point of an annotate function is
+// not in compiled programs yet, so no function has one, and what needs it stops by name instead of failing on the name
+Ref i_shim_has_entry_point(Obj, Args a) {
+    positional_only(a, "has_entry_point", 1, 1);
+    return Ref::steal(boolean(false));
+}
+Ref i_shim_entry_point(Obj, Args) { throw NotImplemented("annotationlib: an annotate function re-run against other globals (the S-1 second entry point)"); }
 Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the module's namespace
     positional_only(a, "_bella_exec", 2, 2);
     const Str* name = as_str(a.pos(0));
@@ -275,6 +282,17 @@ Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the mo
     // exec(code, module.__dict__): globals without __builtins__ get the calling frame's, the dict
     if (dict_get(m->dict, Obj::of(N("__builtins__"))).is_unset())
         dict_set(m->dict, Obj::of(N("__builtins__")), Obj::of(builtins_module()->dict));
+    if (name->text == "annotationlib") {         // the shim's hooks, as the replay's sitecustomize gives them
+        Ref hooks = own(new Module("_bella"));
+        auto* h = static_cast<Module*>(hooks.get().object());
+        for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
+                 {"has_entry_point", i_shim_has_entry_point}, {"annotate_freevars", i_shim_entry_point},
+                 {"annotate_with", i_shim_entry_point}, {"refuse", i_bella_refuse}}) {
+            Ref b = own(new Builtin(n, fn));
+            dict_set(h->dict, Obj::of(N(n)), b.get());
+        }
+        dict_set(m->dict, Obj::of(N("_bella")), hooks.get());
+    }
     it->second.body(m);
     return none_ref();
 }

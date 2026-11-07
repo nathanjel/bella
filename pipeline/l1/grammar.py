@@ -356,6 +356,8 @@ class FunctionDef(Stmt):
     # a list, set or dict comprehension's helper: CPython inlines it (PEP 709), so it has no
     # frame of its own and never enters a traceback
     inlined: bool = False
+    # co_firstlineno: the first decorator's line when there are decorators, else the def's (`line`)
+    first_line: int = 0
 
 
 @dataclass(frozen=True)

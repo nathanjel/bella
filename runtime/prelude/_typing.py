@@ -282,14 +282,14 @@ details.
         if infer_variance and (covariant or contravariant):
             raise ValueError("Variance cannot be specified with infer_variance.")
         if bound is _ABSENT or bound is None:
-            bound = None
+            bound = _ABSENT                      # the C's NULL
         else:
             bound = _type_check(bound, "Bound must be a type.")
         if len(constraints) == 1:
             raise TypeError("A single constraint is not allowed")
         if len(constraints) == 0:
-            constraints_value: object = None
-        elif bound is not None:
+            constraints_value: object = _ABSENT
+        elif bound is not _ABSENT:
             raise TypeError("Constraints cannot be combined with bound=...")
         else:
             constraints_value = constraints
@@ -315,8 +315,8 @@ details.
         return self._infer_variance
 
     @property
-    def __bound__(self) -> object:               # typevar_bound
-        if self._bound is not None:
+    def __bound__(self) -> object:               # typevar_bound: _ABSENT is the C's NULL, a computed None is kept (A13 #5)
+        if self._bound is not _ABSENT:
             return self._bound
         if self._evaluate_bound is None:
             return None
@@ -325,7 +325,7 @@ details.
 
     @property
     def __constraints__(self) -> object:         # typevar_constraints
-        if self._constraints is not None:
+        if self._constraints is not _ABSENT:
             return self._constraints
         if self._evaluate_constraints is None:
             return ()
@@ -340,7 +340,7 @@ details.
     def evaluate_bound(self) -> object:
         if self._evaluate_bound is not None:
             return self._evaluate_bound
-        if self._bound is not None:
+        if self._bound is not _ABSENT:
             return _constevaluator(self._bound)
         return None
 
@@ -348,7 +348,7 @@ details.
     def evaluate_constraints(self) -> object:
         if self._evaluate_constraints is not None:
             return self._evaluate_constraints
-        if self._constraints is not None:
+        if self._constraints is not _ABSENT:
             return _constevaluator(self._constraints)
         return None
 
@@ -1042,17 +1042,14 @@ def _thunk_index(call: str) -> int:              # "__bella_3__()" -> 3
 
 def _make_params(text: str, thunks: tuple[object, ...]) -> tuple[object, ...]:
     """INTRINSIC_TYPEVAR, TYPEVAR_WITH_BOUND, TYPEVAR_WITH_CONSTRAINTS, PARAMSPEC, TYPEVARTUPLE and SET_TYPEPARAM_DEFAULT, in the order the
-    parameters stand: `T`, `T: thunk()`, `T: (*thunk(),)`, `*Ts`, `**P`, each with an optional ` = thunk()` (` = *thunk()` for a
-    TypeVarTuple's default)."""
+    parameters stand: `T`, `T: thunk()`, `T: (*thunk(),)`, `*Ts`, `**P`, each with an optional ` = thunk()` (a TypeVarTuple's starred
+    default unpacks inside its lazy function)."""
     made: list[object] = []
     for item in _split_params(text):
         default: object = None
         if " = " in item:
             item, default_text = item.split(" = ", 1)
-            default_text = default_text.strip()
-            if default_text.startswith("*"):
-                default_text = default_text[1:]
-            default = thunks[_thunk_index(default_text)]
+            default = thunks[_thunk_index(default_text.strip())]
         item = item.strip()
         param: object
         if item.startswith("**"):
@@ -1064,11 +1061,11 @@ def _make_params(text: str, thunks: tuple[object, ...]) -> tuple[object, ...]:
             name = name.strip()
             bound_text = bound_text.strip()
             if not bound_text:
-                param = _typevar_alloc(name, None, None, None, None, _ABSENT, False, False, True, None)
+                param = _typevar_alloc(name, _ABSENT, None, _ABSENT, None, _ABSENT, False, False, True, None)
             elif bound_text.startswith("(*"):     # "(*thunk(),)": the constraints' one lazy function
-                param = _typevar_alloc(name, None, None, None, thunks[_thunk_index(bound_text[2:-2])], _ABSENT, False, False, True, None)
+                param = _typevar_alloc(name, _ABSENT, None, _ABSENT, thunks[_thunk_index(bound_text[2:-2])], _ABSENT, False, False, True, None)
             else:
-                param = _typevar_alloc(name, None, thunks[_thunk_index(bound_text)], None, None, _ABSENT, False, False, True, None)
+                param = _typevar_alloc(name, _ABSENT, thunks[_thunk_index(bound_text)], _ABSENT, None, _ABSENT, False, False, True, None)
         if default is not None:                  # _Py_set_typeparam_default
             param._evaluate_default = default  # type: ignore[attr-defined]
         made.append(param)

@@ -80,7 +80,7 @@ enum class Kind : std::uint8_t {
     Str, Dict, Class, Instance, Function, SlotDescriptor, Marker,
     // the runtime's own objects (bella/runtime.hpp): their deaths go through destroyer(kind)
     Singleton, Bool, BigInt, Float, Tuple, List, Cell, PyFunction, Builtin, Method, Module,
-    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, IntInstance, FloatInstance, Complex, ComplexInstance, Generator, LazyImport, AbcData, Bytes, ByteArray, KindCount
+    Range, Iterator, Traceback, Native, GetSet, Slice, Proxy, Set, DictView, Super, IntInstance, FloatInstance, Complex, ComplexInstance, Generator, LazyImport, AbcData, Bytes, ByteArray, CodeKind, KindCount
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)

@@ -60,6 +60,7 @@ Types& types() {
         x.dict_keyiterator = builtin_type("dict_keyiterator", {x.object});
         x.module = builtin_type("module", {x.object});
         x.traceback = builtin_type("traceback", {x.object});
+        x.code = builtin_type("code", {x.object});
         x.method_descriptor = builtin_type("method_descriptor", {x.object});
         x.classmethod_descriptor = builtin_type("classmethod_descriptor", {x.object});
         x.wrapper_descriptor = builtin_type("wrapper_descriptor", {x.object});
@@ -188,6 +189,7 @@ std::vector<Module*>& all_modules() {
     return made;
 }
 LazyImport::LazyImport() : Object(Kind::LazyImport) { cls = types().lazy_import; }
+CodeObject::CodeObject(const Code* c) : Object(Kind::CodeKind), code(c) { cls = types().code; }
 Traceback::Traceback(const Code* c, int l, Ref nx) : Object(Kind::Traceback), code(c), line(l), next(std::move(nx)) {
     cls = types().traceback;
 }
@@ -254,6 +256,7 @@ bool register_deaths() {
     destroyer(Kind::Generator) = [](Object* o) { gen_die(o); };
     destroyer(Kind::Iterator) = [](Object* o) { decref(std::exchange(static_cast<Iterator*>(o)->seq, Obj{})); destroy<Iterator>(o); };
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
+    destroyer(Kind::CodeKind) = [](Object* o) { destroy<CodeObject>(o); };
     destroyer(Kind::Traceback) = [](Object* o) {
         auto* t = static_cast<Traceback*>(o);      // tb_dealloc: the deeper entries, then this frame
         t->next = Ref{};

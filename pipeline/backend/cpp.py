@@ -139,6 +139,7 @@ class Emitter:
         self.const_init: list[str] = []
         self.names: dict[str, str] = {}
         self.functions: list[_Function] = []
+        self.parent_kind: dict[int, str] = {}       # a code's enclosing code's kind (CO_METHOD: defined in a class body)
         self.by_code: dict[int, _Function] = {}
         self.used: set[str] = set()
 
@@ -214,14 +215,15 @@ class Emitter:
 
     # ---- code objects --------------------------------------------------------------------------
 
-    def collect(self, code: G.Code) -> None:
+    def collect(self, code: G.Code, parent: G.Code | None = None) -> None:
         cname = self.unique("code_" + _ident(code.qualname))
         entry = self.unique("f_" + _ident(code.qualname)) if code.kind != "module" else "module_body"
         fn = _Function(code, cname, entry)
         self.functions.append(fn)
         self.by_code[id(code)] = fn
+        self.parent_kind[id(code)] = parent.kind if parent is not None else ""
         for c in _nested_codes(code.body):
-            self.collect(c)
+            self.collect(c, code)
 
     def emit(self) -> str:
         self.collect(self.module.code)
@@ -255,20 +257,45 @@ class Emitter:
         return "\n".join(out) + "\n"
 
     def code_record(self, fn: _Function) -> str:
+        """The code object's names and counts (dialect specification E-02 as narrowed in v0.14): co_varnames in CPython's order
+        (the parameters, then the other locals as they are first bound; the compiler's own temporaries left out), co_cellvars,
+        co_freevars, and co_flags from the kind of code."""
         c = fn.code
         positional = [p for p in c.params if p.kind in ("positional-only", "positional-or-keyword")]
         posonly = sum(1 for p in c.params if p.kind == "positional-only")
         kwonly = [p for p in c.params if p.kind == "keyword-only"]
         varargs = any(p.kind == "*args" for p in c.params)
         varkw = any(p.kind == "**kwargs" for p in c.params)
-        names = [p.public or p.name for p in self.param_order(c)]
+        params = self.param_order(c)
+        public = {p.name: p.public or p.name for p in params}
+        meta = dict(c.meta)
+        hidden = meta.get("hidden")
+        hidden_names: frozenset[str] = hidden if isinstance(hidden, frozenset) else frozenset()
+        co_varnames = meta.get("co_varnames")
+        locals_: tuple[str, ...] = co_varnames if isinstance(co_varnames, tuple) else c.varnames
+        names = [public[p.name] for p in params] + [n for n in locals_ if n not in public and n not in hidden_names]
+        cellvars = [n for n in c.cellvars if n not in hidden_names]
+        freevars = [n for n in c.freevars if n not in hidden_names]
         doc = "nullptr" if c.docstring is None else c_string(c.docstring)
+        flags = 0
+        if c.kind not in ("module", "classbody"):
+            flags |= 0x1 | 0x2                                         # CO_OPTIMIZED, CO_NEWLOCALS
+        flags |= (0x4 if varargs else 0) | (0x8 if varkw else 0)      # CO_VARARGS, CO_VARKEYWORDS
+        if "<locals>" in c.qualname:
+            flags |= 0x10                                              # CO_NESTED
+        flags |= {"generator": 0x20, "coroutine": 0x80, "async generator": 0x200}.get(c.kind, 0)
+        if c.docstring is not None:
+            flags |= 0x4000000                                         # CO_HAS_DOCSTRING
+        if self.parent_kind.get(id(c)) == "classbody" and c.kind not in ("module", "classbody"):
+            flags |= 0x8000000                                         # CO_METHOD
         # a frame CPython does not have (the prelude's C functions, an inlined comprehension)
         # never enters a traceback (RL-223, RL-224)
-        hidden = ", false" if self.prelude or dict(c.meta).get("inlined", False) else ""
+        shown = "false" if self.prelude or dict(c.meta).get("inlined", False) else "true"
+        def strings(ns: list[str]) -> str:
+            return "{" + ", ".join(c_string(n) for n in ns) + "}"
         return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(self.filename)}, "
                 f"{c.first_line}, {len(positional)}, {posonly}, {len(kwonly)}, {str(varargs).lower()}, "
-                f"{str(varkw).lower()}, {{{', '.join(c_string(n) for n in names)}}}, {doc}{hidden}}};")
+                f"{str(varkw).lower()}, {strings(names)}, {doc}, {shown}, {strings(cellvars)}, {strings(freevars)}, {flags}}};")
 
     @staticmethod
     def param_order(c: G.Code) -> list[G.Param]:

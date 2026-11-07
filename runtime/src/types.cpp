@@ -6,6 +6,7 @@
 #include "bella/runtime.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 
 namespace bella {
@@ -1526,6 +1527,43 @@ void set_fn_annotate(Obj self, Obj v) {          // function___annotate___set_im
     if (v != None() && !callable_check(v)) raise_new("TypeError", "__annotate__ must be callable or None");
     fn_of(self)->annotate = Ref::share(v);
 }
+// function.__code__ and __closure__, and the code object's names and counts (specification E-02 as narrowed in v0.14): one code
+// object per Code record, made at the first read, so that two reads compare equal as CPython's do; the bytecode side has no row here
+// and stops by name through the names table
+Ref fn_code(Obj self) {
+    const Code* c = fn_of(self)->code;
+    if (c->object.get().is_unset()) c->object = own(new CodeObject(c));
+    return c->object;
+}
+void set_fn_code(Obj, Obj v) {                   // func_set_code: a delete is refused; a store needs the bytecode side (E-02, E-07)
+    if (v.is_unset() || !is_kind(v, Kind::CodeKind)) raise_new("TypeError", "__code__ must be set to a code object");
+    throw NotImplemented("function.__code__ assignment (E-07: a function from a code object)");
+}
+Ref fn_closure(Obj self) {
+    const auto& cells = fn_of(self)->closure;
+    if (cells.empty()) return none_ref();
+    Ref items = list_new({});
+    for (const Ref& r : cells) list_append(items.get(), r.get());
+    return list_to_tuple(items.get());
+}
+const Code* code_of(Obj self) { return static_cast<CodeObject*>(self.object())->code; }
+Ref names_tuple(const std::vector<const char*>& names) {
+    Ref items = list_new({});
+    for (const char* n : names) list_append(items.get(), Obj::of(intern(n)));
+    return list_to_tuple(items.get());
+}
+Ref co_name(Obj self) { return str_new(code_of(self)->name); }
+Ref co_qualname(Obj self) { return str_new(code_of(self)->qualname); }
+Ref co_filename(Obj self) { return str_new(code_of(self)->filename); }
+Ref co_firstlineno(Obj self) { return int_from_i64(code_of(self)->first_line); }
+Ref co_argcount(Obj self) { return int_from_i64(code_of(self)->argcount); }
+Ref co_posonlyargcount(Obj self) { return int_from_i64(code_of(self)->posonlyargcount); }
+Ref co_kwonlyargcount(Obj self) { return int_from_i64(code_of(self)->kwonlyargcount); }
+Ref co_nlocals(Obj self) { return int_from_i64(static_cast<std::int64_t>(code_of(self)->varnames.size())); }
+Ref co_varnames(Obj self) { return names_tuple(code_of(self)->varnames); }
+Ref co_cellvars(Obj self) { return names_tuple(code_of(self)->cellvars); }
+Ref co_freevars(Obj self) { return names_tuple(code_of(self)->freevars); }
+Ref co_flags(Obj self) { return int_from_i64(code_of(self)->flags); }
 Ref fn_type_params(Obj self) { return fn_of(self)->type_params.get().is_unset() ? tuple_new({}) : fn_of(self)->type_params; }
 void set_fn_type_params(Obj self, Obj v) {       // function___type_params___set_impl
     if (v.is_unset() || !is_kind(v, Kind::Tuple)) raise_new("TypeError", "__type_params__ must be set to a tuple");
@@ -1611,10 +1649,11 @@ Ref cell_contents_get(Obj self) {
     if (v.is_unset()) raise_new("ValueError", "Cell is empty");
     return Ref::share(v);
 }
-void cell_contents_set(Obj self, Obj v) {
+void cell_contents_set(Obj self, Obj v) {       // cell_set_contents: a delete empties the cell
     auto* c = static_cast<Cell*>(self.object());
-    incref(v);
-    decref(std::exchange(c->value, v));
+    if (!v.is_unset()) incref(v);
+    Obj old = std::exchange(c->value, v);
+    if (!old.is_unset()) decref(old);
 }
 
 // mappingproxy over a class's own attributes
@@ -2483,6 +2522,9 @@ void present_native_class(ClassObject* c, const std::string& module) {
     if (Obj doc = cpython_doc(c->name); doc != None()) c->set_attr(N("__doc__"), doc);
     if (cpython_has(c->name, "__class_getitem__") && !c->attrs.contains(N("__class_getitem__")))   // Py_GenericAlias, unless the class has its own
         method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
+    // a C type whose + is sq_concat (and * sq_repeat) has __add__ and no __radd__ in CPython: the right operand's __radd__ goes first
+    // (binary_op1 tries nb_add on both sides before concatenation); deque, Template (G13 #2)
+    if (cpython_has(c->name, "__add__") && !cpython_has(c->name, "__radd__")) c->sequence_slots = true;
 }
 
 // _PyErr_FormatNote / BaseException.add_note: appended to __notes__, made a list if absent
@@ -2653,6 +2695,18 @@ void init_types() {
         t.function->attrs.set(N(name), Obj::of(g));
     }
     getset(t.function, "__type_params__", fn_type_params, set_fn_type_params);
+    getset(t.function, "__code__", fn_code, set_fn_code);
+    static_cast<GetSet*>(t.function->attrs.find(N("__code__"))->object())->deletable = true;   // the setter refuses the delete itself
+    getset(t.function, "__closure__", fn_closure);
+    for (auto [name, get] : std::initializer_list<std::pair<const char*, Ref (*)(Obj)>>{
+             {"co_name", co_name}, {"co_qualname", co_qualname}, {"co_filename", co_filename}, {"co_firstlineno", co_firstlineno},
+             {"co_argcount", co_argcount}, {"co_posonlyargcount", co_posonlyargcount}, {"co_kwonlyargcount", co_kwonlyargcount},
+             {"co_nlocals", co_nlocals}, {"co_varnames", co_varnames}, {"co_cellvars", co_cellvars}, {"co_freevars", co_freevars},
+             {"co_flags", co_flags}}) {
+        auto* g = new GetSet(name, t.code, get, nullptr);     // members of the code object (code_memberlist)
+        g->cls = t.member_descriptor;
+        t.code->attrs.set(N(name), Obj::of(g));
+    }
     static_cast<GetSet*>(t.function->attrs.find(N("__type_params__"))->object())->deletable = true;
     getset(t.function, "__annotate__", fn_annotate, set_fn_annotate);
     static_cast<GetSet*>(t.function->attrs.find(N("__annotate__"))->object())->deletable = true;
@@ -2670,6 +2724,7 @@ void init_types() {
         t.builtin->attrs.set(N("__module__"), Obj::of(g));
     }
     getset(t.cell, "cell_contents", cell_contents_get, cell_contents_set);
+    static_cast<GetSet*>(t.cell->attrs.find(N("cell_contents"))->object())->deletable = true;   // del empties the cell
     // mappingproxy, slice
     method(t.mappingproxy, "__new__", proxy_new, Binding::Function);
     method(t.mappingproxy, "__getitem__", proxy_getitem);

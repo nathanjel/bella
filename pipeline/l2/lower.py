@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from pipeline.l1 import grammar as L
 from pipeline.l2 import grammar as G
-from pipeline.l2.resolve import Scope, Scopes, expression_temporary, moved_on_use, resolve
+from pipeline.l2.resolve import Scope, Scopes, co_varnames, expression_temporary, moved_on_use, resolve
 from pipeline.passes.spec import Discharge, Fact, Level, Obligation, PassSpec, register
 
 STACK_USE_GUIDELINE = 30        # _PY_STACK_USE_GUIDELINE (Include/internal/pycore_compile.h)
@@ -136,13 +136,14 @@ class _Code:
         return G.Code(
             name=name, qualname=s.qualname, kind=kind, params=params,
             varnames=s.varnames, cellvars=s.cellvars, freevars=s.freevars,
-            body=tuple(self.out), first_line=getattr(node, "line", 0), docstring=doc,
+            body=tuple(self.out), first_line=getattr(node, "first_line", 0) or getattr(node, "line", 0), docstring=doc,
             classcell=isinstance(node, L.ClassBody) and s.needs_class_cell,
             annotation=isinstance(node, L.FunctionDef) and node.annotation,
             classdict=isinstance(node, L.FunctionDef) and node.classdict,
             meta=(("hidden", frozenset(n for n in s.varnames if n in s.synthetic)),
                   ("needs_classdict", s.needs_classdict),
-                  ("inlined", isinstance(node, L.FunctionDef) and node.inlined)))
+                  ("inlined", isinstance(node, L.FunctionDef) and node.inlined),
+                  ("co_varnames", co_varnames(s))))
 
     def child(self, node: L.FunctionDef | L.Lambda | L.ClassBody) -> G.Code:
         return _Code(self.scopes, self.scopes.of(node)).build(node)

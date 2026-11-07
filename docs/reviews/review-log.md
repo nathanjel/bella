@@ -7,12 +7,12 @@ can be fixed without changing the design is fixed with a failing test or conform
 anything that would change the design, the specification or the build plan goes to
 [Open for discussion](#open-for-discussion) with a recommendation.
 
-**Status on 2026-11-06:** 346 findings from twenty-five reviews and one round of examples: 299 fixed (most in commit
+**Status on 2026-11-07:** 357 findings from twenty-seven reviews and one round of examples: 310 fixed (most in commit
 `0d92b51`, RL-37 with decision D-3, RL-23 with D-1, RL-38 with Gate 0 task 1, RL-52 to RL-70 after
 the closure reviews, RL-57 with D-6, RL-71 to RL-86 after the target reviews, RL-72, RL-73, RL-77
 and RL-80 with D-7, D-8, D-9 and D-11, RL-50 and RL-58 with Gate 0 task 5, RL-88 to RL-134 after
 the staging reviews, RL-136 to RL-168 after the L1 and `eval1` reviews, RL-169 to RL-187 after
-the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports, RL-327 to RL-333 after A11, RL-334 to RL-346 after G12 and A12, RL-323 with weak references), 21 already done before or
+the L2 and lifetimes reviews, RL-188 to RL-219 after the compiled-classes reviews, RL-220 to RL-227 but RL-222 and RL-225, RL-228 to RL-253 and RL-255 after the reviews of tracebacks, dicts and operators, 62 of RL-256 to RL-326 after the reviews of compiled imports, RL-327 to RL-333 after A11, RL-334 to RL-346 after G12 and A12, RL-347 to RL-357 after A13 and G13, RL-323 with weak references), 21 already done before or
 because of the review, 4 planned (D-2 and D-10, accepted by the author), 3 deferred (RL-222 to step 3c), 4 refuted
 5 checked with no issue, and 7 accepted, refused or not defects (RL-269, RL-275, RL-284, RL-285, RL-289, RL-319, RL-326). Open: RL-225 (lines inside a statement), RL-254 (a member's type) and RL-277 (a SyntaxError class). The
 author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, and D-12 on 2026-11-03.
@@ -25,6 +25,8 @@ author decided D-1 to D-11, and S-1 to S-5 of `docs/staging.md`, on 2026-11-01, 
 | 2026-11-05 | Codex astra-low (A11) | [2026-11-05-astra-low-11-abc-views-builtin-names.md](2026-11-05-astra-low-11-abc-views-builtin-names.md) | `62d083b..0081164`: the fixes of the last review, D-22, `_abc`, class dict views | CPython 3.15.2 and compiled, in a separate checkout |
 | 2026-11-06 | gemini-3.8-flash-high (G12) | [2026-11-06-gemini-flash-12-exceptions-os-c-types-re-sys.md](2026-11-06-gemini-flash-12-exceptions-os-c-types-re-sys.md) | `d46c55b..1dab41b`: exceptions, `posix`, C types' methods, reduce, `__flags__`, str subclasses, `re`, `sys` and the earlier commits; four findings, RL-334 to RL-337 | `1dab41b`, in the main checkout |
 | 2026-11-06 | Codex astra-low (A12) | [2026-11-06-astra-low-12-c-types-reduce-flags-str-re.md](2026-11-06-astra-low-12-c-types-reduce-flags-str-re.md) | five commits of `d46c55b..1dab41b`, narrowed after the provider's filter stopped a run on the whole range; five findings, RL-338 to RL-342 | `1dab41b`, in a separate checkout |
+| 2026-11-07 | Codex astra-low (A13) | [2026-11-07-astra-low-13-io-locale-typing-ast-templates.md](2026-11-07-astra-low-13-io-locale-typing-ast-templates.md) | `1dab41b..3ea072a`: codecs, `_io` and the standard streams, pwd/grp/`_locale`/zlib/`_ast`, the t-string types, `_typing`, staged `exec` with locals, the offsets | eight findings, all confirmed, RL-347 to RL-354; RL-357 found on them |
+| 2026-11-07 | gemini-3.8-flash-high (G13) | [2026-11-07-gemini-flash-13-typevartuple-template-ast.md](2026-11-07-gemini-flash-13-typevartuple-template-ast.md) | `1dab41b..3ea072a`, the same range | three findings, all confirmed, RL-355, RL-356 (RL-353 is its third) |
 | 2026-11-04 | gemini-4-argon-high (G10) | [2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md](2026-11-04-10-gemini-4-argon-high-compiled-imports-super-metaclasses.md) | compiled super(), metaclasses, int/dict subclasses, imports and build caches, `e827a47..62d083b` | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-04 | eight Sonnet reviewers, one per focus area (S1), in place of astra-low, whose run failed | [2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md](2026-11-04-sonnet-swarm-compiled-imports-super-metaclasses.md) | the same range | CPython 3.15.2, GCC 16.2.1 |
 | 2026-11-03 | astra-low (A10) | [2026-11-03-astra-low-10-traceback-dictionary-review.md](2026-11-03-astra-low-10-traceback-dictionary-review.md) | D-12 part 1, step 3a.3's dict, the operators and argument errors, `f12af86..e827a47` | CPython 3.15.2, GCC 16.2.1 |
@@ -596,6 +598,24 @@ G12 is gemini-3.8-flash-high on `d46c55b..1dab41b`; A12 is Codex astra-low on fi
 | RL-345 | Found on RL-342 | `p.match == p.prefixmatch` compared unequal: one C function under two names | Confirmed (`a6309a4`, mine): False, CPython True | Fixed | `match = prefixmatch` in `Pattern` and `SRE_Scanner` |
 | RL-346 | Found on RL-335 | `__sizeof__` returning `2 ** 70` gave that number; `-(2 ** 70)` raised ValueError. CPython raises OverflowError for both | Confirmed (`1dab41b`, mine) | Fixed | `PyLong_AsSsize_t`'s check before the sign. The pre-header in the value differs from CPython (16 for 32 on a class with a dict) and is not a finding: `sys.getsizeof` values are an implementation detail (dialect spec, section 2's table) |
 
+### `_io`'s cookies and re-init, the streams at exit, the locale guard, lazy bounds, templates, AST repr (A13, G13)
+
+A13 is Codex astra-low and G13 gemini-3.8-flash-high, both on `1dab41b..3ea072a`. All eleven findings reproduce on `3ea072a` against 3.15.2; A13 #7 and G13 #3 are one defect. Each fix is in `pipeline/tests/test_review_2026_11_07.py`, where its program and what stands around it run against CPython.
+
+| ID | Source | Finding | Verdict | Status | Evidence and resolution |
+| --- | --- | --- | --- | --- | --- |
+| RL-347 | A13 #1 | `TextIOWrapper.tell()` after a seek to a cookie with pending newline state skipped unread data: `skip_bytes` was not capped to the snapshot's length | Confirmed (`3ea072a`, mine): `'\rc\n'`, read 1, seek(tell()), read 1, tell, read, seek back, read: CPython `'\n'`, Bella `''` | Fixed | `skip_bytes = min(b2cratio * chars_to_skip, len(next_input))`. The C asserts that invariant and, built without the assert, decodes past the snapshot into the terminating NUL when the ratio is stale after a seek; the cap gives the asserted answer, which is what the release build happened to print |
+| RL-348 | A13 #2 | A replacement `sys.stdout` without a `closed` attribute made the exit flush fail: exit 120 and "Exception ignored while flushing sys.stdout" | Confirmed (`3ea072a`, mine) | Fixed | `file_is_closed`: no `closed`, or one that cannot be tested, means open. Found with it: CPython flushes stderr and stdout once more right after the main module (`pythonrun.c`'s `flush_io`, errors cleared), so a replacement's `flush` ran twice there and once here; `flush_io` added, in every way out of the module |
+| RL-349 | A13 #3 | `TextIOWrapper.__init__` run again kept the earlier stream's decoded characters, snapshot and pending bytes | Confirmed (`3ea072a`, mine): read 1 of `abc`, `__init__(BytesIO(b"XYZ"))`, read 2: CPython `XY`, Bella `bc`; pending writes landed in the new buffer | Fixed | `__init__` clears what the C's `Py_CLEAR`s clear |
+| RL-350 | A13 #4 | Start-up coerced the C locale with `LC_ALL=C` set | Confirmed (`3ea072a`, mine): `LC_ALL=C`: CPython `C`, Bella `C.UTF-8`; `LC_ALL=POSIX` the same | Fixed | `_Py_LegacyLocaleDetected`'s guard: a non-empty `LC_ALL` is never coerced |
+| RL-351 | A13 #5 | A lazy `TypeVar` bound evaluating to `None` was evaluated at every read | Confirmed (`3ea072a`, mine): a counting bound, CPython 1, Bella 2 | Fixed | `_ABSENT` is the C's NULL for an unevaluated bound and constraints; a computed `None` is kept |
+| RL-352 | A13 #6 | `Template` iteration skipped a str subclass whose `__len__` returns 0 | Confirmed (`3ea072a`, mine): CPython `['hello']`, Bella `[]` | Fixed | `PyUnicode_GET_LENGTH` is `str.__len__`, not the subclass's |
+| RL-353 | A13 #7, G13 #3 | `AST.__repr__` detected recursion by `==`, so equal nodes were cut to `Node(...)` and a subclass's `__eq__` ran | Confirmed (`3ea072a`, mine) | Fixed | `Py_ReprEnter` is by identity: `any(entry is self ...)` |
+| RL-354 | A13 #8 | `TextIOWrapper.tell()`'s cookie packed every field in 64 bits; the C's are `Py_off_t`, three `int`s and a `char` | Confirmed (`3ea072a`, mine): `'\rc'`, read 1: CPython 340282367000166625996085689099021713409, Bella a 192-bit number | Fixed | `textiowrapper_build_cookie`'s layout: 8, 4, 4, 4, 1 bytes little-endian |
+| RL-355 | G13 #1 | A `TypeVarTuple`'s starred default (`*Ts = *tuple[int, str]`) lost its star: `__default__` was `tuple[int, str]` | Confirmed (`3ea072a`, mine) | Fixed | The unpacking belongs to the lazy function, as CPython compiles it (`UNPACK_SEQUENCE 1`): the thunk unpacks one item (`[item] = value`), so eval1's text needs no star and `_typing` reads the thunk's value as is. CPython's messages for a wrong value come with it (RL-357) |
+| RL-356 | G13 #2 | `Template + x` never tried `x.__radd__`: the prelude's `__add__` ran as nb_add where the C's is sq_concat | Confirmed (`3ea072a`, mine): CPython `custom`, Bella TypeError | Fixed | A C type with `__add__` and no `__radd__` in the names table concatenates as a sequence (`sequence_slots`), decided at presentation: Template, and deque without its hand-set flag |
+| RL-357 | Found on RL-355 | Unpacking a non-iterable said "'int' object is not iterable" and too many items from a list, tuple or dict said "(expected 1)": CPython says "cannot unpack non-iterable int object" and "(expected 1, got 2)" | Confirmed (`3ea072a`, mine) | Fixed | `unpack_iterable`'s two messages in `ops.cpp`'s `unpack`, as eval1 already had them |
+
 ## Open for discussion
 
 **RL-321 `hash()` beyond the immediates: decided 2026-11-05.** The author accepted 63-bit hashes "as long as it's deterministic and functions as hash in general"; the second half was not true yet and now is (RL-321's row, D-22). Ended the same day: the big-int port lets `hash()` return any int, so a hash is CPython's own and D-22 is gone (`docs/DECISIONS.md`).
@@ -804,5 +824,5 @@ exceptions the runtime raises and catches inside itself):
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-347` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-358` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages.

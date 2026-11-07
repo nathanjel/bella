@@ -121,10 +121,11 @@ def test_report(report: str) -> None:
 
 def test_stores_to_fields_cpython_has_are_refused() -> None:
     """A field of CPython's type that the runtime lacks is refused when stored or deleted, as when
-    read, never put in the __dict__ (RL-255; StopIteration.value was the example until it arrived)."""
+    read, never put in the __dict__ (RL-255; StopIteration.value was the example until it arrived; __code__ exists since
+    v0.14, C-3-46, so a store of a code object is the example: the function from a code object is E-07)."""
     if shutil.which("g++") is None:
         return
-    for body in ("def f():\n    pass\nf.__code__ = 6", "def f():\n    pass\ndel f.__code__"):
+    for body in ("def f():\n    pass\ndef g():\n    pass\nf.__code__ = g.__code__",):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text("print('start')\n" + body + "\nprint('not reached')\n", encoding="utf-8")

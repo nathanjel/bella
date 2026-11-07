@@ -2550,14 +2550,16 @@ def _tw_readline(self: TextIOWrapper, limit: int) -> str:   # _textiowrapper_rea
 
 
 def _tw_pack_cookie(position: int, dec_flags: int = 0, bytes_to_feed: int = 0, need_eof: bool = False, chars_to_skip: int = 0) -> int:
-    return position | (dec_flags << 64) | (bytes_to_feed << 128) | (chars_to_skip << 192) | ((1 if need_eof else 0) << 256)
+    """textiowrapper_build_cookie: the fields' C sizes, little-endian: start_pos (Py_off_t, 8 bytes), dec_flags, bytes_to_feed and
+    chars_to_skip (int, 4 bytes each), need_eof (char)."""
+    return position | (dec_flags << 64) | (bytes_to_feed << 96) | (chars_to_skip << 128) | ((1 if need_eof else 0) << 160)
 
 
-def _tw_unpack_cookie(bigint: int) -> tuple[int, int, int, bool, int]:
+def _tw_unpack_cookie(bigint: int) -> tuple[int, int, int, bool, int]:   # textiowrapper_parse_cookie
     rest, position = divmod(bigint, 1 << 64)
-    rest, dec_flags = divmod(rest, 1 << 64)
-    rest, bytes_to_feed = divmod(rest, 1 << 64)
-    need_eof, chars_to_skip = divmod(rest, 1 << 64)
+    rest, dec_flags = divmod(rest, 1 << 32)
+    rest, bytes_to_feed = divmod(rest, 1 << 32)
+    need_eof, chars_to_skip = divmod(rest, 1 << 32)
     return position, dec_flags, bytes_to_feed, need_eof != 0, chars_to_skip
 
 
@@ -2653,6 +2655,20 @@ class TextIOWrapper(_TextIOBase):
         self._a_ok = False
         self._b_detached = False
         _tw_validate_newline(newline)
+        # the C clears what an earlier __init__ left: buffer, encoding, encoder, decoder, readnl, decoded chars, pending bytes, snapshot,
+        # errors, the counts and the ratio (A13 #3)
+        self._c_buffer = None
+        self._d_encoding = None
+        self._h_decoder = None
+        self._i_encoder = None
+        self._r_readnl = None
+        self._j_decoded_chars = None
+        self._k_decoded_chars_used = 0
+        self._n_pending = None
+        self._o_pending_count = 0
+        self._m_snapshot = None
+        self._t_errors = None
+        self._l_b2cratio = 0.0
         if encoding is None:
             encoding = "utf-8"                   # _Py_GetLocaleEncoding in UTF-8 mode (D-15)
         elif encoding == "locale":
@@ -2931,7 +2947,9 @@ class TextIOWrapper(_TextIOBase):
         decoder = self._h_decoder
         saved_state = decoder.getstate()  # type: ignore[attr-defined]
         try:
-            skip_bytes = int(self._l_b2cratio * chars_to_skip)
+            # the C asserts skip_bytes <= len(next_input) and, built without the assert, decodes past the snapshot's bytes when the
+            # ratio is stale after a seek (its result then comes from the terminating NUL); the cap keeps the asserted invariant
+            skip_bytes = min(int(self._l_b2cratio * chars_to_skip), bytes.__len__(next_input))
             skip_back = 1
             while skip_bytes > 0:
                 _tw_decoder_setstate(self, position, dec_flags)

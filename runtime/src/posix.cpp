@@ -351,6 +351,7 @@ Ref i_posix_sys(Obj, Args a) {                   // _sys(name, ...)
 void set_locale_from_environment() {
     const char* set = setlocale(LC_CTYPE, "");
     if (const char* opt = std::getenv("PYTHONCOERCECLOCALE"); opt != nullptr && std::string_view(opt) == "0") return;
+    if (const char* all = std::getenv("LC_ALL"); all != nullptr && *all != '\0') return;   // _Py_LegacyLocaleDetected: LC_ALL set is not coerced (A13 #4)
     if (set == nullptr || (std::string_view(set) != "C" && std::string_view(set) != "POSIX")) return;
     for (const char* target : {"C.UTF-8", "C.utf8", "UTF-8"})
         if (setlocale(LC_CTYPE, target) != nullptr) {

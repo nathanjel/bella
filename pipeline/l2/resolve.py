@@ -44,6 +44,9 @@ class Scope:
     varnames: tuple[str, ...] = ()
     cellvars: tuple[str, ...] = ()
     freevars: tuple[str, ...] = ()
+    # the inlined comprehensions (PEP 709) this scope holds, each with the length of `order` when it was met: CPython's
+    # co_varnames has their variables where the comprehension stands
+    inlined_at: list[tuple[int, Scope]] = field(default_factory=list)
 
     @property
     def function_like(self) -> bool:
@@ -86,6 +89,8 @@ class _Collector:
         if f.annotate is not None:
             self.function(f.annotate, parent, bind=False)     # attached to f, bound to no name
         s = self.new("function", f, f.qualname or f.name, parent)
+        if f.inlined and parent is not None:
+            parent.inlined_at.append((len(parent.order), s))
         s.can_see_class = f.classdict
         s.params += _param_order(f.params)
         for p in f.params:
@@ -350,6 +355,32 @@ def _analyze(s: Scope, bound: set[str] | None, class_entry: Scope | None) -> set
             allfree.discard(name)          # global for the child: nothing to pass up
     _slots(s, class_free)
     return free | allfree
+
+
+def co_varnames(s: Scope) -> tuple[str, ...]:
+    """CPython's co_varnames: the parameters, then the other locals in order of first appearance, an inlined
+    comprehension's variables (PEP 709) where the comprehension stands; the compiler's own names left out."""
+    out: list[str] = [n for n in s.params if n not in s.synthetic]
+    seen = set(out)
+    inlined = sorted(s.inlined_at, key=lambda pair: pair[0])
+    at = 0
+
+    def add(names: tuple[str, ...]) -> None:
+        for n in names:
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+
+    for i, n in enumerate(s.order):
+        while at < len(inlined) and inlined[at][0] <= i:
+            add(co_varnames(inlined[at][1]))
+            at += 1
+        if s.scopes.get(n) == LOCAL and n not in s.synthetic and (s.function_like or n in s.params):
+            add((n,))
+    while at < len(inlined):
+        add(co_varnames(inlined[at][1]))
+        at += 1
+    return tuple(out)
 
 
 def _slots(s: Scope, class_free: set[str]) -> None:

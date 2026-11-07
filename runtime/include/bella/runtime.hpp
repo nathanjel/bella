@@ -184,12 +184,21 @@ struct Code {
     int kwonlyargcount;
     bool varargs;
     bool varkw;
-    std::vector<const char*> varnames;           // parameters first, as co_varnames
+    std::vector<const char*> varnames;           // co_varnames: the parameters first, then the other locals
     const char* doc = nullptr;                   // the docstring, or none
     // false for code CPython runs without a frame of its own: the prelude (C functions there)
     // and an inlined comprehension (PEP 709); such a frame never enters a traceback (RL-223/224)
     bool shown = true;
+    std::vector<const char*> cellvars;           // co_cellvars and co_freevars (the closure's cells are in freevars' order)
+    std::vector<const char*> freevars;
+    int flags = 0;                               // co_flags, from the kind of code (specification E-02 as narrowed in v0.14)
     mutable bool module_rebound = false;         // a function of this code had its __module__ rebound: a frame's name is no longer its globals'
+    mutable Ref object;                          // its code object, made at the first f.__code__ (one per record: equality is identity)
+};
+
+struct CodeObject : Object {                     // `code`: the names and counts of a Code; its bytecode side stops by name
+    const Code* code;
+    explicit CodeObject(const Code* c);
 };
 
 struct PyFunction : Object {
@@ -233,7 +242,7 @@ struct Types {
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *float_, *complex_, *union_, *generator,
         *method_descriptor, *classmethod_descriptor, *wrapper_descriptor, *method_wrapper, *builtin_method, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
-        *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator;
+        *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator, *code;
 };
 Types& types();
 extern Singleton* const NONE;

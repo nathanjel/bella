@@ -425,16 +425,22 @@ class _TypeParams:
             case.body = self.block(case.body)
         return [s]
 
-    def thunk(self, expr: ast.expr, in_class: bool, shown: str = "") -> tuple[str, ast.FunctionDef]:
+    def thunk(self, expr: ast.expr, in_class: bool, shown: str = "", starred: bool = False) -> tuple[str, ast.FunctionDef]:
         """A lazy expression's function as 3.15.2 compiles one (codegen_setup_annotations_scope for a type parameter's bound,
         constraints or default and an alias's value): one positional parameter, the format, 1 by default, refused above
         VALUE_WITH_FAKE_GLOBALS; it is what evaluate_bound, evaluate_default and evaluate_value hand out, named after the
-        parameter or alias (`shown`) and stored under a name of its own."""
+        parameter or alias (`shown`) and stored under a name of its own. A TypeVarTuple's starred default (`*Ts = *expr`) is
+        the one item the value unpacks to (UNPACK_SEQUENCE 1 in the lazy function: G13 #1)."""
         name, fmt = _tmp("lazy"), _tmp("format")
         body: list[ast.stmt] = [
             ast.If(test=ast.Compare(left=ast.Name(id=fmt, ctx=ast.Load()), ops=[ast.Gt()], comparators=[ast.Constant(2)]),
-                   body=[ast.Raise(exc=_intrinsic("NotImplementedError"), cause=None)], orelse=[]),
-            ast.Return(expr)]
+                   body=[ast.Raise(exc=_intrinsic("NotImplementedError"), cause=None)], orelse=[])]
+        if starred:
+            item = _tmp("item")
+            body += [ast.Assign(targets=[ast.List(elts=[ast.Name(id=item, ctx=ast.Store())], ctx=ast.Store())], value=expr),
+                     ast.Return(ast.Name(id=item, ctx=ast.Load()))]
+        else:
+            body.append(ast.Return(expr))
         fn = ast.FunctionDef(name=shown or name, args=ast.arguments(posonlyargs=[ast.arg(arg=fmt)], args=[], kwonlyargs=[], kw_defaults=[],
                                                                     defaults=[ast.Constant(1)]),
                              body=body, decorator_list=[], returns=None, type_params=[])
@@ -452,8 +458,8 @@ class _TypeParams:
         defs: list[ast.stmt] = []
         names: list[str] = []
 
-        def call(e: ast.expr, shown: str) -> str:
-            name, fn = self.thunk(e, in_class, shown)
+        def call(e: ast.expr, shown: str, starred: bool = False) -> str:
+            name, fn = self.thunk(e, in_class, shown, starred)
             defs.append(fn)
             names.append(name)
             return f"__bella_{len(names) - 1}__()"
@@ -472,9 +478,10 @@ class _TypeParams:
                 assert isinstance(tp, ast.ParamSpec)
                 text = "**" + tp.name
             if tp.default_value is not None:
-                text += " = " + ("*" if isinstance(tp, ast.TypeVarTuple) else "") + call(
-                    tp.default_value.value if isinstance(tp, ast.TypeVarTuple) and isinstance(tp.default_value, ast.Starred)
-                    else tp.default_value, tp.name)
+                # a starred default's unpacking happens in the lazy function, so the text's default is the function's value as is
+                starred = isinstance(tp, ast.TypeVarTuple) and isinstance(tp.default_value, ast.Starred)
+                text += " = " + call(tp.default_value.value if starred and isinstance(tp.default_value, ast.Starred) else tp.default_value,
+                                     tp.name, starred)
             parts.append(text)
         return ", ".join(parts), defs, names
 
@@ -1932,6 +1939,7 @@ class _Decorators(ast.NodeTransformer):
         temps = [_tmp("dec") for _ in node.decorator_list]
         pre = [ast.Assign(targets=[ast.Name(id=t, ctx=ast.Store())], value=d)
                for t, d in zip(temps, node.decorator_list, strict=True)]
+        node.bella_first_line = node.decorator_list[0].lineno  # type: ignore[attr-defined]  # co_firstlineno is the first decorator's
         node.decorator_list = []
         # the def applies them bottom-up to the new function and binds the name once, as CPython
         # does (a __prepare__ namespace sees one store)
@@ -2144,7 +2152,8 @@ class _ToL1:
                              kind=kind, enclosing_binds=frozenset(getattr(f, "bella_enclosing_binds", ())),
                              annotation=bool(getattr(f, "bella_annotation", False)),
                              classdict=bool(getattr(f, "bella_classdict", False)),
-                             inlined=bool(getattr(f, "bella_inlined", False)))
+                             inlined=bool(getattr(f, "bella_inlined", False)),
+                             first_line=int(getattr(f, "bella_first_line", 0)) or f.lineno)
 
     def class_(self, c: ast.ClassDef) -> L.Assign:
         """``C = d1(d2(build_class(<body>, "C", *bases, **keywords)))``: the decorators (already

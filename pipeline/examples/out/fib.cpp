@@ -14,9 +14,9 @@ static const rt::Str* const S_print = rt::intern("print");
 static const rt::Str* const S_range = rt::intern("range");
 static Obj K_1, K_2, K_3;
 
-static const rt::Code code_module{"<module>", "<module>", "fib.py", 1, 0, 0, 0, false, false, {}, nullptr};
-static const rt::Code code_fib_annotate{"__annotate__", "fib.__annotate__", "fib.py", 4, 1, 1, 0, false, false, {"format"}, nullptr};
-static const rt::Code code_fib{"fib", "fib", "fib.py", 4, 1, 0, 0, false, false, {"n"}, nullptr};
+static const rt::Code code_module{"<module>", "<module>", "fib.py", 1, 0, 0, 0, false, false, {}, nullptr, true, {}, {}, 0};
+static const rt::Code code_fib_annotate{"__annotate__", "fib.__annotate__", "fib.py", 4, 1, 1, 0, false, false, {"format"}, nullptr, true, {}, {}, 3};
+static const rt::Code code_fib{"fib", "fib", "fib.py", 4, 1, 0, 0, false, false, {"n"}, nullptr, true, {}, {}, 3};
 
 static Ref f_fib_annotate(rt::PyFunction* fn, rt::Args args);
 static Ref f_fib(rt::PyFunction* fn, rt::Args args);

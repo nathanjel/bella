@@ -1,0 +1,12 @@
+{
+ "case": "C-3-46_code_objects.py",
+ "clause": "C-3-46",
+ "spec": "section 3 (Functions, reflection; E-02 as narrowed in v0.14)",
+ "status": "P1",
+ "source": "dialect specification v0.14, Objects/codeobject.c (code_memberlist), Objects/funcobject.c (func_get_code, func_set_code)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "f f 22 3 2 2 10 ('a', 'b', 'c', 'd', 'e', 'args', 'kw', 'x', 'i', 'y') () () 0x400000f C-3-46_code_objects.py code builtins True True None\nouter outer 29 0 0 0 1 ('inner',) ('v',) () 0x3 C-3-46_code_objects.py code builtins True True None\ninner outer.<locals>.inner 32 0 0 0 0 () () ('v',) 0x13 C-3-46_code_objects.py code builtins True True ['cell']\ngen gen 38 0 0 0 0 () () () 0x23 C-3-46_code_objects.py code builtins True True None\nco co 42 0 0 0 0 () () () 0x83 C-3-46_code_objects.py code builtins True True None\nag ag 46 0 0 0 0 () () () 0x203 C-3-46_code_objects.py code builtins True True None\n<lambda> <lambda> 50 1 0 0 1 ('q',) () () 0x3 C-3-46_code_objects.py code builtins True True None\nmeth C.meth 54 1 0 0 1 ('self',) () ('__class__',) 0x8000003 C-3-46_code_objects.py code builtins True True ['cell']\nplain C.plain 57 1 0 0 1 ('self',) () () 0x8000003 C-3-46_code_objects.py code builtins True True None\nst C.st 60 0 0 0 0 () () () 0x8000003 C-3-46_code_objects.py code builtins True True None\nprop C.prop 64 1 0 0 1 ('self',) () () 0x8000003 C-3-46_code_objects.py code builtins True True None\n1 True TypeError TypeError False True True True (3, [0, 1, 2], 4, 3, (), {}) 1 ('v',) cell no error\n1 no error 5 no error ValueError NameError\nS(a=2, b='x') 4 ('a', 'b') 0 0 False <__ x AttributeError () ('__class__',) True\n",
+ "stderr": "",
+ "exit_code": 0
+}

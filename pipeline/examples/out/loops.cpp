@@ -17,11 +17,11 @@ static const rt::Str* const S_signs = rt::intern("signs");
 static const rt::Str* const S_total = rt::intern("total");
 static Obj K_1, K_2, K_3, K_4, K_5, K_6, K_7, K_8, K_9, K_10;
 
-static const rt::Code code_module{"<module>", "<module>", "loops.py", 1, 0, 0, 0, false, false, {}, nullptr};
-static const rt::Code code_gcd_annotate{"__annotate__", "gcd.__annotate__", "loops.py", 4, 1, 1, 0, false, false, {"format"}, nullptr};
-static const rt::Code code_gcd{"gcd", "gcd", "loops.py", 4, 2, 0, 0, false, false, {"a", "b"}, nullptr};
-static const rt::Code code_signs_annotate{"__annotate__", "signs.__annotate__", "loops.py", 12, 1, 1, 0, false, false, {"format"}, nullptr};
-static const rt::Code code_signs{"signs", "signs", "loops.py", 12, 2, 0, 0, false, false, {"a", "b"}, nullptr};
+static const rt::Code code_module{"<module>", "<module>", "loops.py", 1, 0, 0, 0, false, false, {}, nullptr, true, {}, {}, 0};
+static const rt::Code code_gcd_annotate{"__annotate__", "gcd.__annotate__", "loops.py", 4, 1, 1, 0, false, false, {"format"}, nullptr, true, {}, {}, 3};
+static const rt::Code code_gcd{"gcd", "gcd", "loops.py", 4, 2, 0, 0, false, false, {"a", "b", "r"}, nullptr, true, {}, {}, 3};
+static const rt::Code code_signs_annotate{"__annotate__", "signs.__annotate__", "loops.py", 12, 1, 1, 0, false, false, {"format"}, nullptr, true, {}, {}, 3};
+static const rt::Code code_signs{"signs", "signs", "loops.py", 12, 2, 0, 0, false, false, {"a", "b"}, nullptr, true, {}, {}, 3};
 
 static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args);
 static Ref f_gcd(rt::PyFunction* fn, rt::Args args);
