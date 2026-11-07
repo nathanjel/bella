@@ -1626,8 +1626,8 @@ std::unordered_map<std::string, Module*>& native_modules() {
 // ---- names CPython has and the runtime lacks yet ----
 #include "cpython_names.inc"
 
-// the table knows a built-in type by __name__, which is the part of its name after the module's
-std::string_view table_name(const ClassObject* c) { return std::string_view(c->name).substr(c->name_prefix); }
+// the table knows a built-in type by its tp_name, which is the runtime's name for it
+std::string_view table_name(const ClassObject* c) { return c->name; }
 const CPythonName* cpython_find(std::string_view scope, std::string_view name) {
     std::string key;
     key.reserve(scope.size() + 1 + name.size());
@@ -1719,12 +1719,17 @@ void refuse_absent_data_descriptor(Obj obj, const Str* name) {
     }
 }
 std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name) {
-    if (!immutable_type(owner)) return {};       // a program's class named after a built-in is not that built-in
+    if (!c_type(owner)) return {};               // a program's class named after a built-in is not that built-in
     const CPythonName* e = cpython_find(table_name(owner), name);
     return e != nullptr ? e->kind : std::string_view{};
 }
 bool presents_as_builtin(Obj f) { return is_kind(f, Kind::PyFunction) && f.object()->cls == types().builtin; }
-bool immutable_type(const ClassObject* c) { return !c->heap_type || prelude_classes().contains(c); }
+bool c_type(const ClassObject* c) { return !c->heap_type || prelude_classes().contains(c); }
+bool immutable_type(const ClassObject* c) {      // Py_TPFLAGS_IMMUTABLETYPE: every static type, and a type of CPython's whose flags say so (ast's node classes do not)
+    if (!c_type(c)) return false;
+    auto flags = cpython_type_number("flags", c);
+    return !flags || (*flags & (1 << 8)) != 0;
+}
 void refuse_unimplemented_operator(const char* scope, Obj a, const std::string& sym, Obj b) {
     // an instance, or the built-in type under its class: a program's classes have no row, whatever their names
     auto name = [](Obj v) {
@@ -2270,6 +2275,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
     std::unordered_set<Module*> runtime_own;
     try {
         try {
+            set_locale_from_environment();   // _PyPreConfig: the LC_CTYPE locale, before anything reads the environment
             native_modules()["builtins"] = builtins_module();
             Module* sys = make_sys(argc, argv);
             native_modules()["sys"] = sys;
@@ -2331,11 +2337,16 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 if (Obj hidden = dict_get(pm->dict, Obj::of(intern("__hidden_classes__"))); !hidden.is_unset())
                     for (Obj n : static_cast<List*>(hidden.object())->items) {
                         auto* c = static_cast<ClassObject*>(dict_get(pm->dict, n).object());
-                        prelude_classes().insert(c);
-                        forget_python_origin(c);
-                        present_methods(c);
-                        c->final_type = cpython_has("final", c->name);
-                        c->has_weakref = cpython_has("weakref", c->name);
+                        const Obj* own_module = c->attrs.find(intern("__module__"));   // a type of another module's (string.templatelib.Template)
+                        if (own_module != nullptr && as_str(*own_module) != nullptr && as_str(*own_module)->text != "builtins") {
+                            present_native_class(c, as_str(*own_module)->text);
+                        } else {
+                            prelude_classes().insert(c);
+                            forget_python_origin(c);
+                            present_methods(c);
+                            c->final_type = cpython_has("final", c->name);
+                            c->has_weakref = cpython_has("weakref", c->name);
+                        }
                         c->disallow_instantiation = cpython_attribute_kind(c, "__new__").empty();
                     }
                 if (!all.is_unset())                 // now that the builtins have what a class's __new__ is wrapped in

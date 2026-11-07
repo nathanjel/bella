@@ -51,6 +51,7 @@ C-6-15_format.py
 C-6-16_percent_format.py
 C-6-17_complex.py
 C-6-18_exceptions_os_and_syntax.py
+C-7-13_locale_and_gettext.py
 C-7-18_collections_abc_types.py
 C-7-19_abc.py
 C-7-20_itertools.py
@@ -64,6 +65,7 @@ C-7-27_re.py
 C-7-28_sys_surface.py
 C-7-29_codecs.py
 C-7-30_io.py
+C-7-31_passwd_locale.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

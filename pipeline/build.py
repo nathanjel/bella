@@ -49,7 +49,7 @@ SOURCES = sorted((ROOT / "runtime" / "src").glob("*.cpp"))
 INCLUDED = sorted((ROOT / "runtime" / "src").glob("*.inc"))       # generated tables the sources include
 # the prelude's modules, in this order, each run as the module it names (runtime/src/call.cpp, run_main)
 PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT / "runtime" / "prelude" / "builtins.py", "builtins"),
-           (ROOT / "runtime" / "prelude" / "iterating.py", "builtins"),
+           (ROOT / "runtime" / "prelude" / "iterating.py", "builtins"), (ROOT / "runtime" / "prelude" / "templatelib.py", "builtins"),
            (ROOT / "runtime" / "prelude" / "bootstrap.py", "_frozen_importlib")]
 # built-in modules CPython writes in C and this runtime in Python: compiled with the prelude, run at the
 # first import (runtime/src/imports.cpp)
@@ -57,7 +57,9 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "_weakref.py", ROOT / "runtime" / "prelude" / "_thread.py",
                     ROOT / "runtime" / "prelude" / "_collections.py", ROOT / "runtime" / "prelude" / "_string.py",
                     ROOT / "runtime" / "prelude" / "_stat.py", ROOT / "runtime" / "prelude" / "_functools.py", ROOT / "runtime" / "prelude" / "errno.py", ROOT / "runtime" / "prelude" / "posix.py", ROOT / "runtime" / "prelude" / "_sre.py",
-                    ROOT / "runtime" / "prelude" / "_codecs.py", ROOT / "runtime" / "prelude" / "_io.py"]
+                    ROOT / "runtime" / "prelude" / "_codecs.py", ROOT / "runtime" / "prelude" / "_io.py",
+                    ROOT / "runtime" / "prelude" / "pwd.py", ROOT / "runtime" / "prelude" / "grp.py", ROOT / "runtime" / "prelude" / "_locale.py",
+                    ROOT / "runtime" / "prelude" / "zlib.py", ROOT / "runtime" / "prelude" / "_ast.py"]
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 # -ffp-contract=off: a*b + c is two operations with two roundings, as the reference computes it. A compiler that
@@ -69,6 +71,8 @@ RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra", *FP_FLAGS]
 # A 3143-line module body took over 25 minutes and 24 MB; without the analysis, 15 seconds and 1.2 MB,
 # with no measurable cost at run time (fib and an object, dict and exception workload, within noise).
 PROGRAM_FLAGS = ["-O1", "-w", "-fno-tree-pta", *FP_FLAGS]
+PRELUDE_FLAGS = ["-O1", "-g", "-fno-tree-pta", *FP_FLAGS]     # the prelude's units are lowered Python, the program's kind of code: -O2 takes GCC 16
+#                                                               nine minutes on _io.py's unit alone, -O1 under a minute
 LIBRARY_FLAGS = ["-O0", "-w", *FP_FLAGS]      # the standard library's units: a fifth of the compile time; speed is not a goal yet
 
 
@@ -133,22 +137,22 @@ class _Lock:
 def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
     key = _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED]), *(p.read_bytes() for p, _ in PRELUDE),
                *(p.read_bytes() for p in NATIVE_IN_PYTHON), *_pipeline_bytes(),
-               " ".join([cxx, std, *RUNTIME_FLAGS]).encode())
+               " ".join([cxx, std, *RUNTIME_FLAGS, *PRELUDE_FLAGS]).encode())
     out = BUILD / f"runtime-{key}"
     lib = out / "libbella.a"
     with _Lock(BUILD / "runtime.lock"):
         if lib.exists():
             return lib
         out.mkdir(parents=True, exist_ok=True)
-        units = list(SOURCES)
+        units = [(u, RUNTIME_FLAGS) for u in SOURCES]
         for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON]:
             cpp = out / f"prelude_{p.stem}.cpp"
             cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem.lstrip('_')}", prelude=True),
                            encoding="utf-8")
-            units.append(cpp)
-        objs = [out / f"{u.stem}.o" for u in units]
+            units.append((cpp, PRELUDE_FLAGS))
+        objs = [out / f"{u.stem}.o" for u, _ in units]
         with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
-            list(pool.map(lambda uo: _compile(uo[0], uo[1], RUNTIME_FLAGS, cxx, std), zip(units, objs, strict=True)))
+            list(pool.map(lambda uo: _compile(uo[0][0], uo[1], uo[0][1], cxx, std), zip(units, objs, strict=True)))
         subprocess.run(["ar", "rcs", str(lib) + ".tmp", *map(str, objs)], check=True)
         os.replace(str(lib) + ".tmp", lib)
     return lib

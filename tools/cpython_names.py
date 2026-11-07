@@ -61,26 +61,37 @@ FLAGS = {}
 HEAPFLAGS = {}
 ITEMSIZE = set()
 STATE = set()
+SHORTNAME = set()
+
+def tp_name(t):
+    """PyTypeObject.tp_name, what %T and "'%s' object has no attribute" print: a static type's or a spec's is "module.Name"; a type
+    made by type() in C (ast's nodes) is the bare name. The field follows PyVarObject's three words in the pinned (non-free-threaded)
+    build."""
+    import ctypes
+    return ctypes.c_char_p.from_address(id(t) + 3 * ctypes.sizeof(ctypes.c_ssize_t)).value.decode()
 
 def type_names():
     found = {}
     def add(t):
         if isinstance(t, type):
-            found.setdefault(t.__name__, {}).update({n: type(v).__name__ for n, v in vars(t).items()})
-            if t.__weakrefoffset__:              # _PyType_SUPPORTS_WEAKREFS, by __name__ as the table knows a type
-                WEAKREF.add(t.__name__)
-            FLAGS[t.__name__] = str(t.__flags__)
-            if t.__flags__ & (1 << 10) and t.__name__ not in HEAPFLAGS:   # what a class that says nothing has, on this base
+            key = tp_name(t)                     # the table knows a type by its tp_name, which is the runtime's name for it (ast.Match and re.Match differ)
+            found.setdefault(key, {}).update({n: type(v).__name__ for n, v in vars(t).items()})
+            if t.__module__ != "builtins" and "." not in key:
+                SHORTNAME.add(t.__module__ + "." + t.__qualname__)
+            if t.__weakrefoffset__:              # _PyType_SUPPORTS_WEAKREFS
+                WEAKREF.add(key)
+            FLAGS[key] = str(t.__flags__)
+            if t.__flags__ & (1 << 10) and key not in HEAPFLAGS:   # what a class that says nothing has, on this base
                 try:
-                    HEAPFLAGS[t.__name__] = str(type("Z", (t,), {}).__flags__)
+                    HEAPFLAGS[key] = str(type("Z", (t,), {}).__flags__)
                 except Exception:
                     pass
             if t.__itemsize__:                   # object_getstate_default's tests, for a type written in C
-                ITEMSIZE.add(t.__name__)
+                ITEMSIZE.add(key)
             elif not t.__flags__ & (1 << 9) and t.__basicsize__ > object.__basicsize__ + (8 if t.__dictoffset__ and not t.__flags__ & (1 << 4) else 0) + (8 if t.__weakrefoffset__ > 0 else 0):
-                STATE.add(t.__name__)
+                STATE.add(key)
             if not t.__flags__ & (1 << 10):      # Py_TPFLAGS_BASETYPE
-                FINAL.add(t.__qualname__ if t.__module__ == "builtins" else t.__module__ + "." + t.__qualname__)
+                FINAL.add(key)
     class Probe:
         pass
     class Seq:
@@ -101,9 +112,10 @@ def type_names():
                iter(set()), iter(range(1)), iter(range(2**64)), iter(Seq()), reversed([]), {}.keys(), {}.values(), {}.items(),
                outer, outer().__closure__[0], outer.__code__, type.__dict__, [].append, list.append,
                dict.__dict__["fromkeys"], type.__dict__["__name__"], object.__init__, object().__init__,
-               sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int])]
-    import itertools, posix, re, _codecs, _collections, _functools, _io, _operator, _sre, _stat, _string, _thread, _weakref
-    for v in [type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(_sre).values(), *vars(_io).values(), *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()]:
+               sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int]),
+               t"", t"{0}".interpolations[0], iter(t"")]
+    import grp, itertools, posix, pwd, re, _ast, _codecs, _collections, _functools, _io, _locale, _operator, _sre, _stat, _string, _thread, _weakref
+    for v in [type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(_sre).values(), *vars(_io).values(), *vars(_ast).values(), pwd.struct_passwd, grp.struct_group, *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()]:
         add(v)
     for s in samples:
         add(type(s))
@@ -172,25 +184,26 @@ def native_modules(names):
 
 def docs():
     """The docstrings of the built-in modules a program has from the start, and of the built-in types."""
-    import errno, itertools, posix, re, _codecs, _collections, _functools, _io, _operator, _sre, _stat, _string, _thread, _weakref
-    out = {"posix": posix.__doc__, "sys.copyright": sys.copyright, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_io": _io.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
-    for module in (builtins, sys, errno, itertools, posix, _sre, _codecs, _io, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
+    import errno, grp, itertools, posix, pwd, re, zlib, _ast, _codecs, _collections, _functools, _io, _locale, _operator, _sre, _stat, _string, _thread, _weakref
+    out = {"posix": posix.__doc__, "sys.copyright": sys.copyright, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_io": _io.__doc__, "pwd": pwd.__doc__, "grp": grp.__doc__, "_locale": _locale.__doc__, "zlib": zlib.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
+    for module in (builtins, sys, errno, itertools, posix, pwd, grp, zlib, _sre, _codecs, _io, _locale, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
         for v in vars(module).values():           # their functions', as `<__module__>.<__name__>`, "" for none (no built-in's is empty)
             if isinstance(v, types.BuiltinFunctionType) and isinstance(v.__module__, str):
                 out[v.__module__ + "." + v.__name__] = v.__doc__ or ""
     for name in ("strict", "ignore", "replace", "xmlcharrefreplace", "backslashreplace", "namereplace", "surrogatepass", "surrogateescape"):
         handler = _codecs.lookup_error(name)      # the error handlers: built-in functions of no module
         out["." + handler.__name__] = handler.__doc__ or ""
-    samples = [v for v in [type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(_io).values(), *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()] if isinstance(v, type)]
+    samples = [v for v in [type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(_io).values(), *vars(_ast).values(), pwd.struct_passwd, grp.struct_group, *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), *vars(_thread).values(), *vars(_weakref).values()] if isinstance(v, type)]
     samples += [type(iter([])), type(iter(())), type(iter("")), type({}.keys()), type({}.values()), type({}.items()), type(iter({})),
-                type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout)]
+                type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout),
+                type(t""), type(t"{0}".interpolations[0]), type(iter(t""))]
     for t in samples:
         if isinstance(t.__doc__, str):
-            out.setdefault(t.__name__, t.__doc__)
+            out.setdefault(tp_name(t), t.__doc__)
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:])}))
 '''
 
@@ -207,7 +220,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
         native = sorted(n for n, m in lock["modules"].items() if m["status"] in ("core", "mapped") and m["kind"] == "builtin")
         out = subprocess.run([sys.executable, str(script), *native], capture_output=True, text=True, check=True, cwd=tmp)
     data = json.loads(out.stdout)
-    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "itemsize", "state", "builtin_module") for n in data[scope]}
+    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "itemsize", "state", "shortname", "builtin_module") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
     names |= {(f"{scope}:{t}", value) for scope in ("flags", "heapflags") for t, value in data[scope].items()}

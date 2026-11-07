@@ -436,7 +436,7 @@
    }
   },
   "1c": {
-   "modules": 31,
+   "modules": 32,
    "list": {
     "_frozen_importlib": "core",
     "_frozen_importlib_external": "core",
@@ -455,6 +455,7 @@
     "secrets": "compiled",
     "signal": "compiled",
     "socket": "shim",
+    "string.templatelib": "compiled",
     "tempfile": "compiled",
     "unittest": "compiled",
     "unittest._log": "compiled",

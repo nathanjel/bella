@@ -31,6 +31,11 @@ namespace prelude_posix { Ref module_body(Module* m); }       // runtime/prelude
 namespace prelude_sre { Ref module_body(Module* m); }         // runtime/prelude/_sre.py
 namespace prelude_codecs { Ref module_body(Module* m); }      // runtime/prelude/_codecs.py
 namespace prelude_io { Ref module_body(Module* m); }          // runtime/prelude/_io.py
+namespace prelude_pwd { Ref module_body(Module* m); }         // runtime/prelude/pwd.py
+namespace prelude_grp { Ref module_body(Module* m); }         // runtime/prelude/grp.py
+namespace prelude_locale { Ref module_body(Module* m); }      // runtime/prelude/_locale.py
+namespace prelude_zlib { Ref module_body(Module* m); }        // runtime/prelude/zlib.py
+namespace prelude_ast { Ref module_body(Module* m); }         // runtime/prelude/_ast.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -329,7 +334,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}};
     return table;
 }
 }  // namespace
@@ -374,7 +379,7 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
     body(ns);
     for (Obj n : static_cast<List*>(dict_get(ns->dict, Obj::of(N("__all__"))).object())->items) {
         Obj v = dict_get(ns->dict, n);
-        if (is_kind(v, Kind::Class) && static_cast<ClassObject*>(v.object())->name_prefix == 0)   // a class may have two names
+        if (is_kind(v, Kind::Class) && !c_type(static_cast<ClassObject*>(v.object())))   // a class may have two names
             present_native_class(static_cast<ClassObject*>(v.object()), types_module);
         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;
         dict_set(m->dict, n, v);
@@ -638,6 +643,18 @@ void fill_io(Module* m) {
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sys", i_posix_sys}, {"_io_call", i_io_call}});
     dict_set(m->dict, Obj::of(N("BlockingIOError")), Obj::of(exception_class("BlockingIOError")));
 }
+void fill_pwd(Module* m) {
+    fill_in_python(m, "pwd", "pwd", prelude_pwd::module_body, {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_structseq", i_structseq}, {"_sys", i_posix_sys}});
+}
+void fill_grp(Module* m) {
+    fill_in_python(m, "grp", "grp", prelude_grp::module_body,
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_structseq", i_structseq}, {"_sys", i_posix_sys}});
+}
+void fill_locale(Module* m) {
+    fill_in_python(m, "_locale", "_locale", prelude_locale::module_body, {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_sys", i_posix_sys}});
+}
+void fill_zlib(Module* m) { fill_in_python(m, "zlib", "zlib", prelude_zlib::module_body, {{"_bella_refuse", i_bella_refuse}}); }
+void fill_ast(Module* m) { fill_in_python(m, "_ast", "ast", prelude_ast::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
 void fill_posix(Module* m) {
     fill_in_python(m, "posix", "posix", prelude_posix::module_body,
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_structseq", i_structseq}, {"_sys", i_posix_sys}});

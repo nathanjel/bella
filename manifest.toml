@@ -43,7 +43,7 @@ roots = [
   "typing", "abc", "copy", "copyreg", "types", "contextlib", "weakref", "contextvars", "bisect",
   "heapq", "keyword", "reprlib",
   # text
-  "string", "re", "textwrap", "difflib", "json", "csv", "struct", "base64", "binascii", "codecs",
+  "string", "string.templatelib", "re", "textwrap", "difflib", "json", "csv", "struct", "base64", "binascii", "codecs",
   "html", "urllib.parse", "unicodedata",   # unicodedata [P1] since 2026-11-01 (review log D-8)
   # numbers
   "math", "cmath", "decimal", "fractions", "random", "statistics", "numbers",
@@ -75,7 +75,7 @@ compiled = [
   "json.encoder", "json.scanner", "keyword", "linecache", "locale", "logging", "ntpath", "numbers",
   "opcode", "operator", "os", "os.path", "pathlib", "pathlib._os", "posixpath",
   "pprint", "random", "re", "re._casefix", "re._compiler", "re._constants", "re._parser",
-  "reprlib", "secrets", "shutil", "signal", "stat", "statistics", "string", "struct",
+  "reprlib", "secrets", "shutil", "signal", "stat", "statistics", "string", "string.templatelib", "struct",
   "tempfile", "textwrap", "token", "tokenize", "traceback", "types", "typing", "unittest",
   "unittest.async_case", "unittest.case", "unittest.loader", "unittest.main", "unittest.result",
   "unittest._log", "unittest.runner", "unittest.signals", "unittest.suite", "unittest.util", "urllib",

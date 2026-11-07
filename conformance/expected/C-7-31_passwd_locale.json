@@ -1,0 +1,12 @@
+{
+ "case": "C-7-31_passwd_locale.py",
+ "clause": "C-7-31",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7, Modules/pwdmodule.c, Modules/grpmodule.c, Modules/_localemodule.c",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "struct_passwd pwd ['struct_passwd', 'tuple', 'object'] 7 7 ('pw_name', 'pw_passwd', 'pw_uid', 'pw_gid', 'pw_gecos', 'pw_dir', 'pw_shell') 7 root 0 0 root 0 True True list True\nKeyError TypeError KeyError TypeError KeyError TypeError ValueError TypeError TypeError TypeError TypeError no error TypeError\nstruct_group grp 4 ('gr_name', 'gr_passwd', 'gr_gid', 'gr_mem') 4 root 0 list True True 0 0\nOverflowError TypeError KeyError TypeError TypeError TypeError TypeError TypeError OverflowError\n['getpwall', 'getpwnam', 'getpwuid', 'struct_passwd'] ['getgrall', 'getgrgid', 'getgrnam', 'struct_group']\n<class 'locale.Error'> locale ['Error', 'Exception', 'BaseException', 'object'] 127 0 1 2 3 4 5 6 14 131113 65536 65537 327680 327681 262159 131116 131119 131072 131109 True\nC C C {'int_curr_symbol': '', 'currency_symbol': '', 'mon_decimal_point': '', 'mon_thousands_sep': '', 'mon_grouping': [], 'positive_sign': '', 'negative_sign': '', 'int_frac_digits': 127, 'frac_digits': 127, 'p_cs_precedes': 127, 'p_sep_by_space': 127, 'n_cs_precedes': 127, 'n_sep_by_space': 127, 'p_sign_posn': 127, 'n_sign_posn': 127, 'decimal_point': '.', 'thousands_sep': '', 'grouping': []} ANSI_X3.4-1968 ANSI_X3.4-1968 %m/%d/%y %H:%M:%S .  ^[yY] Sunday Jan AM\n-1 1 0 1 abc  -1 q (None, None) ANSI_X3.4-1968 utf-8 utf-8 en_US.ISO8859-1 C UTF-8 . 1.5 2.5 42 1234 3.14 1.5 None\nError Error TypeError TypeError TypeError ValueError TypeError TypeError TypeError TypeError TypeError ValueError ValueError TypeError ValueError TypeError Error\nmsg msg msg m m messages mine mine /usr/share/locale /tmp /tmp None UTF-8 TypeError TypeError TypeError TypeError TypeError\nC.UTF-8 UTF-8 UTF-8 ('C', 'UTF-8') UTF-8 -1 1 . C\nhello many None x y messages\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -381,6 +381,12 @@ struct IoHooks { Ref open, std_stream; };        // what _io.py gives the runtim
 IoHooks& io_hooks();
 Ref i_io_call(Obj, Args a);                       // _io.py's: the runtime's part, by name
 void fill_io(Module* m);                          // and runtime/prelude/_io.py
+void fill_pwd(Module* m);                         // runtime/prelude/pwd.py over posix.cpp
+void fill_grp(Module* m);                         // runtime/prelude/grp.py over posix.cpp
+void fill_locale(Module* m);                      // runtime/prelude/_locale.py over posix.cpp
+void fill_zlib(Module* m);                        // runtime/prelude/zlib.py: its shape; the functions stop by name (L-02)
+void fill_ast(Module* m);                         // runtime/prelude/_ast.py: the node classes, presented as ast's
+void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
 void ensure_codecs();                             // _codecs has run, and the hooks are set
 Ref i_codecs_call(Obj, Args a);                   // _codecs.py's: the codecs here, by name
@@ -801,6 +807,7 @@ void dunder_args(Obj self, Args a, const char* name, std::size_t n);
 // a builtin_function_or_method, never bound as a method; an exported class is immutable.
 bool presents_as_builtin(Obj f);
 bool immutable_type(const ClassObject* c);
+bool c_type(const ClassObject* c);                           // a type of CPython's: static, or one the prelude presents
 void note_prelude_class(const ClassObject* c);    // a class the prelude writes in Python for one CPython has in C
 // type(v) and v.__class__: the runtime refuses an object it cannot present as CPython's yet (a
 // slot wrapper, which it holds as a method descriptor).

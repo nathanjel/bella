@@ -7,7 +7,14 @@
 #include <sys/stat.h>
 #include <sys/times.h>
 #include <sys/utsname.h>
+#include <grp.h>
+#include <langinfo.h>
+#include <libintl.h>
+#include <pwd.h>
 #include <unistd.h>
+
+#include <clocale>
+#include <cwchar>
 
 #include <cerrno>
 #include <climits>
@@ -181,6 +188,122 @@ Ref p_times(Args) {
 }
 Ref p_getpid(Args) { return int_from_i64(getpid()); }
 Ref p_getppid(Args) { return int_from_i64(getppid()); }
+// the password and group databases (pwdmodule.c, grpmodule.c): an entry's fields as bytes and ints, None when there is none
+Ref passwd_entry(const passwd* p) {
+    if (p == nullptr) return none_ref();
+    Ref name = bytes_new(p->pw_name), passwd = bytes_new(p->pw_passwd == nullptr ? "" : p->pw_passwd), uid = int_from_u64(p->pw_uid), gid = int_from_u64(p->pw_gid),
+        gecos = bytes_new(p->pw_gecos == nullptr ? "" : p->pw_gecos), dir = bytes_new(p->pw_dir == nullptr ? "" : p->pw_dir), shell = bytes_new(p->pw_shell == nullptr ? "" : p->pw_shell);
+    return tuple_new({name.get(), passwd.get(), uid.get(), gid.get(), gecos.get(), dir.get(), shell.get()});
+}
+Ref group_entry(const group* g) {
+    if (g == nullptr) return none_ref();
+    Ref members = list_new({});
+    for (char** m = g->gr_mem; m != nullptr && *m != nullptr; ++m) {
+        Ref member = bytes_new(*m);
+        list_append(members.get(), member.get());
+    }
+    Ref name = bytes_new(g->gr_name), passwd = bytes_new(g->gr_passwd == nullptr ? "" : g->gr_passwd), gid = int_from_u64(g->gr_gid);
+    return tuple_new({name.get(), passwd.get(), gid.get(), members.get()});
+}
+Ref p_getpwuid(Args a) { errno = 0; return passwd_entry(getpwuid(static_cast<uid_t>(i64_of(a.pos(0))))); }
+Ref p_getpwnam(Args a) { errno = 0; return passwd_entry(getpwnam(bytes_data(a.pos(0)).c_str())); }
+Ref p_getpwall(Args) {
+    Ref out = list_new({});
+    setpwent();
+    while (const passwd* p = getpwent()) {
+        Ref e = passwd_entry(p);
+        list_append(out.get(), e.get());
+    }
+    endpwent();
+    return out;
+}
+Ref p_getgrgid(Args a) { errno = 0; return group_entry(getgrgid(static_cast<gid_t>(i64_of(a.pos(0))))); }
+Ref p_getgrnam(Args a) { errno = 0; return group_entry(getgrnam(bytes_data(a.pos(0)).c_str())); }
+Ref p_getgrall(Args) {
+    Ref out = list_new({});
+    setgrent();
+    while (const group* g = getgrent()) {
+        Ref e = group_entry(g);
+        list_append(out.get(), e.get());
+    }
+    endgrent();
+    return out;
+}
+// the C library's locale (Modules/_localemodule.c): bytes in, bytes out, None for NULL
+Ref bytes_or_none(const char* s) { return s == nullptr ? none_ref() : bytes_new(s); }
+const char* c_string_or_null(Obj v) { return v == None() ? nullptr : bytes_data(v).c_str(); }
+Ref p_setlocale(Args a) { return bytes_or_none(setlocale(int_of(a.pos(0)), c_string_or_null(a.pos(1)))); }
+Ref grouping_list(const char* s) {               // copy_grouping: the bytes up to a 0, CHAR_MAX included when it ends the run
+    Ref out = list_new({});
+    if (s == nullptr || s[0] == '\0') return out;
+    for (std::size_t i = 0;; ++i) {
+        Ref v = int_from_i64(static_cast<signed char>(s[i]));
+        list_append(out.get(), v.get());
+        if (s[i] == 0 || s[i] == CHAR_MAX) break;
+    }
+    return out;
+}
+Ref p_localeconv(Args) {                         // (name, value) pairs in the order the C module builds its dict
+    lconv* l = localeconv();
+    Ref out = list_new({});
+    auto text = [&](const char* name, const char* value) {
+        Ref n = str_new(name), v = bytes_new(value == nullptr ? "" : value), pair = tuple_new({n.get(), v.get()});
+        list_append(out.get(), pair.get());
+    };
+    auto number = [&](const char* name, char value) {
+        Ref n = str_new(name), v = int_from_i64(static_cast<signed char>(value)), pair = tuple_new({n.get(), v.get()});
+        list_append(out.get(), pair.get());
+    };
+    auto grouping = [&](const char* name, const char* value) {
+        Ref n = str_new(name), v = grouping_list(value), pair = tuple_new({n.get(), v.get()});
+        list_append(out.get(), pair.get());
+    };
+    text("int_curr_symbol", l->int_curr_symbol);
+    text("currency_symbol", l->currency_symbol);
+    text("mon_decimal_point", l->mon_decimal_point);
+    text("mon_thousands_sep", l->mon_thousands_sep);
+    grouping("mon_grouping", l->mon_grouping);
+    text("positive_sign", l->positive_sign);
+    text("negative_sign", l->negative_sign);
+    number("int_frac_digits", l->int_frac_digits);
+    number("frac_digits", l->frac_digits);
+    number("p_cs_precedes", l->p_cs_precedes);
+    number("p_sep_by_space", l->p_sep_by_space);
+    number("n_cs_precedes", l->n_cs_precedes);
+    number("n_sep_by_space", l->n_sep_by_space);
+    number("p_sign_posn", l->p_sign_posn);
+    number("n_sign_posn", l->n_sign_posn);
+    text("decimal_point", l->decimal_point);
+    text("thousands_sep", l->thousands_sep);
+    grouping("grouping", l->grouping);
+    return out;
+}
+std::wstring wide_of(Obj v) {                    // PyUnicode_AsWideCharString: the code points, wchar_t being UCS-4 here
+    const Str* s = as_str(v);
+    std::wstring out;
+    for (std::size_t i = 0; i < s->length; ++i) out += static_cast<wchar_t>(s->at(i));
+    return out;
+}
+Ref p_strcoll(Args a) { return int_from_i64(wcscoll(wide_of(a.pos(0)).c_str(), wide_of(a.pos(1)).c_str())); }
+Ref p_strxfrm(Args a) {
+    std::wstring s = wide_of(a.pos(0));
+    std::size_t n = wcsxfrm(nullptr, s.c_str(), 0);
+    std::wstring out(n + 1, L'\0');
+    wcsxfrm(out.data(), s.c_str(), n + 1);
+    std::u32string cps;
+    for (std::size_t i = 0; i < n; ++i) cps += static_cast<char32_t>(out[i]);
+    return str_from_codepoints(cps);
+}
+Ref p_nl_langinfo(Args a) { return bytes_or_none(nl_langinfo(static_cast<nl_item>(int_of(a.pos(0))))); }
+Ref p_gettext(Args a) {                          // (domain or None, msg, category or None): gettext, dgettext, dcgettext
+    const char* msg = bytes_data(a.pos(1)).c_str();
+    if (a.pos(0) == None()) return bytes_new(gettext(msg));
+    if (a.pos(2) == None()) return bytes_new(dgettext(bytes_data(a.pos(0)).c_str(), msg));
+    return bytes_new(dcgettext(bytes_data(a.pos(0)).c_str(), msg, int_of(a.pos(2))));
+}
+Ref p_textdomain(Args a) { return bytes_or_none(textdomain(c_string_or_null(a.pos(0)))); }
+Ref p_bindtextdomain(Args a) { return bytes_or_none(bindtextdomain(bytes_data(a.pos(0)).c_str(), c_string_or_null(a.pos(1)))); }
+Ref p_bind_textdomain_codeset(Args a) { return bytes_or_none(bind_textdomain_codeset(bytes_data(a.pos(0)).c_str(), c_string_or_null(a.pos(1)))); }
 Ref p_getuid(Args) { return int_from_u64(getuid()); }
 Ref p_geteuid(Args) { return int_from_u64(geteuid()); }
 Ref p_getgid(Args) { return int_from_u64(getgid()); }
@@ -212,12 +335,27 @@ const std::map<std::string_view, Primitive>& primitives() {
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},
         {"getgid", p_getgid}, {"getegid", p_getegid}, {"putenv", p_putenv}, {"unsetenv", p_unsetenv}, {"clearenv", p_clearenv}, {"exit", p_exit},
-        {"environ", p_environ}, {"refuse", p_refuse}};
+        {"environ", p_environ}, {"refuse", p_refuse}, {"getpwuid", p_getpwuid}, {"getpwnam", p_getpwnam}, {"getpwall", p_getpwall},
+        {"getgrgid", p_getgrgid}, {"getgrnam", p_getgrnam}, {"getgrall", p_getgrall}, {"setlocale", p_setlocale}, {"localeconv", p_localeconv},
+        {"strcoll", p_strcoll}, {"strxfrm", p_strxfrm}, {"nl_langinfo", p_nl_langinfo}, {"gettext", p_gettext}, {"textdomain", p_textdomain},
+        {"bindtextdomain", p_bindtextdomain}, {"bind_textdomain_codeset", p_bind_textdomain_codeset}};
     return table;
 }
 }  // namespace
 
 Ref i_posix_sys(Obj, Args a) {                   // _sys(name, ...)
     return primitives().at(as_str(a.pos(0))->text)(Args{a.data + 1, a.npos - 1, nullptr, 0});
+}
+// _Py_SetLocaleFromEnv(LC_CTYPE), then _Py_CoerceLegacyLocale (PEP 538): the C locale becomes the first of C.UTF-8, C.utf8 and
+// UTF-8 the library has, and LC_CTYPE in the environment says so; PYTHONCOERCECLOCALE=0 leaves it
+void set_locale_from_environment() {
+    const char* set = setlocale(LC_CTYPE, "");
+    if (const char* opt = std::getenv("PYTHONCOERCECLOCALE"); opt != nullptr && std::string_view(opt) == "0") return;
+    if (set == nullptr || (std::string_view(set) != "C" && std::string_view(set) != "POSIX")) return;
+    for (const char* target : {"C.UTF-8", "C.utf8", "UTF-8"})
+        if (setlocale(LC_CTYPE, target) != nullptr) {
+            setenv("LC_CTYPE", target, 1);
+            return;
+        }
 }
 }  // namespace bella

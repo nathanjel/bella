@@ -25,6 +25,7 @@
   "keyword",
   "reprlib",
   "string",
+  "string.templatelib",
   "re",
   "textwrap",
   "difflib",
@@ -85,7 +86,7 @@
    "nt"
   ]
  },
- "module_count": 176,
+ "module_count": 177,
  "errors": [],
  "notes": [],
  "unsupported_functions": {
@@ -5726,6 +5727,23 @@
      "cls": "lazy",
      "line": 152,
      "func": "Template.safe_substitute"
+    }
+   ]
+  },
+  "string.templatelib": {
+   "name": "string.templatelib",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "path": "string/templatelib.py",
+   "edges": [
+    {
+     "importer": "string.templatelib",
+     "target": "itertools",
+     "cls": "lazy",
+     "line": 21,
+     "func": "_template_unpickle"
     }
    ]
   },

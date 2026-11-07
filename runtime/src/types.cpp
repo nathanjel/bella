@@ -1124,7 +1124,7 @@ void merge_class_dict(Obj names, Obj aclass) {
     auto* d = static_cast<Dict*>(names.object());
     if (ClassObject* c = as_class(aclass)) {
         std::vector<std::string_view> table;
-        if (immutable_type(c)) table = cpython_names_of(std::string_view(c->name).substr(c->name_prefix));
+        if (c_type(c)) table = cpython_names_of(c->name);
         for (std::string_view n : table) dict_set(d, Obj::of(intern(n)), None());
         if (c == types().type) dict_set(d, Obj::of(N("__abstractmethods__")), None());   // left out of the table: most classes raise
         if (table.empty())
@@ -1148,8 +1148,15 @@ Ref dict_keys_list(Obj names) {
 }
 Ref object_dir(Obj self, Args a) {               // object___dir___impl
     noargs(a, "object.__dir__");
-    // the prelude's property keeps in its dict what CPython keeps in C fields
-    Ref dict = immutable_type(type_of(self)) && !type_of(self)->dict_without_getset ? Ref{} : optional_getattr(self, N("__dict__"));
+    // the prelude's property keeps in its dict what CPython keeps in C fields: the dict shows only where CPython's type has a __dict__
+    // (ast.AST's getset, functools.partial's member), or where a subclass of the program's gets one of its own
+    auto shows_dict = [](const ClassObject* c) {
+        if (!c_type(c) || c->dict_without_getset) return true;
+        for (const ClassObject* k : c->mro)
+            if (c_type(k) && !cpython_attribute_kind(k, "__dict__").empty()) return true;
+        return false;
+    };
+    Ref dict = shows_dict(type_of(self)) ? optional_getattr(self, N("__dict__")) : Ref{};
     Ref names = is_dict(dict.get()) ? dict_copy(static_cast<Dict*>(dict.get().object())) : dict_new();
     Ref itsclass = optional_getattr(self, N("__class__"));
     if (!itsclass.get().is_unset()) merge_class_dict(names.get(), itsclass.get());
@@ -1317,7 +1324,7 @@ void set_type_qualname(Obj self, Obj v) {
 }
 Ref type_module(Obj self) {
     ClassObject* c = self_class(self);
-    if (immutable_type(c)) {                     // a C type's module: its tp_name's prefix, else builtins
+    if (c_type(c)) {                     // a C type's module: its tp_name's prefix, else builtins
         const Obj* m = c->attrs.find(N("__module__"));
         if (m != nullptr && as_str(*m) != nullptr) return Ref::share(*m);
         return str_new(c->name_prefix > 0 ? c->name.substr(0, c->name_prefix - 1) : "builtins");
@@ -1329,6 +1336,60 @@ void set_type_module(Obj self, Obj v) {          // type_set_module: the class's
     ClassObject* c = self_class(self);
     check_special(c, v, "__module__");
     c->set_attr(N("__module__"), v);
+}
+// type_get_annotate, type_set_annotate, type_get_annotations, type_set_annotations: a class's annotations live in its dict as
+// __annotate_func__ (what the class body stored) and __annotations_cache__ (what reading them, or a store, left); a static type has neither
+Ref type_annotate(Obj self) {
+    ClassObject* c = self_class(self);
+    if (!c->heap_type) raise_new("AttributeError", "type object '" + c->name + "' has no attribute '__annotate__'");
+    const Obj* a = c->attrs.find(N("__annotate__"));
+    if (a == nullptr) a = c->attrs.find(N("__annotate_func__"));
+    if (a != nullptr) return descr_get(*a, None(), self);
+    c->set_attr(N("__annotate_func__"), None());
+    return none_ref();
+}
+void set_type_annotate(Obj self, Obj v) {
+    ClassObject* c = self_class(self);
+    if (v.is_unset()) raise_new("TypeError", "cannot delete __annotate__ attribute");
+    if (immutable_type(c)) raise_new("TypeError", "cannot set '__annotate__' attribute of immutable type '" + c->name + "'");
+    if (v != None() && !callable_check(v)) raise_new("TypeError", "__annotate__ must be callable or None");
+    c->set_attr(N("__annotate_func__"), v);
+    if (v != None() && c->attrs.contains(N("__annotations_cache__"))) c->del_attr(N("__annotations_cache__"));
+}
+Ref type_annotations(Obj self) {
+    ClassObject* c = self_class(self);
+    if (!c->heap_type) raise_new("AttributeError", "type object '" + c->name + "' has no attribute '__annotations__'");
+    const Obj* a = c->attrs.find(N("__annotations__"));      // from __future__ import annotations stores the dict itself
+    if (a == nullptr) a = c->attrs.find(N("__annotations_cache__"));
+    if (a != nullptr) return descr_get(*a, None(), self);
+    Ref annotate = getattr(self, N("__annotate__"));
+    Ref annotations;
+    if (callable_check(annotate.get())) {
+        annotations = invoke(annotate.get(), {int_from_i64(1).get()});
+        if (!is_kind(annotations.get(), Kind::Dict))
+            raise_new("TypeError", "__annotate__() must return a dict, not " + type_of(annotations.get())->name);
+    } else {
+        annotations = dict_new();
+    }
+    c->set_attr(N("__annotations_cache__"), annotations.get());
+    return annotations;
+}
+void set_type_annotations(Obj self, Obj v) {
+    ClassObject* c = self_class(self);
+    if (immutable_type(c)) raise_new("TypeError", "cannot set '__annotations__' attribute of immutable type '" + c->name + "'");
+    if (c->attrs.contains(N("__annotations__"))) {           // the dict itself is in the class: it is what changes
+        if (v.is_unset()) c->del_attr(N("__annotations__"));
+        else c->set_attr(N("__annotations__"), v);
+        if (c->attrs.contains(N("__annotations_cache__"))) c->del_attr(N("__annotations_cache__"));
+    } else if (!v.is_unset()) {
+        c->set_attr(N("__annotations_cache__"), v);
+    } else if (c->attrs.contains(N("__annotations_cache__"))) {
+        c->del_attr(N("__annotations_cache__"));
+    } else {
+        raise_new("AttributeError", "__annotations__");
+    }
+    for (const char* n : {"__annotate_func__", "__annotate__"})
+        if (c->attrs.contains(N(n))) c->del_attr(N(n));
 }
 Ref type_doc(Obj self) {
     ClassObject* c = self_class(self);
@@ -1367,13 +1428,13 @@ Ref type_base(Obj self) {
 // collection and abstract bits; a __call__ of its own takes the vectorcall away (update_one_slot).
 Ref type_flags(Obj self) {
     ClassObject* c = self_class(self);
-    if (immutable_type(c)) {
+    if (c_type(c)) {
         auto flags = cpython_type_number("flags", c);
         if (!flags) throw NotImplemented("the __flags__ of '" + c->name + "' (CPython has it; the runtime does not yet)");
         return int_from_i64(*flags);
     }
     ClassObject* base = c;
-    while (!immutable_type(base)) base = tp_base(base);
+    while (!c_type(base)) base = tp_base(base);
     auto inherited = cpython_type_number("heapflags", base);
     if (!inherited) throw NotImplemented("the __flags__ of a subclass of '" + base->name + "' (CPython has it; the runtime does not yet)");
     constexpr std::int64_t INLINE_VALUES = 1 << 2, MANAGED_WEAKREF = 1 << 3, MANAGED_DICT = 1 << 4, COLLECTION = (1 << 5) | (1 << 6), VECTORCALL = 1 << 11, ABSTRACT = 1 << 20;
@@ -1387,12 +1448,12 @@ Ref type_flags(Obj self) {
 }
 }  // namespace
 std::uint8_t collection_flags_of(const ClassObject* c) {
-    if (!immutable_type(c)) return c->collection_flags;
+    if (!c_type(c)) return c->collection_flags;
     auto flags = cpython_type_number("flags", c);
     return flags ? static_cast<std::uint8_t>(*flags & ((1 << 5) | (1 << 6))) : 0;
 }
 void set_collection_flag_recursive(ClassObject* child, std::uint8_t flag) {
-    if (immutable_type(child) || child->collection_flags == flag) return;
+    if (c_type(child) || child->collection_flags == flag) return;
     child->collection_flags = flag;
     for (ClassObject* grandchild : child->subclasses) set_collection_flag_recursive(grandchild, flag);
 }
@@ -2145,7 +2206,7 @@ void present_as_c_types(Module* bootstrap) {
     ga->forwards_attributes = true;
     note_prelude_class(ga);
     present_methods(ga);
-    ga->has_weakref = cpython_has("weakref", "GenericAlias");
+    ga->has_weakref = cpython_has("weakref", "types.GenericAlias");
     auto* ga_iterator = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("generic_alias_iterator"))).object());
     note_prelude_class(ga_iterator);
     present_methods(ga_iterator);
@@ -2159,7 +2220,7 @@ void present_as_c_types(Module* bootstrap) {
     un->name_prefix = 7;
     note_prelude_class(un);
     un->final_type = cpython_has("final", un->name);
-    un->has_weakref = cpython_has("weakref", "Union");
+    un->has_weakref = cpython_has("weakref", "typing.Union");
     un->disallow_instantiation = true;
     present_methods(un);
     un->mapping_getitem = true;
@@ -2268,14 +2329,13 @@ Ref i_structseq(Obj, Args a) { return invoke(dict_get(bootstrap_of_types()->dict
 Ref i_bella_pickle_layout(Obj, Args a) {         // _PyObject's itemsize and basicsize tests, by the first type written in C
     positional_only(a, "_bella_pickle_layout", 1, 1);
     ClassObject* c = static_base(as_class(a.pos(0)));
-    std::string name = c->name.substr(c->name_prefix);
-    return int_from_i64(cpython_has("itemsize", name) ? 2 : cpython_has("state", name) ? 1 : 0);
+    return int_from_i64(cpython_has("itemsize", c->name) ? 2 : cpython_has("state", c->name) ? 1 : 0);
 }
 Ref i_bella_no_tp_new(Obj, Args a) {             // tp_new is NULL: a static type with object for its base and no __new__ of its own
     positional_only(a, "_bella_no_tp_new", 1, 1);
     for (ClassObject* c : as_class(a.pos(0))->mro) {
         if (c == types().object) return Ref::steal(boolean(false));
-        if (c->heap_type && !immutable_type(c)) continue;
+        if (c->heap_type && !c_type(c)) continue;
         if (!cpython_attribute_kind(c, "__new__").empty()) return Ref::steal(boolean(false));
         if (auto flags = cpython_type_number("flags", c); flags && (*flags & (1 << 9))) continue;   // a heap type of CPython's (PyType_FromSpec): tp_new inherited
         if (tp_base(c) == types().object) return Ref::steal(boolean(true));
@@ -2384,15 +2444,19 @@ void forget_python_origin(ClassObject* c) {
 // names table, what the table says it cannot be (a base), its docstring and its __class_getitem__.
 void present_native_class(ClassObject* c, const std::string& module) {
     std::string short_name = c->name;
-    c->name = module + "." + short_name;
-    c->name_prefix = module.size() + 1;
+    const Obj* own_module = c->attrs.find(N("__module__"));
+    std::string full = (own_module != nullptr && as_str(*own_module) != nullptr ? as_str(*own_module)->text : module) + "." + short_name;
+    if (!cpython_has("shortname", full)) {      // tp_name: "module.Name" for a static type and a spec's, the bare name for a type C made
+        c->name = module + "." + short_name;     // with type() (ast's nodes, io.UnsupportedOperation), whose module is its __module__
+        c->name_prefix = module.size() + 1;
+    }
     note_prelude_class(c);
     c->final_type = cpython_has("final", c->name);
     forget_python_origin(c);
     present_methods(c);
-    c->has_weakref = cpython_has("weakref", short_name);
-    if (Obj doc = cpython_doc(short_name); doc != None()) c->set_attr(N("__doc__"), doc);
-    if (cpython_has(short_name, "__class_getitem__")) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
+    c->has_weakref = cpython_has("weakref", c->name);
+    if (Obj doc = cpython_doc(c->name); doc != None()) c->set_attr(N("__doc__"), doc);
+    if (cpython_has(c->name, "__class_getitem__")) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
 }
 
 // _PyErr_FormatNote / BaseException.add_note: appended to __notes__, made a list if absent
@@ -2504,6 +2568,10 @@ void init_types() {
     getset(t.type, "__qualname__", type_qualname, set_type_qualname);
     getset(t.type, "__module__", type_module, set_type_module);
     getset(t.type, "__doc__", type_doc, set_type_doc);
+    getset(t.type, "__annotations__", type_annotations, set_type_annotations);
+    static_cast<GetSet*>(t.type->attrs.find(N("__annotations__"))->object())->deletable = true;
+    getset(t.type, "__annotate__", type_annotate, set_type_annotate);
+    static_cast<GetSet*>(t.type->attrs.find(N("__annotate__"))->object())->deletable = true;   // the setter refuses the delete itself
     getset(t.type, "__dict__", type_dict);
     getset(t.type, "__mro__", type_mro_attr);
     getset(t.type, "__bases__", type_bases, set_type_bases);
