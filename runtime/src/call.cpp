@@ -1667,6 +1667,11 @@ Obj cpython_doc(std::string_view name) {
     return Obj::of(intern(it->text));
 }
 
+std::optional<std::string_view> cpython_type_text(std::string_view scope, const ClassObject* c) {
+    const CPythonName* e = cpython_find(scope, table_name(c));
+    if (e == nullptr) return std::nullopt;
+    return e->kind;
+}
 std::optional<std::int64_t> cpython_type_number(std::string_view scope, const ClassObject* c) {
     const CPythonName* e = cpython_find(scope, table_name(c));
     if (e == nullptr) return std::nullopt;

@@ -1450,6 +1450,25 @@ Ref type_flags(Obj self) {
     if (type_lookup(c, N("__call__")) != type_lookup(base, N("__call__"))) flags &= ~VECTORCALL;
     return int_from_i64(flags);
 }
+// type.__dictoffset__ and __weakrefoffset__ (tp_dictoffset, tp_weaklistoffset): a C type's from the table; a class adds a managed dict (-1)
+// where its base has none, and a managed weak reference (-32) where its base has none and is not variable-sized (type_new_alloc's rule)
+std::pair<std::int64_t, std::int64_t> type_offsets(ClassObject* c) {
+    if (c_type(c)) {
+        auto text = cpython_type_text("offsets", c);
+        if (!text) throw NotImplemented("the __dictoffset__ and __weakrefoffset__ of '" + c->name + "' (CPython has it; the runtime does not yet)");
+        std::int64_t d = 0, w = 0;
+        auto comma = text->find(',');
+        std::from_chars(text->data(), text->data() + comma, d);
+        std::from_chars(text->data() + comma + 1, text->data() + text->size(), w);
+        return {d, w};
+    }
+    auto [d, w] = type_offsets(tp_base(c));
+    if (d == 0 && c->has_dict) d = -1;
+    if (w == 0 && c->has_weakref && !cpython_has("itemsize", static_base(c)->name)) w = -32;
+    return {d, w};
+}
+Ref type_dictoffset(Obj self) { return int_from_i64(type_offsets(self_class(self)).first); }
+Ref type_weakrefoffset(Obj self) { return int_from_i64(type_offsets(self_class(self)).second); }
 }  // namespace
 std::uint8_t collection_flags_of(const ClassObject* c) {
     if (!c_type(c)) return c->collection_flags;
@@ -2583,10 +2602,11 @@ void init_types() {
     getset(t.type, "__mro__", type_mro_attr);
     getset(t.type, "__bases__", type_bases, set_type_bases);
     getset(t.type, "__base__", type_base);
-    {
-        auto* g = new GetSet("__flags__", t.type, type_flags, nullptr);
+    for (auto [name, get] : std::initializer_list<std::pair<const char*, Ref (*)(Obj)>>{
+             {"__flags__", type_flags}, {"__dictoffset__", type_dictoffset}, {"__weakrefoffset__", type_weakrefoffset}}) {
+        auto* g = new GetSet(name, t.type, get, nullptr);
         g->cls = t.member_descriptor;
-        t.type->attrs.set(N("__flags__"), Obj::of(g));
+        t.type->attrs.set(N(name), Obj::of(g));
     }
     for (const char* n : {"__name__", "__qualname__", "__module__", "__doc__", "__bases__"})
         static_cast<GetSet*>(t.type->attrs.find(N(n))->object())->deletable = true;

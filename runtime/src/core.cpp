@@ -211,8 +211,10 @@ bool register_deaths() {
         auto* m = static_cast<Module*>(o);
         Dict* d = std::exchange(m->dict, nullptr);
         Dict* b = std::exchange(m->builtins, nullptr);
+        Dict* l = std::exchange(m->locals, nullptr);
         decref(d);
         if (b != nullptr) decref(b);
+        if (l != nullptr) decref(l);
         m->name = Ref{};
         destroy<Module>(o);
     };

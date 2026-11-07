@@ -71,8 +71,14 @@ Ref run(const char* kind, const std::string& site, Obj source, Obj globals, Obj 
         raise_new("TypeError", std::string(kind) + "() arg 1 must be a string, bytes or code object");
     const StagedText& text = find_text(site, kind, source);
     if (locals.is_unset()) throw NotImplemented(std::string(kind) + "() in a function or class body, with the frame's locals (PEP 667; locals(): step 3b)");
-    if (locals != globals) throw NotImplemented(std::string(kind) + " at " + site + " with a locals mapping of its own (the texts' second entry point, decision S-1)");
     Ref module = own(new Module(d, builtins_of_globals(d)));
+    if (locals != globals) {                     // the text's top level reads and writes the locals (LOAD_NAME, STORE_NAME); its functions see globals
+        if (!is_kind(locals, Kind::Dict) || is_frozendict(locals))
+            throw NotImplemented(std::string(kind) + " at " + site + " with a locals mapping that is not a dict");
+        auto* m = static_cast<Module*>(module.get().object());
+        m->locals = static_cast<Dict*>(locals.object());
+        incref(m->locals);
+    }
     return text.body(static_cast<Module*>(module.get().object()));
 }
 // PyEval_GetGlobals and _PyEval_GetFrameLocals: a module's frame has its globals for locals; a function's a snapshot

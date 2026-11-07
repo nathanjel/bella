@@ -59,6 +59,7 @@ FINAL = set()
 WEAKREF = set()
 FLAGS = {}
 HEAPFLAGS = {}
+OFFSETS = {}                                     # tp_dictoffset and tp_weaklistoffset, as "dictoffset,weakrefoffset"
 ITEMSIZE = set()
 STATE = set()
 SHORTNAME = set()
@@ -81,6 +82,7 @@ def type_names():
             if t.__weakrefoffset__:              # _PyType_SUPPORTS_WEAKREFS
                 WEAKREF.add(key)
             FLAGS[key] = str(t.__flags__)
+            OFFSETS[key] = f"{t.__dictoffset__},{t.__weakrefoffset__}"
             if t.__flags__ & (1 << 10) and key not in HEAPFLAGS:   # what a class that says nothing has, on this base
                 try:
                     HEAPFLAGS[key] = str(type("Z", (t,), {}).__flags__)
@@ -203,7 +205,7 @@ def docs():
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:])}))
 '''
 
@@ -223,7 +225,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
     names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "itemsize", "state", "shortname", "builtin_module") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
-    names |= {(f"{scope}:{t}", value) for scope in ("flags", "heapflags") for t, value in data[scope].items()}
+    names |= {(f"{scope}:{t}", value) for scope in ("flags", "heapflags", "offsets") for t, value in data[scope].items()}
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}
     version = ".".join(map(str, sys.version_info[:3]))
     return version, sorted(names), sorted(data["docs"].items())

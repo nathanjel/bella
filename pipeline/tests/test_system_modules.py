@@ -66,6 +66,37 @@ import _typing
 print(_typing.Union is typing.Union, _typing._idfunc, _typing._idfunc(5), m(lambda: _typing._idfunc()), _typing.__doc__, sorted(n for n in dir(_typing) if not n.startswith("__")), typing.TypeAliasType("N", int), typing.TypeAliasType("N", int, type_params=(T,)).__type_params__, m(lambda: typing.TypeAliasType("N", int, type_params=[T])), m(lambda: typing.TypeAliasType("N", int, type_params=(U, T))), typing.TypeAliasType("N", int, qualname="Q.N").__qualname__, m(lambda: typing.TypeAliasType("N", int, qualname=1)), typing.TypeAliasType("N", int).__module__, typing.TypeAliasType("N", int).evaluate_value)
 """
 
+EXEC_LOCALS_AND_OFFSETS = r"""
+g = {"base": 10}
+l = {}
+exec("y = base + 1\ndef f():\n    return base, y if 'y' in globals() else 'no y'\nz = f()", g, l)
+print(sorted(l), l["y"], l["z"], sorted(k for k in g if not k.startswith("__")), l["f"].__module__, l["f"].__globals__ is g, "y" in g)
+exec("w = y * 2", g, l)
+print(l["w"])
+try:
+    exec("q = missing", g, l)
+except NameError as e:
+    print("NameError", e)
+d = dict(g)
+exec("def h(): return sorted(k for k in globals() if not k.startswith('__'))\nk = h()", d, d)
+print(d["k"], d["h"]())
+import dataclasses
+@dataclasses.dataclass
+class S:
+    a: int
+    b: str = "x"
+    def twice(self):
+        return self.a * 2
+s = S(2)
+print(s, s.twice(), S.__dictoffset__, S.__weakrefoffset__, hasattr(s, "__dict__"), dataclasses.fields(S)[1].default, S.__init__.__module__, S.__init__.__qualname__)
+class A: pass
+class B(A): __slots__ = ("y",)
+class C(int): pass
+print(A.__dictoffset__, A.__weakrefoffset__, B.__dictoffset__, B.__weakrefoffset__, C.__dictoffset__, C.__weakrefoffset__, int.__dictoffset__, Exception.__dictoffset__, type.__weakrefoffset__)
+m = sentinel("M")
+print(hash(m) == object.__hash__(m), m == m, m != m, {m: 1}[m], m == sentinel("M"))
+"""
+
 AST_NODES = r"""
 import _ast, ast
 def m(f):
@@ -100,6 +131,12 @@ def test_ast_nodes() -> None:
     same(AST_NODES)
 
 
+def test_exec_with_a_locals_mapping_offsets_and_sentinel() -> None:
+    """A staged text run against a locals mapping of its own (dataclasses' methods), type.__dictoffset__ and __weakrefoffset__
+    (dataclasses' slots=True reads them), and sentinel's hash and comparisons as its own slots."""
+    same(EXEC_LOCALS_AND_OFFSETS)
+
+
 def test_typing_objects() -> None:
     """typing's C types and PEP 695's intrinsics: the messages the case does not compare."""
     same(TYPING_OBJECTS)
@@ -122,4 +159,5 @@ if __name__ == "__main__":
     test_the_t_string_types()
     test_ast_nodes()
     test_typing_objects()
+    test_exec_with_a_locals_mapping_offsets_and_sentinel()
     test_what_is_absent_stops_by_name()

@@ -210,6 +210,7 @@ struct Module : Object {
     Ref name;
     Dict* dict;                                  // owned
     Dict* builtins = nullptr;                    // a staged text's, when not the builtins module's own (owned)
+    Dict* locals = nullptr;                      // a staged text's namespace when exec gives one of its own (PyEval_EvalCode's locals), else dict (owned)
     explicit Module(const char* n);
     Module(Dict* globals, Dict* given_builtins); // a text's frame, which lives as its functions do: not a module of the program's
 };
@@ -430,6 +431,7 @@ inline bool is_union(Obj v) { return v.is_object() && v.object()->cls == types()
 Ref i_bella_new_instance(Obj, Args a);            // bootstrap.py's: an instance of a C type that has no __new__
 Module* native_module_named(const std::string& name);   // a built-in module the program has, or nullptr
 std::optional<std::int64_t> cpython_type_number(std::string_view scope, const ClassObject* c);   // flags:, heapflags: of a type written in C
+std::optional<std::string_view> cpython_type_text(std::string_view scope, const ClassObject* c);   // a scope's row for a type, as text (offsets:)
 std::uint8_t collection_flags_of(const ClassObject* c);   // tp_flags & (Py_TPFLAGS_SEQUENCE | Py_TPFLAGS_MAPPING)
 void set_collection_flag_recursive(ClassObject* child, std::uint8_t flag);   // Modules/_abc.c
 std::optional<std::string_view> cpython_doc_text(std::string_view name);   // a row of the docstrings' table, if any

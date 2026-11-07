@@ -865,6 +865,28 @@ Create a unique sentinel object with the given name."""
     def __ror__(self, other):
         return _union_type_or(other, self)
 
+    # tp_hash = PyObject_GenericHash and tp_richcompare = _Py_BaseObject_RichCompare: object's, as the type's own slots
+    def __hash__(self):
+        return object.__hash__(self)
+
+    def __eq__(self, other):
+        return object.__eq__(self, other)
+
+    def __ne__(self, other):
+        return object.__ne__(self, other)
+
+    def __lt__(self, other):
+        return object.__lt__(self, other)
+
+    def __le__(self, other):
+        return object.__le__(self, other)
+
+    def __gt__(self, other):
+        return object.__gt__(self, other)
+
+    def __ge__(self, other):
+        return object.__ge__(self, other)
+
 
 # ---- typing.Union ----
 

@@ -292,7 +292,7 @@ class Emitter:
             # a module whose body failed runs again in a new module object (spec section 8): the
             # module pointer is the body's argument, and each function's is the one it was made in
             self.out += [f"// the module body of {self.filename}", head, "    rt::Module* M = m;", "    init_constants();",
-                         "    Obj ns = Obj::of(m->dict);"]
+                         "    Obj ns = Obj::of(m->locals != nullptr ? m->locals : m->dict);"]
         elif c.kind == "classbody":
             # __build_class__ calls the body with the class namespace (runtime/prelude/build_class.py)
             self.out += [f"// the body of class {c.qualname}  ({self.filename}:{c.first_line})",

@@ -33,7 +33,7 @@ static void init_constants() {
 rt::Ref module_body(rt::Module* m) {
     rt::Module* M = m;
     init_constants();
-    Obj ns = Obj::of(m->dict);
+    Obj ns = Obj::of(m->locals != nullptr ? m->locals : m->dict);
     rt::FrameGuard frame(code_module, M);
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t13, t14, t15, t16, t17, t18, t19;
     frame.line = 4;
