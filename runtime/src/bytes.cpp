@@ -1640,6 +1640,7 @@ Ref i_codecs_call(Obj, Args a) {
         codec_hooks().text_decode = Ref::share(r.pos(1));
         codec_hooks().unknown_handler = Ref::share(r.pos(2));
         codec_hooks().start = Ref::share(r.pos(3));
+        codec_hooks().lookup_text = Ref::share(r.pos(4));
         return none_ref();
     }
     throw NotImplemented("_codecs primitive " + name);

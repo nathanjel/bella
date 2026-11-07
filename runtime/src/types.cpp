@@ -128,7 +128,7 @@ static void wrapper_checks(const std::string& name, Args a) {
     if (name == "__init__" || name == "__call__") return;   // PyWrapperFlag_KEYWORDS, and any number of arguments
     if (a.nkw != 0) raise_new("TypeError", "wrapper " + name + "() takes no keyword arguments");
     static const std::unordered_set<std::string_view> unary{"__iter__", "__next__", "__repr__", "__str__", "__hash__", "__len__", "__bool__", "__neg__", "__pos__",
-                                                            "__abs__", "__invert__", "__int__", "__float__", "__index__"};
+                                                            "__abs__", "__invert__", "__int__", "__float__", "__index__", "__del__"};
     static const std::unordered_set<std::string_view> ternary{"__setitem__", "__setattr__", "__set__"};
     static const std::unordered_set<std::string_view> variable{"__get__", "__pow__", "__rpow__", "__ipow__"};
     if (variable.contains(name)) return;
@@ -2277,6 +2277,7 @@ Ref i_bella_no_tp_new(Obj, Args a) {             // tp_new is NULL: a static typ
         if (c == types().object) return Ref::steal(boolean(false));
         if (c->heap_type && !immutable_type(c)) continue;
         if (!cpython_attribute_kind(c, "__new__").empty()) return Ref::steal(boolean(false));
+        if (auto flags = cpython_type_number("flags", c); flags && (*flags & (1 << 9))) continue;   // a heap type of CPython's (PyType_FromSpec): tp_new inherited
         if (tp_base(c) == types().object) return Ref::steal(boolean(true));
     }
     return Ref::steal(boolean(false));
@@ -2313,7 +2314,19 @@ template <std::size_t I>
 Ref python_getter(Obj self) { return invoke(python_getters()[I].get(), {self}); }
 template <std::size_t... I>
 constexpr std::array<Ref (*)(Obj), sizeof...(I)> python_getter_table(std::index_sequence<I...>) { return {python_getter<I>...}; }
-constexpr auto PYTHON_GETTERS = python_getter_table(std::make_index_sequence<64>{});
+constexpr auto PYTHON_GETTERS = python_getter_table(std::make_index_sequence<192>{});
+std::vector<Ref>& python_setters() {
+    static std::vector<Ref> pool;
+    return pool;
+}
+template <std::size_t I>
+void python_setter(Obj self, Obj value) {
+    if (value.is_unset()) raise_new("AttributeError", "cannot delete attribute");
+    invoke(python_setters()[I].get(), {self, value});
+}
+template <std::size_t... I>
+constexpr std::array<void (*)(Obj, Obj), sizeof...(I)> python_setter_table(std::index_sequence<I...>) { return {python_setter<I>...}; }
+constexpr auto PYTHON_SETTERS = python_setter_table(std::make_index_sequence<32>{});
 }  // namespace
 static Ref generic_new(Obj self, Args a) {        // PyType_GenericNew, under tp_new_wrapper: the arguments are __init__'s
     return own(new_instance(new_wrapper_class(a, as_class(self))));
@@ -2332,10 +2345,12 @@ void present_methods(ClassObject* c) {
         if (Obj property = dict_get(builtins_module()->dict, Obj::of(N("property")));
             !property.is_unset() && type_of(v) == as_class(property) && (kind == "member_descriptor" || kind == "getset_descriptor")) {
             Ref getter = getattr(v, N("fget")), setter = getattr(v, N("fset"));
-            if (getter.get() == None() || setter.get() != None()) throw NotImplemented("a prelude's property with no getter or with a setter: " + name->text);
+            if (getter.get() == None()) throw NotImplemented("a prelude's property with no getter: " + name->text);
             if (python_getters().size() == PYTHON_GETTERS.size()) throw NotImplemented("more properties in the prelude than the pool of getters holds");
-            auto* g = new GetSet(name->text.c_str(), c, PYTHON_GETTERS[python_getters().size()], nullptr);
+            if (setter.get() != None() && python_setters().size() == PYTHON_SETTERS.size()) throw NotImplemented("more property setters in the prelude than the pool holds");
+            auto* g = new GetSet(name->text.c_str(), c, PYTHON_GETTERS[python_getters().size()], setter.get() == None() ? nullptr : PYTHON_SETTERS[python_setters().size()]);
             python_getters().push_back(std::move(getter));
+            if (setter.get() != None()) python_setters().push_back(std::move(setter));
             if (kind == "member_descriptor") g->cls = types().member_descriptor;
             decref(c->attrs.set(name, Obj::of(g)));
             continue;

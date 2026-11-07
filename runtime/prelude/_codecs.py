@@ -177,7 +177,7 @@ def _lookup(encoding: str) -> object:            # _PyCodec_Lookup
     return result
 
 
-def _lookup_text(encoding: str, alternate_command: str) -> object:   # _PyCodec_LookupTextEncoding
+def _lookup_text(encoding: str, alternate_command: str | None) -> object:   # _PyCodec_LookupTextEncoding
     codec = _lookup(encoding)
     if type(codec) is not tuple:
         try:
@@ -185,6 +185,8 @@ def _lookup_text(encoding: str, alternate_command: str) -> object:   # _PyCodec_
         except AttributeError:
             return codec
         if not attr:
+            if alternate_command is None:
+                raise LookupError("'" + _cut(encoding) + "' is not a text encoding")
             raise LookupError("'" + _cut(encoding) + "' is not a text encoding; use " + alternate_command + " to handle arbitrary codecs")
     return codec
 
@@ -678,4 +680,4 @@ charmap_decode = _unwritten("charmap_decode", "_codecs.charmap_decode (not a pha
 charmap_encode = _unwritten("charmap_encode", "_codecs.charmap_encode (not a phase-1 codec: specification section 7)")
 charmap_build = _unwritten("charmap_build", "_codecs.charmap_build (not a phase-1 codec: specification section 7)")
 
-_codecs_call("hooks", _text_encode, _text_decode, _unknown_handler, _start)
+_codecs_call("hooks", _text_encode, _text_decode, _unknown_handler, _start, _lookup_text)

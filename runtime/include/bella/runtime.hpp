@@ -376,7 +376,11 @@ Ref bytes_concat(Obj a, Obj b);
 void bytes_iadd(Obj a, Obj b);
 Ref bytes_repeat(Obj self, std::int64_t count, bool in_place);
 Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
-struct CodecHooks { Ref text_encode, text_decode, unknown_handler, start; };   // what _codecs.py gives the runtime (Python/codecs.c's entry points)
+struct CodecHooks { Ref text_encode, text_decode, unknown_handler, start, lookup_text; };   // what _codecs.py gives the runtime (Python/codecs.c's entry points)
+struct IoHooks { Ref open, std_stream; };        // what _io.py gives the runtime: builtins.open, and create_stdio
+IoHooks& io_hooks();
+Ref i_io_call(Obj, Args a);                       // _io.py's: the runtime's part, by name
+void fill_io(Module* m);                          // and runtime/prelude/_io.py
 CodecHooks& codec_hooks();
 void ensure_codecs();                             // _codecs has run, and the hooks are set
 Ref i_codecs_call(Obj, Args a);                   // _codecs.py's: the codecs here, by name
@@ -480,6 +484,7 @@ void set_exception_field(Obj exc, const char* name, Obj value);   // the new val
 // An exception nothing can propagate (from a finaliser): reported on stderr as CPython reports
 // an unraisable exception, then dropped.
 void report_unraisable(const std::string& context, const PyError& e);
+void report_unraisable(const std::string& context, Obj exc);   // the same, for an exception a prelude caught
 // While an except clause runs, its exception is the one being handled: what a bare `raise`
 // re-raises and what a new exception records as __context__ (sys.exception()).
 class Handling {

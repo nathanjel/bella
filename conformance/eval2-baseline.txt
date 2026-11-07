@@ -78,6 +78,7 @@ C-7-25_functools.py
 C-7-26_posix_and_os.py
 C-7-27_re.py
 C-7-29_codecs.py
+C-7-30_io.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-03_locals_detached.py

@@ -1911,6 +1911,10 @@ void report_unraisable(const std::string& context, const PyError& e) {
     err_stream().write(context + ":\n");
     print_traceback(e.exc.get());
 }
+void report_unraisable(const std::string& context, Obj exc) {
+    err_stream().write(context + ":\n");
+    print_traceback(exc);
+}
 
 namespace {
 // What the report reads of an exception, by attribute access as traceback.TracebackException
@@ -2372,6 +2376,11 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             }
             ensure_codecs();                     // _PyCodec_InitRegistry: the registry, then `encodings` imported, which registers its search
             invoke(codec_hooks().start.get(), {});
+            {                                    // init_set_builtins_open: builtins.open is _io.open
+                Ref io_name = str_new("_io");
+                import_module_level(io_name.get(), Obj{}, Obj{}, Obj{}, 0);
+                if (!io_hooks().open.get().is_unset()) put(builtins_module()->dict, "open", io_hooks().open.get());
+            }
             Module* main = make_main(main_file);
             if (bootstrap != nullptr) {
                 Obj loader_class = dict_get(bootstrap->dict, Obj::of(intern("SourceFileLoader")));
