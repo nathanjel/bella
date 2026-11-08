@@ -74,7 +74,9 @@
   "traceback",
   "gettext",
   "locale",
-  "zlib"
+  "zlib",
+  "optparse",
+  "configparser"
  ],
  "platform": {
   "sys.platform": "linux",
@@ -86,7 +88,7 @@
    "nt"
   ]
  },
- "module_count": 178,
+ "module_count": 180,
  "errors": [],
  "notes": [],
  "unsupported_functions": {
@@ -1726,6 +1728,86 @@
    "dynamic_unknown_lines": [],
    "path": null,
    "edges": []
+  },
+  "configparser": {
+   "name": "configparser",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [],
+   "path": "configparser.py",
+   "edges": [
+    {
+     "importer": "configparser",
+     "target": "collections",
+     "cls": "eager",
+     "line": 148,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "collections.abc",
+     "cls": "eager",
+     "line": 148,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "collections",
+     "cls": "eager",
+     "line": 149,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 150,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "functools",
+     "cls": "eager",
+     "line": 151,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "io",
+     "cls": "eager",
+     "line": 152,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 153,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "os",
+     "cls": "eager",
+     "line": 154,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "re",
+     "cls": "eager",
+     "line": 155,
+     "func": ""
+    },
+    {
+     "importer": "configparser",
+     "target": "sys",
+     "cls": "eager",
+     "line": 156,
+     "func": ""
+    }
+   ]
   },
   "contextlib": {
    "name": "contextlib",
@@ -4339,6 +4421,60 @@
      "cls": "eager",
      "line": 426,
      "func": ""
+    }
+   ]
+  },
+  "optparse": {
+   "name": "optparse",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": null,
+   "dynamic_unknown_lines": [
+    856
+   ],
+   "path": "optparse.py",
+   "edges": [
+    {
+     "importer": "optparse",
+     "target": "sys",
+     "cls": "eager",
+     "line": 67,
+     "func": ""
+    },
+    {
+     "importer": "optparse",
+     "target": "os",
+     "cls": "eager",
+     "line": 67,
+     "func": ""
+    },
+    {
+     "importer": "optparse",
+     "target": "gettext",
+     "cls": "eager",
+     "line": 68,
+     "func": ""
+    },
+    {
+     "importer": "optparse",
+     "target": "textwrap",
+     "cls": "lazy",
+     "line": 245,
+     "func": "HelpFormatter._format_text"
+    },
+    {
+     "importer": "optparse",
+     "target": "textwrap",
+     "cls": "lazy",
+     "line": 302,
+     "func": "HelpFormatter.format_option"
+    },
+    {
+     "importer": "optparse",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1669,
+     "func": "__getattr__"
     }
    ]
   },

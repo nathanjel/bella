@@ -95,6 +95,7 @@ C-7-44_statistics.py
 C-7-45_heapq.py
 C-7-46_zlib.py
 C-7-47_opcode.py
+C-7-48_optparse.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

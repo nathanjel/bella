@@ -18,18 +18,13 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 74,
+    "compiled": 76,
     "core": 18,
     "mapped": 22,
-    "missing-from-manifest": 2,
     "program": 2,
     "shim": 5
    },
-   "errors": [
-    "configparser [source]: required but not in manifest (via pycodestyle:eager:50)",
-    "optparse [source]: required but not in manifest (via pycodestyle:eager:63)",
-    "optparse:856: import with a computed name; review it and add \"Values.read_module: modname\" = [the modules it must reach in phase 1] under [dynamic.optparse]"
-   ]
+   "errors": []
   },
   "data_easy_sales": {
    "level": "easy",
@@ -437,7 +432,7 @@
    }
   },
   "1c": {
-   "modules": 32,
+   "modules": 34,
    "list": {
     "_frozen_importlib": "core",
     "_frozen_importlib_external": "core",
@@ -445,6 +440,7 @@
     "_signal": "core",
     "asyncio": "shim",
     "cmath": "mapped",
+    "configparser": "compiled",
     "html": "compiled",
     "html.entities": "compiled",
     "importlib._abc": "core",
@@ -452,6 +448,7 @@
     "importlib._bootstrap_external": "core",
     "logging": "compiled",
     "marshal": "core",
+    "optparse": "compiled",
     "pprint": "compiled",
     "secrets": "compiled",
     "signal": "compiled",
@@ -474,18 +471,20 @@
    }
   },
   "later": {
-   "modules": 6,
+   "modules": 8,
    "by_status": {
-    "compiled": 3,
+    "compiled": 5,
     "core": 3
    },
-   "compiled_source_lines": 2739,
+   "compiled_source_lines": 5838,
    "list": {
     "_signal": "core",
+    "configparser": "compiled",
     "html": "compiled",
     "html.entities": "compiled",
     "importlib._bootstrap": "core",
     "importlib._bootstrap_external": "core",
+    "optparse": "compiled",
     "signal": "compiled"
    },
    "targets": [

@@ -18,11 +18,7 @@
   ]
  },
  "module_count": 123,
- "errors": [
-  "configparser [source]: required but not in manifest (via pycodestyle:eager:50)",
-  "optparse [source]: required but not in manifest (via pycodestyle:eager:63)",
-  "optparse:856: import with a computed name; review it and add \"Values.read_module: modname\" = [the modules it must reach in phase 1] under [dynamic.optparse]"
- ],
+ "errors": [],
  "notes": [],
  "unsupported_functions": {
   "pathlib": [
@@ -1166,7 +1162,7 @@
   "configparser": {
    "name": "configparser",
    "kind": "source",
-   "status": "missing-from-manifest",
+   "status": "compiled",
    "reached_by": "pycodestyle:eager:50",
    "dynamic_unknown_lines": [],
    "path": "configparser.py",
@@ -3162,7 +3158,7 @@
   "optparse": {
    "name": "optparse",
    "kind": "source",
-   "status": "missing-from-manifest",
+   "status": "compiled",
    "reached_by": "pycodestyle:eager:63",
    "dynamic_unknown_lines": [
     856

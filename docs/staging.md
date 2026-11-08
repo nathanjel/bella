@@ -71,8 +71,10 @@ build did not see:
 | `hashlib` module body, line 291 | a built-in digest is missing | never: every digest is mapped |
 | `inspect._signature_fromstr` | the signature of a C function | E-01 refusal |
 
-Module bodies in the closure read one input between them: `subprocess` reads
-`_PYTHON_SUBPROCESS_USE_POSIX_SPAWN` when it is imported. That is what the recorder sees since
+Module bodies in the closure read two inputs between them: `subprocess` reads
+`_PYTHON_SUBPROCESS_USE_POSIX_SPAWN` when it is imported, and `optparse` (a root since 2026-11-08)
+reads `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG` through `gettext`, whose translation lookups
+its module body runs for its messages. That is what the recorder sees since
 the review's A5-3 fix, which tests show records a body's own reads, reads through a helper and
 directory listings. It does not see existence checks (`os.path.exists`, `os.stat`), clock reads
 or random seeding. So this is an inventory of what it records, not proof that module bodies read

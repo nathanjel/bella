@@ -61,10 +61,12 @@ roots = [
   "gettext", "locale",
   # compression
   "zlib",
+  # command lines and configuration files, admitted for pycodestyle (author, 2026-11-08; docs/targets.md section 5 item 3)
+  "optparse", "configparser",
 ]
 
 compiled = [
-  "__future__", "abc", "argparse", "ast", "base64", "bisect", "calendar", "codecs", "collections",
+  "__future__", "abc", "argparse", "ast", "base64", "bisect", "calendar", "codecs", "collections", "configparser",
   "collections.abc", "contextlib", "contextvars", "copy", "copyreg", "csv", "dataclasses",
   "datetime", "decimal", "difflib", "dis", "encodings", "encodings.aliases",
   "encodings.ascii", "encodings.latin_1", "encodings.utf_8", "encodings.utf_8_sig",
@@ -73,7 +75,7 @@ compiled = [
   "enum", "fnmatch", "fractions", "functools", "genericpath", "gettext", "glob", "hashlib",
   "heapq", "hmac", "html", "html.entities", "inspect", "io", "ipaddress", "json", "json.decoder",
   "json.encoder", "json.scanner", "keyword", "linecache", "locale", "logging", "ntpath", "numbers",
-  "opcode", "operator", "os", "os.path", "pathlib", "pathlib._os", "posixpath",
+  "opcode", "operator", "optparse", "os", "os.path", "pathlib", "pathlib._os", "posixpath",
   "pprint", "random", "re", "re._casefix", "re._compiler", "re._constants", "re._parser",
   "reprlib", "secrets", "shutil", "signal", "stat", "statistics", "string", "string.templatelib", "struct",
   "tempfile", "textwrap", "threading", "token", "tokenize", "traceback", "types", "typing", "unittest",
@@ -156,6 +158,9 @@ traceback = ["_find_incompatible_extension_module"]   # imports importlib.resour
 
 [dynamic._py_warnings]
 "_getcategory: module" = []       # a warning category named in -W or PYTHONWARNINGS
+
+[dynamic.optparse]
+"Values.read_module: modname" = []   # Values.read_module imports the module named by its caller; pycodestyle never calls it
 
 [dynamic.inspect]
 "_main: mod_name" = []             # the `python -m inspect` command line

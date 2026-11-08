@@ -282,8 +282,8 @@ the per-target numbers in section 2 include it.
 
 ## 5. Decisions and clauses this surfaced
 
-Items 1 to 3 follow the tricky targets past phase 1 (review log D-7); items 4 and 5 are in the
-licence register; item 6 is done.
+Items 1 and 2 follow the tricky targets past phase 1 (review log D-7); item 3 was accepted on
+2026-11-08; items 4 and 5 were settled in the licence register the same day; item 6 is done.
 
 1. **Function metadata at run time.** pycodestyle needs `inspect.signature(f).parameters`
    (names and kinds) and `f.__doc__`; tomlkit and toolz would too. Proposal: compiled function
@@ -300,7 +300,8 @@ licence register; item 6 is done.
    CPython run with a tree plugin would succeed where Bella throws.
 3. **Manifest growth.** `optparse` and `configparser` for pycodestyle: ~2.9k pure-Python lines,
    no C dependencies. Accept, or swap pycodestyle for pathspec (clean, no growth, less
-   interesting).
+   interesting). *Accepted by the author 2026-11-08: both are phase-1 roots (cases C-7-48 and
+   C-7-49; `[dynamic.optparse]` reviews `Values.read_module`); 1c is 34 modules with them.*
 4. **zlib's licence.** `zlib` is reached by itsdangerous (and by `shutil`). The zlib licence is
    permissive but is not MIT/BSD/ISC by name; either admit it to the allowed list or map `zlib`
    onto miniz (MIT). A one-line decision for `DECISIONS.md`.
