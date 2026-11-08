@@ -4,6 +4,8 @@
 #include "bella/runtime.hpp"
 
 #include <charconv>
+#include <cmath>
+#include <cstring>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -1846,6 +1848,119 @@ Ref i_dict_next(Obj, Args a) {                   // PyDict_Next: (next position,
         if (!e.key.is_unset()) return tuple_new({Obj::small(i + 1), e.key, e.value});
     }
     return none_ref();
+}
+
+// PyFloat_Pack2/4/8 and PyFloat_Unpack2/4/8 (Objects/floatobject.c) for a prelude: the IEEE 754 binary16, binary32 and binary64
+// forms of a double, on a platform whose doubles are little-endian IEEE (x86-64, aarch64). Pack2 is the C's software path, Pack4
+// its cast with the overflow test and the NaN payload fix, Pack8 a copy.
+namespace {
+std::uint64_t double_bits(double x) { std::uint64_t v; std::memcpy(&v, &x, 8); return v; }
+double bits_double(std::uint64_t v) { double x; std::memcpy(&x, &v, 8); return x; }
+
+std::uint16_t float_pack2(double x) {
+    unsigned sign; int e; std::uint16_t bits;
+    if (x == 0.0) { sign = std::copysign(1.0, x) == -1.0; e = 0; bits = 0; }
+    else if (std::isinf(x)) { sign = x < 0.0; e = 0x1f; bits = 0; }
+    else if (std::isnan(x)) {
+        sign = std::copysign(1.0, x) == -1.0; e = 0x1f;
+        std::uint64_t v = double_bits(x) & 0xffc0000000000ULL;
+        bits = static_cast<std::uint16_t>(v >> 42);           // the NaN's type and payload
+        if (!bits) bits |= (1 << 9);                           // a qNaN when there is no payload
+    } else {
+        sign = x < 0.0;
+        if (sign) x = -x;
+        double f = std::frexp(x, &e);
+        if (f < 0.5 || f >= 1.0) raise_new("SystemError", "frexp() result out of range");
+        f *= 2.0; e--;                                         // f in [1.0, 2.0)
+        if (e >= 16) raise_new("OverflowError", "float too large to pack with e format");
+        else if (e < -25) { f = 0.0; e = 0; }                  // |x| < 2**-25: zero
+        else if (e < -14) { f = std::ldexp(f, 14 + e); e = 0; } // |x| < 2**-14: gradual underflow
+        else { e += 15; f -= 1.0; }
+        f *= 1024.0;
+        bits = static_cast<std::uint16_t>(f);                  // truncated, then rounded to even
+        if ((f - bits > 0.5) || ((f - bits == 0.5) && (bits % 2 == 1))) {
+            ++bits;
+            if (bits == 1024) { bits = 0; ++e; if (e == 31) raise_new("OverflowError", "float too large to pack with e format"); }
+        }
+    }
+    return static_cast<std::uint16_t>(bits | (e << 10) | (sign << 15));
+}
+
+std::uint32_t float_pack4(double x) {
+    float y = static_cast<float>(x);
+    if (std::isinf(y) && !std::isinf(x)) raise_new("OverflowError", "float too large to pack with f format");
+    std::uint32_t u32; std::memcpy(&u32, &y, 4);
+    if (std::isnan(x)) {                                       // a sNaN's payload survives the conversion
+        std::uint64_t v = double_bits(x);
+        if ((v & (1ULL << 51)) == 0 && (u32 & 0x3fffff)) u32 &= ~(1u << 22);
+        if (v & (1ULL << 63)) u32 |= (1u << 31);
+        u32 -= (u32 & 0x3fffff);
+        u32 += static_cast<std::uint32_t>((v & 0x7ffffffffffffULL) >> 29);
+        if ((v & (1ULL << 51)) == 0 && (u32 & 0x3fffff)) u32 &= ~(1u << 22);
+    }
+    return u32;
+}
+
+double float_unpack2(std::uint16_t bits) {
+    unsigned sign = (bits >> 15) & 1; int e = (bits >> 10) & 0x1f; unsigned f = bits & 0x3ff;
+    if (e == 0x1f) {
+        if (f == 0) return sign ? -INFINITY : INFINITY;
+        std::uint64_t v = sign ? 0xfff0000000000000ULL : 0x7ff0000000000000ULL;
+        return bits_double(v + (static_cast<std::uint64_t>(f) << 42));
+    }
+    double x = static_cast<double>(f) / 1024.0;
+    if (e == 0) e = -14; else { x += 1.0; e -= 15; }
+    x = std::ldexp(x, e);
+    return sign ? -x : x;
+}
+
+double float_unpack4(std::uint32_t u32) {
+    float x; std::memcpy(&x, &u32, 4);
+    if (std::isnan(x) && (u32 & (1u << 22)) == 0) {           // a sNaN float stays a sNaN double
+        double y = x;
+        return bits_double(double_bits(y) & ~(1ULL << 51));
+    }
+    return x;
+}
+}  // namespace
+
+Ref i_float_pack(Obj, Args a) {                  // (x, size, little_endian[, cast]) -> the size bytes of PyFloat_Pack{2,4,8};
+    positional_only(a, "_float_pack", 3, 4);     // cast: the C's (float)x of np_float_complex, no overflow test, no NaN fix
+    double x = float_as_double(a.pos(0));
+    std::int64_t size = index_value(a.pos(1));
+    bool le = truth(a.pos(2));
+    bool cast = a.npos > 3 && truth(a.pos(3));
+    std::uint64_t v; int n;
+    if (size == 2) { v = float_pack2(x); n = 2; }
+    else if (size == 4 && cast) { float y = static_cast<float>(x); std::uint32_t u32; std::memcpy(&u32, &y, 4); v = u32; n = 4; }
+    else if (size == 4) { v = float_pack4(x); n = 4; }
+    else if (size == 8) { v = double_bits(x); n = 8; }
+    else raise_new("ValueError", "_float_pack() size must be 2, 4 or 8");
+    std::string out(static_cast<std::size_t>(n), '\0');
+    for (int i = 0; i < n; ++i) {
+        unsigned char byte = static_cast<unsigned char>((v >> (8 * i)) & 0xff);
+        out[static_cast<std::size_t>(le ? i : n - 1 - i)] = static_cast<char>(byte);
+    }
+    return bytes_new(out);
+}
+
+Ref i_float_unpack(Obj, Args a) {                // (data, little_endian[, cast]) -> the float of PyFloat_Unpack{2,4,8}, by the
+    positional_only(a, "_float_unpack", 2, 3);   // data's length; cast: the C's (double)float of nu_float_complex, a sNaN quieted
+    if (!is_kind(a.pos(0), Kind::Bytes)) raise_new("TypeError", "_float_unpack() needs bytes");
+    const std::string& data = bytes_data(a.pos(0));
+    bool le = truth(a.pos(1));
+    bool cast = a.npos > 2 && truth(a.pos(2));
+    int n = static_cast<int>(data.size());
+    if (n != 2 && n != 4 && n != 8) raise_new("ValueError", "_float_unpack() needs 2, 4 or 8 bytes");
+    std::uint64_t v = 0;
+    for (int i = 0; i < n; ++i) {
+        unsigned char byte = static_cast<unsigned char>(data[static_cast<std::size_t>(le ? i : n - 1 - i)]);
+        v |= static_cast<std::uint64_t>(byte) << (8 * i);
+    }
+    if (n == 2) return float_ref(float_unpack2(static_cast<std::uint16_t>(v)));
+    if (n == 4 && cast) { float y; std::uint32_t u32 = static_cast<std::uint32_t>(v); std::memcpy(&y, &u32, 4); return float_ref(static_cast<double>(y)); }
+    if (n == 4) return float_ref(float_unpack4(static_cast<std::uint32_t>(v)));
+    return float_ref(bits_double(v));
 }
 namespace {
 Ref i_set_add(Obj, Args a) {

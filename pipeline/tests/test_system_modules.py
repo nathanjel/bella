@@ -196,6 +196,36 @@ for text in (b"Zg==", b"Zg==Zg==", b"Zg=x=", b"=Zg==", b"Zm9v====", b"Z=g==", b"
 print(base64.b64encode(bytes(range(100)), wrapcol=20), base64.b64decode(b"  Zm9v\nYmFy  "), base64.urlsafe_b64decode("-_8-"), m(lambda: base64.b64decode(b"Zm9v", validate=True, padded=False)), base64.b16encode(b"\xb9\x01"), base64.b16decode(b"B901"), m(lambda: base64.b16decode(b"b901")), base64.b16decode(b"b901", casefold=True))
 """
 
+STRUCT = r"""
+import struct
+def m(f):
+    try:
+        return repr(f())
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+class Sub(complex):
+    @property
+    def real(self):
+        return 99.0
+class C:
+    def __complex__(self):
+        return 1 + 1j
+class F(float):
+    def __float__(self):
+        return 7.0
+print(struct.pack("<D", Sub(1, 2)), struct.pack("<F", C()), struct.pack("<F", 2), struct.pack("<F", F(1.0)), struct.pack("<d", F(1.0)), struct.pack("<F", 1e40), m(lambda: struct.pack(">F", 1e40)), struct.pack("F", 1e40), struct.pack("=F", -1e40), struct.unpack("<F", b"\x01\x00\x80\x7f\x00\x00\x00\x00"), struct.unpack(">F", b"\x7f\x80\x00\x01\x00\x00\x00\x00"), struct.pack("F", -1e40), struct.pack("<F", C())[4:], m(lambda: struct.pack("<D", "x")))
+print(struct.unpack("<e", struct.pack("<e", 0.1)), struct.unpack("<f", struct.pack("<f", 0.1)), struct.pack("<e", 2**-24), struct.pack("<e", 2**-25), struct.pack("<e", 2**-25 * 1.0000001), struct.pack("<e", 65519.99), m(lambda: struct.pack("<e", 65520.0)), m(lambda: struct.pack(">e", -1e5)), struct.pack("<e", 2047.5), struct.pack("<e", 2048.5), struct.pack("<e", 2049.5))
+print(struct.pack("<f", 3.4028235e38), m(lambda: struct.pack("<f", 3.5e38)), struct.pack("<f", float("-nan")), struct.unpack("<f", b"\x00\x00\x80\xff"), struct.unpack(">e", b"\x7e\x00"), struct.unpack("<e", b"\x00\x80"), struct.pack(">d", -0.0), struct.unpack("<d", struct.pack("<d", 1e-320)))
+s = struct.Struct("<2h")
+print(s.pack(1, 2), s.unpack(b"\x01\x00\x02\x00"), list(s.iter_unpack(b"\x01\x00\x02\x00\x03\x00\x04\x00")), s.unpack_from(b"xx\x01\x00\x02\x00", 2), s.unpack_from(buffer=b"xx\x01\x00\x02\x00", offset=2), m(lambda: s.unpack_from(b"", buffer=b"")), m(lambda: s.unpack_from(b"", offset=0, x=1)), m(lambda: s.unpack_from(b"", offsett=0)))
+print(m(lambda: struct.pack("<hh", 1, 2, 3)), m(lambda: struct.pack("<h", 1.0)), m(lambda: struct.pack("<h", True)), m(lambda: struct.pack("<h", 2**100)), m(lambda: struct.pack("P", 2**100)), m(lambda: struct.pack("<e", 2**100)), m(lambda: struct.pack("<f", 2**1000)), m(lambda: struct.pack("<d", 2**1024)), m(lambda: struct.pack("<d", 2**1023)))
+print(struct.calcsize("@ciqdFD"), struct.calcsize("=ciqdFD"), struct.calcsize("ci"), struct.calcsize("ic"), struct.calcsize("c0i"), struct.calcsize("0c0i"), struct.calcsize("xxi"), struct.calcsize("ie"), struct.calcsize("cP"), struct.calcsize("3sq"), struct.calcsize("3pq"), struct.calcsize("< h  h "), m(lambda: struct.calcsize(" <h")), struct.calcsize("Zd"), struct.calcsize("Zf"), m(lambda: struct.calcsize("Zx")), m(lambda: struct.calcsize("Z")), m(lambda: struct.calcsize("<P")), m(lambda: struct.calcsize("<n")))
+print(struct.pack("5p", b""), struct.pack("1p", b"abc"), struct.pack("0p", b"abc"), struct.pack("2s", b""), struct.pack("0s", b"abc"), struct.unpack("2p", b"\x09x"), struct.unpack("5s", b"abcde"), m(lambda: struct.pack("2s", 1)), m(lambda: struct.pack("2p", "ab")), m(lambda: struct.pack("c", b"")), m(lambda: struct.pack("c", 97)))
+it = struct.Struct("b").iter_unpack(b"abc")
+print(type(it).__name__, it.__length_hint__(), [next(it), next(it)], it.__length_hint__(), next(it), it.__length_hint__(), m(lambda: next(it)), it.__length_hint__(), m(lambda: struct.Struct("b").iter_unpack(bytearray(b"ab")).__length_hint__()))
+print(struct.Struct(b"<h").format, struct.Struct("<h") is not struct.Struct("<h"), m(lambda: struct.Struct("<h", 1)), m(lambda: struct.Struct(format=1)), m(lambda: struct.Struct(b"\x80")), m(lambda: struct.Struct("\x00")), m(lambda: struct.Struct("")), struct.Struct("").size, struct.Struct("").pack(), struct.Struct("").unpack(b""), m(lambda: struct.Struct("").unpack(b"x")))
+"""
+
 
 def test_json() -> None:
     """_json's scanner and encoder: the messages the case does not compare."""
@@ -212,11 +242,18 @@ def test_binascii() -> None:
     same(BINASCII)
 
 
+def test_struct() -> None:
+    """_struct's complex and float conversions, the half float's rounding and limits, the standard and native complex paths, Struct's
+    methods by keyword, the cache's messages, Pascal and char strings at their edges, the iterator's length hint."""
+    same(STRUCT)
+
+
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.compress(b'a')", "zlib"), ("import zlib\nzlib.ZLIB_VERSION", "ZLIB_VERSION"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
              ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"),
-             ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"))
+             ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
+             ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")

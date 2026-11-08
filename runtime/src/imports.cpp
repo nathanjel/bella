@@ -39,6 +39,7 @@ namespace prelude_ast { Ref module_body(Module* m); }         // runtime/prelude
 namespace prelude_typing { Ref module_body(Module* m); }      // runtime/prelude/_typing.py
 namespace prelude_json { Ref module_body(Module* m); }        // runtime/prelude/_json.py
 namespace prelude_binascii { Ref module_body(Module* m); }    // runtime/prelude/binascii.py
+namespace prelude_struct { Ref module_body(Module* m); }      // runtime/prelude/_struct.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -355,7 +356,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}};
     return table;
 }
 }  // namespace
@@ -710,6 +711,11 @@ void fill_json(Module* m) {
 }
 void fill_binascii(Module* m) {
     fill_in_python(m, "binascii", "binascii", prelude_binascii::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}});
+}
+void fill_struct(Module* m) {
+    fill_in_python(m, "_struct", "_struct", prelude_struct::module_body,
+                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion},
+                    {"_float_pack", i_float_pack}, {"_float_unpack", i_float_unpack}});
 }
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,
