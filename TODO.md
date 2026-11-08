@@ -81,11 +81,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## 4. One complete compilation path on the target programs
 
-* Scope (review log D-2, decided 2026-11-01): phase 1 is delivered as 1a (core language and
-  the data-structure modules the target programs need), 1b (`enum`, `dataclasses`,
-  `typing`) and 1c (I/O, `re`, `json`, `logging`, `unittest` and the rest), each closed by a
-  gate on its slice of the manifest (design section 11). This task is 1a's first path. The toy
-  emitter refuses, rather than invents, what it cannot represent.
+* Scope (review log D-2, decided 2026-11-01; revised the same day by D-7 and D-10, below): phase
+  1 was first cut as 1a (core language and the data-structure modules the target programs
+  need), 1b (`enum`, `dataclasses`, `typing`) and 1c (I/O, `re`, `json`, `logging`, `unittest`
+  and the rest), each closed by a gate on its slice of the manifest (design section 11). D-7
+  removed 1b: phase 1 is the easy three, staged 1a.1 to 1a.3, and 1c is the rest of the manifest
+  (`targets/closure-summary.json` lists it). This task is 1a's first path. The toy emitter
+  refuses, rather than invents, what it cannot represent.
 * Today: `make slice` runs `pipeline/examples/*.py` through parse → L1 → `eval1` and through
   the toy C++ emitter; 5 integer programs (Mandelbrot among them, `docs/measurements.md`) agree
   with CPython, `fact_big.py` since the big ints. The target programs are chosen
@@ -547,7 +549,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   `make check` and CI) builds the driver with `pipeline/build.py --run` and compares the bytes; the compiled
   `cli_easy_slugs` agrees with the recording. **Gate 1a.3 reached 2026-11-08**: the compiled `data_easy_sales` agrees with its
   recording (`make targets-compiled` checks both), after `_csv`, `_contextvars`, `_bisect`, `_random`, `_statistics`, `_heapq`,
-  `sys.excepthook` and CPython's own `threading` compiled over the `_thread` prelude. **Gate 1a.2 reached 2026-11-08** with zlib (L-02 settled: zlib linked): the compiled `service_easy_tokens` agrees with its recording. The easy three are done compiled. Seen 2026-11-08: the committed `fact_big.cpp` changes in its synthetic names
+  `sys.excepthook` and CPython's own `threading` compiled over the `_thread` prelude. **Gate 1a.2 reached 2026-11-08** with zlib (L-02 settled: zlib linked): the compiled `service_easy_tokens` agrees with its recording. The easy three are done compiled. The tricky three were run compiled the same day (DECISIONS 2026-11-08): each stops before its first line, at `configparser`/`optparse` (manifest), `_warnings`, `_opcode` (done, C-7-47), `importlib` (core, not provided yet), a staged `compile()`'s code object and `list` subclasses, in that order of dependence. Seen 2026-11-08: the committed `fact_big.cpp` changes in its synthetic names
   (`_format3` to `_format4215`) when the slice's process has lowered the prelude units first, as the frontend's
   `_counter` is one per process; numbering per module (reset where `_TAKEN` is filled) would make the committed
   output a function of the program alone. Not done yet.

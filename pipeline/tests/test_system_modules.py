@@ -583,6 +583,8 @@ print(sample[:8], statistics.mean(sample), statistics.median(sample), statistics
 print(R.sample(range(10**6), 5), R.choices("xyz", weights=[1, 2, 7], k=10), R.gauss(0, 1), R.expovariate(2.0), R.shuffle(sample) or sample[:5], R.randbytes(6), R.randint(-5, 5))
 nd = statistics.NormalDist.from_samples(sample)
 print(nd.mean, nd.stdev, nd.inv_cdf(0.25), nd.inv_cdf(0.999), nd.cdf(500), nd.quantiles(n=4))
+d = statistics.NormalDist(10, 2)
+print(d.cdf(12), d.pdf(10), d.inv_cdf(0.9), d.inv_cdf(0.1), d.quantiles(), d.quantiles(n=10), d.overlap(statistics.NormalDist(12, 2)), d.overlap(statistics.NormalDist(12, 3)), [d.cdf(x / 4) for x in range(20, 60, 7)], [d.pdf(x / 3) for x in range(20, 60, 7)])
 c = collections.Counter(w % 7 for w in words)
 print(c.most_common(3), c.most_common(), heapq.nlargest(4, words), heapq.nsmallest(4, words))
 heap = list(words[:1000])
@@ -681,12 +683,30 @@ def test_random_statistics_heapq_threading() -> None:
     with one thread: local, Lock, RLock, Event, Condition, BoundedSemaphore and an unstarted Thread."""
     same(RANDOM_STATISTICS_HEAPQ)
 
+OPCODE = r"""
+import _opcode, opcode, dis
+print(sorted(n for n in dir(_opcode) if not n.startswith("__")))
+print([len([op for op in range(300) if getattr(_opcode, n)(op)]) for n in ("is_valid", "has_arg", "has_const", "has_name", "has_jump", "has_free", "has_local", "has_exc")])
+print(_opcode.get_nb_ops()[:3], _opcode.get_intrinsic2_descs()[1], _opcode.get_special_method_names(), _opcode.get_specialization_stats())
+print(opcode.hasarg[:5], opcode.hasconst, opcode.hasexc, opcode._nb_ops[-1], dis.opname[opcode.opmap["LOAD_CONST"]], dis.hasjump == opcode.hasjump)
+for bad in (lambda: _opcode.has_arg(), lambda: _opcode.has_arg(1, 2), lambda: _opcode.has_arg(op=1), lambda: _opcode.has_arg("x"), lambda: _opcode.has_arg(2**31), lambda: _opcode.get_nb_ops(1)):
+    try:
+        bad()
+    except Exception as e:
+        print(type(e).__name__, e)
+"""
+
 
 def test_zlib() -> None:
     """zlib 1.3.2 built into the runtime against the pin's: twenty-one blocks (random bytes, runs, empty, a 140 KB repeat) at five
     levels, a gzip stream compressed in pieces and read back in pieces, a bounded decompressobj loop, _ZlibDecompressor's buffering,
     sync and full flushes in a raw stream, and the itsdangerous-style token."""
     same(ZLIB)
+
+
+def test_opcode() -> None:
+    """_opcode's predicates and tables (the pin's, read off by tools/opcode_tables.py) behind opcode and dis, and the clinic's parsing."""
+    same(OPCODE)
 
 
 def test_what_is_absent_stops_by_name() -> None:
@@ -696,6 +716,7 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
+             ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
              ("import threading\nthreading.Thread(target=print).start()", "creating a thread"), ("import threading\nlk = threading.Lock(); lk.acquire(); lk.acquire()", "no other thread can release"),
 )
     for body, name in cases:
@@ -713,4 +734,6 @@ if __name__ == "__main__":
     test_typing_objects()
     test_json()
     test_exec_with_a_locals_mapping_offsets_and_sentinel()
+    test_zlib()
+    test_opcode()
     test_what_is_absent_stops_by_name()

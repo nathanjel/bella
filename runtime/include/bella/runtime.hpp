@@ -417,6 +417,7 @@ void fill_bisect(Module* m);                      // runtime/prelude/_bisect.py
 void fill_random(Module* m);                      // runtime/prelude/_random.py
 void fill_statistics(Module* m);                  // runtime/prelude/_statistics.py
 void fill_heapq(Module* m);                       // runtime/prelude/_heapq.py
+void fill_opcode(Module* m);                      // runtime/prelude/_opcode.py
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();

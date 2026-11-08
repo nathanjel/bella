@@ -18,6 +18,7 @@ C-3-19_getattribute_override.py
 C-3-20_copy_protocol.py
 C-3-23_forwardref_evaluate_expression.py
 C-3-25_calls_and_parameters.py
+C-3-26_function_objects.py
 C-3-27_class_statements.py
 C-3-28_unpacking_and_displays.py
 C-3-29_generators_and_comprehensions.py
@@ -59,7 +60,12 @@ C-6-16_percent_format.py
 C-6-17_complex.py
 C-6-18_exceptions_os_and_syntax.py
 C-6-19_dict_view_sets.py
+C-7-03_phase1_omissions_observable.py
+C-7-09_date_modules.py
+C-7-12_zlib.py
 C-7-13_locale_and_gettext.py
+C-7-16_gettext_plural_forms.py
+C-7-17_gettext_catalogue.py
 C-7-18_collections_abc_types.py
 C-7-19_abc.py
 C-7-20_itertools.py
@@ -88,6 +94,7 @@ C-7-43_random.py
 C-7-44_statistics.py
 C-7-45_heapq.py
 C-7-46_zlib.py
+C-7-47_opcode.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py
