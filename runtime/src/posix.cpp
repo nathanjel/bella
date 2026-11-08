@@ -20,6 +20,8 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <pthread.h>
 #include <map>
 #include <memory>
 #include <new>
@@ -326,6 +328,108 @@ Ref p_environ(Args) {                            // convertenviron: of a name gi
 }
 Ref p_refuse(Args a) { throw NotImplemented(as_str(a.pos(0))->text + " (CPython has it; the runtime does not yet)"); }
 
+// ---- time (Modules/timemodule.c, Python/pytime.c): one C library call each --------------------------------------------------
+Ref timespec_pair(const timespec& ts) {
+    Ref sec = int_from_i64(static_cast<std::int64_t>(ts.tv_sec)), nsec = int_from_i64(static_cast<std::int64_t>(ts.tv_nsec));
+    return tuple_new({sec.get(), nsec.get()});
+}
+Ref p_clock_gettime(Args a) {                    // (clk_id) -> (sec, nsec), or -errno
+    timespec ts{};
+    if (clock_gettime(static_cast<clockid_t>(int_of(a.pos(0))), &ts) != 0) return failed();
+    return timespec_pair(ts);
+}
+Ref p_clock_getres(Args a) {
+    timespec ts{};
+    if (clock_getres(static_cast<clockid_t>(int_of(a.pos(0))), &ts) != 0) return failed();
+    return timespec_pair(ts);
+}
+Ref p_clock_settime(Args a) {                    // (clk_id, sec, nsec)
+    timespec ts{};
+    ts.tv_sec = static_cast<time_t>(i64_of(a.pos(1)));
+    ts.tv_nsec = static_cast<long>(i64_of(a.pos(2)));
+    return result(clock_settime(static_cast<clockid_t>(int_of(a.pos(0))), &ts));
+}
+Ref tm_tuple(const tm& b) {                      // the eleven of tmtotuple, in C's own ranges: tm_year since 1900, tm_mon from 0...
+    Ref year = int_from_i64(b.tm_year), mon = int_from_i64(b.tm_mon), mday = int_from_i64(b.tm_mday), hour = int_from_i64(b.tm_hour),
+        min = int_from_i64(b.tm_min), sec = int_from_i64(b.tm_sec), wday = int_from_i64(b.tm_wday), yday = int_from_i64(b.tm_yday),
+        isdst = int_from_i64(b.tm_isdst), zone = bytes_new(b.tm_zone == nullptr ? "" : b.tm_zone), gmtoff = int_from_i64(b.tm_gmtoff);
+    return tuple_new({year.get(), mon.get(), mday.get(), hour.get(), min.get(), sec.get(), wday.get(), yday.get(), isdst.get(), zone.get(), gmtoff.get()});
+}
+Ref p_localtime(Args a) {                        // _PyTime_localtime: the tm, or -errno (EINVAL when the library says nothing)
+    time_t t = static_cast<time_t>(i64_of(a.pos(0)));
+    tm b{};
+    errno = 0;
+    if (localtime_r(&t, &b) == nullptr) { if (errno == 0) errno = EINVAL; return failed(); }
+    return tm_tuple(b);
+}
+Ref p_gmtime(Args a) {                           // _PyTime_gmtime
+    time_t t = static_cast<time_t>(i64_of(a.pos(0)));
+    tm b{};
+    errno = 0;
+    if (gmtime_r(&t, &b) == nullptr) { if (errno == 0) errno = EINVAL; return failed(); }
+    return tm_tuple(b);
+}
+tm tm_of(Args a, std::size_t at) {               // nine C-range fields, then the zone (bytes or None) and gmtoff (int or None)
+    tm b{};
+    b.tm_year = int_of(a.pos(at)); b.tm_mon = int_of(a.pos(at + 1)); b.tm_mday = int_of(a.pos(at + 2)); b.tm_hour = int_of(a.pos(at + 3));
+    b.tm_min = int_of(a.pos(at + 4)); b.tm_sec = int_of(a.pos(at + 5)); b.tm_wday = int_of(a.pos(at + 6)); b.tm_yday = int_of(a.pos(at + 7));
+    b.tm_isdst = int_of(a.pos(at + 8));
+    return b;
+}
+Ref p_mktime(Args a) {                           // time_mktime's sentinel: tm_wday stays -1 only when mktime failed
+    tm b = tm_of(a, 0);
+    std::string zone;
+    if (a.pos(9) != None()) { zone = bytes_data(a.pos(9)); b.tm_zone = zone.c_str(); }
+    if (a.pos(10) != None()) b.tm_gmtoff = static_cast<long>(i64_of(a.pos(10)));
+    b.tm_wday = -1;
+    time_t tt = mktime(&b);
+    if (tt == static_cast<time_t>(-1) && b.tm_wday == -1) return none_ref();
+    return int_from_i64(static_cast<std::int64_t>(tt));
+}
+Ref p_strftime(Args a) {                         // time_strftime1: the C's strftime of an ASCII format, the buffer doubled until it fits
+    std::string format = bytes_data(a.pos(0));
+    tm b = tm_of(a, 1);
+    std::string zone;
+    if (a.pos(10) != None()) { zone = bytes_data(a.pos(10)); b.tm_zone = zone.c_str(); }
+    if (a.pos(11) != None()) b.tm_gmtoff = static_cast<long>(i64_of(a.pos(11)));
+    std::size_t bufsize = 1024;
+    std::string out;
+    while (true) {
+        out.assign(bufsize, '\0');
+        std::size_t n = strftime(out.data(), bufsize, format.c_str(), &b);
+        if (n == 0 && bufsize < 256 * format.size()) { bufsize += bufsize; continue; }
+        out.resize(n);
+        return bytes_new(out);
+    }
+}
+Ref p_tzset(Args) {                              // tzset, then the library's timezone, daylight and tzname (init_timezone)
+    tzset();
+    Ref tz = int_from_i64(timezone), dl = int_from_i64(daylight), n0 = bytes_new(tzname[0] == nullptr ? "" : tzname[0]),
+        n1 = bytes_new(tzname[1] == nullptr ? "" : tzname[1]);
+    return tuple_new({tz.get(), dl.get(), n0.get(), n1.get()});
+}
+Ref p_nanosleep(Args a) {                        // pysleep: clock_nanosleep on the monotonic clock to a deadline, again after a signal
+    std::int64_t ns = i64_of(a.pos(0));
+    timespec now{};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return failed();
+    timespec deadline{};
+    deadline.tv_sec = now.tv_sec + static_cast<time_t>(ns / 1000000000);
+    deadline.tv_nsec = now.tv_nsec + static_cast<long>(ns % 1000000000);
+    if (deadline.tv_nsec >= 1000000000) { deadline.tv_sec += 1; deadline.tv_nsec -= 1000000000; }
+    while (true) {
+        int err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &deadline, nullptr);
+        if (err == 0) return none_ref();
+        if (err != EINTR) { errno = err; return failed(); }
+    }
+}
+Ref p_pthread_getcpuclockid(Args a) {
+    clockid_t clk{};
+    int err = pthread_getcpuclockid(static_cast<pthread_t>(static_cast<std::uint64_t>(i64_of(a.pos(0)))), &clk);
+    if (err != 0) { errno = err; return failed(); }
+    Ref id = int_from_i64(clk);
+    return tuple_new({id.get()});
+}
+
 using Primitive = Ref (*)(Args);
 const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
@@ -338,7 +442,10 @@ const std::map<std::string_view, Primitive>& primitives() {
         {"environ", p_environ}, {"refuse", p_refuse}, {"getpwuid", p_getpwuid}, {"getpwnam", p_getpwnam}, {"getpwall", p_getpwall},
         {"getgrgid", p_getgrgid}, {"getgrnam", p_getgrnam}, {"getgrall", p_getgrall}, {"setlocale", p_setlocale}, {"localeconv", p_localeconv},
         {"strcoll", p_strcoll}, {"strxfrm", p_strxfrm}, {"nl_langinfo", p_nl_langinfo}, {"gettext", p_gettext}, {"textdomain", p_textdomain},
-        {"bindtextdomain", p_bindtextdomain}, {"bind_textdomain_codeset", p_bind_textdomain_codeset}};
+        {"bindtextdomain", p_bindtextdomain}, {"bind_textdomain_codeset", p_bind_textdomain_codeset},
+        {"clock_gettime", p_clock_gettime}, {"clock_getres", p_clock_getres}, {"clock_settime", p_clock_settime}, {"localtime", p_localtime},
+        {"gmtime", p_gmtime}, {"mktime", p_mktime}, {"strftime", p_strftime}, {"tzset", p_tzset}, {"nanosleep", p_nanosleep},
+        {"pthread_getcpuclockid", p_pthread_getcpuclockid}};
     return table;
 }
 }  // namespace

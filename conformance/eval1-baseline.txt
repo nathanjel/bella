@@ -82,6 +82,7 @@ C-7-33_typing_objects.py
 C-7-34_json.py
 C-7-35_binascii.py
 C-7-36_struct.py
+C-7-37_time.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

@@ -226,6 +226,32 @@ print(type(it).__name__, it.__length_hint__(), [next(it), next(it)], it.__length
 print(struct.Struct(b"<h").format, struct.Struct("<h") is not struct.Struct("<h"), m(lambda: struct.Struct("<h", 1)), m(lambda: struct.Struct(format=1)), m(lambda: struct.Struct(b"\x80")), m(lambda: struct.Struct("\x00")), m(lambda: struct.Struct("")), struct.Struct("").size, struct.Struct("").pack(), struct.Struct("").unpack(b""), m(lambda: struct.Struct("").unpack(b"x")))
 """
 
+TIME = r"""
+import os, time
+os.environ["TZ"] = "CET-1CEST,M3.5.0,M10.5.0/3"
+time.tzset()
+def m(f):
+    try:
+        return repr(f())
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+class Idx:
+    def __index__(self):
+        return 86400
+class Fl:
+    def __float__(self):
+        return 3600.5
+print(time.gmtime(Idx()), time.gmtime(Fl()), time.gmtime(1.9999), time.gmtime(-0.5), m(lambda: time.gmtime(2**63)), m(lambda: time.gmtime(-2**63 - 1)), m(lambda: time.gmtime(9.3e18)), m(lambda: time.gmtime(-9.3e18)), m(lambda: time.gmtime(1j)), m(lambda: time.localtime([])))
+print(time.strftime("%Y-%m-%d", (2000, 2, 29, 0, 0, 0, 0, 60, 0)), time.strftime("%j", (2000, 12, 31, 0, 0, 0, 0, 366, 0)), time.strftime("%%%Y%%", (2000, 1, 1, 0, 0, 0, 0, 1, 0)), time.strftime("%Y%", (2000, 1, 1, 0, 0, 0, 0, 1, 0)), time.strftime("%", (2000, 1, 1, 0, 0, 0, 0, 1, 0)), time.strftime("%Y%Y%Y" * 100, (2000, 1, 1, 0, 0, 0, 0, 1, 0))[:12], len(time.strftime("%Y%Y%Y" * 100, (2000, 1, 1, 0, 0, 0, 0, 1, 0))), time.strftime("é", (2000, 1, 1, 0, 0, 0, 0, 1, 0)), time.strftime("\x00%Y\x00", (2000, 1, 1, 0, 0, 0, 0, 1, 0)), time.strftime("%Y\x00%m\x00%%", (2000, 1, 1, 0, 0, 0, 0, 1, 0)), time.strftime("日%Y本%m語", (2000, 1, 1, 0, 0, 0, 0, 1, 0)))
+print(time.asctime((2000, 1, 1, 0, 0, 0, 0, 0, 0)), time.asctime((2000, 0, 0, 0, 0, 0, 0, 0, 0)), time.asctime((99999, 1, 1, 0, 0, 0, 0, 1, 0)), time.asctime((-1, 1, 1, 0, 0, 0, 0, 1, 0)), time.asctime((2000, 1, 1, 0, 0, 0, 7, 1, 0)), m(lambda: time.asctime((2000, 1, 1, 0, 0, 0, -8, 1, 0))), time.asctime(time.struct_time((2000, 1, 1, 0, 0, 0, 0, 1, 0, None, None))))
+print(time.mktime((2000, 1, 1, 0, 0, 0, 0, 0, -1)), time.mktime((2000, 7, 1, 0, 0, 0, 0, 0, -1)), time.mktime((2000, 7, 1, 0, 0, 0, 0, 0, 0)), time.mktime((2000, 7, 1, 0, 0, 0, 0, 0, 1)), time.mktime((1900, 1, 1, 0, 0, 0, 0, 0, 0)), time.mktime((1, 1, 1, 0, 0, 0, 0, 0, 0)), time.mktime((9999, 12, 31, 23, 59, 59, 0, 0, 0)), m(lambda: time.mktime((2**31 - 1, 1, 1, 0, 0, 0, 0, 0, 0))), time.mktime(time.struct_time((2000, 1, 1, 0, 0, 0, 0, 1, 0, "UTC", 0))), time.mktime(time.struct_time((2000, 1, 1, 0, 0, 0, 0, 1, 0, None, 7200))), m(lambda: time.mktime(time.struct_time((2000, 1, 1, 0, 0, 0, 0, 1, 0, 5, 0)))), m(lambda: time.mktime(time.struct_time((2000, 1, 1, 0, 0, 0, 0, 1, 0, "X", "0")))))
+print(m(lambda: time.sleep(0.0000001)), m(lambda: time.sleep(Fl() if False else 0)), m(lambda: time.sleep(1j)), m(lambda: time.sleep(-1e-10)), m(lambda: time.sleep(9.3e9)), m(lambda: time.sleep(2**63 // 10**9 + 1)), m(lambda: time.sleep(None)), time.sleep(Idx() * 0), m(lambda: time.sleep([])))
+print(time.struct_time((1, 2, 3, 4, 5, 6, 7, 8, 9, "Z")).tm_gmtoff, time.struct_time(range(9)).tm_isdst, time.struct_time(iter([1, 2, 3, 4, 5, 6, 7, 8, 9])), m(lambda: time.struct_time(5)), m(lambda: time.struct_time()), m(lambda: time.struct_time((1, 2, 3, 4, 5, 6, 7, 8, 9), {"tm_zone": "Q"})), time.struct_time((1, 2, 3, 4, 5, 6, 7, 8, 9), {"tm_zone": "Q"}).tm_zone, time.struct_time((1, 2, 3, 4, 5, 6, 7, 8, 9))[:3], time.struct_time((1, 2, 3, 4, 5, 6, 7, 8, 9)).count(1), m(lambda: time.struct_time((1, 2, 3, 4, 5, 6, 7, 8, 9)).tm_year.__class__), hash(time.gmtime(0)) == hash(tuple(time.gmtime(0))))
+print(time.get_clock_info("time").resolution, m(lambda: time.get_clock_info(b"time")), m(lambda: time.get_clock_info("")), m(lambda: time.clock_gettime(-1)), m(lambda: time.clock_gettime(True)), m(lambda: time.clock_gettime_ns(2**31)), m(lambda: time.clock_getres(2**31)), m(lambda: time.clock_getres(-5)), m(lambda: time.clock_settime(0, Fl())), m(lambda: time.clock_settime(2**31, 1)), m(lambda: time.pthread_getcpuclockid(True)), m(lambda: time.pthread_getcpuclockid(2**70)))
+import datetime
+print(datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc), datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc).timestamp(), datetime.datetime(2023, 11, 14, 22, 13, 20, tzinfo=datetime.timezone.utc).timestamp(), datetime.date.fromtimestamp(1700000000), datetime.datetime.fromtimestamp(1700000000), datetime.datetime.fromtimestamp(1700000000).astimezone(), datetime.datetime(2023, 7, 1).timestamp())
+"""
+
 
 def test_json() -> None:
     """_json's scanner and encoder: the messages the case does not compare."""
@@ -246,6 +272,13 @@ def test_struct() -> None:
     """_struct's complex and float conversions, the half float's rounding and limits, the standard and native complex paths, Struct's
     methods by keyword, the cache's messages, Pascal and char strings at their edges, the iterator's length hint."""
     same(STRUCT)
+
+
+def test_time() -> None:
+    """time's conversions through __index__ and __float__, strftime's split at non-ASCII and NUL characters and its percent at the end,
+    asctime's ranges, mktime with a struct_time's zone and offset, sleep's edges, struct_time's constructor, the clocks' converters;
+    datetime over it."""
+    same(TIME)
 
 
 def test_what_is_absent_stops_by_name() -> None:

@@ -401,6 +401,7 @@ void fill_typing(Module* m);                      // runtime/prelude/_typing.py:
 void fill_json(Module* m);                        // runtime/prelude/_json.py: the json package's scanner and encoder
 void fill_binascii(Module* m);                    // runtime/prelude/binascii.py: base64, hex, crc32; the rest by name
 void fill_struct(Module* m);                      // runtime/prelude/_struct.py: the struct module's engine
+void fill_time(Module* m);                        // runtime/prelude/time.py: clocks, broken-down time, strftime, the zone
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();

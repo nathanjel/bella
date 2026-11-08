@@ -40,6 +40,7 @@ namespace prelude_typing { Ref module_body(Module* m); }      // runtime/prelude
 namespace prelude_json { Ref module_body(Module* m); }        // runtime/prelude/_json.py
 namespace prelude_binascii { Ref module_body(Module* m); }    // runtime/prelude/binascii.py
 namespace prelude_struct { Ref module_body(Module* m); }      // runtime/prelude/_struct.py
+namespace prelude_time { Ref module_body(Module* m); }        // runtime/prelude/time.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -356,7 +357,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}};
     return table;
 }
 }  // namespace
@@ -386,6 +387,11 @@ Ref i_keyword_suggestion(Obj, Args a) {
 // The file runs in a namespace of its own, which its functions keep as their globals, so that the
 // module a program sees has CPython's names and nothing else; nothing clears that namespace at exit.
 namespace {
+Ref i_bella_module_set(Obj self, Args a) {        // (name, value): PyModule_Add on the module the prelude fills, after its import
+    positional_only(a, "_bella_module_set", 2, 2);
+    dict_set(static_cast<Module*>(self.object())->dict, a.pos(0), a.pos(1));
+    return none_ref();
+}
 void fill_in_python(Module* m, const char* name, const char* types_module, Ref (*body)(Module*),
                     std::initializer_list<std::pair<const char*, NativeFn>> primitives) {
     Module* ns = new_module(name);
@@ -393,6 +399,8 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
     {                                            // tp_alloc: what a type's __new__ makes its instance with, in every such file
         Ref alloc = own(new Builtin("_bella_new_instance", i_bella_new_instance));
         dict_set(ns->dict, Obj::of(N("_bella_new_instance")), alloc.get());
+        Ref setter = own(new Builtin("_bella_module_set", i_bella_module_set, Obj::of(m), Binding::Function));   // PyModule_Add, later
+        dict_set(ns->dict, Obj::of(N("_bella_module_set")), setter.get());
     }
     for (auto [primitive, fn] : primitives) {
         Ref b = own(new Builtin(primitive, fn));
@@ -716,6 +724,11 @@ void fill_struct(Module* m) {
     fill_in_python(m, "_struct", "_struct", prelude_struct::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion},
                     {"_float_pack", i_float_pack}, {"_float_unpack", i_float_unpack}});
+}
+void fill_time(Module* m) {
+    fill_in_python(m, "time", "time", prelude_time::module_body,
+                   {{"_bella_refuse", i_bella_refuse}, {"_bella_bootstrap", i_bella_bootstrap}, {"_tp_name", i_tp_name}, {"_structseq", i_structseq},
+                    {"_sys", i_posix_sys}});
 }
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,
