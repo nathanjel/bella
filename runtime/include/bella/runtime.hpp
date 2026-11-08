@@ -402,6 +402,8 @@ void fill_json(Module* m);                        // runtime/prelude/_json.py: t
 void fill_binascii(Module* m);                    // runtime/prelude/binascii.py: base64, hex, crc32; the rest by name
 void fill_struct(Module* m);                      // runtime/prelude/_struct.py: the struct module's engine
 void fill_time(Module* m);                        // runtime/prelude/time.py: clocks, broken-down time, strftime, the zone
+void fill_math_integer(Module* m);                // runtime/prelude/_math_integer.py: math.integer
+void fill_math(Module* m);                        // runtime/prelude/math.py, with math.integer's six and the submodule
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
@@ -1015,6 +1017,7 @@ Ref i_bella_caller_module(Obj, Args a);                      // caller(): the ne
 Ref i_dict_next(Obj, Args a);                                // PyDict_Next for a prelude: (next position, key, value) or None
 Ref i_float_pack(Obj, Args a);                               // PyFloat_Pack2/4/8 for a prelude: (x, size, little_endian) -> bytes
 Ref i_float_unpack(Obj, Args a);                             // PyFloat_Unpack2/4/8 for a prelude: (data, little_endian) -> float
+Ref i_libm(Obj, Args a);                                     // the C library's floating-point functions for a prelude (libm.cpp)
 Ref i_bella_import_warning(Obj, Args a);
 Ref i_bella_set_lazy_attributes(Obj, Args a);
 

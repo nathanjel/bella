@@ -252,6 +252,43 @@ import datetime
 print(datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc), datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc).timestamp(), datetime.datetime(2023, 11, 14, 22, 13, 20, tzinfo=datetime.timezone.utc).timestamp(), datetime.date.fromtimestamp(1700000000), datetime.datetime.fromtimestamp(1700000000), datetime.datetime.fromtimestamp(1700000000).astimezone(), datetime.datetime(2023, 7, 1).timestamp())
 """
 
+MATH = r"""
+import math
+def m(f):
+    try:
+        return repr(f())
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+class Fl:
+    def __float__(self):
+        return 0.25
+class Bad:
+    def __float__(self):
+        return 1
+class Idx:
+    def __index__(self):
+        return 3
+class Fs(float):
+    def __float__(self):
+        return 9.0
+print(math.sqrt(Fl()), math.sqrt(Fs(4.0)), m(lambda: math.sqrt(Bad())), math.sqrt(Idx()), math.floor(Fs(2.5)), math.isclose(Fl(), 0.25), math.copysign(Idx(), -1), math.fsum([Fl(), Fs(1.0), Idx()]), math.hypot(Fl(), Idx()), math.prod([Fl(), 4]), m(lambda: math.sqrt(None)), m(lambda: math.acos(1.0000001)), m(lambda: math.asin(-1.5)), m(lambda: math.atanh(1.0)), m(lambda: math.log1p(-1.0)), m(lambda: math.cos(float("inf"))), m(lambda: math.sqrt(-1e-300)), m(lambda: math.log(0.0)), m(lambda: math.log2(-2)), m(lambda: math.log10(2**1024 * -1)))
+print([m(lambda: math.gamma(x)) for x in (0.1, 0.9, 1.5, 3.7, 10.5, 50.25, 100.75, 139.9, 140.1, 169.5, -0.1, -0.9, -2.5, -10.5, -50.25, -139.9, -140.1, -169.5, -199.9, -200.5, 1e-10, -1e-10, 1e-19, 1e-21)])
+print([m(lambda: math.lgamma(x)) for x in (0.1, 0.9, 1.5, 3.7, 10.5, 50.25, 100.75, 1e5, 1e10, 1e100, -0.1, -0.9, -2.5, -10.5, -50.25, -1e5 - 0.5, -1e10 - 0.5, 1e-10, -1e-10, 1e-21, -1e-21, 2.0000001)])
+print([m(lambda: math.remainder(a, b)) for a, b in ((3.0, 2.0), (2.5, 1.0), (3.5, 1.0), (-2.5, 1.0), (1e308, 3.0), (5e-324, 1e-323), (1e-323, 5e-324), (7.5, 2.5), (1.0, 2.0), (1.0, -2.0), (-1.0, 2.0), (0.0, 1.0), (-0.0, 1.0), (1e300, 1e-300))])
+print([m(lambda: math.fmod(a, b)) for a, b in ((1e308, 3.0), (-1e308, 3.0), (1e-320, 1e-321), (5.0, -0.0), (0.0, 1.0), (-0.0, 1.0), (float("inf"), float("inf")), (1.0, -float("inf")))])
+print([m(lambda: math.pow(a, b)) for a, b in ((2.0, 1023.0), (2.0, 1024.0), (-2.0, 1023.0), (-2.0, 1024.0), (2.0, -1074.0), (2.0, -1075.0), (-1.0, 1e300), (-1.0, 1e300 + 1), (1e-300, 2.0), (1e-300, -2.0), (-1e-300, -3.0), (0.0, 0.5), (-0.0, 0.5), (-0.0, -0.5), (0.0, float("-inf")), (-0.0, float("-inf")), (float("-inf"), float("inf")), (float("-inf"), 0.5), (float("nan"), float("nan")))])
+print([m(lambda: math.ldexp(a, b)) for a, b in ((0.5, 1024), (0.5, 1025), (1.0, -1074), (1.0, -1075), (1.5, -1074), (-1.0, 1024), (1e-310, 10), (1e-310, 2**31 - 1), (1.0, -(2**31)), (1.0, -(2**31) - 1), (float("nan"), 2**100), (-float("inf"), -(2**100)))])
+print([m(lambda: math.frexp(x)) for x in (1.0, 0.5, 0.1, 1e308, 5e-324, 1e-310, -3.0, 2**53, 0.75)], [math.modf(x) for x in (0.5, -0.5, 1e16, 1e17, -1e-5, 123.456)])
+print(math.log(2**1000), math.log(2**1000 + 1), math.log(10**400, 10), math.log2(2**1000 + 2**999), math.log10(10**400 + 1), math.log(3**700), math.log2(3**700), math.log10(3**700), math.log(2**1024 - 1), math.log(2**1024), math.log(2**2000, 3), math.log(1, 10**400), m(lambda: math.log(1, 1)), m(lambda: math.log(10, 1.0)), math.log(2.5, 2.5), math.log(2**1030, 2**1029), m(lambda: math.log(0, 10)), m(lambda: math.log(-(10**400))), m(lambda: math.log(10**400, 0)))
+print(math.fsum([1e308, 1e308, -1e308, -1e308]), math.fsum([1.0, 1e100, 1.0, -1e100]), math.fsum([0.5, 0.25, 0.125] * 100), m(lambda: math.fsum([1e308, 1e308])), math.fsum([-1e308, -1e308, 1e308]), math.fsum([3.0, 1e-300, -3.0]), math.fsum([2.0**1023, 2.0**1023, -(2.0**1023)]) if False else m(lambda: math.fsum([2.0**1023, 2.0**1023, -(2.0**1023)])), math.fsum([1e16, 1.0, 1.0, 1.0, 1.0]), math.fsum([2**60, 1, -(2**60)]), math.fsum([1e-320, 1e-320, -1e-320]), math.fsum([float("-inf"), 1.0, float("-inf")]), math.fsum([float("nan"), float("inf")]))
+print(math.hypot(1e-320, 1e-320, 1e-320), math.hypot(3e-310, 4e-310), math.hypot(1e308, 1e308, 1e308), math.hypot(0.0, 0.0), math.hypot(-0.0), math.hypot(1e-200, 1e200), math.hypot(*range(1, 50)), math.hypot(0.1, 0.2, 0.3, 0.4, 0.5), math.dist([1e-320, 0], [0, 1e-320]), math.dist([1.5], [-2.5]), math.dist((0.1, 0.1), (0.2, 0.2)), math.dist(range(3), range(1, 4)), m(lambda: math.dist([1, 2], [1, "2"])), m(lambda: math.dist(5, [1])))
+print(math.sumprod([0.1, 0.2, 0.3], [3.0, 2.0, 1.0]), math.sumprod([1e16, 1.0, 1e-16], [1.0, 1.0, 1.0]), math.sumprod([1e308, 1e308, -1e308], [1.0, 1.0, 1.0]) if False else m(lambda: math.sumprod([1e308, 1e308, -1e308], [1.0, 1.0, 1.0])), math.sumprod([1e308, -1e308, 1e308], [1.0, 1.0, 1.0]), math.sumprod([2**63 - 1, 1], [1, 1]), math.sumprod([2**62, 2**62, 2**62], [2, 2, 2]), math.sumprod([1, 2.0, 3], [4, 5, 6.0]), math.sumprod([1, 2], [3.0, True]), math.sumprod([2**70, 1.0], [1.0, 2.0]), math.sumprod([1e200, 1e200], [1e200, -1e200]), math.sumprod([float("nan")], [1.0]), math.sumprod([float("inf")], [1]), math.sumprod([0.1] * 100, [0.1] * 100))
+print(math.nextafter(1.0, float("inf"), steps=2**63), math.nextafter(1.0, -float("inf"), steps=2**63 + 1), math.nextafter(-1.0, 1.0, steps=1), math.nextafter(-1e-320, 1e-320, steps=3), math.nextafter(1e-320, -1e-320, steps=2), math.nextafter(2.0, 1.0, steps=2**52), math.nextafter(1.0, 2.0, steps=2**52), math.nextafter(1.0, 2.0, steps=2**52 + 1), math.nextafter(0.0, -0.0), math.nextafter(-0.0, 0.0), math.nextafter(0.0, -0.0, steps=1), math.nextafter(float("inf"), -float("inf"), steps=2**64), math.nextafter(5.0, 5.0, steps=10**30), m(lambda: math.nextafter(1.0, 2.0, steps=Idx())), math.nextafter(1.0, 2.0, steps=True))
+print(math.ulp(5e-324), math.ulp(1e-308), math.ulp(2.0**-1022), math.ulp(0.5), math.ulp(1e16), math.ulp(-1e300), math.ulp(1.7976931348623157e308), math.isclose(1e-300, 2e-300, rel_tol=0.6), math.isclose(1e-300, 2e-300), math.isclose(1e300, 1e300 * (1 + 1e-10)), math.isclose(-float("inf"), -float("inf")), math.isclose(float("inf"), -float("inf")), math.isclose(1, 1.0000000001, rel_tol=1e-9, abs_tol=0), m(lambda: math.isclose(1, 2, abs_tol=-0.0)), math.isclose(1, 2, abs_tol=float("inf")), math.isclose(1, 2, rel_tol=float("nan")))
+print(math.gcd(2**200, 3**100 * 2**150), math.lcm(2**100, 3**50), math.gcd(-12, 18), math.gcd(12, -18, 0), math.lcm(6, -4, 10), math.lcm(1, 0, 2), math.gcd(True, False), math.lcm(Idx(), 4), m(lambda: math.lcm(1.5)), math.factorial(50), math.factorial(Idx()), m(lambda: math.factorial(2**63 - 1)), m(lambda: math.factorial(-(2**70))), math.comb(60, 30), math.comb(2**64, 1), math.comb(2**64, 2**64 - 2), math.perm(20, 10), math.perm(2**64, 1), math.perm(10, 10), math.perm(10, 11), math.isqrt(2**200), math.isqrt(2**200 - 1), math.isqrt((2**100 + 1) ** 2 - 1), math.isqrt(Idx()), m(lambda: math.isqrt(-(2**100))), math.comb(Idx(), 2), math.perm(Idx()), m(lambda: math.comb(3, 1.0)), m(lambda: math.perm(2**64, 2**70)), m(lambda: math.comb(2**70, 2**63)))
+print(m(lambda: math.sqrt()), m(lambda: math.atan2(1, 2, 3)), m(lambda: math.copysign(1)), m(lambda: math.log(1, 2, 3)), m(lambda: math.fma(1, 2)), m(lambda: math.hypot(1, x=2)), m(lambda: math.dist()), m(lambda: math.sumprod([1])), m(lambda: math.isclose()), m(lambda: math.prod()), m(lambda: math.nextafter()), m(lambda: math.ulp(1, 2)), m(lambda: math.gcd(1, [])), m(lambda: math.lcm(x=1)), m(lambda: math.isqrt()), m(lambda: math.factorial(n=5)), m(lambda: math.comb(5, k=2)), m(lambda: math.perm(5, k=2)), m(lambda: math.ldexp(1)), m(lambda: math.frexp()), m(lambda: math.modf(1, 2)), m(lambda: math.fmod(1)), m(lambda: math.remainder()), m(lambda: math.trunc()), m(lambda: math.floor(1, 2)), m(lambda: math.degrees()), m(lambda: math.isnan(1, 2)), m(lambda: math.fmax(1, 2, 3)), m(lambda: math.erf()), m(lambda: math.gamma(1, 2)), m(lambda: math.exp(x=1)), m(lambda: math.log(x=1)))
+"""
+
 
 def test_json() -> None:
     """_json's scanner and encoder: the messages the case does not compare."""
@@ -279,6 +316,14 @@ def test_time() -> None:
     asctime's ranges, mktime with a struct_time's zone and offset, sleep's edges, struct_time's constructor, the clocks' converters;
     datetime over it."""
     same(TIME)
+
+
+def test_math() -> None:
+    """math's conversions (__float__, __index__, float subclasses), gamma and lgamma across their ranges, remainder and fmod at the edges,
+    pow's special values, ldexp and frexp at the limits, logs of huge ints, fsum's overflow and special sums, hypot and dist with
+    subnormals, sumprod's paths, nextafter's step arithmetic, ulp, isclose, the integer functions with large arguments, and every calling
+    convention's message."""
+    same(MATH)
 
 
 def test_what_is_absent_stops_by_name() -> None:

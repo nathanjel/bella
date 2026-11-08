@@ -41,6 +41,8 @@ namespace prelude_json { Ref module_body(Module* m); }        // runtime/prelude
 namespace prelude_binascii { Ref module_body(Module* m); }    // runtime/prelude/binascii.py
 namespace prelude_struct { Ref module_body(Module* m); }      // runtime/prelude/_struct.py
 namespace prelude_time { Ref module_body(Module* m); }        // runtime/prelude/time.py
+namespace prelude_math_integer { Ref module_body(Module* m); }   // runtime/prelude/_math_integer.py
+namespace prelude_math { Ref module_body(Module* m); }        // runtime/prelude/math.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -357,7 +359,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}};
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}};
     return table;
 }
 }  // namespace
@@ -729,6 +731,25 @@ void fill_time(Module* m) {
     fill_in_python(m, "time", "time", prelude_time::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_bella_bootstrap", i_bella_bootstrap}, {"_tp_name", i_tp_name}, {"_structseq", i_structseq},
                     {"_sys", i_posix_sys}});
+}
+void fill_math_integer(Module* m) {
+    fill_in_python(m, "math.integer", "math.integer", prelude_math_integer::module_body, {{"_tp_name", i_tp_name}});
+}
+void fill_math(Module* m) {                      // math_exec: the module, then math.integer's six functions and the submodule itself
+    fill_in_python(m, "math", "math", prelude_math::module_body,
+                   {{"_tp_name", i_tp_name}, {"_libm", i_libm}, {"_float_pack", i_float_pack}, {"_float_unpack", i_float_unpack},
+                    {"_keyword_suggestion", i_keyword_suggestion}});
+    NativeModule& n = native_registry().at("math.integer");
+    if (n.made == nullptr) {
+        n.made = new_module("math.integer");
+        note_native_module("math.integer", n.made);
+        n.fill(n.made);
+        adopt_functions(n.made);
+    }
+    Ref key = str_new("math.integer");
+    dict_set(sys_modules(), key.get(), Obj::of(n.made));   // _PyImport_SetModuleString("math.integer", intmath)
+    for (const char* name : {"comb", "factorial", "gcd", "isqrt", "lcm", "perm"}) dict_set(m->dict, Obj::of(N(name)), dict_get(n.made->dict, Obj::of(N(name))));
+    dict_set(m->dict, Obj::of(N("integer")), Obj::of(n.made));
 }
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,
