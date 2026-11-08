@@ -36,6 +36,7 @@ C-3-42_c_types_present_their_methods.py
 C-3-43_object_reduce.py
 C-3-44_type_flags.py
 C-3-45_str_subclasses.py
+C-3-47_future_annotations.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

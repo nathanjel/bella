@@ -230,6 +230,7 @@ bool register_deaths() {
         f->dict = Ref{};
         for (Ref& c : f->closure) c = Ref{};
         f->annotate = Ref{};
+        f->annotations = Ref{};
         f->type_params = Ref{};
         f->name = Ref{};
         f->qualname = Ref{};

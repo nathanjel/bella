@@ -317,6 +317,29 @@ h = hashlib.sha256(); h.update(b"a"); g = h.copy(); g.update(b"b"); h.update(b"b
 print(h.hexdigest() == g.hexdigest() == hashlib.sha256(b"ab").hexdigest(), h.name, h.digest_size, h.block_size, hashlib.new("SHA1", b"a").name, m(lambda: hmac.new(b"k", b"m", "md5").name), hmac.compare_digest(hashlib.sha1(b"a").digest(), hashlib.sha1(b"a").digest()), m(lambda: hmac.new(b"k", 5, "sha1")), m(lambda: hashlib.sha1(5)), m(lambda: hashlib.sha1("s")))
 """
 
+FUNCTION_ANNOTATIONS = r"""
+import annotationlib
+def f(x: int, y: "str" = "a") -> list[int]:
+    return [x]
+def g(): pass
+print(f.__annotations__, f.__annotations__ is f.__annotations__, f.__annotate__ is not None, g.__annotations__, g.__annotate__, g.__annotations__ is g.__annotations__)
+def m(fn):
+    try: return repr(fn())
+    except Exception as e: return type(e).__name__ + ": " + str(e)
+h = f
+print(m(lambda: setattr(h, "__annotations__", 1)), m(lambda: setattr(h, "__annotations__", {"z": 1})), h.__annotations__, h.__annotate__, m(lambda: delattr(h, "__annotations__")), h.__annotations__, h.__annotate__)
+def k(a: int): pass
+print(m(lambda: setattr(k, "__annotate__", 5)), m(lambda: delattr(k, "__annotate__")), k.__annotations__, m(lambda: setattr(k, "__annotate__", lambda fmt: {"q": fmt})), k.__annotations__, k.__annotate__(2), m(lambda: setattr(k, "__annotate__", None)), k.__annotations__, k.__annotate__)
+def bad(a: int): pass
+bad.__annotate__ = lambda fmt: 5
+print(m(lambda: bad.__annotations__))
+def late(a: Undefined): pass  # noqa: F821
+print(m(lambda: late.__annotations__))
+class C:
+    def meth(self, v: int) -> None: pass
+print(C.meth.__annotations__, C().meth.__annotations__, type(C.meth.__annotate__).__name__)
+"""
+
 
 def test_json() -> None:
     """_json's scanner and encoder: the messages the case does not compare."""
@@ -352,6 +375,12 @@ def test_math() -> None:
     subnormals, sumprod's paths, nextafter's step arithmetic, ulp, isclose, the integer functions with large arguments, and every calling
     convention's message."""
     same(MATH)
+
+
+def test_function_annotations() -> None:
+    """function.__annotations__ under PEP 649: made once from __annotate__ and cached, an empty dict for a bare function, the setter's
+    type check and its clearing of __annotate__, the deleter, __annotate__'s own rules, a non-dict answer refused, methods."""
+    same(FUNCTION_ANNOTATIONS)
 
 
 def test_digests() -> None:

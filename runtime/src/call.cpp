@@ -2054,6 +2054,25 @@ Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list
         import_star(a.at(0), ns);
         return none_ref();
     }
+    if (name == "setup_annotations") {           // SETUP_ANNOTATIONS (bytecodes.c): PyMapping_GetOptionalItem on the namespace, then a
+        Obj key = Obj::of(intern("__annotations__"));   // new dict stored unless one was found; an exact dict is asked without running code
+        bool found;
+        if (is_kind(ns, Kind::Dict)) found = !dict_get(static_cast<Dict*>(ns.object()), key).is_unset();
+        else {
+            try {
+                getitem(ns, key);
+                found = true;
+            } catch (const PyError& e) {
+                if (!isinstance(e.exc.get(), exception_class("KeyError"))) throw;
+                found = false;
+            }
+        }
+        if (!found) {
+            Ref fresh = dict_new();
+            setitem(ns, key, fresh.get());
+        }
+        return none_ref();
+    }
     Ref f = builtin(intrinsic);
     std::size_t npos = a.size();
     a.insert(a.end(), kwvalues.begin(), kwvalues.end());

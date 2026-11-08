@@ -1522,11 +1522,40 @@ void set_fn_kwdefaults(Obj self, Obj v) {        // func_set_kwdefaults
     fn_of(self)->kwdefaults = v.is_unset() || v == None() ? Ref{} : Ref::share(v);
 }
 Ref fn_annotate(Obj self) { return fn_of(self)->annotate.get().is_unset() ? none_ref() : fn_of(self)->annotate; }
-void set_fn_annotate(Obj self, Obj v) {          // function___annotate___set_impl
+void set_fn_annotate(Obj self, Obj v) {          // function___annotate___set_impl: a callable forgets the dict made so far
     if (v.is_unset()) raise_new("TypeError", "__annotate__ cannot be deleted");
     if (v != None() && !callable_check(v)) raise_new("TypeError", "__annotate__ must be callable or None");
     fn_of(self)->annotate = Ref::share(v);
+    if (v != None()) fn_of(self)->annotations = Ref{};
 }
+Ref fn_annotations(Obj self) {                   // function___annotations___get_impl and func_get_annotation_dict
+    PyFunction* f = fn_of(self);
+    if (f->annotations.get().is_unset()) {
+        Obj annotate = f->annotate.get();
+        if (annotate.is_unset() || annotate == None() || !callable_check(annotate)) f->annotations = dict_new();
+        else {
+            Ref made = invoke(annotate, {Obj::small(1)});
+            if (!is_kind(made.get(), Kind::Dict)) raise_new("TypeError", "__annotate__() must return a dict, not " + type_of(made.get())->name);
+            f->annotations = made;
+        }
+    }
+    return f->annotations;
+}
+void set_fn_annotations(Obj self, Obj v) {       // function___annotations___set_impl: None or a deletion clears, a dict is kept; __annotate__ goes
+    if (!v.is_unset() && v != None() && !is_kind(v, Kind::Dict)) raise_new("TypeError", "__annotations__ must be set to a dict object");
+    fn_of(self)->annotations = v.is_unset() || v == None() ? Ref{} : Ref::share(v);
+    fn_of(self)->annotate = Ref{};
+}
+}  // namespace
+Ref with_string_annotations(Ref fn) {            // PEP 563: MAKE_FUNCTION stores the strings as the dict itself, and no __annotate__ exists
+    auto* f = static_cast<PyFunction*>(fn.get().object());
+    if (!f->annotate.get().is_unset()) {
+        f->annotations = invoke(f->annotate.get(), {Obj::small(1)});
+        f->annotate = Ref{};
+    }
+    return fn;
+}
+namespace {
 // function.__code__ and __closure__, and the code object's names and counts (specification E-02 as narrowed in v0.14): one code
 // object per Code record, made at the first read, so that two reads compare equal as CPython's do; the bytecode side has no row here
 // and stops by name through the names table
@@ -2713,6 +2742,8 @@ void init_types() {
     }
     static_cast<GetSet*>(t.function->attrs.find(N("__type_params__"))->object())->deletable = true;
     getset(t.function, "__annotate__", fn_annotate, set_fn_annotate);
+    getset(t.function, "__annotations__", fn_annotations, set_fn_annotations);
+    static_cast<GetSet*>(t.function->attrs.find(N("__annotations__"))->object())->deletable = true;
     static_cast<GetSet*>(t.function->attrs.find(N("__annotate__"))->object())->deletable = true;
     getset(t.function, "__dict__", fn_dict);
     getset(t.method, "__func__", method_func);
