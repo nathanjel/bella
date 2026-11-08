@@ -1062,11 +1062,8 @@ class Emitter:
             case G.MakeFunction(code, defaults, kwdefaults, closure, annotate):
                 fn = self.by_code[id(code)]
                 cells = ", ".join(map(a, closure))
-                made = (f"rt::make_function({fn.cname}, {fn.entry}, M, {a(defaults)}, {a(kwdefaults)}, "
+                return (f"rt::make_function({fn.cname}, {fn.entry}, M, {a(defaults)}, {a(kwdefaults)}, "
                         f"{{{cells}}}, {a(annotate)})")
-                if annotate is not None and "annotations" in self.module.future:   # PEP 563: the strings are the dict, made now
-                    return f"rt::with_string_annotations({made})"
-                return made
             case G.Yield() | G.YieldFrom():
                 return 'throw rt::NotImplemented("yield (step 3b: generators)")'
         return f"(throw rt::NotImplemented({c_string(f'the operation {type(o).__name__} in compiled code')}), Ref{{}})"

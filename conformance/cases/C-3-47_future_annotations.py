@@ -2,8 +2,9 @@
 # spec: section 3
 # source: PEP 563 in 3.15 (codegen_body's SETUP_ANNOTATIONS; Python/bytecodes.c), annotationlib
 """Annotations under `from __future__ import annotations`: a module's and a class body's `__annotations__` are dicts of strings made
-when the body runs (SETUP_ANNOTATIONS, which keeps one a body already has), no `__annotate__` exists, functions carry their strings,
-and annotationlib answers every format from the strings."""
+when the body runs (SETUP_ANNOTATIONS, which keeps one a body already has) and no `__annotate__` exists; a function's `__annotate__`
+is still a function, one that returns the strings for the first two formats and refuses the rest, and `__annotations__` comes from it;
+annotationlib answers every format from the strings."""
 # ruff: noqa: ANN001, ANN002, ANN003, ANN201, ANN202, ANN204, B018, B023, E501, E731, E741, E742, F601, PLR0133, SLF001
 from __future__ import annotations
 
@@ -52,3 +53,13 @@ print(__annotations__, C.__annotations__, D.__annotations__, D.Inner.__annotatio
 print(C().f(), C.d, D.e, sorted(k for k in vars(D) if not k.startswith("__")), type(C.__annotations__), "__annotate__" in globals(), getattr(C, "__annotate__", "none"), g.__annotations__, C.f.__annotations__, g(1))
 print(annotationlib.get_annotations(C), annotationlib.get_annotations(C, format=annotationlib.Format.STRING), annotationlib.get_annotations(D, format=annotationlib.Format.FORWARDREF), annotationlib.get_annotations(g), annotationlib.get_annotations(D.Inner, format=annotationlib.Format.VALUE))
 print(C.__dict__["__annotations__"] is C.__annotations__, __annotations__ is globals()["__annotations__"], sorted(__annotations__), sorted(D.__annotations__))
+
+
+def m(f):  # type: ignore[no-untyped-def]
+    try:
+        return repr(f())
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+
+
+print("function annotate:", type(g.__annotate__).__name__, g.__annotate__.__qualname__, C.f.__annotate__.__qualname__, g.__annotate__(1), g.__annotate__(2), C.f.__annotate__(1), m(lambda: g.__annotate__(3)), m(lambda: g.__annotate__(4)), m(lambda: g.__annotate__()), g.__annotations__ is g.__annotations__, g.__annotate__(1) is g.__annotations__, getattr(F, "__annotate__", "none"), "__annotations__" in vars(F))  # type: ignore[arg-type,call-arg,misc,no-untyped-call,union-attr]

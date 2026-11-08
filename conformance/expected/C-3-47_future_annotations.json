@@ -6,7 +6,7 @@
  "source": "PEP 563 in 3.15 (codegen_body's SETUP_ANNOTATIONS; Python/bytecodes.c), annotationlib",
  "recorded_with": "3.15.2",
  "authoritative": true,
- "stdout": "{'x': 'int', 'y': 'str', 'z': 'list[int]', 'w': 'dict[str, int]'} {'a': 'int', 'b': 't.Any', 'c': 'str'} {'e': 'float'} {'g': 'Undefined'} {'preset': 'yes', 'f': 'int'} False {}\n3 5 2.5 ['Inner', 'e'] <class 'dict'> False None {'p': 'int', 'args': 'str', 'q': 'C', 'kw': 'float', 'return': 'list[C]'} {'v': 'int', 'return': 'int'} [1]\n{'a': 'int', 'b': 't.Any', 'c': 'str'} {'a': 'int', 'b': 't.Any', 'c': 'str'} {'e': 'float'} {'p': 'int', 'args': 'str', 'q': 'C', 'kw': 'float', 'return': 'list[C]'} {'g': 'Undefined'}\nTrue True ['w', 'x', 'y', 'z'] ['e']\n",
+ "stdout": "{'x': 'int', 'y': 'str', 'z': 'list[int]', 'w': 'dict[str, int]'} {'a': 'int', 'b': 't.Any', 'c': 'str'} {'e': 'float'} {'g': 'Undefined'} {'preset': 'yes', 'f': 'int'} False {}\n3 5 2.5 ['Inner', 'e'] <class 'dict'> False None {'p': 'int', 'args': 'str', 'q': 'C', 'kw': 'float', 'return': 'list[C]'} {'v': 'int', 'return': 'int'} [1]\n{'a': 'int', 'b': 't.Any', 'c': 'str'} {'a': 'int', 'b': 't.Any', 'c': 'str'} {'e': 'float'} {'p': 'int', 'args': 'str', 'q': 'C', 'kw': 'float', 'return': 'list[C]'} {'g': 'Undefined'}\nTrue True ['w', 'x', 'y', 'z'] ['e']\nfunction annotate: function g.__annotate__ C.f.__annotate__ {'p': 'int', 'args': 'str', 'q': 'C', 'kw': 'float', 'return': 'list[C]'} {'p': 'int', 'args': 'str', 'q': 'C', 'kw': 'float', 'return': 'list[C]'} {'v': 'int', 'return': 'int'} NotImplementedError:  NotImplementedError:  TypeError: g.__annotate__() missing 1 required positional argument: 'format' True False None False\n",
  "stderr": "",
  "exit_code": 0
 }

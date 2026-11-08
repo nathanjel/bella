@@ -478,6 +478,9 @@ class _Translator:
         self.out.add(indent, f"{head} {name}({params}):", code.first_line or line)
         body_indent = indent + 1
         first = code.first_line or line
+        for p in code.params:
+            if p.public is not None and p.public != p.name:
+                self.out.add(body_indent, f"{p.name} = {p.public}", first)
         param_names = {p.name for p in code.params}
         declared = [n for n in (*code.varnames, *code.cellvars) if n not in param_names]
         if declared:
@@ -522,11 +525,13 @@ class _Translator:
     def params(self, code: G.Code) -> str:
         if code.kind in ("module", "classbody"):
             return f"{RESERVED}ns"
-        pos = [p.name for p in code.params if p.kind == "positional-only"]
-        normal = [p.name for p in code.params if p.kind == "positional-or-keyword"]
-        star = next((p.name for p in code.params if p.kind == "*args"), None)
-        kwonly = [p.name for p in code.params if p.kind == "keyword-only"]
-        kwargs = next((p.name for p in code.params if p.kind == "**kwargs"), None)
+        # a parameter is declared by the name CPython reports (the annotate function's `format`), so that the
+        # host's own messages name it; the body's hidden name is bound to it first (eval1 binds the same way)
+        pos = [p.public or p.name for p in code.params if p.kind == "positional-only"]
+        normal = [p.public or p.name for p in code.params if p.kind == "positional-or-keyword"]
+        star = next((p.public or p.name for p in code.params if p.kind == "*args"), None)
+        kwonly = [p.public or p.name for p in code.params if p.kind == "keyword-only"]
+        kwargs = next((p.public or p.name for p in code.params if p.kind == "**kwargs"), None)
         parts: list[str] = [*pos]
         if pos:
             parts.append("/")
@@ -811,6 +816,10 @@ def _check_slots(code: types.CodeType, codes: dict[str, G.Code], unchecked: froz
         return tuple(n for n in names if not n.startswith(RESERVED))
     host = (visible(code.co_varnames), visible(code.co_cellvars), visible(code.co_freevars))
     want_vars = l2.varnames if l2.kind not in ("module", "classbody") else tuple(n for n in l2.varnames)
+    hidden = [p.name for p in l2.params if p.public is not None and p.public != p.name]
+    if hidden:                                   # a parameter declared by its public name: the hidden name is the first local the body binds
+        params = [p.name for p in l2.params]
+        want_vars = (*(p.public or p.name for p in l2.params), *hidden, *(n for n in l2.varnames if n not in params))
     want = (want_vars, l2.cellvars, l2.freevars)
     if l2.kind not in ("coroutine", "async generator") and code.co_name not in unchecked and host != want:
         raise SlotMismatch(f"{l2.qualname}: the host compiled {host}, L2 says {want}")

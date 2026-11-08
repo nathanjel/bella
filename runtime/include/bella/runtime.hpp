@@ -1024,7 +1024,6 @@ Ref i_bella_exec(Obj, Args a);
 Ref i_bella_refuse(Obj, Args a);
 Ref i_bella_caller_module(Obj, Args a);                      // caller(): the nearest program frame's module name
 Ref i_dict_next(Obj, Args a);                                // PyDict_Next for a prelude: (next position, key, value) or None
-Ref with_string_annotations(Ref fn);                         // PEP 563: a function's __annotate__ run once into __annotations__
 Ref i_float_pack(Obj, Args a);                               // PyFloat_Pack2/4/8 for a prelude: (x, size, little_endian) -> bytes
 Ref i_float_unpack(Obj, Args a);                             // PyFloat_Unpack2/4/8 for a prelude: (data, little_endian) -> float
 Ref i_libm(Obj, Args a);                                     // the C library's floating-point functions for a prelude (libm.cpp)

@@ -1547,14 +1547,6 @@ void set_fn_annotations(Obj self, Obj v) {       // function___annotations___set
     fn_of(self)->annotate = Ref{};
 }
 }  // namespace
-Ref with_string_annotations(Ref fn) {            // PEP 563: MAKE_FUNCTION stores the strings as the dict itself, and no __annotate__ exists
-    auto* f = static_cast<PyFunction*>(fn.get().object());
-    if (!f->annotate.get().is_unset()) {
-        f->annotations = invoke(f->annotate.get(), {Obj::small(1)});
-        f->annotate = Ref{};
-    }
-    return fn;
-}
 namespace {
 // function.__code__ and __closure__, and the code object's names and counts (specification E-02 as narrowed in v0.14): one code
 // object per Code record, made at the first read, so that two reads compare equal as CPython's do; the bytecode side has no row here

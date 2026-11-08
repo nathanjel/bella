@@ -77,6 +77,7 @@ class _Owner:
     private: str | None               # the class name used for mangling
     type_params: set[str]
     entries: list[Entry]
+    strings: bool = False             # PEP 563: the function's __annotate__ returns the annotations' source strings
 
 
 entry_key = annotate_rt.entry_key       # the identity the build files an evaluator under
@@ -281,6 +282,8 @@ class _Owners(ast.NodeVisitor):
         if entries and not self.pep563:
             self.owners.append(_Owner("function", tp or outer, outer.kind == "class", private,
                                       {mangle(private, p.name) for p in _params(node.type_params)}, entries))
+        elif entries:                 # under the future import the compiler still makes the function's __annotate__, of strings
+            self.owners.append(_Owner("function", tp or outer, False, private, set(), entries, strings=True))
         self.scope = _function_scope(node, tp or outer, private)
         for stmt in node.body:
             self.visit(stmt)
@@ -405,8 +408,15 @@ def _generate(owner: _Owner) -> tuple[ast.FunctionDef, list[tuple[str, str]], tu
     conditional = any(index is not None for _, _, index, _ in owner.entries)
     body: list[ast.stmt] = [
         ast.If(ast.Compare(_name("format"), [ast.Gt()], [ast.Constant(2)]), [ast.Raise(_name("NotImplementedError"))], []),
-        ast.Assign([ast.Name("_b", ast.Store())], _call("builtins_of", _name("_g"))),
     ]
+    if owner.strings:                 # PEP 563: the strings the compiler stored, loading nothing
+        body.append(ast.Return(ast.Dict([ast.Constant(k) for k, _, _, _ in owner.entries], [ast.Constant(ast.unparse(ann)) for _, ann, _, _ in owner.entries])))
+        params = ast.arguments([], [ast.arg("format"), ast.arg("_g"), ast.arg("_c")], None, [], [], None, [])
+        fn = ast.FunctionDef("__annotate__", params, body, [], None, None, [])
+        ast.copy_location(fn, owner.entries[0][1])
+        ast.fix_missing_locations(fn)
+        return fn, [], ()
+    body.append(ast.Assign([ast.Name("_b", ast.Store())], _call("builtins_of", _name("_g"))))
     values: list[tuple[str, ast.expr, int | None]] = []
     for key, ann, index, starred in owner.entries:
         if index is not None:   # the conditional check's load comes before the value's, as in the bytecode
