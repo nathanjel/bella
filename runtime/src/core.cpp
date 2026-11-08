@@ -223,6 +223,7 @@ bool register_deaths() {
     destroyer(Kind::PyFunction) = [](Object* o) {
         auto* f = static_cast<PyFunction*>(o);     // func_clear's order: its globals first
         decref(static_cast<Object*>(f->module));
+        f->closure_tuple = Ref{};
         f->defaults = Ref{};
         f->kwdefaults = Ref{};
         f->doc = Ref{};

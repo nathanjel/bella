@@ -1539,12 +1539,15 @@ void set_fn_code(Obj, Obj v) {                   // func_set_code: a delete is r
     if (v.is_unset() || !is_kind(v, Kind::CodeKind)) raise_new("TypeError", "__code__ must be set to a code object");
     throw NotImplemented("function.__code__ assignment (E-07: a function from a code object)");
 }
-Ref fn_closure(Obj self) {
-    const auto& cells = fn_of(self)->closure;
-    if (cells.empty()) return none_ref();
-    Ref items = list_new({});
-    for (const Ref& r : cells) list_append(items.get(), r.get());
-    return list_to_tuple(items.get());
+Ref fn_closure(Obj self) {                       // the function's closure tuple, one object (A14 #7)
+    PyFunction* f = fn_of(self);
+    if (f->closure.empty()) return none_ref();
+    if (f->closure_tuple.get().is_unset()) {
+        Ref items = list_new({});
+        for (const Ref& r : f->closure) list_append(items.get(), r.get());
+        f->closure_tuple = list_to_tuple(items.get());
+    }
+    return f->closure_tuple;
 }
 const Code* code_of(Obj self) { return static_cast<CodeObject*>(self.object())->code; }
 Ref names_tuple(const std::vector<const char*>& names) {

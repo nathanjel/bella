@@ -704,7 +704,8 @@ Ref i_bella_class_set(Obj, Args a) {             // a store into a type's dict a
     return none_ref();
 }
 void fill_json(Module* m) {
-    fill_in_python(m, "_json", "_json", prelude_json::module_body, {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}});
+    fill_in_python(m, "_json", "_json", prelude_json::module_body,
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_dict_next", i_dict_next}});
 }
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,

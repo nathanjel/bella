@@ -208,6 +208,7 @@ struct PyFunction : Object {
     Ref defaults;                                // a tuple, or Unset
     Ref kwdefaults;                              // a dict, or Unset
     std::vector<Ref> closure;                    // cells, in the order of co_freevars
+    Ref closure_tuple;                           // func_closure: the same tuple of those cells at every read, made at the first
     Ref name, qualname, doc, annotate, dict, type_params;
     Ref module_name;                             // func.__module__ once rebound; Unset: its globals' __name__
     PyFunction(const Code* c, Ref (*e)(PyFunction*, Args), Module* m);
@@ -1008,6 +1009,7 @@ Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
 Ref i_bella_exec(Obj, Args a);
 Ref i_bella_refuse(Obj, Args a);
 Ref i_bella_caller_module(Obj, Args a);                      // caller(): the nearest program frame's module name
+Ref i_dict_next(Obj, Args a);                                // PyDict_Next for a prelude: (next position, key, value) or None
 Ref i_bella_import_warning(Obj, Args a);
 Ref i_bella_set_lazy_attributes(Obj, Args a);
 

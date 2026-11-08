@@ -15,7 +15,7 @@ import sys
 import tomllib
 import warnings
 from pathlib import Path
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 import _ast_unparse  # type: ignore[import-not-found]  # noqa: F401  # ast.unparse imports it on first use; here, never while a program runs
@@ -1598,9 +1598,9 @@ def desugar_with(tree: ast.Module) -> ast.Module:
     return _as_module(ast.fix_missing_locations(_With().visit(tree)))
 
 
-def _walrus_targets(nodes: list[ast.AST]) -> list[str]:
+def _walrus_targets(nodes: Sequence[ast.AST]) -> list[str]:
     """PEP 572: the names a comprehension's walrus expressions bind (nested comprehensions
-    included, lambdas not: they are scopes of their own), in source order."""
+    included, lambdas not: they are scopes of their own), in the order the loop binds them."""
     out: list[str] = []
 
     def walk(n: ast.AST) -> None:
@@ -1706,9 +1706,7 @@ class _Comprehensions(ast.NodeTransformer):
             inner = [ast.For(target=gen.target, iter=iterable, body=inner, orelse=[])]
             if is_outer:
                 inner[0].bella_iterator = True  # type: ignore[attr-defined]  # the iterator GET_ITER made outside (A7-4)
-        parts: list[ast.AST] = [node.key, node.value] if isinstance(node, ast.DictComp) and node.key else [node.elt]  # type: ignore[union-attr, list-item]
-        parts += [c for g in node.generators for c in g.ifs] + [g.iter for g in node.generators[1:]]
-        bound_outside = _walrus_targets(parts)
+        bound_outside = _walrus_targets(inner)   # the loop's order is the order the code binds them (co_varnames, G14 #2)
         body: list[ast.stmt] = []
         # PEP 572: a walrus target binds in the containing scope, honouring its global declaration
         # (review 2026-11-02, G6 2.4.2); the helper's own comprehensions see the same names global
@@ -2149,7 +2147,7 @@ class _ToL1:
         return L.FunctionDef(f.lineno, f.name, params, body, frozenset(globals_), frozenset(nonlocals),
                              qualname=qualname, decorators=decorators, annotate=annotate, docstring=_docstring(f.body),
                              store=getattr(f, "bella_store", "") if getattr(f, "bella_store", f.name) != f.name else "",
-                             kind=kind, enclosing_binds=frozenset(getattr(f, "bella_enclosing_binds", ())),
+                             kind=kind, enclosing_binds=tuple(getattr(f, "bella_enclosing_binds", ())),
                              annotation=bool(getattr(f, "bella_annotation", False)),
                              classdict=bool(getattr(f, "bella_classdict", False)),
                              inlined=bool(getattr(f, "bella_inlined", False)),

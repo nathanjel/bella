@@ -11,11 +11,16 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
     _number_index                                # noqa: B018  # PyNumber_Index
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name, and %T
+    _dict_next                                   # noqa: B018  # PyDict_Next: the entries as they are at each step
 except NameError:
     import operator
 
     _bella_new_instance = object.__new__
     _number_index = operator.index
+
+    def _dict_next(d: dict[object, object], i: int) -> tuple[int, object, object] | None:
+        items = list(d.items())
+        return (i + 1, *items[i]) if i < len(items) else None
 
     def _tp_name(obj: object) -> str:
         t = type(obj)
@@ -27,6 +32,13 @@ class _Absent:
 
 
 _ABSENT = _Absent()
+
+
+def _ssize(value: object) -> int:                # the clinic's Py_ssize_t converter: an index that a C ssize_t holds (A14 #8)
+    n = _number_index(value)
+    if n < -(2**63) or n >= 2**63:
+        raise OverflowError("Python int too large to convert to C ssize_t")
+    return n
 _WHITESPACE = " \t\n\r"
 _ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
 _HEX = "0123456789abcdefABCDEF"
@@ -144,7 +156,7 @@ s after the end quote."""
     pystr = args[0]
     if not isinstance(pystr, str):
         raise TypeError("scanstring() argument 1 must be str, not " + _tp_name(pystr))
-    end = _number_index(args[1])
+    end = _ssize(args[1])
     strict = True if len(args) < 3 else bool(args[2])
     return _scanstring(str.__str__(pystr), end, strict)
 
@@ -283,7 +295,7 @@ class Scanner:
         pystr, idx = _parse_args("scan_once", args, kwds, ("string", "idx"), 2)
         if not isinstance(pystr, str):
             raise TypeError("first argument must be a string, not " + _tp_name(pystr))
-        index = _number_index(idx)
+        index = _ssize(idx)
         memo: dict[str, str] = {}
         try:
             return _scan_once(self, memo, str.__str__(pystr), index)
@@ -508,7 +520,7 @@ class Encoder:
 
     def __call__(self, *args: object, **kwds: object) -> tuple[str]:   # encoder_call: "On:_iterencode"
         obj, level = _parse_args("_iterencode", args, kwds, ("obj", "_current_indent_level"), 2)
-        indent_level = _number_index(level)
+        indent_level = _ssize(level)
         cache: list[str] | None = None
         if self._indent is not None:             # create_indent_cache: the newline at the level given, then levels from 0
             newline_indent = "\n"
@@ -520,22 +532,24 @@ class Encoder:
         return ("".join(parts),)
 
 
-def _note(exc: BaseException, text: str) -> None:   # _PyErr_FormatNote
-    add_note = getattr(exc, "add_note", None)
-    if add_note is not None:
-        add_note(text)
+def _note(exc: BaseException, text: str) -> None:   # _PyErr_FormatNote: BaseException_add_note itself, not an override (A14 #4)
+    BaseException.add_note(exc, text)
 
 
-def _encode_float(s: Encoder, obj: float) -> str:   # encoder_encode_float
-    if obj != obj or obj in (float("inf"), float("-inf")):
+def _encode_float(s: Encoder, obj: float) -> str:   # encoder_encode_float: PyFloat_AS_DOUBLE, no comparison of the subclass's (A14 #1)
+    value = float.__float__(obj)
+    if value != value or value == _INF or value == -_INF:
         if not s._allow_nan:
             raise ValueError("Out of range float values are not JSON compliant: " + repr(obj))
-        if obj > 0:
+        if value > 0:
             return "Infinity"
-        if obj < 0:
+        if value < 0:
             return "-Infinity"
         return "NaN"
     return float.__repr__(obj)
+
+
+_INF = float("inf")
 
 
 def _write_string(s: Encoder, parts: list[str], obj: str) -> None:   # encoder_write_string
@@ -646,8 +660,13 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
             if not isinstance(item, tuple) or len(item) != 2:
                 raise ValueError("items must return 2-tuples")
             _encode_key_value(s, parts, first, dct, item[0], item[1], level, cache, separator)
-    else:
-        for key, value in dct.items():  # type: ignore[attr-defined]
+    else:                                        # PyDict_Next: the entries as they are at each step, an inserted one included (A14 #2)
+        pos = 0
+        while True:
+            step = _dict_next(dct, pos)  # type: ignore[arg-type]
+            if step is None:
+                break
+            pos, key, value = step
             _encode_key_value(s, parts, first, dct, key, value, level, cache, separator)
     if ident is not None:
         del markers[ident]  # type: ignore[index]
@@ -658,9 +677,12 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
 
 
 def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: list[str] | None) -> None:   # encoder_listencode_list
-    size = list.__len__ if isinstance(seq, list) else tuple.__len__   # PySequence_Fast of a list or tuple is the object: its size is read again
-    item = list.__getitem__ if isinstance(seq, list) else tuple.__getitem__   # at every step, and an item is what it holds then
-    if size(seq) == 0:  # type: ignore[arg-type]
+    # PySequence_Fast: an exact list or tuple is the object itself, its size read again at every step and an item what it holds
+    # then; a subclass is iterated into a list first (A14 #3)
+    fast: object = seq if type(seq) is list or type(seq) is tuple else list(seq)  # type: ignore[call-overload]
+    size = list.__len__ if isinstance(fast, list) else tuple.__len__
+    item = list.__getitem__ if isinstance(fast, list) else tuple.__getitem__
+    if size(fast) == 0:  # type: ignore[arg-type]
         parts.append("[]")
         return
     ident = None
@@ -677,8 +699,8 @@ def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: l
         separator = _item_separator(s, level, cache)  # type: ignore[arg-type]
         parts.append(cache[level * 2])  # type: ignore[index]
     i = 0
-    while i < size(seq):  # type: ignore[arg-type]
-        obj = item(seq, i)  # type: ignore[arg-type]
+    while i < size(fast):  # type: ignore[arg-type]
+        obj = item(fast, i)  # type: ignore[arg-type]
         if i:
             parts.append(separator)
         try:

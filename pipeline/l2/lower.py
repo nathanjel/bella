@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from pipeline.l1 import grammar as L
 from pipeline.l2 import grammar as G
-from pipeline.l2.resolve import Scope, Scopes, co_varnames, expression_temporary, moved_on_use, resolve
+from pipeline.l2.resolve import Scope, Scopes, co_cellvars, co_varnames, expression_temporary, moved_on_use, resolve
 from pipeline.passes.spec import Discharge, Fact, Level, Obligation, PassSpec, register
 
 STACK_USE_GUIDELINE = 30        # _PY_STACK_USE_GUIDELINE (Include/internal/pycore_compile.h)
@@ -143,7 +143,7 @@ class _Code:
             meta=(("hidden", frozenset(n for n in s.varnames if n in s.synthetic)),
                   ("needs_classdict", s.needs_classdict),
                   ("inlined", isinstance(node, L.FunctionDef) and node.inlined),
-                  ("co_varnames", co_varnames(s))))
+                  ("co_varnames", co_varnames(s)), ("co_cellvars", co_cellvars(s))))
 
     def child(self, node: L.FunctionDef | L.Lambda | L.ClassBody) -> G.Code:
         return _Code(self.scopes, self.scopes.of(node)).build(node)

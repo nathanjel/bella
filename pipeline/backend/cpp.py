@@ -140,6 +140,7 @@ class Emitter:
         self.names: dict[str, str] = {}
         self.functions: list[_Function] = []
         self.parent_kind: dict[int, str] = {}       # a code's enclosing code's kind (CO_METHOD: defined in a class body)
+        self.nested: dict[int, bool] = {}           # CO_NESTED: an enclosing code is a function's (a generic's parameter scope too)
         self.by_code: dict[int, _Function] = {}
         self.used: set[str] = set()
 
@@ -222,6 +223,7 @@ class Emitter:
         self.functions.append(fn)
         self.by_code[id(code)] = fn
         self.parent_kind[id(code)] = parent.kind if parent is not None else ""
+        self.nested[id(code)] = parent is not None and (self.nested.get(id(parent), False) or parent.kind not in ("module", "classbody"))
         for c in _nested_codes(code.body):
             self.collect(c, code)
 
@@ -274,15 +276,18 @@ class Emitter:
         co_varnames = meta.get("co_varnames")
         locals_: tuple[str, ...] = co_varnames if isinstance(co_varnames, tuple) else c.varnames
         names = [public[p.name] for p in params] + [n for n in locals_ if n not in public and n not in hidden_names]
-        cellvars = [n for n in c.cellvars if n not in hidden_names]
+        co_cellvars = meta.get("co_cellvars")
+        cellvars = [n for n in (co_cellvars if isinstance(co_cellvars, tuple) else c.cellvars) if n not in hidden_names]
         freevars = [n for n in c.freevars if n not in hidden_names]
         doc = "nullptr" if c.docstring is None else c_string(c.docstring)
         flags = 0
         if c.kind not in ("module", "classbody"):
             flags |= 0x1 | 0x2                                         # CO_OPTIMIZED, CO_NEWLOCALS
         flags |= (0x4 if varargs else 0) | (0x8 if varkw else 0)      # CO_VARARGS, CO_VARKEYWORDS
-        if "<locals>" in c.qualname:
-            flags |= 0x10                                              # CO_NESTED
+        if self.nested.get(id(c), False):
+            flags |= 0x10                                              # CO_NESTED: some enclosing code is a function's
+        if "annotations" in self.module.future:
+            flags |= 0x1000000                                         # CO_FUTURE_ANNOTATIONS
         flags |= {"generator": 0x20, "coroutine": 0x80, "async generator": 0x200}.get(c.kind, 0)
         if c.docstring is not None:
             flags |= 0x4000000                                         # CO_HAS_DOCSTRING

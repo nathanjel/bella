@@ -1837,7 +1837,6 @@ Ref i_number_index(Obj, Args a) {                // PyNumber_Index
     positional_only(a, "_number_index", 1, 1);
     return int_index_of(a.pos(0));
 }
-namespace {
 Ref i_dict_next(Obj, Args a) {                   // PyDict_Next: (next position, key, value) or None
     positional_only(a, "_dict_next", 2, 2);
     if (!is_kind(a.pos(0), Kind::Dict)) raise_new("TypeError", "_dict_next() needs a dict");
@@ -1848,6 +1847,7 @@ Ref i_dict_next(Obj, Args a) {                   // PyDict_Next: (next position,
     }
     return none_ref();
 }
+namespace {
 Ref i_set_add(Obj, Args a) {
     positional_only(a, "set_add", 2, 2);
     set_add(a.pos(0), a.pos(1));
