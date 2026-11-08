@@ -289,6 +289,33 @@ print(math.gcd(2**200, 3**100 * 2**150), math.lcm(2**100, 3**50), math.gcd(-12, 
 print(m(lambda: math.sqrt()), m(lambda: math.atan2(1, 2, 3)), m(lambda: math.copysign(1)), m(lambda: math.log(1, 2, 3)), m(lambda: math.fma(1, 2)), m(lambda: math.hypot(1, x=2)), m(lambda: math.dist()), m(lambda: math.sumprod([1])), m(lambda: math.isclose()), m(lambda: math.prod()), m(lambda: math.nextafter()), m(lambda: math.ulp(1, 2)), m(lambda: math.gcd(1, [])), m(lambda: math.lcm(x=1)), m(lambda: math.isqrt()), m(lambda: math.factorial(n=5)), m(lambda: math.comb(5, k=2)), m(lambda: math.perm(5, k=2)), m(lambda: math.ldexp(1)), m(lambda: math.frexp()), m(lambda: math.modf(1, 2)), m(lambda: math.fmod(1)), m(lambda: math.remainder()), m(lambda: math.trunc()), m(lambda: math.floor(1, 2)), m(lambda: math.degrees()), m(lambda: math.isnan(1, 2)), m(lambda: math.fmax(1, 2, 3)), m(lambda: math.erf()), m(lambda: math.gamma(1, 2)), m(lambda: math.exp(x=1)), m(lambda: math.log(x=1)))
 """
 
+DIGESTS = r"""
+import _blake2, _hmac, _md5, _sha1, _sha2, _sha3, hashlib, hmac
+def m(f):
+    try:
+        return repr(f())
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+data = bytes(range(256)) * 9
+for c in (_md5.md5, _sha1.sha1, _sha2.sha224, _sha2.sha256, _sha2.sha384, _sha2.sha512, _sha3.sha3_224, _sha3.sha3_256, _sha3.sha3_384, _sha3.sha3_512, _blake2.blake2b, _blake2.blake2s):
+    whole = c(data).hexdigest()
+    piecewise = c()
+    for size in (1, 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 64, 65, 127, 128, 129, 1000):
+        piecewise.update(data[:size])
+        data = data[size:] + data[:size]
+    print(c.__name__ if hasattr(c, "__name__") else c, whole[:16], piecewise.hexdigest()[:16], c(b"").hexdigest()[:16], c(b"a" * 1000000).hexdigest()[:16])
+print(_sha3.shake_128(data).hexdigest(300)[-16:], _sha3.shake_256(data).hexdigest(300)[-16:], _sha3.shake_128(b"").digest(0), _sha3.shake_256(b"x").digest(1).hex())
+print(_blake2.blake2b(data, digest_size=1).hexdigest(), _blake2.blake2b(data, key=data[:64], salt=data[:16], person=data[16:32], fanout=255, depth=255, leaf_size=2**32 - 1, node_offset=2**64 - 1, node_depth=255, inner_size=64, last_node=True).hexdigest()[:16], _blake2.blake2s(data, key=data[:32], salt=data[:8], person=data[8:16], fanout=255, depth=255, leaf_size=2**32 - 1, node_offset=2**48 - 1, node_depth=255, inner_size=32, last_node=True).hexdigest()[:16], _blake2.blake2b(b"", key=b"\x00" * 64).hexdigest()[:16], _blake2.blake2s(b"", key=b"\x00" * 32).hexdigest()[:16])
+for name in ("md5", "sha1", "sha256", "sha512", "sha3_256", "sha3_512"):
+    for klen in (0, 63, 64, 65, 135, 136, 137, 143, 144, 145, 71, 72, 73):
+        k = data[:klen]
+        assert _hmac.compute_digest(k, data, name) == _hmac.new(k, data, name).digest() == hmac.new(k, data, name).digest() == hmac.digest(k, data, name), (name, klen)
+    print(name, _hmac.compute_digest(data[:5], data, name).hex()[:16], hmac.new(data[:200], data, getattr(hashlib, name)).hexdigest()[:16])
+print(hmac.new(b"key", b"The quick brown fox jumps over the lazy dog", hashlib.sha256).hexdigest(), hashlib.sha1(b"The quick brown fox jumps over the lazy dog").hexdigest(), hashlib.md5(b"The quick brown fox jumps over the lazy dog").hexdigest(), hashlib.sha3_256(b"").hexdigest(), hashlib.blake2b(b"abc").hexdigest()[:32], hashlib.blake2s(b"abc").hexdigest()[:32], hashlib.shake_128(b"").hexdigest(16), hashlib.sha512(b"abc").hexdigest()[:32], hashlib.sha384(b"abc").hexdigest()[:32], hashlib.sha224(b"abc").hexdigest()[:32])
+h = hashlib.sha256(); h.update(b"a"); g = h.copy(); g.update(b"b"); h.update(b"b")
+print(h.hexdigest() == g.hexdigest() == hashlib.sha256(b"ab").hexdigest(), h.name, h.digest_size, h.block_size, hashlib.new("SHA1", b"a").name, m(lambda: hmac.new(b"k", b"m", "md5").name), hmac.compare_digest(hashlib.sha1(b"a").digest(), hashlib.sha1(b"a").digest()), m(lambda: hmac.new(b"k", 5, "sha1")), m(lambda: hashlib.sha1(5)), m(lambda: hashlib.sha1("s")))
+"""
+
 
 def test_json() -> None:
     """_json's scanner and encoder: the messages the case does not compare."""
@@ -326,12 +353,19 @@ def test_math() -> None:
     same(MATH)
 
 
+def test_digests() -> None:
+    """The digests over a long rotating input in every piece size, a million bytes, SHAKE's long output, BLAKE2 with every parameter at its
+    limit, HMAC with keys around each block size through _hmac, hmac and hashlib, and the known answers of the quick brown fox."""
+    same(DIGESTS)
+
+
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.compress(b'a')", "zlib"), ("import zlib\nzlib.ZLIB_VERSION", "ZLIB_VERSION"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
              ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"),
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
-             ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"))
+             ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
+             ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")

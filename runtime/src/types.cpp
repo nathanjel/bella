@@ -2302,7 +2302,7 @@ void present_as_c_types(Module* bootstrap) {
     forget_python_origin(se);
     present_methods(se);
     se->del_attr(N("__module__"));
-    if (Obj doc = cpython_doc("sentinel"); doc != None()) se->set_attr(N("__doc__"), doc);
+    if (Obj doc = cpython_doc("type:sentinel"); doc != None()) se->set_attr(N("__doc__"), doc);
     for (auto [name, get, set] : std::initializer_list<std::tuple<const char*, Ref (*)(Obj), void (*)(Obj, Obj)>>{
              {"__name__", sentinel_name_get, nullptr}, {"__module__", sentinel_module_get, sentinel_module_set}}) {
         auto* g = new GetSet(name, se, get, set);
@@ -2522,7 +2522,8 @@ void present_native_class(ClassObject* c, const std::string& module) {
         c->del_attr(N("__dict__"));
     present_methods(c);
     c->has_weakref = cpython_has("weakref", c->name);
-    if (Obj doc = cpython_doc(c->name); doc != None()) c->set_attr(N("__doc__"), doc);
+    if (Obj doc = cpython_doc("type:" + c->name); doc != None())   // the type's own doc; an empty row says CPython has None
+        c->set_attr(N("__doc__"), as_str(doc)->text.empty() ? None() : doc);
     if (cpython_has(c->name, "__class_getitem__") && !c->attrs.contains(N("__class_getitem__")))   // Py_GenericAlias, unless the class has its own
         method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
     // a C type whose + is sq_concat (and * sq_repeat) has __add__ and no __radd__ in CPython: the right operand's __radd__ goes first

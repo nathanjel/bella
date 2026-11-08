@@ -2533,7 +2533,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own
                 if (!c->attrs.contains(intern("__doc__")))
-                    if (Obj doc = cpython_doc(c->name); doc != None()) c->set_attr(intern("__doc__"), doc);
+                    if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !as_str(doc)->text.empty()) c->set_attr(intern("__doc__"), doc);
             };
             for (ClassObject* c : builtin_types()) own_doc(c);
             for (ClassObject* c : exception_classes()) own_doc(c);

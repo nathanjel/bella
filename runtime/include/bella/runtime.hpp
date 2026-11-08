@@ -404,6 +404,12 @@ void fill_struct(Module* m);                      // runtime/prelude/_struct.py:
 void fill_time(Module* m);                        // runtime/prelude/time.py: clocks, broken-down time, strftime, the zone
 void fill_math_integer(Module* m);                // runtime/prelude/_math_integer.py: math.integer
 void fill_math(Module* m);                        // runtime/prelude/math.py, with math.integer's six and the submodule
+void fill_md5(Module* m);                         // runtime/prelude/_md5.py, over hashes.cpp
+void fill_sha1(Module* m);                        // runtime/prelude/_sha1.py
+void fill_sha2(Module* m);                        // runtime/prelude/_sha2.py
+void fill_sha3(Module* m);                        // runtime/prelude/_sha3.py
+void fill_blake2(Module* m);                      // runtime/prelude/_blake2.py
+void fill_hmac(Module* m);                        // runtime/prelude/_hmac.py
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
@@ -1018,6 +1024,10 @@ Ref i_dict_next(Obj, Args a);                                // PyDict_Next for 
 Ref i_float_pack(Obj, Args a);                               // PyFloat_Pack2/4/8 for a prelude: (x, size, little_endian) -> bytes
 Ref i_float_unpack(Obj, Args a);                             // PyFloat_Unpack2/4/8 for a prelude: (data, little_endian) -> float
 Ref i_libm(Obj, Args a);                                     // the C library's floating-point functions for a prelude (libm.cpp)
+Ref i_hash_new(Obj, Args a);                                 // the digests for a prelude (hashes.cpp): (algorithm, params) -> state
+Ref i_hash_update(Obj, Args a);                              // (state, data) -> state
+Ref i_hash_digest(Obj, Args a);                              // (state) -> bytes
+Ref i_hash_xof(Obj, Args a);                                 // (state, length) -> bytes, a SHAKE's
 Ref i_bella_import_warning(Obj, Args a);
 Ref i_bella_set_lazy_attributes(Obj, Args a);
 
