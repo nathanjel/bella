@@ -1639,8 +1639,12 @@ Ref builtin_descr_qualname(Obj self) {           // descr_get_qualname, wrapper_
 }
 Ref builtin_module(Obj self);
 Ref builtin_doc(Obj self) {                      // from the table, for the ones written in Python as for those in C++; a method's waits
-    if (is_kind(self, Kind::Builtin))            // a method the prelude writes: its docstring is the C's ml_doc as CPython shows it
-        if (Obj written = static_cast<Builtin*>(self.object())->written.get(); is_kind(written, Kind::PyFunction)) return fn_doc(written);
+    if (is_kind(self, Kind::Builtin)) {
+        auto* b = static_cast<Builtin*>(self.object());
+        if (b->cls == types().builtin_method) return none_ref();   // a bound METH_METHOD (builtin_method): CPython 3.15.2 answers None
+        // a method the prelude writes with a docstring: the C's ml_doc as CPython shows it (one without: the C may have one, so it stops below)
+        if (Obj written = b->written.get(); is_kind(written, Kind::PyFunction) && fn_doc(written).get() != None()) return fn_doc(written);
+    }
     Ref module = builtin_module(self), name = builtin_name(self);
     const Str* m = as_str(module.get());
     if (m != nullptr || module.get() == None())      // the table's rows are <__module__>.<__name__>, "" for None (the error handlers of _codecs)
