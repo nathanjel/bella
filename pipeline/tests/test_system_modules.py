@@ -441,6 +441,17 @@ for mode in (csv.QUOTE_MINIMAL, csv.QUOTE_ALL, csv.QUOTE_NONNUMERIC, csv.QUOTE_N
         print(mode, repr(out.getvalue()))
     except csv.Error as e:
         print(mode, "Error:", e)
+out = io.StringIO()
+dw = csv.DictWriter(out, fieldnames=["name", "qty"])
+dw.writeheader()
+dw.writerow({"name": "n", "qty": 2})
+dw.writerows([{"name": "m"}, {"qty": 5, "name": "o"}])
+try:
+    dw.writerow({"name": "n", "bad": 2})
+except ValueError as e:
+    print(e)
+csv.DictWriter(out, fieldnames=["a"], extrasaction="ignore", restval="-").writerows([{"a": 1, "b": 2}, {}])
+print(repr(out.getvalue()), list(csv.DictReader(io.StringIO(out.getvalue(), newline=""))))
 """
 
 
@@ -630,7 +641,6 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
-             ("import csv, io\ncsv.DictWriter(io.StringIO(), ['a']).writerow({'a': 1})", "set operations on dict keys"),
              ("import threading\nthreading.Thread(target=print).start()", "creating a thread"), ("import threading\nlk = threading.Lock(); lk.acquire(); lk.acquire()", "no other thread can release"),
              ("import heapq\nlist(heapq.merge([1], [2]))", "list_iterator.__next__"))
     for body, name in cases:

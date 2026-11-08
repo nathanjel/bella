@@ -164,6 +164,16 @@ Ref set_slot(Obj self, Args a) {
     if (!is_kind(a.pos(0), Kind::Set)) return not_implemented();
     return reflected ? native_binary(op, a.pos(0), self) : native_binary(op, self, a.pos(0));
 }
+template <BinOp op, bool reflected>
+Ref dictview_slot(Obj self, Args a) {           // dictviews_sub and its kin: the other side any iterable, the view on either side
+    wrapper_args(a, reflected ? "__ror__" : "__or__", 1);
+    return reflected ? dictview_binary(op, a.pos(0), self) : dictview_binary(op, self, a.pos(0));
+}
+template <CmpOp op>
+Ref dictview_cmp_slot(Obj self, Args a) {
+    wrapper_args(a, cmp_name(op), 1);
+    return dictview_compare(op, self, a.pos(0));
+}
 template <bool reflected>
 Ref dict_or_slot(Obj self, Args a) {
     wrapper_args(a, "__or__", 1);
@@ -350,6 +360,22 @@ void init_slots() {
     slot(t.list, "sort", list_sort_m);
     slot(t.none, "__bool__", own_bool);
     slot(t.none, "__hash__", own_hash);
+    for (ClassObject* c : {t.dict_keys, t.dict_items}) {   // dictviews_as_number and dictview_richcompare
+        slot(c, "__or__", dictview_slot<BinOp::Or, false>);
+        slot(c, "__ror__", dictview_slot<BinOp::Or, true>);
+        slot(c, "__and__", dictview_slot<BinOp::And, false>);
+        slot(c, "__rand__", dictview_slot<BinOp::And, true>);
+        slot(c, "__sub__", dictview_slot<BinOp::Sub, false>);
+        slot(c, "__rsub__", dictview_slot<BinOp::Sub, true>);
+        slot(c, "__xor__", dictview_slot<BinOp::Xor, false>);
+        slot(c, "__rxor__", dictview_slot<BinOp::Xor, true>);
+        slot(c, "__eq__", dictview_cmp_slot<CmpOp::Eq>);
+        slot(c, "__ne__", dictview_cmp_slot<CmpOp::Ne>);
+        slot(c, "__lt__", dictview_cmp_slot<CmpOp::Lt>);
+        slot(c, "__le__", dictview_cmp_slot<CmpOp::Le>);
+        slot(c, "__gt__", dictview_cmp_slot<CmpOp::Gt>);
+        slot(c, "__ge__", dictview_cmp_slot<CmpOp::Ge>);
+    }
     for (ClassObject* c : {t.set, t.frozenset}) {
         slot(c, "__or__", set_slot<BinOp::Or, false>);
         slot(c, "__ror__", set_slot<BinOp::Or, true>);

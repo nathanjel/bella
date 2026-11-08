@@ -404,6 +404,76 @@ Ref set_compare(CmpOp op, Obj v, Obj w) {         // set_richcompare
     }
 }
 
+// ---- the set operations of dict keys and items views (Objects/dictobject.c) ----
+namespace {
+bool contains(Obj container, Obj item) { return truth(compare(CmpOp::In, item, container).get()); }   // PySequence_Contains
+std::size_t view_len(Obj v) { return static_cast<Dict*>(static_cast<DictView*>(v.object())->dict.object())->used; }
+Ref dictviews_to_set(Obj self) {                 // PySet_New(self), the keys view of an exact dict read as the dict (its hashes)
+    Ref result = own(new SetObject(false));
+    Obj source = self;
+    if (is_kind(self, Kind::DictView) && static_cast<DictView*>(self.object())->which == DictView::Keys &&
+        is_exact_dict(static_cast<DictView*>(self.object())->dict))
+        source = static_cast<DictView*>(self.object())->dict;
+    set_update(result.get(), source);
+    return result;
+}
+Ref dictview_intersect(Obj self, Obj other) {    // _PyDictView_Intersect
+    if (!set_like_view(self)) std::swap(self, other);
+    std::size_t len_self = view_len(self);
+    if (is_kind(other, Kind::Set) && !as_set(other)->frozen && !is_subclass_instance(other) && len_self <= as_set(other)->used)
+        return intersection_any(other, self);    // other.intersection(self): the keys of self that other holds
+    if (set_like_view(other) && view_len(other) > len_self) std::swap(self, other);
+    Ref result = own(new SetObject(false));
+    Ref it = iter(other);
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+        if (contains(self, v.get())) set_add(result.get(), v.get());
+    return result;
+}
+bool all_contained_in(Obj self, Obj other) {
+    Ref it = iter(self);
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+        if (!contains(other, v.get())) return false;
+    return true;
+}
+}  // namespace
+Ref dictview_binary(BinOp op, Obj a, Obj b) {    // dictviews_sub, _PyDictView_Intersect, dictviews_or, dictviews_xor: a set
+    if (op == BinOp::And) return dictview_intersect(a, b);
+    Ref result = dictviews_to_set(a);
+    if (op == BinOp::Sub) difference_update(result.get(), b);
+    else if (op == BinOp::Or) set_update(result.get(), b);
+    else symmetric_difference_update(result.get(), b);
+    return result;
+}
+Ref dictview_compare(CmpOp op, Obj self, Obj other) {   // dictview_richcompare: against a set, a frozenset or a keys or items view
+    if (!is_kind(other, Kind::Set) && !set_like_view(other)) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+    std::size_t len_self = view_len(self);
+    std::size_t len_other = is_kind(other, Kind::Set) ? as_set(other)->used : view_len(other);
+    bool ok = false;
+    switch (op) {
+        case CmpOp::Eq: ok = len_self == len_other && all_contained_in(self, other); break;
+        case CmpOp::Ne: ok = !(len_self == len_other && all_contained_in(self, other)); break;
+        case CmpOp::Lt: ok = len_self < len_other && all_contained_in(self, other); break;
+        case CmpOp::Le: ok = len_self <= len_other && all_contained_in(self, other); break;
+        case CmpOp::Gt: ok = len_self > len_other && all_contained_in(other, self); break;
+        case CmpOp::Ge: ok = len_self >= len_other && all_contained_in(other, self); break;
+        default: return Ref::steal(Obj::of(NOTIMPLEMENTED));
+    }
+    return Ref::steal(boolean(ok));
+}
+Ref dictview_isdisjoint_m(Obj self, Args a) {    // dictviews_isdisjoint
+    onearg(a, type_of(self)->name + ".isdisjoint");
+    Obj other = a.pos(0);
+    if (other == self) return Ref::steal(boolean(view_len(self) == 0));
+    if (is_kind(other, Kind::Set) || set_like_view(other)) {   // the shorter is iterated, when the other side is cheap to ask
+        std::size_t len_other = is_kind(other, Kind::Set) ? as_set(other)->used : view_len(other);
+        if (len_other > view_len(self)) std::swap(self, other);
+    }
+    Ref it = iter(other);
+    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+        if (contains(self, v.get())) return Ref::steal(boolean(false));
+    return Ref::steal(boolean(true));
+}
+
 Ref build_folded_set(std::initializer_list<Obj> items) {   // BUILD_SET 0, a frozenset constant, SET_UPDATE
     Ref constant = own(new SetObject(true));
     for (Obj v : items) set_add(constant.get(), v);

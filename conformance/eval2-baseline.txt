@@ -55,6 +55,7 @@ C-6-15_format.py
 C-6-16_percent_format.py
 C-6-17_complex.py
 C-6-18_exceptions_os_and_syntax.py
+C-6-19_dict_view_sets.py
 C-7-01_hash_and_hmac_surface.py
 C-7-02_traceback_formats_module_not_found.py
 C-7-05_core_data_collections_itertools_functools.py

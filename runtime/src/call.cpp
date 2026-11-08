@@ -962,6 +962,9 @@ Ref view_contains_m(Obj self, Args a) {
     dunder_args(self, a, "__contains__", 1);
     return compare(CmpOp::In, a.pos(0), self);
 }
+Ref view_mapping(Obj self) {                     // dictview_mapping: a mappingproxy over the dict (3.10)
+    return own(new Proxy(static_cast<DictView*>(self.object())->dict));
+}
 
 Ref dict_clear_m(Obj self, Args a) {
     noargs(a, "dict.clear");
@@ -1537,7 +1540,11 @@ Module* make_builtins() {
         method(v, "__len__", view_len_m);
         method(v, "__iter__", view_iter_m);
         method(v, "__reversed__", view_reversed_m);
-        if (v != t.dict_values) method(v, "__contains__", view_contains_m);
+        v->attrs.set(intern("mapping"), Obj::of(new GetSet("mapping", v, view_mapping, nullptr)));
+        if (v != t.dict_values) {
+            method(v, "__contains__", view_contains_m);
+            method(v, "isdisjoint", dictview_isdisjoint_m);
+        }
     }
     method(t.dict, "clear", dict_clear_m);
     method(t.dict, "copy", dict_copy_m);

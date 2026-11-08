@@ -352,10 +352,9 @@ Ref binary_op1(BinOp op, Obj a, Obj b) {
 }
 
 Ref binary(BinOp op, Obj a, Obj b) {
-    if ((set_like_view(a) || set_like_view(b)) && set_like_operator(op))
-        throw NotImplemented("set operations on dict keys and items views");
     Ref r = binary_op1(op, a, b);
     if (!not_implemented(r)) return r;
+    if ((set_like_view(a) || set_like_view(b)) && set_like_operator(op)) return dictview_binary(op, a, b);   // the view's nb_* slot
     r = sequence_op(op, a, b, false);
     if (!not_implemented(r)) return r;
     // a class's own method that declined has answered for that operand; the table speaks of the built-ins
@@ -366,7 +365,6 @@ Ref binary(BinOp op, Obj a, Obj b) {
 
 // PyNumber_InPlace*: the left operand's in-place method, then binary_op1, then the sequence step
 Ref inplace(BinOp op, Obj a, Obj b) {
-    if (set_like_view(a) && set_like_operator(op)) throw NotImplemented("set operations on dict keys and items views");
     if ((is_heap_obj(a) || overridden(a, BIN_NAMES[static_cast<int>(op)][2])) &&
         !((op == BinOp::Add || op == BinOp::Mul) && sequence_slot_of(a, BIN_NAMES[static_cast<int>(op)][2]))) {
         bool has = false;
@@ -383,6 +381,7 @@ Ref inplace(BinOp op, Obj a, Obj b) {
     }
     Ref r = binary_op1(op, a, b);
     if (!not_implemented(r)) return r;
+    if ((set_like_view(a) || set_like_view(b)) && set_like_operator(op)) return dictview_binary(op, a, b);   // no in-place slot: the binary
     r = sequence_op(op, a, b, true);
     if (!not_implemented(r)) return r;
     std::string sym = op == BinOp::Pow ? "**=" : std::string(symbol(op)) + "=";
@@ -643,7 +642,10 @@ Ref compare(CmpOp op, Obj a, Obj b) {
         case CmpOp::NotIn: return Ref::steal(boolean(!contains(b, a)));
         default: break;
     }
-    if (set_like_view(a) || set_like_view(b)) throw NotImplemented("comparing dict keys and items views (as sets)");
+    if (set_like_view(a)) {                      // dictview_richcompare: the view's own slot (nothing subclasses a view)
+        Ref r = dictview_compare(op, a, b);
+        if (!not_implemented(r)) return r;
+    }
     std::int64_t x, y;
     if (as_exact_int(a, x) && as_exact_int(b, y)) return Ref::steal(boolean(ordered(op, x, y)));
     ClassObject *ta = type_of(a), *tb = type_of(b);
@@ -655,6 +657,10 @@ Ref compare(CmpOp op, Obj a, Obj b) {
     }
     Ref r = compare_side(a, b, op);
     if (!not_implemented(r)) return r;
+    if (set_like_view(b)) {                      // the reflected slot of a view on the right (a set's own declined it)
+        r = dictview_compare(swapped(op), b, a);
+        if (!not_implemented(r)) return r;
+    }
     if (!checked_reverse) {
         r = compare_side(b, a, swapped(op));
         if (!not_implemented(r)) return r;

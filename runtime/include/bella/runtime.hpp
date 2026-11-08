@@ -792,6 +792,10 @@ bool set_contains_hashed(SetObject* s, Obj key, std::int64_t hash);
 bool set_discard(SetObject* s, Obj key);
 Ref set_binary(BinOp op, Obj a, Obj b);                      // | & - ^ of sets and frozensets, else NotImplemented
 Ref set_inplace(BinOp op, Obj a, Obj b);                     // |= &= -= ^= of a set
+Ref dictview_binary(BinOp op, Obj a, Obj b);                 // - & | ^ with a dict keys or items view on either side: a set
+Ref dictview_compare(CmpOp op, Obj self, Obj other);         // a view against a set or a view, else NotImplemented
+Ref dictview_isdisjoint_m(Obj self, Args a);                 // dict_keys.isdisjoint, dict_items.isdisjoint
+bool set_like_view(Obj v);                                   // a keys or items view (dict_values has no set operations)
 Ref set_compare(CmpOp op, Obj a, Obj b);                     // equality, subset and superset
 void init_sets();
 void list_append(Obj list, Obj value);
