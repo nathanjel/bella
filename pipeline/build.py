@@ -47,6 +47,9 @@ BUILD = ROOT / "build" / "compiled"
 INCLUDE = ROOT / "runtime" / "include"
 SOURCES = sorted((ROOT / "runtime" / "src").glob("*.cpp"))
 INCLUDED = sorted((ROOT / "runtime" / "src").glob("*.inc"))       # generated tables the sources include
+# vendored C libraries built into the runtime (docs/licences.md): zlib 1.3.2, the pin's, for the zlib module (runtime/src/zlib.cpp)
+VENDORED_C = sorted((ROOT / "runtime" / "vendor" / "zlib-1.3.2").glob("*.c"))
+VENDORED_H = sorted((ROOT / "runtime" / "vendor" / "zlib-1.3.2").glob("*.h"))
 # the prelude's modules, in this order, each run as the module it names (runtime/src/call.cpp, run_main)
 PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT / "runtime" / "prelude" / "builtins.py", "builtins"),
            (ROOT / "runtime" / "prelude" / "iterating.py", "builtins"), (ROOT / "runtime" / "prelude" / "templatelib.py", "builtins"),
@@ -75,6 +78,7 @@ STD = os.environ.get("CXXSTD", "c++26")
 # division; -mfma reproduces it): the program's numbers must not depend on what the compiler's target has.
 FP_FLAGS = ["-ffp-contract=off"]
 RUNTIME_FLAGS = ["-O2", "-g", "-Wall", "-Wextra", *FP_FLAGS]
+VENDORED_FLAGS = ["-O2", "-w", *FP_FLAGS]          # the vendored C, with its own warnings off
 # -fno-tree-pta: GCC 16's -O1 is super-linear on a long function full of temporaries with destructors.
 # A 3143-line module body took over 25 minutes and 24 MB; without the analysis, 15 seconds and 1.2 MB,
 # with no measurable cost at run time (fib and an object, dict and exception workload, within noise).
@@ -123,8 +127,11 @@ def _pipeline_bytes() -> tuple[bytes, ...]:
 
 
 def _compile(src: Path, obj: Path, flags: list[str], cxx: str, std: str) -> None:
-    proc = subprocess.run([cxx, f"-std={std}", *flags, f"-I{INCLUDE}", "-x", "c++", "-c", str(src), "-o", str(obj)],
-                          capture_output=True, text=True, check=False)
+    if src.suffix == ".c":                       # a vendored C library: the compiler's C front end, its own standard
+        proc = subprocess.run([cxx, *flags, "-x", "c", "-c", str(src), "-o", str(obj)], capture_output=True, text=True, check=False)
+    else:
+        proc = subprocess.run([cxx, f"-std={std}", *flags, f"-I{INCLUDE}", "-x", "c++", "-c", str(src), "-o", str(obj)],
+                              capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         raise RuntimeError(f"{cxx} failed on {src}:\n{proc.stderr[-4000:]}")
 
@@ -143,22 +150,22 @@ class _Lock:
 
 
 def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
-    key = _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED]), *(p.read_bytes() for p, _ in PRELUDE),
+    key = _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED, *VENDORED_C, *VENDORED_H]), *(p.read_bytes() for p, _ in PRELUDE),
                *(p.read_bytes() for p in NATIVE_IN_PYTHON), *_pipeline_bytes(),
-               " ".join([cxx, std, *RUNTIME_FLAGS, *PRELUDE_FLAGS]).encode())
+               " ".join([cxx, std, *RUNTIME_FLAGS, *PRELUDE_FLAGS, *VENDORED_FLAGS]).encode())
     out = BUILD / f"runtime-{key}"
     lib = out / "libbella.a"
     with _Lock(BUILD / "runtime.lock"):
         if lib.exists():
             return lib
         out.mkdir(parents=True, exist_ok=True)
-        units = [(u, RUNTIME_FLAGS) for u in SOURCES]
+        units = [(u, RUNTIME_FLAGS) for u in SOURCES] + [(u, VENDORED_FLAGS) for u in VENDORED_C]
         for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON]:
             cpp = out / f"prelude_{p.stem}.cpp"
             cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem.lstrip('_')}", prelude=True),
                            encoding="utf-8")
             units.append((cpp, PRELUDE_FLAGS))
-        objs = [out / f"{u.stem}.o" for u, _ in units]
+        objs = [out / f"{u.stem}{'.c' if u.suffix == '.c' else ''}.o" for u, _ in units]   # zlib's crc32.c beside the runtime's units
         with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
             list(pool.map(lambda uo: _compile(uo[0][0], uo[1], uo[0][1], cxx, std), zip(units, objs, strict=True)))
         subprocess.run(["ar", "rcs", str(lib) + ".tmp", *map(str, objs)], check=True)

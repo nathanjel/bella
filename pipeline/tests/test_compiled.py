@@ -442,17 +442,18 @@ def test_an_exposed_dict_stays_split_compiled_3a3() -> None:
     same("\n".join(parts))
 
 
-def test_dict_view_set_operations_are_refused_3a3() -> None:
-    """What the views cannot do yet stops the program (exit 70), never answers wrongly."""
+def test_dict_view_set_operations_3a3() -> None:
+    """The views' set operations answer as CPython's (C-6-19); what they still cannot do stops the program, never answers wrongly."""
     if not _HAVE_CXX:
         return
-    for op in ("d.keys() & {'a'}", "d.items() | set()", "d.keys() == {'a'}", "d.keys().isdisjoint([])"):
+    for op, expected in (("d.keys() & {'a'}", "{'a'}"), ("d.items() | set()", "{('a', 1)}"), ("d.keys() == {'a'}", "True"), ("d.keys().isdisjoint([])", "True"),
+                         ("sorted(d.keys() ^ ['b'])", "['a', 'b']"), ("d.keys() < {'a', 'b'}", "True")):
         src = f"d = {{'a': 1}}\nprint('start')\nprint({op})\n"
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(src, encoding="utf-8")
             got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False)
-        assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr, (op, got)
+        assert (got.returncode, got.stdout) == (0, f"start\n{expected}\n"), (op, got)
 
 
 def test_argument_errors_are_cpythons() -> None:
@@ -479,7 +480,7 @@ def test_operators_cpython_has_and_the_runtime_lacks_are_refused() -> None:
     """bytes % (formatting), a keys view compared as a set: refused, never TypeError."""
     if not _HAVE_CXX:
         return
-    for body in ("print(b'%d' % 5)", "print({1: 2}.keys() == {1})", "class C:\n    pass\nprint(b'%s' % C())"):
+    for body in ("print(b'%d' % 5)", "class C:\n    pass\nprint(b'%s' % C())"):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text("print('start')\n" + body + "\n", encoding="utf-8")

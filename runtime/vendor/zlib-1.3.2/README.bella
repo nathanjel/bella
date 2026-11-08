@@ -1,0 +1,9 @@
+zlib 1.3.2, the version the pinned CPython 3.15.2 bundles (zlib.ZLIB_VERSION), vendored on 2026-11-08 for the
+runtime's zlib module (runtime/src/zlib.cpp; licence entry L-02, admitted by the author the same day). The
+files are those of the release tarball that deflate and inflate need (gzguts.h only because zutil.c includes it): the gz* file API, infback.c, the build
+files, examples and contrib are left out. Nothing is changed.
+
+Source: https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz
+        (the same bytes as https://zlib.net/fossils/zlib-1.3.2.tar.gz)
+SHA-256: bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
+Licence: LICENSE (the zlib License)

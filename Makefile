@@ -37,7 +37,7 @@ help:
 	@echo "make compiled-corpus   the corpus compiled through L2 into C++ (pipeline/build.py); conformance/evalc-baseline.txt"
 	@echo "make targets-eval1     the easy three under eval1, each with its whole closure lowered (the gates' second leg)"
 	@echo "make targets-eval2     the easy three through L2 under eval2, each with its whole closure"
-	@echo "make targets-compiled  the compiled binaries against the recordings (gates 1a.1 and 1a.3: cli_easy_slugs, data_easy_sales)"
+	@echo "make targets-compiled  the compiled binaries against the recordings (gates 1a.1 to 1a.3: the easy three)"
 	@echo "make targets-closure   each target's closure and the phase-1 increments -> targets/closure*"
 	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
 	@echo "make check             everything above (what CI runs): the closures, then the rest at once (JOBS=$(JOBS))"
@@ -78,7 +78,7 @@ targets-eval2:
 # the compiled binaries (the gates' third leg): pipeline/build.py builds each driver once (cached) and runs it; 1a.1's target today
 COMPILED_RUNNER = $(shell $(PY) -c "import sys; print(sys.executable)") -P $(CURDIR)/pipeline/build.py --run {driver} {argv}
 targets-compiled:
-	$(PY) targets/run_targets.py check --target cli_easy_slugs --target data_easy_sales --runner "$(COMPILED_RUNNER)"
+	$(PY) targets/run_targets.py check --target cli_easy_slugs --target service_easy_tokens --target data_easy_sales --runner "$(COMPILED_RUNNER)"
 
 staging-check:
 	$(PY) pipeline/staging/check.py

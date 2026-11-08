@@ -1039,6 +1039,7 @@ Ref i_hash_new(Obj, Args a);                                 // the digests for 
 Ref i_hash_update(Obj, Args a);                              // (state, data) -> state
 Ref i_hash_digest(Obj, Args a);                              // (state) -> bytes
 Ref i_hash_xof(Obj, Args a);                                 // (state, length) -> bytes, a SHAKE's
+Ref i_zlib(Obj, Args a);                                     // runtime/src/zlib.cpp: _zlib(name, ...) over zlib 1.3.2
 Ref i_bella_import_warning(Obj, Args a);
 Ref i_bella_set_lazy_attributes(Obj, Args a);
 

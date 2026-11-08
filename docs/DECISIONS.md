@@ -912,3 +912,7 @@ time; the program's own stay at `-O1`).
 
 **2026-11-08 — gate 1a.3 reached.** The compiled `data_easy_sales` agrees with its recording; `make targets-compiled` now checks `cli_easy_slugs` and `data_easy_sales`.
 
+**2026-11-08 — L-02 settled: zlib itself, vendored at the pin's version (author).** The author admitted the zlib License; only zlib's own deflate reproduces the bytes CPython makes (miniz and zlib-ng compress differently, and Fedora's system "zlib" is zlib-ng), so the runtime builds zlib 1.3.2, the version the pinned CPython bundles, from source vendored under `runtime/vendor/zlib-1.3.2` rather than linking the host's library: the same bytes on every machine, verified against the pin's. The C module's output buffer schedule is replicated because deflate's stored blocks and flushes take their boundaries from the space offered. L-04 (the in-house digests) got the author's nod the same day.
+
+**2026-11-08 — gate 1a.2 reached.** The compiled `service_easy_tokens` agrees with its recording; the easy three targets are done compiled, and `make targets-compiled` checks all three.
+

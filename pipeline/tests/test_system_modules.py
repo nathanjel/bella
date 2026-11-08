@@ -627,6 +627,54 @@ def test_bisect() -> None:
     same(BISECT)
 
 
+ZLIB = r"""
+import zlib, io, base64
+def gen(n):
+    x = 101 + n
+    while True:
+        x = (x * 1103515245 + 12345) & 0x7fffffff
+        yield x
+g = gen(3)
+blocks = [bytes(next(g) % 256 for _ in range(1 + next(g) % 3000)) for _ in range(12)] + [bytes([next(g) % 16]) * (next(g) % 5000) for _ in range(6)] + [b"", b"a", b"ab" * 70000]
+for level in (-1, 0, 1, 5, 9):
+    comps = [zlib.compress(b, level) for b in blocks]
+    print(level, [len(c) for c in comps], all(zlib.decompress(c) == b for c, b in zip(comps, blocks)), zlib.crc32(b"".join(comps)), zlib.adler32(b"".join(comps)))
+co = zlib.compressobj(7, wbits=31, memLevel=6)
+stream = b"".join(co.compress(b) for b in blocks) + co.flush()
+d = zlib.decompressobj(31)
+got = []
+for i in range(0, len(stream), 1000):
+    got.append(d.decompress(stream[i:i + 1000]))
+got.append(d.flush())
+print(len(stream), b"".join(got) == b"".join(blocks), d.eof, zlib.crc32(stream), zlib.decompress(stream, 47) == b"".join(blocks))
+d = zlib.decompressobj()
+body = zlib.compress(b"".join(blocks))
+out = bytearray()
+pending = body
+sizes = []
+while pending or d.unconsumed_tail:
+    chunk = d.decompress(pending, 4096)
+    out += chunk
+    sizes.append(len(chunk))
+    pending = d.unconsumed_tail
+    if d.eof:
+        break
+print(bytes(out) == b"".join(blocks), len(sizes), sizes[:3], sizes[-2:], d.eof, d.unused_data, d.flush())
+z = zlib._ZlibDecompressor()
+out = bytearray()
+for i in range(0, len(body), 777):
+    out += z.decompress(body[i:i + 777], 2000)
+    while not z.needs_input and not z.eof:
+        out += z.decompress(b"", 2000)
+print(bytes(out) == b"".join(blocks), z.eof, z.needs_input, z.unused_data)
+sync = zlib.compressobj(wbits=-15)
+parts = [sync.compress(blocks[0]) + sync.flush(zlib.Z_SYNC_FLUSH), sync.compress(blocks[1]) + sync.flush(zlib.Z_FULL_FLUSH), sync.compress(blocks[2]) + sync.flush()]
+print([len(p) for p in parts], [p[-4:] for p in parts[:2]], zlib.decompress(b"".join(parts), -15) == b"".join(blocks[:3]))
+token = base64.urlsafe_b64encode(zlib.compress(b'{"id": 7, "name": "token"}')).rstrip(b"=")
+print(token, zlib.decompress(base64.urlsafe_b64decode(token + b"=" * (-len(token) % 4))))
+"""
+
+
 def test_random_statistics_heapq_threading() -> None:
     """The twister over two thousand words and a thousand bits, random's distributions, statistics over five hundred samples with
     NormalDist.from_samples and the inverse CDF, Counter.most_common and the heaps over the words, and CPython's own threading module
@@ -634,8 +682,15 @@ def test_random_statistics_heapq_threading() -> None:
     same(RANDOM_STATISTICS_HEAPQ)
 
 
+def test_zlib() -> None:
+    """zlib 1.3.2 built into the runtime against the pin's: twenty-one blocks (random bytes, runs, empty, a 140 KB repeat) at five
+    levels, a gzip stream compressed in pieces and read back in pieces, a bounded decompressobj loop, _ZlibDecompressor's buffering,
+    sync and full flushes in a raw stream, and the itsdangerous-style token."""
+    same(ZLIB)
+
+
 def test_what_is_absent_stops_by_name() -> None:
-    cases = (("import zlib\nzlib.compress(b'a')", "zlib"), ("import zlib\nzlib.ZLIB_VERSION", "ZLIB_VERSION"), ("import ast\nast.parse('1')", "compile()"),
+    cases = (("import zlib\nzlib.crc32(b'a', -1)", "unsigned 32-bit"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
              ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"),
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
