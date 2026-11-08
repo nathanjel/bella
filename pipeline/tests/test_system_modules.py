@@ -383,10 +383,77 @@ def test_function_annotations() -> None:
     same(FUNCTION_ANNOTATIONS)
 
 
+CSV = r"""
+import _csv, csv, io
+def gen(n):
+    x = 4242 + n
+    while True:
+        x = (x * 1103515245 + 12345) & 0x7fffffff
+        yield x
+alphabet = ['a', 'b', ' ', ',', '"', ';', '\\', '\n', '\r', '\r\n', '\t', 'é', '\u2603', '']
+rows = []
+g = gen(7)
+for i in range(60):
+    row = []
+    for j in range(1 + next(g) % 5):
+        k = next(g) % 4
+        if k == 0:
+            row.append(None)
+        elif k == 1:
+            row.append(next(g) % 1000 if next(g) % 2 else next(g) / 7.0)
+        else:
+            row.append("".join(alphabet[next(g) % len(alphabet)] for _ in range(next(g) % 6)))
+    rows.append(row)
+for quoting in (0, 1, 2, 4, 5):
+    for kw in ({}, {"escapechar": "\\"}, {"doublequote": False, "escapechar": "\\"}, {"delimiter": ";", "lineterminator": "\n"}, {"skipinitialspace": True, "escapechar": "\\"}):
+        out = io.StringIO()
+        try:
+            w = _csv.writer(out, quoting=quoting, **kw)
+            for row in rows:
+                w.writerow(row)
+            text = out.getvalue()
+        except _csv.Error as e:
+            print(quoting, sorted(kw.items()), "Error:", e)
+            continue
+        back = []
+        r = _csv.reader(io.StringIO(text, newline=""), quoting=quoting, **kw)
+        try:
+            for row in r:
+                back.append(row)
+        except Exception as e:
+            print(quoting, sorted(kw.items()), len(text), type(e).__name__, e, r.line_num)
+            continue
+        print(quoting, sorted(kw.items()), len(text), len(back), r.line_num, sum(len(x) for x in back), back == [[("" if f is None else str(f)) for f in row] for row in rows] if quoting in (0, 1) else back[:3])
+text = "id,name,amount,date\r\n1,\"Smith, J\",10.50,2026-01-02\r\n2,\"O\"\"Brien\",7,2026-01-03\r\n3,\"multi\r\nline\",0.5,2026-02-01\r\n"
+print(list(csv.DictReader(io.StringIO(text, newline=""))))
+r = csv.reader(io.StringIO(text, newline=""))
+print([(row, r.line_num) for row in r])
+print(csv.Sniffer().sniff(text).delimiter, csv.Sniffer().sniff(text).quotechar, csv.Sniffer().has_header(text))
+print(csv.Sniffer().sniff("a|b|c\n1|2|3\n4|5|6\n").delimiter, csv.Sniffer().has_header("a|b|c\n1|2|3\n4|5|6\n"))
+try:
+    csv.Sniffer().sniff("")
+except csv.Error as e:
+    print("Error:", e)
+for mode in (csv.QUOTE_MINIMAL, csv.QUOTE_ALL, csv.QUOTE_NONNUMERIC, csv.QUOTE_NONE, csv.QUOTE_STRINGS, csv.QUOTE_NOTNULL):
+    out = io.StringIO()
+    try:
+        csv.writer(out, quoting=mode, escapechar="\\").writerows([["x", 1, None, 2.5, "a,b"], [], [""], [None]])
+        print(mode, repr(out.getvalue()))
+    except csv.Error as e:
+        print(mode, "Error:", e)
+"""
+
+
 def test_digests() -> None:
     """The digests over a long rotating input in every piece size, a million bytes, SHAKE's long output, BLAKE2 with every parameter at its
     limit, HMAC with keys around each block size through _hmac, hmac and hashlib, and the known answers of the quick brown fox."""
     same(DIGESTS)
+
+
+def test_csv() -> None:
+    """_csv's writer and reader round trip sixty generated rows (delimiters, quotes, backslashes, line endings and empty fields) under each
+    quoting mode and five dialects, the csv package's DictReader, reader with line_num, Sniffer and writer over them."""
+    same(CSV)
 
 
 def test_what_is_absent_stops_by_name() -> None:
@@ -395,7 +462,8 @@ def test_what_is_absent_stops_by_name() -> None:
              ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"),
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
-             ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"))
+             ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
+             ("import csv, io\ncsv.DictWriter(io.StringIO(), ['a']).writerow({'a': 1})", "set operations on dict keys"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
