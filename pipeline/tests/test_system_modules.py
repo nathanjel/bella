@@ -450,10 +450,75 @@ def test_digests() -> None:
     same(DIGESTS)
 
 
+CONTEXTVARS = r"""
+import contextvars
+counter = contextvars.ContextVar("counter", default=0)
+trail = contextvars.ContextVar("trail")
+def bump(n):
+    tokens = []
+    for i in range(n):
+        tokens.append(counter.set(counter.get() + 1))
+    seen = [counter.get()]
+    for tok in reversed(tokens):
+        counter.reset(tok)
+        seen.append(counter.get())
+    return seen
+print(bump(5), counter.get())
+def layered(depth):
+    ctx = contextvars.copy_context()
+    if depth == 0:
+        return [counter.get()]
+    counter.set(counter.get() + 10)
+    inner = ctx.run(layered, depth - 1)
+    return [counter.get()] + inner + [ctx[counter] if counter in ctx else None]
+print(layered(3), counter.get())
+snapshots = []
+for i in range(4):
+    trail.set(tuple(range(i)))
+    snapshots.append(contextvars.copy_context())
+print([c[trail] for c in snapshots], [len(c) for c in snapshots], snapshots[0] == snapshots[1], snapshots[3] == contextvars.copy_context())
+def run_in(ctx, f, *a):
+    return ctx.run(f, *a)
+print(run_in(snapshots[1], lambda: (trail.get(), counter.get(), counter.set(7).old_value, counter.get())), counter.get(), snapshots[1][counter])
+with counter.set(100) as tok:
+    with counter.set(200):
+        print(counter.get(), tok.old_value, tok.var.name)
+    print(counter.get())
+print(counter.get())
+try:
+    tok.__exit__(None, None, None)
+except RuntimeError as e:
+    print("RuntimeError", str(e).startswith("<Token used var=<ContextVar name='counter'"))
+names = [contextvars.ContextVar("n%d" % i, default=i) for i in range(20)]
+for i, v in enumerate(names):
+    if i % 2:
+        v.set(i * i)
+ctx = contextvars.copy_context()
+print(sorted((v.name, val) for v, val in ctx.items()), len(ctx), sum(1 for v in names if v in ctx), [v.get() for v in names])
+import decimal
+from decimal import Decimal, getcontext, localcontext
+print(getcontext().prec, Decimal(1) / Decimal(7))
+with localcontext() as c:
+    c.prec = 5
+    print(Decimal(1) / Decimal(7), getcontext().prec)
+print(Decimal(1) / Decimal(7), getcontext().prec)
+def in_ctx():
+    getcontext().prec = 3
+    return str(Decimal(1) / Decimal(7))
+print(contextvars.copy_context().run(in_ctx), str(Decimal(1) / Decimal(7)), getcontext().prec)
+"""
+
+
 def test_csv() -> None:
     """_csv's writer and reader round trip sixty generated rows (delimiters, quotes, backslashes, line endings and empty fields) under each
     quoting mode and five dialects, the csv package's DictReader, reader with line_num, Sniffer and writer over them."""
     same(CSV)
+
+
+def test_contextvars() -> None:
+    """Context variables set and reset in nests, layered copies run with their own variables, snapshots of the current context, the
+    token as a context manager, a context's mapping over twenty variables, and decimal's context through contextvars.ContextVar."""
+    same(CONTEXTVARS)
 
 
 def test_what_is_absent_stops_by_name() -> None:

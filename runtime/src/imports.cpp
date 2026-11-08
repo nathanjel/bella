@@ -50,6 +50,7 @@ namespace prelude_sha3 { Ref module_body(Module* m); }        // runtime/prelude
 namespace prelude_blake2 { Ref module_body(Module* m); }      // runtime/prelude/_blake2.py
 namespace prelude_hmac { Ref module_body(Module* m); }        // runtime/prelude/_hmac.py
 namespace prelude_csv { Ref module_body(Module* m); }         // runtime/prelude/_csv.py
+namespace prelude_contextvars { Ref module_body(Module* m); }   // runtime/prelude/_contextvars.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -367,7 +368,7 @@ struct NativeModule {
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
     static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
-        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}};
+        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}};
     return table;
 }
 }  // namespace
@@ -776,6 +777,7 @@ void fill_sha3(Module* m) { fill_digest(m, "_sha3", prelude_sha3::module_body); 
 void fill_blake2(Module* m) { fill_digest(m, "_blake2", prelude_blake2::module_body); }
 void fill_hmac(Module* m) { fill_digest(m, "_hmac", prelude_hmac::module_body); }
 void fill_csv(Module* m) { fill_in_python(m, "_csv", "_csv", prelude_csv::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
+void fill_contextvars(Module* m) { fill_in_python(m, "_contextvars", "_contextvars", prelude_contextvars::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_bella_caller_module", i_bella_caller_module},
