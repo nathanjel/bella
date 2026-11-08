@@ -1,0 +1,12 @@
+{
+ "case": "C-3-48_iterator_next_attribute.py",
+ "clause": "C-3-48",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "dialect specification section 3, Objects/iterobject.c, listobject.c, tupleobject.c, rangeobject.c, unicodeobject.c,",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "list_iterator method-wrapper __next__ <method-wrap True 1 [2, 3] | stop ()\n   expected 0 arguments, got 1\ntuple_iterator method-wrapper __next__ <method-wrap True 4 [] | stop ()\n   expected 0 arguments, got 1\nrange_iterator method-wrapper __next__ <method-wrap True 0 [1] | stop ()\n   expected 0 arguments, got 1\nstr_ascii_iterator method-wrapper __next__ <method-wrap True a ['b'] | stop ()\n   expected 0 arguments, got 1\nbytes_iterator method-wrapper __next__ <method-wrap True 120 [121] | stop ()\n   expected 0 arguments, got 1\ndict_keyiterator method-wrapper __next__ <method-wrap True 1 [] | stop ()\n   expected 0 arguments, got 1\ndict_valueiterator method-wrapper __next__ <method-wrap True 2 [] | stop ()\n   expected 0 arguments, got 1\ndict_itemiterator method-wrapper __next__ <method-wrap True (1, 2) [] | stop ()\n   expected 0 arguments, got 1\nlist_reverseiterator method-wrapper __next__ <method-wrap True 2 [1] | stop ()\n   expected 0 arguments, got 1\ndict_reversekeyiterator method-wrapper __next__ <method-wrap True 3 [] | stop ()\n   expected 0 arguments, got 1\nset_iterator method-wrapper __next__ <method-wrap True 5 [6] | stop ()\n   expected 0 arguments, got 1\nbytearray_iterator method-wrapper __next__ <method-wrap True 113 [] | stop ()\n   expected 0 arguments, got 1\nreversed method-wrapper __next__ <method-wrap True 8 [7] | stop ()\n   expected 0 arguments, got 1\n[1, 2, 3, 4, 5, 6, 7, 8, 9] [9, 8, 5, 4, 1] ['b', 'ab', 'c', 'dd'] [] [1]\nmethod-wrapper wrapper_descriptor __next__ True 5 tuple_iterator.__next__\ndescriptor '__next__' requires a 'list_iterator' object but received a 'tuple_iterator'\n",
+ "stderr": "",
+ "exit_code": 0
+}

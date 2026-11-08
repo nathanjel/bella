@@ -133,6 +133,13 @@ Ref str_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); retu
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
 Ref own_iter(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return iter(self); }
+Ref own_next(Obj self, Args a) {                 // the C++ iterators' tp_iternext as a slot wrapper: StopIteration at the end
+    wrapper_args(a, "__next__", 0);
+    Ref v = for_next(self);
+    if (!is_end(v)) return v;
+    Ref exc = invoke(Obj::of(exception_class("StopIteration")), {});
+    raise(exc.get());
+}
 Ref own_contains(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return compare(CmpOp::In, a.pos(0), self); }
 Ref own_getitem(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return getitem(self, a.pos(0)); }
 Ref own_add(Obj self, Args a) { wrapper_args(a, "__add__", 1); return sequence_concat(self, a.pos(0)); }
@@ -343,6 +350,12 @@ void init_slots() {
         slot(c, "__contains__", own_contains);
     }
     for (ClassObject* c : {t.list, t.tuple, t.range, t.bytes, t.bytearray}) slot(c, "__getitem__", own_getitem);
+    for (ClassObject* c : {t.range_iterator, t.longrange_iterator, t.tuple_iterator, t.list_iterator, t.list_reverseiterator, t.str_iterator,
+                           t.dict_keyiterator, t.dict_valueiterator, t.dict_itemiterator, t.dict_reversekeyiterator, t.dict_reversevalueiterator,
+                           t.dict_reverseitemiterator, t.bytes_iterator, t.bytearray_iterator, t.iterator, t.set_iterator}) {
+        slot(c, "__iter__", own_iter);           // PyObject_SelfIter and tp_iternext, as the attributes it.__iter__ and it.__next__
+        slot(c, "__next__", own_next);
+    }
     slot(t.str, "__repr__", str_repr_slot);
     slot(t.str, "__hash__", str_hash_slot);
     slot(t.str, "__len__", str_len_slot);

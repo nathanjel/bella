@@ -112,6 +112,7 @@ def type_names():
         yield 1
     samples = [iter(int, 1), iter([]), iter(()), iter(""), iter("é"), iter({}), iter({}.values()), iter({}.items()),
                iter(set()), iter(range(1)), iter(range(2**64)), iter(Seq()), reversed([]), {}.keys(), {}.values(), {}.items(),
+               iter(b""), iter(bytearray()), reversed({}), reversed({}.values()), reversed({}.items()),
                outer, outer().__closure__[0], outer.__code__, type.__dict__, [].append, list.append,
                dict.__dict__["fromkeys"], type.__dict__["__name__"], object.__init__, object().__init__,
                sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int]),
@@ -199,6 +200,7 @@ def docs():
     samples = [v for v in [type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(_io).values(), *vars(_ast).values(), pwd.struct_passwd, grp.struct_group, *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), _struct.Struct, type(struct.iter_unpack('b', b'a')), time.struct_time, _md5.MD5Type, _sha1.SHA1Type, *vars(_sha2).values(), *vars(_sha3).values(), *vars(_blake2).values(), _hmac.HMAC, _csv.Dialect, _csv.Reader, _csv.Writer, _csv.Error, _contextvars.Context, _contextvars.ContextVar, _contextvars.Token, type(_contextvars.Token.MISSING), type(_contextvars.copy_context().keys()), type(_contextvars.copy_context().values()), type(_contextvars.copy_context().items()), _random.Random, *vars(_thread).values(), *vars(_weakref).values()] if isinstance(v, type)]
     samples += [type(iter([])), type(iter(())), type(iter("")), type({}.keys()), type({}.values()), type({}.items()), type(iter({})),
                 type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout),
+                type(iter(b"")), type(iter(bytearray())), type(reversed({})), type(reversed({}.values())), type(reversed({}.items())),
                 type(t""), type(t"{0}".interpolations[0]), type(iter(t""))]
     for t in samples:                             # a type's doc under its own scope: _md5.md5 is a function and a type, with different docs
         out["type:" + tp_name(t)] = t.__doc__ if isinstance(t.__doc__, str) else ""
