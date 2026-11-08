@@ -515,10 +515,54 @@ def test_csv() -> None:
     same(CSV)
 
 
+BISECT = r"""
+import _bisect, bisect
+def gen(n):
+    x = 99 + n
+    while True:
+        x = (x * 1103515245 + 12345) & 0x7fffffff
+        yield x
+g = gen(3)
+values = [next(g) % 1000 for _ in range(400)]
+sorted_right, sorted_left = [], []
+for v in values:
+    _bisect.insort_right(sorted_right, v)
+    bisect.insort_left(sorted_left, v)
+print(sorted_right == sorted(values), sorted_left == sorted(values), len(sorted_right))
+probes = [next(g) % 1100 - 50 for _ in range(300)]
+ok = True
+for x in probes:
+    r, l = _bisect.bisect_right(sorted_right, x), _bisect.bisect_left(sorted_right, x)
+    ok = ok and all(e <= x for e in sorted_right[:r]) and all(e > x for e in sorted_right[r:]) and all(e < x for e in sorted_right[:l]) and all(e >= x for e in sorted_right[l:])
+    lo, hi = sorted((next(g) % 401, next(g) % 401))
+    rr = _bisect.bisect_right(sorted_right, x, lo, hi)
+    ok = ok and lo <= rr <= hi and all(e <= x for e in sorted_right[lo:rr]) and all(e > x for e in sorted_right[rr:hi])
+print(ok, sum(_bisect.bisect_right(sorted_right, x) - _bisect.bisect_left(sorted_right, x) for x in range(1000)))
+records = [(next(g) % 50, i) for i in range(200)]
+by_key = []
+for rec in records:
+    _bisect.insort_left(by_key, rec, key=lambda r: r[0])
+print([r[0] for r in by_key] == sorted(r[0] for r in records), [_bisect.bisect_right(by_key, k, key=lambda r: r[0]) for k in (0, 10, 25, 49, 50)], [_bisect.bisect_left(by_key, k, key=lambda r: r[0]) for k in (0, 10, 25, 49, 50)])
+stable = [r[1] for r in by_key if r[0] == by_key[100][0]]
+print(stable == sorted(stable))
+words = sorted("the quick brown fox jumps over the lazy dog".split())
+print(words, [bisect.bisect(words, w) for w in ("a", "fox", "foxy", "zzz", "")], [bisect.bisect_left(words, w) for w in ("a", "fox", "foxy", "zzz", "")])
+def grade(score, breakpoints=[60, 70, 80, 90], grades="FDCBA"):
+    return grades[bisect.bisect(breakpoints, score)]
+print([grade(s) for s in [33, 99, 77, 70, 89, 90, 60, 59]])
+"""
+
+
 def test_contextvars() -> None:
     """Context variables set and reset in nests, layered copies run with their own variables, snapshots of the current context, the
     token as a context manager, a context's mapping over twenty variables, and decimal's context through contextvars.ContextVar."""
     same(CONTEXTVARS)
+
+
+def test_bisect() -> None:
+    """insort keeps four hundred generated values sorted from both sides, bisect's answers bound the slices as the documentation
+    says over three hundred probes with random lo and hi, insort with a key is stable, and the bisect module's textbook uses."""
+    same(BISECT)
 
 
 def test_what_is_absent_stops_by_name() -> None:

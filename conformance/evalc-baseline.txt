@@ -81,6 +81,7 @@ C-7-38_math.py
 C-7-39_digests.py
 C-7-40_csv.py
 C-7-41_contextvars.py
+C-7-42_bisect.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

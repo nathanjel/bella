@@ -413,6 +413,7 @@ void fill_blake2(Module* m);                      // runtime/prelude/_blake2.py
 void fill_hmac(Module* m);                        // runtime/prelude/_hmac.py
 void fill_csv(Module* m);                         // runtime/prelude/_csv.py
 void fill_contextvars(Module* m);                 // runtime/prelude/_contextvars.py
+void fill_bisect(Module* m);                      // runtime/prelude/_bisect.py
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
