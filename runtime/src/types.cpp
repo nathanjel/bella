@@ -1398,8 +1398,8 @@ void set_type_annotations(Obj self, Obj v) {
 }
 Ref type_doc(Obj self) {
     ClassObject* c = self_class(self);
-    if (!c->heap_type)                           // type_get_doc: a static type's tp_doc
-        if (Obj d = cpython_doc(c->name); d != None()) return Ref::share(d);
+    if (!c->heap_type)                           // type_get_doc: a static type's tp_doc (the names table's type: scope)
+        if (Obj d = cpython_doc("type:" + c->name); d != None() && !as_str(d)->text.empty()) return Ref::share(d);
     if (const Obj* d = c->attrs.find(N("__doc__"))) return descr_get(*d, None(), self);
     return none_ref();
 }
