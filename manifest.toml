@@ -76,12 +76,13 @@ compiled = [
   "opcode", "operator", "os", "os.path", "pathlib", "pathlib._os", "posixpath",
   "pprint", "random", "re", "re._casefix", "re._compiler", "re._constants", "re._parser",
   "reprlib", "secrets", "shutil", "signal", "stat", "statistics", "string", "string.templatelib", "struct",
-  "tempfile", "textwrap", "token", "tokenize", "traceback", "types", "typing", "unittest",
+  "tempfile", "textwrap", "threading", "token", "tokenize", "traceback", "types", "typing", "unittest",
   "unittest.async_case", "unittest.case", "unittest.loader", "unittest.main", "unittest.result",
   "unittest._log", "unittest.runner", "unittest.signals", "unittest.suite", "unittest.util", "urllib",
   "urllib.parse", "uuid", "warnings", "weakref", "_colorize",
   "_opcode_metadata", "_pydatetime", "_pydecimal", "_py_abc", "_weakrefset",
   "_strptime", "_py_warnings", "_missing_stdlib_info",
+  "_threading_local",   # threading's fallback under `from _thread import _local`, in a handler the closure cannot prove dead; never imported, since _thread has _local
   "_ast_unparse",   # ast.unparse: the annotationlib shim's FORWARDREF and STRING need it (decision S-1)
 ]
 
@@ -101,8 +102,7 @@ core = [
 ]
 
 [phase1.shim]
-threading = "single-threaded shim: Lock, RLock, local, Event, current_thread; creating a thread raises with the milestone name"
-_thread = "single-threaded primitives behind the threading shim"
+_thread = "single-threaded primitives (runtime/prelude/_thread.py) under CPython's own threading module, which is compiled: locks, RLock, local, Event, Condition, Semaphore, the main thread; creating a thread raises with the milestone name"
 socket = "import succeeds for logging.handlers type hints; sockets are [P2+]"
 subprocess = "import succeeds; every API raises with the milestone name"
 asyncio = "import succeeds for unittest.async_case; async is [P2+]"
@@ -115,6 +115,7 @@ codeop = "for traceback only (review log D-4): the PyCF_* flags with CPython's v
 logging = "findCaller receives call-site information from the compiler instead of sys._getframe (E-02)"
 traceback = "formatting from source maps; file and line in release builds (D-06); imports the codeop shim, reached only to suggest a keyword for a SyntaxError carrying parser metadata (review log D-4); _find_incompatible_extension_module returns None, since a closed world has no extension module built for another Python version (see [replaced])"
 contextvars = "single-threaded implementation over _contextvars mapping"
+threading = "CPython's own module over the single-threaded _thread (see [phase1.shim]): Thread.start, and every wait only another thread could end, stop with the milestone name ([P2+]); the rest behaves as with one thread (2026-11-08, in place of a shim to write)"
 locale = "C and UTF-8 locales only; the rest of locale is [P2+]"
 decimal = "C accelerator omitted so the pure-Python _pydecimal is used (see [omissions])"
 datetime = "C accelerator omitted so the pure-Python _pydatetime is used (see [omissions])"

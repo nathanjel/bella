@@ -1155,6 +1155,15 @@ Ref sys_exc_info(Obj, Args a) {                   // sys_exc_info_impl: (type, v
     Ref tb = getattr(exc, intern("__traceback__"));
     return tuple_new({Obj::of(type_of(exc)), exc, tb.get()});
 }
+void print_traceback(Obj exc);
+Ref sys_excepthook(Obj, Args a) {                 // sys_excepthook_impl: PyErr_Display on stderr, for an exception with its traceback
+    clinic(a, "excepthook", "sys.excepthook", 3, 3);
+    Obj value = a.pos(1);
+    if (!is_kind(value, Kind::Instance) || !is_subclass(type_of(value), exception_class("BaseException")))
+        throw NotImplemented("sys.excepthook with a value that is no exception instance");
+    print_traceback(value);
+    return none_ref();
+}
 Ref sys_getrecursionlimit(Obj, Args a) {
     noargs(a, "sys.getrecursionlimit");
     return int_from_i64(recursion_limit());
@@ -1592,6 +1601,8 @@ Module* make_sys(int argc, char** argv) {
     put_builtin(d, "intern", sys_intern);
     put_builtin(d, "exc_info", sys_exc_info);
     put_builtin(d, "exception", sys_exception);
+    put_builtin(d, "excepthook", sys_excepthook);
+    put(d, "__excepthook__", dict_get(d, Obj::of(intern("excepthook"))));
     put_builtin(d, "_getframemodulename", sys_getframemodulename);
     put(d, "maxsize", int_from_i64(INT64_MAX).get());
     put_builtin(d, "getrecursionlimit", sys_getrecursionlimit);

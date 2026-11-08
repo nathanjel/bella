@@ -1639,6 +1639,8 @@ Ref builtin_descr_qualname(Obj self) {           // descr_get_qualname, wrapper_
 }
 Ref builtin_module(Obj self);
 Ref builtin_doc(Obj self) {                      // from the table, for the ones written in Python as for those in C++; a method's waits
+    if (is_kind(self, Kind::Builtin))            // a method the prelude writes: its docstring is the C's ml_doc as CPython shows it
+        if (Obj written = static_cast<Builtin*>(self.object())->written.get(); is_kind(written, Kind::PyFunction)) return fn_doc(written);
     Ref module = builtin_module(self), name = builtin_name(self);
     const Str* m = as_str(module.get());
     if (m != nullptr || module.get() == None())      // the table's rows are <__module__>.<__name__>, "" for None (the error handlers of _codecs)
@@ -2688,6 +2690,7 @@ void init_types() {
         member("__name__", builtin_name);
         member("__objclass__", builtin_objclass);
         getset(c, "__qualname__", builtin_descr_qualname);
+        if (c == t.method_descriptor || c == t.classmethod_descriptor) getset(c, "__doc__", builtin_doc);   // method_get_doc: the ml_doc
     }
     getset(t.method_wrapper, "__self__", builtin_self);
     for (ClassObject* c : {t.getset_descriptor, t.member_descriptor}) {

@@ -559,10 +559,68 @@ def test_contextvars() -> None:
     same(CONTEXTVARS)
 
 
+RANDOM_STATISTICS_HEAPQ = r"""
+import _random, random, statistics, heapq, threading, collections
+r = _random.Random(2024)
+words = [r.getrandbits(32) for _ in range(2000)]
+print(words[:3], words[-3:], sum(words) % 1000003, r.getstate()[-1])
+r.seed(2024)
+print(all(r.getrandbits(32) == w for w in words), [r.random() for _ in range(3)], r.getrandbits(1000) % 999983)
+R = random.Random(99)
+sample = [R.randrange(1000) for _ in range(500)]
+print(sample[:8], statistics.mean(sample), statistics.median(sample), statistics.pstdev(sample), statistics.quantiles(sample, n=4), statistics.mode(sample), len(statistics.multimode(sample)))
+print(R.sample(range(10**6), 5), R.choices("xyz", weights=[1, 2, 7], k=10), R.gauss(0, 1), R.expovariate(2.0), R.shuffle(sample) or sample[:5], R.randbytes(6), R.randint(-5, 5))
+nd = statistics.NormalDist.from_samples(sample)
+print(nd.mean, nd.stdev, nd.inv_cdf(0.25), nd.inv_cdf(0.999), nd.cdf(500), nd.quantiles(n=4))
+c = collections.Counter(w % 7 for w in words)
+print(c.most_common(3), c.most_common(), heapq.nlargest(4, words), heapq.nsmallest(4, words))
+heap = list(words[:1000])
+heapq.heapify(heap)
+out = [heapq.heappop(heap) for _ in range(10)]
+heapq.heappush(heap, 5)
+print(out, out == sorted(words[:1000])[:10], heapq.heappushpop(heap, 7), heapq.heapreplace(heap, 11), heap[0], len(heap))
+hm = list(words[:1000])
+heapq.heapify_max(hm)
+print([heapq.heappop_max(hm) for _ in range(5)] == sorted(words[:1000], reverse=True)[:5], heapq.heappushpop_max(hm, 2**40), hm[0] == max(hm))
+loc = threading.local()
+print(getattr(loc, "value", "unset"), threading.current_thread().name, threading.main_thread() is threading.current_thread(), threading.active_count(), threading.get_ident() == threading.main_thread().ident, threading.get_native_id() > 0)
+loc.value = [1]
+loc.value.append(2)
+print(loc.value, vars(loc), threading.local() is not loc)
+lock = threading.Lock()
+with lock:
+    print(lock.locked(), lock.acquire(blocking=False))
+rl = threading.RLock()
+with rl:
+    with rl:
+        print(rl._is_owned(), repr(rl).startswith("<locked _thread.RLock object owner="), rl._recursion_count())
+ev = threading.Event()
+print(ev.is_set(), ev.wait(0.01), ev.set(), ev.is_set(), ev.wait(), ev.clear(), ev.is_set())
+cond = threading.Condition()
+with cond:
+    print(cond.wait(0.01), cond.wait_for(lambda: True))
+sem = threading.BoundedSemaphore(2)
+print(sem.acquire(), sem.acquire(), sem.acquire(timeout=0.01), sem.release(), sem.release())
+try:
+    sem.release()
+except ValueError as e:
+    print(e)
+t = threading.Thread(target=print, args=("never",), name="worker")
+print(t.name, t.daemon, t.is_alive(), t.ident, repr(t)[:28], threading.Timer(0.1, print).name.startswith("Thread-"))
+"""
+
+
 def test_bisect() -> None:
     """insort keeps four hundred generated values sorted from both sides, bisect's answers bound the slices as the documentation
     says over three hundred probes with random lo and hi, insort with a key is stable, and the bisect module's textbook uses."""
     same(BISECT)
+
+
+def test_random_statistics_heapq_threading() -> None:
+    """The twister over two thousand words and a thousand bits, random's distributions, statistics over five hundred samples with
+    NormalDist.from_samples and the inverse CDF, Counter.most_common and the heaps over the words, and CPython's own threading module
+    with one thread: local, Lock, RLock, Event, Condition, BoundedSemaphore and an unstarted Thread."""
+    same(RANDOM_STATISTICS_HEAPQ)
 
 
 def test_what_is_absent_stops_by_name() -> None:
@@ -572,7 +630,9 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
-             ("import csv, io\ncsv.DictWriter(io.StringIO(), ['a']).writerow({'a': 1})", "set operations on dict keys"))
+             ("import csv, io\ncsv.DictWriter(io.StringIO(), ['a']).writerow({'a': 1})", "set operations on dict keys"),
+             ("import threading\nthreading.Thread(target=print).start()", "creating a thread"), ("import threading\nlk = threading.Lock(); lk.acquire(); lk.acquire()", "no other thread can release"),
+             ("import heapq\nlist(heapq.merge([1], [2]))", "list_iterator.__next__"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")

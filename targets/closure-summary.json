@@ -35,11 +35,11 @@
    "level": "easy",
    "stage": "1a.3",
    "by_status": {
-    "compiled": 86,
+    "compiled": 88,
     "core": 15,
     "mapped": 32,
     "program": 8,
-    "shim": 6
+    "shim": 5
    },
    "errors": []
   },
@@ -246,19 +246,19 @@
    ]
   },
   "1a.3": {
-   "modules": 14,
+   "modules": 15,
    "by_status": {
-    "compiled": 9,
-    "mapped": 4,
-    "shim": 1
+    "compiled": 11,
+    "mapped": 4
    },
-   "compiled_source_lines": 11757,
+   "compiled_source_lines": 13657,
    "list": {
     "_bisect": "mapped",
     "_csv": "mapped",
     "_pydecimal": "compiled",
     "_random": "mapped",
     "_statistics": "mapped",
+    "_threading_local": "compiled",
     "bisect": "compiled",
     "contextvars": "compiled",
     "csv": "compiled",
@@ -267,21 +267,21 @@
     "numbers": "compiled",
     "random": "compiled",
     "statistics": "compiled",
-    "threading": "shim"
+    "threading": "compiled"
    },
    "targets": [
     "data_easy_sales"
    ]
   },
   "1a": {
-   "modules": 150,
+   "modules": 151,
    "by_status": {
-    "compiled": 93,
+    "compiled": 95,
     "core": 15,
     "mapped": 36,
-    "shim": 6
+    "shim": 5
    },
-   "compiled_source_lines": 71201,
+   "compiled_source_lines": 73101,
    "list": {
     "__future__": "compiled",
     "_abc": "core",
@@ -323,6 +323,7 @@
     "_struct": "mapped",
     "_suggestions": "core",
     "_thread": "shim",
+    "_threading_local": "compiled",
     "_tokenize": "core",
     "_types": "core",
     "_typing": "mapped",
@@ -420,7 +421,7 @@
     "subprocess": "shim",
     "sys": "core",
     "textwrap": "compiled",
-    "threading": "shim",
+    "threading": "compiled",
     "time": "mapped",
     "token": "compiled",
     "tokenize": "compiled",

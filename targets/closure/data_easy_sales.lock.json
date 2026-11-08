@@ -17,7 +17,7 @@
    "nt"
   ]
  },
- "module_count": 147,
+ "module_count": 148,
  "errors": [],
  "notes": [],
  "unsupported_functions": {
@@ -861,6 +861,37 @@
    "dynamic_unknown_lines": [],
    "path": null,
    "edges": []
+  },
+  "_threading_local": {
+   "name": "_threading_local",
+   "kind": "source",
+   "status": "compiled",
+   "reached_by": "threading:guarded:70",
+   "dynamic_unknown_lines": [],
+   "path": "_threading_local.py",
+   "edges": [
+    {
+     "importer": "_threading_local",
+     "target": "weakref",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "_threading_local",
+     "target": "contextlib",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "_threading_local",
+     "target": "threading",
+     "cls": "eager",
+     "line": 120,
+     "func": ""
+    }
+   ]
   },
   "_tokenize": {
    "name": "_tokenize",
@@ -5669,11 +5700,180 @@
   "threading": {
    "name": "threading",
    "kind": "source",
-   "status": "shim",
+   "status": "compiled",
    "reached_by": "humanize.i18n:eager:6",
    "dynamic_unknown_lines": [],
    "path": "threading.py",
-   "edges": []
+   "edges": [
+    {
+     "importer": "threading",
+     "target": "os",
+     "cls": "eager",
+     "line": 3,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "sys",
+     "cls": "eager",
+     "line": 4,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 5,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "_contextvars",
+     "cls": "eager",
+     "line": 6,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "time",
+     "cls": "eager",
+     "line": 8,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "_weakrefset",
+     "cls": "eager",
+     "line": 9,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "itertools",
+     "cls": "eager",
+     "line": 10,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "_collections",
+     "cls": "optional",
+     "line": 12,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "collections",
+     "cls": "guarded",
+     "line": 14,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "_thread",
+     "cls": "optional",
+     "line": 68,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "_threading_local",
+     "cls": "guarded",
+     "line": 70,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 448,
+     "func": "Condition.notifyAll"
+    },
+    {
+     "importer": "threading",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 620,
+     "func": "Event.isSet"
+    },
+    {
+     "importer": "threading",
+     "target": "functools",
+     "cls": "lazy",
+     "line": 927,
+     "func": "synchronized_iterator"
+    },
+    {
+     "importer": "threading",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1356,
+     "func": "Thread.isDaemon"
+    },
+    {
+     "importer": "threading",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1367,
+     "func": "Thread.setDaemon"
+    },
+    {
+     "importer": "threading",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1378,
+     "func": "Thread.getName"
+    },
+    {
+     "importer": "threading",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1389,
+     "func": "Thread.setName"
+    },
+    {
+     "importer": "threading",
+     "target": "_thread",
+     "cls": "optional",
+     "line": 1396,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "traceback",
+     "cls": "guarded",
+     "line": 1400,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "collections",
+     "cls": "guarded",
+     "line": 1401,
+     "func": ""
+    },
+    {
+     "importer": "threading",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1625,
+     "func": "currentThread"
+    },
+    {
+     "importer": "threading",
+     "target": "warnings",
+     "cls": "lazy",
+     "line": 1648,
+     "func": "activeCount"
+    },
+    {
+     "importer": "threading",
+     "target": "_thread",
+     "cls": "eager",
+     "line": 1688,
+     "func": ""
+    }
+   ]
   },
   "time": {
    "name": "time",
