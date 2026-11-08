@@ -173,6 +173,29 @@ def test_exec_with_a_locals_mapping_offsets_and_sentinel() -> None:
     (dataclasses' slots=True reads them), and sentinel's hash and comparisons as its own slots."""
     same(EXEC_LOCALS_AND_OFFSETS)
 
+BINASCII = r"""
+import binascii, base64
+def m(f):
+    try:
+        return repr(f())
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+print(m(lambda: binascii.a2b_base64(b"Zg==", b"x")), m(lambda: binascii.a2b_base64()), m(lambda: binascii.a2b_base64(b"", data=1)), m(lambda: binascii.a2b_base64(b"", paddd=1)),
+      m(lambda: binascii.a2b_base64(b"", 1, 2, 3, 4, 5, 6)), m(lambda: binascii.a2b_base64(padded=1)), m(lambda: binascii.a2b_base64(b"", strict_mode=1, padded=1, alphabet=binascii.BASE64_ALPHABET, ignorechars=b"", canonical=1, x=2)))
+print(m(lambda: binascii.crc32()), m(lambda: binascii.crc32(b"", 1, 2)), m(lambda: binascii.crc32(b"", crc=1)), m(lambda: binascii.hexlify(b"a", ":", 2, 3)), m(lambda: binascii.hexlify()), m(lambda: binascii.hexlify(b"a", data=b"b")),
+      m(lambda: binascii.hexlify(data=b"a", bytes_per_sep=2, sep=":")), m(lambda: binascii.hexlify(b"a", sepp=":")), m(lambda: binascii.hexlify(b"ab", ":", bytes_per_sep=1.5)), m(lambda: binascii.hexlify(b"ab", [1])), m(lambda: binascii.unhexlify(b"00", b" ")))
+print(m(lambda: binascii.b2a_base64(b"x", wrapcol=-5)), m(lambda: binascii.b2a_base64(b"x", wrapcol=2**64)), m(lambda: binascii.b2a_base64(b"x", wrapcol="3")), m(lambda: binascii.b2a_base64(b"x", alphabet=b"abc")), m(lambda: binascii.a2b_base64(b"Zg==", alphabet="A" * 64)),
+      m(lambda: binascii.a2b_base64(b"Zg==", alphabet=bytearray(64))), m(lambda: binascii.a2b_base64("Zm9v\xe9")), m(lambda: binascii.a2b_base64(1)), m(lambda: binascii.b2a_base64("x")))
+class I:
+    def __index__(self):
+        return 8
+print(binascii.b2a_base64(bytes(range(12)), wrapcol=I()), binascii.crc32(b"a", I()), binascii.hexlify(b"abcd", ":", I()), m(lambda: binascii.hexlify(b"abcd", ":", 2**63)), m(lambda: binascii.b2a_base64(b"a", wrapcol=True, newline=0, padded=None)))
+for text in (b"Zg==", b"Zg==Zg==", b"Zg=x=", b"=Zg==", b"Zm9v====", b"Z=g==", b"Zh==", b"Zg", b"Z", b"Zg=", b"Zm8=", b"Zm8", b"Zm8==", b"Zm9", b"Zm9=", b"Zm9v==", b"Zg==\n", b"\nZg==", b"Zg =="):
+    print(text, m(lambda: binascii.a2b_base64(text)), m(lambda: binascii.a2b_base64(text, strict_mode=True)), m(lambda: binascii.a2b_base64(text, strict_mode=True, padded=False)), m(lambda: binascii.a2b_base64(text, canonical=True)),
+          m(lambda: binascii.a2b_base64(text, ignorechars=b"\n =")), m(lambda: binascii.a2b_base64(text, ignorechars=b"\n")))
+print(base64.b64encode(bytes(range(100)), wrapcol=20), base64.b64decode(b"  Zm9v\nYmFy  "), base64.urlsafe_b64decode("-_8-"), m(lambda: base64.b64decode(b"Zm9v", validate=True, padded=False)), base64.b16encode(b"\xb9\x01"), base64.b16decode(b"B901"), m(lambda: base64.b16decode(b"b901")), base64.b16decode(b"b901", casefold=True))
+"""
+
 
 def test_json() -> None:
     """_json's scanner and encoder: the messages the case does not compare."""
@@ -184,10 +207,16 @@ def test_typing_objects() -> None:
     same(TYPING_OBJECTS)
 
 
+def test_binascii() -> None:
+    """binascii's calling conventions (the clinic's messages), its converters, every strict-mode message, base64 over it."""
+    same(BINASCII)
+
+
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.compress(b'a')", "zlib"), ("import zlib\nzlib.ZLIB_VERSION", "ZLIB_VERSION"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
-             ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"))
+             ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"),
+             ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")

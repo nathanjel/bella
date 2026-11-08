@@ -186,9 +186,9 @@ def native_modules(names):
 
 def docs():
     """The docstrings of the built-in modules a program has from the start, and of the built-in types."""
-    import errno, grp, itertools, posix, pwd, re, typing, zlib, _ast, _codecs, _collections, _functools, _io, _json, _locale, _operator, _sre, _stat, _string, _thread, _typing, _weakref
-    out = {"posix": posix.__doc__, "sys.copyright": sys.copyright, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_io": _io.__doc__, "pwd": pwd.__doc__, "grp": grp.__doc__, "_locale": _locale.__doc__, "_typing": _typing.__doc__, "_json": _json.__doc__, "zlib": zlib.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
-    for module in (builtins, sys, errno, itertools, posix, pwd, grp, zlib, _sre, _codecs, _io, _json, _locale, _typing, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
+    import binascii, errno, grp, itertools, posix, pwd, re, typing, zlib, _ast, _codecs, _collections, _functools, _io, _json, _locale, _operator, _sre, _stat, _string, _thread, _typing, _weakref
+    out = {"posix": posix.__doc__, "sys.copyright": sys.copyright, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_io": _io.__doc__, "pwd": pwd.__doc__, "grp": grp.__doc__, "_locale": _locale.__doc__, "_typing": _typing.__doc__, "_json": _json.__doc__, "zlib": zlib.__doc__, "binascii": binascii.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
+    for module in (builtins, sys, errno, itertools, posix, pwd, grp, zlib, binascii, _sre, _codecs, _io, _json, _locale, _typing, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
         for v in vars(module).values():           # their functions', as `<__module__>.<__name__>`, "" for none (no built-in's is empty)
             if isinstance(v, types.BuiltinFunctionType) and isinstance(v.__module__, str):
                 out[v.__module__ + "." + v.__name__] = v.__doc__ or ""
