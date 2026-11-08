@@ -1628,6 +1628,11 @@ Module* make_sys(int argc, char** argv) {
     put(d, "abiflags", Obj::of(intern("")));
     put(d, "dont_write_bytecode", Ref::steal(boolean(false)).get());
     put(d, "pycache_prefix", None());
+    {   // sys.path_importer_cache: the closed world's registry stands for the path finders (decision 2026-11-03), so no path entry
+        // is ever looked up or cached; linecache reads it for a file it cannot find (_read_from_archive)
+        Ref cache = dict_new();
+        put(d, "path_importer_cache", cache.get());
+    }
     put(d, "version", str_new("3.15.2 (bella) [GCC " __VERSION__ "]").get());
     put(d, "copyright", cpython_doc("sys.copyright"));
     {
@@ -1852,6 +1857,21 @@ Ref i_lookup_special(Obj, Args a) {              // _PyObject_LookupSpecial: the
     }
     Ref bound = descr_get(found, a.pos(0), Obj::of(type_of(a.pos(0))));
     return tuple_new({bound.get()});
+}
+// _frame(n) for the _warnings prelude (setup_context): the n-th frame above the one that called into the prelude, as
+// (globals, filename, lineno), or None past the outermost; a prelude's own frames are not on the chain, as C functions' are not
+Ref i_warnings_frame(Obj, Args a) {
+    positional_only(a, "_frame", 1, 1);
+    std::int64_t depth = index_value(a.pos(0));
+    detail::FrameRecord* f = detail::current_frame();
+    while (f != nullptr && !f->code->shown) f = f->caller;
+    while (f != nullptr && depth-- > 0) {
+        f = f->caller;
+        while (f != nullptr && !f->code->shown) f = f->caller;
+    }
+    if (f == nullptr) return none_ref();
+    Ref filename = str_new(f->code->filename);
+    return tuple_new({Obj::of(f->module->dict), filename.get(), Obj::small(f->line)});
 }
 Ref i_number_index(Obj, Args a) {                // PyNumber_Index
     positional_only(a, "_number_index", 1, 1);

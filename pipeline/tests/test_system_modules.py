@@ -696,6 +696,45 @@ for bad in (lambda: _opcode.has_arg(), lambda: _opcode.has_arg(1, 2), lambda: _o
         print(type(e).__name__, e)
 """
 
+WARNINGS = r"""
+import warnings, _warnings, sys, os, io
+def shown(rec):
+    return [(w.category.__name__, os.path.basename(w.filename), w.lineno, str(w.message), w.module) for w in rec]
+def inner(level):
+    warnings.warn("inner", stacklevel=level)
+with warnings.catch_warnings(record=True) as rec:
+    warnings.simplefilter("always")
+    for level in (1, 2, 3, 9):
+        inner(level)
+    warnings.warn(DeprecationWarning("inst"))
+    warnings.warn_explicit("explicit", RuntimeWarning, "x.py", 4, "mod", {})
+print(shown(rec), warnings.filters is _warnings.filters, warnings.warn is _warnings.warn, warnings.defaultaction, warnings.onceregistry)
+with warnings.catch_warnings(record=True) as rec:          # the default filters
+    warnings.warn("user"); warnings.warn("dep", DeprecationWarning); warnings.warn("pending", PendingDeprecationWarning); warnings.warn("imp", ImportWarning)
+    warnings.warn_explicit("dep elsewhere", DeprecationWarning, "e.py", 1, module="elsewhere")
+    for _ in range(3):
+        warnings.warn("once per location")
+print(shown(rec), sorted(str(k) for k in __warningregistry__))
+registry = {}
+for action in ("error", "ignore", "always", "default", "once", "module"):
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter(action)
+        got = []
+        for ln in (1, 1, 2):
+            try:
+                warnings.warn_explicit("t", UserWarning, "f.py", ln, "m", registry); got.append(".")
+            except UserWarning:
+                got.append("E")
+        print(action, "".join(got), len(rec), sorted(str(k) for k in registry if k != "version"))
+err = io.StringIO()
+sys.stderr = err
+warnings.resetwarnings()
+warnings.warn("to stderr")
+warnings.warn("to stderr")
+sys.stderr = sys.__stderr__
+print([line.partition(":")[2] if line.startswith(("/", "prog.py")) else line for line in err.getvalue().splitlines()])   # the path before the first colon is the build's to spell
+"""
+
 
 def test_zlib() -> None:
     """zlib 1.3.2 built into the runtime against the pin's: twenty-one blocks (random bytes, runs, empty, a 140 KB repeat) at five
@@ -709,6 +748,13 @@ def test_opcode() -> None:
     same(OPCODE)
 
 
+def test_warnings() -> None:
+    """_warnings (the C half of warnings) as a prelude: the frame a warning is charged to by stacklevel, a Warning instance as the
+    message, the default filters by category and module, the six actions and their registry entries, and the stderr format with
+    the source line through linecache (which reads the program's file)."""
+    same(WARNINGS)
+
+
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.crc32(b'a', -1)", "unsigned 32-bit"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
@@ -716,7 +762,8 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
-             ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
+             ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("import warnings\nwarnings.warn_explicit('m', UserWarning, 'f', 1, module_globals={'__name__': 'x'})", "module_globals"),
+             ("import tokenize, io\nnext(tokenize.generate_tokens(io.StringIO('x = 1').readline))", "_tokenize.TokenizerIter"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
              ("import threading\nthreading.Thread(target=print).start()", "creating a thread"), ("import threading\nlk = threading.Lock(); lk.acquire(); lk.acquire()", "no other thread can release"),
 )
     for body, name in cases:
@@ -736,4 +783,5 @@ if __name__ == "__main__":
     test_exec_with_a_locals_mapping_offsets_and_sentinel()
     test_zlib()
     test_opcode()
+    test_warnings()
     test_what_is_absent_stops_by_name()

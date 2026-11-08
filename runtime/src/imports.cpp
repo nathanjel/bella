@@ -56,6 +56,8 @@ namespace prelude_random { Ref module_body(Module* m); }      // runtime/prelude
 namespace prelude_statistics { Ref module_body(Module* m); }  // runtime/prelude/_statistics.py
 namespace prelude_heapq { Ref module_body(Module* m); }       // runtime/prelude/_heapq.py
 namespace prelude_opcode { Ref module_body(Module* m); }      // runtime/prelude/_opcode.py
+namespace prelude_warnings { Ref module_body(Module* m); }    // runtime/prelude/_warnings.py
+namespace prelude_tokenize { Ref module_body(Module* m); }    // runtime/prelude/_tokenize.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -150,15 +152,17 @@ Ref call_bootstrap(const char* fn, std::initializer_list<Obj> args) {
     return invoke(f.get(), args);
 }
 
-// An ImportWarning: the default filters ignore it (`ignore::ImportWarning`), and a compiled program
-// cannot change them before the warnings module compiles (step 3b; PYTHONWARNINGS and -W are not
-// read, D-18), so it has no effect, as in CPython. Once a warnings module is loaded the filters can
-// differ, and the warning is refused until it is implemented.
-void import_warning(const std::string& message) {
-    if (!dict_get(interp_modules(), Obj::of(N("warnings"))).is_unset() ||
-        !dict_get(interp_modules(), Obj::of(N("_warnings"))).is_unset())
-        throw NotImplemented("the ImportWarning '" + message + "' (warnings: step 3b)");
+// PyErr_WarnEx for the import system: the warning goes through the _warnings prelude (runtime/prelude/_warnings.py), imported
+// here if the program has not, as the C machinery is always present in CPython; showing it imports the warnings module, as the
+// C does, and a program whose closure lacks it stops by name there. The default filters ignore an ImportWarning.
+void runtime_warning(const char* category, const std::string& message) {
+    Ref warnings_module = Ref::share(dict_get(interp_modules(), Obj::of(N("_warnings"))));
+    if (warnings_module.get().is_unset()) warnings_module = import_module_level(Obj::of(N("_warnings")), None(), None(), None(), 0);
+    Ref warn = getattr(warnings_module.get(), N("warn"));
+    Ref msg = str_new(message);
+    invoke(warn.get(), {msg.get(), Obj::of(exception_class(category))});
 }
+void import_warning(const std::string& message) { runtime_warning("ImportWarning", message); }
 
 // resolve_name: a relative import's absolute name from the importing module's globals
 Ref resolve_name(Obj name, Obj globals, std::int64_t level) {
@@ -173,8 +177,7 @@ Ref resolve_name(Obj name, Obj globals, std::int64_t level) {
         if (!spec.get().is_unset() && spec.get() != None()) {
             Ref parent = getattr(spec.get(), N("parent"));
             Ref eq = compare(CmpOp::Eq, package.get(), parent.get());
-            if (!truth(eq.get()))
-                throw NotImplemented("the DeprecationWarning '__package__ != __spec__.parent' (warnings: step 3b)");
+            if (!truth(eq.get())) runtime_warning("DeprecationWarning", "__package__ != __spec__.parent");
         }
     } else if (!spec.get().is_unset() && spec.get() != None()) {
         package = getattr(spec.get(), N("parent"));
@@ -373,7 +376,7 @@ struct NativeModule {
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
     static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
-        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}};
+        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}};
     return table;
 }
 }  // namespace
@@ -801,6 +804,11 @@ void fill_heapq(Module* m) { fill_in_python(m, "_heapq", "_heapq", prelude_heapq
 void fill_opcode(Module* m) {
     fill_in_python(m, "_opcode", "_opcode", prelude_opcode::module_body, {{"_bella_refuse", i_bella_refuse}, {"_number_index", i_number_index}});
 }
+void fill_warnings(Module* m) {
+    fill_in_python(m, "_warnings", "_warnings", prelude_warnings::module_body,
+                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame}});
+}
+void fill_tokenize(Module* m) { fill_in_python(m, "_tokenize", "_tokenize", prelude_tokenize::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
 void fill_contextvars(Module* m) { fill_in_python(m, "_contextvars", "_contextvars", prelude_contextvars::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,

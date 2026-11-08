@@ -71,7 +71,8 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "_csv.py", ROOT / "runtime" / "prelude" / "_contextvars.py",
                     ROOT / "runtime" / "prelude" / "_bisect.py", ROOT / "runtime" / "prelude" / "_random.py",
                     ROOT / "runtime" / "prelude" / "_statistics.py", ROOT / "runtime" / "prelude" / "_heapq.py",
-                    ROOT / "runtime" / "prelude" / "_opcode.py"]
+                    ROOT / "runtime" / "prelude" / "_opcode.py", ROOT / "runtime" / "prelude" / "_warnings.py",
+                    ROOT / "runtime" / "prelude" / "_tokenize.py"]
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 # -ffp-contract=off: a*b + c is two operations with two roundings, as the reference computes it. A compiler that

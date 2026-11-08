@@ -331,6 +331,7 @@ Ref list_sort_m(Obj self, Args a);               // runtime/src/sort.cpp
 Ref b_sorted(Obj, Args a);
 Ref i_lookup_special(Obj, Args a);               // builtins.py's primitives
 Ref i_number_index(Obj, Args a);
+Ref i_warnings_frame(Obj, Args a);                // _frame(n) for runtime/prelude/_warnings.py: (globals, filename, lineno) of a caller's frame
 Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tuple
 Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
 void fill_itertools(Module* m);                   // runtime/src/imports.cpp, running runtime/prelude/itertools.py
@@ -418,6 +419,8 @@ void fill_random(Module* m);                      // runtime/prelude/_random.py
 void fill_statistics(Module* m);                  // runtime/prelude/_statistics.py
 void fill_heapq(Module* m);                       // runtime/prelude/_heapq.py
 void fill_opcode(Module* m);                      // runtime/prelude/_opcode.py
+void fill_warnings(Module* m);                    // runtime/prelude/_warnings.py
+void fill_tokenize(Module* m);                    // runtime/prelude/_tokenize.py
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
