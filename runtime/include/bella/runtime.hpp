@@ -62,10 +62,6 @@ struct BoolObject : Object {
     bool value;
     BoolObject(ClassObject* c, bool v) : Object(Kind::Bool), value(v) { cls = c; flags |= IMMORTAL; }
 };
-struct List : Object {
-    std::vector<Obj> items;
-    List();
-};
 struct Cell : Object {
     Obj value;                                   // Unset: empty
     Cell();
@@ -326,6 +322,10 @@ Ref str_subscript(Obj self, Obj key);             // unicode_subscript
 bool str_contains(Obj self, Obj item);            // PyUnicode_Contains
 inline bool is_exact_str(Obj v) { return is_kind(v, Kind::Str) && !has_attributes(v.object()); }   // PyUnicode_CheckExact
 inline bool is_exact_tuple(Obj v) { return is_kind(v, Kind::Tuple) && !has_attributes(v.object()); }   // PyTuple_CheckExact
+inline bool is_exact_list(Obj v) { return is_kind(v, Kind::List) && !has_attributes(v.object()); }     // PyList_CheckExact
+Ref list_subscript(Obj obj, Obj key);             // list's own __getitem__, whatever a subclass says
+void list_ass_subscript(Obj obj, Obj key, Obj value);   // list's own __setitem__, and __delitem__ with Unset
+bool list_contains(Obj container, Obj item);      // list's own __contains__
 // such an object's class overrides `name`: what its MRO finds is not the built-in's own (CPython
 // then gives the subclass a slot that calls the override: slot_mp_subscript and the others)
 bool overrides_builtin(Obj v, const char* name);
@@ -510,6 +510,10 @@ bool with_attribute_storage(Obj v, F&& f) {
     }
     if (is_kind(v, Kind::Tuple) && has_attributes(v.object())) {
         f(static_cast<TupleInstance*>(v.object()));
+        return true;
+    }
+    if (is_kind(v, Kind::List) && has_attributes(v.object())) {
+        f(static_cast<ListInstance*>(v.object()));
         return true;
     }
     if (is_kind(v, Kind::Str) && has_attributes(v.object())) {

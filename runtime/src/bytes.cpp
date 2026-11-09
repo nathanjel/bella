@@ -356,7 +356,7 @@ Ref partition_m(Obj self, Args a) {
 Ref join_m(Obj self, Args a) {                    // stringlib_bytes_join
     onearg(a, who(self, "join"));
     Ref seq;
-    if (is_kind(a.pos(0), Kind::List) || is_exact_tuple(a.pos(0))) {
+    if (is_exact_list(a.pos(0)) || is_exact_tuple(a.pos(0))) {   // PySequence_Fast
         seq = Ref::share(a.pos(0));
     } else {
         Ref it;

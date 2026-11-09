@@ -938,6 +938,26 @@ struct TupleInstance : Tuple {
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
+// A list, and an instance of a program's subclass of list (C-3-51): as Tuple and TupleInstance, its kind stays List, as
+// PyList_Check says yes of it; what only an exact list does asks is_exact_list, and what a subclass may override asks first.
+struct List : Object {                           // owns one count of each item
+    std::vector<Obj> items;
+    List();
+};
+struct ListInstance : List {
+    std::vector<Obj> fields;
+    DictObject* dict = nullptr;
+    std::vector<const Str*> order;
+    std::int64_t tag = -1;
+    explicit ListInstance(ClassObject* c) {
+        cls = c;
+        flags |= HAS_ATTRIBUTES;
+        fields.assign(c->field_index.size(), Obj{});
+    }
+    bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
+    Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    bool has_field(const Str* n) const { return cls->field_index.contains(n); }
+};
 // An instance of a program's subclass of str: kind stays Str, as PyUnicode_Check says yes of it, and the attribute storage is beside the
 // text. What reads the text needs no change; what only an exact str does asks is_exact_str; what a subclass may override asks first.
 struct StrInstance : Str {
@@ -1428,6 +1448,7 @@ inline void bury(Object* o) {
             case Kind::ComplexInstance: delete static_cast<ComplexInstance*>(o); break;
             case Kind::Str: delete static_cast<StrInstance*>(o); break;   // an exact str's death is its destroyer's
             case Kind::Tuple: delete static_cast<TupleInstance*>(o); break;   // an exact tuple's death is its destroyer's
+            case Kind::List: delete static_cast<ListInstance*>(o); break;     // an exact list's death is its destroyer's
             case Kind::Function: delete static_cast<Function*>(o); break;
             case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
             case Kind::Marker: delete static_cast<Marker*>(o); break;
@@ -1674,6 +1695,17 @@ inline void dealloc(Object* o) {
                 if (!detail::release_attributes(t)) return;
                 if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
                 for (auto it = t->items.rbegin(); it != t->items.rend(); ++it) decref(std::exchange(*it, Obj{}));
+                detail::bury(o);
+                return;
+            }
+            [[fallthrough]];
+        case Kind::List:
+            if (o->kind == Kind::List && has_attributes(o)) {    // subtype_dealloc, then list_dealloc's items, last to first
+                auto* l = static_cast<ListInstance*>(o);
+                if (!detail::release_attributes(l)) return;
+                if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
+                std::vector<Obj> items = std::move(l->items);   // list_dealloc reads ob_item as it was
+                for (auto it = items.rbegin(); it != items.rend(); ++it) decref(*it);
                 detail::bury(o);
                 return;
             }

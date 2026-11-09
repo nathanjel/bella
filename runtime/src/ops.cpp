@@ -490,14 +490,7 @@ bool contains(Obj container, Obj item) {
         }
     }
     if (is_kind(container, Kind::Tuple) && !overridden(container, "__contains__")) return tuple_items_contain(container, item);
-    if (is_kind(container, Kind::List)) {
-        auto& items = static_cast<List*>(container.object())->items;
-        for (std::size_t i = 0; i < items.size(); ++i) {   // list_contains: each item held, also when == raises
-            Ref item = Ref::share(items[i]);
-            if (equal(item.get())) return true;
-        }
-        return false;
-    }
+    if (is_kind(container, Kind::List) && !overridden(container, "__contains__")) return list_contains(container, item);
     if (is_kind(container, Kind::Dict) && !overridden(container, "__contains__"))
         return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
     if (is_kind(container, Kind::Dict)) return truth(call_special(container, "__contains__", {item}).get());
@@ -711,7 +704,10 @@ bool truth(Obj v) {
             if (!is_subclass_instance(v)) return !static_cast<Tuple*>(o)->items.empty();
             if (!overridden(v, "__bool__") && !overridden(v, "__len__")) return !static_cast<Tuple*>(o)->items.empty();
             return truth_by_methods(v);
-        case Kind::List: return !static_cast<List*>(o)->items.empty();
+        case Kind::List:
+            if (!is_subclass_instance(v)) return !static_cast<List*>(o)->items.empty();
+            if (!overridden(v, "__bool__") && !overridden(v, "__len__")) return !static_cast<List*>(o)->items.empty();
+            return truth_by_methods(v);
         case Kind::Bytes:
         case Kind::ByteArray: return !bytes_data(v).empty();
         case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
@@ -998,6 +994,7 @@ ClassObject* builtin_of(Obj v) {
         case Kind::FloatInstance: return types().float_;
         case Kind::ComplexInstance: return types().complex_;
         case Kind::Tuple: return types().tuple;
+        case Kind::List: return types().list;
         default: return types().object;
     }
 }
@@ -1348,6 +1345,22 @@ static void check_sequence_key(Obj obj, Obj key, const char* name) {
     index_value(key, "IndexError");
 }
 bool tuple_contains(Obj container, Obj item) { return tuple_items_contain(container, item); }
+bool list_contains(Obj container, Obj item) {    // list_contains: the items, each held, also when == raises
+    auto& items = static_cast<List*>(container.object())->items;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        Ref held = Ref::share(items[i]);
+        if (held.get() == item || truth(compare(CmpOp::Eq, held.get(), item).get())) return true;
+    }
+    return false;
+}
+Ref list_subscript(Obj obj, Obj key) {           // list_subscript: the items, whatever a subclass says; a slice an exact list
+    auto& items = static_cast<List*>(obj.object())->items;
+    if (!is_kind(key, Kind::Slice)) return Ref::share(items[index_of(key, items.size(), "list")]);
+    auto* l = new List;
+    Ref r = own(l);
+    each_index(key, static_cast<std::int64_t>(items.size()), [&](std::size_t i) { incref(items[i]); l->items.push_back(items[i]); });
+    return r;
+}
 Ref tuple_subscript(Obj obj, Obj key) {          // tuple_subscript: the items, whatever a subclass says
     auto& items = static_cast<Tuple*>(obj.object())->items;
     if (!is_kind(key, Kind::Slice)) return Ref::share(items[index_of(key, items.size(), "tuple")]);
@@ -1376,14 +1389,7 @@ Ref getitem(Obj obj, Obj key) {
     check_sequence_key(obj, key, "__getitem__");
     bool slice = is_kind(key, Kind::Slice);
     if (is_kind(obj, Kind::Tuple) && !overridden(obj, "__getitem__")) return tuple_subscript(obj, key);
-    if (is_kind(obj, Kind::List)) {
-        auto& items = static_cast<List*>(obj.object())->items;
-        if (!slice) return Ref::share(items[index_of(key, items.size(), "list")]);
-        auto* l = new List;
-        Ref r = own(l);
-        each_index(key, static_cast<std::int64_t>(items.size()), [&](std::size_t i) { incref(items[i]); l->items.push_back(items[i]); });
-        return r;
-    }
+    if (is_kind(obj, Kind::List) && !overridden(obj, "__getitem__")) return list_subscript(obj, key);
     if (as_str(obj) != nullptr && !overridden(obj, "__getitem__")) return str_subscript(obj, key);
     if (is_bytes_like(obj)) return bytes_getitem(obj, key);
     if (is_kind(obj, Kind::Range)) {                 // range_subscript
@@ -1406,7 +1412,7 @@ Ref getitem(Obj obj, Obj key) {
 }
 
 Ref sequence_fast(Obj v, const char* message) {
-    if (is_kind(v, Kind::List) || is_exact_tuple(v)) return Ref::share(v);
+    if (is_exact_list(v) || is_exact_tuple(v)) return Ref::share(v);   // PySequence_Fast: an exact list or tuple as it is
     Ref it;
     try {
         it = iter(v);
@@ -1459,41 +1465,9 @@ static void list_assign_slice(Obj obj, Obj key, Obj value) {
     for (Obj old : garbage) decref(old);
 }
 
-void setitem(Obj obj, Obj key, Obj value) {
-    check_sequence_key(obj, key, "__setitem__");
-    if (is_kind(obj, Kind::List)) {
-        if (is_kind(key, Kind::Slice)) {
-            list_assign_slice(obj, key, value);
-            return;
-        }
-        auto& items = static_cast<List*>(obj.object())->items;
-        std::size_t i = index_of(key, items.size(), "list", "list assignment");
-        incref(value);
-        Obj old = std::exchange(items[i], value);
-        decref(old);
-        return;
-    }
-    if (is_dict(obj) && !overridden(obj, "__setitem__")) {
-        dict_set(static_cast<Dict*>(obj.object()), key, value);
-        return;
-    }
-    bool has = false;
-    call_special(obj, "__setitem__", {key, value}, &has);
-    if (has) return;
-    raise_new("TypeError", "'" + type_of(obj)->name + "' object does not support item assignment");
-}
-
-void delitem(Obj obj, Obj key) {
-    check_sequence_key(obj, key, "__delitem__");
-    if (is_dict(obj) && !overridden(obj, "__delitem__")) {
-        if (!dict_del(static_cast<Dict*>(obj.object()), key)) {
-            Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
-            raise(exc.get());
-        }
-        return;
-    }
-    if (is_kind(obj, Kind::List)) {
-        auto& items = static_cast<List*>(obj.object())->items;
+void list_ass_subscript(Obj obj, Obj key, Obj value) {   // list_ass_subscript: the items, whatever a subclass says; Unset deletes
+    auto& items = static_cast<List*>(obj.object())->items;
+    if (value.is_unset()) {
         if (is_kind(key, Kind::Slice)) {             // list_ass_subscript with no value
             auto [start, stop, step, n] = slice_indices(key, static_cast<std::int64_t>(items.size()));
             if (n == 0) return;
@@ -1525,6 +1499,44 @@ void delitem(Obj obj, Obj key) {
         decref(old);
         return;
     }
+    if (is_kind(key, Kind::Slice)) {
+        list_assign_slice(obj, key, value);
+        return;
+    }
+    std::size_t i = index_of(key, items.size(), "list", "list assignment");
+    incref(value);
+    Obj old = std::exchange(items[i], value);
+    decref(old);
+}
+void setitem(Obj obj, Obj key, Obj value) {
+    check_sequence_key(obj, key, "__setitem__");
+    if (is_kind(obj, Kind::List) && !overridden(obj, "__setitem__")) {
+        list_ass_subscript(obj, key, value);
+        return;
+    }
+    if (is_dict(obj) && !overridden(obj, "__setitem__")) {
+        dict_set(static_cast<Dict*>(obj.object()), key, value);
+        return;
+    }
+    bool has = false;
+    call_special(obj, "__setitem__", {key, value}, &has);
+    if (has) return;
+    raise_new("TypeError", "'" + type_of(obj)->name + "' object does not support item assignment");
+}
+
+void delitem(Obj obj, Obj key) {
+    check_sequence_key(obj, key, "__delitem__");
+    if (is_dict(obj) && !overridden(obj, "__delitem__")) {
+        if (!dict_del(static_cast<Dict*>(obj.object()), key)) {
+            Ref exc = invoke(Obj::of(exception_class("KeyError")), {key});
+            raise(exc.get());
+        }
+        return;
+    }
+    if (is_kind(obj, Kind::List) && !overridden(obj, "__delitem__")) {
+        list_ass_subscript(obj, key, Obj{});
+        return;
+    }
     bool has = false;
     call_special(obj, "__delitem__", {key}, &has);
     if (has) return;
@@ -1554,7 +1566,7 @@ Ref dict_reversed(Obj d, int which) {
 Ref iter(Obj obj) {
     if (is_kind(obj, Kind::Range)) return range_iter(obj);
     if (is_kind(obj, Kind::Tuple) && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::TupleIt, obj));
-    if (is_kind(obj, Kind::List)) return own(new Iterator(Iterator::ListIt, obj));
+    if (is_kind(obj, Kind::List) && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::ListIt, obj));
     if (as_str(obj) != nullptr && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::StrIt, obj));
     if (is_bytes_like(obj)) return own(new Iterator(Iterator::BytesIt, obj));
     if (is_kind(obj, Kind::Set)) {
@@ -1725,7 +1737,7 @@ Ref for_next(Obj itv) {
 
 void unpack(Obj value, std::span<Ref> targets, int star) {
     std::vector<Ref> items;
-    if (is_exact_tuple(value) || is_kind(value, Kind::List)) {
+    if (is_exact_tuple(value) || is_exact_list(value)) {   // UNPACK_SEQUENCE's exact list and tuple; anything else iterates
         auto& src = is_kind(value, Kind::Tuple) ? static_cast<Tuple*>(value.object())->items
                                                 : static_cast<List*>(value.object())->items;
         for (Obj v : src) items.push_back(Ref::share(v));

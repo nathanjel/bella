@@ -528,7 +528,7 @@ Ref b_len(Obj, Args a) {
     Obj v = a.pos(0);
     if (const Str* s = as_str(v); s != nullptr && !overrides_builtin_len(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(s->length)));
     if (is_kind(v, Kind::Tuple) && !overrides_builtin_len(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Tuple*>(v.object())->items.size())));
-    if (is_kind(v, Kind::List)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<List*>(v.object())->items.size())));
+    if (is_kind(v, Kind::List) && !overrides_builtin_len(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<List*>(v.object())->items.size())));
     if (is_kind(v, Kind::Dict) && !overrides_builtin_len(v))
         return Ref::steal(Obj::small(static_cast<std::int64_t>(static_cast<Dict*>(v.object())->used)));
     if (is_kind(v, Kind::DictView))
@@ -732,6 +732,18 @@ Ref list_clear_m(Obj self, Args a) {
     for (auto it = old.rbegin(); it != old.rend(); ++it) decref(*it);
     return none_ref();
 }
+// list___init__: keywords refused when the type's __new__ is list's own (a subclass with a __new__ of its own may take
+// them, and they are then ignored), at most one argument; the list emptied, then extended by it
+Ref list_init_m(Obj self, Args a) {
+    if (a.nkw != 0 && type_lookup(type_of(self), intern("__new__")) == type_lookup(types().list, intern("__new__")))
+        raise_new("TypeError", "list() takes no keyword arguments");
+    if (a.npos > 1) raise_new("TypeError", "list expected at most 1 argument, got " + std::to_string(a.npos));
+    std::vector<Obj> old = std::move(list_self(self)->items);   // list_clear: emptied first, then released
+    list_self(self)->items.clear();
+    for (auto it = old.rbegin(); it != old.rend(); ++it) decref(*it);
+    if (a.npos == 1) list_extend(self, a.pos(0));
+    return none_ref();
+}
 Ref list_insert_m(Obj self, Args a) {
     clinic(a, "insert", "list.insert", 2, 2);
     auto& items = list_self(self)->items;
@@ -853,11 +865,13 @@ Ref list_len_m(Obj self, Args a) { dunder_args(self, a, "__len__", 0); return Re
 // may call them (dict.__getitem__(self, k) inside a __getitem__)
 Ref getitem_m(Obj self, Args a) {
     dunder_args(self, a, "__getitem__", 1);
+    if (is_kind(self, Kind::List)) return list_subscript(self, a.pos(0));
     return is_kind(self, Kind::Dict) ? dict_subscript(self, a.pos(0)) : getitem(self, a.pos(0));
 }
 Ref setitem_m(Obj self, Args a) {
     dunder_args(self, a, "__setitem__", 2);
     if (is_kind(self, Kind::Dict)) dict_set(static_cast<Dict*>(self.object()), a.pos(0), a.pos(1));
+    else if (is_kind(self, Kind::List)) list_ass_subscript(self, a.pos(0), a.pos(1));
     else setitem(self, a.pos(0), a.pos(1));
     return none_ref();
 }
@@ -872,10 +886,12 @@ Ref dict_delitem_m(Obj self, Args a) {
 Ref contains_m(Obj self, Args a) {
     dunder_args(self, a, "__contains__", 1);
     if (is_kind(self, Kind::Dict)) return Ref::steal(boolean(!dict_get(static_cast<Dict*>(self.object()), a.pos(0)).is_unset()));
+    if (is_kind(self, Kind::List)) return Ref::steal(boolean(list_contains(self, a.pos(0))));
     return compare(CmpOp::In, a.pos(0), self);
 }
 Ref iter_m(Obj self, Args a) {
     dunder_args(self, a, "__iter__", 0);
+    if (is_kind(self, Kind::List)) return own(new Iterator(Iterator::ListIt, self));   // list_iter: the items, whatever a subclass says
     return is_kind(self, Kind::Dict) ? dict_iter(self) : iter(self);
 }
 Dict* dict_self(Obj self) { return static_cast<Dict*>(self.object()); }   // the descriptor checked the receiver
@@ -1515,6 +1531,7 @@ Module* make_builtins() {
         incref(None());
         decref(c->attrs.set(intern("__hash__"), None()));
     }
+    method(t.list, "__init__", list_init_m);
     method(t.list, "append", list_append_m);
     method(t.list, "extend", list_extend_m);
     method(t.list, "pop", list_pop_m);
@@ -2340,6 +2357,10 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                 for (Obj x : static_cast<Tuple*>(o)->items) todo.push_back(x);
                 break;
             case Kind::List:
+                if (has_attributes(o)) {
+                    attribute_values(static_cast<ListInstance*>(o), todo);
+                    found.push_back(Ref::share(v));
+                }
                 for (Obj x : static_cast<List*>(o)->items) todo.push_back(x);
                 break;
             case Kind::Set:

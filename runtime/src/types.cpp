@@ -668,7 +668,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
         if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
-        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().str && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().float_ &&
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().str && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().list && bc != types().float_ &&
             bc != types().module &&              // a class statement over ModuleType (importlib.util._LazyModule): instances and __class__ assignment stop by name
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
@@ -910,6 +910,7 @@ Ref builtin_new_m(Obj self, Args a) {
     ClassObject* type = as_class(self);
     ClassObject* cls = new_wrapper_class(a, type);
     if (cls == types().list) return list_new({});
+    if (is_subclass(cls, types().list)) return own(new ListInstance(cls));   // PyType_GenericNew: empty, whatever the arguments
     return invoke(Obj::of(cls), Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
 }
 Ref tuple_new_m(Obj, Args a) {                   // tuple_new_impl, and tuple_subtype_new for a subclass

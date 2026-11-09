@@ -322,7 +322,7 @@ void gen_raise_pending(Generator* g) {
 void gen_delegate_to(Generator* g, Obj iterable) {   // GET_YIELD_FROM_ITER
     g->delegate = iter(iterable);
     // _PyEval_GetIter: exact list, tuple, str and bytes stay on the stack with an index, with no iterator to show
-    bool virtual_iterator = is_kind(iterable, Kind::List) || is_exact_tuple(iterable) || is_kind(iterable, Kind::Str) || is_kind(iterable, Kind::Bytes);
+    bool virtual_iterator = is_exact_list(iterable) || is_exact_tuple(iterable) || is_kind(iterable, Kind::Str) || is_kind(iterable, Kind::Bytes);
     g->delegate_shown = virtual_iterator ? Ref::share(iterable) : Ref{};
     g->sent = none_ref();
 }

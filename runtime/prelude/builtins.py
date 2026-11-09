@@ -212,12 +212,12 @@ def _receiver(self: object, cls: type, name: str) -> None:
 
 def _list_repr(self: list[object]) -> str:
     _receiver(self, list, "__repr__")
-    if not self:
+    if not list.__len__(self):                   # list_repr: the items, whatever a subclass says
         return "[]"
     if not _enter(self):
         return "[...]"
     try:
-        return "[" + ", ".join([repr(x) for x in self]) + "]"
+        return "[" + ", ".join([repr(x) for x in list.__iter__(self)]) + "]"
     finally:
         _leave(self)
 

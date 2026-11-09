@@ -120,6 +120,8 @@ Ref tuple_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return i
 Ref tuple_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return tuple_subscript(self, a.pos(0)); }
 Ref tuple_contains_slot(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return Ref::steal(boolean(tuple_contains(self, a.pos(0)))); }
 Ref tuple_iter_slot(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return own(new Iterator(Iterator::TupleIt, self)); }
+// list's own __delitem__: its items, whatever a subclass says (list.__delitem__(self, i) inside a __delitem__)
+Ref list_delitem_slot(Obj self, Args a) { wrapper_args(a, "__delitem__", 1); list_ass_subscript(self, a.pos(0), Obj{}); return none_ref(); }
 Ref tuple_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int_from_i64(static_cast<std::int64_t>(static_cast<Tuple*>(self.object())->items.size())); }
 Ref type_or_slot(Obj self, Args a) { wrapper_args(a, "__or__", 1); return type_or(self, a.pos(0)); }
 Ref type_ror_slot(Obj self, Args a) { wrapper_args(a, "__ror__", 1); return type_or(a.pos(0), self); }
@@ -369,6 +371,7 @@ void init_slots() {
     }
     for (ClassObject* c : {t.range, t.slice, t.none, t.bytes, t.bytearray}) slot(c, "__repr__", own_repr);
     slot(t.list, "__reversed__", list_reversed);
+    slot(t.list, "__delitem__", list_delitem_slot);  // its other item methods are call.cpp's (method_descriptor and wrappers)
     slot(t.range, "__reversed__", range_reversed);
     slot(t.list, "sort", list_sort_m);
     slot(t.none, "__bool__", own_bool);
