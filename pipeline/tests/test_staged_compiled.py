@@ -90,7 +90,7 @@ REFUSED = (
     ('if __name__ == "__main__":\n    print(eval("1 + 1"))', "E-01: eval at __main__:<module> of a text"),
     ('def f():\n    v = 1\n    return eval("v")\nf()', "the frame's locals"),
     ('import collections\nexec("y = 1", {}, collections.ChainMap({}))', "a locals mapping that is not a dict"),
-    ('compile("1", "<s>", "eval")', "compile()"),
+    ('if __name__ == "__main__":\n    compile("1", "<s>", "eval")', "E-01: compile at __main__:<module> of a text"),
 )
 
 

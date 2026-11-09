@@ -51,8 +51,14 @@ for fn in (lambda: int | 1, lambda: 1 | int, lambda: int | "a", lambda: "a" | in
 REFUSED = (
     ("(int | str) | 1", "importing '"),
     ("1 | (int | str)", "importing '"),
-    ("import types\ntypes.UnionType[int, 'a']", "compile()"),      # typing compiles the forward reference eagerly (_make_forward_ref)
 )
+
+# typing compiles the forward reference eagerly (_make_forward_ref): the build stages it (C-8-11)
+FORWARD = r"""
+import types
+u = types.UnionType[int, 'a']
+print(u, u.__args__, u.__args__[1].__forward_code__.co_name)
+"""
 
 
 def pytest_generate_tests(metafunc: Any) -> None:
@@ -62,6 +68,10 @@ def pytest_generate_tests(metafunc: Any) -> None:
 
 def test_messages() -> None:
     same(MESSAGES)
+
+
+def test_a_forward_reference_in_a_union() -> None:
+    same(FORWARD)
 
 
 def test_what_is_not_there_yet_stops_by_name(refused: tuple[str, str]) -> None:

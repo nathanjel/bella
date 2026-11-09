@@ -816,7 +816,7 @@ def test_exception_groups() -> None:
 
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.crc32(b'a', -1)", "unsigned 32-bit"), ("import ast\nast.parse('1')", "compile()"),
-             ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
+             ("import ast\nast.expr()", "abstract AST node class"), ("import typing\nif __name__ == '__main__':\n    typing.TypeVar('T', bound='Fwd')", "a ForwardRef built at runtime"),
              ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"),
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),

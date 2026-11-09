@@ -181,10 +181,10 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
 # ---- staged texts (docs/staging.md): what the dry runs recorded, compiled into the program ----
 # A program's own text runs only if the dry run saw it, and the dry run runs its module body: a program that cannot
 # have one is spared that. What a dry run of it fails on is the program's own to say, when it runs. typing compiles a
-# string forward reference when it makes one (a TypeVar's bound, Optional["Node"], a TypedDict's fields): a name typing
-# exports, subscripted with a string, may stage a compile.
+# string forward reference when it makes one (a TypeVar's bound, Optional["Node"], types.UnionType[int, "Node"], a TypedDict's
+# fields): a name typing exports, or UnionType, subscripted with a string, may stage a compile.
 _MAY_STAGE = re.compile(r"\b(?:exec|eval|compile|namedtuple|NamedTuple|dataclass|make_dataclass|TypeVar|ForwardRef|TypedDict)\b"
-                        r"|\b(?:" + "|".join(sorted(n for n in typing.__all__ if n[0].isupper())) + r")\[[^\]\n]*[\"']")
+                        r"|\b(?:" + "|".join(sorted({"UnionType", *(n for n in typing.__all__ if n[0].isupper())})) + r")\[[^\]\n]*[\"']")
 _FUTURE_MASK = 0x3FE0000                 # every CO_FUTURE_* flag, as the dry run keys a compile
 
 
