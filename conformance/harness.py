@@ -190,6 +190,14 @@ def python_version(python: str) -> str:
     return out.stdout.strip()
 
 
+def machine_paths(python: str) -> tuple[str, ...]:
+    """The directories a recording must not mention: where the interpreter is installed and where this checkout is. Either
+    differs between this machine and CI's image, so a recording naming one fails `verify` there (2026-11-09, C-7-52)."""
+    out = subprocess.run([python, "-c", "import sys; print(sys.base_prefix); print(sys.prefix)"],
+                         capture_output=True, text=True, check=True)
+    return tuple(dict.fromkeys([*out.stdout.split(), str(ROOT.parent)]))
+
+
 # ------------------------------------------------------------------------------------------
 
 def cmd_record(args: argparse.Namespace) -> int:
@@ -200,6 +208,7 @@ def cmd_record(args: argparse.Namespace) -> int:
               f"(--allow-unpinned records a non-authoritative set)", file=sys.stderr)
         return 2
     EXPECTED.mkdir(exist_ok=True)
+    local = machine_paths(args.python)
     n = 0
     for case in iter_cases(args.filter):
         header = read_header(case)
@@ -214,6 +223,12 @@ def cmd_record(args: argparse.Namespace) -> int:
                       f"its simulation", file=sys.stderr)
                 return 1
         for deviation, trace in traces.items():
+            printed = [v for k in ("stdout", "stderr") if isinstance(v := trace[k], str)]
+            leaked = [d for d in local if any(d in text for text in printed)]
+            if leaked:
+                print(f"record: {case.name} prints {leaked[0]}, which is this machine's and not CI's: print a basename or "
+                      f"a name instead", file=sys.stderr)
+                return 1
             record = {"case": case.name, "clause": header.clause, "spec": header.spec, "status": header.status,
                       "source": header.source, **({"deviation": deviation} if deviation else {}),
                       "recorded_with": version, "authoritative": version == pinned, **trace}
