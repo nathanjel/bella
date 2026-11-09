@@ -14,6 +14,7 @@ refuse.
 """
 from __future__ import annotations
 
+import builtins
 import fcntl
 import hashlib
 import marshal
@@ -22,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import typing
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache
@@ -178,8 +180,12 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
 
 # ---- staged texts (docs/staging.md): what the dry runs recorded, compiled into the program ----
 # A program's own text runs only if the dry run saw it, and the dry run runs its module body: a program that cannot
-# have one is spared that. What a dry run of it fails on is the program's own to say, when it runs.
-_MAY_STAGE = re.compile(r"\b(?:exec|eval|compile|namedtuple|NamedTuple|dataclass|make_dataclass)\b")
+# have one is spared that. What a dry run of it fails on is the program's own to say, when it runs. typing compiles a
+# string forward reference when it makes one (a TypeVar's bound, Optional["Node"], a TypedDict's fields): a name typing
+# exports, subscripted with a string, may stage a compile.
+_MAY_STAGE = re.compile(r"\b(?:exec|eval|compile|namedtuple|NamedTuple|dataclass|make_dataclass|TypeVar|ForwardRef|TypedDict)\b"
+                        r"|\b(?:" + "|".join(sorted(n for n in typing.__all__ if n[0].isupper())) + r")\[[^\]\n]*[\"']")
+_FUTURE_MASK = 0x3FE0000                 # every CO_FUTURE_* flag, as the dry run keys a compile
 
 
 @dataclass(frozen=True)
@@ -192,6 +198,49 @@ class StagedRow:
     why: str
     text: str
     future: frozenset[str]
+
+
+@dataclass(frozen=True)
+class CompileRow:
+    """A staged compile() (docs/staging.md section 4): its key as the dry run made it, and its outcome: the code (a body to
+    run, and the code object's names and counts, copied from the one CPython made), or the exception CPython raised and its
+    arguments (encoded, `encoded_value`). `why` is the refusal when either cannot be given. Rows whose code objects CPython
+    finds equal share a `group`."""
+    site: str
+    source: bytes
+    is_bytes: bool
+    filename: str
+    mode: str
+    flags: int
+    optimize: int
+    module: str | None
+    feature_version: int
+    namespace: str | None
+    why: str
+    text: str
+    future: frozenset[str]
+    code: tuple[Any, ...] | None         # (co_name, co_qualname, co_firstlineno, co_argcount, co_posonlyargcount,
+                                         #  co_kwonlyargcount, co_varnames, co_cellvars, co_freevars, co_flags)
+    raises: str | None
+    raise_args: bytes
+    group: int
+
+
+def encoded_value(v: object) -> bytes:
+    """An exception's argument as the runtime decodes it (runtime/src/staged.cpp, decoded): N None, T/F a bool, i<digits>;
+    an int, s<length>:<UTF-8> a str, t<count>; a tuple of what follows. Anything else cannot be given."""
+    if v is None:
+        return b"N"
+    if isinstance(v, bool):
+        return b"T" if v else b"F"
+    if isinstance(v, int):
+        return b"i" + str(v).encode() + b";"
+    if isinstance(v, str):
+        data = v.encode("utf-8", "surrogatepass")
+        return b"s" + str(len(data)).encode() + b":" + data
+    if isinstance(v, tuple):
+        return b"t" + str(len(v)).encode() + b";" + b"".join(encoded_value(x) for x in v)
+    raise TypeError(type(v).__name__)
 
 
 @cache
@@ -214,8 +263,54 @@ def _program_artefact(program: Path) -> dict[str, Any] | None:
     return artefact
 
 
-def staged_tables(program: Path, modules: list[ProgramModule]) -> tuple[list[StagedRow], dict[str, str], dict[str, str]]:
-    """The texts of the sites this program has, and the sites' own refusals."""
+def _reachable(key: tuple[Any, ...]) -> bool:
+    """Whether the runtime's compile() can reach this key: a call whose arguments CPython rejects before it compiles (a mode
+    it does not know, a module that is not a str, a number beyond a C int) raises there, before any lookup, and the dry
+    run's key of it is never matched."""
+    _site, _, _source, _filename, mode, flags, optimize, module, feature_version = key
+    numbers = (flags, optimize, feature_version)
+    return (mode in ("exec", "eval", "single") and (module is None or isinstance(module, str))
+            and all(isinstance(n, int) and -(2 ** 31) <= n < 2 ** 31 for n in numbers) and -1 <= optimize <= 2)
+
+
+def _compile_row(key: tuple[Any, ...], outcome: tuple[Any, ...], groups: dict[Any, int]) -> CompileRow:
+    """A staged compile's row: what the runtime matches (the key), and what it answers or why it cannot."""
+    site, _, source, filename, mode, flags, optimize, module, feature_version = key
+    given = source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source
+    future = features(flags)
+    text = source_text("exec", source)          # compile() strips nothing (eval() strips its own text's leading blanks)
+    why, namespace, code, raises, raise_args, group = "", None, None, None, b"", -1
+    if outcome[0] == "raises":
+        cls = getattr(builtins, outcome[1], None)
+        if not (isinstance(cls, type) and issubclass(cls, BaseException)):
+            why = f"E-01: compile at {site} raised {outcome[1]}, which is not a built-in exception"
+        else:
+            try:
+                raises, raise_args = outcome[1], encoded_value(tuple(outcome[2]))
+            except TypeError as exc:
+                why = f"compile() at {site} raised {outcome[1]} with an argument the build cannot give (a {exc})"
+    elif mode not in ("exec", "eval"):
+        why = f"compile() at {site} in mode {mode!r} (an interactive statement prints its value)"
+    elif flags & ~_FUTURE_MASK:
+        why = f"compile() at {site} with flags {flags:#x}, beyond the __future__ features"
+    elif optimize not in (-1, 0):
+        why = f"compile() at {site} with optimize={optimize} (asserts and docstrings removed)"
+    else:
+        c = outcome[1]
+        namespace = "bella::staged_compile_" + _key(mode.encode(), given, str(filename).encode(), " ".join(sorted(future)).encode())
+        try:
+            lowered_unit(text, filename, namespace, mode, future)
+        except (L.Unsupported, L.DialectError, SyntaxError, wf2.WellFormednessError) as exc:
+            namespace, why = None, f"compile() at {site}: the staged text does not lower yet: {type(exc).__name__}: {exc}"
+        code = (c.co_name, c.co_qualname, c.co_firstlineno, c.co_argcount, c.co_posonlyargcount, c.co_kwonlyargcount,
+                c.co_varnames, c.co_cellvars, c.co_freevars, c.co_flags)
+        group = groups.setdefault(c, len(groups))   # code_richcompare: code objects equal by value share a group
+    return CompileRow(site, given, isinstance(source, bytes), str(filename), str(mode), flags, optimize, module, feature_version,
+                      namespace, why, text, future, code, raises, raise_args, group)
+
+
+def staged_tables(program: Path, modules: list[ProgramModule]) -> tuple[list[StagedRow], dict[str, str], dict[str, str], list[CompileRow]]:
+    """The texts of the sites this program has, their compiles, and the sites' own refusals."""
     names = {m.name for m in modules}
     own = [read_source(program), *(read_source(m.path) for m in modules if m.path is not None and not m.frozen and m.origin is None
                                    and not m.path.is_relative_to(STDLIB))]
@@ -226,9 +321,14 @@ def staged_tables(program: Path, modules: list[ProgramModule]) -> tuple[list[Sta
             artefacts.append(made)
     names |= {"__main__"}
     rows: dict[tuple[str, str, str | bytes], StagedRow] = {}
+    compiles: dict[tuple[Any, ...], CompileRow] = {}
+    groups: dict[Any, int] = {}
     refused: dict[str, str] = {}
     unstaged: dict[str, str] = {}
     for artefact in artefacts:
+        for key, outcome in artefact["compiled"].items():
+            if key[0].partition(":")[0] in names and key not in compiles and _reachable(key):
+                compiles[key] = _compile_row(key, outcome, groups)
         for (site, kind, source), (_code, flags) in artefact["texts"].items():
             if site.partition(":")[0] not in names or (site, kind, source) in rows:
                 continue
@@ -243,16 +343,42 @@ def staged_tables(program: Path, modules: list[ProgramModule]) -> tuple[list[Sta
                 rows[(site, kind, source)] = StagedRow(site, kind, given, isinstance(source, bytes), None, f"{type(exc).__name__}: {exc}", text, future)
         refused.update({s: m for s, m in artefact["refused"].items() if s.partition(":")[0] in names})
         unstaged.update({s: m for s, m in artefact["unstaged"].items() if s.partition(":")[0] in names})
-    return list(rows.values()), refused, unstaged
+    return list(rows.values()), refused, unstaged, list(compiles.values())
 
 
-def _staged_cpp(rows: list[StagedRow], refused: dict[str, str], unstaged: dict[str, str]) -> tuple[str, str]:
+def _compiles_cpp(compiles: list[CompileRow]) -> tuple[str, str]:
+    """The staged compiles' code records and table, and the span main() registers."""
+    if not compiles:
+        return "", "{}"
+    def strings(ns: tuple[str, ...]) -> str:
+        return "{" + ", ".join(c_string(n) for n in ns) + "}"
+    records, items = [], []
+    for i, r in enumerate(compiles):
+        record = "nullptr"
+        if r.code is not None:
+            name, qualname, first, argc, posonly, kwonly, varnames, cellvars, freevars, flags = r.code
+            records.append(f"static const ::bella::Code STAGED_CODE_{i}{{{c_string(name)}, {c_string(qualname)}, {c_string(r.filename)}, "
+                           f"{first}, {argc}, {posonly}, {kwonly}, false, false, {strings(varnames)}, nullptr, true, "
+                           f"{strings(cellvars)}, {strings(freevars)}, {flags}}};")
+            record = f"&STAGED_CODE_{i}"
+        items.append(f"    {{{c_string(r.site)}, {c_bytes(r.source)}, {len(r.source)}, {'true' if r.is_bytes else 'false'}, "
+                     f"{c_string(r.filename)}, {c_string(r.mode)}, {r.flags}, {r.optimize}, "
+                     f"{c_string(r.module) if r.module is not None else 'nullptr'}, {r.feature_version}, {record}, "
+                     f"{'::' + r.namespace + '::module_body' if r.namespace else 'nullptr'}, {c_string(r.why)}, "
+                     f"{c_string(r.raises) if r.raises else 'nullptr'}, {c_bytes(r.raise_args)}, {len(r.raise_args)}, {r.group}}}")
+    table = "static const ::bella::StagedCompile STAGED_COMPILES[] = {\n" + ",\n".join(items) + "\n};\n"
+    return "\n".join(records) + "\n" + table, f"std::span<const ::bella::StagedCompile>(STAGED_COMPILES, {len(compiles)})"
+
+
+def _staged_cpp(rows: list[StagedRow], refused: dict[str, str], unstaged: dict[str, str], compiles: list[CompileRow]) -> tuple[str, str]:
     """Its declarations and tables, and the line of main() that registers them."""
-    if not rows and not refused and not unstaged:
+    if not rows and not refused and not unstaged and not compiles:
         return "", ""
-    decls = sorted({f"namespace {r.namespace} {{ ::bella::Ref module_body(::bella::Module* m); }}" for r in rows if r.namespace})
+    bodies: list[str | None] = [r.namespace for r in rows] + [c.namespace for c in compiles]
+    decls = sorted({f"namespace {n} {{ ::bella::Ref module_body(::bella::Module* m); }}" for n in bodies if n})
     body = [f"    {{{c_string(r.site)}, {c_string(r.kind)}, {c_bytes(r.source)}, {len(r.source)}, {'true' if r.is_bytes else 'false'}, "
             f"{'::' + r.namespace + '::module_body' if r.namespace else 'nullptr'}, {c_string(r.why)}}}" for r in rows]
+    compile_tables, compiles_span = _compiles_cpp(compiles)
     def sites(name: str, table: dict[str, str]) -> tuple[str, str]:
         if not table:
             return "", "{}"
@@ -262,8 +388,8 @@ def _staged_cpp(rows: list[StagedRow], refused: dict[str, str], unstaged: dict[s
     unstaged_table, unstaged_span = sites("STAGED_UNSTAGED", unstaged)
     texts = "static const ::bella::StagedText STAGED[] = {\n" + ",\n".join(body) + "\n};\n" if rows else ""
     texts_span = f"std::span<const ::bella::StagedText>(STAGED, {len(rows)})" if rows else "{}"
-    return ("\n".join(decls) + "\n" + texts + refused_table + unstaged_table,
-            f"    ::bella::register_staged({texts_span}, {refused_span}, {unstaged_span});\n")
+    return ("\n".join(decls) + "\n" + texts + refused_table + unstaged_table + compile_tables,
+            f"    ::bella::register_staged({texts_span}, {refused_span}, {unstaged_span}, {compiles_span});\n")
 
 
 def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, str] = ("", "")) -> str:
@@ -330,11 +456,14 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
             shown = f"<frozen {m.name}>" if m.frozen else str(m.origin or m.path)
             library = m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB)
             units.append((lowered_unit(read_source(m.path), shown, namespace_of(m.name)), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS))
-    rows, refused, unstaged = staged_tables(program, modules)
+    rows, refused, unstaged, compiles = staged_tables(program, modules)
     for name in sorted({r.namespace for r in rows if r.namespace}):
         row = next(r for r in rows if r.namespace == name)
         units.append((lowered_unit(row.text, "<string>", name, row.kind, row.future), name.rpartition("::")[2], LIBRARY_FLAGS))
-    units.append((main_unit(program, modules, _staged_cpp(rows, refused, unstaged)), f"{program.stem}-main", PROGRAM_FLAGS))
+    for name in sorted({r.namespace for r in compiles if r.namespace}):
+        made = next(r for r in compiles if r.namespace == name)
+        units.append((lowered_unit(made.text, made.filename, name, made.mode, made.future), name.rpartition("::")[2], LIBRARY_FLAGS))
+    units.append((main_unit(program, modules, _staged_cpp(rows, refused, unstaged, compiles)), f"{program.stem}-main", PROGRAM_FLAGS))
     with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
         objs = list(pool.map(lambda u: _object(u[0], u[1], cxx, std, u[2]), units))
     # the runtime's debug information is most of a binary, and every program would carry a copy

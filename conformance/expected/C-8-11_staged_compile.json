@@ -1,0 +1,12 @@
+{
+ "case": "C-8-11_staged_compile.py",
+ "clause": "C-8-11",
+ "spec": "section 8",
+ "status": "P1",
+ "source": "docs/staging.md section 4 (a compile stages its outcome: the code, or the exception with its arguments), typing._make_forward_ref",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "ForwardRef Node None\ncode <module> <module> <string> 1\n0 0 0 0 () () () 0\nTrue True\nForwardRef('Node') ForwardRef('Node') ForwardRef('Leaf') True False\nTrue False False False True <string>\n('Node', 'list[Node]')\nSyntaxError None None None None\nSyntaxError ('<string>', 1, 0, '1 +', 1, 0)\nFalse None\nNone <module> True\nTrue\n",
+ "stderr": "",
+ "exit_code": 0
+}

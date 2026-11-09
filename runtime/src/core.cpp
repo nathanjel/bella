@@ -515,6 +515,12 @@ std::int64_t full_hash(Obj v) {
         case Kind::Tuple:
             if (has_attributes(o) && type_lookup(o->cls, intern("__hash__")) != type_lookup(types().tuple, intern("__hash__"))) break;
             return tuple_hash(static_cast<Tuple*>(o));
+        case Kind::CodeKind: {                   // code_hash mixes the bytecode, which only CPython's code object has
+            if (static_cast<CodeObject*>(o)->staged != nullptr)
+                throw NotImplemented("hash() of a code object a staged compile() made (code_hash: its bytecode, E-02)");
+            auto h = pointer_hash(o);            // a function's: one code object per code record, whose == is identity
+            return h == -1 ? -2 : h;
+        }
         default:
             break;
     }

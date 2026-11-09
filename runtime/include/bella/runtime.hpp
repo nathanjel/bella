@@ -193,8 +193,10 @@ struct Code {
     mutable Ref object;                          // its code object, made at the first f.__code__ (one per record: equality is identity)
 };
 
+struct StagedCompile;
 struct CodeObject : Object {                     // `code`: the names and counts of a Code; its bytecode side stops by name
     const Code* code;
+    const StagedCompile* staged = nullptr;       // what a staged compile() returned: exec and eval run its body
     explicit CodeObject(const Code* c);
 };
 
@@ -1007,7 +1009,32 @@ struct StagedSite {
     const char* site;
     const char* message;
 };
-void register_staged(std::span<const StagedText> texts, std::span<const StagedSite> refused, std::span<const StagedSite> unstaged);
+// A staged compile() (docs/staging.md section 4), keyed as the dry run keys it: the site, the source as given, and the
+// parameters (flags with the caller's __future__ flags merged unless dont_inherit; `module` null for None). Its outcome is
+// the code (`code` the names and counts of the one CPython made, `body` what runs it, null with `why` when it does not
+// lower) or the exception CPython raised (`raises` its built-in class, `raise_args` its arguments, encoded by
+// pipeline/build.py encoded_value). Code objects of rows in one `group` compare equal, as CPython's do.
+struct StagedCompile {
+    const char* site;
+    const char* source;
+    std::size_t length;
+    bool bytes;
+    const char* filename;
+    const char* mode;
+    int flags;
+    int optimize;
+    const char* module;
+    int feature_version;
+    const Code* code;
+    Ref (*body)(Module*);
+    const char* why;
+    const char* raises;
+    const char* raise_args;
+    std::size_t raise_args_length;
+    int group;
+};
+void register_staged(std::span<const StagedText> texts, std::span<const StagedSite> refused, std::span<const StagedSite> unstaged,
+                     std::span<const StagedCompile> compiles = {});
 Ref b_eval(Obj, Args a);
 Ref b_exec(Obj, Args a);
 Ref b_compile(Obj, Args a);

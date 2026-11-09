@@ -112,6 +112,7 @@ C-8-07_lazy_modules_list.py
 C-8-08_staged_dataclass.py
 C-8-09_staged_namedtuple.py
 C-8-10_import_system.py
+C-8-11_staged_compile.py
 C-9-01_cyclic_disposal_order.py
 C-9-02_cyclic_resurrection.py
 C-9-03_refcount_disposal_order.py

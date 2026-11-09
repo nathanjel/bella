@@ -291,6 +291,8 @@ void init_slots() {
     slot(i, "__repr__", int_repr);
     slot(i, "__hash__", int_hash);
     slot(t.tuple, "__hash__", tuple_hash_slot);
+    comparisons(t.code);                         // code_richcompare, code_hash
+    slot(t.code, "__hash__", own_hash);
     slot(t.tuple, "__len__", tuple_len_slot);
     slot(t.tuple, "__getitem__", tuple_getitem_slot);
     slot(t.tuple, "__contains__", tuple_contains_slot);

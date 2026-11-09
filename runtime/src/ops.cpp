@@ -596,6 +596,15 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
         Ref t0 = tuple_new({s0->start, s0->stop, s0->step}), t1 = tuple_new({s1->start, s1->stop, s1->step});
         return sequence_compare(op, t0.get(), t1.get(), false);
     }
+    if (is_kind(a, Kind::CodeKind) && is_kind(b, Kind::CodeKind)) {   // code_richcompare: == and != only
+        if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+        // a staged compile's code objects compare as the ones CPython made did (the build groups them); a function's
+        // is one per code record, as is CPython's
+        const StagedCompile* s0 = static_cast<CodeObject*>(a.object())->staged;
+        const StagedCompile* s1 = static_cast<CodeObject*>(b.object())->staged;
+        bool eq = a == b || (s0 != nullptr && s1 != nullptr && s0->group == s1->group);
+        return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
+    }
     if ((op == CmpOp::Eq || op == CmpOp::Ne) && a == b && !is_heap_obj(a)) return Ref::steal(boolean(op == CmpOp::Eq));
     return Ref::steal(Obj::of(NOTIMPLEMENTED));
 }

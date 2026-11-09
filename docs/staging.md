@@ -136,7 +136,11 @@ call it.
   program's closure is lowered through L2 and compiled into the binary, one unit per distinct text. A hit runs its body in a
   `Module` made for the call, as long-lived as its functions: its globals are the dict given, and its builtins are what that
   dict's `__builtins__` said at that moment, as `_PyEval_BuiltinsFromGlobals` does. A program's own module body is only dry-run
-  when its source could stage anything; otherwise its texts miss and stop with E-01, as any unstaged text does.
+  when its source could stage anything; otherwise its texts miss and stop with E-01, as any unstaged text does. A staged
+  `compile()` is a row of its own (`StagedCompile`, matched on the whole key after `compile()`'s own argument checks): its text
+  lowered in its mode under its file name, with the code object's names and counts copied from the one CPython made, or the
+  exception CPython raised and its arguments. `exec` and `eval` run that code object wherever it is given, and two of them
+  compare equal when CPython's did (C-8-11); its hash, which mixes the bytecode, stops by name.
 * **Policy refusals.** A function in the manifest's `[refused]` table is refused when it is
   called, malformed input included (`gettext.c2py("bad")` is refused, not a catchable
   `ValueError`), and whether or not its text was staged. C-7-16 needs the latter: the dry run of
