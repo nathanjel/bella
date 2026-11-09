@@ -225,9 +225,24 @@ def search_roots(program: Path) -> list[Path]:
     return roots
 
 
+@cache
+def program_policy(directory: Path) -> dict[str, dict[str, list[str]]]:
+    """The program's registry of computed imports (spec section 8): the `[dynamic]` table of the nearest `bella.toml` above the
+    program, in the manifest's shape (module -> {"function: name expression" -> the modules the lookup must find}). The
+    repository's own `bella.toml` serves its programs (the targets, the examples)."""
+    for d in (directory, *directory.parents):
+        policy = d / "bella.toml"
+        if policy.is_file():
+            table = tomllib.loads(policy.read_text(encoding="utf-8")).get("dynamic", {})
+            return {module: {site: list(names) for site, names in sites.items()} for module, sites in table.items()}
+    return {}
+
+
 def find_program_modules(program: Path) -> list[ProgramModule]:
-    """Every module of the program's own an import can reach, in the order they were found."""
+    """Every module of the program's own an import can reach, in the order they were found, and the modules the program's policy
+    says its computed imports must find (`program_policy`), reached from the modules whose sites they are."""
     roots = search_roots(program)
+    dynamic = program_policy(program.resolve().parent)
     found: dict[str, ProgramModule] = {}
     absent: set[str] = set()
     queue: list[ProgramModule] = []
@@ -303,6 +318,11 @@ def find_program_modules(program: Path) -> list[ProgramModule]:
         done += 1
         if m.path is not None:
             scan(m.path, m.name, m.package)
+        for names in dynamic.get(m.name, {}).values():   # the computed imports of this module's reviewed sites
+            for target in names:
+                parts = target.split(".")
+                for i in range(1, len(parts) + 1):
+                    find(".".join(parts[:i]))
     # the start-up modules themselves, after the program's own closure is complete, so that what they would import later (codecs.open's
     # `warnings`, and the world behind it) is not compiled into every program: a lazy import of theirs the program does not reach otherwise
     # stops by name, as any uncompiled module does

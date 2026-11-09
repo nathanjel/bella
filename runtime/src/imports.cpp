@@ -58,6 +58,7 @@ namespace prelude_heapq { Ref module_body(Module* m); }       // runtime/prelude
 namespace prelude_opcode { Ref module_body(Module* m); }      // runtime/prelude/_opcode.py
 namespace prelude_warnings { Ref module_body(Module* m); }    // runtime/prelude/_warnings.py
 namespace prelude_tokenize { Ref module_body(Module* m); }    // runtime/prelude/_tokenize.py
+namespace prelude_imp { Ref module_body(Module* m); }         // runtime/prelude/_imp.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -376,7 +377,7 @@ struct NativeModule {
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
     static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
-        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}};
+        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_imp", {fill_imp}}};
     return table;
 }
 }  // namespace
@@ -408,6 +409,20 @@ Ref i_keyword_suggestion(Obj, Args a) {
 // TypeErrors in its order: the counts, then each slot in order (a missing required argument where it stands), then an argument
 // given by name and position, then the first unexpected keyword with _Py_CalculateSuggestions' hint. `names` lists every
 // parameter, the first `posonly` positional-only; minkw counts the required keyword-only ones.
+Ref i_cpython_table(Obj, Args a) {               // a row of the names table (tools/cpython_names.py), the pin's build constants among them
+    positional_only(a, "_cpython_table", 1, 1);
+    Obj doc = cpython_doc(as_str(a.pos(0))->text);
+    return doc == None() ? none_ref() : Ref::share(doc);
+}
+Ref i_source_hash(Obj, Args a) {                 // _imp.source_hash: _Py_KeyedHash's 8 bytes in the machine's order (little-endian here)
+    positional_only(a, "_source_hash", 2, 2);
+    auto key = static_cast<std::uint64_t>(static_cast<std::int64_t>(index_value(a.pos(0))));   // the C long's bits, a negative key wrapping
+    const std::string& data = bytes_data(a.pos(1));
+    std::uint64_t h = keyed_hash(key, reinterpret_cast<const unsigned char*>(data.data()), data.size());
+    std::string out(8, '\0');
+    for (int i = 0; i < 8; ++i) out[static_cast<std::size_t>(i)] = static_cast<char>((h >> (8 * i)) & 0xff);
+    return bytes_new(out);
+}
 Ref i_is_c_type(Obj, Args a) {                   // whether an object's type is CPython's (a static type, a prelude's presented class), not a class of the program's
     positional_only(a, "_is_c_type", 1, 1);
     return Ref::steal(boolean(c_type(type_of(a.pos(0)))));
@@ -893,6 +908,11 @@ void fill_warnings(Module* m) {
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame}});
 }
 void fill_tokenize(Module* m) { fill_in_python(m, "_tokenize", "_tokenize", prelude_tokenize::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
+void fill_imp(Module* m) {
+    fill_in_python(m, "_imp", "_imp", prelude_imp::module_body,
+                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_cpython_table", i_cpython_table}, {"_source_hash", i_source_hash},
+                    {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes}});
+}
 void fill_contextvars(Module* m) { fill_in_python(m, "_contextvars", "_contextvars", prelude_contextvars::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,
@@ -937,9 +957,9 @@ Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one mod
     return Ref::share(Obj::of(n.made));
 }
 
-Ref i_bella_import_warning(Obj, Args a) {        // _warnings.warn(msg, ImportWarning): see import_warning
-    positional_only(a, "_bella_import_warning", 1, 1);
-    import_warning(as_str(a.pos(0))->text);
+Ref i_bella_import_warning(Obj, Args a) {        // _warnings.warn(msg, ImportWarning), or of the category named second: see runtime_warning
+    positional_only(a, "_bella_import_warning", 1, 2);
+    runtime_warning(a.npos == 2 ? as_str(a.pos(1))->text.c_str() : "ImportWarning", as_str(a.pos(0))->text);
     return none_ref();
 }
 bool& shutting_down() {

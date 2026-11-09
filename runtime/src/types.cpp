@@ -663,6 +663,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             raise_new("TypeError", "duplicate base class " + bc->name);
         if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
         if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().str && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().float_ &&
+            bc != types().module &&              // a class statement over ModuleType (importlib.util._LazyModule): instances and __class__ assignment stop by name
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
         bases.push_back(bc);
@@ -1497,10 +1498,9 @@ void set_fn_qualname(Obj self, Obj v) {
 }
 Ref fn_doc(Obj self) { return fn_of(self)->doc; }
 void set_fn_doc(Obj self, Obj v) { fn_of(self)->doc = Ref::share(v); }
-Ref fn_module(Obj self) {                        // set from the globals when made; func.__module__ may be rebound
+Ref fn_module(Obj self) {                        // set from the globals' __name__ when made (func_new_impl); func.__module__ may be rebound
     if (!fn_of(self)->module_name.get().is_unset()) return fn_of(self)->module_name;
-    Obj n = dict_get(fn_of(self)->module->dict, Obj::of(N("__name__")));
-    return n.is_unset() ? none_ref() : Ref::share(n);
+    return none_ref();                           // a function made in a namespace without __name__
 }
 void set_fn_module(Obj self, Obj v) {
     fn_of(self)->module_name = v.is_unset() ? none_ref() : Ref::share(v);
@@ -1647,6 +1647,14 @@ Ref builtin_doc(Obj self) {                      // from the table, for the ones
     }
     Ref module = builtin_module(self), name = builtin_name(self);
     const Str* m = as_str(module.get());
+    if (as_str(name.get())->text == "__new__") {     // tp_new's builtin, bound to its type: the table's new:<tp_name> row
+        Ref bound = builtin_self(self);
+        if (is_kind(bound.get(), Kind::Class))
+            if (auto text = cpython_doc_text("new:" + static_cast<ClassObject*>(bound.get().object())->name)) {
+                if (text->empty()) return none_ref();
+                return Ref::share(Obj::of(intern(std::string(*text))));
+            }
+    }
     if (m != nullptr || module.get() == None())      // the table's rows are <__module__>.<__name__>, "" for None (the error handlers of _codecs)
         if (auto text = cpython_doc_text((m == nullptr ? "" : m->text) + "." + as_str(name.get())->text)) {
             if (text->empty()) return none_ref();

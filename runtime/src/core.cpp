@@ -168,6 +168,9 @@ PyFunction::PyFunction(const Code* c, Ref (*e)(PyFunction*, Args), Module* m)
     : Object(Kind::PyFunction), code(c), entry(e), module(m) {
     cls = types().function;
     incref(static_cast<Object*>(m));
+    // func_new_impl: __module__ is the globals' __name__ as it stands now; a module that renames itself afterwards
+    // (importlib renames _frozen_importlib) leaves its functions' __module__ as it was (review G15 range: importlib)
+    if (Obj n = dict_get(m->dict, Obj::of(intern("__name__"))); !n.is_unset()) module_name = Ref::share(n);
 }
 Module::Module(const char* n) : Object(Kind::Module), name(str_new(n)), dict(new Dict) {
     cls = types().module;
@@ -527,6 +530,7 @@ std::int64_t full_hash(Obj v) {
     raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
 }
 }  // namespace
+std::uint64_t keyed_hash(std::uint64_t key, const unsigned char* src, std::size_t len) { return siphash13(key, 0, src, len); }   // _Py_KeyedHash
 
 std::int64_t tuple_hash(const Tuple* t) {
     // tuplehash: xxHash's mixing, as Objects/tupleobject.c

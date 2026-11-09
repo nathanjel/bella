@@ -2498,6 +2498,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             register_modules(modules, program_dir);
             runtime_own = {builtins_module(), sys};
             Module* bootstrap = nullptr;
+            Module* external = nullptr;
+            ModuleBody external_body = nullptr;
             for (const PreludeModule& pm_entry : prelude) {
                 // each prelude module runs as the module it names: `builtins` (its classes say so in
                 // __module__) or `_frozen_importlib` (bootstrap.py). Its __all__ goes into builtins,
@@ -2535,7 +2537,25 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                         put(pm->dict, n, b.get());
                     }
                 }
+                if (std::string_view(pm_entry.name) == "_frozen_importlib_external") {   // bootstrap_external.py: _set_bootstrap_module's work, its primitives
+                    put(pm->dict, "_bootstrap", Obj::of(bootstrap));
+                    for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{{"_bella_refuse", i_bella_refuse}, {"_cpython_table", i_cpython_table}}) {
+                        Ref b = own(new Builtin(n, fn));
+                        put(pm->dict, n, b.get());
+                    }
+                }
+                if (std::string_view(pm_entry.name) == "_frozen_importlib_external") {
+                    // its body reads the build's constants through int and str methods, which init_bigint and the others install
+                    // after this loop: it runs then (below); the module is in sys.modules from here, as CPython's frozen one is
+                    external = pm;
+                    external_body = pm_entry.body;
+                    dict_set(sys_modules(), Obj::of(intern(pm_entry.name)), Obj::of(pm));
+                    put(bootstrap->dict, "_bootstrap_external", Obj::of(pm));
+                    continue;
+                }
                 pm_entry.body(pm);
+                if (std::string_view(pm_entry.name) == "_frozen_importlib")   // in sys.modules, as CPython's frozen module is: importlib's package imports it by name
+                    dict_set(sys_modules(), Obj::of(intern(pm_entry.name)), Obj::of(pm));
                 Obj all = dict_get(pm->dict, Obj::of(intern("__all__")));
                 if (!all.is_unset())
                     for (Obj n : static_cast<List*>(all.object())->items) {
@@ -2584,6 +2604,15 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             init_float();
             init_complex();
             init_generator();
+            if (external != nullptr) {
+                external_body(external);         // bootstrap_external.py, now that int and str have their methods
+                // sys.meta_path: the finders the import system stands for, as CPython's _install and _install_external_importers
+                // list them; the closed world's registry does their search, and a program reads the list (importlib.invalidate_caches)
+                // but may not change it (E-04). sys.path_hooks stays absent: CPython's holds zipimport's class, which phase 1 lacks
+                Ref finders = list_new({dict_get(bootstrap->dict, Obj::of(intern("BuiltinImporter"))), dict_get(bootstrap->dict, Obj::of(intern("FrozenImporter"))),
+                                        dict_get(external->dict, Obj::of(intern("PathFinder")))});
+                put(sys->dict, "meta_path", finders.get());
+            }
             for (ClassObject* c : builtin_types())    // every file's methods made, those that are slot wrappers say so
                 for (auto& [name, v] : c->attrs.items())
                     if (is_kind(v, Kind::Builtin)) {

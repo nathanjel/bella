@@ -73,7 +73,8 @@ compiled = [
   "encodings.utf_16", "encodings.utf_16_be", "encodings.utf_16_le", "encodings.utf_32",
   "encodings.utf_32_be", "encodings.utf_32_le",
   "enum", "fnmatch", "fractions", "functools", "genericpath", "gettext", "glob", "hashlib",
-  "heapq", "hmac", "html", "html.entities", "inspect", "io", "ipaddress", "json", "json.decoder",
+  "heapq", "hmac", "html", "html.entities", "importlib", "importlib._abc", "importlib.machinery", "importlib.util",   # CPython's own package over the runtime's _frozen_importlib, _frozen_importlib_external and _imp (2026-11-09)
+  "inspect", "io", "ipaddress", "json", "json.decoder",
   "json.encoder", "json.scanner", "keyword", "linecache", "locale", "logging", "ntpath", "numbers",
   "opcode", "operator", "optparse", "os", "os.path", "pathlib", "pathlib._os", "posixpath",
   "pprint", "random", "re", "re._casefix", "re._compiler", "re._constants", "re._parser",
@@ -99,8 +100,8 @@ mapped = [
 core = [
   "builtins", "sys", "marshal", "posix", "_abc", "_codecs", "_frozen_importlib",
   "_frozen_importlib_external", "_imp", "_io", "_signal", "_warnings", "_weakref",
-  "importlib", "importlib._abc", "importlib._bootstrap", "importlib._bootstrap_external",
-  "importlib.machinery", "importlib.util", "zipimport", "_tokenize", "_suggestions", "_ast", "_types",
+  "importlib._bootstrap", "importlib._bootstrap_external",
+  "zipimport", "_tokenize", "_suggestions", "_ast", "_types",
 ]
 
 [phase1.shim]
@@ -158,6 +159,9 @@ traceback = ["_find_incompatible_extension_module"]   # imports importlib.resour
 
 [dynamic._py_warnings]
 "_getcategory: module" = []       # a warning category named in -W or PYTHONWARNINGS
+
+[dynamic."importlib.util"]
+"find_spec: parent_name" = []   # find_spec imports a dotted name's parent: whatever the program compiled, found in the registry; nothing on its own account
 
 [dynamic.optparse]
 "Values.read_module: modname" = []   # Values.read_module imports the module named by its caller; pycodestyle never calls it

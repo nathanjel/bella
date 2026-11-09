@@ -16,7 +16,8 @@ the manifest as closed on it (175 modules):*
   `configparser` (pycodestyle), as below; `cli_easy_slugs` needs nothing outside it.*
 * *Closures on the pin (`make targets-closure`, 2026-11-01): the five targets other than
   `cli_tricky_check` are closed, two of them with a declaration of their own in `targets.toml`
-  (humanize's `_get_default_locale_path`, mistune's plugin loader). The increments: 1a (the easy
+  (humanize's `_get_default_locale_path`, mistune's plugin loader; the latter moved to the project's `bella.toml` `[dynamic]`
+  table on 2026-11-09, the registry of computed imports the build reads). The increments: 1a (the easy
   three) is 149 manifest modules with 71,219 compiled source lines; the tricky three add 6
   modules (`html`, `html.entities`, `signal` and three core ones) plus pycodestyle's `optparse`
   and `configparser`; 25 manifest modules, `unittest` and `logging` among them, are reached by

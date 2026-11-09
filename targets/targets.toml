@@ -98,10 +98,5 @@ stressors = [
 # identical with importlib.resources blocked, checked 2026-11-01).
 "humanize.i18n" = ["importlib.resources"]
 
-[service_tricky_markdown.closure.dynamic."mistune.plugins"]
-# import_plugin: the plugins the render requests name (the request naming "no_such_plugin" fails
-# at the rsplit before any import). Any other plugin is outside the closed world.
-"import_plugin: module_path" = [
-  "mistune.plugins.footnotes", "mistune.plugins.formatting", "mistune.plugins.table",
-  "mistune.plugins.task_lists",
-]
+# mistune's plugin loader (import_plugin, a computed import) is declared in the project's bella.toml [dynamic] table, the
+# registry of computed imports the build reads for every program of the project (spec section 8; 2026-11-09).

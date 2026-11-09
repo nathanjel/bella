@@ -41,8 +41,8 @@ target-version = "py315"
 # targets/vendor holds verbatim snapshots of third-party libraries (never edited), and
 # targets/data the fixed inputs, among them a file pycodestyle must find faults in;
 # runtime/shims holds CPython's own modules, changed only where a line says "bella:", and so
-# does runtime/prelude/bootstrap.py (importlib._bootstrap's parts the import system runs).
-extend-exclude = ["targets/vendor", "targets/data", "runtime/shims", "runtime/prelude/bootstrap.py"]
+# do runtime/prelude/bootstrap.py and bootstrap_external.py (importlib._bootstrap's and _bootstrap_external's parts the import system runs).
+extend-exclude = ["targets/vendor", "targets/data", "runtime/shims", "runtime/prelude/bootstrap.py", "runtime/prelude/bootstrap_external.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "UP", "PGH", "S102", "S307"]

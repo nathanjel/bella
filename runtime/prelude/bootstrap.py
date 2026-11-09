@@ -225,6 +225,13 @@ def spec_from_loader(name, loader, *, origin=None, is_package=None):
     if not origin and hasattr(loader, 'get_filename'):
         if _bootstrap_external is None:
             raise NotImplementedError
+        spec_from_file_location = _bootstrap_external.spec_from_file_location
+
+        if is_package is None:
+            return spec_from_file_location(name, loader=loader)
+        search = [] if is_package else None
+        return spec_from_file_location(name, loader=loader,
+                                       submodule_search_locations=search)
 
     if is_package is None:
         if hasattr(loader, 'is_package'):
@@ -1613,6 +1620,115 @@ def _handle_fromlist(module, fromlist, import_, *, recursive=False):
                     continue
                 raise
     return module
+
+
+def _resolve_name(name, package, level):
+    """Resolve a relative module name to an absolute one."""
+    bits = package.rsplit('.', level - 1)
+    if len(bits) < level:
+        raise ImportError('attempted relative import beyond top-level package')
+    base = bits[0]
+    return f'{base}.{name}' if name else base
+
+
+def _sanity_check(name, package, level):
+    """Verify arguments are "sane"."""
+    if not isinstance(name, str):
+        raise TypeError(f'module name must be str, not {type(name)}')
+    if level < 0:
+        raise ValueError('level must be >= 0')
+    if level > 0:
+        if not isinstance(package, str):
+            raise TypeError('__package__ not set to a string')
+        elif not package:
+            raise ImportError('attempted relative import with no known parent '
+                              'package')
+    if not name and level == 0:
+        raise ValueError('Empty module name')
+
+
+def _gcd_import(name, package=None, level=0):
+    """Import and return the module based on its name, the package the call is
+    being made from, and the level adjustment.
+
+    This function represents the greatest common denominator of functionality
+    between import_module and __import__. This includes setting __package__ if
+    the loader did not.
+
+    """
+    _sanity_check(name, package, level)
+    if level > 0:
+        name = _resolve_name(name, package, level)
+    return _find_and_load(name, _gcd_import)
+
+
+def _calc___package__(globals):
+    """Calculate what __package__ should be.
+
+    __package__ is not guaranteed to be defined or could be set to None
+    to represent that its proper value is unknown.
+
+    """
+    package = globals.get('__package__')
+    spec = globals.get('__spec__')
+    if package is not None:
+        if spec is not None and package != spec.parent:
+            # bella: the runtime's warning, through the _warnings prelude (runtime_warning)
+            _bella_import_warning("__package__ != __spec__.parent "
+                                  f"({package!r} != {spec.parent!r})", "DeprecationWarning")
+        return package
+    elif spec is not None:
+        return spec.parent
+    else:
+        _bella_import_warning("can't resolve package from __spec__ or __package__, "
+                              "falling back on __name__ and __path__")
+        package = globals['__name__']
+        if '__path__' not in globals:
+            package = package.rpartition('.')[0]
+    return package
+
+
+def __import__(name, globals=None, locals=None, fromlist=(), level=0):
+    """Import a module.
+
+    The 'globals' argument is used to infer where the import is occurring from
+    to handle relative imports. The 'locals' argument is ignored. The
+    'fromlist' argument specifies what should exist as attributes on the module
+    being imported (e.g. ``from module import <fromlist>``).  The 'level'
+    argument represents the package location to import from in a relative
+    import (e.g. ``from ..pkg import mod`` would have a 'level' of 2).
+
+    """
+    if level == 0:
+        module = _gcd_import(name)
+    else:
+        globals_ = globals if globals is not None else {}
+        package = _calc___package__(globals_)
+        module = _gcd_import(name, package, level)
+    if not fromlist:
+        # Return up to the first dot in 'name'. This is complicated by the fact
+        # that 'name' may be relative.
+        if level == 0:
+            return _gcd_import(name.partition('.')[0])
+        elif not name:
+            return module
+        else:
+            # Figure out where to slice the module's name up to the first dot
+            # in 'name'.
+            cut_off = len(name) - len(name.partition('.')[0])
+            # Slice end needs to be positive to alleviate need to special-case
+            # when ``'.' not in name``.
+            return sys.modules[module.__name__[:len(module.__name__)-cut_off]]
+    elif hasattr(module, '__path__'):
+        return _handle_fromlist(module, fromlist, _gcd_import)
+    else:
+        return module
+
+
+def _exec(spec, module):
+    """Execute the spec's specified module in an existing module's namespace."""
+    # bella: importlib.reload reaches here (E-04): a compiled module's body ran once, when the build's closed world first imported it
+    _bella_refuse("importlib.reload (running a module's body again is import-system customisation, E-04)")
 
 
 def _setup(builtin_names):

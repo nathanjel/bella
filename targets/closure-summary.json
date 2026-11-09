@@ -6,9 +6,9 @@
    "level": "easy",
    "stage": "1a.1",
    "by_status": {
-    "compiled": 72,
-    "core": 15,
-    "mapped": 20,
+    "compiled": 78,
+    "core": 17,
+    "mapped": 21,
     "program": 1,
     "shim": 5
    },
@@ -18,7 +18,7 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 76,
+    "compiled": 82,
     "core": 18,
     "mapped": 22,
     "program": 2,
@@ -30,8 +30,8 @@
    "level": "easy",
    "stage": "1a.3",
    "by_status": {
-    "compiled": 88,
-    "core": 15,
+    "compiled": 92,
+    "core": 17,
     "mapped": 32,
     "program": 8,
     "shim": 5
@@ -42,7 +42,7 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 78,
+    "compiled": 84,
     "core": 17,
     "mapped": 24,
     "program": 12,
@@ -54,8 +54,8 @@
    "level": "easy",
    "stage": "1a.2",
    "by_status": {
-    "compiled": 84,
-    "core": 15,
+    "compiled": 90,
+    "core": 17,
     "mapped": 32,
     "program": 9,
     "shim": 5
@@ -66,9 +66,9 @@
    "level": "tricky",
    "stage": "later",
    "by_status": {
-    "compiled": 80,
+    "compiled": 86,
     "core": 17,
-    "mapped": 25,
+    "mapped": 26,
     "program": 20,
     "shim": 5
    },
@@ -77,14 +77,14 @@
  },
  "increments": {
   "1a.1": {
-   "modules": 112,
+   "modules": 121,
    "by_status": {
-    "compiled": 72,
-    "core": 15,
-    "mapped": 20,
+    "compiled": 78,
+    "core": 17,
+    "mapped": 21,
     "shim": 5
    },
-   "compiled_source_lines": 52088,
+   "compiled_source_lines": 54475,
    "list": {
     "__future__": "compiled",
     "_abc": "core",
@@ -95,8 +95,11 @@
     "_collections_abc": "shim",
     "_colorize": "compiled",
     "_contextvars": "mapped",
+    "_frozen_importlib": "core",
+    "_frozen_importlib_external": "core",
     "_functools": "mapped",
     "_heapq": "mapped",
+    "_imp": "core",
     "_io": "core",
     "_locale": "mapped",
     "_missing_stdlib_info": "compiled",
@@ -110,6 +113,7 @@
     "_struct": "mapped",
     "_suggestions": "core",
     "_thread": "shim",
+    "_threading_local": "compiled",
     "_tokenize": "core",
     "_types": "core",
     "_typing": "mapped",
@@ -154,9 +158,12 @@
     "glob": "compiled",
     "grp": "mapped",
     "heapq": "compiled",
-    "importlib": "core",
-    "importlib.machinery": "core",
-    "importlib.util": "core",
+    "importlib": "compiled",
+    "importlib._abc": "compiled",
+    "importlib._bootstrap": "core",
+    "importlib._bootstrap_external": "core",
+    "importlib.machinery": "compiled",
+    "importlib.util": "compiled",
     "inspect": "compiled",
     "io": "compiled",
     "ipaddress": "compiled",
@@ -187,6 +194,8 @@
     "subprocess": "shim",
     "sys": "core",
     "textwrap": "compiled",
+    "threading": "compiled",
+    "time": "mapped",
     "token": "compiled",
     "tokenize": "compiled",
     "traceback": "compiled",
@@ -204,10 +213,10 @@
    ]
   },
   "1a.2": {
-   "modules": 24,
+   "modules": 23,
    "by_status": {
     "compiled": 12,
-    "mapped": 12
+    "mapped": 11
    },
    "compiled_source_lines": 7356,
    "list": {
@@ -233,27 +242,25 @@
     "json.encoder": "compiled",
     "json.scanner": "compiled",
     "math.integer": "mapped",
-    "string": "compiled",
-    "time": "mapped"
+    "string": "compiled"
    },
    "targets": [
     "service_easy_tokens"
    ]
   },
   "1a.3": {
-   "modules": 15,
+   "modules": 13,
    "by_status": {
-    "compiled": 11,
+    "compiled": 9,
     "mapped": 4
    },
-   "compiled_source_lines": 13657,
+   "compiled_source_lines": 11757,
    "list": {
     "_bisect": "mapped",
     "_csv": "mapped",
     "_pydecimal": "compiled",
     "_random": "mapped",
     "_statistics": "mapped",
-    "_threading_local": "compiled",
     "bisect": "compiled",
     "contextvars": "compiled",
     "csv": "compiled",
@@ -261,22 +268,21 @@
     "fractions": "compiled",
     "numbers": "compiled",
     "random": "compiled",
-    "statistics": "compiled",
-    "threading": "compiled"
+    "statistics": "compiled"
    },
    "targets": [
     "data_easy_sales"
    ]
   },
   "1a": {
-   "modules": 151,
+   "modules": 157,
    "by_status": {
-    "compiled": 95,
-    "core": 15,
+    "compiled": 99,
+    "core": 17,
     "mapped": 36,
     "shim": 5
    },
-   "compiled_source_lines": 73101,
+   "compiled_source_lines": 73588,
    "list": {
     "__future__": "compiled",
     "_abc": "core",
@@ -290,9 +296,12 @@
     "_colorize": "compiled",
     "_contextvars": "mapped",
     "_csv": "mapped",
+    "_frozen_importlib": "core",
+    "_frozen_importlib_external": "core",
     "_functools": "mapped",
     "_heapq": "mapped",
     "_hmac": "mapped",
+    "_imp": "core",
     "_io": "core",
     "_json": "mapped",
     "_locale": "mapped",
@@ -374,9 +383,12 @@
     "hashlib": "compiled",
     "heapq": "compiled",
     "hmac": "compiled",
-    "importlib": "core",
-    "importlib.machinery": "core",
-    "importlib.util": "core",
+    "importlib": "compiled",
+    "importlib._abc": "compiled",
+    "importlib._bootstrap": "core",
+    "importlib._bootstrap_external": "core",
+    "importlib.machinery": "compiled",
+    "importlib.util": "compiled",
     "inspect": "compiled",
     "io": "compiled",
     "ipaddress": "compiled",
@@ -432,20 +444,14 @@
    }
   },
   "1c": {
-   "modules": 34,
+   "modules": 28,
    "list": {
-    "_frozen_importlib": "core",
-    "_frozen_importlib_external": "core",
-    "_imp": "core",
     "_signal": "core",
     "asyncio": "shim",
     "cmath": "mapped",
     "configparser": "compiled",
     "html": "compiled",
     "html.entities": "compiled",
-    "importlib._abc": "core",
-    "importlib._bootstrap": "core",
-    "importlib._bootstrap_external": "core",
     "logging": "compiled",
     "marshal": "core",
     "optparse": "compiled",
@@ -471,10 +477,10 @@
    }
   },
   "later": {
-   "modules": 8,
+   "modules": 6,
    "by_status": {
     "compiled": 5,
-    "core": 3
+    "core": 1
    },
    "compiled_source_lines": 5838,
    "list": {
@@ -482,8 +488,6 @@
     "configparser": "compiled",
     "html": "compiled",
     "html.entities": "compiled",
-    "importlib._bootstrap": "core",
-    "importlib._bootstrap_external": "core",
     "optparse": "compiled",
     "signal": "compiled"
    },

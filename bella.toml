@@ -37,6 +37,20 @@ declared_inputs = { env = [], files = [] }
 mode = "forbid"          # phase 1 has no island; "allow" prints the ledger
 topology = "subinterpreter"
 
+[dynamic]
+# The registry of computed imports (dialect specification, section 8): for an `__import__` or `import_module` whose name is
+# computed, the modules the lookup must find in a program of this project, by the site that makes it ("function: name
+# expression", as the manifest's [dynamic] tables review the standard library's). The build compiles them into every program
+# that imports the site's module; a name outside the registry is ModuleNotFoundError at runtime (the closed world).
+
+[dynamic."mistune.plugins"]
+# import_plugin: the plugins the render requests of service_tricky_markdown name (the request naming "no_such_plugin" fails at
+# the rsplit before any import). Any other plugin is outside the closed world.
+"import_plugin: module_path" = [
+  "mistune.plugins.footnotes", "mistune.plugins.formatting", "mistune.plugins.table",
+  "mistune.plugins.task_lists",
+]
+
 [packages]
 # Per-package overrides go here once third-party dependencies exist, e.g.
 # [packages.numpy]

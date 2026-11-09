@@ -53,7 +53,8 @@ VENDORED_H = sorted((ROOT / "runtime" / "vendor" / "zlib-1.3.2").glob("*.h"))
 # the prelude's modules, in this order, each run as the module it names (runtime/src/call.cpp, run_main)
 PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT / "runtime" / "prelude" / "builtins.py", "builtins"),
            (ROOT / "runtime" / "prelude" / "iterating.py", "builtins"), (ROOT / "runtime" / "prelude" / "templatelib.py", "builtins"),
-           (ROOT / "runtime" / "prelude" / "bootstrap.py", "_frozen_importlib")]
+           (ROOT / "runtime" / "prelude" / "bootstrap.py", "_frozen_importlib"),
+           (ROOT / "runtime" / "prelude" / "bootstrap_external.py", "_frozen_importlib_external")]
 # built-in modules CPython writes in C and this runtime in Python: compiled with the prelude, run at the
 # first import (runtime/src/imports.cpp)
 NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runtime" / "prelude" / "_operator.py",
@@ -72,7 +73,7 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "_bisect.py", ROOT / "runtime" / "prelude" / "_random.py",
                     ROOT / "runtime" / "prelude" / "_statistics.py", ROOT / "runtime" / "prelude" / "_heapq.py",
                     ROOT / "runtime" / "prelude" / "_opcode.py", ROOT / "runtime" / "prelude" / "_warnings.py",
-                    ROOT / "runtime" / "prelude" / "_tokenize.py"]
+                    ROOT / "runtime" / "prelude" / "_tokenize.py", ROOT / "runtime" / "prelude" / "_imp.py"]
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 # -ffp-contract=off: a*b + c is two operations with two roundings, as the reference computes it. A compiler that

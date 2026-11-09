@@ -80,6 +80,7 @@ C-7-28_sys_surface.py
 C-7-29_codecs.py
 C-7-30_io.py
 C-7-31_passwd_locale.py
+C-7-32_ast_nodes.py
 C-7-33_typing_objects.py
 C-7-34_json.py
 C-7-35_binascii.py
@@ -97,6 +98,8 @@ C-7-46_zlib.py
 C-7-47_opcode.py
 C-7-48_optparse.py
 C-7-50_warnings.py
+C-7-51_warnings_frames.py
+C-7-52_importlib.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

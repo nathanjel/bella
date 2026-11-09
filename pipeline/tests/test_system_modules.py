@@ -735,6 +735,22 @@ sys.stderr = sys.__stderr__
 print([line.partition(":")[2] if line.startswith(("/", "prog.py")) else line for line in err.getvalue().splitlines()])   # the path before the first colon is the build's to spell
 """
 
+IMPORTLIB = r"""
+import importlib, importlib.util, importlib.machinery, json, sys, os, _imp
+print(importlib.import_module("json") is json, importlib.import_module(".decoder", "json").__name__, importlib.__import__("os.path") is os, importlib.machinery.all_suffixes()[:2], len(importlib.machinery.EXTENSION_SUFFIXES))
+spec = importlib.util.spec_from_file_location("m", "/d/m.py")
+print(spec.name, type(spec.loader).__name__, spec.origin, spec.parent, importlib.util.module_from_spec(spec).__file__, importlib.util.find_spec("json").name, importlib.util.find_spec("nope"), importlib.util.resolve_name("..x", "a.b.c"))
+print(importlib.util.source_hash(b"abc"), importlib.util.decode_source(b"a = 1\r\nb = 2\n"), _imp.is_builtin("math"), _imp.is_frozen("os"), _imp.lock_held(), sys.modules["_frozen_importlib"] is importlib._bootstrap, [c.__name__ for c in sys.meta_path])
+print(type(json.__loader__).__module__, json.__spec__.loader is json.__loader__, os.__spec__.origin, inspect_ok := __import__("inspect").getmodulename("x.py"))
+class M(type(sys)):
+    pass
+print(M.__mro__[1].__name__)
+try:
+    importlib.import_module("no.such")
+except ModuleNotFoundError as e:
+    print(e.name, e)
+"""
+
 
 def test_zlib() -> None:
     """zlib 1.3.2 built into the runtime against the pin's: twenty-one blocks (random bytes, runs, empty, a 140 KB repeat) at five
@@ -755,6 +771,13 @@ def test_warnings() -> None:
     same(WARNINGS)
 
 
+def test_importlib() -> None:
+    """importlib's package, compiled from CPython's text over the runtime's _frozen_importlib, _frozen_importlib_external and _imp:
+    import_module, __import__, the suffixes, spec_from_file_location, find_spec, resolve_name, source_hash, decode_source, the
+    frozen modules' identities, sys.meta_path, and a class statement over ModuleType."""
+    same(IMPORTLIB)
+
+
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.crc32(b'a', -1)", "unsigned 32-bit"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
@@ -763,7 +786,9 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
              ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("import warnings\nwarnings.warn_explicit('m', UserWarning, 'f', 1, module_globals={'__name__': 'x'})", "module_globals"),
-             ("import tokenize, io\nnext(tokenize.generate_tokens(io.StringIO('x = 1').readline))", "_tokenize.TokenizerIter"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
+             ("import tokenize, io\nnext(tokenize.generate_tokens(io.StringIO('x = 1').readline))", "_tokenize.TokenizerIter"),
+             ("import importlib, json\nimportlib.reload(json)", "importlib.reload"), ("import importlib.machinery\nimportlib.machinery.PathFinder.find_spec('x')", "PathFinder.find_spec"),
+             ("import importlib.util, json\nimportlib.util.LazyLoader(json.__loader__).exec_module(json)", "__class__ assignment"), ("import _imp\n_imp.get_frozen_object('os')", "_imp.get_frozen_object"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
              ("import threading\nthreading.Thread(target=print).start()", "creating a thread"), ("import threading\nlk = threading.Lock(); lk.acquire(); lk.acquire()", "no other thread can release"),
 )
     for body, name in cases:
@@ -784,4 +809,5 @@ if __name__ == "__main__":
     test_zlib()
     test_opcode()
     test_warnings()
+    test_importlib()
     test_what_is_absent_stops_by_name()

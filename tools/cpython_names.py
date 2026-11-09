@@ -187,13 +187,19 @@ def native_modules(names):
 
 def docs():
     """The docstrings of the built-in modules a program has from the start, and of the built-in types."""
-    import binascii, errno, grp, itertools, math, math.integer, posix, pwd, re, struct, time, typing, zlib, _ast, _bisect, _blake2, _contextvars, _heapq, _opcode, _warnings, _tokenize, _random, _statistics, _csv, _hmac, _md5, _sha1, _sha2, _sha3, _struct, _codecs, _collections, _functools, _io, _json, _locale, _operator, _sre, _stat, _string, _thread, _typing, _weakref
-    out = {"posix": posix.__doc__, "sys.copyright": sys.copyright, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_io": _io.__doc__, "pwd": pwd.__doc__, "grp": grp.__doc__, "_locale": _locale.__doc__, "_typing": _typing.__doc__, "_json": _json.__doc__, "zlib": zlib.__doc__, "binascii": binascii.__doc__, "_struct": _struct.__doc__, "time": time.__doc__, "math": math.__doc__, "math.integer": math.integer.__doc__, "_md5": _md5.__doc__, "_sha1": _sha1.__doc__, "_sha2": _sha2.__doc__, "_sha3": _sha3.__doc__, "_blake2": _blake2.__doc__, "_hmac": _hmac.__doc__, "_csv": _csv.__doc__, "_contextvars": _contextvars.__doc__, "_bisect": _bisect.__doc__, "_random": _random.__doc__, "_statistics": _statistics.__doc__, "_heapq": _heapq.__doc__, "_opcode": _opcode.__doc__, "_warnings": _warnings.__doc__, "_tokenize": _tokenize.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
+    import binascii, errno, grp, itertools, math, math.integer, posix, pwd, re, struct, time, typing, zlib, _ast, _bisect, _blake2, _contextvars, _heapq, _opcode, _warnings, _tokenize, _imp, _random, _statistics, _csv, _hmac, _md5, _sha1, _sha2, _sha3, _struct, _codecs, _collections, _functools, _io, _json, _locale, _operator, _sre, _stat, _string, _thread, _typing, _weakref
+    out = {"posix": posix.__doc__, "sys.copyright": sys.copyright, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_io": _io.__doc__, "pwd": pwd.__doc__, "grp": grp.__doc__, "_locale": _locale.__doc__, "_typing": _typing.__doc__, "_json": _json.__doc__, "zlib": zlib.__doc__, "binascii": binascii.__doc__, "_struct": _struct.__doc__, "time": time.__doc__, "math": math.__doc__, "math.integer": math.integer.__doc__, "_md5": _md5.__doc__, "_sha1": _sha1.__doc__, "_sha2": _sha2.__doc__, "_sha3": _sha3.__doc__, "_blake2": _blake2.__doc__, "_hmac": _hmac.__doc__, "_csv": _csv.__doc__, "_contextvars": _contextvars.__doc__, "_bisect": _bisect.__doc__, "_random": _random.__doc__, "_statistics": _statistics.__doc__, "_heapq": _heapq.__doc__, "_opcode": _opcode.__doc__, "_warnings": _warnings.__doc__, "_tokenize": _tokenize.__doc__, "_imp": _imp.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
     out = {k: (v if v is not None else "") for k, v in out.items()}   # a module without a docstring (_md5, _hmac): an empty row, None at run time
-    for module in (builtins, sys, errno, itertools, posix, pwd, grp, zlib, binascii, _struct, time, math, math.integer, _md5, _sha1, _sha2, _sha3, _blake2, _hmac, _csv, _contextvars, _bisect, _random, _statistics, _heapq, _opcode, _warnings, _tokenize, _sre, _codecs, _io, _json, _locale, _typing, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
+    for module in (builtins, sys, errno, itertools, posix, pwd, grp, zlib, binascii, _struct, time, math, math.integer, _md5, _sha1, _sha2, _sha3, _blake2, _hmac, _csv, _contextvars, _bisect, _random, _statistics, _heapq, _opcode, _warnings, _tokenize, _imp, _sre, _codecs, _io, _json, _locale, _typing, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
         for v in vars(module).values():           # their functions', as `<__module__>.<__name__>`, "" for none (no built-in's is empty)
             if isinstance(v, types.BuiltinFunctionType) and isinstance(v.__module__, str):
                 out[v.__module__ + "." + v.__name__] = v.__doc__ or ""
+    # _imp's constants of the build: what importlib.machinery and _imp answer, recorded from the pin (one row each, the lists joined by newlines)
+    out["imp:extension_suffixes"] = "\n".join(_imp.extension_suffixes())
+    out["imp:pyc_magic_number_token"] = str(_imp.pyc_magic_number_token)
+    out["imp:check_hash_based_pycs"] = _imp.check_hash_based_pycs
+    out["imp:frozen_module_names"] = "\n".join(_imp._frozen_module_names())
+    out["imp:frozen_packages"] = "\n".join(n for n in _imp._frozen_module_names() if _imp.is_frozen_package(n))
     for name in ("strict", "ignore", "replace", "xmlcharrefreplace", "backslashreplace", "namereplace", "surrogatepass", "surrogateescape"):
         handler = _codecs.lookup_error(name)      # the error handlers: built-in functions of no module
         out["." + handler.__name__] = handler.__doc__ or ""
@@ -204,6 +210,9 @@ def docs():
                 type(t""), type(t"{0}".interpolations[0]), type(iter(t""))]
     for t in samples:                             # a type's doc under its own scope: _md5.md5 is a function and a type, with different docs
         out["type:" + tp_name(t)] = t.__doc__ if isinstance(t.__doc__, str) else ""
+        new = vars(t).get("__new__")              # tp_new's builtin, a builtin_function_or_method bound to the type: its doc under new:<tp_name>
+        if isinstance(new, types.BuiltinFunctionType):
+            out["new:" + tp_name(t)] = new.__doc__ or ""
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),

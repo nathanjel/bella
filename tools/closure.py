@@ -161,6 +161,12 @@ class Program:
         omissions = cast(dict[str, list[str]], self.tables.get("omissions", {}))
         lazy = cast(dict[str, list[str]], self.tables.get("lazy_unsupported", {}))
         dynamic = cast(dict[str, dict[str, list[str]]], self.tables.get("dynamic", {}))
+        # the project's registry of computed imports (bella.toml [dynamic]), which the build reads for every program of the project
+        start = self.dirs[0] if self.dirs else None   # a program with no directories (the tests' synthetic ones) has no policy file
+        policy_file = next((d / "bella.toml" for d in (start, *start.parents) if (d / "bella.toml").is_file()), None) if start is not None else None
+        policy = tomllib.loads(policy_file.read_text(encoding="utf-8")).get("dynamic", {}) if policy_file is not None else {}
+        for module, sites in cast(dict[str, dict[str, list[str]]], policy).items():
+            dynamic[module] = {**dynamic.get(module, {}), **{site: list(names) for site, names in sites.items()}}
         return replace(
             manifest,
             omissions=manifest.omissions | {k: manifest.omissions.get(k, set()) | set(v) for k, v in omissions.items()},
