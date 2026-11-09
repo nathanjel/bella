@@ -255,7 +255,9 @@ def test_build_cache_keys() -> None:
 
 def test_a_frozen_name_is_not_a_program_file() -> None:
     """RL-257: FrozenImporter takes `importlib.machinery` whatever the parent's path says, so the
-    program's file of that name never runs; the frozen one is refused until the build compiles it."""
+    program's file of that name never runs. Since 2026-11-09 the frozen one is compiled and runs; over a program's own
+    `importlib` package its `from ._bootstrap import` reaches the frozen alias `importlib._bootstrap`, a second copy of the
+    import system in CPython, which stops by name."""
     if shutil.which("g++") is None:
         return
     with tempfile.TemporaryDirectory() as tmp:
@@ -266,7 +268,7 @@ def test_a_frozen_name_is_not_a_program_file() -> None:
         main.write_text("import importlib.machinery\n", encoding="utf-8")
         assert not any(m.name == "importlib.machinery" and m.path is not None and m.path.is_relative_to(Path(tmp).resolve()) for m in find_program_modules(main))
         got = subprocess.run([str(build(main, str(main)))], capture_output=True, text=True, check=False, cwd=tmp)
-    assert got.stdout == "user importlib\n" and got.returncode == 70 and "importlib.machinery" in got.stderr, got
+    assert got.stdout == "user importlib\n" and got.returncode == 70 and "importlib._bootstrap" in got.stderr, got
 
 
 def _compiled(tmp: str, text: str, seed: str = "0") -> str:

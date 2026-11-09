@@ -277,6 +277,11 @@ Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_p
     auto it = registry().find(name->text);
     if (it != registry().end() && it->second.kind == ModuleKind::Refused)   // frozen in CPython: found whatever the path says
         throw NotImplemented("importing '" + name->text + "' (a frozen module of CPython's the build does not compile: step 3b)");
+    if (name->text == "importlib._bootstrap" || name->text == "importlib._bootstrap_external")
+        // CPython's frozen table aliases these to _frozen_importlib's code, and importing one outside importlib's package (which
+        // puts the frozen modules in sys.modules under these names) runs a second, uninitialised copy: reached only through a
+        // program's own package named importlib, under <frozen importlib.machinery>
+        throw NotImplemented("importing '" + name->text + "' as a frozen module of its own (a second copy of the import system, which only a program's own importlib package reaches)");
     if (it == registry().end()) {
         if (is_stdlib_name(a.pos(0)))
             throw NotImplemented("importing '" + name->text + "' (the standard library: step 3b)");
