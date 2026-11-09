@@ -16,6 +16,7 @@ try:
     _hash_new                                    # noqa: B018  # hashes.cpp: (algorithm, params) -> state bytes
     _hash_update                                 # noqa: B018  # (state, data) -> state
     _hash_digest                                 # noqa: B018  # (state) -> bytes
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -32,7 +33,7 @@ except NameError:
 
     def _tp_name(o: object) -> str:
         return type(o).__name__
-
+    _unpack_keywords: Callable[..., Any] = _missing
 
 _GIL_MINSIZE = 2048
 _ABSENT: object = object()
@@ -170,25 +171,7 @@ HMAC.__module__ = "_hmac"
 
 def new(*args: object, **kwds: object) -> HMAC:
     """Return a new HMAC object."""
-    names = ("key", "msg", "digestmod")
-    nargs = len(args)
-    if nargs + len(kwds) > 3:
-        raise TypeError("new() takes at most 3 arguments (" + str(nargs + len(kwds)) + " given)")
-    if nargs > 3:
-        raise TypeError("new() takes at most 3 positional arguments (" + str(nargs) + " given)")
-    values: list[object] = [*args, *[_ABSENT] * (3 - nargs)]
-    for keyword, value in kwds.items():
-        if keyword not in names:
-            suggestion = _keyword_suggestion(names, keyword)
-            if suggestion is not None:
-                raise TypeError("new() got an unexpected keyword argument '" + keyword + "'. Did you mean '" + suggestion + "'?")
-            raise TypeError("new() got an unexpected keyword argument '" + keyword + "'")
-        at = names.index(keyword)
-        if at < nargs:
-            raise TypeError("argument for new() given by name ('" + keyword + "') and position (" + str(at + 1) + ")")
-        values[at] = value
-    if values[0] is _ABSENT:
-        raise TypeError("new() missing required argument 'key' (pos 1)")
+    values = _unpack_keywords("new", ("key", "msg", "digestmod"), 0, 1, 3, 0, args, kwds, _ABSENT)
     key, msg, digestmod = values
     if digestmod is _ABSENT:
         raise TypeError("new() missing 1 required argument 'digestmod'")
@@ -203,24 +186,7 @@ def new(*args: object, **kwds: object) -> HMAC:
 
 def compute_digest(*args: object, **kwds: object) -> bytes:
     """Compute the HMAC-based digest of the given message using the given digest algorithm."""
-    names = ("key", "msg", "digest")
-    nargs = len(args)
-    if nargs + len(kwds) > 3:
-        raise TypeError("compute_digest() takes at most 3 arguments (" + str(nargs + len(kwds)) + " given)")
-    values: list[object] = [*args, *[_ABSENT] * (3 - nargs)]
-    for keyword, value in kwds.items():
-        if keyword not in names:
-            suggestion = _keyword_suggestion(names, keyword)
-            if suggestion is not None:
-                raise TypeError("compute_digest() got an unexpected keyword argument '" + keyword + "'. Did you mean '" + suggestion + "'?")
-            raise TypeError("compute_digest() got an unexpected keyword argument '" + keyword + "'")
-        at = names.index(keyword)
-        if at < nargs:
-            raise TypeError("argument for compute_digest() given by name ('" + keyword + "') and position (" + str(at + 1) + ")")
-        values[at] = value
-    for at in range(3):
-        if values[at] is _ABSENT:
-            raise TypeError("compute_digest() missing required argument '" + names[at] + "' (pos " + str(at + 1) + ")")
+    values = _unpack_keywords("compute_digest", ("key", "msg", "digest"), 0, 3, 3, 0, args, kwds, _ABSENT)
     key, msg, digest = values
     name = _algorithm(digest, True)
     return _one_shot(name, key, msg)

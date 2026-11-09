@@ -12,6 +12,7 @@ __name__ = "_opcode"
 try:
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _number_index                                # noqa: B018  # PyNumber_Index
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     import operator
     from collections.abc import Callable
@@ -22,6 +23,7 @@ except NameError:
 
     _bella_refuse: Callable[..., Any] = _missing
     _number_index: Callable[[object], int] = operator.index
+    _unpack_keywords: Callable[..., Any] = _missing
 
 ENABLE_SPECIALIZATION = 1
 
@@ -43,13 +45,7 @@ _SPECIAL_METHODS = ['__enter__', '__exit__', '__aenter__', '__aexit__']
 
 def _arguments(fname: str, args: tuple[object, ...], kwds: dict[str, object]) -> object:
     """_PyArg_UnpackKeywords for ($module, /, opcode): one argument, by position or by name."""
-    if len(args) + len(kwds) > 1:
-        raise TypeError(fname + "() takes at most 1 argument (" + str(len(args) + len(kwds)) + " given)")
-    if args:
-        return args[0]
-    if "opcode" in kwds:
-        return kwds["opcode"]
-    raise TypeError(fname + "() missing required argument 'opcode' (pos 1)")   # before any unexpected keyword
+    return _unpack_keywords(fname, ("opcode",), 0, 1, 1, 0, args, kwds, None)[0]
 
 
 def _int(value: object) -> int:                  # the clinic's int: PyLong_AsInt after __index__

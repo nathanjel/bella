@@ -8,24 +8,19 @@ __name__ = "math.integer"
 
 try:
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
+    _number_index                                # noqa: B018  # PyNumber_Index
 except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
 
+    def _number_index(o: object) -> int:
+        import operator
+        return operator.index(o)
 
 _LONG_MAX = 2**63 - 1
 
 
-def _index(value: object) -> int:                # PyNumber_Index
-    if issubclass(type(value), int):
-        return int.__index__(value)  # type: ignore[arg-type]
-    index = getattr(type(value), "__index__", None)
-    if index is None:
-        raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
-    result = index(value)
-    if not issubclass(type(result), int):
-        raise TypeError("__index__ returned non-int (type " + _tp_name(result) + ")")
-    return int.__index__(result)
+_index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
 def _positional(name: str, args: tuple[object, ...], kwds: dict[str, object], low: int, high: int) -> None:   # _PyArg_CheckPositional

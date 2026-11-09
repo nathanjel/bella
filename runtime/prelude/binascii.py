@@ -14,6 +14,7 @@ try:
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
+    _number_index                                # noqa: B018  # PyNumber_Index
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -27,6 +28,9 @@ except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
 
+    def _number_index(o: object) -> int:
+        import operator
+        return operator.index(o)
 
 ASCII85_ALPHABET = b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'
 BASE32HEX_ALPHABET = b"0123456789ABCDEFGHIJKLMNOPQRSTUV"
@@ -84,16 +88,7 @@ def _bytes_arg(function: str, name: str, value: object) -> bytes:   # PyBytesObj
     return value  # type: ignore[return-value]
 
 
-def _index(value: object) -> int:                # PyNumber_Index
-    if issubclass(type(value), int):
-        return int.__index__(value)  # type: ignore[arg-type]
-    index = getattr(type(value), "__index__", None)
-    if index is None:
-        raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
-    result = index(value)
-    if not issubclass(type(result), int):
-        raise TypeError("__index__ returned non-int (type " + _tp_name(result) + ")")
-    return int.__index__(result)
+_index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
 def _ssize(value: object) -> int:                # the clinic's Py_ssize_t converter

@@ -15,6 +15,7 @@ try:
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _float_pack                                  # noqa: B018  # PyFloat_Pack2/4/8: (x, size, little_endian[, cast]) -> bytes
     _float_unpack                                # noqa: B018  # PyFloat_Unpack2/4/8: (data, little_endian[, cast]) -> float
+    _number_index                                # noqa: B018  # PyNumber_Index
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -31,6 +32,9 @@ except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
 
+    def _number_index(o: object) -> int:
+        import operator
+        return operator.index(o)
 
 class error(Exception):  # noqa: N801           # PyErr_NewException("struct.error", NULL, NULL)
     pass
@@ -68,16 +72,7 @@ def _rw_buffer(value: object, function: str, position: int) -> bytearray:   # Py
     raise TypeError(function + "() argument " + str(position) + " must be read-write bytes-like object, not " + _tp_name(value))
 
 
-def _index(value: object) -> int:                # PyNumber_Index
-    if issubclass(type(value), int):
-        return int.__index__(value)  # type: ignore[arg-type]
-    index = getattr(type(value), "__index__", None)
-    if index is None:
-        raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
-    result = index(value)
-    if not issubclass(type(result), int):
-        raise TypeError("__index__ returned non-int (type " + _tp_name(result) + ")")
-    return int.__index__(result)
+_index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
 def _ssize(value: object) -> int:                # the clinic's Py_ssize_t converter
@@ -405,7 +400,7 @@ def _unpack_from(codes: list[_Code], length: int, little: bool, data: bytes, sta
 
 def _format_text(format: object) -> str:         # set_format: a str, or bytes decoded as ASCII with surrogateescape
     if issubclass(type(format), str):
-        return str(format)  # type: ignore[arg-type]
+        return str.__str__(format)  # type: ignore[arg-type]  # the text itself, whatever a subclass's __str__ says
     if issubclass(type(format), bytes):
         return bytes.decode(format, "ascii", "surrogateescape")  # type: ignore[arg-type]
     raise TypeError("Struct() argument 1 must be a str or bytes object, not " + _tp_name(format))
@@ -620,7 +615,7 @@ def _cached(format: object) -> Struct:
     if issubclass(type(format), bytes):
         key = bytes.decode(format, "ascii", "surrogateescape")  # type: ignore[arg-type]
     elif issubclass(type(format), str):
-        key = str(format)  # type: ignore[arg-type]
+        key = str.__str__(format)  # type: ignore[arg-type]
     else:
         raise TypeError("Struct() argument 1 must be a str or bytes object, not " + _tp_name(format))
     s = _cache.get(key)

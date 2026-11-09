@@ -435,9 +435,43 @@ bool all_contained_in(Obj self, Obj other) {
         if (!contains(other, v.get())) return false;
     return true;
 }
+bool items_view(Obj v) { return is_kind(v, Kind::DictView) && static_cast<DictView*>(v.object())->which == DictView::Items; }
+// dictitems_xor_lock_held: items ^ items on a copy of the left dict, each pair hashed only when it survives (an equal value under
+// the same key cancels without being hashed), the right dict walked as _PyDict_Next walks it
+Ref dictitems_xor(Obj self, Obj other) {
+    auto* d1 = static_cast<Dict*>(static_cast<DictView*>(self.object())->dict.object());
+    auto* d2 = static_cast<Dict*>(static_cast<DictView*>(other.object())->dict.object());
+    Ref temp = dict_copy(d1);
+    auto* t = static_cast<Dict*>(temp.get().object());
+    Ref result = own(new SetObject(false));
+    for (std::size_t pos = 0; pos < d2->entries.size(); ++pos) {
+        if (d2->entries[pos].key.is_unset()) continue;
+        Ref key = Ref::share(d2->entries[pos].key);
+        Ref val2 = Ref::share(d2->entries[pos].value);
+        Obj found = dict_get(t, key.get());
+        bool to_delete = false;
+        if (!found.is_unset()) {
+            Ref val1 = Ref::share(found);
+            to_delete = val1.get() == val2.get() || truth(compare(CmpOp::Eq, val1.get(), val2.get()).get());   // PyObject_RichCompareBool
+        }
+        if (to_delete) {
+            dict_del(t, key.get());
+        } else {
+            Ref pair = tuple_new({key.get(), val2.get()});
+            set_add(result.get(), pair.get());
+        }
+    }
+    for (std::size_t pos = 0; pos < t->entries.size(); ++pos) {   // the remaining pairs of the copy
+        if (t->entries[pos].key.is_unset()) continue;
+        Ref pair = tuple_new({t->entries[pos].key, t->entries[pos].value});
+        set_add(result.get(), pair.get());
+    }
+    return result;
+}
 }  // namespace
 Ref dictview_binary(BinOp op, Obj a, Obj b) {    // dictviews_sub, _PyDictView_Intersect, dictviews_or, dictviews_xor: a set
     if (op == BinOp::And) return dictview_intersect(a, b);
+    if (op == BinOp::Xor && items_view(a) && items_view(b)) return dictitems_xor(a, b);
     Ref result = dictviews_to_set(a);
     if (op == BinOp::Sub) difference_update(result.get(), b);
     else if (op == BinOp::Or) set_update(result.get(), b);

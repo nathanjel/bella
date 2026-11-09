@@ -91,7 +91,12 @@ def _bound_in(stmts: tuple[L.Stmt, ...], out: set[str]) -> None:
             _bound_in(s.orelse, out)
         elif isinstance(s, L.FunctionDef):
             out.add(s.store or s.name)
-            out.update(s.enclosing_binds)        # a comprehension's walrus targets (PEP 572)
+            if not s.binds_through:              # a comprehension's walrus targets (PEP 572); through an annotation scope they are the next function's
+                out.update(s.enclosing_binds)
+            if s.annotate is not None:           # a walrus in a comprehension of its annotations binds here, past the annotation scope
+                for helper in s.annotate.body:
+                    if isinstance(helper, L.FunctionDef) and helper.binds_through:
+                        out.update(helper.enclosing_binds)
         elif isinstance(s, L.Declare):
             out.update(s.names)                  # `x: T` makes x local
         elif (isinstance(s, L.ExprStmt) and isinstance(s.value, L.Call) and isinstance(s.value.func, L.Intrinsic)

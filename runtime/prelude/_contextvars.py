@@ -13,6 +13,7 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
+    _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -25,7 +26,7 @@ except NameError:
 
     def _tp_name(o: object) -> str:
         return type(o).__name__
-
+    _keyword_suggestion: Callable[..., Any] = _missing
 
 _ABSENT: object = object()
 
@@ -255,7 +256,8 @@ class ContextVar:
         default: object = _ABSENT
         for keyword, value in kwds.items():
             if keyword != "default":
-                raise TypeError("ContextVar() got an unexpected keyword argument '" + keyword + "'")
+                suggestion = _keyword_suggestion(("default",), keyword)
+                raise TypeError("ContextVar() got an unexpected keyword argument '" + keyword + "'" + ("" if suggestion is None else ". Did you mean '" + suggestion + "'?"))
             default = value
         name = args[0]
         if not issubclass(type(name), str):

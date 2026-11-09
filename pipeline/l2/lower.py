@@ -40,6 +40,7 @@ class _Code:
         self.n = 0
         self.blocks: list[_Block] = [_Block()]
         self.line = 0
+        self.expr_line = 0                       # the line of the expression being lowered: each operation says it (G15 #2)
         self.expression_temps: dict[str, G.Atom] = {}       # chained-comparison operands: temporaries
 
     # ---- emission ------------------------------------------------------------------------------
@@ -56,6 +57,9 @@ class _Code:
         return G.Temp(self.n)
 
     def let(self, op: G.Op) -> G.Temp:
+        # an operation's line is its expression's, as CPython's instruction carries its own location: a call on the second line of
+        # a statement is charged to that line (a traceback, a warning's stacklevel); its operands may have said other lines first
+        self.at(self.expr_line)
         t = self.temp()
         self.emit(G.Let(t, op))
         return t
@@ -188,6 +192,7 @@ class _Code:
 
     def stmt(self, st: L.Stmt) -> None:
         self.at(st.line)
+        self.expr_line = st.line
         match st:
             case L.ExprStmt(value=value):
                 a = self.expr(value)
@@ -329,6 +334,14 @@ class _Code:
     # ---- expressions ---------------------------------------------------------------------------
 
     def expr(self, e: L.Expr) -> G.Atom:
+        saved = self.expr_line
+        self.expr_line = e.line or saved
+        try:
+            return self._expr(e)
+        finally:
+            self.expr_line = saved
+
+    def _expr(self, e: L.Expr) -> G.Atom:
         match e:
             case L.Const(value=value):
                 return G.Const(value)

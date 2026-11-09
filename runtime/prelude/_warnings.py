@@ -16,6 +16,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _number_index                                # noqa: B018  # PyNumber_Index
     _frame                                       # noqa: B018  # the frame n callers above the one calling into this module: (globals, filename, lineno), or None
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     import operator
     from collections.abc import Callable
@@ -30,6 +31,10 @@ except NameError:
         return type(o).__name__
 
     _number_index: Callable[[object], int] = operator.index
+
+    def _unpack_keywords(fname: str, names: tuple[str, ...], posonly: int, minpos: int, maxpos: int, minkw: int, args: tuple[object, ...],
+                         kwds: dict[str, object], absent: object) -> list[object]:
+        raise ImportError("this file needs the runtime's primitives")
 
     def _frame(n: int) -> tuple[dict[str, object], str, int] | None:   # under CPython: this module's functions have frames, three deep
         import sys as _s
@@ -307,8 +312,9 @@ def _is_filename_to_skip(filename: object, skip_file_prefixes: tuple[object, ...
     return False
 
 
-def _setup_context(stack_level: int, skip_file_prefixes: tuple[object, ...] | None) -> tuple[object, int, object, dict[object, object]]:
-    """(filename, lineno, module, registry) of the frame stack_level frames up, as the C computes them."""
+def _setup_context(stack_level: int, skip_file_prefixes: tuple[object, ...] | None) -> tuple[object, int, object, object]:
+    """(filename, lineno, module, registry) of the frame stack_level frames up, as the C computes them; the registry is whatever
+    the globals hold under __warningregistry__ (warn_explicit checks it), a new dict when they hold nothing."""
     if skip_file_prefixes:
         for prefix in skip_file_prefixes:
             if not isinstance(prefix, str):
@@ -340,7 +346,6 @@ def _setup_context(stack_level: int, skip_file_prefixes: tuple[object, ...] | No
     if registry is _ABSENT:
         registry = {}
         dict.__setitem__(globals_, "__warningregistry__", registry)
-    assert isinstance(registry, dict)
     module = dict.get(globals_, "__name__", _ABSENT)
     if module is _ABSENT or not (module is None or isinstance(module, str)):
         module = "<string>"
@@ -361,31 +366,8 @@ def _get_category(message: object, category: object) -> object:
 
 # ---- the module's functions (clinic) -------------------------------------------------------------------------------------------
 
-def _arguments(fname: str, names: tuple[str, ...], maxpos: int, minpos: int, args: tuple[object, ...], kwds: dict[str, object]) -> list[object]:
-    """_PyArg_UnpackKeywords: `names` in order, the first `maxpos` positional, the first `minpos` required; _ABSENT where not given."""
-    nargs = len(args)
-    if nargs + len(kwds) > len(names):
-        raise TypeError(fname + "() takes at most " + str(len(names)) + " argument" + ("" if len(names) == 1 else "s") + " (" + str(nargs + len(kwds)) + " given)")
-    if nargs > maxpos:
-        raise TypeError(fname + "() takes at most " + str(maxpos) + " positional argument" + ("" if maxpos == 1 else "s") + " (" + str(nargs) + " given)")
-    values: list[object] = [*args, *[_ABSENT] * (len(names) - nargs)]
-    for keyword, value in kwds.items():
-        if keyword in names:
-            at = names.index(keyword)
-            if at < nargs:
-                raise TypeError("argument for " + fname + "() given by name ('" + keyword + "') and position (" + str(at + 1) + ")")
-            values[at] = value
-    for at in range(minpos):
-        if values[at] is _ABSENT:
-            raise TypeError(fname + "() missing required argument '" + names[at] + "' (pos " + str(at + 1) + ")")
-    for keyword in kwds:
-        if keyword not in names:
-            raise TypeError(fname + "() got an unexpected keyword argument '" + keyword + "'")
-    return values
-
-
 def warn(*args: object, **kwds: object) -> None:
-    message, category, stacklevel, source, skip_file_prefixes = _arguments("warn", ("message", "category", "stacklevel", "source", "skip_file_prefixes"), 4, 1, args, kwds)
+    message, category, stacklevel, source, skip_file_prefixes = _unpack_keywords("warn", ("message", "category", "stacklevel", "source", "skip_file_prefixes"), 0, 1, 4, 0, args, kwds, _ABSENT)
     if category is _ABSENT:
         category = None
     if stacklevel is _ABSENT:
@@ -419,8 +401,8 @@ def warn(*args: object, **kwds: object) -> None:
 
 
 def warn_explicit(*args: object, **kwds: object) -> None:
-    message, category, filename, lineno, module, registry, module_globals, source = _arguments(
-        "warn_explicit", ("message", "category", "filename", "lineno", "module", "registry", "module_globals", "source"), 8, 4, args, kwds)
+    message, category, filename, lineno, module, registry, module_globals, source = _unpack_keywords(
+        "warn_explicit", ("message", "category", "filename", "lineno", "module", "registry", "module_globals", "source"), 0, 4, 8, 0, args, kwds, _ABSENT)
     if not isinstance(filename, str):
         raise TypeError("warn_explicit() argument 'filename' must be str, not " + _tp_name(filename))
     line = _number_index(lineno)

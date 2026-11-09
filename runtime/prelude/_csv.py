@@ -13,6 +13,8 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
+    _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -26,6 +28,8 @@ except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
 
+    _unpack_keywords: Callable[..., Any] = _missing
+    _keyword_suggestion: Callable[..., Any] = _missing
 
 QUOTE_MINIMAL = 0
 QUOTE_ALL = 1
@@ -88,7 +92,7 @@ def _set_char_or_none(name: str, value: object, default: str | None) -> str | No
         raise TypeError('"' + name + '" must be a unicode character or None, not ' + _tp_name(value))
     if str.__len__(value) != 1:  # type: ignore[arg-type]
         raise TypeError('"' + name + '" must be a unicode character or None, not a string of length ' + str(str.__len__(value)))  # type: ignore[arg-type]
-    return str(value)  # type: ignore[arg-type]
+    return str.__str__(value)  # type: ignore[arg-type]  # the text itself, whatever a subclass's __str__ says
 
 
 def _set_char(name: str, value: object, default: str) -> str:
@@ -98,7 +102,7 @@ def _set_char(name: str, value: object, default: str) -> str:
         raise TypeError('"' + name + '" must be a unicode character, not ' + _tp_name(value))
     if str.__len__(value) != 1:  # type: ignore[arg-type]
         raise TypeError('"' + name + '" must be a unicode character, not a string of length ' + str(str.__len__(value)))  # type: ignore[arg-type]
-    return str(value)  # type: ignore[arg-type]
+    return str.__str__(value)  # type: ignore[arg-type]  # the text itself, whatever a subclass's __str__ says
 
 
 def _set_str(name: str, value: object, default: str) -> str:
@@ -138,7 +142,8 @@ The Dialect type records CSV parsing and generation options.
         given: list[object] = [*args, *[_ABSENT] * (9 - len(args))]
         for keyword, value in kwds.items():
             if keyword not in _DIALECT_KWS:
-                raise TypeError("this function got an unexpected keyword argument '" + keyword + "'")
+                suggestion = _keyword_suggestion(_DIALECT_KWS, keyword)
+                raise TypeError("this function got an unexpected keyword argument '" + keyword + "'" + ("" if suggestion is None else ". Did you mean '" + suggestion + "'?"))
             at = _DIALECT_KWS.index(keyword)
             if given[at] is not _ABSENT:
                 raise TypeError("argument for function given by name ('" + keyword + "') and position (" + str(at + 1) + ")")
@@ -288,7 +293,7 @@ in CSV format.
             if self._fields is None:
                 raise Error("iterator has already advanced the reader")
             self._line_num += 1
-            for c in line:  # type: ignore[attr-defined]
+            for c in str.__str__(line):  # type: ignore[arg-type]  # the text itself: a subclass's __iter__ is not consulted
                 self._process(c)
             self._process(_EOL)
             if self._state == _START_RECORD:
@@ -640,16 +645,7 @@ def get_dialect(*args: object, **kwds: object) -> object:
 
 
 def _one_arg(fname: str, pname: str, args: tuple[object, ...], kwds: dict[str, object]) -> object:   # the clinic: one positional-or-keyword
-    nargs = len(args) + len(kwds)
-    if nargs > 1:
-        raise TypeError(fname + "() takes at most 1 argument (" + str(nargs) + " given)")
-    if kwds:
-        if pname not in kwds:
-            raise TypeError(fname + "() missing required argument '" + pname + "' (pos 1)")
-        return kwds[pname]
-    if not args:
-        raise TypeError(fname + "() missing required argument '" + pname + "' (pos 1)")
-    return args[0]
+    return _unpack_keywords(fname, (pname,), 0, 1, 1, 0, args, kwds, _ABSENT)[0]
 
 
 def field_size_limit(*args: object, **kwds: object) -> int:
@@ -658,16 +654,7 @@ def field_size_limit(*args: object, **kwds: object) -> int:
 Returns old limit. If limit is not given, no new limit is set and
 the old limit is returned"""
     global _field_limit
-    nargs = len(args) + len(kwds)
-    if nargs > 1:
-        raise TypeError("field_size_limit() takes at most 1 argument (" + str(nargs) + " given)")
-    new_limit: object = _ABSENT
-    if kwds:
-        if "new_limit" not in kwds:
-            raise TypeError("field_size_limit() got an unexpected keyword argument '" + next(iter(kwds)) + "'")
-        new_limit = kwds["new_limit"]
-    elif args:
-        new_limit = args[0]
+    new_limit = _unpack_keywords("field_size_limit", ("new_limit",), 0, 0, 1, 0, args, kwds, _ABSENT)[0]
     old = _field_limit
     if new_limit is not _ABSENT:
         if type(new_limit) is not int:

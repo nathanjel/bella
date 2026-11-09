@@ -358,7 +358,7 @@ Ref new_m(Obj, Args a) {                         // actual_complex_new, then the
                 if (npos >= 2) raise_new("TypeError", "argument for complex() given by name ('imag') and position (2)");
                 i = a.kw(k);
             } else {
-                raise_new("TypeError", "complex() got an unexpected keyword argument '" + name + "'");
+                unexpected_keyword("complex()", a.kwnames[k], {"real", "imag"});
             }
         }
         return new_impl(cls, r, i);

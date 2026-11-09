@@ -425,7 +425,7 @@ class _TypeParams:
             case.body = self.block(case.body)
         return [s]
 
-    def thunk(self, expr: ast.expr, in_class: bool, shown: str = "", starred: bool = False) -> tuple[str, ast.FunctionDef]:
+    def thunk(self, expr: ast.expr, in_class: bool, shown: str = "", starred: bool = False, typescope: str = "TypeVar bound") -> tuple[str, ast.FunctionDef]:
         """A lazy expression's function as 3.15.2 compiles one (codegen_setup_annotations_scope for a type parameter's bound,
         constraints or default and an alias's value): one positional parameter, the format, 1 by default, refused above
         VALUE_WITH_FAKE_GLOBALS; it is what evaluate_bound, evaluate_default and evaluate_value hand out, named after the
@@ -446,8 +446,9 @@ class _TypeParams:
                              body=body, decorator_list=[], returns=None, type_params=[])
         if shown:
             fn.bella_store = name  # type: ignore[attr-defined]
-        fn.bella_public = {fmt: "format"}  # type: ignore[attr-defined]
+        fn.bella_public = {fmt: ".format"}  # type: ignore[attr-defined]  # only __annotate__ renames its .format (codegen_setup_annotations_scope); the PEP 695 thunks keep it (G15 #17)
         fn.bella_annotation = True  # type: ignore[attr-defined]
+        fn.bella_typescope = typescope  # type: ignore[attr-defined]  # a walrus in a comprehension here is a SyntaxError (symtable_extend_namedexpr_scope)
         fn.bella_classdict = in_class  # type: ignore[attr-defined]
         return name, ast.fix_missing_locations(_copy_loc(fn, expr))
 
@@ -522,7 +523,7 @@ class _TypeParams:
         name = s.name.id
         # the value's function is named after the alias, as CPython's is: the alias takes its
         # __qualname__ from it (_Py_make_typealias; review 2026-11-02, G6 2.3.3)
-        value_name, value_fn = self.thunk(s.value, in_class, name)
+        value_name, value_fn = self.thunk(s.value, in_class, name, typescope="TypeAlias")
         text, defs, thunks = self.params_text(s.type_params, in_class)
         made = ast.Call(func=_intrinsic("typealias"),
                         args=[ast.Constant(f"type {name}[{text}] = __bella_v__()" if s.type_params else f"type {name} = __bella_v__()"),
@@ -1634,10 +1635,13 @@ class _Comprehensions(ast.NodeTransformer):
     transformer does not enter nested function bodies: ``_hoist`` lowers each body in its own
     scope."""
 
-    def __init__(self, scope: str, globals_: frozenset[str] = frozenset()) -> None:
+    def __init__(self, scope: str, globals_: frozenset[str] = frozenset(), through: str = "") -> None:
         self.hoisted: list[ast.stmt] = []
-        self.scope = scope                       # "module", "function" or "class"
+        self.scope = scope                       # "module", "function" or "class": the scope a walrus target binds in
         self.globals_ = globals_                 # the names the containing function declares global
+        # the statements are an annotation scope's: symtable_extend_namedexpr_scope skips it, so a walrus target binds in the scope
+        # around it ("annotation"), or they are a type parameter's or alias's (its words), where such a walrus is a SyntaxError
+        self.through = through
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         # decorators and defaults run in the enclosing scope; the body is lowered by _hoist
@@ -1713,6 +1717,8 @@ class _Comprehensions(ast.NodeTransformer):
         declared_global = [n for n in bound_outside if self.scope != "function" or n in self.globals_]
         declared_nonlocal = [n for n in bound_outside if n not in declared_global]
         if bound_outside:
+            if self.through and self.through != "annotation":
+                raise SyntaxError(f"assignment expression within a comprehension cannot be used in a {self.through} (line {node.lineno})")
             if self.scope == "class":
                 raise SyntaxError("assignment expression within a comprehension cannot be used in a class body "
                                   f"(line {node.lineno})")
@@ -1740,6 +1746,8 @@ class _Comprehensions(ast.NodeTransformer):
         fn.bella_qualname = getattr(node, "bella_qualname", None)  # type: ignore[attr-defined]
         if declared_nonlocal:
             fn.bella_enclosing_binds = declared_nonlocal  # type: ignore[attr-defined]
+            if self.through == "annotation":     # bound in the function around the annotation scope, free in the scope between
+                fn.bella_binds_through = True  # type: ignore[attr-defined]
         self.hoisted.append(ast.fix_missing_locations(_copy_loc(fn, node)))
         return ast.fix_missing_locations(_copy_loc(ast.Call(
             func=ast.Name(id=fname, ctx=ast.Load()),
@@ -1747,25 +1755,33 @@ class _Comprehensions(ast.NodeTransformer):
             keywords=[]), node))
 
 
-def _hoist(stmts: list[ast.stmt], scope: str = "module", globals_: frozenset[str] = frozenset()) -> list[ast.stmt]:
-    """`globals_`: the names the function whose statements these are declares global."""
+def _hoist(stmts: list[ast.stmt], scope: str = "module", globals_: frozenset[str] = frozenset(), through: str = "") -> list[ast.stmt]:
+    """`globals_`: the names the function whose statements these are declares global; `through`: the statements are an annotation
+    scope's ("annotation": a comprehension's walrus binds in `scope`, the scope around it) or a type scope's (its words)."""
     out: list[ast.stmt] = []
     for s in stmts:
-        tr = _Comprehensions(scope, globals_)
+        tr = _Comprehensions(scope, globals_, through)
         s = tr.visit(s)
-        inner, inner_globals = scope, globals_
+        inner, inner_globals, inner_through = scope, globals_, ""
         if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            inner, inner_globals = "function", frozenset(declarations(s.body)[0])
+            if getattr(s, "bella_annotation", False):   # an annotation or type scope: transparent to a walrus, or refusing it
+                inner_through = getattr(s, "bella_typescope", "annotation")
+                if inner_through == "annotation":
+                    inner_globals = globals_ | frozenset(declarations(s.body)[0])
+                else:
+                    inner, inner_globals = "function", frozenset(declarations(s.body)[0])
+            else:
+                inner, inner_globals = "function", frozenset(declarations(s.body)[0])
         elif isinstance(s, ast.ClassDef):
             inner, inner_globals = "class", frozenset()
         for fld in ("body", "orelse", "finalbody"):
             if hasattr(s, fld) and isinstance(getattr(s, fld), list):
-                setattr(s, fld, _hoist(getattr(s, fld), inner, inner_globals))
+                setattr(s, fld, _hoist(getattr(s, fld), inner, inner_globals, inner_through))
         if isinstance(s, (ast.Try, ast.TryStar)):
             for h in s.handlers:
-                h.body = _hoist(h.body, scope, globals_)
+                h.body = _hoist(h.body, scope, globals_, through)
         for case in getattr(s, "cases", []):
-            case.body = _hoist(case.body, scope, globals_)
+            case.body = _hoist(case.body, scope, globals_, through)
         out.extend(tr.hoisted)
         out.append(s)
     return out
@@ -2148,6 +2164,7 @@ class _ToL1:
                              qualname=qualname, decorators=decorators, annotate=annotate, docstring=_docstring(f.body),
                              store=getattr(f, "bella_store", "") if getattr(f, "bella_store", f.name) != f.name else "",
                              kind=kind, enclosing_binds=tuple(getattr(f, "bella_enclosing_binds", ())),
+                             binds_through=bool(getattr(f, "bella_binds_through", False)),
                              annotation=bool(getattr(f, "bella_annotation", False)),
                              classdict=bool(getattr(f, "bella_classdict", False)),
                              inlined=bool(getattr(f, "bella_inlined", False)),

@@ -316,6 +316,9 @@ class Emitter:
         self.hidden = _hidden(c)
         self.counter = 0
         self.flat = False
+        # PEP 709: an inlined comprehension runs in its enclosing frame, so its lines are that frame's (a warning's stacklevel, a
+        # traceback through the enclosing call); its own record is not on the frame chain (review G15 #2)
+        self.inlined = bool(dict(c.meta).get("inlined", False)) and not self.prelude
         params = [p.name for p in self.param_order(c)]
         frame_locals = [*c.varnames, *(n for n in c.cellvars if n not in c.varnames), *c.freevars]
         self.vars = {n: cpp_name(n) for n in frame_locals}
@@ -670,7 +673,7 @@ class Emitter:
         a = self.atom
         match s:
             case G.Line(n):
-                self.add(indent, f"frame.line = {n};")
+                self.add(indent, f"frame.line = {n};" + (" rt::detail::enclosing_line(frame, frame.line);" if self.inlined else ""))
             case G.Let(t, G.Yield(value)) if self.flat:
                 self.yield_(value, f"t{t.n} = std::move(gen1->sent);", indent)
             case G.Do(G.Yield(value)) if self.flat:

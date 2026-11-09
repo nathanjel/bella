@@ -1071,7 +1071,7 @@ Ref int_new_m(Obj, Args a) {
     }
     Obj x = npos >= 1 ? a.pos(1) : Obj{}, base = npos >= 2 ? a.pos(2) : Obj{};
     for (std::size_t k = 0; k < a.nkw; ++k) {
-        if (a.kwnames[k]->text != "base") raise_new("TypeError", "int() got an unexpected keyword argument '" + a.kwnames[k]->text + "'");
+        if (a.kwnames[k]->text != "base") unexpected_keyword("int()", a.kwnames[k], {"base"});
         base = a.kw(k);
     }
     Ref value;

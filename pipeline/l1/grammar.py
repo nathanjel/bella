@@ -349,6 +349,9 @@ class FunctionDef(Stmt):
     # targets (PEP 572), declared nonlocal or global in the comprehension's function, in the
     # order the comprehension binds them
     enclosing_binds: tuple[str, ...] = ()
+    # the enclosing binds skip the scope that contains the comprehension, an annotation scope, and bind in the function around
+    # it (symtable_extend_namedexpr_scope passes an AnnotationBlock by); that scope has them free
+    binds_through: bool = False
     # an annotate function (PEP 649): its names are resolved when it is called, never checked
     # statically; `classdict`: defined in a class, so a name is looked up in the class's
     # namespace first (LOAD_FROM_DICT_OR_GLOBALS, LOAD_FROM_DICT_OR_DEREF)

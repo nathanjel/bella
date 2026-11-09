@@ -13,6 +13,7 @@ try:
     _hash_new                                    # noqa: B018  # hashes.cpp: (algorithm, params) -> state bytes
     _hash_update                                 # noqa: B018  # (state, data) -> state
     _hash_digest                                 # noqa: B018  # (state) -> bytes
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -28,7 +29,7 @@ except NameError:
 
     def _tp_name(o: object) -> str:
         return type(o).__name__
-
+    _unpack_keywords: Callable[..., Any] = _missing
 
 _GIL_MINSIZE = 2048
 _ABSENT: object = object()
@@ -46,24 +47,9 @@ def _buffer(value: object) -> bytes:             # GET_BUFFER_VIEW_OR_ERROUT: a 
 
 def _constructor_args(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> bytes | None:
     """The clinic's (data=b'', *, usedforsecurity=True, string=None): the data to hash first, or None for none."""
-    nargs = len(args)
-    if nargs + len(kwds) > 3:
-        raise TypeError(name + "() takes at most 3 arguments (" + str(nargs + len(kwds)) + " given)")
-    if nargs > 1:
-        raise TypeError(name + "() takes at most 1 positional argument (" + str(nargs) + " given)")
-    data: object = args[0] if nargs else _ABSENT
-    string: object = _ABSENT
-    for keyword, value in kwds.items():
-        if keyword == "data":
-            if nargs:
-                raise TypeError("argument for " + name + "() given by name ('data') and position (1)")
-            data = value
-        elif keyword == "usedforsecurity":
-            bool(value)
-        elif keyword == "string":
-            string = value
-        else:
-            raise TypeError(name + "() got an unexpected keyword argument '" + keyword + "'")
+    data, usedforsecurity, string = _unpack_keywords(name, ("data", "usedforsecurity", "string"), 0, 0, 1, 0, args, kwds, _ABSENT)
+    if usedforsecurity is not _ABSENT:
+        bool(usedforsecurity)                    # the converter runs after the parsing
     if string is not _ABSENT:                    # an explicit None counts as given: the C warns, then hashes it
         if data is not _ABSENT:
             raise TypeError("'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for "

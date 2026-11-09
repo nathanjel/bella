@@ -22,6 +22,7 @@ try:
     _sleep_ns                                    # noqa: B018  # a wait no other thread can end
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -39,6 +40,7 @@ except NameError:
 
     def _bella_refuse(text: str) -> NoReturn:
         raise ImportError(text)
+    _unpack_keywords: Callable[..., Any] = _missing
 
 TIMEOUT_MAX = 9223372036.0
 _NAME_MAXLEN = 15
@@ -108,26 +110,8 @@ def _parse_timeout(timeout: object, blocking: bool) -> int:   # lock_acquire_par
 
 def _acquire_arguments(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> tuple[bool, object]:
     """acquire(blocking=True, timeout=-1)'s clinic: _PyArg_UnpackKeywords."""
-    total = len(args) + len(kwds)
-    if total > 2:
-        raise TypeError(name + "() takes at most 2 " + ("" if args else "keyword ") + "arguments (" + str(total) + " given)")
-    blocking, timeout = True, _ABSENT
-    if args:
-        blocking = args[0]  # type: ignore[assignment]
-    if len(args) > 1:
-        timeout = args[1]
-    for key, value in kwds.items():
-        if key == "blocking":
-            if args:
-                raise TypeError("argument for " + name + "() given by name ('blocking') and position (1)")
-            blocking = value  # type: ignore[assignment]
-        elif key == "timeout":
-            if len(args) > 1:
-                raise TypeError("argument for " + name + "() given by name ('timeout') and position (2)")
-            timeout = value
-        else:
-            raise TypeError(name + "() got an unexpected keyword argument '" + key + "'")
-    return bool(blocking), timeout
+    blocking, timeout = _unpack_keywords(name, ("blocking", "timeout"), 0, 0, 2, 0, args, kwds, _ABSENT)
+    return True if blocking is _ABSENT else bool(blocking), timeout
 
 
 def _wait_in_vain(ns: int) -> bool:              # a wait that nothing can end: its timeout, then no
@@ -596,20 +580,8 @@ def start_new(*args: object, **kwds: object) -> int:
 
 def start_joinable_thread(*args: object, **kwds: object) -> _ThreadHandle:   # "O|Op:start_joinable_thread"
     names = ("function", "handle", "daemon")
-    total = len(args) + len(kwds)
-    if total > 3:
-        raise TypeError("start_joinable_thread() takes at most 3 arguments (" + str(total) + " given)")
-    given: dict[str, object] = {}
-    for index, value in enumerate(args):
-        given[names[index]] = value
-    for key, value in kwds.items():
-        if key not in names:
-            raise TypeError("start_joinable_thread() got an unexpected keyword argument '" + key + "'")
-        if key in given:
-            raise TypeError("argument for start_joinable_thread() given by name ('" + key + "') and position (" + str(names.index(key) + 1) + ")")
-        given[key] = value
-    if "function" not in given:
-        raise TypeError("start_joinable_thread() missing required argument 'function' (pos 1)")
+    values = _unpack_keywords("start_joinable_thread", names, 0, 1, 3, 0, args, kwds, _ABSENT)
+    given: dict[str, object] = {parameter: value for parameter, value in zip(names, values, strict=True) if value is not _ABSENT}
     if "daemon" in given:
         bool(given["daemon"])
     if not callable(given["function"]):

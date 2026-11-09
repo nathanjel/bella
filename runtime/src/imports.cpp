@@ -403,6 +403,80 @@ Ref i_keyword_suggestion(Obj, Args a) {
     std::string s = keyword_suggestion(as_str(a.pos(1))->text, known);
     return s.empty() ? none_ref() : str_new(s);
 }
+// _PyArg_UnpackKeywords (Python/getargs.c) for the preludes' clinic functions: _unpack_keywords(fname, names, posonly, minpos,
+// maxpos, minkw, args, kwds, absent) answers a list with one slot per name, `absent` where nothing was given, and raises the C's
+// TypeErrors in its order: the counts, then each slot in order (a missing required argument where it stands), then an argument
+// given by name and position, then the first unexpected keyword with _Py_CalculateSuggestions' hint. `names` lists every
+// parameter, the first `posonly` positional-only; minkw counts the required keyword-only ones.
+Ref i_is_c_type(Obj, Args a) {                   // whether an object's type is CPython's (a static type, a prelude's presented class), not a class of the program's
+    positional_only(a, "_is_c_type", 1, 1);
+    return Ref::steal(boolean(c_type(type_of(a.pos(0)))));
+}
+Ref i_as_double(Obj, Args a) {                   // PyFloat_AsDouble for a prelude: a float, __float__ (None included: not callable), __index__
+    positional_only(a, "_as_double", 1, 1);
+    return float_ref(float_as_double(a.pos(0)));
+}
+Ref i_unpack_keywords(Obj, Args a) {
+    positional_only(a, "_unpack_keywords", 9, 9);
+    const std::string fname = as_str(a.pos(0))->text;
+    const auto& names = static_cast<Tuple*>(a.pos(1).object())->items;
+    auto posonly = static_cast<std::size_t>(index_value(a.pos(2)));
+    auto minpos = static_cast<std::size_t>(index_value(a.pos(3)));
+    auto maxpos = static_cast<std::size_t>(index_value(a.pos(4)));
+    auto minkw = static_cast<std::size_t>(index_value(a.pos(5)));
+    const auto& args = static_cast<Tuple*>(a.pos(6).object())->items;
+    auto* kwds = static_cast<Dict*>(a.pos(7).object());
+    Obj absent = a.pos(8);
+    std::size_t nargs = args.size(), nkwargs = kwds->used, maxargs = names.size();
+    std::size_t reqlimit = minkw ? maxpos + minkw : minpos, minposonly = std::min(posonly, minpos);
+    auto plural = [](std::size_t n) { return n == 1 ? "" : "s"; };
+    if (nargs + nkwargs > maxargs)
+        raise_new("TypeError", fname + "() takes at most " + std::to_string(maxargs) + " " + (nargs == 0 ? "keyword " : "") + "argument" + plural(maxargs) +
+                                   " (" + std::to_string(nargs + nkwargs) + " given)");
+    if (nargs > maxpos) {
+        if (maxpos == 0) raise_new("TypeError", fname + "() takes no positional arguments");
+        raise_new("TypeError", fname + "() takes " + (minpos < maxpos ? "at most " : "exactly ") + std::to_string(maxpos) + " positional argument" + plural(maxpos) +
+                                   " (" + std::to_string(nargs) + " given)");
+    }
+    if (nargs < minposonly)
+        raise_new("TypeError", fname + "() takes " + (minposonly < maxpos ? "at least " : "exactly ") + std::to_string(minposonly) + " positional argument" + plural(minposonly) +
+                                   " (" + std::to_string(nargs) + " given)");
+    std::vector<Obj> buf(maxargs, absent);
+    for (std::size_t i = 0; i < nargs; ++i) buf[i] = args[i];
+    std::size_t left = nkwargs;
+    for (std::size_t i = std::max(nargs, posonly); i < maxargs; ++i) {
+        Obj current;
+        if (left) current = dict_get(kwds, names[i]);
+        else if (i >= reqlimit) break;
+        if (!current.is_unset()) {
+            buf[i] = current;
+            --left;
+        } else if (i < minpos || (maxpos <= i && i < reqlimit)) {
+            raise_new("TypeError", fname + "() missing required argument '" + as_str(names[i])->text + "' (pos " + std::to_string(i + 1) + ")");
+        }
+    }
+    if (left > 0) {
+        for (std::size_t i = posonly; i < nargs; ++i)
+            if (!dict_get(kwds, names[i]).is_unset())
+                raise_new("TypeError", "argument for " + fname + "() given by name ('" + as_str(names[i])->text + "') and position (" + std::to_string(i + 1) + ")");
+        std::vector<std::string> known;
+        for (std::size_t i = posonly; i < maxargs; ++i) known.push_back(as_str(names[i])->text);
+        for (const auto& e : kwds->entries) {
+            if (e.key.is_unset()) continue;
+            if (as_str(e.key) == nullptr) raise_new("TypeError", "keywords must be strings");
+            const std::string& keyword = as_str(e.key)->text;
+            if (std::find(known.begin(), known.end(), keyword) != known.end()) continue;
+            std::string suggestion = keyword_suggestion(keyword, known);
+            raise_new("TypeError", fname + "() got an unexpected keyword argument '" + keyword + "'" + (suggestion.empty() ? "" : ". Did you mean '" + suggestion + "'?"));
+        }
+        raise_new("TypeError", "invalid keyword argument for " + fname + "()");
+    }
+    std::vector<Ref> kept;
+    for (Obj v : buf) kept.push_back(Ref::share(v));
+    Ref out = list_new({});
+    for (Ref& v : kept) list_append(out.get(), v.get());
+    return out;
+}
 // The file runs in a namespace of its own, which its functions keep as their globals, so that the
 // module a program sees has CPython's names and nothing else; nothing clears that namespace at exit.
 namespace {
@@ -420,6 +494,16 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(ns->dict, Obj::of(N("_bella_new_instance")), alloc.get());
         Ref setter = own(new Builtin("_bella_module_set", i_bella_module_set, Obj::of(m), Binding::Function));   // PyModule_Add, later
         dict_set(ns->dict, Obj::of(N("_bella_module_set")), setter.get());
+        Ref unpack = own(new Builtin("_unpack_keywords", i_unpack_keywords));   // _PyArg_UnpackKeywords, in every such file
+        dict_set(ns->dict, Obj::of(N("_unpack_keywords")), unpack.get());
+        Ref index = own(new Builtin("_number_index", i_number_index));   // PyNumber_Index, with its messages, in every such file
+        dict_set(ns->dict, Obj::of(N("_number_index")), index.get());
+        Ref as_double = own(new Builtin("_as_double", i_as_double));   // PyFloat_AsDouble, with its messages, in every such file
+        dict_set(ns->dict, Obj::of(N("_as_double")), as_double.get());
+        Ref c_type = own(new Builtin("_is_c_type", i_is_c_type));   // a C type under the object, not a class of the program's
+        dict_set(ns->dict, Obj::of(N("_is_c_type")), c_type.get());
+        Ref suggest = own(new Builtin("_keyword_suggestion", i_keyword_suggestion));   // _Py_CalculateSuggestions, in every such file
+        dict_set(ns->dict, Obj::of(N("_keyword_suggestion")), suggest.get());
     }
     for (auto [primitive, fn] : primitives) {
         Ref b = own(new Builtin(primitive, fn));

@@ -35,6 +35,7 @@ class Scope:
     nonlocals: set[str] = field(default_factory=set)
     order: list[str] = field(default_factory=list)       # every name, in order of first appearance
     children: list[Scope] = field(default_factory=list)
+    parent: Scope | None = None
     can_see_class: bool = False       # an annotation or type-parameter scope in a class
     synthetic: frozenset[str] = frozenset()
     # results
@@ -69,7 +70,7 @@ class _Collector:
         self.by_node: dict[int, Scope] = {}
 
     def new(self, kind: str, node: object, qualname: str, parent: Scope | None) -> Scope:
-        s = Scope(kind, node, qualname, synthetic=self.synthetic)
+        s = Scope(kind, node, qualname, synthetic=self.synthetic, parent=parent)
         self.by_node[id(node)] = s
         if parent is not None:
             parent.children.append(s)
@@ -105,7 +106,11 @@ class _Collector:
         if bind:
             parent.bind(f.store or f.name)
         for n in f.enclosing_binds:                           # in the comprehension's order: CPython's co_varnames
-            parent.bind(n)
+            if f.binds_through and parent.parent is not None:   # an annotation scope between: the function around it binds, it sees
+                parent.parent.bind(n)
+                parent.see(n)
+            else:
+                parent.bind(n)
 
     def lambda_(self, e: L.Lambda, parent: Scope) -> None:
         for p in e.params:

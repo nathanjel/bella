@@ -526,7 +526,7 @@ Ref str_splitlines_m(Obj self, Args a) {         // unicode_splitlines_impl(keep
     bool keepends = false;
     if (a.npos == 1) keepends = truth(a.pos(0));
     for (std::size_t k = 0; k < a.nkw; ++k) {
-        if (a.kwnames[k]->text != "keepends") raise_new("TypeError", "splitlines() got an unexpected keyword argument '" + a.kwnames[k]->text + "'");
+        if (a.kwnames[k]->text != "keepends") unexpected_keyword("splitlines()", a.kwnames[k], {"keepends"});
         keepends = truth(a.kw(k));
     }
     auto is_break = [](char32_t c) {             // Py_UNICODE_ISLINEBREAK
@@ -560,7 +560,7 @@ Ref str_expandtabs_m(Obj self, Args a) {         // unicode_expandtabs_impl(tabs
     if (total > 1) raise_new("TypeError", std::string("expandtabs() takes at most 1 ") + (a.npos != 0 ? "" : "keyword ") + "argument (" + std::to_string(total) + " given)");
     Obj given = a.npos == 1 ? a.pos(0) : Obj{};
     for (std::size_t k = 0; k < a.nkw; ++k) {
-        if (a.kwnames[k]->text != "tabsize") raise_new("TypeError", "expandtabs() got an unexpected keyword argument '" + a.kwnames[k]->text + "'");
+        if (a.kwnames[k]->text != "tabsize") unexpected_keyword("expandtabs()", a.kwnames[k], {"tabsize"});
         given = a.kw(k);
     }
     int tabsize = given.is_unset() ? 8 : c_int_arg(given);

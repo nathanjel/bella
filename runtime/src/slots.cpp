@@ -167,13 +167,13 @@ Ref own_len(Obj self, Args a) {
 }
 template <BinOp op, bool reflected>
 Ref set_slot(Obj self, Args a) {
-    wrapper_args(a, "__or__", 1);
+    wrapper_args(a, binop_dunder(op, reflected), 1);
     if (!is_kind(a.pos(0), Kind::Set)) return not_implemented();
     return reflected ? native_binary(op, a.pos(0), self) : native_binary(op, self, a.pos(0));
 }
 template <BinOp op, bool reflected>
 Ref dictview_slot(Obj self, Args a) {           // dictviews_sub and its kin: the other side any iterable, the view on either side
-    wrapper_args(a, reflected ? "__ror__" : "__or__", 1);
+    wrapper_args(a, binop_dunder(op, reflected), 1);
     return reflected ? dictview_binary(op, a.pos(0), self) : dictview_binary(op, self, a.pos(0));
 }
 template <CmpOp op>

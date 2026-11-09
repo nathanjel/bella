@@ -559,6 +559,11 @@ struct FrameRecord {
     int line;
 };
 FrameRecord*& current_frame();
+// an inlined comprehension's line is its enclosing frame's (PEP 709): the nearest shown caller takes it
+inline void enclosing_line(FrameRecord& inlined, int line) {
+    for (FrameRecord* f = inlined.caller; f != nullptr; f = f->caller)
+        if (f->code->shown) { f->line = line; return; }
+}
 }
 template <std::size_t N>
 class FrameGuard : public detail::FrameRecord {
@@ -799,7 +804,8 @@ Ref set_inplace(BinOp op, Obj a, Obj b);                     // |= &= -= ^= of a
 Ref dictview_binary(BinOp op, Obj a, Obj b);                 // - & | ^ with a dict keys or items view on either side: a set
 Ref dictview_compare(CmpOp op, Obj self, Obj other);         // a view against a set or a view, else NotImplemented
 Ref dictview_isdisjoint_m(Obj self, Args a);                 // dict_keys.isdisjoint, dict_items.isdisjoint
-bool set_like_view(Obj v);                                   // a keys or items view (dict_values has no set operations)
+bool set_like_view(Obj v);
+const char* binop_dunder(BinOp op, bool reflected);   // "__or__", "__ror__": the slot wrappers' names                                   // a keys or items view (dict_values has no set operations)
 Ref set_compare(CmpOp op, Obj a, Obj b);                     // equality, subset and superset
 void init_sets();
 void list_append(Obj list, Obj value);

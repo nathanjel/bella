@@ -177,7 +177,7 @@ of the current time and the process identifier."""
             raise ValueError("state vector is the wrong size")
         new_state: list[int] = []
         for i in range(_N):
-            element = state[i]  # type: ignore[index]
+            element = tuple.__getitem__(state, i)  # type: ignore[arg-type]  # PyTuple_GET_ITEM: the tuple's own items, whatever a subclass's __getitem__ says
             if not issubclass(type(element), int):   # PyLong_AsUnsignedLong
                 raise TypeError("an integer is required")
             value = int.__index__(element)
@@ -186,7 +186,7 @@ of the current time and the process identifier."""
             if value > 0xFFFFFFFFFFFFFFFF:
                 raise OverflowError("Python int too large to convert to C unsigned long")
             new_state.append(value & _MASK32)
-        index = _number_index(state[_N])  # type: ignore[index]   # PyLong_AsLong
+        index = _number_index(tuple.__getitem__(state, _N))  # type: ignore[arg-type]   # PyLong_AsLong
         if index > 0x7FFFFFFFFFFFFFFF or index < -0x8000000000000000:
             raise OverflowError("Python int too large to convert to C long")
         if index < 0 or index > _N:

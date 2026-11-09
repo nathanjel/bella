@@ -10,6 +10,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _number_index                                # noqa: B018  # PyNumber_Index
     _libm                                        # noqa: B018  # libm.cpp: (name, x) -> (result, errno)
+    _as_double                                   # noqa: B018  # PyFloat_AsDouble
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -30,20 +31,8 @@ except NameError:
         import math
         return getattr(math, name)(x), 0
 
-
-def _as_double(value: object) -> float:          # PyFloat_AsDouble, the clinic's `double`
-    if issubclass(type(value), float):
-        return float.__float__(value)  # type: ignore[arg-type]
-    to_float = getattr(type(value), "__float__", None)
-    if to_float is not None:
-        result = to_float(value)
-        if not issubclass(type(result), float):
-            raise TypeError(_tp_name(value) + ".__float__ returned non-float (type " + _tp_name(result) + ")")
-        return float.__float__(result)
-    if hasattr(type(value), "__index__"):
-        return float(_number_index(value))
-    raise TypeError("must be real number, not " + _tp_name(value))
-
+    def _as_double(value: object) -> float:   # PyFloat_AsDouble, for probing this file under CPython
+        return float(value)  # type: ignore[arg-type]
 
 def _normal_dist_inv_cdf(*args: object, **kwds: object) -> float:
     if kwds:

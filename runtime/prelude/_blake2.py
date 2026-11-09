@@ -15,6 +15,8 @@ try:
     _hash_new                                    # noqa: B018  # hashes.cpp: (algorithm, params) -> state bytes
     _hash_update                                 # noqa: B018  # (state, data) -> state
     _hash_digest                                 # noqa: B018  # (state) -> bytes
+    _number_index                                # noqa: B018  # PyNumber_Index
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -32,6 +34,10 @@ except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
 
+    def _number_index(o: object) -> int:
+        import operator
+        return operator.index(o)
+    _unpack_keywords: Callable[..., Any] = _missing
 
 _GIL_MINSIZE = 2048
 BLAKE2B_SALT_SIZE = 16
@@ -65,16 +71,7 @@ def _py_buffer(value: object) -> bytes:          # key, salt, person: the clinic
     raise TypeError("a bytes-like object is required, not '" + _tp_name(value) + "'")
 
 
-def _index(value: object) -> int:                # PyNumber_Index
-    if issubclass(type(value), int):
-        return int.__index__(value)  # type: ignore[arg-type]
-    index = getattr(type(value), "__index__", None)
-    if index is None:
-        raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
-    result = index(value)
-    if not issubclass(type(result), int):
-        raise TypeError("__index__ returned non-int (type " + _tp_name(result) + ")")
-    return int.__index__(result)
+_index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
 def _c_int(value: object) -> int:                # the clinic's int
@@ -98,23 +95,8 @@ def _unsigned(value: object, what: str) -> int:  # _PyLong_UnsignedLong_Converte
 def _new(name: str, cls: type, args: tuple[object, ...], kwds: dict[str, object], max_digest: int, max_key: int, salt_size: int,
          max_offset: int) -> object:
     """py_blake2b_or_s_new: the parameters checked in the C's order, the state made, the data hashed."""
-    nargs = len(args)
-    if nargs + len(kwds) > 14:
-        raise TypeError(name + "() takes at most 14 arguments (" + str(nargs + len(kwds)) + " given)")
-    if nargs > 1:
-        raise TypeError(name + "() takes at most 1 positional argument (" + str(nargs) + " given)")
-    given: dict[str, object] = {}
-    if nargs:
-        given["data"] = args[0]
-    for keyword, value in kwds.items():
-        if keyword not in _PARAMETERS:
-            suggestion = _keyword_suggestion(_PARAMETERS[1:], keyword)
-            if suggestion is not None:
-                raise TypeError(name + "() got an unexpected keyword argument '" + keyword + "'. Did you mean '" + suggestion + "'?")
-            raise TypeError(name + "() got an unexpected keyword argument '" + keyword + "'")
-        if keyword == "data" and nargs:
-            raise TypeError("argument for " + name + "() given by name ('data') and position (1)")
-        given[keyword] = value
+    values = _unpack_keywords(name, _PARAMETERS, 0, 0, 1, 0, args, kwds, _ABSENT)
+    given: dict[str, object] = {parameter: value for parameter, value in zip(_PARAMETERS, values, strict=True) if value is not _ABSENT}
     digest_size = _c_int(given["digest_size"]) if "digest_size" in given else max_digest
     key = _py_buffer(given["key"]) if "key" in given else b""
     salt = _py_buffer(given["salt"]) if "salt" in given else b""

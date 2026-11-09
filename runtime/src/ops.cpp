@@ -111,6 +111,8 @@ Ref concat_str(Obj a, Obj b) {                   // PyUnicode_Concat: with an em
 // The C++ types' number slots (nb_add, nb_or, ...): NotImplemented for operands they do not know.
 // Concatenation and repetition are sequence slots, tried after both operands' number slots
 // declined (sequence_op below), as PyNumber_Add and PyNumber_Multiply do.
+bool set_like_view(Obj v);
+namespace { bool set_like_operator(BinOp op); }
 Ref native_binary(BinOp op, Obj a, Obj b) {
     std::int64_t x, y;
     if (op == BinOp::MatMul) return Ref::steal(Obj::of(NOTIMPLEMENTED));   // no built-in type has nb_matrix_multiply
@@ -121,6 +123,7 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (is_complex(a) || is_complex(b)) return complex_binary(op, a, b);
     if (is_float(a) || is_float(b)) return float_binary(op, a, b);
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_binary(op, a, b);
+    if ((set_like_view(a) || set_like_view(b)) && set_like_operator(op)) return dictview_binary(op, a, b);   // dictviews_as_number: the view's own slot, on either side
     if (op == BinOp::Or && is_kind(a, Kind::Dict) && is_kind(b, Kind::Dict)) {   // frozendict_or, _PyDict_Or: a copy, updated
         if (is_exact_frozendict(a)) {
             if (static_cast<Dict*>(a.object())->used == 0 && is_exact_frozendict(b)) return Ref::share(b);
@@ -140,6 +143,9 @@ const char* const BIN_NAMES[][3] = {
     {"__mod__", "__rmod__", "__imod__"}, {"__pow__", "__rpow__", "__ipow__"}, {"__lshift__", "__rlshift__", "__ilshift__"},
     {"__rshift__", "__rrshift__", "__irshift__"}, {"__and__", "__rand__", "__iand__"}, {"__or__", "__ror__", "__ior__"},
     {"__xor__", "__rxor__", "__ixor__"}, {"__matmul__", "__rmatmul__", "__imatmul__"}};
+}  // namespace
+const char* binop_dunder(BinOp op, bool reflected) { return BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0]; }
+namespace {
 // an object whose type is a class of the program's: an instance, or a class whose metaclass is one
 bool is_heap_obj(Obj v) { return (v.is_object() && v.object()->kind == Kind::Instance) || has_python_type(v); }
 // a subclass instance of a built-in whose class overrides this special method (decision 2026-11-03)
@@ -354,7 +360,6 @@ Ref binary_op1(BinOp op, Obj a, Obj b) {
 Ref binary(BinOp op, Obj a, Obj b) {
     Ref r = binary_op1(op, a, b);
     if (!not_implemented(r)) return r;
-    if ((set_like_view(a) || set_like_view(b)) && set_like_operator(op)) return dictview_binary(op, a, b);   // the view's nb_* slot
     r = sequence_op(op, a, b, false);
     if (!not_implemented(r)) return r;
     // a class's own method that declined has answered for that operand; the table speaks of the built-ins
@@ -381,7 +386,6 @@ Ref inplace(BinOp op, Obj a, Obj b) {
     }
     Ref r = binary_op1(op, a, b);
     if (!not_implemented(r)) return r;
-    if ((set_like_view(a) || set_like_view(b)) && set_like_operator(op)) return dictview_binary(op, a, b);   // no in-place slot: the binary
     r = sequence_op(op, a, b, true);
     if (!not_implemented(r)) return r;
     std::string sym = op == BinOp::Pow ? "**=" : std::string(symbol(op)) + "=";

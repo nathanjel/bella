@@ -409,8 +409,9 @@ def _generate(owner: _Owner) -> tuple[ast.FunctionDef, list[tuple[str, str]], tu
     body: list[ast.stmt] = [
         ast.If(ast.Compare(_name("format"), [ast.Gt()], [ast.Constant(2)]), [ast.Raise(_name("NotImplementedError"))], []),
     ]
-    if owner.strings:                 # PEP 563: the strings the compiler stored, loading nothing
-        body.append(ast.Return(ast.Dict([ast.Constant(k) for k, _, _, _ in owner.entries], [ast.Constant(ast.unparse(ann)) for _, ann, _, _ in owner.entries])))
+    if owner.strings:                 # PEP 563: the strings the compiler stored, loading nothing; a starred vararg annotation keeps its star
+        body.append(ast.Return(ast.Dict([ast.Constant(k) for k, _, _, _ in owner.entries],
+                                        [ast.Constant(("*" if starred else "") + ast.unparse(ann)) for _, ann, _, starred in owner.entries])))
         params = ast.arguments([], [ast.arg("format"), ast.arg("_g"), ast.arg("_c")], None, [], [], None, [])
         fn = ast.FunctionDef("__annotate__", params, body, [], None, None, [])
         ast.copy_location(fn, owner.entries[0][1])

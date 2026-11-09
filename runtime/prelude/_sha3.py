@@ -15,6 +15,8 @@ try:
     _hash_update                                 # noqa: B018  # (state, data) -> state
     _hash_digest                                 # noqa: B018  # (state) -> bytes
     _hash_xof                                    # noqa: B018  # (state, length) -> bytes, SHAKE's
+    _number_index                                # noqa: B018  # PyNumber_Index
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -32,6 +34,10 @@ except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
 
+    def _number_index(o: object) -> int:
+        import operator
+        return operator.index(o)
+    _unpack_keywords: Callable[..., Any] = _missing
 
 _GIL_MINSIZE = 2048
 implementation = "HACL"
@@ -49,24 +55,9 @@ def _buffer(value: object) -> bytes:
 
 
 def _constructor_args(args: tuple[object, ...], kwds: dict[str, object]) -> bytes | None:   # (data=b'', /, *, usedforsecurity=True, string=None)
-    nargs = len(args)
-    if nargs + len(kwds) > 3:
-        raise TypeError("sha3_224() takes at most 3 arguments (" + str(nargs + len(kwds)) + " given)")
-    if nargs > 1:
-        raise TypeError("sha3_224() takes at most 1 positional argument (" + str(nargs) + " given)")
-    data: object = args[0] if nargs else _ABSENT
-    string: object = _ABSENT
-    for keyword, value in kwds.items():
-        if keyword == "data":
-            if nargs:
-                raise TypeError("argument for sha3_224() given by name ('data') and position (1)")
-            data = value
-        elif keyword == "usedforsecurity":
-            bool(value)
-        elif keyword == "string":
-            string = value
-        else:
-            raise TypeError("sha3_224() got an unexpected keyword argument '" + keyword + "'")
+    data, usedforsecurity, string = _unpack_keywords("sha3_224", ("data", "usedforsecurity", "string"), 0, 0, 1, 0, args, kwds, _ABSENT)
+    if usedforsecurity is not _ABSENT:
+        bool(usedforsecurity)                    # the converter runs after the parsing
     if string is not _ABSENT:                    # an explicit None counts as given: the C warns, then hashes it
         if data is not _ABSENT:
             raise TypeError("'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for "
@@ -77,16 +68,7 @@ def _constructor_args(args: tuple[object, ...], kwds: dict[str, object]) -> byte
     return _buffer(data)
 
 
-def _index(value: object) -> int:                # PyNumber_Index
-    if issubclass(type(value), int):
-        return int.__index__(value)  # type: ignore[arg-type]
-    index = getattr(type(value), "__index__", None)
-    if index is None:
-        raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
-    result = index(value)
-    if not issubclass(type(result), int):
-        raise TypeError("__index__ returned non-int (type " + _tp_name(result) + ")")
-    return int.__index__(result)
+_index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
 def _length_arg(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> int:   # the SHAKEs' (length, /)

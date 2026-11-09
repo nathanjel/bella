@@ -10,6 +10,8 @@ try:
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _number_index                                # noqa: B018  # PyNumber_Index
+    _is_c_type                                   # noqa: B018  # the object's type is CPython's, not a class of the program's
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -26,12 +28,19 @@ except NameError:
         import operator
         return operator.index(o)
 
+    def _is_c_type(o: object) -> bool:
+        return type(o).__module__ != "__main__"   # for probing this file under CPython
+    _unpack_keywords: Callable[..., Any] = _missing
 
 _ABSENT: object = object()
 _MAXSIZE = 2**63 - 1
 # the C mapping types a phase-1 program can hold: mp_subscript and no sq_item, so no sequence for the slot's purposes
 _C_MAPPINGS = ("dict", "mappingproxy", "collections.OrderedDict", "collections.defaultdict", "re.Match", "types.GenericAlias", "typing.Union",
-               "weakref.ProxyType", "weakref.CallableProxyType")
+               "weakref.ProxyType", "weakref.CallableProxyType", "_contextvars.Context")
+
+
+def _c_mapping(a: object) -> bool:               # one of CPython's mapping types (mp_subscript, no sq_item), never a class of the program's named like one
+    return _is_c_type(a) and _tp_name(a) in _C_MAPPINGS
 
 
 def _ssize(value: object, overflow: str) -> int:   # PyLong_AsSsize_t after PyNumber_Index
@@ -43,25 +52,7 @@ def _ssize(value: object, overflow: str) -> int:   # PyLong_AsSsize_t after PyNu
 
 def _arguments(fname: str, args: tuple[object, ...], kwds: dict[str, object]) -> tuple[object, object, int, int, object]:
     """The clinic's (a, x, lo=0, hi=None, *, key=None) through _PyArg_UnpackKeywords, with its messages in its order."""
-    names = ("a", "x", "lo", "hi", "key")
-    nargs = len(args)
-    if nargs + len(kwds) > 5:
-        raise TypeError(fname + "() takes at most 5 arguments (" + str(nargs + len(kwds)) + " given)")
-    if nargs > 4:
-        raise TypeError(fname + "() takes at most 4 positional arguments (" + str(nargs) + " given)")
-    values: list[object] = [*args, *[_ABSENT] * (5 - nargs)]
-    for keyword, value in kwds.items():          # the parameters in order, then what no parameter took
-        if keyword in names:
-            at = names.index(keyword)
-            if at < nargs:
-                raise TypeError("argument for " + fname + "() given by name ('" + keyword + "') and position (" + str(at + 1) + ")")
-            values[at] = value
-    for at in (0, 1):
-        if values[at] is _ABSENT:
-            raise TypeError(fname + "() missing required argument '" + names[at] + "' (pos " + str(at + 1) + ")")
-    for keyword in kwds:
-        if keyword not in names:
-            raise TypeError(fname + "() got an unexpected keyword argument '" + keyword + "'")
+    values = _unpack_keywords(fname, ("a", "x", "lo", "hi", "key"), 0, 2, 4, 0, args, kwds, _ABSENT)
     a, x, lo_given, hi_given, key = values
     lo = 0
     if lo_given is not _ABSENT:
@@ -81,14 +72,14 @@ def _arguments(fname: str, args: tuple[object, ...], kwds: dict[str, object]) ->
 def _size(a: object) -> int:                     # PySequence_Size
     if not hasattr(type(a), "__len__"):
         raise TypeError("object of type '" + _tp_name(a) + "' has no len()")
-    if _tp_name(a) in _C_MAPPINGS:
+    if _c_mapping(a):
         raise TypeError(_tp_name(a) + " is not a sequence")
     return len(a)  # type: ignore[arg-type]
 
 
 def _check_sq_item(a: object) -> None:           # get_sq_item: the sequence slot, or the C's two messages
     if hasattr(type(a), "__getitem__"):
-        if _tp_name(a) in _C_MAPPINGS:           # mp_subscript alone
+        if _c_mapping(a):                        # mp_subscript alone
             raise TypeError(_tp_name(a) + " is not a sequence")
         return                                   # a sequence type, or a class of the program (a subclass of dict too): the heap type has the slot
     raise TypeError("'" + _tp_name(a) + "' object does not support indexing")

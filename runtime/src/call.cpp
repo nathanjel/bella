@@ -274,7 +274,12 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
             found = SIZE_MAX;
         }
         if (found == SIZE_MAX) {
-            if (kwdict == nullptr) raise_new("TypeError", who + " got an unexpected keyword argument '" + name->text + "'");
+            if (kwdict == nullptr) {             // ceval's kw_fail: _Py_CalculateSuggestions over the keyword-capable parameters
+                std::vector<std::string> possible(c.varnames.begin() + c.posonlyargcount, c.varnames.begin() + static_cast<std::ptrdiff_t>(n + nkwonly));
+                std::string suggestion = keyword_suggestion(name->text, possible);
+                raise_new("TypeError", who + " got an unexpected keyword argument '" + name->text + "'" +
+                                           (suggestion.empty() ? "" : ". Did you mean '" + suggestion + "'?"));
+            }
             dict_set(kwdict, Obj::of(name), value);
             continue;
         }
@@ -1164,6 +1169,8 @@ Ref sys_excepthook(Obj, Args a) {                 // sys_excepthook_impl: PyErr_
     Obj value = a.pos(1);
     if (!is_kind(value, Kind::Instance) || !is_subclass(type_of(value), exception_class("BaseException")))
         throw NotImplemented("sys.excepthook with a value that is no exception instance");
+    Obj tb = a.pos(2);                           // _PyErr_Display: a traceback given for a value that has none becomes the value's
+    if (is_kind(tb, Kind::Traceback) && traceback_of(value).is_unset()) set_exception_field(value, "__traceback__", tb);
     print_traceback(value);
     return none_ref();
 }

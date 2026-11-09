@@ -18,6 +18,8 @@ try:
     _structseq                                   # noqa: B018  # bootstrap.py's: a type of named tuples
     _sys                                         # noqa: B018  # posix.cpp: one C library call by name
     _bella_module_set                            # noqa: B018  # PyModule_Add on the module itself, once imported (tzset)
+    _number_index                                # noqa: B018  # PyNumber_Index
+    _as_double                                   # noqa: B018  # PyFloat_AsDouble
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -34,6 +36,12 @@ except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
 
+    def _number_index(o: object) -> int:
+        import operator
+        return operator.index(o)
+
+    def _as_double(value: object) -> float:   # PyFloat_AsDouble, for probing this file under CPython
+        return float(value)  # type: ignore[arg-type]
 
 CLOCK_REALTIME = 0
 CLOCK_MONOTONIC = 1
@@ -59,34 +67,11 @@ struct_time.__doc__ = ("The time value as returned by gmtime(), localtime(), and
 
 # ---- conversions (Python/pytime.c) --------------------------------------------------------------------------------------------
 
-def _index(value: object) -> int:                # PyNumber_Index
-    if issubclass(type(value), int):
-        return int.__index__(value)  # type: ignore[arg-type]
-    index = getattr(type(value), "__index__", None)
-    if index is None:
-        raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
-    result = index(value)
-    if not issubclass(type(result), int):
-        raise TypeError("__index__ returned non-int (type " + _tp_name(result) + ")")
-    return int.__index__(result)
+_index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
 def _fail(code: int) -> None:                    # PyErr_SetFromErrno(OSError)
     raise OSError(code, _sys("strerror", code))
-
-
-def _as_double(value: object) -> float:          # PyFloat_AsDouble
-    if issubclass(type(value), float):
-        return float.__float__(value)  # type: ignore[arg-type]
-    to_float = getattr(type(value), "__float__", None)
-    if to_float is not None:
-        result = to_float(value)
-        if not issubclass(type(result), float):
-            raise TypeError(_tp_name(value) + ".__float__ returned non-float (type " + _tp_name(result) + ")")
-        return float.__float__(result)
-    if hasattr(type(value), "__index__"):
-        return float(_index(value))
-    raise TypeError("must be real number, not " + _tp_name(value))
 
 
 def _object_to_time_t(value: object) -> int:     # _PyTime_ObjectToTime_t with _PyTime_ROUND_FLOOR: an index, or else a real number
@@ -425,6 +410,11 @@ When 'seconds' is not passed in, convert the current time instead."""
     return _tm_to_struct(_broken_down("localtime", _time_t_arg("localtime", args, kwds)))
 
 
+def _c_mod(a: int, n: int) -> int:               # C's %, the remainder taking the dividend's sign
+    r = abs(a) % n
+    return -r if a < 0 else r
+
+
 def _gettmarg(value: object, message: str) -> list[object]:
     """gettmarg: the nine fields in C's ranges, then tm_zone (bytes or None) and tm_gmtoff (int or None) from a struct_time."""
     if not issubclass(type(value), tuple):
@@ -435,7 +425,7 @@ def _gettmarg(value: object, message: str) -> list[object]:
     year = items[0]
     if year < _INT_MIN + 1900:
         raise OverflowError("year out of range")
-    out: list[object] = [year - 1900, items[1] - 1, items[2], items[3], items[4], items[5], (items[6] + 1) % 7, items[7] - 1, items[8], None, None]
+    out: list[object] = [year - 1900, items[1] - 1, items[2], items[3], items[4], items[5], _c_mod(items[6] + 1, 7), items[7] - 1, items[8], None, None]   # (tm_wday + 1) % 7 in C: negative stays negative
     if type(value) is struct_time:
         zone = value.tm_zone  # type: ignore[attr-defined]
         if zone is not None:
@@ -575,7 +565,7 @@ the C library strftime function.
         tm[8] = -1
     elif tm[8] > 1:  # type: ignore[operator]
         tm[8] = 1
-    text = str(fmt)  # type: ignore[arg-type]
+    text = str.__str__(fmt)  # type: ignore[arg-type]  # the text itself, whatever a subclass's __str__ says
     out: list[str] = []
     i = 0
     n = len(text)

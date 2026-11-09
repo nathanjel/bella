@@ -18,6 +18,9 @@ try:
     _float_pack                                  # noqa: B018  # PyFloat_Pack8: a float's eight bytes
     _float_unpack                                # noqa: B018  # PyFloat_Unpack8
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
+    _number_index                                # noqa: B018  # PyNumber_Index
+    _as_double                                   # noqa: B018  # PyFloat_AsDouble
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -33,6 +36,13 @@ except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
 
+    def _number_index(o: object) -> int:
+        import operator
+        return operator.index(o)
+
+    def _as_double(value: object) -> float:   # PyFloat_AsDouble, for probing this file under CPython
+        return float(value)  # type: ignore[arg-type]
+    _unpack_keywords: Callable[..., Any] = _missing
 
 pi = 3.141592653589793
 e = 2.718281828459045
@@ -52,30 +62,7 @@ _DBL_MIN = 2.2250738585072014e-308
 
 # ---- the clinic's and the C API's conversions ------------------------------------------------------------------------------
 
-def _index(value: object) -> int:                # PyNumber_Index
-    if issubclass(type(value), int):
-        return int.__index__(value)  # type: ignore[arg-type]
-    index = getattr(type(value), "__index__", None)
-    if index is None:
-        raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
-    result = index(value)
-    if not issubclass(type(result), int):
-        raise TypeError("__index__ returned non-int (type " + _tp_name(result) + ")")
-    return int.__index__(result)
-
-
-def _as_double(value: object) -> float:          # PyFloat_AsDouble
-    if issubclass(type(value), float):
-        return float.__float__(value)  # type: ignore[arg-type]
-    to_float = getattr(type(value), "__float__", None)
-    if to_float is not None:
-        result = to_float(value)
-        if not issubclass(type(result), float):
-            raise TypeError(_tp_name(value) + ".__float__ returned non-float (type " + _tp_name(result) + ")")
-        return float.__float__(result)
-    if hasattr(type(value), "__index__"):
-        return float(_index(value))
-    raise TypeError("must be real number, not " + _tp_name(value))
+_index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
 def _clinic_double(value: object) -> float:      # the clinic's `double`: PyFloat_AsDouble, a float itself read directly
@@ -504,14 +491,14 @@ y, the nearest even value of n is used. The result is always exact."""
 
 # ---- floor, ceil, trunc -----------------------------------------------------------------------------------------------------
 
-def _special(value: object, name: str) -> object:   # _PyObject_MaybeCallSpecialNoArgs: the type's method, or _ABSENT
-    method = getattr(type(value), name, None)
-    if method is None:
-        return _ABSENT
-    return method(value)
-
-
 _ABSENT: object = object()
+
+
+def _special(value: object, name: str) -> object:   # _PyObject_MaybeCallSpecialNoArgs: the type's attribute called (None included), or _ABSENT
+    method = getattr(type(value), name, _ABSENT)
+    if method is _ABSENT:
+        return _ABSENT
+    return method(value)  # type: ignore[operator]
 
 
 def _from_double(x: float) -> int:               # PyLong_FromDouble
@@ -1138,26 +1125,7 @@ must be smaller than at least one of the tolerances.
 -inf, inf and NaN behave similarly to the IEEE 754 Standard.  That
 is, NaN is not close to anything, even itself.  inf and -inf are
 only close to themselves."""
-    names = ("a", "b", "rel_tol", "abs_tol")
-    nargs = len(args)
-    if nargs + len(kwds) > 4:
-        raise TypeError("isclose() takes at most 4 arguments (" + str(nargs + len(kwds)) + " given)")
-    if nargs > 2:
-        raise TypeError("isclose() takes exactly 2 positional arguments (" + str(nargs) + " given)")
-    values: list[object] = [*args, *[_ABSENT] * (4 - nargs)]
-    for keyword, value in kwds.items():
-        if keyword not in names:
-            suggestion = _keyword_suggestion(names, keyword)
-            if suggestion is not None:
-                raise TypeError("isclose() got an unexpected keyword argument '" + keyword + "'. Did you mean '" + suggestion + "'?")
-            raise TypeError("isclose() got an unexpected keyword argument '" + keyword + "'")
-        at = names.index(keyword)
-        if at < nargs:
-            raise TypeError("argument for isclose() given by name ('" + keyword + "') and position (" + str(at + 1) + ")")
-        values[at] = value
-    for at in range(2):
-        if values[at] is _ABSENT:
-            raise TypeError("isclose() missing required argument '" + names[at] + "' (pos " + str(at + 1) + ")")
+    values = _unpack_keywords("isclose", ("a", "b", "rel_tol", "abs_tol"), 0, 2, 2, 0, args, kwds, _ABSENT)
     a = _clinic_double(values[0])
     b = _clinic_double(values[1])
     rel_tol = 1e-09 if values[2] is _ABSENT else _clinic_double(values[2])

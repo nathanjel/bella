@@ -5,6 +5,7 @@
 // bytes do not depend on.
 #include "bella/runtime.hpp"
 
+#include <climits>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -36,8 +37,8 @@ ZHandle& handle_of(Obj v) {
     if (it == handles().end()) raise_new("SystemError", "zlib: a stream handle that is not open");
     return *it->second;
 }
-const std::string& data_of(Obj v) {
-    if (is_kind(v, Kind::Bytes)) return bytes_data(v);
+const std::string& data_of(Obj v) {              // bytes, or a bytearray read at this moment (a zdict kept as the object given)
+    if (is_bytes_like(v)) return bytes_data(v);
     raise_new("TypeError", "a zlib primitive needs bytes");
 }
 Ref msg_of(const z_stream& zst) { return zst.msg == nullptr ? none_ref() : str_new(zst.msg); }
@@ -68,24 +69,41 @@ struct Blocks {
     }
 };
 
+// arrange_input_buffer: the library takes at most UINT_MAX bytes at a time; a longer input is fed in chunks, as the C module's
+// outer do-while does. A Z_FINISH is asked of the last chunk only (the others get Z_NO_FLUSH, as the C computes its flush from
+// what remains); any other flush goes with every chunk, as Decompress.decompress's Z_SYNC_FLUSH does.
+constexpr std::size_t CHUNK = UINT_MAX;
+int chunk_flush(int flush, bool last) { return flush == Z_FINISH && !last ? Z_NO_FLUSH : flush; }
+std::size_t arrange_input(z_stream& zst, const std::string& data, std::size_t& consumed) {
+    std::size_t take = std::min(data.size() - consumed, CHUNK);
+    zst.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(data.data() + consumed));
+    zst.avail_in = static_cast<uInt>(take);
+    return take;
+}
+
 // deflate(zst, flush) over the whole input, growing the output while the library fills it (the C's inner do-while)
 Ref run_deflate(ZHandle& h, const std::string& data, int flush) {
-    h.zst.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(data.data()));
-    h.zst.avail_in = static_cast<uInt>(data.size());   // phase 1: inputs below UINT_MAX
     std::string out;
     Blocks blocks{-1};
     std::int64_t room = blocks.first(-1);
-    int err;
+    int err = Z_OK;
+    std::size_t consumed = 0;
     do {
-        std::size_t old = out.size();
-        out.resize(old + static_cast<std::size_t>(room));
-        h.zst.next_out = reinterpret_cast<Bytef*>(&out[old]);
-        h.zst.avail_out = static_cast<uInt>(room);
-        err = deflate(&h.zst, flush);
-        out.resize(old + static_cast<std::size_t>(room) - h.zst.avail_out);
+        std::size_t take = arrange_input(h.zst, data, consumed);
+        int this_flush = chunk_flush(flush, consumed + take == data.size());
+        do {
+            std::size_t old = out.size();
+            out.resize(old + static_cast<std::size_t>(room));
+            h.zst.next_out = reinterpret_cast<Bytef*>(&out[old]);
+            h.zst.avail_out = static_cast<uInt>(room);
+            err = deflate(&h.zst, this_flush);
+            out.resize(old + static_cast<std::size_t>(room) - h.zst.avail_out);
+            if (err == Z_STREAM_ERROR) break;
+            room = blocks.grow();
+        } while (h.zst.avail_out == 0);
+        consumed += take - h.zst.avail_in;
         if (err == Z_STREAM_ERROR) break;
-        room = blocks.grow();
-    } while (h.zst.avail_out == 0);
+    } while (consumed < data.size());
     Ref bytes = bytes_new(out);
     return tuple_new({Obj::small(err), bytes.get(), msg_of(h.zst).get()});
 }
@@ -94,42 +112,53 @@ Ref run_deflate(ZHandle& h, const std::string& data, int flush) {
 // schedule's), a dictionary set when the stream asks for one; answers (err, output, consumed, msg, context) where context is
 // "setdict" when setting the dictionary failed. inflate's bytes and what it consumes do not depend on the blocks, only its calls do.
 Ref run_inflate(ZHandle& h, const std::string& data, std::int64_t max_length, std::int64_t init_size, int flush, Obj zdict) {
-    h.zst.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(data.data()));
-    h.zst.avail_in = static_cast<uInt>(data.size());
     std::string out;
     int err = Z_OK;
     const char* context = "";
     Blocks blocks{max_length};
     std::int64_t room = blocks.first(init_size);   // the space left in the current block
-    for (;;) {
-        if (room == 0) {                         // the C's loop top, with avail_out == 0
-            if (max_length >= 0 && blocks.allocated >= max_length) break;   // OutputBuffer_GetDataSize == max_length: save
-            room = blocks.grow();
-        }
-        std::size_t old = out.size();
-        out.resize(old + static_cast<std::size_t>(room));
-        h.zst.next_out = reinterpret_cast<Bytef*>(&out[old]);
-        h.zst.avail_out = static_cast<uInt>(room);
-        err = inflate(&h.zst, flush);
-        out.resize(old + static_cast<std::size_t>(room) - h.zst.avail_out);
-        room = h.zst.avail_out;                  // the rest of this block, written to next
-        if (err == Z_NEED_DICT && zdict != None()) {
-            const std::string& dict = data_of(zdict);
-            int set = inflateSetDictionary(&h.zst, reinterpret_cast<const Bytef*>(dict.data()), static_cast<uInt>(dict.size()));
-            if (set != Z_OK) {
-                err = set;
-                context = "setdict";
-                break;
+    std::size_t consumed = 0;
+    bool stop = false;
+    do {
+        std::size_t take = arrange_input(h.zst, data, consumed);
+        int this_flush = chunk_flush(flush, consumed + take == data.size());
+        for (;;) {
+            if (room == 0) {                     // the C's loop top, with avail_out == 0
+                if (max_length >= 0 && blocks.allocated >= max_length) { stop = true; break; }   // OutputBuffer_GetDataSize == max_length: save
+                room = blocks.grow();
             }
-            continue;                            // the C's loop runs inflate again
+            std::size_t old = out.size();
+            out.resize(old + static_cast<std::size_t>(room));
+            h.zst.next_out = reinterpret_cast<Bytef*>(&out[old]);
+            h.zst.avail_out = static_cast<uInt>(room);
+            err = inflate(&h.zst, this_flush);
+            out.resize(old + static_cast<std::size_t>(room) - h.zst.avail_out);
+            room = h.zst.avail_out;              // the rest of this block, written to next
+            if (err == Z_NEED_DICT && zdict != None()) {   // set_inflate_zdict, reading the dictionary's buffer now
+                const std::string& dict = data_of(zdict);
+                if (dict.size() > CHUNK) {
+                    context = "zdict_overflow";
+                    stop = true;
+                    break;
+                }
+                int set = inflateSetDictionary(&h.zst, reinterpret_cast<const Bytef*>(dict.data()), static_cast<uInt>(dict.size()));
+                if (set != Z_OK) {
+                    err = set;
+                    context = "setdict";
+                    stop = true;
+                    break;
+                }
+                continue;                        // the C's loop runs inflate again
+            }
+            if (err != Z_OK && err != Z_BUF_ERROR && err != Z_STREAM_END) { stop = true; break; }
+            if (room != 0) break;
         }
-        if (err != Z_OK && err != Z_BUF_ERROR && err != Z_STREAM_END) break;
-        if (room != 0) break;
-    }
-    std::int64_t consumed = static_cast<std::int64_t>(data.size()) - h.zst.avail_in;
+        consumed += take - h.zst.avail_in;
+        if (stop || err == Z_STREAM_END) break;
+    } while (consumed < data.size());
     Ref bytes = bytes_new(out);
     Ref ctx = str_new(context);
-    return tuple_new({Obj::small(err), bytes.get(), Obj::small(consumed), msg_of(h.zst).get(), ctx.get()});
+    return tuple_new({Obj::small(err), bytes.get(), int_from_i64(static_cast<std::int64_t>(consumed)).get(), msg_of(h.zst).get(), ctx.get()});
 }
 
 std::int64_t put(std::unique_ptr<ZHandle> h) {
@@ -145,11 +174,18 @@ Ref i_zlib(Obj, Args a) {                         // _zlib(name, ...)
         Ref compiled = str_new(ZLIB_VERSION), runtime = str_new(zlibVersion());
         return tuple_new({compiled.get(), runtime.get()});
     }
-    if (name == "adler32" || name == "crc32") {
+    if (name == "adler32" || name == "crc32") {   // the checksum over chunks of UINT_MAX, as the C module avoids the uInt truncation
         const std::string& data = data_of(a.pos(1));
         unsigned long value = static_cast<unsigned long>(index_value(a.pos(2)));
         const auto* p = reinterpret_cast<const Bytef*>(data.data());
-        value = name == "adler32" ? adler32(value, p, static_cast<uInt>(data.size())) : crc32(value, p, static_cast<uInt>(data.size()));
+        std::size_t len = data.size();
+        bool adler = name == "adler32";
+        while (len > CHUNK) {
+            value = adler ? adler32(value, p, static_cast<uInt>(CHUNK)) : crc32(value, p, static_cast<uInt>(CHUNK));
+            p += CHUNK;
+            len -= CHUNK;
+        }
+        value = adler ? adler32(value, p, static_cast<uInt>(len)) : crc32(value, p, static_cast<uInt>(len));
         return u32(value);
     }
     if (name == "adler32_combine" || name == "crc32_combine") {

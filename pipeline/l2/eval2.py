@@ -478,9 +478,6 @@ class _Translator:
         self.out.add(indent, f"{head} {name}({params}):", code.first_line or line)
         body_indent = indent + 1
         first = code.first_line or line
-        for p in code.params:
-            if p.public is not None and p.public != p.name:
-                self.out.add(body_indent, f"{p.name} = {p.public}", first)
         param_names = {p.name for p in code.params}
         declared = [n for n in (*code.varnames, *code.cellvars) if n not in param_names]
         if declared:
@@ -525,13 +522,14 @@ class _Translator:
     def params(self, code: G.Code) -> str:
         if code.kind in ("module", "classbody"):
             return f"{RESERVED}ns"
-        # a parameter is declared by the name CPython reports (the annotate function's `format`), so that the
-        # host's own messages name it; the body's hidden name is bound to it first (eval1 binds the same way)
-        pos = [p.public or p.name for p in code.params if p.kind == "positional-only"]
-        normal = [p.public or p.name for p in code.params if p.kind == "positional-or-keyword"]
-        star = next((p.public or p.name for p in code.params if p.kind == "*args"), None)
-        kwonly = [p.public or p.name for p in code.params if p.kind == "keyword-only"]
-        kwargs = next((p.public or p.name for p in code.params if p.kind == "**kwargs"), None)
+        # a parameter is declared by its hidden name (an annotate function's `.format`, a symbol of its own in CPython, which
+        # may share the name `format` with a free or cell variable of the same code); the name CPython reports is written
+        # into co_varnames afterwards (_check_slots), so the host's own messages name it (G15 #18)
+        pos = [p.name for p in code.params if p.kind == "positional-only"]
+        normal = [p.name for p in code.params if p.kind == "positional-or-keyword"]
+        star = next((p.name for p in code.params if p.kind == "*args"), None)
+        kwonly = [p.name for p in code.params if p.kind == "keyword-only"]
+        kwargs = next((p.name for p in code.params if p.kind == "**kwargs"), None)
         parts: list[str] = [*pos]
         if pos:
             parts.append("/")
@@ -815,15 +813,16 @@ def _check_slots(code: types.CodeType, codes: dict[str, G.Code], unchecked: froz
     def visible(names: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(n for n in names if not n.startswith(RESERVED))
     host = (visible(code.co_varnames), visible(code.co_cellvars), visible(code.co_freevars))
-    want_vars = l2.varnames if l2.kind not in ("module", "classbody") else tuple(n for n in l2.varnames)
-    hidden = [p.name for p in l2.params if p.public is not None and p.public != p.name]
-    if hidden:                                   # a parameter declared by its public name: the hidden name is the first local the body binds
-        params = [p.name for p in l2.params]
-        want_vars = (*(p.public or p.name for p in l2.params), *hidden, *(n for n in l2.varnames if n not in params))
-    want = (want_vars, l2.cellvars, l2.freevars)
+    want = (l2.varnames, l2.cellvars, l2.freevars)
     if l2.kind not in ("coroutine", "async generator") and code.co_name not in unchecked and host != want:
         raise SlotMismatch(f"{l2.qualname}: the host compiled {host}, L2 says {want}")
-    return code.replace(co_consts=consts, co_name=l2.name, co_qualname=l2.qualname)
+    # a parameter's public name (an annotate function's `format` for its `.format`) stands in co_varnames, as CPython's does,
+    # unless a cell or free variable of the code has that name too: CPython keeps the two symbols apart, but a host code object
+    # made through replace() would merge them into one cell, so the hidden name stays there (eval2 alone; the runtime has both)
+    taken = {*code.co_cellvars, *code.co_freevars}
+    public = {p.name: p.public for p in l2.params if p.public is not None and p.public != p.name and p.public not in taken}
+    varnames = tuple(public.get(n, n) for n in code.co_varnames) if public else code.co_varnames
+    return code.replace(co_consts=consts, co_name=l2.name, co_qualname=l2.qualname, co_varnames=varnames)
 
 
 def compile_module(m: G.Module, refused: dict[str, str] | None = None, audit: bool = False) -> tuple[_Compiled, str]:

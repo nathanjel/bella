@@ -19,6 +19,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _number_index                                # noqa: B018  # PyNumber_Index
     _zlib                                        # noqa: B018  # zlib.cpp: the library's calls by name
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -29,6 +30,7 @@ except NameError:
     _bella_new_instance = object.__new__
     _bella_refuse: Callable[..., Any] = _missing
     _zlib: Callable[..., Any] = _missing
+    _unpack_keywords: Callable[..., Any] = _missing
 
     def _tp_name(o: object) -> str:
         return type(o).__name__
@@ -125,28 +127,11 @@ def _unsigned(value: object, name: str) -> int:   # unsigned_int(bitwise=True): 
 
 
 def _arguments(fname: str, names: tuple[str, ...], maxpos: int, minpos: int, args: tuple[object, ...], kwds: dict[str, object]) -> list[object]:
-    """_PyArg_UnpackKeywords: `names` in order, the first `maxpos` positional, the first `minpos` required."""
-    nargs = len(args)
-    if nargs + len(kwds) > len(names):
-        raise TypeError(fname + "() takes at most " + str(len(names)) + " argument" + ("" if len(names) == 1 else "s") + " (" + str(nargs + len(kwds)) + " given)")
-    if nargs > maxpos:
-        raise TypeError(fname + "() takes at most " + str(maxpos) + " positional argument" + ("" if maxpos == 1 else "s") + " (" + str(nargs) + " given)")
-    values: list[object] = [*args, *[_ABSENT] * (len(names) - nargs)]
-    for keyword, value in kwds.items():
-        if keyword in names:
-            at = names.index(keyword)
-            if at < nargs:
-                raise TypeError("argument for " + fname + "() given by name ('" + keyword + "') and position (" + str(at + 1) + ")")
-            values[at] = value
-    for at in range(minpos):
-        if values[at] is _ABSENT:
-            if not names[at]:                    # positional-only: counted, "exactly" when nothing more may follow
-                raise TypeError(fname + "() takes " + ("exactly " if minpos == maxpos else "at least ") + str(minpos) + " positional argument" + ("" if minpos == 1 else "s") + " (" + str(nargs) + " given)")
-            raise TypeError(fname + "() missing required argument '" + names[at] + "' (pos " + str(at + 1) + ")")
-    for keyword in kwds:
-        if keyword not in names or not keyword:
-            raise TypeError(fname + "() got an unexpected keyword argument '" + keyword + "'")
-    return values
+    """_PyArg_UnpackKeywords: `names` in order, "" for a positional-only one, the first `maxpos` positional, the first `minpos` required."""
+    posonly = 0
+    while posonly < len(names) and not names[posonly]:
+        posonly += 1
+    return _unpack_keywords(fname, names, posonly, minpos, maxpos, 0, args, kwds, _ABSENT)
 
 
 # ---- the one-shot functions ----------------------------------------------------------------------------------------------------
@@ -399,6 +384,8 @@ Call the flush() method to clear these buffers."""
         if max_length == 0:
             max_length = -1
         err, out, consumed, zmsg, context = _zlib("inflate", self._handle, data, max_length, -1, Z_SYNC_FLUSH, self._zdict)
+        if context == "zdict_overflow":          # the dictionary's buffer is read when the stream asks for it (set_inflate_zdict)
+            raise OverflowError("zdict length does not fit in an unsigned int")
         if context == "setdict":
             raise _zlib_error(err, zmsg, "while setting zdict")
         self._save_unconsumed_input(data, consumed, err)
@@ -484,11 +471,11 @@ def decompressobj(*args: object, **kwds: object) -> Decompress:
     dictionary as used by the compressor that produced the input data."""
     given = _arguments("decompressobj", ("wbits", "zdict"), 2, 0, args, kwds)
     wbits = MAX_WBITS if given[0] is _ABSENT else _int(given[0])
-    zdict: bytes | None = None
+    zdict: object = None                         # kept as given: a zlib stream reads its buffer when it asks for a dictionary
     if given[1] is not _ABSENT:
         if not issubclass(type(given[1]), (bytes, bytearray)) and not hasattr(type(given[1]), "__buffer__"):
             raise TypeError("zdict argument must support the buffer protocol")
-        zdict = _buffer(given[1])
+        zdict = given[1]
     err, handle, zmsg = _zlib("inflate_init", wbits)
     if err == _Z_STREAM_ERROR:
         raise ValueError("Invalid initialization option")
@@ -503,8 +490,8 @@ def decompressobj(*args: object, **kwds: object) -> Decompress:
     self._unconsumed_tail = b""
     self._eof = False
     self._zdict = zdict
-    if zdict is not None and wbits < 0:
-        _inflate_zdict(handle, zdict)
+    if zdict is not None and wbits < 0:          # a raw stream has no header to ask with: the dictionary is set now
+        _inflate_zdict(handle, _buffer(zdict))
     return self
 
 
