@@ -18,14 +18,14 @@
 
 namespace bella {
 
+int& recursion_limit() {                         // D-17: sys.setrecursionlimit's; 1000 is CPython's default
+    static int limit = 1000;
+    return limit;
+}
 namespace {
 int& recursion_depth() {
     static int depth = 0;
     return depth;
-}
-int& recursion_limit() {                         // D-17: sys.setrecursionlimit's; 1000 is CPython's default
-    static int limit = 1000;
-    return limit;
 }
 
 std::unordered_map<ClassObject*, NativeFn>& constructors() {
@@ -584,6 +584,7 @@ bool object_recursive_isinstance(Obj inst, Obj cls) {
     return real_isinstance(inst, cls);
 }
 }  // namespace
+bool instance_of(Obj inst, Obj cls) { return object_recursive_isinstance(inst, cls); }
 bool object_issubclass(Obj derived, Obj cls) {
     if (is_kind(cls, Kind::Class) && type_of(cls) == types().type) return derived == cls || real_issubclass(derived, cls);
     if (is_union(cls)) {                         // its args, as a tuple
@@ -1296,12 +1297,15 @@ Ref sys_getframemodulename(Obj, Args a) {         // sys__getframemodulename_imp
     Obj name = dict_get(f->module->dict, Obj::of(intern("__name__")));
     return name.is_unset() ? none_ref() : Ref::share(name);
 }
+bool is_callable(Obj v) {                        // PyCallable_Check
+    Kind k = v.is_object() ? v.object()->kind : Kind::Bool;
+    bool yes = k == Kind::PyFunction || k == Kind::Builtin || k == Kind::Method || k == Kind::Class || k == Kind::Function;
+    if (k == Kind::Instance) yes = v.object()->cls->has("__call__");
+    return yes;
+}
 Ref b_callable(Obj, Args a) {
     onearg(a, "callable");
-    Kind k = a.pos(0).is_object() ? a.pos(0).object()->kind : Kind::Bool;
-    bool yes = k == Kind::PyFunction || k == Kind::Builtin || k == Kind::Method || k == Kind::Class || k == Kind::Function;
-    if (k == Kind::Instance) yes = a.pos(0).object()->cls->has("__call__");
-    return Ref::steal(boolean(yes));
+    return Ref::steal(boolean(is_callable(a.pos(0))));
 }
 Ref b_ord(Obj, Args a) {
     onearg(a, "ord");
@@ -1699,6 +1703,7 @@ void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
             throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
 }
 }  // namespace
+bool callable_object(Obj v) { return is_callable(v); }
 
 void adopt_functions(Module* m) {
     Obj name = dict_get(m->dict, Obj::of(intern("__name__")));
@@ -2203,6 +2208,8 @@ void print_traceback(Obj exc) {
     std::unordered_set<const Object*> seen;
     for (Ref e = Ref::share(exc); !e.get().is_unset();) {
         seen.insert(e.get().object());
+        if (is_exception_group(e.get()))             // TracebackException's nested format (the `+-+---- 1 ----` boxes): not written yet
+            throw NotImplemented("the traceback of an uncaught exception group (its nested format)");
         if (report_attr(e.get(), "__notes__").get() != None())
             throw NotImplemented("the __notes__ of an uncaught exception (PEP 678)");
         Ref cause = report_attr(e.get(), "__cause__");

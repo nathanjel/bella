@@ -92,6 +92,7 @@ struct GetSet : Object {                         // a getset descriptor: a data 
     Ref (*get)(Obj self);
     void (*set)(Obj self, Obj value);            // nullptr: read-only
     bool deletable = false;                      // del calls set with Unset
+    const char* doc = nullptr;                   // its __doc__ (PyMemberDef's or PyGetSetDef's doc), "" for None; nullptr: not known
     GetSet(const char* n, ClassObject* o, Ref (*g)(Obj), void (*s)(Obj, Obj));
 };
 struct SliceObject : Object {                    // slice(start, stop, step), each owned
@@ -307,6 +308,12 @@ ClassObject* exception_class(const char* name);
 bool exception_matches(Obj exc, Obj spec);       // except clause matching (a class or a tuple of them)
 Obj traceback_of(Obj exc);
 bool is_exception_instance(Obj v);               // PyExceptionInstance_Check
+bool is_sequence(Obj v);                         // PySequence_Check
+bool callable_object(Obj v);                     // PyCallable_Check (call.cpp)
+bool instance_of(Obj inst, Obj cls);             // PyObject_IsInstance, with __instancecheck__ (call.cpp)
+int& recursion_limit();                          // sys.getrecursionlimit's (call.cpp)
+bool is_exception_group(Obj v);                  // _PyBaseExceptionGroup_Check
+ClassObject* exception_group_class();            // ExceptionGroup, a heap type made at start-up
 // a class whose metaclass is a class of the program's (a heap subclass of type): its special
 // methods come from that metaclass, as an instance's come from its class
 inline bool has_python_type(Obj v) { return v.is_object() && v.object()->kind == Kind::Class && v.object()->cls->heap_type; }

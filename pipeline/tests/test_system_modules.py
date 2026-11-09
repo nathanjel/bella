@@ -751,6 +751,35 @@ except ModuleNotFoundError as e:
     print(e.name, e)
 """
 
+EXCEPTION_GROUPS = r"""
+import contextlib, copy
+def shape(g):
+    if g is None:
+        return None
+    if isinstance(g, BaseExceptionGroup):
+        return (type(g).__name__, g.message, [shape(x) for x in g.exceptions])
+    return repr(g)
+tree = ExceptionGroup("outer", [ValueError(1), ExceptionGroup("inner", [TypeError(2), ValueError(3)]), OSError(4)])
+for matcher in (ValueError, (TypeError, OSError), lambda x: isinstance(x, ValueError) and x.args[0] > 1, KeyError):
+    match, rest = tree.split(matcher)
+    print(shape(match), shape(rest), shape(tree.subgroup(matcher)))
+print(type(BaseExceptionGroup("m", [ValueError()])).__name__, type(BaseExceptionGroup("m", [KeyboardInterrupt()])).__name__, str(tree), repr(ExceptionGroup("t", (ValueError(),))))
+try:
+    raise ExceptionGroup("raised", [ValueError(1), TypeError(2)]) from KeyError("why")
+except ExceptionGroup as e:
+    e.add_note("n")
+    m, r = e.split(ValueError)
+    print(m.__traceback__ is e.__traceback__, repr(m.__cause__), m.__suppress_context__, m.__notes__, m.__notes__ is e.__notes__)
+with contextlib.suppress(ValueError):
+    raise ExceptionGroup("all", [ValueError(1)])
+try:
+    with contextlib.suppress(ValueError):
+        raise ExceptionGroup("partly", [ValueError(1), TypeError(2)])
+except ExceptionGroup as left:
+    print(shape(left))
+print(shape(copy.copy(tree)), ImportError("x", name="n").__reduce__(), AttributeError("a", name="b").__reduce__())
+"""
+
 
 def test_zlib() -> None:
     """zlib 1.3.2 built into the runtime against the pin's: twenty-one blocks (random bytes, runs, empty, a 140 KB repeat) at five
@@ -778,6 +807,13 @@ def test_importlib() -> None:
     same(IMPORTLIB)
 
 
+def test_exception_groups() -> None:
+    """BaseExceptionGroup and ExceptionGroup (Objects/exceptions.c) without except*: split and subgroup by a type, a tuple and a
+    predicate, the class chosen by what is nested, the metadata the parts keep, contextlib.suppress over a group, and the
+    reduction methods copy reaches (BaseException's, ImportError's, AttributeError's)."""
+    same(EXCEPTION_GROUPS)
+
+
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.crc32(b'a', -1)", "unsigned 32-bit"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\ntyping.TypeVar('T', bound='Fwd')", "compile()"),
@@ -785,7 +821,7 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
-             ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("import warnings\nwarnings.warn_explicit('m', UserWarning, 'f', 1, module_globals={'__name__': 'x'})", "module_globals"),
+             ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("raise ExceptionGroup('uncaught', [ValueError()])", "uncaught exception group"), ("import warnings\nwarnings.warn_explicit('m', UserWarning, 'f', 1, module_globals={'__name__': 'x'})", "module_globals"),
              ("import tokenize, io\nnext(tokenize.generate_tokens(io.StringIO('x = 1').readline))", "_tokenize.TokenizerIter"),
              ("import importlib, json\nimportlib.reload(json)", "importlib.reload"), ("import importlib.machinery\nimportlib.machinery.PathFinder.find_spec('x')", "PathFinder.find_spec"),
              ("import importlib.util, json\nimportlib.util.LazyLoader(json.__loader__).exec_module(json)", "__class__ assignment"), ("import _imp\n_imp.get_frozen_object('os')", "_imp.get_frozen_object"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
@@ -810,4 +846,5 @@ if __name__ == "__main__":
     test_opcode()
     test_warnings()
     test_importlib()
+    test_exception_groups()
     test_what_is_absent_stops_by_name()

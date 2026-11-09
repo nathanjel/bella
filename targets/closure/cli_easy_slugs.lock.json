@@ -37,7 +37,7 @@
    "name": "__future__",
    "kind": "source",
    "status": "compiled",
-   "reached_by": "cli_easy_slugs:runtime:0",
+   "reached_by": "codeop:eager:44",
    "dynamic_unknown_lines": [],
    "path": "__future__.py",
    "edges": []
@@ -1041,8 +1041,23 @@
    "status": "shim",
    "reached_by": "traceback:eager:13",
    "dynamic_unknown_lines": [],
-   "path": "codeop.py",
-   "edges": []
+   "path": "runtime/shims/codeop.py",
+   "edges": [
+    {
+     "importer": "codeop",
+     "target": "__future__",
+     "cls": "eager",
+     "line": 44,
+     "func": ""
+    },
+    {
+     "importer": "codeop",
+     "target": "warnings",
+     "cls": "eager",
+     "line": 45,
+     "func": ""
+    }
+   ]
   },
   "collections": {
    "name": "collections",

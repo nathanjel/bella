@@ -682,8 +682,7 @@ struct ExceptionClasses {
             c->mro = {c};
             for (ClassObject* m : bases[0]->mro) c->mro.push_back(m);
         }
-        c->has_dict = true;
-        c->set_attr(intern("__module__"), Obj::of(intern("builtins")));
+        c->has_dict = true;                        // no __module__ in its dict: a static type's comes from tp_name (type_module)
         by_name[name] = c;
         return c;
     }
@@ -724,6 +723,9 @@ struct ExceptionClasses {
         }
         make("SystemExit", "BaseException", exception_fields({"code"}));
         make("StopIteration", "Exception", exception_fields({"value"}));
+        // PyBaseExceptionGroupObject: msg, excs (a tuple), excs_str (the repr of a sequence that was no list or tuple); its
+        // subclass ExceptionGroup is a heap type made by type() at start-up (types.cpp), as PyErr_NewException makes it
+        make("BaseExceptionGroup", "BaseException", exception_fields({"msg", "excs", "excs_str"}));
     }
 };
 ExceptionClasses& exceptions() {

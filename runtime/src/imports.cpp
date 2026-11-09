@@ -310,7 +310,7 @@ Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the mo
     // exec(code, module.__dict__): globals without __builtins__ get the calling frame's, the dict
     if (dict_get(m->dict, Obj::of(N("__builtins__"))).is_unset())
         dict_set(m->dict, Obj::of(N("__builtins__")), Obj::of(builtins_module()->dict));
-    if (name->text == "annotationlib") {         // the shim's hooks, as the replay's sitecustomize gives them
+    if (name->text == "annotationlib" || name->text == "codeop") {   // a shim's hooks, as the replay's sitecustomize gives them
         Ref hooks = own(new Module("_bella"));
         auto* h = static_cast<Module*>(hooks.get().object());
         for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{

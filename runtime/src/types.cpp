@@ -243,6 +243,12 @@ ClassObject* descriptor_owner(Obj self) {
     return static_cast<GetSet*>(self.object())->owner;
 }
 Ref descriptor_name(Obj self) { return str_new(descriptor_text(self)); }
+Ref descriptor_doc(Obj self) {                   // member_get_doc / getset_get_doc: the def's doc, None for none
+    auto* g = static_cast<GetSet*>(self.object());
+    if (g->doc == nullptr)
+        throw NotImplemented(type_of(self)->name + ".__doc__ of '" + std::string(g->name) + "' (CPython has it; the runtime does not yet)");
+    return *g->doc == '\0' ? none_ref() : str_new(g->doc);
+}
 Ref descriptor_objclass(Obj self) { return Ref::share(Obj::of(descriptor_owner(self))); }
 Ref descriptor_qualname(Obj self) {              // descr_get_qualname: the type's qualified name, a dot, its own
     Ref owner = getattr(Obj::of(descriptor_owner(self)), N("__qualname__"));
@@ -1976,6 +1982,67 @@ Ref oserror_reduce(Obj self, Args a) {           // OSError_reduce
     }
     return tuple_new({cls.get(), args.get()});
 }
+bool instance_dict_made(Obj self) {              // self->dict != NULL
+    bool has_dict = false;
+    with_attribute_storage(self, [&](auto* inst) { has_dict = inst->dict != nullptr || inst->exposed() || !inst->order.empty(); });
+    return has_dict;
+}
+Ref exception_reduce(Obj self, Args a) {         // BaseException___reduce___impl: (type, args) or, with a dict made, (type, args, dict)
+    noargs(a, "BaseException.__reduce__");
+    Ref cls = Ref::share(Obj::of(type_of(self)));
+    Obj args = exception_field(self, "args");
+    Ref shown = args.is_unset() ? none_ref() : Ref::share(args);
+    if (!args.is_unset() && instance_dict_made(self)) {
+        Ref d = getattr(self, N("__dict__"));
+        return tuple_new({cls.get(), shown.get(), d.get()});
+    }
+    return tuple_new({cls.get(), shown.get()});
+}
+Ref fields_state(Obj self, std::initializer_list<std::pair<const char*, const char*>> fields) {   // ImportError_getstate, AttributeError_getstate
+    bool any = false;                            // (key, field): the dict's copy with the fields set, the dict, or None
+    for (auto [key, field] : fields) any = any || !exception_field(self, field).is_unset();
+    if (any) {
+        Ref state = instance_dict_made(self) ? dict_copy(static_cast<Dict*>(getattr(self, N("__dict__")).get().object())) : dict_new();
+        for (auto [key, field] : fields)
+            if (Obj v = exception_field(self, field); !v.is_unset()) dict_set(static_cast<Dict*>(state.get().object()), Obj::of(N(key)), v);
+        return state;
+    }
+    if (instance_dict_made(self)) return getattr(self, N("__dict__"));
+    return none_ref();
+}
+Ref import_error_reduce(Obj self, Args a) {      // ImportError_reduce: (type, args) or (type, args, state)
+    noargs(a, "ImportError.__reduce__");
+    Ref state = fields_state(self, {{"name", "name"}, {"path", "path"}, {"name_from", "name_from"}});
+    Ref cls = Ref::share(Obj::of(type_of(self)));
+    Ref args = or_none(exception_field(self, "args"));
+    if (state.get() == None()) return tuple_new({cls.get(), args.get()});
+    return tuple_new({cls.get(), args.get(), state.get()});
+}
+Ref attribute_error_getstate(Obj self, Args a) { // AttributeError_getstate: name and args, never obj (GH-103352)
+    noargs(a, "AttributeError.__getstate__");
+    return fields_state(self, {{"name", "name"}, {"args", "args"}});
+}
+Ref attribute_error_reduce(Obj self, Args a) {   // AttributeError_reduce: (type, args, state)
+    noargs(a, "AttributeError.__reduce__");
+    Ref state = fields_state(self, {{"name", "name"}, {"args", "args"}});
+    Ref cls = Ref::share(Obj::of(type_of(self)));
+    Ref args = or_none(exception_field(self, "args"));
+    return tuple_new({cls.get(), args.get(), state.get()});
+}
+Ref exception_setstate(Obj self, Args a) {       // BaseException___setstate___impl: each item set as an attribute, in the dict's order
+    onearg(a, "BaseException.__setstate__");
+    Obj state = a.pos(0);
+    if (state == None()) return none_ref();
+    if (!is_kind(state, Kind::Dict)) raise_new("TypeError", "state is not a dictionary");
+    auto* d = static_cast<Dict*>(state.object());
+    for (std::size_t pos = 0; pos < d->entries.size(); ++pos) {   // PyDict_Next, live
+        if (d->entries[pos].key.is_unset()) continue;
+        Ref key = Ref::share(d->entries[pos].key), value = Ref::share(d->entries[pos].value);
+        if (as_str(key.get()) == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(key.get())->name + "'");
+        setattr(self, as_str(key.get()), value.get());
+    }
+    return none_ref();
+}
 Ref traceback_lineno(Obj self) { return int_from_i64(static_cast<Traceback*>(self.object())->line); }
 Ref oserror_written_get(Obj self) {
     Obj v = exception_field(self, "written");
@@ -2001,6 +2068,169 @@ BELLA_FIELD(F_ERRNO, "errno") BELLA_FIELD(F_STRERROR, "strerror") BELLA_FIELD(F_
 BELLA_FIELD(F_MSG, "msg") BELLA_FIELD(F_LINENO, "lineno") BELLA_FIELD(F_OFFSET, "offset") BELLA_FIELD(F_TEXT, "text") BELLA_FIELD(F_END_LINENO, "end_lineno")
 BELLA_FIELD(F_END_OFFSET, "end_offset") BELLA_FIELD(F_PRINT, "print_file_and_line") BELLA_FIELD(F_METADATA, "_metadata")
 #undef BELLA_FIELD
+// ---- BaseExceptionGroup (Objects/exceptions.c, 3.15.2) ----
+bool is_exception_class(Obj v) {                 // PyExceptionClass_Check
+    return is_kind(v, Kind::Class) && is_subclass(static_cast<ClassObject*>(v.object()), exception_class("BaseException"));
+}
+ClassObject*& exception_group_slot() {
+    static ClassObject* c = nullptr;
+    return c;
+}
+std::string short_type_name(ClassObject* c) {     // _PyType_Name: tp_name after its last dot
+    auto dot = c->name.rfind('.');
+    return dot == std::string::npos ? c->name : c->name.substr(dot + 1);
+}
+std::string tp_name_of(Obj v) { return is_none(v) ? "None" : type_of(v)->name; }   // _PyArg_BadArgument's words
+Ref beg_new(Obj self, Args a) {                  // BaseExceptionGroup_new: PyArg_ParseTuple(args, "UO:BaseExceptionGroup.__new__")
+    ClassObject* cls = new_wrapper_class(a, as_class(self));
+    std::size_t given = a.npos - 1;              // the keywords are BaseException_init's to refuse
+    if (given != 2) raise_new("TypeError", "BaseExceptionGroup.__new__() takes exactly 2 arguments (" + std::to_string(given) + " given)");
+    Obj message = a.pos(1), sequence = a.pos(2);
+    if (as_str(message) == nullptr) raise_new("TypeError", "BaseExceptionGroup.__new__() argument 1 must be str, not " + tp_name_of(message));
+    if (!is_sequence(sequence)) raise_new("TypeError", "second argument (exceptions) must be a sequence");
+    Ref excs_str;                                // saved in case a custom sequence is mutated
+    if (!is_subclass(type_of(sequence), types().list) && !is_subclass(type_of(sequence), types().tuple)) excs_str = repr_of(sequence);
+    Ref excs = invoke(Obj::of(types().tuple), {sequence});   // PySequence_Tuple
+    const auto& items = static_cast<Tuple*>(excs.get().object())->items;
+    if (items.empty()) raise_new("ValueError", "second argument (exceptions) must be a non-empty sequence");
+    bool nested_base_exceptions = false;
+    Obj exception = Obj::of(exception_class("Exception"));
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (!is_exception_instance(items[i])) raise_new("ValueError", "Item " + std::to_string(i) + " of second argument (exceptions) is not an exception");
+        if (!instance_of(items[i], exception)) nested_base_exceptions = true;
+    }
+    ClassObject* group = exception_group_slot();
+    if (cls == group) {
+        if (nested_base_exceptions) raise_new("TypeError", "Cannot nest BaseExceptions in an ExceptionGroup");
+    } else if (cls == exception_class("BaseExceptionGroup")) {
+        if (!nested_base_exceptions) cls = group;  // all nested exceptions are Exception subclasses: an ExceptionGroup
+    } else if (nested_base_exceptions && is_subclass(cls, exception_class("Exception"))) {   // a subclass of the program's
+        raise_new("TypeError", "Cannot nest BaseExceptions in '" + cls->name + "'");
+    }
+    auto* e = new_instance(cls);                 // BaseException_new: args is the positional arguments
+    Ref r = own(e);
+    std::vector<Obj> args;
+    for (std::size_t i = 1; i < a.npos; ++i) {
+        incref(a.pos(i));
+        args.push_back(a.pos(i));
+    }
+    Ref args_tuple = tuple_steal(std::move(args));
+    set_exception_field(r.get(), "args", args_tuple.get());
+    set_exception_field(r.get(), "msg", message);
+    set_exception_field(r.get(), "excs", excs.get());
+    if (!excs_str.get().is_unset()) set_exception_field(r.get(), "excs_str", excs_str.get());
+    return r;
+}
+Ref beg_str(Obj self, Args a) {                  // "%S (%zd sub-exception%s)"
+    no_wrapper_args(a, "__str__");
+    Ref text = str_of(exception_field(self, "msg"));
+    std::size_t n = static_cast<Tuple*>(exception_field(self, "excs").object())->items.size();
+    return str_new(as_str(text.get())->text + " (" + std::to_string(n) + " sub-exception" + (n > 1 ? "s" : "") + ")");
+}
+Ref beg_repr(Obj self, Args a) {                 // "%s(%R, %U)": self.exceptions shown as self.args[1] was, a list as a list
+    no_wrapper_args(a, "__repr__");
+    Ref exceptions_str;
+    if (Obj saved = exception_field(self, "excs_str"); !saved.is_unset()) {
+        exceptions_str = Ref::share(saved);
+    } else {
+        Obj excs = exception_field(self, "excs");
+        Obj args = exception_field(self, "args");
+        bool as_list = is_kind(args, Kind::Tuple) && static_cast<Tuple*>(args.object())->items.size() == 2 &&
+                       is_subclass(type_of(static_cast<Tuple*>(args.object())->items[1]), types().list);
+        if (as_list) {
+            Ref list = invoke(Obj::of(types().list), {excs});
+            exceptions_str = repr_of(list.get());
+        } else {
+            exceptions_str = repr_of(excs);
+        }
+    }
+    Ref message = repr_of(exception_field(self, "msg"));
+    return str_new(short_type_name(type_of(self)) + "(" + as_str(message.get())->text + ", " + as_str(exceptions_str.get())->text + ")");
+}
+Ref beg_message_get(Obj self) { return or_none(exception_field(self, "msg")); }
+Ref beg_exceptions_get(Obj self) { return or_none(exception_field(self, "excs")); }
+Ref beg_derive(Obj self, Args a) {               // BaseExceptionGroup.derive(excs, /): a BaseExceptionGroup of the same message
+    onearg(a, "BaseExceptionGroup.derive");
+    return invoke(Obj::of(exception_class("BaseExceptionGroup")), {exception_field(self, "msg"), a.pos(0)});
+}
+enum class Matcher { ByType, ByPredicate };
+Matcher matcher_type(Obj value) {                // get_matcher_type
+    if (callable_object(value) && !is_kind(value, Kind::Class)) return Matcher::ByPredicate;
+    if (is_exception_class(value)) return Matcher::ByType;
+    if (is_kind(value, Kind::Tuple) && !is_subclass_instance(value)) {
+        bool all = true;
+        for (Obj item : static_cast<Tuple*>(value.object())->items) all = all && is_exception_class(item);
+        if (all) return Matcher::ByType;
+    }
+    raise_new("TypeError", "expected an exception type, a tuple of exception types, or a callable (other than a class)");
+}
+bool split_matches(Obj exc, Matcher type, Obj value) {   // exceptiongroup_split_check_match
+    if (type == Matcher::ByType) return exception_matches(exc, value);   // PyErr_GivenExceptionMatches
+    Ref answer = invoke(value, {exc});
+    return truth(answer.get());
+}
+Ref beg_subset(Obj orig, Obj excs) {             // exceptiongroup_subset: orig.derive(excs) with orig's metadata, Unset for no excs
+    if (static_cast<List*>(excs.object())->items.empty()) return Ref{};
+    Ref derive = getattr(orig, N("derive"));
+    Ref eg = invoke(derive.get(), {excs});
+    if (!is_exception_group(eg.get())) raise_new("TypeError", "derive must return an instance of BaseExceptionGroup");
+    if (Obj tb = exception_field(orig, "__traceback__"); !tb.is_unset()) set_exception_field(eg.get(), "__traceback__", tb);
+    set_exception_field(eg.get(), "__context__", exception_field(orig, "__context__"));   // PyException_SetContext
+    set_exception_field(eg.get(), "__cause__", exception_field(orig, "__cause__"));       // PyException_SetCause: suppress_context = 1
+    set_exception_field(eg.get(), "__suppress_context__", boolean(true));
+    Ref notes = optional_getattr(orig, N("__notes__"));
+    if (!notes.get().is_unset() && is_sequence(notes.get())) {   // a copy, so the parts have notes lists of their own
+        Ref copy = invoke(Obj::of(types().list), {notes.get()});
+        setattr(eg.get(), N("__notes__"), copy.get());
+    }
+    return eg;
+}
+struct SplitDepth {                              // _Py_EnterRecursiveCall(" in exceptiongroup_split_recursive")
+    static int& depth() {
+        static int d = 0;
+        return d;
+    }
+    SplitDepth() {
+        if (++depth() > recursion_limit()) {
+            --depth();
+            // CPython's limit here is its C stack's, which no program can reproduce: the nesting is refused past Python's
+            throw NotImplemented("an exception group nested deeper than the recursion limit (CPython's limit there is the C stack's)");
+        }
+    }
+    ~SplitDepth() { --depth(); }
+};
+std::pair<Ref, Ref> split_recursive(Obj exc, Matcher type, Obj value, bool construct_rest) {   // exceptiongroup_split_recursive
+    if (split_matches(exc, type, value)) return {Ref::share(exc), Ref{}};   // a full match
+    if (!is_exception_group(exc)) return {Ref{}, construct_rest ? Ref::share(exc) : Ref{}};   // a leaf and no match
+    Ref match_list = list_new({});               // a partial match
+    Ref rest_list = construct_rest ? list_new({}) : Ref{};
+    Ref excs = Ref::share(exception_field(exc, "excs"));
+    for (Obj e : static_cast<Tuple*>(excs.get().object())->items) {
+        Ref inner = Ref::share(e);
+        std::pair<Ref, Ref> part;
+        {
+            SplitDepth guard;
+            part = split_recursive(inner.get(), type, value, construct_rest);
+        }
+        if (!part.first.get().is_unset()) list_append(match_list.get(), part.first.get());
+        if (!part.second.get().is_unset()) list_append(rest_list.get(), part.second.get());
+    }
+    Ref match = beg_subset(exc, match_list.get());
+    Ref rest = construct_rest ? beg_subset(exc, rest_list.get()) : Ref{};
+    return {std::move(match), std::move(rest)};
+}
+Ref beg_split(Obj self, Args a) {                // BaseExceptionGroup.split(matcher_value, /) -> (match, rest)
+    onearg(a, "BaseExceptionGroup.split");
+    Matcher type = matcher_type(a.pos(0));
+    auto [match, rest] = split_recursive(self, type, a.pos(0), true);
+    return tuple_new({match.get().is_unset() ? None() : match.get(), rest.get().is_unset() ? None() : rest.get()});
+}
+Ref beg_subgroup(Obj self, Args a) {             // BaseExceptionGroup.subgroup(matcher_value, /) -> match
+    onearg(a, "BaseExceptionGroup.subgroup");
+    Matcher type = matcher_type(a.pos(0));
+    auto parts = split_recursive(self, type, a.pos(0), false);
+    return parts.first.get().is_unset() ? none_ref() : std::move(parts.first);
+}
 // ---- SyntaxError ----
 Ref syntax_error_init(Obj self, Args a) {        // SyntaxError_init
     if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
@@ -2285,6 +2515,8 @@ Ref class_getitem(Obj self, Args a) {            // Py_GenericAlias as a built-i
     return generic_alias(self, a.pos(0));
 }
 }  // namespace
+bool is_exception_group(Obj v) { return is_kind(v, Kind::Instance) && is_subclass(type_of(v), exception_class("BaseExceptionGroup")); }
+ClassObject* exception_group_class() { return exception_group_slot(); }
 Ref generic_alias(Obj origin, Obj args) {
     return invoke(dict_get(bootstrap_of_types()->dict, Obj::of(N("GenericAlias"))), {origin, args});
 }
@@ -2716,6 +2948,7 @@ void init_types() {
         member("__name__", descriptor_name);
         member("__objclass__", descriptor_objclass);
         c->attrs.set(N("__qualname__"), Obj::of(new GetSet("__qualname__", c, descriptor_qualname, nullptr)));   // descr_getset
+        c->attrs.set(N("__doc__"), Obj::of(new GetSet("__doc__", c, descriptor_doc, nullptr)));                // member_get_doc, getset_get_doc
     }
     // functions, methods, cells
     getset(t.function, "__name__", fn_name, set_fn_name);
@@ -2839,8 +3072,42 @@ void init_types() {
     method(base, "__str__", exception_str);
     method(base, "__repr__", exception_repr);
     method(base, "with_traceback", exception_with_traceback);
+    method(base, "__reduce__", exception_reduce);
+    method(base, "__setstate__", exception_setstate);
+    method(exception_class("ImportError"), "__reduce__", import_error_reduce);
+    method(exception_class("AttributeError"), "__reduce__", attribute_error_reduce);
+    method(exception_class("AttributeError"), "__getstate__", attribute_error_getstate);
     method(base, "add_note", exception_add_note);
     method(exception_class("KeyError"), "__str__", key_error_str);
+    {   // BaseExceptionGroup's slots, members and methods; ExceptionGroup a heap type over it and Exception
+        ClassObject* beg = exception_class("BaseExceptionGroup");
+        new_method(beg, beg_new);
+        method(beg, "__init__", exception_init);    // BaseExceptionGroup_init: no keywords, then BaseException_init
+        method(beg, "__str__", beg_str);
+        method(beg, "__repr__", beg_repr);
+        method(beg, "derive", beg_derive);
+        method(beg, "split", beg_split);
+        method(beg, "subgroup", beg_subgroup);
+        method(beg, "__class_getitem__", class_getitem, Binding::ClassMethod);
+        for (auto [name, get, doc] : std::initializer_list<std::tuple<const char*, Ref (*)(Obj), const char*>>{
+                 {"message", beg_message_get, "exception message"}, {"exceptions", beg_exceptions_get, "nested exceptions"}}) {
+            auto* m = new GetSet(name, beg, get, nullptr);   // PyMemberDef, Py_READONLY: "readonly attribute"
+            m->cls = t.member_descriptor;
+            m->doc = doc;
+            beg->attrs.set(N(name), Obj::of(m));
+        }
+        // create_exception_group_class: PyErr_NewException("builtins.ExceptionGroup", (BaseExceptionGroup, Exception), NULL)
+        Ref name = str_new("ExceptionGroup");
+        Ref bases = tuple_new({Obj::of(beg), Obj::of(exception_class("Exception"))});
+        Ref ns = dict_new();
+        Ref module = str_new("builtins");
+        dict_set(static_cast<Dict*>(ns.get().object()), Obj::of(N("__module__")), module.get());
+        Ref made = invoke(Obj::of(t.type), {name.get(), bases.get(), ns.get()});
+        made.get().object()->flags |= IMMORTAL;
+        exception_group_slot() = static_cast<ClassObject*>(made.get().object());
+        dict_set(builtins_module()->dict, Obj::of(N("BaseExceptionGroup")), Obj::of(beg));
+        dict_set(builtins_module()->dict, Obj::of(N("ExceptionGroup")), made.get());
+    }
     base->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
     deletable_getset(base, "args", exception_args_get, exception_args_set);
     deletable_getset(base, "__traceback__", exception_traceback_get, exception_traceback_set);

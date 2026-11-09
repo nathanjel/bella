@@ -303,6 +303,7 @@ static bool sequence_check(Obj v) {
     if (v.is_object() && v.object()->cls->weak_proxy) return false;
     return has_sq_item(v);
 }
+bool is_sequence(Obj v) { return sequence_check(v); }   // PySequence_Check
 Ref i_tp_name(Obj, Args a) {                      // a class's tp_name: its module's name in it, for a C type that has one
     positional_only(a, "_tp_name", 1, 1);
     return str_new(type_of(a.pos(0))->name);

@@ -1,0 +1,12 @@
+{
+ "case": "C-3-50_exception_group_format.py",
+ "clause": "C-3-50",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "dialect specification section 3 (exception groups), PEP 654, Lib/traceback.py (TracebackException for groups)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "  | ExceptionGroup: fmt (3 sub-exceptions)\n  +-+---------------- 1 ----------------\n    | ValueError: 1\n    +---------------- 2 ----------------\n    | ExceptionGroup: in (1 sub-exception)\n    +-+---------------- 1 ----------------\n      | TypeError: 2\n      +------------------------------------\n    +---------------- 3 ----------------\n    | KeyError: 3\n    +------------------------------------\nExceptionGroup: only (1 sub-exception)\n15 or: 14|    +---------------- ... ----------------|    | and 2 more exceptions|    +------------------------------------|\n",
+ "stderr": "",
+ "exit_code": 0
+}
