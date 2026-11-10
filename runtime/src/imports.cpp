@@ -696,10 +696,55 @@ Ref getter_doc(Obj self) { return getattr(self, N("_b_doc")); }
 void getter_doc_set(Obj self, Obj value) {
     setattr(self, N("_b_doc"), value.is_unset() ? None() : value);
 }
+Ref i_hash_of(Obj, Args a);                       // _functools's, below: a hash taken once, then the dict's own operations with it
+Ref i_get_hashed(Obj, Args a);
+Ref i_set_hashed(Obj, Args a);
+Ref i_pop_hashed(Obj, Args a);
+// OrderedDict's primitives (runtime/prelude/_collections.py, Objects/odictobject.c): the dict's own probe with a hash already
+// taken, so that a key's __eq__ runs as often as the C's lookups run it; what tells the C that its table was rebuilt; a view of
+// it; and the C types of its views, subtypes of the dict's (which a class may not subclass)
+Ref i_dict_index(Obj, Args a) {                  // (dict, key, hash): _odict_get_index_raw
+    positional_only(a, "_dict_index", 3, 3);
+    auto* d = static_cast<Dict*>(a.pos(0).object());
+    std::int64_t h = 0;
+    int_fits_i64(a.pos(2), h);
+    auto absent = static_cast<std::int64_t>(d->entries.size());   // dk_nentries: where a new entry would go
+    if (d->indices.empty()) return int_from_i64(absent);
+    auto [slot, ix] = detail::probe(d, a.pos(1), h);
+    return int_from_i64(ix >= 0 ? ix : absent);
+}
+Ref i_dict_shape(Obj, Args a) {                  // (dict): what od_resize_sentinel and od_fast_nodes_size measure, the table's layout and size
+    positional_only(a, "_dict_shape", 1, 1);
+    auto* d = static_cast<Dict*>(a.pos(0).object());
+    Ref layout = int_from_i64(static_cast<std::int64_t>(d->layout));
+    Ref size = int_from_i64(d->indices.empty() ? 1 : static_cast<std::int64_t>(d->indices.size()));   // Py_EMPTY_KEYS has one slot
+    return tuple_new({layout.get(), size.get()});
+}
+Ref i_odict_view(Obj, Args a) {                  // (od, view type, which): _PyDictView_New(od, &PyODict*_Type)
+    positional_only(a, "_odict_view", 3, 3);
+    std::int64_t which = 0;
+    int_fits_i64(a.pos(2), which);
+    auto* v = new DictView(a.pos(0), static_cast<DictView::Which>(which));
+    v->cls = static_cast<ClassObject*>(a.pos(1).object());   // one of the three, _collections' own
+    return own(v);
+}
+Ref i_view_dict(Obj, Args a) {                   // (view): dv_dict
+    positional_only(a, "_view_dict", 1, 1);
+    return Ref::share(static_cast<DictView*>(a.pos(0).object())->dict);
+}
+Ref i_view_subtype(Obj, Args a) {                // (name, base, namespace): a C type over a dict view's, its methods the namespace's
+    positional_only(a, "_view_subtype", 3, 3);
+    ClassObject* c = builtin_type(as_str(a.pos(0))->text.c_str(), {static_cast<ClassObject*>(a.pos(1).object())});
+    for (auto& e : static_cast<Dict*>(a.pos(2).object())->entries)
+        if (!e.key.is_unset()) c->set_attr(intern(as_str(e.key)->text), e.value);
+    return Ref::share(Obj::of(c));
+}
 void fill_collections(Module* m) {               // its types are named for `collections`, the module that shows them
     fill_in_python(m, "_collections", "collections", prelude_collections::module_body,
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_bella_refuse", i_bella_refuse}, {"_count_element", i_count_element},
-                    {"_repr_enter", i_repr_enter}, {"_repr_leave", i_repr_leave}});
+                    {"_repr_enter", i_repr_enter}, {"_repr_leave", i_repr_leave}, {"_hash_of", i_hash_of}, {"_get_hashed", i_get_hashed},
+                    {"_set_hashed", i_set_hashed}, {"_pop_hashed", i_pop_hashed}, {"_dict_index", i_dict_index}, {"_dict_shape", i_dict_shape},
+                    {"_odict_view", i_odict_view}, {"_view_subtype", i_view_subtype}, {"_view_dict", i_view_dict}});
     auto cls = [&](const char* n) { return static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N(n))).object()); };
     cls("deque")->sequence_slots = true;
     auto member = [](ClassObject* c, const char* name, Ref (*get)(Obj), void (*set)(Obj, Obj)) {

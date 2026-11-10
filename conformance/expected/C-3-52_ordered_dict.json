@@ -1,0 +1,12 @@
+{
+ "case": "C-3-52_ordered_dict.py",
+ "clause": "C-3-52",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Objects/odictobject.c (collections.OrderedDict, the C type collections imports from _collections)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "OrderedDict({'b': 2, 'a': 1, 'c': 3}) ['b', 'a', 'c'] 3 1 0\n[('b', 20), ('c', 3), ('d', 4), ('a', 5)]\n['a', 'c', 'd', 'b'] KeyError KeyError\n('b', 20) ('a', 5) ['c', 'd'] KeyError\n3 dflt KeyError 4 None [('d', 4), ('e', None)]\nOrderedDict() OrderedDict({'d': 4, 'e': None}) OrderedDict True\nOrderedDict({'x': 0, 'y': 0, 'z': 0}) OrderedDict ['z', 'y', 'x'] ['z', 'y', 'x'] [0, 0, 0] [('z', 0), ('y', 0), ('x', 0)]\nodict_keys odict_values odict_items odict_iterator odict_iterator\nodict_keys(['x', 'y', 'z']) odict_values([0, 0, 0]) odict_items([('x', 0), ('y', 0), ('z', 0)]) True {'x'} True True\nTrue collections OrderedDict (<class 'collections.OrderedDict'>, <class 'dict'>, <class 'object'>)\nFalse True True True True False TypeError\nOrderedDict({'a': 1, 'b': 2, 'c': 3}) OrderedDict({'c': 3, 'a': 1, 'b': 2}) OrderedDict TypeError\nOrderedDict({'a': 1, 'b': 2, 'z': 26})\nOrderedDict({'inner': OrderedDict({'x': 1}), 'self': ...}) OrderedDict() OrderedDict({1: OrderedDict()})\n  set k 1\n  set l 2\n  set m 3\n  set n 4\nSub({'k': 1, 'l': 2, 'm': 3, 'n': 4}) missing nope 4 1\n  set k 1\n  set l 2\n  set m 3\n  set n 4\nSub Sub({'k': 1, 'l': 2, 'm': 3, 'n': 4})\ndone ['a', 'b', 'c'] RuntimeError OrderedDict mutated during iteration RuntimeError OrderedDict mutated during iteration RuntimeError OrderedDict mutated during iteration\nTrue () {'attr': 'kept'} None [('a', 1)]\nOrderedDict({'a': 1}) kept OrderedDict({'a': [1]}) {'attr': 'kept'}\nTrue {}\nTypeError TypeError ValueError ValueError TypeError TypeError\n[1] ['hash 1', 'hash 2', 'hash 3', 'eq 1', 'eq 1', 'hash 1', 'hash 1', 'hash 2', 'hash 3', 'eq 1', 'eq 1', 'eq 1', 'hash 1']\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -10,6 +10,7 @@ deque's `__add__`, which the runtime knows from `ClassObject::sequence_slots`.
 __all__ = ["OrderedDict", "_count_elements", "_deque_iterator", "_deque_reverse_iterator", "_tuplegetter", "defaultdict", "deque"]
 
 __name__ = "_collections"
+__hidden_classes__ = ["odict_iterator", "odict_keys", "odict_values", "odict_items"]   # types of the builtins that are no names of theirs
 
 try:
     _number_index                                # noqa: B018  # PyNumber_Index, given by the runtime
@@ -19,6 +20,15 @@ try:
     _repr_enter                                  # noqa: B018  # Py_ReprEnter: false when it is in there already
     _repr_leave                                  # noqa: B018  # Py_ReprLeave
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
+    _hash_of                                     # noqa: B018  # PyObject_Hash, once: the C passes the hash on
+    _set_hashed                                  # noqa: B018  # the dict's own operations with a hash already taken
+    _pop_hashed                                  # noqa: B018
+    _dict_index                                  # noqa: B018  # _odict_get_index_raw: the dict's probe, the entry index
+    _dict_shape                                  # noqa: B018  # the table's layout and size (od_resize_sentinel)
+    _odict_view                                  # noqa: B018  # _PyDictView_New(od, type)
+    _view_subtype                                # noqa: B018  # a C subtype of a dict view's type
+    _view_dict                                   # noqa: B018  # a view's dv_dict
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -32,6 +42,15 @@ except NameError:
     _count_element: Callable[..., None] = _missing
     _repr_enter: Callable[..., bool] = _missing
     _repr_leave: Callable[..., None] = _missing
+    _unpack_keywords: Callable[..., Any] = _missing
+    _hash_of: Callable[..., int] = _missing
+    _set_hashed: Callable[..., None] = _missing
+    _pop_hashed: Callable[..., Any] = _missing
+    _dict_index: Callable[..., int] = _missing
+    _dict_shape: Callable[..., Any] = _missing
+    _odict_view: Callable[..., Any] = _missing
+    _view_subtype: Callable[..., Any] = _missing
+    _view_dict: Callable[..., Any] = _missing
 
     def _bella_refuse(text: str) -> NoReturn:
         raise ImportError(text)
@@ -76,11 +95,15 @@ def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   
         raise TypeError(shown + ".__new__(" + cls.__name__ + "): " + cls.__name__ + " is not a subtype of " + shown)  # type: ignore[attr-defined]
 
 
+def _type_shown(cls: type) -> str:              # tp_name: a type of the builtins is shown without its module
+    return cls.__name__ if cls.__module__ == "builtins" else cls.__module__ + "." + cls.__name__
+
+
 def _receiver(args: tuple[object, ...], cls: type, name: str, shown: str) -> None:   # a method descriptor's
     if not args:
         raise TypeError("unbound method " + shown + "." + name + "() needs an argument")
     if not issubclass(type(args[0]), cls):
-        raise TypeError("descriptor '" + name + "' for '" + cls.__module__ + "." + cls.__name__ + "' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
+        raise TypeError("descriptor '" + name + "' for '" + _type_shown(cls) + "' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
 
 
 def _noargs(args: tuple[object, ...], kwds: dict[str, object], cls: type, name: str, shown: str) -> None:   # METH_NOARGS
@@ -102,9 +125,9 @@ def _one(args: tuple[object, ...], kwds: dict[str, object], cls: type, name: str
 
 def _wrapper(args: tuple[object, ...], kwds: dict[str, object], cls: type, name: str, count: int) -> None:   # wrapper_call, check_num_args
     if not args:
-        raise TypeError("descriptor '" + name + "' of '" + cls.__module__ + "." + cls.__name__ + "' object needs an argument")
+        raise TypeError("descriptor '" + name + "' of '" + _type_shown(cls) + "' object needs an argument")
     if not issubclass(type(args[0]), cls):
-        raise TypeError("descriptor '" + name + "' requires a '" + cls.__module__ + "." + cls.__name__ + "' object but received a '" + _tp_name(args[0]) + "'")
+        raise TypeError("descriptor '" + name + "' requires a '" + _type_shown(cls) + "' object but received a '" + _tp_name(args[0]) + "'")
     if kwds:
         raise TypeError("wrapper " + name + "() takes no keyword arguments")
     if len(args) != count + 1:
@@ -836,11 +859,551 @@ def _dd_or(left: object, right: object) -> object:
     return new
 
 
-class OrderedDict(dict):  # type: ignore[type-arg]   # Objects/odictobject.c
-    __module__ = "collections"
+# ---- OrderedDict (Objects/odictobject.c)
+#
+# What PyODictObject adds to its dict is one field here, `_a_od`, made at the first use (tp_alloc zeroes the C's):
+# [nodes, first, last, fast, sentinel, state, next id]. A node is [key, hash, prev, next] under its id in `nodes`, prev and
+# next ids (None at an end), so that nothing holds a cycle and the nodes let their keys go before the dict lets its entries
+# go, as odict_dealloc frees them first. `fast` is od_fast_nodes, a node id (or None) for each entry index of the dict's
+# table, rebuilt (_odict_resize) when the table was; `sentinel` is what od_resize_sentinel and od_fast_nodes_size measure,
+# the table's layout and size. Every lookup is the dict's own probe with the key's hash already taken (_dict_index), so a
+# key's __hash__ and __eq__ run as often as in the C. `state` counts what od_state counts.
 
-    def __new__(cls, *args: object, **kwds: object) -> OrderedDict:
-        _bella_refuse("collections.OrderedDict (step 3b: Objects/odictobject.c)")
+_NODES, _FIRST, _LAST, _FAST, _SENTINEL, _STATE, _NEXT_ID = 0, 1, 2, 3, 4, 5, 6
+_KEY, _HASH, _PREV, _NEXT = 0, 1, 2, 3
+_ITER_REVERSED, _ITER_KEYS, _ITER_VALUES = 1, 2, 4
+_NULL: object = object()                         # the C's NULL where a key may be None
+_OD_MUTATED = "OrderedDict mutated during iteration"
+
+
+def _od(self: object) -> list[Any]:
+    try:
+        fields: list[Any] = _od_field.__get__(self, None)
+    except AttributeError:
+        fields = [{}, None, None, [], None, 0, 0]
+        _od_field.__set__(self, fields)
+    return fields
+
+
+def _od_index(self: object, fields: list[Any], key: object, hash: int) -> int:   # _odict_get_index
+    shape = _dict_shape(self)
+    if fields[_SENTINEL] != shape:              # _odict_resize: the table was rebuilt, so every node is looked up again
+        fast: list[Any] = [None] * shape[1]
+        nodes = fields[_NODES]
+        node = fields[_FIRST]
+        while node is not None:
+            n = nodes[node]
+            fast[_dict_index(self, n[_KEY], n[_HASH])] = node
+            node = n[_NEXT]
+        fields[_FAST] = fast
+        fields[_SENTINEL] = shape
+    return _dict_index(self, key, hash)
+
+
+def _od_find_hash(self: object, fields: list[Any], key: object, hash: int) -> Any:   # _odict_find_node_hash
+    index = _od_index(self, fields, key, hash)
+    return fields[_FAST][index]
+
+
+def _od_find(self: object, fields: list[Any], key: object) -> Any:   # _odict_find_node
+    return _od_find_hash(self, fields, key, _hash_of(key))
+
+
+def _od_add_head(fields: list[Any], node: int) -> None:
+    nodes = fields[_NODES]
+    first = fields[_FIRST]
+    nodes[node][_PREV] = None
+    nodes[node][_NEXT] = first
+    if first is None:
+        fields[_LAST] = node
+    else:
+        nodes[first][_PREV] = node
+    fields[_FIRST] = node
+    fields[_STATE] += 1
+
+
+def _od_add_tail(fields: list[Any], node: int) -> None:
+    nodes = fields[_NODES]
+    last = fields[_LAST]
+    nodes[node][_PREV] = last
+    nodes[node][_NEXT] = None
+    if last is None:
+        fields[_FIRST] = node
+    else:
+        nodes[last][_NEXT] = node
+    fields[_LAST] = node
+    fields[_STATE] += 1
+
+
+def _od_remove(fields: list[Any], node: int) -> None:   # _odict_remove_node
+    nodes = fields[_NODES]
+    n = nodes[node]
+    if fields[_FIRST] == node:
+        fields[_FIRST] = n[_NEXT]
+    elif n[_PREV] is not None:
+        nodes[n[_PREV]][_NEXT] = n[_NEXT]
+    if fields[_LAST] == node:
+        fields[_LAST] = n[_PREV]
+    elif n[_NEXT] is not None:
+        nodes[n[_NEXT]][_PREV] = n[_PREV]
+    n[_PREV] = None
+    n[_NEXT] = None
+    fields[_STATE] += 1
+
+
+def _od_add_new_node(self: object, fields: list[Any], key: object, hash: int) -> None:   # _odict_add_new_node: at the end
+    index = _od_index(self, fields, key, hash)
+    if fields[_FAST][index] is not None:        # we already have a node for the key
+        return
+    node = fields[_NEXT_ID]
+    fields[_NEXT_ID] = node + 1
+    fields[_NODES][node] = [key, hash, None, None]
+    _od_add_tail(fields, node)
+    fields[_FAST][index] = node
+
+
+def _od_clear_node(self: object, fields: list[Any], node: Any, key: object, hash: int) -> None:   # _odict_clear_node
+    if fields[_FIRST] is None:                   # let later code decide if this is a KeyError
+        return
+    index = _od_index(self, fields, key, hash)
+    fast = fields[_FAST]
+    if node is None:
+        node = fast[index]
+    if node is None:
+        return
+    fast[index] = None
+    _od_remove(fields, node)
+    fields[_NODES].pop(node)[_KEY] = None        # _odictnode_DEALLOC: the key's count, now
+
+
+def _od_clear_nodes(fields: list[Any]) -> None:   # _odict_clear_nodes: each node lets its key go, first to last
+    fields[_FAST] = []
+    fields[_SENTINEL] = None
+    nodes = fields[_NODES]
+    node = fields[_FIRST]
+    fields[_FIRST] = None
+    fields[_LAST] = None
+    while node is not None:
+        n = nodes.pop(node)
+        node = n[_NEXT]
+        n[_KEY] = None
+    nodes.clear()
+    fields[_STATE] += 1
+
+
+def _od_setitem_hashed(self: object, key: object, value: object, hash: int) -> None:   # _PyODict_SetItem_KnownHash_LockHeld
+    _set_hashed(self, key, hash, value)
+    _od_add_new_node(self, _od(self), key, hash)
+
+
+def _od_setitem(self: object, key: object, value: object) -> None:   # PyODict_SetItem
+    _od_setitem_hashed(self, key, value, _hash_of(key))
+
+
+def _od_delitem(self: object, key: object) -> None:   # PyODict_DelItem
+    hash = _hash_of(key)
+    _od_clear_node(self, _od(self), None, key, hash)
+    if _pop_hashed(self, key, hash, _NULL) is _NULL:   # _PyDict_DelItem_KnownHash_LockHeld
+        raise KeyError(key)
+
+
+def _od_popkey_hash(self: object, key: object, failobj: object, hash: int) -> object:   # _odict_popkey_hash
+    fields = _od(self)
+    node = _od_find_hash(self, fields, key, hash)
+    if node is not None:
+        _od_clear_node(self, fields, node, key, hash)   # the node first, then the dict's entry
+        value = _pop_hashed(self, key, hash, _NULL)
+        return failobj if value is _NULL else value
+    if failobj is _NULL:
+        raise KeyError(key)
+    return failobj
+
+
+def _od_keys_equal(a: object, b: object) -> bool:   # _odict_keys_equal
+    fa, fb = _od(a), _od(b)
+    state_a, state_b = fa[_STATE], fb[_STATE]
+    node_a, node_b = fa[_FIRST], fb[_FIRST]
+    while True:
+        if node_a is None and node_b is None:
+            return True
+        if node_a is None or node_b is None:
+            return False
+        na, nb = fa[_NODES][node_a], fb[_NODES][node_b]
+        res = _same(na[_KEY], nb[_KEY])
+        if fa[_STATE] != state_a or fb[_STATE] != state_b:
+            raise RuntimeError(_OD_MUTATED)
+        if not res:
+            return False
+        node_a, node_b = na[_NEXT], nb[_NEXT]
+
+
+def _od_richcompare(v: object, w: object, eq: bool) -> object:   # odict_richcompare_lock_held, == and !=
+    if not isinstance(v, OrderedDict) or not isinstance(w, (dict, frozendict)):
+        return NotImplemented
+    cmp = dict.__eq__(v, w) if eq else dict.__ne__(v, w)  # type: ignore[arg-type]
+    if not isinstance(w, OrderedDict):
+        return cmp
+    if eq and cmp is False:
+        return cmp
+    if not eq and cmp is True:
+        return cmp
+    return _od_keys_equal(v, w) == eq
+
+
+def _od_add_pairs(self: object, pairs: object) -> None:   # mutablemapping_add_pairs
+    for pair in pairs:  # type: ignore[attr-defined]
+        pair_iterator = iter(pair)
+        key = next(pair_iterator, _NULL)
+        if key is _NULL:
+            raise ValueError("need more than 0 values to unpack")
+        value = next(pair_iterator, _NULL)
+        if value is _NULL:
+            raise ValueError("need more than 1 value to unpack")
+        if next(pair_iterator, _NULL) is not _NULL:
+            raise ValueError("too many values to unpack (expected 2)")
+        self[key] = value  # type: ignore[index]
+
+
+def _od_update_arg(self: object, arg: object) -> None:   # mutablemapping_update_arg
+    if type(arg) is dict or type(arg) is frozendict:    # PyAnyDict_CheckExact: its items, listed first
+        _od_add_pairs(self, dict.items(arg))  # type: ignore[arg-type]
+        return
+    keys = getattr(arg, "keys", _NULL)
+    if keys is not _NULL:
+        for key in keys():  # type: ignore[operator]
+            self[key] = arg[key]  # type: ignore[index]
+        return
+    items = getattr(arg, "items", _NULL)
+    if items is not _NULL:
+        _od_add_pairs(self, items())  # type: ignore[operator]
+        return
+    _od_add_pairs(self, arg)
+
+
+def _od_update(self: object, args: tuple[object, ...], kwds: dict[str, object]) -> None:   # mutablemapping_update
+    if len(args) > 1:
+        raise TypeError("update() takes at most 1 positional argument (" + str(len(args)) + " given)")
+    if args:
+        _od_update_arg(self, args[0])
+    if kwds:
+        _od_add_pairs(self, list(kwds.items()))
+
+
+def _od_or(left: object, right: object) -> object:   # odict_or
+    if isinstance(left, OrderedDict):
+        cls, other = type(left), right
+    else:
+        cls, other = type(right), left
+    if not isinstance(other, (dict, frozendict)):
+        return NotImplemented
+    new = cls(left)
+    _od_update_arg(new, right)
+    return new
+
+
+def _od_dict_copy(self: object) -> dict[Any, Any]:   # PyDict_Copy of one that has an __iter__ of its own: dict_merge's keys() path
+    copy: dict[Any, Any] = {}
+    for key in list(self.keys()):  # type: ignore[attr-defined]
+        copy[key] = self[key]  # type: ignore[index]
+    return copy
+
+
+class OrderedDict(dict):  # type: ignore[type-arg]
+    __module__ = "collections"
+    __doc__ = "Dictionary that remembers insertion order"
+    __slots__ = ("_a_od", "__dict__", "__weakref__")
+
+    def __init__(*args: object, **kwds: object) -> None:   # odict_init
+        _wrapper(args[:1], {}, OrderedDict, "__init__", 0)
+        if len(args) > 2:
+            raise TypeError("expected at most 1 argument, got " + str(len(args) - 1))
+        _od_update(args[0], args[1:], kwds)
+
+    def __setitem__(*args: object, **kwds: object) -> None:   # odict_mp_ass_sub
+        _wrapper(args, kwds, OrderedDict, "__setitem__", 2)
+        _od_setitem(args[0], args[1], args[2])
+
+    def __delitem__(*args: object, **kwds: object) -> None:
+        _wrapper(args, kwds, OrderedDict, "__delitem__", 1)
+        _od_delitem(args[0], args[1])
+
+    def __iter__(*args: object, **kwds: object) -> object:   # odict_iter
+        _wrapper(args, kwds, OrderedDict, "__iter__", 0)
+        return _odict_iter_new(args[0], _ITER_KEYS)
+
+    def __reversed__(*args: object, **kwds: object) -> object:   # odict_reversed
+        _noargs(args, kwds, OrderedDict, "__reversed__", "OrderedDict")
+        return _odict_iter_new(args[0], _ITER_KEYS | _ITER_REVERSED)
+
+    def __repr__(*args: object, **kwds: object) -> str:   # odict_repr
+        _wrapper(args, kwds, OrderedDict, "__repr__", 0)
+        self = args[0]
+        if dict.__len__(self) == 0:  # type: ignore[arg-type]
+            return type(self).__name__ + "()"
+        if not _repr_enter(self):
+            return "..."
+        try:
+            return type(self).__name__ + "(" + repr(_od_dict_copy(self)) + ")"
+        finally:
+            _repr_leave(self)
+
+    def __eq__(*args: object, **kwds: object) -> object:  # type: ignore[override]
+        _wrapper(args, kwds, OrderedDict, "__eq__", 1)
+        return _od_richcompare(args[0], args[1], True)
+
+    def __ne__(*args: object, **kwds: object) -> object:  # type: ignore[override]
+        _wrapper(args, kwds, OrderedDict, "__ne__", 1)
+        return _od_richcompare(args[0], args[1], False)
+
+    def __lt__(*args: object, **kwds: object) -> object:  # odict_richcompare: only == and !=
+        _wrapper(args, kwds, OrderedDict, "__lt__", 1)
+        return NotImplemented
+
+    def __le__(*args: object, **kwds: object) -> object:
+        _wrapper(args, kwds, OrderedDict, "__le__", 1)
+        return NotImplemented
+
+    def __gt__(*args: object, **kwds: object) -> object:
+        _wrapper(args, kwds, OrderedDict, "__gt__", 1)
+        return NotImplemented
+
+    def __ge__(*args: object, **kwds: object) -> object:
+        _wrapper(args, kwds, OrderedDict, "__ge__", 1)
+        return NotImplemented
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __or__(*args: object, **kwds: object) -> object:   # odict_or
+        _wrapper(args, kwds, OrderedDict, "__or__", 1)
+        return _od_or(args[0], args[1])
+
+    def __ror__(*args: object, **kwds: object) -> object:
+        _wrapper(args, kwds, OrderedDict, "__ror__", 1)
+        return _od_or(args[1], args[0])
+
+    def __ior__(*args: object, **kwds: object) -> object:   # odict_inplace_or
+        _wrapper(args, kwds, OrderedDict, "__ior__", 1)
+        _od_update_arg(args[0], args[1])
+        return args[0]
+
+    @classmethod
+    def fromkeys(*args: object, **kwds: object) -> object:   # OrderedDict_fromkeys_impl: _PyDict_FromKeys, through __setitem__
+        cls = args[0]
+        seq, value = _unpack_keywords("fromkeys", ("iterable", "value"), 0, 1, 2, 0, args[1:], kwds, _NULL)
+        d = cls()  # type: ignore[operator]
+        if value is _NULL:
+            value = None
+        for key in seq:  # type: ignore[attr-defined]
+            d[key] = value
+        return d
+
+    def __sizeof__(*args: object, **kwds: object) -> int:
+        _noargs(args, kwds, OrderedDict, "__sizeof__", "OrderedDict")
+        _bella_refuse("OrderedDict.__sizeof__ (the C's node and fast-node table sizes)")
+
+    def __reduce__(*args: object, **kwds: object) -> object:   # OrderedDict___reduce___impl
+        _noargs(args, kwds, OrderedDict, "__reduce__", "OrderedDict")
+        self = args[0]
+        state = self.__getstate__()             # _PyObject_GetState
+        items = self.items()  # type: ignore[attr-defined]
+        return (type(self), (), state, None, iter(items))
+
+    def setdefault(*args: object, **kwds: object) -> object:   # OrderedDict_setdefault_impl: skips __missing__
+        _receiver(args, OrderedDict, "setdefault", "OrderedDict")
+        self = args[0]
+        key, default = _unpack_keywords("setdefault", ("key", "default"), 0, 1, 2, 0, args[1:], kwds, _NULL)
+        if default is _NULL:
+            default = None
+        if type(self) is OrderedDict:
+            result = dict.get(self, key, _NULL)  # type: ignore[arg-type]
+            if result is _NULL:
+                _od_setitem(self, key, default)
+                result = default
+            return result
+        if key in self:  # type: ignore[operator]
+            return self[key]  # type: ignore[index]
+        self[key] = default  # type: ignore[index]
+        return default
+
+    def pop(*args: object, **kwds: object) -> object:   # OrderedDict_pop_impl: skips __missing__
+        _receiver(args, OrderedDict, "pop", "OrderedDict")
+        key, default = _unpack_keywords("pop", ("key", "default"), 0, 1, 2, 0, args[1:], kwds, _NULL)
+        return _od_popkey_hash(args[0], key, default, _hash_of(key))
+
+    def popitem(*args: object, **kwds: object) -> object:   # OrderedDict_popitem_impl
+        _receiver(args, OrderedDict, "popitem", "OrderedDict")
+        self = args[0]
+        (last,) = _unpack_keywords("popitem", ("last",), 0, 0, 1, 0, args[1:], kwds, _NULL)
+        last = True if last is _NULL else bool(last)
+        fields = _od(self)
+        if fields[_FIRST] is None:
+            raise KeyError("dictionary is empty")
+        n = fields[_NODES][fields[_LAST] if last else fields[_FIRST]]
+        key = n[_KEY]
+        value = _od_popkey_hash(self, key, _NULL, n[_HASH])
+        return (key, value)
+
+    def keys(*args: object, **kwds: object) -> object:  # type: ignore[override]
+        _noargs(args, kwds, OrderedDict, "keys", "OrderedDict")
+        return _odict_view(args[0], odict_keys, 0)
+
+    def values(*args: object, **kwds: object) -> object:  # type: ignore[override]
+        _noargs(args, kwds, OrderedDict, "values", "OrderedDict")
+        return _odict_view(args[0], odict_values, 1)
+
+    def items(*args: object, **kwds: object) -> object:  # type: ignore[override]
+        _noargs(args, kwds, OrderedDict, "items", "OrderedDict")
+        return _odict_view(args[0], odict_items, 2)
+
+    def update(*args: object, **kwds: object) -> None:   # mutablemapping_update
+        _receiver(args, OrderedDict, "update", "OrderedDict")
+        _od_update(args[0], args[1:], kwds)
+
+    def clear(*args: object, **kwds: object) -> None:   # OrderedDict_clear_impl
+        _noargs(args, kwds, OrderedDict, "clear", "OrderedDict")
+        dict.clear(args[0])  # type: ignore[arg-type]
+        _od_clear_nodes(_od(args[0]))
+
+    def copy(*args: object, **kwds: object) -> object:   # OrderedDict_copy_impl
+        _noargs(args, kwds, OrderedDict, "copy", "OrderedDict")
+        self = args[0]
+        exact = type(self) is OrderedDict
+        od_copy = OrderedDict() if exact else type(self)()
+        fields = _od(self)
+        state = fields[_STATE]
+        node = fields[_FIRST]
+        while node is not None:
+            n = fields[_NODES][node]
+            key = n[_KEY]
+            if exact:
+                value = dict.get(self, key, _NULL)  # type: ignore[arg-type]
+                if value is _NULL:
+                    raise KeyError(key)
+                _od_setitem_hashed(od_copy, key, value, n[_HASH])
+            else:
+                od_copy[key] = self[key]  # type: ignore[index]
+            if fields[_STATE] != state:
+                raise RuntimeError(_OD_MUTATED)
+            node = n[_NEXT]
+        return od_copy
+
+    def move_to_end(*args: object, **kwds: object) -> None:   # OrderedDict_move_to_end_impl
+        _receiver(args, OrderedDict, "move_to_end", "OrderedDict")
+        self = args[0]
+        key, last = _unpack_keywords("move_to_end", ("key", "last"), 0, 1, 2, 0, args[1:], kwds, _NULL)
+        last = True if last is _NULL else bool(last)
+        fields = _od(self)
+        if fields[_FIRST] is None:
+            raise KeyError(key)
+        node = fields[_LAST] if last else fields[_FIRST]
+        if key is not fields[_NODES][node][_KEY]:
+            node = _od_find(self, fields, key)
+            if node is None:
+                raise KeyError(key)
+            if last:
+                if node != fields[_LAST]:
+                    _od_remove(fields, node)
+                    _od_add_tail(fields, node)
+            elif node != fields[_FIRST]:
+                _od_remove(fields, node)
+                _od_add_head(fields, node)
+
+
+_od_field = OrderedDict.__dict__["_a_od"]
+
+
+# the iterator (PyODictIter_Type) and the views (PyODictKeys_Type and the others, the dict's views' C subtypes)
+
+class odict_iterator:
+    __module__ = "builtins"
+    __slots__ = ("_a_odict", "_b_current", "_c_size", "_d_state", "_e_kind")
+
+    def __iter__(*args: object, **kwds: object) -> object:
+        _wrapper(args, kwds, odict_iterator, "__iter__", 0)
+        return args[0]
+
+    def __next__(*args: object, **kwds: object) -> object:   # odictiter_iternext
+        _wrapper(args, kwds, odict_iterator, "__next__", 0)
+        self = args[0]
+        key = _odictiter_nextkey(self)
+        if key is _NULL:
+            raise StopIteration
+        kind = self._e_kind  # type: ignore[attr-defined]
+        if not kind & _ITER_VALUES:
+            return key
+        value = dict.get(self._a_odict, key, _NULL)  # type: ignore[attr-defined]
+        if value is _NULL:
+            self._b_current = _NULL  # type: ignore[attr-defined]
+            self._a_odict = _NULL  # type: ignore[attr-defined]
+            raise KeyError(key)
+        if not kind & _ITER_KEYS:
+            return value
+        return (key, value)
+
+    def __reduce__(*args: object, **kwds: object) -> object:   # odictiter_reduce: a copy's items, listed
+        _noargs(args, kwds, odict_iterator, "__reduce__", "odict_iterator")
+        self = args[0]
+        tmp = _bella_new_instance(odict_iterator)
+        for name in ("_a_odict", "_b_current", "_c_size", "_d_state", "_e_kind"):
+            setattr(tmp, name, getattr(self, name))
+        return (iter, (list(tmp),))
+
+
+def _odict_iter_new(od: object, kind: int) -> object:   # odictiter_new
+    it = _bella_new_instance(odict_iterator)
+    fields = _od(od)
+    node = fields[_LAST] if kind & _ITER_REVERSED else fields[_FIRST]
+    it._b_current = _NULL if node is None else fields[_NODES][node][_KEY]
+    it._c_size = dict.__len__(od)  # type: ignore[arg-type]   # PyODict_SIZE
+    it._d_state = fields[_STATE]
+    it._a_odict = od
+    it._e_kind = kind
+    return it
+
+
+def _odictiter_nextkey(it: Any) -> object:     # odictiter_nextkey_lock_held: the current key is tracked, not the node
+    od = it._a_odict
+    if od is _NULL:
+        return _NULL
+    if it._b_current is _NULL:                   # we're already done
+        it._a_odict = _NULL
+        return _NULL
+    fields = _od(od)
+    if fields[_STATE] != it._d_state:
+        it._a_odict = _NULL
+        raise RuntimeError(_OD_MUTATED)
+    if it._c_size != dict.__len__(od):
+        it._c_size = -1                          # make this state sticky
+        raise RuntimeError("OrderedDict changed size during iteration")
+    node = _od_find(od, fields, it._b_current)
+    if node is None:                             # must have been deleted
+        key = it._b_current
+        it._b_current = _NULL
+        raise KeyError(key)
+    key = it._b_current
+    n = fields[_NODES][node]
+    following = n[_PREV] if it._e_kind & _ITER_REVERSED else n[_NEXT]
+    it._b_current = _NULL if following is None else fields[_NODES][following][_KEY]
+    return key
+
+
+def _odict_view_iter(name: str, kind: int) -> Any:
+    def __iter__(*args: object, **kwds: object) -> object:   # odictkeys_iter and the others
+        _wrapper(args, kwds, _view_types[name], "__iter__", 0)
+        return _odict_iter_new(_view_dict(args[0]), kind)
+
+    def __reversed__(*args: object, **kwds: object) -> object:
+        _noargs(args, kwds, _view_types[name], "__reversed__", name)
+        return _odict_iter_new(_view_dict(args[0]), kind | _ITER_REVERSED)
+
+    return {"__module__": "builtins", "__iter__": __iter__, "__reversed__": __reversed__}
+
+
+_view_types: dict[str, Any] = {}
+odict_keys = _view_subtype("odict_keys", type({}.keys()), _odict_view_iter("odict_keys", _ITER_KEYS))
+odict_values = _view_subtype("odict_values", type({}.values()), _odict_view_iter("odict_values", _ITER_VALUES))
+odict_items = _view_subtype("odict_items", type({}.items()), _odict_view_iter("odict_items", _ITER_KEYS | _ITER_VALUES))
+_view_types.update(odict_keys=odict_keys, odict_values=odict_values, odict_items=odict_items)
 
 
 # ---- _tuplegetter

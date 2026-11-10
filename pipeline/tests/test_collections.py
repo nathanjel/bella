@@ -280,7 +280,7 @@ print(b)
 ]
 
 REFUSED = (
-    ("import collections\ncollections.OrderedDict()\n", "OrderedDict"),
+    ("import collections\ncollections.OrderedDict().__sizeof__()\n", "OrderedDict.__sizeof__"),   # OrderedDict itself: C-3-52
     ("from collections import deque\ndeque().__sizeof__()\n", "__sizeof__"),
 )
 

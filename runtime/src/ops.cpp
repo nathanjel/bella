@@ -1629,7 +1629,10 @@ Ref iter(Obj obj) {
         it->size = static_cast<std::int64_t>(static_cast<SetObject*>(obj.object())->used);
         return r;
     }
-    if ((is_kind(obj, Kind::Dict) && !overridden(obj, "__iter__")) || is_kind(obj, Kind::DictView)) {
+    // a view of the dict's own types: an OrderedDict's (odict_keys, a C subtype) is iterated as its type says
+    bool own_view = is_kind(obj, Kind::DictView) && (obj.object()->cls == types().dict_keys || obj.object()->cls == types().dict_values ||
+                                                     obj.object()->cls == types().dict_items);
+    if ((is_kind(obj, Kind::Dict) && !overridden(obj, "__iter__")) || own_view) {
         Obj d = obj;
         Iterator::Of of = Iterator::DictKeysIt;
         if (is_kind(obj, Kind::DictView)) {
