@@ -540,6 +540,25 @@ def _off(value: object) -> int:                  # Py_off_t_converter
     return out
 
 
+def _dev(value: object) -> int:                  # _Py_Dev_Converter: a dev_t as 64 bits, read as signed (-1 is NODEV)
+    n = int(value) if issubclass(type(value), int) else _number_index(value)  # type: ignore[call-overload]
+    if n < 0:
+        if n == -1:                              # NODEV
+            return -1
+        raise OverflowError("can't convert negative int to unsigned")
+    if n > 18446744073709551615:
+        raise OverflowError("int too big to convert")
+    return n - 18446744073709551616 if n >= 9223372036854775808 else n  # type: ignore[no-any-return]
+
+
+def _major_minor(value: int) -> int:             # major_minor_conv: the unsigned int that is NODEV's reads as -1
+    return -1 if value == 4294967295 else value
+
+
+def _wait_status(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> int:   # status: int, by position or by name
+    return _sys("wstatus", str.encode(name[1:]), _int(_unpack(name, args, kwds, ("status",), 1, 1)[0]))  # type: ignore[no-any-return]
+
+
 def _fd_converter(value: object) -> int:         # _fd_converter
     if type(value) is bool:
         _warn("bool is used as a file descriptor", "RuntimeWarning")   # PyErr_WarnEx(PyExc_RuntimeWarning, ..., 1)
@@ -1049,14 +1068,39 @@ def _path_normpath(*args: object, **kwds: object) -> object:   # _Py_normpath_an
 
 environ = _sys("environ")
 
-WCOREDUMP = _absent("WCOREDUMP")
-WEXITSTATUS = _absent("WEXITSTATUS")
-WIFCONTINUED = _absent("WIFCONTINUED")
-WIFEXITED = _absent("WIFEXITED")
-WIFSIGNALED = _absent("WIFSIGNALED")
-WIFSTOPPED = _absent("WIFSTOPPED")
-WSTOPSIG = _absent("WSTOPSIG")
-WTERMSIG = _absent("WTERMSIG")
+
+def WCOREDUMP(*args: object, **kwds: object) -> bool:  # noqa: N802  # by position only
+    return _sys("wstatus", b"COREDUMP", _int(_one("WCOREDUMP", args, kwds))) != 0  # type: ignore[no-any-return]
+
+
+def WEXITSTATUS(*args: object, **kwds: object) -> int:  # noqa: N802
+    return _wait_status("WEXITSTATUS", args, kwds)
+
+
+def WIFCONTINUED(*args: object, **kwds: object) -> bool:  # noqa: N802
+    return _wait_status("WIFCONTINUED", args, kwds) != 0
+
+
+def WIFEXITED(*args: object, **kwds: object) -> bool:  # noqa: N802
+    return _wait_status("WIFEXITED", args, kwds) != 0
+
+
+def WIFSIGNALED(*args: object, **kwds: object) -> bool:  # noqa: N802
+    return _wait_status("WIFSIGNALED", args, kwds) != 0
+
+
+def WIFSTOPPED(*args: object, **kwds: object) -> bool:  # noqa: N802
+    return _wait_status("WIFSTOPPED", args, kwds) != 0
+
+
+def WSTOPSIG(*args: object, **kwds: object) -> int:  # noqa: N802
+    return _wait_status("WSTOPSIG", args, kwds)
+
+
+def WTERMSIG(*args: object, **kwds: object) -> int:  # noqa: N802
+    return _wait_status("WTERMSIG", args, kwds)
+
+
 _inputhook = _absent("_inputhook")
 _is_inputhook_installed = _absent("_is_inputhook_installed")
 abort = _absent("abort")
@@ -1236,10 +1280,29 @@ def lockf(*args: object, **kwds: object) -> None:   # os_lockf_impl
 
 
 login_tty = _absent("login_tty")
-major = _absent("major")
-makedev = _absent("makedev")
+
+
+def major(*args: object, **kwds: object) -> int:   # os_major_impl
+    return _major_minor(_sys("dev", b"major", _dev(_one("major", args, kwds))))
+
+
+def makedev(*args: object, **kwds: object) -> int:   # os_makedev_impl: each part NODEV or an unsigned int (major_minor_check)
+    _positional("makedev", args, kwds, 2)
+    a = _dev(args[0])
+    b = _dev(args[1])
+    if not (-1 <= a <= 4294967295 and -1 <= b <= 4294967295):
+        raise OverflowError("Python int too large to convert to C unsigned int")
+    device = _sys("dev", b"make", a, b)
+    return -1 if device == 18446744073709551615 else device  # type: ignore[no-any-return]  # _PyLong_FromDev
+
+
 memfd_create = _absent("memfd_create")
-minor = _absent("minor")
+
+
+def minor(*args: object, **kwds: object) -> int:   # os_minor_impl
+    return _major_minor(_sys("dev", b"minor", _dev(_one("minor", args, kwds))))
+
+
 mkfifo = _absent("mkfifo")
 mknod = _absent("mknod")
 nice = _absent("nice")
@@ -1529,5 +1592,20 @@ wait3 = _absent("wait3")
 wait4 = _absent("wait4")
 waitid = _absent("waitid")
 waitpid = _absent("waitpid")
-waitstatus_to_exitcode = _absent("waitstatus_to_exitcode")
+
+
+def waitstatus_to_exitcode(*args: object, **kwds: object) -> int:   # os_waitstatus_to_exitcode_impl
+    status = _int(_unpack("waitstatus_to_exitcode", args, kwds, ("status",), 1, 1)[0])
+    if _sys("wstatus", b"IFEXITED", status):
+        return _sys("wstatus", b"EXITSTATUS", status)  # type: ignore[no-any-return]
+    if _sys("wstatus", b"IFSIGNALED", status):
+        signum = _sys("wstatus", b"TERMSIG", status)
+        if signum <= 0:
+            raise ValueError("invalid WTERMSIG: " + str(signum))
+        return -signum  # type: ignore[no-any-return]
+    if _sys("wstatus", b"IFSTOPPED", status):
+        raise ValueError("process stopped by delivery of signal " + str(_sys("wstatus", b"STOPSIG", status)))
+    raise ValueError("invalid wait status: " + str(status))
+
+
 writev = _absent("writev")

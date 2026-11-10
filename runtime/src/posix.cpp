@@ -6,6 +6,8 @@
 #include <sys/random.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <sys/wait.h>
 #include <sys/xattr.h>
 #include <sys/times.h>
 #include <sys/utsname.h>
@@ -311,6 +313,22 @@ Ref p_lseek(Args a) { return result(lseek(int_of(a.pos(0)), i64_of(a.pos(1)), in
 Ref p_isatty(Args a) { return int_from_i64(isatty(int_of(a.pos(0)))); }
 Ref p_fsync(Args a) { return result(fsync(int_of(a.pos(0)))); }
 Ref p_ftruncate(Args a) { return result(ftruncate(int_of(a.pos(0)), i64_of(a.pos(1)))); }
+// ---- what only computes (C-7-66): the C library's own reading of a wait status, and of a device number
+Ref p_wstatus(Args a) {                          // (which, status): the W* macros, by their first letters after the W
+    const std::string& which = bytes_data(a.pos(0));
+    int status = int_of(a.pos(1));
+    int r = which == "IFEXITED" ? WIFEXITED(status) : which == "EXITSTATUS" ? WEXITSTATUS(status) : which == "IFSIGNALED" ? WIFSIGNALED(status)
+          : which == "TERMSIG" ? WTERMSIG(status) : which == "COREDUMP" ? WCOREDUMP(status) : which == "IFSTOPPED" ? WIFSTOPPED(status)
+          : which == "STOPSIG" ? WSTOPSIG(status) : WIFCONTINUED(status);
+    return int_from_i64(r);
+}
+Ref p_dev(Args a) {                              // (b"major" | b"minor", dev) or (b"make", major, minor): numbers as 64 bits, signed
+    const std::string& which = bytes_data(a.pos(0));
+    if (which == "make")
+        return int_from_u64(makedev(static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(1)))), static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(2))))));
+    dev_t dev = static_cast<dev_t>(i64_of(a.pos(1)));
+    return int_from_u64(which == "major" ? major(dev) : minor(dev));
+}
 // ---- descriptors (C-7-65)
 // os_dup2_impl on this platform: dup3 with O_CLOEXEC for a descriptor that is not to be inherited (which refuses the same number
 // twice), dup2 otherwise
@@ -682,7 +700,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
         {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},

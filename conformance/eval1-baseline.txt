@@ -112,6 +112,7 @@ C-7-60_utime_and_copying_trees.py
 C-7-61_os_argument_order.py
 C-7-64_dir_fd_for_names.py
 C-7-65_descriptors.py
+C-7-66_wait_statuses_and_device_numbers.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

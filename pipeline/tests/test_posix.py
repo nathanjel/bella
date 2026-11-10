@@ -173,6 +173,31 @@ finally:
     shutil.rmtree(d)
 '''
 
+# beside C-7-65 and C-7-66: the messages of the descriptor functions, of the wait statuses and of the device numbers
+DESCRIPTOR_MESSAGES = r"""
+import os
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+print(m(lambda: os.dup()), m(lambda: os.dup(fd=1)), m(lambda: os.dup("a")), m(lambda: os.dup(987)), m(lambda: os.dup2(1)), m(lambda: os.dup2(1, 2, 3, 4)), m(lambda: os.dup2(987, 986)), m(lambda: os.dup2(fd=0, fd3=1)), m(lambda: os.pipe(1)),
+      m(lambda: os.pipe2()), m(lambda: os.pipe2(flags=0)), m(lambda: os.pipe2(-1)), m(lambda: os.get_inheritable()), m(lambda: os.get_inheritable(987)), m(lambda: os.set_inheritable(1)), m(lambda: os.set_inheritable(987, "x")),
+      m(lambda: os.set_inheritable(987, 1)), m(lambda: os.get_blocking(987)), m(lambda: os.set_blocking(987, True)), m(lambda: os.set_blocking(1)), m(lambda: os.closerange(1)), m(lambda: os.closerange(a=1, b=2)), m(lambda: os.fchdir(987)),
+      m(lambda: os.fchdir("a")), m(lambda: os.fdatasync(987)), m(lambda: os.fdatasync()), m(lambda: os.sync(1)), m(lambda: os.truncate("no such file here", 1)), m(lambda: os.truncate(987, 1)), m(lambda: os.truncate("a")),
+      m(lambda: os.truncate("a", "b")), m(lambda: os.truncate(1.5, 1)), m(lambda: os.ftruncate(987, 1)), m(lambda: os.ftruncate(1)), m(lambda: os.ftruncate(fd=1, length=1)), m(lambda: os.pread(987, 1, 0)), m(lambda: os.pread(0, -1, 0)),
+      m(lambda: os.pread(1, 1)), m(lambda: os.pwrite(987, b"", 0)), m(lambda: os.pwrite(1, "a", 0)), m(lambda: os.pwrite(1, b"")), m(lambda: os.lockf(987, 1, 0)), m(lambda: os.lockf(1, 1)), m(lambda: os.posix_fallocate(987, 0, 1)),
+      m(lambda: os.posix_fallocate(1, 0)), m(lambda: os.posix_fadvise(987, 0, 0, 0)), m(lambda: os.posix_fadvise(1, 0, 0)), sep="\n")
+print(m(lambda: os.WIFEXITED()), m(lambda: os.WIFEXITED("a")), m(lambda: os.WIFEXITED(2**40)), m(lambda: os.WIFEXITED(state=1)), m(lambda: os.WCOREDUMP(status=1)), m(lambda: os.WCOREDUMP()), m(lambda: os.waitstatus_to_exitcode(0x7f)),
+      m(lambda: os.waitstatus_to_exitcode(0x137f)), m(lambda: os.waitstatus_to_exitcode(0xffff)), m(lambda: os.waitstatus_to_exitcode(-1)), m(lambda: os.waitstatus_to_exitcode("a")), m(lambda: os.waitstatus_to_exitcode()),
+      m(lambda: os.major(-2)), m(lambda: os.major(2**64)), m(lambda: os.major("a")), m(lambda: os.major()), m(lambda: os.major(device=1)), m(lambda: os.minor(1.5)), m(lambda: os.makedev(2**32, 0)), m(lambda: os.makedev(0, -2)),
+      m(lambda: os.makedev(2**64, 0)), m(lambda: os.makedev(1)), m(lambda: os.makedev(major=1, minor=2)), os.dup.__doc__[:20], os.WIFEXITED.__doc__[:20], os.makedev.__doc__[:20], os.pipe.__name__, os.major.__qualname__, sep="\n")
+"""
+
+
+def test_descriptor_wait_status_and_device_messages() -> None:
+    same(DESCRIPTOR_MESSAGES)
+
 
 def test_extended_attributes_and_odd_times() -> None:
     same(XATTRS)
@@ -212,6 +237,7 @@ if __name__ == "__main__":
     test_scandir_and_dir_fd()
     test_copying_between_descriptors_and_chmod()
     test_extended_attributes_and_odd_times()
+    test_descriptor_wait_status_and_device_messages()
     test_messages()
     test_what_a_function_shows()
     test_a_write_goes_straight_out_and_exit_does_not_flush()
