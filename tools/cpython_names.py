@@ -183,6 +183,10 @@ def native_modules(names):
             out[name] = sorted(vars(importlib.import_module(name)))
         except ImportError:
             pass                 # a shim's name, or a module the build's platform lacks
+    # importlib/__init__.py gives _frozen_importlib a __file__ when the package is imported (the probe has imported it); the
+    # module start-up makes has none, and a program's own `import importlib` sets it as CPython's does
+    if "_frozen_importlib" in out:
+        out["_frozen_importlib"] = [n for n in out["_frozen_importlib"] if n != "__file__"]
     return out
 
 def docs():
@@ -200,6 +204,8 @@ def docs():
     out["imp:check_hash_based_pycs"] = _imp.check_hash_based_pycs
     out["imp:frozen_module_names"] = "\n".join(_imp._frozen_module_names())
     out["imp:frozen_packages"] = "\n".join(n for n in _imp._frozen_module_names() if _imp.is_frozen_package(n))
+    # find_frozen's original name of each, in the same order ("" for None): Python/frozen.c's aliases
+    out["imp:frozen_orignames"] = "\n".join((_imp.find_frozen(n) or (None, None, None))[2] or "" for n in _imp._frozen_module_names())
     for name in ("strict", "ignore", "replace", "xmlcharrefreplace", "backslashreplace", "namereplace", "surrogatepass", "surrogateescape"):
         handler = _codecs.lookup_error(name)      # the error handlers: built-in functions of no module
         out["." + handler.__name__] = handler.__doc__ or ""
@@ -231,6 +237,8 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
         script.write_text(PROBE, encoding="utf-8")
         lock = json.loads((PROJECT / "closure.lock.json").read_text(encoding="utf-8"))
         native = sorted(n for n, m in lock["modules"].items() if m["status"] in ("core", "mapped") and m["kind"] == "builtin")
+        # and the import system's two frozen modules, whose preludes keep part of CPython's text: a name they lack stops by name
+        native += ["_frozen_importlib", "_frozen_importlib_external"]
         out = subprocess.run([sys.executable, str(script), *native], capture_output=True, text=True, check=True, cwd=tmp)
     data = json.loads(out.stdout)
     names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "itemsize", "state", "shortname", "builtin_module") for n in data[scope]}

@@ -942,6 +942,14 @@ void fill_operator(Module* m) {                  // its types are named for `ope
 }
 
 void set_bootstrap_module(Module* m) { bootstrap_module() = m; }
+namespace {
+Module*& external_module() {
+    static Module* m = nullptr;
+    return m;
+}
+}  // namespace
+void set_external_module(Module* m) { external_module() = m; }
+bool is_bootstrap_prelude(const Module* m) { return m != nullptr && (m == bootstrap_module() || m == external_module()); }
 Ref i_bella_is_builtin(Obj, Args a) {            // _imp.is_builtin: sys and builtins, then the table
     positional_only(a, "_bella_is_builtin", 1, 1);
     const std::string& name = as_str(a.pos(0))->text;

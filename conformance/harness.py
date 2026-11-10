@@ -195,7 +195,7 @@ def machine_paths(python: str) -> tuple[str, ...]:
     differs between this machine and CI's image, so a recording naming one fails `verify` there (2026-11-09, C-7-52)."""
     out = subprocess.run([python, "-c", "import sys; print(sys.base_prefix); print(sys.prefix)"],
                          capture_output=True, text=True, check=True)
-    return tuple(dict.fromkeys([*out.stdout.split(), str(ROOT.parent)]))
+    return tuple(dict.fromkeys([*out.stdout.splitlines(), str(ROOT.parent)]))   # one per line: a prefix may hold a space (A16 #7)
 
 
 # ------------------------------------------------------------------------------------------

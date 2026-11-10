@@ -2322,6 +2322,20 @@ FRONTEND_PASSES = ["desugar-annotations", "desugar-type-params", "desugar-functi
                    "desugar-listcomp", "desugar-fstring", "desugar-decorators", "to-l1"]
 
 
+def _future_flags(features: frozenset[str]) -> int:
+    flags = 0
+    for name in features:
+        flags |= getattr(__future__, name).compiler_flag
+    return flags
+
+
+def _parse(source: str, filename: str, mode: str, inherit_future: frozenset[str]) -> ast.AST:
+    """ast.parse, with the caller's __future__ features where a staged text inherits them: barry_as_FLUFL is the
+    tokenizer's, so `<>` parses only under it (review G16 #1)."""
+    tree: ast.AST = compile(source, filename, mode, ast.PyCF_ONLY_AST | _future_flags(inherit_future), dont_inherit=True)
+    return tree
+
+
 def check_compile(tree: ast.Module | ast.Expression, filename: str, mode: str, inherit_future: frozenset[str]) -> None:
     """Every compile-time error of CPython 3.15.2, from its own compiler: the symbol table's and
     the code generator's (a nonlocal without a binding, a parameter declared global, `import *`
@@ -2331,9 +2345,7 @@ def check_compile(tree: ast.Module | ast.Expression, filename: str, mode: str, i
     CPython reject?" is answered by asking it. The parsed tree is compiled, before any pass
     rewrites it, and the code is dropped; the parser's warnings were already given by
     ast.parse, and the compiler's are not repeated here."""
-    flags = 0
-    for name in inherit_future:
-        flags |= getattr(__future__, name).compiler_flag
+    flags = _future_flags(inherit_future)
     with warnings.catch_warnings(module=warnings):          # the host's module, whatever sys.modules holds
         warnings.simplefilter("ignore")
         compile(tree, filename, mode, flags=flags, dont_inherit=True)
@@ -2389,11 +2401,14 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
     context of the function that runs it)."""
     check_host_grammar()
     if mode == "eval":
-        expression = ast.parse(source, filename=filename, mode="eval")
+        expression = _parse(source, filename, "eval", inherit_future)
+        assert isinstance(expression, ast.Expression)
         check_compile(expression, filename, mode, inherit_future)
         tree = ast.Module([ast.fix_missing_locations(ast.copy_location(ast.Expr(expression.body), expression.body))], [])
     else:
-        tree = ast.parse(source, filename=filename)
+        parsed = _parse(source, filename, "exec", inherit_future)
+        assert isinstance(parsed, ast.Module)
+        tree = parsed
         check_compile(tree, filename, mode, inherit_future)
     check_finally(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]

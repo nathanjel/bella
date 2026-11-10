@@ -62,7 +62,7 @@ def _where(frame: FrameType) -> str:
 
 _texts: dict[tuple[str, str, str | bytes], Any] = {}   # (site, operation, source as given) -> (code, future flags)
 _compiled: dict[tuple[Any, ...], Any] = {}          # compile(): what it depends on -> outcome
-_staged_code: set[int] = set()                      # ids of the code objects staged compile() hands out
+_staged_code: dict[int, Any] = {}                   # the code objects staged compile() handed out, by id (kept alive)
 _FUTURE_MASK = 0x3FE0000                            # every CO_FUTURE_* flag
 _AST_RESULT = 0x400 | 0x8000                        # PyCF_ONLY_AST, PyCF_OPTIMIZED_AST
 _entry_points: dict[str, tuple[tuple[str, ...], Any]] = {}   # annotate key -> (free variables, code)
@@ -87,7 +87,7 @@ def _code_for(kind: str, source: Any, frame: FrameType) -> Any:
     if site in _refused:         # a phase policy, enforced whether or not the dry run staged the text
         _refuse(_refused[site])
     if isinstance(source, _CodeType):
-        if id(source) in _staged_code:       # code a staged compile() returned: compiled at build time
+        if _staged_code.get(id(source)) is source:   # code a staged compile() returned: compiled at build time
             return source
         _refuse(f"E-01: {kind} of a code object at {_where(frame)}")
     if not isinstance(source, (str, bytes)):
@@ -158,7 +158,9 @@ def compile(source: Any, filename: Any, mode: str, flags: int = 0, dont_inherit:
         if not (isinstance(cls, type) and issubclass(cls, BaseException)):
             _refuse(f"E-01: compile at {_where(frame)} raised {outcome[1]}, which is not a built-in exception")
         raise cls(*outcome[2])
-    return outcome[1]
+    code = outcome[1].replace()     # a code object of its own per call, equal to the staged one, as compile() makes each time
+    _staged_code[id(code)] = code
+    return code
 
 
 def _refused_function(message: str) -> Any:
@@ -297,7 +299,6 @@ def _install() -> None:
             _refuse(f"E-01: {path} was staged at optimisation level {data['optimize']}, not {sys.flags.optimize}")
         _texts.update(data["texts"])
         _compiled.update(data["compiled"])
-        _staged_code.update(id(o[1]) for o in data["compiled"].values() if o[0] == "code")
         _entry_points.update(data["annotations"])
         _declined.update(data["declined"])
         _refused.update(data["refused"])

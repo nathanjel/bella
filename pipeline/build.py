@@ -184,7 +184,7 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
 # string forward reference when it makes one (a TypeVar's bound, Optional["Node"], types.UnionType[int, "Node"], a TypedDict's
 # fields): a name typing exports, or UnionType, subscripted with a string, may stage a compile.
 _MAY_STAGE = re.compile(r"\b(?:exec|eval|compile|namedtuple|NamedTuple|dataclass|make_dataclass|TypeVar|ForwardRef|TypedDict)\b"
-                        r"|\b(?:" + "|".join(sorted({"UnionType", *(n for n in typing.__all__ if n[0].isupper())})) + r")\[[^\]\n]*[\"']")
+                        r"|\b(?:" + "|".join(sorted({"UnionType", *(n for n in typing.__all__ if n[0].isupper())})) + r")\[[^\]]*[\"']")   # across lines: a subscription may span several (G16 #2)
 _FUTURE_MASK = 0x3FE0000                 # every CO_FUTURE_* flag, as the dry run keys a compile
 
 
@@ -418,6 +418,7 @@ def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, 
     return ('// The main unit, compiled by Bella: the start, and the modules compiled with the program.\n'
             '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + staged[0] +
             "\nint main(int argc, char** argv) {\n" + staged[1] +
+            f"    ::bella::set_stdlib_dir({c_string(getattr(sys, '_stdlib_dir', None) or str(STDLIB))});\n" +
             f"    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {c_string(os.path.abspath(main_file))},\n"
             f"                             {c_string(str(main_file.resolve().parent))}, {{{bodies}}},\n"
             f"                             std::span<const ::bella::ModuleEntry>(MODULES, {count}));\n}}\n")

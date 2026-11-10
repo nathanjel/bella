@@ -18,10 +18,13 @@ loaders of bootstrap.py run their compiled bodies, so this module keeps CPython'
 The module runs as `_frozen_importlib_external`, so its classes say so in `__module__`, as CPython's do; `_bootstrap` is the
 `_frozen_importlib` module (bootstrap.py), set before this body runs as `_set_bootstrap_module` would set it.
 """
+import _imp
+import _io
 import sys
+import _warnings
+# bella: `import marshal` (the runtime has no marshal: reading this module's `marshal` stops by name, through the names table)
 
 _bootstrap = _bootstrap                           # noqa: PLW0127  # bella: set by the runtime before the body runs (_set_bootstrap_module)
-_imp = None                                       # bella: importlib's package reads _imp itself; this module reads the build's constants below
 
 _MS_WINDOWS = False                               # bella: the targets are posix (manifest [platform])
 

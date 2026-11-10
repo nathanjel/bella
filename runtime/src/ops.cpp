@@ -150,6 +150,11 @@ namespace {
 bool is_heap_obj(Obj v) { return (v.is_object() && v.object()->kind == Kind::Instance) || has_python_type(v); }
 // a subclass instance of a built-in whose class overrides this special method (decision 2026-11-03)
 bool overridden(Obj v, const char* name) { return is_subclass_instance(v) && overrides_builtin(v, name); }
+// what PyIndex_Check asks of an object that is not an int: nb_index, which a class that defines __index__ has, a built-in's
+// subclass included
+bool has_index_method(Obj v) {
+    return (is_heap_obj(v) || is_subclass_instance(v)) && !type_lookup(type_of(v), intern("__index__")).is_unset();
+}
 bool not_implemented(const Ref& r) { return r.get() == Obj::of(NOTIMPLEMENTED); }
 
 // a method a C type has as a sequence slot, where the C has no number slot: the first class to name it says
@@ -161,11 +166,26 @@ bool sequence_slot_of(Obj v, const char* name) {
     return false;
 }
 
+bool repeatable(Obj v);
+// A built-in sequence's dunders for + and * are its sequence slots' wrappers (sq_concat, sq_repeat), which update_one_slot
+// cannot take for a subclass's number slot: a subclass has nb_add (nb_multiply) only when a class of its own defines
+// __add__ or __radd__ (__mul__ or __rmul__), and that slot calls the method by name, the built-in's wrapper included
+bool generic_number_slot(Obj self, BinOp op) {
+    return overridden(self, BIN_NAMES[static_cast<int>(op)][0]) || overridden(self, BIN_NAMES[static_cast<int>(op)][1]);
+}
+
 // one operand's method: a class's dunder (absent: *has false), or the C++ type's operation
 Ref operand_method(Obj self, Obj other, BinOp op, bool reflected, bool& has) {
     if ((op == BinOp::Add || op == BinOp::Mul) && sequence_slot_of(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0])) {
         has = false;
         return Ref{};
+    }
+    if ((op == BinOp::Add || op == BinOp::Mul) && repeatable(self) && is_subclass_instance(self)) {
+        if (!generic_number_slot(self, op)) {    // list's own: no number slot, the sequence step answers
+            has = false;
+            return Ref{};
+        }
+        return call_special(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0], {other}, &has);
     }
     if (is_heap_obj(self) || overridden(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0])) {
         Ref r = call_special(self, BIN_NAMES[static_cast<int>(op)][reflected ? 1 : 0], {other}, &has);
@@ -186,12 +206,12 @@ bool set_like_view(Obj v) { return is_kind(v, Kind::DictView) && static_cast<Dic
 namespace {
 bool repeatable(Obj v) { return as_str(v) != nullptr || is_kind(v, Kind::List) || is_kind(v, Kind::Tuple) || is_bytes_like(v); }
 bool has_sequence_methods(Obj v) {               // a type with tp_as_sequence (every class has one)
-    return repeatable(v) || (is_heap_obj(v) && type_of(v)->heap_type) || is_kind(v, Kind::Dict) || is_kind(v, Kind::Set) || is_kind(v, Kind::Range) ||
+    return repeatable(v) || ((is_heap_obj(v) || is_subclass_instance(v)) && type_of(v)->heap_type) || is_kind(v, Kind::Dict) || is_kind(v, Kind::Set) || is_kind(v, Kind::Range) ||
            is_kind(v, Kind::DictView);
 }
 // sequence_repeat: the count through __index__; then str's, tuple's or list's repeat
 Ref repeat(Obj seq, Obj n, bool in_place) {
-    if (!is_int(n) && (!is_heap_obj(n) || type_lookup(type_of(n), intern("__index__")).is_unset()))
+    if (!is_int(n) && !has_index_method(n))
         raise_new("TypeError", "can't multiply sequence by non-int of type '" + type_of(n)->name + "'");
     std::int64_t count = index_value(n);
     if (is_bytes_like(seq)) return bytes_repeat(seq, count, in_place);
@@ -232,8 +252,56 @@ Ref repeat(Obj seq, Obj n, bool in_place) {
     for (std::int64_t i = 0; i < count; ++i) for (Obj v : items) { incref(v); l->items.push_back(v); }
     return r;
 }
-// PyNumber_Add's and PyNumber_Multiply's sequence step, once both number slots declined: the left
-// operand's concatenation (+= extends a list), or repetition by either operand
+// A built-in sequence's slots, which a subclass keeps while no class of its own defines the method: update_one_slot finds a
+// function where it wanted the wrapper, and these slots have no generic form (sq_repeat is both __mul__'s and __rmul__'s)
+bool keeps_concat(Obj v) { return repeatable(v) && !overridden(v, "__add__"); }
+bool keeps_inplace_concat(Obj v) { return (is_kind(v, Kind::List) || is_kind(v, Kind::ByteArray)) && !overridden(v, "__iadd__"); }
+bool keeps_repeat(Obj v) { return repeatable(v) && !overridden(v, "__mul__") && !overridden(v, "__rmul__"); }
+bool keeps_inplace_repeat(Obj v) { return (is_kind(v, Kind::List) || is_kind(v, Kind::ByteArray)) && !overridden(v, "__imul__"); }
+
+// sq_concat and sq_inplace_concat of bytes, bytearray, list, tuple and str: what the slot does with the other operand
+Ref builtin_concat(Obj a, Obj b, bool in_place) {
+    if (is_bytes_like(a)) {
+        if (in_place && is_kind(a, Kind::ByteArray)) {
+            bytes_iadd(a, b);
+            return Ref::share(a);
+        }
+        return bytes_concat(a, b);
+    }
+    if (is_kind(a, Kind::List)) {
+        if (in_place) {
+            list_extend(a, b);
+            return Ref::share(a);
+        }
+        if (!is_kind(b, Kind::List))
+            raise_new("TypeError", "can only concatenate list (not \"" + type_of(b)->name + "\") to list");
+        auto* l = new List;
+        Ref r = own(l);
+        for (Obj v : static_cast<List*>(a.object())->items) { incref(v); l->items.push_back(v); }
+        for (Obj v : static_cast<List*>(b.object())->items) { incref(v); l->items.push_back(v); }
+        return r;
+    }
+    if (is_kind(a, Kind::Tuple)) {
+        if (static_cast<Tuple*>(a.object())->items.empty() && is_exact_tuple(b)) return Ref::share(b);
+        if (!is_kind(b, Kind::Tuple))
+            raise_new("TypeError", "can only concatenate tuple (not \"" + type_of(b)->name + "\") to tuple");
+        if (static_cast<Tuple*>(b.object())->items.empty() && is_exact_tuple(a)) return Ref::share(a);
+        std::vector<Obj> items;
+        for (Obj v : static_cast<Tuple*>(a.object())->items) { incref(v); items.push_back(v); }
+        for (Obj v : static_cast<Tuple*>(b.object())->items) { incref(v); items.push_back(v); }
+        return tuple_steal(std::move(items));
+    }
+    if (as_str(a) != nullptr) {
+        const Str* sb = as_str(b);
+        if (sb == nullptr) raise_new("TypeError", "can only concatenate str (not \"" + type_of(b)->name + "\") to str");
+        return concat_str(a, b);
+    }
+    return Ref::steal(Obj::of(NOTIMPLEMENTED));
+}
+
+// PyNumber_Add's and PyNumber_Multiply's sequence step, once both number slots declined: the left operand's concatenation
+// (sq_inplace_concat first for +=), or repetition by the first operand that has sq_repeat (for *=, sq_inplace_repeat first,
+// and the right operand only when the left has no sequence methods at all)
 Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
     if (op == BinOp::Add && sequence_slot_of(a, in_place ? "__iadd__" : "__add__")) return call_special(a, in_place ? "__iadd__" : "__add__", {b});
     if (op == BinOp::Mul) {                          // sequence_repeat, on the first operand with a slot
@@ -247,45 +315,13 @@ Ref sequence_op(BinOp op, Obj a, Obj b, bool in_place) {
         }
     }
     if (op == BinOp::Add) {
-        if (is_bytes_like(a)) {
-            if (in_place && is_kind(a, Kind::ByteArray)) {
-                bytes_iadd(a, b);
-                return Ref::share(a);
-            }
-            return bytes_concat(a, b);
-        }
-        if (is_kind(a, Kind::List)) {
-            if (in_place) {
-                list_extend(a, b);
-                return Ref::share(a);
-            }
-            if (!is_kind(b, Kind::List))
-                raise_new("TypeError", "can only concatenate list (not \"" + type_of(b)->name + "\") to list");
-            auto* l = new List;
-            Ref r = own(l);
-            for (Obj v : static_cast<List*>(a.object())->items) { incref(v); l->items.push_back(v); }
-            for (Obj v : static_cast<List*>(b.object())->items) { incref(v); l->items.push_back(v); }
-            return r;
-        }
-        if (is_kind(a, Kind::Tuple)) {
-            if (static_cast<Tuple*>(a.object())->items.empty() && is_exact_tuple(b)) return Ref::share(b);
-            if (!is_kind(b, Kind::Tuple))
-                raise_new("TypeError", "can only concatenate tuple (not \"" + type_of(b)->name + "\") to tuple");
-            if (static_cast<Tuple*>(b.object())->items.empty() && is_exact_tuple(a)) return Ref::share(a);
-            std::vector<Obj> items;
-            for (Obj v : static_cast<Tuple*>(a.object())->items) { incref(v); items.push_back(v); }
-            for (Obj v : static_cast<Tuple*>(b.object())->items) { incref(v); items.push_back(v); }
-            return tuple_steal(std::move(items));
-        }
-        if (as_str(a) != nullptr) {
-            const Str* sb = as_str(b);
-            if (sb == nullptr) raise_new("TypeError", "can only concatenate str (not \"" + type_of(b)->name + "\") to str");
-            return concat_str(a, b);
-        }
+        bool inplace_slot = in_place && keeps_inplace_concat(a);
+        if (inplace_slot || keeps_concat(a)) return builtin_concat(a, b, inplace_slot);
     }
     if (op == BinOp::Mul) {
-        if (repeatable(a)) return repeat(a, b, in_place && (is_kind(a, Kind::List) || is_kind(a, Kind::ByteArray)));
-        if ((!in_place || !has_sequence_methods(a)) && repeatable(b)) return repeat(b, a, false);
+        bool inplace_slot = in_place && keeps_inplace_repeat(a);
+        if (inplace_slot || keeps_repeat(a)) return repeat(a, b, inplace_slot);
+        if ((!in_place || !has_sequence_methods(a)) && keeps_repeat(b)) return repeat(b, a, false);
     }
     return Ref::steal(Obj::of(NOTIMPLEMENTED));
 }
@@ -294,7 +330,7 @@ bool set_like_operator(BinOp op) { return op == BinOp::And || op == BinOp::Or ||
 
 // list.__add__ and the others: sq_concat and sq_repeat (wrap_binaryfunc, wrap_indexargfunc), which
 // raise for an operand they cannot take; only the `+` and `*` operators try its reflected method
-Ref sequence_concat(Obj self, Obj other) { return sequence_op(BinOp::Add, self, other, false); }
+Ref sequence_concat(Obj self, Obj other) { return builtin_concat(self, other, false); }
 Ref sequence_repeat(Obj self, Obj count) { return repeat(self, int_from_i64(index_value(count)).get(), false); }
 
 // PySequence_Check: a class's __getitem__ gives it sq_item; a mapping's mp_subscript does not
@@ -319,9 +355,10 @@ Ref i_sequence_concat(Obj, Args a) {
     positional_only(a, "_sequence_concat", 3, 3);
     Obj s = a.pos(0), o = a.pos(1);
     bool in_place = truth(a.pos(2));
-    if (repeatable(s)) return sequence_op(BinOp::Add, s, o, in_place);
-    if (sequence_check(s) && sequence_check(o)) {   // both appear to be sequences
-        if (in_place && is_heap_obj(s)) {
+    bool inplace_slot = in_place && keeps_inplace_concat(s);
+    if (inplace_slot || keeps_concat(s)) return builtin_concat(s, o, inplace_slot);
+    if (sequence_check(s) && sequence_check(o)) {   // both appear to be sequences: BINARY_IOP1 or BINARY_OP1 over nb_add
+        if (in_place && (is_heap_obj(s) || overridden(s, "__iadd__"))) {
             bool has = false;
             Ref r = call_special(s, "__iadd__", {o}, &has);
             if (has && !not_implemented(r)) return r;
@@ -340,7 +377,9 @@ Ref binary_op1(BinOp op, Obj a, Obj b) {
     ClassObject *ta = type_of(a), *tb = type_of(b);
     const char* rname = BIN_NAMES[static_cast<int>(op)][1];
     bool tried_reflected = false, has = false;
-    if (ta != tb && (is_heap_obj(b) || is_subclass_instance(b)) && is_subclass(tb, ta)) {   // a subclass's reflected method first
+    // a built-in sequence's subclass has a number slot for + or * only when a class of its own defines the pair (operand_method)
+    bool sequence_without_slot = (op == BinOp::Add || op == BinOp::Mul) && repeatable(b) && is_subclass_instance(b) && !generic_number_slot(b, op);
+    if (ta != tb && (is_heap_obj(b) || is_subclass_instance(b)) && is_subclass(tb, ta) && !sequence_without_slot) {   // a subclass's reflected method first
         Obj rb = type_lookup(tb, intern(rname));
         Obj ra = is_heap_obj(a) ? type_lookup(ta, intern(rname)) : Obj{};
         if (!rb.is_unset() && rb != ra) {
@@ -390,7 +429,13 @@ Ref inplace(BinOp op, Obj a, Obj b) {
     r = sequence_op(op, a, b, true);
     if (!not_implemented(r)) return r;
     std::string sym = op == BinOp::Pow ? "**=" : std::string(symbol(op)) + "=";
-    refuse_unimplemented_operator("iop", a, sym, b);
+    // a class's own method that declined has answered for that operand, as in binary(); the table speaks of the built-ins
+    const char* const* names = BIN_NAMES[static_cast<int>(op)];
+    // and a heap subclass's own sequence methods, empty, keep the right operand's repetition away (PyNumber_InPlaceMultiply
+    // tries the right operand only when the left has none), where the built-in it derives from has none
+    bool own_sequence_methods = op == BinOp::Mul && is_subclass_instance(a) && !repeatable(a) && keeps_repeat(b);
+    if (!overridden(a, names[2]) && !overridden(a, names[0]) && !overridden(b, names[1]) && !own_sequence_methods)
+        refuse_unimplemented_operator("iop", a, sym, b);
     unsupported(sym.c_str(), a, b);
 }
 
@@ -750,7 +795,7 @@ bool truth(Obj v) {
 Ref int_index_of(Obj v) {
     if (v.is_small() || is_kind(v, Kind::BigInt)) return Ref::share(v);
     if (is_int(v)) return big_plain(v);
-    if (is_heap_obj(v)) {
+    if (is_heap_obj(v) || is_subclass_instance(v)) {   // nb_index: a class's __index__, a built-in's subclass's too
         bool has = false;
         Ref r = call_special(v, "__index__", {}, &has);
         if (has) {                                   // _PyNumber_Index
@@ -1278,7 +1323,7 @@ namespace {
 std::size_t index_of(Obj key, std::size_t size, const char* what, const char* range_what = nullptr) {
     std::int64_t i;
     if (!as_int(key, i)) {
-        if (!is_int(key) && (!is_heap_obj(key) || type_lookup(type_of(key), intern("__index__")).is_unset())) {
+        if (!is_int(key) && !has_index_method(key)) {
             if (std::string_view(what) == "string")
                 raise_new("TypeError", "string indices must be integers, not '" + type_of(key)->name + "'");
             raise_new("TypeError", std::string(what) + " indices must be integers or slices, not " + type_of(key)->name);
@@ -1301,7 +1346,7 @@ std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length, const cha
         if (v == None()) return dflt;
         std::int64_t x;
         if (as_int(v, x)) return x;
-        if (!is_int(v) && (!is_heap_obj(v) || type_lookup(type_of(v), intern("__index__")).is_unset()))
+        if (!is_int(v) && !has_index_method(v))
             raise_new("TypeError", message);
         return clipped_index(v);
     };
@@ -1403,7 +1448,7 @@ Ref getitem(Obj obj, Obj key) {
     if (is_bytes_like(obj)) return bytes_getitem(obj, key);
     if (is_kind(obj, Kind::Range)) {                 // range_subscript
         if (slice) return range_slice(obj, key);
-        if (!is_int(key) && (!is_heap_obj(key) || type_lookup(type_of(key), intern("__index__")).is_unset()))
+        if (!is_int(key) && !has_index_method(key))
             raise_new("TypeError", "range indices must be integers or slices, not " + type_of(key)->name);
         return range_item(obj, int_index_of(key).get());
     }
@@ -1550,7 +1595,7 @@ void delitem(Obj obj, Obj key) {
     call_special(obj, "__delitem__", {key}, &has);
     if (has) return;
     // PyObject_DelItem: an index goes to PySequence_DelItem, which words it otherwise
-    if (has_sequence_methods(obj) && (is_int(key) || (is_heap_obj(key) && !type_lookup(type_of(key), intern("__index__")).is_unset()))) {
+    if (has_sequence_methods(obj) && (is_int(key) || has_index_method(key))) {
         index_value(key, "IndexError");
         raise_new("TypeError", "'" + type_of(obj)->name + "' object doesn't support item deletion");
     }

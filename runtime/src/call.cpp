@@ -1313,10 +1313,10 @@ Ref sys_getframemodulename(Obj, Args a) {         // sys__getframemodulename_imp
     Obj name = dict_get(f->module->dict, Obj::of(intern("__name__")));
     return name.is_unset() ? none_ref() : Ref::share(name);
 }
-bool is_callable(Obj v) {                        // PyCallable_Check
+bool is_callable(Obj v) {                        // PyCallable_Check: tp_call, which slot_tp_call fills for a class that defines __call__
     Kind k = v.is_object() ? v.object()->kind : Kind::Bool;
     bool yes = k == Kind::PyFunction || k == Kind::Builtin || k == Kind::Method || k == Kind::Class || k == Kind::Function;
-    if (k == Kind::Instance) yes = v.object()->cls->has("__call__");
+    if (k == Kind::Instance || (!yes && is_subclass_instance(v))) yes = v.object()->cls->has("__call__");   // a built-in's subclass too
     return yes;
 }
 Ref b_callable(Obj, Args a) {
@@ -1656,6 +1656,7 @@ Module* make_sys(int argc, char** argv) {
     put(d, "abiflags", Obj::of(intern("")));
     put(d, "dont_write_bytecode", Ref::steal(boolean(false)).get());
     put(d, "pycache_prefix", None());
+    if (!stdlib_dir().empty()) put(d, "_stdlib_dir", str_new(stdlib_dir()).get());   // the build's interpreter's (main_unit)
     {   // sys.path_importer_cache: the closed world's registry stands for the path finders (decision 2026-11-03), so no path entry
         // is ever looked up or cached; linecache reads it for a file it cannot find (_read_from_archive)
         Ref cache = dict_new();
@@ -1721,6 +1722,11 @@ void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
 }
 }  // namespace
 bool callable_object(Obj v) { return is_callable(v); }
+std::string& stdlib_dir() {                      // sys._stdlib_dir: where the pin's standard library is, as the build found it
+    static std::string dir;
+    return dir;
+}
+void set_stdlib_dir(const char* dir) { stdlib_dir() = dir; }
 
 void adopt_functions(Module* m) {
     Obj name = dict_get(m->dict, Obj::of(intern("__name__")));
@@ -1784,7 +1790,8 @@ void refuse_absent_attribute(Obj obj, const Str* name) {
         auto* m = static_cast<Module*>(obj.object());
         const std::string& mod = as_str(m->name.get())->text;
         auto it = native_modules().find(mod);
-        if (it != native_modules().end() && it->second == m && cpython_has(mod, name->text))
+        bool tabled = (it != native_modules().end() && it->second == m) || is_bootstrap_prelude(m);   // its names are the table's
+        if (tabled && cpython_has(mod, name->text))
             throw NotImplemented(mod + "." + name->text + " (CPython has it; the runtime does not yet)");
     }
     if (is_kind(obj, Kind::Class)) refuse_in(static_cast<ClassObject*>(obj.object())->mro, name);
@@ -2576,6 +2583,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     // its body reads the build's constants through int and str methods, which init_bigint and the others install
                     // after this loop: it runs then (below); the module is in sys.modules from here, as CPython's frozen one is
                     external = pm;
+                    set_external_module(pm);
                     external_body = pm_entry.body;
                     dict_set(sys_modules(), Obj::of(intern(pm_entry.name)), Obj::of(pm));
                     put(bootstrap->dict, "_bootstrap_external", Obj::of(pm));

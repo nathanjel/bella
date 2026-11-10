@@ -1740,16 +1740,38 @@ def _setup(builtin_names):
 
     """
     # bella: the part of _setup a compiled program observes: the specs and loaders of the built-in
-    # modules the runtime made before this module ran (sys.builtin_module_names among them)
+    # modules the runtime made before this module ran (sys.builtin_module_names among them), and of
+    # the import system's two frozen modules (_imp.is_frozen of the others is the registry's)
     module_type = type(sys)
     for name, module in sys.modules.items():
         if isinstance(module, module_type):
             if name in builtin_names:
                 loader = BuiltinImporter
+            elif name == '_frozen_importlib':
+                loader = FrozenImporter
+            elif name == '_frozen_importlib_external':
+                _bella_import_external(module)
+                continue
             else:
                 continue
             spec = _spec_from_module(module, loader)
             _init_module_attrs(spec, module)
+            if loader is FrozenImporter:
+                # bella: FrozenImporter._fix_up_module, which runs before sys._stdlib_dir is known: no file
+                spec.loader_state = SimpleNamespace(filename=None, origname='importlib._bootstrap')
+
+
+def _bella_import_external(module):
+    """bella: what _install_external_importers' import of _frozen_importlib_external gives the module start-up made:
+    FrozenImporter.find_spec's spec (_imp.find_frozen's original name, _resolve_filename's file under sys._stdlib_dir),
+    create_module's __file__, then _init_module_attrs."""
+    origname = 'importlib._bootstrap_external'   # Python/frozen.c's alias
+    spec = spec_from_loader(module.__name__, FrozenImporter, origin=FrozenImporter._ORIGIN, is_package=False)
+    filename = f"{sys._stdlib_dir}/{origname.replace('.', '/')}.py" if getattr(sys, '_stdlib_dir', None) else None
+    spec.loader_state = SimpleNamespace(filename=filename, origname=origname)
+    if filename:
+        module.__file__ = filename
+    _init_module_attrs(spec, module)
 
 
 # ---- structseq (Objects/structseq.c): a type of named tuples for the modules written in Python

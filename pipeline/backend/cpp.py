@@ -286,8 +286,11 @@ class Emitter:
         flags |= (0x4 if varargs else 0) | (0x8 if varkw else 0)      # CO_VARARGS, CO_VARKEYWORDS
         if self.nested.get(id(c), False):
             flags |= 0x10                                              # CO_NESTED: some enclosing code is a function's
+        # compute_code_flags: ff_features & PyCF_MASK, of which future.c sets two (the other features are mandatory now)
         if "annotations" in self.module.future:
             flags |= 0x1000000                                         # CO_FUTURE_ANNOTATIONS
+        if "barry_as_FLUFL" in self.module.future:
+            flags |= 0x400000                                          # CO_FUTURE_BARRY_AS_BDFL (G16 #1)
         flags |= {"generator": 0x20, "coroutine": 0x80, "async generator": 0x200}.get(c.kind, 0)
         if c.docstring is not None:
             flags |= 0x4000000                                         # CO_HAS_DOCSTRING

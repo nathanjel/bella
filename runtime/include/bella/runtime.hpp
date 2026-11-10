@@ -1074,6 +1074,10 @@ ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases);   
 void note_native_module(const char* name, Module* m);   // its absent names are refused by the table
 std::string_view native_module_name(const Module* m);   // empty for any other module
 void set_bootstrap_module(Module* m);
+void set_stdlib_dir(const char* dir);             // sys._stdlib_dir, the build's interpreter's (pipeline/build.py main_unit), before run_main
+std::string& stdlib_dir();
+void set_external_module(Module* m);              // _frozen_importlib_external, as start-up made it
+bool is_bootstrap_prelude(const Module* m);       // either of the two: their names are the names table's, as a C module's are
 Ref i_bella_ga_get(Obj, Args a);
 Ref object_getattribute(Obj self, Args a);
 Ref instance_dict_of(Obj self);                  // the __dict__ of a class's instance, by its getset

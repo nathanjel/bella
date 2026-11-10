@@ -45,6 +45,8 @@ import sys
 _ABSENT = object()
 _FROZEN: tuple[str, ...] = tuple(_cpython_table("imp:frozen_module_names").split("\n"))
 _FROZEN_PACKAGES: frozenset[str] = frozenset(_cpython_table("imp:frozen_packages").split("\n"))
+_FROZEN_ORIGNAMES: dict[str, str | None] = {   # find_frozen's original names (Python/frozen.c's aliases), None where it has none
+    n: o or None for n, o in zip(_FROZEN, _cpython_table("imp:frozen_orignames").split("\n"), strict=True)}
 _EXTENSION_SUFFIXES: tuple[str, ...] = tuple(_cpython_table("imp:extension_suffixes").split("\n"))
 check_hash_based_pycs: str = _cpython_table("imp:check_hash_based_pycs")
 pyc_magic_number_token: int = int(_cpython_table("imp:pyc_magic_number_token"))
@@ -118,7 +120,7 @@ def find_frozen(*args: object, **kwds: object) -> tuple[object, bool, str] | Non
         _bella_refuse("_imp.find_frozen with withdata (the frozen module's marshalled code: a compiled program has none)")
     if name not in _FROZEN:
         return None
-    return (None, name in _FROZEN_PACKAGES, name)
+    return (None, name in _FROZEN_PACKAGES, _FROZEN_ORIGNAMES[name])
 
 
 def get_frozen_object(*args: object, **kwds: object) -> object:
