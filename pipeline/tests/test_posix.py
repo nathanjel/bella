@@ -114,6 +114,37 @@ finally:
 print(os.path.exists(root))
 """
 
+# beside C-7-59: what depends on the kernel and the C library (a link's own mode), and odd modes
+COPYING = r"""
+import os, shutil, stat, tempfile
+def m(f):
+    try:
+        return repr(f())
+    except OSError as e:
+        return type(e).__name__ + ": " + repr((e.errno, e.strerror))
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+with tempfile.TemporaryDirectory() as d:
+    a = os.path.join(d, "a")
+    open(a, "w").close()
+    os.symlink("a", os.path.join(d, "l"))
+    top = os.open(d, os.O_RDONLY)
+    src = os.open(a, os.O_RDONLY)
+    mode = lambda: oct(stat.S_IMODE(os.stat(a).st_mode))
+    print(m(lambda: os.chmod(a, 0o600, follow_symlinks=False)), mode(), m(lambda: os.chmod(os.path.join(d, "l"), 0o640, follow_symlinks=False)), mode(), m(lambda: os.chmod("l", 0o600, dir_fd=top, follow_symlinks=False)),
+          m(lambda: os.chmod("a", 0o640, dir_fd=top, follow_symlinks=False)), mode(), m(lambda: os.chmod(os.path.join(d, "l"), 0o604)), mode(), m(lambda: os.chmod(a, -1)), mode(), m(lambda: os.chmod(a, 0o640, follow_symlinks=1)), mode(),
+          m(lambda: os.copy_file_range(src, src, 1, offset_src=-1)), m(lambda: os.sendfile(src, src, 0, 1)), m(lambda: os.chmod(a, 0o600, dir_fd=None)), m(lambda: os.fchmod(top, 0o700)), oct(stat.S_IMODE(os.stat(d).st_mode)))
+    with open(a, "wb") as f:
+        f.write(b"x" * 300000)
+    with open(a, "rb") as fsrc, open(os.path.join(d, "b"), "wb") as fdst:
+        print(m(lambda: os.copy_file_range(fsrc.fileno(), fdst.fileno(), 100000)), m(lambda: os.sendfile(fdst.fileno(), fsrc.fileno(), None, 100000)), fsrc.tell(), m(lambda: shutil.copyfileobj(fsrc, fdst)))
+    print(os.path.getsize(os.path.join(d, "b")), shutil.copy(a, os.path.join(d, "c")) == os.path.join(d, "c"), open(os.path.join(d, "c"), "rb").read() == b"x" * 300000)
+"""
+
+
+def test_copying_between_descriptors_and_chmod() -> None:
+    same(COPYING)
+
 
 def test_scandir_and_dir_fd() -> None:
     same(SCANDIR)
@@ -132,7 +163,7 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
-    for body, name in (("os.fork()", "os.fork"), ("os.dup(0)", "os.dup"), ("import shutil, tempfile\n        with tempfile.TemporaryDirectory() as d:\n            shutil.copyfile(__file__, os.path.join(d, 'copy'))", "os.copy_file_range"), ("os.mkdir('x', dir_fd=0)", "os.mkdir(dir_fd=...)"), ("os.access('.', 0, effective_ids=True)", "os.access(effective_ids=True)"),
+    for body, name in (("os.fork()", "os.fork"), ("os.dup(0)", "os.dup"), ("import shutil, tempfile\n        with tempfile.TemporaryDirectory() as d:\n            shutil.copy2(__file__, os.path.join(d, 'copy'))", "os.utime"), ("os.mkdir('x', dir_fd=0)", "os.mkdir(dir_fd=...)"), ("os.access('.', 0, effective_ids=True)", "os.access(effective_ids=True)"),
                        ("os.sched_param(1)", "os.sched_param"), ("os.stat(True)", "a bool as a file descriptor"), ("os.fsync(False)", "a bool as a file descriptor"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
@@ -143,6 +174,7 @@ def test_what_the_runtime_has_not_stops_by_name() -> None:
 
 if __name__ == "__main__":
     test_scandir_and_dir_fd()
+    test_copying_between_descriptors_and_chmod()
     test_messages()
     test_what_a_function_shows()
     test_a_write_goes_straight_out_and_exit_does_not_flush()

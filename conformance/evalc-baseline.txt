@@ -114,6 +114,7 @@ C-7-55_atexit_after_an_uncaught_exception.py
 C-7-56_excepthook.py
 C-7-57_unraisablehook.py
 C-7-58_scandir.py
+C-7-59_copying_between_files.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

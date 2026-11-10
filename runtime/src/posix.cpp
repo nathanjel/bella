@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/random.h>
+#include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <sys/times.h>
 #include <sys/utsname.h>
@@ -180,6 +181,39 @@ Ref p_open(Args a) {                             // _Py_open's: not inheritable 
     return result(fd);
 }
 Ref p_close(Args a) { return result(close(int_of(a.pos(0)))); }
+// copying between descriptors in the kernel: each again after a signal, as os_copy_file_range_impl and os_sendfile_impl loop
+Ref p_copy_file_range(Args a) {                  // (src, dst, count, offset_src or None, offset_dst or None)
+    off_t in = 0, out = 0;
+    off_t* from = a.pos(3) == None() ? nullptr : &in;
+    off_t* to = a.pos(4) == None() ? nullptr : &out;
+    if (from != nullptr) in = static_cast<off_t>(i64_of(a.pos(3)));
+    if (to != nullptr) out = static_cast<off_t>(i64_of(a.pos(4)));
+    ssize_t r;
+    do r = copy_file_range(int_of(a.pos(0)), from, int_of(a.pos(1)), to, static_cast<std::size_t>(i64_of(a.pos(2))), 0);
+    while (r < 0 && errno == EINTR);
+    return result(r);
+}
+Ref p_sendfile(Args a) {                         // (out_fd, in_fd, offset or None, count): with no offset the input's own position moves
+    off_t offset = 0;
+    off_t* at = a.pos(2) == None() ? nullptr : &offset;
+    if (at != nullptr) offset = static_cast<off_t>(i64_of(a.pos(2)));
+    ssize_t r;
+    do r = sendfile(int_of(a.pos(0)), int_of(a.pos(1)), at, static_cast<std::size_t>(i64_of(a.pos(3))));
+    while (r < 0 && errno == EINTR);
+    return result(r);
+}
+Ref p_chmod(Args a) {                            // (path or descriptor, mode, dir_fd or None, follow_symlinks): os_chmod_impl's three calls
+    mode_t mode = static_cast<mode_t>(int_of(a.pos(1)));
+    if (is_int(a.pos(0))) {
+        int r;
+        do r = fchmod(int_of(a.pos(0)), mode);
+        while (r != 0 && errno == EINTR);
+        return result(r);
+    }
+    bool follow = truth(a.pos(3));
+    if (is_int(a.pos(2)) || !follow) return result(fchmodat(dir_fd_of(a, 2), text_of(a.pos(0)), mode, follow ? 0 : AT_SYMLINK_NOFOLLOW));
+    return result(chmod(text_of(a.pos(0)), mode));
+}
 Ref p_read(Args a) {
     std::size_t length = static_cast<std::size_t>(i64_of(a.pos(1)));
     std::unique_ptr<char[]> buf;
@@ -490,7 +524,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},
         {"getgid", p_getgid}, {"getegid", p_getegid}, {"putenv", p_putenv}, {"unsetenv", p_unsetenv}, {"clearenv", p_clearenv}, {"exit", p_exit},

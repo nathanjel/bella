@@ -1066,12 +1066,39 @@ WTERMSIG = _absent("WTERMSIG")
 _inputhook = _absent("_inputhook")
 _is_inputhook_installed = _absent("_is_inputhook_installed")
 abort = _absent("abort")
-chmod = _absent("chmod")
+
+
+def chmod(*args: object, **kwds: object) -> None:   # os_chmod_impl: fchmod for a descriptor, fchmodat under dir_fd or for the link itself, else chmod
+    path, mode, dir_fd, follow = _unpack("chmod", args, kwds, ("path", "mode", "dir_fd", "follow_symlinks"), 2, 2)
+    data, shown = _path("chmod", "path", path, allow_fd=True)
+    bits = _int(mode)
+    under = _dir_fd(dir_fd)
+    follows = follow is _ABSENT or bool(follow)
+    code = _sys("chmod", data, bits, under, follows)
+    if code < 0:
+        if type(data) is not int and not follows and -code == 95:   # ENOTSUP: fchmodat cannot change a link's own mode here
+            if under is not None:
+                raise ValueError("chmod: cannot use dir_fd and follow_symlinks together")
+            raise NotImplementedError("chmod: follow_symlinks unavailable on this platform")
+        _fail(-code, shown)
 chown = _absent("chown")
 chroot = _absent("chroot")
 closerange = _absent("closerange")
 confstr = _absent("confstr")
-copy_file_range = _absent("copy_file_range")
+
+
+def copy_file_range(*args: object, **kwds: object) -> int:   # os_copy_file_range_impl
+    src, dst, count, offset_src, offset_dst = _unpack("copy_file_range", args, kwds, ("src", "dst", "count", "offset_src", "offset_dst"), 3, 5)
+    source, target = _int(src), _int(dst)
+    size = _ssize(count)
+    if size < 0:
+        raise ValueError("count cannot be negative")
+    start = None if offset_src is _ABSENT or offset_src is None else _off(offset_src)
+    place = None if offset_dst is _ABSENT or offset_dst is None else _off(offset_dst)
+    result = _sys("copy_file_range", source, target, size, start, place)
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
 ctermid = _absent("ctermid")
 device_encoding = _absent("device_encoding")
 dup = _absent("dup")
@@ -1082,7 +1109,14 @@ eventfd_write = _absent("eventfd_write")
 execv = _absent("execv")
 execve = _absent("execve")
 fchdir = _absent("fchdir")
-fchmod = _absent("fchmod")
+
+
+def fchmod(*args: object, **kwds: object) -> None:   # os_fchmod_impl
+    fd, mode = _unpack("fchmod", args, kwds, ("fd", "mode"), 2, 2)
+    descriptor = _int(fd)
+    code = _sys("chmod", descriptor, _int(mode), None, True)
+    if code < 0:
+        _fail(-code)
 fchown = _absent("fchown")
 fdatasync = _absent("fdatasync")
 fork = _absent("fork")
@@ -1169,7 +1203,18 @@ sched_setaffinity = _absent("sched_setaffinity")
 sched_setparam = _absent("sched_setparam")
 sched_setscheduler = _absent("sched_setscheduler")
 sched_yield = _absent("sched_yield")
-sendfile = _absent("sendfile")
+
+
+def sendfile(*args: object, **kwds: object) -> int:   # os_sendfile_impl, as Linux has it: no offset means the input's own position
+    out_fd, in_fd, offset, count = _unpack("sendfile", args, kwds, ("out_fd", "in_fd", "offset", "count"), 4, 4)
+    target, source = _int(out_fd), _int(in_fd)
+    size = _ssize(count)
+    if size < 0:
+        raise ValueError("count cannot be negative")
+    result = _sys("sendfile", target, source, None if offset is None else _off(offset), size)
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
 set_blocking = _absent("set_blocking")
 set_inheritable = _absent("set_inheritable")
 setegid = _absent("setegid")
