@@ -957,7 +957,9 @@ void fill_warnings(Module* m) {
     fill_in_python(m, "_warnings", "_warnings", prelude_warnings::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame}});
 }
-void fill_tokenize(Module* m) { fill_in_python(m, "_tokenize", "_tokenize", prelude_tokenize::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
+void fill_tokenize(Module* m) {
+    fill_in_python(m, "_tokenize", "_tokenize", prelude_tokenize::module_body, {{"_tp_name", i_tp_name}, {"_tokenizer", i_tokenizer}});
+}
 void fill_imp(Module* m) {
     fill_in_python(m, "_imp", "_imp", prelude_imp::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_cpython_table", i_cpython_table}, {"_source_hash", i_source_hash},

@@ -37,7 +37,7 @@ help:
 	@echo "make compiled-corpus   the corpus compiled through L2 into C++ (pipeline/build.py); conformance/evalc-baseline.txt"
 	@echo "make targets-eval1     the easy three under eval1, each with its whole closure lowered (the gates' second leg)"
 	@echo "make targets-eval2     the easy three through L2 under eval2, each with its whole closure"
-	@echo "make targets-compiled  the compiled binaries against the recordings (gates 1a.1 to 1a.3: the easy three; and data_tricky_toml, service_tricky_markdown)"
+	@echo "make targets-compiled  the compiled binaries against the recordings (all six: gates 1a.1 to 1a.3, and the tricky three)"
 	@echo "make targets-closure   each target's closure and the phase-1 increments -> targets/closure*"
 	@echo "make lint              ruff and mypy, and the dialect programs under strict mypy (keep them clean)"
 	@echo "make check             everything above (what CI runs): the closures, then the rest at once (JOBS=$(JOBS))"
@@ -75,12 +75,11 @@ targets-eval2:
 	$(PY) targets/run_targets.py check --target cli_easy_slugs --target service_easy_tokens --target data_easy_sales \
 	  --runner "$(EVAL2_RUNNER)"
 
-# the compiled binaries (the gates' third leg): pipeline/build.py builds each driver once (cached) and runs it; the easy three,
-# and the tricky ones that agree with their recordings (data_tricky_toml 2026-11-09, service_tricky_markdown 2026-11-10)
+# the compiled binaries (the gates' third leg): pipeline/build.py builds each driver once (cached) and runs it; all six targets
+# (the easy three by 2026-11-08; data_tricky_toml 2026-11-09, service_tricky_markdown and cli_tricky_check 2026-11-10)
 COMPILED_RUNNER = $(shell $(PY) -c "import sys; print(sys.executable)") -P $(CURDIR)/pipeline/build.py --run {driver} {argv}
 targets-compiled:
-	$(PY) targets/run_targets.py check --target cli_easy_slugs --target service_easy_tokens --target data_easy_sales \
-	  --target data_tricky_toml --target service_tricky_markdown --runner "$(COMPILED_RUNNER)"
+	$(PY) targets/run_targets.py check --runner "$(COMPILED_RUNNER)"
 
 staging-check:
 	$(PY) pipeline/staging/check.py

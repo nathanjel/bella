@@ -1504,6 +1504,7 @@ Ref str_from_bytes(Obj source, Obj encoding, Obj errors) {   // str(b, encoding,
 }
 
 std::string utf8_with_errors(Obj text, const char* errors) { return encode_utf8(as_str(text), text, errors); }
+Ref unicode_decode(std::string_view s, const std::string* encoding, const std::string* errors) { return decode_with(s, encoding, errors); }
 
 void init_bytes() {
     destroyer(Kind::Bytes) = [](Object* o) { delete static_cast<BytesObject*>(o); };

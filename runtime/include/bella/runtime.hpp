@@ -471,6 +471,7 @@ std::string int_in_base(Obj v, int base);         // bases 2, 8, 16, with the pr
 Ref build_folded_set(std::initializer_list<Obj> items);   // a set display CPython folds to a frozenset constant
 Ref sequence_fast(Obj v, const char* message);   // PySequence_Fast: a list or tuple itself, else a list of its items
 std::string utf8_with_errors(Obj text, const char* errors);   // what a text stream writes (UTF-8 mode, D-15)
+Ref unicode_decode(std::string_view s, const std::string* encoding, const std::string* errors);   // PyUnicode_Decode: null is UTF-8, strict
 std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length,    // PySlice_Unpack and AdjustIndices: start, stop, step, count
                                           const char* message = "slice indices must be integers or have an __index__ method");
 std::vector<std::string_view> cpython_names_of(std::string_view scope);   // the names table's rows under a scope
@@ -1108,6 +1109,7 @@ Ref i_hash_update(Obj, Args a);                              // (state, data) ->
 Ref i_hash_digest(Obj, Args a);                              // (state) -> bytes
 Ref i_hash_xof(Obj, Args a);                                 // (state, length) -> bytes, a SHAKE's
 Ref i_zlib(Obj, Args a);                                     // runtime/src/zlib.cpp: _zlib(name, ...) over zlib 1.3.2
+Ref i_tokenizer(Obj, Args a);                                // runtime/src/tokenizer.cpp: _tokenizer(name, ...) over CPython's lexer
 Ref i_bella_import_warning(Obj, Args a);
 Ref i_bella_set_lazy_attributes(Obj, Args a);
 
