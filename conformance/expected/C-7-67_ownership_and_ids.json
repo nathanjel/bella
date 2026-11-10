@@ -1,0 +1,12 @@
+{
+ "case": "C-7-67_ownership_and_ids.py",
+ "clause": "C-7-67",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7 (os), Modules/posixmodule.c (os_chown_impl, os_fchown_impl, os_lchown_impl, _Py_Uid_Converter, _Py_Gid_Converter, os_getgroups_impl, os_getpgid_impl, os_getpgrp_impl, os_getsid_impl, os_getresuid_impl, os_getresgid_impl, os_getpriority_impl, os_nice_impl, os_getloadavg_impl, os_sched_yield_impl, os_getrandom_impl)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "chown: None None None None None None None FileNotFoundError: (2, 'No such file or directory', 'dangling') None None None None True True True\nunder a directory: None None FileNotFoundError: (2, 'No such file or directory', 'dangling') FileNotFoundError: (2, 'No such file or directory', 'missing') NotADirectoryError: (20, 'Not a directory', 'f') OSError: (9, 'Bad file descriptor', 'f') None FileNotFoundError: (2, 'No such file or directory', 'f')\nchown refuses: FileNotFoundError: (2, 'No such file or directory', 'missing') FileNotFoundError: (2, 'No such file or directory', b'missing') OSError: (9, 'Bad file descriptor', 987) ValueError ValueError TypeError TypeError TypeError TypeError TypeError TypeError\nan id: TypeError TypeError TypeError TypeError OverflowError OverflowError OverflowError OverflowError OverflowError OverflowError OverflowError OverflowError OverflowError None\nfchown: None None None OSError: (9, 'Bad file descriptor', None) TypeError TypeError TypeError OverflowError OverflowError TypeError True\nlchown: None None None FileNotFoundError: (2, 'No such file or directory', 'missing') TypeError TypeError OverflowError TypeError TypeError True\nids: tuple 3 True True True True True 3 list True TypeError TypeError TypeError\ngroup and session: True True True int True int True ProcessLookupError: (3, 'No such process', None) ProcessLookupError: (3, 'No such process', None) TypeError TypeError OverflowError TypeError TypeError TypeError TypeError\npriority: True True int int int OSError: (22, 'Invalid argument', None) ProcessLookupError: (3, 'No such process', None) TypeError TypeError TypeError TypeError TypeError OverflowError (0, 1, 2)\nload: tuple 3 True TypeError yield: None TypeError\ngetrandom: bytes 16 True b'' 4 3 5 OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) TypeError TypeError TypeError OverflowError TypeError TypeError (1, 2)\n",
+ "stderr": "",
+ "exit_code": 0
+}

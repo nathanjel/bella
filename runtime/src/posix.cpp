@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/random.h>
+#include <sys/resource.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -26,6 +27,7 @@
 #include <cstring>
 #include <ctime>
 #include <pthread.h>
+#include <sched.h>
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -328,6 +330,79 @@ Ref p_dev(Args a) {                              // (b"major" | b"minor", dev) o
         return int_from_u64(makedev(static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(1)))), static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(2))))));
     dev_t dev = static_cast<dev_t>(i64_of(a.pos(1)));
     return int_from_u64(which == "major" ? major(dev) : minor(dev));
+}
+// ---- ownership and ids (C-7-67)
+// os_chown_impl, os_fchown_impl, os_lchown_impl: (which, path or fd, uid, gid[, dir_fd, follow_symlinks]); an id is -1 for
+// "leave it" or 32 bits
+Ref p_chown(Args a) {
+    const std::string& which = bytes_data(a.pos(0));
+    uid_t uid = static_cast<uid_t>(i64_of(a.pos(2)));
+    gid_t gid = static_cast<gid_t>(i64_of(a.pos(3)));
+    if (which == "fchown") {
+        int r;
+        do r = fchown(int_of(a.pos(1)), uid, gid);
+        while (r != 0 && errno == EINTR);
+        return result(r);
+    }
+    if (which == "lchown") return result(lchown(text_of(a.pos(1)), uid, gid));
+    if (is_int(a.pos(1))) return result(fchown(int_of(a.pos(1)), uid, gid));
+    int dir_fd = dir_fd_of(a, 4);
+    bool follow = truth(a.pos(5));
+    if (!follow && dir_fd == AT_FDCWD) return result(lchown(text_of(a.pos(1)), uid, gid));
+    if (dir_fd != AT_FDCWD || !follow) return result(fchownat(dir_fd, text_of(a.pos(1)), uid, gid, follow ? 0 : AT_SYMLINK_NOFOLLOW));
+    return result(chown(text_of(a.pos(1)), uid, gid));
+}
+Ref p_ids(Args a) {                              // (which[, ...]): ids come back unsigned, as the kernel has them
+    const std::string& which = bytes_data(a.pos(0));
+    if (which == "getgroups") {
+        int n = getgroups(0, nullptr);
+        if (n < 0) return failed();
+        std::vector<gid_t> groups(static_cast<std::size_t>(n));
+        if (n > 0 && (n = getgroups(n, groups.data())) == -1) return failed();
+        Ref out = list_new({});
+        for (int i = 0; i < n; ++i) {
+            Ref g = int_from_u64(groups[static_cast<std::size_t>(i)]);
+            list_append(out.get(), g.get());
+        }
+        return out;
+    }
+    if (which == "getpgrp") return int_from_i64(getpgrp());
+    if (which == "getpgid") return result(getpgid(int_of(a.pos(1))));
+    if (which == "getsid") return result(getsid(int_of(a.pos(1))));
+    if (which == "getresuid" || which == "getresgid") {
+        unsigned r, e, s;
+        static_assert(sizeof(uid_t) == sizeof(unsigned) && sizeof(gid_t) == sizeof(unsigned));
+        if ((which == "getresuid" ? getresuid(&r, &e, &s) : getresgid(&r, &e, &s)) < 0) return failed();
+        Ref x = int_from_u64(r), y = int_from_u64(e), z = int_from_u64(s);
+        return tuple_new({x.get(), y.get(), z.get()});
+    }
+    // getpriority and nice: any value is a priority, so the error travels beside it: (errno, value)
+    errno = 0;
+    int value = which == "getpriority" ? getpriority(static_cast<__priority_which_t>(int_of(a.pos(1))), static_cast<id_t>(int_of(a.pos(2)))) : nice(int_of(a.pos(1)));
+    int error = which == "getpriority" ? errno : (value == -1 ? errno : 0);
+    Ref e = int_from_i64(error), v = int_from_i64(value);
+    return tuple_new({e.get(), v.get()});
+}
+Ref p_loadavg(Args) {                            // os_getloadavg_impl: None when unobtainable
+    double v[3];
+    if (getloadavg(v, 3) != 3) return none_ref();
+    Ref x = float_ref(v[0]), y = float_ref(v[1]), z = float_ref(v[2]);
+    return tuple_new({x.get(), y.get(), z.get()});
+}
+Ref p_sched_yield(Args) { return result(sched_yield()); }
+Ref p_getrandom(Args a) {                        // (size, flags): os_getrandom_impl, again after a signal
+    std::size_t size = static_cast<std::size_t>(i64_of(a.pos(0)));
+    std::unique_ptr<char[]> buf;
+    try {
+        buf = std::make_unique_for_overwrite<char[]>(size);
+    } catch (const std::bad_alloc&) {
+        raise_new("MemoryError", "");
+    }
+    ssize_t n;
+    do n = getrandom(buf.get(), size, static_cast<unsigned>(int_of(a.pos(1))));
+    while (n < 0 && errno == EINTR);
+    if (n < 0) return failed();
+    return bytes_new(std::string_view(buf.get(), static_cast<std::size_t>(n)));
 }
 // ---- descriptors (C-7-65)
 // os_dup2_impl on this platform: dup3 with O_CLOEXEC for a descriptor that is not to be inherited (which refuses the same number
@@ -700,7 +775,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
         {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},

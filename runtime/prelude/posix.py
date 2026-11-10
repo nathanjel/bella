@@ -559,6 +559,30 @@ def _wait_status(name: str, args: tuple[object, ...], kwds: dict[str, object]) -
     return _sys("wstatus", str.encode(name[1:]), _int(_unpack(name, args, kwds, ("status",), 1, 1)[0]))  # type: ignore[no-any-return]
 
 
+def _id(kind: str, value: object) -> int:        # _Py_Uid_Converter, _Py_Gid_Converter: -1 ("leave it") or 32 bits
+    failed = False
+    n = 0
+    try:
+        n = _number_index(value)
+    except BaseException:  # noqa: BLE001  # whatever __index__ raised is replaced, not chained
+        failed = True
+    if failed:
+        raise TypeError(kind + " should be integer, not " + type(value).__name__)
+    if -9223372036854775808 <= n <= 9223372036854775807:
+        if n == -1:
+            return -1
+        if n < 0 or n > 4294967295:              # too large for the type goes to the C's "underflow" label too
+            raise OverflowError(kind + " is less than minimum")
+        return n
+    if n < 0:
+        raise OverflowError(kind + " is less than minimum")
+    raise OverflowError(kind + " is greater than maximum")
+
+
+def _from_id(value: int) -> int:                 # _PyLong_FromUid, _PyLong_FromGid: the all-ones id reads as -1
+    return -1 if value == 4294967295 else value
+
+
 def _fd_converter(value: object) -> int:         # _fd_converter
     if type(value) is bool:
         _warn("bool is used as a file descriptor", "RuntimeWarning")   # PyErr_WarnEx(PyExc_RuntimeWarning, ..., 1)
@@ -1119,7 +1143,25 @@ def chmod(*args: object, **kwds: object) -> None:   # os_chmod_impl: fchmod for 
                 raise ValueError("chmod: cannot use dir_fd and follow_symlinks together")
             raise NotImplementedError("chmod: follow_symlinks unavailable on this platform")
         _fail(-code, shown)
-chown = _absent("chown")
+
+
+def chown(*args: object, **kwds: object) -> None:   # os_chown_impl
+    path, uid, gid, dir_fd, follow = _unpack("chown", args, kwds, ("path", "uid", "gid", "dir_fd", "follow_symlinks"), 3, 3)
+    data, shown = _path("chown", "path", path, allow_fd=True)
+    u = _id("uid", uid)
+    g = _id("gid", gid)
+    under = _dir_fd(dir_fd)
+    follows = follow is _ABSENT or bool(follow)
+    if type(data) is int:
+        if under is not None:
+            raise ValueError("chown: can't specify both dir_fd and fd")
+        if not follows:
+            raise ValueError("chown: cannot use fd and follow_symlinks together")
+    code = _sys("chown", b"chown", data, u, g, under, follows)
+    if code < 0:
+        _fail(-code, shown)
+
+
 chroot = _absent("chroot")
 
 
@@ -1185,7 +1227,15 @@ def fchmod(*args: object, **kwds: object) -> None:   # os_fchmod_impl
     code = _sys("chmod", descriptor, _int(mode), None, True)
     if code < 0:
         _fail(-code)
-fchown = _absent("fchown")
+
+
+def fchown(*args: object, **kwds: object) -> None:   # os_fchown_impl
+    fd, uid, gid = _unpack("fchown", args, kwds, ("fd", "uid", "gid"), 3, 3)
+    descriptor = _int(fd)
+    u = _id("uid", uid)
+    code = _sys("chown", b"fchown", descriptor, u, _id("gid", gid))
+    if code < 0:
+        _fail(-code)
 
 
 def fdatasync(*args: object, **kwds: object) -> None:   # os_fdatasync_impl
@@ -1223,16 +1273,81 @@ def get_inheritable(*args: object, **kwds: object) -> bool:   # os_get_inheritab
 
 
 getgrouplist = _absent("getgrouplist")
-getgroups = _absent("getgroups")
-getloadavg = _absent("getloadavg")
+
+
+def getgroups(*args: object, **kwds: object) -> list[int]:   # os_getgroups_impl
+    _noargs("getgroups", args, kwds)
+    result = _sys("ids", b"getgroups")
+    if type(result) is int:
+        _fail(-result)
+    return [_from_id(g) for g in result]
+
+
+def getloadavg(*args: object, **kwds: object) -> tuple[float, float, float]:   # os_getloadavg_impl
+    _noargs("getloadavg", args, kwds)
+    result = _sys("loadavg")
+    if result is None:
+        raise OSError("Load averages are unobtainable")
+    return result  # type: ignore[no-any-return]
+
+
 getlogin = _absent("getlogin")
-getpgid = _absent("getpgid")
-getpgrp = _absent("getpgrp")
-getpriority = _absent("getpriority")
-getrandom = _absent("getrandom")
-getresgid = _absent("getresgid")
-getresuid = _absent("getresuid")
-getsid = _absent("getsid")
+
+
+def getpgid(*args: object, **kwds: object) -> int:   # os_getpgid_impl
+    result = _sys("ids", b"getpgid", _int(_unpack("getpgid", args, kwds, ("pid",), 1, 1)[0]))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def getpgrp(*args: object, **kwds: object) -> int:   # os_getpgrp_impl
+    _noargs("getpgrp", args, kwds)
+    return _sys("ids", b"getpgrp")  # type: ignore[no-any-return]
+
+
+def getpriority(*args: object, **kwds: object) -> int:   # os_getpriority_impl: errno says whether it failed, any value is a priority
+    which, who = _unpack("getpriority", args, kwds, ("which", "who"), 2, 2)
+    a = _int(which)
+    error, value = _sys("ids", b"getpriority", a, _int(who))
+    if error:
+        _fail(error)
+    return value  # type: ignore[no-any-return]
+
+
+def getrandom(*args: object, **kwds: object) -> bytes:   # os_getrandom_impl
+    size, flags = _unpack("getrandom", args, kwds, ("size", "flags"), 1, 2)
+    length = _ssize(size)
+    bits = 0 if flags is _ABSENT else _int(flags)
+    if length < 0:
+        _fail(22)
+    result = _sys("getrandom", length, bits)
+    if type(result) is int:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def getresgid(*args: object, **kwds: object) -> tuple[int, int, int]:   # os_getresgid_impl
+    _noargs("getresgid", args, kwds)
+    result = _sys("ids", b"getresgid")
+    if type(result) is int:
+        _fail(-result)
+    return (_from_id(result[0]), _from_id(result[1]), _from_id(result[2]))
+
+
+def getresuid(*args: object, **kwds: object) -> tuple[int, int, int]:   # os_getresuid_impl
+    _noargs("getresuid", args, kwds)
+    result = _sys("ids", b"getresuid")
+    if type(result) is int:
+        _fail(-result)
+    return (_from_id(result[0]), _from_id(result[1]), _from_id(result[2]))
+
+
+def getsid(*args: object, **kwds: object) -> int:   # os_getsid_impl
+    result = _sys("ids", b"getsid", _int(_one("getsid", args, kwds)))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
 
 
 def _xattr_follow(function: str, data: object, follow: object) -> bool:
@@ -1257,7 +1372,15 @@ grantpt = _absent("grantpt")
 initgroups = _absent("initgroups")
 kill = _absent("kill")
 killpg = _absent("killpg")
-lchown = _absent("lchown")
+
+
+def lchown(*args: object, **kwds: object) -> None:   # os_lchown_impl
+    path, uid, gid = _unpack("lchown", args, kwds, ("path", "uid", "gid"), 3, 3)
+    data, shown = _path("lchown", "path", path)
+    u = _id("uid", uid)
+    code = _sys("chown", b"lchown", data, u, _id("gid", gid))
+    if code < 0:
+        _fail(-code, shown)
 
 
 def listxattr(*args: object, **kwds: object) -> list[str]:   # os_listxattr_impl: the names are str whatever the path is
@@ -1305,7 +1428,15 @@ def minor(*args: object, **kwds: object) -> int:   # os_minor_impl
 
 mkfifo = _absent("mkfifo")
 mknod = _absent("mknod")
-nice = _absent("nice")
+
+
+def nice(*args: object, **kwds: object) -> int:   # os_nice_impl: the new priority, which may be -1 without an error
+    error, value = _sys("ids", b"nice", _int(_one("nice", args, kwds)))
+    if error:
+        _fail(error)
+    return value  # type: ignore[no-any-return]
+
+
 openpty = _absent("openpty")
 pathconf = _absent("pathconf")
 pidfd_open = _absent("pidfd_open")
@@ -1425,7 +1556,13 @@ sched_rr_get_interval = _absent("sched_rr_get_interval")
 sched_setaffinity = _absent("sched_setaffinity")
 sched_setparam = _absent("sched_setparam")
 sched_setscheduler = _absent("sched_setscheduler")
-sched_yield = _absent("sched_yield")
+
+
+def sched_yield(*args: object, **kwds: object) -> None:   # os_sched_yield_impl
+    _noargs("sched_yield", args, kwds)
+    code = _sys("sched_yield")
+    if code < 0:
+        _fail(-code)
 
 
 def sendfile(*args: object, **kwds: object) -> int:   # os_sendfile_impl, as Linux has it: no offset means the input's own position

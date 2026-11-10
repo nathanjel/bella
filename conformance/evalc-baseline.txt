@@ -122,6 +122,7 @@ C-7-63_io_runtime_warnings.py
 C-7-64_dir_fd_for_names.py
 C-7-65_descriptors.py
 C-7-66_wait_statuses_and_device_numbers.py
+C-7-67_ownership_and_ids.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

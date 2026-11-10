@@ -194,6 +194,31 @@ print(m(lambda: os.WIFEXITED()), m(lambda: os.WIFEXITED("a")), m(lambda: os.WIFE
       m(lambda: os.makedev(2**64, 0)), m(lambda: os.makedev(1)), m(lambda: os.makedev(major=1, minor=2)), os.dup.__doc__[:20], os.WIFEXITED.__doc__[:20], os.makedev.__doc__[:20], os.pipe.__name__, os.major.__qualname__, sep="\n")
 """
 
+# beside C-7-67: the messages of ownership and of the ids
+OWNERSHIP_MESSAGES = r"""
+import os
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class Bad:
+    def __index__(self):
+        raise ValueError("from __index__")
+print(m(lambda: os.chown()), m(lambda: os.chown("a", 1)), m(lambda: os.chown("a", "b", 1)), m(lambda: os.chown("a", 1, None)), m(lambda: os.chown("a", 1.5, 1)), m(lambda: os.chown("a", Bad(), 1)), m(lambda: os.chown("a", -2, 1)),
+      m(lambda: os.chown("a", 1, -2)), m(lambda: os.chown("a", 2**32, 1)), m(lambda: os.chown("a", 1, 2**63)), m(lambda: os.chown("a", 2**64, 1)), m(lambda: os.chown("a", -2**70, 1)), m(lambda: os.chown(0, -1, -1, dir_fd=0)),
+      m(lambda: os.chown(0, -1, -1, follow_symlinks=False)), m(lambda: os.chown(1.5, -1, -1)), m(lambda: os.chown("no such file here", -1, -1)), m(lambda: os.chown(987, -1, -1)), m(lambda: os.chown("a", -1, -1, 5)),
+      m(lambda: os.fchown(987, -1, -1)), m(lambda: os.fchown("a", -1, -1)), m(lambda: os.fchown(1, "b", -1)), m(lambda: os.fchown(1)), m(lambda: os.lchown("no such file here", -1, -1)), m(lambda: os.lchown(1, -1, -1)),
+      m(lambda: os.lchown("a", -1, [])), m(lambda: os.getgroups(1)), m(lambda: os.getresuid(1)), m(lambda: os.getpgrp(1)), m(lambda: os.getpgid()), m(lambda: os.getpgid("a")), m(lambda: os.getpgid(4194305)),
+      m(lambda: os.getsid(pid=1)), m(lambda: os.getsid(4194305)), m(lambda: os.getpriority(1)), m(lambda: os.getpriority(99, 0)), m(lambda: os.nice()), m(lambda: os.nice("a")), m(lambda: os.getloadavg(1)), m(lambda: os.sched_yield(1)),
+      m(lambda: os.getrandom()), m(lambda: os.getrandom(-1)), m(lambda: os.getrandom("a")), m(lambda: os.getrandom(1, 2, 3)), m(lambda: os.getrandom(1, 99999)), os.chown.__doc__[:20], os.getrandom.__doc__[:20], os.getpgid.__name__,
+      (os.getresuid(), os.getresgid(), os.getgroups(), os.getpgrp(), os.getsid(0) > 0, os.nice(0), os.getpriority(os.PRIO_PROCESS, 0)), sep="\n")
+"""
+
+
+def test_ownership_and_id_messages() -> None:
+    same(OWNERSHIP_MESSAGES)
+
 
 def test_descriptor_wait_status_and_device_messages() -> None:
     same(DESCRIPTOR_MESSAGES)
@@ -224,7 +249,7 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
-    for body, name in (("os.fork()", "os.fork"), ("os.chown('x', 0, 0)", "os.chown"), ("os.getloadavg()", "os.getloadavg"),
+    for body, name in (("os.fork()", "os.fork"), ("os.statvfs('.')", "os.statvfs"), ("os.sysconf('SC_PAGE_SIZE')", "os.sysconf"),
                        ("os.sched_param(1)", "os.sched_param"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
@@ -238,6 +263,7 @@ if __name__ == "__main__":
     test_copying_between_descriptors_and_chmod()
     test_extended_attributes_and_odd_times()
     test_descriptor_wait_status_and_device_messages()
+    test_ownership_and_id_messages()
     test_messages()
     test_what_a_function_shows()
     test_a_write_goes_straight_out_and_exit_does_not_flush()
