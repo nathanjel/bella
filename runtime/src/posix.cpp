@@ -160,21 +160,32 @@ Ref p_closedir(Args a) {
     }
     return int_from_i64(0);
 }
-Ref p_mkdir(Args a) { return result(mkdir(text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))))); }
-Ref p_rename(Args a) { return result(rename(text_of(a.pos(0)), text_of(a.pos(1)))); }
+// The functions that name an entry take a directory's descriptor for each name, or None for the working directory (AT_FDCWD,
+// which is what the plain call means): mkdirat, renameat, faccessat, readlinkat, symlinkat, linkat
+Ref p_mkdir(Args a) { return result(mkdirat(dir_fd_of(a, 2), text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))))); }   // (path, mode[, dir_fd])
+Ref p_rename(Args a) { return result(renameat(dir_fd_of(a, 2), text_of(a.pos(0)), dir_fd_of(a, 3), text_of(a.pos(1)))); }   // (src, dst[, src_dir_fd, dst_dir_fd])
 Ref p_chdir(Args a) {
     if (is_int(a.pos(0))) return result(fchdir(int_of(a.pos(0))));
     return result(chdir(text_of(a.pos(0))));
 }
-Ref p_access(Args a) { return result(access(text_of(a.pos(0)), int_of(a.pos(1)))); }
+Ref p_access(Args a) {                           // (path, mode[, dir_fd, effective_ids, follow_symlinks]): os_access_impl
+    int dir_fd = dir_fd_of(a, 2);
+    bool effective = a.npos > 3 && truth(a.pos(3));
+    bool follow = a.npos <= 4 || truth(a.pos(4));
+    if (dir_fd != AT_FDCWD || effective || !follow)
+        return result(faccessat(dir_fd, text_of(a.pos(0)), int_of(a.pos(1)), (follow ? 0 : AT_SYMLINK_NOFOLLOW) | (effective ? AT_EACCESS : 0)));
+    return result(access(text_of(a.pos(0)), int_of(a.pos(1))));
+}
 Ref p_readlink(Args a) {
     std::string buf(PATH_MAX, '\0');
-    ssize_t n = readlink(text_of(a.pos(0)), buf.data(), buf.size());
+    ssize_t n = readlinkat(dir_fd_of(a, 1), text_of(a.pos(0)), buf.data(), buf.size());   // (path[, dir_fd])
     if (n < 0) return failed();
     return bytes_new(std::string_view(buf.data(), static_cast<std::size_t>(n)));
 }
-Ref p_symlink(Args a) { return result(symlink(text_of(a.pos(0)), text_of(a.pos(1)))); }
-Ref p_link(Args a) { return result(linkat(AT_FDCWD, text_of(a.pos(0)), AT_FDCWD, text_of(a.pos(1)), truth(a.pos(2)) ? AT_SYMLINK_FOLLOW : 0)); }
+Ref p_symlink(Args a) { return result(symlinkat(text_of(a.pos(0)), dir_fd_of(a, 2), text_of(a.pos(1)))); }   // (src, dst[, dir_fd])
+Ref p_link(Args a) {                             // (src, dst, follow_symlinks[, src_dir_fd, dst_dir_fd])
+    return result(linkat(dir_fd_of(a, 3), text_of(a.pos(0)), dir_fd_of(a, 4), text_of(a.pos(1)), truth(a.pos(2)) ? AT_SYMLINK_FOLLOW : 0));
+}
 Ref p_open(Args a) {                             // _Py_open's: not inheritable (PEP 446), and again after a signal
     int fd;
     do fd = openat(dir_fd_of(a, 3), text_of(a.pos(0)), int_of(a.pos(1)) | O_CLOEXEC, static_cast<mode_t>(int_of(a.pos(2))));   // (path, flags, mode[, dir_fd])

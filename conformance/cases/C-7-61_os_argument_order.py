@@ -9,7 +9,7 @@ sendfile) comes after all of them; a conversion that fails ends it there; and an
 is a descriptor to the functions that take one."""
 # ruff: noqa: E501, PTH
 # The extended attributes, where review R20 found the order wrong (RL-429), need a file system that has them and are compared
-# on one machine (pipeline/tests/test_review_2026_11_10.py). dir_fd is given here to the functions the runtime has it for.
+# on one machine (pipeline/tests/test_review_2026_11_10.py).
 import os
 import tempfile
 from collections.abc import Callable
@@ -113,16 +113,24 @@ def main() -> None:
         show("stat bad dir_fd", lambda: os.stat(P("path"), dir_fd="x", follow_symlinks=T("follow")))  # type: ignore[arg-type]
         show("lstat", lambda: os.lstat(P("path"), dir_fd=N("dir_fd", top)))  # type: ignore[arg-type]
         show("lstat both", lambda: os.lstat(Both("path", fd, "file")))
-        show("mkdir", lambda: os.mkdir(P("path", "made"), N("mode", 0o700)))  # type: ignore[arg-type]
-        show("mkdir bad mode", lambda: os.mkdir(P("path", "made2"), "x"))  # type: ignore[arg-type]
-        show("access", lambda: os.access(P("path"), N("mode", os.R_OK), effective_ids=T("effective", False), follow_symlinks=T("follow")))  # type: ignore[arg-type]
-        show("access bad mode", lambda: os.access(P("path"), "x", effective_ids=T("effective", False), follow_symlinks=T("follow")))  # type: ignore[arg-type]
-        show("readlink", lambda: os.readlink(P("path", "nolink")))
-        show("symlink", lambda: os.symlink(P("src"), P("dst", "link"), T("is_dir", False)))  # type: ignore[arg-type]
-        show("link", lambda: os.link(P("src"), P("dst", "hard"), follow_symlinks=T("follow")))  # type: ignore[arg-type]
-        show("link bad dst", lambda: os.link(P("src"), 1.5, follow_symlinks=T("follow")))  # type: ignore[arg-type]
-        show("rename", lambda: os.rename(P("src", "hard"), P("dst", "harder")))
-        show("replace", lambda: os.replace(P("src", "harder"), P("dst", "hard")))
+        show("mkdir", lambda: os.mkdir(P("path", "made"), N("mode", 0o700), dir_fd=N("dir_fd", top)))  # type: ignore[arg-type]
+        show("mkdir by name", lambda: os.mkdir(dir_fd=N("dir_fd", top), mode=N("mode", 0o700), path=P("path", "made by name")))  # type: ignore[arg-type]
+        show("mkdir bad mode", lambda: os.mkdir(P("path", "made2"), "x", dir_fd=N("dir_fd", top)))  # type: ignore[arg-type]
+        show("access", lambda: os.access(P("path"), N("mode", os.R_OK), dir_fd=N("dir_fd", top), effective_ids=T("effective", False), follow_symlinks=T("follow")))  # type: ignore[arg-type]
+        show("access by name", lambda: os.access(follow_symlinks=T("follow"), effective_ids=T("effective", False), dir_fd=N("dir_fd", top), mode=N("mode", os.R_OK), path=P("path")))  # type: ignore[arg-type]
+        show("access bad mode", lambda: os.access(P("path"), "x", dir_fd=N("dir_fd", top), effective_ids=T("effective", False), follow_symlinks=T("follow")))  # type: ignore[arg-type]
+        show("access bad dir_fd", lambda: os.access(P("path"), N("mode", os.R_OK), dir_fd="x", effective_ids=T("effective", False), follow_symlinks=T("follow")))  # type: ignore[arg-type]
+        show("readlink", lambda: os.readlink(P("path", "nolink"), dir_fd=N("dir_fd", top)))  # type: ignore[arg-type]
+        show("symlink", lambda: os.symlink(P("src"), P("dst", "link"), T("is_dir", False), dir_fd=N("dir_fd", top)))  # type: ignore[arg-type]
+        show("symlink bad dst", lambda: os.symlink(P("src"), 1.5, T("is_dir", False), dir_fd=N("dir_fd", top)))  # type: ignore[arg-type]
+        show("link", lambda: os.link(P("src"), P("dst", "hard"), src_dir_fd=N("src_dir_fd", top), dst_dir_fd=N("dst_dir_fd", top), follow_symlinks=T("follow")))  # type: ignore[arg-type]
+        show("link by name", lambda: os.link(follow_symlinks=T("follow"), dst_dir_fd=N("dst_dir_fd", top), src_dir_fd=N("src_dir_fd", top), dst=P("dst", "hard by name"), src=P("src")))  # type: ignore[arg-type]
+        show("link bad dst", lambda: os.link(P("src"), 1.5, src_dir_fd=N("src_dir_fd", top), dst_dir_fd=N("dst_dir_fd", top), follow_symlinks=T("follow")))  # type: ignore[arg-type]
+        show("link bad dst_dir_fd", lambda: os.link(P("src"), P("dst", "hard2"), src_dir_fd=N("src_dir_fd", top), dst_dir_fd="x", follow_symlinks=T("follow")))  # type: ignore[arg-type]
+        show("rename", lambda: os.rename(P("src", "hard"), P("dst", "harder"), src_dir_fd=N("src_dir_fd", top), dst_dir_fd=N("dst_dir_fd", top)))  # type: ignore[arg-type]
+        show("rename by name", lambda: os.rename(dst_dir_fd=N("dst_dir_fd", top), src_dir_fd=N("src_dir_fd", top), dst=P("dst", "hard by another name"), src=P("src", "hard by name")))  # type: ignore[arg-type]
+        show("rename bad src_dir_fd", lambda: os.rename(P("src", "harder"), P("dst", "hardest"), src_dir_fd="x", dst_dir_fd=N("dst_dir_fd", top)))  # type: ignore[arg-type]
+        show("replace", lambda: os.replace(P("src", "harder"), P("dst", "hard"), src_dir_fd=N("src_dir_fd", top), dst_dir_fd=N("dst_dir_fd", top)))  # type: ignore[arg-type]
         show("open", lambda: os.close(os.open(P("path"), N("flags", os.O_RDONLY), N("mode", 0o600), dir_fd=N("dir_fd", top))))  # type: ignore[arg-type]
         show("open by name", lambda: os.close(os.open(dir_fd=N("dir_fd", top), mode=N("mode", 0o600), flags=N("flags", os.O_RDONLY), path=P("path"))))  # type: ignore[arg-type]
         show("open bad flags", lambda: os.open(P("path"), "x", N("mode", 0o600), dir_fd=N("dir_fd", top)))  # type: ignore[arg-type]

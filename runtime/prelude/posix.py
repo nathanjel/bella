@@ -632,11 +632,6 @@ def _fail(code: int, filename: object = _ABSENT, filename2: object = _ABSENT) ->
     raise OSError(code, _sys("strerror", code), filename, None, filename2)
 
 
-def _no_dir_fd(function: str, value: object) -> None:
-    if value is not None and value is not _ABSENT:
-        _refuse("os." + function + "(dir_fd=...)")
-
-
 def _dir_fd(value: object) -> int | None:        # dir_fd_converter: None for the default (AT_FDCWD)
     if value is None or value is _ABSENT:
         return None
@@ -744,8 +739,7 @@ def mkdir(*args: object, **kwds: object) -> None:
     path, mode, dir_fd = _unpack("mkdir", args, kwds, ("path", "mode", "dir_fd"), 1, 2)
     data, shown = _path("mkdir", "path", path)
     bits = 0o777 if mode is _ABSENT else _int(mode)
-    _no_dir_fd("mkdir", dir_fd)
-    code = _sys("mkdir", data, bits)
+    code = _sys("mkdir", data, bits, _dir_fd(dir_fd))   # mkdirat
     if code < 0:
         _fail(-code, shown)
 
@@ -754,9 +748,8 @@ def _rename(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> Non
     src, dst, src_fd, dst_fd = _unpack(name, args, kwds, ("src", "dst", "src_dir_fd", "dst_dir_fd"), 2, 2)
     a, shown_a = _path(name, "src", src)
     b, shown_b = _path(name, "dst", dst)
-    _no_dir_fd(name, src_fd)
-    _no_dir_fd(name, dst_fd)
-    code = _sys("rename", a, b)
+    under_a = _dir_fd(src_fd)
+    code = _sys("rename", a, b, under_a, _dir_fd(dst_fd))   # renameat
     if code < 0:
         _fail(-code, shown_a, shown_b)
 
@@ -781,19 +774,16 @@ def access(*args: object, **kwds: object) -> bool:
     path, mode, dir_fd, effective_ids, follow = _unpack("access", args, kwds, ("path", "mode", "dir_fd", "effective_ids", "follow_symlinks"), 2, 2)
     data, _shown = _path("access", "path", path)
     bits = _int(mode)
-    _no_dir_fd("access", dir_fd)
-    if effective_ids is not _ABSENT and effective_ids:
-        _refuse("os.access(effective_ids=True)")
-    if follow is not _ABSENT and not follow:
-        _refuse("os.access(follow_symlinks=False)")
-    return _sys("access", data, bits) == 0
+    under = _dir_fd(dir_fd)
+    effective = effective_ids is not _ABSENT and bool(effective_ids)
+    follows = follow is _ABSENT or bool(follow)
+    return _sys("access", data, bits, under, effective, follows) == 0   # faccessat when any of the three is given
 
 
 def readlink(*args: object, **kwds: object) -> object:
     path, dir_fd = _unpack("readlink", args, kwds, ("path", "dir_fd"), 1, 1)
-    _no_dir_fd("readlink", dir_fd)
     data, shown = _path("readlink", "path", path)
-    result = _sys("readlink", data)
+    result = _sys("readlink", data, _dir_fd(dir_fd))   # readlinkat
     if type(result) is int:
         _fail(-result, shown)
     return result if issubclass(type(shown), bytes) else bytes.decode(result, "utf-8", "surrogateescape")
@@ -805,8 +795,7 @@ def symlink(*args: object, **kwds: object) -> None:
     b, shown_b = _path("symlink", "dst", dst)
     if is_dir is not _ABSENT:
         bool(is_dir)
-    _no_dir_fd("symlink", dir_fd)
-    code = _sys("symlink", a, b)
+    code = _sys("symlink", a, b, _dir_fd(dir_fd))   # symlinkat
     if code < 0:
         _fail(-code, shown_a, shown_b)
 
@@ -815,9 +804,9 @@ def link(*args: object, **kwds: object) -> None:
     src, dst, src_fd, dst_fd, follow = _unpack("link", args, kwds, ("src", "dst", "src_dir_fd", "dst_dir_fd", "follow_symlinks"), 2, 2)
     a, shown_a = _path("link", "src", src)
     b, shown_b = _path("link", "dst", dst)
-    _no_dir_fd("link", src_fd)
-    _no_dir_fd("link", dst_fd)
-    code = _sys("link", a, b, follow is _ABSENT or bool(follow))
+    under_a = _dir_fd(src_fd)
+    under_b = _dir_fd(dst_fd)
+    code = _sys("link", a, b, follow is _ABSENT or bool(follow), under_a, under_b)   # linkat
     if code < 0:
         _fail(-code, shown_a, shown_b)
 
