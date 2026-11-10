@@ -1212,6 +1212,41 @@ def test_an_unclosed_file_shown_on_standard_error() -> None:
     same_but_for_the_tracemalloc_hint(UNCLOSED_SHOWN)
 
 
+# beside C-7-63: the two RuntimeWarnings of io and os as the default filters show them, once for a line, and as errors uncaught
+RUNTIME_WARNINGS_SHOWN = {
+    "shown": """
+        import io, os, sys
+        for _ in range(2):
+            open(__file__, "rb", buffering=1).close()
+        io.FileIO(False, closefd=False)
+        os.stat(True)
+        os.stat(__file__, dir_fd=False)
+        os.fsync(sys.__stderr__) if False else os.stat(False)
+        print("end")
+    """,
+    "line buffering, an error": """
+        import warnings
+        warnings.simplefilter("error")
+        print("start")
+        open(__file__, "rb", buffering=1)
+    """,
+    "a bool, an error": """
+        import os, warnings
+        warnings.simplefilter("error")
+        print("start")
+        os.stat(True)
+    """,
+}
+
+
+def test_the_runtime_warnings_of_io_and_os_on_standard_error() -> None:
+    for name, program in RUNTIME_WARNINGS_SHOWN.items():
+        try:
+            same_streams({"main.py": program}, stderr=True)
+        except AssertionError as e:
+            raise AssertionError(f"{name}: {e}") from None
+
+
 def test_a_file_still_open_on_the_way_out() -> None:
     for name, program in UNCLOSED_AT_EXIT.items():
         try:
@@ -1237,4 +1272,5 @@ if __name__ == "__main__":
     test_a_file_whose_close_raises_in_its_finaliser()
     test_an_unclosed_file_shown_on_standard_error()
     test_a_file_still_open_on_the_way_out()
+    test_the_runtime_warnings_of_io_and_os_on_standard_error()
     test_what_is_absent_stops_by_name()

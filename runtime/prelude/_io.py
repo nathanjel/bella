@@ -683,7 +683,7 @@ class FileIO(_RawIOBase):
             else:
                 self._a_fd = -1
         if isinstance(nameobj, bool):
-            _refuse("the RuntimeWarning 'bool is used as a file descriptor' (warnings: step 3b)")
+            _io_call("warn", "bool is used as a file descriptor", "RuntimeWarning")   # PyErr_WarnEx(PyExc_RuntimeWarning, ..., 1)
         fd = -1
         if isinstance(nameobj, int) or hasattr(type(nameobj), "__index__"):
             fd = _int(nameobj)
@@ -3436,7 +3436,7 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
     if binary and newline is not None:
         raise ValueError("binary mode doesn't take a newline argument")
     if binary and buffering == 1:
-        _refuse("the RuntimeWarning 'line buffering (buffering=1) isn't supported in binary mode' (warnings: step 3b)")
+        _io_call("warn", "line buffering (buffering=1) isn't supported in binary mode, the default buffer size will be used", "RuntimeWarning")
     raw = FileIO(path_or_fd, rawmode, closefd, opener)
     result: object = raw
     try:

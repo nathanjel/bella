@@ -871,6 +871,7 @@ Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
     if (name == "refuse") throw NotImplemented(as_str(r.pos(0))->text);
     if (name == "unraisable") return i_unraisable(Obj{}, r);   // (message or None, exception)
     if (name == "resource_warning") return i_resource_warning(Obj{}, r);   // (message, source)
+    if (name == "warn") return i_bella_import_warning(Obj{}, r);   // (message, the category's name): PyErr_WarnEx(category, message, 1)
     if (name == "lookup_text") {                 // _PyCodec_LookupTextEncoding(encoding, NULL)
         ensure_codecs();
         return invoke(codec_hooks().lookup_text.get(), {r.pos(0), None()});
@@ -1005,7 +1006,7 @@ void fill_typing(Module* m) {
 void fill_posix(Module* m) {
     fill_in_python(m, "posix", "posix", prelude_posix::module_body,
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_structseq", i_structseq}, {"_sys", i_posix_sys},
-                    {"_unraisable", i_unraisable}, {"_resource_warning", i_resource_warning}});
+                    {"_unraisable", i_unraisable}, {"_resource_warning", i_resource_warning}, {"_warn", i_bella_import_warning}});
     dict_set(m->dict, Obj::of(N("error")), Obj::of(exception_class("OSError")));
     static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("DirEntry"))).object())->disallow_instantiation = true;
 }

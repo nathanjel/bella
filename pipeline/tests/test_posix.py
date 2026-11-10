@@ -200,7 +200,7 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
     for body, name in (("os.fork()", "os.fork"), ("os.dup(0)", "os.dup"), ("os.truncate('x', 0)", "os.truncate"), ("os.mkdir('x', dir_fd=0)", "os.mkdir(dir_fd=...)"), ("os.access('.', 0, effective_ids=True)", "os.access(effective_ids=True)"),
-                       ("os.sched_param(1)", "os.sched_param"), ("os.stat(True)", "a bool as a file descriptor"), ("os.fsync(False)", "a bool as a file descriptor"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
+                       ("os.sched_param(1)", "os.sched_param"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"import os\nprint('start')\nif __name__ == '__main__':\n    try:\n        {body}\n    except BaseException:\n        print('raised')\n", encoding="utf-8")

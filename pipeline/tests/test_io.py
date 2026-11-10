@@ -209,8 +209,7 @@ def test_what_leaves_the_program() -> None:
 
 
 def test_what_is_absent_stops_by_name() -> None:
-    cases = (("import io\nio.FileIO(True)", "bool is used as a file descriptor"), ("import io\nio.BytesIO(b'a').getbuffer()", "getbuffer"),
-             ("open('prog.py', 'rb', buffering=1)", "line buffering"), ("open('prog.py').reconfigure(encoding='utf-8')", "reconfigure"),
+    cases = (("import io\nio.BytesIO(b'a').getbuffer()", "getbuffer"), ("open('prog.py').reconfigure(encoding='utf-8')", "reconfigure"),
              ("import io\nio.BytesIO().readinto(memoryview(bytearray(1)))", "memoryview"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:

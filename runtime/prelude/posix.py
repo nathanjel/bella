@@ -22,6 +22,7 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: an instance of a type a program cannot make
     _unraisable                                  # noqa: B018  # PyErr_FormatUnraisable: a message and the exception
     _resource_warning                            # noqa: B018  # PyErr_ResourceWarning: a message and the object left open
+    _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _as_double                                   # noqa: B018  # PyFloat_AsDouble, with its messages
 except NameError:
     from collections.abc import Callable
@@ -38,6 +39,7 @@ except NameError:
     _bella_new_instance: Callable[..., Any] = _missing
     _unraisable: Callable[..., Any] = _missing
     _resource_warning: Callable[..., Any] = _missing
+    _warn: Callable[..., Any] = _missing
     _as_double: Callable[..., float] = _missing
 
 AT_NO_AUTOMOUNT = 2048
@@ -540,7 +542,7 @@ def _off(value: object) -> int:                  # Py_off_t_converter
 
 def _fd_converter(value: object) -> int:         # _fd_converter
     if type(value) is bool:
-        _refuse("a bool as a file descriptor (CPython warns)")
+        _warn("bool is used as a file descriptor", "RuntimeWarning")   # PyErr_WarnEx(PyExc_RuntimeWarning, ..., 1)
     out = _number_index(value)
     if out > 2147483647:
         raise OverflowError("fd is greater than maximum")
@@ -552,7 +554,7 @@ def _fd_converter(value: object) -> int:         # _fd_converter
 def _fildes(value: object) -> int:               # PyObject_AsFileDescriptor
     if issubclass(type(value), int):
         if issubclass(type(value), bool):
-            _refuse("a bool as a file descriptor (CPython warns)")
+            _warn("bool is used as a file descriptor", "RuntimeWarning")
         fd = _int(value)
     else:
         method = getattr(value, "fileno", None)
