@@ -59,6 +59,7 @@ namespace prelude_opcode { Ref module_body(Module* m); }      // runtime/prelude
 namespace prelude_warnings { Ref module_body(Module* m); }    // runtime/prelude/_warnings.py
 namespace prelude_tokenize { Ref module_body(Module* m); }    // runtime/prelude/_tokenize.py
 namespace prelude_imp { Ref module_body(Module* m); }         // runtime/prelude/_imp.py
+namespace prelude_atexit { Ref module_body(Module* m); }      // runtime/prelude/atexit.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -382,7 +383,7 @@ struct NativeModule {
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
     static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
-        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_imp", {fill_imp}}};
+        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_imp", {fill_imp}}, {"atexit", {fill_atexit}}};
     return table;
 }
 }  // namespace
@@ -834,14 +835,17 @@ IoHooks& io_hooks() {
     static IoHooks hooks;
     return hooks;
 }
+Ref i_unraisable(Obj, Args a) {                   // _unraisable(message, exception): PyErr_FormatUnraisable, for an exception a prelude
+    positional_only(a, "_unraisable", 2, 2);     // caught; the message is None when it did not format (a %R whose repr raised)
+    if (a.pos(0) == None()) report_unraisable(a.pos(1));
+    else report_unraisable(as_str(a.pos(0))->text, a.pos(1));
+    return none_ref();
+}
 Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
     const std::string& name = as_str(a.pos(0))->text;
     Args r{a.data + 1, a.npos - 1, nullptr, 0};
     if (name == "refuse") throw NotImplemented(as_str(r.pos(0))->text);
-    if (name == "unraisable") {                  // (context, exception): PyErr_FormatUnraisable
-        report_unraisable(as_str(r.pos(0))->text, r.pos(1));
-        return none_ref();
-    }
+    if (name == "unraisable") return i_unraisable(Obj{}, r);   // (message or None, exception)
     if (name == "lookup_text") {                 // _PyCodec_LookupTextEncoding(encoding, NULL)
         ensure_codecs();
         return invoke(codec_hooks().lookup_text.get(), {r.pos(0), None()});
@@ -960,6 +964,7 @@ void fill_warnings(Module* m) {
 void fill_tokenize(Module* m) {
     fill_in_python(m, "_tokenize", "_tokenize", prelude_tokenize::module_body, {{"_tp_name", i_tp_name}, {"_tokenizer", i_tokenizer}});
 }
+void fill_atexit(Module* m) { fill_in_python(m, "atexit", "atexit", prelude_atexit::module_body, {{"_unraisable", i_unraisable}}); }
 void fill_imp(Module* m) {
     fill_in_python(m, "_imp", "_imp", prelude_imp::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_cpython_table", i_cpython_table}, {"_source_hash", i_source_hash},

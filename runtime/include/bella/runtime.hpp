@@ -447,6 +447,7 @@ void fill_opcode(Module* m);                      // runtime/prelude/_opcode.py
 void fill_warnings(Module* m);                    // runtime/prelude/_warnings.py
 void fill_tokenize(Module* m);                    // runtime/prelude/_tokenize.py
 void fill_imp(Module* m);                         // runtime/prelude/_imp.py
+void fill_atexit(Module* m);                      // runtime/prelude/atexit.py
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
@@ -559,6 +560,7 @@ void set_exception_field(Obj exc, const char* name, Obj value);   // the new val
 // an unraisable exception, then dropped.
 void report_unraisable(const std::string& context, const PyError& e);
 void report_unraisable(const std::string& context, Obj exc);   // the same, for an exception a prelude caught
+void report_unraisable(Obj exc);                  // one whose message did not format (PyErr_FormatUnraisable clears that error): no first line
 void write_stderr(const std::string& text);       // PyFile_WriteString to sys.stderr: nothing when it is None, errors ignored
 bool flush_std_stream(const char* name, bool report = false);   // flush_std_files' half for sys.stdout or sys.stderr: false when its flush raised, reported as ignored if asked
 // While an except clause runs, its exception is the one being handled: what a bare `raise`

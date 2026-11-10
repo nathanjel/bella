@@ -361,8 +361,12 @@ class _IOBase:
                 pass
             try:
                 self.close()  # type: ignore[attr-defined]
-            except BaseException:  # noqa: BLE001
-                _io_call("unraisable", "Exception ignored while finalizing file " + repr(self))
+            except BaseException as e:  # noqa: BLE001
+                try:
+                    message: str | None = "Exception ignored while finalizing file " + repr(self)
+                except BaseException:  # noqa: BLE001  # %R failed: PyErr_Clear, and the report is without its first line
+                    message = None
+                _io_call("unraisable", message, e)
 
     def seekable(*args: object, **kwds: object) -> bool:  # noqa: N805
         _noargs("_IOBase.seekable", args, kwds)

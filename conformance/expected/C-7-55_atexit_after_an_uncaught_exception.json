@@ -1,0 +1,12 @@
+{
+ "case": "C-7-55_atexit_after_an_uncaught_exception.py",
+ "clause": "C-7-55",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 2 (entry and exit), Python/pylifecycle.c (make_pre_finalization_calls, wait_for_thread_shutdown), Lib/threading.py (_shutdown)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "before: False False 3\nthreading's newest shutting down: True handlers still registered: 3\nthreading's raiser shutting down: True handlers still registered: 3\nhandler registers with threading shutting down: True the main thread done: False\n  RuntimeError can't register atexit after shutdown\nhandler exits shutting down: True the main thread done: False\nhandler oldest shutting down: True the main thread done: False\n",
+ "stderr": "before: False False 3\nTraceback (most recent call last):\n  File \"C-7-55_atexit_after_an_uncaught_exception.py\", line 51, in <module>\nKeyError: 'uncaught'\nthreading's newest shutting down: True handlers still registered: 3\nthreading's raiser shutting down: True handlers still registered: 3\nException ignored on threading shutdown:\nTraceback (most recent call last):\n  File \"threading.py\", line 1715, in _shutdown\n  File \"threading.py\", line 1685, in <lambda>\n  File \"C-7-55_atexit_after_an_uncaught_exception.py\", line 41, in at_threading\nValueError: from threading's shutdown\nhandler registers with threading shutting down: True the main thread done: False\n  RuntimeError can't register atexit after shutdown\nhandler exits shutting down: True the main thread done: False\nException ignored in atexit callback <the handler>:\nTraceback (most recent call last):\n  File \"C-7-55_atexit_after_an_uncaught_exception.py\", line 32, in __call__\nSystemExit: a text from a handler\nhandler oldest shutting down: True the main thread done: False\n",
+ "exit_code": 1
+}

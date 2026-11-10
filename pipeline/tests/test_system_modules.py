@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from pipeline.build import build
+from pipeline.tests.test_compiled_imports import same as same_streams
 from pipeline.tests.test_review_2026_11_03 import same
 
 SYSTEM_MODULES = r"""
@@ -824,6 +825,10 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("raise ExceptionGroup('uncaught', [ValueError()])", "uncaught exception group"), ("import warnings\nwarnings.warn_explicit('m', UserWarning, 'f', 1, module_globals={'__name__': 'x'})", "module_globals"),
              ("import importlib, json\nimportlib.reload(json)", "importlib.reload"), ("import importlib.machinery\nimportlib.machinery.PathFinder.find_spec('x')", "PathFinder.find_spec"),
              ("import importlib.util, json\nimportlib.util.LazyLoader(json.__loader__).exec_module(json)", "__class__ assignment"), ("import _imp\n_imp.get_frozen_object('os')", "_imp.get_frozen_object"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
+             ("import sys\nsys.excepthook = print\nraise KeyError('x')", "sys.excepthook replaced by the program"),
+             ("import atexit, sys\nsys.unraisablehook = print\natexit.register(lambda: 1 / 0)", "sys.unraisablehook set by the program"),
+             ("import sys\nsys.unraisablehook", "sys.unraisablehook"),
+             ("import weakref\nclass K: pass\nk = K()\nweakref.finalize(k, print, 'at exit')", "importing 'gc'"),
              ("import threading\nthreading.Thread(target=print).start()", "creating a thread"), ("import threading\nlk = threading.Lock(); lk.acquire(); lk.acquire()", "no other thread can release"),
 )
     for body, name in cases:
@@ -832,6 +837,112 @@ def test_what_is_absent_stops_by_name() -> None:
             prog.write_text(f"print('start')\n{body}\n", encoding="utf-8")
             got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, cwd=tmp)
         assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr and name in got.stderr, (body, got)
+
+
+# atexit on every way out of a program (C-7-54 and C-7-55 are the cases; these are the ways out they do not take)
+ATEXIT_WAYS_OUT = {
+    "the end of the module": """
+        import atexit, sys
+        class Kept:
+            def __del__(self): print("finaliser, after the handlers")
+        kept = Kept()
+        atexit.register(print, "handler on stderr", file=sys.stderr)
+        atexit.register(print, "handler on stdout")
+        print("end")
+    """,
+    "sys.exit with a text": """
+        import atexit, sys
+        atexit.register(print, "handler after the text", file=sys.stderr)
+        sys.exit("the exit's text")
+    """,
+    "sys.exit in a function": """
+        import atexit, sys
+        def leave(): sys.exit(5)
+        atexit.register(print, "handler")
+        leave()
+    """,
+    "SystemExit of nothing": """
+        import atexit
+        atexit.register(print, "handler")
+        raise SystemExit
+    """,
+    "the module dropped from sys.modules": """
+        import atexit, sys
+        atexit.register(print, "registered before the module was dropped")
+        del sys.modules["atexit"]
+        import atexit as again
+        print(again._ncallbacks(), atexit._ncallbacks())   # the list is the interpreter's, whichever module object asks
+        again.register(print, "registered with the second module")
+        del sys.modules["atexit"], atexit, again
+    """,
+    "a handler that runs the handlers": """
+        import atexit
+        def once():
+            print("once", atexit._ncallbacks())
+        def runs():
+            atexit.unregister(runs)
+            print("runs them", atexit._ncallbacks())
+            atexit._run_exitfuncs()
+            print("after", atexit._ncallbacks())
+        atexit.register(once)
+        atexit.register(runs)
+    """,
+    "what stands for threading has no _shutdown": """
+        import atexit, sys, threading
+        atexit.register(print, "handler, after the report", file=sys.stderr)
+        sys.modules["threading"] = None
+    """,
+    "threading dropped from sys.modules": """
+        import atexit, sys, threading
+        threading._register_atexit(print, "never called: threading is not among the modules")
+        atexit.register(lambda: print("handler; shutting down:", threading._SHUTTING_DOWN))
+        del sys.modules["threading"]
+    """,
+    "the handlers' keywords": """
+        import atexit
+        def show(*args, **kwargs): print(args, kwargs)
+        keywords = {"k": 1}
+        atexit.register(show, 1, **keywords)
+        atexit.register(show, **{})
+        atexit.register(show, func=2, args=3, kwargs=4)
+        keywords["k"] = 2
+    """,
+    "an uncaught exception without sys.excepthook": """
+        import atexit, sys
+        atexit.register(print, "handler", file=sys.stderr)
+        del sys.excepthook
+        raise KeyError("uncaught")
+    """,
+}
+
+# iobase_finalize: close() raising in the finaliser is reported as ignored, with the file's repr unless that raises too
+IO_FINALISER = """
+    import io, sys
+    class F(io.RawIOBase):
+        def __repr__(self): return "<F>"
+        def close(self): raise ValueError("close fails")
+    class G(io.StringIO):
+        def __repr__(self): raise RuntimeError("no repr")
+        def close(self): raise KeyError("close of a StringIO fails")
+    f = F()
+    del f
+    print("after the first", file=sys.stderr)
+    g = G()
+    del g
+    print("end", file=sys.stderr)
+"""
+
+
+def test_atexit_on_every_way_out() -> None:
+    for name, program in ATEXIT_WAYS_OUT.items():
+        try:
+            same_streams({"main.py": program}, stderr=True)
+        except AssertionError as e:
+            raise AssertionError(f"{name}: {e}") from None
+
+
+def test_a_file_whose_close_raises_in_its_finaliser() -> None:
+    same_streams({"main.py": IO_FINALISER}, stderr=True)
 
 
 if __name__ == "__main__":
@@ -846,4 +957,6 @@ if __name__ == "__main__":
     test_warnings()
     test_importlib()
     test_exception_groups()
+    test_atexit_on_every_way_out()
+    test_a_file_whose_close_raises_in_its_finaliser()
     test_what_is_absent_stops_by_name()
