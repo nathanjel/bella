@@ -45,6 +45,7 @@ C-3-49_exception_groups.py
 C-3-50_exception_group_format.py
 C-3-51_list_subclasses.py
 C-3-52_ordered_dict.py
+C-3-53_str_beyond_ascii.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py
@@ -65,6 +66,7 @@ C-6-17_complex.py
 C-6-18_exceptions_os_and_syntax.py
 C-6-19_dict_view_sets.py
 C-7-03_phase1_omissions_observable.py
+C-7-05_core_data_collections_itertools_functools.py
 C-7-09_date_modules.py
 C-7-12_zlib.py
 C-7-13_locale_and_gettext.py

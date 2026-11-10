@@ -321,32 +321,72 @@ Ref strip_like(Obj self, Args a, const char* name, int which) {
 }
 }  // namespace
 
-// ---- what needs the case and category tables, on ASCII text; beyond it, the Unicode database stops by name ----
+// ---- the case and category tables (runtime/src/unicode.cpp, Objects/unicodectype.c): an ASCII str by its bytes, which the
+// tables agree with, anything else by its code points, as Objects/unicodeobject.c's do_* functions walk them ----
 namespace {
-const Str* ascii_only(Obj self, const char* method) {
-    const Str* s = self_str(self, method);
-    if (!s->ascii) throw NotImplemented(std::string("str.") + method + " of a str beyond ASCII (it needs the Unicode database)");
-    return s;
-}
 bool is_lower(char c) { return c >= 'a' && c <= 'z'; }
 bool is_upper(char c) { return c >= 'A' && c <= 'Z'; }
 char to_lower(char c) { return is_upper(c) ? static_cast<char>(c + 32) : c; }
 char to_upper(char c) { return is_lower(c) ? static_cast<char>(c - 32) : c; }
 bool is_digit(char c) { return c >= '0' && c <= '9'; }
-template <class F>
-Ref mapped(Obj self, Args a, const char* method, F f) {   // METH_NOARGS, one new str
-    noargs(a, std::string("str.") + method);
-    const Str* s = ascii_only(self, method);
-    std::string out = s->text;
-    f(out);
-    return str_new(out);
+// handle_capital_sigma: U+03A3 is final after a cased letter (case-ignorable ones passed over) and not before one
+std::uint32_t capital_sigma(const Str* s, std::size_t i) {
+    std::size_t j = i;
+    std::uint32_t c = 0;
+    bool found = false;
+    while (j > 0) {
+        c = s->at(--j);
+        if (!unicode_is_case_ignorable(c)) {
+            found = true;
+            break;
+        }
+    }
+    bool final_sigma = found && unicode_is_cased(c);
+    if (final_sigma) {
+        std::size_t k = i + 1;
+        for (; k < s->length; ++k) {
+            c = s->at(k);
+            if (!unicode_is_case_ignorable(c)) break;
+        }
+        final_sigma = k == s->length || !unicode_is_cased(c);
+    }
+    return final_sigma ? 0x3C2 : 0x3C3;
 }
-template <class F>
-Ref every(Obj self, Args a, const char* method, F f) {    // a predicate true of every character, and false of none at all
+int lower_ucs4(const Str* s, std::size_t i, std::uint32_t c, std::uint32_t* mapped) {   // lower_ucs4: the obscure special case
+    if (c == 0x3A3) {
+        mapped[0] = capital_sigma(s, i);
+        return 1;
+    }
+    return unicode_lower_full(c, mapped);
+}
+void put(std::u32string& out, const std::uint32_t* mapped, int n) {
+    for (int k = 0; k < n; ++k) out.push_back(static_cast<char32_t>(mapped[k]));
+}
+// case_operation: a new str, the ASCII one by its bytes (ascii_upper_or_lower and the others), the rest by `perform`
+template <class Ascii, class Perform>
+Ref case_operation(Obj self, Args a, const char* method, Ascii ascii, Perform perform) {
     noargs(a, std::string("str.") + method);
-    const Str* s = ascii_only(self, method);
-    if (s->text.empty()) return Ref::steal(boolean(false));
-    return Ref::steal(boolean(std::all_of(s->text.begin(), s->text.end(), f)));
+    const Str* s = self_str(self, method);
+    if (s->ascii) {
+        std::string out = s->text;
+        ascii(out);
+        return str_new(out);
+    }
+    std::u32string out;
+    out.reserve(s->length);
+    perform(s, out);
+    return str_from_codepoints(out);
+}
+// a predicate true of every character, and false of none at all
+template <class Ascii, class Unicode>
+Ref every(Obj self, Args a, const char* method, Ascii ascii, Unicode unicode) {
+    noargs(a, std::string("str.") + method);
+    const Str* s = self_str(self, method);
+    if (s->length == 0) return Ref::steal(boolean(false));
+    if (s->ascii) return Ref::steal(boolean(std::all_of(s->text.begin(), s->text.end(), ascii)));
+    for (std::size_t i = 0; i < s->length; ++i)
+        if (!unicode(static_cast<std::uint32_t>(s->at(i)))) return Ref::steal(boolean(false));
+    return Ref::steal(boolean(true));
 }
 bool is_ascii_space(char c) { return c == ' ' || (c >= '\t' && c <= '\r') || (c >= '\x1c' && c <= '\x1f'); }
 // the fill character's converter, convert_uc
@@ -401,44 +441,82 @@ Translated translate_lookup(char32_t c, Obj mapping, Ref& item, char32_t& replac
 }
 }  // namespace
 
-Ref str_lower_m(Obj self, Args a) {
-    return mapped(self, a, "lower", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_lower); });
+Ref str_lower_m(Obj self, Args a) {               // do_lower
+    return case_operation(self, a, "lower", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_lower); },
+                          [](const Str* s, std::u32string& out) {
+                              std::uint32_t mapped[3];
+                              for (std::size_t i = 0; i < s->length; ++i) put(out, mapped, lower_ucs4(s, i, s->at(i), mapped));
+                          });
 }
-Ref str_casefold_m(Obj self, Args a) {
-    return mapped(self, a, "casefold", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_lower); });
+Ref str_casefold_m(Obj self, Args a) {            // do_casefold
+    return case_operation(self, a, "casefold", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_lower); },
+                          [](const Str* s, std::u32string& out) {
+                              std::uint32_t mapped[3];
+                              for (std::size_t i = 0; i < s->length; ++i) put(out, mapped, unicode_fold_full(s->at(i), mapped));
+                          });
 }
-Ref str_upper_m(Obj self, Args a) {
-    return mapped(self, a, "upper", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_upper); });
+Ref str_upper_m(Obj self, Args a) {               // do_upper
+    return case_operation(self, a, "upper", [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), to_upper); },
+                          [](const Str* s, std::u32string& out) {
+                              std::uint32_t mapped[3];
+                              for (std::size_t i = 0; i < s->length; ++i) put(out, mapped, unicode_upper_full(s->at(i), mapped));
+                          });
 }
-Ref str_swapcase_m(Obj self, Args a) {
-    return mapped(self, a, "swapcase", [](std::string& t) {
-        std::transform(t.begin(), t.end(), t.begin(), [](char c) { return is_upper(c) ? to_lower(c) : to_upper(c); });
-    });
+Ref str_swapcase_m(Obj self, Args a) {            // do_swapcase
+    return case_operation(self, a, "swapcase",
+                          [](std::string& t) { std::transform(t.begin(), t.end(), t.begin(), [](char c) { return is_upper(c) ? to_lower(c) : to_upper(c); }); },
+                          [](const Str* s, std::u32string& out) {
+                              std::uint32_t mapped[3];
+                              for (std::size_t i = 0; i < s->length; ++i) {
+                                  std::uint32_t c = s->at(i);
+                                  if (unicode_is_uppercase(c)) put(out, mapped, lower_ucs4(s, i, c, mapped));
+                                  else if (unicode_is_lowercase(c)) put(out, mapped, unicode_upper_full(c, mapped));
+                                  else out.push_back(static_cast<char32_t>(c));
+                              }
+                          });
 }
-Ref str_capitalize_m(Obj self, Args a) {
-    return mapped(self, a, "capitalize", [](std::string& t) {
-        for (std::size_t i = 0; i < t.size(); ++i) t[i] = i == 0 ? to_upper(t[i]) : to_lower(t[i]);
-    });
+Ref str_capitalize_m(Obj self, Args a) {          // do_capitalize: the first character's titlecase, the rest lowered
+    return case_operation(self, a, "capitalize",
+                          [](std::string& t) { for (std::size_t i = 0; i < t.size(); ++i) t[i] = i == 0 ? to_upper(t[i]) : to_lower(t[i]); },
+                          [](const Str* s, std::u32string& out) {
+                              std::uint32_t mapped[3];
+                              if (s->length == 0) return;
+                              put(out, mapped, unicode_title_full(s->at(0), mapped));
+                              for (std::size_t i = 1; i < s->length; ++i) put(out, mapped, lower_ucs4(s, i, s->at(i), mapped));
+                          });
 }
-Ref str_title_m(Obj self, Args a) {              // do_title: a letter after a cased one is lowered
-    return mapped(self, a, "title", [](std::string& t) {
-        bool previous_is_cased = false;
-        for (char& c : t) {
-            c = previous_is_cased ? to_lower(c) : to_upper(c);
-            previous_is_cased = is_lower(c) || is_upper(c);
-        }
-    });
+Ref str_title_m(Obj self, Args a) {               // do_title: a letter after a cased one is lowered
+    return case_operation(self, a, "title",
+                          [](std::string& t) {
+                              bool previous_is_cased = false;
+                              for (char& c : t) {
+                                  c = previous_is_cased ? to_lower(c) : to_upper(c);
+                                  previous_is_cased = is_lower(c) || is_upper(c);
+                              }
+                          },
+                          [](const Str* s, std::u32string& out) {
+                              std::uint32_t mapped[3];
+                              bool previous_is_cased = false;
+                              for (std::size_t i = 0; i < s->length; ++i) {
+                                  std::uint32_t c = s->at(i);
+                                  put(out, mapped, previous_is_cased ? lower_ucs4(s, i, c, mapped) : unicode_title_full(c, mapped));
+                                  previous_is_cased = unicode_is_cased(c);
+                              }
+                          });
 }
-Ref str_isalpha_m(Obj self, Args a) { return every(self, a, "isalpha", [](char c) { return is_lower(c) || is_upper(c); }); }
-Ref str_isalnum_m(Obj self, Args a) { return every(self, a, "isalnum", [](char c) { return is_lower(c) || is_upper(c) || is_digit(c); }); }
-Ref str_isdigit_m(Obj self, Args a) { return every(self, a, "isdigit", is_digit); }
-Ref str_isdecimal_m(Obj self, Args a) { return every(self, a, "isdecimal", is_digit); }
-Ref str_isnumeric_m(Obj self, Args a) { return every(self, a, "isnumeric", is_digit); }
-Ref str_isspace_m(Obj self, Args a) { return every(self, a, "isspace", is_ascii_space); }
+Ref str_isalpha_m(Obj self, Args a) { return every(self, a, "isalpha", [](char c) { return is_lower(c) || is_upper(c); }, unicode_is_alpha); }
+Ref str_isalnum_m(Obj self, Args a) { return every(self, a, "isalnum", [](char c) { return is_lower(c) || is_upper(c) || is_digit(c); }, unicode_is_alnum); }
+Ref str_isdigit_m(Obj self, Args a) { return every(self, a, "isdigit", is_digit, unicode_is_digit); }
+Ref str_isdecimal_m(Obj self, Args a) { return every(self, a, "isdecimal", is_digit, unicode_is_decimal); }
+Ref str_isnumeric_m(Obj self, Args a) { return every(self, a, "isnumeric", is_digit, unicode_is_numeric); }
+Ref str_isspace_m(Obj self, Args a) { return every(self, a, "isspace", is_ascii_space, unicode_is_space); }
 Ref str_isprintable_m(Obj self, Args a) {        // true of nothing at all
     noargs(a, "str.isprintable");
-    const Str* s = ascii_only(self, "isprintable");
-    return Ref::steal(boolean(std::all_of(s->text.begin(), s->text.end(), [](char c) { return c >= ' ' && c <= '~'; })));
+    const Str* s = self_str(self, "isprintable");
+    if (s->ascii) return Ref::steal(boolean(std::all_of(s->text.begin(), s->text.end(), [](char c) { return c >= ' ' && c <= '~'; })));
+    for (std::size_t i = 0; i < s->length; ++i)
+        if (!unicode_is_printable(s->at(i))) return Ref::steal(boolean(false));
+    return Ref::steal(boolean(true));
 }
 Ref str_isidentifier_m(Obj self, Args a) {
     noargs(a, "str.isidentifier");
@@ -449,35 +527,38 @@ Ref str_isidentifier_m(Obj self, Args a) {
         if (!unicode_is_xid_continue(s->at(i))) return Ref::steal(boolean(false));
     return Ref::steal(boolean(true));
 }
-Ref str_islower_m(Obj self, Args a) {
+Ref str_islower_m(Obj self, Args a) {            // unicode_islower_impl
     noargs(a, "str.islower");
-    const Str* s = ascii_only(self, "islower");
+    const Str* s = self_str(self, "islower");
     bool cased = false;
-    for (char c : s->text) {
-        if (is_upper(c)) return Ref::steal(boolean(false));
-        cased = cased || is_lower(c);
+    for (std::size_t i = 0; i < s->length; ++i) {
+        std::uint32_t c = s->at(i);
+        if (unicode_is_uppercase(c) || unicode_is_titlecase(c)) return Ref::steal(boolean(false));
+        cased = cased || unicode_is_lowercase(c);
     }
     return Ref::steal(boolean(cased));
 }
-Ref str_isupper_m(Obj self, Args a) {
+Ref str_isupper_m(Obj self, Args a) {            // unicode_isupper_impl
     noargs(a, "str.isupper");
-    const Str* s = ascii_only(self, "isupper");
+    const Str* s = self_str(self, "isupper");
     bool cased = false;
-    for (char c : s->text) {
-        if (is_lower(c)) return Ref::steal(boolean(false));
-        cased = cased || is_upper(c);
+    for (std::size_t i = 0; i < s->length; ++i) {
+        std::uint32_t c = s->at(i);
+        if (unicode_is_lowercase(c) || unicode_is_titlecase(c)) return Ref::steal(boolean(false));
+        cased = cased || unicode_is_uppercase(c);
     }
     return Ref::steal(boolean(cased));
 }
-Ref str_istitle_m(Obj self, Args a) {
+Ref str_istitle_m(Obj self, Args a) {            // unicode_istitle_impl
     noargs(a, "str.istitle");
-    const Str* s = ascii_only(self, "istitle");
+    const Str* s = self_str(self, "istitle");
     bool cased = false, previous_is_cased = false;
-    for (char c : s->text) {
-        if (is_upper(c)) {
+    for (std::size_t i = 0; i < s->length; ++i) {
+        std::uint32_t c = s->at(i);
+        if (unicode_is_uppercase(c) || unicode_is_titlecase(c)) {
             if (previous_is_cased) return Ref::steal(boolean(false));
             previous_is_cased = cased = true;
-        } else if (is_lower(c)) {
+        } else if (unicode_is_lowercase(c)) {
             if (!previous_is_cased) return Ref::steal(boolean(false));
             previous_is_cased = cased = true;
         } else {

@@ -363,6 +363,18 @@ bool unicode_is_xid_start(std::uint32_t ch);
 bool unicode_is_xid_continue(std::uint32_t ch);
 std::uint32_t unicode_to_lower(std::uint32_t ch);
 std::uint32_t unicode_to_upper(std::uint32_t ch);
+bool unicode_is_alpha(std::uint32_t ch);          // Py_UNICODE_ISALPHA, ISDIGIT, ISNUMERIC, ISLOWER, ISUPPER, ISTITLE
+bool unicode_is_digit(std::uint32_t ch);
+bool unicode_is_numeric(std::uint32_t ch);
+bool unicode_is_lowercase(std::uint32_t ch);
+bool unicode_is_uppercase(std::uint32_t ch);
+bool unicode_is_titlecase(std::uint32_t ch);
+bool unicode_is_cased(std::uint32_t ch);           // _PyUnicode_IsCased, _PyUnicode_IsCaseIgnorable
+bool unicode_is_case_ignorable(std::uint32_t ch);
+int unicode_lower_full(std::uint32_t ch, std::uint32_t* out);   // _PyUnicode_ToLowerFull and the others: 1 to 3 code points into out
+int unicode_upper_full(std::uint32_t ch, std::uint32_t* out);
+int unicode_title_full(std::uint32_t ch, std::uint32_t* out);
+int unicode_fold_full(std::uint32_t ch, std::uint32_t* out);
 void fill_sre(Module* m);                         // and runtime/prelude/_sre.py, runtime/src/sre.cpp
 Ref i_sre_call(Obj, Args a);                      // _sre.py's: the engine, by name
 Ref i_present_c_class(Obj, Args a);               // a prelude's: (cls, module) a type with no instances from Python, named for the module

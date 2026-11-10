@@ -1,7 +1,8 @@
 """str's methods on ASCII text, compiled, against CPython.
 
 Case C-6-14 shows the behaviour by exception class, as a case must; these compare messages too, and what stops by
-name: a str beyond ASCII where a method needs the Unicode database, which the runtime does not have yet.
+name: int() of a str beyond ASCII, whose digits need the database's decimal values. Beyond ASCII the methods use the
+Unicode database (runtime/src/unicode.cpp; C-3-53).
 """
 from __future__ import annotations
 
@@ -56,23 +57,25 @@ print("a".center(Idx()), "a".ljust(Idx(), "*"), "a".rjust(Idx()), "a".zfill(Idx(
 """),
 ]
 
+# the methods on text beyond ASCII (C-3-53 has the characters; this the str subclass and the messages around them)
+BEYOND_ASCII = r"""
+class S(str):
+    pass
+for t in ("é", "Straße", "ΣΑΣ", S("ǅungla"), "٣", "\u3000", ""):
+    for name in ("lower", "upper", "title", "swapcase", "capitalize", "casefold", "isalpha", "isalnum", "isdigit", "isdecimal",
+                 "isnumeric", "isspace", "isprintable", "islower", "isupper", "istitle"):
+        r = getattr(t, name)()
+        print(name, repr(r), type(r).__name__, end="; ")
+    print()
+for f in (lambda: "é".lower(1), lambda: "é".isalpha(x=1), lambda: str.upper(1), lambda: str.title()):
+    try:
+        f()
+    except TypeError as e:
+        print("TypeError", e)
+"""
+
 REFUSED = (
-    ('"é".lower()', "str.lower"),
-    ('"é".upper()', "str.upper"),
-    ('"é".title()', "str.title"),
-    ('"é".swapcase()', "str.swapcase"),
-    ('"é".capitalize()', "str.capitalize"),
-    ('"é".casefold()', "str.casefold"),
-    ('"é".isalpha()', "str.isalpha"),
-    ('"é".isalnum()', "str.isalnum"),
-    ('"é".isdigit()', "str.isdigit"),
-    ('"é".isdecimal()', "str.isdecimal"),
-    ('"é".isnumeric()', "str.isnumeric"),
-    ('"é".isspace()', "str.isspace"),
-    ('"é".isprintable()', "str.isprintable"),
-    ('"é".islower()', "str.islower"),
-    ('"é".isupper()', "str.isupper"),
-    ('"é".istitle()', "str.istitle"),
+    ("int('\u0663')", "int() of a str beyond ASCII"),   # its digits need the database's decimal values, not written yet
 )
 
 
@@ -85,6 +88,10 @@ def pytest_generate_tests(metafunc: Any) -> None:
 
 def test_as_cpython(program: tuple[str, str]) -> None:
     same(program[1])
+
+
+def test_beyond_ascii() -> None:
+    same(BEYOND_ASCII)
 
 
 def test_what_needs_the_unicode_database_stops_by_name(refused: tuple[str, str]) -> None:
