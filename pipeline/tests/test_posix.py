@@ -215,6 +215,29 @@ print(m(lambda: os.chown()), m(lambda: os.chown("a", 1)), m(lambda: os.chown("a"
       (os.getresuid(), os.getresgid(), os.getgroups(), os.getpgrp(), os.getsid(0) > 0, os.nice(0), os.getpriority(os.PRIO_PROCESS, 0)), sep="\n")
 """
 
+# beside C-7-68: the messages of statvfs and of the configuration functions, and the values one machine gives both sides
+LIMITS_MESSAGES = r"""
+import os
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+print(m(lambda: os.statvfs()), m(lambda: os.statvfs("no such file here")), m(lambda: os.statvfs(987)), m(lambda: os.statvfs(1.5)), m(lambda: os.fstatvfs()), m(lambda: os.fstatvfs(987)), m(lambda: os.fstatvfs("a")), m(lambda: os.fstatvfs(fd=0)),
+      m(lambda: os.sysconf()), m(lambda: os.sysconf("nope")), m(lambda: os.sysconf(1.5)), m(lambda: os.sysconf(99999)), m(lambda: os.sysconf(name=1)), m(lambda: os.confstr("nope")), m(lambda: os.confstr(99999)), m(lambda: os.confstr([])),
+      m(lambda: os.pathconf(".")), m(lambda: os.pathconf("no such file here", 3)), m(lambda: os.pathconf(".", 99999)), m(lambda: os.pathconf(".", "nope")), m(lambda: os.pathconf(987, 3)), m(lambda: os.pathconf(".", None)),
+      m(lambda: os.fpathconf(1)), m(lambda: os.fpathconf(987, 3)), m(lambda: os.fpathconf("a", 3)), m(lambda: os.fpathconf(fd=0, name=3)), os.statvfs.__doc__[:20], os.sysconf.__doc__[:20], sep="\n")
+st = os.statvfs(".")
+print(st.f_bsize, st.f_frsize, st.f_blocks, st.f_files, st.f_flag, st.f_namemax, st.f_fsid, os.statvfs_result.__name__, os.statvfs_result.__module__)
+print([os.sysconf(n) for n in sorted(os.sysconf_names) if n not in ("SC_AVPHYS_PAGES",)])
+print([m(lambda n=n: os.confstr(n)) for n in sorted(os.confstr_names)])
+print([os.pathconf(".", n) for n in sorted(os.pathconf_names)])
+"""
+
+
+def test_statvfs_and_configuration_limits() -> None:
+    same(LIMITS_MESSAGES)
+
 
 def test_ownership_and_id_messages() -> None:
     same(OWNERSHIP_MESSAGES)
@@ -249,7 +272,7 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
-    for body, name in (("os.fork()", "os.fork"), ("os.statvfs('.')", "os.statvfs"), ("os.sysconf('SC_PAGE_SIZE')", "os.sysconf"),
+    for body, name in (("os.fork()", "os.fork"), ("os.ttyname(0)", "os.ttyname"), ("os.setsid()", "os.setsid"),
                        ("os.sched_param(1)", "os.sched_param"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
@@ -264,6 +287,7 @@ if __name__ == "__main__":
     test_extended_attributes_and_odd_times()
     test_descriptor_wait_status_and_device_messages()
     test_ownership_and_id_messages()
+    test_statvfs_and_configuration_limits()
     test_messages()
     test_what_a_function_shows()
     test_a_write_goes_straight_out_and_exit_does_not_flush()

@@ -1,0 +1,12 @@
+{
+ "case": "C-7-68_file_system_and_configuration_limits.py",
+ "clause": "C-7-68",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7 (os), Modules/posixmodule.c (os_statvfs_impl, os_fstatvfs_impl, _pystatvfs_fromstructstatvfs, conv_confname, os_sysconf_impl, os_confstr_impl, os_pathconf_impl, os_fpathconf_impl)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "statvfs: statvfs_result os 10 11 10 True int True True True True True True True True IndexError True 10 False\nthe same file system: True True True True True True True False\nstatvfs refuses: FileNotFoundError: (2, 'No such file or directory', 'missing') FileNotFoundError: (2, 'No such file or directory', b'missing') OSError: (9, 'Bad file descriptor', 987) TypeError TypeError TypeError TypeError OSError: (9, 'Bad file descriptor', None) TypeError TypeError TypeError TypeError TypeError\nsysconf: int True True 100 True 100 True True\nthe table is read at the call: 100 TypeError\nsysconf refuses: ValueError ValueError ValueError TypeError TypeError TypeError OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) OverflowError TypeError TypeError TypeError\nconfstr: str True True True '' True ValueError OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) TypeError TypeError TypeError TypeError OverflowError\npathconf: 255 4096 255 255 4096 255 int 4096 255 4096 4096 255\npathconf refuses: FileNotFoundError: (2, 'No such file or directory', 'missing') OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) ValueError OSError: (9, 'Bad file descriptor', 987) OSError: (22, 'Invalid argument', None) TypeError TypeError TypeError TypeError OSError: (9, 'Bad file descriptor', None) OSError: (22, 'Invalid argument', None) ValueError TypeError TypeError TypeError TypeError\n",
+ "stderr": "",
+ "exit_code": 0
+}

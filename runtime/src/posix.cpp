@@ -7,6 +7,7 @@
 #include <sys/resource.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <sys/xattr.h>
@@ -330,6 +331,42 @@ Ref p_dev(Args a) {                              // (b"major" | b"minor", dev) o
         return int_from_u64(makedev(static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(1)))), static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(2))))));
     dev_t dev = static_cast<dev_t>(i64_of(a.pos(1)));
     return int_from_u64(which == "major" ? major(dev) : minor(dev));
+}
+// ---- the file system and the configured limits (C-7-68)
+Ref p_statvfs(Args a) {                          // (path or fd, again after a signal): _pystatvfs_fromstructstatvfs's eleven
+    struct statvfs st;
+    int r;
+    if (is_int(a.pos(0))) {
+        do r = fstatvfs(int_of(a.pos(0)), &st);
+        while (r != 0 && errno == EINTR && truth(a.pos(1)));
+    } else {
+        r = statvfs(text_of(a.pos(0)), &st);
+    }
+    if (r != 0) return failed();
+    Ref v[11] = {int_from_i64(static_cast<long>(st.f_bsize)), int_from_i64(static_cast<long>(st.f_frsize)), int_from_i64(static_cast<long long>(st.f_blocks)),
+                 int_from_i64(static_cast<long long>(st.f_bfree)), int_from_i64(static_cast<long long>(st.f_bavail)), int_from_i64(static_cast<long long>(st.f_files)),
+                 int_from_i64(static_cast<long long>(st.f_ffree)), int_from_i64(static_cast<long long>(st.f_favail)), int_from_i64(static_cast<long>(st.f_flag)),
+                 int_from_i64(static_cast<long>(st.f_namemax)), int_from_u64(st.f_fsid)};
+    return tuple_new({v[0].get(), v[1].get(), v[2].get(), v[3].get(), v[4].get(), v[5].get(), v[6].get(), v[7].get(), v[8].get(), v[9].get(), v[10].get()});
+}
+// sysconf, pathconf and fpathconf give -1 for "no limit" as well as for an error, so errno travels beside the value: (errno,
+// value); confstr gives its text, None for a name with no value, or the error
+Ref p_conf(Args a) {                             // (which, name[, path or fd])
+    const std::string& which = bytes_data(a.pos(0));
+    int name = int_of(a.pos(1));
+    errno = 0;
+    if (which == "confstr") {
+        char small[255];
+        std::size_t len = confstr(name, small, sizeof(small));
+        if (len == 0) return errno != 0 ? failed() : none_ref();
+        if (len < sizeof(small)) return bytes_new(std::string_view(small, len - 1));
+        std::string big(len, '\0');
+        std::size_t again = confstr(name, big.data(), len);
+        return bytes_new(std::string_view(big.data(), again - 1));
+    }
+    long value = which == "sysconf" ? sysconf(name) : is_int(a.pos(2)) ? fpathconf(int_of(a.pos(2)), name) : pathconf(text_of(a.pos(2)), name);
+    Ref e = int_from_i64(value == -1 ? errno : 0), v = int_from_i64(value);
+    return tuple_new({e.get(), v.get()});
 }
 // ---- ownership and ids (C-7-67)
 // os_chown_impl, os_fchown_impl, os_lchown_impl: (which, path or fd, uid, gid[, dir_fd, follow_symlinks]); an id is -1 for
@@ -775,7 +812,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
         {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},

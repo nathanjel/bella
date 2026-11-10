@@ -583,6 +583,16 @@ def _from_id(value: int) -> int:                 # _PyLong_FromUid, _PyLong_From
     return -1 if value == 4294967295 else value
 
 
+def _confname(value: object, table: object) -> int:   # conv_confname: a name of the module's table as it is now, or the number
+    if issubclass(type(value), str):
+        value = dict.get(table, value, _ABSENT)  # type: ignore[arg-type]
+        if value is _ABSENT:
+            raise ValueError("unrecognized configuration name")
+    if _type_lookup(value, "__index__") is _ABSENT:
+        raise TypeError("configuration names must be strings or integers")
+    return _int(value)
+
+
 def _fd_converter(value: object) -> int:         # _fd_converter
     if type(value) is bool:
         _warn("bool is used as a file descriptor", "RuntimeWarning")   # PyErr_WarnEx(PyExc_RuntimeWarning, ..., 1)
@@ -1172,7 +1182,13 @@ def closerange(*args: object, **kwds: object) -> None:   # os_closerange_impl: u
     _sys("closerange", low, high - 1)
 
 
-confstr = _absent("confstr")
+def confstr(*args: object, **kwds: object) -> str | None:   # os_confstr_impl
+    result = _sys("conf", b"confstr", _confname(_one("confstr", args, kwds), confstr_names))
+    if result is None:
+        return None
+    if type(result) is int:
+        _fail(-result)
+    return bytes.decode(result, "utf-8", "surrogateescape")
 
 
 def copy_file_range(*args: object, **kwds: object) -> int:   # os_copy_file_range_impl
@@ -1246,8 +1262,22 @@ def fdatasync(*args: object, **kwds: object) -> None:   # os_fdatasync_impl
 
 fork = _absent("fork")
 forkpty = _absent("forkpty")
-fpathconf = _absent("fpathconf")
-fstatvfs = _absent("fstatvfs")
+
+
+def fpathconf(*args: object, **kwds: object) -> int:   # os_fpathconf_impl
+    _positional("fpathconf", args, kwds, 2)
+    fd = _fildes(args[0])
+    error, value = _sys("conf", b"pathconf", _confname(args[1], pathconf_names), fd)
+    if error:
+        _fail(error)
+    return value  # type: ignore[no-any-return]
+
+
+def fstatvfs(*args: object, **kwds: object) -> object:   # os_fstatvfs_impl
+    result = _sys("statvfs", _int(_one("fstatvfs", args, kwds)), True)
+    if type(result) is int:
+        _fail(-result)
+    return statvfs_result(result)
 
 
 def ftruncate(*args: object, **kwds: object) -> None:   # os_ftruncate_impl
@@ -1438,7 +1468,19 @@ def nice(*args: object, **kwds: object) -> int:   # os_nice_impl: the new priori
 
 
 openpty = _absent("openpty")
-pathconf = _absent("pathconf")
+
+
+def pathconf(*args: object, **kwds: object) -> int:   # os_pathconf_impl: EINVAL may be the name's, so it carries no file name
+    path, name = _unpack("pathconf", args, kwds, ("path", "name"), 2, 2)
+    data, shown = _path("pathconf", "path", path, allow_fd=True)
+    error, value = _sys("conf", b"pathconf", _confname(name, pathconf_names), data)
+    if error:
+        if error == 22:
+            _fail(error)
+        _fail(error, shown)
+    return value  # type: ignore[no-any-return]
+
+
 pidfd_open = _absent("pidfd_open")
 
 
@@ -1623,7 +1665,14 @@ def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
     if code < 0:
         _fail(-code, shown)
 splice = _absent("splice")
-statvfs = _absent("statvfs")
+
+
+def statvfs(*args: object, **kwds: object) -> object:   # os_statvfs_impl
+    data, shown = _path("statvfs", "path", _unpack("statvfs", args, kwds, ("path",), 1, 1)[0], allow_fd=True)
+    result = _sys("statvfs", data, False)
+    if type(result) is int:
+        _fail(-result, shown)
+    return statvfs_result(result)
 
 
 def sync(*args: object, **kwds: object) -> None:   # os_sync_impl
@@ -1631,7 +1680,13 @@ def sync(*args: object, **kwds: object) -> None:   # os_sync_impl
     _sys("sync")
 
 
-sysconf = _absent("sysconf")
+def sysconf(*args: object, **kwds: object) -> int:   # os_sysconf_impl
+    error, value = _sys("conf", b"sysconf", _confname(_one("sysconf", args, kwds), sysconf_names))
+    if error:
+        _fail(error)
+    return value  # type: ignore[no-any-return]
+
+
 system = _absent("system")
 tcgetpgrp = _absent("tcgetpgrp")
 tcsetpgrp = _absent("tcsetpgrp")
