@@ -118,7 +118,7 @@ def _check_char(name: str, c: str | None, lineterminator: str, allowspace: bool)
         return
     if c == "\r" or c == "\n" or (c == " " and not allowspace):
         raise ValueError("bad " + name + " value")
-    if c in lineterminator:
+    if str.find(lineterminator, c) >= 0:         # PyUnicode_FindChar: not a subclass's __contains__ (review F17 #12)
         raise ValueError("bad " + name + " or lineterminator value")
 
 
@@ -477,6 +477,8 @@ in CSV format from sequence input.
 
     def _append(self, field: str | None, quoted: bool) -> None:   # join_append and join_append_data
         d: Dialect = self._dialect
+        if field is not None and type(field) is not str:
+            field = str.__str__(field)           # PyUnicode_DATA and PyUnicode_GET_LENGTH: the text, not a subclass's __len__ or __iter__
         length = 0 if field is None else len(field)
         if length == 0 and d.delimiter == " " and d.skipinitialspace:
             if d.quoting == QUOTE_NONE or (field is None and d.quoting in (QUOTE_STRINGS, QUOTE_NOTNULL)):
@@ -489,7 +491,7 @@ in CSV format from sequence input.
         if field is not None:
             for c in field:
                 want_escape = False
-                if c == d.delimiter or c == d.escapechar or c == d.quotechar or c == "\n" or c == "\r" or c in d.lineterminator:
+                if c == d.delimiter or c == d.escapechar or c == d.quotechar or c == "\n" or c == "\r" or str.find(d.lineterminator, c) >= 0:
                     if d.quoting == QUOTE_NONE:
                         want_escape = True
                     else:

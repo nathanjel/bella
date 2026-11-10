@@ -299,11 +299,12 @@ class Emitter:
         # a frame CPython does not have (the prelude's C functions, an inlined comprehension)
         # never enters a traceback (RL-223, RL-224)
         shown = "false" if self.prelude or dict(c.meta).get("inlined", False) else "true"
+        inlined = "true" if dict(c.meta).get("inlined", False) and not self.prelude else "false"   # the prelude stands for C, which has none
         def strings(ns: list[str]) -> str:
             return "{" + ", ".join(c_string(n) for n in ns) + "}"
         return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(self.filename)}, "
                 f"{c.first_line}, {len(positional)}, {posonly}, {len(kwonly)}, {str(varargs).lower()}, "
-                f"{str(varkw).lower()}, {strings(names)}, {doc}, {shown}, {strings(cellvars)}, {strings(freevars)}, {flags}}};")
+                f"{str(varkw).lower()}, {strings(names)}, {doc}, {shown}, {strings(cellvars)}, {strings(freevars)}, {flags}, {inlined}}};")
 
     @staticmethod
     def param_order(c: G.Code) -> list[G.Param]:
@@ -949,6 +950,8 @@ class Emitter:
                 return f"rt::load_deref({self.vars[r.id]}, {c_string(r.id)}, true)"
             case "global":
                 return f"rt::load_global(M, {self.name(r.id)})"
+            case "name" if r.mapping == "module":    # in a comprehension inlined into the module's code
+                return f"rt::load_module_name(M, {self.name(r.id)})"
             case "name":
                 return f"rt::load_name(ns, M, {self.name(r.id)})"
             case "classdict":

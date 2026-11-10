@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import typing
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache
@@ -95,9 +96,18 @@ LIBRARY_FLAGS = ["-O0", "-w", *FP_FLAGS]      # the standard library's units: a 
 
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mode: str = "exec",
            future: frozenset[str] = frozenset()) -> str:
-    module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future)))
-    wf2.check(module, lifetimes=True)
-    return emit_module(module, namespace, filename, prelude)
+    # the passes walk the tree by recursion, and a chain of operators, calls or elif branches is as deep as it is long: the
+    # limit eval1's run has (pipeline/l1/run.py), and past it a refusal by name, not a traceback (review F17 #14)
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(limit, 20000))
+    try:
+        module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future)))
+        wf2.check(module, lifetimes=True)
+        return emit_module(module, namespace, filename, prelude)
+    except RecursionError:
+        raise Unsupported(f"{filename}: a chain of operators, calls or branches too long for the compiler's passes") from None
+    finally:
+        sys.setrecursionlimit(limit)
 
 
 def lowered_unit(source: str, filename: str, namespace: str, mode: str = "exec", future: frozenset[str] = frozenset()) -> str:
@@ -256,11 +266,29 @@ def _program_artefact(program: Path) -> dict[str, Any] | None:
     from pipeline.staging import run as staging  # noqa: PLC0415
     try:
         path = staging.program_artefact(program, None, staging.phase1_blocked()).with_suffix(".bin")
-    except SystemExit:
+    except staging.DryRunFailed as exc:
+        if exc.tool:      # the tool's own failure: going on without it would stop the program at a text it has a right to (review F17 #15)
+            raise
         return None
     with path.open("rb") as f:
         artefact: dict[str, Any] = marshal.load(f)
     return artefact
+
+
+def _warned(source: str, filename: str, mode: str, flags: int) -> str:
+    """What CPython's compiler warns of in a text (`1 is 1`, an invalid escape sequence), "" when nothing. It issues the warning
+    each time the program compiles the text, through the filters of that moment (under "error" the compile raises
+    SyntaxError); the runtime replays none, so such a text stops by name (review F17 #11)."""
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        try:
+            compile(source, filename, mode, flags & _FUTURE_MASK, dont_inherit=True)
+        except (SyntaxError, ValueError, OverflowError, RecursionError, MemoryError):
+            return ""                            # no code: what the text raises is its row's own matter
+    if not seen:
+        return ""
+    said = "; ".join(f"{w.category.__name__}: {w.message}" for w in seen)
+    return f"the staged text makes CPython's compiler warn ({said}), each time the program compiles it; a warning is not replayed yet"
 
 
 def _reachable(key: tuple[Any, ...]) -> bool:
@@ -298,8 +326,12 @@ def _compile_row(key: tuple[Any, ...], outcome: tuple[Any, ...], groups: dict[An
     else:
         c = outcome[1]
         namespace = "bella::staged_compile_" + _key(mode.encode(), given, str(filename).encode(), " ".join(sorted(future)).encode())
+        warned = _warned(text, str(filename), mode, flags)
         try:
-            lowered_unit(text, filename, namespace, mode, future)
+            if warned:
+                namespace, why = None, f"compile() at {site}: {warned}"
+            else:
+                lowered_unit(text, filename, namespace, mode, future)
         except (L.Unsupported, L.DialectError, SyntaxError, wf2.WellFormednessError) as exc:
             namespace, why = None, f"compile() at {site}: the staged text does not lower yet: {type(exc).__name__}: {exc}"
         code = (c.co_name, c.co_qualname, c.co_firstlineno, c.co_argcount, c.co_posonlyargcount, c.co_kwonlyargcount,
@@ -314,35 +346,43 @@ def staged_tables(program: Path, modules: list[ProgramModule]) -> tuple[list[Sta
     names = {m.name for m in modules}
     own = [read_source(program), *(read_source(m.path) for m in modules if m.path is not None and not m.frozen and m.origin is None
                                    and not m.path.is_relative_to(STDLIB))]
-    artefacts = [_stdlib_artefact()] if names else []
+    # the standard library's artefact holds every module's sites, of which this program has its closure's; its own artefact
+    # holds what this program ran, the texts of a text included, whose site is named after the `__name__` of the globals it was
+    # given (no module at all)
+    artefacts: list[tuple[dict[str, Any], bool]] = [(_stdlib_artefact(), False)] if names else []
     if any(_MAY_STAGE.search(text) for text in own):
         made = _program_artefact(program)
         if made is not None:
-            artefacts.append(made)
+            artefacts.append((made, True))
     names |= {"__main__"}
     rows: dict[tuple[str, str, str | bytes], StagedRow] = {}
     compiles: dict[tuple[Any, ...], CompileRow] = {}
     groups: dict[Any, int] = {}
     refused: dict[str, str] = {}
     unstaged: dict[str, str] = {}
-    for artefact in artefacts:
+    for artefact, whole in artefacts:
         for key, outcome in artefact["compiled"].items():
-            if key[0].partition(":")[0] in names and key not in compiles and _reachable(key):
+            if (whole or key[0].partition(":")[0] in names) and key not in compiles and _reachable(key):
                 compiles[key] = _compile_row(key, outcome, groups)
         for (site, kind, source), (_code, flags) in artefact["texts"].items():
-            if site.partition(":")[0] not in names or (site, kind, source) in rows:
+            if not (whole or site.partition(":")[0] in names) or (site, kind, source) in rows:
                 continue
             given = source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source
             future = features(flags)
             text = source_text(kind, source)
             name = "bella::staged_" + _key(kind.encode(), given, " ".join(sorted(future)).encode())
+            warned = _warned(text, "<string>", kind, flags)
+            if warned:
+                rows[(site, kind, source)] = StagedRow(site, kind, given, isinstance(source, bytes), None, warned, text, future)
+                continue
             try:
                 lowered_unit(text, "<string>", name, kind, future)
                 rows[(site, kind, source)] = StagedRow(site, kind, given, isinstance(source, bytes), name, "", text, future)
             except (L.Unsupported, L.DialectError, SyntaxError, wf2.WellFormednessError) as exc:
-                rows[(site, kind, source)] = StagedRow(site, kind, given, isinstance(source, bytes), None, f"{type(exc).__name__}: {exc}", text, future)
-        refused.update({s: m for s, m in artefact["refused"].items() if s.partition(":")[0] in names})
-        unstaged.update({s: m for s, m in artefact["unstaged"].items() if s.partition(":")[0] in names})
+                rows[(site, kind, source)] = StagedRow(site, kind, given, isinstance(source, bytes), None,
+                                                       f"the staged text does not lower yet: {type(exc).__name__}: {exc}", text, future)
+        refused.update({s: m for s, m in artefact["refused"].items() if whole or s.partition(":")[0] in names})
+        unstaged.update({s: m for s, m in artefact["unstaged"].items() if whole or s.partition(":")[0] in names})
     return list(rows.values()), refused, unstaged, list(compiles.values())
 
 

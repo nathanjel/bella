@@ -37,6 +37,7 @@ class Scope:
     children: list[Scope] = field(default_factory=list)
     parent: Scope | None = None
     can_see_class: bool = False       # an annotation or type-parameter scope in a class
+    module_frame: bool = False        # a comprehension inlined into the module's own code: its free names are LOAD_NAME there
     synthetic: frozenset[str] = frozenset()
     # results
     scopes: dict[str, str] = field(default_factory=dict)
@@ -78,6 +79,7 @@ class _Collector:
 
     def module(self, m: L.Module) -> Scope:
         s = self.new("module", m, "<module>", None)
+        s.globals |= m.globals
         self.block(m.body, s)
         return s
 
@@ -93,6 +95,7 @@ class _Collector:
         if f.inlined and parent is not None:
             parent.inlined_at.append((len(parent.order), s))
         s.can_see_class = f.classdict
+        s.module_frame = f.module_frame
         s.params += _param_order(f.params)
         for p in f.params:
             s.bind(p.name)
@@ -505,6 +508,8 @@ class Scopes:
         if s.function_like:
             if ctx == "load" and s.can_see_class:
                 return G.NameRef("classdict", name, then="global", mapping="__classdict__")
+            if ctx == "load" and s.module_frame:      # inlined into module code, where an implicit global is OP_NAME (review F17 #2)
+                return G.NameRef("name", name, mapping="module")
             return G.NameRef("global", name)
         return G.NameRef("name", name)
 

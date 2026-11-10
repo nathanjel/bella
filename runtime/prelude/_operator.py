@@ -417,7 +417,8 @@ class attrgetter:
         for item in args:
             if not issubclass(type(item), str):
                 raise TypeError("attribute name must be a string")
-            names.append(tuple(item.split(".")) if "." in item else item)  # type: ignore[attr-defined, operator]
+            # the C reads the code points for dots and cuts with PyUnicode_Substring: not a subclass's split or __contains__ (review F17 #12)
+            names.append(tuple(str.split(item, ".")) if str.find(item, ".") >= 0 else item)  # type: ignore[arg-type]
         self = _bella_new_instance(cls)
         self._attr = tuple(names)
         self._nattrs = nattrs

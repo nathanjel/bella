@@ -39,23 +39,30 @@ def _args(fname: str, args: tuple[object, ...], kwds: dict[str, object], count: 
     return list(args)
 
 
+# PyList_GET_ITEM, PyList_SET_ITEM and PyList_SetSlice: the list's own storage, whatever a subclass's __getitem__, __setitem__ or
+# __delitem__ would do (review F17 #5)
+_get = list.__getitem__
+_set = list.__setitem__
+_del = list.__delitem__
+
+
 def _siftdown(heap: list[object], startpos: int, pos: int, maximum: bool) -> None:   # siftdown / siftdown_max
     size = list.__len__(heap)
     if pos >= size:
         raise IndexError("index out of range")
-    newitem = heap[pos]
+    newitem = _get(heap, pos)
     while pos > startpos:
         parentpos = (pos - 1) >> 1
-        parent = heap[parentpos]
+        parent = _get(heap, parentpos)
         cmp = (parent < newitem) if maximum else (newitem < parent)
         if size != list.__len__(heap):
             raise RuntimeError("list changed size during iteration")
         if not cmp:
             break
-        parent = heap[parentpos]
-        newitem = heap[pos]
-        heap[parentpos] = newitem
-        heap[pos] = parent
+        parent = _get(heap, parentpos)
+        newitem = _get(heap, pos)
+        _set(heap, parentpos, newitem)
+        _set(heap, pos, parent)
         pos = parentpos
 
 
@@ -69,14 +76,17 @@ def _siftup(heap: list[object], pos: int, maximum: bool) -> None:   # siftup / s
         childpos = 2 * pos + 1
         if childpos + 1 < endpos:
             if maximum:                          # the larger child: the right one unless it is smaller than the left
-                cmp = heap[childpos + 1] < heap[childpos]
+                cmp = _get(heap, childpos + 1) < _get(heap, childpos)
             else:                                # the smaller child: the right one unless the left is smaller
-                cmp = heap[childpos] < heap[childpos + 1]
+                cmp = _get(heap, childpos) < _get(heap, childpos + 1)
             if not cmp:
                 childpos += 1
             if endpos != list.__len__(heap):
                 raise RuntimeError("list changed size during iteration")
-        heap[childpos], heap[pos] = heap[pos], heap[childpos]
+        tmp1 = _get(heap, childpos)
+        tmp2 = _get(heap, pos)
+        _set(heap, childpos, tmp2)
+        _set(heap, pos, tmp1)
         pos = childpos
     _siftdown(heap, startpos, pos, maximum)
 
@@ -85,13 +95,13 @@ def _pop(heap: list[object], maximum: bool) -> object:   # heappop_internal
     n = list.__len__(heap)
     if n == 0:
         raise IndexError("index out of range")
-    lastelt = heap[n - 1]
-    del heap[n - 1:n]
+    lastelt = _get(heap, n - 1)
+    _del(heap, slice(n - 1, n))
     n -= 1
     if not n:
         return lastelt
-    returnitem = heap[0]
-    heap[0] = lastelt
+    returnitem = _get(heap, 0)
+    _set(heap, 0, lastelt)
     _siftup(heap, 0, maximum)
     return returnitem
 
@@ -99,8 +109,8 @@ def _pop(heap: list[object], maximum: bool) -> object:   # heappop_internal
 def _replace(heap: list[object], item: object, maximum: bool) -> object:   # heapreplace_internal
     if list.__len__(heap) == 0:
         raise IndexError("index out of range")
-    returnitem = heap[0]
-    heap[0] = item
+    returnitem = _get(heap, 0)
+    _set(heap, 0, item)
     _siftup(heap, 0, maximum)
     return returnitem
 
@@ -108,14 +118,14 @@ def _replace(heap: list[object], item: object, maximum: bool) -> object:   # hea
 def _pushpop(heap: list[object], item: object, maximum: bool) -> object:   # heappushpop and heappushpop_max
     if list.__len__(heap) == 0:
         return item
-    top = heap[0]
+    top = _get(heap, 0)
     cmp = (item < top) if maximum else (top < item)
     if not cmp:
         return item
     if list.__len__(heap) == 0:
         raise IndexError("index out of range")
-    returnitem = heap[0]
-    heap[0] = item
+    returnitem = _get(heap, 0)
+    _set(heap, 0, item)
     _siftup(heap, 0, maximum)
     return returnitem
 

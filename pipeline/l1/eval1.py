@@ -76,6 +76,8 @@ class Scope:
     temps: dict[str, Any] = field(default_factory=dict)
     synthetic: frozenset[str] = frozenset()   # on a module scope: the names its frontend generated
     is_class: bool = False                 # a class body: invisible to the scopes nested in it
+    text: bool = False                     # the locals a text was run with (exec, eval): a class-like scope over its globals
+    module_frame: bool = False             # a comprehension inlined into the module's code (PEP 709): it reads those locals
     cell: Any = None                       # a class body's __class__ cell, when it has one
     classdict: Any = None                  # a class body's __classdict__ cell, when it has one
     caller: Any = None                     # on a module scope: caller_for's function
@@ -462,7 +464,7 @@ class Interpreter:
         else:
             bound: set[str] = set()
             _bound_in(m.body, bound)
-            scope = Scope(vars=loc, parent=module, locals_=frozenset(bound), module=module, is_class=True)
+            scope = Scope(vars=loc, parent=module, locals_=frozenset(bound), globals_=m.globals, module=module, is_class=True, text=True)
         self.frames.append((module, "<module>"))
         try:
             if m.mode == "eval":
@@ -549,6 +551,15 @@ class Interpreter:
                 return _reify(value, name, mapping)
         s: Scope | None = scope.parent
         while s is not None and not s.is_module():
+            if s.is_class and s.text and scope.module_frame:
+                # LOAD_NAME from a comprehension inlined into the text's code: the locals it was run with, then the globals
+                found = True
+                try:
+                    value = s.vars[name]
+                except KeyError:
+                    found = False
+                if found:
+                    return _reify(value, name, s.vars)
             if s.is_class:
                 # a class body's names are invisible to what is nested in it, except the
                 # __class__ cell of the nearest class a function is in
@@ -1058,6 +1069,7 @@ class Interpreter:
         scope = Scope(vars={}, parent=closure, locals_=_local_names(node),
                       globals_=node.globals if isinstance(node, L.FunctionDef) else frozenset(),
                       nonlocals_=node.nonlocals if isinstance(node, L.FunctionDef) else frozenset(), module=module,
+                      module_frame=isinstance(node, L.FunctionDef) and node.module_frame,
                       classdict_scope=_nearest_class(closure) if isinstance(node, L.FunctionDef) and node.classdict else None)
         if self.staged is not None:
             self._check_entry(module, node.qualname)

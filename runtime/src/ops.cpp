@@ -1906,11 +1906,11 @@ Ref frozendict_copy(Obj v) {
 Ref dict_copy(Dict* d) {
     Ref out = dict_new();
     auto* to = static_cast<Dict*>(out.get().object());
-    if (overridden(Obj::of(d), "__iter__")) {      // a subclass's own iteration: merged through keys()
+    if (d->used == 0) return out;                  // copy_lock_held: an empty one before anything is asked (review F17 #18)
+    if (!d->split && overridden(Obj::of(d), "__iter__")) {   // a subclass's own iteration: merged through keys()
         each_item(Obj::of(d), [&](Obj k, Obj v) { dict_set(to, k, v); });
         return out;
     }
-    if (d->used == 0) return out;
     if (d->split || d->used >= d->entries.size() * 2 / 3) {
         dict_clone_into(to, d);
         return out;

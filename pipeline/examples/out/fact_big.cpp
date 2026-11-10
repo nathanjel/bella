@@ -13,9 +13,9 @@ static const rt::Str* const S_print = rt::intern("print");
 static const rt::Str* const S_range = rt::intern("range");
 static Obj K_1, K_2;
 
-static const rt::Code code_module{"<module>", "<module>", "fact_big.py", 1, 0, 0, 0, false, false, {}, nullptr, true, {}, {}, 0};
-static const rt::Code code_factorial_annotate{"__annotate__", "factorial.__annotate__", "fact_big.py", 4, 1, 1, 0, false, false, {"format"}, nullptr, true, {}, {}, 3};
-static const rt::Code code_factorial{"factorial", "factorial", "fact_big.py", 4, 1, 0, 0, false, false, {"n", "result", "i"}, nullptr, true, {}, {}, 3};
+static const rt::Code code_module{"<module>", "<module>", "fact_big.py", 1, 0, 0, 0, false, false, {}, nullptr, true, {}, {}, 0, false};
+static const rt::Code code_factorial_annotate{"__annotate__", "factorial.__annotate__", "fact_big.py", 4, 1, 1, 0, false, false, {"format"}, nullptr, true, {}, {}, 3, false};
+static const rt::Code code_factorial{"factorial", "factorial", "fact_big.py", 4, 1, 0, 0, false, false, {"n", "result", "i"}, nullptr, true, {}, {}, 3, false};
 
 static Ref f_factorial_annotate(rt::PyFunction* fn, rt::Args args);
 static Ref f_factorial(rt::PyFunction* fn, rt::Args args);

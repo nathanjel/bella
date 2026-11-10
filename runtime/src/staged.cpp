@@ -52,7 +52,7 @@ const StagedText& find_text(const std::string& site, const char* kind, Obj sourc
     std::string data = bytes ? bytes_data(source) : as_str(source)->text;
     for (const StagedText& t : table().texts)
         if (t.bytes == bytes && site == t.site && std::string_view(kind) == t.kind && std::string_view(t.source, t.length) == data) {
-            if (t.body == nullptr) refused(std::string(kind) + " at " + site + ": the staged text does not lower yet: " + t.why);
+            if (t.body == nullptr) refused(std::string(kind) + " at " + site + ": " + t.why);
             return t;
         }
     if (const StagedSite* r = site_row(table().unstaged, site)) refused(r->message);
@@ -100,6 +100,13 @@ Ref run(const char* kind, const std::string& site, Obj source, Obj globals, Obj 
     }
     return body(static_cast<Module*>(module.get().object()));
 }
+// The frame's locals are asked for from inside a comprehension: CPython inlines it (PEP 709), so its variables are that frame's
+// own and the text may read them; here they are the helper's, out of reach. Inside a function the call stops in any case; at
+// module level it would run without them, so it stops here (review F17 #6)
+void frame_locals_reachable(const char* kind, const detail::FrameRecord* caller) {
+    if (caller != nullptr && caller->comprehensions > 0)
+        throw NotImplemented(std::string(kind) + "() in a comprehension, with the frame's locals (PEP 709: the comprehension's variables are the frame's)");
+}
 // PyEval_GetGlobals and _PyEval_GetFrameLocals: a module's frame has its globals for locals; a function's a snapshot
 void from_frame(const char* kind, detail::FrameRecord* caller, Obj& globals, Obj& locals) {
     if (caller == nullptr) raise_new("TypeError", std::string(kind) + " must be given globals and locals when called without a frame");
@@ -110,8 +117,12 @@ void from_frame(const char* kind, detail::FrameRecord* caller, Obj& globals, Obj
             locals = globals;
             return;
         }
-        // a function's snapshot, or a class body's namespace: Unset until the text is known to be run
-        locals = std::string_view(caller->code->name) == "<module>" ? globals : Obj{};
+        // a module's frame has its globals for locals, or, when it is a text's that was given locals, those (review F17 #8);
+        // a function's snapshot or a class body's namespace: Unset until the text is known to be run
+        if (std::string_view(caller->code->name) == "<module>")
+            locals = caller->module->locals != nullptr ? Obj::of(caller->module->locals) : globals;
+        else
+            locals = Obj{};
     }
 }
 // source, then the optional ones by position or name; what the clinic says of each
@@ -234,6 +245,7 @@ Ref b_eval(Obj, Args a) {                        // builtin_eval_impl: eval(sour
         raise_new("TypeError", is_mapping(globals) ? "globals must be a real dict or a frozendict; try eval(expr, {}, mapping)" : "globals must be a dict or a frozendict");
     detail::FrameRecord* caller = python_caller();
     std::string site = site_of(caller);
+    if (globals == None() && locals == None()) frame_locals_reachable("eval", caller);
     from_frame("eval", caller, globals, locals);
     return run("eval", site, source, globals, locals);
 }
@@ -244,6 +256,7 @@ Ref b_exec(Obj, Args a) {                        // builtin_exec_impl: exec(sour
     Obj source = given[0], globals = given[1], locals = given[2], closure = given[3];
     detail::FrameRecord* caller = python_caller();
     std::string site = site_of(caller);
+    if (globals == None() && locals == None()) frame_locals_reachable("exec", caller);
     from_frame("exec", caller, globals, locals);
     if (!is_kind(globals, Kind::Dict)) raise_new("TypeError", "exec() globals must be a dict or a frozendict, not " + fully_qualified_name(type_of(globals)));
     if (!locals.is_unset() && !is_mapping(locals)) raise_new("TypeError", "locals must be a mapping or None, not " + type_of(locals)->name);

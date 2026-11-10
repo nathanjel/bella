@@ -996,6 +996,19 @@ def _od_setitem_hashed(self: object, key: object, value: object, hash: int) -> N
     _od_add_new_node(self, _od(self), key, hash)
 
 
+def _key_error(key: object) -> BaseException:
+    """PyErr_SetObject(PyExc_KeyError, key), as odictobject.c raises a missing key: an instance of KeyError is the exception, a tuple
+    its arguments, None no argument; anything else the one argument (review F17 #9). `del od[key]` and `od[key]` go through
+    _PyErr_SetKeyError instead, which always wraps."""
+    if issubclass(type(key), KeyError):
+        return key  # type: ignore[return-value]
+    if key is None:
+        return KeyError()
+    if isinstance(key, tuple):
+        return KeyError(*tuple.__getitem__(key, slice(None)))
+    return KeyError(key)
+
+
 def _od_setitem(self: object, key: object, value: object) -> None:   # PyODict_SetItem
     _od_setitem_hashed(self, key, value, _hash_of(key))
 
@@ -1015,7 +1028,7 @@ def _od_popkey_hash(self: object, key: object, failobj: object, hash: int) -> ob
         value = _pop_hashed(self, key, hash, _NULL)
         return failobj if value is _NULL else value
     if failobj is _NULL:
-        raise KeyError(key)
+        raise _key_error(key)
     return failobj
 
 
@@ -1278,7 +1291,7 @@ class OrderedDict(dict):  # type: ignore[type-arg]
             if exact:
                 value = dict.get(self, key, _NULL)  # type: ignore[arg-type]
                 if value is _NULL:
-                    raise KeyError(key)
+                    raise _key_error(key)
                 _od_setitem_hashed(od_copy, key, value, n[_HASH])
             else:
                 od_copy[key] = self[key]  # type: ignore[index]
@@ -1294,12 +1307,12 @@ class OrderedDict(dict):  # type: ignore[type-arg]
         last = True if last is _NULL else bool(last)
         fields = _od(self)
         if fields[_FIRST] is None:
-            raise KeyError(key)
+            raise _key_error(key)
         node = fields[_LAST] if last else fields[_FIRST]
         if key is not fields[_NODES][node][_KEY]:
             node = _od_find(self, fields, key)
             if node is None:
-                raise KeyError(key)
+                raise _key_error(key)
             if last:
                 if node != fields[_LAST]:
                     _od_remove(fields, node)
@@ -1335,7 +1348,7 @@ class odict_iterator:
         if value is _NULL:
             self._b_current = _NULL  # type: ignore[attr-defined]
             self._a_odict = _NULL  # type: ignore[attr-defined]
-            raise KeyError(key)
+            raise _key_error(key)
         if not kind & _ITER_KEYS:
             return value
         return (key, value)
@@ -1379,7 +1392,7 @@ def _odictiter_nextkey(it: Any) -> object:     # odictiter_nextkey_lock_held: th
     if node is None:                             # must have been deleted
         key = it._b_current
         it._b_current = _NULL
-        raise KeyError(key)
+        raise _key_error(key)
     key = it._b_current
     n = fields[_NODES][node]
     following = n[_PREV] if it._e_kind & _ITER_REVERSED else n[_NEXT]

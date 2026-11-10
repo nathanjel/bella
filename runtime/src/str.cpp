@@ -624,7 +624,7 @@ Ref str_splitlines_m(Obj self, Args a) {         // unicode_splitlines_impl(keep
             i += s->at(i) == U'\r' && i + 1 < n && s->at(i + 1) == U'\n' ? 2 : 1;
             if (keepends) eol = i;
         }
-        if (j == 0 && eol == n) {                // no line break, or one line whole: the object itself
+        if (j == 0 && eol == n && is_exact_str(self)) {   // no line break, or one line whole: the object itself, when it is exactly a str (STRINGLIB_CHECK_EXACT; review F17 #13)
             list_append(out.get(), self);
             break;
         }

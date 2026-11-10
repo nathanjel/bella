@@ -2726,7 +2726,7 @@ class TextIOWrapper(_TextIOBase):
             if str.find(text, "\n") != -1:
                 haslf = True
         if haslf and self._x_writetranslate and self._y_writenl is not None:
-            text = text.replace("\n", self._y_writenl)
+            text = str.replace(text, "\n", self._y_writenl)   # PyUnicode_Replace: not a subclass's replace
         text_needflush = self._w_write_through
         needflush = self._v_line_buffering and (haslf or str.find(text, "\r") != -1)
         b = self._i_encoder.encode(text)  # type: ignore[attr-defined]
@@ -3119,6 +3119,8 @@ def _sio_check(self: StringIO) -> None:
 
 def _sio_write_str(self: StringIO, obj: str) -> None:   # write_str
     decoded: str = _nl_decode(self._c_decoder, obj, True) if self._c_decoder is not None else obj
+    if type(decoded) is not str:                 # the C copies code points: a subclass's +, slicing and replace are not asked (review F17 #4)
+        decoded = str.__str__(decoded)
     if self._h_writenl is not None:
         decoded = decoded.replace("\n", self._h_writenl)
     length = str.__len__(decoded)
@@ -3173,7 +3175,7 @@ class StringIO(_TextIOBase):
             if not isinstance(newline_obj, str):
                 raise TypeError("newline must be str or None, not " + _tp_name(newline_obj))
             str.encode(newline_obj, "utf-8")
-            newline = newline_obj
+            newline = str.__str__(newline_obj)   # PyUnicode_AsUTF8, then PyUnicode_FromString: the text, an exact str
             cut = str.find(newline, "\0")
             if cut >= 0:
                 newline = newline[:cut]

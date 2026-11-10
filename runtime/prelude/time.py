@@ -346,7 +346,9 @@ Get information of the specified clock."""
     name = args[0]
     if not issubclass(type(name), str):
         raise TypeError("get_clock_info() argument 1 must be str, not " + _tp_name(name))
-    if "\x00" in name:  # type: ignore[operator]
+    str.encode(name, "utf-8")  # type: ignore[arg-type]   # the "s" converter: PyUnicode_AsUTF8AndSize, then the null check
+    name = str.__str__(name)  # type: ignore[arg-type]   # the text: the C compares it with strcmp (review F17 #12)
+    if str.find(name, "\x00") >= 0:
         raise ValueError("embedded null character")
     clocks = {"time": (CLOCK_REALTIME, "clock_gettime(CLOCK_REALTIME)", False, True), "monotonic": (CLOCK_MONOTONIC, "clock_gettime(CLOCK_MONOTONIC)", True, False),
               "perf_counter": (CLOCK_MONOTONIC, "clock_gettime(CLOCK_MONOTONIC)", True, False),
@@ -369,7 +371,8 @@ Get information of the specified clock."""
 
 def _tm_to_struct(fields: tuple[object, ...]) -> object:   # tmtotuple: the C ranges to Python's
     year, mon, mday, hour, minute, sec, wday, yday, isdst, zone, gmtoff = fields
-    return struct_time((year + 1900, mon + 1, mday, hour, minute, sec, (wday + 6) % 7, yday + 1, isdst,  # type: ignore[operator]
+    year = (year + 1900 + 2**31) % 2**32 - 2**31  # type: ignore[operator]   # tm_year + 1900 in a C int: past 2**31 the pin's build wraps (review F17 #17)
+    return struct_time((year, mon + 1, mday, hour, minute, sec, (wday + 6) % 7, yday + 1, isdst,  # type: ignore[operator]
                         bytes.decode(zone, "utf-8", "surrogateescape"), gmtoff))  # type: ignore[arg-type]
 
 

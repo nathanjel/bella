@@ -85,7 +85,7 @@ class _Checker:
             self.fail(code, f"cell {r.id!r} is not in cellvars")
         elif r.kind == "free" and r.id not in code.freevars:
             self.fail(code, f"free {r.id!r} is not in freevars")
-        elif r.kind == "name" and code.kind not in ("module", "classbody"):
+        elif r.kind == "name" and code.kind not in ("module", "classbody") and r.mapping != "module":
             self.fail(code, f"name {r.id!r} (LOAD_NAME) outside a module or class body")
         elif r.kind == "classdict" and (r.then not in ("global", "free") or r.mapping not in ("locals", "__classdict__")):
             self.fail(code, f"classdict {r.id!r} needs then= global|free and mapping= locals|__classdict__")

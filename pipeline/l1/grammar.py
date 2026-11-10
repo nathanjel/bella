@@ -360,6 +360,9 @@ class FunctionDef(Stmt):
     # a list, set or dict comprehension's helper: CPython inlines it (PEP 709), so it has no
     # frame of its own and never enters a traceback
     inlined: bool = False
+    # such a helper whose comprehension stands in the module's own code (not in a function, a lambda, a class body or a
+    # generator expression): inlined there, its free names are LOAD_NAME, the frame's locals before the globals
+    module_frame: bool = False
     # co_firstlineno: the first decorator's line when there are decorators, else the def's (`line`)
     first_line: int = 0
 
@@ -413,3 +416,7 @@ class Module(Node):
     synthetic: frozenset[str] = field(default=frozenset(), compare=False)
     future: frozenset[str] = field(default=frozenset(), compare=False)   # its __future__ features
     mode: str = field(default="exec", compare=False)   # "eval": the value is the last statement's
+    # the names its own statements declare global, and the walrus targets of its comprehensions, which the symbol table
+    # declares so (symtable_extend_namedexpr_scope): stored and read in the globals, where a text run with locals of its own
+    # would use those (STORE_GLOBAL against STORE_NAME); in a module run as a module the two are one mapping
+    globals: frozenset[str] = field(default=frozenset(), compare=False)

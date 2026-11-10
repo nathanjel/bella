@@ -691,6 +691,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (k->text == "__qualname__") {
             const Str* q = as_str(e.value);
             if (q == nullptr) raise_new("TypeError", "type __qualname__ must be a str, not " + type_of(e.value)->name);
+            if (!is_exact_str(e.value)) throw NotImplemented("a subclass of str as a class's __qualname__ (CPython keeps the object; the runtime keeps text)");
             qualname = q->text;
             continue;
         }
@@ -1333,6 +1334,7 @@ void set_type_qualname(Obj self, Obj v) {
     check_special(c, v, "__qualname__");
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "can only assign string to " + c->name + ".__qualname__, not '" + type_of(v)->name + "'");
+    if (!is_exact_str(v)) throw NotImplemented("a subclass of str as a class's __qualname__ (CPython keeps the object; the runtime keeps text)");
     c->qualname = s->text;
 }
 Ref type_module(Obj self) {
@@ -2352,7 +2354,7 @@ Ref exception_args_get(Obj self) { return exception_args(self); }
 void exception_args_set(Obj self, Obj v) {          // PySequence_Tuple
     if (v.is_unset()) raise_new("TypeError", "args may not be deleted");
     Ref t;
-    if (is_kind(v, Kind::Tuple)) {
+    if (is_exact_tuple(v)) {                         // a subclass is iterated, as anything else is (review F17 #12)
         t = Ref::share(v);
     } else {
         Ref it = iter(v);

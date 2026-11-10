@@ -402,6 +402,21 @@ class _Rewrite(ast.NodeTransformer):
         return super().generic_visit(node)
 
 
+def _pep563_text(annotation: ast.expr, starred: bool) -> str:
+    """The string CPython's compiler stores for an annotation (Python/ast_unparse.c), asked of it: ast.unparse differs from it in
+    places and needs a codec phase 1 lacks (review F17 #10, #15)."""
+    arg = ast.arg("a", ast.Starred(annotation, ast.Load()) if starred else annotation)
+    fn = ast.FunctionDef("f", ast.arguments([], [] if starred else [arg], arg if starred else None, [], [], None, []), [ast.Pass()], [], None, None, [])
+    module = ast.Module([ast.ImportFrom("__future__", [ast.alias("annotations")], 0), fn], [])
+    namespace: dict[str, object] = {}
+    exec(compile(ast.fix_missing_locations(module), "<annotation>", "exec", dont_inherit=True), namespace)  # noqa: S102
+    made = namespace["f"]
+    assert isinstance(made, types.FunctionType)
+    text = made.__annotations__["a"]
+    assert isinstance(text, str)
+    return text
+
+
 def _generate(owner: _Owner) -> tuple[ast.FunctionDef, list[tuple[str, str]], tuple[str, ...]]:
     rewrite = _Rewrite(owner)
     module = owner.kind == "module"
@@ -411,7 +426,7 @@ def _generate(owner: _Owner) -> tuple[ast.FunctionDef, list[tuple[str, str]], tu
     ]
     if owner.strings:                 # PEP 563: the strings the compiler stored, loading nothing; a starred vararg annotation keeps its star
         body.append(ast.Return(ast.Dict([ast.Constant(k) for k, _, _, _ in owner.entries],
-                                        [ast.Constant(("*" if starred else "") + ast.unparse(ann)) for _, ann, _, starred in owner.entries])))
+                                        [ast.Constant(_pep563_text(ann, starred)) for _, ann, _, starred in owner.entries])))
         params = ast.arguments([], [ast.arg("format"), ast.arg("_g"), ast.arg("_c")], None, [], [], None, [])
         fn = ast.FunctionDef("__annotate__", params, body, [], None, None, [])
         ast.copy_location(fn, owner.entries[0][1])

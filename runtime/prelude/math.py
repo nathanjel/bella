@@ -994,14 +994,15 @@ Roughly equivalent to:
         p = tuple(p)  # type: ignore[call-overload]
     if not issubclass(type(q), tuple):
         q = tuple(q)  # type: ignore[call-overload]
-    if len(p) != len(q):  # type: ignore[arg-type]
+    size = tuple.__len__(p)  # type: ignore[arg-type]   # PyTuple_GET_SIZE and PyTuple_GET_ITEM: not a subclass's __len__ or __getitem__ (review F17 #12)
+    if size != tuple.__len__(q):  # type: ignore[arg-type]
         raise ValueError("both points must have the same number of dimensions")
     largest = 0.0
     found_nan = False
     diffs: list[float] = []
-    for i in range(len(p)):  # type: ignore[arg-type]
-        px = _assign_double(p[i])  # type: ignore[index]
-        qx = _assign_double(q[i])  # type: ignore[index]
+    for i in range(size):
+        px = _assign_double(tuple.__getitem__(p, i))  # type: ignore[arg-type]
+        qx = _assign_double(tuple.__getitem__(q, i))  # type: ignore[arg-type]
         x = abs(px - qx)
         diffs.append(x)
         found_nan = found_nan or _isnan(x)

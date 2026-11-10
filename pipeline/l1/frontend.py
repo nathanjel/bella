@@ -18,7 +18,6 @@ from pathlib import Path
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-import _ast_unparse  # type: ignore[import-not-found]  # noqa: F401  # ast.unparse imports it on first use; here, never while a program runs
 
 from pipeline.l1 import grammar as L
 from pipeline.passes import manager
@@ -29,6 +28,7 @@ _counter = itertools.count()
 # of the program being lowered, and are recorded so that the module can hide them (Module.synthetic).
 _TAKEN: set[str] = set()
 _SYNTHETIC: set[str] = set()
+_WALRUS_GLOBALS: set[str] = set()     # the walrus targets of the module's own comprehensions, of the module being lowered
 
 
 def _tmp(prefix: str) -> str:
@@ -123,7 +123,7 @@ def _annotate_function(entries: list[tuple[str, ast.expr, int | None]], conditio
                body=[ast.Raise(exc=_intrinsic("NotImplementedError"), cause=None)], orelse=[]),
         ast.Assign(targets=[ast.Name(id=d, ctx=ast.Store())], value=ast.Dict(keys=[], values=[]))]
     for key, annotation, index in entries:
-        value = ast.Constant(ast.unparse(annotation)) if future else annotation
+        value = ast.Constant(annotation_text(annotation)) if future else annotation
         store: ast.stmt = ast.Assign(targets=[ast.Subscript(value=ast.Name(id=d, ctx=ast.Load()), slice=ast.Constant(key),
                                                             ctx=ast.Store())], value=value)
         if index is not None:
@@ -185,7 +185,8 @@ class _Annotations:
         return self.classes[-1] if self.classes else None
 
     def run(self, tree: ast.Module) -> ast.Module:
-        doc = _docstring(tree.body)
+        # an expression's text (eval, compile in mode "eval") has no docstring: a str literal is its value (review F17 #1)
+        doc = None if getattr(tree, "bella_eval", False) else _docstring(tree.body)
         body = tree.body[1:] if doc is not None else tree.body
         annotated = self.has_annotations(tree.body)     # before block() rewrites nested statements in place
         entries: list[tuple[str, ast.expr, int | None]] = []
@@ -291,7 +292,7 @@ class _Annotations:
             out.append(_copy_loc(ast.Assign(
                 targets=[ast.Subscript(value=ast.Name(id="__annotations__", ctx=ast.Load()), slice=ast.Constant(key),
                                        ctx=ast.Store())],
-                value=ast.Constant(ast.unparse(s.annotation))), s))
+                value=ast.Constant(annotation_text(s.annotation))), s))
         elif s.simple and isinstance(s.target, ast.Name):
             key = mangle(self.private, s.target.id)
             index: int | None = None
@@ -648,7 +649,7 @@ class _FunctionAnnotations:
         for key, e in items:
             value: ast.expr
             if self.future:
-                value = ast.Constant(ast.unparse(e))
+                value = ast.Constant(annotation_text(e))
             elif isinstance(e, ast.Starred):
                 one = _tmp("unpacked")
                 body.append(_copy_loc(ast.Assign(targets=[ast.Tuple(elts=[ast.Name(id=one, ctx=ast.Store())], ctx=ast.Store())],
@@ -702,6 +703,20 @@ def _own_scope(stmts: list[ast.stmt]) -> Iterator[ast.AST]:
         yield n
         if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             todo.extend(ast.iter_child_nodes(n))
+
+
+def annotation_text(annotation: ast.expr) -> str:
+    """An annotation's text under PEP 563, from the compiler that makes it (Python/ast_unparse.c): ast.unparse, the library's, writes
+    a call's lone generator argument, a lambda's starred first parameter, an f-string holding both quotes and an attribute of True
+    otherwise (review F17 #10). The annotation is compiled as a parameter's, in a function of its own, and read back."""
+    starred = isinstance(annotation, ast.Starred)          # `*args: *Ts`
+    arg = ast.arg("a", annotation)
+    fn = ast.FunctionDef("f", ast.arguments([], [] if starred else [arg], arg if starred else None, [], [], None, []), [ast.Pass()], [], None, None, [])
+    module = ast.Module([ast.ImportFrom("__future__", [ast.alias("annotations")], 0), fn], [])
+    namespace: dict[str, Any] = {}
+    exec(compile(ast.fix_missing_locations(module), "<annotation>", "exec", dont_inherit=True), namespace)  # noqa: S102
+    text: str = namespace["f"].__annotations__["a"]
+    return text
 
 
 def declarations(stmts: list[ast.stmt]) -> tuple[set[str], set[str]]:
@@ -1635,8 +1650,9 @@ class _Comprehensions(ast.NodeTransformer):
     transformer does not enter nested function bodies: ``_hoist`` lowers each body in its own
     scope."""
 
-    def __init__(self, scope: str, globals_: frozenset[str] = frozenset(), through: str = "") -> None:
+    def __init__(self, scope: str, globals_: frozenset[str] = frozenset(), through: str = "", module_frame: bool = False) -> None:
         self.hoisted: list[ast.stmt] = []
+        self.module_frame = module_frame         # the code runs in the module's own frame: a comprehension there is inlined into it
         self.scope = scope                       # "module", "function" or "class": the scope a walrus target binds in
         self.globals_ = globals_                 # the names the containing function declares global
         # the statements are an annotation scope's: symtable_extend_namedexpr_scope skips it, so a walrus target binds in the scope
@@ -1716,6 +1732,9 @@ class _Comprehensions(ast.NodeTransformer):
         # (review 2026-11-02, G6 2.4.2); the helper's own comprehensions see the same names global
         declared_global = [n for n in bound_outside if self.scope != "function" or n in self.globals_]
         declared_nonlocal = [n for n in bound_outside if n not in declared_global]
+        if self.scope == "module":               # the symbol table declares them global in the module too (review F17 #2)
+            _WALRUS_GLOBALS.update(declared_global)
+        frame = self.module_frame and kind != "genexp"   # a generator expression is a function of its own
         if bound_outside:
             if self.through and self.through != "annotation":
                 raise SyntaxError(f"assignment expression within a comprehension cannot be used in a {self.through} (line {node.lineno})")
@@ -1739,10 +1758,11 @@ class _Comprehensions(ast.NodeTransformer):
         fn = ast.FunctionDef(
             name="<genexpr>" if kind == "genexp" else fname,
             args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=arg)], kwonlyargs=[], kw_defaults=[], defaults=[]),
-            body=_hoist(body, "function", frozenset(declared_global)),   # comprehensions in the element, conditions or inner loops
+            body=_hoist(body, "function", frozenset(declared_global), module_frame=frame),   # comprehensions in the element, conditions or inner loops
             decorator_list=[], returns=None, type_params=[])
         fn.bella_store = fname  # type: ignore[attr-defined]
         fn.bella_inlined = kind != "genexp"  # type: ignore[attr-defined]
+        fn.bella_module_frame = frame  # type: ignore[attr-defined]
         fn.bella_qualname = getattr(node, "bella_qualname", None)  # type: ignore[attr-defined]
         if declared_nonlocal:
             fn.bella_enclosing_binds = declared_nonlocal  # type: ignore[attr-defined]
@@ -1755,14 +1775,17 @@ class _Comprehensions(ast.NodeTransformer):
             keywords=[]), node))
 
 
-def _hoist(stmts: list[ast.stmt], scope: str = "module", globals_: frozenset[str] = frozenset(), through: str = "") -> list[ast.stmt]:
+def _hoist(stmts: list[ast.stmt], scope: str = "module", globals_: frozenset[str] = frozenset(), through: str = "",
+           module_frame: bool = False) -> list[ast.stmt]:
     """`globals_`: the names the function whose statements these are declares global; `through`: the statements are an annotation
-    scope's ("annotation": a comprehension's walrus binds in `scope`, the scope around it) or a type scope's (its words)."""
+    scope's ("annotation": a comprehension's walrus binds in `scope`, the scope around it) or a type scope's (its words);
+    `module_frame`: they run in the module's own frame (its statements, and the comprehensions inlined into them)."""
     out: list[ast.stmt] = []
     for s in stmts:
-        tr = _Comprehensions(scope, globals_, through)
+        tr = _Comprehensions(scope, globals_, through, module_frame)
         s = tr.visit(s)
         inner, inner_globals, inner_through = scope, globals_, ""
+        inner_frame = module_frame and not isinstance(s, _DEFS)   # a function's or a class's body is a frame of its own
         if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if getattr(s, "bella_annotation", False):   # an annotation or type scope: transparent to a walrus, or refusing it
                 inner_through = getattr(s, "bella_typescope", "annotation")
@@ -1776,12 +1799,12 @@ def _hoist(stmts: list[ast.stmt], scope: str = "module", globals_: frozenset[str
             inner, inner_globals = "class", frozenset()
         for fld in ("body", "orelse", "finalbody"):
             if hasattr(s, fld) and isinstance(getattr(s, fld), list):
-                setattr(s, fld, _hoist(getattr(s, fld), inner, inner_globals, inner_through))
+                setattr(s, fld, _hoist(getattr(s, fld), inner, inner_globals, inner_through, inner_frame))
         if isinstance(s, (ast.Try, ast.TryStar)):
             for h in s.handlers:
-                h.body = _hoist(h.body, scope, globals_, through)
+                h.body = _hoist(h.body, scope, globals_, through, module_frame)
         for case in getattr(s, "cases", []):
-            case.body = _hoist(case.body, scope, globals_, through)
+            case.body = _hoist(case.body, scope, globals_, through, module_frame)
         out.extend(tr.hoisted)
         out.append(s)
     return out
@@ -1798,7 +1821,7 @@ def _hoist(stmts: list[ast.stmt], scope: str = "module", globals_: frozenset[str
     discharge=Discharge.TESTED, status="tested",
 ))
 def desugar_listcomp(tree: ast.Module) -> ast.Module:
-    tree.body = _hoist(tree.body, "module")
+    tree.body = _hoist(tree.body, "module", module_frame=True)
     return ast.fix_missing_locations(tree)
 
 
@@ -2168,6 +2191,7 @@ class _ToL1:
                              annotation=bool(getattr(f, "bella_annotation", False)),
                              classdict=bool(getattr(f, "bella_classdict", False)),
                              inlined=bool(getattr(f, "bella_inlined", False)),
+                             module_frame=bool(getattr(f, "bella_module_frame", False)),
                              first_line=int(getattr(f, "bella_first_line", 0)) or f.lineno)
 
     def class_(self, c: ast.ClassDef) -> L.Assign:
@@ -2405,6 +2429,7 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
         assert isinstance(expression, ast.Expression)
         check_compile(expression, filename, mode, inherit_future)
         tree = ast.Module([ast.fix_missing_locations(ast.copy_location(ast.Expr(expression.body), expression.body))], [])
+        tree.bella_eval = True  # type: ignore[attr-defined]
     else:
         parsed = _parse(source, filename, "exec", inherit_future)
         assert isinstance(parsed, ast.Module)
@@ -2416,6 +2441,9 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
     _TAKEN.clear()
     _TAKEN.update(_identifiers(tree))
     _SYNTHETIC.clear()
+    _WALRUS_GLOBALS.clear()
+    declared = frozenset(declarations(tree.body)[0])     # `global` among the module's own statements (review F17 #3)
     module = manager.run(tree, manager.pipeline(FRONTEND_PASSES))
     assert isinstance(module, L.Module)
-    return dataclasses.replace(module, synthetic=frozenset(_SYNTHETIC), future=tree.bella_future, mode=mode)  # type: ignore[attr-defined]
+    return dataclasses.replace(module, synthetic=frozenset(_SYNTHETIC), future=tree.bella_future, mode=mode,  # type: ignore[attr-defined]
+                               globals=declared | frozenset(_WALRUS_GLOBALS))

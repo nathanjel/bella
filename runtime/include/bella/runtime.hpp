@@ -189,6 +189,7 @@ struct Code {
     std::vector<const char*> cellvars;           // co_cellvars and co_freevars (the closure's cells are in freevars' order)
     std::vector<const char*> freevars;
     int flags = 0;                               // co_flags, from the kind of code (specification E-02 as narrowed in v0.14)
+    bool inlined = false;                        // a program's list, set or dict comprehension: CPython runs it in the frame around it (PEP 709)
     mutable bool module_rebound = false;         // a function of this code had its __module__ rebound: a frame's name is no longer its globals'
     mutable Ref object;                          // its code object, made at the first f.__code__ (one per record: equality is identity)
 };
@@ -587,6 +588,7 @@ struct FrameRecord {
     Module* module;
     FrameRecord* caller;
     int line;
+    int comprehensions = 0;                      // the inlined comprehensions running in this frame now (PEP 709): their variables are its own
 };
 FrameRecord*& current_frame();
 // an inlined comprehension's line is its enclosing frame's (PEP 709): the nearest shown caller takes it
@@ -607,11 +609,13 @@ public:
           uncaught_(std::uncaught_exceptions()) {
         detail::enter_frame();
         if (c.shown) detail::current_frame() = this;
+        else if (c.inlined && caller != nullptr) ++caller->comprehensions;
     }
     void arrived(PyError& e) noexcept { detail::arrive(*code, line, id_, e); }
     ~FrameGuard() {
         detail::leave_frame();
         detail::current_frame() = caller;
+        if (!code->shown && code->inlined && caller != nullptr) --caller->comprehensions;
         if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, line, id_, locals_.data(), N);
     }
     FrameGuard(const FrameGuard&) = delete;
@@ -770,6 +774,9 @@ Obj str_constant_cps(std::initializer_list<char32_t> cps);   // an immortal str 
 void delete_fast(Ref& slot, const char* name);
 Ref load_global(Module* m, const Str* name);                 // globals, then builtins; NameError
 Ref load_name(Obj ns, Module* m, const Str* name);           // the namespace, globals, builtins
+// LOAD_NAME in a module's frame from a comprehension inlined into its code (PEP 709): the locals a text was run with, when
+// it was given any, before the globals
+inline Ref load_module_name(Module* m, const Str* name) { return m->locals != nullptr ? load_name(Obj::of(m->locals), m, name) : load_global(m, name); }
 void store_name(Obj ns, const Str* name, Ref value);
 void store_global(Module* m, const Str* name, Ref value);
 void delete_name(Obj ns, const Str* name);

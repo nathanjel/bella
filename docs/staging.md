@@ -141,6 +141,16 @@ call it.
   lowered in its mode under its file name, with the code object's names and counts copied from the one CPython made, or the
   exception CPython raised and its arguments. `exec` and `eval` run that code object wherever it is given, and two of them
   compare equal when CPython's did (C-8-11); its hash, which mixes the bytecode, stops by name.
+  A text is a module's code in the namespaces it was given (review F17, RL-404 to RL-411). With locals of its own, its
+  top-level names are stored there; a `global` statement and the walrus of a comprehension bind in the globals; its list, set
+  and dict comprehensions, which CPython inlines (PEP 709), read the locals before the globals, where a generator expression,
+  a lambda, a function and a class body read the globals; an expression's text has no docstring; and `eval` or `exec` called
+  from the text with no namespaces gets the text's own. Two things stop by name: `eval` or `exec` asking for the frame's locals
+  from inside an inlined comprehension (its variables are that frame's, which a compiled helper cannot hand over), and a text
+  CPython's compiler warns of (`1 is 1`, an invalid escape: the warning would pass the program's filters at each compile, and
+  nothing replays it yet). The program's own artefact is taken whole, since a text run with globals of another `__name__` has
+  sites of its own. A dry run that fails as a tool (its own exit status, `TOOL_FAILED`) fails the build; a program that ends
+  the process there leaves nothing staged.
 * **Policy refusals.** A function in the manifest's `[refused]` table is refused when it is
   called, malformed input included (`gettext.c2py("bad")` is refused, not a catchable
   `ValueError`), and whether or not its text was staged. C-7-16 needs the latter: the dry run of

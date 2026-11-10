@@ -29,7 +29,7 @@ HERE = REPO / "pipeline" / "staging"
 BUILD = REPO / "build" / "staging"
 LOCK = REPO / "closure.lock.json"
 SHIMS = REPO / "runtime" / "shims"
-INPUTS = [LOCK, REPO / "manifest.toml", HERE / "dryrun.py", HERE / "annotations.py", HERE / "annotate_rt.py", HERE / "scan.py",
+INPUTS = [LOCK, REPO / "manifest.toml", HERE / "__init__.py", HERE / "dryrun.py", HERE / "annotations.py", HERE / "annotate_rt.py", HERE / "scan.py",
           HERE / "intrinsics.py", *sorted(SHIMS.glob("*.py"))]
 
 
@@ -61,6 +61,19 @@ def optimisation_level(python_options: list[str]) -> int:
     return int(proc.stdout)
 
 
+# dryrun.py's exit status for a failure of its own (pipeline.staging.TOOL_FAILED, which this file, run as a script too, does not
+# import; pipeline/tests/test_review_2026_11_10.py holds the two together)
+TOOL_FAILED = 113
+
+
+class DryRunFailed(SystemExit):
+    """The dry run ended with an error; `tool`: its own (dryrun.py's TOOL_FAILED), not the program ending the process."""
+
+    def __init__(self, message: str, tool: bool) -> None:
+        super().__init__(message)
+        self.tool = tool
+
+
 def dry_run(out: Path, blocked: list[str], args: list[str], seed: str | None = None, optimize: int = 0) -> None:
     """One dry run, in the phase-1 configuration (conformance/simulate blocks the omissions)."""
     env = dict(os.environ, BELLA_SIMULATE_BLOCK=",".join(blocked),
@@ -76,7 +89,7 @@ def dry_run(out: Path, blocked: list[str], args: list[str], seed: str | None = N
                           env=env, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout + proc.stderr)
-        raise SystemExit(f"bella: the dry run failed ({' '.join(args)})")
+        raise DryRunFailed(f"bella: the dry run failed ({' '.join(args)})", proc.returncode == TOOL_FAILED)
 
 
 def current(out: Path, script: Path | None = None) -> bool:

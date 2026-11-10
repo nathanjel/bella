@@ -222,7 +222,7 @@ import tomllib  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 from pipeline.staging import annotations as annotation_entries  # noqa: E402
-from pipeline.staging import intrinsics, scan  # noqa: E402
+from pipeline.staging import TOOL_FAILED, intrinsics, scan  # noqa: E402
 
 sys.path.remove(_REPO)
 
@@ -347,6 +347,12 @@ def main() -> int:
     finally:
         sys.stdout, sys.stderr, sys.stdin = real_out, real_err, real_in
 
+    # From here on only this tool runs, and the codecs phase 1 lacks (D-20) are its own again: ast.unparse escapes an f-string's
+    # backslashes through unicode_escape (review F17 #15)
+    held: dict[str, object] = dict(sys.modules)      # conformance/simulate's sitecustomize stored None for each
+    for blocked in [n for n, m in held.items() if m is None and n.startswith("encodings.")]:
+        del sys.modules[blocked]
+
     evaluators: dict[str, annotation_entries.Evaluator] = {}
     declined: list[str] = []
     for path in sorted(set(covered.values())):
@@ -425,4 +431,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        status = main()
+    except Exception:  # noqa: BLE001  # the tool's own failure; the program's are caught where it runs
+        import traceback
+        traceback.print_exc()
+        status = TOOL_FAILED
+    raise SystemExit(status)

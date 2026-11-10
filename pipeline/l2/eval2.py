@@ -81,6 +81,7 @@ class _Runtime:
         self.interp = interp
         self.G = g
         self.B = interp.builtins
+        self.frame_ns: Any = g                   # the module frame's mapping (run_code sets it): a text's locals, else the globals
 
     # names ------------------------------------------------------------------------------------
 
@@ -344,6 +345,8 @@ class _Translator:
             return r.id
         if r.kind == "global":
             return f"{RESERVED}R.lg({r.id!r})"
+        if r.kind == "name" and r.mapping == "module":     # in a comprehension inlined into the module's code
+            return f"{RESERVED}R.ln({RESERVED}R.frame_ns, {r.id!r})"
         if r.kind == "name":
             return f"{RESERVED}R.ln({RESERVED}ns, {r.id!r})"
         mapping = f"{RESERVED}ns" if r.mapping == "locals" else "__classdict__"
@@ -912,6 +915,7 @@ class Interpreter:
             self.compiled[key] = hit
         compiled = hit[1]
         rt = _Runtime(self, g)
+        rt.frame_ns = ns                         # the module frame's mapping: the locals a text was given, else its globals
         factory = types.FunctionType(compiled.factory, g, f"{RESERVED}factory")
         body = factory(rt, compiled.codes, END, _caller_locals, compiled.consts, builtins.BaseException, *_HOST_STATE)
         return body(ns)

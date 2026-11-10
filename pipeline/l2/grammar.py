@@ -54,7 +54,9 @@ class NameRef:
     * free: LOAD_DEREF on a cell of the closure (`co_freevars`).
     * global: LOAD_GLOBAL / STORE_GLOBAL: the module's namespace, then builtins.
     * name: LOAD_NAME / STORE_NAME: the frame's namespace mapping (a class body's, or the module's
-      globals at module level), then globals, then builtins.
+      globals at module level), then globals, then builtins. With `mapping` "module" it is a load in
+      a comprehension inlined into the module's code (PEP 709): the module frame's mapping, which is
+      the locals a text was run with (exec, eval) and the globals otherwise.
     * classdict: LOAD_FROM_DICT_OR_GLOBALS / LOAD_FROM_DICT_OR_DEREF: a mapping first, then
       `then` ("global" or "free"). `mapping` says which: "locals" (a class body reading a free
       variable of its function) or "__classdict__" (an annotation or type-parameter scope in a

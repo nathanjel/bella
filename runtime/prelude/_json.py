@@ -525,7 +525,7 @@ class Encoder:
         if self._indent is not None:             # create_indent_cache: the newline at the level given, then levels from 0
             newline_indent = "\n"
             if indent_level:
-                newline_indent += self._indent * indent_level  # type: ignore[operator]
+                newline_indent = _concat(newline_indent, self._indent * indent_level)  # type: ignore[operator]   # PyUnicode_AppendAndDel of PySequence_Repeat
             cache = [newline_indent]
         parts: list[str] = []
         _encode_obj(self, parts, obj, 0, cache)
@@ -559,14 +559,24 @@ def _write_string(s: Encoder, parts: list[str], obj: str) -> None:   # encoder_w
     encoded = s._encoder(obj)  # type: ignore[operator]
     if not isinstance(encoded, str):
         raise TypeError("encoder() must return a string, not " + _tp_name(encoded))
-    parts.append(encoded)
+    parts.append(_written(encoded))
+
+
+def _concat(left: str, right: object) -> str:   # PyUnicode_Concat: the two texts, never a subclass's __add__ or __radd__ (review F17 #12)
+    if not isinstance(right, str):
+        raise TypeError('can only concatenate str (not "' + _tp_name(right) + '") to str')
+    return str.__add__(str.__str__(left), str.__str__(right))
+
+
+def _written(text: str) -> str:   # PyUnicodeWriter_WriteStr: an exact str as it is, a subclass's instance through str()
+    return text if type(text) is str else str(text)
 
 
 def _item_separator(s: Encoder, level: int, cache: list[str]) -> str:   # get_item_separator, filling the cache a level at a time
     while level * 2 > len(cache):              # update_indent_cache
         have = (len(cache) + 1) // 2
-        newline_indent = cache[(have - 1) * 2] + s._indent  # type: ignore[operator]
-        cache.append(s._item_separator + newline_indent)
+        newline_indent = _concat(cache[(have - 1) * 2], s._indent)
+        cache.append(_concat(s._item_separator, newline_indent))
         cache.append(newline_indent)
     return cache[level * 2 - 1]
 
@@ -625,9 +635,9 @@ def _encode_key_value(s: Encoder, parts: list[str], first: list[bool], dct: obje
         if s._indent is not None:
             parts.append(cache[level * 2])  # type: ignore[index]
     else:
-        parts.append(separator)
+        parts.append(_written(separator))
     _write_string(s, parts, keystr)  # type: ignore[arg-type]
-    parts.append(s._key_separator)
+    parts.append(_written(s._key_separator))
     try:
         _encode_obj(s, parts, value, level, cache)
     except BaseException as exc:
@@ -702,7 +712,7 @@ def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: l
     while i < size(fast):  # type: ignore[arg-type]
         obj = item(fast, i)  # type: ignore[arg-type]
         if i:
-            parts.append(separator)
+            parts.append(_written(separator))
         try:
             _encode_obj(s, parts, obj, level, cache)
         except BaseException as exc:
