@@ -16,6 +16,7 @@ C-3-14_comprehension_unpacking.py
 C-3-15_generator_close_and_throw.py
 C-3-17_match.py
 C-3-20_copy_protocol.py
+C-3-24_signatures_at_runtime.py
 C-3-25_calls_and_parameters.py
 C-3-26_function_objects.py
 C-3-27_class_statements.py

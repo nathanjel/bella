@@ -29,8 +29,7 @@ RUN = str(run.HERE / "run.py")
 CASES = run.REPO / "conformance" / "cases"
 STAGING_CASES = ["C-8-08_staged_dataclass.py", "C-8-09_staged_namedtuple.py", "C-3-21_annotate_formats.py",
                  "C-3-22_forwardref_unbound_name.py"]
-REFUSED_CASES = {"C-3-23_forwardref_evaluate_expression.py": "ForwardRef", "C-3-24_signatures_at_runtime.py": "signature",
-                 "C-7-16_gettext_plural_forms.py": "Plural-Forms"}
+REFUSED_CASES = {"C-3-23_forwardref_evaluate_expression.py": "ForwardRef", "C-7-16_gettext_plural_forms.py": "Plural-Forms"}
 
 
 def deterministic(blocked: list[str]) -> list[str]:

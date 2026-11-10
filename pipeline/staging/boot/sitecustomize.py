@@ -239,16 +239,11 @@ class _ShimLoader:
         _REAL_EXEC(code, vars(module))  # noqa: S102
 
 
-def _signature_refused(*args: object, **kwargs: object) -> NoReturn:
-    _refuse("[P2+] inspect: the signature of a compiled function needs its metadata at runtime, which "
-            "phase 1 does not have (decision S-2, docs/staging.md)")
-
-
 class _PatchingLoader:
     """A module whose code reaches what a compiled program cannot provide, with that one entry
     point replaced by its refusal (model only: in Bella the refusal is where `__code__` is read)."""
 
-    patches: dict[str, dict[str, Any]] = {"inspect": {"_signature_from_function": _signature_refused}}
+    patches: dict[str, dict[str, Any]] = {}   # the manifest's [refused] and the locks' unsupported functions (_install)
 
     def __init__(self, loader: Any, name: str) -> None:
         self._loader, self._name = loader, name

@@ -283,14 +283,17 @@ the per-target numbers in section 2 include it.
 
 ## 5. Decisions and clauses this surfaced
 
-Items 1 and 2 follow the tricky targets past phase 1 (review log D-7); item 3 was accepted on
-2026-11-08; items 4 and 5 were settled in the licence register the same day; item 6 is done.
+Item 2 follows the tricky targets past phase 1 (review log D-7); item 1 was decided on 2026-11-10
+and item 3 accepted on 2026-11-08; items 4 and 5 were settled in the licence register the same day; item 6 is done.
 
 1. **Function metadata at run time.** pycodestyle needs `inspect.signature(f).parameters`
    (names and kinds) and `f.__doc__`; tomlkit and toolz would too. Proposal: compiled function
    objects carry a static signature record and their docstring; `inspect.signature` is answered
    from it; `__code__` stays excluded (E-05). Needs a spec clause (C-3-09?) and a conformance
    case before the function-object layout is fixed.
+   *Decided by the author 2026-11-10: \[P1\]. No separate record was needed: since v0.14 a
+   function's `__code__` carries the names, counts and flags, and CPython's `inspect` reads the
+   signature from it, the defaults and the annotations (spec v0.15, C-3-24).*
 2. **Dead excluded calls.** `pycodestyle.check_ast` contains `compile()` on a path this
    program never takes. Options: (a) the linter rejects any program whose closure contains an
    excluded call — pycodestyle is then out; (b) the call compiles to a `bella::Excluded` throw

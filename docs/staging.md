@@ -86,7 +86,7 @@ nothing else.
 | --- | --- |
 | `pipeline/staging/dryrun.py` | The dry run. It imports the manifest closure, the program's modules and the entry script (as `__bella_entry__`, reported as `__main__`, so the main guard stays false), discards their output, and records every `exec`, `eval` and `compile` with its call site, operation, text, parameters and outcome. Every module loaded from outside the standard library is the program's, its lazy imports resolved. It also records inputs, runs the probes, and generates the entry points. It writes the reviewable artefact (JSON, with every source it depends on, by content) and the compiled one (marshal). |
 | `pipeline/staging/run.py` | The runner: build (both dry runs, cached in `build/staging/` while their sources are unchanged), then run `python SCRIPT` with the replay installed. It serves as `harness.py check --runner` and `run_targets.py check --runner`. |
-| `pipeline/staging/boot/sitecustomize.py` | The replay model. It replaces `exec`/`eval`/`compile`, blocks the D-20 omissions, serves the shims, applies `[refused]` and `[unstaged]`, refuses the locks' unsupported functions and `inspect`'s signatures (S-2). It imports nothing start-up has not imported. |
+| `pipeline/staging/boot/sitecustomize.py` | The replay model. It replaces `exec`/`eval`/`compile`, blocks the D-20 omissions, serves the shims, applies `[refused]` and `[unstaged]`, refuses the locks' unsupported functions. It imports nothing start-up has not imported. |
 | `pipeline/staging/annotations.py` | The entry-point generator, for annotate and PEP 695 evaluate functions, and its build-time checks against CPython (section 6) |
 | `pipeline/staging/annotate_rt.py` | The name loads the entry points use, one per opcode |
 | `pipeline/staging/scan.py` | Static facts: exec sites named as frames name them, and literal `namedtuple` calls (import aliases resolved) |
@@ -94,7 +94,7 @@ nothing else.
 | `pipeline/staging/check.py` | `make staging-check` |
 | `runtime/shims/annotationlib.py` | CPython 3.15.2's module with eight changes, each marked `bella:` |
 | `pipeline/tests/test_staging.py` | The refusals the corpus cannot show, the review probes replayed against CPython, regressions for A5-1 to A5-4, the generator against a corpus of scope shapes and under mutation, the scanner, the template |
-| `conformance/cases/` | C-8-08 and C-8-09 (staged dataclass, namedtuple), C-3-21 (`__annotate__` formats, exception arguments), C-3-22 (FORWARDREF and STRING with names not bound yet, \[P1\]), C-3-23, C-3-24 and C-7-16 (the \[P2+\] boundaries), C-7-17 (a catalogue without plural forms) |
+| `conformance/cases/` | C-8-08 and C-8-09 (staged dataclass, namedtuple), C-3-21 (`__annotate__` formats, exception arguments), C-3-22 (FORWARDREF and STRING with names not bound yet, \[P1\]), C-3-23 and C-7-16 (the \[P2+\] boundaries), C-3-24 (signatures at runtime, \[P1\] since 2026-11-10), C-7-17 (a catalogue without plural forms) |
 
 The conformance harness gained `check --status`. `verify` now also runs every \[P1\] case that
 declares no deviation in the phase-1 configuration, and fails it if the output changes (F-1).
@@ -165,8 +165,7 @@ call it.
   * An entry point is found through `annotate.__code__`, which in Bella is attached by the
     compiler.
   * The model makes some objects visible: `sitecustomize` in `sys.modules`, the shim finder in
-    `sys.meta_path`, `annotationlib._bella`, and `inspect.__loader__` (wrapped for the S-2
-    refusal).
+    `sys.meta_path` and `annotationlib._bella`.
   * A traceback through an entry point shows its helper frames.
   * The shims other than `annotationlib` are not written yet. The dry run imports CPython's
     real modules for them and drops texts from modules phase 1 does not have (`ssl`,
@@ -259,7 +258,8 @@ functions, the probes now cover.
 * **F-2 (decided, S-1).** A dataclass whose annotation names its own class reads FORWARDREF
   before the name is bound. The entry point makes this \[P1\] (C-3-22).
 * **F-3 (decided, S-2).** A dataclass's generated docstring calls `inspect.signature`, which
-  needs function metadata. It is \[P2+\] (C-3-24, refused in the model where `inspect` reads it).
+  needs function metadata. It was \[P2+\] until 2026-11-10 and is \[P1\] since (C-3-24): a compiled
+  function carries what `inspect` reads, and the model no longer refuses it.
 * **F-4 (decided, S-4).** `gettext.c2py` executes a text derived from a catalogue, so such a
   catalogue is refused with `[P2+]` (C-7-16). A catalogue without Plural-Forms loads (C-7-17).
 
@@ -329,7 +329,8 @@ and 3.7.3 were A6's. Its probes now run as tests:
 * **S-1:** the compiler-generated second entry point, as proposed. FORWARDREF and STRING with
   names not bound yet are \[P1\]; evaluating the text of a reference or annotation stays \[P2+\].
 * **S-2:** function signatures at runtime stay out of phase 1, to be revisited with item 1 of
-  `docs/targets.md` section 5. The boundary is C-3-24.
+  `docs/targets.md` section 5. The boundary is C-3-24. *Revised by the author 2026-11-10: they are
+  \[P1\]; C-3-24 compares output (`docs/DECISIONS.md`).*
 * **S-3:** as proposed. A runtime text the dry run did not stage is refused, and `bella-lint`
   warns about dataclasses made inside functions. Spec section 8 states the input rule for
   layouts, separately from code.

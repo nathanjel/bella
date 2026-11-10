@@ -17,6 +17,7 @@ C-3-18_class_assignment.py
 C-3-19_getattribute_override.py
 C-3-20_copy_protocol.py
 C-3-23_forwardref_evaluate_expression.py
+C-3-24_signatures_at_runtime.py
 C-3-25_calls_and_parameters.py
 C-3-26_function_objects.py
 C-3-27_class_statements.py
