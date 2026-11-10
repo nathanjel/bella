@@ -1141,19 +1141,20 @@ getresuid = _absent("getresuid")
 getsid = _absent("getsid")
 
 
-def _xattr_path(function: str, path: object, follow: object) -> tuple[object, object, bool]:
-    """The path of an extended-attribute function, which may be a descriptor, and fd_and_follow_symlinks_invalid."""
-    data, shown = _path(function, "path", path, allow_fd=True, nullable=function == "listxattr")
+def _xattr_follow(function: str, data: object, follow: object) -> bool:
+    """follow_symlinks of an extended-attribute function, and fd_and_follow_symlinks_invalid. It is the last parameter of
+    each and is converted last: after the attribute, whose __fspath__ runs before this __bool__ (review R20, RL-429)."""
     follows = follow is _ABSENT or bool(follow)
     if type(data) is int and not follows:
         raise ValueError(function + ": cannot use fd and follow_symlinks together")
-    return data, shown, follows
+    return follows
 
 
 def getxattr(*args: object, **kwds: object) -> bytes:   # os_getxattr_impl
     path, attribute, follow = _unpack("getxattr", args, kwds, ("path", "attribute", "follow_symlinks"), 2, 2)
-    data, shown, follows = _xattr_path("getxattr", path, follow)
+    data, shown = _path("getxattr", "path", path, allow_fd=True)
     name = _path("getxattr", "attribute", attribute)[0]
+    follows = _xattr_follow("getxattr", data, follow)
     result = _sys("xattr", b"get", data, follows, name)
     if type(result) is int:
         _fail(-result, shown)
@@ -1167,7 +1168,8 @@ lchown = _absent("lchown")
 
 def listxattr(*args: object, **kwds: object) -> list[str]:   # os_listxattr_impl: the names are str whatever the path is
     path, follow = _unpack("listxattr", args, kwds, ("path", "follow_symlinks"), 0, 1)
-    data, shown, follows = _xattr_path("listxattr", None if path is _ABSENT else path, follow)
+    data, shown = _path("listxattr", "path", None if path is _ABSENT else path, allow_fd=True, nullable=True)
+    follows = _xattr_follow("listxattr", data, follow)
     result = _sys("xattr", b"list", b"." if data is None else data, follows)
     if type(result) is int:
         _fail(-result, shown)
@@ -1202,8 +1204,9 @@ readv = _absent("readv")
 
 def removexattr(*args: object, **kwds: object) -> None:   # os_removexattr_impl
     path, attribute, follow = _unpack("removexattr", args, kwds, ("path", "attribute", "follow_symlinks"), 2, 2)
-    data, shown, follows = _xattr_path("removexattr", path, follow)
+    data, shown = _path("removexattr", "path", path, allow_fd=True)
     name = _path("removexattr", "attribute", attribute)[0]
+    follows = _xattr_follow("removexattr", data, follow)
     code = _sys("xattr", b"remove", data, follows, name)
     if code < 0:
         _fail(-code, shown)
@@ -1278,9 +1281,7 @@ def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
             _refuse("os.setxattr() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + type(value).__name__ + "'")
     bits = 0 if flags is _ABSENT else _int(flags)
-    follows = follow is _ABSENT or bool(follow)
-    if type(data) is int and not follows:
-        raise ValueError("setxattr: cannot use fd and follow_symlinks together")
+    follows = _xattr_follow("setxattr", data, follow)
     code = _sys("xattr", b"set", data, follows, name, bytes(value), bits)  # type: ignore[arg-type]
     if code < 0:
         _fail(-code, shown)

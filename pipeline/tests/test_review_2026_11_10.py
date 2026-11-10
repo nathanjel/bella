@@ -1148,6 +1148,82 @@ class After:
 """
 
 
+# RL-429 (R20, the other reviewer's probe): os converts its arguments in the order of its parameters. The extended attributes
+# need a file system that has them, so both sides run on one here, under the working directory (as XATTRS in test_posix.py).
+XATTR_ORDER = r"""
+import os, shutil, tempfile
+trace = []
+selected = "user.first"
+class Attribute:
+    def __fspath__(self):
+        trace.append("attribute " + selected)
+        return selected
+class Path:
+    def __init__(self, value): self.value = value
+    def __fspath__(self):
+        trace.append("path")
+        return self.value
+class Flag:
+    def __init__(self, value, then=None): self.value = value; self.then = then
+    def __bool__(self):
+        global selected
+        trace.append("follow")
+        if self.then is not None:
+            selected = self.then
+        return self.value
+class Flags:
+    def __index__(self):
+        trace.append("flags")
+        return 0
+class Descriptor:
+    def __init__(self, fd): self.fd = fd
+    def __index__(self):
+        trace.append("fd")
+        return self.fd
+def show(label, f):
+    global selected
+    selected = "user.first"
+    del trace[:]
+    try:
+        out = repr(f())
+    except Exception as e:
+        out = type(e).__name__ + ": " + str(e)
+    print(label, out, trace)
+d = tempfile.mkdtemp(dir=os.getcwd())
+try:
+    a = os.path.join(d, "a")
+    open(a, "w").close()
+    fd = os.open(a, os.O_RDONLY)
+    os.setxattr(a, "user.first", b"first")
+    os.setxattr(a, "user.second", b"second")
+    show("get", lambda: os.getxattr(Path(a), Attribute(), follow_symlinks=Flag(True, "user.second")))
+    show("get by name", lambda: os.getxattr(follow_symlinks=Flag(True, "user.second"), attribute=Attribute(), path=Path(a)))
+    show("get fd", lambda: os.getxattr(Descriptor(fd), Attribute(), follow_symlinks=Flag(False, "user.second")))
+    show("get bad attribute", lambda: os.getxattr(Path(a), 1, follow_symlinks=Flag(True)))
+    show("get bad path", lambda: os.getxattr(1.5, Attribute(), follow_symlinks=Flag(True)))
+    show("set", lambda: os.setxattr(Path(a), Attribute(), b"again", Flags(), follow_symlinks=Flag(True, "user.second")))
+    show("set bad value", lambda: os.setxattr(Path(a), Attribute(), "text", Flags(), follow_symlinks=Flag(True)))
+    show("set bad flags", lambda: os.setxattr(Path(a), Attribute(), b"x", "x", follow_symlinks=Flag(True)))
+    show("set fd", lambda: os.setxattr(Descriptor(fd), Attribute(), b"x", Flags(), follow_symlinks=Flag(False)))
+    show("list", lambda: sorted(os.listxattr(Path(a), follow_symlinks=Flag(True))))
+    show("list fd", lambda: os.listxattr(Descriptor(fd), follow_symlinks=Flag(False)))
+    show("values", lambda: (os.getxattr(a, "user.first"), os.getxattr(a, "user.second")))
+    show("remove", lambda: os.removexattr(Path(a), Attribute(), follow_symlinks=Flag(True, "user.second")))
+    show("remaining", lambda: sorted(os.listxattr(a)))
+    show("remove fd", lambda: os.removexattr(Descriptor(fd), Attribute(), follow_symlinks=Flag(False, "user.second")))
+    show("remove bad attribute", lambda: os.removexattr(Path(a), None, follow_symlinks=Flag(True)))
+    show("remaining", lambda: sorted(os.listxattr(a)))
+    os.close(fd)
+finally:
+    shutil.rmtree(d)
+"""
+
+
+def test_the_extended_attributes_convert_their_arguments_in_order() -> None:
+    """RL-429: path, attribute, then follow_symlinks, as Argument Clinic does; the flag was taken with the path."""
+    same(XATTR_ORDER)
+
+
 def test_the_tools_own_writing_lets_nothing_else_through() -> None:
     """RL-424 (R20 #1): the tool's writes are its own function's, on its own thread, of its own two files; no one else's."""
     for _ in range(3):
@@ -1212,6 +1288,7 @@ if __name__ == "__main__":
     test_the_bootstrap_preludes_keep_the_pins_parameters_and_docstrings()
     test_a_bound_methods_doc_is_its_functions()
     test_what_the_bootstrap_modules_keep_for_themselves_stops_by_name()
+    test_the_extended_attributes_convert_their_arguments_in_order()
     test_the_tools_own_writing_lets_nothing_else_through()
     test_what_a_module_body_leaves_for_later_is_confined_too()
     test_the_confinement_takes_whatever_arguments_an_event_has()

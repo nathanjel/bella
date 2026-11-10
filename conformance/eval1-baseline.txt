@@ -109,6 +109,7 @@ C-7-53_tokenize.py
 C-7-58_scandir.py
 C-7-59_copying_between_files.py
 C-7-60_utime_and_copying_trees.py
+C-7-61_os_argument_order.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py
