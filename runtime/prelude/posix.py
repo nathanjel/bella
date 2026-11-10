@@ -1077,7 +1077,15 @@ def chmod(*args: object, **kwds: object) -> None:   # os_chmod_impl: fchmod for 
         _fail(-code, shown)
 chown = _absent("chown")
 chroot = _absent("chroot")
-closerange = _absent("closerange")
+
+
+def closerange(*args: object, **kwds: object) -> None:   # os_closerange_impl: up to, not including, the second
+    _positional("closerange", args, kwds, 2)
+    low = _int(args[0])
+    high = _int(args[1])
+    _sys("closerange", low, high - 1)
+
+
 confstr = _absent("confstr")
 
 
@@ -1095,14 +1103,36 @@ def copy_file_range(*args: object, **kwds: object) -> int:   # os_copy_file_rang
     return result  # type: ignore[no-any-return]
 ctermid = _absent("ctermid")
 device_encoding = _absent("device_encoding")
-dup = _absent("dup")
-dup2 = _absent("dup2")
+
+
+def dup(*args: object, **kwds: object) -> int:   # os_dup_impl: _Py_dup, a descriptor that is not inherited
+    result = _sys("dup", _int(_one("dup", args, kwds)))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def dup2(*args: object, **kwds: object) -> int:   # os_dup2_impl
+    fd, fd2, inheritable = _unpack("dup2", args, kwds, ("fd", "fd2", "inheritable"), 2, 3)
+    a = _int(fd)
+    b = _int(fd2)
+    result = _sys("dup2", a, b, inheritable is _ABSENT or bool(inheritable))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
 eventfd = _absent("eventfd")
 eventfd_read = _absent("eventfd_read")
 eventfd_write = _absent("eventfd_write")
 execv = _absent("execv")
 execve = _absent("execve")
-fchdir = _absent("fchdir")
+
+
+def fchdir(*args: object, **kwds: object) -> None:   # os_fchdir_impl: fildes_converter, posix_fildes_fd
+    code = _sys("fildes", b"fchdir", _fildes(_unpack("fchdir", args, kwds, ("fd",), 1, 1)[0]))
+    if code < 0:
+        _fail(-code)
 
 
 def fchmod(*args: object, **kwds: object) -> None:   # os_fchmod_impl
@@ -1112,14 +1142,42 @@ def fchmod(*args: object, **kwds: object) -> None:   # os_fchmod_impl
     if code < 0:
         _fail(-code)
 fchown = _absent("fchown")
-fdatasync = _absent("fdatasync")
+
+
+def fdatasync(*args: object, **kwds: object) -> None:   # os_fdatasync_impl
+    code = _sys("fildes", b"fdatasync", _fildes(_unpack("fdatasync", args, kwds, ("fd",), 1, 1)[0]))
+    if code < 0:
+        _fail(-code)
+
+
 fork = _absent("fork")
 forkpty = _absent("forkpty")
 fpathconf = _absent("fpathconf")
 fstatvfs = _absent("fstatvfs")
-ftruncate = _absent("ftruncate")
-get_blocking = _absent("get_blocking")
-get_inheritable = _absent("get_inheritable")
+
+
+def ftruncate(*args: object, **kwds: object) -> None:   # os_ftruncate_impl
+    _positional("ftruncate", args, kwds, 2)
+    fd = _int(args[0])
+    code = _sys("truncate", fd, _off(args[1]))
+    if code < 0:
+        _fail(-code)
+
+
+def get_blocking(*args: object, **kwds: object) -> bool:   # os_get_blocking_impl
+    result = _sys("blocking", _int(_one("get_blocking", args, kwds)))
+    if result < 0:
+        _fail(-result)
+    return result == 1  # type: ignore[no-any-return]
+
+
+def get_inheritable(*args: object, **kwds: object) -> bool:   # os_get_inheritable_impl
+    result = _sys("inheritable", _int(_one("get_inheritable", args, kwds)))
+    if result < 0:
+        _fail(-result)
+    return result == 1  # type: ignore[no-any-return]
+
+
 getgrouplist = _absent("getgrouplist")
 getgroups = _absent("getgroups")
 getloadavg = _absent("getloadavg")
@@ -1166,7 +1224,17 @@ def listxattr(*args: object, **kwds: object) -> list[str]:   # os_listxattr_impl
     if type(result) is int:
         _fail(-result, shown)
     return [bytes.decode(name, "utf-8", "surrogateescape") for name in result]
-lockf = _absent("lockf")
+
+
+def lockf(*args: object, **kwds: object) -> None:   # os_lockf_impl
+    _positional("lockf", args, kwds, 3)
+    fd = _int(args[0])
+    command = _int(args[1])
+    code = _sys("lockf", fd, command, _off(args[2]))
+    if code < 0:
+        _fail(-code)
+
+
 login_tty = _absent("login_tty")
 major = _absent("major")
 makedev = _absent("makedev")
@@ -1178,17 +1246,78 @@ nice = _absent("nice")
 openpty = _absent("openpty")
 pathconf = _absent("pathconf")
 pidfd_open = _absent("pidfd_open")
-pipe = _absent("pipe")
-pipe2 = _absent("pipe2")
-posix_fadvise = _absent("posix_fadvise")
-posix_fallocate = _absent("posix_fallocate")
+
+
+def pipe(*args: object, **kwds: object) -> tuple[int, int]:   # os_pipe_impl: pipe2 with O_CLOEXEC
+    _noargs("pipe", args, kwds)
+    result = _sys("pipe", O_CLOEXEC)
+    if type(result) is int:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def pipe2(*args: object, **kwds: object) -> tuple[int, int]:   # os_pipe2_impl
+    result = _sys("pipe", _int(_one("pipe2", args, kwds)))
+    if type(result) is int:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def posix_fadvise(*args: object, **kwds: object) -> None:   # os_posix_fadvise_impl
+    _positional("posix_fadvise", args, kwds, 4)
+    fd = _int(args[0])
+    offset = _off(args[1])
+    length = _off(args[2])
+    code = _sys("posix_f", b"fadvise", fd, offset, length, _int(args[3]))
+    if code < 0:
+        _fail(-code)
+
+
+def posix_fallocate(*args: object, **kwds: object) -> None:   # os_posix_fallocate_impl
+    _positional("posix_fallocate", args, kwds, 3)
+    fd = _int(args[0])
+    offset = _off(args[1])
+    code = _sys("posix_f", b"fallocate", fd, offset, _off(args[2]))
+    if code < 0:
+        _fail(-code)
+
+
 posix_openpt = _absent("posix_openpt")
 posix_spawn = _absent("posix_spawn")
 posix_spawnp = _absent("posix_spawnp")
-pread = _absent("pread")
+
+
+def pread(*args: object, **kwds: object) -> bytes:   # os_pread_impl
+    _positional("pread", args, kwds, 3)
+    fd = _int(args[0])
+    length = _ssize(args[1])
+    offset = _off(args[2])
+    if length < 0:
+        _fail(22)
+    result = _sys("pread", fd, length, offset)
+    if type(result) is int:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
 preadv = _absent("preadv")
 ptsname = _absent("ptsname")
-pwrite = _absent("pwrite")
+
+
+def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
+    _positional("pwrite", args, kwds, 3)
+    fd = _int(args[0])
+    data = args[1]
+    if not issubclass(type(data), (bytes, bytearray)):   # the Py_buffer converter
+        if _type_lookup(data, "__buffer__") is not _ABSENT:
+            _refuse("os.pwrite() of a buffer that is not bytes or bytearray")
+        raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
+    result = _sys("pwrite", fd, bytes(data), _off(args[2]))  # type: ignore[arg-type]
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
 pwritev = _absent("pwritev")
 readinto = _absent("readinto")
 readv = _absent("readv")
@@ -1246,8 +1375,24 @@ def sendfile(*args: object, **kwds: object) -> int:   # os_sendfile_impl, as Lin
     if result < 0:
         _fail(-result)
     return result  # type: ignore[no-any-return]
-set_blocking = _absent("set_blocking")
-set_inheritable = _absent("set_inheritable")
+
+
+def set_blocking(*args: object, **kwds: object) -> None:   # os_set_blocking_impl
+    _positional("set_blocking", args, kwds, 2)
+    fd = _int(args[0])
+    code = _sys("blocking", fd, bool(args[1]))
+    if code < 0:
+        _fail(-code)
+
+
+def set_inheritable(*args: object, **kwds: object) -> None:   # os_set_inheritable_impl: the flag is an int, not a truth
+    _positional("set_inheritable", args, kwds, 2)
+    fd = _int(args[0])
+    code = _sys("inheritable", fd, _int(args[1]) != 0)
+    if code < 0:
+        _fail(-code)
+
+
 setegid = _absent("setegid")
 seteuid = _absent("seteuid")
 setgid = _absent("setgid")
@@ -1279,7 +1424,13 @@ def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
         _fail(-code, shown)
 splice = _absent("splice")
 statvfs = _absent("statvfs")
-sync = _absent("sync")
+
+
+def sync(*args: object, **kwds: object) -> None:   # os_sync_impl
+    _noargs("sync", args, kwds)
+    _sys("sync")
+
+
 sysconf = _absent("sysconf")
 system = _absent("system")
 tcgetpgrp = _absent("tcgetpgrp")
@@ -1289,7 +1440,18 @@ timerfd_gettime = _absent("timerfd_gettime")
 timerfd_gettime_ns = _absent("timerfd_gettime_ns")
 timerfd_settime = _absent("timerfd_settime")
 timerfd_settime_ns = _absent("timerfd_settime_ns")
-truncate = _absent("truncate")
+
+
+def truncate(*args: object, **kwds: object) -> None:   # os_truncate_impl: by name, or by a descriptor as ftruncate
+    path, length = _unpack("truncate", args, kwds, ("path", "length"), 2, 2)
+    data, shown = _path("truncate", "path", path, allow_fd=True)
+    code = _sys("truncate", data, _off(length))
+    if code < 0:
+        if type(data) is int:
+            _fail(-code)
+        _fail(-code, shown)
+
+
 ttyname = _absent("ttyname")
 unlockpt = _absent("unlockpt")
 unshare = _absent("unshare")

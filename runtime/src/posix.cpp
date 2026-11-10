@@ -24,6 +24,7 @@
 #include <cstring>
 #include <ctime>
 #include <pthread.h>
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <new>
@@ -310,6 +311,92 @@ Ref p_lseek(Args a) { return result(lseek(int_of(a.pos(0)), i64_of(a.pos(1)), in
 Ref p_isatty(Args a) { return int_from_i64(isatty(int_of(a.pos(0)))); }
 Ref p_fsync(Args a) { return result(fsync(int_of(a.pos(0)))); }
 Ref p_ftruncate(Args a) { return result(ftruncate(int_of(a.pos(0)), i64_of(a.pos(1)))); }
+// ---- descriptors (C-7-65)
+// os_dup2_impl on this platform: dup3 with O_CLOEXEC for a descriptor that is not to be inherited (which refuses the same number
+// twice), dup2 otherwise
+Ref p_dup2(Args a) {                             // (fd, fd2, inheritable)
+    int fd = int_of(a.pos(0)), fd2 = int_of(a.pos(1));
+    return result(truth(a.pos(2)) ? dup2(fd, fd2) : dup3(fd, fd2, O_CLOEXEC));
+}
+Ref p_pipe(Args a) {                             // (flags): pipe2; os.pipe asks for O_CLOEXEC
+    int fds[2];
+    if (pipe2(fds, int_of(a.pos(0))) != 0) return failed();
+    return tuple_new({Obj::small(fds[0]), Obj::small(fds[1])});
+}
+// _Py_get_inheritable, and _Py_set_inheritable by its fcntl path (the ioctl it tries first changes the same flag)
+Ref p_inheritable(Args a) {                      // (fd[, inheritable]): 1 or 0, or 0 when set
+    int fd = int_of(a.pos(0));
+    int flags = fcntl(fd, F_GETFD, 0);
+    if (flags < 0) return failed();
+    if (a.npos == 1) return int_from_i64((flags & FD_CLOEXEC) != 0 ? 0 : 1);
+    int wanted = truth(a.pos(1)) ? (flags & ~FD_CLOEXEC) : (flags | FD_CLOEXEC);
+    if (wanted != flags && fcntl(fd, F_SETFD, wanted) < 0) return failed();
+    return int_from_i64(0);
+}
+Ref p_blocking(Args a) {                         // (fd[, blocking]): _Py_get_blocking (F_GETFL), _Py_set_blocking (FIONBIO)
+    int fd = int_of(a.pos(0));
+    if (a.npos == 1) {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0) return failed();
+        return int_from_i64((flags & O_NONBLOCK) != 0 ? 0 : 1);
+    }
+    int arg = truth(a.pos(1)) ? 0 : 1;
+    return result(ioctl(fd, FIONBIO, &arg));
+}
+Ref p_closerange(Args a) {                       // (first, last), both closed: _Py_closerange, whose errors are ignored
+    int first = std::max(int_of(a.pos(0)), 0), last = int_of(a.pos(1));
+    if (close_range(static_cast<unsigned>(first), static_cast<unsigned>(last), 0) != 0)
+        for (int i = first; i <= last; i++) (void)close(i);
+    return int_from_i64(0);
+}
+Ref p_fildes(Args a) {                           // (which, fd): posix_fildes_fd, again after a signal
+    const std::string& which = bytes_data(a.pos(0));
+    int fd = int_of(a.pos(1)), r;
+    do r = which == "fchdir" ? fchdir(fd) : which == "fdatasync" ? fdatasync(fd) : fsync(fd);
+    while (r != 0 && errno == EINTR);
+    return result(r);
+}
+Ref p_sync(Args) {
+    sync();
+    return int_from_i64(0);
+}
+Ref p_truncate(Args a) {                         // (path or fd, length): os_truncate_impl, os_ftruncate_impl
+    if (!is_int(a.pos(0))) return result(truncate(text_of(a.pos(0)), i64_of(a.pos(1))));
+    int r;
+    do r = ftruncate(int_of(a.pos(0)), i64_of(a.pos(1)));
+    while (r != 0 && errno == EINTR);
+    return result(r);
+}
+Ref p_pread(Args a) {                            // (fd, length, offset)
+    std::size_t length = static_cast<std::size_t>(i64_of(a.pos(1)));
+    std::unique_ptr<char[]> buf;
+    try {
+        buf = std::make_unique_for_overwrite<char[]>(length);
+    } catch (const std::bad_alloc&) {
+        raise_new("MemoryError", "");
+    }
+    ssize_t n;
+    do n = pread(int_of(a.pos(0)), buf.get(), length, i64_of(a.pos(2)));
+    while (n < 0 && errno == EINTR);
+    if (n < 0) return failed();
+    return bytes_new(std::string_view(buf.get(), static_cast<std::size_t>(n)));
+}
+Ref p_pwrite(Args a) {                           // (fd, data, offset)
+    const std::string& data = bytes_data(a.pos(1));
+    ssize_t n;
+    do n = pwrite(int_of(a.pos(0)), data.data(), data.size(), i64_of(a.pos(2)));
+    while (n < 0 && errno == EINTR);
+    return result(n);
+}
+Ref p_lockf(Args a) { return result(lockf(int_of(a.pos(0)), int_of(a.pos(1)), i64_of(a.pos(2)))); }   // (fd, command, length)
+// posix_fallocate and posix_fadvise give the error as their result, not in errno: (which, fd, offset, length[, advice])
+Ref p_posix_f(Args a) {
+    int r;
+    do r = bytes_data(a.pos(0)) == "fallocate" ? posix_fallocate(int_of(a.pos(1)), i64_of(a.pos(2)), i64_of(a.pos(3)))
+                                               : posix_fadvise(int_of(a.pos(1)), i64_of(a.pos(2)), i64_of(a.pos(3)), int_of(a.pos(4)));
+    while (r == EINTR);
+    return int_from_i64(-r);
+}
 Ref p_strerror(Args a) { return str_new(std::strerror(int_of(a.pos(0)))); }
 Ref p_umask(Args a) { return int_from_i64(umask(static_cast<mode_t>(int_of(a.pos(0))))); }
 Ref p_urandom(Args a) {
@@ -595,7 +682,8 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},
         {"getgid", p_getgid}, {"getegid", p_getegid}, {"putenv", p_putenv}, {"unsetenv", p_unsetenv}, {"clearenv", p_clearenv}, {"exit", p_exit},
