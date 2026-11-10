@@ -79,7 +79,9 @@ _NAMEDTUPLE_SITE = "collections:namedtuple"
 
 def _miss(kind: str, frame: FrameType) -> NoReturn:
     site = _site(frame)
-    _refuse(_unstaged.get(site) or f"E-01: {kind} at {_where(frame)} of a text the dry run did not stage (spec section 8)")
+    confined = _unstaged.get("*")                # where the program's dry run was ended early, if it was (review F17 #7)
+    _refuse(_unstaged.get(site) or f"E-01: {kind} at {_where(frame)} of a text the dry run did not stage (spec section 8)"
+            + (f"; {confined}" if confined else ""))
 
 
 def _code_for(kind: str, source: Any, frame: FrameType) -> Any:

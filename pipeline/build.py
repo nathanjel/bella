@@ -342,8 +342,10 @@ def _compile_row(key: tuple[Any, ...], outcome: tuple[Any, ...], groups: dict[An
                       namespace, why, text, future, code, raises, raise_args, group)
 
 
-def staged_tables(program: Path, modules: list[ProgramModule]) -> tuple[list[StagedRow], dict[str, str], dict[str, str], list[CompileRow]]:
-    """The texts of the sites this program has, their compiles, and the sites' own refusals."""
+def staged_tables(program: Path, modules: list[ProgramModule],
+                  notes: list[str] | None = None) -> tuple[list[StagedRow], dict[str, str], dict[str, str], list[CompileRow]]:
+    """The texts of the sites this program has, their compiles, and the sites' own refusals; `notes` takes what the build has
+    to say about them (where the program's dry run was ended early)."""
     names = {m.name for m in modules}
     own = [read_source(program), *(read_source(m.path) for m in modules if m.path is not None and not m.frozen and m.origin is None
                                    and not m.path.is_relative_to(STDLIB))]
@@ -355,6 +357,11 @@ def staged_tables(program: Path, modules: list[ProgramModule]) -> tuple[list[Sta
         made = _program_artefact(program)
         if made is not None:
             artefacts.append((made, True))
+            said = notes if notes is not None else []
+            for file, line, what in made["confined"]:     # review F17 #7: the build goes on, and says where the dry run ended
+                said.append(f"bella: note: {file}:{line}: the dry run of this module body ended here, at {what}: a module body's "
+                             f"effects on the world are not performed at build time. Definition-time code the body reaches after "
+                             f"this line is not staged and stops the program by name (docs/staging.md)")
     names |= {"__main__"}
     rows: dict[tuple[str, str, str | bytes], StagedRow] = {}
     compiles: dict[tuple[Any, ...], CompileRow] = {}
@@ -483,7 +490,7 @@ def _object(cpp: str, name: str, cxx: str, std: str, flags: list[str] = PROGRAM_
     return obj
 
 
-def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Path | None = None) -> Path:
+def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Path | None = None, notes: bool = True) -> Path:
     """The program's binary; `keep`: also write the main module's C++ there (the committed examples)."""
     lib = runtime_library(cxx, std)
     modules = find_program_modules(program)
@@ -498,7 +505,10 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
             shown = f"<frozen {m.name}>" if m.frozen else str(m.origin or m.path)
             library = m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB)
             units.append((lowered_unit(read_source(m.path), shown, namespace_of(m.name)), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS))
-    rows, refused, unstaged, compiles = staged_tables(program, modules)
+    said: list[str] = []
+    rows, refused, unstaged, compiles = staged_tables(program, modules, said)
+    for line in said if notes else ():           # not under --run, whose streams are the program's own
+        print(line, file=sys.stderr)
     for name in sorted({r.namespace for r in rows if r.namespace}):
         row = next(r for r in rows if r.namespace == name)
         units.append((lowered_unit(row.text, "<string>", name, row.kind, row.future), name.rpartition("::")[2], LIBRARY_FLAGS))
@@ -551,7 +561,7 @@ def main(argv: list[str]) -> int:
         return 2
     program = Path(argv[0])
     try:
-        exe = build(program, os.path.abspath(argv[0]))       # co_filename: the absolute path, as CPython 3.15 has it
+        exe = build(program, os.path.abspath(argv[0]), notes=not run)   # co_filename: the absolute path, as CPython 3.15 has it
     except (Unsupported, SyntaxError) as exc:
         print(f"bella: refused: {exc}", file=sys.stderr)
         return REFUSED

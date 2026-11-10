@@ -45,6 +45,12 @@ const StagedSite* site_row(std::span<const StagedSite> rows, const std::string& 
         if (site == r.site) return &r;
     return nullptr;
 }
+// A text the dry run did not stage. When the dry run of the program's own module body was ended early (a body's effects on the
+// world are refused at build time: review F17 #7), the build left the reason under "*", which is no site, and the refusal says it
+[[noreturn]] void not_staged(const std::string& what) {
+    const StagedSite* confined = site_row(table().unstaged, "*");
+    refused(confined == nullptr ? what : what + "; " + confined->message);
+}
 
 const StagedText& find_text(const std::string& site, const char* kind, Obj source) {
     if (const StagedSite* r = site_row(table().refused, site)) refused(r->message);
@@ -56,7 +62,7 @@ const StagedText& find_text(const std::string& site, const char* kind, Obj sourc
             return t;
         }
     if (const StagedSite* r = site_row(table().unstaged, site)) refused(r->message);
-    refused(std::string("E-01: ") + kind + " at " + site + " of a text the dry run did not stage (spec section 8)");
+    not_staged(std::string("E-01: ") + kind + " at " + site + " of a text the dry run did not stage (spec section 8)");
 }
 
 Dict* builtins_of_globals(Dict* globals) {       // _PyEval_BuiltinsFromGlobals: a module's dict, or the mapping itself
@@ -321,6 +327,6 @@ Ref b_compile(Obj, Args a) {
         return own(code);
     }
     if (const StagedSite* r = site_row(table().unstaged, site)) refused(r->message);
-    refused("E-01: compile at " + site + " of a text the dry run did not stage (spec section 8)");
+    not_staged("E-01: compile at " + site + " of a text the dry run did not stage (spec section 8)");
 }
 }  // namespace bella

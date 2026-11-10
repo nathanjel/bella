@@ -151,6 +151,23 @@ call it.
   nothing replays it yet). The program's own artefact is taken whole, since a text run with globals of another `__name__` has
   sites of its own. A dry run that fails as a tool (its own exit status, `TOOL_FAILED`) fails the build; a program that ends
   the process there leaves nothing staged.
+  **A program's module bodies run at build time, confined** (review F17 #7, RL-410; the author, 2026-11-10). Staging needs
+  them run: what `namedtuple` or `@dataclass` generates depends on the values the body computed. Code under
+  `if __name__ == "__main__":` does not run (the entry is imported under another name), and what a body prints is discarded.
+  What a body would do to the world outside the build is refused by the dry run's audit hook: opening a file for writing,
+  removing, renaming, making directories, changing modes and times, `shutil`'s and `tempfile`'s operations, starting a process,
+  and connecting, binding or sending on a socket. Reading the world (files, listings, names) and changing the process itself
+  (the environment, the working directory) are allowed; so is `tempfile.gettempdir()`, whose probe file is a question. The dry
+  run of that body ends at the statement (the exception is a `BaseException`, so `except Exception` does not take it for a
+  failed operation; a body that catches it goes on, and each later effect is refused too), what it staged before stays, and
+  the build goes on: `build.py prog.py` prints a note naming the file, the line and the operation, while `--run` keeps its
+  streams the program's. The compiled program then does what CPython does with it; a text its body generates after that line
+  was never staged, and stops by name at run time with the place the dry run ended
+  (`E-01: exec at ... of a text the dry run did not stage (spec section 8); the dry run stopped at prog.py:12 (open('out.txt')
+  for writing), ...`), under eval1, eval2 and compiled alike. This can never make a program compute something else: a staged
+  text is used only for exactly that text at that site. It is a guard for honest programs, not a sandbox: an audit hook does
+  not see what an extension module or `ctypes` does, nor a write to a descriptor the process already holds, and a module
+  body's time and CPU are spent at build time all the same. The standard library's own module bodies are not confined.
 * **Policy refusals.** A function in the manifest's `[refused]` table is refused when it is
   called, malformed input included (`gettext.c2py("bad")` is refused, not a catchable
   `ValueError`), and whether or not its text was staged. C-7-16 needs the latter: the dry run of

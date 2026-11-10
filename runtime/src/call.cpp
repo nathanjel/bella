@@ -1716,9 +1716,13 @@ std::unordered_set<const ClassObject*>& prelude_classes() {     // the prelude's
     return classes;
 }
 void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
-    for (const ClassObject* c : mro)
+    for (const ClassObject* c : mro) {
         if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(table_name(c), name->text))
             throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
+        if (c->heap_type)                        // a class of the import system's two modules: its own names are the table's too
+            if (std::string scope = bootstrap_class_scope(c); !scope.empty() && cpython_has(scope, name->text))
+                throw NotImplemented(scope + "." + name->text + " (CPython has it; the runtime does not yet)");
+    }
 }
 }  // namespace
 bool callable_object(Obj v) { return is_callable(v); }
@@ -2736,6 +2740,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 put(sys_dict, "stderr", err.get());
                 put(sys_dict, "__stderr__", err.get());
             }
+            hide_bootstrap_names();              // start-up is over: what the two import-system modules hold beyond CPython's names
             Module* main = make_main(main_file);
             if (bootstrap != nullptr) {
                 Obj loader_class = dict_get(bootstrap->dict, Obj::of(intern("SourceFileLoader")));

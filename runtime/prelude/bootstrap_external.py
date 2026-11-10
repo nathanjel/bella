@@ -167,7 +167,7 @@ BYTECODE_SUFFIXES = ['.pyc']
 DEBUG_BYTECODE_SUFFIXES = OPTIMIZED_BYTECODE_SUFFIXES = BYTECODE_SUFFIXES
 
 
-def cache_from_source(path, debug_override=None, *, optimization=None):
+def cache_from_source(path, *, optimization=None):
     """Given the path to a .py file, return the path to its .pyc file.
 
     The .py file does not need to exist; this simply returns the path to the
@@ -178,15 +178,18 @@ def cache_from_source(path, debug_override=None, *, optimization=None):
     of the argument is taken and verified to be alphanumeric (else ValueError
     is raised).
 
-    The debug_override parameter is deprecated. If debug_override is not None,
-    a True value is the same as setting 'optimization' to the empty string
-    while a False value is equivalent to setting 'optimization' to '1'.
-
     If sys.implementation.cache_tag is None then NotImplementedError is raised.
 
     """
-    # bella: bootstrap.py's, which the import system itself uses: sys.implementation.cache_tag is None (D-16)
-    return _bootstrap.cache_from_source(path, debug_override, optimization=optimization)
+    path = _os_fspath(path)  # bella: _os.fspath
+    head, tail = _path_split(path)
+    base, sep, rest = tail.rpartition('.')
+    tag = sys.implementation.cache_tag
+    if tag is None:
+        raise NotImplementedError('sys.implementation.cache_tag is None')
+    # bella: the tag is always None here (D-16: a compiled program has no bytecode cache), so the rest of CPython's
+    # function, which builds the name, is never reached
+    _bella_refuse("importlib.util.cache_from_source with a cache tag (D-16: sys.implementation.cache_tag is None)")
 
 
 def source_from_cache(path):
@@ -509,22 +512,30 @@ class ExtensionFileLoader(FileLoader, _LoaderBasics):
         """Return None as extension modules have no source code."""
         return None
 
-    def get_filename(self, fullname):
+    def get_filename(self, name=None, *args, **kwargs):
         """Return the path to the source file as found by the finder."""
-        # bella: under _check_name
-        if fullname is None:
-            fullname = self.name
-        elif self.name != fullname:
-            raise ImportError(f'loader for {self.name} cannot handle {fullname}', name=fullname)
+        # bella: @_check_name, written out: the wrapper's parameters and its check, then the method, which takes the name alone
+        if name is None:
+            name = self.name
+        elif self.name != name:
+            raise ImportError(f'loader for {self.name} cannot handle {name}', name=name)
+        if args or kwargs:
+            _bella_refuse("ExtensionFileLoader.get_filename with arguments beyond the name (the method under @_check_name takes none: a TypeError of its own)")
         return self.path
 
 
 class NamespacePath:
-    """Represents a namespace package's path.  It uses the module name
-    to find its parent module, and from there it looks up the parent's
-    __path__.  When this changes, the module's own path is recomputed,
-    using path_finder.  For top-level modules, the parent module's path
-    is sys.path."""
+    """Represents a namespace package's path.
+
+    It uses the module *name* to find its parent module, and from there it looks
+    up the parent's __path__. When this changes, the module's own path is
+    recomputed, using *path_finder*. The initial value is set to *path*.
+
+    For top-level modules, the parent module's path is sys.path.
+
+    *path_finder* should be a callable with the same signature as
+    MetaPathFinder.find_spec((fullname, path, target=None) -> spec).
+    """
 
     # When invalidate_caches() is called, this epoch is incremented
     # https://bugs.python.org/issue45703
@@ -679,6 +690,23 @@ class PathFinder:
         """
         _bella_refuse("PathFinder.find_spec (a path finder's search: the closed world is resolved at build time, E-04)")
 
+    @classmethod
+    def discover(cls, parent=None):
+        if parent is None:
+            path = sys.path
+        elif parent.submodule_search_locations is None:
+            raise ValueError(f'{parent} is not a package module')
+        else:
+            path = parent.submodule_search_locations
+
+        for entry in set(path):
+            if not isinstance(entry, str):
+                continue
+            if (finder := cls._path_importer_cache(entry)) is None:
+                continue
+            if discover := getattr(finder, 'discover', None):
+                yield from discover(parent)
+
     @staticmethod
     def find_distributions(*args, **kwargs):
         """
@@ -755,6 +783,21 @@ class FileFinder:
             return cls(path, *loader_details)
 
         return path_hook_for_FileFinder
+
+    def _find_children(self):
+        # bella: _os.scandir of the directory, for a search the closed world does not make (E-04); a generator, as CPython's
+        # is, so nothing is asked of the directory before the first item
+        _bella_refuse("FileFinder._find_children (a directory listing for a path finder's search, E-04)")
+        yield
+
+    def discover(self, parent=None):
+        if parent and parent.submodule_search_locations is None:
+            raise ValueError(f'{parent} is not a package module')
+
+        module_prefix = f'{parent.name}.' if parent else ''
+        for child_name in self._find_children():
+            if spec := self.find_spec(module_prefix + child_name):
+                yield spec
 
     def __repr__(self):
         return f'FileFinder({self.path!r})'

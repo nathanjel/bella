@@ -420,21 +420,21 @@ class BuiltinImporter:
         """Exec a built-in module"""
         # bella: _imp.exec_builtin: create_module made the whole of it
 
-    # bella: @_requires_builtin, written out (it needs functions' __dict__)
+    # bella: @_requires_builtin, written out (it needs functions' __dict__); `self` is the wrapper's name for the class
     @classmethod
-    def get_code(cls, fullname):
+    def get_code(self, fullname):
         """Return None as built-in modules do not have code objects."""
         _check_builtin(fullname)
         return None
 
     @classmethod
-    def get_source(cls, fullname):
+    def get_source(self, fullname):
         """Return None as built-in modules do not have source code."""
         _check_builtin(fullname)
         return None
 
     @classmethod
-    def is_package(cls, fullname):
+    def is_package(self, fullname):
         """Return False as built-in modules are never packages."""
         _check_builtin(fullname)
         return False
@@ -443,6 +443,13 @@ class BuiltinImporter:
 def _check_builtin(fullname):
     if not _bella_is_builtin(fullname):
         raise ImportError(f'{fullname!r} is not a built-in module',
+                          name=fullname)
+
+
+def _check_frozen(fullname):
+    import _imp
+    if not _imp.is_frozen(fullname):
+        raise ImportError(f'{fullname!r} is not a frozen module',
                           name=fullname)
 
 
@@ -457,16 +464,139 @@ class FrozenImporter:
 
     _ORIGIN = "frozen"
 
-    # bella: a frozen module's code is compiled into the program like any other module's; what
-    # find_spec reads of _imp.find_frozen and sys._stdlib_dir, the registry says (_spec_from_compiled)
+    # bella: a frozen module's code is compiled into the program like any other module's, and the import system finds it
+    # in the registry (_spec_from_compiled). The class's own finder and loader methods are CPython's text over _imp, whose
+    # answers are the pin's (the names table): what CPython freezes, whether or not this program has it
+
+    @classmethod
+    def _fix_up_module(cls, module):
+        import _imp  # bella: the module's own `_imp` is _setup's argument; it is imported where it is used
+        spec = module.__spec__
+        state = spec.loader_state
+        if state is None:
+            # The module is missing FrozenImporter-specific values.
+
+            # Fix up the spec attrs.
+            origname = vars(module).pop('__origname__', None)
+            assert origname, 'see PyImport_ImportFrozenModuleObject()'
+            ispkg = hasattr(module, '__path__')
+            assert _imp.is_frozen_package(module.__name__) == ispkg, ispkg
+            filename, pkgdir = cls._resolve_filename(origname, spec.name, ispkg)
+            spec.loader_state = type(sys.implementation)(
+                filename=filename,
+                origname=origname,
+            )
+            __path__ = spec.submodule_search_locations
+            if ispkg:
+                assert __path__ == [], __path__
+                if pkgdir:
+                    spec.submodule_search_locations.insert(0, pkgdir)
+            else:
+                assert __path__ is None, __path__
+
+            # Fix up the module attrs (the bare minimum).
+            assert not hasattr(module, '__file__'), module.__file__
+            if filename:
+                try:
+                    module.__file__ = filename
+                except AttributeError:
+                    pass
+            if ispkg:
+                if module.__path__ != __path__:
+                    assert module.__path__ == [], module.__path__
+                    module.__path__.extend(__path__)
+        else:
+            # These checks ensure that _fix_up_module() is only called
+            # in the right places.
+            __path__ = spec.submodule_search_locations
+            ispkg = __path__ is not None
+            # Check the loader state.
+            assert sorted(vars(state)) == ['filename', 'origname'], state
+            if state.origname:
+                # The only frozen modules with "origname" set are stdlib modules.
+                (__file__, pkgdir,
+                 ) = cls._resolve_filename(state.origname, spec.name, ispkg)
+                assert state.filename == __file__, (state.filename, __file__)
+                if pkgdir:
+                    assert __path__ == [pkgdir], (__path__, pkgdir)
+                else:
+                    assert __path__ == ([] if ispkg else None), __path__
+            else:
+                __file__ = None
+                assert state.filename is None, state.filename
+                assert __path__ == ([] if ispkg else None), __path__
+            # Check the file attrs.
+            if __file__:
+                assert hasattr(module, '__file__')
+                assert module.__file__ == __file__, (module.__file__, __file__)
+            else:
+                assert not hasattr(module, '__file__'), module.__file__
+            if ispkg:
+                assert hasattr(module, '__path__')
+                assert module.__path__ == __path__, (module.__path__, __path__)
+            else:
+                assert not hasattr(module, '__path__'), module.__path__
+        assert not spec.has_location
+
+    @classmethod
+    def _resolve_filename(cls, fullname, alias=None, ispkg=False):
+        if not fullname or not getattr(sys, '_stdlib_dir', None):
+            return None, None
+        try:
+            sep = cls._SEP
+        except AttributeError:
+            sep = cls._SEP = '\\' if sys.platform == 'win32' else '/'
+
+        if fullname != alias:
+            if fullname.startswith('<'):
+                fullname = fullname[1:]
+                if not ispkg:
+                    fullname = f'{fullname}.__init__'
+            else:
+                ispkg = False
+        relfile = fullname.replace('.', sep)
+        if ispkg:
+            pkgdir = f'{sys._stdlib_dir}{sep}{relfile}'
+            filename = f'{pkgdir}{sep}__init__.py'
+        else:
+            pkgdir = None
+            filename = f'{sys._stdlib_dir}{sep}{relfile}.py'
+        return filename, pkgdir
+
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        import _imp  # bella: the module's own `_imp` is _setup's argument; it is imported where it is used
+        info = _call_with_frames_removed(_imp.find_frozen, fullname)
+        if info is None:
+            return None
+        # We get the marshaled data in exec_module() (the loader
+        # part of the importer), instead of here (the finder part).
+        # The loader is the usual place to get the data that will
+        # be loaded into the module.  (For example, see _LoaderBasics
+        # in _bootstrap_external.py.)  Most importantly, this importer
+        # is simpler if we wait to get the data.
+        # However, getting as much data in the finder as possible
+        # to later load the module is okay, and sometimes important.
+        # (That's why ModuleSpec.loader_state exists.)  This is
+        # especially true if it avoids throwing away expensive data
+        # the loader would otherwise duplicate later and can be done
+        # efficiently.  In this case it isn't worth it.
+        _, ispkg, origname = info
+        spec = spec_from_loader(fullname, cls,
+                                origin=cls._ORIGIN,
+                                is_package=ispkg)
+        filename, pkgdir = cls._resolve_filename(origname, fullname, ispkg)
+        spec.loader_state = type(sys.implementation)(
+            filename=filename,
+            origname=origname,
+        )
+        if pkgdir:
+            spec.submodule_search_locations.insert(0, pkgdir)
+        return spec
 
     @staticmethod
     def create_module(spec):
-        """Set __file__, if able.
-
-        NOTE: Normally this would be set by importlib.
-
-        """
+        """Set __file__, if able."""
         module = _new_module(spec.name)
         try:
             filename = spec.loader_state.filename
@@ -483,13 +613,26 @@ class FrozenImporter:
         # bella: _imp.get_frozen_object and exec, the module's compiled body
         _bella_exec(name, module)
 
+    # bella: @_requires_frozen, written out (it needs functions' __dict__); `self` is the wrapper's name for the class
     @classmethod
-    def is_package(cls, fullname):
+    def get_code(self, fullname):
+        """Return the code object for the frozen module."""
+        import _imp
+        _check_frozen(fullname)
+        return _imp.get_frozen_object(fullname)
+
+    @classmethod
+    def get_source(self, fullname):
+        """Return None as frozen modules do not have source code."""
+        _check_frozen(fullname)
+        return None
+
+    @classmethod
+    def is_package(self, fullname):
         """Return True if the frozen module is a package."""
-        found = _bella_find(fullname)  # bella: _imp.is_frozen_package
-        if found is None or not found[2]:
-            raise ImportError(f'{fullname!r} is not a frozen module', name=fullname)
-        return found[1]
+        import _imp
+        _check_frozen(fullname)
+        return _imp.is_frozen_package(fullname)
 
 
 # ---- types.GenericAlias ----
@@ -1229,27 +1372,9 @@ def _path_split(path):
     return path[:i], path[i + 1:]
 
 
-def cache_from_source(path, debug_override=None, *, optimization=None):
-    """Given the path to a .py file, return the path to its .pyc file.
-
-    The .py file does not need to exist; this simply returns the path to the
-    .pyc file calculated as if the .py file were imported.
-
-    The 'optimization' parameter controls the presumed optimization level of
-    the bytecode file. If 'optimization' is not None, the string representation
-    of the argument is taken and verified to be alphanumeric (else ValueError
-    is raised).
-
-    The debug_override parameter is deprecated. If debug_override is not None,
-    a True value is the same as setting 'optimization' to the empty string
-    while a False value is equivalent to setting 'optimization' to '1'.
-
-    If sys.implementation.cache_tag is None then NotImplementedError is raised.
-
-    """
-    if debug_override is not None:
-        _bella_refuse("importlib.util.cache_from_source with debug_override: DeprecationWarning (step 3b)")
-    # bella: sys.implementation.cache_tag is None (D-16): a compiled program has no bytecode cache
+def cache_from_source(path):
+    # bella: _bootstrap_external's, for _get_cached below: sys.implementation.cache_tag is None (D-16), so a compiled
+    # program has no bytecode cache to name. The module's own function, with CPython's parameters, is bootstrap_external.py's
     raise NotImplementedError('sys.implementation.cache_tag is None')
 
 
@@ -1295,26 +1420,62 @@ class SourceLoader(_LoaderBasics):
 
     __module__ = '_frozen_importlib_external'
 
-    # bella: the methods below read or write files, which a compiled program does not do
+    # bella: the methods below read or write files, which a compiled program does not do; their docstrings are CPython's
     def path_mtime(self, path):
+        """Optional method that returns the modification time (an int) for the
+        specified path (a str).
+
+        Raises OSError when the path cannot be handled.
+        """
         _bella_refuse("a source loader's path_mtime (a compiled program has no source to read)")
 
     def path_stats(self, path):
+        """Optional method returning a metadata dict for the specified
+        path (a str).
+
+        Possible keys:
+        - 'mtime' (mandatory) is the numeric timestamp of last source
+          code modification;
+        - 'size' (optional) is the size in bytes of the source code.
+
+        Implementing this method allows the loader to read bytecode files.
+        Raises OSError when the path cannot be handled.
+        """
         _bella_refuse("a source loader's path_stats (a compiled program has no source to read)")
 
     def _cache_bytecode(self, source_path, cache_path, data):
+        """Optional method which writes data (bytes) to a file path (a str).
+
+        Implementing this method allows for the writing of bytecode files.
+
+        The source path is needed in order to correctly transfer permissions
+        """
         _bella_refuse("a source loader's _cache_bytecode (a compiled program has no bytecode)")
 
     def set_data(self, path, data):
-        """Optional method which writes data (bytes) to a file path (a str)."""
+        """Optional method which writes data (bytes) to a file path (a str).
+
+        Implementing this method allows for the writing of bytecode files.
+        """
 
     def get_source(self, fullname):
+        """Concrete implementation of InspectLoader.get_source."""
         _bella_refuse("a source loader's get_source (step 3b: reading files)")
 
     def source_to_code(self, data, path, fullname=None, *, _optimize=-1):
+        """Return the code object compiled from source.
+
+        The 'data' argument can be any object type that compile() supports.
+        """
         _bella_refuse("a source loader's source_to_code (E-01: no compiler at runtime)")
 
     def get_code(self, fullname):
+        """Concrete implementation of InspectLoader.get_code.
+
+        Reading of bytecode requires path_stats to be implemented. To write
+        bytecode, set_data must also be implemented.
+
+        """
         _bella_refuse("a source loader's get_code (a compiled program has no code objects to load)")
 
 
@@ -1338,21 +1499,29 @@ class FileLoader:
     def __hash__(self):
         return hash(self.name) ^ hash(self.path)
 
-    def get_filename(self, name=None):
+    def get_filename(self, name=None, *args, **kwargs):
         """Return the path to the source file as found by the finder."""
-        # bella: under _check_name
+        # bella: @_check_name, written out (it needs functions' __dict__): the wrapper's parameters and its check, then the
+        # method, which takes the name alone
         if name is None:
             name = self.name
         elif self.name != name:
             # bella: CPython's text formats with %, which the runtime lacks yet; the same message
             raise ImportError(f'loader for {self.name} cannot handle {name}', name=name)
+        if args or kwargs:
+            _bella_refuse("FileLoader.get_filename with arguments beyond the name (the method under @_check_name takes none: a TypeError of its own)")
         return self.path
 
     def get_data(self, path):
         """Return the data from path as raw bytes."""
         _bella_refuse("a file loader's get_data (step 3b: reading files)")
 
-    def get_resource_reader(self, name=None):
+    def get_resource_reader(self, name=None, *args, **kwargs):
+        # bella: @_check_name, written out: its check comes first
+        if name is None:
+            name = self.name
+        elif self.name != name:
+            raise ImportError(f'loader for {self.name} cannot handle {name}', name=name)
         _bella_refuse("a source loader's get_resource_reader (importlib.resources is [P2+])")
 
 
@@ -1369,7 +1538,7 @@ class SourceFileLoader(FileLoader, SourceLoader):
     def _cache_bytecode(self, source_path, bytecode_path, data):
         _bella_refuse("a source loader's _cache_bytecode (a compiled program has no bytecode)")
 
-    def set_data(self, path, data, *, _mode=0):
+    def set_data(self, path, data, *, _mode=0o666):
         """Write bytes data to a file."""
         _bella_refuse("a source loader's set_data (a compiled program writes no bytecode)")
 
@@ -1767,7 +1936,7 @@ def _bella_import_external(module):
     create_module's __file__, then _init_module_attrs."""
     origname = 'importlib._bootstrap_external'   # Python/frozen.c's alias
     spec = spec_from_loader(module.__name__, FrozenImporter, origin=FrozenImporter._ORIGIN, is_package=False)
-    filename = f"{sys._stdlib_dir}/{origname.replace('.', '/')}.py" if getattr(sys, '_stdlib_dir', None) else None
+    filename, _ = FrozenImporter._resolve_filename(origname, module.__name__, False)   # as find_spec does: the class's _SEP is set here
     spec.loader_state = SimpleNamespace(filename=filename, origname=origname)
     if filename:
         module.__file__ = filename

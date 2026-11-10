@@ -1616,6 +1616,7 @@ Ref method_new(Obj, Args a) {                    // method(func, obj): any calla
     return own(new Method(r.pos(0), r.pos(1)));
 }
 Ref method_self(Obj self) { return Ref::share(static_cast<Method*>(self.object())->self); }
+Ref method_doc(Obj self) { return getattr(static_cast<Method*>(self.object())->func, N("__doc__")); }   // method_get_doc: the function's, not the type's
 Ref builtin_name(Obj self) {
     if (is_kind(self, Kind::PyFunction)) return static_cast<PyFunction*>(self.object())->name;     // the prelude's
     return str_new(static_cast<Builtin*>(self.object())->name);
@@ -2992,6 +2993,7 @@ void init_types() {
     getset(t.method, "__func__", method_func);
     method(t.method, "__new__", method_new, Binding::Function);
     getset(t.method, "__self__", method_self);
+    getset(t.method, "__doc__", method_doc);
     getset(t.builtin, "__name__", builtin_name);
     getset(t.builtin, "__self__", builtin_self);
     getset(t.builtin, "__qualname__", builtin_qualname);

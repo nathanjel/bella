@@ -87,13 +87,18 @@ class Staged:
         except (L.Unsupported, L.DialectError, SyntaxError, WellFormednessError) as exc:
             return f"{type(exc).__name__}: {exc}"
 
+    def not_staged(self, what: str) -> str:
+        """The refusal of a text the dry run did not stage, with where the program's dry run was ended early if it was (its
+        module body's effects on the world are refused at build time, review F17 #7: the artefact's "*" row)."""
+        confined = self.unstaged.get("*")
+        return f"{what}; {confined}" if confined else what
+
     def text(self, site: str, kind: str, source: str | bytes, caller_flags: int) -> L.Module:
         if site in self.refused:
             raise L.Refused(self.refused[site])
         entry = self.texts.get((site, kind, source))
         if entry is None:
-            raise L.Refused(self.unstaged.get(site) or
-                            f"E-01: {kind} at {site} of a text the dry run did not stage (spec section 8)")
+            raise L.Refused(self.unstaged.get(site) or self.not_staged(f"E-01: {kind} at {site} of a text the dry run did not stage (spec section 8)"))
         flags, lowered = entry
         if flags != caller_flags:
             raise L.Refused(f"E-01: {kind} at {site}: the caller's __future__ flags differ from the staged code's")

@@ -1246,6 +1246,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
                 raise_new("TypeError", "__class__ assignment only supported for mutable types or ModuleType subclasses");
             throw NotImplemented("[P2+] __class__ assignment (spec section 3)");
         }
+        if (auto* m = static_cast<Module*>(obj.object()); bootstrap_hides(m, name)) refuse_bootstrap_assignment(m, name);
         dict_set(static_cast<Module*>(obj.object())->dict, Obj::of(name), value);
         return;
     }
@@ -1295,7 +1296,8 @@ void delattr(Obj obj, const Str* name) {
     }
     if (is_kind(obj, Kind::Module)) {            // _PyObject_GenericSetAttrWithDict's deletion
         if (name == intern("__dict__")) raise_attribute_error(obj, name, "readonly attribute");
-        if (!dict_del(static_cast<Module*>(obj.object())->dict, Obj::of(name)))
+        if (bootstrap_hides(static_cast<Module*>(obj.object()), name) ||     // not an attribute of the module, as in CPython
+            !dict_del(static_cast<Module*>(obj.object())->dict, Obj::of(name)))
             raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
         return;
     }

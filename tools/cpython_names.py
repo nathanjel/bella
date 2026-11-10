@@ -191,6 +191,19 @@ def native_modules(names):
         out["_frozen_importlib"] = [n for n in out["_frozen_importlib"] if n != "__file__"]
     return out
 
+def bootstrap_classes():
+    """The classes of the import system's two modules, which are Python's own in CPython too: each one's own attributes, under
+    `<module>.<class>`, so that one the runtime's preludes lack stops by name where it is read (review F17 #16)."""
+    out = {}
+    for name in ("_frozen_importlib", "_frozen_importlib_external"):
+        for v in vars(sys.modules[name]).values():
+            if isinstance(v, type) and v.__module__ == name:
+                out[name + "." + v.__qualname__] = sorted(vars(v))
+    # as the class statements make them: FrozenImporter._resolve_filename sets _SEP the first time it has a file to name, and
+    # finds it out by the AttributeError before that
+    out["_frozen_importlib.FrozenImporter"].remove("_SEP")
+    return out
+
 def docs():
     """The docstrings of the built-in modules a program has from the start, and of the built-in types."""
     import atexit, binascii, errno, grp, itertools, math, math.integer, posix, pwd, re, struct, time, typing, zlib, _ast, _bisect, _blake2, _contextvars, _heapq, _opcode, _warnings, _tokenize, _imp, _random, _statistics, _csv, _hmac, _md5, _sha1, _sha2, _sha3, _struct, _codecs, _collections, _functools, _io, _json, _locale, _operator, _sre, _stat, _string, _thread, _typing, _weakref
@@ -225,7 +238,7 @@ def docs():
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
                   "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
-                  "modules": native_modules(sys.argv[1:])}))
+                  "modules": native_modules(sys.argv[1:]), "bootstrap_classes": bootstrap_classes()}))
 '''
 
 
@@ -248,6 +261,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
     names |= {(key, "") for key in data["operators"]}
     names |= {(f"{scope}:{t}", value) for scope in ("flags", "heapflags", "offsets") for t, value in data[scope].items()}
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}
+    names |= {(f"{cls}:{n}", "") for cls, ns in data["bootstrap_classes"].items() for n in ns}
     version = ".".join(map(str, sys.version_info[:3]))
     return version, sorted(names), sorted(data["docs"].items())
 

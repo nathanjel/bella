@@ -181,6 +181,69 @@ for _loader in ("_frozen_importlib", "_frozen_importlib_external"):
 
 
 _LOADER = ("_frozen_importlib", "importlib._bootstrap", "zipimport")
+_STDLIB = os.path.realpath(os.path.dirname(os.__file__))
+_TOOL = os.path.realpath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "pipeline"))
+
+
+class Confined(BaseException):
+    """A program's module body asked for an effect on the world outside the build; the dry run of that body ends here. Not an
+    Exception: the body's own `except Exception` is not meant to take it for a failure of the operation."""
+
+
+# The audit events that change the world: files and directories, processes, and what is sent over a socket. Reading it (open
+# for reading, listing, stat, a name looked up) and changing the process itself (the environment, the working directory) are
+# a module body's own business. "open" is one of them when its flags can write.
+_EFFECTS = frozenset({
+    "os.remove", "os.rename", "os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.chflags", "os.truncate", "os.symlink", "os.link",
+    "os.utime", "os.setxattr", "os.removexattr", "os.lockf",
+    "shutil.copyfile", "shutil.copymode", "shutil.copystat", "shutil.copytree", "shutil.rmtree", "shutil.move", "shutil.make_archive",
+    "shutil.unpack_archive", "tempfile.mkstemp", "tempfile.mkdtemp",
+    "subprocess.Popen", "os.system", "os.exec", "os.fork", "os.forkpty", "os.posix_spawn", "os.spawn", "os.startfile", "os.kill",
+    "os.killpg", "pty.spawn",
+    "socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.sethostname",
+})
+_WRITES = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+_confined: list[tuple[str, int, str]] = []      # (file, line, what): where a body was stopped, in order
+_own: dict[str, bool] = {}
+
+
+def _of_the_program(path: object) -> bool:
+    """A source file of the program's: a file that is neither the standard library's nor this tool's."""
+    if not isinstance(path, str):
+        return False
+    known = _own.get(path)
+    if known is None:
+        real = os.path.realpath(path)
+        known = _own[path] = os.path.isfile(real) and not real.startswith((_STDLIB + os.sep, _TOOL + os.sep))
+    return known
+
+
+def _confine(event: str, args: tuple[Any, ...]) -> None:
+    """Review F17 #7, and the author's decision of 2026-11-10: a program's module body runs here, at build time, for the
+    definition-time code it generates, and what it would do to the world besides is refused. The body ends at that statement
+    (what it staged before stays), the build goes on with a note, and a text the body would have reached later stops by name
+    at run time, saying where the dry run ended. An audit hook is no sandbox: it stops what a program does in the open, not
+    what it does through an extension module, ctypes or a descriptor it already holds."""
+    name = _bodies[-1]
+    module = sys.modules.get(ENTRY if name == "__main__" else name)
+    if not _of_the_program(getattr(module, "__file__", None)):
+        return                                   # the standard library's module bodies, and the probes, are the build's own
+    doer = sys._getframe(2)
+    if doer.f_code.co_name == "_get_default_tempdir" and doer.f_globals.get("__name__") == "tempfile":
+        return                                   # tempfile.gettempdir() tries each candidate with a file it removes: a question, not an effect
+    if event == "open":
+        what = f"open({args[0]!r}) for writing"
+    elif event.startswith("socket."):
+        what = f"{event}({args[1]!r})"
+    else:
+        what = f"{event}({args[0]!r})" if args else f"{event}()"
+    frame: FrameType | None = sys._getframe(2)
+    while frame is not None and not _of_the_program(frame.f_code.co_filename):
+        frame = frame.f_back                     # the statement is the program's: the call into the standard library that does it
+    where = (frame.f_code.co_filename, frame.f_lineno) if frame is not None else (str(getattr(module, "__file__", name)), 0)
+    if (*where, what) not in _confined:
+        _confined.append((*where, what))
+    raise Confined(f"{where[0]}:{where[1]}: {what}")
 
 
 def _audit(event: str, args: tuple[Any, ...]) -> None:
@@ -188,7 +251,11 @@ def _audit(event: str, args: tuple[Any, ...]) -> None:
     frame that performed the operation decides whether the loader did it (reading a module's
     source, listing a directory for the path cache): an importer further down the stack is
     there for every module body (review 2026-11-01 astra-low-05, A5-3)."""
-    if not _bodies or event not in ("open", "os.listdir", "os.scandir", "subprocess.Popen", "os.system", "socket.connect"):
+    if not _bodies:
+        return
+    if event in _EFFECTS or (event == "open" and isinstance(args[2], int) and args[2] & _WRITES):
+        _confine(event, args)
+    if event not in ("open", "os.listdir", "os.scandir", "subprocess.Popen", "os.system", "socket.connect"):
         return
     if str(sys._getframe(1).f_globals.get("__name__")).startswith(_LOADER):
         return
@@ -247,10 +314,6 @@ def _import_entry(path: str, failures: dict[str, str]) -> str:
     except BaseException as exc:  # noqa: BLE001  # SystemExit, or an uncaught error the program also raises
         failures[name] = type(exc).__name__
     return name
-
-
-_STDLIB = os.path.realpath(os.path.dirname(os.__file__))
-_TOOL = os.path.realpath(os.path.join(_REPO, "pipeline"))
 
 
 def _program_modules(program: dict[str, str], failures: dict[str, str]) -> None:
@@ -394,6 +457,7 @@ def main() -> int:
         "compile_calls_not_staged": {site: sorted(b for b in by if not b.startswith("pipeline."))
                                      for site, by in sorted(_compiles.items()) if any(not b.startswith("pipeline.") for b in by)},
         "failed_imports": dict(sorted(failures.items())),
+        "confined": [{"file": file, "line": line, "what": what} for file, line, what in _confined],
         "inputs": {m: sorted(v) for m, v in sorted(_inputs.items())},
         "namedtuple_calls": len(calls),
         "intrinsics": {" ".join(k): v for k, v in sorted(table.items())},
@@ -417,14 +481,19 @@ def main() -> int:
         with open(lock_path, encoding="utf-8") as f:
             for module, functions in json.load(f).get("unsupported_functions", {}).items():
                 unsupported.setdefault(module, []).extend(fn for fn in functions if fn not in unsupported.get(module, []))
+    unstaged = dict(manifest.get("unstaged", {}))
+    if _confined:                                # the reason every miss of this program's carries: "*" is no site
+        file, line, what = _confined[0]
+        unstaged["*"] = f"the dry run stopped at {os.path.basename(file)}:{line} ({what}), so what the module body does after that line was not staged"
     with open(binary_tmp, "wb") as binary:
         marshal.dump({"optimize": sys.flags.optimize, "texts": compiled, "compiled": {k: o for k, (_, o) in compiled_kept.items()},
+                      "confined": list(_confined),
                       "annotations": {k: (e.freevars, e.code) for k, e in evaluators.items()},
                       # compiler-generated functions without an entry point; one that matched no
                       # annotation owner is hand-written, which is not the compiler's to declare
                       "declined": dict(d.split(": ", 1) for d in declined if "matched to 0 annotation owners" not in d),
                       "intrinsics": intrinsic_code, "refused": dict(manifest.get("refused", {})),
-                      "unstaged": dict(manifest.get("unstaged", {})), "unsupported": unsupported}, binary)
+                      "unstaged": unstaged, "unsupported": unsupported}, binary)
     os.replace(binary_tmp, args.binary)
     os.replace(json_tmp, args.out)
     return 0

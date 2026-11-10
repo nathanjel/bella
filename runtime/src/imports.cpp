@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <unordered_set>
 #include <cstdint>
 #include <unordered_map>
 
@@ -1002,6 +1003,40 @@ Module*& external_module() {
 }  // namespace
 void set_external_module(Module* m) { external_module() = m; }
 bool is_bootstrap_prelude(const Module* m) { return m != nullptr && (m == bootstrap_module() || m == external_module()); }
+namespace {
+const char* bootstrap_scope(const Module* m) { return m == bootstrap_module() ? "_frozen_importlib" : "_frozen_importlib_external"; }
+std::unordered_set<std::string>& hidden_names(const Module* m) {
+    static std::unordered_set<std::string> boot, ext;
+    return m == bootstrap_module() ? boot : ext;
+}
+}  // namespace
+std::string bootstrap_class_scope(const ClassObject* c) {
+    if (!c->heap_type) return {};
+    const Obj* said = c->attrs.find(N("__module__"));
+    const Str* text = said != nullptr ? as_str(*said) : nullptr;
+    if (text == nullptr) return {};
+    Module* m = text->text == "_frozen_importlib" ? bootstrap_module() : text->text == "_frozen_importlib_external" ? external_module() : nullptr;
+    if (m == nullptr) return {};
+    Obj held = dict_get(m->dict, Obj::of(intern(c->name)));   // the module's own class of that name, not a program's that says so
+    return held.is_object() && held.object() == c ? text->text + "." + c->name : std::string{};
+}
+void hide_bootstrap_names() {
+    for (Module* m : {bootstrap_module(), external_module()}) {
+        if (m == nullptr) continue;
+        for (auto& e : m->dict->entries)
+            if (!e.key.is_unset())
+                if (const Str* k = as_str(e.key); k != nullptr && !cpython_has(bootstrap_scope(m), k->text)) hidden_names(m).insert(k->text);
+    }
+}
+bool bootstrap_hides(const Module* m, const Str* name) { return is_bootstrap_prelude(m) && hidden_names(m).contains(name->text); }
+void refuse_bootstrap_assignment(const Module* m, const Str* name) {
+    throw NotImplemented(std::string(bootstrap_scope(m)) + "." + name->text + " assigned by the program (the runtime keeps an object of its own under that "
+                         "name in the module)");
+}
+void refuse_bootstrap_namespace(const Module* m) {
+    throw NotImplemented(std::string("the namespace of ") + bootstrap_scope(m) + " as a whole (dir, vars or __dict__: the runtime keeps names of its own "
+                         "in it, which CPython's module does not have)");
+}
 Ref i_bella_is_builtin(Obj, Args a) {            // _imp.is_builtin: sys and builtins, then the table
     positional_only(a, "_bella_is_builtin", 1, 1);
     const std::string& name = as_str(a.pos(0))->text;
@@ -1740,6 +1775,7 @@ Ref module_getattr(Obj obj, const Str* name, bool suppress) {
             attr = descr_get(found, obj, Obj::of(c));
         } else {
             Obj v = dict_get(m->dict, Obj::of(name));
+            if (!v.is_unset() && bootstrap_hides(m, name)) v = Obj{};   // the runtime's own, in a module of the import system: no attribute of it
             if (!v.is_unset()) attr = Ref::share(v);
             else if (!found.is_unset()) attr = descr_get(found, obj, Obj::of(c));
         }
@@ -1823,6 +1859,7 @@ Ref module_repr_m(Obj self, Args a) {            // module_repr: importlib._boot
 Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the namespace, else its keys
     positional_only(a, "__dir__", 0, 0);
     Module* m = as_module(self, "__dir__");
+    if (is_bootstrap_prelude(m)) refuse_bootstrap_namespace(m);
     Ref dirfunc = resolved_dict_item(m->dict, N("__dir__"));
     if (!dirfunc.get().is_unset()) return invoke(dirfunc.get(), {});
     Ref names = dict_new();                      // a native module has CPython's names, whichever it has written
@@ -1836,7 +1873,11 @@ Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the
         if (!e.key.is_unset()) list_append(keys.get(), e.key);
     return keys;
 }
-Ref module_dict_get(Obj self) { return Ref::share(Obj::of(as_module(self, "__dict__")->dict)); }
+Ref module_dict_get(Obj self) {
+    Module* m = as_module(self, "__dict__");
+    if (is_bootstrap_prelude(m)) refuse_bootstrap_namespace(m);
+    return Ref::share(Obj::of(m->dict));
+}
 Ref module_new_m(Obj, Args a) {                  // ModuleType(name, doc=None): __new__ makes it empty
     if (a.npos < 1 || !is_kind(a.pos(0), Kind::Class) || static_cast<ClassObject*>(a.pos(0).object()) != types().module)
         throw NotImplemented("a subclass of the module type (step 3b)");

@@ -1100,6 +1100,15 @@ void set_stdlib_dir(const char* dir);             // sys._stdlib_dir, the build'
 std::string& stdlib_dir();
 void set_external_module(Module* m);              // _frozen_importlib_external, as start-up made it
 bool is_bootstrap_prelude(const Module* m);       // either of the two: their names are the names table's, as a C module's are
+// The two modules below module level (review F17 #16). Their classes are Python's in CPython too, and the names table has each
+// one's own attributes under `<module>.<class>`: the scope of such a class, "" for any other. And what the runtime keeps in
+// the two namespaces for itself (bootstrap.py is also the start-up file) is no attribute of the modules: found once at the
+// end of start-up, a read does not see such a name, an assignment to one stops by name, and so does the namespace as a whole
+std::string bootstrap_class_scope(const ClassObject* c);
+void hide_bootstrap_names();
+bool bootstrap_hides(const Module* m, const Str* name);
+[[noreturn]] void refuse_bootstrap_namespace(const Module* m);
+[[noreturn]] void refuse_bootstrap_assignment(const Module* m, const Str* name);   // CPython would make a new attribute; here the name is the runtime's own object
 Ref i_bella_ga_get(Obj, Args a);
 Ref object_getattribute(Obj self, Args a);
 Ref instance_dict_of(Obj self);                  // the __dict__ of a class's instance, by its getset

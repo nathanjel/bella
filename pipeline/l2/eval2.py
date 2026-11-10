@@ -965,7 +965,7 @@ class Interpreter:
         outcome = self.staged.compiled.get((site, "compile", source, str(filename), str(mode), flags | inherited, optimize,
                                             module, _feature_version))
         if outcome is None:
-            raise Refused(self.staged.unstaged.get(site) or f"E-01: compile at {site} of a text the dry run did not stage")
+            raise Refused(self.staged.unstaged.get(site) or self.staged.not_staged(f"E-01: compile at {site} of a text the dry run did not stage"))
         if outcome[0] == "raises":
             cls = getattr(builtins, outcome[1], None)
             if not (isinstance(cls, type) and issubclass(cls, BaseException)):
