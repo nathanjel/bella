@@ -141,6 +141,42 @@ with tempfile.TemporaryDirectory() as d:
     print(os.path.getsize(os.path.join(d, "b")), shutil.copy(a, os.path.join(d, "c")) == os.path.join(d, "c"), open(os.path.join(d, "c"), "rb").read() == b"x" * 300000)
 """
 
+# beside C-7-60: the extended attributes (which a file system may not have: both sides run on one here, under the working
+# directory), copy2 carrying them over, and times given as other real numbers or at the edge of time_t
+XATTRS = r'''
+import os, shutil, tempfile, decimal, fractions
+def m(f):
+    try:
+        return repr(f())
+    except OSError as e:
+        return type(e).__name__ + ": " + repr((e.errno, e.strerror, type(e.filename).__name__))
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+d = tempfile.mkdtemp(dir=os.getcwd())
+try:
+    a = os.path.join(d, "a")
+    open(a, "w").close()
+    os.symlink("a", os.path.join(d, "l"))
+    fd = os.open(a, os.O_RDONLY)
+    print(m(lambda: os.listxattr(a)), m(lambda: os.setxattr(a, "user.one", b"1")), m(lambda: os.setxattr(a, b"user.two", bytearray(b"22"), os.XATTR_CREATE)), m(lambda: sorted(os.listxattr(a))), m(lambda: os.getxattr(a, "user.one")), m(lambda: os.getxattr(fd, b"user.two")),
+          m(lambda: os.setxattr(a, "user.one", b"x", os.XATTR_CREATE)), m(lambda: os.setxattr(a, "user.none", b"x", os.XATTR_REPLACE)), m(lambda: os.setxattr(fd, "user.big", b"v" * 5000)), m(lambda: len(os.getxattr(a, "user.big"))), m(lambda: os.removexattr(a, "user.big")),
+          m(lambda: os.removexattr(a, "user.big")), m(lambda: os.getxattr(a, "user.missing")), m(lambda: sorted(os.listxattr(fd))), m(lambda: sorted(os.listxattr(os.fsencode(a)))), m(lambda: os.listxattr(os.path.join(d, "l"), follow_symlinks=False)), m(lambda: sorted(os.listxattr(os.path.join(d, "l")))))
+    print(m(lambda: os.listxattr(fd, follow_symlinks=False)), m(lambda: os.getxattr(fd, "user.one", follow_symlinks=False)), m(lambda: os.setxattr(fd, "user.one", b"", follow_symlinks=False)), m(lambda: os.removexattr(fd, "user.one", follow_symlinks=False)),
+          m(lambda: os.getxattr(a, 1)), m(lambda: os.setxattr(a, "user.one", "str")), m(lambda: os.setxattr(a, "user.one", b"1", "x")), m(lambda: os.getxattr(a)), m(lambda: os.setxattr(a, "user.one")), m(lambda: os.removexattr(a)), m(lambda: os.listxattr(a, False)),
+          m(lambda: os.getxattr(os.path.join(d, "missing"), "user.one")), m(lambda: os.listxattr(-1)), m(lambda: os.getxattr(a, "user.one", False)), m(lambda: os.setxattr(a, "bad\0name", b"1")), m(lambda: os.listxattr(1.5)), m(lambda: os.getxattr(path=a, attribute="user.one")))
+    b = shutil.copy2(a, os.path.join(d, "b"))
+    print(m(lambda: sorted(os.listxattr(b))), m(lambda: os.getxattr(b, "user.two")))
+    here = os.getcwd(); os.chdir(d); print(m(lambda: os.listxattr()), m(lambda: os.listxattr(None))); os.chdir(here)
+    print(m(lambda: os.utime(a, (decimal.Decimal("1.5"), fractions.Fraction(5, 2)))), os.stat(a).st_atime_ns, os.stat(a).st_mtime_ns, m(lambda: os.utime(a, (2 ** 63, 0))), m(lambda: os.utime(a, (9223372036854775808.0, 0))), m(lambda: os.utime(a, (-9223372036854775808.0, 0))), m(lambda: os.utime(a, (1e-10, -1e-10))), os.stat(a).st_atime_ns, os.stat(a).st_mtime_ns)
+    os.close(fd)
+finally:
+    shutil.rmtree(d)
+'''
+
+
+def test_extended_attributes_and_odd_times() -> None:
+    same(XATTRS)
+
 
 def test_copying_between_descriptors_and_chmod() -> None:
     same(COPYING)
@@ -163,7 +199,7 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
-    for body, name in (("os.fork()", "os.fork"), ("os.dup(0)", "os.dup"), ("import shutil, tempfile\n        with tempfile.TemporaryDirectory() as d:\n            shutil.copy2(__file__, os.path.join(d, 'copy'))", "os.utime"), ("os.mkdir('x', dir_fd=0)", "os.mkdir(dir_fd=...)"), ("os.access('.', 0, effective_ids=True)", "os.access(effective_ids=True)"),
+    for body, name in (("os.fork()", "os.fork"), ("os.dup(0)", "os.dup"), ("os.truncate('x', 0)", "os.truncate"), ("os.mkdir('x', dir_fd=0)", "os.mkdir(dir_fd=...)"), ("os.access('.', 0, effective_ids=True)", "os.access(effective_ids=True)"),
                        ("os.sched_param(1)", "os.sched_param"), ("os.stat(True)", "a bool as a file descriptor"), ("os.fsync(False)", "a bool as a file descriptor"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
@@ -175,6 +211,7 @@ def test_what_the_runtime_has_not_stops_by_name() -> None:
 if __name__ == "__main__":
     test_scandir_and_dir_fd()
     test_copying_between_descriptors_and_chmod()
+    test_extended_attributes_and_odd_times()
     test_messages()
     test_what_a_function_shows()
     test_a_write_goes_straight_out_and_exit_does_not_flush()

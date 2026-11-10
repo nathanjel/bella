@@ -21,6 +21,7 @@ try:
     _sys                                         # noqa: B018  # the system calls, by name
     _bella_new_instance                          # noqa: B018  # tp_alloc: an instance of a type a program cannot make
     _unraisable                                  # noqa: B018  # PyErr_FormatUnraisable: a message and the exception
+    _as_double                                   # noqa: B018  # PyFloat_AsDouble, with its messages
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -35,6 +36,7 @@ except NameError:
     _sys: Callable[..., Any] = _missing
     _bella_new_instance: Callable[..., Any] = _missing
     _unraisable: Callable[..., Any] = _missing
+    _as_double: Callable[..., float] = _missing
 
 AT_NO_AUTOMOUNT = 2048
 CLD_CONTINUED = 6
@@ -1137,13 +1139,39 @@ getrandom = _absent("getrandom")
 getresgid = _absent("getresgid")
 getresuid = _absent("getresuid")
 getsid = _absent("getsid")
-getxattr = _absent("getxattr")
+
+
+def _xattr_path(function: str, path: object, follow: object) -> tuple[object, object, bool]:
+    """The path of an extended-attribute function, which may be a descriptor, and fd_and_follow_symlinks_invalid."""
+    data, shown = _path(function, "path", path, allow_fd=True, nullable=function == "listxattr")
+    follows = follow is _ABSENT or bool(follow)
+    if type(data) is int and not follows:
+        raise ValueError(function + ": cannot use fd and follow_symlinks together")
+    return data, shown, follows
+
+
+def getxattr(*args: object, **kwds: object) -> bytes:   # os_getxattr_impl
+    path, attribute, follow = _unpack("getxattr", args, kwds, ("path", "attribute", "follow_symlinks"), 2, 2)
+    data, shown, follows = _xattr_path("getxattr", path, follow)
+    name = _path("getxattr", "attribute", attribute)[0]
+    result = _sys("xattr", b"get", data, follows, name)
+    if type(result) is int:
+        _fail(-result, shown)
+    return result  # type: ignore[no-any-return]
 grantpt = _absent("grantpt")
 initgroups = _absent("initgroups")
 kill = _absent("kill")
 killpg = _absent("killpg")
 lchown = _absent("lchown")
-listxattr = _absent("listxattr")
+
+
+def listxattr(*args: object, **kwds: object) -> list[str]:   # os_listxattr_impl: the names are str whatever the path is
+    path, follow = _unpack("listxattr", args, kwds, ("path", "follow_symlinks"), 0, 1)
+    data, shown, follows = _xattr_path("listxattr", None if path is _ABSENT else path, follow)
+    result = _sys("xattr", b"list", b"." if data is None else data, follows)
+    if type(result) is int:
+        _fail(-result, shown)
+    return [bytes.decode(name, "utf-8", "surrogateescape") for name in result]
 lockf = _absent("lockf")
 login_tty = _absent("login_tty")
 major = _absent("major")
@@ -1170,7 +1198,15 @@ pwrite = _absent("pwrite")
 pwritev = _absent("pwritev")
 readinto = _absent("readinto")
 readv = _absent("readv")
-removexattr = _absent("removexattr")
+
+
+def removexattr(*args: object, **kwds: object) -> None:   # os_removexattr_impl
+    path, attribute, follow = _unpack("removexattr", args, kwds, ("path", "attribute", "follow_symlinks"), 2, 2)
+    data, shown, follows = _xattr_path("removexattr", path, follow)
+    name = _path("removexattr", "attribute", attribute)[0]
+    code = _sys("xattr", b"remove", data, follows, name)
+    if code < 0:
+        _fail(-code, shown)
 
 
 def scandir(*args: object, **kwds: object) -> ScandirIterator:   # os_scandir_impl
@@ -1231,7 +1267,23 @@ setresuid = _absent("setresuid")
 setreuid = _absent("setreuid")
 setsid = _absent("setsid")
 setuid = _absent("setuid")
-setxattr = _absent("setxattr")
+
+
+def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
+    path, attribute, value, flags, follow = _unpack("setxattr", args, kwds, ("path", "attribute", "value", "flags", "follow_symlinks"), 3, 4)
+    data, shown = _path("setxattr", "path", path, allow_fd=True)
+    name = _path("setxattr", "attribute", attribute)[0]
+    if not issubclass(type(value), (bytes, bytearray)):   # the Py_buffer converter
+        if _type_lookup(value, "__buffer__") is not _ABSENT:
+            _refuse("os.setxattr() of a buffer that is not bytes or bytearray")
+        raise TypeError("a bytes-like object is required, not '" + type(value).__name__ + "'")
+    bits = 0 if flags is _ABSENT else _int(flags)
+    follows = follow is _ABSENT or bool(follow)
+    if type(data) is int and not follows:
+        raise ValueError("setxattr: cannot use fd and follow_symlinks together")
+    code = _sys("xattr", b"set", data, follows, name, bytes(value), bits)  # type: ignore[arg-type]
+    if code < 0:
+        _fail(-code, shown)
 splice = _absent("splice")
 statvfs = _absent("statvfs")
 sync = _absent("sync")
@@ -1248,7 +1300,75 @@ truncate = _absent("truncate")
 ttyname = _absent("ttyname")
 unlockpt = _absent("unlockpt")
 unshare = _absent("unshare")
-utime = _absent("utime")
+
+
+def _time_t(value: object) -> int:               # _PyLong_AsTime_t
+    seconds = _number_index(value)
+    if not -(2**63) <= seconds < 2**63:
+        raise OverflowError("timestamp out of range for platform time_t")
+    return seconds
+
+
+def _timespec(value: object) -> tuple[int, int]:   # pytime_object_to_denominator(obj, &sec, &nsec, 1e9, _PyTime_ROUND_FLOOR)
+    if _type_lookup(value, "__index__") is not _ABSENT:   # PyIndex_Check: whole seconds
+        return _time_t(value), 0
+    d = _as_double(value)                        # PyFloat_AsDouble: a float, or what has __float__; "must be real number" otherwise
+    if d != d:
+        raise ValueError("Invalid value NaN (not a number)")
+    if d - d != 0.0:                             # an infinity: modf leaves it whole, and no time_t holds it
+        raise OverflowError("timestamp out of range for platform time_t")
+    whole = float(int(d))                        # modf: the integral part, towards zero
+    part = (d - whole) * 1e9
+    floor = float(int(part))                     # _PyTime_ROUND_FLOOR
+    if part < floor:
+        floor -= 1.0
+    if floor >= 1e9:
+        floor -= 1e9
+        whole += 1.0
+    elif floor < 0:
+        floor += 1e9
+        whole -= 1.0
+    if not -9223372036854775808.0 <= whole < 9223372036854775808.0:
+        raise OverflowError("timestamp out of range for platform time_t")
+    return int(whole), int(floor)
+
+
+def _split_ns(value: object) -> tuple[int, int]:   # split_py_long_to_s_and_ns: the object's own divmod by a billion
+    pair = divmod(value, 1000000000)  # type: ignore[operator]
+    if not issubclass(type(pair), tuple) or tuple.__len__(pair) != 2:
+        raise TypeError(type(value).__name__ + ".__divmod__() must return a 2-tuple, not " + type(pair).__name__)
+    seconds = _time_t(tuple.__getitem__(pair, 0))
+    nanoseconds = _number_index(tuple.__getitem__(pair, 1))
+    if not -(2**63) <= nanoseconds < 2**63:
+        raise OverflowError("Python int too large to convert to C long")
+    return seconds, nanoseconds
+
+
+def utime(*args: object, **kwds: object) -> None:   # os_utime_impl
+    path, times, ns, dir_fd, follow = _unpack("utime", args, kwds, ("path", "times", "ns", "dir_fd", "follow_symlinks"), 1, 2)
+    data, shown = _path("utime", "path", path, allow_fd=True)
+    under = _dir_fd(dir_fd)
+    follows = follow is _ABSENT or bool(follow)
+    given = times is not _ABSENT and times is not None
+    if given and ns is not _ABSENT:
+        raise ValueError("utime: you may specify either 'times' or 'ns' but not both")
+    when: tuple[int, int, int, int] | None = None   # None: now
+    if given:
+        if type(times) is not tuple or len(times) != 2:
+            raise TypeError("utime: 'times' must be either a tuple of two numbers or None")
+        when = (*_timespec(times[0]), *_timespec(times[1]))
+    elif ns is not _ABSENT:
+        if type(ns) is not tuple or len(ns) != 2:
+            raise TypeError("utime: 'ns' must be a tuple of two ints")
+        when = (*_split_ns(ns[0]), *_split_ns(ns[1]))
+    if type(data) is int:                        # path_and_dir_fd_invalid, fd_and_follow_symlinks_invalid
+        if under is not None:
+            raise ValueError("utime: can't specify dir_fd without matching path")
+        if not follows:
+            raise ValueError("utime: cannot use fd and follow_symlinks together")
+    code = _sys("utime", data, when, under, follows)
+    if code < 0:
+        _fail(-code, shown)
 wait = _absent("wait")
 wait3 = _absent("wait3")
 wait4 = _absent("wait4")

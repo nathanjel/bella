@@ -6,6 +6,7 @@
 #include <sys/random.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <sys/times.h>
 #include <sys/utsname.h>
 #include <grp.h>
@@ -201,6 +202,65 @@ Ref p_sendfile(Args a) {                         // (out_fd, in_fd, offset or No
     do r = sendfile(int_of(a.pos(0)), int_of(a.pos(1)), at, static_cast<std::size_t>(i64_of(a.pos(3))));
     while (r < 0 && errno == EINTR);
     return result(r);
+}
+Ref p_utime(Args a) {                            // (path or descriptor, None for now or (a_sec, a_nsec, m_sec, m_nsec), dir_fd or None, follow_symlinks)
+    timespec ts[2]{};
+    timespec* when = nullptr;
+    if (a.pos(1) != None()) {
+        auto& t = static_cast<Tuple*>(a.pos(1).object())->items;
+        ts[0].tv_sec = static_cast<time_t>(i64_of(t[0]));
+        ts[0].tv_nsec = static_cast<long>(i64_of(t[1]));
+        ts[1].tv_sec = static_cast<time_t>(i64_of(t[2]));
+        ts[1].tv_nsec = static_cast<long>(i64_of(t[3]));
+        when = ts;
+    }
+    if (is_int(a.pos(0))) return result(futimens(int_of(a.pos(0)), when));   // utime_fd
+    return result(utimensat(dir_fd_of(a, 2), text_of(a.pos(0)), when, truth(a.pos(3)) ? 0 : AT_SYMLINK_NOFOLLOW));   // utime_dir_fd, utime_nofollow_symlinks, utime_default
+}
+// The extended attributes: (operation, path or descriptor, follow_symlinks[, name[, value, flags]]). "get" and "list" grow
+// their buffer as CPython's do (a first size, then the system's maximum); "list" gives the names as bytes.
+Ref p_xattr(Args a) {
+    const std::string op = bytes_data(a.pos(0));
+    bool by_fd = is_int(a.pos(1)), follow = truth(a.pos(2));
+    int fd = by_fd ? int_of(a.pos(1)) : -1;
+    const char* path = by_fd ? nullptr : text_of(a.pos(1));
+    if (op == "list") {
+        for (std::size_t size : {std::size_t{256}, std::size_t{XATTR_LIST_MAX}}) {
+            std::string buffer(size, '\0');
+            ssize_t n = by_fd ? flistxattr(fd, buffer.data(), size) : follow ? listxattr(path, buffer.data(), size) : llistxattr(path, buffer.data(), size);
+            if (n < 0) {
+                if (errno == ERANGE && size == 256) continue;
+                return failed();
+            }
+            Ref names = list_new({});
+            for (std::size_t start = 0, i = 0; i < static_cast<std::size_t>(n); ++i)
+                if (buffer[i] == '\0') {
+                    Ref name = bytes_new(std::string_view(buffer.data() + start, i - start));
+                    list_append(names.get(), name.get());
+                    start = i + 1;
+                }
+            return names;
+        }
+    }
+    const char* name = text_of(a.pos(3));
+    if (op == "get") {
+        for (std::size_t size : {std::size_t{128}, std::size_t{XATTR_SIZE_MAX}}) {
+            std::string buffer(size, '\0');
+            ssize_t n = by_fd ? fgetxattr(fd, name, buffer.data(), size) : follow ? getxattr(path, name, buffer.data(), size) : lgetxattr(path, name, buffer.data(), size);
+            if (n < 0) {
+                if (errno == ERANGE && size == 128) continue;
+                return failed();
+            }
+            return bytes_new(std::string_view(buffer.data(), static_cast<std::size_t>(n)));
+        }
+    }
+    if (op == "set") {
+        const std::string& value = bytes_data(a.pos(4));
+        int flags = int_of(a.pos(5));
+        return result(by_fd ? fsetxattr(fd, name, value.data(), value.size(), flags) : follow ? setxattr(path, name, value.data(), value.size(), flags)
+                                                                                           : lsetxattr(path, name, value.data(), value.size(), flags));
+    }
+    return result(by_fd ? fremovexattr(fd, name) : follow ? removexattr(path, name) : lremovexattr(path, name));
 }
 Ref p_chmod(Args a) {                            // (path or descriptor, mode, dir_fd or None, follow_symlinks): os_chmod_impl's three calls
     mode_t mode = static_cast<mode_t>(int_of(a.pos(1)));
@@ -524,7 +584,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},
         {"getgid", p_getgid}, {"getegid", p_getegid}, {"putenv", p_putenv}, {"unsetenv", p_unsetenv}, {"clearenv", p_clearenv}, {"exit", p_exit},
