@@ -1,0 +1,12 @@
+{
+ "case": "C-7-56_excepthook.py",
+ "clause": "C-7-56",
+ "spec": "section 2",
+ "status": "P1",
+ "source": "dialect specification section 2 (entry and exit: an uncaught exception), Python/pythonrun.c (_PyErr_PrintEx), Python/sysmodule.c (sys.excepthook)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "before: True builtin_function_or_method excepthook sys [False, False, False, False]\nhook: Refused Refused('uncaught', 3) [56, 49, 45] ValueError('the cause') True\nlast: True True True True\nat exit: Refused('uncaught', 3) [56, 49, 45] True\n",
+ "stderr": "the built-in hook, by hand:\nTraceback (most recent call last):\n  File \"C-7-56_excepthook.py\", line 43, in inner\nValueError: the cause\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C-7-56_excepthook.py\", line 56, in <module>\n  File \"C-7-56_excepthook.py\", line 49, in outer\n  File \"C-7-56_excepthook.py\", line 45, in inner\nRefused: ('uncaught', 3)\nand of an exception that was never raised:\nKeyError: 'never raised'\n",
+ "exit_code": 1
+}

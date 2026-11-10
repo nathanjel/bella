@@ -2048,6 +2048,13 @@ Ref exception_setstate(Obj self, Args a) {       // BaseException___setstate___i
     return none_ref();
 }
 Ref traceback_lineno(Obj self) { return int_from_i64(static_cast<Traceback*>(self.object())->line); }
+Ref traceback_next(Obj self) {                   // tb_next_get: the entry one call deeper, or None
+    Obj next = static_cast<Traceback*>(self.object())->next.get();
+    return is_kind(next, Kind::Traceback) ? Ref::share(next) : none_ref();
+}
+void traceback_next_set(Obj, Obj) {              // tb_next_set: a program may relink a traceback; the runtime's entries are its own yet
+    throw NotImplemented("assigning or deleting traceback.tb_next");
+}
 Ref oserror_written_get(Obj self) {
     Obj v = exception_field(self, "written");
     if (v.is_unset()) raise_new("AttributeError", "characters_written");
@@ -3039,6 +3046,9 @@ void init_types() {
     {
         auto* lineno = new GetSet("tb_lineno", t.traceback, traceback_lineno, nullptr);
         t.traceback->attrs.set(N("tb_lineno"), Obj::of(lineno));
+        auto* next = new GetSet("tb_next", t.traceback, traceback_next, traceback_next_set);
+        next->deletable = true;                  // so that a deletion reaches the setter's stop, not "not writable"
+        t.traceback->attrs.set(N("tb_next"), Obj::of(next));
         ClassObject* os = os_error();
         method(os, "__new__", oserror_new, Binding::Function);
         method(os, "__init__", oserror_init_m);

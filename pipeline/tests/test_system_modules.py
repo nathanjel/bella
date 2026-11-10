@@ -825,9 +825,8 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("raise ExceptionGroup('uncaught', [ValueError()])", "uncaught exception group"), ("import warnings\nwarnings.warn_explicit('m', UserWarning, 'f', 1, module_globals={'__name__': 'x'})", "module_globals"),
              ("import importlib, json\nimportlib.reload(json)", "importlib.reload"), ("import importlib.machinery\nimportlib.machinery.PathFinder.find_spec('x')", "PathFinder.find_spec"),
              ("import importlib.util, json\nimportlib.util.LazyLoader(json.__loader__).exec_module(json)", "__class__ assignment"), ("import _imp\n_imp.get_frozen_object('os')", "_imp.get_frozen_object"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
-             ("import sys\nsys.excepthook = print\nraise KeyError('x')", "sys.excepthook replaced by the program"),
-             ("import atexit, sys\nsys.unraisablehook = print\natexit.register(lambda: 1 / 0)", "sys.unraisablehook set by the program"),
-             ("import sys\nsys.unraisablehook", "sys.unraisablehook"),
+             ("import sys\nr = sys.__unraisablehook__\nclass K:\n    def __del__(self): raise ValueError\nkept = []\nsys.unraisablehook = kept.append\nK()\n"
+              "r(type(kept[0])((3, 4, None, None, None)))", "an exc_type that is no class"),
              ("import weakref\nclass K: pass\nk = K()\nweakref.finalize(k, print, 'at exit')", "importing 'gc'"),
              ("import threading\nthreading.Thread(target=print).start()", "creating a thread"), ("import threading\nlk = threading.Lock(); lk.acquire(); lk.acquire()", "no other thread can release"),
 )
@@ -933,6 +932,94 @@ IO_FINALISER = """
 """
 
 
+# what becomes of an uncaught exception under each hook (C-7-56 is the case; these are the hooks it does not install)
+EXCEPTHOOK_WAYS = {
+    "a hook that raises": """
+        import atexit, sys
+        def hook(kind, value, tb):
+            print("the hook", kind.__name__)
+            raise RuntimeError("from the hook")
+        sys.excepthook = hook
+        atexit.register(print, "handler", file=sys.stderr)
+        raise KeyError("uncaught")
+    """,
+    "a hook that exits with a number": """
+        import sys
+        def hook(kind, value, tb): sys.exit(5)
+        sys.excepthook = hook
+        raise KeyError("uncaught")
+    """,
+    "a hook that exits with a text": """
+        import sys
+        def hook(kind, value, tb): raise SystemExit("the hook's text")
+        sys.excepthook = hook
+        raise KeyError("uncaught")
+    """,
+    "None for a hook": """
+        import sys
+        sys.excepthook = None
+        raise KeyError("uncaught")
+    """,
+    "the built-in hook, and what an atexit handler reads": """
+        import atexit, sys
+        def handler():
+            print(repr(sys.last_exc), sys.last_type.__name__, sys.last_value is sys.last_exc, type(sys.last_traceback).__name__, sys.last_traceback.tb_next)
+        atexit.register(handler)
+        print([hasattr(sys, n) for n in ("last_exc", "last_type", "last_value", "last_traceback")])
+        raise KeyError("uncaught")
+    """,
+    "SystemExit is no business of the hook's": """
+        import atexit, sys
+        sys.excepthook = lambda *args: print("never called")
+        atexit.register(lambda: print([hasattr(sys, n) for n in ("last_exc", "last_type")]))
+        sys.exit(4)
+    """,
+    "a hook that is the built-in one of another name": """
+        import sys
+        sys.excepthook = sys.__excepthook__
+        def f(): raise ValueError("uncaught", 1)
+        f()
+    """,
+    "a hook that prints and one that is a method": """
+        import sys
+        class Reporter:
+            def report(self, kind, value, tb):
+                print("reported:", kind.__name__, value.args, tb.tb_lineno, tb.tb_next is None, file=sys.stderr)
+        sys.excepthook = Reporter().report
+        print("before")
+        raise LookupError("uncaught", 2)
+    """,
+    "the unraisable hook at the end of the program": """
+        import atexit, sys
+        class Named:
+            def __repr__(self): return "<Named>"
+            def __call__(self): raise ValueError("from the handler")
+        def hook(u):
+            print("hook:", type(u).__name__, u.exc_type.__name__, u.exc_value, u.err_msg, u.object)
+        sys.unraisablehook = hook
+        atexit.register(Named())
+        atexit.register(int, "x")
+        print("end")
+    """,
+    "the built-in unraisable hook for an exception with no frame of its own": """
+        import atexit, weakref
+        class Referent: pass
+        referent = Referent()
+        reference = weakref.ref(referent, int)
+        del referent
+        atexit.register(int, "x")
+    """,
+}
+
+
+def test_an_uncaught_exception_under_each_hook() -> None:
+    for name, program in EXCEPTHOOK_WAYS.items():
+        try:
+            same_streams({"main.py": program}, stderr=True)
+        except AssertionError as e:
+            raise AssertionError(f"{name}: {e}") from None
+
+
 def test_atexit_on_every_way_out() -> None:
     for name, program in ATEXIT_WAYS_OUT.items():
         try:
@@ -958,5 +1045,6 @@ if __name__ == "__main__":
     test_importlib()
     test_exception_groups()
     test_atexit_on_every_way_out()
+    test_an_uncaught_exception_under_each_hook()
     test_a_file_whose_close_raises_in_its_finaliser()
     test_what_is_absent_stops_by_name()

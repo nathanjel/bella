@@ -1181,6 +1181,23 @@ Ref sys_exc_info(Obj, Args a) {                   // sys_exc_info_impl: (type, v
     return tuple_new({Obj::of(type_of(exc)), exc, tb.get()});
 }
 void print_traceback(Obj exc);
+// Python/errors.c's UnraisableHookArgs, the structseq sys.unraisablehook is called with: made by the prelude at start-up
+// (bootstrap.py's _bella_sys_surface), kept here since no module holds it
+Ref& unraisable_args_type() {
+    static Ref type;
+    return type;
+}
+void write_unraisable(Obj type, Obj value, Obj tb, Obj message, Obj object);
+Ref sys_unraisablehook(Obj, Args a) {             // sys_unraisablehook: the default hook, which takes that type alone (METH_O)
+    onearg(a, "sys.unraisablehook");
+    Obj given = a.pos(0);
+    Obj wanted = unraisable_args_type().get();
+    if (wanted.is_unset() || !given.is_object() || Obj::of(type_of(given)) != wanted)
+        raise_new("TypeError", "sys.unraisablehook argument type must be UnraisableHookArgs");
+    auto& items = static_cast<Tuple*>(given.object())->items;
+    write_unraisable(items[0], items[1], items[2], items[3], items[4]);
+    return none_ref();
+}
 Ref sys_excepthook(Obj, Args a) {                 // sys_excepthook_impl: PyErr_Display on stderr, for an exception with its traceback
     clinic(a, "excepthook", "sys.excepthook", 3, 3);
     Obj value = a.pos(1);
@@ -1638,6 +1655,8 @@ Module* make_sys(int argc, char** argv) {
     put_builtin(d, "exception", sys_exception);
     put_builtin(d, "excepthook", sys_excepthook);
     put(d, "__excepthook__", dict_get(d, Obj::of(intern("excepthook"))));
+    put_builtin(d, "unraisablehook", sys_unraisablehook);
+    put(d, "__unraisablehook__", dict_get(d, Obj::of(intern("unraisablehook"))));
     put_builtin(d, "_getframemodulename", sys_getframemodulename);
     put(d, "maxsize", int_from_i64(INT64_MAX).get());
     put_builtin(d, "getrecursionlimit", sys_getrecursionlimit);
@@ -2177,24 +2196,82 @@ void print_traceback(Obj exc);
 }  // namespace
 
 namespace {
-// PyErr_FormatUnraisable calls sys.unraisablehook with the exception and the message; the runtime writes the default hook's
-// report itself, so a hook the program put in sys would go uncalled: a stop by name until the hook is the runtime's own
-void no_unraisablehook_of_the_programs() {
+// write_unraisable_exc_file, the default hook's work on sys.stderr (nothing when sys has none, or None): a first line from
+// the message and the object, then the report of the exception. CPython hands the value to the traceback module
+// (_print_exception_bltin) and falls back on the class's name and the value's text when that fails, as it does for a value
+// that is no exception; here the runtime's own report stands for the module's
+void write_unraisable(Obj type, Obj value, Obj tb, Obj message, Obj object) {
+    Obj file = std_stream("stderr");
+    if (file.is_unset() || file == None()) return;
+    bool said = !message.is_unset() && message != None();
+    if (!object.is_unset() && object != None()) {
+        std::string head = "Exception ignored in: ";
+        if (said) {
+            Ref text = str_of(message);
+            head = as_str(text.get())->text + ": ";
+        }
+        try {
+            Ref shown = repr_of(object);
+            head += as_str(shown.get())->text;
+        } catch (const PyError&) {
+            head += "<object repr() failed>";
+        }
+        write_stderr(head + "\n");
+    } else if (said) {
+        Ref text = str_of(message);
+        write_stderr(as_str(text.get())->text + ":\n");
+    }
+    if (is_exception_instance(value)) {
+        print_traceback(value);
+        return;
+    }
+    if (value.is_unset() || value == None()) {   // traceback.print_exception(None)
+        write_stderr("NoneType: None\n");
+        return;
+    }
+    // a value that is no exception: the traceback given, then `module.qualname: str(value)`
+    if (!tb.is_unset() && tb != None()) throw NotImplemented("sys.unraisablehook's report of a traceback given beside a value that is no exception");
+    if (type.is_unset() || type == None()) return;
+    if (!is_kind(type, Kind::Class)) throw NotImplemented("sys.unraisablehook with an exc_type that is no class (CPython 3.15.2 crashes there)");
+    Ref text = str_of(value);
+    write_stderr(fully_qualified_name(static_cast<ClassObject*>(type.object())) + ": " + as_str(text.get())->text + "\n");
+}
+// format_unraisable_v: sys.unraisablehook(UnraisableHookArgs(class, exception, traceback, message, None)). An exception with
+// no traceback gets one of the frame that is running, if any. No hook, or None for one, is the default hook; a hook that
+// raises (SystemExit too) or cannot be called is reported by the default hook itself, as the object, with its own exception
+void format_unraisable(const std::string* context, Obj exc) {
+    Ref type = Ref::share(Obj::of(type_of(exc)));
+    Ref tb = Ref::share(traceback_of(exc));
+    if (!is_kind(tb.get(), Kind::Traceback)) {
+        tb = none_ref();
+        if (detail::FrameRecord* frame = detail::current_frame(); frame != nullptr && is_exception_instance(exc)) {
+            tb = own(new Traceback(frame->code, frame->line, Ref{}));   // _PyTraceBack_FromFrame(NULL, frame), then PyException_SetTraceback
+            set_exception_field(exc, "__traceback__", tb.get());
+        }
+    }
+    Ref message = context != nullptr ? str_new(*context) : none_ref();
     auto sys = native_modules().find("sys");
-    if (sys != native_modules().end() && sys->second != nullptr && !dict_get(sys->second->dict, Obj::of(intern("unraisablehook"))).is_unset())
-        throw NotImplemented("sys.unraisablehook set by the program, where an ignored exception is reported (the runtime writes the default hook's report itself)");
+    Obj hook = sys != native_modules().end() && sys->second != nullptr ? dict_get(sys->second->dict, Obj::of(intern("unraisablehook"))) : Obj{};
+    if (hook.is_unset() || hook == None() || unraisable_args_type().get().is_unset()) {
+        write_unraisable(type.get(), exc, tb.get(), message.get(), None());
+        return;
+    }
+    Ref held = Ref::share(hook);                 // the hook may replace itself
+    try {
+        Ref fields = tuple_new({type.get(), exc, tb.get(), message.get(), None()});
+        Ref args = invoke(unraisable_args_type().get(), {fields.get()});
+        invoke(held.get(), {args.get()});
+    } catch (const PyError& failed) {            // sys.unraisablehook failed: log its error using default hook
+        Obj raised = failed.exc.get();
+        Ref failure = str_new("Exception ignored in sys.unraisablehook");
+        Obj its = traceback_of(raised);
+        write_unraisable(Obj::of(type_of(raised)), raised, is_kind(its, Kind::Traceback) ? its : None(), failure.get(), held.get());
+    }
 }
 }  // namespace
-void report_unraisable(const std::string& context, const PyError& e) { report_unraisable(context, e.exc.get()); }
-void report_unraisable(const std::string& context, Obj exc) {
-    no_unraisablehook_of_the_programs();
-    write_stderr(context + ":\n");
-    print_traceback(exc);
-}
-void report_unraisable(Obj exc) {
-    no_unraisablehook_of_the_programs();
-    print_traceback(exc);
-}
+void report_unraisable(const std::string& context, const PyError& e) { format_unraisable(&context, e.exc.get()); }
+void report_unraisable(const std::string& context, Obj exc) { format_unraisable(&context, exc); }
+void report_unraisable(Obj exc) { format_unraisable(nullptr, exc); }
 
 namespace {
 // What the report reads of an exception, by attribute access as traceback.TracebackException
@@ -2694,8 +2771,11 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 for (std::string_view n : cpython_names_of("stdlib")) list_append(names.get(), Obj::of(intern(std::string(n))));
                 Ref stdlib = invoke(Obj::of(types().frozenset), {names.get()});
                 put(sys_dict, "stdlib_module_names", stdlib.get());
-                for (auto& e : static_cast<Dict*>(surface.get().object())->entries)
-                    if (!e.key.is_unset()) dict_set(sys_dict, e.key, e.value);
+                for (auto& e : static_cast<Dict*>(surface.get().object())->entries) {
+                    if (e.key.is_unset()) continue;
+                    if (as_str(e.key)->text == "_bella_unraisable_args") unraisable_args_type() = Ref::share(e.value);   // no module's
+                    else dict_set(sys_dict, e.key, e.value);
+                }
             }
             // importlib._bootstrap._setup: the built-in modules' specs and loaders
             {
@@ -2755,14 +2835,37 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             if (isinstance(e.exc.get(), exception_class("SystemExit"))) {
                 status = exit_status(e.exc.get());
             } else {
-                // _PyErr_PrintEx calls sys.excepthook(type, value, traceback). The runtime's own is this report; without one
-                // CPython says so and writes the same report; one the program put there stops by name until it is called
-                Obj hook = dict_get(native_modules()["sys"]->dict, Obj::of(intern("excepthook")));
-                if (hook.is_unset()) write_stderr("sys.excepthook is missing\n");
-                else if (!is_kind(hook, Kind::Builtin) || static_cast<Builtin*>(hook.object())->fn != sys_excepthook)
-                    throw NotImplemented("sys.excepthook replaced by the program, at an uncaught exception (the runtime writes the report itself)");
-                print_traceback(e.exc.get());
+                // _PyErr_PrintEx, as Py_RunMain calls it: sys.last_exc and its three older names, then sys.excepthook(class,
+                // exception, traceback). Without a hook CPython says so and writes the report; a hook that raises is reported
+                // with the original after it, and one that exits gives the status (handle_system_exit)
+                Obj raised = e.exc.get();
+                Ref kind = Ref::share(Obj::of(type_of(raised)));
+                Obj its = traceback_of(raised);
+                Ref tb = is_kind(its, Kind::Traceback) ? Ref::share(its) : none_ref();
+                auto* sys_dict = native_modules()["sys"]->dict;
+                put(sys_dict, "last_exc", raised);
+                put(sys_dict, "last_type", kind.get());
+                put(sys_dict, "last_value", raised);
+                put(sys_dict, "last_traceback", tb.get());
                 status = 1;
+                Ref hook = Ref::share(dict_get(sys_dict, Obj::of(intern("excepthook"))));
+                if (hook.get().is_unset()) {
+                    write_stderr("sys.excepthook is missing\n");
+                    print_traceback(raised);
+                } else {
+                    try {
+                        invoke(hook.get(), {kind.get(), raised, tb.get()});
+                    } catch (const PyError& failed) {
+                        if (isinstance(failed.exc.get(), exception_class("SystemExit"))) {
+                            status = exit_status(failed.exc.get());
+                        } else {
+                            write_stderr("Error in sys.excepthook:\n");
+                            print_traceback(failed.exc.get());
+                            write_stderr("\nOriginal exception was:\n");
+                            print_traceback(raised);
+                        }
+                    }
+                }
             }
         }
         // Py_FinalizeEx, on every way out of the program but a refusal. First make_pre_finalization_calls, while the

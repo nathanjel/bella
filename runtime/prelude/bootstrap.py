@@ -1950,7 +1950,7 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
     constructor `structseq` in its messages. What makes the result look as C makes it is _bella_structseq_finish.
     `settle(items, past)`: what a type's own tp_new does to a new one after the common part (statresult_new). With no
     `has_new` a program cannot make one (Py_TPFLAGS_DISALLOW_INSTANTIATION); with no `says_module` its __module__ is its tp_name's, not in its dict."""
-    shown = module + "." + name
+    shown = name if module == "builtins" else module + "." + name   # the tp_name: a type of no module's is in builtins
     named = [f for f in fields if f is not None]
     total = len(fields)
     unnamed = total - len(named)
@@ -2090,6 +2090,8 @@ def _bella_sys_surface(thread_version, hash_randomization):
     int_info = _bella_structseq("int_info", "sys", ["bits_per_digit", "sizeof_digit", "default_max_str_digits", "str_digits_check_threshold"], 4, says_module=False)
     hash_info = _bella_structseq("hash_info", "sys", ["width", "modulus", "inf", "nan", "imag", "algorithm", "hash_bits", "seed_bits", "cutoff"], 9, says_module=False)
     thread_info = _bella_structseq("thread_info", "sys", ["name", "lock", "version"], 3, says_module=False)
+    # Python/errors.c's UnraisableHookArgs, what sys.unraisablehook is called with; no module holds it
+    unraisable_args = _bella_structseq("UnraisableHookArgs", "builtins", ["exc_type", "exc_value", "exc_traceback", "err_msg", "object"], 5, says_module=False)
     version = _bella_structseq_make(version_info, [3, 15, 2, "final", 0], [])
     return {
         "version_info": version,
@@ -2099,6 +2101,7 @@ def _bella_sys_surface(thread_version, hash_randomization):
         "hash_info": hash_info([64, 2305843009213693951, 314159, 0, 1000003, "siphash13", 64, 128, 0]),
         "thread_info": thread_info(["pthread", "pymutex", thread_version]),
         "implementation": SimpleNamespace(name="bella", cache_tag=None, version=version, hexversion=51315440, _multiarch="x86_64-linux-gnu", supports_isolated_interpreters=False),
+        "_bella_unraisable_args": unraisable_args,   # the runtime's own: it takes it out of what goes into sys
     }
 
 
