@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory() as root:
     for entry in entries:
         print("str:", shown(entry, root))
     print("bytes:", [(e.name, e.path.removeprefix(os.fsencode(root)), e.is_dir()) for e in sorted(os.scandir(os.fsencode(root)), key=lambda e: e.name)][:3])
-    print("path-like:", sorted(e.name for e in os.scandir(entries[3])), [e.path.removeprefix(root) for e in os.scandir(os.path.join(root, "dir", ""))])
+    print("path-like:", sorted(e.name for e in os.scandir(entries[3])), sorted(e.path.removeprefix(root) for e in os.scandir(os.path.join(root, "dir", ""))))
     here = os.getcwd()
     os.chdir(root)
     print("default:", sorted((e.name, e.path) for e in os.scandir())[:2], sorted((e.name, e.path) for e in os.scandir("."))[:2], sorted(e.path for e in os.scandir(None))[:1])
