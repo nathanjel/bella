@@ -1073,6 +1073,67 @@ def test_what_the_bootstrap_modules_keep_for_themselves_stops_by_name() -> None:
         assert (got.returncode, got.stdout) == (70, "start\n") and name.rstrip(", ") in got.stderr, (name, got)
 
 
+# R19 (gemini-3.8-flash, 2026-11-10), both in the confinement of RL-410.
+# RL-422: what a module body leaves for later is no business of the build's either. Each of these bodies runs to its end (its
+# dataclass is staged, nothing is recorded) and what it left behind never touches the world: not at the end of the dry run's
+# process, not while the tool still works
+DEFERRED_EFFECTS = {
+    "a handler of atexit": "import atexit\ndef later():\n    open('made.txt', 'w').write('x')\natexit.register(later)\n",
+    "a finaliser at the end of the process": "class Kept:\n    def __del__(self):\n        open('made.txt', 'w').write('x')\nkept = Kept()\n",
+    "weakref.finalize": "import weakref\nclass K: pass\nk = K()\nfinalizer = weakref.finalize(k, lambda: open('made.txt', 'w').write('x'))\n",
+    "threading's own atexit": "import threading\nthreading._register_atexit(lambda: open('made.txt', 'w').write('x'))\n",
+    "a thread that outlives the body": "import threading, time\ndef later():\n    time.sleep(0.4)\n    open('made.txt', 'w').write('x')\nthreading.Thread(target=later).start()\n",
+    "a thread beside the body": "import threading\nthread = threading.Thread(target=lambda: open('made.txt', 'w').write('x'))\nthread.start()\nthread.join()\n",
+    "a removal left for the end": "import atexit, os\natexit.register(os.remove, 'kept.txt')\natexit.register(os.rmdir, 'dir')\n",
+    "a status left for the end": "import atexit, os\natexit.register(os._exit, 3)\n",
+    "an error left for the end": "import atexit\natexit.register(lambda: 1 / 0)\n",
+}
+# RL-423: the hook formats whatever arguments an event comes with, a program's own sys.audit included; `what` is what the
+# record must say, None for what is no effect at all (an "open" with no flags to judge by)
+HOOK_ARGUMENTS = [
+    ("sys.audit('socket.sethostname', 'foo')", "socket.sethostname('foo')"),
+    ("socket.sethostname('a-name')", "socket.sethostname("),
+    ("sys.audit('socket.connect', 'alone')", "socket.connect('alone')"),
+    ("sys.audit('socket.bind')", "socket.bind()"),
+    ("sys.audit('os.rename')", "os.rename()"),
+    ("sys.audit('os.remove', Unshown())", "os.remove(<an object whose repr raised>)"),
+    ("sys.audit('subprocess.Popen', 'touch', ['touch', 'made.txt'], None, None)", "subprocess.Popen('touch')"),
+    ("sys.audit('open', 'made.txt')", None),
+    ("sys.audit('open')", None),
+    ("sys.audit('open', 'made.txt', 'w', 'no flags')", None),
+    ("sys.audit('open', 'made.txt', 'w', 1)", "open('made.txt') for writing"),
+]
+
+
+def test_what_a_module_body_leaves_for_later_is_confined_too() -> None:
+    """RL-422 (R19 #1): an atexit handler, a finaliser, a thread: nothing a body sets going changes the world at build time."""
+    after = "from dataclasses import dataclass\n@dataclass\nclass After:\n    x: int\n"
+    for name, source in DEFERRED_EFFECTS.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                artefact, _ = _dry(tmp, source + after)
+            except (AssertionError, SystemExit) as e:
+                raise AssertionError(f"{name}: {e}") from None
+        assert artefact["confined"] == [] and artefact["failed_imports"] == {}, (name, artefact["confined"], artefact["failed_imports"])
+        assert any(t["site"].startswith("dataclasses:") and "__main__" in t["by"] for t in artefact["texts"]), name
+
+
+def test_the_confinement_takes_whatever_arguments_an_event_has() -> None:
+    """RL-423 (R19 #2): one argument where the hook read two; none at all; one whose repr raises. The record is made each time."""
+    head = "import socket, sys\nclass Unshown:\n    def __repr__(self):\n        raise RuntimeError('no repr')\n"
+    after = "from dataclasses import dataclass\n@dataclass\nclass After:\n    x: int\n"
+    for statement, what in HOOK_ARGUMENTS:
+        with tempfile.TemporaryDirectory() as tmp:
+            artefact, _ = _dry(tmp, head + statement + "\n" + after)
+        staged = any(t["site"].startswith("dataclasses:") and "__main__" in t["by"] for t in artefact["texts"])
+        if what is None:
+            assert artefact["confined"] == [] and artefact["failed_imports"] == {} and staged, (statement, artefact["confined"], artefact["failed_imports"])
+            continue
+        confined = artefact["confined"]
+        assert len(confined) == 1 and confined[0]["line"] == 5 and what in confined[0]["what"], (statement, confined, artefact["failed_imports"])
+        assert artefact["failed_imports"] == {"__bella_entry__": "Confined"} and not staged, (statement, artefact["failed_imports"])
+
+
 if __name__ == "__main__":
     test_sequence_slots_of_a_subclass()
     test_a_subclass_with_call_is_callable()
@@ -1100,4 +1161,6 @@ if __name__ == "__main__":
     test_the_bootstrap_preludes_keep_the_pins_parameters_and_docstrings()
     test_a_bound_methods_doc_is_its_functions()
     test_what_the_bootstrap_modules_keep_for_themselves_stops_by_name()
+    test_what_a_module_body_leaves_for_later_is_confined_too()
+    test_the_confinement_takes_whatever_arguments_an_event_has()
     test_a_failure_of_the_dry_run_itself_fails_the_build()

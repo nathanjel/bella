@@ -154,9 +154,14 @@ call it.
   **A program's module bodies run at build time, confined** (review F17 #7, RL-410; the author, 2026-11-10). Staging needs
   them run: what `namedtuple` or `@dataclass` generates depends on the values the body computed. Code under
   `if __name__ == "__main__":` does not run (the entry is imported under another name), and what a body prints is discarded.
-  What a body would do to the world outside the build is refused by the dry run's audit hook: opening a file for writing,
+  What the program would do to the world outside the build is refused by the dry run's audit hook: opening a file for writing,
   removing, renaming, making directories, changing modes and times, `shutil`'s and `tempfile`'s operations, starting a process,
-  and connecting, binding or sending on a socket. Reading the world (files, listings, names) and changing the process itself
+  and connecting, binding or sending on a socket. From the moment one of the program's modules begins to run, this holds for
+  every such event in the dry run's process, whoever performs it and whenever: the body itself, a thread it started, a
+  finaliser, a callback (review R19, RL-422). And the process ends as soon as its artefact is written, without running what a
+  body left for the end of it: handlers of `atexit` and of `threading`, finalisers of what is still alive, threads still
+  running. Those are the program's to run when the program runs. (None of the closure's 183 modules raises such an event
+  while it is imported, measured 2026-11-10, so nothing of the standard library's own is refused.) Reading the world (files, listings, names) and changing the process itself
   (the environment, the working directory) are allowed; so is `tempfile.gettempdir()`, whose probe file is a question. The dry
   run of that body ends at the statement (the exception is a `BaseException`, so `except Exception` does not take it for a
   failed operation; a body that catches it goes on, and each later effect is refused too), what it staged before stays, and
@@ -167,7 +172,8 @@ call it.
   for writing), ...`), under eval1, eval2 and compiled alike. This can never make a program compute something else: a staged
   text is used only for exactly that text at that site. It is a guard for honest programs, not a sandbox: an audit hook does
   not see what an extension module or `ctypes` does, nor a write to a descriptor the process already holds, and a module
-  body's time and CPU are spent at build time all the same. The standard library's own module bodies are not confined.
+  body's time and CPU are spent at build time all the same. It also takes a program's own `sys.audit` of one of these events
+  for the operation itself (RL-423): such a body ends there, with the note.
 * **Policy refusals.** A function in the manifest's `[refused]` table is refused when it is
   called, malformed input included (`gettext.c2py("bad")` is refused, not a catchable
   `ValueError`), and whether or not its text was staged. C-7-16 needs the latter: the dry run of

@@ -25,6 +25,7 @@ for the C++ the compiler would emit, which the replay loads (marshal, as a .pyc 
 """
 from __future__ import annotations
 
+import _thread                     # a built-in the interpreter has loaded already: the list of what was preloaded is unchanged
 import builtins
 import os
 import sys
@@ -218,32 +219,54 @@ def _of_the_program(path: object) -> bool:
     return known
 
 
+def _shown(value: object) -> str:
+    try:
+        return repr(value)
+    except BaseException:  # noqa: BLE001  # an argument of the program's own: whatever its repr does
+        return "<an object whose repr raised>"
+
+
+def _effect(event: str, args: tuple[Any, ...]) -> str:
+    """What an event would do, for the note. An event comes with whatever arguments its caller gave: C's own (a socket and its
+    address, a host name alone), or a program's sys.audit of the same name (review R19 #2)."""
+    if event == "open":
+        return f"open({_shown(args[0])}) for writing"
+    if not args:
+        return f"{event}()"
+    addressed = event in ("socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg") and len(args) > 1
+    return f"{event}({_shown(args[1] if addressed else args[0])})"
+
+
+_started = False                                # a module of the program's has begun to run
+_own_writes = 0                                 # the tool is writing its artefact
+_MAIN_THREAD = _thread.get_ident()
+
+
 def _confine(event: str, args: tuple[Any, ...]) -> None:
-    """Review F17 #7, and the author's decision of 2026-11-10: a program's module body runs here, at build time, for the
-    definition-time code it generates, and what it would do to the world besides is refused. The body ends at that statement
-    (what it staged before stays), the build goes on with a note, and a text the body would have reached later stops by name
-    at run time, saying where the dry run ended. An audit hook is no sandbox: it stops what a program does in the open, not
-    what it does through an extension module, ctypes or a descriptor it already holds."""
-    name = _bodies[-1]
-    module = sys.modules.get(ENTRY if name == "__main__" else name)
-    if not _of_the_program(getattr(module, "__file__", None)):
-        return                                   # the standard library's module bodies, and the probes, are the build's own
+    """Review F17 #7 and the author's decision of 2026-11-10: a program's module bodies run here, at build time, for the
+    definition-time code they generate, and what the program would do to the world besides is refused. From the moment one of
+    its modules begins to run, every such event in this process is refused, whoever performs it and whenever: in the body, in
+    a thread it started, in a finaliser, in anything it left for later (review R19 #1). Only the tool's own writing of its
+    artefact is let through. When the refusal ends a module body (the main thread, a body running), the place is recorded:
+    what the body staged before stays, the build goes on with a note, and a text the body would have reached later stops by
+    name at run time, saying where the dry run ended. An audit hook is no sandbox: it stops what a program does in the open,
+    not what it does through an extension module, ctypes or a descriptor it already holds."""
+    if _own_writes:
+        return
     doer = sys._getframe(2)
     if doer.f_code.co_name == "_get_default_tempdir" and doer.f_globals.get("__name__") == "tempfile":
         return                                   # tempfile.gettempdir() tries each candidate with a file it removes: a question, not an effect
-    if event == "open":
-        what = f"open({args[0]!r}) for writing"
-    elif event.startswith("socket."):
-        what = f"{event}({args[1]!r})"
-    else:
-        what = f"{event}({args[0]!r})" if args else f"{event}()"
-    frame: FrameType | None = sys._getframe(2)
+    what = _effect(event, args)
+    frame: FrameType | None = doer
     while frame is not None and not _of_the_program(frame.f_code.co_filename):
         frame = frame.f_back                     # the statement is the program's: the call into the standard library that does it
-    where = (frame.f_code.co_filename, frame.f_lineno) if frame is not None else (str(getattr(module, "__file__", name)), 0)
-    if (*where, what) not in _confined:
-        _confined.append((*where, what))
-    raise Confined(f"{where[0]}:{where[1]}: {what}")
+    if _bodies and _thread.get_ident() == _MAIN_THREAD:
+        name = _bodies[-1]
+        module = sys.modules.get(ENTRY if name == "__main__" else name)
+        where = (frame.f_code.co_filename, frame.f_lineno) if frame is not None else (str(getattr(module, "__file__", name)), 0)
+        if (*where, what) not in _confined:
+            _confined.append((*where, what))
+    raise Confined(what if frame is None else f"{frame.f_code.co_filename}:{frame.f_lineno}: {what}")
 
 
 def _audit(event: str, args: tuple[Any, ...]) -> None:
@@ -251,15 +274,19 @@ def _audit(event: str, args: tuple[Any, ...]) -> None:
     frame that performed the operation decides whether the loader did it (reading a module's
     source, listing a directory for the path cache): an importer further down the stack is
     there for every module body (review 2026-11-01 astra-low-05, A5-3)."""
+    if _started and (event in _EFFECTS or (event == "open" and len(args) > 2 and isinstance(args[2], int) and args[2] & _WRITES)):
+        _confine(event, args)
     if not _bodies:
         return
-    if event in _EFFECTS or (event == "open" and isinstance(args[2], int) and args[2] & _WRITES):
-        _confine(event, args)
     if event not in ("open", "os.listdir", "os.scandir", "subprocess.Popen", "os.system", "socket.connect"):
         return
     if str(sys._getframe(1).f_globals.get("__name__")).startswith(_LOADER):
         return
-    _inputs.setdefault(_body(), set()).add(f"{event} {args[0]}" if args else event)
+    try:
+        subject = str(args[0]) if args else ""  # as the inventory has always shown it; an argument of the program's own may refuse
+    except BaseException:  # noqa: BLE001
+        subject = "<an object whose str raised>"
+    _inputs.setdefault(_body(), set()).add(f"{event} {subject}" if args else event)
 
 
 sys.addaudithook(_audit)
@@ -377,6 +404,8 @@ def main() -> int:
             _import(name, failures)
         if args.entry and not args.safe_path:
             sys.path.insert(0, os.path.dirname(os.path.abspath(args.entry)))
+        global _started
+        _started = bool(args.entry or args.program_module)   # from here on the process changes nothing outside the build
         for name in args.program_module:
             _import(name, failures)
             if (path := _source_of(name)) is not None:
@@ -468,6 +497,8 @@ def main() -> int:
     # checks: steps running at once (make -j) may make the same artefact, and none may read a
     # half-written one
     json_tmp, binary_tmp = f"{args.out}.{os.getpid()}.tmp", f"{args.binary}.{os.getpid()}.tmp"
+    global _own_writes
+    _own_writes += 1                             # the two files of the artefact: the one thing this process writes
     with open(json_tmp, "w", encoding="utf-8") as f:
         json.dump(artefact, f, indent=1)
         f.write("\n")
@@ -496,6 +527,7 @@ def main() -> int:
                       "unstaged": unstaged, "unsupported": unsupported}, binary)
     os.replace(binary_tmp, args.binary)
     os.replace(json_tmp, args.out)
+    _own_writes -= 1
     return 0
 
 
@@ -506,4 +538,13 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         status = TOOL_FAILED
-    raise SystemExit(status)
+    # The process ends here and now. What a module body left for the end of it (atexit's handlers, threading's, finalisers
+    # of what is still alive, threads still running) is the program's to run when the program runs, not the build's
+    # (review R19 #1); the artefact is written and closed, and the two streams are all that is left to flush.
+    for stream in (sys.__stdout__, sys.__stderr__):
+        try:
+            if stream is not None:
+                stream.flush()
+        except Exception:  # noqa: BLE001, S110
+            pass
+    os._exit(status)
