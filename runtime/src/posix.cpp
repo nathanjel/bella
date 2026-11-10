@@ -26,6 +26,7 @@
 #include <memory>
 #include <new>
 #include <string_view>
+#include <vector>
 
 #include "bella/runtime.hpp"
 
@@ -49,12 +50,13 @@ Ref int_from_u64(std::uint64_t v) {              // PyLong_FromUnsignedLongLong
 }
 Ref result(std::int64_t r) { return r < 0 ? failed() : int_from_i64(r); }
 
-Ref p_stat(Args a) {
+// a directory's descriptor for the *at calls: an optional last argument, AT_FDCWD without it (or with None)
+int dir_fd_of(Args a, std::size_t i) { return a.npos > i && is_int(a.pos(i)) ? int_of(a.pos(i)) : AT_FDCWD; }
+Ref p_stat(Args a) {                             // (path or descriptor, follow_symlinks[, dir_fd]): fstat, or fstatat
     struct stat st{};
     int r;
     if (is_int(a.pos(0))) r = fstat(int_of(a.pos(0)), &st);
-    else if (truth(a.pos(1))) r = stat(text_of(a.pos(0)), &st);
-    else r = lstat(text_of(a.pos(0)), &st);
+    else r = fstatat(dir_fd_of(a, 2), text_of(a.pos(0)), &st, truth(a.pos(1)) ? 0 : AT_SYMLINK_NOFOLLOW);
     if (r != 0) return failed();
     Ref fields[] = {int_from_u64(st.st_mode), int_from_u64(st.st_ino), int_from_u64(st.st_dev), int_from_u64(st.st_nlink), int_from_u64(st.st_uid),
                     int_from_u64(st.st_gid), int_from_i64(st.st_size), int_from_i64(st.st_atim.tv_sec), int_from_i64(st.st_atim.tv_nsec),
@@ -101,8 +103,61 @@ Ref p_listdir(Args a) {                          // _posix_listdir: readdir's or
     return names;
 }
 Ref p_dup(Args a) { return result(fcntl(int_of(a.pos(0)), F_DUPFD_CLOEXEC, 0)); }   // _Py_dup: not inheritable
-Ref p_rmdir(Args a) { return result(rmdir(text_of(a.pos(0)))); }
-Ref p_unlink(Args a) { return result(unlink(text_of(a.pos(0)))); }
+Ref p_rmdir(Args a) { return result(unlinkat(dir_fd_of(a, 1), text_of(a.pos(0)), AT_REMOVEDIR)); }   // (path[, dir_fd])
+Ref p_unlink(Args a) { return result(unlinkat(dir_fd_of(a, 1), text_of(a.pos(0)), 0)); }
+// os.scandir's directory streams, by number: opendir of a path, or fdopendir of a descriptor (a duplicate, which closedir
+// closes); readdir's next entry that is neither . nor .., as (name, d_ino, kind), kind being 1 for a directory, 2 for a regular
+// file, 3 for a link, 4 for anything else and 0 where the file system does not say (DT_UNKNOWN); closedir, after rewinddir
+// for a descriptor's, whose offset the duplicate shares
+std::vector<DIR*>& dir_streams() {
+    static std::vector<DIR*> open;
+    return open;
+}
+Ref p_opendir(Args a) {
+    DIR* d;
+    if (is_int(a.pos(0))) {
+        int fd = int_of(a.pos(0));
+        d = fdopendir(fd);
+        if (d == nullptr) {
+            int saved = errno;
+            close(fd);
+            errno = saved;
+        }
+    } else {
+        d = opendir(text_of(a.pos(0)));
+    }
+    if (d == nullptr) return failed();
+    auto& streams = dir_streams();
+    for (std::size_t i = 0; i < streams.size(); ++i)
+        if (streams[i] == nullptr) {
+            streams[i] = d;
+            return int_from_i64(static_cast<std::int64_t>(i));
+        }
+    streams.push_back(d);
+    return int_from_i64(static_cast<std::int64_t>(streams.size() - 1));
+}
+Ref p_readdir(Args a) {
+    DIR* d = dir_streams().at(static_cast<std::size_t>(int_of(a.pos(0))));
+    while (true) {
+        errno = 0;
+        dirent* e = readdir(d);
+        if (e == nullptr) return errno != 0 ? failed() : none_ref();
+        std::string_view n(e->d_name);
+        if (n == "." || n == "..") continue;
+        int kind = e->d_type == DT_UNKNOWN ? 0 : e->d_type == DT_DIR ? 1 : e->d_type == DT_REG ? 2 : e->d_type == DT_LNK ? 3 : 4;
+        Ref name = bytes_new(n), ino = int_from_u64(e->d_ino), k = int_from_i64(kind);
+        return tuple_new({name.get(), ino.get(), k.get()});
+    }
+}
+Ref p_closedir(Args a) {
+    DIR*& slot = dir_streams().at(static_cast<std::size_t>(int_of(a.pos(0))));
+    if (slot != nullptr) {
+        if (truth(a.pos(1))) rewinddir(slot);
+        closedir(slot);
+        slot = nullptr;
+    }
+    return int_from_i64(0);
+}
 Ref p_mkdir(Args a) { return result(mkdir(text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))))); }
 Ref p_rename(Args a) { return result(rename(text_of(a.pos(0)), text_of(a.pos(1)))); }
 Ref p_chdir(Args a) {
@@ -120,7 +175,7 @@ Ref p_symlink(Args a) { return result(symlink(text_of(a.pos(0)), text_of(a.pos(1
 Ref p_link(Args a) { return result(linkat(AT_FDCWD, text_of(a.pos(0)), AT_FDCWD, text_of(a.pos(1)), truth(a.pos(2)) ? AT_SYMLINK_FOLLOW : 0)); }
 Ref p_open(Args a) {                             // _Py_open's: not inheritable (PEP 446), and again after a signal
     int fd;
-    do fd = open(text_of(a.pos(0)), int_of(a.pos(1)) | O_CLOEXEC, static_cast<mode_t>(int_of(a.pos(2))));
+    do fd = openat(dir_fd_of(a, 3), text_of(a.pos(0)), int_of(a.pos(1)) | O_CLOEXEC, static_cast<mode_t>(int_of(a.pos(2))));   // (path, flags, mode[, dir_fd])
     while (fd < 0 && errno == EINTR);
     return result(fd);
 }
@@ -433,7 +488,7 @@ Ref p_pthread_getcpuclockid(Args a) {
 using Primitive = Ref (*)(Args);
 const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
-        {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
+        {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
         {"open", p_open}, {"close", p_close}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},

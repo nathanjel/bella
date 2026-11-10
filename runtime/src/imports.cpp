@@ -979,7 +979,8 @@ void fill_typing(Module* m) {
 }
 void fill_posix(Module* m) {
     fill_in_python(m, "posix", "posix", prelude_posix::module_body,
-                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_structseq", i_structseq}, {"_sys", i_posix_sys}});
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_structseq", i_structseq}, {"_sys", i_posix_sys},
+                    {"_unraisable", i_unraisable}});
     dict_set(m->dict, Obj::of(N("error")), Obj::of(exception_class("OSError")));
     static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("DirEntry"))).object())->disallow_instantiation = true;
 }

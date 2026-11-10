@@ -61,6 +61,63 @@ os.write(2, b"to stderr\n")
 os._exit(3)
 """
 
+# os.scandir and dir_fd beside C-7-58: what the case leaves out, and what walks a tree with them
+SCANDIR = r"""
+import glob, os, shutil, stat, sys, tempfile, warnings
+def m(f):
+    try:
+        return repr(f())
+    except OSError as e:
+        return type(e).__name__ + ": " + repr((e.errno, e.strerror, type(e.filename).__name__))
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+class Bytes:
+    def __init__(self, path): self.path = path
+    def __fspath__(self): return os.fsencode(self.path)
+root = tempfile.mkdtemp()
+try:
+    for i in range(300):
+        open(os.path.join(root, "f%03d" % i), "w").close()
+    os.makedirs(os.path.join(root, "a", "b", "c"))
+    open(os.path.join(root, "a", "b", "leaf.txt"), "w").close()
+    os.symlink("a", os.path.join(root, "to-a"))
+    names = sorted(e.name for e in os.scandir(root))
+    print(len(names), names[:2], names[-3:], sorted(type(e.name).__name__ for e in os.scandir(Bytes(root)))[:1], sorted(type(e.path).__name__ for e in os.scandir(Bytes(root)))[:1])
+    print([(d.removeprefix(root), sorted(ds), sorted(fs)[:2]) for d, ds, fs in sorted(os.walk(root))])
+    print(sorted((d.removeprefix(root), sorted(ds), sorted(fs)[:1]) for d, ds, fs in os.walk(root, followlinks=True))[:5], sorted(d.removeprefix(root) for d, ds, fs in os.walk(root, topdown=False))[:4])
+    print(sorted(glob.glob("f00[0-3]", root_dir=root)), sorted(glob.glob("**/*.txt", root_dir=root, recursive=True)), sorted(glob.glob(os.path.join(glob.escape(root), "a", "*")))[0].removeprefix(root))
+    file_fd = os.open(os.path.join(root, "f000"), os.O_RDONLY)
+    top = os.open(root, os.O_RDONLY)
+    print(m(lambda: os.scandir(file_fd)), m(lambda: os.stat(top, dir_fd=top)), m(lambda: os.stat(top, follow_symlinks=False)), m(lambda: os.stat("f000", dir_fd="a")), m(lambda: os.stat("f000", dir_fd=1.5)),
+          m(lambda: os.lstat("f000", dir_fd=2 ** 40)), m(lambda: os.unlink("f000", dir_fd="a")), m(lambda: os.open("f000", os.O_RDONLY, dir_fd=None) > 0), m(lambda: os.stat("f000", dir_fd=None).st_size))
+    made = os.open("made.txt", os.O_WRONLY | os.O_CREAT, 0o600, dir_fd=top)
+    os.write(made, b"made")
+    os.close(made)
+    print(os.stat("made.txt", dir_fd=top).st_size, stat.S_IMODE(os.lstat("made.txt", dir_fd=top).st_mode) == 0o600, m(lambda: os.remove("made.txt", dir_fd=top)), m(lambda: os.remove("made.txt", dir_fd=top)))
+    entry = next(e for e in os.scandir(root) if e.name == "to-a")
+    print(m(lambda: os.DirEntry.stat()), m(lambda: os.DirEntry.stat(1)), m(lambda: os.DirEntry.is_dir(entry)), m(lambda: os.DirEntry.inode(entry, 1)), m(lambda: os.DirEntry.__fspath__(entry).removeprefix(root)),
+          m(lambda: entry.is_dir(follow_symlinks=0)), m(lambda: entry.is_file(follow_symlinks=[])), m(lambda: entry.is_junction(1)), m(lambda: entry.__fspath__(1)), m(lambda: entry.stat(follow_symlinks=False).st_size > 0),
+          type(os.DirEntry.__dict__["name"]).__name__, type(os.DirEntry.__dict__["stat"]).__name__, m(lambda: os.DirEntry.name.__get__(entry)), os.DirEntry.__qualname__)
+    it = os.scandir(top)
+    print(type(it).__qualname__, m(lambda: type(it).close()), m(lambda: it.close(1)), m(lambda: it.__enter__(1)), m(lambda: it.__exit__()), m(lambda: it.__exit__(1, 2, 3, 4)), m(lambda: next(it)), m(lambda: type(it).__next__(1)))
+    seen = []
+    sys.unraisablehook = lambda u: seen.append((u.exc_type.__name__, str(u.exc_value).split(" <")[0], u.err_msg.split(" <")[0]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        dropped = os.scandir(root)
+        del dropped
+    print(seen)
+    os.close(file_fd)
+    os.close(top)
+finally:
+    shutil.rmtree(root)
+print(os.path.exists(root))
+"""
+
+
+def test_scandir_and_dir_fd() -> None:
+    same(SCANDIR)
+
 
 def test_messages() -> None:
     same(MESSAGES)
@@ -75,7 +132,7 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
-    for body, name in (("os.fork()", "os.fork"), ("os.scandir('.')", "os.scandir"), ("os.dup(0)", "os.dup"), ("os.stat('.', dir_fd=0)", "os.stat(dir_fd=...)"), ("os.mkdir('x', dir_fd=0)", "os.mkdir(dir_fd=...)"), ("os.access('.', 0, effective_ids=True)", "os.access(effective_ids=True)"),
+    for body, name in (("os.fork()", "os.fork"), ("os.dup(0)", "os.dup"), ("import shutil, tempfile\n        with tempfile.TemporaryDirectory() as d:\n            shutil.copyfile(__file__, os.path.join(d, 'copy'))", "os.copy_file_range"), ("os.mkdir('x', dir_fd=0)", "os.mkdir(dir_fd=...)"), ("os.access('.', 0, effective_ids=True)", "os.access(effective_ids=True)"),
                        ("os.sched_param(1)", "os.sched_param"), ("os.stat(True)", "a bool as a file descriptor"), ("os.fsync(False)", "a bool as a file descriptor"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
@@ -85,6 +142,7 @@ def test_what_the_runtime_has_not_stops_by_name() -> None:
 
 
 if __name__ == "__main__":
+    test_scandir_and_dir_fd()
     test_messages()
     test_what_a_function_shows()
     test_a_write_goes_straight_out_and_exit_does_not_flush()

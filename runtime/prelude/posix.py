@@ -11,6 +11,7 @@ dir_fd for one, stops by name too.
 __all__ = ["AT_NO_AUTOMOUNT", "CLD_CONTINUED", "CLD_DUMPED", "CLD_EXITED", "CLD_KILLED", "CLD_STOPPED", "CLD_TRAPPED", "CLONE_FILES", "CLONE_FS", "CLONE_NEWCGROUP", "CLONE_NEWIPC", "CLONE_NEWNET", "CLONE_NEWNS", "CLONE_NEWPID", "CLONE_NEWTIME", "CLONE_NEWUSER", "CLONE_NEWUTS", "CLONE_SIGHAND", "CLONE_SYSVSEM", "CLONE_THREAD", "CLONE_VM", "DirEntry", "EFD_CLOEXEC", "EFD_NONBLOCK", "EFD_SEMAPHORE", "EX_CANTCREAT", "EX_CONFIG", "EX_DATAERR", "EX_IOERR", "EX_NOHOST", "EX_NOINPUT", "EX_NOPERM", "EX_NOUSER", "EX_OK", "EX_OSERR", "EX_OSFILE", "EX_PROTOCOL", "EX_SOFTWARE", "EX_TEMPFAIL", "EX_UNAVAILABLE", "EX_USAGE", "F_LOCK", "F_OK", "F_TEST", "F_TLOCK", "F_ULOCK", "GRND_NONBLOCK", "GRND_RANDOM", "MFD_ALLOW_SEALING", "MFD_CLOEXEC", "MFD_HUGETLB", "MFD_HUGE_16GB", "MFD_HUGE_16MB", "MFD_HUGE_1GB", "MFD_HUGE_1MB", "MFD_HUGE_256MB", "MFD_HUGE_2GB", "MFD_HUGE_2MB", "MFD_HUGE_32MB", "MFD_HUGE_512KB", "MFD_HUGE_512MB", "MFD_HUGE_64KB", "MFD_HUGE_8MB", "MFD_HUGE_MASK", "MFD_HUGE_SHIFT", "NGROUPS_MAX", "NODEV", "O_ACCMODE", "O_APPEND", "O_ASYNC", "O_CLOEXEC", "O_CREAT", "O_DIRECT", "O_DIRECTORY", "O_DSYNC", "O_EXCL", "O_FSYNC", "O_LARGEFILE", "O_NDELAY", "O_NOATIME", "O_NOCTTY", "O_NOFOLLOW", "O_NONBLOCK", "O_PATH", "O_RDONLY", "O_RDWR", "O_RSYNC", "O_SYNC", "O_TMPFILE", "O_TRUNC", "O_WRONLY", "POSIX_FADV_DONTNEED", "POSIX_FADV_NOREUSE", "POSIX_FADV_NORMAL", "POSIX_FADV_RANDOM", "POSIX_FADV_SEQUENTIAL", "POSIX_FADV_WILLNEED", "POSIX_SPAWN_CLOSE", "POSIX_SPAWN_DUP2", "POSIX_SPAWN_OPEN", "PRIO_PGRP", "PRIO_PROCESS", "PRIO_USER", "P_ALL", "P_PGID", "P_PID", "P_PIDFD", "RTLD_DEEPBIND", "RTLD_GLOBAL", "RTLD_LAZY", "RTLD_LOCAL", "RTLD_NODELETE", "RTLD_NOLOAD", "RTLD_NOW", "R_OK", "SCHED_BATCH", "SCHED_DEADLINE", "SCHED_FIFO", "SCHED_IDLE", "SCHED_NORMAL", "SCHED_OTHER", "SCHED_RESET_ON_FORK", "SCHED_RR", "SEEK_DATA", "SEEK_HOLE", "SPLICE_F_MORE", "SPLICE_F_MOVE", "SPLICE_F_NONBLOCK", "ST_APPEND", "ST_MANDLOCK", "ST_NOATIME", "ST_NODEV", "ST_NODIRATIME", "ST_NOEXEC", "ST_NOSUID", "ST_RDONLY", "ST_RELATIME", "ST_SYNCHRONOUS", "ST_WRITE", "TFD_CLOEXEC", "TFD_NONBLOCK", "TFD_TIMER_ABSTIME", "TMP_MAX", "WCONTINUED", "WCOREDUMP", "WEXITED", "WEXITSTATUS", "WIFCONTINUED", "WIFEXITED", "WIFSIGNALED", "WIFSTOPPED", "WNOHANG", "WNOWAIT", "WSTOPPED", "WSTOPSIG", "WTERMSIG", "WUNTRACED", "W_OK", "XATTR_CREATE", "XATTR_REPLACE", "XATTR_SIZE_MAX", "X_OK", "_clearenv", "_create_environ", "_exit", "_have_functions", "_inputhook", "_is_inputhook_installed", "_path_normpath", "_path_splitroot_ex", "abort", "access", "chdir", "chmod", "chown", "chroot", "close", "closerange", "confstr", "confstr_names", "copy_file_range", "cpu_count", "ctermid", "device_encoding", "dup", "dup2", "environ", "eventfd", "eventfd_read", "eventfd_write", "execv", "execve", "fchdir", "fchmod", "fchown", "fdatasync", "fork", "forkpty", "fpathconf", "fspath", "fstat", "fstatvfs", "fsync", "ftruncate", "get_blocking", "get_inheritable", "get_terminal_size", "getcwd", "getcwdb", "getegid", "geteuid", "getgid", "getgrouplist", "getgroups", "getloadavg", "getlogin", "getpgid", "getpgrp", "getpid", "getppid", "getpriority", "getrandom", "getresgid", "getresuid", "getsid", "getuid", "getxattr", "grantpt", "initgroups", "isatty", "kill", "killpg", "lchown", "link", "listdir", "listxattr", "lockf", "login_tty", "lseek", "lstat", "major", "makedev", "memfd_create", "minor", "mkdir", "mkfifo", "mknod", "nice", "open", "openpty", "pathconf", "pathconf_names", "pidfd_open", "pipe", "pipe2", "posix_fadvise", "posix_fallocate", "posix_openpt", "posix_spawn", "posix_spawnp", "pread", "preadv", "ptsname", "putenv", "pwrite", "pwritev", "read", "readinto", "readlink", "readv", "register_at_fork", "remove", "removexattr", "rename", "replace", "rmdir", "scandir", "sched_get_priority_max", "sched_get_priority_min", "sched_getaffinity", "sched_getparam", "sched_getscheduler", "sched_param", "sched_rr_get_interval", "sched_setaffinity", "sched_setparam", "sched_setscheduler", "sched_yield", "sendfile", "set_blocking", "set_inheritable", "setegid", "seteuid", "setgid", "setgroups", "setns", "setpgid", "setpgrp", "setpriority", "setregid", "setresgid", "setresuid", "setreuid", "setsid", "setuid", "setxattr", "splice", "stat", "stat_result", "statvfs", "statvfs_result", "strerror", "symlink", "sync", "sysconf", "sysconf_names", "system", "tcgetpgrp", "tcsetpgrp", "terminal_size", "timerfd_create", "timerfd_gettime", "timerfd_gettime_ns", "timerfd_settime", "timerfd_settime_ns", "times", "times_result", "truncate", "ttyname", "umask", "uname", "uname_result", "unlink", "unlockpt", "unsetenv", "unshare", "urandom", "utime", "wait", "wait3", "wait4", "waitid", "waitid_result", "waitpid", "waitstatus_to_exitcode", "write", "writev"]
 
 __name__ = "posix"
+__hidden_classes__ = ["ScandirIterator"]       # posix.ScandirIterator: a type of the module that is no name of it
 
 try:
     _number_index                                # noqa: B018  # PyNumber_Index, given by the runtime
@@ -18,6 +19,8 @@ try:
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _structseq                                   # noqa: B018  # bootstrap.py's: a type of named tuples
     _sys                                         # noqa: B018  # the system calls, by name
+    _bella_new_instance                          # noqa: B018  # tp_alloc: an instance of a type a program cannot make
+    _unraisable                                  # noqa: B018  # PyErr_FormatUnraisable: a message and the exception
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -30,6 +33,8 @@ except NameError:
     _keyword_suggestion: Callable[..., str | None] = _missing
     _structseq: Callable[..., Any] = _missing
     _sys: Callable[..., Any] = _missing
+    _bella_new_instance: Callable[..., Any] = _missing
+    _unraisable: Callable[..., Any] = _missing
 
 AT_NO_AUTOMOUNT = 2048
 CLD_CONTINUED = 6
@@ -206,10 +211,203 @@ waitid_result = _structseq("waitid_result", "posix", ["si_pid", "si_uid", "si_si
 
 
 class DirEntry:
-    """No way to make one until scandir, as CPython's has none but scandir either; the runtime disallows its instantiation."""
+    """os.DirEntry (posixmodule.c): what scandir yields. The name and the path are members; the kind is readdir's d_type
+    (0 where the file system does not say), and the two stat results are fetched once each."""
 
-    __slots__ = ()
+    __slots__ = ("_e_name", "_e_path", "_e_ino", "_e_kind", "_e_dir_fd", "_e_stat", "_e_lstat")
     __module__ = "posix"
+
+    @property
+    def name(self) -> object:
+        return self._e_name  # type: ignore[attr-defined]
+
+    @property
+    def path(self) -> object:
+        return self._e_path  # type: ignore[attr-defined]
+
+    def is_symlink(*args: object, **kwds: object) -> bool:  # noqa: N805
+        self = _entry_method("is_symlink", args)
+        if len(args) > 1 or kwds:
+            raise TypeError("is_symlink() takes no arguments")
+        if self._e_kind != 0:
+            return self._e_kind == 3
+        return _entry_test_mode(self, False, 0o120000)
+
+    def is_junction(*args: object, **kwds: object) -> bool:  # noqa: N805
+        _entry_noargs("is_junction", args, kwds)
+        return False
+
+    def stat(*args: object, **kwds: object) -> object:  # noqa: N805
+        self = _entry_method("stat", args)
+        follow = _unpack("stat", args[1:], kwds, ("follow_symlinks",), 0, 0)[0]
+        return _entry_stat(self, follow is _ABSENT or bool(follow))
+
+    def is_dir(*args: object, **kwds: object) -> bool:  # noqa: N805
+        self = _entry_method("is_dir", args)
+        follow = _unpack("is_dir", args[1:], kwds, ("follow_symlinks",), 0, 0)[0]
+        return _entry_test_mode(self, follow is _ABSENT or bool(follow), 0o040000)
+
+    def is_file(*args: object, **kwds: object) -> bool:  # noqa: N805
+        self = _entry_method("is_file", args)
+        follow = _unpack("is_file", args[1:], kwds, ("follow_symlinks",), 0, 0)[0]
+        return _entry_test_mode(self, follow is _ABSENT or bool(follow), 0o100000)
+
+    def inode(*args: object, **kwds: object) -> int:  # noqa: N805
+        return _entry_noargs("inode", args, kwds)._e_ino  # type: ignore[no-any-return]
+
+    def __fspath__(*args: object, **kwds: object) -> object:  # noqa: N805
+        return _entry_noargs("__fspath__", args, kwds)._e_path
+
+    def __repr__(self) -> str:
+        return "<DirEntry " + repr(self._e_name) + ">"  # type: ignore[attr-defined]
+
+
+def _entry_method(name: str, args: tuple[object, ...]) -> DirEntry:   # a method descriptor's check of its receiver
+    if not args:
+        raise TypeError("unbound method DirEntry." + name + "() needs an argument")
+    if not issubclass(type(args[0]), DirEntry):
+        raise TypeError("descriptor '" + name + "' for 'posix.DirEntry' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
+    return args[0]  # type: ignore[return-value]
+
+
+def _entry_noargs(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> DirEntry:   # METH_NOARGS
+    self = _entry_method(name, args)
+    if kwds:
+        raise TypeError("DirEntry." + name + "() takes no keyword arguments")
+    if len(args) > 1:
+        raise TypeError("DirEntry." + name + "() takes no arguments (" + str(len(args) - 1) + " given)")
+    return self
+
+
+def _entry_fetch_stat(self: DirEntry, follow: bool) -> object:   # DirEntry_fetch_stat: fstatat under the directory's descriptor, else stat or lstat
+    path = self._e_path  # type: ignore[attr-defined]
+    data = str.encode(path, "utf-8", "surrogateescape") if issubclass(type(path), str) else path
+    result = _sys("stat", data, follow, self._e_dir_fd)  # type: ignore[attr-defined]
+    if type(result) is int:
+        _fail(-result, path)                     # path_object_error(self->path)
+    return _stat_result(result)
+
+
+def _entry_stat(self: DirEntry, follow: bool) -> object:   # os_DirEntry_stat_impl: each of the two results is fetched once
+    if not follow:
+        if self._e_lstat is None:  # type: ignore[attr-defined]
+            _entry_set(self, "_e_lstat", _entry_fetch_stat(self, False))
+        return self._e_lstat  # type: ignore[attr-defined]
+    if self._e_stat is None:  # type: ignore[attr-defined]
+        if DirEntry.is_symlink(self):
+            _entry_set(self, "_e_stat", _entry_fetch_stat(self, True))
+        else:
+            _entry_set(self, "_e_stat", _entry_stat(self, False))
+    return self._e_stat  # type: ignore[attr-defined]
+
+
+def _entry_test_mode(self: DirEntry, follow: bool, mode_bits: int) -> bool:   # DirEntry_test_mode
+    kind = self._e_kind  # type: ignore[attr-defined]
+    is_symlink = kind == 3
+    if kind == 0 or (follow and is_symlink):     # the file system did not say, or the link's target is asked about
+        try:
+            found = _entry_stat(self, follow)
+        except FileNotFoundError:
+            return False                         # the file is not there (any more): neither a file nor a directory
+        return (found.st_mode & 0o170000) == mode_bits  # type: ignore[attr-defined,no-any-return]
+    if is_symlink:
+        return False
+    return kind == 1 if mode_bits == 0o040000 else kind == 2
+
+
+_entry_set = object.__setattr__
+
+
+class ScandirIterator:
+    """posix.ScandirIterator: a directory stream that yields its entries as DirEntry objects. The stream is the runtime's, by
+    number (None once closed); a descriptor's is a duplicate, rewound when it is closed."""
+
+    __slots__ = ("_s_stream", "_s_path", "_s_shown", "_s_bytes", "_s_fd")
+    __module__ = "posix"
+
+    def __iter__(self) -> ScandirIterator:
+        return self
+
+    def __next__(self) -> DirEntry:               # ScandirIterator_iternext
+        stream = self._s_stream  # type: ignore[attr-defined]
+        if stream is not None:                   # None: iterated to the end before, or closed
+            got = _sys("readdir", stream)
+            if type(got) is tuple:
+                return _entry_from_posix_info(self, got[0], got[1], got[2])
+            _scandir_close(self)                 # an error, or no more files
+            if got is not None:
+                _fail(-got, self._s_shown)  # type: ignore[attr-defined]  # path_error(&iterator->path)
+        raise StopIteration
+
+    def close(*args: object, **kwds: object) -> None:  # noqa: N805
+        _scandir_close(_scandir_noargs("close", args, kwds))
+
+    def __enter__(*args: object, **kwds: object) -> object:  # noqa: N805
+        return _scandir_noargs("__enter__", args, kwds)
+
+    def __exit__(*args: object, **kwds: object) -> None:  # noqa: N805  # METH_VARARGS: whatever it is given
+        if not args:
+            raise TypeError("unbound method ScandirIterator.__exit__() needs an argument")
+        if not issubclass(type(args[0]), ScandirIterator):
+            raise TypeError("descriptor '__exit__' for 'posix.ScandirIterator' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
+        if kwds:
+            raise TypeError("ScandirIterator.__exit__() takes no keyword arguments")
+        _scandir_close(args[0])  # type: ignore[arg-type]
+
+    def __del__(self) -> None:                   # ScandirIterator_finalize
+        was_closed = self._s_stream is None  # type: ignore[attr-defined]
+        _scandir_close(self)
+        if not was_closed:
+            import _warnings
+            try:
+                shown = repr(self)
+            except BaseException:  # noqa: BLE001  # %R failed: PyErr_ResourceWarning returns its error, which is no Warning: dropped
+                return
+            try:                                 # PyErr_ResourceWarning(op, 1, "unclosed scandir iterator %R", iterator)
+                _warnings.warn("unclosed scandir iterator " + shown, ResourceWarning, 1, self)
+            except Warning as e:                 # spurious errors can appear at shutdown: only a warning made an error is reported
+                _unraisable("Exception ignored while finalizing scandir iterator " + shown, e)
+            except BaseException:  # noqa: BLE001, S110
+                pass
+
+
+def _scandir_noargs(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> ScandirIterator:   # METH_NOARGS
+    if not args:
+        raise TypeError("unbound method ScandirIterator." + name + "() needs an argument")
+    if not issubclass(type(args[0]), ScandirIterator):
+        raise TypeError("descriptor '" + name + "' for 'posix.ScandirIterator' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
+    if kwds:
+        raise TypeError("ScandirIterator." + name + "() takes no keyword arguments")
+    if len(args) > 1:
+        raise TypeError("ScandirIterator." + name + "() takes no arguments (" + str(len(args) - 1) + " given)")
+    return args[0]  # type: ignore[return-value]
+
+
+def _scandir_close(self: ScandirIterator) -> None:   # ScandirIterator_closedir
+    stream = self._s_stream  # type: ignore[attr-defined]
+    if stream is not None:
+        _entry_set(self, "_s_stream", None)
+        _sys("closedir", stream, self._s_fd is not None)  # type: ignore[attr-defined]
+
+
+def _entry_from_posix_info(iterator: ScandirIterator, name: bytes, ino: int, kind: int) -> DirEntry:   # DirEntry_from_posix_info
+    entry: DirEntry = _bella_new_instance(DirEntry)
+    as_bytes = iterator._s_bytes  # type: ignore[attr-defined]
+    shown_name = name if as_bytes else bytes.decode(name, "utf-8", "surrogateescape")
+    if iterator._s_fd is not None:  # type: ignore[attr-defined]
+        path: object = shown_name                # under a descriptor the path is the name, and stat goes through the descriptor
+    else:
+        directory = iterator._s_path  # type: ignore[attr-defined]  # join_path_filename: "." for no path, one separator between
+        joined = (directory if bytes.endswith(directory, b"/") or not directory else directory + b"/") + name
+        path = joined if as_bytes else bytes.decode(joined, "utf-8", "surrogateescape")
+    _entry_set(entry, "_e_name", shown_name)
+    _entry_set(entry, "_e_path", path)
+    _entry_set(entry, "_e_ino", ino)
+    _entry_set(entry, "_e_kind", kind)
+    _entry_set(entry, "_e_dir_fd", iterator._s_fd)  # type: ignore[attr-defined]
+    _entry_set(entry, "_e_stat", None)
+    _entry_set(entry, "_e_lstat", None)
+    return entry
 
 
 class sched_param(tuple):  # noqa: N801, SLOT001
@@ -434,6 +632,14 @@ def _no_dir_fd(function: str, value: object) -> None:
         _refuse("os." + function + "(dir_fd=...)")
 
 
+def _dir_fd(value: object) -> int | None:        # dir_fd_converter: None for the default (AT_FDCWD)
+    if value is None or value is _ABSENT:
+        return None
+    if _type_lookup(value, "__index__") is _ABSENT:
+        raise TypeError("argument should be integer or None, not " + type(value).__name__)
+    return _fd_converter(value)
+
+
 # ---- stat
 
 def _stat_result(values: tuple[int, ...]) -> object:   # _pystat_fromstructstat, fill_time
@@ -445,9 +651,15 @@ def _stat_result(values: tuple[int, ...]) -> object:   # _pystat_fromstructstat,
 
 def stat(*args: object, **kwds: object) -> object:
     path, dir_fd, follow = _unpack("stat", args, kwds, ("path", "dir_fd", "follow_symlinks"), 1, 1)
-    _no_dir_fd("stat", dir_fd)
     data, shown = _path("stat", "path", path, allow_fd=True)
-    result = _sys("stat", data, follow is _ABSENT or bool(follow))
+    under = _dir_fd(dir_fd)
+    follows = follow is _ABSENT or bool(follow)
+    if type(data) is int:                        # posix_do_stat: path_and_dir_fd_invalid, fd_and_follow_symlinks_invalid
+        if under is not None:
+            raise ValueError("stat: can't specify dir_fd without matching path")
+        if not follows:
+            raise ValueError("stat: cannot use fd and follow_symlinks together")
+    result = _sys("stat", data, follows, under)
     if type(result) is int:
         _fail(-result, shown)
     return _stat_result(result)
@@ -455,9 +667,8 @@ def stat(*args: object, **kwds: object) -> object:
 
 def lstat(*args: object, **kwds: object) -> object:
     path, dir_fd = _unpack("lstat", args, kwds, ("path", "dir_fd"), 1, 1)
-    _no_dir_fd("lstat", dir_fd)
     data, shown = _path("lstat", "path", path)
-    result = _sys("stat", data, False)
+    result = _sys("stat", data, False, _dir_fd(dir_fd))
     if type(result) is int:
         _fail(-result, shown)
     return _stat_result(result)
@@ -506,9 +717,8 @@ def listdir(*args: object, **kwds: object) -> list[object]:
 
 def _named(primitive: str, name: str, args: tuple[object, ...], kwds: dict[str, object]) -> None:
     path, dir_fd = _unpack(name, args, kwds, ("path", "dir_fd"), 1, 1)
-    _no_dir_fd(name, dir_fd)
     data, shown = _path(name, "path", path)
-    code = _sys(primitive, data)
+    code = _sys(primitive, data, _dir_fd(dir_fd))    # unlinkat, with AT_REMOVEDIR for rmdir
     if code < 0:
         _fail(-code, shown)
 
@@ -614,8 +824,7 @@ def open(*args: object, **kwds: object) -> int:  # noqa: A001
     data, shown = _path("open", "path", path)
     bits = _int(flags)
     perms = 0o777 if mode is _ABSENT else _int(mode)
-    _no_dir_fd("open", dir_fd)
-    fd = _sys("open", data, bits, perms)
+    fd = _sys("open", data, bits, perms, _dir_fd(dir_fd))   # openat
     if fd < 0:
         _fail(-fd, shown)
     return fd
@@ -928,7 +1137,28 @@ pwritev = _absent("pwritev")
 readinto = _absent("readinto")
 readv = _absent("readv")
 removexattr = _absent("removexattr")
-scandir = _absent("scandir")
+
+
+def scandir(*args: object, **kwds: object) -> ScandirIterator:   # os_scandir_impl
+    path = _unpack("scandir", args, kwds, ("path",), 0, 1)[0]
+    data, shown = _path("scandir", "path", None if path is _ABSENT else path, allow_fd=True, nullable=True)
+    iterator: ScandirIterator = _bella_new_instance(ScandirIterator)
+    _entry_set(iterator, "_s_stream", None)
+    _entry_set(iterator, "_s_shown", shown)
+    _entry_set(iterator, "_s_bytes", type(data) is not int and data is not None and issubclass(type(shown), bytes))   # only a bytes object says bytes
+    _entry_set(iterator, "_s_fd", data if type(data) is int else None)
+    _entry_set(iterator, "_s_path", b"." if data is None else data)
+    if type(data) is int:                        # closedir closes it, so a duplicate: _Py_dup's error has no file name
+        opened = _sys("dup", data)
+        if opened < 0:
+            _fail(-opened)
+        stream = _sys("opendir", opened)
+    else:
+        stream = _sys("opendir", b"." if data is None else data)
+    if stream < 0:
+        _fail(-stream, shown)                    # path_error(&iterator->path)
+    _entry_set(iterator, "_s_stream", stream)
+    return iterator
 sched_get_priority_max = _absent("sched_get_priority_max")
 sched_get_priority_min = _absent("sched_get_priority_min")
 sched_getaffinity = _absent("sched_getaffinity")

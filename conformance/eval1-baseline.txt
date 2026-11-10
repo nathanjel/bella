@@ -106,6 +106,7 @@ C-7-49_configparser.py
 C-7-50_warnings.py
 C-7-52_importlib.py
 C-7-53_tokenize.py
+C-7-58_scandir.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

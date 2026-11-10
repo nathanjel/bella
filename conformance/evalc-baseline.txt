@@ -104,6 +104,7 @@ C-7-45_heapq.py
 C-7-46_zlib.py
 C-7-47_opcode.py
 C-7-48_optparse.py
+C-7-49_configparser.py
 C-7-50_warnings.py
 C-7-51_warnings_frames.py
 C-7-52_importlib.py
@@ -112,6 +113,7 @@ C-7-54_atexit.py
 C-7-55_atexit_after_an_uncaught_exception.py
 C-7-56_excepthook.py
 C-7-57_unraisablehook.py
+C-7-58_scandir.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py
