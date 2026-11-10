@@ -161,7 +161,13 @@ call it.
   finaliser, a callback (review R19, RL-422). And the process ends as soon as its artefact is written, without running what a
   body left for the end of it: handlers of `atexit` and of `threading`, finalisers of what is still alive, threads still
   running. Those are the program's to run when the program runs. (None of the closure's 183 modules raises such an event
-  while it is imported, measured 2026-11-10, so nothing of the standard library's own is refused.) Reading the world (files, listings, names) and changing the process itself
+  while it is imported, measured 2026-11-10, so nothing of the standard library's own is refused.) The tool's own writing
+  is let through by what it is: its own function, on the main thread, opening or renaming one of the artefact's two files
+  (review R20, RL-424). What raises no audit event at all cannot be refused by a hook and is replaced by a refusal when the
+  program's code starts: `os.mkfifo`, `mknod`, `setpriority`, the three `sched_set` functions, `tcsetpgrp` and
+  `signal.pidfd_send_signal` (RL-425: every function of `posixmodule.c` was read for its event; these reach beyond the
+  process without a descriptor opened for writing first). A question is no effect: `os.lockf` with `F_TEST`, a lock given
+  up. And the dry run's standard input is the null device, not the build's. Reading the world (files, listings, names) and changing the process itself
   (the environment, the working directory) are allowed; so is `tempfile.gettempdir()`, whose probe file is a question. The dry
   run of that body ends at the statement (the exception is a `BaseException`, so `except Exception` does not take it for a
   failed operation; a body that catches it goes on, and each later effect is refused too), what it staged before stays, and

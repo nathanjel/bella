@@ -86,7 +86,8 @@ def dry_run(out: Path, blocked: list[str], args: list[str], seed: str | None = N
     proc = subprocess.run([sys.executable, "-P", *(["-" + "O" * optimize] if optimize else []), str(HERE / "dryrun.py"),
                            "--out", str(out.with_suffix(".json")),
                            "--binary", str(out.with_suffix(".bin")), *args],
-                          env=env, capture_output=True, text=True, check=False)
+                          env=env, capture_output=True, text=True, check=False,
+                          stdin=subprocess.DEVNULL)   # a module body that reads descriptor 0 gets the end of input, not the build's terminal
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout + proc.stderr)
         raise DryRunFailed(f"bella: the dry run failed ({' '.join(args)})", proc.returncode == TOOL_FAILED)

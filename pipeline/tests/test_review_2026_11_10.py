@@ -713,6 +713,21 @@ CONFINED_EFFECTS = [
     ("import socket; socket.create_connection(('127.0.0.1', PORT), timeout=2)", "socket.connect(('127.0.0.1', PORT))"),
     ("import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b'x', ('127.0.0.1', PORT))", "socket.sendto(('127.0.0.1', PORT))"),
     ("import socket; socket.socket().bind(('127.0.0.1', 0))", "socket.bind(('127.0.0.1', 0))"),
+    # review R20: what raises no audit event of its own (RL-425), a lock taken (RL-426), what announces an effect (RL-427)
+    ("import os; os.mkfifo('made.fifo')", "os.mkfifo('made.fifo')"),
+    ("import os; os.mknod('made.node')", "os.mknod('made.node')"),
+    ("import os; os.mkfifo('made.fifo', dir_fd=os.open('dir', os.O_RDONLY))", "os.mkfifo('made.fifo')"),
+    ("import posix; posix.mkfifo('made.fifo')", "os.mkfifo('made.fifo')"),
+    ("from os import mknod; mknod('made.node')", "os.mknod('made.node')"),
+    ("import os; os.setpriority(os.PRIO_PROCESS, 0, 19)", "os.setpriority("),
+    ("import os; os.sched_setaffinity(0, {0})", "os.sched_setaffinity(0)"),
+    ("import os, signal; signal.pidfd_send_signal(os.pidfd_open(os.getpid()), 0)", "signal.pidfd_send_signal("),
+    ("import os; f = open('kept.txt'); os.lockf(f.fileno(), os.F_LOCK, 0)", "os.lockf("),
+    ("import fcntl; f = open('kept.txt'); fcntl.flock(f.fileno(), fcntl.LOCK_EX)", "fcntl.flock("),
+    ("import fcntl; f = open('kept.txt'); fcntl.lockf(f.fileno(), fcntl.LOCK_SH)", "fcntl.lockf("),
+    ("import os, shutil; shutil.chown('kept.txt', user=os.getuid())", "shutil.chown('kept.txt')"),
+    ("import sys; sys.audit('webbrowser.open', 'http://example.invalid/')", "webbrowser.open('http://example.invalid/')"),
+    ("import syslog; syslog.syslog('from a module body')", "syslog.syslog("),
 ]
 # what a module body may do: read the world, and change its own process
 CONFINED_ALLOWED = """
@@ -723,6 +738,12 @@ os.environ['BELLA_TEST'] = '1'
 os.chdir('dir')
 os.chdir('..')
 where = (os.getcwd(), os.stat('kept.txt').st_size, tempfile.gettempdir(), socket.gethostname(), sys.argv)
+import fcntl
+kept = open('kept.txt')
+held = os.lockf(kept.fileno(), os.F_TEST, 0)       # review R20 #3: a question about a lock, not a lock
+fcntl.flock(kept.fileno(), fcntl.LOCK_UN)          # giving up a lock it cannot hold
+sys.audit('signal.pthread_kill', 0, 0)             # review R20 #4: a signal to a thread of this very process
+exec("STDIN_IS_NULL = %r" % (os.fstat(0).st_rdev == os.stat(os.devnull).st_rdev))   # the build's own input is not the dry run's
 from dataclasses import dataclass
 @dataclass
 class After:
@@ -788,6 +809,7 @@ def test_the_dry_run_performs_no_effect_of_a_module_body() -> None:
         artefact, _ = _dry(tmp, CONFINED_ALLOWED)
         assert artefact["confined"] == [] and artefact["failed_imports"] == {}, artefact["confined"]
         assert any(t["site"].startswith("dataclasses:") for t in artefact["texts"])
+        assert any(t["text"] == "STDIN_IS_NULL = True" for t in artefact["texts"]), [t["text"] for t in artefact["texts"] if "STDIN" in t["text"]]
 
 
 def test_where_the_dry_run_is_confined() -> None:
@@ -1104,6 +1126,35 @@ HOOK_ARGUMENTS = [
     ("sys.audit('open', 'made.txt', 'w', 1)", "open('made.txt') for writing"),
 ]
 
+# RL-424 (R20 #1): while the tool writes its artefact nothing else gets through: a thread that keeps trying never succeeds
+WINDOW = """
+import threading, time
+def keeps_trying():
+    for _ in range(4000):
+        try:
+            with open('made.txt', 'w') as f:
+                f.write('through the window')
+            break
+        except BaseException:
+            time.sleep(0.0005)
+thread = threading.Thread(target=keeps_trying)
+thread.daemon = True
+thread.start()
+time.sleep(0.02)
+from dataclasses import dataclass
+@dataclass
+class After:
+    x: int
+"""
+
+
+def test_the_tools_own_writing_lets_nothing_else_through() -> None:
+    """RL-424 (R20 #1): the tool's writes are its own function's, on its own thread, of its own two files; no one else's."""
+    for _ in range(3):
+        with tempfile.TemporaryDirectory() as tmp:
+            artefact, _ = _dry(tmp, WINDOW)
+        assert artefact["confined"] == [] and artefact["failed_imports"] == {}, artefact["confined"]
+
 
 def test_what_a_module_body_leaves_for_later_is_confined_too() -> None:
     """RL-422 (R19 #1): an atexit handler, a finaliser, a thread: nothing a body sets going changes the world at build time."""
@@ -1161,6 +1212,7 @@ if __name__ == "__main__":
     test_the_bootstrap_preludes_keep_the_pins_parameters_and_docstrings()
     test_a_bound_methods_doc_is_its_functions()
     test_what_the_bootstrap_modules_keep_for_themselves_stops_by_name()
+    test_the_tools_own_writing_lets_nothing_else_through()
     test_what_a_module_body_leaves_for_later_is_confined_too()
     test_the_confinement_takes_whatever_arguments_an_event_has()
     test_a_failure_of_the_dry_run_itself_fails_the_build()

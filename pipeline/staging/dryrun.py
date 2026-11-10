@@ -202,8 +202,18 @@ _EFFECTS = frozenset({
     "subprocess.Popen", "os.system", "os.exec", "os.fork", "os.forkpty", "os.posix_spawn", "os.spawn", "os.startfile", "os.kill",
     "os.killpg", "pty.spawn",
     "socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.sethostname",
+    "fcntl.flock", "fcntl.lockf", "syslog.syslog",
+    "shutil.chown", "webbrowser.open",           # they announce what the calls beneath them would be refused for (review R20 #4)
 })
 _WRITES = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+_LOCK_UN = 8                                    # fcntl.LOCK_UN, without importing fcntl before the program does
+# What changes something outside this process and raises no audit event at all, so that no hook sees it (review R20 #2).
+# Found by reading every function of Modules/posixmodule.c for PySys_Audit: 148 of this platform's raise none, and these are
+# the ones among them that need no descriptor opened for writing first (which is refused) and reach beyond the process:
+# nodes in the file system, other processes' scheduling, the terminal's foreground group; and signal's pidfd_send_signal.
+# They are replaced by a refusal in posix, os and _signal when the program's code starts.
+_UNAUDITED = ("mkfifo", "mknod", "setpriority", "sched_setaffinity", "sched_setparam", "sched_setscheduler", "tcsetpgrp")
+_artefact: frozenset[str] = frozenset()         # the tool's own files, while main() writes them
 _confined: list[tuple[str, int, str]] = []      # (file, line, what): where a body was stopped, in order
 _own: dict[str, bool] = {}
 
@@ -238,22 +248,61 @@ def _effect(event: str, args: tuple[Any, ...]) -> str:
 
 
 _started = False                                # a module of the program's has begun to run
-_own_writes = 0                                 # the tool is writing its artefact
 _MAIN_THREAD = _thread.get_ident()
 
 
-def _confine(event: str, args: tuple[Any, ...]) -> None:
+def _is_effect(event: str, args: tuple[Any, ...]) -> bool:
+    if event == "open":                          # by its flags, when it has them
+        return len(args) > 2 and isinstance(args[2], int) and bool(args[2] & _WRITES)
+    if event == "os.lockf":                      # F_TEST asks whether a lock is held and changes nothing (review R20 #3)
+        return not (len(args) > 1 and args[1] == os.F_TEST)
+    if event in ("fcntl.flock", "fcntl.lockf"):  # giving a lock up is no effect; none can be held here
+        return not (len(args) > 1 and isinstance(args[1], int) and args[1] & _LOCK_UN)
+    return event in _EFFECTS
+
+
+def _own_write(event: str, args: tuple[Any, ...], doer: FrameType) -> bool:
+    """The tool writing its artefact: main() itself, on the main thread, opening or moving one of its own two files. Not
+    "while the tool writes": a thread the program started would get its own write through that window (review R20 #1)."""
+    if not _artefact or doer.f_code is not main.__code__ or _thread.get_ident() != _MAIN_THREAD:
+        return False
+    if event == "open":
+        return isinstance(args[0], str) and args[0] in _artefact
+    return event == "os.rename" and len(args) > 1 and all(isinstance(a, str) and a in _artefact for a in args[:2])
+
+
+def _refusing(event: str) -> Any:
+    def refused(*args: Any, **kwargs: Any) -> None:
+        _confine(event, args, sys._getframe(1))
+    refused.__name__ = refused.__qualname__ = event.rpartition(".")[2]
+    return refused
+
+
+def _refuse_the_unaudited() -> None:
+    """In place of what no audit event announces (_UNAUDITED): in posix and os, which hold the same functions under two
+    names, and in _signal, from which signal takes its own when the program imports it."""
+    import posix  # noqa: PLC0415  # built in, and loaded by the interpreter already
+    for module in (posix, os):
+        for name in _UNAUDITED:
+            if hasattr(module, name):
+                setattr(module, name, _refusing("os." + name))
+    for holder in (__import__("_signal"), sys.modules.get("signal")):   # _signal is built in too; signal.py copies its names
+        if holder is not None and hasattr(holder, "pidfd_send_signal"):
+            setattr(holder, "pidfd_send_signal", _refusing("signal.pidfd_send_signal"))  # noqa: B010
+
+
+def _confine(event: str, args: tuple[Any, ...], doer: FrameType) -> None:
     """Review F17 #7 and the author's decision of 2026-11-10: a program's module bodies run here, at build time, for the
     definition-time code they generate, and what the program would do to the world besides is refused. From the moment one of
     its modules begins to run, every such event in this process is refused, whoever performs it and whenever: in the body, in
     a thread it started, in a finaliser, in anything it left for later (review R19 #1). Only the tool's own writing of its
-    artefact is let through. When the refusal ends a module body (the main thread, a body running), the place is recorded:
+    artefact is let through (_own_write), and what raises no event of its own is replaced by a refusal beforehand
+    (_refuse_the_unaudited, review R20 #2). When the refusal ends a module body (the main thread, a body running), the place is recorded:
     what the body staged before stays, the build goes on with a note, and a text the body would have reached later stops by
     name at run time, saying where the dry run ended. An audit hook is no sandbox: it stops what a program does in the open,
     not what it does through an extension module, ctypes or a descriptor it already holds."""
-    if _own_writes:
+    if _own_write(event, args, doer):
         return
-    doer = sys._getframe(2)
     if doer.f_code.co_name == "_get_default_tempdir" and doer.f_globals.get("__name__") == "tempfile":
         return                                   # tempfile.gettempdir() tries each candidate with a file it removes: a question, not an effect
     what = _effect(event, args)
@@ -274,8 +323,8 @@ def _audit(event: str, args: tuple[Any, ...]) -> None:
     frame that performed the operation decides whether the loader did it (reading a module's
     source, listing a directory for the path cache): an importer further down the stack is
     there for every module body (review 2026-11-01 astra-low-05, A5-3)."""
-    if _started and (event in _EFFECTS or (event == "open" and len(args) > 2 and isinstance(args[2], int) and args[2] & _WRITES)):
-        _confine(event, args)
+    if _started and _is_effect(event, args):
+        _confine(event, args, sys._getframe(1))
     if not _bodies:
         return
     if event not in ("open", "os.listdir", "os.scandir", "subprocess.Popen", "os.system", "socket.connect"):
@@ -406,6 +455,8 @@ def main() -> int:
             sys.path.insert(0, os.path.dirname(os.path.abspath(args.entry)))
         global _started
         _started = bool(args.entry or args.program_module)   # from here on the process changes nothing outside the build
+        if _started:
+            _refuse_the_unaudited()
         for name in args.program_module:
             _import(name, failures)
             if (path := _source_of(name)) is not None:
@@ -497,8 +548,8 @@ def main() -> int:
     # checks: steps running at once (make -j) may make the same artefact, and none may read a
     # half-written one
     json_tmp, binary_tmp = f"{args.out}.{os.getpid()}.tmp", f"{args.binary}.{os.getpid()}.tmp"
-    global _own_writes
-    _own_writes += 1                             # the two files of the artefact: the one thing this process writes
+    global _artefact
+    _artefact = frozenset({json_tmp, binary_tmp, str(args.out), str(args.binary)})   # the one thing this process writes
     with open(json_tmp, "w", encoding="utf-8") as f:
         json.dump(artefact, f, indent=1)
         f.write("\n")
@@ -527,7 +578,7 @@ def main() -> int:
                       "unstaged": unstaged, "unsupported": unsupported}, binary)
     os.replace(binary_tmp, args.binary)
     os.replace(json_tmp, args.out)
-    _own_writes -= 1
+    _artefact = frozenset()
     return 0
 
 
