@@ -21,6 +21,7 @@ try:
     _sys                                         # noqa: B018  # the system calls, by name
     _bella_new_instance                          # noqa: B018  # tp_alloc: an instance of a type a program cannot make
     _unraisable                                  # noqa: B018  # PyErr_FormatUnraisable: a message and the exception
+    _resource_warning                            # noqa: B018  # PyErr_ResourceWarning: a message and the object left open
     _as_double                                   # noqa: B018  # PyFloat_AsDouble, with its messages
 except NameError:
     from collections.abc import Callable
@@ -36,6 +37,7 @@ except NameError:
     _sys: Callable[..., Any] = _missing
     _bella_new_instance: Callable[..., Any] = _missing
     _unraisable: Callable[..., Any] = _missing
+    _resource_warning: Callable[..., Any] = _missing
     _as_double: Callable[..., float] = _missing
 
 AT_NO_AUTOMOUNT = 2048
@@ -360,13 +362,12 @@ class ScandirIterator:
         was_closed = self._s_stream is None  # type: ignore[attr-defined]
         _scandir_close(self)
         if not was_closed:
-            import _warnings
             try:
                 shown = repr(self)
             except BaseException:  # noqa: BLE001  # %R failed: PyErr_ResourceWarning returns its error, which is no Warning: dropped
                 return
             try:                                 # PyErr_ResourceWarning(op, 1, "unclosed scandir iterator %R", iterator)
-                _warnings.warn("unclosed scandir iterator " + shown, ResourceWarning, 1, self)
+                _resource_warning("unclosed scandir iterator " + shown, self)
             except Warning as e:                 # spurious errors can appear at shutdown: only a warning made an error is reported
                 _unraisable("Exception ignored while finalizing scandir iterator " + shown, e)
             except BaseException:  # noqa: BLE001, S110

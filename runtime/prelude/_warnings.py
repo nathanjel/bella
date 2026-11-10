@@ -4,7 +4,9 @@ variable and the lock). The rules are the C's: the filters are read from the war
 module filter matches exactly where a pattern is matched (against the module, or the filename when the module is not given), the
 registry's version follows this module's own counter, and the frame a warning is charged to comes from the runtime's frame chain,
 which, as CPython's, has no frame for this module's functions. Showing a warning goes through warnings._showwarnmsg; the C's own
-printing, for an interpreter without the warnings module, cannot be reached here and stops by name."""
+printing (show_warning) is for when the warnings module is not there to ask: on the way out, when nothing is imported any more
+and sys.modules is empty, or with its _showwarnmsg deleted. It prints the line of the warning; the source line beneath it, which
+the C reads from the file, stops by name."""
 
 __all__ = ["_acquire_lock", "_defaultaction", "_filters_mutated_lock_held", "_onceregistry", "_release_lock", "_warnings_context",
            "filters", "warn", "warn_explicit"]
@@ -17,6 +19,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _frame                                       # noqa: B018  # the frame n callers above the one calling into this module: (globals, filename, lineno), or None
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
+    _bella_shutting_down                         # noqa: B018  # _Py_IsInterpreterFinalizing
 except NameError:
     import operator
     from collections.abc import Callable
@@ -44,6 +47,10 @@ except NameError:
             return None
         return (f.f_globals, f.f_code.co_filename, f.f_lineno)
 
+    def _bella_shutting_down() -> bool:
+        import sys as _s
+        return _s.is_finalizing()
+
 import sys
 
 import _contextvars
@@ -63,7 +70,7 @@ _state: dict[str, object] = {"filters": filters, "once_registry": _onceregistry,
 
 
 def _warnings_attr(name: str, try_import: bool) -> object:   # get_warnings_attr: the warnings module's attribute, or _ABSENT
-    if try_import:
+    if try_import and not _bella_shutting_down():   # "don't try to import after the start of the Python finalization"
         try:
             wm = __import__("warnings")
         except ImportError:
@@ -236,11 +243,52 @@ def _update_registry(registry: dict[object, object], text: object, category: obj
     return _already_warned(registry, altkey, True)
 
 
+def _file_write(value: object, f: object) -> None:   # PyFile_WriteObject(value, f, Py_PRINT_RAW), PyFile_WriteString
+    writer = f.write  # type: ignore[attr-defined]
+    writer(str(value))
+
+
+def _show_warning(filename: object, lineno: int, text: object, category: object, sourceline: object) -> None:   # show_warning
+    """The C's own printing on sys.stderr: "filename:lineno: Category: text", a write for each part. Whatever goes wrong ends it
+    and is dropped (PyErr_Clear). Beneath it the C prints the source line: the one it was given, as it stands (it measures the
+    indentation and then writes the whole line); or, given none, the one it reads from the file: nothing for a file name in
+    angle brackets, as the "<sys>" of a warning with no frame, and nothing on the way out, where its import of io fails
+    (measured on 3.15.2: a warning from a __del__ that runs at exit is one line)."""
+    f_stderr = dict.get(sys.__dict__, "stderr", _ABSENT)
+    try:
+        name = category.__name__  # type: ignore[attr-defined]
+        if f_stderr is _ABSENT:
+            _bella_refuse("_warnings' note that sys.stderr is lost (show_warning writes it to the C stream)")
+        _file_write(filename, f_stderr)
+        _file_write(":" + str(lineno) + ": ", f_stderr)
+        _file_write(name, f_stderr)
+        _file_write(": ", f_stderr)
+        _file_write(text, f_stderr)
+        _file_write("\n", f_stderr)
+    except BaseException:  # noqa: BLE001
+        return
+    if sourceline is not None:
+        try:
+            _file_write(sourceline, f_stderr)
+        except BaseException:  # noqa: BLE001, S110
+            pass
+        try:
+            _file_write("\n", f_stderr)
+        except BaseException:  # noqa: BLE001, S110
+            pass
+        return
+    assert isinstance(filename, str)             # _Py_DisplaySourceLine(f_stderr, filename, lineno, 2, NULL, NULL)
+    if (str.__len__(filename) > 0 and filename[0] == "<" and filename[-1] == ">") or _bella_shutting_down():
+        return
+    _bella_refuse("_warnings' own printing of a warning's source line (show_warning, with the warnings module not there to ask)")
+
+
 def _call_show_warning(category: object, text: object, message: object, filename: object, lineno: int, sourceline: object,
                        source: object, module: object) -> None:
     show_fn = _warnings_attr("_showwarnmsg", True)
     if show_fn is _ABSENT:
-        _bella_refuse("_warnings' own printing of a warning without the warnings module (show_warning)")
+        _show_warning(filename, lineno, text, category, sourceline)
+        return
     if not callable(show_fn):
         raise TypeError("warnings._showwarnmsg() must be set to a callable")
     cls = _warnings_attr("WarningMessage", False)

@@ -166,7 +166,6 @@ void runtime_warning(const char* category, const std::string& message) {
     invoke(warn.get(), {msg.get(), Obj::of(exception_class(category))});
 }
 void import_warning(const std::string& message) { runtime_warning("ImportWarning", message); }
-
 // resolve_name: a relative import's absolute name from the importing module's globals
 Ref resolve_name(Obj name, Obj globals, std::int64_t level) {
     if (globals.is_unset()) raise_new("KeyError", "'__name__' not in globals");
@@ -388,6 +387,30 @@ std::unordered_map<std::string, NativeModule>& native_registry() {
     return table;
 }
 }  // namespace
+Module* native_module_made(const char* name) {  // a built-in module if it was ever created, without creating it
+    auto it = native_registry().find(name);
+    return it == native_registry().end() ? nullptr : it->second.made;
+}
+// PyErr_ResourceWarning(source, 1, message): _warnings.warn(message, ResourceWarning, 1, source), for a prelude that finalizes
+// something left open. The C machinery needs no import, so on the way out, when an import statement fails as CPython's does,
+// the module is asked as it stands; one that was never made has CPython's own filters (init_filters), which ignore a
+// ResourceWarning, so nothing is to be done. What warn raises (a warning the filters made an error) is the caller's.
+Ref i_resource_warning(Obj, Args a) {
+    positional_only(a, "_resource_warning", 2, 2);
+    Ref warnings_module;
+    if (shutting_down()) {
+        Module* made = native_module_made("_warnings");
+        if (made == nullptr) return none_ref();
+        warnings_module = Ref::share(Obj::of(made));
+    } else {
+        warnings_module = Ref::share(dict_get(interp_modules(), Obj::of(N("_warnings"))));
+        if (warnings_module.get().is_unset() || !is_kind(warnings_module.get(), Kind::Module))
+            warnings_module = import_module_level(Obj::of(N("_warnings")), None(), None(), None(), 0);
+    }
+    Ref warn = getattr(warnings_module.get(), N("warn"));
+    invoke(warn.get(), {a.pos(0), Obj::of(exception_class("ResourceWarning")), Obj::small(1), a.pos(1)});
+    return none_ref();
+}
 // ---- a built-in module written in Python (pipeline/build.py, NATIVE_IN_PYTHON) ----
 namespace {
 // _PyObject_IsUniquelyReferenced of what an attribute holds: the attribute's count, and this read's
@@ -847,6 +870,7 @@ Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
     Args r{a.data + 1, a.npos - 1, nullptr, 0};
     if (name == "refuse") throw NotImplemented(as_str(r.pos(0))->text);
     if (name == "unraisable") return i_unraisable(Obj{}, r);   // (message or None, exception)
+    if (name == "resource_warning") return i_resource_warning(Obj{}, r);   // (message, source)
     if (name == "lookup_text") {                 // _PyCodec_LookupTextEncoding(encoding, NULL)
         ensure_codecs();
         return invoke(codec_hooks().lookup_text.get(), {r.pos(0), None()});
@@ -960,7 +984,8 @@ void fill_opcode(Module* m) {
 }
 void fill_warnings(Module* m) {
     fill_in_python(m, "_warnings", "_warnings", prelude_warnings::module_body,
-                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame}});
+                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame},
+                    {"_bella_shutting_down", i_bella_shutting_down}});
 }
 void fill_tokenize(Module* m) {
     fill_in_python(m, "_tokenize", "_tokenize", prelude_tokenize::module_body, {{"_tp_name", i_tp_name}, {"_tokenizer", i_tokenizer}});
@@ -980,7 +1005,7 @@ void fill_typing(Module* m) {
 void fill_posix(Module* m) {
     fill_in_python(m, "posix", "posix", prelude_posix::module_body,
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_structseq", i_structseq}, {"_sys", i_posix_sys},
-                    {"_unraisable", i_unraisable}});
+                    {"_unraisable", i_unraisable}, {"_resource_warning", i_resource_warning}});
     dict_set(m->dict, Obj::of(N("error")), Obj::of(exception_class("OSError")));
     static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("DirEntry"))).object())->disallow_instantiation = true;
 }

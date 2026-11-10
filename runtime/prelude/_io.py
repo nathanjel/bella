@@ -627,6 +627,23 @@ def _fileio_internal_close(self: FileIO) -> None:
             _fail(-res)
 
 
+def _fileio_dealloc_warn(self: FileIO, source: object) -> None:   # fileio_dealloc_warn
+    """The ResourceWarning of a file that is finalized open: about `source`, the object the program dropped (the text or
+    buffered file above this one, or this one). A warning the filters made an error is reported as unraisable, about this
+    file; any other error is dropped, as the C drops it when it puts the exception it saved back."""
+    if self._a_fd >= 0 and self._h_closefd:
+        try:                                     # PyErr_ResourceWarning(source, 1, "unclosed file %R", source)
+            _io_call("resource_warning", "unclosed file " + repr(source), source)
+        except Warning as e:                     # "spurious errors can appear at shutdown"
+            try:
+                message: str | None = "Exception ignored while finalizing file " + repr(self)
+            except BaseException:  # noqa: BLE001  # %R failed: PyErr_Clear, and the report is without its first line
+                message = None
+            _io_call("unraisable", message, e)
+        except BaseException:  # noqa: BLE001, S110
+            pass
+
+
 class FileIO(_RawIOBase):
     __slots__ = ("_a_fd", "_b_created", "_c_readable", "_d_writable", "_e_appending", "_f_truncate", "_g_seekable", "_h_closefd", "_i_finalizing", "_j_blksize", "_k_stat_atopen", "_l_in_repr")
 
@@ -768,9 +785,9 @@ class FileIO(_RawIOBase):
                 self._a_fd = -1
             if self._a_fd >= 0:
                 try:
-                    _fileio_internal_close(self)
-                except BaseException as e:  # noqa: BLE001
-                    raise e from None  # the close's error, with the first chained: _PyErr_ChainExceptions1
+                    _fileio_internal_close(self)   # its own error carries the first as its context: _PyErr_ChainExceptions1
+                finally:
+                    self._k_stat_atopen = None
             self._k_stat_atopen = None
             raise
 
@@ -779,7 +796,8 @@ class FileIO(_RawIOBase):
         raise TypeError("cannot pickle '" + type(args[0]).__name__ + "' instances")
 
     def _dealloc_warn(*args: object, **kwds: object) -> None:  # noqa: N805
-        _one("FileIO._dealloc_warn", args, kwds)   # the ResourceWarning for an unclosed file: CPython's default filters hide it; not emitted
+        source = _one("FileIO._dealloc_warn", args, kwds)
+        _fileio_dealloc_warn(args[0], source)  # type: ignore[arg-type]
 
     def fileno(*args: object, **kwds: object) -> int:  # noqa: N805
         _noargs("FileIO.fileno", args, kwds)
@@ -944,14 +962,15 @@ class FileIO(_RawIOBase):
             if not self._h_closefd:
                 self._a_fd = -1
                 raise
-            try:
-                _fileio_internal_close(self)
-            except BaseException as e:  # noqa: BLE001
-                raise e from None
+            if self._i_finalizing:
+                _fileio_dealloc_warn(self, self)
+            _fileio_internal_close(self)         # its own error carries the first as its context: _PyErr_ChainExceptions1
             raise
         if not self._h_closefd:
             self._a_fd = -1
             return
+        if self._i_finalizing:                   # the C function itself, not what a subclass calls _dealloc_warn
+            _fileio_dealloc_warn(self, self)
         _fileio_internal_close(self)
 
     def isatty(*args: object, **kwds: object) -> bool:  # noqa: N805
@@ -1671,10 +1690,7 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         if _bf_closed(self):
             return None
         if self._finalizing:
-            try:
-                self._dealloc_warn(self)  # type: ignore[attr-defined]
-            except BaseException:  # noqa: BLE001, S110
-                pass
+            _dealloc_warn(self, self)            # _io__Buffered__dealloc_warn_impl itself, not what a subclass calls so
         exc: BaseException | None = None
         try:
             self.flush()  # type: ignore[attr-defined]
@@ -3017,15 +3033,6 @@ class TextIOWrapper(_TextIOBase):
             self._f_telling = self._u_seekable
             raise StopIteration
         return line
-
-    def _dealloc_warn(*args: object, **kwds: object) -> None:  # noqa: N805
-        source = _one("TextIOWrapper._dealloc_warn", args, kwds)
-        self: TextIOWrapper = args[0]  # type: ignore[assignment]
-        if self._a_ok and not self._b_detached:
-            try:
-                self._c_buffer._dealloc_warn(source)  # type: ignore[attr-defined]
-            except BaseException:  # noqa: BLE001, S110
-                pass
 
     def __getstate__(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("TextIOWrapper.__getstate__", args, kwds)

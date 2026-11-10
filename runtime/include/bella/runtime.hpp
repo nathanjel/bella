@@ -499,6 +499,8 @@ std::optional<std::string_view> cpython_doc_text(std::string_view name);   // a 
 Obj cpython_doc(std::string_view name);          // a built-in module's or type's docstring (cpython_names.inc)
 bool& shutting_down();                           // finalize_modules has begun: imports fail as CPython's do
 Ref i_bella_shutting_down(Obj, Args a);
+Module* native_module_made(const char* name);    // a built-in module if it was ever created, without creating it
+Ref i_resource_warning(Obj, Args a);             // PyErr_ResourceWarning(source, 1, message), with no import on the way out
 void add_note(Obj exc, const std::string& text); // _PyErr_FormatNote
 // _PyArg_ParseTupleAndKeywords' error for a keyword it does not know, with its suggestion
 [[noreturn]] void unexpected_keyword(const std::string& who, const Str* name, std::initializer_list<const char*> known);

@@ -115,6 +115,7 @@ C-7-58_scandir.py
 C-7-59_copying_between_files.py
 C-7-60_utime_and_copying_trees.py
 C-7-61_os_argument_order.py
+C-7-62_unclosed_file_warning.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-03_locals_detached.py

@@ -3,10 +3,15 @@ edges, and what stops by name. The locale facts are the C locale's and C.UTF-8's
 both sides."""
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
+from conformance.harness import mask_stderr
 from pipeline.build import build
 from pipeline.tests.test_compiled_imports import same as same_streams
 from pipeline.tests.test_review_2026_11_03 import same
@@ -1032,6 +1037,189 @@ def test_a_file_whose_close_raises_in_its_finaliser() -> None:
     same_streams({"main.py": IO_FINALISER}, stderr=True)
 
 
+# beside C-7-62: what the unclosed-file warning puts on standard error. In flight the warnings module shows it, with the line that
+# dropped the file; made an error it is reported as ignored, about the raw file; and a Python __del__ that drops a file is charged
+UNCLOSED_SHOWN = """
+    import io, os, sys, warnings
+    warnings.simplefilter("always")
+    open(__file__, "rb")
+    open(__file__, encoding="utf-8")
+    def leaves():
+        local = open(__file__, "rb", buffering=0)
+        return local.fileno() > 2
+    leaves()
+    class Owner:
+        def __init__(self):
+            self.f = open(__file__, "rb")
+        def __del__(self):
+            self.f = None
+            warnings.warn("from __del__", UserWarning)
+    o = Owner()
+    del o
+    sys.stderr.write("--- default: once a line\\n")
+    warnings.simplefilter("default")
+    for _ in range(2):
+        open(__file__, "rb")
+    sys.stderr.write("--- no filters\\n")
+    warnings.resetwarnings()
+    open(__file__, "rb")
+    sys.stderr.write("--- an error\\n")
+    warnings.simplefilter("error")
+    open(__file__, "rb")
+    open(__file__, encoding="utf-8")
+    sys.stderr.write("--- the C's own printing, with no warnings._showwarnmsg to ask\\n")
+    warnings.simplefilter("always")
+    del warnings._showwarnmsg
+    warnings.warn_explicit("explicit", UserWarning, "<made up>", 7)
+    class Err:
+        def write(self, text):
+            sys.__stderr__.write("[" + text.replace("\\n", "\\\\n") + "]\\n")
+    sys.stderr = Err()
+    warnings.warn_explicit("part by part", DeprecationWarning, "<made up>", 9)
+    sys.stderr = None
+    warnings.warn_explicit("nowhere to go", UserWarning, "<made up>", 10)
+    sys.stderr = sys.__stderr__
+    warnings.simplefilter("ignore")
+    print("end")
+"""
+
+# On the way out a file a module still holds is finalized with no frame to charge ("<sys>", line 0) and no warnings module to ask
+# (sys.modules is empty by then), so the C prints the line itself: for whatever holds the file, on every way out, and whatever
+# showwarning the program had put in. A program that never touched the filters says nothing.
+UNCLOSED_AT_EXIT = {
+    "a global": """
+        import warnings
+        warnings.simplefilter("always")
+        kept = open(__file__, "rb")
+        def a_function():
+            pass
+        print("ending")
+    """,
+    "no function in the module": """
+        import warnings
+        warnings.simplefilter("always")
+        kept = open(__file__, encoding="utf-8")
+        print("ending")
+    """,
+    "an error": """
+        import warnings
+        warnings.simplefilter("error")
+        kept = open(__file__, encoding="utf-8")
+        def a_function():
+            pass
+        print("ending")
+    """,
+    "sys.exit": """
+        import sys, warnings
+        warnings.simplefilter("always")
+        kept = open(__file__, "rb", buffering=0)
+        def a_function():
+            pass
+        print("ending")
+        sys.exit(3)
+    """,
+    "an uncaught exception": """
+        import warnings
+        warnings.simplefilter("always")
+        kept = open(__file__, "rb")
+        def a_function():
+            pass
+        print("ending")
+        raise ValueError("uncaught")
+    """,
+    "a closure": """
+        import warnings
+        warnings.simplefilter("always")
+        def make():
+            f = open(__file__, "rb")
+            def inner():
+                return f
+            return inner
+        keep = make()
+        print("ending")
+    """,
+    "a generator": """
+        import warnings
+        warnings.simplefilter("always")
+        def gen():
+            f = open(__file__, "rb")
+            yield 1
+            yield f
+        g = gen()
+        next(g)
+        print("ending")
+    """,
+    "a showwarning of the program's": """
+        import sys, warnings
+        def show(message, category, filename, lineno, file=None, line=None):
+            sys.__stdout__.write("the program's showwarning: %s %s:%s\\n" % (category.__name__, filename, lineno))
+        warnings.showwarning = show
+        warnings.simplefilter("always")
+        open(__file__, "rb")
+        kept = open(__file__, "rb")
+        print("ending")
+    """,
+    "an atexit handler": """
+        import atexit, warnings
+        warnings.simplefilter("always")
+        kept = open(__file__, "rb")
+        def last():
+            global kept
+            print("handler")
+            kept = None
+        atexit.register(last)
+        print("ending")
+    """,
+    "the default filters": """
+        import sys
+        kept = open(__file__, "rb")
+        other = open(__file__, "rb", buffering=0)
+        def a_function():
+            pass
+        print("ending")
+    """,
+    "the default filters, warnings imported": """
+        import warnings
+        kept = open(__file__, "rb")
+        def a_function():
+            pass
+        print("ending")
+    """,
+}
+# CPython's default hook adds this line beneath a warning that has a source, when tracemalloc can be imported and is not tracing.
+# tracemalloc is excluded (E-03) and the manifest leaves it out of warnings' imports, so the compiled program takes the hook's
+# other path and has no such line: open with the author (docs/DECISIONS.md, C-7-62). Compared without it, and its absence checked.
+TRACEMALLOC_HINT = "ResourceWarning: Enable tracemalloc to get the object allocation traceback\n"
+
+
+def same_but_for_the_tracemalloc_hint(program: str) -> None:
+    if shutil.which("g++") is None:
+        return
+    env = dict(os.environ, PYTHONHASHSEED="0")
+    with tempfile.TemporaryDirectory() as tmp:
+        main = Path(tmp, "main.py")
+        main.write_text(textwrap.dedent(program), encoding="utf-8")
+        ref = subprocess.run([sys.executable, "main.py"], capture_output=True, text=True, check=False, env=env, cwd=tmp)
+        got = subprocess.run([str(build(main, str(main)))], capture_output=True, text=True, check=False, env=env, cwd=tmp)
+    assert TRACEMALLOC_HINT not in got.stderr, got.stderr
+    want = (ref.stdout, ref.returncode, mask_stderr(ref.stderr.replace(TRACEMALLOC_HINT, "")))
+    have = (got.stdout, got.returncode, mask_stderr(got.stderr))
+    assert have == want, (f"\n--- compiled (exit {got.returncode})\n{got.stdout}{got.stderr}\n"
+                          f"--- CPython (exit {ref.returncode})\n{ref.stdout}{ref.stderr}")
+
+
+def test_an_unclosed_file_shown_on_standard_error() -> None:
+    same_but_for_the_tracemalloc_hint(UNCLOSED_SHOWN)
+
+
+def test_a_file_still_open_on_the_way_out() -> None:
+    for name, program in UNCLOSED_AT_EXIT.items():
+        try:
+            same_but_for_the_tracemalloc_hint(program)
+        except AssertionError as e:
+            raise AssertionError(f"{name}: {e}") from None
+
+
 if __name__ == "__main__":
     test_pwd_grp_locale_zlib()
     test_the_t_string_types()
@@ -1047,4 +1235,6 @@ if __name__ == "__main__":
     test_atexit_on_every_way_out()
     test_an_uncaught_exception_under_each_hook()
     test_a_file_whose_close_raises_in_its_finaliser()
+    test_an_unclosed_file_shown_on_standard_error()
+    test_a_file_still_open_on_the_way_out()
     test_what_is_absent_stops_by_name()
