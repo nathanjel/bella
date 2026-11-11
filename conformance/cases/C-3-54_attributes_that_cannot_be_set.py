@@ -19,6 +19,29 @@ class Slotted:
     __slots__ = ("unset", "x")
 
 
+class SlottedWithNames:
+    """Its instances have no __dict__, and its own names are not theirs to set."""
+
+    __slots__ = ("never_set",)
+    shared = 1
+
+    def meth(self) -> None:
+        pass
+
+
+class Guarded:
+    """Slotted, with a __setattr__ and a __delattr__ of its own, which hand on to object's."""
+
+    __slots__ = ("x",)
+    shared = 1
+
+    def __setattr__(self, name: str, value: object) -> None:
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        super().__delattr__(name)
+
+
 class WithProperty:
     @property
     def ro(self) -> int:
@@ -115,6 +138,18 @@ def main() -> None:
     # classes and their instances
     show("slot, unset", slotted, "unset", 1)
     show("slot, missing", slotted, "missing", 1)
+    with_names = SlottedWithNames()
+    print("slot, never set: del", outcome(lambda: delattr(with_names, "never_set"), with_names) + ";", "by its member:", outcome(lambda: SlottedWithNames.never_set.__delete__(with_names), with_names))  # type: ignore[attr-defined]
+    show("a class attribute of a slotted class", with_names, "shared", 2)
+    show("a method of a slotted class", with_names, "meth", 2)
+    show("__doc__ of a slotted class's instance", with_names, "__doc__", "d")
+    show("__module__ of a slotted class's instance", with_names, "__module__", "m")
+    print("by object's own methods:", outcome(lambda: object.__setattr__(with_names, "shared", 2), with_names), outcome(lambda: object.__delattr__(with_names, "meth"), with_names),
+          outcome(lambda: object.__setattr__(with_names, "new", 2), with_names), outcome(lambda: object.__delattr__(with_names, "new"), with_names))
+    guarded = Guarded()
+    show("a class attribute, its class has a __setattr__", guarded, "shared", 2)
+    show("a new name, its class has a __setattr__", guarded, "new", 2)
+    show("a slot, its class has a __setattr__", guarded, "x", 2)
     show("property", WithProperty(), "ro", 1)
     show("a method of an instance", plain, "meth", 1)
     show("int.x", int, "x", 1)
@@ -134,6 +169,12 @@ def main() -> None:
     show("Slotted.x.__name__", Slotted.x, "__name__", "y")  # type: ignore[attr-defined]
     show("super.__thisclass__", super(Plain, plain), "__thisclass__", int)
     show("SimpleNamespace.x", types.SimpleNamespace(), "x", 1)
+    show("union.__doc__", int | str, "__doc__", "d")
+    show("union.__module__", int | str, "__module__", "m")
+    show("union.__or__", int | str, "__or__", 1)
+    show("alias.__doc__", list[int], "__doc__", "d")
+    show("alias.__module__", list[int], "__module__", "m")
+    show("alias.__mro_entries__", list[int], "__mro_entries__", 1)
 
     # the library's C types (property, staticmethod and classmethod have a case of their own, C-3-55)
     show("partial.func", functools.partial(f), "func", f)

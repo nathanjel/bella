@@ -2648,6 +2648,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_tp_name", tp_name.get());
                     Ref alloc = own(new Builtin("_bella_new_instance", i_bella_new_instance));
                     put(pm->dict, "_bella_new_instance", alloc.get());
+                    Ref unpack = own(new Builtin("_unpack_keywords", i_unpack_keywords));   // _PyArg_UnpackKeywords, as every prelude has it
+                    put(pm->dict, "_unpack_keywords", unpack.get());
                 }
                 if (std::string_view(pm_entry.name) == "_frozen_importlib") {
                     bootstrap = pm;
@@ -2711,12 +2713,15 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                         }
                         c->disallow_instantiation = cpython_attribute_kind(c, "__new__").empty();
                     }
-                if (!all.is_unset())                 // now that the builtins have what a class's __new__ is wrapped in
-                    for (Obj n : static_cast<List*>(all.object())->items)
-                        if (Obj v = dict_get(pm->dict, n); is_kind(v, Kind::Class)) present_methods(static_cast<ClassObject*>(v.object()));
                 Obj intr = dict_get(pm->dict, Obj::of(intern("__intrinsics__")));
                 if (!intr.is_unset())
                     for (Obj n : static_cast<List*>(intr.object())->items) dict_set(intrinsics(), n, dict_get(pm->dict, n));
+                if (!all.is_unset())                 // now that the builtins have what a class's __new__ is wrapped in, and the runtime
+                    for (Obj n : static_cast<List*>(all.object())->items)   // the prelude's own descriptor class (_GetSet)
+                        if (Obj v = dict_get(pm->dict, n); is_kind(v, Kind::Class)) {
+                            present_methods(static_cast<ClassObject*>(v.object()));
+                            present_builtin_class(static_cast<ClassObject*>(v.object()));
+                        }
                 Obj tm = dict_get(pm->dict, Obj::of(intern("__type_methods__")));
                 if (is_kind(tm, Kind::Dict))
                     for (auto& e : static_cast<Dict*>(tm.object())->entries) {

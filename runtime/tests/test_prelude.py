@@ -184,6 +184,95 @@ def test_property_staticmethod_classmethod_match_the_builtins() -> None:
     assert got == want, f"\n  prelude {got}\n  builtin {want}"
 
 
+def members_story(prop: Any, sm: Any, cm: Any) -> list[object]:
+    """What the three hold and how they give it out (case C-3-55): the name and the docstring of a property, its copies, a
+    subclass's docstring, the members that cannot be set, __init__ again, __get__ by hand, and the annotations."""
+    out: list[object] = []
+
+    def said(act: Any) -> object:
+        try:
+            return act()
+        except Exception as e:
+            return (type(e).__name__, str(e))
+
+    def documented(self: Any) -> int:
+        """the getter's"""
+        return 1
+
+    def plain(self: Any) -> int:
+        return 2
+
+    def store(self: Any, value: object) -> None:
+        pass
+
+    def annotated(a: int) -> str:
+        return ""
+
+    class Sub(prop):  # type: ignore[misc]
+        """the subclass's"""
+
+    class SlottedSub(prop):  # type: ignore[misc]
+        __slots__ = ()
+
+    class Holder:
+        x = prop(plain)
+        y = x
+        anon = prop()
+        only_set = prop(None, store)
+
+    holder = Holder()
+    loose = prop(None)
+    out += [Holder.x.__name__, Holder.anon.__name__, said(lambda: loose.__name__), said(lambda: holder.anon), said(lambda: setattr(holder, "x", 1)), said(lambda: delattr(holder, "only_set")),
+            said(lambda: loose.__get__(holder)), said(lambda: loose.__set__(holder, 1)), loose.__get__(None, Holder) is loose, said(lambda: loose.__get__(None, None)), said(lambda: loose.__get__(None))]
+    named = prop(plain)
+    named.__name__ = None
+    out.append(named.__name__)
+    del named.__name__
+    loose.__set_name__(Holder, 5)
+    out += [named.__name__, loose.__name__, said(lambda: loose.__set_name__(Holder)), said(lambda: holder.anon)]
+    from_getter = prop(documented)
+    given = prop(documented, doc="given")
+    out += [from_getter.__doc__, given.__doc__, prop(plain).__doc__, from_getter.setter(store).__doc__, from_getter.getter(plain).__doc__, given.getter(plain).__doc__, from_getter.getter(None).__doc__]
+    from_getter.__doc__ = "written"
+    out += [from_getter.__doc__, from_getter.getter(plain).__doc__, from_getter.setter(store).__doc__]
+    del from_getter.__doc__
+    out += [from_getter.__doc__, said(lambda: delattr(from_getter, "__doc__"))]
+    copied = Holder.x.setter(store)
+    out += [copied.__name__, copied.fget is plain, copied.fset is store, copied.fdel, Holder.x.getter(None).fget is plain, type(Sub(plain).setter(store)).__name__, said(lambda: Holder.x.setter()),
+            said(lambda: Holder.x.deleter(fdel=plain))]
+    sub = Sub(documented)
+    out += [sub.__doc__, vars(sub), vars(Sub(plain)), Sub(plain, doc="x").__doc__, sub.setter(store).__doc__, said(lambda: SlottedSub(plain).__doc__), said(lambda: type(SlottedSub(documented)).__name__),
+            said(lambda: vars(prop(plain))), said(lambda: setattr(prop(plain), "x", 1))]
+    for made in (prop(plain), sm(plain), cm(plain)):
+        for name in ("fget", "__func__", "__wrapped__"):
+            if hasattr(made, name):
+                out += [said(lambda made=made, name=name: setattr(made, name, 1)), said(lambda made=made, name=name: delattr(made, name))]
+    out += [said(lambda: sm()), said(lambda: sm(plain, plain)), said(lambda: sm(function=plain)), said(lambda: cm()), said(lambda: cm(function=plain)), said(lambda: prop(plain, store, store, "d", 5)),
+            said(lambda: prop(nope=1)), said(lambda: prop(plain, fget=plain)), prop.__new__(prop).fget, sm.__new__(sm, plain).__func__ is plain, said(lambda: sm.__new__(sm))]
+    again_s, again_c, again_p = sm(documented), cm(documented), prop(documented, store, doc="given")
+    again_s.__init__(plain)
+    again_c.__init__(plain)
+    again_p.__init__(plain)
+    out += [again_s.__func__ is plain, again_s.__name__, again_s.__doc__, again_c.__qualname__ == plain.__qualname__, again_p.fget is plain, again_p.fset, again_p.__doc__, vars(sm(documented)) == vars(cm(documented)),
+            sorted(vars(sm(documented))), repr(sm(len)), repr(cm(len))]
+    static, bound = sm(lambda *a: a), cm(lambda cls, *a: (cls.__name__, a))
+    out += [static(1), static.__get__(1)(2), said(lambda: static.__get__(None)), said(lambda: static.__get__()), static.__get__(None, int)(3), bound.__get__(None, int)(), bound.__get__(5)(1), said(lambda: bound.__get__(None)),
+            said(lambda: bound(1))]
+    with_annotations = sm(annotated)
+    before = sorted(vars(with_annotations))
+    out += [with_annotations.__annotations__, before, sorted(vars(with_annotations)), cm(annotated).__annotations__ is annotated.__annotations__, said(lambda: sm(1).__annotations__)]
+    with_annotations.__annotations__ = {"q": 1}
+    out += [with_annotations.__annotations__, said(lambda: delattr(with_annotations, "__annotations__")), said(lambda: delattr(with_annotations, "__annotations__"))]
+    return out
+
+
+def test_what_the_three_hold_matches_the_builtins() -> None:
+    prelude = load("builtins")
+    want = members_story(property, staticmethod, classmethod)
+    got = members_story(prelude.property, prelude.staticmethod, prelude.classmethod)
+    assert got == want, "".join(f"\n  {i}: prelude {g!r}\n     builtin {w!r}" for i, (g, w) in enumerate(zip(got, want, strict=True)) if g != w)
+
+
 def test_container_repr_matches_the_builtins() -> None:
     prelude = load("builtins")
     funcs = {list: prelude._list_repr, tuple: prelude._tuple_repr, dict: prelude._dict_repr,

@@ -393,11 +393,13 @@ Ref call_builtin(Builtin* b, Obj self, Args a);   // a built-in's call: fn, or w
 void check_classmethod_type(const Builtin* b, Obj type);   // classmethod_get's checks of what it binds to
 void present_methods(ClassObject* c);             // a prelude's class: its methods are what the names table says
 Ref i_keyword_suggestion(Obj, Args a);            // _Py_CalculateSuggestions, for a prelude's messages
+Ref i_unpack_keywords(Obj, Args a);               // _PyArg_UnpackKeywords, for a prelude's function that takes keywords
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);
 Ref i_tp_name(Obj, Args a);
 void forget_python_origin(ClassObject* c);
+void present_builtin_class(ClassObject* c);       // a class of builtins.py as CPython's static type: its __module__, __doc__, __dict__, __class_getitem__
 void present_native_class(ClassObject* c, const std::string& module);   // a class of the prelude as the module's C type
 std::string keyword_suggestion(const std::string& name, const std::vector<std::string>& known);   // _Py_CalculateSuggestions; "" for none
 void fill_abc(Module* m);                        // runtime/src/abc.cpp: the module _abc
@@ -915,6 +917,7 @@ void type_delattr(ClassObject* cls, const Str* name);
 Ref generic_getattr(Obj obj, const Str* name);               // PyObject_GenericGetAttr, non-instances
 [[noreturn]] void raise_attribute_error(Obj obj, const Str* name, const std::string& message);
 [[noreturn]] void raise_delete_failed(Obj obj, const Str* name, const std::string& what);
+[[noreturn]] void raise_set_failed(Obj obj, const Str* name, const std::string& what);
 Ref load_classdict(Obj mapping, Module* m, const Str* name); // LOAD_FROM_DICT_OR_GLOBALS
 Ref load_classdict_free(Obj mapping, const Str* name, const Ref& cell, const char* text);
 Obj cell_contents(const Ref& cell);                          // borrowed; Unset when empty

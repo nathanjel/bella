@@ -1207,10 +1207,34 @@ void read_only_attribute(Obj obj, const Str* name, Obj found) {
 }
 }  // namespace
 
-// a delete the header refused: its own words when it has them; member_delete says the name alone
+// _PyObject_GenericSetAttrWithDict where the object has no dict (case C-3-54). A name its type has (a method, a class attribute) is
+// "read-only", which names nothing and holds no object. A name it lacks is "no attribute", and "no __dict__ for setting new
+// attributes" is added only where tp_setattro is the generic one: a class with a __setattr__ or __delattr__ of its own has another.
+// A name the runtime keeps on a C type that CPython's type does not have (a static type's __module__, which is its tp_name's; a
+// helper of a prelude class) is not found there.
+static void refuse_without_dict(Obj obj, const Str* name, const std::string& what) {
+    if (what.find("no __dict__ for setting new attributes") == std::string::npos) return;
+    const ClassObject* cls = type_of(obj);
+    for (const ClassObject* c : cls->mro) {
+        if (!c->attrs.contains(name) || (c_type(c) && cpython_attribute_kind(c, name->text).empty())) continue;
+        raise_new("AttributeError", "'" + cls->name + "' object attribute '" + name->text + "' is read-only");
+    }
+    static const Str* const set = intern("__setattr__");
+    static const Str* const del = intern("__delattr__");
+    for (const ClassObject* c : cls->mro)
+        if (!c_type(c) && (c->attrs.contains(set) || c->attrs.contains(del)))
+            raise_attribute_error(obj, name, "'" + cls->name + "' object has no attribute '" + name->text + "'");
+}
+// a store the header refused, from setattr and from object.__setattr__ alike
+void raise_set_failed(Obj obj, const Str* name, const std::string& what) {
+    refuse_without_dict(obj, name, what);
+    raise_attribute_error(obj, name, what.find(' ') == std::string::npos ? "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'" : what);
+}
+// a delete the header refused: its own words when it has them; member_delete says the name alone, and that is all the error holds
 void raise_delete_failed(Obj obj, const Str* name, const std::string& what) {
+    refuse_without_dict(obj, name, what);
     if (what.find(' ') != std::string::npos) raise_attribute_error(obj, name, what);
-    if (is_kind(type_lookup(type_of(obj), name), Kind::SlotDescriptor)) raise_attribute_error(obj, name, name->text);
+    if (is_kind(type_lookup(type_of(obj), name), Kind::SlotDescriptor)) raise_new("AttributeError", name->text);
     raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
 }
 
@@ -1233,9 +1257,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
             try {
                 bella::setattr(inst, name, value);
             } catch (const bella::AttributeError& e) {
-                raise_attribute_error(obj, name, std::string(e.what()).find(' ') == std::string::npos
-                                                     ? "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'"
-                                                     : std::string(e.what()));
+                raise_set_failed(obj, name, e.what());
             }
         });
         return;

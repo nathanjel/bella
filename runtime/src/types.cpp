@@ -287,7 +287,7 @@ Ref getset_delete(Obj self, Args a) {
         auto* d = static_cast<SlotDescriptor*>(self.object());
         check_member_applies(d, a.pos(0));
         with_attribute_storage(a.pos(0), [&](auto* inst) {
-            if (inst->field(d->name).is_unset()) raise_attribute_error(a.pos(0), d->name, d->name->text);
+            if (inst->field(d->name).is_unset()) raise_new("AttributeError", d->name->text);   // PyMember_SetOne: the name, and nothing held
             decref(std::exchange(inst->field(d->name), Obj{}));
         });
         return none_ref();
@@ -1252,9 +1252,7 @@ Ref object_setattr(Obj self, Args a) {
         try {
             bella::setattr(inst, intern(n->text), a.pos(1));
         } catch (const bella::AttributeError& e) {
-            raise_attribute_error(self, intern(n->text), std::string(e.what()).find(' ') == std::string::npos
-                                                             ? "'" + type_of(self)->name + "' object has no attribute '" + n->text + "'"
-                                                             : std::string(e.what()));
+            raise_set_failed(self, intern(n->text), e.what());
         }
     });
     return none_ref();
@@ -1408,7 +1406,7 @@ void set_type_annotations(Obj self, Obj v) {
 }
 Ref type_doc(Obj self) {
     ClassObject* c = self_class(self);
-    if (!c->heap_type)                           // type_get_doc: a static type's tp_doc (the names table's type: scope)
+    if (c_type(c))                               // type_get_doc: a static type's tp_doc (the names table's type: scope), whatever its dict holds (property's member)
         if (Obj d = cpython_doc("type:" + c->name); d != None() && !as_str(d)->text.empty()) return Ref::share(d);
     if (const Obj* d = c->attrs.find(N("__doc__"))) return descr_get(*d, None(), self);
     return none_ref();
@@ -2676,7 +2674,8 @@ Ref i_structseq(Obj, Args a) { return invoke(dict_get(bootstrap_of_types()->dict
 // functions, which have no row, stay as they are: they are its own.
 Ref i_bella_pickle_layout(Obj, Args a) {         // _PyObject's itemsize and basicsize tests, by the first type written in C
     positional_only(a, "_bella_pickle_layout", 1, 1);
-    ClassObject* c = static_base(as_class(a.pos(0)));
+    ClassObject* c = as_class(a.pos(0));
+    while (!c_type(c) && !c->bases.empty()) c = tp_base(c);   // a subclass has its base's C fields (property's, staticmethod's)
     return int_from_i64(cpython_has("itemsize", c->name) ? 2 : cpython_has("state", c->name) ? 1 : 0);
 }
 Ref i_bella_no_tp_new(Obj, Args a) {             // tp_new is NULL: a static type with object for its base and no __new__ of its own
@@ -2722,19 +2721,27 @@ template <std::size_t I>
 Ref python_getter(Obj self) { return invoke(python_getters()[I].get(), {self}); }
 template <std::size_t... I>
 constexpr std::array<Ref (*)(Obj), sizeof...(I)> python_getter_table(std::index_sequence<I...>) { return {python_getter<I>...}; }
-constexpr auto PYTHON_GETTERS = python_getter_table(std::make_index_sequence<192>{});
+constexpr auto PYTHON_GETTERS = python_getter_table(std::make_index_sequence<256>{});
 std::vector<Ref>& python_setters() {
+    static std::vector<Ref> pool;
+    return pool;
+}
+std::vector<Ref>& python_deleters() {           // beside each setter: what a deletion calls, None where the prelude wrote none
     static std::vector<Ref> pool;
     return pool;
 }
 template <std::size_t I>
 void python_setter(Obj self, Obj value) {
-    if (value.is_unset()) raise_new("AttributeError", "cannot delete attribute");
+    if (value.is_unset()) {
+        if (python_deleters()[I].get() == None()) raise_new("AttributeError", "cannot delete attribute");
+        invoke(python_deleters()[I].get(), {self});
+        return;
+    }
     invoke(python_setters()[I].get(), {self, value});
 }
 template <std::size_t... I>
 constexpr std::array<void (*)(Obj, Obj), sizeof...(I)> python_setter_table(std::index_sequence<I...>) { return {python_setter<I>...}; }
-constexpr auto PYTHON_SETTERS = python_setter_table(std::make_index_sequence<32>{});
+constexpr auto PYTHON_SETTERS = python_setter_table(std::make_index_sequence<48>{});
 }  // namespace
 static Ref generic_new(Obj self, Args a) {        // PyType_GenericNew, under tp_new_wrapper: the arguments are __init__'s
     return own(new_instance(new_wrapper_class(a, as_class(self))));
@@ -2750,16 +2757,25 @@ void present_methods(ClassObject* c) {
             if (made->self.is_unset() && made->binding == Binding::Method && kind == "wrapper_descriptor") made->cls = types().wrapper_descriptor;
             continue;
         }
-        if (Obj property = dict_get(builtins_module()->dict, Obj::of(N("property")));
-            !property.is_unset() && type_of(v) == as_class(property) && (kind == "member_descriptor" || kind == "getset_descriptor")) {
-            Ref getter = getattr(v, N("fget")), setter = getattr(v, N("fset"));
+        // a property, or the _GetSet that property, staticmethod and classmethod write their own members with (builtins.py)
+        Obj property = dict_get(builtins_module()->dict, Obj::of(N("property")));
+        Obj own_getset = dict_get(intrinsics(), Obj::of(N("_GetSet")));
+        if (((!property.is_unset() && type_of(v) == as_class(property)) || (!own_getset.is_unset() && type_of(v) == as_class(own_getset))) &&
+            (kind == "member_descriptor" || kind == "getset_descriptor")) {
+            Ref getter = getattr(v, N("fget")), setter = getattr(v, N("fset")), deleter = getattr(v, N("fdel"));
             if (getter.get() == None()) throw NotImplemented("a prelude's property with no getter: " + name->text);
+            if (setter.get() == None() && deleter.get() != None()) throw NotImplemented("a prelude's property with a deleter and no setter: " + name->text);
             if (python_getters().size() == PYTHON_GETTERS.size()) throw NotImplemented("more properties in the prelude than the pool of getters holds");
             if (setter.get() != None() && python_setters().size() == PYTHON_SETTERS.size()) throw NotImplemented("more property setters in the prelude than the pool holds");
             auto* g = new GetSet(name->text.c_str(), c, PYTHON_GETTERS[python_getters().size()], setter.get() == None() ? nullptr : PYTHON_SETTERS[python_setters().size()]);
             python_getters().push_back(std::move(getter));
-            if (setter.get() != None()) python_setters().push_back(std::move(setter));
+            if (setter.get() != None()) {
+                g->deletable = deleter.get() != None();   // the C setter is given NULL: what it does then is the prelude's deleter
+                python_setters().push_back(std::move(setter));
+                python_deleters().push_back(std::move(deleter));
+            }
             if (kind == "member_descriptor") g->cls = types().member_descriptor;
+            if (!own_getset.is_unset() && type_of(v) == as_class(own_getset)) g->doc = "";   // the three types' C gives its members and getsets no doc
             decref(c->attrs.set(name, Obj::of(g)));
             continue;
         }
@@ -2787,6 +2803,23 @@ void present_methods(ClassObject* c) {
 void forget_python_origin(ClassObject* c) {
     for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__", "__weakref__"})   // a C type's list has no getset
         if (c->attrs.contains(N(n))) c->del_attr(N(n));
+}
+// PyObject_GenericSetDict, the __dict__ of a C type with a tp_dictoffset (staticmethod, classmethod): any dict, and never none
+static void set_generic_dict(Obj self, Obj d) {
+    if (d.is_unset()) raise_new("TypeError", "cannot delete __dict__");
+    set_instance_dict(self, d);
+}
+// A class of builtins.py (property, staticmethod, classmethod) as the static type it is in CPython: no __module__ of its own
+// (tp_name says it), tp_doc as its __doc__ unless a member has that name, the __dict__ that C declares, and Py_GenericAlias
+void present_builtin_class(ClassObject* c) {
+    if (c->attrs.contains(N("__module__")) && !cpython_has(c->name, "__module__")) c->del_attr(N("__module__"));
+    if (cpython_attribute_kind(c, "__doc__") == "str")
+        if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !as_str(doc)->text.empty()) c->set_attr(N("__doc__"), doc);
+    if (const Obj* d = c->attrs.find(N("__dict__")); d != nullptr && *d == Obj::of(instance_dict_getset()) && cpython_attribute_kind(c, "__dict__") == "getset_descriptor") {
+        getset(c, "__dict__", instance_dict, set_generic_dict);
+        static_cast<GetSet*>(c->attrs.find(N("__dict__"))->object())->deletable = true;   // the setter is asked, and refuses
+    }
+    if (cpython_has(c->name, "__class_getitem__") && !c->attrs.contains(N("__class_getitem__"))) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
 }
 // A class the prelude writes for a type a built-in module has in C: its tp_name, its place in the
 // names table, what the table says it cannot be (a base), its docstring and its __class_getitem__.
