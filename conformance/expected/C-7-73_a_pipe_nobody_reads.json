@@ -1,0 +1,12 @@
+{
+ "case": "C-7-73_a_pipe_nobody_reads.py",
+ "clause": "C-7-73",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification sections 3 and 7 (process and signals), Python/pylifecycle.c (signal_install_handlers: SIGPIPE and SIGXFSZ are ignored when the interpreter starts), Modules/posixmodule.c (os_write_impl), Modules/_io/fileio.c, Modules/_io/bufferedio.c",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "os.write: BrokenPipeError: (32, 'Broken pipe', None) 0 BrokenPipeError: (32, 'Broken pipe', None) True True\na raw file: BrokenPipeError: (32, 'Broken pipe', None) 0 False None True\na buffered file: 18 BrokenPipeError: (32, 'Broken pipe', None) BrokenPipeError: (32, 'Broken pipe', None) False BrokenPipeError: (32, 'Broken pipe', None) True None\na text file: 4 BrokenPipeError: (32, 'Broken pipe', None) False BrokenPipeError: (32, 'Broken pipe', None) True\na line-buffered text file: 10 BrokenPipeError: (32, 'Broken pipe', None) BrokenPipeError: (32, 'Broken pipe', None) True\na reader that leaves: 5 b'taken' None BrokenPipeError: (32, 'Broken pipe', None)\nstill here\n",
+ "stderr": "",
+ "exit_code": 0
+}

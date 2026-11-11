@@ -5,6 +5,7 @@
 
 #include <charconv>
 #include <cmath>
+#include <csignal>
 #include <cstring>
 #include <algorithm>
 #include <cstdio>
@@ -2610,12 +2611,21 @@ Module* make_main(const char* main_file) {
 }
 }  // namespace
 
+// signal_install_handlers (Python/pylifecycle.c): CPython ignores SIGPIPE and SIGXFSZ when it starts, so a write to a pipe nobody
+// reads, or past the file size limit, is an OSError the program can catch and not the end of the process (case C-7-73). What a
+// program starts inherits both, as what CPython starts does.
+static void ignore_what_cpython_ignores() {
+    std::signal(SIGPIPE, SIG_IGN);
+    std::signal(SIGXFSZ, SIG_IGN);
+}
+
 int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
              std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
     int status = 0;
     std::unordered_set<Module*> runtime_own;
     try {
         try {
+            ignore_what_cpython_ignores();
             set_locale_from_environment();   // _PyPreConfig: the LC_CTYPE locale, before anything reads the environment
             native_modules()["builtins"] = builtins_module();
             Module* sys = make_sys(argc, argv);
