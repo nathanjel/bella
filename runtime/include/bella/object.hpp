@@ -290,13 +290,21 @@ public:
 inline constexpr std::size_t SHARED_KEYS_MAX = 30;      // SHARED_KEYS_MAX_SIZE, Objects/dictobject.c
 struct SharedKeys {
     std::vector<const Str*> names;
+    // A class has thirty places (dk_usable, _PyDict_NewKeysForClass): each key takes one, and so does each instance made while
+    // more than one is left (_PyObject_InitInlineValues: "it will shrink by one before each new object"). A class that has made
+    // some thirty instances therefore takes one more name and then none (refmodel RefClass.keys_left; C-3-60).
+    std::size_t left = SHARED_KEYS_MAX;
     bool contains(const Str* n) const { return std::find(names.begin(), names.end(), n) != names.end(); }
-    // Records n; false when the keys are full and n is not there.
+    // Records n; false when no place is left and n is not there.
     bool note(const Str* n) {
         if (contains(n)) return true;
-        if (names.size() >= SHARED_KEYS_MAX) return false;
+        if (left == 0) return false;
         names.push_back(n);
+        --left;
         return true;
+    }
+    void instance_made() {
+        if (left > 1) --left;
     }
 };
 
@@ -864,6 +872,10 @@ inline ClassObject* make_class(const ClassSpec& spec) {
 }
 
 // ---- instances (refmodel RefObject) ----
+// An instance that keeps its values in it takes one of the places its class's shared keys have (SharedKeys::instance_made).
+inline void instance_made(ClassObject* c) {
+    if (c->has_dict && c->dict_kind == DictKind::Inline && c->keys) c->keys->instance_made();
+}
 struct Instance : Object {
     std::vector<Obj> fields;                    // by the class's field_index; Unset: absent
     DictObject* dict = nullptr;                 // before exposure: the names not promoted; after: the __dict__
@@ -871,6 +883,7 @@ struct Instance : Object {
     std::int64_t tag = -1;                      // tests log the deaths of tagged objects
     explicit Instance(ClassObject* c) : Object(Kind::Instance) {
         cls = c;
+        instance_made(c);
         fields.assign(c->field_index.size(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
@@ -889,6 +902,7 @@ struct DictInstance : DictObject {
     std::int64_t tag = -1;
     explicit DictInstance(ClassObject* c) {
         cls = c;
+        instance_made(c);
         flags |= HAS_ATTRIBUTES;
         fields.assign(c->field_index.size(), Obj{});
     }
@@ -909,6 +923,7 @@ struct IntInstance : Object {
     std::int64_t tag = -1;
     IntInstance(ClassObject* c, std::int64_t v) : Object(Kind::IntInstance), value(v) {
         cls = c;
+        instance_made(c);
         flags |= HAS_ATTRIBUTES;
         fields.assign(c->field_index.size(), Obj{});
     }
@@ -930,6 +945,7 @@ struct FloatInstance : Float {
     FloatInstance(ClassObject* c, double v) : Float(v) {
         kind = Kind::FloatInstance;
         cls = c;
+        instance_made(c);
         flags |= HAS_ATTRIBUTES;
         fields.assign(c->field_index.size(), Obj{});
     }
@@ -950,6 +966,7 @@ struct TupleInstance : Tuple {
     std::int64_t tag = -1;
     explicit TupleInstance(ClassObject* c) {
         cls = c;
+        instance_made(c);
         flags |= HAS_ATTRIBUTES;
         fields.assign(c->field_index.size(), Obj{});
     }
@@ -970,6 +987,7 @@ struct ListInstance : List {
     std::int64_t tag = -1;
     explicit ListInstance(ClassObject* c) {
         cls = c;
+        instance_made(c);
         flags |= HAS_ATTRIBUTES;
         fields.assign(c->field_index.size(), Obj{});
     }
@@ -986,6 +1004,7 @@ struct StrInstance : Str {
     std::int64_t tag = -1;
     StrInstance(ClassObject* c, std::string text) : Str(std::move(text), false) {
         cls = c;
+        instance_made(c);
         flags |= HAS_ATTRIBUTES;
         fields.assign(c->field_index.size(), Obj{});
     }
@@ -1006,6 +1025,7 @@ struct ComplexInstance : Complex {
     ComplexInstance(ClassObject* c, double r, double i) : Complex(r, i) {
         kind = Kind::ComplexInstance;
         cls = c;
+        instance_made(c);
         flags |= HAS_ATTRIBUTES;
         fields.assign(c->field_index.size(), Obj{});
     }
@@ -1323,6 +1343,20 @@ inline Ref getattr(T* obj, const Str* name, Site* site = nullptr) {
     return execute(plan_generic(obj, name).first, obj, name);
 }
 
+template <class T>
+inline Ref expose_dict(T* obj);
+namespace detail {
+// A name the class's keys cannot take is stored on an object whose values are in it: they move into an ordinary dict of the
+// object's own, in the order they were stored (store_instance_attr_lock_held: make_dict_from_instance_attributes, then
+// insertdict's resize into a combined table, which marks the inline values invalid; refmodel Runtime._unshare).
+template <class T>
+inline void unshare(T* obj) {
+    expose_dict(obj);
+    obj->dict->split.reset();
+    obj->dict->embedded = nullptr;
+}
+}  // namespace detail
+
 // Every store keeps the new value before it releases the old one.
 template <class T>
 inline void setattr(T* obj, const Str* name, Obj value) {
@@ -1352,8 +1386,12 @@ inline void setattr(T* obj, const Str* name, Obj value) {
     if (detail::is_promoted(obj, name)) {
         Obj& slot = obj->field(name);
         if (slot.is_unset()) {
+            if (!cls->keys->note(name)) {            // no place left for the name: an ordinary dict from here on
+                detail::unshare(obj);
+                dict_store(obj->dict, Obj::of(name), value);
+                return;
+            }
             obj->order.push_back(name);
-            cls->keys->note(name);
         }
         incref(value);
         Obj old = std::exchange(slot, value);
@@ -1373,8 +1411,12 @@ inline void setattr(T* obj, const Str* name, Obj value) {
         incref(obj->dict);
     }
     if (dict_find(obj->dict, Obj::of(name)).is_unset()) {
+        if (!cls->keys->note(name)) {                // no place left for the name: an ordinary dict from here on
+            detail::unshare(obj);
+            dict_store(obj->dict, Obj::of(name), value);
+            return;
+        }
         obj->order.push_back(name);
-        cls->keys->note(name);
     }
     dict_store(obj->dict, Obj::of(name), value);
 }

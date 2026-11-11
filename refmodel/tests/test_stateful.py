@@ -40,6 +40,10 @@ class AttributeModel(RuleBasedStateMachine):
     def drop(self, obj: int) -> None:
         self.world.apply(("drop", obj))
 
+    @rule(obj=objects, times=st.integers(1, 35))
+    def churn(self, obj: int, times: int) -> None:
+        self.world.apply(("churn", obj, times))
+
     @rule(obj=objects, name=names)
     def delete(self, obj: int, name: str) -> None:
         self.world.apply(("del", obj, name))

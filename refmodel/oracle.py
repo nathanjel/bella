@@ -275,6 +275,13 @@ class World:
         del m, r
         return ("value", None), ("value", None)
 
+    def op_churn(self, obj_i: int, times: int) -> tuple[Outcome, Outcome]:
+        """The object dropped and replaced that many times: each instance a class makes takes one of the places its
+        shared keys have, so that after some thirty the class takes no new name (C-3-60)."""
+        for _ in range(times):
+            self.op_drop(obj_i)
+        return ("value", None), ("value", None)
+
     def op_weak_new(self, obj_i: int, with_callback: bool) -> tuple[Outcome, Outcome]:
         """A weak reference to an object of the program's, kept by the program: which one it is, since
         a reference with no callback is shared, or that this class has no room for one."""
@@ -652,8 +659,10 @@ class World:
         roll = rng.random()
         if roll < 0.03:
             return ("recreate_class", rng.randrange(RUNTIME_VARIANTS))
-        if roll < 0.05:
+        if roll < 0.035:
             return ("drop", rng.randrange(n_obj))
+        if roll < 0.05:
+            return ("churn", rng.randrange(n_obj), rng.randrange(12, 36))
         if roll < 0.09:
             return ("weak_new", rng.randrange(n_obj), rng.random() < 0.6)
         if roll < 0.11:
@@ -670,7 +679,7 @@ class World:
             value = self.new_tag() if then == "set" and rng.random() < 0.6 else rng.randrange(100)
             probe = self.probe_names(rng, obj_i) if rng.random() < 0.7 else None
             return ("del_dict", obj_i, then, rng.choice(NAMES), value, probe)
-        if roll < 0.205:
+        if roll < 0.215:
             first, second = rng.sample(NAMES, 2)
             return ("probe", rng.randrange(n_obj), rng.random() < 0.5, (first, second, self.new_tag(), self.new_tag(), self.new_tag(), self.new_tag()))
         if roll < 0.30:

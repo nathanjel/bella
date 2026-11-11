@@ -134,7 +134,7 @@ class VersionCounter:
 
 VERSIONS = VersionCounter()
 
-SHARED_KEYS_MAX = 30          # SHARED_KEYS_MAX_SIZE (Objects/dictobject.c): a split dict holds at most 30 keys
+SHARED_KEYS_MAX = 30          # SHARED_KEYS_MAX_SIZE (Objects/dictobject.c): a class's shared keys have thirty places
 
 
 # ---------------------------------------------------------------------------------------------
@@ -314,7 +314,14 @@ class RefClass:
         self.version = VERSIONS.issue()
         # the shared keys of its instances' dicts, in CPython's order: the compiler's sorted
         # __static_attributes__, then each name the first time any instance stores it
-        self.keys: list[str] = sorted(static_attributes)[:SHARED_KEYS_MAX]
+        # A class has thirty places (dk_usable, _PyDict_NewKeysForClass): each key takes one, and so does each instance made
+        # while more than one is left (_PyObject_InitInlineValues: "it will shrink by one before each new object"). A class
+        # that has made some thirty instances therefore takes no new name, and an instance that stores one gets an ordinary
+        # dict (found by the Hypothesis machine on 2026-11-11, once an operation made instances fast enough; measured).
+        self.keys: list[str] = []
+        self.keys_left = SHARED_KEYS_MAX
+        for name in sorted(static_attributes):
+            self.note_key(name)
         self.heap = heap if heap is not None else HEAP
         self.heap.classes.add(self)
         self.subclasses: list[RefClass] = []
@@ -381,9 +388,10 @@ class RefClass:
         """Records `name` in the shared keys; False when they are full and it is not there."""
         if name in self.keys:
             return True
-        if len(self.keys) >= SHARED_KEYS_MAX:
+        if self.keys_left <= 0:
             return False
         self.keys.append(name)
+        self.keys_left -= 1
         return True
 
     # -- lookup along the MRO -----------------------------------------------------------------
@@ -484,6 +492,8 @@ class RefObject:
         self.dict: RefDict | None = None    # before exposure: the attributes not promoted; after: the object's __dict__
         self.exposed = False
         self.dropped = False                # del obj.__dict__ took its dict: the next thing asked decides what it gets (Runtime.del_dict)
+        if cls.has_dict and cls.dict_kind == "inline" and cls.keys_left > 1:
+            cls.keys_left -= 1              # an instance with its values in it takes one of the class's places, while more than one is left
         self.refs = 0
         self.alive = True
         self.finalized = False              # PEP 442: its finaliser has run (finalize, or dealloc)
@@ -722,6 +732,14 @@ class Runtime:
         obj.exposed = True
         obj.dropped = False
 
+    def _unshare(self, obj: RefObject) -> None:
+        """A name the class's keys cannot take is stored on an object whose values are in it: they move into an ordinary
+        dict of the object's own, in the order they were stored (store_instance_attr_lock_held: make_dict_from_instance_
+        attributes, then insertdict's resize into a combined table, which marks the inline values invalid)."""
+        d = self.expose_dict(obj)
+        d.split = None
+        d.owner = None
+
     @staticmethod
     def _instance_storage(obj: RefObject, name: str) -> tuple[bool, Any]:
         """(present, value) for the *__dict__-backed* storage of `name` (never slots). This is the plain read that
@@ -937,6 +955,10 @@ class Runtime:
             self._settle(obj, split=True)
         elif not obj.exposed and cls.has_dict and cls.dict_kind != "inline":
             self._settle(obj, split=cls.dict_kind == "shared")
+        elif not obj.exposed and cls.has_dict:
+            stored = obj.inline[name] is not UNSET if name in cls.promoted_fields else obj.dict is not None and name in obj.dict
+            if not stored and not cls.note_key(name):
+                self._unshare(obj)          # the class's keys take no more names: an ordinary dict from here on
         if obj.exposed:
             d = obj.dict
             assert d is not None

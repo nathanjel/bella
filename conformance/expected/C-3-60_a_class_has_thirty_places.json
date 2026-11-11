@@ -1,0 +1,12 @@
+{
+ "case": "C-3-60_a_class_has_thirty_places.py",
+ "clause": "C-3-60",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Objects/dictobject.c (_PyDict_NewKeysForClass, _PyObject_InitInlineValues, insert_split_key, store_instance_attr_lock_held); found by the reference model's Hypothesis machine, 2026-11-11",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "-- instances made before the names x, y, z were stored: 0, 26, 27, 40\na class: x z | x z | z x | z x\nlist: x z | x z | z x | z x\nint: x z | x z | x z | x z\ntuple: x z | x z | x z | x z\nan exception: z x | z x | z x | z x\n-- names the keys already hold, and the one more they take\nx y | ['x', 'w', 'y'] x y w | x w | v x\n-- the class's own code sets them\na b | a b n | ['b', 'a', 'm'] b a m | a a2 b\n-- the last place\nk0 p | r k0 | k0 p\n-- a subclass has places of its own\nx z | y x q x\nend\n",
+ "stderr": "",
+ "exit_code": 0
+}

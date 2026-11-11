@@ -335,6 +335,12 @@ struct World {
                 drop(i);
                 return "('value', None)";
             }
+            if (op == "churn") {                 // dropped and replaced that many times (refmodel World.op_churn)
+                std::size_t i; int times;
+                in >> i >> times;
+                for (int k = 0; k < times; ++k) drop(i);
+                return "('value', None)";
+            }
             if (op == "probe") {                 // fresh instances asked which dict they have (refmodel World.op_probe)
                 std::size_t i; int delete_first; std::string n1, n2, t1, t2, t3, t4;
                 in >> i >> delete_first >> n1 >> n2 >> t1 >> t2 >> t3 >> t4;

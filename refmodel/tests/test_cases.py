@@ -215,6 +215,43 @@ def test_the_dict_an_instance_has_is_its_classes() -> None:
     assert _dict_state(plain) == (False, "plain")
 
 
+def test_a_class_has_thirty_places_for_its_keys() -> None:
+    """C-3-60, measured on 3.15.2 (found by the Hypothesis machine): a key takes one of a class's thirty places, and so
+    does each instance made while more than one is left; an instance that stores a name the keys cannot take has an
+    ordinary dict from there on, its values in the order they were stored."""
+    rt = Runtime()
+    K = RefClass("K")
+    first = RefObject(K)
+    rt.setattr(first, "x", 1)
+    rt.setattr(first, "y", 2)
+    assert K.keys == ["x", "y"] and K.keys_left == 27          # one instance and two keys
+    for _ in range(40):
+        RefObject(K)
+    assert K.keys_left == 1                                    # the last place is a key's
+    o = RefObject(K)
+    rt.setattr(o, "x", 1)
+    rt.setattr(o, "w", 2)                                      # one more name joins
+    assert K.keys == ["x", "y", "w"] and K.keys_left == 0 and _dict_state(o) == (False, "none")
+    rt.setattr(o, "v", 3)                                      # and then none
+    assert _dict_state(o) == (False, "plain") and list(rt.expose_dict(o)) == ["x", "w", "v"] and K.keys == ["x", "y", "w"]
+    rt.setattr(o, "y", 4)                                      # a name the keys hold is one more of the dict's now
+    assert list(rt.expose_dict(o)) == ["x", "w", "v", "y"]
+    p = RefObject(K)
+    rt.setattr(p, "y", 1)
+    rt.setattr(p, "x", 2)
+    try:
+        rt.delattr(p, "never")                                 # a delete that fails changes nothing
+    except AttributeError:
+        pass
+    assert _dict_state(p) == (False, "none") and K.keys == ["x", "y", "w"]
+    shared = RefClass("N", dict_kind="shared")                 # no values in the object: an instance takes no place
+    for _ in range(40):
+        RefObject(shared)
+    assert shared.keys_left == 30 and RefClass("S", (K,)).keys_left == 30       # and a subclass has places of its own
+    known = RefClass("Known", static_attributes=("b", "a"))
+    assert known.keys == ["a", "b"] and known.keys_left == 28
+
+
 def test_inline_field_shadows_class_attribute_and_cache_notices() -> None:
     rt, A, *_ = _world()
     A.set_attr("x", 1)
