@@ -25,6 +25,7 @@ try:
     _resource_warning                            # noqa: B018  # PyErr_ResourceWarning: a message and the object left open
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _as_double                                   # noqa: B018  # PyFloat_AsDouble, with its messages
+    _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -43,6 +44,7 @@ except NameError:
     _resource_warning: Callable[..., Any] = _missing
     _warn: Callable[..., Any] = _missing
     _as_double: Callable[..., float] = _missing
+    _unpack_keywords: Callable[..., Any] = _missing
 
 AT_NO_AUTOMOUNT = 2048
 CLD_CONTINUED = 6
@@ -417,12 +419,15 @@ def _entry_from_posix_info(iterator: ScandirIterator, name: bytes, ino: int, kin
     return entry
 
 
-class sched_param(tuple):  # noqa: N801, SLOT001
-    __slots__ = ()
-    __module__ = "posix"
+def _sched_param_new(args: tuple[object, ...], kwds: dict[str, object]) -> list[object]:   # os_sched_param_impl: any object, kept as given
+    return [_unpack_keywords("sched_param", ("sched_priority",), 0, 1, 1, 0, args, kwds, None)[0]]
 
-    def __new__(*args: object, **kwds: object) -> object:  # noqa: N805
-        _refuse("os.sched_param")
+
+def _sched_param_reduce(self: tuple[object, ...]) -> tuple[object, ...]:   # os_sched_param_reduce
+    return (tuple.__getitem__(self, 0),)
+
+
+sched_param = _structseq("sched_param", "posix", ["sched_priority"], 1, parse=_sched_param_new, reduced=_sched_param_reduce)
 
 
 # ---- arguments
@@ -668,6 +673,41 @@ def _write_vector(shown: str, fd: int, buffers: object, offset: int | None, flag
     if result < 0:
         _fail(-result)
     return result  # type: ignore[no-any-return]
+
+
+def _long_long(value: object) -> int:            # the long_long converter (PyLong_AsLongLong through PyLong_AsNativeBytes)
+    out = _number_index(value)
+    if not -(2**63) <= out < 2**63:
+        raise OverflowError("int too big to convert")
+    return out
+
+
+def _ns_from_seconds(value: float) -> int:       # _PyTime_FromSecondsDouble(d, _PyTime_ROUND_FLOOR): pytime_from_double
+    d = value * 1e9
+    if not -9223372036854775808.0 <= d < 9223372036854775808.0:   # a NaN is on neither side
+        raise OverflowError("timestamp out of range for C PyTime_t")
+    whole = int(d)                               # towards zero; floor is one less where that went up
+    return whole - 1 if d < whole else whole
+
+
+def _timer(fd: int, flags: int, initial: int, interval: int) -> tuple[int, int, int, int]:   # timerfd_settime: _PyTime_AsTimespec twice
+    seconds, nanoseconds = divmod(initial, 1000000000)
+    every, every_ns = divmod(interval, 1000000000)
+    result = _sys("timerfd", b"set", fd, flags, seconds, nanoseconds, every, every_ns)
+    if type(result) is int:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def _sched_priority(param: object) -> int:       # convert_sched_param: the type itself, and its field as a C int
+    if type(param) is not sched_param:
+        raise TypeError("must have a sched_param object")
+    priority = _number_index(tuple.__getitem__(param, 0))  # type: ignore[arg-type]
+    if not -(2**63) <= priority < 2**63:
+        raise OverflowError("Python int too large to convert to C long")
+    if not -2147483648 <= priority <= 2147483647:
+        raise OverflowError("sched_priority out of range")
+    return priority
 
 
 def _fd_converter(value: object) -> int:         # _fd_converter
@@ -1280,8 +1320,19 @@ def copy_file_range(*args: object, **kwds: object) -> int:   # os_copy_file_rang
     if result < 0:
         _fail(-result)
     return result  # type: ignore[no-any-return]
-ctermid = _absent("ctermid")
-device_encoding = _absent("device_encoding")
+
+
+def ctermid(*args: object, **kwds: object) -> str:   # os_ctermid_impl
+    _noargs("ctermid", args, kwds)
+    result = _sys("ctermid")
+    if type(result) is int:
+        _fail(-result)
+    return bytes.decode(result, "utf-8", "surrogateescape")
+
+
+def device_encoding(*args: object, **kwds: object) -> str | None:   # _Py_device_encoding: a terminal's, which in UTF-8 mode is utf-8
+    fd = _int(_unpack("device_encoding", args, kwds, ("fd",), 1, 1)[0])
+    return "utf-8" if _sys("isatty", fd) else None
 
 
 def dup(*args: object, **kwds: object) -> int:   # os_dup_impl: _Py_dup, a descriptor that is not inherited
@@ -1401,7 +1452,15 @@ def get_inheritable(*args: object, **kwds: object) -> bool:   # os_get_inheritab
     return result == 1  # type: ignore[no-any-return]
 
 
-getgrouplist = _absent("getgrouplist")
+def getgrouplist(*args: object, **kwds: object) -> list[int]:   # os_getgrouplist_impl
+    _positional("getgrouplist", args, kwds, 2)
+    user = args[0]
+    if not issubclass(type(user), str):
+        raise TypeError("getgrouplist() argument 1 must be str, not " + _tp_name(user))
+    name = str.encode(user, "utf-8")  # type: ignore[arg-type]
+    if b"\0" in name:
+        raise ValueError("embedded null character")
+    return [_from_id(g) for g in _sys("getgrouplist", name, _id("gid", args[1]))]
 
 
 def getgroups(*args: object, **kwds: object) -> list[int]:   # os_getgroups_impl
@@ -1420,7 +1479,14 @@ def getloadavg(*args: object, **kwds: object) -> tuple[float, float, float]:   #
     return result  # type: ignore[no-any-return]
 
 
-getlogin = _absent("getlogin")
+def getlogin(*args: object, **kwds: object) -> str:   # os_getlogin_impl
+    _noargs("getlogin", args, kwds)
+    result = _sys("getlogin")
+    if result is None:
+        raise OSError("unable to determine login name")
+    if type(result) is int:
+        _fail(-result)
+    return bytes.decode(result, "utf-8", "surrogateescape")
 
 
 def getpgid(*args: object, **kwds: object) -> int:   # os_getpgid_impl
@@ -1601,7 +1667,13 @@ def pathconf(*args: object, **kwds: object) -> int:   # os_pathconf_impl: EINVAL
     return value  # type: ignore[no-any-return]
 
 
-pidfd_open = _absent("pidfd_open")
+def pidfd_open(*args: object, **kwds: object) -> int:   # os_pidfd_open_impl
+    pid, flags = _unpack("pidfd_open", args, kwds, ("pid", "flags"), 1, 2)
+    process = _int(pid)
+    result = _sys("pidfd_open", process, 0 if flags is _ABSENT else _unsigned(flags, "unsigned int", 32))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
 
 
 def pipe(*args: object, **kwds: object) -> tuple[int, int]:   # os_pipe_impl: pipe2 with O_CLOEXEC
@@ -1737,15 +1809,87 @@ def scandir(*args: object, **kwds: object) -> ScandirIterator:   # os_scandir_im
         _fail(-stream, shown)                    # path_error(&iterator->path)
     _entry_set(iterator, "_s_stream", stream)
     return iterator
-sched_get_priority_max = _absent("sched_get_priority_max")
-sched_get_priority_min = _absent("sched_get_priority_min")
-sched_getaffinity = _absent("sched_getaffinity")
-sched_getparam = _absent("sched_getparam")
-sched_getscheduler = _absent("sched_getscheduler")
-sched_rr_get_interval = _absent("sched_rr_get_interval")
-sched_setaffinity = _absent("sched_setaffinity")
-sched_setparam = _absent("sched_setparam")
-sched_setscheduler = _absent("sched_setscheduler")
+
+
+def sched_get_priority_max(*args: object, **kwds: object) -> int:   # os_sched_get_priority_max_impl
+    error, value = _sys("sched", b"max", _int(_unpack("sched_get_priority_max", args, kwds, ("policy",), 1, 1)[0]))
+    if error:
+        _fail(error)
+    return value  # type: ignore[no-any-return]
+
+
+def sched_get_priority_min(*args: object, **kwds: object) -> int:   # os_sched_get_priority_min_impl
+    error, value = _sys("sched", b"min", _int(_unpack("sched_get_priority_min", args, kwds, ("policy",), 1, 1)[0]))
+    if error:
+        _fail(error)
+    return value  # type: ignore[no-any-return]
+
+
+def sched_getaffinity(*args: object, **kwds: object) -> set[int]:   # os_sched_getaffinity_impl
+    result = _sys("sched", b"getaffinity", _int(_one("sched_getaffinity", args, kwds)))
+    if type(result) is int:
+        _fail(-result)
+    return set(result)
+
+
+def sched_getparam(*args: object, **kwds: object) -> object:   # os_sched_getparam_impl
+    result = _sys("sched", b"getparam", _int(_one("sched_getparam", args, kwds)))
+    if type(result) is int:
+        _fail(-result)
+    return sched_param(result[0])
+
+
+def sched_getscheduler(*args: object, **kwds: object) -> int:   # os_sched_getscheduler_impl
+    result = _sys("sched", b"getscheduler", _int(_one("sched_getscheduler", args, kwds)))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def sched_rr_get_interval(*args: object, **kwds: object) -> float:   # os_sched_rr_get_interval_impl
+    result = _sys("sched", b"interval", _int(_one("sched_rr_get_interval", args, kwds)))
+    if type(result) is int:
+        _fail(-result)
+    return float(result[0]) + 1e-9 * result[1]  # type: ignore[no-any-return]
+
+
+def sched_setaffinity(*args: object, **kwds: object) -> None:   # os_sched_setaffinity_impl: each item checked as it comes
+    _positional("sched_setaffinity", args, kwds, 2)
+    pid = _int(args[0])
+    cpus: list[int] = []
+    for item in args[1]:  # type: ignore[attr-defined]
+        if _type_lookup(item, "__index__") is _ABSENT:
+            raise TypeError("expected an iterator of ints, but iterator yielded " + repr(type(item)))
+        cpu = _number_index(item)
+        if cpu >= 2**63:
+            raise OverflowError("Python int too large to convert to C long")
+        if cpu < -(2**63):
+            raise OverflowError("Python int too large to convert to C long")
+        if cpu < 0:
+            raise ValueError("negative CPU number")
+        if cpu > 2147483646:
+            raise OverflowError("CPU number too large")
+        cpus.append(cpu)
+    code = _sys("sched", b"setaffinity", pid, tuple(cpus))
+    if code < 0:
+        _fail(-code)
+
+
+def sched_setparam(*args: object, **kwds: object) -> None:   # os_sched_setparam_impl
+    _positional("sched_setparam", args, kwds, 2)
+    pid = _int(args[0])
+    code = _sys("sched", b"setparam", pid, _sched_priority(args[1]))
+    if code < 0:
+        _fail(-code)
+
+
+def sched_setscheduler(*args: object, **kwds: object) -> None:   # os_sched_setscheduler_impl
+    _positional("sched_setscheduler", args, kwds, 3)
+    pid = _int(args[0])
+    policy = _int(args[1])
+    code = _sys("sched", b"setscheduler", pid, policy, _sched_priority(args[2]))
+    if code < 0:
+        _fail(-code)
 
 
 def sched_yield(*args: object, **kwds: object) -> None:   # os_sched_yield_impl
@@ -1852,11 +1996,50 @@ def sysconf(*args: object, **kwds: object) -> int:   # os_sysconf_impl
 system = _absent("system")
 tcgetpgrp = _absent("tcgetpgrp")
 tcsetpgrp = _absent("tcsetpgrp")
-timerfd_create = _absent("timerfd_create")
-timerfd_gettime = _absent("timerfd_gettime")
-timerfd_gettime_ns = _absent("timerfd_gettime_ns")
-timerfd_settime = _absent("timerfd_settime")
-timerfd_settime_ns = _absent("timerfd_settime_ns")
+
+
+def timerfd_create(*args: object, **kwds: object) -> int:   # os_timerfd_create_impl
+    clockid, flags = _unpack_keywords("timerfd_create", ("", "flags"), 1, 1, 1, 0, args, kwds, _ABSENT)
+    clock = _int(clockid)
+    result = _sys("timerfd", b"create", clock, 0 if flags is _ABSENT else _int(flags))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def timerfd_gettime(*args: object, **kwds: object) -> tuple[float, float]:   # os_timerfd_gettime_impl, build_itimerspec
+    result = _sys("timerfd", b"get", _fildes(_one("timerfd_gettime", args, kwds)))
+    if type(result) is int:
+        _fail(-result)
+    return (float(result[0]) + float(result[1]) * 1e-9, float(result[2]) + float(result[3]) * 1e-9)
+
+
+def timerfd_gettime_ns(*args: object, **kwds: object) -> tuple[int, int]:   # os_timerfd_gettime_ns_impl, build_itimerspec_ns
+    result = _sys("timerfd", b"get", _fildes(_one("timerfd_gettime_ns", args, kwds)))
+    if type(result) is int:
+        _fail(-result)
+    return (result[0] * 1000000000 + result[1], result[2] * 1000000000 + result[3])
+
+
+def timerfd_settime(*args: object, **kwds: object) -> tuple[float, float]:   # os_timerfd_settime_impl
+    fd, flags, initial, interval = _unpack_keywords("timerfd_settime", ("", "flags", "initial", "interval"), 1, 1, 1, 0, args, kwds, _ABSENT)
+    descriptor = _fildes(fd)
+    bits = 0 if flags is _ABSENT else _int(flags)
+    first = 0.0 if initial is _ABSENT else _as_double(initial)
+    every = 0.0 if interval is _ABSENT else _as_double(interval)
+    start = _ns_from_seconds(first)
+    result = _timer(descriptor, bits, start, _ns_from_seconds(every))
+    return (float(result[0]) + float(result[1]) * 1e-9, float(result[2]) + float(result[3]) * 1e-9)
+
+
+def timerfd_settime_ns(*args: object, **kwds: object) -> tuple[int, int]:   # os_timerfd_settime_ns_impl
+    fd, flags, initial, interval = _unpack_keywords("timerfd_settime_ns", ("", "flags", "initial", "interval"), 1, 1, 1, 0, args, kwds, _ABSENT)
+    descriptor = _fildes(fd)
+    bits = 0 if flags is _ABSENT else _int(flags)
+    first = 0 if initial is _ABSENT else _long_long(initial)
+    every = 0 if interval is _ABSENT else _long_long(interval)
+    result = _timer(descriptor, bits, first, every)
+    return (result[0] * 1000000000 + result[1], result[2] * 1000000000 + result[3])
 
 
 def truncate(*args: object, **kwds: object) -> None:   # os_truncate_impl: by name, or by a descriptor as ftruncate

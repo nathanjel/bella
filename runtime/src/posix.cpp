@@ -6,7 +6,11 @@
 #include <sys/random.h>
 #include <sys/resource.h>
 #include <sys/sendfile.h>
+#include <grp.h>
+#include <sched.h>
 #include <sys/eventfd.h>
+#include <sys/syscall.h>
+#include <sys/timerfd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -334,6 +338,137 @@ Ref p_dev(Args a) {                              // (b"major" | b"minor", dev) o
         return int_from_u64(makedev(static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(1)))), static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(2))))));
     dev_t dev = static_cast<dev_t>(i64_of(a.pos(1)));
     return int_from_u64(which == "major" ? major(dev) : minor(dev));
+}
+// ---- timers that are descriptors, the scheduler, and a few of the process's names (C-7-70)
+// timerfd: (b"create", clockid, flags), (b"get", fd), (b"set", fd, flags, seconds, nanoseconds, interval seconds, interval
+// nanoseconds). What is left and the interval come back as four ints: seconds, nanoseconds, seconds, nanoseconds
+Ref p_timerfd(Args a) {
+    const std::string& which = bytes_data(a.pos(0));
+    if (which == "create") return result(timerfd_create(int_of(a.pos(1)), int_of(a.pos(2)) | TFD_CLOEXEC));   // PEP 446
+    itimerspec now{};
+    if (which == "get") {
+        if (timerfd_gettime(int_of(a.pos(1)), &now) != 0) return failed();
+    } else {
+        itimerspec next{};
+        next.it_value.tv_sec = static_cast<time_t>(i64_of(a.pos(3)));
+        next.it_value.tv_nsec = static_cast<long>(i64_of(a.pos(4)));
+        next.it_interval.tv_sec = static_cast<time_t>(i64_of(a.pos(5)));
+        next.it_interval.tv_nsec = static_cast<long>(i64_of(a.pos(6)));
+        if (timerfd_settime(int_of(a.pos(1)), int_of(a.pos(2)), &next, &now) != 0) return failed();
+    }
+    Ref s = int_from_i64(now.it_value.tv_sec), ns = int_from_i64(now.it_value.tv_nsec);
+    Ref is = int_from_i64(now.it_interval.tv_sec), ins = int_from_i64(now.it_interval.tv_nsec);
+    return tuple_new({s.get(), ns.get(), is.get(), ins.get()});
+}
+// the scheduler: (which, ...). A priority may be any int, so the two limits come back beside errno: (errno, value)
+Ref p_sched(Args a) {
+    const std::string& which = bytes_data(a.pos(0));
+    if (which == "max" || which == "min") {
+        errno = 0;
+        int value = which == "max" ? sched_get_priority_max(int_of(a.pos(1))) : sched_get_priority_min(int_of(a.pos(1)));
+        Ref e = int_from_i64(value == -1 ? errno : 0), v = int_from_i64(value);
+        return tuple_new({e.get(), v.get()});
+    }
+    pid_t pid = static_cast<pid_t>(int_of(a.pos(1)));
+    if (which == "getscheduler") return result(sched_getscheduler(pid));
+    if (which == "setscheduler") {
+        sched_param param{};
+        param.sched_priority = int_of(a.pos(3));
+        return result(sched_setscheduler(pid, int_of(a.pos(2)), &param) == -1 ? -1 : 0);
+    }
+    if (which == "getparam") {                   // the priority in a tuple, an error as a number
+        sched_param param{};
+        if (sched_getparam(pid, &param) != 0) return failed();
+        Ref v = int_from_i64(param.sched_priority);
+        return tuple_new({v.get()});
+    }
+    if (which == "setparam") {
+        sched_param param{};
+        param.sched_priority = int_of(a.pos(2));
+        return result(sched_setparam(pid, &param) != 0 ? -1 : 0);
+    }
+    if (which == "interval") {                   // sched_rr_get_interval: (seconds, nanoseconds)
+        timespec interval{};
+        if (sched_rr_get_interval(pid, &interval) != 0) return failed();
+        Ref s = int_from_i64(interval.tv_sec), ns = int_from_i64(interval.tv_nsec);
+        return tuple_new({s.get(), ns.get()});
+    }
+    if (which == "getaffinity") {                // os_sched_getaffinity_impl: a set too small is EINVAL, and is doubled
+        int ncpus = 64;
+        for (;;) {
+            std::size_t setsize = CPU_ALLOC_SIZE(ncpus);
+            cpu_set_t* mask = CPU_ALLOC(ncpus);
+            if (mask == nullptr) raise_new("MemoryError", "");
+            if (sched_getaffinity(pid, setsize, mask) == 0) {
+                Ref out = list_new({});
+                int count = CPU_COUNT_S(setsize, mask);
+                for (int cpu = 0; count != 0; ++cpu)
+                    if (CPU_ISSET_S(cpu, setsize, mask)) {
+                        --count;
+                        Ref n = int_from_i64(cpu);
+                        list_append(out.get(), n.get());
+                    }
+                CPU_FREE(mask);
+                return out;
+            }
+            CPU_FREE(mask);
+            if (errno != EINVAL) return failed();
+            if (ncpus > INT_MAX / 2) raise_new("OverflowError", "could not allocate a large enough CPU set");
+            ncpus *= 2;
+        }
+    }
+    // setaffinity: (pid, the CPU numbers, each checked by the Python side): a set that grows as os_sched_setaffinity_impl's does
+    auto& cpus = static_cast<Tuple*>(a.pos(2).object())->items;
+    int ncpus = 64;
+    for (Obj item : cpus) {
+        std::int64_t cpu = i64_of(item);
+        while (ncpus <= cpu) ncpus = ncpus > INT_MAX / 2 ? static_cast<int>(cpu) + 1 : ncpus * 2;
+    }
+    std::size_t setsize = CPU_ALLOC_SIZE(ncpus);
+    cpu_set_t* mask = CPU_ALLOC(ncpus);
+    if (mask == nullptr) raise_new("MemoryError", "");
+    CPU_ZERO_S(setsize, mask);
+    for (Obj item : cpus) CPU_SET_S(static_cast<std::size_t>(i64_of(item)), setsize, mask);
+    int r = sched_setaffinity(pid, setsize, mask);
+    int error = errno;
+    CPU_FREE(mask);
+    errno = error;
+    return result(r);
+}
+Ref p_pidfd_open(Args a) { return result(syscall(SYS_pidfd_open, static_cast<pid_t>(int_of(a.pos(0))), static_cast<unsigned>(i64_of(a.pos(1))))); }
+Ref p_ctermid(Args) {                            // os_ctermid_impl
+    char buffer[L_ctermid];
+    if (ctermid(buffer) == nullptr) return failed();
+    return bytes_new(std::string_view(buffer));
+}
+Ref p_getlogin(Args) {                           // os_getlogin_impl: the name, the error, or None where there is neither
+    errno = 0;
+    const char* name = getlogin();
+    if (name != nullptr) return bytes_new(std::string_view(name));
+    return errno != 0 ? failed() : none_ref();
+}
+Ref p_getgrouplist(Args a) {                     // (user, gid): os_getgrouplist_impl, the list grown as the C library asks
+    int ngroups = 1 + NGROUPS_MAX;
+    std::vector<gid_t> groups;
+    for (;;) {
+        try {
+            groups.resize(static_cast<std::size_t>(ngroups));
+        } catch (const std::bad_alloc&) {
+            raise_new("MemoryError", "");
+        }
+        int before = ngroups;
+        if (getgrouplist(text_of(a.pos(0)), static_cast<gid_t>(i64_of(a.pos(1))), groups.data(), &ngroups) != -1) break;
+        if (ngroups <= before) {
+            if (ngroups > INT_MAX / 2) raise_new("MemoryError", "");
+            ngroups *= 2;
+        }
+    }
+    Ref out = list_new({});
+    for (int i = 0; i < ngroups; ++i) {
+        Ref g = int_from_u64(groups[static_cast<std::size_t>(i)]);
+        list_append(out.get(), g.get());
+    }
+    return out;
 }
 // ---- several buffers at once, and descriptors with no file (C-7-69)
 // readv and preadv: (fd, sizes[, offset]). One call into buffers of the sizes the program's have; the bytes come back whole, for
@@ -880,7 +1015,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
         {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},

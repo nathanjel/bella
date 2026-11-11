@@ -1945,11 +1945,13 @@ def _bella_import_external(module):
 
 # ---- structseq (Objects/structseq.c): a type of named tuples for the modules written in Python
 
-def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, says_module=True):
+def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, says_module=True, parse=None, reduced=None):
     """`fields` in order, None for one with no name; the first `visible` are the tuple's. CPython names the type's
     constructor `structseq` in its messages. What makes the result look as C makes it is _bella_structseq_finish.
     `settle(items, past)`: what a type's own tp_new does to a new one after the common part (statresult_new). With no
-    `has_new` a program cannot make one (Py_TPFLAGS_DISALLOW_INSTANTIATION); with no `says_module` its __module__ is its tp_name's, not in its dict."""
+    `has_new` a program cannot make one (Py_TPFLAGS_DISALLOW_INSTANTIATION); with no `says_module` its __module__ is its tp_name's, not in its dict.
+    `parse(args, kwds)`: the visible items, for a type whose tp_new takes its fields one by one (os.sched_param), and
+    `reduced(self)`: the arguments its own __reduce__ gives beside the type."""
     shown = name if module == "builtins" else module + "." + name   # the tp_name: a type of no module's is in builtins
     named = [f for f in fields if f is not None]
     total = len(fields)
@@ -1970,6 +1972,8 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
         if not issubclass(wanted, cls):
             raise TypeError(shown + ".__new__(" + wanted.__name__ + "): " + wanted.__name__ + " is not a subtype of " + shown)
         rest = args[1:]
+        if parse is not None:
+            return _bella_structseq_make(cls, parse(rest, kwds), [])
         given = len(rest) + len(kwds)
         if given > 2:
             raise TypeError("structseq() takes at most 2 " + ("keyword " if not rest else "") + "arguments (" + str(given) + " given)")
@@ -2040,6 +2044,8 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
             raise TypeError(name + ".__reduce__() takes no keyword arguments")
         if len(args) != 1:
             raise TypeError(name + ".__reduce__() takes no arguments (" + str(len(args) - 1) + " given)")
+        if reduced is not None:
+            return (type(args[0]), reduced(args[0]))
         past = {}
         for field, value in zip(fields[visible:], _bella_structseq_hidden(args[0])):
             past[field] = value

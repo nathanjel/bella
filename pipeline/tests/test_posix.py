@@ -2,7 +2,11 @@
 named tuples and the module's functions show."""
 from __future__ import annotations
 
+import os
+import pty
+import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -290,6 +294,101 @@ def test_vectors_eventfd_memfd_nodes_and_splice() -> None:
     same(VECTOR_MESSAGES)
 
 
+# C-7-70: timerfd, the scheduler and sched_param, pidfd_open, ctermid, device_encoding, getlogin and getgrouplist. Their words, and
+# what one machine gives both sides: its CPUs, the round-robin quantum, the login name, a user's groups.
+TIMER_MESSAGES = r"""
+import os
+import warnings
+def m(f):
+    try:
+        with warnings.catch_warnings(record=True) as got:
+            warnings.simplefilter("always")
+            v = f()
+        return repr(v) + "".join(" (" + type(x.message).__name__ + ": " + str(x.message) + ")" for x in got)
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class I:
+    def __init__(self, v):
+        self.v = v
+    def __index__(self):
+        return self.v
+t = os.timerfd_create(1)
+P = os.sched_param
+me = os.getpid()
+allowed = os.sched_getaffinity(0)
+print(m(lambda: os.timerfd_create()), m(lambda: os.timerfd_create(99)), m(lambda: os.timerfd_create("x")), m(lambda: os.timerfd_create(1, 0)), m(lambda: os.timerfd_create(1, flags=12345)), m(lambda: os.timerfd_create(1, flags="x")),
+      m(lambda: os.timerfd_create(clockid=1)), m(lambda: os.timerfd_create(1, flag=0)), m(lambda: os.timerfd_create(2**40)), m(lambda: os.timerfd_create(1.5)), m(lambda: os.timerfd_create(1, flags=2**40)), m(lambda: os.timerfd_create(1, clockid=1)),
+      m(lambda: os.timerfd_create(flags=0)), m(lambda: os.timerfd_create(1, clockid2=1)), m(lambda: os.timerfd_create(1, flags=0, more=1)), sep="\n")
+print(m(lambda: os.timerfd_settime()), m(lambda: os.timerfd_settime(987)), m(lambda: os.timerfd_settime("x")), m(lambda: os.timerfd_settime(t, 0)), m(lambda: os.timerfd_settime(t, initial="x")), m(lambda: os.timerfd_settime(t, initial=-1)),
+      m(lambda: os.timerfd_settime(t, interval=-0.5)), m(lambda: os.timerfd_settime(t, initial=float("nan"))), m(lambda: os.timerfd_settime(t, initial=float("inf"))), m(lambda: os.timerfd_settime(t, initial=1e300)),
+      m(lambda: os.timerfd_settime(t, initial=9.3e9)), m(lambda: os.timerfd_settime(t, flags=99)), m(lambda: os.timerfd_settime(t, flags="x")), m(lambda: os.timerfd_settime(t, initia=1)), m(lambda: os.timerfd_settime(fd=t)),
+      m(lambda: os.timerfd_settime(t, initial=None)), m(lambda: os.timerfd_settime(t, interval=2**70)), m(lambda: os.timerfd_settime(t, initial=-1e-10)), m(lambda: os.timerfd_settime(t, flags="x", initial="y")),
+      m(lambda: os.timerfd_settime(t, initial="y", interval=float("nan"))), m(lambda: os.timerfd_settime(t, initial=float("nan"), interval="y")), m(lambda: os.timerfd_settime(t, initial=10**400)), m(lambda: os.timerfd_settime(True)),
+      m(lambda: os.timerfd_settime(t, interval=float("nan"), initial=float("inf"))), sep="\n")
+print(m(lambda: os.timerfd_settime_ns()), m(lambda: os.timerfd_settime_ns(987)), m(lambda: os.timerfd_settime_ns(t, initial=1.5)), m(lambda: os.timerfd_settime_ns(t, initial=-1)), m(lambda: os.timerfd_settime_ns(t, interval=-1)),
+      m(lambda: os.timerfd_settime_ns(t, initial=2**63)), m(lambda: os.timerfd_settime_ns(t, initial=-(2**63) - 1)), m(lambda: os.timerfd_settime_ns(t, interval=2**200)), m(lambda: os.timerfd_settime_ns(t, initial=I(2**63))),
+      m(lambda: os.timerfd_settime_ns(t, initial="1")), m(lambda: os.timerfd_settime_ns(t, 0)), m(lambda: os.timerfd_settime_ns(t, flags=99)), m(lambda: os.timerfd_settime_ns(t, initial=None)), m(lambda: os.timerfd_settime_ns(t, flags=2**31)),
+      m(lambda: os.timerfd_settime_ns(t, initial=2**63, interval="x")), m(lambda: os.timerfd_settime_ns("x", initial=2**63)), m(lambda: os.timerfd_settime_ns(t, flags="x", initial=2**63)), m(lambda: os.timerfd_settime_ns(t, initial=-(2**63))),
+      m(lambda: os.timerfd_settime_ns(t, initial=1, interval=2, flags=0, extra=1)), m(lambda: os.timerfd_settime_ns(t, initial=1, initial2=2)), m(lambda: os.timerfd_settime_ns(t, **{"fd": 1})), sep="\n")
+print(m(lambda: os.timerfd_gettime()), m(lambda: os.timerfd_gettime(987)), m(lambda: os.timerfd_gettime("x")), m(lambda: os.timerfd_gettime(t, 1)), m(lambda: os.timerfd_gettime(fd=t)), m(lambda: os.timerfd_gettime_ns()), m(lambda: os.timerfd_gettime_ns(987)),
+      m(lambda: os.timerfd_gettime_ns(1.5)), m(lambda: os.timerfd_gettime(False) and None), m(lambda: os.timerfd_gettime_ns(t, 1)), sep="\n")
+print(P, P(5), m(lambda: P()), m(lambda: P(1, 2)), m(lambda: P(sched_priority=3)), m(lambda: P(x=1)), m(lambda: P(1, sched_priority=2)), m(lambda: P(sched_priorit=2)), m(lambda: type("S", (P,), {})), m(lambda: setattr(P(1), "sched_priority", 1)),
+      m(lambda: P(1).x), m(lambda: P.__new__()), m(lambda: P.__new__(int)), m(lambda: P.__new__(P)), m(lambda: P.__new__(P, 1, 2)), m(lambda: P.__new__(P, sched_priority=1)), m(lambda: P(1).__reduce__(1)), m(lambda: P.__reduce__()),
+      m(lambda: P.__reduce__((1,))), m(lambda: P(1).__replace__(x=1)), m(lambda: P(1).__reduce_ex__(2)), m(lambda: P(1).__replace__(sched_priority="p")), P.__doc__, P.sched_priority, type(P.__dict__["__new__"]).__name__, sorted(P.__dict__),
+      m(lambda: P([1])), m(lambda: P(1) + (2,)), m(lambda: P(1) * 2), m(lambda: P(1)[:]), m(lambda: P(3) < P(4)), sep="\n")
+print(m(lambda: os.sched_get_priority_max(99)), m(lambda: os.sched_get_priority_max(-1)), m(lambda: os.sched_get_priority_max("x")), m(lambda: os.sched_get_priority_max()), m(lambda: os.sched_get_priority_max(policy=1)),
+      m(lambda: os.sched_get_priority_min(policy=2)), m(lambda: os.sched_get_priority_max(2**40)), m(lambda: os.sched_get_priority_max(1.5)), m(lambda: os.sched_get_priority_max(1, 2)), m(lambda: os.sched_get_priority_max(polic=1)),
+      m(lambda: os.sched_get_priority_min()), m(lambda: os.sched_get_priority_min(os.SCHED_RESET_ON_FORK)), m(lambda: os.sched_getscheduler(2**30)), m(lambda: os.sched_getscheduler(-1)), m(lambda: os.sched_getscheduler("x")),
+      m(lambda: os.sched_getscheduler()), m(lambda: os.sched_getscheduler(pid=0)), m(lambda: os.sched_getscheduler(2**70)), m(lambda: os.sched_getscheduler(1.5)), m(lambda: os.sched_getparam(2**30)), m(lambda: os.sched_getparam(-1)),
+      m(lambda: os.sched_getparam("x")), m(lambda: os.sched_getparam()), sep="\n")
+print(m(lambda: os.sched_setparam(0, P(5))), m(lambda: os.sched_setparam(0, (0,))), m(lambda: os.sched_setparam(0, P("x"))), m(lambda: os.sched_setparam(0, P(2**40))), m(lambda: os.sched_setparam(0, P(2**70))), m(lambda: os.sched_setparam(0, P(1.5))),
+      m(lambda: os.sched_setparam(2**30, P(0))), m(lambda: os.sched_setparam("x", 0)), m(lambda: os.sched_setparam(0)), m(lambda: os.sched_setparam(0, P(0), 1)), m(lambda: os.sched_setparam(pid=0, param=P(0))), m(lambda: os.sched_setparam(0, P(-1))),
+      m(lambda: os.sched_setparam(0, P(-(2**40)))), m(lambda: os.sched_setparam(0, P(I(0)))), m(lambda: os.sched_setparam(0, P(None))), m(lambda: os.sched_setscheduler(0, os.SCHED_OTHER, P(3))), m(lambda: os.sched_setscheduler(0, 99, P(0))),
+      m(lambda: os.sched_setscheduler(0, os.SCHED_OTHER, 0)), m(lambda: os.sched_setscheduler(0, "x", P(0))), m(lambda: os.sched_setscheduler("x", 0, 0)), m(lambda: os.sched_setscheduler(0, 0)), m(lambda: os.sched_setscheduler(2**30, 0, P(0))),
+      m(lambda: os.sched_setscheduler(0, 2**40, 5)), m(lambda: os.sched_rr_get_interval(0)), m(lambda: os.sched_rr_get_interval(2**30)), m(lambda: os.sched_rr_get_interval(-1)),
+      m(lambda: os.sched_rr_get_interval("x")), m(lambda: os.sched_rr_get_interval()), sep="\n")
+print(sorted(allowed), m(lambda: os.sched_setaffinity(0, [])), m(lambda: os.sched_setaffinity(0, 5)), m(lambda: os.sched_setaffinity(0, ["x"])), m(lambda: os.sched_setaffinity(0, [-1])), m(lambda: os.sched_setaffinity(0, [2**31 - 1])),
+      m(lambda: os.sched_setaffinity(0, [2**70])), m(lambda: os.sched_setaffinity(0, [-(2**70)])), m(lambda: os.sched_setaffinity(0, [1.5])), m(lambda: os.sched_setaffinity(0, [100000])), m(lambda: os.sched_setaffinity(2**30, allowed)),
+      m(lambda: os.sched_setaffinity(0)), m(lambda: os.sched_setaffinity(0, allowed, 1)), m(lambda: os.sched_setaffinity(0, "0")), m(lambda: os.sched_setaffinity(0, [min(allowed), "x"])), m(lambda: os.sched_setaffinity("x", allowed)),
+      m(lambda: os.sched_setaffinity(0, [None])), m(lambda: os.sched_setaffinity(pid=0, mask=allowed)), m(lambda: os.sched_getaffinity(2**30)), m(lambda: os.sched_getaffinity(-1)), m(lambda: os.sched_getaffinity("x")), m(lambda: os.sched_getaffinity()),
+      m(lambda: os.sched_getaffinity(pid=0)), sorted(os.sched_getaffinity(0)) == sorted(allowed), os.process_cpu_count(), os.cpu_count(), sep="\n")
+print(m(lambda: os.pidfd_open(2**30)), m(lambda: os.pidfd_open(-1)), m(lambda: os.pidfd_open(0)), m(lambda: os.pidfd_open()), m(lambda: os.pidfd_open("x")), m(lambda: os.pidfd_open(me, 12345)), m(lambda: os.pidfd_open(me, -1)),
+      m(lambda: os.pidfd_open(me, 2**32)), m(lambda: os.pidfd_open(me, 0, 0)), m(lambda: os.pidfd_open(me, "0")), m(lambda: os.pidfd_open(me, flag=0)), m(lambda: os.pidfd_open("x", -1)), m(lambda: os.ctermid()), m(lambda: os.ctermid(1)),
+      m(lambda: os.ctermid(x=1)), m(lambda: os.device_encoding(0)), m(lambda: os.device_encoding(987)), m(lambda: os.device_encoding("x")), m(lambda: os.device_encoding()), m(lambda: os.device_encoding(fd=0)), m(lambda: os.device_encoding(1.5)),
+      m(lambda: os.device_encoding(-1)), m(lambda: os.device_encoding(2**40)), m(lambda: os.device_encoding(0, 1)), m(lambda: os.device_encoding(f=0)), m(lambda: os.device_encoding(True)), sep="\n")
+print(m(lambda: os.getlogin()), m(lambda: os.getlogin(1)), m(lambda: os.getgrouplist("root", 0)), m(lambda: os.getgrouplist("no such user here", 5)), m(lambda: os.getgrouplist("root")), m(lambda: os.getgrouplist(b"root", 0)),
+      m(lambda: os.getgrouplist("root", -1)), m(lambda: os.getgrouplist("root", 2**32)), m(lambda: os.getgrouplist("root", "0")), m(lambda: os.getgrouplist("a\0b", 0)), m(lambda: os.getgrouplist(user="root", group=0)),
+      m(lambda: os.getgrouplist("root", 2**32 - 1)), m(lambda: os.getgrouplist("root", 0, 0)), m(lambda: os.getgrouplist(5, "x")), m(lambda: os.getgrouplist("\udcff", 0)), m(lambda: os.getgrouplist("root", -2)),
+      m(lambda: sorted(os.getgrouplist(os.environ.get("USER", "root"), os.getgid())) == sorted(set(os.getgroups()) | {os.getgid()})), m(lambda: os.getgrouplist("root", 1.5)), sep="\n")
+print(os.timerfd_create.__doc__[:60], os.timerfd_settime.__doc__[:60], os.sched_getaffinity.__doc__[:40], os.pidfd_open.__doc__[:40], os.ctermid.__doc__, os.device_encoding.__doc__[:40], os.getlogin.__doc__, os.getgrouplist.__doc__[:40], sep="\n")
+"""
+
+
+def test_timers_the_scheduler_and_the_process_names() -> None:
+    same(TIMER_MESSAGES)
+
+
+def test_device_encoding_of_a_terminal() -> None:
+    """A terminal's encoding is utf-8 in UTF-8 mode, which 3.15 is in unless told otherwise (_Py_device_encoding). CPython and the
+    compiled program are given the same pseudo-terminal as their standard input; their output is a pipe."""
+    if shutil.which("g++") is None:
+        return
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_text("import os\nprint(os.device_encoding(0), os.device_encoding(1), os.isatty(0))\n", encoding="utf-8")
+        compiled = build(prog, "prog.py")
+        master, slave = pty.openpty()
+        try:
+            ref = subprocess.run([sys.executable, str(prog)], stdin=slave, capture_output=True, text=True, check=False, env=env)
+            got = subprocess.run([str(compiled)], stdin=slave, capture_output=True, text=True, check=False, env=env)
+        finally:
+            os.close(master)
+            os.close(slave)
+    assert (got.stdout, got.stderr, got.returncode) == (ref.stdout, ref.stderr, ref.returncode), (ref, got)
+    assert ref.stdout == "utf-8 None True\n", ref
+
+
 def test_statvfs_and_configuration_limits() -> None:
     same(LIMITS_MESSAGES)
 
@@ -328,7 +427,7 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
     for body, name in (("os.fork()", "os.fork"), ("os.ttyname(0)", "os.ttyname"), ("os.setsid()", "os.setsid"),
-                       ("os.sched_param(1)", "os.sched_param"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
+                       ("os.tcgetpgrp(0)", "os.tcgetpgrp"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"import os\nprint('start')\nif __name__ == '__main__':\n    try:\n        {body}\n    except BaseException:\n        print('raised')\n", encoding="utf-8")
