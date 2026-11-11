@@ -680,6 +680,13 @@ def _set(which: bytes, *values: object) -> None:   # one of the setters: None, o
         _fail(-code)
 
 
+def _tty(which: bytes, *values: object) -> object:   # a terminal call: its value, or the error with no file name (posix_error)
+    result = _sys("tty", which, *values)
+    if type(result) is int and result < 0:
+        _fail(-result)
+    return result
+
+
 def _fd_converter(value: object) -> int:         # _fd_converter
     if type(value) is bool:
         _warn("bool is used as a file descriptor", "RuntimeWarning")   # PyErr_WarnEx(PyExc_RuntimeWarning, ..., 1)
@@ -1222,8 +1229,16 @@ def WTERMSIG(*args: object, **kwds: object) -> int:  # noqa: N802
     return _wait_status("WTERMSIG", args, kwds)
 
 
-_inputhook = _absent("_inputhook")
-_is_inputhook_installed = _absent("_is_inputhook_installed")
+def _inputhook(*args: object, **kwds: object) -> int:   # os__inputhook_impl: PyOS_InputHook is C's to set, and no C sets it here
+    _noargs("_inputhook", args, kwds)
+    return 0
+
+
+def _is_inputhook_installed(*args: object, **kwds: object) -> bool:   # os__is_inputhook_installed_impl
+    _noargs("_is_inputhook_installed", args, kwds)
+    return False
+
+
 abort = _absent("abort")
 
 
@@ -1259,7 +1274,11 @@ def chown(*args: object, **kwds: object) -> None:   # os_chown_impl
         _fail(-code, shown)
 
 
-chroot = _absent("chroot")
+def chroot(*args: object, **kwds: object) -> None:   # os_chroot_impl
+    data, shown = _path("chroot", "path", _unpack("chroot", args, kwds, ("path",), 1, 1)[0])
+    code = _sys("chroot", data)
+    if code < 0:
+        _fail(-code, shown)
 
 
 def closerange(*args: object, **kwds: object) -> None:   # os_closerange_impl: up to, not including, the second
@@ -1533,7 +1552,10 @@ def getxattr(*args: object, **kwds: object) -> bytes:   # os_getxattr_impl
     if type(result) is int:
         _fail(-result, shown)
     return result  # type: ignore[no-any-return]
-grantpt = _absent("grantpt")
+
+
+def grantpt(*args: object, **kwds: object) -> None:   # os_grantpt_impl
+    _tty(b"grantpt", _fildes(_one("grantpt", args, kwds)))
 
 
 def initgroups(*args: object, **kwds: object) -> None:   # os_initgroups_impl
@@ -1574,7 +1596,8 @@ def lockf(*args: object, **kwds: object) -> None:   # os_lockf_impl
         _fail(-code)
 
 
-login_tty = _absent("login_tty")
+def login_tty(*args: object, **kwds: object) -> None:   # os_login_tty_impl
+    _tty(b"login_tty", _fildes(_one("login_tty", args, kwds)))
 
 
 def major(*args: object, **kwds: object) -> int:   # os_major_impl
@@ -1630,7 +1653,9 @@ def nice(*args: object, **kwds: object) -> int:   # os_nice_impl: the new priori
     return value  # type: ignore[no-any-return]
 
 
-openpty = _absent("openpty")
+def openpty(*args: object, **kwds: object) -> tuple[int, int]:   # os_openpty_impl
+    _noargs("openpty", args, kwds)
+    return _tty(b"openpty")  # type: ignore[return-value]
 
 
 def pathconf(*args: object, **kwds: object) -> int:   # os_pathconf_impl: EINVAL may be the name's, so it carries no file name
@@ -1687,7 +1712,10 @@ def posix_fallocate(*args: object, **kwds: object) -> None:   # os_posix_falloca
         _fail(-code)
 
 
-posix_openpt = _absent("posix_openpt")
+def posix_openpt(*args: object, **kwds: object) -> int:   # os_posix_openpt_impl
+    return _tty(b"posix_openpt", _int(_one("posix_openpt", args, kwds)))  # type: ignore[return-value]
+
+
 posix_spawn = _absent("posix_spawn")
 posix_spawnp = _absent("posix_spawnp")
 
@@ -1712,7 +1740,8 @@ def preadv(*args: object, **kwds: object) -> int:   # os_preadv_impl
     return _read_vector("preadv2", fd, args[1], offset, _int(args[3]) if len(args) > 3 else 0)
 
 
-ptsname = _absent("ptsname")
+def ptsname(*args: object, **kwds: object) -> str:   # os_ptsname_impl
+    return bytes.decode(_tty(b"ptsname", _fildes(_one("ptsname", args, kwds))), "utf-8", "surrogateescape")  # type: ignore[arg-type]
 
 
 def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
@@ -1932,7 +1961,10 @@ def setgroups(*args: object, **kwds: object) -> None:   # os_setgroups: a sequen
     _set(b"setgroups", tuple(ids))
 
 
-setns = _absent("setns")
+def setns(*args: object, **kwds: object) -> None:   # os_setns_impl
+    fd, nstype = _unpack("setns", args, kwds, ("fd", "nstype"), 1, 2)
+    descriptor = _fildes(fd)
+    _tty(b"setns", descriptor, 0 if nstype is _ABSENT else _int(nstype))
 
 
 def setpgid(*args: object, **kwds: object) -> None:   # os_setpgid_impl
@@ -2039,8 +2071,16 @@ def sysconf(*args: object, **kwds: object) -> int:   # os_sysconf_impl
 
 
 system = _absent("system")
-tcgetpgrp = _absent("tcgetpgrp")
-tcsetpgrp = _absent("tcsetpgrp")
+
+
+def tcgetpgrp(*args: object, **kwds: object) -> int:   # os_tcgetpgrp_impl
+    return _tty(b"tcgetpgrp", _int(_one("tcgetpgrp", args, kwds)))  # type: ignore[return-value]
+
+
+def tcsetpgrp(*args: object, **kwds: object) -> None:   # os_tcsetpgrp_impl
+    _positional("tcsetpgrp", args, kwds, 2)
+    fd = _int(args[0])
+    _tty(b"tcsetpgrp", fd, _int(args[1]))
 
 
 def timerfd_create(*args: object, **kwds: object) -> int:   # os_timerfd_create_impl
@@ -2097,9 +2137,16 @@ def truncate(*args: object, **kwds: object) -> None:   # os_truncate_impl: by na
         _fail(-code, shown)
 
 
-ttyname = _absent("ttyname")
-unlockpt = _absent("unlockpt")
-unshare = _absent("unshare")
+def ttyname(*args: object, **kwds: object) -> str:   # os_ttyname_impl
+    return bytes.decode(_tty(b"ttyname", _int(_one("ttyname", args, kwds))), "utf-8", "surrogateescape")  # type: ignore[arg-type]
+
+
+def unlockpt(*args: object, **kwds: object) -> None:   # os_unlockpt_impl
+    _tty(b"unlockpt", _fildes(_one("unlockpt", args, kwds)))
+
+
+def unshare(*args: object, **kwds: object) -> None:   # os_unshare_impl
+    _tty(b"unshare", _int(_unpack("unshare", args, kwds, ("flags",), 1, 1)[0]))
 
 
 def _time_t(value: object) -> int:               # _PyLong_AsTime_t

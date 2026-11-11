@@ -422,6 +422,95 @@ def test_setters_of_ids_groups_session_and_priority() -> None:
     same(SETTER_MESSAGES)
 
 
+# C-7-72: pseudo-terminals (openpty, posix_openpt, grantpt, unlockpt, ptsname, ttyname, tcgetpgrp, tcsetpgrp, login_tty), chroot,
+# unshare, setns and posix's two input-hook functions: their words, and what a terminal that is not the process's own answers.
+TERMINAL_MESSAGES = r"""
+import os
+import posix
+import tempfile
+import warnings
+def m(f):
+    try:
+        with warnings.catch_warnings(record=True) as got:
+            warnings.simplefilter("always")
+            v = f()
+        return repr(v) + "".join(" (" + type(x.message).__name__ + ": " + str(x.message) + ")" for x in got)
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class Fileno:
+    def __init__(self, fd):
+        self.fd = fd
+    def fileno(self):
+        return self.fd
+ma, sl = os.openpty()
+f = tempfile.TemporaryFile()
+plain = f.fileno()
+p = os.posix_openpt(os.O_RDWR | os.O_NOCTTY)
+print(m(lambda: os.openpty(1)), m(lambda: os.openpty(x=1)), m(lambda: os.ttyname(ma)), m(lambda: os.ttyname(sl) == os.ptsname(ma)), m(lambda: os.ttyname(987)), m(lambda: os.ttyname("x")), m(lambda: os.ttyname()), m(lambda: os.ttyname(fd=sl)),
+      m(lambda: os.ttyname(1.5)), m(lambda: os.ttyname(2**40)), m(lambda: os.ttyname(Fileno(sl))), m(lambda: os.ttyname(plain)), m(lambda: os.ttyname(True)), m(lambda: os.ttyname(sl, 1)), sep="\n")
+print(m(lambda: os.posix_openpt()), m(lambda: os.posix_openpt("x")), m(lambda: os.posix_openpt(oflag=2)), m(lambda: os.posix_openpt(2**40)), m(lambda: os.posix_openpt(2, 3)), m(lambda: os.posix_openpt(1.5)), m(lambda: os.grantpt(987)),
+      m(lambda: os.grantpt(plain)), m(lambda: os.grantpt(sl)), m(lambda: os.grantpt("x")), m(lambda: os.grantpt()), m(lambda: os.grantpt(fd=p)), m(lambda: os.grantpt(Fileno(p))), m(lambda: os.grantpt(1.5)), m(lambda: os.unlockpt(987)),
+      m(lambda: os.unlockpt(plain)), m(lambda: os.unlockpt(sl)), m(lambda: os.unlockpt()), m(lambda: os.unlockpt(Fileno(p))), m(lambda: os.unlockpt("x")), m(lambda: os.ptsname(987)), m(lambda: os.ptsname(plain)), m(lambda: os.ptsname(sl)),
+      m(lambda: os.ptsname()), m(lambda: os.ptsname(Fileno(p)) == os.ptsname(p)), m(lambda: os.ptsname("x")), m(lambda: os.ptsname(fd=p)), m(lambda: os.ptsname(-1)), m(lambda: os.grantpt(Fileno("x"))), m(lambda: os.grantpt(2**40)), sep="\n")
+print(m(lambda: os.tcgetpgrp(sl)), m(lambda: os.tcgetpgrp(ma)), m(lambda: os.tcgetpgrp(plain)), m(lambda: os.tcgetpgrp(987)), m(lambda: os.tcgetpgrp("x")), m(lambda: os.tcgetpgrp()), m(lambda: os.tcgetpgrp(fd=sl)), m(lambda: os.tcgetpgrp(Fileno(sl))),
+      m(lambda: os.tcgetpgrp(1.5)), m(lambda: os.tcsetpgrp(sl, os.getpgrp())), m(lambda: os.tcsetpgrp(plain, os.getpgrp())), m(lambda: os.tcsetpgrp(987, 1)), m(lambda: os.tcsetpgrp(sl)), m(lambda: os.tcsetpgrp("x", 1)),
+      m(lambda: os.tcsetpgrp(sl, "x")), m(lambda: os.tcsetpgrp(fd=sl, pgid=1)), m(lambda: os.tcsetpgrp(sl, 2**40)), m(lambda: os.tcsetpgrp(sl, 1, 2)), m(lambda: os.tcsetpgrp(sl, -1)), m(lambda: os.tcsetpgrp("x", "y")),
+      m(lambda: os.login_tty(987)), m(lambda: os.login_tty("x")), m(lambda: os.login_tty()), m(lambda: os.login_tty(fd=sl)), m(lambda: os.login_tty(Fileno(987))), m(lambda: os.login_tty(1.5)), m(lambda: os.login_tty(sl, 1)), sep="\n")
+print(m(lambda: os.chroot("no such dir here")), m(lambda: os.chroot(5)), m(lambda: os.chroot()), m(lambda: os.chroot(path="no such dir here")), m(lambda: os.chroot(b"no such")), m(lambda: os.chroot("a\0b")), m(lambda: os.chroot(f.name if isinstance(f.name, str) else "no such")),
+      m(lambda: os.chroot("x", 1)), m(lambda: os.chroot(None)), m(lambda: os.chroot(pat="x")), m(lambda: os.chroot(1.5)), m(lambda: os.unshare(0)), m(lambda: os.unshare()), m(lambda: os.unshare("x")), m(lambda: os.unshare(flags=0)),
+      m(lambda: os.unshare(-1)), m(lambda: os.unshare(2**40)), m(lambda: os.unshare(0, 0)), m(lambda: os.unshare(flag=0)), m(lambda: os.setns(987)), m(lambda: os.setns(plain)), m(lambda: os.setns()), m(lambda: os.setns("x")),
+      m(lambda: os.setns(fd=987, nstype=0)), m(lambda: os.setns(987, "x")), m(lambda: os.setns(987, 0, 0)), m(lambda: os.setns(Fileno(987))), m(lambda: os.setns(987, 2**40)), m(lambda: os.setns(987, nstyp=0)), m(lambda: os.setns("x", "y")),
+      m(lambda: os.setns(True)), sep="\n")
+print(m(lambda: posix._inputhook()), m(lambda: posix._is_inputhook_installed()), m(lambda: posix._inputhook(1)), m(lambda: posix._is_inputhook_installed(1)), m(lambda: posix._inputhook(x=1)), hasattr(os, "_inputhook"), posix._inputhook.__doc__,
+      posix._is_inputhook_installed.__doc__, os.openpty.__doc__, os.ttyname.__doc__[:50], os.login_tty.__doc__[:50], os.chroot.__doc__, os.unshare.__doc__[:50], os.setns.__doc__[:50], os.ptsname.__doc__[:50], os.tcgetpgrp.__doc__, sep="\n")
+"""
+
+# login_tty where it succeeds: the program is given one end of a pseudo-terminal, makes it its own, and says over it what it
+# then is. The session, the controlling terminal and its foreground group are the process's own after the call.
+LOGIN_TTY = r"""
+import os
+import sys
+fd = int(sys.argv[1])
+name = os.ttyname(fd)
+before = (os.getsid(0) == os.getpid(), os.isatty(1))
+done = os.login_tty(fd)
+after = (done, os.isatty(0), os.isatty(1), os.isatty(2), os.ttyname(0) == name, os.ttyname(2) == name, os.getsid(0) == os.getpid(), os.getpgrp() == os.getpid(), os.tcgetpgrp(0) == os.getpgrp(),
+         os.tcsetpgrp(1, os.getpgrp()), os.tcgetpgrp(2) == os.getpid(), os.device_encoding(0), os.ctermid())
+try:
+    os.fstat(fd)
+    closed = False
+except OSError as e:
+    closed = e.errno == 9
+os.write(1, repr((before, after, closed)).encode() + b"\n")
+"""
+
+
+def test_terminals_chroot_unshare_and_setns() -> None:
+    same(TERMINAL_MESSAGES)
+
+
+def test_login_tty_makes_the_terminal_the_process_own() -> None:
+    if shutil.which("g++") is None:
+        return
+    outputs = []
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_text(LOGIN_TTY, encoding="utf-8")
+        for command in ([sys.executable, str(prog)], [str(build(prog, "prog.py"))]):
+            master, slave = pty.openpty()
+            try:
+                done = subprocess.run([*command, str(slave)], pass_fds=[slave], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+                os.close(slave)
+                slave = -1
+                outputs.append((os.read(master, 4096), done.stdout, done.stderr, done.returncode))
+            finally:
+                os.close(master)
+                if slave >= 0:
+                    os.close(slave)
+    assert outputs[0] == outputs[1], outputs
+    assert outputs[0] == (b"((False, False), (None, True, True, True, True, True, True, True, True, None, True, 'utf-8', '/dev/tty'), True)\r\n", "", "", 0), outputs[0]
+
+
 def test_device_encoding_of_a_terminal() -> None:
     """A terminal's encoding is utf-8 in UTF-8 mode, which 3.15 is in unless told otherwise (_Py_device_encoding). CPython and the
     compiled program are given the same pseudo-terminal as their standard input; their output is a pipe."""
@@ -480,8 +569,8 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
-    for body, name in (("os.fork()", "os.fork"), ("os.ttyname(0)", "os.ttyname"), ("os.posix_openpt(0)", "os.posix_openpt"),
-                       ("os.tcgetpgrp(0)", "os.tcgetpgrp"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
+    for body, name in (("os.fork()", "os.fork"), ("os.forkpty()", "os.forkpty"), ("os.waitpid(0, 0)", "os.waitpid"),
+                       ("os.kill(0, 0)", "os.kill"), ("os.system('true')", "os.system"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"import os\nprint('start')\nif __name__ == '__main__':\n    try:\n        {body}\n    except BaseException:\n        print('raised')\n", encoding="utf-8")

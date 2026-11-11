@@ -1,0 +1,12 @@
+{
+ "case": "C-7-72_pseudo_terminals_and_moving_the_process.py",
+ "clause": "C-7-72",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7 (os), Modules/posixmodule.c (os_openpty_impl, os_ttyname_impl, os_posix_openpt_impl, os_grantpt_impl, os_unlockpt_impl, os_ptsname_impl, os_tcgetpgrp_impl, os_tcsetpgrp_impl, os_login_tty_impl, os_chroot_impl, os_unshare_impl, os_setns_impl)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "openpty: True True True False False True True True b'to the master\\r\\n' b'to the slave\\n' utf-8 TypeError TypeError\nttyname: str True True True /dev/ptmx True True OSError: (25, 'Inappropriate ioctl for device', None) OSError: (9, 'Bad file descriptor', None) TypeError TypeError TypeError TypeError OverflowError TypeError\nposix_openpt: True False True None None True True None None True True True\nthey refuse: TypeError TypeError TypeError OverflowError TypeError OSError: (9, 'Bad file descriptor', None) OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) TypeError TypeError TypeError OSError: (9, 'Bad file descriptor', None) OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) TypeError TypeError OSError: (9, 'Bad file descriptor', None) OSError: (25, 'Inappropriate ioctl for device', None) OSError: (25, 'Inappropriate ioctl for device', None) TypeError TypeError TypeError\ntcgetpgrp and tcsetpgrp: 0 OSError: (25, 'Inappropriate ioctl for device', None) OSError: (25, 'Inappropriate ioctl for device', None) OSError: (9, 'Bad file descriptor', None) TypeError TypeError TypeError TypeError TypeError OSError: (25, 'Inappropriate ioctl for device', None) OSError: (25, 'Inappropriate ioctl for device', None) OSError: (9, 'Bad file descriptor', None) TypeError TypeError TypeError TypeError OverflowError TypeError OSError: (22, 'Invalid argument', None)\nlogin_tty refuses: OSError: (9, 'Bad file descriptor', None) TypeError TypeError TypeError OSError: (9, 'Bad file descriptor', None) TypeError\nchroot, unshare and setns: True True True TypeError TypeError ValueError TypeError TypeError None None TypeError TypeError OSError: (22, 'Invalid argument', None) OverflowError TypeError OSError: (9, 'Bad file descriptor', None) OSError: (22, 'Invalid argument', None) TypeError TypeError OSError: (9, 'Bad file descriptor', None) TypeError TypeError OSError: (9, 'Bad file descriptor', None) OverflowError OSError: (22, 'Invalid argument', None)\n",
+ "stderr": "",
+ "exit_code": 0
+}

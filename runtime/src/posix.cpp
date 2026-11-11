@@ -7,6 +7,9 @@
 #include <sys/resource.h>
 #include <sys/sendfile.h>
 #include <grp.h>
+#include <pty.h>
+#include <signal.h>
+#include <utmp.h>
 #include <sched.h>
 #include <sys/eventfd.h>
 #include <sys/syscall.h>
@@ -20,7 +23,6 @@
 #include <sys/xattr.h>
 #include <sys/times.h>
 #include <sys/utsname.h>
-#include <grp.h>
 #include <langinfo.h>
 #include <libintl.h>
 #include <pwd.h>
@@ -35,7 +37,6 @@
 #include <cstring>
 #include <ctime>
 #include <pthread.h>
-#include <sched.h>
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -339,6 +340,56 @@ Ref p_dev(Args a) {                              // (b"major" | b"minor", dev) o
     dev_t dev = static_cast<dev_t>(i64_of(a.pos(1)));
     return int_from_u64(which == "major" ? major(dev) : minor(dev));
 }
+// ---- pseudo-terminals, and the process moved elsewhere (C-7-72): (which, ...)
+Ref p_tty(Args a) {
+    const std::string& which = bytes_data(a.pos(0));
+    if (which == "openpty") {                    // os_openpty_impl: neither end is inherited
+        int master = -1, slave = -1;
+        if (openpty(&master, &slave, nullptr, nullptr, nullptr) != 0) return failed();
+        for (int fd : {master, slave}) {
+            int flags = fcntl(fd, F_GETFD);
+            if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0) {
+                int error = errno;
+                close(master);
+                close(slave);
+                errno = error;
+                return failed();
+            }
+        }
+        Ref m = int_from_i64(master), s = int_from_i64(slave);
+        return tuple_new({m.get(), s.get()});
+    }
+    if (which == "posix_openpt") return result(posix_openpt(int_of(a.pos(1)) | O_CLOEXEC));
+    int fd = int_of(a.pos(1));
+    if (which == "ttyname" || which == "ptsname") {   // the name as bytes; ttyname_r and ptsname_r give the error as their value
+        long size = which == "ttyname" ? sysconf(_SC_TTY_NAME_MAX) : PATH_MAX + 1;
+        if (size == -1) return failed();
+        std::string name(static_cast<std::size_t>(size), '\0');
+        int error = which == "ttyname" ? ttyname_r(fd, name.data(), name.size()) : ptsname_r(fd, name.data(), name.size());
+        if (error != 0) {
+            errno = error;
+            return failed();
+        }
+        return bytes_new(std::string_view(name.c_str()));
+    }
+    if (which == "grantpt") {                    // os_grantpt_impl: SIGCHLD is the default's while a helper may run
+        struct sigaction dfl{}, saved{};
+        dfl.sa_handler = SIG_DFL;
+        sigaction(SIGCHLD, &dfl, &saved);
+        int r = grantpt(fd);
+        int error = errno;
+        sigaction(SIGCHLD, &saved, nullptr);
+        errno = error;
+        return result(r);
+    }
+    if (which == "unlockpt") return result(unlockpt(fd));
+    if (which == "login_tty") return result(login_tty(fd));
+    if (which == "tcgetpgrp") return result(tcgetpgrp(fd));
+    if (which == "tcsetpgrp") return result(tcsetpgrp(fd, static_cast<pid_t>(int_of(a.pos(2)))));
+    if (which == "unshare") return result(unshare(fd));
+    return result(setns(fd, int_of(a.pos(2))));  // setns
+}
+Ref p_chroot(Args a) { return result(chroot(text_of(a.pos(0)))); }
 // ---- setting what the process is: its ids, its groups, its process group, session and priority (C-7-71)
 // (which, ...): an id is -1 ("leave it") or 32 bits, as the Python side's converter left it
 Ref p_setid(Args a) {
@@ -1041,7 +1092,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"setid", p_setid}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"setid", p_setid}, {"tty", p_tty}, {"chroot", p_chroot}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
         {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},
