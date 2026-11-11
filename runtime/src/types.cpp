@@ -35,6 +35,29 @@ ClassObject* static_base(ClassObject* c) {
     while (!is_kind(type_lookup(c, N("__new__")), Kind::Builtin) && !c->bases.empty()) c = tp_base(c);
     return c;
 }
+// Which dict a class's instances have (object.hpp's DictKind; C-3-59), as CPython's own flags and offsets say of the nearest
+// type written in C along tp_base (the names table's rows). That type has a dict slot of its own (tp_dictoffset): an ordinary
+// dict, for it and for what derives from it, unless its flags say the dict is managed. It has none, and a class added one: a
+// managed dict, whose values are in the object unless the object's size varies (heapflags: without Py_TPFLAGS_INLINE_VALUES,
+// an int's or a tuple's subclass). A type the table has no row for keeps its values in the object, as every class did before.
+DictKind dict_kind_of(ClassObject* c) {
+    constexpr std::int64_t INLINE_VALUES = 1 << 2, MANAGED_DICT = 1 << 4;
+    if (!c->has_dict) return DictKind::Inline;
+    ClassObject* base = c;
+    while (!c_type(base)) base = tp_base(base);
+    if (base->dict_without_getset) return DictKind::Plain;   // _thread._local: the thread's dict of the object is an ordinary one (_ldict)
+    auto managed = [](std::int64_t flags) { return (flags & INLINE_VALUES) ? DictKind::Inline : DictKind::Shared; };
+    std::int64_t dictoffset = 0;
+    if (auto text = cpython_type_text("offsets", base)) std::from_chars(text->data(), text->data() + text->find(','), dictoffset);
+    if (dictoffset != 0) {
+        auto flags = cpython_type_number("flags", base);
+        if (!flags) return DictKind::Inline;
+        return (*flags & MANAGED_DICT) ? managed(*flags) : DictKind::Plain;
+    }
+    if (base == c) return DictKind::Inline;      // a dict the runtime's own writing of the type has, and CPython's type does not
+    auto flags = cpython_type_number("heapflags", base);
+    return flags && (*flags & MANAGED_DICT) ? managed(*flags) : DictKind::Inline;
+}
 }  // namespace
 
 // tp_new_wrapper's checks of T.__new__(cls, ...) (Objects/typeobject.c): the class it is given
@@ -784,6 +807,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     c->cls = meta;
     c->qualname = qualname;
     c->heap_type = true;
+    c->dict_kind = dict_kind_of(c);
     bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict && !b->dict_without_getset; });
     // type_ready's order: the getsets (__dict__, __weakref__) and only then the members. The room for weak
     // references comes by itself unless the object has a variable size, as an int's has; a slot asks for it there
@@ -1299,9 +1323,7 @@ Ref instance_dict(Obj self) {
 }
 void set_instance_dict(Obj self, Obj d) {
     if (d.is_unset()) {                          // del obj.__dict__ (subtype_setdict): the object has none, and what is asked next decides (C-3-58)
-        // an int's or a tuple's subclass keeps no values in the object (tp_itemsize): it is as when it was made, whatever is asked
-        if (is_kind(self, Kind::IntInstance) || is_kind(self, Kind::Tuple)) drop_instance_dict(self);
-        else with_attribute_storage(self, [](auto* inst) { del_dict(inst); });
+        with_attribute_storage(self, [](auto* inst) { del_dict(inst); });   // by the class's kind of dict (C-3-59)
         return;
     }
     if (!is_dict(d)) raise_new("TypeError", "__dict__ must be set to a dictionary, not a '" + type_of(d)->name + "'");
@@ -2825,6 +2847,7 @@ static void set_generic_dict(Obj self, Obj d) {
 // (BaseException's and staticmethod's getset, PyObject_GenericGetDict and PyObject_GenericSetDict) has its own here, not the
 // one every class with a dict shares: its __objclass__ is the type, it takes any dict, and it is never deleted (case C-3-56).
 void present_descriptor_kinds(ClassObject* c) {
+    c->dict_kind = dict_kind_of(c);              // the dict its instances have is CPython's type's too (C-3-59)
     if (const Obj* d = c->attrs.find(N("__dict__")); d != nullptr && *d == Obj::of(instance_dict_getset()) && cpython_attribute_kind(c, "__dict__") == "getset_descriptor") {
         getset(c, "__dict__", instance_dict, set_generic_dict);
         static_cast<GetSet*>(c->attrs.find(N("__dict__"))->object())->deletable = true;   // the setter is asked, and refuses

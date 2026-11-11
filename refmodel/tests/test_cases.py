@@ -164,6 +164,57 @@ def test_a_finaliser_meets_the_dropped_object() -> None:
     assert seen == [(True, "none"), "no w"] and _dict_state(a) == (False, "plain")
 
 
+def test_the_dict_an_instance_has_is_its_classes() -> None:
+    """C-3-59, measured on 3.15.2: a type written in C with its own dict slot, and what derives from it, has an ordinary
+    dict; an int's or a tuple's subclass a dict of its own that shares the class's keys; both made at the first write,
+    the first delete or when asked for, and never by a read."""
+    rt = Runtime()
+    X = RefClass("X", dict_kind="plain")
+    shared = RefClass("I", dict_kind="shared")
+    assert RefClass("E", (X,)).dict_kind == "plain" and RefClass("M", (RefClass("Mixin"), X)).dict_kind == "plain"
+    for cls in (X, shared):
+        o = RefObject(cls)
+        try:
+            rt.getattr(o, "a")
+        except AttributeError:
+            pass
+        assert _dict_state(o) == (False, "none")                 # a read asks for none
+        rt.setattr(o, "a", 1)
+        assert _dict_state(o) == (False, cls.dict_kind) and rt.getattr(o, "a") == 1
+        asked = RefObject(cls)
+        assert _dict_state(asked) == (False, "none") and rt.expose_dict(asked) is rt.expose_dict(asked)
+        assert _dict_state(asked) == (False, cls.dict_kind)
+    o = RefObject(shared)
+    before = list(shared.keys)
+    try:
+        rt.delattr(o, "never")                   # the delete that fails makes the dict, and the name joins no keys
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("a name it has not")
+    assert _dict_state(o) == (False, "shared") and list(shared.keys) == before
+    rt.expose_dict(o).clear_()                   # its values are its own: cleared, it is an ordinary dict
+    assert _dict_state(o) == (False, "plain")
+    rt.del_dict(o)                               # no values in the object to mark invalid: as when it was made
+    assert _dict_state(o) == (False, "none")
+    rt.setattr(o, "a", 1)
+    assert _dict_state(o) == (False, "shared")
+    for refused, error in ((lambda: rt.del_dict(RefObject(X)), TypeError), (lambda: RefClass("Bad", promoted=("x",), dict_kind="plain"), ValueError),
+                           (lambda: RefClass("Bad", dict_kind="odd"), ValueError)):
+        try:
+            refused()
+        except error:
+            pass
+        else:
+            raise AssertionError("refused")
+    plain = RefObject(X)
+    rt.setattr(plain, "a", 1)
+    rt.drop_dict(plain)                          # a C type's own Py_CLEAR(self->dict): none again, and an ordinary one next
+    assert _dict_state(plain) == (False, "none")
+    rt.setattr(plain, "a", 1)
+    assert _dict_state(plain) == (False, "plain")
+
+
 def test_inline_field_shadows_class_attribute_and_cache_notices() -> None:
     rt, A, *_ = _world()
     A.set_attr("x", 1)

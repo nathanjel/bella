@@ -1,0 +1,12 @@
+{
+ "case": "C-3-59_the_dict_an_instance_has.py",
+ "clause": "C-3-59",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Objects/typeobject.c (type_new_descriptors, type_ready_managed_dict), Objects/dictobject.c (ensure_nonmanaged_dict, _PyObjectDict_SetItem, store_instance_attr_lock_held), Objects/object.c (_PyObject_GenericSetAttrWithDict)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "-- the values in the object: the keys' order\na class: a b | subclasses of list, dict, str, float: a b a b a b a b\nof property, defaultdict, deque: a b a b a b\n-- a dict of its own that shares the keys\nsubclasses of int, tuple: a b a b\n-- an ordinary dict: the order they were set\na function, its dict cleared: b a\nexceptions: b a b a b a b a\na program's: b a b a b a\npartial: b a b a | an lru_cache wrapper: b a\nSimpleNamespace: b a b a\nstaticmethod, classmethod: b a b a b a\nOrderedDict: b a b a\nStringIO, BytesIO: b a b a b a b a\n-- a delete of a name it has not, then another instance's q and nope\na class: nope q\nlist: nope q\nint: q nope\ntuple: q nope\nan exception: q nope\npartial: q nope\n-- its dict cleared, then z and y set\na class: y z\nlist: y z\nint: z y\ntuple: z y\n-- the delete that fails makes the dict\n2 3\nNone {}\nend\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -1,6 +1,7 @@
 """`del obj.__dict__` compiled, against CPython on the same machine. Case C-3-58 compares which dict the object gets by the order
 in which its values go; here are the words of the refusals, which the case does not print, and the one row in which a compiled
-program and both evaluators differ from CPython: a method call as the first thing asked of the object, deviation D-23."""
+program and both evaluators differ from CPython: a method call as the first thing asked of the object, deviation D-23; and the
+kind of dict (case C-3-59) of forty more types."""
 from __future__ import annotations
 
 import os
@@ -92,8 +93,96 @@ print(" ".join(log))
 """
 
 
+# which dict an instance has, for forty more types than case C-3-59 prints: "a b" shares the class's keys, "b a" is an ordinary dict
+KINDS = r"""
+import argparse
+import collections
+import contextlib
+import datetime
+import functools
+import io
+import json
+import random
+import string
+import threading
+import types
+import weakref
+
+log = []
+
+
+class V:
+    def __init__(self, n):
+        self.n = n
+
+    def __del__(self):
+        log.append(self.n)
+
+
+def order(make):
+    try:
+        first = make()
+        first.a = 1
+        first.b = 2
+        o = make()
+        o.b = V("b")
+        o.a = V("a")
+    except Exception as e:
+        log.clear()
+        return type(e).__name__
+    del first
+    log.clear()
+    del o
+    s = " ".join(log) or "-"
+    log.clear()
+    return s
+
+
+def f():
+    pass
+
+
+made = {}
+
+
+def sub(base, *args):
+    def make():
+        if base not in made:
+            made[base] = type("Sub", (base,), {})
+        return made[base](*args)
+    return make
+
+
+ROWS = [
+    ("threading.local", threading.local), ("local subclass", sub(threading.local)),
+    ("weakref.ref subclass", sub(weakref.ref, f)), ("WeakValueDictionary", weakref.WeakValueDictionary),
+    ("random.Random", random.Random), ("Random subclass", sub(random.Random)),
+    ("cached_property", lambda: functools.cached_property(f)), ("partialmethod", lambda: functools.partialmethod(f)),
+    ("Counter", collections.Counter), ("ChainMap", collections.ChainMap), ("UserDict", collections.UserDict),
+    ("complex subclass", sub(complex)),
+    ("datetime subclass", sub(datetime.datetime, 2020, 1, 1)), ("timedelta subclass", sub(datetime.timedelta)), ("date subclass", sub(datetime.date, 2020, 1, 1)),
+
+    ("json.JSONDecoder", json.JSONDecoder), ("argparse.Namespace", argparse.Namespace),
+    ("Template", lambda: string.Template("a")), ("ExitStack", contextlib.ExitStack),
+    ("TextIOWrapper", lambda: io.TextIOWrapper(io.BytesIO())), ("BufferedReader", lambda: io.BufferedReader(io.BytesIO())),
+    ("IOBase subclass", sub(io.IOBase)), ("RawIOBase subclass", sub(io.RawIOBase)), ("TextIOWrapper subclass", sub(io.TextIOWrapper, io.BytesIO())),
+    ("enumerate subclass", sub(enumerate, [])), ("zip subclass", sub(zip)), ("map subclass", sub(map, len, [])), ("filter subclass", sub(filter, None, [])),
+    ("Event", threading.Event), ("BaseExceptionGroup", lambda: BaseExceptionGroup("m", [ValueError()])),
+    ("UnicodeDecodeError", lambda: UnicodeDecodeError("utf-8", b"", 0, 1, "r")), ("SystemExit", SystemExit), ("ImportError", ImportError), ("AttributeError", AttributeError),
+    ("classmethod subclass", sub(classmethod, f)), ("property", lambda: property(f)), ("object", object), ("GenericAlias", lambda: list[int]),
+    ("SimpleNamespace(a)", lambda: types.SimpleNamespace(q=1)),
+]
+for title, make in ROWS:
+    print(title + ":", order(make), flush=True)
+"""
+
+
 def test_messages() -> None:
     same(MESSAGES)
+
+
+def test_the_kind_of_dict_of_forty_more_types() -> None:
+    same(KINDS)
 
 
 def test_d23_a_method_call_first_is_a_plain_read() -> None:

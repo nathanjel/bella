@@ -41,6 +41,13 @@ What is modelled (design document, section 3, as revised by review rounds two an
   ``refmodel/tests/test_cases.py::test_an_exposed_dict_stays_split_as_cpythons``). A store keeps the new
   value before it releases the old one; a class mutation takes the new version before it
   releases the old attribute (``type_setattro``).
+* Which dict an instance has is its class's (``RefClass.dict_kind``; C-3-59, measured on 3.15.2). ``inline``: the
+  values in the object, as above (CPython's managed dict with inline values: a program's class, a subclass of a built-in
+  type of fixed size). ``shared``: a dict of its own that shares the class's keys, made at the first write, the first
+  delete or when asked for (a managed dict with no inline values: the subclass of an ``int`` or a ``tuple``, whose size
+  varies); a delete of a missing name joins no keys there, and ``clear`` makes that dict ordinary. ``plain``: an ordinary
+  dict made the same way (a type written in C with its own dict slot and whatever derives from it: exceptions,
+  ``partial``, ``SimpleNamespace``, ``OrderedDict``, the ``io`` classes); a program never deletes it.
 * ``del obj.__dict__`` (C-3-58; the author's decision of 2026-11-11): the object has no dict and its inline values are
   gone, and the first thing asked of its instance storage decides what it gets (``RefObject.dropped``,
   ``Runtime.del_dict``): an ordinary dict for a plain read, one that shares the class's keys for a write, a delete or
@@ -295,6 +302,7 @@ class RefClass:
         static_attributes: tuple[str, ...] = (),
         heap: Heap | None = None,
         native: tuple[str, ...] | None = None,
+        dict_kind: str | None = None,
     ) -> None:
         self.name = name
         self.bases = tuple(bases)
@@ -331,6 +339,16 @@ class RefClass:
             if p in self.slot_fields:
                 raise ValueError(f"promoted field {p!r} collides with a slot")
         self.promoted_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c.promoted))
+        # Which dict an instance has (type_new_descriptors, type_ready_managed_dict, ensure_nonmanaged_dict): "inline",
+        # "shared" or "plain", as the module's account says. A class that says nothing has that of the nearest class in
+        # its MRO that is not inline (its solid base's: class E(Mixin, Exception) is laid out as an exception).
+        if dict_kind is None:
+            dict_kind = next((c.dict_kind for c in self.mro[1:] if c.dict_kind != "inline"), "inline")
+        if dict_kind not in ("inline", "shared", "plain"):
+            raise ValueError(f"no such kind of dict: {dict_kind!r}")
+        if dict_kind != "inline" and self.promoted_fields:
+            raise ValueError("promoted fields are values kept in the object: an inline class's only")
+        self.dict_kind: str = dict_kind
         # A built-in type's C fields (BaseException's args, __traceback__, __cause__, ...): stored in
         # the object, never in its __dict__, reached through the type's own descriptors, and released
         # in the order of the type's clear function, which names the place of the dict ("__dict__").
@@ -692,10 +710,12 @@ class Runtime:
     # ---- helpers -------------------------------------------------------------------------
     @staticmethod
     def _settle(obj: RefObject, split: bool) -> None:
-        """An object whose dict was deleted gets one at the first thing asked of its instance storage: an ordinary dict
-        when that is a plain read (_PyObject_MaterializeManagedDict with the inline values invalid: PyDict_New), one that
-        shares the class's keys, its values its own and not the object's, when it is a write, a delete or its __dict__
-        (ensure_managed_dict: new_dict_with_shared_keys). No user code runs and nothing is released."""
+        """The object gets a dict of its own, its values not the object's: one that shares the class's keys, or an
+        ordinary one. An object whose dict was deleted gets it at the first thing asked of its instance storage: ordinary
+        when that is a plain read (_PyObject_MaterializeManagedDict with the inline values invalid: PyDict_New), sharing
+        when it is a write, a delete or its __dict__ (ensure_managed_dict: new_dict_with_shared_keys). An object of a class
+        that keeps no values in the object gets it at the first write, delete or __dict__, of its class's kind
+        (ensure_nonmanaged_dict), and a read asks for none. No user code runs and nothing is released."""
         d = RefDict(split=obj.cls if split else None)
         d.refs = 1
         obj.dict = d
@@ -915,6 +935,8 @@ class Runtime:
                 return
         if obj.dropped:
             self._settle(obj, split=True)
+        elif not obj.exposed and cls.has_dict and cls.dict_kind != "inline":
+            self._settle(obj, split=cls.dict_kind == "shared")
         if obj.exposed:
             d = obj.dict
             assert d is not None
@@ -972,6 +994,8 @@ class Runtime:
         # (found by the machine again, 2026-11-07); so is the dict a dropped object gets here, whose values are its own
         if obj.dropped:
             self._settle(obj, split=True)
+        elif not obj.exposed and cls.has_dict and cls.dict_kind != "inline":
+            self._settle(obj, split=cls.dict_kind == "shared")     # _PyObjectDict_SetItem makes the dict before it finds the name missing
         if obj.exposed:
             assert obj.dict is not None
             if obj.dict.owner is obj:
@@ -1007,6 +1031,8 @@ class Runtime:
             raise AttributeError(f"'{cls.name}' object has no attribute '__dict__'")
         if obj.dropped:
             self._settle(obj, split=True)
+        elif not obj.exposed and cls.dict_kind != "inline":
+            self._settle(obj, split=cls.dict_kind == "shared")
         if obj.exposed:
             assert obj.dict is not None
             return obj.dict
@@ -1048,9 +1074,9 @@ class Runtime:
     def drop_dict(self, obj: RefObject) -> None:
         """A C type's own `Py_CLEAR(self->dict)` (partial.__setstate__ given no dict): the object has no dict again,
         as when it was made, until an attribute is set or its __dict__ is asked for. What it held goes as the dict it
-        was (exposed first), released after the object let go of it. Also `del obj.__dict__` of the instance of an
-        int's or a tuple's subclass, which keeps no values in the object (tp_itemsize). Not that of any other class's
-        instance, which is del_dict's."""
+        was (exposed first), released after the object let go of it. Also `del obj.__dict__` of an instance whose
+        class keeps a shared dict and no values in the object (del_dict sends it here). Not that of an inline class's
+        instance, which is del_dict's own."""
         if not obj.cls.has_dict:
             raise AttributeError(f"'{obj.cls.name}' object has no attribute '__dict__'")
         decref(self._let_go(obj))
@@ -1074,6 +1100,11 @@ class Runtime:
         is `_settle`'s: nothing until something is asked of its instance storage. Again, with none, changes nothing."""
         if not obj.cls.has_dict:
             raise AttributeError(f"'{obj.cls.name}' object has no attribute '__dict__'")
+        if obj.cls.dict_kind == "plain":
+            raise TypeError("cannot delete __dict__")      # PyObject_GenericSetDict: a C type's own dict slot is never deleted
+        if obj.cls.dict_kind == "shared":
+            self.drop_dict(obj)                 # no inline values to mark invalid: no dict again, as when it was made
+            return
         if obj.dropped:
             return
         old = self._let_go(obj)

@@ -628,6 +628,12 @@ inline VersionCounter& versions() {
 }
 
 // ---- classes (refmodel RefClass) ----
+// Which dict an instance has (CPython 3.15.2: type_new_descriptors, type_ready_managed_dict, ensure_nonmanaged_dict; refmodel
+// RefClass.dict_kind). Inline: its values in the object until the dict is asked for (a managed dict with inline values: a
+// program's class, a subclass of a built-in type of fixed size). Shared: a dict of its own that shares the class's keys, made
+// at the first write, the first delete or when asked for (a managed dict with no inline values: an int's or a tuple's
+// subclass). Plain: an ordinary dict made the same way (a type written in C with its own dict slot, and what derives from it).
+enum class DictKind : std::uint8_t { Inline, Shared, Plain };
 struct ClassObject : Object {
     std::string name;
     std::string qualname;                        // __qualname__ (the name unless the class body set one)
@@ -651,6 +657,7 @@ struct ClassObject : Object {
     std::vector<const Str*> native_fields;
     std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
     bool has_dict = false;
+    DictKind dict_kind = DictKind::Inline;       // which dict an instance has; a class that says nothing has its solid base's
     bool has_weakref = false;                    // room for weak references (RefClass.has_weakref)
     bool dict_without_getset = false;            // _thread._local: a subclass still gets a __dict__ of its own to show
     bool sequence_slots = false;                 // a C type written in Python, with sq_concat and sq_item and no number slots
@@ -766,6 +773,7 @@ struct ClassSpec {
     std::vector<std::pair<std::string, Obj>> attrs = {};
     std::vector<std::string> static_attributes = {};
     std::optional<std::vector<std::string>> native = std::nullopt;   // a built-in type's C fields (RefClass native)
+    std::optional<DictKind> dict_kind = std::nullopt;                // which dict an instance has; nullopt: the solid base's
 };
 
 // RefClass.__init__
@@ -815,6 +823,17 @@ inline ClassObject* make_class(const ClassSpec& spec) {
             throw ModelError("promoted field '" + p->text + "' collides with a slot");
     for (auto it = c->mro.rbegin(); it != c->mro.rend(); ++it)
         for (const Str* p : (*it)->promoted) add_unique(c->promoted_fields, p);
+    if (spec.dict_kind) {
+        c->dict_kind = *spec.dict_kind;
+    } else {
+        for (std::size_t k = 1; k < c->mro.size(); ++k)
+            if (c->mro[k]->dict_kind != DictKind::Inline) {
+                c->dict_kind = c->mro[k]->dict_kind;
+                break;
+            }
+    }
+    if (c->dict_kind != DictKind::Inline && !c->promoted_fields.empty())
+        throw ModelError("promoted fields are values kept in the object: an inline class's only");
     if (spec.native) {
         c->native.clear();
         for (const auto& n : *spec.native) c->native.push_back(intern(n));
@@ -1108,12 +1127,14 @@ struct LookupPlan {
 
 // ---- the attribute machinery (refmodel Runtime) ----
 namespace detail {
-// An object whose dict was deleted (del_dict) gets one at the first thing asked of its instance storage: an ordinary dict
-// when that is a plain read (_PyObject_MaterializeManagedDict with the inline values invalid: PyDict_New), one that shares
-// the class's keys, its values its own and not the object's, when it is a write, a delete or its __dict__
-// (ensure_managed_dict: new_dict_with_shared_keys). No user code runs and nothing is released (refmodel Runtime._settle).
+// The object gets a dict of its own, its values not the object's: one that shares the class's keys, or an ordinary one.
+// An object whose dict was deleted (del_dict) gets it at the first thing asked of its instance storage: ordinary when that
+// is a plain read (_PyObject_MaterializeManagedDict with the inline values invalid: PyDict_New), sharing when it is a write,
+// a delete or its __dict__ (ensure_managed_dict: new_dict_with_shared_keys). An object of a class that keeps no values in the
+// object gets it at the first write, delete or __dict__, of its class's kind (ensure_nonmanaged_dict), and a read asks for
+// none. No user code runs and nothing is released (refmodel Runtime._settle).
 template <class T>
-inline void settle_dropped(T* obj, bool split) {
+inline void settle(T* obj, bool split) {
     auto* d = new DictObject();
     if (split) d->split = obj->cls->keys;
     incref(d);
@@ -1125,7 +1146,7 @@ inline void settle_dropped(T* obj, bool split) {
 template <class T>
 inline std::pair<bool, Obj> instance_storage(T* obj, const Str* name) {
     if (obj->flags & (DICT_EXPOSED | DICT_DROPPED)) {
-        if (obj->flags & DICT_DROPPED) settle_dropped(obj, false);
+        if (obj->flags & DICT_DROPPED) settle(obj, false);
         Obj v = dict_find(obj->dict, Obj::of(name));
         return v.is_unset() ? std::pair{false, Obj{}} : std::pair{true, v};
     }
@@ -1324,7 +1345,7 @@ inline void setattr(T* obj, const Str* name, Obj value) {
         }
     }
     if (obj->flags & (DICT_EXPOSED | DICT_DROPPED)) {   // a new name joins a split dict's keys (dict_put)
-        if (obj->flags & DICT_DROPPED) detail::settle_dropped(obj, true);
+        if (obj->flags & DICT_DROPPED) detail::settle(obj, true);
         dict_store(obj->dict, Obj::of(name), value);
         return;
     }
@@ -1342,6 +1363,11 @@ inline void setattr(T* obj, const Str* name, Obj value) {
     if (!cls->has_dict)
         throw AttributeError("'" + cls->name + "' object has no attribute '" + name->text + "' and no __dict__ for setting new attributes");
     if (obj->dict == nullptr) {
+        if (cls->dict_kind != DictKind::Inline) {    // no values in the object: a dict of its own from the first write on
+            detail::settle(obj, cls->dict_kind == DictKind::Shared);
+            dict_store(obj->dict, Obj::of(name), value);
+            return;
+        }
         obj->dict = new DictObject();
         obj->dict->split = cls->keys;
         incref(obj->dict);
@@ -1377,7 +1403,9 @@ inline void delattr(T* obj, const Str* name) {
     // (_PyObject_StoreInstanceAttribute); once the dict is detached from the object (obj.__dict__ = d, _PyObject_SetManagedDict), a
     // delete goes through the dict and a missing name is just missing (refmodel Runtime.delattr); so is the dict a dropped object
     // gets here, whose values are its own
-    if (obj->flags & DICT_DROPPED) detail::settle_dropped(obj, true);
+    if (obj->flags & DICT_DROPPED) detail::settle(obj, true);
+    else if (obj->dict == nullptr && cls->has_dict && cls->dict_kind != DictKind::Inline)   // _PyObjectDict_SetItem makes the dict before it finds the name missing
+        detail::settle(obj, cls->dict_kind == DictKind::Shared);
     if (obj->exposed()) {
         if (obj->dict->embedded == obj) obj->dict->note_key(name);
         Obj old = dict_pop(obj->dict, Obj::of(name));
@@ -1410,7 +1438,8 @@ template <class T>
 inline Ref expose_dict(T* obj) {
     ClassObject* cls = obj->cls;
     if (!cls->has_dict) throw AttributeError("'" + cls->name + "' object has no attribute '__dict__'");
-    if (obj->flags & DICT_DROPPED) detail::settle_dropped(obj, true);
+    if (obj->flags & DICT_DROPPED) detail::settle(obj, true);
+    else if (obj->dict == nullptr && cls->dict_kind != DictKind::Inline) detail::settle(obj, cls->dict_kind == DictKind::Shared);
     if (obj->exposed()) return Ref::share(Obj::of(obj->dict));
     auto* d = new DictObject();
     for (const Str* name : obj->order) {         // the references move: no count changes
@@ -1442,9 +1471,9 @@ inline void set_dict(T* obj, DictObject* d) {
 
 // A C type's own `Py_CLEAR(self->dict)` (partial.__setstate__ given no dict): the object has no dict again, as when it
 // was made, until an attribute is set or its __dict__ is asked for. What it held goes as the dict it was (exposed
-// first), released after the object let go of it (refmodel Runtime.drop_dict). Also `del obj.__dict__` of the instance of an
-// int's or a tuple's subclass, which keeps no values in the object (tp_itemsize). Not that of any other class's instance,
-// which is del_dict's.
+// first), released after the object let go of it (refmodel Runtime.drop_dict). Also `del obj.__dict__` of an instance whose
+// class keeps a shared dict and no values in the object (del_dict sends it here). Not that of an inline class's instance,
+// which is del_dict's own.
 template <class T>
 inline void drop_dict(T* obj) {
     if (!obj->cls->has_dict) throw AttributeError("'" + obj->cls->name + "' object has no attribute '__dict__'");
@@ -1457,11 +1486,18 @@ inline void drop_dict(T* obj) {
 
 // del obj.__dict__ of an instance whose class keeps its values in the object (subtype_setdict, _PyObject_SetManagedDict(obj,
 // NULL)): the object is without its dict and its inline values before anything is released, so a finaliser that runs meanwhile
-// already meets the dropped object; what it held goes as the dict it was. What it gets next is settle_dropped's: nothing until
-// something is asked of its instance storage. Again, with none, changes nothing (refmodel Runtime.del_dict; C-3-58).
+// already meets the dropped object; what it held goes as the dict it was. What it gets next is settle's: nothing until
+// something is asked of its instance storage. Again, with none, changes nothing. A C type's own dict slot is never deleted
+// (PyObject_GenericSetDict), and an object with no values in it has no dict again, as when it was made (refmodel
+// Runtime.del_dict; C-3-58, C-3-59).
 template <class T>
 inline void del_dict(T* obj) {
     if (!obj->cls->has_dict) throw AttributeError("'" + obj->cls->name + "' object has no attribute '__dict__'");
+    if (obj->cls->dict_kind == DictKind::Plain) throw TypeError("cannot delete __dict__");
+    if (obj->cls->dict_kind == DictKind::Shared) {
+        drop_dict(obj);
+        return;
+    }
     if (obj->flags & DICT_DROPPED) return;
     expose_dict(obj);
     DictObject* old = std::exchange(obj->dict, nullptr);

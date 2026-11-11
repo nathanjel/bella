@@ -20,8 +20,8 @@ using namespace bella;
 namespace {
 
 const std::vector<std::string> NAMES = {"x", "y", "z", "s", "t", "w", "cv", "g1", "attr", "k"};
-constexpr std::size_t RUNTIME_CLASS = 6;
-constexpr std::size_t RUNTIME_OBJECTS[] = {8, 9};
+constexpr std::size_t RUNTIME_CLASS = 8;
+constexpr std::size_t RUNTIME_OBJECTS[] = {10, 11};
 
 Obj marker(std::string text) {
     auto* m = new Marker(std::move(text));
@@ -66,9 +66,12 @@ struct World {
             throw AttributeError(name->text);
         });
         ClassObject* G = cls({.name = "G", .attrs = {{"__getattr__", Obj::of(hook)}}});
-        classes = {A, B, S, T, E, G, runtime_class(0)};
+        ClassObject* X = cls({.name = "X", .dict_kind = DictKind::Plain});       // a C type's own dict slot: an ordinary dict
+        ClassObject* I = cls({.name = "I", .dict_kind = DictKind::Shared});      // no values in the object: a dict of its own
+        I->has_weakref = false;                                                  // nor room for a weak reference (tp_itemsize)
+        classes = {A, B, S, T, E, G, X, I, runtime_class(0)};
         ClassObject* R = classes[RUNTIME_CLASS];
-        for (ClassObject* c : {A, A, B, B, S, T, E, G, R, R}) objects.push_back(held(new_instance(c)));
+        for (ClassObject* c : {A, A, B, B, S, T, E, G, X, I, R, R}) objects.push_back(held(new_instance(c)));
         for (const auto& n : NAMES) sites[n] = std::make_unique<Site>();
         sites["<computed>"] = std::make_unique<Site>();
     }
@@ -183,6 +186,30 @@ struct World {
     }
 
     // ---- operations ----
+    void drop(std::size_t i) {                        // the program drops its object; a fresh one of its class takes its place
+        Instance* old = objects[i];
+        forget(old);
+        objects[i] = held(new_instance(old->cls));
+        decref(old);
+    }
+
+    void store_tagged(std::size_t i, const std::string& name, const std::string& tagged) {
+        Ref v = Ref::steal(value(tagged));            // held by the object alone once it is stored
+        setattr(objects[i], intern(name), v.get());
+    }
+
+    template <class F>
+    static std::string outcome(F&& f) {
+        try {
+            f();
+        } catch (const AttributeError&) {
+            return "('error', 'AttributeError')";
+        } catch (const TypeError&) {
+            return "('error', 'TypeError')";
+        }
+        return "('value', None)";
+    }
+
     std::string get(std::size_t i, const std::string& name, bool computed) {
         Ref r = getattr(objects[i], intern(name), sites[computed ? "<computed>" : name].get());
         return "('value', " + lit(r.get()) + ")";
@@ -305,11 +332,20 @@ struct World {
             if (op == "drop") {
                 std::size_t i;
                 in >> i;
-                Instance* old = objects[i];
-                forget(old);
-                objects[i] = held(new_instance(old->cls));
-                decref(old);
+                drop(i);
                 return "('value', None)";
+            }
+            if (op == "probe") {                 // fresh instances asked which dict they have (refmodel World.op_probe)
+                std::size_t i; int delete_first; std::string n1, n2, t1, t2, t3, t4;
+                in >> i >> delete_first >> n1 >> n2 >> t1 >> t2 >> t3 >> t4;
+                drop(i);
+                std::string out = "('value', [";
+                if (delete_first) out += outcome([&] { delattr(objects[i], intern(n2)); }) + ", ";
+                out += outcome([&] { store_tagged(i, n1, t1); store_tagged(i, n2, t2); }) + ", ";
+                drop(i);
+                out += outcome([&] { store_tagged(i, n2, t3); store_tagged(i, n1, t4); });
+                drop(i);
+                return out + "])";
             }
             if (op == "weak_new") {
                 std::size_t i; std::string with;

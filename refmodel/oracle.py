@@ -26,8 +26,8 @@ from refmodel import objects as O
 from refmodel.objects import ModelError, RefClass, RefObject, RefWeak, Runtime, Site, decref, incref, weak_ref, make_descriptor_class
 
 NAMES: tuple[str, ...] = ("x", "y", "z", "s", "t", "w", "cv", "g1", "attr", "k")
-RUNTIME_CLASS = 6                     # index in World.classes of the class recreate_class replaces
-RUNTIME_OBJECTS = (8, 9)              # indices in World.objects of its instances
+RUNTIME_CLASS = 8                     # index in World.classes of the class recreate_class replaces
+RUNTIME_OBJECTS = (10, 11)            # indices in World.objects of its instances
 RUNTIME_VARIANTS = 5
 
 Outcome = tuple[str, Any]   # ("value", v) | ("error", "AttributeError") | ("dict", [(k, v), ...])
@@ -113,6 +113,9 @@ class World:
             raise AttributeError(name)
 
         G = RefClass("G", attrs={"__getattr__": model_getattr_hook})
+        X = RefClass("X", dict_kind="plain")           # a C type's own dict slot, and what derives from it: an ordinary dict
+        N = RefClass("I", dict_kind="shared")          # no values in the object: a dict of its own that shares the keys
+        N.has_weakref = False                          # nor room for a weak reference (tp_itemsize)
 
         # ---- real classes ------------------------------------------------------------------
         class RA:
@@ -136,13 +139,20 @@ class World:
                     return ("G", name)
                 raise AttributeError(name)
 
-        self.classes: list[tuple[RefClass, type]] = [(A, RA), (B, RB), (S, RS), (T, RT), (E, RE), (G, RG)]
+        class RX(Exception):
+            pass
+
+        class RI(int):
+            pass
+
+        self.classes: list[tuple[RefClass, type]] = [(A, RA), (B, RB), (S, RS), (T, RT), (E, RE), (G, RG), (X, RX), (N, RI)]
         self.classes.append(self._make_runtime_class(0))
         R, RR = self.classes[RUNTIME_CLASS]
         self.objects: list[tuple[RefObject, Any]] = [
             (RefObject(A), RA()), (RefObject(A), RA()),
             (RefObject(B), RB()), (RefObject(B), RB()),
             (RefObject(S), RS()), (RefObject(T), RT()), (RefObject(E), RE()), (RefObject(G), RG()),
+            (RefObject(X), RX()), (RefObject(N), RI()),
             (RefObject(R), RR()), (RefObject(R), RR()),
         ]
         for m, _ in self.objects:
@@ -479,6 +489,58 @@ class World:
         decref(vm)
         return out
 
+    def op_probe(self, obj_i: int, delete_first: bool, probe: Any) -> tuple[Outcome, Outcome]:
+        """Which kind of dict the class's instances have, asked of fresh ones (name, name, four tags). The object is
+        dropped; on the one that takes its place two tagged values are stored under the two names, and it is dropped;
+        on the next the same names are stored in the other order, and it is dropped too. An ordinary dict lets the
+        values go in the order they were stored both times; one that shares the class's keys lets them go in the keys'
+        order, which is not the stored order one of the two times. With `delete_first` the second name is deleted from
+        the first fresh instance before anything is stored: a delete that fails joins the class's keys where the values
+        are kept in the object, and joins none where the dict is the object's own."""
+        n1, n2, t1, t2, t3, t4 = probe
+        self.op_drop(obj_i)
+        outcomes_m: list[Outcome] = []
+        outcomes_r: list[Outcome] = []
+        if delete_first:
+            om, orr = self.op_del(obj_i, n2)
+            outcomes_m.append(om)
+            outcomes_r.append(orr)
+        for stores in (((n1, t1), (n2, t2)), ((n2, t3), (n1, t4))):
+            om, orr = self._store_tagged(obj_i, stores)
+            outcomes_m.append(om)
+            outcomes_r.append(orr)
+            self.op_drop(obj_i)
+        return ("value", outcomes_m), ("value", outcomes_r)
+
+    def _store_tagged(self, obj_i: int, stores: Any) -> tuple[Outcome, Outcome]:
+        """Fresh tagged values stored under names, each held by the object alone once it is stored."""
+        m, r = self.objects[obj_i]
+
+        def model() -> None:
+            for n, tag in stores:
+                v = RefObject(self.tracked_m, tag=tag[1])
+                incref(v)
+                try:
+                    self.rt.setattr(m, n, v)
+                finally:
+                    decref(v)
+
+        def real() -> None:
+            for n, tag in stores:
+                setattr(r, n, Tagged(tag[1], self.real_deaths))
+
+        return _outcome(model), _outcome(real)
+
+    def probe_names(self, rng: random.Random, obj_i: int) -> tuple[Any, ...]:
+        """Two names and two tags for a probe: names the class's keys already hold, the later one stored first, when
+        there are two (only then do the two kinds of dict release them in different orders); any two otherwise."""
+        known = [k for k in self.objects[obj_i][0].cls.keys if k in NAMES]
+        first, second = rng.choice(NAMES), rng.choice(NAMES)
+        if len(known) >= 2 and rng.random() < 0.8:
+            a, b = sorted(rng.sample(range(len(known)), 2))
+            first, second = known[b], known[a]
+        return (first, self.new_tag(), second, self.new_tag())
+
     def op_set_class_attr(self, cls_i: int, name: str, value: Any) -> tuple[Outcome, Outcome]:
         mc, rc = self.classes[cls_i]
         vm, vr = self.value(value)
@@ -606,17 +668,11 @@ class World:
             obj_i = rng.randrange(n_obj)
             then = rng.choice(("none", "none", "get", "get", "get", "set", "set", "del", "expose"))
             value = self.new_tag() if then == "set" and rng.random() < 0.6 else rng.randrange(100)
-            probe = None
-            if rng.random() < 0.7:
-                # two names the class's keys already hold, the later one stored first when there are two: only then do the
-                # two kinds of dict release them in different orders
-                known = [k for k in self.objects[obj_i][0].cls.keys if k in NAMES]
-                first, second = rng.choice(NAMES), rng.choice(NAMES)
-                if len(known) >= 2 and rng.random() < 0.8:
-                    a, b = sorted(rng.sample(range(len(known)), 2))
-                    first, second = known[b], known[a]
-                probe = (first, self.new_tag(), second, self.new_tag())
+            probe = self.probe_names(rng, obj_i) if rng.random() < 0.7 else None
             return ("del_dict", obj_i, then, rng.choice(NAMES), value, probe)
+        if roll < 0.205:
+            first, second = rng.sample(NAMES, 2)
+            return ("probe", rng.randrange(n_obj), rng.random() < 0.5, (first, second, self.new_tag(), self.new_tag(), self.new_tag(), self.new_tag()))
         if roll < 0.30:
             return ("get", rng.randrange(n_obj), rng.choice(NAMES), rng.random() < 0.2)
         if roll < 0.58:

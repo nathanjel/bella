@@ -13,8 +13,8 @@ from hypothesis.stateful import RuleBasedStateMachine, invariant, rule  # noqa: 
 
 from refmodel.oracle import NAMES, RUNTIME_VARIANTS, World  # noqa: E402
 
-objects = st.integers(0, 9)
-classes = st.integers(0, 6)
+objects = st.integers(0, 11)
+classes = st.integers(0, 8)
 names = st.sampled_from(NAMES)
 values = st.one_of(st.integers(0, 99), st.just("tagged"))      # "tagged": a fresh object whose death is compared
 
@@ -23,7 +23,7 @@ class AttributeModel(RuleBasedStateMachine):
     def __init__(self) -> None:
         super().__init__()
         self.world = World()
-        assert len(self.world.objects) == 10 and len(self.world.classes) == 7
+        assert len(self.world.objects) == 12 and len(self.world.classes) == 9
 
     @rule(obj=objects, name=names, computed=st.booleans())
     def get(self, obj: int, name: str, computed: bool) -> None:
@@ -57,6 +57,11 @@ class AttributeModel(RuleBasedStateMachine):
     def del_dict(self, obj: int, then: str, name: str, value: int | str, probe: tuple[str, str] | None) -> None:
         tagged = None if probe is None else (probe[0], self.world.new_tag(), probe[1], self.world.new_tag())
         self.world.apply(("del_dict", obj, then, name, self._value(value) if then == "set" else 0, tagged))
+
+    @rule(obj=objects, delete_first=st.booleans(), first=names, second=names)
+    def probe(self, obj: int, delete_first: bool, first: str, second: str) -> None:
+        tags = tuple(self.world.new_tag() for _ in range(4))
+        self.world.apply(("probe", obj, delete_first, (first, second, *tags)))
 
     @rule(cls=classes, name=names, value=values)
     def set_class_attr(self, cls: int, name: str, value: int | str) -> None:
