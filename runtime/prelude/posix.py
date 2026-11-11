@@ -17,7 +17,6 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index, given by the runtime
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _sequence_check                              # noqa: B018  # PySequence_Check
-    _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _structseq                                   # noqa: B018  # bootstrap.py's: a type of named tuples
     _sys                                         # noqa: B018  # the system calls, by name
     _bella_new_instance                          # noqa: B018  # tp_alloc: an instance of a type a program cannot make
@@ -36,7 +35,6 @@ except NameError:
     _number_index: Callable[..., int] = _missing
     _tp_name: Callable[..., str] = _missing
     _sequence_check: Callable[..., bool] = _missing
-    _keyword_suggestion: Callable[..., str | None] = _missing
     _structseq: Callable[..., Any] = _missing
     _sys: Callable[..., Any] = _missing
     _bella_new_instance: Callable[..., Any] = _missing
@@ -451,41 +449,7 @@ def _absent(name: str) -> object:
 
 def _unpack(name: str, args: tuple[object, ...], kwds: dict[str, object], names: tuple[str, ...], minpos: int, maxpos: int) -> list[object]:
     """_PyArg_UnpackKeywords with no positional-only parameters: the values, or _ABSENT for one not given."""
-    nargs = len(args)
-    nkw = len(kwds)
-    maxargs = len(names)
-    if nargs + nkw > maxargs:
-        raise TypeError(name + "() takes at most " + str(maxargs) + (" keyword" if nargs == 0 else "") + " argument" + ("" if maxargs == 1 else "s") + " (" + str(nargs + nkw) + " given)")
-    if nargs > maxpos:
-        if maxpos == 0:
-            raise TypeError(name + "() takes no positional arguments")
-        raise TypeError(name + "() takes " + ("at most" if minpos < maxpos else "exactly") + " " + str(maxpos) + " positional argument" + ("" if maxpos == 1 else "s") + " (" + str(nargs) + " given)")
-    out: list[object] = [*args, *[_ABSENT] * (maxargs - nargs)]
-    if nkw:
-        i = 0
-        while i < nargs:
-            if names[i] in kwds:
-                raise TypeError("argument for " + name + "() given by name ('" + names[i] + "') and position (" + str(i + 1) + ")")
-            i += 1
-    left = nkw
-    i = nargs
-    while i < maxargs:
-        if not left and i >= minpos:
-            break
-        if left and names[i] in kwds:
-            out[i] = kwds[names[i]]
-            left -= 1
-        elif i < minpos:
-            raise TypeError(name + "() missing required argument '" + names[i] + "' (pos " + str(i + 1) + ")")
-        i += 1
-    if left > 0:                                 # error_unexpected_keyword
-        for keyword in kwds:
-            if keyword not in names:
-                suggestion = _keyword_suggestion(names, keyword)
-                if suggestion is not None:
-                    raise TypeError(name + "() got an unexpected keyword argument '" + keyword + "'. Did you mean '" + suggestion + "'?")
-                raise TypeError(name + "() got an unexpected keyword argument '" + keyword + "'")
-    return out
+    return _unpack_keywords(name, names, 0, minpos, maxpos, 0, args, kwds, _ABSENT)  # type: ignore[no-any-return]
 
 
 def _noargs(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> None:   # METH_NOARGS
@@ -708,6 +672,12 @@ def _sched_priority(param: object) -> int:       # convert_sched_param: the type
     if not -2147483648 <= priority <= 2147483647:
         raise OverflowError("sched_priority out of range")
     return priority
+
+
+def _set(which: bytes, *values: object) -> None:   # one of the setters: None, or the error with no file name (posix_error)
+    code = _sys("setid", which, *values)
+    if code < 0:
+        _fail(-code)
 
 
 def _fd_converter(value: object) -> int:         # _fd_converter
@@ -1564,7 +1534,14 @@ def getxattr(*args: object, **kwds: object) -> bytes:   # os_getxattr_impl
         _fail(-result, shown)
     return result  # type: ignore[no-any-return]
 grantpt = _absent("grantpt")
-initgroups = _absent("initgroups")
+
+
+def initgroups(*args: object, **kwds: object) -> None:   # os_initgroups_impl
+    _positional("initgroups", args, kwds, 2)
+    name = _fsconverter(args[0])
+    _set(b"initgroups", name, _id("gid", args[1]))
+
+
 kill = _absent("kill")
 killpg = _absent("killpg")
 
@@ -1927,20 +1904,88 @@ def set_inheritable(*args: object, **kwds: object) -> None:   # os_set_inheritab
         _fail(-code)
 
 
-setegid = _absent("setegid")
-seteuid = _absent("seteuid")
-setgid = _absent("setgid")
-setgroups = _absent("setgroups")
+def setegid(*args: object, **kwds: object) -> None:   # os_setegid_impl
+    _set(b"setegid", _id("gid", _one("setegid", args, kwds)))
+
+
+def seteuid(*args: object, **kwds: object) -> None:   # os_seteuid_impl
+    _set(b"seteuid", _id("uid", _one("seteuid", args, kwds)))
+
+
+def setgid(*args: object, **kwds: object) -> None:   # os_setgid_impl
+    _set(b"setgid", _id("gid", _one("setgid", args, kwds)))
+
+
+def setgroups(*args: object, **kwds: object) -> None:   # os_setgroups: a sequence, each item an int that is a gid
+    groups = _one("setgroups", args, kwds)
+    if not _sequence_check(groups):
+        raise TypeError("setgroups argument must be a sequence")
+    count = len(groups)  # type: ignore[arg-type]
+    if count > NGROUPS_MAX:
+        raise ValueError("too many groups")
+    ids: list[int] = []
+    for i in range(count):
+        item = groups[i]  # type: ignore[index]
+        if _type_lookup(item, "__index__") is _ABSENT:
+            raise TypeError("groups must be integers")
+        ids.append(_id("gid", item))
+    _set(b"setgroups", tuple(ids))
+
+
 setns = _absent("setns")
-setpgid = _absent("setpgid")
-setpgrp = _absent("setpgrp")
-setpriority = _absent("setpriority")
-setregid = _absent("setregid")
-setresgid = _absent("setresgid")
-setresuid = _absent("setresuid")
-setreuid = _absent("setreuid")
-setsid = _absent("setsid")
-setuid = _absent("setuid")
+
+
+def setpgid(*args: object, **kwds: object) -> None:   # os_setpgid_impl
+    _positional("setpgid", args, kwds, 2)
+    pid = _int(args[0])
+    _set(b"setpgid", pid, _int(args[1]))
+
+
+def setpgrp(*args: object, **kwds: object) -> None:   # os_setpgrp_impl
+    _noargs("setpgrp", args, kwds)
+    _set(b"setpgrp")
+
+
+def setpriority(*args: object, **kwds: object) -> None:   # os_setpriority_impl
+    which, who, priority = _unpack("setpriority", args, kwds, ("which", "who", "priority"), 3, 3)
+    a = _int(which)
+    b = _int(who)
+    _set(b"setpriority", a, b, _int(priority))
+
+
+def setregid(*args: object, **kwds: object) -> None:   # os_setregid_impl
+    _positional("setregid", args, kwds, 2)
+    real = _id("gid", args[0])
+    _set(b"setregid", real, _id("gid", args[1]))
+
+
+def setresgid(*args: object, **kwds: object) -> None:   # os_setresgid_impl
+    _positional("setresgid", args, kwds, 3)
+    real = _id("gid", args[0])
+    effective = _id("gid", args[1])
+    _set(b"setresgid", real, effective, _id("gid", args[2]))
+
+
+def setresuid(*args: object, **kwds: object) -> None:   # os_setresuid_impl
+    _positional("setresuid", args, kwds, 3)
+    real = _id("uid", args[0])
+    effective = _id("uid", args[1])
+    _set(b"setresuid", real, effective, _id("uid", args[2]))
+
+
+def setreuid(*args: object, **kwds: object) -> None:   # os_setreuid_impl
+    _positional("setreuid", args, kwds, 2)
+    real = _id("uid", args[0])
+    _set(b"setreuid", real, _id("uid", args[1]))
+
+
+def setsid(*args: object, **kwds: object) -> None:   # os_setsid_impl
+    _noargs("setsid", args, kwds)
+    _set(b"setsid")
+
+
+def setuid(*args: object, **kwds: object) -> None:   # os_setuid_impl
+    _set(b"setuid", _id("uid", _one("setuid", args, kwds)))
 
 
 def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl

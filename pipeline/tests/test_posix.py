@@ -368,6 +368,60 @@ def test_timers_the_scheduler_and_the_process_names() -> None:
     same(TIMER_MESSAGES)
 
 
+# C-7-71: the setters of ids, groups, the process group, the session and the priority. Their words, the order of two refusals in
+# one call (a missing argument is said before one given twice), and what this machine's privilege lets through: setgroups and
+# initgroups are refused to an ordinary user and allowed to root, the same on both sides.
+SETTER_MESSAGES = r"""
+import os
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class I:
+    def __init__(self, v):
+        self.v = v
+    def __index__(self):
+        return self.v
+class Raises:
+    def __index__(self):
+        raise RuntimeError("inside __index__")
+class Len:
+    def __len__(self):
+        raise RuntimeError("no length")
+    def __getitem__(self, i):
+        return 0
+u, g = os.getuid(), os.getgid()
+gs = os.getgroups()
+print(m(lambda: os.setuid(u)), m(lambda: os.setuid(I(u))), m(lambda: os.setuid(-1)), m(lambda: os.setuid(2**32)), m(lambda: os.setuid(2**32 - 1)), m(lambda: os.setuid("x")), m(lambda: os.setuid()), m(lambda: os.setuid(u, u)),
+      m(lambda: os.setuid(uid=u)), m(lambda: os.setuid(1.5)), m(lambda: os.setuid(-2)), m(lambda: os.setuid(2**70)), m(lambda: os.setuid(-(2**70))), m(lambda: os.setuid(Raises())), m(lambda: os.setuid(None)), m(lambda: os.seteuid(u)),
+      m(lambda: os.seteuid(-1)), m(lambda: os.seteuid("x")), m(lambda: os.seteuid()), m(lambda: os.seteuid(euid=u)), m(lambda: os.seteuid(2**32)), m(lambda: os.setgid(g)), m(lambda: os.setgid(-1)), m(lambda: os.setgid("x")),
+      m(lambda: os.setgid()), m(lambda: os.setgid(gid=g)), m(lambda: os.setgid(2**32)), m(lambda: os.setgid(2**70)), m(lambda: os.setegid(g)), m(lambda: os.setegid(-1)), m(lambda: os.setegid("x")), m(lambda: os.setegid()), sep="\n")
+print(m(lambda: os.setreuid(u, u)), m(lambda: os.setreuid(-1, -1)), m(lambda: os.setreuid(u)), m(lambda: os.setreuid("x", u)), m(lambda: os.setreuid(u, "x")), m(lambda: os.setreuid(ruid=u, euid=u)), m(lambda: os.setreuid(2**32, u)),
+      m(lambda: os.setreuid(-2, -2)), m(lambda: os.setreuid(u, u, u)), m(lambda: os.setreuid("x", "y")), m(lambda: os.setreuid(2**70, "y")), m(lambda: os.setregid(g, g)), m(lambda: os.setregid(-1, -1)), m(lambda: os.setregid(g)),
+      m(lambda: os.setregid("x", g)), m(lambda: os.setregid(g, 1.5)), m(lambda: os.setresuid(u, u, u)), m(lambda: os.setresuid(-1, -1, -1)), m(lambda: os.setresuid(u, u)), m(lambda: os.setresuid("x", u, u)), m(lambda: os.setresuid(u, u, "x")),
+      m(lambda: os.setresuid(u, u, u, u)), m(lambda: os.setresuid(ruid=u, euid=u, suid=u)), m(lambda: os.setresuid(-2, u, u)), m(lambda: os.setresuid(u, 2**70, "x")), m(lambda: os.setresgid(g, g, g)), m(lambda: os.setresgid(-1, -1, -1)),
+      m(lambda: os.setresgid(g, g)), m(lambda: os.setresgid(g, "x", g)), (os.getresuid(), os.getresgid()) == ((u, u, u), (g, g, g)), sep="\n")
+print(m(lambda: os.setgroups(gs)), m(lambda: os.setgroups((g,))), m(lambda: os.setgroups(5)), m(lambda: os.setgroups(["x"])), m(lambda: os.setgroups([2**32])), m(lambda: os.setgroups()), m(lambda: os.setgroups(gs, 1)),
+      m(lambda: os.setgroups(groups=gs)), m(lambda: os.setgroups(iter(gs))), m(lambda: os.setgroups("abc")), m(lambda: os.setgroups(range(70000))), m(lambda: os.setgroups(range(65537))), m(lambda: os.setgroups({g: 1})),
+      m(lambda: os.setgroups([1.5])), m(lambda: os.setgroups([g, "x"])), m(lambda: os.setgroups(set(gs))), m(lambda: os.setgroups([-2])), m(lambda: os.setgroups(Len())), m(lambda: os.setgroups([Raises()])), m(lambda: os.setgroups([2**70, "x"])),
+      m(lambda: os.setgroups(["x", 2**70])), m(lambda: os.setgroups(b"ab")), m(lambda: os.initgroups("root")), m(lambda: os.initgroups(5, 0)), m(lambda: os.initgroups("root", "x")), m(lambda: os.initgroups("a\0b", 0)),
+      m(lambda: os.initgroups(username="root", gid=0)), m(lambda: os.initgroups("root", 2**32)), m(lambda: os.initgroups(5, "x")), m(lambda: os.initgroups("root", 0, 0)), m(lambda: os.initgroups(os.environ.get("USER", "root"), g)), sep="\n")
+print(os.getsid(0) == os.getpid(), os.getpgrp() == os.getpid(), m(lambda: os.setsid()), m(lambda: os.setsid(1)), m(lambda: os.setsid(x=1)), m(lambda: os.setpgrp()), m(lambda: os.setpgrp(1)), m(lambda: os.setpgrp(x=1)),
+      m(lambda: os.setpgid(0, os.getpgrp())), m(lambda: os.setpgid(os.getpid(), 0)), m(lambda: os.setpgid(2**30, 0)), m(lambda: os.setpgid(0, -1)), m(lambda: os.setpgid(0, 2**30)), m(lambda: os.setpgid(0)), m(lambda: os.setpgid("x", 0)),
+      m(lambda: os.setpgid(0, "x")), m(lambda: os.setpgid(pid=0, pgrp=0)), m(lambda: os.setpgid(0, 0, 0)), m(lambda: os.setpgid(2**40, 0)), m(lambda: os.setpgid(-1, 0)), m(lambda: os.setpgid("x", "y")), m(lambda: os.setpgid(0, 2**40)), sep="\n")
+p = os.getpriority(os.PRIO_PROCESS, 0)
+print(m(lambda: os.setpriority(os.PRIO_PROCESS, 0, p)), m(lambda: os.setpriority(which=os.PRIO_PROCESS, who=os.getpid(), priority=p)), m(lambda: os.setpriority(os.PRIO_PGRP, 2**30, p)), m(lambda: os.setpriority(99, 0, p)),
+      m(lambda: os.setpriority(os.PRIO_PROCESS, 0)), m(lambda: os.setpriority("x", 0, 0)), m(lambda: os.setpriority(0, "x", 0)), m(lambda: os.setpriority(0, 0, "x")), m(lambda: os.setpriority(0, 0, 0, 0)), m(lambda: os.setpriority(0, 0, priorit=0)),
+      m(lambda: os.setpriority(0, 0, 2**40)), m(lambda: os.setpriority(os.PRIO_USER, 2**31 - 1, p)), m(lambda: os.setpriority(0, 2**31, p)), m(lambda: os.setpriority(0, 0, which=0)), m(lambda: os.setpriority()), m(lambda: os.setpriority(1.5, "x", "y")),
+      os.getpriority(os.PRIO_PROCESS, 0) == p, os.setuid.__doc__, os.setgroups.__doc__, os.setsid.__doc__, os.setpriority.__doc__, os.initgroups.__doc__[:40], sep="\n")
+"""
+
+
+def test_setters_of_ids_groups_session_and_priority() -> None:
+    same(SETTER_MESSAGES)
+
+
 def test_device_encoding_of_a_terminal() -> None:
     """A terminal's encoding is utf-8 in UTF-8 mode, which 3.15 is in unless told otherwise (_Py_device_encoding). CPython and the
     compiled program are given the same pseudo-terminal as their standard input; their output is a pipe."""
@@ -426,7 +480,7 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
-    for body, name in (("os.fork()", "os.fork"), ("os.ttyname(0)", "os.ttyname"), ("os.setsid()", "os.setsid"),
+    for body, name in (("os.fork()", "os.fork"), ("os.ttyname(0)", "os.ttyname"), ("os.posix_openpt(0)", "os.posix_openpt"),
                        ("os.tcgetpgrp(0)", "os.tcgetpgrp"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")

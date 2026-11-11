@@ -1,0 +1,12 @@
+{
+ "case": "C-7-71_setting_ids_groups_session_and_priority.py",
+ "clause": "C-7-71",
+ "spec": "section 7",
+ "status": "P1",
+ "source": "dialect specification section 7 (os), Modules/posixmodule.c (os_setuid_impl, os_seteuid_impl, os_setgid_impl, os_setegid_impl, os_setreuid_impl, os_setregid_impl, os_setresuid_impl, os_setresgid_impl, os_setgroups, os_initgroups_impl, os_setpgid_impl, os_setpgrp_impl, os_setsid_impl, os_setpriority_impl, _Py_Uid_Converter, _Py_Gid_Converter)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "user ids: None None None None None None None None None None True\ngroup ids: None None None None None None None None None True True\nids refused: OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) OSError: (22, 'Invalid argument', None) OverflowError OverflowError OverflowError TypeError TypeError TypeError TypeError TypeError TypeError TypeError OverflowError TypeError TypeError OverflowError TypeError TypeError TypeError TypeError TypeError TypeError OverflowError OverflowError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError OverflowError TypeError TypeError OverflowError True\nsetgroups refuses: TypeError TypeError OverflowError OverflowError TypeError TypeError TypeError TypeError TypeError ValueError TypeError TypeError TypeError TypeError TypeError OverflowError TypeError TypeError TypeError ValueError TypeError OverflowError TypeError True\nsetsid: True True TypeError TypeError\nsetpgrp and setpgid: True True True True True True ProcessLookupError: (3, 'No such process', None) OSError: (22, 'Invalid argument', None) PermissionError: (1, 'Operation not permitted', None) TypeError TypeError TypeError TypeError TypeError OverflowError OSError: (22, 'Invalid argument', None) TypeError TypeError\nsetpriority: None None None True ProcessLookupError: (3, 'No such process', None) OSError: (22, 'Invalid argument', None) TypeError TypeError TypeError TypeError TypeError TypeError OverflowError ProcessLookupError: (3, 'No such process', None) ProcessLookupError: (3, 'No such process', None) OverflowError TypeError True (0, 1, 2)\n",
+ "stderr": "",
+ "exit_code": 0
+}

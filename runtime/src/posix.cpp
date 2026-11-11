@@ -339,6 +339,32 @@ Ref p_dev(Args a) {                              // (b"major" | b"minor", dev) o
     dev_t dev = static_cast<dev_t>(i64_of(a.pos(1)));
     return int_from_u64(which == "major" ? major(dev) : minor(dev));
 }
+// ---- setting what the process is: its ids, its groups, its process group, session and priority (C-7-71)
+// (which, ...): an id is -1 ("leave it") or 32 bits, as the Python side's converter left it
+Ref p_setid(Args a) {
+    const std::string& which = bytes_data(a.pos(0));
+    auto id = [&](std::size_t i) { return static_cast<unsigned>(i64_of(a.pos(i))); };
+    static_assert(sizeof(uid_t) == sizeof(unsigned) && sizeof(gid_t) == sizeof(unsigned));
+    if (which == "setuid") return result(setuid(id(1)));
+    if (which == "seteuid") return result(seteuid(id(1)));
+    if (which == "setgid") return result(setgid(id(1)));
+    if (which == "setegid") return result(setegid(id(1)));
+    if (which == "setreuid") return result(setreuid(id(1), id(2)));
+    if (which == "setregid") return result(setregid(id(1), id(2)));
+    if (which == "setresuid") return result(setresuid(id(1), id(2), id(3)));
+    if (which == "setresgid") return result(setresgid(id(1), id(2), id(3)));
+    if (which == "setpgid") return result(setpgid(int_of(a.pos(1)), int_of(a.pos(2))));
+    if (which == "setpgrp") return result(setpgrp());
+    if (which == "setsid") return result(setsid() < 0 ? -1 : 0);
+    if (which == "setpriority")
+        return result(setpriority(static_cast<__priority_which_t>(int_of(a.pos(1))), static_cast<id_t>(int_of(a.pos(2))), int_of(a.pos(3))) == -1 ? -1 : 0);
+    if (which == "initgroups") return result(initgroups(text_of(a.pos(1)), id(2)));
+    auto& items = static_cast<Tuple*>(a.pos(1).object())->items;   // setgroups: (the ids)
+    std::vector<gid_t> groups;
+    groups.reserve(items.size());
+    for (Obj item : items) groups.push_back(static_cast<gid_t>(i64_of(item)));
+    return result(setgroups(groups.size(), groups.data()));
+}
 // ---- timers that are descriptors, the scheduler, and a few of the process's names (C-7-70)
 // timerfd: (b"create", clockid, flags), (b"get", fd), (b"set", fd, flags, seconds, nanoseconds, interval seconds, interval
 // nanoseconds). What is left and the interval come back as four ints: seconds, nanoseconds, seconds, nanoseconds
@@ -1015,7 +1041,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"setid", p_setid}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
         {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},
