@@ -228,8 +228,8 @@ class _Code:
                 self.emit(G.IfEnd(v, (G.EndLoop(),), step))
                 loop_body = self.captured()
                 self.emit(G.Loop(loop_body, (it,), self.sub(orelse)))
-            case L.Break():
-                self.emit(G.Break())
+            case L.Break(looks=looks):
+                self.emit(G.Break(looks))
             case L.Continue():
                 self.emit(G.Continue())
             case L.Pass() | L.Declare():
@@ -245,9 +245,13 @@ class _Code:
                 c = self.expr(cause) if cause is not None else None
                 self.emit(G.Raise(e, c, cause is not None))
             case L.Try(body=body, handlers=handlers, orelse=orelse, finalbody=finalbody):
+                # A handler, the else block, the finally block and what follows the statement are reached from lines the
+                # code lowered just before them did not run (the body's, another handler's): each says its first line again
+                # (C-3-61: a with's __exit__ after its body)
                 tried = self.sub(body)
                 lowered = []
                 for h in handlers:
+                    self.line = 0
                     self.capture()
                     if h.type is not None:       # the clause's type is evaluated and checked at its line (A10-1)
                         self.at(h.line)
@@ -259,8 +263,12 @@ class _Code:
                     lowered.append(G.Handler(match_, ty if isinstance(ty, G.Temp) else None, name, self.sub(h.body)))
                 # a body that never completes never reaches its `else` (CPython compiles it and
                 # drops the code, as for any statement after a return)
+                self.line = 0
                 otherwise = self.sub(orelse) if G.falls_through(tried) else ()
-                self.emit(G.Try(tried, tuple(lowered), otherwise, self.sub(finalbody)))
+                self.line = 0
+                final = self.sub(finalbody)
+                self.line = 0
+                self.emit(G.Try(tried, tuple(lowered), otherwise, final))
             case L.Delete(targets=targets):
                 for tgt in targets:
                     self.delete(tgt)

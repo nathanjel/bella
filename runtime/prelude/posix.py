@@ -613,6 +613,7 @@ def _read_vector(shown: str, fd: int, buffers: object, offset: int | None, flags
         raise NotImplementedError("preadv2: flags unavailable on this platform")
     targets = _buffers(buffers, count, True)
     sizes = tuple([bytearray.__len__(b) for b in targets])  # type: ignore[arg-type]
+    _sys("look_lean")                            # a lean build's look before a call that may wait, here and below (CPython has none: D-24)
     result = _sys("readv", fd, sizes) if offset is None else _sys("readv", fd, sizes, offset)
     if type(result) is int:
         _fail(-result)
@@ -624,6 +625,7 @@ def _read_vector(shown: str, fd: int, buffers: object, offset: int | None, flags
         size = min(bytearray.__len__(b), total - at)  # type: ignore[arg-type]
         bytearray.__setitem__(b, slice(0, size), result[at:at + size])  # type: ignore[arg-type]
         at += size
+    _sys("look")
     return total
 
 
@@ -634,9 +636,11 @@ def _write_vector(shown: str, fd: int, buffers: object, offset: int | None, flag
     if flags != 0:                               # the pinned build has no pwritev2
         raise NotImplementedError("pwritev2: flags unavailable on this platform")
     parts = tuple([bytes(b) for b in _buffers(buffers, count, False)])  # type: ignore[call-overload]
+    _sys("look_lean")
     result = _sys("writev", fd, parts) if offset is None else _sys("writev", fd, parts, offset)
     if result < 0:
         _fail(-result)
+    _sys("look")
     return result  # type: ignore[no-any-return]
 
 
@@ -927,6 +931,8 @@ def _path(function: str, argument: str, value: object, allow_fd: bool = False, n
 
 
 def _fail(code: int, filename: object = _ABSENT, filename2: object = _ABSENT) -> None:   # PyErr_SetFromErrnoWithFilenameObjects
+    if code == 4:                                # EINTR: "if (i == EINTR && PyErr_CheckSignals()) return NULL;", for a call that is
+        _sys("check")                            # not made again (close, lockf, eventfd_read): the handlers, then InterruptedError
     if filename is _ABSENT:
         raise OSError(code, _sys("strerror", code))
     if filename2 is _ABSENT:
@@ -978,10 +984,13 @@ def lstat(*args: object, **kwds: object) -> object:
 
 def fstat(*args: object, **kwds: object) -> object:
     fd = _int(_unpack("fstat", args, kwds, ("fd",), 1, 1)[0])
-    result = _sys("stat", fd, True)
+    _sys("look_lean")
+    result = _sys("fstat", fd)                   # os_fstat_impl: again after a signal (os.stat(fd) is one call)
     if type(result) is int:
         _fail(-result)
-    return _stat_result(result)
+    out = _stat_result(result)
+    _sys("look")
+    return out
 
 
 # ---- directories and names
@@ -1120,9 +1129,11 @@ def open(*args: object, **kwds: object) -> int:  # noqa: A001
     data, shown = _path("open", "path", path)
     bits = _int(flags)
     perms = 0o777 if mode is _ABSENT else _int(mode)
+    _sys("look_lean")
     fd = _sys("open", data, bits, perms, _dir_fd(dir_fd))   # openat
     if fd < 0:
         _fail(-fd, shown)
+    _sys("look")
     return fd
 
 
@@ -1138,9 +1149,11 @@ def read(*args: object, **kwds: object) -> bytes:
     length = _ssize(args[1])
     if length < 0:
         _fail(22)
+    _sys("look_lean")
     result = _sys("read", fd, length)
     if type(result) is int:
         _fail(-result)
+    _sys("look")                                 # the look when a call that waited is over, here and below
     return result
 
 
@@ -1152,9 +1165,11 @@ def write(*args: object, **kwds: object) -> int:
         if _type_lookup(data, "__buffer__") is not _ABSENT:
             _refuse("os.write() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
+    _sys("look_lean")
     result = _sys("write", fd, data)
     if result < 0:
         _fail(-result)
+    _sys("look")
     return result
 
 
@@ -1172,10 +1187,13 @@ def isatty(*args: object, **kwds: object) -> bool:
     return _sys("isatty", _int(_one("isatty", args, kwds))) == 1
 
 
-def fsync(*args: object, **kwds: object) -> None:
-    code = _sys("fsync", _fildes(_unpack("fsync", args, kwds, ("fd",), 1, 1)[0]))
+def fsync(*args: object, **kwds: object) -> None:   # os_fsync_impl: posix_fildes_fd(fd, fsync), again after a signal
+    fd = _fildes(_unpack("fsync", args, kwds, ("fd",), 1, 1)[0])
+    _sys("look_lean")
+    code = _sys("fildes", b"fsync", fd)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def get_terminal_size(*args: object, **kwds: object) -> object:
@@ -1203,7 +1221,10 @@ def urandom(*args: object, **kwds: object) -> bytes:
     size = _ssize(_one("urandom", args, kwds))
     if size < 0:
         raise ValueError("size cannot be negative")
-    return _sys("urandom", size)
+    _sys("look_lean")
+    data = _sys("urandom", size)
+    _sys("look")
+    return data
 
 
 def cpu_count(*args: object, **kwds: object) -> object:
@@ -1462,9 +1483,11 @@ def copy_file_range(*args: object, **kwds: object) -> int:   # os_copy_file_rang
         raise ValueError("count cannot be negative")
     start = None if offset_src is _ABSENT or offset_src is None else _off(offset_src)
     place = None if offset_dst is _ABSENT or offset_dst is None else _off(offset_dst)
+    _sys("look_lean")
     result = _sys("copy_file_range", source, target, size, start, place)
     if result < 0:
         _fail(-result)
+    _sys("look")
     return result  # type: ignore[no-any-return]
 
 
@@ -1552,32 +1575,44 @@ def execve(*args: object, **kwds: object) -> None:   # os_execve_impl: by name o
 
 
 def fchdir(*args: object, **kwds: object) -> None:   # os_fchdir_impl: fildes_converter, posix_fildes_fd
-    code = _sys("fildes", b"fchdir", _fildes(_unpack("fchdir", args, kwds, ("fd",), 1, 1)[0]))
+    fd = _fildes(_unpack("fchdir", args, kwds, ("fd",), 1, 1)[0])
+    _sys("look_lean")
+    code = _sys("fildes", b"fchdir", fd)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def fchmod(*args: object, **kwds: object) -> None:   # os_fchmod_impl
     fd, mode = _unpack("fchmod", args, kwds, ("fd", "mode"), 2, 2)
     descriptor = _int(fd)
-    code = _sys("chmod", descriptor, _int(mode), None, True)
+    bits = _int(mode)
+    _sys("look_lean")
+    code = _sys("fchmod", descriptor, bits)      # again after a signal, where os.chmod(fd) is one call
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def fchown(*args: object, **kwds: object) -> None:   # os_fchown_impl
     fd, uid, gid = _unpack("fchown", args, kwds, ("fd", "uid", "gid"), 3, 3)
     descriptor = _int(fd)
     u = _id("uid", uid)
-    code = _sys("chown", b"fchown", descriptor, u, _id("gid", gid))
+    g = _id("gid", gid)
+    _sys("look_lean")
+    code = _sys("chown", b"fchown", descriptor, u, g)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def fdatasync(*args: object, **kwds: object) -> None:   # os_fdatasync_impl
-    code = _sys("fildes", b"fdatasync", _fildes(_unpack("fdatasync", args, kwds, ("fd",), 1, 1)[0]))
+    fd = _fildes(_unpack("fdatasync", args, kwds, ("fd",), 1, 1)[0])
+    _sys("look_lean")
+    code = _sys("fildes", b"fdatasync", fd)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 fork = _absent("fork", " ([P2+]: a process made by fork is a later phase, spec sections 3 and 7; posix_spawn starts a program)")
@@ -1594,18 +1629,25 @@ def fpathconf(*args: object, **kwds: object) -> int:   # os_fpathconf_impl
 
 
 def fstatvfs(*args: object, **kwds: object) -> object:   # os_fstatvfs_impl
-    result = _sys("statvfs", _int(_one("fstatvfs", args, kwds)), True)
+    fd = _int(_one("fstatvfs", args, kwds))
+    _sys("look_lean")
+    result = _sys("statvfs", fd, True)
     if type(result) is int:
         _fail(-result)
-    return statvfs_result(result)
+    out = statvfs_result(result)
+    _sys("look")
+    return out
 
 
 def ftruncate(*args: object, **kwds: object) -> None:   # os_ftruncate_impl
     _positional("ftruncate", args, kwds, 2)
     fd = _int(args[0])
-    code = _sys("truncate", fd, _off(args[1]))
+    length = _off(args[1])
+    _sys("look_lean")
+    code = _sys("truncate", fd, length)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def get_blocking(*args: object, **kwds: object) -> bool:   # os_get_blocking_impl
@@ -1686,9 +1728,11 @@ def getrandom(*args: object, **kwds: object) -> bytes:   # os_getrandom_impl
     bits = 0 if flags is _ABSENT else _int(flags)
     if length < 0:
         _fail(22)
+    _sys("look_lean")
     result = _sys("getrandom", length, bits)
     if type(result) is int:
         _fail(-result)
+    _sys("look")
     return result  # type: ignore[no-any-return]
 
 
@@ -1745,8 +1789,26 @@ def initgroups(*args: object, **kwds: object) -> None:   # os_initgroups_impl
     _set(b"initgroups", name, _id("gid", args[1]))
 
 
-kill = _absent("kill", " (it waits for the signal module: a signal sent to the process itself runs its handler inside the call)")
-killpg = _absent("killpg", " (it waits for the signal module: a signal sent to the process itself runs its handler inside the call)")
+def kill(*args: object, **kwds: object) -> None:   # os_kill_impl
+    _positional("kill", args, kwds, 2)
+    pid = _int(args[0])                          # PyLong_AsPid
+    signum = _ssize(args[1])                     # a Py_ssize_t, which the call takes as (int)signal
+    # PySys_Audit("os.kill", "in", pid, signal): sys.audit looks at nothing yet
+    code = _sys("kill", pid, signum)
+    if code < 0:
+        _fail(-code)
+    _sys("check")                                # "Check immediately if the signal was sent to the current process": whatever the pid and the signal
+    _sys("look")                                 # and the call is over (_CHECK_PERIODIC_AT_END): a report a handler left queued
+
+
+def killpg(*args: object, **kwds: object) -> None:   # os_killpg_impl
+    _positional("killpg", args, kwds, 2)
+    pgid = _int(args[0])
+    signum = _int(args[1])
+    code = _sys("killpg", pgid, signum)
+    if code < 0:
+        _fail(-code)
+    _sys("look")                                 # no PyErr_CheckSignals in the C: a signal to the process's own group is handled when the call is over
 
 
 def lchown(*args: object, **kwds: object) -> None:   # os_lchown_impl
@@ -1812,9 +1874,12 @@ def mkfifo(*args: object, **kwds: object) -> None:   # os_mkfifo_impl: posix_err
     path, mode, dir_fd = _unpack("mkfifo", args, kwds, ("path", "mode", "dir_fd"), 1, 2)
     data, _shown = _path("mkfifo", "path", path)
     bits = 0o666 if mode is _ABSENT else _int(mode)
-    code = _sys("mknod", data, bits, None, _dir_fd(dir_fd))
+    under = _dir_fd(dir_fd)
+    _sys("look_lean")
+    code = _sys("mknod", data, bits, None, under)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def mknod(*args: object, **kwds: object) -> None:   # os_mknod_impl
@@ -1822,9 +1887,12 @@ def mknod(*args: object, **kwds: object) -> None:   # os_mknod_impl
     data, _shown = _path("mknod", "path", path)
     bits = 0o600 if mode is _ABSENT else _int(mode)
     number = 0 if device is _ABSENT else _dev(device)
-    code = _sys("mknod", data, bits, number, _dir_fd(dir_fd))
+    under = _dir_fd(dir_fd)
+    _sys("look_lean")
+    code = _sys("mknod", data, bits, number, under)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def nice(*args: object, **kwds: object) -> int:   # os_nice_impl: the new priority, which may be -1 without an error
@@ -1879,18 +1947,24 @@ def posix_fadvise(*args: object, **kwds: object) -> None:   # os_posix_fadvise_i
     fd = _int(args[0])
     offset = _off(args[1])
     length = _off(args[2])
-    code = _sys("posix_f", b"fadvise", fd, offset, length, _int(args[3]))
+    advice = _int(args[3])
+    _sys("look_lean")
+    code = _sys("posix_f", b"fadvise", fd, offset, length, advice)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def posix_fallocate(*args: object, **kwds: object) -> None:   # os_posix_fallocate_impl
     _positional("posix_fallocate", args, kwds, 3)
     fd = _int(args[0])
     offset = _off(args[1])
-    code = _sys("posix_f", b"fallocate", fd, offset, _off(args[2]))
+    length = _off(args[2])
+    _sys("look_lean")
+    code = _sys("posix_f", b"fallocate", fd, offset, length)
     if code < 0:
         _fail(-code)
+    _sys("look")
 
 
 def posix_openpt(*args: object, **kwds: object) -> int:   # os_posix_openpt_impl
@@ -1912,9 +1986,11 @@ def pread(*args: object, **kwds: object) -> bytes:   # os_pread_impl
     offset = _off(args[2])
     if length < 0:
         _fail(22)
+    _sys("look_lean")
     result = _sys("pread", fd, length, offset)
     if type(result) is int:
         _fail(-result)
+    _sys("look")
     return result  # type: ignore[no-any-return]
 
 
@@ -1937,9 +2013,13 @@ def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
         if _type_lookup(data, "__buffer__") is not _ABSENT:
             _refuse("os.pwrite() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
-    result = _sys("pwrite", fd, bytes(data), _off(args[2]))  # type: ignore[arg-type]
+    content = bytes(data)  # type: ignore[call-overload]
+    offset = _off(args[2])
+    _sys("look_lean")
+    result = _sys("pwrite", fd, content, offset)
     if result < 0:
         _fail(-result)
+    _sys("look")
     return result  # type: ignore[no-any-return]
 
 
@@ -1958,10 +2038,12 @@ def readinto(*args: object, **kwds: object) -> int:   # os_readinto_impl
         if not issubclass(type(buffer), bytes) and _type_lookup(buffer, "__buffer__") is not _ABSENT:
             _refuse("os.readinto() into a buffer that is not a bytearray")
         raise TypeError("readinto() argument 2 must be read-write bytes-like object, not " + _tp_name(buffer))
+    _sys("look_lean")
     result = _sys("read", fd, bytearray.__len__(buffer))  # type: ignore[arg-type]
     if type(result) is int:
         _fail(-result)
     bytearray.__setitem__(buffer, slice(0, len(result)), result)  # type: ignore[arg-type]
+    _sys("look")
     return len(result)
 
 
@@ -2096,9 +2178,12 @@ def sendfile(*args: object, **kwds: object) -> int:   # os_sendfile_impl, as Lin
     size = _ssize(count)
     if size < 0:
         raise ValueError("count cannot be negative")
-    result = _sys("sendfile", target, source, None if offset is None else _off(offset), size)
+    start = None if offset is None else _off(offset)
+    _sys("look_lean")
+    result = _sys("sendfile", target, source, start, size)
     if result < 0:
         _fail(-result)
+    _sys("look")
     return result  # type: ignore[no-any-return]
 
 
@@ -2229,9 +2314,11 @@ def splice(*args: object, **kwds: object) -> int:   # os_splice_impl: the offset
     bits = 0 if flags is _ABSENT else _unsigned(flags, "unsigned int", 32)
     start = None if offset_src is _ABSENT or offset_src is None else _off(offset_src)
     place = None if offset_dst is _ABSENT or offset_dst is None else _off(offset_dst)
+    _sys("look_lean")
     result = _sys("splice", source, target, size, start, place, bits)
     if result < 0:
         _fail(-result)
+    _sys("look")
     return result  # type: ignore[no-any-return]
 
 
@@ -2256,7 +2343,11 @@ def sysconf(*args: object, **kwds: object) -> int:   # os_sysconf_impl
 
 
 def system(*args: object, **kwds: object) -> int:   # os_system_impl: what the C library's system() returns
-    return _sys("system", _fsconverter(_unpack("system", args, kwds, ("command",), 1, 1)[0]))  # type: ignore[no-any-return]
+    command = _fsconverter(_unpack("system", args, kwds, ("command",), 1, 1)[0])
+    _sys("look_lean")
+    result = _sys("system", command)
+    _sys("look")                                 # a signal the command sent to this process, or SIGCHLD, is handled when the call is over
+    return result  # type: ignore[no-any-return]
 
 
 def tcgetpgrp(*args: object, **kwds: object) -> int:   # os_tcgetpgrp_impl
@@ -2316,11 +2407,14 @@ def timerfd_settime_ns(*args: object, **kwds: object) -> tuple[int, int]:   # os
 def truncate(*args: object, **kwds: object) -> None:   # os_truncate_impl: by name, or by a descriptor as ftruncate
     path, length = _unpack("truncate", args, kwds, ("path", "length"), 2, 2)
     data, shown = _path("truncate", "path", path, allow_fd=True)
-    code = _sys("truncate", data, _off(length))
+    size = _off(length)
+    _sys("look_lean")                            # a descriptor's is os.ftruncate's loop
+    code = _sys("truncate", data, size)
     if code < 0:
         if type(data) is int:
             _fail(-code)
         _fail(-code, shown)
+    _sys("look")
 
 
 def ttyname(*args: object, **kwds: object) -> str:   # os_ttyname_impl
@@ -2406,9 +2500,11 @@ def utime(*args: object, **kwds: object) -> None:   # os_utime_impl
 
 def wait(*args: object, **kwds: object) -> tuple[int, int]:   # os_wait_impl
     _noargs("wait", args, kwds)
+    _sys("look_lean")
     result = _sys("wait", b"wait")
     if type(result) is int:
         _fail(-result)
+    _sys("look")                                 # SIGCHLD does not interrupt the wait it ends: its handler runs when the call is over
     return result  # type: ignore[no-any-return]
 
 
@@ -2420,20 +2516,28 @@ def waitid(*args: object, **kwds: object) -> object:   # os_waitid_impl: None wh
     _positional("waitid", args, kwds, 3)
     idtype = _int(args[0])
     which = _int(args[1])
-    result = _sys("wait", b"waitid", idtype, which, _int(args[2]))
+    options = _int(args[2])
+    _sys("look_lean")
+    result = _sys("wait", b"waitid", idtype, which, options)
     if result is None:
+        _sys("look")
         return None
     if type(result) is int:
         _fail(-result)
-    return waitid_result((result[0], _from_id(result[1]), result[2], result[3], result[4]))
+    out = waitid_result((result[0], _from_id(result[1]), result[2], result[3], result[4]))
+    _sys("look")
+    return out
 
 
 def waitpid(*args: object, **kwds: object) -> tuple[int, int]:   # os_waitpid_impl
     _positional("waitpid", args, kwds, 2)
     pid = _int(args[0])
-    result = _sys("wait", b"waitpid", pid, _int(args[1]))
+    options = _int(args[1])
+    _sys("look_lean")
+    result = _sys("wait", b"waitpid", pid, options)
     if type(result) is int:
         _fail(-result)
+    _sys("look")
     return result  # type: ignore[no-any-return]
 
 

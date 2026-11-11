@@ -49,6 +49,7 @@ rt::Ref module_body(rt::Module* m) {
     init_constants();
     Obj ns = Obj::of(m->locals != nullptr ? m->locals : m->dict);
     rt::FrameGuard frame(code_module, M);
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t21, t22, t23, t24, t25, t26, t27, t29, t30, t31, t32, t33, t34, t35, t37, t38, t39, t40, t41, t42, t43, t44, t45, t47, t48, t49, t50, t51, t52, t53, t54, t55, t57, t58, t59, t60, t62, t63, t64, t65, t66, t67, t69, t70, t71, t72, t73, t74, t75, t76, t77, t78, t79, t80, t81, t82, t83, t84;
     frame.line = 4;
     t1 = rt::make_function(code_gcd_annotate, f_gcd_annotate, M, Obj{}, Obj{}, {}, Obj{});
@@ -69,7 +70,7 @@ rt::Ref module_body(rt::Module* m) {
     t7 = rt::iter(t6.get());
     t6 = Ref{};
     bool ended1 = false;
-    for (;;) {
+    for (;; BELLA_LOOK()) {
         frame.line = 18;
         t8 = rt::for_next(t7.get());
         if (rt::is_end(t8)) {
@@ -138,7 +139,7 @@ rt::Ref module_body(rt::Module* m) {
     rt::store_name(ns, S_k, Ref::share(Obj::small(0)));
     frame.line = 29;
     bool ended2 = false;
-    for (;;) {
+    for (;; BELLA_LOOK()) {
         frame.line = 29;
         t29 = rt::load_name(ns, M, S_k);
         t30 = rt::compare(rt::CmpOp::Lt, t29.get(), Obj::small(10));
@@ -281,6 +282,7 @@ static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args) {
     rt::FrameGuard frame(code_gcd_annotate, M, _format6, _ann7);
     rt::StackValues stack_values(_ann7, _format6);
     rt::bind(fn, args, {&_format6});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
     frame.line = 4;
     t1 = rt::load_fast(_format6, "_format6");
@@ -321,9 +323,10 @@ static Ref f_gcd(rt::PyFunction* fn, rt::Args args) {
     Ref r;
     rt::FrameGuard frame(code_gcd, M, a, b, r);
     rt::bind(fn, args, {&a, &b});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9;
     frame.line = 5;
-    for (;;) {
+    for (;; BELLA_LOOK()) {
         frame.line = 5;
         t1 = rt::load_fast(b, "b");
         t2 = rt::compare(rt::CmpOp::Ne, t1.get(), Obj::small(0));
@@ -361,6 +364,7 @@ static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args) {
     rt::FrameGuard frame(code_signs_annotate, M, _format9, _ann10);
     rt::StackValues stack_values(_ann10, _format9);
     rt::bind(fn, args, {&_format9});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
     frame.line = 12;
     t1 = rt::load_fast(_format9, "_format9");
@@ -400,6 +404,7 @@ static Ref f_signs(rt::PyFunction* fn, rt::Args args) {
     Ref b;
     rt::FrameGuard frame(code_signs, M, a, b);
     rt::bind(fn, args, {&a, &b});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t27, t28, t29, t30, t31, t32, t33, t34;
     frame.line = 13;
     t1 = rt::load_global(M, S_print);

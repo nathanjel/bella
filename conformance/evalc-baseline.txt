@@ -54,6 +54,7 @@ C-3-57_a_partial_without_its_dict.py
 C-3-58_an_instance_without_its_dict.py
 C-3-59_the_dict_an_instance_has.py
 C-3-60_a_class_has_thirty_places.py
+C-3-61_the_lines_of_a_with_statement.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py
@@ -137,6 +138,8 @@ C-7-71_setting_ids_groups_session_and_priority.py
 C-7-72_pseudo_terminals_and_moving_the_process.py
 C-7-73_a_pipe_nobody_reads.py
 C-7-74_starting_a_program_and_waiting_for_it.py
+C-7-75_signals_where_the_program_asks.py
+C-7-76_signals_that_arrive.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

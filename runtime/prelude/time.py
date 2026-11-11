@@ -71,6 +71,8 @@ _index = _number_index                           # PyNumber_Index: the runtime's
 
 
 def _fail(code: int) -> None:                    # PyErr_SetFromErrno(OSError)
+    if code == 4:                                # EINTR: errors.c runs the handlers before it makes the InterruptedError
+        _sys("check")
     raise OSError(code, _sys("strerror", code))
 
 
@@ -333,9 +335,11 @@ a floating-point number for subsecond precision."""
     ns = _seconds_to_ns(value, True)
     if ns < 0:
         raise ValueError("sleep length must be non-negative")
+    _sys("look_lean")                            # a lean build's look before the wait (CPython has none: docs/deviations.toml D-24)
     result = _sys("nanosleep", ns)
     if type(result) is int:
         _fail(-result)
+    _sys("look")                                 # the look when a call that waited is over (ceval's, after a call of a C function)
 
 
 def get_clock_info(*args: object, **kwds: object) -> object:

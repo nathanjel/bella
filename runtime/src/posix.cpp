@@ -67,14 +67,39 @@ Ref int_from_u64(std::uint64_t v) {              // PyLong_FromUnsignedLongLong
 }
 Ref result(std::int64_t r) { return r < 0 ? failed() : int_from_i64(r); }
 
+// PEP 475's loop, as posixmodule.c writes it around every call that can wait: `do r = call; while (r < 0 && errno == EINTR && !(async_err =
+// PyErr_CheckSignals()));`. A call a signal interrupted runs the handlers (check_signals) and is made again; a handler that
+// raises leaves from here as a PyError, and no OSError is made of the EINTR. That is all a primitive does about signals. The
+// looks before a call that waits and when it is over (docs/DECISIONS.md 2026-11-11) are the Python side's, in the function
+// that stands for CPython's C function (`_sys("look")`): the same primitives are called from the middle of _io's buffered
+// objects, where CPython runs no handler but on EINTR, and where a handler that wrote to the same file would find it half
+// updated. Nothing a primitive holds across the call may need a release that unwinding would skip.
+template <class Call>
+auto interruptible(Call call) -> decltype(call()) {
+    for (;;) {
+        auto r = call();
+        if (!(r < 0 && errno == EINTR)) return r;
+        check_signals();
+    }
+}
+
 // a directory's descriptor for the *at calls: an optional last argument, AT_FDCWD without it (or with None)
 int dir_fd_of(Args a, std::size_t i) { return a.npos > i && is_int(a.pos(i)) ? int_of(a.pos(i)) : AT_FDCWD; }
-Ref p_stat(Args a) {                             // (path or descriptor, follow_symlinks[, dir_fd]): fstat, or fstatat
+Ref stat_fields(const struct stat& st);
+Ref p_stat(Args a) {                             // (path or descriptor, follow_symlinks[, dir_fd]): fstat, or fstatat; one call (os.stat, FileIO)
     struct stat st{};
     int r;
     if (is_int(a.pos(0))) r = fstat(int_of(a.pos(0)), &st);
     else r = fstatat(dir_fd_of(a, 2), text_of(a.pos(0)), &st, truth(a.pos(1)) ? 0 : AT_SYMLINK_NOFOLLOW);
     if (r != 0) return failed();
+    return stat_fields(st);
+}
+Ref p_fstat(Args a) {                            // (fd): os_fstat_impl, again after a signal (os.stat(fd) and _Py_fstat_noraise are one call)
+    struct stat st{};
+    if (interruptible([&] { return fstat(int_of(a.pos(0)), &st); }) != 0) return failed();
+    return stat_fields(st);
+}
+Ref stat_fields(const struct stat& st) {
     Ref fields[] = {int_from_u64(st.st_mode), int_from_u64(st.st_ino), int_from_u64(st.st_dev), int_from_u64(st.st_nlink), int_from_u64(st.st_uid),
                     int_from_u64(st.st_gid), int_from_i64(st.st_size), int_from_i64(st.st_atim.tv_sec), int_from_i64(st.st_atim.tv_nsec),
                     int_from_i64(st.st_mtim.tv_sec), int_from_i64(st.st_mtim.tv_nsec), int_from_i64(st.st_ctim.tv_sec), int_from_i64(st.st_ctim.tv_nsec),
@@ -202,9 +227,7 @@ Ref p_link(Args a) {                             // (src, dst, follow_symlinks[,
     return result(linkat(dir_fd_of(a, 3), text_of(a.pos(0)), dir_fd_of(a, 4), text_of(a.pos(1)), truth(a.pos(2)) ? AT_SYMLINK_FOLLOW : 0));
 }
 Ref p_open(Args a) {                             // _Py_open's: not inheritable (PEP 446), and again after a signal
-    int fd;
-    do fd = openat(dir_fd_of(a, 3), text_of(a.pos(0)), int_of(a.pos(1)) | O_CLOEXEC, static_cast<mode_t>(int_of(a.pos(2))));   // (path, flags, mode[, dir_fd])
-    while (fd < 0 && errno == EINTR);
+    int fd = interruptible([&] { return openat(dir_fd_of(a, 3), text_of(a.pos(0)), int_of(a.pos(1)) | O_CLOEXEC, static_cast<mode_t>(int_of(a.pos(2)))); });   // (path, flags, mode[, dir_fd])
     return result(fd);
 }
 Ref p_close(Args a) { return result(close(int_of(a.pos(0)))); }
@@ -215,18 +238,14 @@ Ref p_copy_file_range(Args a) {                  // (src, dst, count, offset_src
     off_t* to = a.pos(4) == None() ? nullptr : &out;
     if (from != nullptr) in = static_cast<off_t>(i64_of(a.pos(3)));
     if (to != nullptr) out = static_cast<off_t>(i64_of(a.pos(4)));
-    ssize_t r;
-    do r = copy_file_range(int_of(a.pos(0)), from, int_of(a.pos(1)), to, static_cast<std::size_t>(i64_of(a.pos(2))), 0);
-    while (r < 0 && errno == EINTR);
+    ssize_t r = interruptible([&] { return copy_file_range(int_of(a.pos(0)), from, int_of(a.pos(1)), to, static_cast<std::size_t>(i64_of(a.pos(2))), 0); });
     return result(r);
 }
 Ref p_sendfile(Args a) {                         // (out_fd, in_fd, offset or None, count): with no offset the input's own position moves
     off_t offset = 0;
     off_t* at = a.pos(2) == None() ? nullptr : &offset;
     if (at != nullptr) offset = static_cast<off_t>(i64_of(a.pos(2)));
-    ssize_t r;
-    do r = sendfile(int_of(a.pos(0)), int_of(a.pos(1)), at, static_cast<std::size_t>(i64_of(a.pos(3))));
-    while (r < 0 && errno == EINTR);
+    ssize_t r = interruptible([&] { return sendfile(int_of(a.pos(0)), int_of(a.pos(1)), at, static_cast<std::size_t>(i64_of(a.pos(3)))); });
     return result(r);
 }
 Ref p_utime(Args a) {                            // (path or descriptor, None for now or (a_sec, a_nsec, m_sec, m_nsec), dir_fd or None, follow_symlinks)
@@ -290,15 +309,14 @@ Ref p_xattr(Args a) {
 }
 Ref p_chmod(Args a) {                            // (path or descriptor, mode, dir_fd or None, follow_symlinks): os_chmod_impl's three calls
     mode_t mode = static_cast<mode_t>(int_of(a.pos(1)));
-    if (is_int(a.pos(0))) {
-        int r;
-        do r = fchmod(int_of(a.pos(0)), mode);
-        while (r != 0 && errno == EINTR);
-        return result(r);
-    }
+    if (is_int(a.pos(0))) return result(fchmod(int_of(a.pos(0)), mode));   // one call: os.fchmod's loop is p_fchmod's
     bool follow = truth(a.pos(3));
     if (is_int(a.pos(2)) || !follow) return result(fchmodat(dir_fd_of(a, 2), text_of(a.pos(0)), mode, follow ? 0 : AT_SYMLINK_NOFOLLOW));
     return result(chmod(text_of(a.pos(0)), mode));
+}
+Ref p_fchmod(Args a) {                           // (fd, mode): os_fchmod_impl, again after a signal
+    mode_t mode = static_cast<mode_t>(int_of(a.pos(1)));
+    return result(interruptible([&] { return fchmod(int_of(a.pos(0)), mode); }));
 }
 Ref p_read(Args a) {
     std::size_t length = static_cast<std::size_t>(i64_of(a.pos(1)));
@@ -308,22 +326,17 @@ Ref p_read(Args a) {
     } catch (const std::bad_alloc&) {
         raise_new("MemoryError", "");
     }
-    ssize_t n;
-    do n = read(int_of(a.pos(0)), buf.get(), length);
-    while (n < 0 && errno == EINTR);
+    ssize_t n = interruptible([&] { return read(int_of(a.pos(0)), buf.get(), length); });
     if (n < 0) return failed();
     return bytes_new(std::string_view(buf.get(), static_cast<std::size_t>(n)));
 }
 Ref p_write(Args a) {
     const std::string& data = bytes_data(a.pos(1));
-    ssize_t n;
-    do n = write(int_of(a.pos(0)), data.data(), data.size());
-    while (n < 0 && errno == EINTR);
+    ssize_t n = interruptible([&] { return write(int_of(a.pos(0)), data.data(), data.size()); });   // the octets as they are at each call: a handler ran between two
     return result(n);
 }
 Ref p_lseek(Args a) { return result(lseek(int_of(a.pos(0)), i64_of(a.pos(1)), int_of(a.pos(2)))); }
 Ref p_isatty(Args a) { return int_from_i64(isatty(int_of(a.pos(0)))); }
-Ref p_fsync(Args a) { return result(fsync(int_of(a.pos(0)))); }
 Ref p_ftruncate(Args a) { return result(ftruncate(int_of(a.pos(0)), i64_of(a.pos(1)))); }
 // ---- what only computes (C-7-66): the C library's own reading of a wait status, and of a device number
 Ref p_wstatus(Args a) {                          // (which, status): the W* macros, by their first letters after the W
@@ -453,23 +466,38 @@ Ref p_wait(Args a) {
     if (which == "waitid") {
         siginfo_t si;
         si.si_pid = 0;
-        int r;
-        do r = waitid(static_cast<idtype_t>(int_of(a.pos(1))), static_cast<id_t>(int_of(a.pos(2))), &si, int_of(a.pos(3)));
-        while (r < 0 && errno == EINTR);
+        int r = interruptible([&] { return waitid(static_cast<idtype_t>(int_of(a.pos(1))), static_cast<id_t>(int_of(a.pos(2))), &si, int_of(a.pos(3))); });
         if (r < 0) return failed();
         if (si.si_pid == 0) return none_ref();
         Ref p = int_from_i64(si.si_pid), u = int_from_u64(si.si_uid), g = int_from_i64(si.si_signo), s = int_from_i64(si.si_status), c = int_from_i64(si.si_code);
         return tuple_new({p.get(), u.get(), g.get(), s.get(), c.get()});
     }
     int status = 0;
-    pid_t pid;
-    do pid = which == "wait" ? wait(&status) : waitpid(static_cast<pid_t>(int_of(a.pos(1))), &status, int_of(a.pos(2)));
-    while (pid < 0 && errno == EINTR);
+    pid_t pid = interruptible([&] { return which == "wait" ? wait(&status) : waitpid(static_cast<pid_t>(int_of(a.pos(1))), &status, int_of(a.pos(2))); });
     if (pid < 0) return failed();
     Ref p = int_from_i64(pid), s = int_from_i64(status);
     return tuple_new({p.get(), s.get()});
 }
 Ref p_system(Args a) { return int_from_i64(system(text_of(a.pos(0)))); }   // os_system_impl: what system() gives, as it is
+// os_kill_impl and os_killpg_impl: (pid or pgid, signal). The number goes to the system as it is: 32 and 33 too, which the C
+// library's raise() refuses and kill() sends
+Ref p_kill(Args a) { return result(kill(static_cast<pid_t>(int_of(a.pos(0))), int_of(a.pos(1)))); }
+Ref p_killpg(Args a) { return result(killpg(static_cast<pid_t>(int_of(a.pos(0))), int_of(a.pos(1)))); }
+// what a prelude's function does where its C does: PyErr_CheckSignals itself ("check"), and the look when a call that sent a
+// signal or waited is over ("look": the evaluation loop's after a call of a C function, _CHECK_PERIODIC_AT_END); "look_lean" is
+// a lean build's before a call that may wait
+Ref p_check(Args) {
+    check_signals();
+    return none_ref();
+}
+Ref p_look(Args) {
+    look_if_noted();
+    return none_ref();
+}
+Ref p_look_lean(Args) {
+    look_if_lean();
+    return none_ref();
+}
 // (path or descriptor, argv, env or None): execv, execve, fexecve. It comes back only to say why not
 Ref p_exec(Args a) {
     std::vector<char*> argv = c_strings(a.pos(1));
@@ -705,9 +733,9 @@ Ref p_readv(Args a) {
     } catch (const std::bad_alloc&) {
         raise_new("MemoryError", "");
     }
-    ssize_t n;
-    do n = a.npos > 2 ? preadv(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()), i64_of(a.pos(2))) : readv(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()));
-    while (n < 0 && errno == EINTR);
+    ssize_t n = interruptible([&] {
+        return a.npos > 2 ? preadv(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()), i64_of(a.pos(2))) : readv(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()));
+    });
     if (n < 0) return failed();
     std::string out;
     out.reserve(static_cast<std::size_t>(n));
@@ -721,9 +749,9 @@ Ref p_writev(Args a) {                           // (fd, parts[, offset]): write
         const std::string& data = bytes_data(parts[i]);
         iov[i] = {const_cast<char*>(data.data()), data.size()};
     }
-    ssize_t n;
-    do n = a.npos > 2 ? pwritev(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()), i64_of(a.pos(2))) : writev(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()));
-    while (n < 0 && errno == EINTR);
+    ssize_t n = interruptible([&] {
+        return a.npos > 2 ? pwritev(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()), i64_of(a.pos(2))) : writev(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()));
+    });
     return result(n);
 }
 // eventfd: (b"make", initval, flags), (b"read", fd) -> (value,), (b"write", fd, value as 64 bits read signed)
@@ -738,10 +766,10 @@ Ref p_eventfd(Args a) {
 }
 Ref p_memfd(Args a) { return result(memfd_create(text_of(a.pos(0)), static_cast<unsigned>(i64_of(a.pos(1))))); }   // (name, flags)
 Ref p_mknod(Args a) {                            // (path, mode, device or None for a fifo, dir_fd): mknodat, mkfifoat; again after a signal
-    int r;
-    do r = a.pos(2) == None() ? mkfifoat(dir_fd_of(a, 3), text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))))
-                              : mknodat(dir_fd_of(a, 3), text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))), static_cast<dev_t>(i64_of(a.pos(2))));
-    while (r != 0 && errno == EINTR);
+    int r = interruptible([&] {
+        return a.pos(2) == None() ? mkfifoat(dir_fd_of(a, 3), text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))))
+                                  : mknodat(dir_fd_of(a, 3), text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))), static_cast<dev_t>(i64_of(a.pos(2))));
+    });
     return result(r);
 }
 Ref p_splice(Args a) {                           // (src, dst, count, offset_src or None, offset_dst or None, flags)
@@ -750,18 +778,15 @@ Ref p_splice(Args a) {                           // (src, dst, count, offset_src
     off_t* to = a.pos(4) == None() ? nullptr : &out;
     if (from != nullptr) in = static_cast<off_t>(i64_of(a.pos(3)));
     if (to != nullptr) out = static_cast<off_t>(i64_of(a.pos(4)));
-    ssize_t r;
-    do r = splice(int_of(a.pos(0)), from, int_of(a.pos(1)), to, static_cast<std::size_t>(i64_of(a.pos(2))), static_cast<unsigned>(i64_of(a.pos(5))));
-    while (r < 0 && errno == EINTR);
+    ssize_t r = interruptible([&] { return splice(int_of(a.pos(0)), from, int_of(a.pos(1)), to, static_cast<std::size_t>(i64_of(a.pos(2))), static_cast<unsigned>(i64_of(a.pos(5)))); });
     return result(r);
 }
 // ---- the file system and the configured limits (C-7-68)
 Ref p_statvfs(Args a) {                          // (path or fd, again after a signal): _pystatvfs_fromstructstatvfs's eleven
     struct statvfs st;
     int r;
-    if (is_int(a.pos(0))) {
-        do r = fstatvfs(int_of(a.pos(0)), &st);
-        while (r != 0 && errno == EINTR && truth(a.pos(1)));
+    if (is_int(a.pos(0))) {                      // os_fstatvfs_impl loops; os.statvfs of a descriptor is one call
+        r = truth(a.pos(1)) ? interruptible([&] { return fstatvfs(int_of(a.pos(0)), &st); }) : fstatvfs(int_of(a.pos(0)), &st);
     } else {
         r = statvfs(text_of(a.pos(0)), &st);
     }
@@ -799,10 +824,7 @@ Ref p_chown(Args a) {
     uid_t uid = static_cast<uid_t>(i64_of(a.pos(2)));
     gid_t gid = static_cast<gid_t>(i64_of(a.pos(3)));
     if (which == "fchown") {
-        int r;
-        do r = fchown(int_of(a.pos(1)), uid, gid);
-        while (r != 0 && errno == EINTR);
-        return result(r);
+        return result(interruptible([&] { return fchown(int_of(a.pos(1)), uid, gid); }));
     }
     if (which == "lchown") return result(lchown(text_of(a.pos(1)), uid, gid));
     if (is_int(a.pos(1))) return result(fchown(int_of(a.pos(1)), uid, gid));
@@ -858,9 +880,7 @@ Ref p_getrandom(Args a) {                        // (size, flags): os_getrandom_
     } catch (const std::bad_alloc&) {
         raise_new("MemoryError", "");
     }
-    ssize_t n;
-    do n = getrandom(buf.get(), size, static_cast<unsigned>(int_of(a.pos(1))));
-    while (n < 0 && errno == EINTR);
+    ssize_t n = interruptible([&] { return getrandom(buf.get(), size, static_cast<unsigned>(int_of(a.pos(1)))); });
     if (n < 0) return failed();
     return bytes_new(std::string_view(buf.get(), static_cast<std::size_t>(n)));
 }
@@ -904,10 +924,8 @@ Ref p_closerange(Args a) {                       // (first, last), both closed: 
 }
 Ref p_fildes(Args a) {                           // (which, fd): posix_fildes_fd, again after a signal
     const std::string& which = bytes_data(a.pos(0));
-    int fd = int_of(a.pos(1)), r;
-    do r = which == "fchdir" ? fchdir(fd) : which == "fdatasync" ? fdatasync(fd) : fsync(fd);
-    while (r != 0 && errno == EINTR);
-    return result(r);
+    int fd = int_of(a.pos(1));
+    return result(interruptible([&] { return which == "fchdir" ? fchdir(fd) : which == "fdatasync" ? fdatasync(fd) : fsync(fd); }));
 }
 Ref p_sync(Args) {
     sync();
@@ -915,10 +933,7 @@ Ref p_sync(Args) {
 }
 Ref p_truncate(Args a) {                         // (path or fd, length): os_truncate_impl, os_ftruncate_impl
     if (!is_int(a.pos(0))) return result(truncate(text_of(a.pos(0)), i64_of(a.pos(1))));
-    int r;
-    do r = ftruncate(int_of(a.pos(0)), i64_of(a.pos(1)));
-    while (r != 0 && errno == EINTR);
-    return result(r);
+    return result(interruptible([&] { return ftruncate(int_of(a.pos(0)), i64_of(a.pos(1))); }));
 }
 Ref p_pread(Args a) {                            // (fd, length, offset)
     std::size_t length = static_cast<std::size_t>(i64_of(a.pos(1)));
@@ -928,26 +943,25 @@ Ref p_pread(Args a) {                            // (fd, length, offset)
     } catch (const std::bad_alloc&) {
         raise_new("MemoryError", "");
     }
-    ssize_t n;
-    do n = pread(int_of(a.pos(0)), buf.get(), length, i64_of(a.pos(2)));
-    while (n < 0 && errno == EINTR);
+    ssize_t n = interruptible([&] { return pread(int_of(a.pos(0)), buf.get(), length, i64_of(a.pos(2))); });
     if (n < 0) return failed();
     return bytes_new(std::string_view(buf.get(), static_cast<std::size_t>(n)));
 }
 Ref p_pwrite(Args a) {                           // (fd, data, offset)
     const std::string& data = bytes_data(a.pos(1));
-    ssize_t n;
-    do n = pwrite(int_of(a.pos(0)), data.data(), data.size(), i64_of(a.pos(2)));
-    while (n < 0 && errno == EINTR);
+    ssize_t n = interruptible([&] { return pwrite(int_of(a.pos(0)), data.data(), data.size(), i64_of(a.pos(2))); });
     return result(n);
 }
 Ref p_lockf(Args a) { return result(lockf(int_of(a.pos(0)), int_of(a.pos(1)), i64_of(a.pos(2)))); }   // (fd, command, length)
 // posix_fallocate and posix_fadvise give the error as their result, not in errno: (which, fd, offset, length[, advice])
 Ref p_posix_f(Args a) {
     int r;
-    do r = bytes_data(a.pos(0)) == "fallocate" ? posix_fallocate(int_of(a.pos(1)), i64_of(a.pos(2)), i64_of(a.pos(3)))
-                                               : posix_fadvise(int_of(a.pos(1)), i64_of(a.pos(2)), i64_of(a.pos(3)), int_of(a.pos(4)));
-    while (r == EINTR);
+    for (;;) {                                   // os_posix_fallocate_impl: `while (result == EINTR && !(async_err = PyErr_CheckSignals()))`
+        r = bytes_data(a.pos(0)) == "fallocate" ? posix_fallocate(int_of(a.pos(1)), i64_of(a.pos(2)), i64_of(a.pos(3)))
+                                                : posix_fadvise(int_of(a.pos(1)), i64_of(a.pos(2)), i64_of(a.pos(3)), int_of(a.pos(4)));
+        if (r != EINTR) break;
+        check_signals();
+    }
     return int_from_i64(-r);
 }
 Ref p_strerror(Args a) { return str_new(std::strerror(int_of(a.pos(0)))); }
@@ -958,7 +972,10 @@ Ref p_urandom(Args a) {
     while (done < buf.size()) {
         ssize_t n = getrandom(buf.data() + done, buf.size() - done, 0);
         if (n < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {                // py_getrandom with raise: "if (PyErr_CheckSignals()) return -1;" and on
+                check_signals();
+                continue;
+            }
             throw NotImplemented("os.urandom when getrandom fails");
         }
         done += static_cast<std::size_t>(n);
@@ -1220,6 +1237,7 @@ Ref p_nanosleep(Args a) {                        // pysleep: clock_nanosleep on 
         int err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &deadline, nullptr);
         if (err == 0) return none_ref();
         if (err != EINTR) { errno = err; return failed(); }
+        check_signals();                         // "sleep was interrupted by SIGINT": the handlers, and on to the same deadline
     }
 }
 Ref p_pthread_getcpuclockid(Args a) {
@@ -1233,10 +1251,10 @@ Ref p_pthread_getcpuclockid(Args a) {
 using Primitive = Ref (*)(Args);
 const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
-        {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
+        {"stat", p_stat}, {"fstat", p_fstat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"setid", p_setid}, {"tty", p_tty}, {"spawn", p_spawn}, {"wait", p_wait}, {"system", p_system}, {"exec", p_exec}, {"abort", p_abort}, {"chroot", p_chroot}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
-        {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"setid", p_setid}, {"tty", p_tty}, {"spawn", p_spawn}, {"wait", p_wait}, {"system", p_system}, {"kill", p_kill}, {"killpg", p_killpg}, {"check", p_check}, {"look", p_look}, {"look_lean", p_look_lean}, {"exec", p_exec}, {"abort", p_abort}, {"chroot", p_chroot}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"fchmod", p_fchmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},
         {"getgid", p_getgid}, {"getegid", p_getegid}, {"putenv", p_putenv}, {"unsetenv", p_unsetenv}, {"clearenv", p_clearenv}, {"exit", p_exit},

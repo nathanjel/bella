@@ -55,6 +55,7 @@ static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
     Ref n;
     rt::FrameGuard frame(code_fib, n);
     rt::bind(fn, args, {&n});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13;
     frame.line = 5;
     t1 = rt::load_fast(n, "n");
@@ -74,6 +75,15 @@ static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
   `_` written `_1` and a non-ASCII character `_2` and its code point (RL-207, RL-219). Runtime
   calls are qualified (`rt::`), so no Python name shadows them.
 * One C++ statement per L2 statement, in L2's order; `frame.line = n` for L2's `line n`.
+* `BELLA_LOOK()` (`bella/runtime.hpp`) where CPython's evaluation loop looks for a pending signal
+  (docs/DECISIONS.md, 2026-11-11): at a frame's start once its arguments are bound (RESUME: a
+  function, a lambda, a class or module body, a generator's first resume and each resume after a
+  plain `yield`, never into `yield from`, by `throw()` or by `close()`), at a loop's turn
+  (JUMP_BACKWARD: `for (;; BELLA_LOOK())`, which C++ runs after the body and at `continue`), and
+  after a loop that a `break` CPython compiles backward has left (`if (brokeN) BELLA_LOOK();`,
+  L2's `Break(looks)`). Not in an inlined comprehension, nor in prelude units, which stand for
+  CPython's C, nor in `_pydecimal` and `_pydatetime`, which stand for its C accelerators
+  (`LOOK_FREE`). The macro tests one word and is nothing at all in a lean build (D-24).
 * Temporaries are `Ref`s declared at the top of their region (the function, a `try` body, a
   handler, a `finally` block) in their number order, so C++ unwinding destroys them newest first:
   L2's exception edge (`docs/l2.md` section 8, decision 1). `release t` is `t = Ref{}`; a store
@@ -292,8 +302,13 @@ headers and the flags, so a change to the runtime's sources recompiles no unit. 
 library's units compile at `-O0`, a fifth of the time, while speed is not a goal; the program's at
 `-O1`. The main unit, generated last, holds `main()` and the registry (`ModuleEntry`) handed to
 `run_main`. A kept example's C++ is its module's unit, without the main unit's absolute paths.
-Generated names avoid the headers' macros (`ENOENT`, `S_IFMT`), which the compiler lists. Links strip
-debug information (`BELLA_KEEP_DEBUG=1` keeps it), and a program rebuilt replaces its old binary.
+Generated names avoid the headers' macros (`ENOENT`, `S_IFMT`, and `BELLA_LEAN`, `BELLA_LOOK`,
+`BELLA_IS_LEAN`, which are reserved whether a compiler is found or not). Links strip debug information
+(`BELLA_KEEP_DEBUG=1` keeps it), and a program rebuilt replaces its old binary of the same fidelity.
+A build's fidelity is `exact` (the default) or `lean` (`--fidelity lean`, `BELLA_FIDELITY=lean`;
+deviation D-24): a lean build gives `-DBELLA_LEAN` to the units compiled from the program and the
+standard library and to the main unit, never to the runtime's or the prelude's, so one runtime
+library serves both; its lowered text is the same, its units and binary are keyed apart.
 
 The import system keeps CPython's split:
 * `runtime/src/imports.cpp` is the C half: IMPORT_NAME (`_PyEval_LazyImportName`,

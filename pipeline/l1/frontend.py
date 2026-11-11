@@ -15,6 +15,7 @@ import sys
 import tomllib
 import warnings
 from pathlib import Path
+from types import CodeType
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -1528,10 +1529,10 @@ class _With(ast.NodeTransformer):
         self.generic_visit(node)
         body: list[ast.stmt] = list(node.body)
         for item in reversed(node.items):
-            body = self._expand(item, body, node)
+            body = self._expand(item, body)
         return body
 
-    def _expand(self, item: ast.withitem, body: list[ast.stmt], loc: ast.AST) -> list[ast.stmt]:
+    def _expand(self, item: ast.withitem, body: list[ast.stmt]) -> list[ast.stmt]:
         # %special is CPython's special-method lookup (_PyObject_LookupSpecial): the type's MRO,
         # bound through the descriptor protocol, TypeError when missing. CPython 3.15 looks up
         # __exit__ before __enter__ (review 2026-11-01, gemini 2.2.5.2; measured on 3.15.2).
@@ -1581,6 +1582,11 @@ finally:
                 n.id = _INTRINSIC + n.id
             elif isinstance(n, ast.Name) and n.id == "__special__":
                 n.id = _INTRINSIC + "special"     # an intrinsic too: no program binding reaches it
+            # what the statement does itself (the lookups, __enter__, __exit__ on every way out) is at the item's expression,
+            # as codegen_with_inner's locations are: the with's line, an item's own line, an expression's first line (C-3-61).
+            # Before the program's nodes go in, so that they keep theirs
+            if "lineno" in n._attributes:
+                ast.copy_location(n, item.context_expr)
         assign = stmts[0]
         assert isinstance(assign, ast.Assign)
         assign.value = item.context_expr
@@ -1589,14 +1595,12 @@ finally:
         try_inner = try_outer.body[0]
         assert isinstance(try_inner, ast.Try)
         inner_body: list[ast.stmt] = []
-        if item.optional_vars is not None:
-            inner_body.append(ast.Assign(targets=[item.optional_vars], value=ast.Name(id=value, ctx=ast.Load())))
-        inner_body.append(_assign(value, ast.Constant(None)))
+        if item.optional_vars is not None:          # the target's store is at the target
+            bind = ast.Assign(targets=[item.optional_vars], value=ast.Name(id=value, ctx=ast.Load()))
+            inner_body.append(ast.fix_missing_locations(ast.copy_location(bind, item.optional_vars)))
+        inner_body.append(ast.fix_missing_locations(ast.copy_location(_assign(value, ast.Constant(None)), item.context_expr)))
         inner_body.extend(body)
         try_inner.body = inner_body
-        for s in stmts:
-            ast.copy_location(s, loc)
-            ast.fix_missing_locations(s)
         return stmts
 
 
@@ -2118,7 +2122,7 @@ class _ToL1:
             return L.For(ln, self.target(s.target), iterable, self.block(s.body), self.block(s.orelse),
                          iterator=bool(getattr(s, "bella_iterator", False)))
         if isinstance(s, ast.Break):
-            return L.Break(ln)
+            return L.Break(ln, looks=bool(getattr(s, "bella_looks", False)))
         if isinstance(s, ast.Continue):
             return L.Continue(ln)
         if isinstance(s, ast.Pass):
@@ -2360,19 +2364,68 @@ def _parse(source: str, filename: str, mode: str, inherit_future: frozenset[str]
     return tree
 
 
-def check_compile(tree: ast.Module | ast.Expression, filename: str, mode: str, inherit_future: frozenset[str]) -> None:
+def check_compile(tree: ast.Module | ast.Expression, filename: str, mode: str, inherit_future: frozenset[str]) -> CodeType:
     """Every compile-time error of CPython 3.15.2, from its own compiler: the symbol table's and
     the code generator's (a nonlocal without a binding, a parameter declared global, `import *`
     outside a module, a lazy import in a try, `yield` in a comprehension, a repeated attribute in
     a class pattern, ...), raised as the SyntaxError CPython raises (review 2026-11-02, G6 2.4.3,
     2.6.2, 2.7.2, 2.7.3). The host is the pinned interpreter (check_host_grammar), so "what does
     CPython reject?" is answered by asking it. The parsed tree is compiled, before any pass
-    rewrites it, and the code is dropped; the parser's warnings were already given by
-    ast.parse, and the compiler's are not repeated here."""
+    rewrites it; the code is read once more (mark_looking_breaks) and dropped; the parser's
+    warnings were already given by ast.parse, and the compiler's are not repeated here."""
     flags = _future_flags(inherit_future)
     with warnings.catch_warnings(module=warnings):          # the host's module, whatever sys.modules holds
         warnings.simplefilter("ignore")
-        compile(tree, filename, mode, flags=flags, dont_inherit=True)
+        code: CodeType = compile(tree, filename, mode, flags=flags, dont_inherit=True)
+    return code
+
+
+def mark_looking_breaks(tree: ast.Module, code: CodeType) -> None:
+    """The `break` statements CPython 3.15.2 compiles to JUMP_BACKWARD, marked `bella_looks`: its eval loop looks
+    there (_CHECK_PERIODIC), so a compiled program looks too. A break is a plain JUMP to its loop's exit
+    (codegen_break), backward only when the block layout puts the exit first: code only an exception reaches (an
+    except clause, a finally block's exception copy, what follows only them) is laid out after the rest
+    (push_cold_blocks_to_end), so a break there jumps back to an exit that the rest reaches, unless the exit is small
+    enough to be copied in place of the jump (inline_small_or_no_lineno_blocks: `return x`, falling off the end).
+    Which breaks those are is the layout's business, so the frontend asks CPython, as for a folded set display
+    (Python/flowgraph.c 1231-1262, 3446-3550). Such a jump starts in the code after the first handler and lands
+    before it. The break it belongs to is the nearest instruction before it, or the jump itself, at the break's own
+    position (the four numbers tell two breaks on a line apart), with no other jump or exit between: the jump keeps
+    the break's position, except after an unwinding finally block or `with`, whose copy sits between them."""
+    breaks: dict[tuple[int | None, int | None, int | None, int | None], ast.Break] = {}
+    others: set[tuple[int | None, int | None, int | None, int | None]] = set()     # a continue's: not a break's jump
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Break):
+            breaks[(n.lineno, n.end_lineno, n.col_offset, n.end_col_offset)] = n
+        elif isinstance(n, ast.Continue):
+            others.add((n.lineno, n.end_lineno, n.col_offset, n.end_col_offset))
+    if not breaks:
+        return
+    todo = [code]
+    while todo:
+        c = todo.pop()
+        todo += [k for k in c.co_consts if isinstance(k, CodeType)]
+        listing = dis.Bytecode(c)
+        handlers: list[int] = [e.target for e in listing.exception_entries]  # type: ignore[attr-defined]  # dis has it, typeshed not
+        if not handlers:
+            continue
+        cold = min(handlers)
+        ins = list(listing)
+        for i, jump in enumerate(ins):
+            if jump.opname != "JUMP_BACKWARD" or jump.offset < cold or jump.argval >= cold:
+                continue
+            for k in range(i, -1, -1):
+                p = ins[k].positions
+                at = (p.lineno, p.end_lineno, p.col_offset, p.end_col_offset) if p is not None else (None,) * 4
+                if at in breaks:
+                    breaks[at].bella_looks = True  # type: ignore[attr-defined]
+                    break
+                if at in others or (k < i and ins[k].opname in _STRAIGHT_LINE_ENDS):
+                    break
+
+
+_STRAIGHT_LINE_ENDS = frozenset({"JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT", "RETURN_VALUE", "RAISE_VARARGS",
+                                 "RERAISE"})
 
 
 def check_host_grammar() -> None:
@@ -2434,7 +2487,7 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
         parsed = _parse(source, filename, "exec", inherit_future)
         assert isinstance(parsed, ast.Module)
         tree = parsed
-        check_compile(tree, filename, mode, inherit_future)
+        mark_looking_breaks(tree, check_compile(tree, filename, mode, inherit_future))
     check_finally(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]
     tree.bella_future = future_features(tree) | inherit_future  # type: ignore[attr-defined]

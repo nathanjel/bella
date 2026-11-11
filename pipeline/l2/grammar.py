@@ -412,7 +412,9 @@ class EndLoop(Stmt):
 
 @dataclass(frozen=True)
 class Break(Stmt):
-    pass
+    """`looks`: CPython's eval loop looks when this break leaves the loop, after the unwinding (its block layout
+    made the jump a JUMP_BACKWARD: L1's Break says so)."""
+    looks: bool = False
 
 
 @dataclass(frozen=True)
@@ -503,7 +505,7 @@ class Module:
 
 
 def leaves_by(stmts: Sequence[Stmt], kind: type[Stmt]) -> bool:
-    """A statement of `kind` (Break or EndLoop) that belongs to the loop these statements are the
+    """A statement of `kind` (Break, Continue or EndLoop) that belongs to the loop these statements are the
     body of; a nested loop's body has its own, its `else` block is this loop's."""
     for s in stmts:
         if isinstance(s, kind):

@@ -39,6 +39,7 @@ rt::Ref module_body(rt::Module* m) {
     init_constants();
     Obj ns = Obj::of(m->locals != nullptr ? m->locals : m->dict);
     rt::FrameGuard frame(code_module, M);
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t20, t21, t22, t23, t24, t25, t26, t27, t28, t29, t30, t31, t32;
     frame.line = 4;
     t1 = rt::make_function(code_steps_annotate, f_steps_annotate, M, Obj{}, Obj{}, {}, Obj{});
@@ -55,7 +56,7 @@ rt::Ref module_body(rt::Module* m) {
     t3 = Ref{};
     t5 = rt::iter(t4.get());
     t4 = Ref{};
-    for (;;) {
+    for (;; BELLA_LOOK()) {
         frame.line = 17;
         t6 = rt::for_next(t5.get());
         if (rt::is_end(t6)) {
@@ -133,6 +134,7 @@ static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args) {
     rt::FrameGuard frame(code_steps_annotate, M, _format3, _ann4);
     rt::StackValues stack_values(_ann4, _format3);
     rt::bind(fn, args, {&_format3});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 4;
     t1 = rt::load_fast(_format3, "_format3");
@@ -167,11 +169,12 @@ static Ref f_steps(rt::PyFunction* fn, rt::Args args) {
     Ref count;
     rt::FrameGuard frame(code_steps, M, n, count);
     rt::bind(fn, args, {&n});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
     frame.line = 5;
     count = Ref::share(Obj::small(0));
     frame.line = 6;
-    for (;;) {
+    for (;; BELLA_LOOK()) {
         frame.line = 6;
         t1 = rt::load_fast(n, "n");
         t2 = rt::compare(rt::CmpOp::Ne, t1.get(), Obj::small(1));

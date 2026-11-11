@@ -205,6 +205,8 @@ def _optional_attr(value: object, name: str) -> object:   # PyObject_GetOptional
 
 
 def _fail(code: int, filename: object = _ABSENT) -> None:   # PyErr_SetFromErrnoWithFilenameObject
+    if code == _EINTR:                           # "if (i == EINTR && PyErr_CheckSignals()) return NULL;" (Python/errors.c)
+        _sys("check")
     if filename is _ABSENT:
         raise OSError(code, _sys("strerror", code))
     raise OSError(code, _sys("strerror", code), filename)
@@ -1031,7 +1033,7 @@ class FileIO(_RawIOBase):
 # ---- BufferedReader, BufferedWriter, BufferedRandom (bufferedio.c): one state, as the C's `buffered` struct ----
 
 _BUFFERED_SLOTS = ("_a_raw", "_b_ok", "_c_detached", "_d_readable", "_e_writable", "_f_buffer", "_g_buffer_size", "_h_pos", "_i_raw_pos", "_j_read_end",
-                   "_k_write_pos", "_l_write_end", "_m_abs_pos", "_n_buffer_mask", "_o_in_repr", "_finalizing")
+                   "_k_write_pos", "_l_write_end", "_m_abs_pos", "_n_buffer_mask", "_o_in_repr", "_p_owner", "_finalizing")
 
 
 class _Buffered:                                 # the shape of the three classes' state, for the functions below; never a base
@@ -1050,6 +1052,7 @@ class _Buffered:                                 # the shape of the three classe
     _m_abs_pos: int
     _n_buffer_mask: int
     _o_in_repr: bool
+    _p_owner: bool                               # the lock's `owner`: a method of the object is under way (ENTER_BUFFERED)
     _finalizing: bool
 
 
@@ -1067,8 +1070,15 @@ def _bf_new(cls: type) -> _Buffered:             # the struct's zero state: `ok`
     self._m_abs_pos = -1
     self._n_buffer_mask = 0
     self._o_in_repr = False
+    self._p_owner = False
     self._finalizing = False
     return self
+
+
+def _bf_enter(self: _Buffered) -> None:          # ENTER_BUFFERED; LEAVE_BUFFERED is `self._p_owner = False` in a finally
+    if self._p_owner:                            # _enter_buffered_busy: one thread, so a lock that is held is held by this one, which
+        raise RuntimeError("reentrant call inside " + repr(self))   # came back in: a signal's handler, a raw stream's method
+    self._p_owner = True
 
 
 def _bf_check_initialized(self: _Buffered) -> None:   # CHECK_INITIALIZED
@@ -1228,7 +1238,8 @@ def _bf_flush_unlocked(self: _Buffered) -> None:   # _bufferedwriter_flush_unloc
             raise BlockingIOError(_EAGAIN, "write could not complete without blocking", 0)
         self._k_write_pos += n
         self._i_raw_pos = self._k_write_pos
-    _bf_reset_write(self)
+        _sys("check")                            # "Partial writes can return successfully when interrupted by a signal (see write(2)).
+    _bf_reset_write(self)                        # We must run signal handlers before blocking another time, possibly indefinitely."
 
 
 def _bf_flush_and_rewind(self: _Buffered) -> None:   # buffered_flush_and_rewind_unlocked
@@ -1357,32 +1368,36 @@ def _bf_readline(self: _Buffered, limit: int) -> bytes:   # _buffered_readline
     if n == limit:
         self._h_pos += n
         return bytes(self._f_buffer[start:start + n])
-    chunks: list[bytes] = []
-    if n > 0:
-        chunks.append(bytes(self._f_buffer[start:start + n]))
-        self._h_pos += n
-        if limit >= 0:
-            limit -= n
-    if self._e_writable:
-        _bf_flush_and_rewind(self)
-    while True:
-        _bf_reset_read(self)
-        n = _bf_fill_buffer(self)
-        if n <= 0:
-            break
-        if limit >= 0 and n > limit:
-            n = limit
-        found = self._f_buffer.find(b"\n", 0, n)
-        if found >= 0:
-            chunks.append(bytes(self._f_buffer[0:found + 1]))
-            self._h_pos = found + 1
-            break
-        chunks.append(bytes(self._f_buffer[0:n]))
-        if n == limit:
-            self._h_pos = n
-            break
-        if limit >= 0:
-            limit -= n
+    _bf_enter(self)                              # the buffer was looked at unlocked; the raw stream is read locked
+    try:
+        chunks: list[bytes] = []
+        if n > 0:
+            chunks.append(bytes(self._f_buffer[start:start + n]))
+            self._h_pos += n
+            if limit >= 0:
+                limit -= n
+        if self._e_writable:
+            _bf_flush_and_rewind(self)
+        while True:
+            _bf_reset_read(self)
+            n = _bf_fill_buffer(self)
+            if n <= 0:
+                break
+            if limit >= 0 and n > limit:
+                n = limit
+            found = self._f_buffer.find(b"\n", 0, n)
+            if found >= 0:
+                chunks.append(bytes(self._f_buffer[0:found + 1]))
+                self._h_pos = found + 1
+                break
+            chunks.append(bytes(self._f_buffer[0:n]))
+            if n == limit:
+                self._h_pos = n
+                break
+            if limit >= 0:
+                limit -= n
+    finally:
+        self._p_owner = False
     return b"".join(chunks)
 
 
@@ -1442,6 +1457,7 @@ def _bf_write(self: _Buffered, data: bytes) -> int:   # _io_BufferedWriter_write
             break
         written += n
         remaining -= n
+        _sys("check")                            # the same, after each raw write of a large write
     if self._d_readable:
         _bf_reset_read(self)
     if remaining > 0:
@@ -1469,35 +1485,39 @@ def _bf_readinto_generic(self: _Buffered, b: object, readinto1: bool, shown: str
         target[0:n] = self._f_buffer[self._h_pos:self._h_pos + n]
         self._h_pos += n
         written = n
-    if self._e_writable:
-        _bf_flush_and_rewind(self)
-    _bf_reset_read(self)
-    self._h_pos = 0
-    remaining = length - written
-    while remaining > 0:
-        if remaining > self._g_buffer_size:
-            n = _bf_raw_read(self, written, remaining, target)
-        elif not (readinto1 and written):
-            n = _bf_fill_buffer(self)
-            if n > 0:
-                if n > remaining:
-                    n = remaining
-                target[written:written + n] = self._f_buffer[self._h_pos:self._h_pos + n]
-                self._h_pos += n
+    _bf_enter(self)
+    try:
+        if self._e_writable:
+            _bf_flush_and_rewind(self)
+        _bf_reset_read(self)
+        self._h_pos = 0
+        remaining = length - written
+        while remaining > 0:
+            if remaining > self._g_buffer_size:
+                n = _bf_raw_read(self, written, remaining, target)
+            elif not (readinto1 and written):
+                n = _bf_fill_buffer(self)
+                if n > 0:
+                    if n > remaining:
+                        n = remaining
+                    target[written:written + n] = self._f_buffer[self._h_pos:self._h_pos + n]
+                    self._h_pos += n
+                    written += n
+                    remaining -= n
+                    continue
+            else:
+                n = 0
+            if n == 0 or (n == -2 and written > 0):
+                break
+            if n < 0:
+                return None
+            if readinto1:
                 written += n
-                remaining -= n
-                continue
-        else:
-            n = 0
-        if n == 0 or (n == -2 and written > 0):
-            break
-        if n < 0:
-            return None
-        if readinto1:
+                break
             written += n
-            break
-        written += n
-        remaining -= n
+            remaining -= n
+    finally:
+        self._p_owner = False
     return written
 
 
@@ -1558,11 +1578,19 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
             raise ValueError("read length must be non-negative or -1")
         _bf_check_closed(self, "read of closed file")
         if size == -1:
-            return _bf_read_all(self)
-        res = _bf_read_fast(self, size)
+            _bf_enter(self)
+            try:
+                return _bf_read_all(self)
+            finally:
+                self._p_owner = False
+        res = _bf_read_fast(self, size)          # unlocked, as the C's
         if res is not None:
             return res
-        return _bf_read_generic(self, size)
+        _bf_enter(self)
+        try:
+            return _bf_read_generic(self, size)
+        finally:
+            self._p_owner = False
 
     def read1(*args: object, **kwds: object) -> object:
         n = _positional("read1", shown + ".read1", args, kwds, 0, 1)
@@ -1577,11 +1605,15 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         have = _bf_readahead(self)
         if have > 0:
             return _bf_read_fast(self, min(have, size))
-        if self._e_writable:
-            _bf_flush_and_rewind(self)
-        _bf_reset_read(self)
-        out = bytearray(size)
-        r = _bf_raw_read(self, 0, size, out)
+        _bf_enter(self)
+        try:
+            if self._e_writable:
+                _bf_flush_and_rewind(self)
+            _bf_reset_read(self)
+            out = bytearray(size)
+            r = _bf_raw_read(self, 0, size, out)
+        finally:
+            self._p_owner = False
         if r == -2:
             r = 0
         return bytes(out[:r])
@@ -1593,9 +1625,13 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
             _ssize(args[1])
         _bf_check_initialized(self)
         _bf_check_closed(self, "peek of closed file")
-        if self._e_writable:
-            _bf_flush_and_rewind(self)
-        return _bf_peek_unlocked(self)
+        _bf_enter(self)
+        try:
+            if self._e_writable:
+                _bf_flush_and_rewind(self)
+            return _bf_peek_unlocked(self)
+        finally:
+            self._p_owner = False
 
     def readinto(*args: object, **kwds: object) -> object:
         b = _one(shown + ".readinto", args, kwds)
@@ -1617,7 +1653,11 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         self: _Buffered = args[0]  # type: ignore[assignment]
         data = _buffer(b)
         _bf_check_initialized(self)
-        return _bf_write(self, data)
+        _bf_enter(self)                          # and only then "write to closed file" (gh-31976: the check after the lock)
+        try:
+            return _bf_write(self, data)
+        finally:
+            self._p_owner = False
 
     def flush(*args: object, **kwds: object) -> object:
         _noargs(shown + ".flush", args, kwds)
@@ -1626,7 +1666,11 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         if not can_write:                        # _io__Buffered_simple_flush: the reader's flush is the raw's
             return self._a_raw.flush()  # type: ignore[attr-defined]
         _bf_check_closed(self, "flush of closed file")
-        _bf_flush_and_rewind(self)
+        _bf_enter(self)
+        try:
+            _bf_flush_and_rewind(self)
+        finally:
+            self._p_owner = False
         return None
 
     def tell(*args: object, **kwds: object) -> int:
@@ -1657,14 +1701,18 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
                     if current - avail + offset < 0:
                         return 0
                     return current - avail + offset
-        if self._e_writable:
-            _bf_flush_unlocked(self)
-        if whence == 1:
-            target -= _bf_raw_offset(self)
-        res = _bf_raw_seek(self, target, whence)
-        self._i_raw_pos = -1
-        if self._d_readable:
-            _bf_reset_read(self)
+        _bf_enter(self)                          # after the fast way within the buffer, which is unlocked
+        try:
+            if self._e_writable:
+                _bf_flush_unlocked(self)
+            if whence == 1:
+                target -= _bf_raw_offset(self)
+            res = _bf_raw_seek(self, target, whence)
+            self._i_raw_pos = -1
+            if self._d_readable:
+                _bf_reset_read(self)
+        finally:
+            self._p_owner = False
         return res
 
     def truncate(*args: object, **kwds: object) -> object:
@@ -1675,27 +1723,36 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         _bf_check_closed(self, "truncate of closed file")
         if not self._e_writable:
             _unsupported("truncate")
-        _bf_flush_and_rewind(self)
-        res = self._a_raw.truncate(pos)  # type: ignore[attr-defined]
+        _bf_enter(self)
         try:
-            _bf_raw_tell(self)
-        except BaseException:  # noqa: BLE001, S110
-            pass
+            _bf_flush_and_rewind(self)
+            res = self._a_raw.truncate(pos)  # type: ignore[attr-defined]
+            try:
+                _bf_raw_tell(self)
+            except BaseException:  # noqa: BLE001, S110
+                pass
+        finally:
+            self._p_owner = False
         return res
 
     def close(*args: object, **kwds: object) -> object:
         _noargs(shown + ".close", args, kwds)
         self: _Buffered = args[0]  # type: ignore[assignment]
         _bf_check_initialized(self)
-        if _bf_closed(self):
-            return None
-        if self._finalizing:
-            _dealloc_warn(self, self)            # _io__Buffered__dealloc_warn_impl itself, not what a subclass calls so
+        _bf_enter(self)
+        try:
+            if _bf_closed(self):
+                return None
+            if self._finalizing:
+                _dealloc_warn(self, self)        # _io__Buffered__dealloc_warn_impl itself, not what a subclass calls so
+        finally:
+            self._p_owner = False                # "flush() will most probably re-take the lock, so drop it first"
         exc: BaseException | None = None
         try:
             self.flush()  # type: ignore[attr-defined]
         except BaseException as e:  # noqa: BLE001
             exc = e
+        _bf_enter(self)
         try:
             res = self._a_raw.close()  # type: ignore[attr-defined]
         except BaseException as e:
@@ -1706,6 +1763,7 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
             self._f_buffer = bytearray()
             self._j_read_end = 0
             self._h_pos = 0
+            self._p_owner = False
         if exc is not None:
             raise exc
         return res

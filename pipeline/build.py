@@ -3,6 +3,7 @@
 
     python3 pipeline/build.py PROGRAM.py [-o BINARY]           build; print the binary's path
     python3 pipeline/build.py --run PROGRAM.py [ARGS...]        build, then run it as the program
+    --fidelity=exact|lean  ahead of PROGRAM.py (anywhere without --run): which build; exact when not given
 
 The program is lowered (frontend, to-anf, lifetimes, wf2) and emitted by pipeline/backend/cpp.py;
 the runtime library is runtime/src/*.cpp and the prelude (runtime/prelude/*.py, compiled the
@@ -11,6 +12,20 @@ module of the program's own that an import can reach (pipeline/closed_world.py) 
 own, compiled once per content hash; the main unit hands the runtime their registry (spec
 section 8). A construct the pipeline refuses stops the build with exit 70, as the evaluators
 refuse.
+
+A build is exact or lean (its fidelity; docs/DECISIONS.md, 2026-11-11). Exact is the default and is
+CPython's behaviour up to the registered deviations (docs/deviations.toml). Lean leaves out the looks
+for a signal that the units of the program and of the standard library take at a function's entry
+and at a loop's turn: those units are compiled with -DBELLA_LEAN, under which bella/runtime.hpp makes
+BELLA_LOOK() nothing; the text, the runtime library and the prelude are the same in both, and one
+program built both ways keeps both binaries. A lean program differs in two more things, and neither
+waits for a signal from outside: it starts with SIGINT as it found it, default_int_handler not
+installed (where that is the default action, Ctrl-C ends the program at once and
+`_thread.interrupt_main()` does nothing), and a handler is given None for its frame. The looks the
+runtime library takes itself, its prelude's among them, are in both builds. All of this is one
+deviation. On the command line --fidelity says which, else the environment's BELLA_FIDELITY (for the
+harnesses, whose runner is this command), else exact; build() takes it as an argument and reads no
+environment.
 """
 from __future__ import annotations
 
@@ -77,7 +92,10 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "_statistics.py", ROOT / "runtime" / "prelude" / "_heapq.py",
                     ROOT / "runtime" / "prelude" / "_opcode.py", ROOT / "runtime" / "prelude" / "_warnings.py",
                     ROOT / "runtime" / "prelude" / "_tokenize.py", ROOT / "runtime" / "prelude" / "_imp.py",
-                    ROOT / "runtime" / "prelude" / "atexit.py"]
+                    ROOT / "runtime" / "prelude" / "atexit.py", ROOT / "runtime" / "prelude" / "_signal.py"]
+# standard-library modules that stand for a C accelerator CPython has and the closure omits (manifest.toml [adaptations],
+# decimal and datetime): CPython's C looks for signals nowhere in them, so their units have no looks (pipeline/backend/cpp.py)
+LOOK_FREE = frozenset({"_pydecimal", "_pydatetime"})
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 # -ffp-contract=off: a*b + c is two operations with two roundings, as the reference computes it. A compiler that
@@ -93,10 +111,18 @@ PROGRAM_FLAGS = ["-O1", "-w", "-fno-tree-pta", *FP_FLAGS]
 PRELUDE_FLAGS = ["-O1", "-g", "-fno-tree-pta", *FP_FLAGS]     # the prelude's units are lowered Python, the program's kind of code: -O2 takes GCC 16
 #                                                               nine minutes on _io.py's unit alone, -O1 under a minute
 LIBRARY_FLAGS = ["-O0", "-w", *FP_FLAGS]      # the standard library's units: a fifth of the compile time; speed is not a goal yet
+# A build's fidelity. The whole difference is this define, and only build() gives it: to the units compiled from Python
+# sources that are not the prelude's (the program's, the standard library's, the staged texts) and to the main unit, which
+# hands the runtime BELLA_IS_LEAN. runtime_library() takes no fidelity: the library and the prelude are one for both, so
+# nothing in the headers but the macros BELLA_LOOK and BELLA_IS_LEAN may depend on the define (an inline function that did
+# would be two definitions of one name, and the linker keeps either). The emitted text is the same in both, so the lowered
+# cache is shared, and the three names are escaped in a program's identifiers (pipeline/backend/cpp.py, _KEYWORDS).
+FIDELITIES = ("exact", "lean")
+LEAN_DEFINE = "-DBELLA_LEAN"
 
 
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mode: str = "exec",
-           future: frozenset[str] = frozenset()) -> str:
+           future: frozenset[str] = frozenset(), looks: bool = True) -> str:
     # the passes walk the tree by recursion, and a chain of operators, calls or elif branches is as deep as it is long: the
     # limit eval1's run has (pipeline/l1/run.py), and past it a refusal by name, not a traceback (review F17 #14)
     limit = sys.getrecursionlimit()
@@ -104,23 +130,24 @@ def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mo
     try:
         module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future)))
         wf2.check(module, lifetimes=True)
-        return emit_module(module, namespace, filename, prelude)
+        return emit_module(module, namespace, filename, prelude, looks)
     except RecursionError:
         raise Unsupported(f"{filename}: a chain of operators, calls or branches too long for the compiler's passes") from None
     finally:
         sys.setrecursionlimit(limit)
 
 
-def lowered_unit(source: str, filename: str, namespace: str, mode: str = "exec", future: frozenset[str] = frozenset()) -> str:
+def lowered_unit(source: str, filename: str, namespace: str, mode: str = "exec", future: frozenset[str] = frozenset(),
+                 looks: bool = True) -> str:
     """to_cpp, kept under build/compiled/lowered by what decides its text: a closure's modules are
     the same for every program that imports them, and lowering them takes seconds each time. The
     compiler's macros are part of it: they decide which names the emitter escapes."""
     key = _key(source.encode(), filename.encode(), namespace.encode(), mode.encode(), " ".join(sorted(future)).encode(), *_pipeline_bytes(),
-               " ".join(sorted(header_macros())).encode())
+               " ".join(sorted(header_macros())).encode(), b"looks" if looks else b"no looks")
     kept = BUILD / "lowered" / f"{namespace.replace('::', '_')}-{key}.cpp"
     if kept.exists():
         return kept.read_text(encoding="utf-8")
-    text = to_cpp(source, filename, namespace, mode=mode, future=future)
+    text = to_cpp(source, filename, namespace, mode=mode, future=future, looks=looks)
     kept.parent.mkdir(parents=True, exist_ok=True)
     tmp = kept.with_name(kept.name + f".{os.getpid()}.tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -165,11 +192,15 @@ class _Lock:
         self.f.close()
 
 
+def _runtime_key(cxx: str, std: str) -> str:
+    """What the runtime library is built from. No fidelity: one library serves an exact build and a lean one."""
+    return _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED, *VENDORED_C, *VENDORED_H]), *(p.read_bytes() for p, _ in PRELUDE),
+                *(p.read_bytes() for p in NATIVE_IN_PYTHON), *_pipeline_bytes(),
+                " ".join([cxx, std, *RUNTIME_FLAGS, *PRELUDE_FLAGS, *VENDORED_FLAGS]).encode())
+
+
 def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
-    key = _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED, *VENDORED_C, *VENDORED_H]), *(p.read_bytes() for p, _ in PRELUDE),
-               *(p.read_bytes() for p in NATIVE_IN_PYTHON), *_pipeline_bytes(),
-               " ".join([cxx, std, *RUNTIME_FLAGS, *PRELUDE_FLAGS, *VENDORED_FLAGS]).encode())
-    out = BUILD / f"runtime-{key}"
+    out = BUILD / f"runtime-{_runtime_key(cxx, std)}"
     lib = out / "libbella.a"
     with _Lock(BUILD / "runtime.lock"):
         if lib.exists():
@@ -467,15 +498,26 @@ def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, 
             '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + staged[0] +
             "\nint main(int argc, char** argv) {\n" + staged[1] +
             f"    ::bella::set_stdlib_dir({c_string(getattr(sys, '_stdlib_dir', None) or str(STDLIB))});\n" +
+            "    ::bella::set_lean(BELLA_IS_LEAN);\n" +      # the header's, 1 under -DBELLA_LEAN and 0 without: one text for both builds
             f"    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {c_string(os.path.abspath(main_file))},\n"
             f"                             {c_string(str(main_file.resolve().parent))}, {{{bodies}}},\n"
             f"                             std::span<const ::bella::ModuleEntry>(MODULES, {count}));\n}}\n")
 
 
+def _unit_flags(flags: list[str], fidelity: str) -> list[str]:
+    """The flags of a unit build() compiles: a lean build's carry the define, an exact build's are the flags as they
+    were. They are part of the unit's key (_object_key), so the two builds never share an object."""
+    return [*flags, LEAN_DEFINE] if fidelity == "lean" else flags
+
+
+def _object_key(cpp: str, cxx: str, std: str, flags: list[str]) -> str:
+    return _key(cpp.encode(), *(h.read_bytes() for h in sorted(INCLUDE.rglob("*.hpp"))), " ".join([cxx, std, *flags]).encode())
+
+
 def _object(cpp: str, name: str, cxx: str, std: str, flags: list[str] = PROGRAM_FLAGS) -> Path:
     """A unit compiled once per content: its object file under build/compiled/units, kept across
     changes to the runtime's sources, since it depends only on its text, the headers and the flags."""
-    key = _key(cpp.encode(), *(h.read_bytes() for h in sorted(INCLUDE.rglob("*.hpp"))), " ".join([cxx, std, *flags]).encode())
+    key = _object_key(cpp, cxx, std, flags)
     obj = BUILD / "units" / f"{name}-{key}.o"
     if obj.exists():
         return obj
@@ -490,9 +532,13 @@ def _object(cpp: str, name: str, cxx: str, std: str, flags: list[str] = PROGRAM_
     return obj
 
 
-def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Path | None = None, notes: bool = True) -> Path:
-    """The program's binary; `keep`: also write the main module's C++ there (the committed examples)."""
-    lib = runtime_library(cxx, std)
+def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Path | None = None, notes: bool = True, *,
+          fidelity: str = "exact") -> Path:
+    """The program's binary; `keep`: also write the main module's C++ there (the committed examples). `fidelity`: "exact"
+    or "lean" (FIDELITIES); the environment is not asked here, so a caller gets the build it names."""
+    if fidelity not in FIDELITIES:
+        raise ValueError(f"fidelity {fidelity!r}: a build is {' or '.join(FIDELITIES)}")
+    lib = runtime_library(cxx, std)              # the same library for both
     modules = find_program_modules(program)
     main_cpp = to_cpp(read_source(program), filename, "bella::m_main")
     if keep is not None:
@@ -504,7 +550,8 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
             # a frozen module's code says `<frozen os>`, as CPython's does
             shown = f"<frozen {m.name}>" if m.frozen else str(m.origin or m.path)
             library = m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB)
-            units.append((lowered_unit(read_source(m.path), shown, namespace_of(m.name)), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS))
+            units.append((lowered_unit(read_source(m.path), shown, namespace_of(m.name), looks=m.name not in LOOK_FREE), m.name,
+                          LIBRARY_FLAGS if library else PROGRAM_FLAGS))
     said: list[str] = []
     rows, refused, unstaged, compiles = staged_tables(program, modules, said)
     for line in said if notes else ():           # not under --run, whose streams are the program's own
@@ -517,11 +564,10 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
         units.append((lowered_unit(made.text, made.filename, name, made.mode, made.future), name.rpartition("::")[2], LIBRARY_FLAGS))
     units.append((main_unit(program, modules, _staged_cpp(rows, refused, unstaged, compiles)), f"{program.stem}-main", PROGRAM_FLAGS))
     with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
-        objs = list(pool.map(lambda u: _object(u[0], u[1], cxx, std, u[2]), units))
+        objs = list(pool.map(lambda u: _object(u[0], u[1], cxx, std, _unit_flags(u[2], fidelity)), units))
     # the runtime's debug information is most of a binary, and every program would carry a copy
     strip = [] if os.environ.get("BELLA_KEEP_DEBUG") else ["-Wl,--strip-debug"]
-    key = _key(*(o.name.encode() for o in objs), lib.parent.name.encode(), " ".join(strip).encode())
-    out = BUILD / f"{program.stem}-{key}"
+    out = BUILD / f"{program.stem}-{_link_key(objs, lib, strip, fidelity)}"
     exe = out / program.stem
     if exe.exists():
         return exe
@@ -532,14 +578,27 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
     if proc.returncode != 0:
         raise RuntimeError(f"{cxx} failed linking {program}:\n{proc.stderr[-4000:]}")
     os.replace(tmp, exe)
-    _forget_previous(program, out)
+    _forget_previous(program, out, fidelity)
     return exe
 
 
-def _forget_previous(program: Path, current: Path) -> None:
-    """A program rebuilt replaces its previous binary: each change to the runtime would otherwise
+def _link_key(objs: list[Path], lib: Path, strip: list[str], fidelity: str) -> str:
+    """A binary's key: its objects and its library by their names, which hold their keys, and how it is linked. A lean
+    build's objects differ from an exact one's already, by their flags; the fidelity is named as well, so that the two
+    binaries of one program are two by what this says and not by that reasoning."""
+    return _key(*(o.name.encode() for o in objs), lib.parent.name.encode(), " ".join(strip).encode(), fidelity.encode())
+
+
+def _pointer(program: Path, fidelity: str) -> Path:
+    """Where a program's current binary is noted, one note per fidelity: built both ways, a program keeps both binaries.
+    An exact build's note is where it was before there was a choice, so the binary a program had is still replaced."""
+    return BUILD / "last" / _key(str(program.resolve()).encode(), *([] if fidelity == "exact" else [fidelity.encode()]))
+
+
+def _forget_previous(program: Path, current: Path, fidelity: str = "exact") -> None:
+    """A program rebuilt replaces its previous binary of the same fidelity: each change to the runtime would otherwise
     leave one more copy of every program under build/compiled."""
-    pointer = BUILD / "last" / _key(str(program.resolve()).encode())
+    pointer = _pointer(program, fidelity)
     pointer.parent.mkdir(parents=True, exist_ok=True)
     previous = pointer.read_text(encoding="utf-8") if pointer.exists() else ""
     if previous and previous != current.name:
@@ -547,10 +606,33 @@ def _forget_previous(program: Path, current: Path) -> None:
     pointer.write_text(current.name, encoding="utf-8")
 
 
+def _fidelity_option(argv: list[str], leading: bool) -> tuple[str | None, list[str]]:
+    """`--fidelity=WHICH` or `--fidelity WHICH` taken out of the arguments, and the arguments without it; the last one
+    given counts. `leading`: only ahead of the first other argument (under --run, what follows the program is the
+    program's own); otherwise anywhere, as -o is."""
+    chosen: str | None = None
+    kept: list[str] = []
+    i = 0
+    while i < len(argv):
+        if argv[i].startswith("--fidelity="):
+            chosen, i = argv[i].partition("=")[2], i + 1
+        elif argv[i] == "--fidelity":
+            chosen, i = (argv[i + 1] if i + 1 < len(argv) else ""), i + 2
+        elif leading:
+            break
+        else:
+            kept.append(argv[i])
+            i += 1
+    return chosen, kept + argv[i:]
+
+
 def main(argv: list[str]) -> int:
+    chosen, argv = _fidelity_option(argv, leading=True)          # ahead of --run
     run = argv[:1] == ["--run"]
     if run:
         argv = argv[1:]
+    late, argv = _fidelity_option(argv, leading=run)             # after --run; anywhere when the command only builds
+    chosen = late if late is not None else chosen
     out_path = None
     if not run and "-o" in argv:
         i = argv.index("-o")
@@ -559,9 +641,16 @@ def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__, file=sys.stderr)
         return 2
+    # the option, else the environment (an empty value is no value, as BELLA_JOBS reads its own), else exact. A value that
+    # is neither stops here: falling back to exact would run the wrong build under the right name
+    fidelity = chosen if chosen is not None else os.environ.get("BELLA_FIDELITY") or "exact"
+    if fidelity not in FIDELITIES:
+        print(f"bella: {'--fidelity' if chosen is not None else 'BELLA_FIDELITY'} is {fidelity!r}: a build is {' or '.join(FIDELITIES)}",
+              file=sys.stderr)
+        return 2
     program = Path(argv[0])
     try:
-        exe = build(program, os.path.abspath(argv[0]), notes=not run)   # co_filename: the absolute path, as CPython 3.15 has it
+        exe = build(program, os.path.abspath(argv[0]), notes=not run, fidelity=fidelity)   # co_filename: the absolute path, as CPython 3.15 has it
     except (Unsupported, SyntaxError) as exc:
         print(f"bella: refused: {exc}", file=sys.stderr)
         return REFUSED

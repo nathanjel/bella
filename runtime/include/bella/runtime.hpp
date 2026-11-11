@@ -451,6 +451,7 @@ void fill_warnings(Module* m);                    // runtime/prelude/_warnings.p
 void fill_tokenize(Module* m);                    // runtime/prelude/_tokenize.py
 void fill_imp(Module* m);                         // runtime/prelude/_imp.py
 void fill_atexit(Module* m);                      // runtime/prelude/atexit.py
+void fill_signal(Module* m);                      // runtime/prelude/_signal.py, over runtime/src/signals.cpp
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
@@ -1138,6 +1139,29 @@ Ref i_tokenizer(Obj, Args a);                                // runtime/src/toke
 Ref i_bella_import_warning(Obj, Args a);
 Ref i_bella_set_lazy_attributes(Obj, Args a);
 
+// ---- signals (runtime/src/signals.cpp: Modules/signalmodule.c's C half, and the evaluation loop's handle_signals) ----
+// A signal leaves two notes, as CPython's does: is_tripped, which check_signals() reads, and this one, the eval breaker as
+// generated code tests it: CPython's signals bit and pending calls' bit in one word (a failed wakeup write queues the one
+// pending call there is). It is declared volatile int and not std::sig_atomic_t (signals.cpp asserts they are one type) so that
+// <csignal> stays out of this header: its macros decide which Python names the emitter renames.
+namespace detail {
+extern volatile int signal_breaker;
+}
+void check_signals();                            // PyErr_CheckSignals, where the C calls it itself: the handlers of the signals that came, lowest number first; one that raises leaves the rest tripped
+void look_for_signals();                         // the evaluation loop's look, the breaker already tested (BELLA_LOOK): the signals bit cleared, check_signals(), set again if a handler raised; then the reports of failed wakeup writes queued when it began
+void look_for_signals_now();                     // Py_MakePendingCalls: the same, whatever the breaker says (before and after the program, a lock's wait)
+void finish_pending_calls();                     // _Py_FinishPendingCalls: the queued reports of failed wakeup writes, all of them, and no handler (run_main, before atexit)
+inline void look_if_noted() {                    // the look when a call is over, in the runtime's own code and in both fidelities (os.killpg, a wait)
+    if (detail::signal_breaker) [[unlikely]] look_for_signals();
+}
+void look_if_lean();                             // look_if_noted() in a lean build alone: before a call that may wait, where CPython has no look,
+                                                 // since its generated code looked at the last entry or turn (docs/deviations.toml D-24)
+void set_lean(bool lean);                        // the fidelity the program's units were compiled with (pipeline/build.py main_unit: BELLA_IS_LEAN), before run_main
+void signals_init();                             // _PySignal_Init: _signal imported, which reads the dispositions and, in an exact build, takes SIGINT if it was the default's
+void signals_fini();                             // _PySignal_Fini: the table emptied, each slot before its object goes; a signal Python handled is the default's again
+int exit_by_sigint();                            // exit_sigint (Modules/main.c): SIGINT at its default and sent to the process itself; 130 if that came back
+Ref i_signals(Obj, Args a);                      // _signal.py's, and _thread.interrupt_main's: the signal core, by name
+
 // A module of the prelude, run before the program as the module it names (builtins, or
 // _frozen_importlib for runtime/prelude/bootstrap.py).
 struct PreludeModule {
@@ -1151,3 +1175,18 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
              std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules);
 
 }  // namespace bella
+
+// The look generated code takes where CPython's evaluation loop does: at a function's entry (RESUME) and at a loop's turn
+// (JUMP_BACKWARD). It is text and not an inline function, so that the two fidelities are one runtime library: -DBELLA_LEAN,
+// given to the units compiled from the program's and the standard library's sources and never to the prelude's or the
+// runtime's, leaves the test out; BELLA_IS_LEAN is what the program's main unit hands to set_lean, by one text in both
+// builds. An expression and not design point 2's `if` statement: it serves the emitter's statement (`BELLA_LOOK();`, also
+// after a label) and a for statement's iteration expression alike, and has no `else` to capture.
+#ifdef BELLA_LEAN
+#undef BELLA_LEAN                                // the build's -D goes no further than this header: a program may have a name spelled so
+#define BELLA_IS_LEAN 1
+#define BELLA_LOOK() ((void)0)
+#else
+#define BELLA_IS_LEAN 0
+#define BELLA_LOOK() (__builtin_expect(::bella::detail::signal_breaker != 0, 0) ? ::bella::look_for_signals() : (void)0)
+#endif

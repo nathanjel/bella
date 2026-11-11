@@ -15,6 +15,16 @@ order, and `frame.line = n` marks the source lines. The rules (docs/emitter.md):
   released where L2 says (after the `finally` blocks nested in the loop).
 * What L2 has that the runtime lacks yet compiles to a refusal where it would run (P-1):
   generators and class bodies until steps 3b and 3a.2.
+* Where CPython's eval loop looks for signals, the text says `BELLA_LOOK()` (runtime.hpp, an expression;
+  nothing in a lean build): when a frame starts, its arguments bound (RESUME: a function, a lambda, a
+  class or module body, a generator's first resume and each resume after a plain `yield`), and at a
+  JUMP_BACKWARD: where a loop turns back (the loop's `for (;; BELLA_LOOK())`, which C++ runs after the
+  body and at `continue`, never before the first turn or on the way out), and after a loop that a
+  `break` CPython compiles backward has left (L2's `Break.looks`). Not where CPython has no look: an
+  inlined comprehension's entry, a generator's making, a resume into `yield from`, by `throw()` or by
+  `close()`; nor in the prelude (design item 2), which stands for CPython's C and for its importlib,
+  whose looks a compiled program does not repeat, nor in a library module that stands for a C
+  accelerator (pipeline/build.py, LOOK_FREE).
 """
 from __future__ import annotations
 
@@ -31,6 +41,11 @@ from pathlib import Path
 from pipeline.l1.grammar import Unsupported
 from pipeline.l2 import grammar as G
 
+# The last three are macros in a unit. BELLA_LEAN is the command line's, and only a lean build's units have it
+# (pipeline/build.py, LEAN_DEFINE): header_macros() asks the compiler with no define and never lists it, so without its
+# entry here a local of that name would be the program's in an exact build and the preprocessor's in a lean one, unless
+# the header undefines it first, which the emitter does not count on. BELLA_LOOK and BELLA_IS_LEAN are the header's, and
+# header_macros() lists them wherever a compiler is found; they are here so that the text is the same where none is.
 _KEYWORDS = frozenset("""alignas alignof and and_eq asm auto bitand bitor bool break case catch char char8_t char16_t
 char32_t class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield
 decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline
@@ -38,10 +53,11 @@ int long mutable namespace new noexcept not not_eq nullptr operator or or_eq pri
 reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this
 thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq
 final override import module contract_assert main std rt Obj Ref Args fn args frame stack_values ns M ret init_constants module_body
+BELLA_LEAN BELLA_LOOK BELLA_IS_LEAN
 """.split())
 # Every name the emitter makes matches this (review 2026-11-03, A9-20); a Python name that matches
 # it, or that C++ reserves, is escaped.
-_COMPILER_NAME = re.compile(r"^(t\d+|e\d+|h\d+|u\d+|gen1|cur1|fin\d+|ended\d+|raised\d+|after\d+|K_\d+|S_\w*|code_\w*|f_\w*|py\w*)$")
+_COMPILER_NAME = re.compile(r"^(t\d+|e\d+|h\d+|u\d+|gen1|cur1|fin\d+|ended\d+|raised\d+|after\d+|broke\d+|K_\d+|S_\w*|code_\w*|f_\w*|py\w*)$")
 
 _BINARY = {"+": "Add", "-": "Sub", "*": "Mul", "/": "TrueDiv", "//": "FloorDiv", "%": "Mod", "**": "Pow",
            "<<": "LShift", ">>": "RShift", "&": "And", "|": "Or", "^": "Xor", "@": "MatMul"}
@@ -97,7 +113,7 @@ def c_string(s: str) -> str:
     return '"' + "".join(out) + '"'
 
 
-_RETURN, _BREAK, _CONTINUE, _ENDLOOP = 1, 2, 3, 4      # how a try with a finally was left
+_RETURN, _BREAK, _CONTINUE, _ENDLOOP, _LOOKBREAK = 1, 2, 3, 4, 5      # how a try with a finally was left (5: a break that looks)
 
 
 @dataclass
@@ -107,6 +123,7 @@ class _Exit:
     body: tuple[G.Stmt, ...] = ()                # the finally block, or the cleanup
     holds: tuple[G.Temp, ...] = ()               # a loop's held temporaries
     ended: str | None = None                     # a loop's flag for running its else block
+    broke: str = ""                              # a loop's flag for the look after it, when a break that looks may leave it
     flag: str = ""                               # a finally's completion variable
     completions: set[int] = field(default_factory=set)   # the completions that reached a finally
     restore: int = 0                             # a generator's: the handler row outside this construct
@@ -130,11 +147,12 @@ class _Function:
 
 
 class Emitter:
-    def __init__(self, module: G.Module, namespace: str, filename: str, prelude: bool = False) -> None:
+    def __init__(self, module: G.Module, namespace: str, filename: str, prelude: bool = False, looks: bool = True) -> None:
         self.module = module
         self.namespace = namespace
         self.filename = filename
         self.prelude = prelude                   # the prelude: C functions in CPython, no frames
+        self.looks = looks and not prelude       # BELLA_LOOK where CPython's eval loop looks; not in what stands for its C
         self.consts: dict[tuple[str, object], str] = {}
         self.const_init: list[str] = []
         self.names: dict[str, str] = {}
@@ -319,6 +337,8 @@ class Emitter:
         self.exits: list[_Exit] = []
         self.hidden = _hidden(c)
         self.counter = 0
+        self.brokes = 0                          # the flags of a break that looks: their own numbers, the others keep theirs
+        self.exception_copy = 0                  # inside a finally block's copy for the exception (exception_copy_of)
         self.flat = False
         # PEP 709: an inlined comprehension runs in its enclosing frame, so its lines are that frame's (a warning's stacklevel, a
         # traceback through the enclosing call); its own record is not on the frame chain (review G15 #2)
@@ -378,6 +398,8 @@ class Emitter:
                 return self.out
         if _returns_through_finally(c.body):
             self.out.append("    Ref ret;                                   // a return's value while finally blocks run")
+        if not self.inlined:                     # PEP 709: an inlined comprehension has no RESUME
+            self.look(1)                         # RESUME: the frame is entered and its arguments are bound
         self.region(c.body, 1)
         if G.falls_through(c.body):
             self.out.append("    return rt::none_ref();")
@@ -426,6 +448,8 @@ class Emitter:
                 "            rt::gen_raise_pending(gen1);",
                 "            switch (gen1->pc) {",
                 "            case 0:;"]
+        if self.looks:                           # RESUME: the first resume, never the generator's making
+            out.append("                BELLA_LOOK();")
         out += body
         out += ["            }",
                 "            __builtin_unreachable();",
@@ -491,6 +515,8 @@ class Emitter:
         self.add(indent, f"return {self.take(value)};")
         self.add(indent, f"case {pc}:;")
         self.add(indent, after)
+        self.look(indent)                        # RESUME after a yield; `yield from` has none, nor throw() and close(),
+        #                                          which raise in gen_raise_pending before the switch
 
     def yield_from(self, value: G.Atom, after: str, indent: int) -> None:
         pc = self.new_pc()
@@ -551,7 +577,7 @@ class Emitter:
         self.enter_row(inner, indent)
         self.exits.append(_Exit("handling", row=row, restore=parent))
         self.add(indent, "{")
-        self.region(s.finalbody, indent + 1)
+        self.exception_copy_of(s.finalbody, indent + 1)
         self.add(indent, "}")
         self.exits.pop()
         self.cur = parent
@@ -659,6 +685,13 @@ class Emitter:
     def add(self, indent: int, text: str) -> None:
         self.out.append("    " * indent + text)
 
+    def look(self, indent: int) -> None:
+        """Where CPython's eval loop looks for signals at a frame's start (RESUME). None in a prelude unit (design item
+        2): the prelude stands for CPython's C, and for its importlib, whose looks a compiled program does not repeat;
+        nor in a library module that stands for a C accelerator (pipeline/build.py, LOOK_FREE)."""
+        if self.looks:
+            self.add(indent, "BELLA_LOOK();")
+
     def region(self, body: tuple[G.Stmt, ...], indent: int) -> None:
         """A block that owns its temporaries: declared here, so unwinding destroys them."""
         temps = sorted(_assigned(body))
@@ -668,6 +701,15 @@ class Emitter:
         elif temps:
             self.add(indent, "Ref " + ", ".join(f"t{n}" for n in temps) + ";")
         self.block(body, indent)
+
+    def exception_copy_of(self, body: tuple[G.Stmt, ...], indent: int) -> None:
+        """A finally block's copy for the exception. CPython has one too, laid out with the code only an exception
+        reaches (push_cold_blocks_to_end), and ending in RERAISE: a loop in it leaves to that code, forward, so its
+        breaks never look (a break in a finally block that leaves it is refused, D-10, so a break here is such a
+        loop's). Every other copy is the one break CPython has, and L2's Break.looks is the answer for it."""
+        self.exception_copy += 1
+        self.region(body, indent)
+        self.exception_copy -= 1
 
     def block(self, body: tuple[G.Stmt, ...], indent: int) -> None:
         for s in body:
@@ -727,19 +769,38 @@ class Emitter:
                     self.add(indent, f"{ended} = 0;")
                 elif ended:
                     self.add(indent, f"bool {ended} = false;")
-                self.add(indent, "for (;;) {")
-                self.exits.append(_Exit("loop", holds=holds, ended=ended))
+                # JUMP_BACKWARD looks: after the body and at `continue`, never before the first turn or on the way
+                # out, and outside every try of the body: a for statement's third expression, exactly. A body that
+                # always returns, raises or breaks has no jump back
+                turns = self.looks and (G.falls_through(body) or G.leaves_by(body, G.Continue))
+                loop = _Exit("loop", holds=holds, ended=ended)
+                # a break CPython compiles backward looks after the unwinding, at the jump; here that is after the loop,
+                # outside the handler's catch, before the else test and what follows (the flag says which break left).
+                # A loop in a finally block has two copies here as in CPython; in the exception's, its breaks jump forward
+                if self.looks and not self.exception_copy and _looking_break(body):
+                    self.brokes += 1
+                    loop.broke = f"broke{self.brokes}"
+                    if self.flat:
+                        self.int_slots.append(loop.broke)
+                        self.add(indent, f"{loop.broke} = 0;")
+                    else:
+                        self.add(indent, f"bool {loop.broke} = false;")
+                self.add(indent, "for (;; BELLA_LOOK()) {" if turns else "for (;;) {")
+                self.exits.append(loop)
                 self.block(body, indent + 1)
                 self.exits.pop()
                 self.add(indent, "}")
+                if loop.broke:
+                    self.add(indent, f"if ({loop.broke}) BELLA_LOOK();")
                 if ended:
                     self.add(indent, f"if ({ended}) {{")
                     self.block(orelse, indent + 1)
                     self.add(indent, "}")
             case G.EndLoop():
                 self.leave(_ENDLOOP, len(self.exits) - 1, indent)
-            case G.Break():
-                self.leave(_BREAK, len(self.exits) - 1, indent)
+            case G.Break(looks):
+                loop = next(ex for ex in reversed(self.exits) if ex.kind == "loop")
+                self.leave(_LOOKBREAK if looks and loop.broke else _BREAK, len(self.exits) - 1, indent)
             case G.Continue():
                 self.leave(_CONTINUE, len(self.exits) - 1, indent)
             case G.Return(value):
@@ -786,11 +847,14 @@ class Emitter:
                 for h in ex.holds:
                     self.add(indent, f"t{h.n} = Ref{{}};")
                 continue
-            if kind in (_BREAK, _ENDLOOP):
+            if kind in (_BREAK, _LOOKBREAK, _ENDLOOP):
                 for h in ex.holds:
                     self.add(indent, f"t{h.n} = Ref{{}};")
             if kind == _ENDLOOP and ex.ended:
                 self.add(indent, f"{ex.ended} = true;")
+            if kind == _LOOKBREAK:
+                assert ex.broke, "a break that looks the loop did not expect"
+                self.add(indent, f"{ex.broke} = true;")
             self.add(indent, "continue;" if kind == _CONTINUE else "break;")
             return
         assert kind == _RETURN, "a break or continue outside a loop"
@@ -844,7 +908,7 @@ class Emitter:
             self.add(indent + 2, f"{self.vars[name]} = rt::none_ref();")   # stack values (RL-186)
         self.add(indent + 2, f"rt::Handling {self.aux('h')}({e}.exc);")
         self.add(indent + 2, "{")
-        self.region(s.finalbody, indent + 3)
+        self.exception_copy_of(s.finalbody, indent + 3)
         self.add(indent + 2, "}")
         self.add(indent + 2, f"rt::rethrow({e});")
         self.add(indent + 1, "}")
@@ -1129,6 +1193,20 @@ def _yields(body: tuple[G.Stmt, ...]) -> bool:
     return False
 
 
+def _looking_break(stmts: tuple[G.Stmt, ...]) -> bool:
+    """A break that looks (Break.looks) belongs to the loop these statements are the body of (as G.leaves_by)."""
+    for s in stmts:
+        if isinstance(s, G.Break) and s.looks:
+            return True
+        if isinstance(s, (G.If, G.IfEnd)) and (_looking_break(s.body) or _looking_break(s.orelse)):
+            return True
+        if isinstance(s, G.Loop) and _looking_break(s.orelse):
+            return True
+        if isinstance(s, G.Try) and any(_looking_break(b) for b in (s.body, s.orelse, s.finalbody, *(h.body for h in s.handlers))):
+            return True
+    return False
+
+
 def _all_assigned(body: tuple[G.Stmt, ...]) -> set[int]:
     """The temporaries these statements assign that live in a generator's slots, a region that does not yield being its
     own (its temporaries are on the C++ stack, and unwinding drops them)."""
@@ -1200,5 +1278,5 @@ def _returns_through_finally(body: tuple[G.Stmt, ...], in_finally: bool = False)
     return False
 
 
-def emit_module(module: G.Module, namespace: str, filename: str, prelude: bool = False) -> str:
-    return Emitter(module, namespace, filename, prelude).emit()
+def emit_module(module: G.Module, namespace: str, filename: str, prelude: bool = False, looks: bool = True) -> str:
+    return Emitter(module, namespace, filename, prelude, looks).emit()

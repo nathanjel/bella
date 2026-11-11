@@ -297,7 +297,9 @@ class For(Stmt):
 
 @dataclass(frozen=True)
 class Break(Stmt):
-    pass
+    """`looks`: CPython 3.15.2 compiles this break to JUMP_BACKWARD, so its eval loop looks for signals when the
+    break leaves the loop (the frontend asks CPython's compiler: mark_looking_breaks)."""
+    looks: bool = False
 
 
 @dataclass(frozen=True)

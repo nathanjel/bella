@@ -1,8 +1,9 @@
 """_thread, in Python, for a runtime with one thread (spec section 7, the manifest's shim); see itertools.py beside it.
 
 From Modules/_threadmodule.c, line by line, as far as one thread can tell: a lock the only thread holds has no one
-to release it, so a timed acquire waits out its timeout and says no, and an untimed one would wait for ever, which
-stops by name. Creating a thread stops by name too, with the milestone's (spec section 7): `threading` is [P2+].
+to release it but a signal's handler, so an acquire waits until its timeout, if it has one, or until a handler has
+released the lock or raised; an untimed one that no signal reaches waits for ever, as CPython's does. Creating a thread stops by name
+too, with the milestone's (spec section 7): `threading` is [P2+].
 An RLock's owner and a handle's ident are the thread's ident, as they are in the C.
 """
 
@@ -19,7 +20,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _thread_ident                                # noqa: B018  # PyThread_get_thread_ident_ex
     _native_thread_id                            # noqa: B018  # PyThread_get_thread_native_id
-    _sleep_ns                                    # noqa: B018  # a wait no other thread can end
+    _signals                                     # noqa: B018  # the signal core (runtime/src/signals.cpp): a lock's wait, interrupt_main
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
@@ -36,7 +37,7 @@ except NameError:
     _tp_name: Callable[..., str] = _missing
     _thread_ident: Callable[[], int] = _missing
     _native_thread_id: Callable[[], int] = _missing
-    _sleep_ns: Callable[[int], None] = _missing
+    _signals: Callable[..., Any] = _missing
 
     def _bella_refuse(text: str) -> NoReturn:
         raise ImportError(text)
@@ -114,11 +115,33 @@ def _acquire_arguments(name: str, args: tuple[object, ...], kwds: dict[str, obje
     return True if blocking is _ABSENT else bool(blocking), timeout
 
 
-def _wait_in_vain(ns: int) -> bool:              # a wait that nothing can end: its timeout, then no
-    if ns == _TIMEOUT_UNSET:
-        _bella_refuse(_DEADLOCK)
-    if ns > 0:
-        _sleep_ns(ns)
+def _wait(ns: int, take: Callable[[object], bool], self: object) -> bool:
+    """_PyMutex_LockTimed after its first try, with _PY_LOCK_HANDLE_SIGNALS, on one thread: only a signal's handler can free
+    the lock, so the wait is a sleep to the first deadline that a signal ends early, the handlers run (Py_MakePendingCalls,
+    in the primitive) and the lock tried again. What a handler raises leaves the acquire with the lock not taken."""
+    if ns == 0:                                  # "if (timeout == 0) return PY_LOCK_FAILURE;"
+        return False
+    _signals("look_lean")                        # a lean build's look before the wait (CPython has none: D-24)
+    if ns == _TIMEOUT_UNSET:                     # untimed: only a signal's handler can end it, by freeing the lock or by raising
+        while not take(self):
+            _signals("wait", -1)                 # Py_PARK_INTR: the handlers have run (Py_MakePendingCalls); the lock is tried again
+        _signals("look")                         # the call is over (_CHECK_PERIODIC_AT_END)
+        return True
+    deadline = _signals("monotonic") + ns        # _PyTime_Add(now, timeout): it stops at PyTime_MAX
+    if deadline > _PYTIME_MAX:
+        deadline = _PYTIME_MAX
+    while not take(self):
+        if ns == 0 or _signals("wait", deadline) == 0:   # Py_PARK_TIMEOUT, or no time left after the handlers: no
+            _signals("look")
+            return False
+        ns = deadline - _signals("monotonic")    # Py_PARK_INTR: the handlers have run; _PyDeadline_Get, never below 0
+        if ns < 0:
+            ns = 0
+    _signals("look")                             # the call is over (_CHECK_PERIODIC_AT_END)
+    return True
+
+
+def _never(self: object) -> bool:                # a thread that is not this one does not end: a handle's join only times out
     return False
 
 
@@ -197,10 +220,16 @@ LockType = lock
 def _lock_acquire(name: str, self: object, args: tuple[object, ...], kwds: dict[str, object]) -> bool:
     blocking, timeout = _acquire_arguments(name, args, kwds)
     ns = _parse_timeout(timeout, blocking)
-    if not self._a_locked:  # type: ignore[attr-defined]
-        self._a_locked = True  # type: ignore[attr-defined]
+    if _lock_take(self):
         return True
-    return _wait_in_vain(ns)
+    return _wait(ns, _lock_take, self)
+
+
+def _lock_take(self: object) -> bool:            # the lock's bits: taken if it was free
+    if self._a_locked:  # type: ignore[attr-defined]
+        return False
+    self._a_locked = True  # type: ignore[attr-defined]
+    return True
 
 
 def _lock_release(self: object) -> None:
@@ -316,14 +345,20 @@ def _rlock_owned(self: object) -> bool:
 
 
 def _rlock_acquire(self: object, ns: int) -> bool:   # _PyRecursiveMutex_LockTimed
-    if self._b_count == 0:  # type: ignore[attr-defined]
-        self._a_owner = _thread_ident()  # type: ignore[attr-defined]
-        self._b_count = 1  # type: ignore[attr-defined]
+    if _rlock_take(self):
         return True
     if self._a_owner == _thread_ident():  # type: ignore[attr-defined]
         self._b_count += 1  # type: ignore[attr-defined]
         return True
-    return _wait_in_vain(ns)
+    return _wait(ns, _rlock_take, self)
+
+
+def _rlock_take(self: object) -> bool:           # the mutex under the RLock: taken by this thread if it was free
+    if self._b_count != 0:  # type: ignore[attr-defined]
+        return False
+    self._a_owner = _thread_ident()  # type: ignore[attr-defined]
+    self._b_count = 1  # type: ignore[attr-defined]
+    return True
 
 
 def _rlock_release(self: object) -> None:        # _PyRecursiveMutex_TryUnlock
@@ -409,7 +444,7 @@ class _ThreadHandle:
             return
         if self._a_ident == _thread_ident():  # type: ignore[attr-defined]
             raise RuntimeError("Cannot join current thread")
-        _wait_in_vain(ns)
+        _wait(ns, _never, self)
 
 
 class _ExceptHookArgs:
@@ -519,9 +554,10 @@ def interrupt_main(*args: object, **kwds: object) -> None:   # thread_interrupt_
         raise OverflowError("signed integer is greater than maximum")
     if signum < -2147483648:
         raise OverflowError("signed integer is less than minimum")
-    if not 1 <= signum < 65:
+    if not 1 <= signum < 65:                     # PyErr_SetInterruptEx's -1
         raise ValueError("signal number out of range")
-    _bella_refuse("_thread.interrupt_main: raising a signal (the module signal)")
+    _signals("interrupt", signum)                # trip_signal, unless the handler is SIG_DFL or SIG_IGN: nothing is sent
+    _signals("look")                             # the call is over (_CHECK_PERIODIC_AT_END): the handler runs here
 
 
 def set_name(*args: object, **kwds: object) -> None:

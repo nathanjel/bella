@@ -61,6 +61,7 @@ namespace prelude_warnings { Ref module_body(Module* m); }    // runtime/prelude
 namespace prelude_tokenize { Ref module_body(Module* m); }    // runtime/prelude/_tokenize.py
 namespace prelude_imp { Ref module_body(Module* m); }         // runtime/prelude/_imp.py
 namespace prelude_atexit { Ref module_body(Module* m); }      // runtime/prelude/atexit.py
+namespace prelude_signal { Ref module_body(Module* m); }      // runtime/prelude/_signal.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
 // defined below, with the lazy imports
@@ -332,7 +333,8 @@ Module*& bootstrap_module() {
     return m;
 }
 ClassObject* no_instances_yet(const char* name, const char* module = nullptr) {
-    ClassObject* c = builtin_type(name, {types().object});
+    ClassObject* c = builtin_class(name);
+    if (c->cls == nullptr) builtin_type(name, {types().object});   // once: signals.cpp makes "frame" when a handler is given one first
     if (module != nullptr) {
         Obj text = Obj::of(intern(module));
         c->attrs.set(N("__module__"), text);
@@ -383,7 +385,7 @@ struct NativeModule {
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
     static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
-        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_imp", {fill_imp}}, {"atexit", {fill_atexit}}};
+        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_imp", {fill_imp}}, {"atexit", {fill_atexit}}, {"_signal", {fill_signal}}};
     return table;
 }
 }  // namespace
@@ -638,7 +640,7 @@ void fill_weakref(Module* m) {                   // the types are named for `wea
     member->cls = types().member_descriptor;
     ref->attrs.set(N("__callback__"), Obj::of(member));
 }
-// the one thread, and the wait that no other thread can end
+// the one thread (a lock's wait is the signal core's: _signals("wait"), runtime/src/signals.cpp)
 Ref i_thread_ident(Obj, Args a) {
     positional_only(a, "_thread_ident", 0, 0);
     return int_from_i64(static_cast<std::int64_t>(pthread_self()));
@@ -646,14 +648,6 @@ Ref i_thread_ident(Obj, Args a) {
 Ref i_native_thread_id(Obj, Args a) {
     positional_only(a, "_native_thread_id", 0, 0);
     return int_from_i64(gettid());
-}
-Ref i_sleep_ns(Obj, Args a) {
-    positional_only(a, "_sleep_ns", 1, 1);
-    std::int64_t ns = clipped_index(a.pos(0));
-    timespec left{.tv_sec = static_cast<time_t>(ns / 1000000000), .tv_nsec = static_cast<long>(ns % 1000000000)};
-    while (nanosleep(&left, &left) != 0 && errno == EINTR) {
-    }
-    return none_ref();
 }
 Ref handle_ident(Obj self) { return getattr(self, N("_a_ident")); }
 Ref local_getattribute(Obj self, Args a) {       // local_getattro: the rest is the generic path's
@@ -663,7 +657,7 @@ Ref local_getattribute(Obj self, Args a) {       // local_getattro: the rest is 
 void fill_thread(Module* m) {
     fill_in_python(m, "_thread", "_thread", prelude_thread::module_body,
                    {{"_number_index", i_number_index}, {"_sequence_check", i_sequence_check}, {"_tp_name", i_tp_name}, {"_thread_ident", i_thread_ident},
-                    {"_native_thread_id", i_native_thread_id}, {"_sleep_ns", i_sleep_ns}, {"_bella_refuse", i_bella_refuse}});
+                    {"_native_thread_id", i_native_thread_id}, {"_signals", i_signals}, {"_bella_refuse", i_bella_refuse}});
     auto* local = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("_local"))).object());
     Ref dict_getset = Ref::steal(local->attrs.pop(N("__dict__")));   // local_getattro answers for __dict__: the type has no getset
     Ref self_reference = Ref::steal(local->attrs.pop(N("_a_self_reference")));
@@ -997,6 +991,10 @@ void fill_tokenize(Module* m) {
     fill_in_python(m, "_tokenize", "_tokenize", prelude_tokenize::module_body, {{"_tp_name", i_tp_name}, {"_tokenizer", i_tokenizer}});
 }
 void fill_atexit(Module* m) { fill_in_python(m, "atexit", "atexit", prelude_atexit::module_body, {{"_unraisable", i_unraisable}}); }
+void fill_signal(Module* m) {                    // its two types are named for `signal`, as CPython's are (signal.struct_siginfo, signal.ItimerError)
+    fill_in_python(m, "_signal", "signal", prelude_signal::module_body,
+                   {{"_tp_name", i_tp_name}, {"_structseq", i_structseq}, {"_warn", i_bella_import_warning}, {"_signals", i_signals}});
+}
 void fill_imp(Module* m) {
     fill_in_python(m, "_imp", "_imp", prelude_imp::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_cpython_table", i_cpython_table}, {"_source_hash", i_source_hash},

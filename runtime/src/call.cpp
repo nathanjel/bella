@@ -3,6 +3,7 @@
 // (bella/runtime.hpp).
 #include "bella/runtime.hpp"
 
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <csignal>
@@ -446,6 +447,7 @@ struct Stream {
         std::size_t done = 0;
         while (done < buffer.size()) {
             ssize_t n = ::write(fd, buffer.data() + done, buffer.size() - done);
+            if (n < 0 && errno == EINTR) continue;   // _Py_write_noraise: again after a signal, and no handler runs here
             if (n <= 0) break;
             done += static_cast<std::size_t>(n);
         }
@@ -2622,7 +2624,56 @@ static void ignore_what_cpython_ignores() {
 int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
              std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
     int status = 0;
+    bool interrupted = false;                    // _PyRuntime.signals.unhandled_keyboard_interrupt: the process ends by SIGINT
+    bool exited = false;                         // Py_Exit from inside the report: no look after the program
+    bool ran = false;                            // the program's first line was reached
     std::unordered_set<Module*> runtime_own;
+    // An exception nothing caught, as Modules/main.c's pymain_exit_err_print takes it. _Py_HandleSystemExitAndKeyboardInterrupt
+    // first: a KeyboardInterrupt is noted, for the way the process ends, and reported like any other; a SystemExit is its
+    // status and no report. Then _PyErr_PrintEx: sys.last_exc and its three older names, then sys.excepthook(class,
+    // exception, traceback). Without a hook CPython says so and writes the report; a hook that raises is reported with the
+    // original after it (a KeyboardInterrupt of its own is noted too: handle_system_exit), and one that exits ends the
+    // program there (Py_Exit): its status, no SIGINT whatever was noted, and no look after the program
+    auto report_uncaught = [&](const PyError& e) {
+        if (isinstance(e.exc.get(), exception_class("KeyboardInterrupt"))) {
+            interrupted = true;
+        } else if (isinstance(e.exc.get(), exception_class("SystemExit"))) {
+            status = exit_status(e.exc.get());
+            return;
+        }
+        Obj raised = e.exc.get();
+        Ref kind = Ref::share(Obj::of(type_of(raised)));
+        Obj its = traceback_of(raised);
+        Ref tb = is_kind(its, Kind::Traceback) ? Ref::share(its) : none_ref();
+        auto* sys_dict = native_modules()["sys"]->dict;
+        put(sys_dict, "last_exc", raised);
+        put(sys_dict, "last_type", kind.get());
+        put(sys_dict, "last_value", raised);
+        put(sys_dict, "last_traceback", tb.get());
+        status = 1;
+        Ref hook = Ref::share(dict_get(sys_dict, Obj::of(intern("excepthook"))));
+        if (hook.get().is_unset()) {
+            write_stderr("sys.excepthook is missing\n");
+            print_traceback(raised);
+            return;
+        }
+        try {
+            invoke(hook.get(), {kind.get(), raised, tb.get()});
+        } catch (const PyError& failed) {
+            if (isinstance(failed.exc.get(), exception_class("KeyboardInterrupt"))) {
+                interrupted = true;
+            } else if (isinstance(failed.exc.get(), exception_class("SystemExit"))) {
+                status = exit_status(failed.exc.get());
+                interrupted = false;
+                exited = true;
+                return;
+            }
+            write_stderr("Error in sys.excepthook:\n");
+            print_traceback(failed.exc.get());
+            write_stderr("\nOriginal exception was:\n");
+            print_traceback(raised);
+        }
+    };
     try {
         try {
             ignore_what_cpython_ignores();
@@ -2807,6 +2858,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 import_module_level(io_name.get(), Obj{}, Obj{}, Obj{}, 0);
                 if (!io_hooks().open.get().is_unset()) put(builtins_module()->dict, "open", io_hooks().open.get());
             }
+            // _PySignal_Init, between the encodings and the standard streams as in init_interp_main: _signal is among sys.modules
+            // from here on, its table says what the program was started with, and SIGINT raises KeyboardInterrupt (an exact
+            // build, and unless whoever started the program had SIGINT ignored)
+            signals_init();
             {                                    // create_stdio: the three descriptors as _io objects; one that is not open is None (is_valid_fd)
                 auto* sys_dict = native_modules()["sys"]->dict;
                 // config_init_stdio_encoding: PYTHONIOENCODING is "encoding[:errors]"; an encoding alone makes the errors strict, and
@@ -2845,44 +2900,24 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 Ref loader = invoke(loader_class, {Obj::of(intern("__main__")), file.get()});
                 put(main->dict, "__loader__", loader.get());
             }
+            // pymain_check_signals before the program (Modules/main.c:737, Py_MakePendingCalls): a signal that came while the
+            // runtime started. If its handler raises, that is reported below and the program is not run
+            look_for_signals_now();
+            ran = true;
             main_body(main);
             flush_io();
         } catch (const PyError& e) {
             flush_io();                          // before the report (RL-227)
-            if (isinstance(e.exc.get(), exception_class("SystemExit"))) {
-                status = exit_status(e.exc.get());
-            } else {
-                // _PyErr_PrintEx, as Py_RunMain calls it: sys.last_exc and its three older names, then sys.excepthook(class,
-                // exception, traceback). Without a hook CPython says so and writes the report; a hook that raises is reported
-                // with the original after it, and one that exits gives the status (handle_system_exit)
-                Obj raised = e.exc.get();
-                Ref kind = Ref::share(Obj::of(type_of(raised)));
-                Obj its = traceback_of(raised);
-                Ref tb = is_kind(its, Kind::Traceback) ? Ref::share(its) : none_ref();
-                auto* sys_dict = native_modules()["sys"]->dict;
-                put(sys_dict, "last_exc", raised);
-                put(sys_dict, "last_type", kind.get());
-                put(sys_dict, "last_value", raised);
-                put(sys_dict, "last_traceback", tb.get());
-                status = 1;
-                Ref hook = Ref::share(dict_get(sys_dict, Obj::of(intern("excepthook"))));
-                if (hook.get().is_unset()) {
-                    write_stderr("sys.excepthook is missing\n");
-                    print_traceback(raised);
-                } else {
-                    try {
-                        invoke(hook.get(), {kind.get(), raised, tb.get()});
-                    } catch (const PyError& failed) {
-                        if (isinstance(failed.exc.get(), exception_class("SystemExit"))) {
-                            status = exit_status(failed.exc.get());
-                        } else {
-                            write_stderr("Error in sys.excepthook:\n");
-                            print_traceback(failed.exc.get());
-                            write_stderr("\nOriginal exception was:\n");
-                            print_traceback(raised);
-                        }
-                    }
-                }
+            report_uncaught(e);
+        }
+        // pymain_check_signals again (Modules/main.c:757), however the program ended: a handler whose signal no look has met
+        // yet runs now, with no frame (None), before threading's shutdown and atexit. What it raises is reported as an
+        // uncaught exception is, and its status replaces the program's (SystemExit(9) is 9, anything else 1)
+        if (ran && !exited) {
+            try {
+                look_for_signals_now();
+            } catch (const PyError& e) {
+                report_uncaught(e);
             }
         }
         // Py_FinalizeEx, on every way out of the program but a refusal. First make_pre_finalization_calls, while the
@@ -2900,9 +2935,14 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             } catch (const PyError& e) {
                 report_unraisable("Exception ignored on threading shutdown", e);
             }
+            finish_pending_calls();              // _Py_FinishPendingCalls: a failed wakeup write's report still queued is printed before atexit
             if (Obj handlers = dict_get(intrinsics(), Obj::of(intern("_atexit_call"))); !handlers.is_unset()) invoke(handlers, {});
             if (!flush_std_stream("stdout", true)) status = 120;
             if (!flush_std_stream("stderr", false)) status = 120;
+            // _PySignal_Fini, between flush_std_files and finalize_modules: the handlers go (a handler's own finaliser runs
+            // here, and getsignal says None inside it), a signal Python handled is the default's again and ends the process
+            // if it comes during the teardown, an ignored one stays ignored
+            signals_fini();
             clear_modules(runtime_own);
             if (!flush_std_stream("stdout", true)) status = 120;   // again, for what the finalisers printed
             if (!flush_std_stream("stderr", false)) status = 120;
@@ -2918,7 +2958,9 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
     }
     out_stream().flush();
     err_stream().flush();
-    return status;
+    // Py_RunMain, after Py_FinalizeEx: "if (unhandled_keyboard_interrupt) exitcode = exit_sigint()". Whatever the status was
+    // (120 too), the process ends by SIGINT's default action, so that what started it knows of the ^C; 130 if it is still here
+    return interrupted ? exit_by_sigint() : status;
 }
 
 }  // namespace bella

@@ -48,6 +48,7 @@ rt::Ref module_body(rt::Module* m) {
     init_constants();
     Obj ns = Obj::of(m->locals != nullptr ? m->locals : m->dict);
     rt::FrameGuard frame(code_module, M);
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28, t29, t30, t31, t32, t33, t34, t35, t36, t37, t38, t39, t40, t41, t42, t43, t44, t46, t47, t48, t49, t50;
     frame.line = 7;
     t1 = rt::make_function(code_escape_time_annotate, f_escape_time_annotate, M, Obj{}, Obj{}, {}, Obj{});
@@ -72,7 +73,7 @@ rt::Ref module_body(rt::Module* m) {
     t3 = Ref{};
     t6 = rt::iter(t5.get());
     t5 = Ref{};
-    for (;;) {
+    for (;; BELLA_LOOK()) {
         frame.line = 27;
         t7 = rt::for_next(t6.get());
         if (rt::is_end(t7)) {
@@ -103,7 +104,7 @@ rt::Ref module_body(rt::Module* m) {
             t14 = Ref{};
             t17 = rt::iter(t16.get());
             t16 = Ref{};
-            for (;;) {
+            for (;; BELLA_LOOK()) {
                 frame.line = 30;
                 t18 = rt::for_next(t17.get());
                 if (rt::is_end(t18)) {
@@ -197,6 +198,7 @@ static Ref f_escape_time_annotate(rt::PyFunction* fn, rt::Args args) {
     rt::FrameGuard frame(code_escape_time_annotate, M, _format3, _ann4);
     rt::StackValues stack_values(_ann4, _format3);
     rt::bind(fn, args, {&_format3});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14;
     frame.line = 7;
     t1 = rt::load_fast(_format3, "_format3");
@@ -247,6 +249,7 @@ static Ref f_escape_time(rt::PyFunction* fn, rt::Args args) {
     Ref zi2;
     rt::FrameGuard frame(code_escape_time, M, cr, ci, limit, zr, zi, n, zr2, zi2);
     rt::bind(fn, args, {&cr, &ci, &limit});
+    BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28, t29, t30, t31, t32, t33;
     frame.line = 8;
     zr = Ref::share(Obj::small(0));
@@ -255,7 +258,7 @@ static Ref f_escape_time(rt::PyFunction* fn, rt::Args args) {
     frame.line = 10;
     n = Ref::share(Obj::small(0));
     frame.line = 11;
-    for (;;) {
+    for (;; BELLA_LOOK()) {
         frame.line = 11;
         t1 = rt::load_fast(n, "n");
         t2 = rt::load_fast(limit, "limit");

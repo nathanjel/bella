@@ -1,0 +1,12 @@
+{
+ "case": "C-3-61_the_lines_of_a_with_statement.py",
+ "clause": "C-3-61",
+ "spec": "section 3 (exceptions), section 8 (an uncaught exception's report), D-06",
+ "status": "P1",
+ "source": "Python/codegen.c (codegen_with_inner: the item's location for BEFORE_WITH and the calls of __exit__), found by a",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "enter_raises: Boom 1\nexit_raises: Boom 1\nexit_raises_while_handling: Boom 1\nno_enter: TypeError 1\nno_exit: TypeError 1\nthe_second_item_on_its_own_line: Boom 2\nin the body: True\nitems_in_parentheses: Boom 3\nan_expression_over_two_lines: Boom 1\nin the body: 2\nexit_after_a_longer_body: Boom 1\nexit_on_return: Boom 1\nexit_on_break: Boom 2\nnested: Boom 2\nthe_target_cannot_be_unpacked: TypeError 1\nthe_target_on_another_line: TypeError 2\nin the body: M\nan_exit_over_two_lines: Boom 1\nthe_body_raises: ValueError 3\nthe_body_raises_and_exit_swallows_then_another: KeyError 3\na_call_in_the_body_fails: ValueError 2\n",
+ "stderr": "",
+ "exit_code": 0
+}

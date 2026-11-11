@@ -833,7 +833,7 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import sys\nr = sys.__unraisablehook__\nclass K:\n    def __del__(self): raise ValueError\nkept = []\nsys.unraisablehook = kept.append\nK()\n"
               "r(type(kept[0])((3, 4, None, None, None)))", "an exc_type that is no class"),
              ("import weakref\nclass K: pass\nk = K()\nweakref.finalize(k, print, 'at exit')", "importing 'gc'"),
-             ("import threading\nthreading.Thread(target=print).start()", "creating a thread"), ("import threading\nlk = threading.Lock(); lk.acquire(); lk.acquire()", "no other thread can release"),
+             ("import threading\nthreading.Thread(target=print).start()", "creating a thread"),
 )
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
