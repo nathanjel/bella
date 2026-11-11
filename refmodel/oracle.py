@@ -425,6 +425,60 @@ class World:
 
         return _outcome(model), _outcome(real)
 
+    def op_del_dict(self, obj_i: int, then: str, name: str, value: Any, probe: Any) -> tuple[Outcome, Outcome]:
+        """del obj.__dict__, and the first thing asked of the object after it, as one operation: the sweep that follows
+        every operation is a plain read, which would settle every dropped object the same way. `then` is "none" (the
+        next thing decides), "get", "set", "del" or "expose". With a probe (name, tag, name, tag) two tagged values are
+        then stored under the two names and the dict is deleted again, so that the order in which they die says which
+        dict the object had: the one that shares the class's keys, or an ordinary one."""
+        m, r = self.objects[obj_i]
+        vm, vr = self.value(value)
+
+        def model() -> Any:
+            self.rt.del_dict(m)
+            if then == "get":
+                first = _outcome(lambda: self.rt.getattr(m, name, self.sites[name]))
+            elif then == "set":
+                first = _outcome(lambda: self.rt.setattr(m, name, vm))
+            elif then == "del":
+                first = _outcome(lambda: self.rt.delattr(m, name))
+            elif then == "expose":
+                first = _outcome(lambda: len(self.rt.expose_dict(m)))
+            else:
+                first = ("value", None)
+            if probe is not None:
+                for n, tag in (probe[:2], probe[2:]):
+                    v = RefObject(self.tracked_m, tag=tag[1])
+                    incref(v)
+                    try:
+                        self.rt.setattr(m, n, v)
+                    finally:
+                        decref(v)
+                self.rt.del_dict(m)
+            return first
+
+        def real() -> Any:
+            del r.__dict__
+            if then == "get":
+                first = _outcome(lambda: getattr(r, name))
+            elif then == "set":
+                first = _outcome(lambda: setattr(r, name, vr))
+            elif then == "del":
+                first = _outcome(lambda: delattr(r, name))
+            elif then == "expose":
+                first = _outcome(lambda: len(r.__dict__))
+            else:
+                first = ("value", None)
+            if probe is not None:
+                for n, tag in (probe[:2], probe[2:]):
+                    setattr(r, n, Tagged(tag[1], self.real_deaths))
+                del r.__dict__
+            return first
+
+        out = _outcome(model), _outcome(real)
+        decref(vm)
+        return out
+
     def op_set_class_attr(self, cls_i: int, name: str, value: Any) -> tuple[Outcome, Outcome]:
         mc, rc = self.classes[cls_i]
         vm, vr = self.value(value)
@@ -548,6 +602,21 @@ class World:
             return ("revive", rng.randrange(n_obj), rng.choice(NAMES), self.new_tag())
         if roll < 0.15:
             return ("release_kept",)
+        if roll < 0.18:
+            obj_i = rng.randrange(n_obj)
+            then = rng.choice(("none", "none", "get", "get", "get", "set", "set", "del", "expose"))
+            value = self.new_tag() if then == "set" and rng.random() < 0.6 else rng.randrange(100)
+            probe = None
+            if rng.random() < 0.7:
+                # two names the class's keys already hold, the later one stored first when there are two: only then do the
+                # two kinds of dict release them in different orders
+                known = [k for k in self.objects[obj_i][0].cls.keys if k in NAMES]
+                first, second = rng.choice(NAMES), rng.choice(NAMES)
+                if len(known) >= 2 and rng.random() < 0.8:
+                    a, b = sorted(rng.sample(range(len(known)), 2))
+                    first, second = known[b], known[a]
+                probe = (first, self.new_tag(), second, self.new_tag())
+            return ("del_dict", obj_i, then, rng.choice(NAMES), value, probe)
         if roll < 0.30:
             return ("get", rng.randrange(n_obj), rng.choice(NAMES), rng.random() < 0.2)
         if roll < 0.58:

@@ -227,6 +227,34 @@ struct World {
                 }
                 return out + "]))";
             }
+            if (op == "del_dict") {              // the del, the first thing asked after it, and the probe (refmodel World.op_del_dict)
+                std::size_t i; std::string then, name, v, n1, v1, n2, v2;
+                in >> i >> then >> name >> v >> n1 >> v1 >> n2 >> v2;
+                Ref temp = Ref::steal(value(v));
+                del_dict(objects[i]);
+                std::string first = "('value', None)";
+                try {
+                    if (then == "get") first = get(i, name, false);
+                    else if (then == "set") setattr(objects[i], intern(name), temp.get());
+                    else if (then == "del") delattr(objects[i], intern(name));
+                    else if (then == "expose") {
+                        Ref d = expose_dict(objects[i]);
+                        first = "('value', " + std::to_string(static_cast<DictObject*>(d.get().object())->used) + ")";
+                    }
+                } catch (const AttributeError&) {
+                    first = "('error', 'AttributeError')";
+                } catch (const TypeError&) {
+                    first = "('error', 'TypeError')";
+                }
+                if (n1 != "-") {
+                    for (const auto& [n, tagged] : {std::pair{n1, v1}, std::pair{n2, v2}}) {
+                        Ref held = Ref::steal(value(tagged));
+                        setattr(objects[i], intern(n), held.get());
+                    }
+                    del_dict(objects[i]);
+                }
+                return "('value', " + first + ")";
+            }
             if (op == "replace_dict") {
                 std::size_t i; long src;
                 in >> i >> src;

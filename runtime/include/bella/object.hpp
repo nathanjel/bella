@@ -84,7 +84,7 @@ enum class Kind : std::uint8_t {
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
-enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4, FROZEN_DICT = 1u << 5, HAS_WEAKREFS = 1u << 6, WEAK_REFERENCE = 1u << 7 };
+enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4, FROZEN_DICT = 1u << 5, HAS_WEAKREFS = 1u << 6, WEAK_REFERENCE = 1u << 7, DICT_DROPPED = 1u << 8 };
 
 struct Object {
     ClassObject* cls = nullptr;
@@ -1108,10 +1108,24 @@ struct LookupPlan {
 
 // ---- the attribute machinery (refmodel Runtime) ----
 namespace detail {
-// (present, value) for the __dict__-backed storage of a name (never slots)
+// An object whose dict was deleted (del_dict) gets one at the first thing asked of its instance storage: an ordinary dict
+// when that is a plain read (_PyObject_MaterializeManagedDict with the inline values invalid: PyDict_New), one that shares
+// the class's keys, its values its own and not the object's, when it is a write, a delete or its __dict__
+// (ensure_managed_dict: new_dict_with_shared_keys). No user code runs and nothing is released (refmodel Runtime._settle).
+template <class T>
+inline void settle_dropped(T* obj, bool split) {
+    auto* d = new DictObject();
+    if (split) d->split = obj->cls->keys;
+    incref(d);
+    obj->dict = d;
+    obj->flags = static_cast<decltype(obj->flags)>((obj->flags | DICT_EXPOSED) & ~DICT_DROPPED);
+}
+// (present, value) for the __dict__-backed storage of a name (never slots). This is the plain read that reaches the
+// instance, so a dropped object gets its ordinary dict here; the two flags are one test for every other object.
 template <class T>
 inline std::pair<bool, Obj> instance_storage(T* obj, const Str* name) {
-    if (obj->exposed()) {
+    if (obj->flags & (DICT_EXPOSED | DICT_DROPPED)) {
+        if (obj->flags & DICT_DROPPED) settle_dropped(obj, false);
         Obj v = dict_find(obj->dict, Obj::of(name));
         return v.is_unset() ? std::pair{false, Obj{}} : std::pair{true, v};
     }
@@ -1309,7 +1323,8 @@ inline void setattr(T* obj, const Str* name, Obj value) {
             return;
         }
     }
-    if (obj->exposed()) {                        // a new name joins a split dict's keys (dict_put)
+    if (obj->flags & (DICT_EXPOSED | DICT_DROPPED)) {   // a new name joins a split dict's keys (dict_put)
+        if (obj->flags & DICT_DROPPED) detail::settle_dropped(obj, true);
         dict_store(obj->dict, Obj::of(name), value);
         return;
     }
@@ -1360,7 +1375,9 @@ inline void delattr(T* obj, const Str* name) {
     }
     // a delete through the object's inline values inserts the name into the shared keys before it finds the attribute missing
     // (_PyObject_StoreInstanceAttribute); once the dict is detached from the object (obj.__dict__ = d, _PyObject_SetManagedDict), a
-    // delete goes through the dict and a missing name is just missing (refmodel Runtime.delattr)
+    // delete goes through the dict and a missing name is just missing (refmodel Runtime.delattr); so is the dict a dropped object
+    // gets here, whose values are its own
+    if (obj->flags & DICT_DROPPED) detail::settle_dropped(obj, true);
     if (obj->exposed()) {
         if (obj->dict->embedded == obj) obj->dict->note_key(name);
         Obj old = dict_pop(obj->dict, Obj::of(name));
@@ -1393,6 +1410,7 @@ template <class T>
 inline Ref expose_dict(T* obj) {
     ClassObject* cls = obj->cls;
     if (!cls->has_dict) throw AttributeError("'" + cls->name + "' object has no attribute '__dict__'");
+    if (obj->flags & DICT_DROPPED) detail::settle_dropped(obj, true);
     if (obj->exposed()) return Ref::share(Obj::of(obj->dict));
     auto* d = new DictObject();
     for (const Str* name : obj->order) {         // the references move: no count changes
@@ -1424,7 +1442,9 @@ inline void set_dict(T* obj, DictObject* d) {
 
 // A C type's own `Py_CLEAR(self->dict)` (partial.__setstate__ given no dict): the object has no dict again, as when it
 // was made, until an attribute is set or its __dict__ is asked for. What it held goes as the dict it was (exposed
-// first), released after the object let go of it (RefRuntime.drop_dict). Not `del obj.__dict__`, which is set_dict's.
+// first), released after the object let go of it (refmodel Runtime.drop_dict). Also `del obj.__dict__` of the instance of an
+// int's or a tuple's subclass, which keeps no values in the object (tp_itemsize). Not that of any other class's instance,
+// which is del_dict's.
 template <class T>
 inline void drop_dict(T* obj) {
     if (!obj->cls->has_dict) throw AttributeError("'" + obj->cls->name + "' object has no attribute '__dict__'");
@@ -1432,6 +1452,21 @@ inline void drop_dict(T* obj) {
     DictObject* old = std::exchange(obj->dict, nullptr);
     if (old->embedded == obj) old->embedded = nullptr;   // its values are detached from obj
     obj->flags = static_cast<decltype(obj->flags)>(obj->flags & ~DICT_EXPOSED);
+    decref(old);
+}
+
+// del obj.__dict__ of an instance whose class keeps its values in the object (subtype_setdict, _PyObject_SetManagedDict(obj,
+// NULL)): the object is without its dict and its inline values before anything is released, so a finaliser that runs meanwhile
+// already meets the dropped object; what it held goes as the dict it was. What it gets next is settle_dropped's: nothing until
+// something is asked of its instance storage. Again, with none, changes nothing (refmodel Runtime.del_dict; C-3-58).
+template <class T>
+inline void del_dict(T* obj) {
+    if (!obj->cls->has_dict) throw AttributeError("'" + obj->cls->name + "' object has no attribute '__dict__'");
+    if (obj->flags & DICT_DROPPED) return;
+    expose_dict(obj);
+    DictObject* old = std::exchange(obj->dict, nullptr);
+    if (old->embedded == obj) old->embedded = nullptr;   // its values are detached from obj
+    obj->flags = static_cast<decltype(obj->flags)>((obj->flags & ~DICT_EXPOSED) | DICT_DROPPED);
     decref(old);
 }
 

@@ -92,6 +92,78 @@ def test_a_dropped_dict_leaves_the_object_as_it_was_made() -> None:
     assert fresh is not held and list(fresh.items()) == []
 
 
+def _dict_state(o: RefObject) -> tuple[bool, str]:
+    """(its dict was deleted and nothing asked since, the dict it has: none, embedded (the object's own values), shared
+    (the class's keys, values of its own), plain)."""
+    d = o.dict if o.exposed else None
+    return o.dropped, "none" if d is None else "plain" if d.split is None else "embedded" if d.owner is o else "shared"
+
+
+def test_a_deleted_dict_is_settled_by_the_first_thing_asked() -> None:
+    """C-3-58, measured on 3.15.2: after `del obj.__dict__` a plain read gives the object an ordinary dict, a write, a
+    delete or its __dict__ one that shares the class's keys, and what the class answers alone gives it none."""
+    rt, A, *_ = _world()
+    data = RefObject(make_descriptor_class("D", lambda d, o, c: 7, lambda d, o, v: None))
+    A.set_attr("dd", data)
+    a = RefObject(A)
+    rt.setattr(a, "x", 1)
+    rt.setattr(a, "w", 2)
+    rt.del_dict(a)
+    assert _dict_state(a) == (True, "none") and a.dict is None and a.order == [] and a.inline["x"] is UNSET
+    rt.del_dict(a)                               # again, with none: nothing
+    assert rt.getattr(a, "dd") == 7 and _dict_state(a) == (True, "none")     # a data descriptor: the class answers alone
+    rt.setattr(a, "dd", 1)
+    assert _dict_state(a) == (True, "none")
+    site = Site()
+    assert rt.getattr(a, "cv", site) == 10       # a plain read reaches the instance: an ordinary dict
+    assert _dict_state(a) == (False, "plain")
+    rt.setattr(a, "x", 5)
+    assert a.inline["x"] is UNSET and rt.expose_dict(a)["x"] == 5
+    rt.del_dict(a)
+    rt.setattr(a, "x", 6)                        # a write: a dict that shares the class's keys, its values its own
+    assert _dict_state(a) == (False, "shared")
+    rt.del_dict(a)
+    before = list(A.keys)
+    try:
+        rt.delattr(a, "never")                   # a delete settles it the same way, and the name joins no keys
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("a name it has not")
+    assert _dict_state(a) == (False, "shared") and list(A.keys) == before
+    rt.del_dict(a)
+    d = rt.expose_dict(a)                        # its __dict__: the same
+    assert _dict_state(a) == (False, "shared") and rt.expose_dict(a) is d
+    rt.del_dict(a)
+    rt.set_dict(a, {"k": 1})                     # one given after: that one
+    assert _dict_state(a) == (False, "plain") and rt.getattr(a, "k") == 1
+    b = RefObject(A)
+    rt.del_dict(b)
+    assert rt.getattr(b, "cv", site) == 10 and _dict_state(b) == (False, "plain")     # the cached read too
+
+
+def test_a_finaliser_meets_the_dropped_object() -> None:
+    """The object is without its dict before the del releases anything (set_dict_inline_values stores the new dict and
+    marks the values invalid first): a finaliser that reads then gives it an ordinary dict (measured on 3.15.2)."""
+    rt, A, *_ = _world()
+    seen: list[object] = []
+    a = RefObject(A)
+    incref(a)
+
+    def fin(obj: RefObject) -> None:
+        seen.append(_dict_state(a))
+        try:
+            rt.getattr(a, "w")
+        except AttributeError:
+            seen.append("no w")
+
+    Looker = RefClass("Looker", attrs={"__del__": fin})
+    rt.setattr(a, "x", RefObject(Looker))
+    rt.setattr(a, "w", 2)
+    rt.del_dict(a)
+    assert seen == [(True, "none"), "no w"] and _dict_state(a) == (False, "plain")
+
+
 def test_inline_field_shadows_class_attribute_and_cache_notices() -> None:
     rt, A, *_ = _world()
     A.set_attr("x", 1)

@@ -52,6 +52,12 @@ class AttributeModel(RuleBasedStateMachine):
     def replace_dict(self, obj: int, src: int | None) -> None:
         self.world.apply(("replace_dict", obj, src))
 
+    @rule(obj=objects, then=st.sampled_from(("none", "get", "set", "del", "expose")), name=names, value=values,
+          probe=st.one_of(st.none(), st.tuples(names, names)))
+    def del_dict(self, obj: int, then: str, name: str, value: int | str, probe: tuple[str, str] | None) -> None:
+        tagged = None if probe is None else (probe[0], self.world.new_tag(), probe[1], self.world.new_tag())
+        self.world.apply(("del_dict", obj, then, name, self._value(value) if then == "set" else 0, tagged))
+
     @rule(cls=classes, name=names, value=values)
     def set_class_attr(self, cls: int, name: str, value: int | str) -> None:
         self.world.apply(("set_class_attr", cls, name, self._value(value)))

@@ -137,3 +137,11 @@ status = "accepted"
 lint = "yes"
 note = "gettext, a P1 module, reads sys.base_prefix when it imports and argparse reads sys.executable, neither in the spec's sys surface; proposed and accepted by the author 2026-11-06, with the lint rule: a read of sys.executable is flagged, since a program that starts [sys.executable, '-m', ...] or [sys.executable, '-c', ...] starts itself, not an interpreter"
 
+
+[deviations.D-23]
+summary = "after `del obj.__dict__`, a method call `obj.m()` as the first thing asked of the object counts as a plain read and gives it an ordinary dict; CPython's call form asks nothing of the instance (_PyObject_GetMethod), so there the next plain read or write still decides which dict the object gets"
+status = "accepted"
+lint = "yes"
+observable = "only the order in which the object's attribute values are released. Measured on 3.15.2: for a class whose keys are y, z, `del o.__dict__; o.m(); o.z = Z(); o.y = Y(); del o` releases y then z (a dict that shares the class's keys); a compiled program, eval1 and eval2 release z then y (an ordinary dict). No difference when the class defines __getattr__ or __getattribute__ (its call form is a read in CPython too), for an int's or a tuple's subclass (no values kept in the object), or when anything but a call comes first (C-3-58)"
+note = "the author's decision of 2026-11-11, as a stop-gap to reconsider: the dropped state itself is in the reference model and the header and is exact; this row would need the compiler to tell a call's load from a plain one through L1, L2, the backend and both evaluators. Pinned by pipeline/tests/test_instance_dict.py, which fails when the two agree. Lint flags `del <expr>.__dict__` and `delattr(<expr>, \"__dict__\")`"
+expires = "phase 2 (revisit)"

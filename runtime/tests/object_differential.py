@@ -66,6 +66,9 @@ def encode(op: tuple[Any, ...]) -> str:
         return f"{kind} {args[0]} {args[1]} {value(args[2])}"
     if kind == "revive":
         return f"revive {args[0]} {args[1]} {value(args[2])}"
+    if kind == "del_dict":
+        probe = "- - - -" if args[4] is None else f"{args[4][0]} {value(args[4][1])} {args[4][2]} {value(args[4][3])}"
+        return f"del_dict {args[0]} {args[1]} {args[2]} {value(args[3])} {probe}"
     if kind == "replace_dict":
         return f"replace_dict {args[0]} {-1 if args[1] is None else args[1]}"
     if kind == "install_descriptor":

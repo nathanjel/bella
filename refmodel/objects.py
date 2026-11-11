@@ -41,6 +41,12 @@ What is modelled (design document, section 3, as revised by review rounds two an
   ``refmodel/tests/test_cases.py::test_an_exposed_dict_stays_split_as_cpythons``). A store keeps the new
   value before it releases the old one; a class mutation takes the new version before it
   releases the old attribute (``type_setattro``).
+* ``del obj.__dict__`` (C-3-58; the author's decision of 2026-11-11): the object has no dict and its inline values are
+  gone, and the first thing asked of its instance storage decides what it gets (``RefObject.dropped``,
+  ``Runtime.del_dict``): an ordinary dict for a plain read, one that shares the class's keys for a write, a delete or
+  its ``__dict__``; a lookup the class answers alone (a data descriptor, a slot) leaves it as it is. CPython also tells
+  a method call's load from a plain one (``_PyObject_GetMethod`` asks nothing of the instance), which neither the model
+  nor the compiler does: deviation D-23.
 * ``CacheEntry.found`` is borrowed: it holds no count. The model checks the property the C++
   header relies on: no entry that a live class's version still validates names an object that
   dies, and no cached lookup reads a dead ``found``.
@@ -459,6 +465,7 @@ class RefObject:
         self.order: list[str] = []          # first-assignment order of __dict__-backed names
         self.dict: RefDict | None = None    # before exposure: the attributes not promoted; after: the object's __dict__
         self.exposed = False
+        self.dropped = False                # del obj.__dict__ took its dict: the next thing asked decides what it gets (Runtime.del_dict)
         self.refs = 0
         self.alive = True
         self.finalized = False              # PEP 442: its finaliser has run (finalize, or dealloc)
@@ -684,8 +691,23 @@ class Runtime:
 
     # ---- helpers -------------------------------------------------------------------------
     @staticmethod
+    def _settle(obj: RefObject, split: bool) -> None:
+        """An object whose dict was deleted gets one at the first thing asked of its instance storage: an ordinary dict
+        when that is a plain read (_PyObject_MaterializeManagedDict with the inline values invalid: PyDict_New), one that
+        shares the class's keys, its values its own and not the object's, when it is a write, a delete or its __dict__
+        (ensure_managed_dict: new_dict_with_shared_keys). No user code runs and nothing is released."""
+        d = RefDict(split=obj.cls if split else None)
+        d.refs = 1
+        obj.dict = d
+        obj.exposed = True
+        obj.dropped = False
+
+    @staticmethod
     def _instance_storage(obj: RefObject, name: str) -> tuple[bool, Any]:
-        """(present, value) for the *__dict__-backed* storage of `name` (never slots)."""
+        """(present, value) for the *__dict__-backed* storage of `name` (never slots). This is the plain read that
+        reaches the instance: an object whose dict was deleted gets an ordinary one here."""
+        if obj.dropped:
+            Runtime._settle(obj, split=False)
         if obj.exposed:
             assert obj.dict is not None
             if name in obj.dict:
@@ -891,6 +913,8 @@ class Runtime:
                     raise AttributeError("__set__")      # data descriptor with only __delete__
                 setter[0](found, obj, value)
                 return
+        if obj.dropped:
+            self._settle(obj, split=True)
         if obj.exposed:
             d = obj.dict
             assert d is not None
@@ -945,7 +969,9 @@ class Runtime:
         # in the release order of every later instance (found by the Hypothesis machine, measured on
         # 3.15.2). Once the dict is detached from the object (obj.__dict__ = d, the same dict too:
         # _PyObject_SetManagedDict), a delete goes through the dict and a missing name is just missing
-        # (found by the machine again, 2026-11-07)
+        # (found by the machine again, 2026-11-07); so is the dict a dropped object gets here, whose values are its own
+        if obj.dropped:
+            self._settle(obj, split=True)
         if obj.exposed:
             assert obj.dict is not None
             if obj.dict.owner is obj:
@@ -979,6 +1005,8 @@ class Runtime:
         cls = obj.cls
         if not cls.has_dict:
             raise AttributeError(f"'{cls.name}' object has no attribute '__dict__'")
+        if obj.dropped:
+            self._settle(obj, split=True)
         if obj.exposed:
             assert obj.dict is not None
             return obj.dict
@@ -1020,18 +1048,36 @@ class Runtime:
     def drop_dict(self, obj: RefObject) -> None:
         """A C type's own `Py_CLEAR(self->dict)` (partial.__setstate__ given no dict): the object has no dict again,
         as when it was made, until an attribute is set or its __dict__ is asked for. What it held goes as the dict it
-        was (exposed first), released after the object let go of it. Not `del obj.__dict__` of a class's instance,
-        which CPython leaves in a state of its own (its inline values invalid: the next plain read gives it an ordinary
-        dict, the next write one that shares the class's keys), so the oracle has no operation for this one."""
+        was (exposed first), released after the object let go of it. Also `del obj.__dict__` of the instance of an
+        int's or a tuple's subclass, which keeps no values in the object (tp_itemsize). Not that of any other class's
+        instance, which is del_dict's."""
         if not obj.cls.has_dict:
             raise AttributeError(f"'{obj.cls.name}' object has no attribute '__dict__'")
+        decref(self._let_go(obj))
+
+    def _let_go(self, obj: RefObject) -> RefDict:
+        """The object holds no dict and no inline values; what it held is the caller's to release, as the dict it was."""
         self.expose_dict(obj)
         old = obj.dict
         assert old is not None
         if old.owner is obj:
-            old.owner = None                # dropped: its values are detached from obj
+            old.owner = None                # its values are detached from obj
         obj.dict = None
         obj.exposed = False
+        return old
+
+    def del_dict(self, obj: RefObject) -> None:
+        """del obj.__dict__ of an instance whose class keeps its values in the object (subtype_setdict,
+        _PyObject_SetManagedDict(obj, NULL): set_dict_inline_values, or _PyDict_DetachFromObject once the dict is an
+        object). The inline values are invalid and there is no dict from before anything is released, so a finaliser
+        that runs meanwhile already meets the dropped object; what it held goes as the dict it was. What it gets next
+        is `_settle`'s: nothing until something is asked of its instance storage. Again, with none, changes nothing."""
+        if not obj.cls.has_dict:
+            raise AttributeError(f"'{obj.cls.name}' object has no attribute '__dict__'")
+        if obj.dropped:
+            return
+        old = self._let_go(obj)
+        obj.dropped = True
         decref(old)
 
 

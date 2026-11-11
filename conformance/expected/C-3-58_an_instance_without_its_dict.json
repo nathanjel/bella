@@ -1,0 +1,12 @@
+{
+ "case": "C-3-58_an_instance_without_its_dict.py",
+ "clause": "C-3-58",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Objects/typeobject.c (subtype_setdict), Objects/dictobject.c (_PyObject_SetManagedDict, set_dict_inline_values, _PyObject_MaterializeManagedDict, ensure_managed_dict), Objects/object.c (_PyObject_GenericGetAttrWithDict, _PyObject_GenericSetAttrWithDict)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "-- what the del lets go of\nits values: y z {} False\na dict somebody holds: - ['z', 'y'] False {}\n  let go: y z\na dict nobody holds: ['z', 'y'] y z\na dict it was given: z y\nagain, with none: {}\none given after: {'k': 1}\n-- what is asked first: nothing, or what only the class answers\nnothing: y z\na data descriptor: y z\na property: y z\na data descriptor set: y z\nits class: y z\na special method: y z\nrepr, ==, hash, isinstance: y z\na slot: y z y z\n-- a plain read that reaches the instance\na class attribute: z y\na method not called: z y\na non-data descriptor: z y\na name it has not: z y\ngetattr with a default: z y\nhasattr: z y\na copy: z y\nthe same read at one place: z y z y z y\n-- a write, a delete, its __dict__\na write: y z\na delete that fails: y z\nits __dict__: y z\nvars: y z\ndir: y z\nanother dict given: z y\n-- the order of its names is its own either way\n['z', 'y'] y z\n10 ['z', 'y'] z y\n-- a finaliser that asks while the del is letting go\nit read: y sees None z ['z', 'y'] z2 y2\nit wrote: y z ['w', 'z', 'y'] y2 z2\n-- a class whose attributes its own code sets\na b False ['b', 'a'] b2 a2\na b a3 ['b', 'a'] a3 b3\na b a b\n-- subclasses of built-in types: nothing first, a read first, a write first\nMyList: y z | z y | y z\nMyDict: y z | z y | y z\nMyStr: y z | z y | y z\nMyFloat: y z | z y | y z\nMyComplex: y z | z y | y z\nMyInt: y z | y z | y z\nMyTuple: y z | y z | y z\n-- a class with __getattr__: its method call is a read\n__getattr__: z y | z y | y z | y z\n-- what has no dict, and what never loses it\nTypeError AttributeError AttributeError AttributeError AttributeError\nend\n",
+ "stderr": "",
+ "exit_code": 0
+}

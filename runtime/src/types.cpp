@@ -1298,13 +1298,13 @@ Ref instance_dict(Obj self) {
     return out;
 }
 void set_instance_dict(Obj self, Obj d) {
-    Ref fresh;
-    if (d.is_unset()) {                          // del obj.__dict__: the dict is detached; the object starts afresh
-        fresh = dict_new();
-        d = fresh.get();
-    } else if (!is_dict(d)) {
-        raise_new("TypeError", "__dict__ must be set to a dictionary, not a '" + type_of(d)->name + "'");
+    if (d.is_unset()) {                          // del obj.__dict__ (subtype_setdict): the object has none, and what is asked next decides (C-3-58)
+        // an int's or a tuple's subclass keeps no values in the object (tp_itemsize): it is as when it was made, whatever is asked
+        if (is_kind(self, Kind::IntInstance) || is_kind(self, Kind::Tuple)) drop_instance_dict(self);
+        else with_attribute_storage(self, [](auto* inst) { del_dict(inst); });
+        return;
     }
+    if (!is_dict(d)) raise_new("TypeError", "__dict__ must be set to a dictionary, not a '" + type_of(d)->name + "'");
     with_attribute_storage(self, [&](auto* inst) { set_dict(inst, static_cast<DictObject*>(d.object())); });
 }
 
