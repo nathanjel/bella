@@ -1164,10 +1164,16 @@ Ref i_bella_ga_get(Obj, Args a) {                // bootstrap.py's: a generic al
     return instance_member(a.pos(0), intern(as_str(a.pos(1))->text));
 }
 
-// a getset with no setter says "not writable"; a member (PyMemberDef) "readonly attribute"
+// a getset with no setter says "not writable"; a member (PyMemberDef) "readonly attribute", whether the runtime has it as a
+// member or as a getset of its own that CPython's type has as a member (method.__func__, function.__closure__)
 static std::string not_writable(Obj obj, const Str* name) {
     Obj found = type_lookup(type_of(obj), name);
     if (found.is_object() && found.object()->cls == types().member_descriptor) return "readonly attribute";
+    for (const ClassObject* c : type_of(obj)->mro)
+        if (std::string_view kind = cpython_attribute_kind(c, name->text); !kind.empty()) {
+            if (kind == "member_descriptor") return "readonly attribute";
+            break;
+        }
     std::string owner = is_kind(found, Kind::GetSet) ? static_cast<GetSet*>(found.object())->owner->name : type_of(obj)->name;
     return "attribute '" + name->text + "' of '" + owner + "' objects is not writable";
 }
@@ -1192,10 +1198,12 @@ void read_only_attribute(Obj obj, const Str* name, Obj found) {
     std::string_view kind;
     for (const ClassObject* c : type_of(obj)->mro)
         if (kind.empty()) kind = cpython_attribute_kind(c, name->text);
+    // what a descriptor of the type refuses, and a name of a type with no __dict__, carry neither name nor obj: only the
+    // "no attribute" of an object with nowhere to put one does (_PyObject_SetAttributeErrorContext; case C-3-54)
     if (kind == "getset_descriptor" || kind == "member_descriptor")
-        raise_attribute_error(obj, name, not_writable(obj, name));
+        raise_new("AttributeError", not_writable(obj, name));
     if (!found.is_unset() || !kind.empty())
-        raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object attribute '" + name->text + "' is read-only");
+        raise_new("AttributeError", "'" + type_of(obj)->name + "' object attribute '" + name->text + "' is read-only");
 }
 }  // namespace
 
@@ -1237,7 +1245,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
         return;
     }
     if (is_kind(obj, Kind::Module)) {
-        if (name == intern("__dict__")) raise_attribute_error(obj, name, "readonly attribute");
+        if (name == intern("__dict__")) raise_new("AttributeError", "readonly attribute");
         if (name == intern("__class__")) {
             if (!is_kind(value, Kind::Class))
                 raise_new("TypeError", "__class__ must be set to a class, not '" + type_of(value)->name + "' object");
@@ -1259,7 +1267,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(found, Kind::GetSet)) {
         auto* g = static_cast<GetSet*>(found.object());
         if (g->set == nullptr)
-            raise_attribute_error(obj, name, not_writable(obj, name));
+            raise_new("AttributeError", not_writable(obj, name));
         g->set(obj, value);
         return;
     }
@@ -1295,7 +1303,7 @@ void delattr(Obj obj, const Str* name) {
         return;
     }
     if (is_kind(obj, Kind::Module)) {            // _PyObject_GenericSetAttrWithDict's deletion
-        if (name == intern("__dict__")) raise_attribute_error(obj, name, "readonly attribute");
+        if (name == intern("__dict__")) raise_new("AttributeError", "readonly attribute");
         if (bootstrap_hides(static_cast<Module*>(obj.object()), name) ||     // not an attribute of the module, as in CPython
             !dict_del(static_cast<Module*>(obj.object())->dict, Obj::of(name)))
             raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
@@ -1306,11 +1314,17 @@ void delattr(Obj obj, const Str* name) {
     if (Obj found = type_lookup(type_of(obj), name); is_kind(found, Kind::GetSet)) {
         auto* g = static_cast<GetSet*>(found.object());
         if (!g->deletable)
-            raise_attribute_error(obj, name, not_writable(obj, name));
+            raise_new("AttributeError", not_writable(obj, name));
         g->set(obj, Obj{});
         return;
     }
-    if (is_kind(obj, Kind::PyFunction) && type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
+    if (is_kind(obj, Kind::PyFunction) && !presents_as_builtin(obj)) {   // from the function's own dict, as the store goes into it
+        if (type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
+        Ref d = generic_getattr(obj, intern("__dict__"));
+        if (!dict_del(static_cast<Dict*>(d.get().object()), Obj::of(name)))
+            raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+        return;
+    }
     read_only_attribute(obj, name, type_lookup(type_of(obj), name));
     if (!is_kind(obj, Kind::PyFunction))
         raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text +

@@ -1506,7 +1506,7 @@ void set_fn_qualname(Obj self, Obj v) {
     fn_of(self)->qualname = Ref::share(v);
 }
 Ref fn_doc(Obj self) { return fn_of(self)->doc; }
-void set_fn_doc(Obj self, Obj v) { fn_of(self)->doc = Ref::share(v); }
+void set_fn_doc(Obj self, Obj v) { fn_of(self)->doc = Ref::share(v.is_unset() ? None() : v); }   // a member: deleted, it reads None
 Ref fn_module(Obj self) {                        // set from the globals' __name__ when made (func_new_impl); func.__module__ may be rebound
     if (!fn_of(self)->module_name.get().is_unset()) return fn_of(self)->module_name;
     return none_ref();                           // a function made in a namespace without __name__
@@ -1605,6 +1605,11 @@ void set_fn_type_params(Obj self, Obj v) {       // function___type_params___set
 Ref fn_dict(Obj self) {
     if (fn_of(self)->dict.get().is_unset()) fn_of(self)->dict = dict_new();
     return fn_of(self)->dict;
+}
+void set_fn_dict(Obj self, Obj d) {              // PyObject_GenericSetDict: any dict, and no deleting
+    if (d.is_unset()) raise_new("TypeError", "cannot delete __dict__");
+    if (!is_dict(d)) raise_new("TypeError", "__dict__ must be set to a dictionary, not a '" + type_of(d)->name + "'");
+    fn_of(self)->dict = Ref::share(d);
 }
 Ref method_func(Obj self) { return Ref::share(static_cast<Method*>(self.object())->func); }
 Ref method_new(Obj, Args a) {                    // method(func, obj): any callable bound to obj
@@ -2996,7 +3001,10 @@ void init_types() {
     getset(t.function, "__annotations__", fn_annotations, set_fn_annotations);
     static_cast<GetSet*>(t.function->attrs.find(N("__annotations__"))->object())->deletable = true;
     static_cast<GetSet*>(t.function->attrs.find(N("__annotate__"))->object())->deletable = true;
-    getset(t.function, "__dict__", fn_dict);
+    getset(t.function, "__dict__", fn_dict, set_fn_dict);
+    // a delete reaches the setter, which says what it wants: func_set_name and func_set_qualname refuse a NULL as they
+    // refuse what is no str, and PyObject_GenericSetDict says the dict cannot be deleted (case C-3-54)
+    for (const char* name : {"__name__", "__qualname__", "__dict__", "__doc__"}) static_cast<GetSet*>(t.function->attrs.find(N(name))->object())->deletable = true;
     getset(t.method, "__func__", method_func);
     method(t.method, "__new__", method_new, Binding::Function);
     getset(t.method, "__self__", method_self);

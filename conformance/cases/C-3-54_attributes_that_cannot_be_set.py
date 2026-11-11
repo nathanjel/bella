@@ -98,6 +98,10 @@ def main() -> None:
     show("function.__code__, not code", f, "__code__", 1)
     show("function.__defaults__, not a tuple", f, "__defaults__", 1)
     show("function.__dict__, not a dict", f, "__dict__", 1)
+    show("function.__qualname__, not a str", f, "__qualname__", 1)
+    show("function.__kwdefaults__, not a dict", f, "__kwdefaults__", 1)
+    show("function.__wrapped__", f, "__wrapped__", f)
+    show("function.new", f, "new", 1)
     show("len.__name__", len, "__name__", "x")
     show("len.__self__", len, "__self__", 1)
     show("len.new", len, "new", 1)
@@ -121,7 +125,6 @@ def main() -> None:
     show("class.__dict__", Plain, "__dict__", {})
     show("class.__base__", Plain, "__base__", object)
     show("class.__qualname__, not a str", Plain, "__qualname__", 1)
-    show("class.__bases__, not a tuple", Plain, "__bases__", 1)
     show("class.__abstractmethods__", Plain, "__abstractmethods__", ())
     show("class.__module__", Plain, "__module__", "m")
     show("class.__doc__", Plain, "__doc__", "d")
@@ -132,10 +135,7 @@ def main() -> None:
     show("super.__thisclass__", super(Plain, plain), "__thisclass__", int)
     show("SimpleNamespace.x", types.SimpleNamespace(), "x", 1)
 
-    # descriptors and the library's C types
-    show("property.fget", WithProperty.ro, "fget", None)
-    show("staticmethod.__func__", staticmethod(f), "__func__", f)
-    show("classmethod.__func__", classmethod(f), "__func__", f)  # type: ignore[arg-type]
+    # the library's C types (property, staticmethod and classmethod have a case of their own, C-3-55)
     show("partial.func", functools.partial(f), "func", f)
     show("partial.args", functools.partial(f), "args", ())
     show("itemgetter.new", operator.itemgetter(1), "new", 1)
@@ -146,6 +146,19 @@ def main() -> None:
     show("exception.__traceback__", ValueError(1), "__traceback__", 5)
     show("exception.__cause__", ValueError(1), "__cause__", 5)
     show("exception.__context__", ValueError(1), "__context__", 5)
+
+
+    # a function's own __dict__ can be given, any dict, and not taken away; its __doc__ deleted reads None
+    def h() -> None:
+        """doc"""
+
+    h.x = 1  # type: ignore[attr-defined]
+    mine = {"y": 2}
+    h.__dict__ = mine
+    print("a function's dict:", h.__dict__ is mine, h.y, hasattr(h, "x"), vars(h) is mine)  # type: ignore[attr-defined]
+    del h.y  # type: ignore[attr-defined]
+    del h.__doc__
+    print("after deleting:", mine, h.__doc__, outcome(lambda: delattr(h, "y"), h), outcome(lambda: delattr(h, "__dict__"), h), h.__dict__ is mine)
 
 
 if __name__ == "__main__":
