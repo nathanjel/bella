@@ -243,11 +243,18 @@ ClassObject* descriptor_owner(Obj self) {
     return static_cast<GetSet*>(self.object())->owner;
 }
 Ref descriptor_name(Obj self) { return str_new(descriptor_text(self)); }
-Ref descriptor_doc(Obj self) {                   // member_get_doc / getset_get_doc: the def's doc, None for none
-    auto* g = static_cast<GetSet*>(self.object());
-    if (g->doc == nullptr)
-        throw NotImplemented(type_of(self)->name + ".__doc__ of '" + std::string(g->name) + "' (CPython has it; the runtime does not yet)");
-    return *g->doc == '\0' ? none_ref() : str_new(g->doc);
+// member_get_doc / getset_get_doc: the def's doc, None for none. One the runtime's own definition does not carry is the names
+// table's, recorded from CPython's type (`member:<tp_name>.<name>`, an empty row for None): a struct sequence's fields, a C
+// type's members. A program's own __slots__ member has none (case C-3-56).
+Ref descriptor_doc(Obj self) {
+    const char* own = is_kind(self, Kind::SlotDescriptor) ? nullptr : static_cast<GetSet*>(self.object())->doc;
+    if (own != nullptr) return *own == '\0' ? none_ref() : str_new(own);
+    ClassObject* owner = descriptor_owner(self);
+    std::string name = descriptor_text(self);
+    if (!c_type(owner)) return none_ref();
+    Obj recorded = cpython_doc("member:" + owner->name + "." + name);
+    if (recorded == None()) throw NotImplemented(type_of(self)->name + ".__doc__ of '" + name + "' (CPython has it; the runtime does not yet)");
+    return as_str(recorded)->text.empty() ? none_ref() : Ref::share(recorded);
 }
 Ref descriptor_objclass(Obj self) { return Ref::share(Obj::of(descriptor_owner(self))); }
 Ref descriptor_qualname(Obj self) {              // descr_get_qualname: the type's qualified name, a dot, its own
@@ -636,6 +643,7 @@ Ref first_weakref(Obj self) {                     // subtype_getweakref: the hea
 GetSet* weakref_getset() {                        // CPython's belongs to object, whichever class it is put in
     static GetSet* g = [] {
         auto* d = new GetSet("__weakref__", types().object, first_weakref, nullptr);
+        d->doc = "list of weak references to the object";   // subtype_getsets_full's
         d->flags |= IMMORTAL;
         return d;
     }();
@@ -1305,6 +1313,7 @@ GetSet* instance_dict_getset() {
     static GetSet* g = [] {
         auto* gs = new GetSet("__dict__", types().object, instance_dict, set_instance_dict);
         gs->deletable = true;
+        gs->doc = "dictionary for instance variables";       // subtype_getsets_full's
         return gs;
     }();
     return g;
@@ -1479,6 +1488,7 @@ std::pair<std::int64_t, std::int64_t> type_offsets(ClassObject* c) {
 Ref type_dictoffset(Obj self) { return int_from_i64(type_offsets(self_class(self)).first); }
 Ref type_weakrefoffset(Obj self) { return int_from_i64(type_offsets(self_class(self)).second); }
 }  // namespace
+void drop_instance_dict(Obj self) { with_attribute_storage(self, [](auto* inst) { drop_dict(inst); }); }
 std::uint8_t collection_flags_of(const ClassObject* c) {
     if (!c_type(c)) return c->collection_flags;
     auto flags = cpython_type_number("flags", c);
@@ -2799,6 +2809,7 @@ void present_methods(ClassObject* c) {
         if (kind == "wrapper_descriptor") b->cls = types().wrapper_descriptor;
         decref(c->attrs.set(name, Obj::of(b)));
     }
+    present_descriptor_kinds(c);
 }
 void forget_python_origin(ClassObject* c) {
     for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__", "__weakref__"})   // a C type's list has no getset
@@ -2809,16 +2820,29 @@ static void set_generic_dict(Obj self, Obj d) {
     if (d.is_unset()) raise_new("TypeError", "cannot delete __dict__");
     set_instance_dict(self, d);
 }
+// A C++ getset is the kind of descriptor CPython's type has under that name, a member (PyMemberDef) or a getset (PyGetSetDef):
+// the names table decides, where a file's own choice differed. And a C type whose __dict__ is its own descriptor in CPython
+// (BaseException's and staticmethod's getset, PyObject_GenericGetDict and PyObject_GenericSetDict) has its own here, not the
+// one every class with a dict shares: its __objclass__ is the type, it takes any dict, and it is never deleted (case C-3-56).
+void present_descriptor_kinds(ClassObject* c) {
+    if (const Obj* d = c->attrs.find(N("__dict__")); d != nullptr && *d == Obj::of(instance_dict_getset()) && cpython_attribute_kind(c, "__dict__") == "getset_descriptor") {
+        getset(c, "__dict__", instance_dict, set_generic_dict);
+        static_cast<GetSet*>(c->attrs.find(N("__dict__"))->object())->deletable = true;   // the setter is asked, and refuses
+    }
+    for (auto& [name, v] : c->attrs.items())
+        if (is_kind(v, Kind::GetSet) && v != Obj::of(instance_dict_getset())) {
+            std::string_view kind = cpython_attribute_kind(c, name->text);
+            if (kind == "member_descriptor") v.object()->cls = types().member_descriptor;
+            else if (kind == "getset_descriptor") v.object()->cls = types().getset_descriptor;
+        }
+}
 // A class of builtins.py (property, staticmethod, classmethod) as the static type it is in CPython: no __module__ of its own
 // (tp_name says it), tp_doc as its __doc__ unless a member has that name, the __dict__ that C declares, and Py_GenericAlias
 void present_builtin_class(ClassObject* c) {
     if (c->attrs.contains(N("__module__")) && !cpython_has(c->name, "__module__")) c->del_attr(N("__module__"));
     if (cpython_attribute_kind(c, "__doc__") == "str")
         if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !as_str(doc)->text.empty()) c->set_attr(N("__doc__"), doc);
-    if (const Obj* d = c->attrs.find(N("__dict__")); d != nullptr && *d == Obj::of(instance_dict_getset()) && cpython_attribute_kind(c, "__dict__") == "getset_descriptor") {
-        getset(c, "__dict__", instance_dict, set_generic_dict);
-        static_cast<GetSet*>(c->attrs.find(N("__dict__"))->object())->deletable = true;   // the setter is asked, and refuses
-    }
+    present_descriptor_kinds(c);
     if (cpython_has(c->name, "__class_getitem__") && !c->attrs.contains(N("__class_getitem__"))) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
 }
 // A class the prelude writes for a type a built-in module has in C: its tp_name, its place in the

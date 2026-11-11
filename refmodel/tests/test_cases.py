@@ -75,6 +75,23 @@ def test_dict_replacement_and_sharing() -> None:
     assert rt.getattr(b, "z") == 3
 
 
+def test_a_dropped_dict_leaves_the_object_as_it_was_made() -> None:
+    rt, A, *_ = _world()
+    a = RefObject(A)
+    rt.setattr(a, "y", 2)
+    rt.setattr(a, "w", 3)
+    rt.drop_dict(a)                              # never exposed: what it held is gone with the dict it would have been
+    assert not a.exposed and a.dict is None and a.order == [] and a.inline["y"] is UNSET
+    rt.setattr(a, "x", 1)
+    assert a.inline["x"] == 1 and a.order == ["x"]            # the class's keys are shared again
+    held = rt.expose_dict(a)
+    incref(held)                                 # a program variable holds it
+    rt.drop_dict(a)                              # exposed: whoever holds the dict keeps it, as it is
+    assert not a.exposed and a.dict is None and held.owner is None and list(held.items()) == [("x", 1)]
+    fresh = rt.expose_dict(a)
+    assert fresh is not held and list(fresh.items()) == []
+
+
 def test_inline_field_shadows_class_attribute_and_cache_notices() -> None:
     rt, A, *_ = _world()
     A.set_attr("x", 1)

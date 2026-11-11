@@ -46,6 +46,8 @@ C-3-52_ordered_dict.py
 C-3-53_str_beyond_ascii.py
 C-3-54_attributes_that_cannot_be_set.py
 C-3-55_property_staticmethod_classmethod_members.py
+C-3-56_what_a_member_says_of_itself.py
+C-3-57_a_partial_without_its_dict.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

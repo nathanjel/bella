@@ -2765,6 +2765,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                             if (b->owner == nullptr) b->owner = c;
                         }
                     }
+            for (ClassObject* c : builtin_types()) present_descriptor_kinds(c);   // members and getsets as the names table has them
+            for (ClassObject* c : exception_classes()) present_descriptor_kinds(c);
             adopt_functions(builtins_module());
             adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own

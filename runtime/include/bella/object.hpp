@@ -1422,6 +1422,19 @@ inline void set_dict(T* obj, DictObject* d) {
     decref(old);
 }
 
+// A C type's own `Py_CLEAR(self->dict)` (partial.__setstate__ given no dict): the object has no dict again, as when it
+// was made, until an attribute is set or its __dict__ is asked for. What it held goes as the dict it was (exposed
+// first), released after the object let go of it (RefRuntime.drop_dict). Not `del obj.__dict__`, which is set_dict's.
+template <class T>
+inline void drop_dict(T* obj) {
+    if (!obj->cls->has_dict) throw AttributeError("'" + obj->cls->name + "' object has no attribute '__dict__'");
+    expose_dict(obj);
+    DictObject* old = std::exchange(obj->dict, nullptr);
+    if (old->embedded == obj) old->embedded = nullptr;   // its values are detached from obj
+    obj->flags = static_cast<decltype(obj->flags)>(obj->flags & ~DICT_EXPOSED);
+    decref(old);
+}
+
 // ---- deaths ----
 namespace detail {
 // RL-20: an entry a live class still validates never names an object that dies

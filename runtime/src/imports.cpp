@@ -789,6 +789,11 @@ Ref i_has_dict(Obj, Args a) {                    // the C's self->dict is not NU
     with_attribute_storage(a.pos(0), [&](auto* inst) { has = inst->dict != nullptr || inst->exposed() || !inst->order.empty(); });
     return Ref::steal(boolean(has));
 }
+Ref i_drop_dict(Obj, Args a) {                   // the C's Py_CLEAR(self->dict), which no descriptor of the type allows
+    positional_only(a, "_drop_dict", 1, 1);
+    drop_instance_dict(a.pos(0));
+    return none_ref();
+}
 Ref i_method_new(Obj, Args a) {                  // PyMethod_New
     positional_only(a, "_method_new", 2, 2);
     return own(new Method(a.pos(0), a.pos(1)));
@@ -837,7 +842,7 @@ void key_obj_set(Obj self, Obj value) {
 void fill_functools(Module* m) {
     fill_in_python(m, "_functools", "functools", prelude_functools::module_body,
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_repr_enter", i_repr_enter}, {"_repr_leave", i_repr_leave},
-                    {"_bella_new_instance", i_bella_new_instance}, {"_has_dict", i_has_dict}, {"_method_new", i_method_new}, {"_hash_of", i_hash_of},
+                    {"_bella_new_instance", i_bella_new_instance}, {"_has_dict", i_has_dict}, {"_drop_dict", i_drop_dict}, {"_method_new", i_method_new}, {"_hash_of", i_hash_of},
                     {"_get_hashed", i_get_hashed}, {"_set_hashed", i_set_hashed}, {"_pop_hashed", i_pop_hashed}, {"_is_callable", i_is_callable}});
     auto* key = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("KeyWrapper"))).object());
     key->disallow_instantiation = true;

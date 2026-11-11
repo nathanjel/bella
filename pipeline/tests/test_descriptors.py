@@ -260,9 +260,47 @@ for name in ("shared", "meth", "x", "__doc__", "__module__", "new", "__slots__")
             print("direct", name, type(e).__name__, e, e.name, e.obj is None)
 """
 
+# Every public member and getset of seventy types, as the type's own namespace holds it: which of the two it is, the class it
+# belongs to, its names, its __doc__ and its repr (case C-3-56 prints a selection of the docs). A struct sequence's fields, the
+# exceptions' members and the small built-in types are all here. Left out, each for a gap of its own (TODO.md): the types that
+# lack a member CPython's has (type, module, generator, code, the built-in function and descriptor types, partial, itemgetter),
+# and the preludes' own slots, which CPython's types do not have and vars() still shows.
+MEMBERS = r"""import grp
+import itertools
+import os
+import pwd
+import re
+import sys
+import time
+import types
+
+
+TYPES = [int, float, complex, bool, str, bytes, bytearray, list, tuple, dict, set, frozenset, range, slice, object, property, staticmethod, classmethod, super,
+         types.FunctionType, types.MethodType, types.CellType,
+         types.MappingProxyType, types.MemberDescriptorType, types.GetSetDescriptorType,
+         type(None), type(NotImplemented), type(...), BaseException, Exception, OSError, SystemExit, StopIteration, ImportError,
+         AttributeError, NameError, SyntaxError, KeyError, BaseExceptionGroup, re.Pattern, re.Match,
+         os.stat_result, os.statvfs_result, os.terminal_size, os.times_result, os.uname_result, os.waitid_result, os.sched_param, os.DirEntry, time.struct_time, pwd.struct_passwd,
+         grp.struct_group, type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), type({}.keys()), type({}.items()),
+         type({}.values()), itertools.count, itertools.chain, enumerate, zip, map, filter, reversed, type(iter([])), frozendict]
+for t in TYPES:
+    rows = []
+    for name, v in sorted(vars(t).items()):
+        kind = type(v).__name__
+        if kind in ("member_descriptor", "getset_descriptor") and (not name.startswith("_") or name.startswith("__")):
+            rows.append((name, kind[0], v.__objclass__.__name__, v.__name__, v.__qualname__, v.__doc__, repr(v)))
+    print(t.__module__ + "." + t.__qualname__, len(rows))
+    for row in rows:
+        print("   ", row)
+"""
+
 
 def test_the_three_descriptors_say_what_cpythons_say() -> None:
     same(MESSAGES)
+
+
+def test_members_and_getsets_of_seventy_types() -> None:
+    same(MEMBERS)
 
 
 def test_an_object_without_a_dict_refuses_in_cpythons_words() -> None:
@@ -272,3 +310,4 @@ def test_an_object_without_a_dict_refuses_in_cpythons_words() -> None:
 if __name__ == "__main__":
     test_the_three_descriptors_say_what_cpythons_say()
     test_an_object_without_a_dict_refuses_in_cpythons_words()
+    test_members_and_getsets_of_seventy_types()

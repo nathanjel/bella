@@ -63,6 +63,7 @@ OFFSETS = {}                                     # tp_dictoffset and tp_weaklist
 ITEMSIZE = set()
 STATE = set()
 SHORTNAME = set()
+MEMBER_DOCS = {}                                 # a member's or a getset's own __doc__, as "<tp_name>.<name>", "" for none
 
 def tp_name(t):
     """PyTypeObject.tp_name, what %T and "'%s' object has no attribute" print: a static type's or a spec's is "module.Name"; a type
@@ -90,6 +91,9 @@ def type_names():
         if isinstance(t, type):
             key = tp_name(t)                     # the table knows a type by its tp_name, which is the runtime's name for it (ast.Match and re.Match differ)
             found.setdefault(key, {}).update({n: type(v).__name__ for n, v in vars(t).items()})
+            for n, v in vars(t).items():
+                if type(v).__name__ in ("member_descriptor", "getset_descriptor"):
+                    MEMBER_DOCS[key + "." + n] = v.__doc__ if isinstance(v.__doc__, str) else ""
             if t.__module__ != "builtins" and "." not in key:
                 SHORTNAME.add(t.__module__ + "." + t.__qualname__)
             if t.__weakrefoffset__:              # _PyType_SUPPORTS_WEAKREFS
@@ -250,7 +254,7 @@ def docs():
     return out
 
 print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "member_docs": MEMBER_DOCS, "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:]), "bootstrap_classes": bootstrap_classes()}))
 '''
 
@@ -276,7 +280,9 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}
     names |= {(f"{cls}:{n}", "") for cls, ns in data["bootstrap_classes"].items() for n in ns}
     version = ".".join(map(str, sys.version_info[:3]))
-    return version, sorted(names), sorted(data["docs"].items())
+    docs = dict(data["docs"])
+    docs.update({"member:" + key: text for key, text in data["member_docs"].items()})   # what a member descriptor's __doc__ answers
+    return version, sorted(names), sorted(docs.items())
 
 
 def _c_text(text: str) -> str:

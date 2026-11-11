@@ -16,6 +16,7 @@ try:
     _repr_leave                                  # noqa: B018  # Py_ReprLeave
     _bella_new_instance                          # noqa: B018  # an instance of a type with no __new__ of its own
     _has_dict                                    # noqa: B018  # the C's self->dict is not NULL
+    _drop_dict                                   # noqa: B018  # the C's Py_CLEAR(self->dict)
     _method_new                                  # noqa: B018  # PyMethod_New
     _hash_of                                     # noqa: B018  # PyObject_Hash
     _get_hashed                                  # noqa: B018  # _PyDict_GetItemRef_KnownHash; a default when absent
@@ -35,6 +36,7 @@ except NameError:
     _repr_leave: Callable[..., None] = _missing
     _bella_new_instance: Callable[..., Any] = _missing
     _has_dict: Callable[..., bool] = _missing
+    _drop_dict: Callable[..., None] = _missing
     _method_new: Callable[..., Any] = _missing
     _hash_of: Callable[..., int] = _missing
     _get_hashed: Callable[..., Any] = _missing
@@ -314,7 +316,7 @@ and keywords."""
         _set(self, "_p_phcount", phcount)
         if dict_ is None:
             if _has_dict(self):                  # the old one goes, as it is; whoever holds it keeps it
-                object.__delattr__(self, "__dict__")
+                _drop_dict(self)
         else:
             _set(self, "__dict__", dict_)
 

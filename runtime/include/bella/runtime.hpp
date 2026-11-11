@@ -400,6 +400,7 @@ Ref i_sequence_check(Obj, Args a);
 Ref i_tp_name(Obj, Args a);
 void forget_python_origin(ClassObject* c);
 void present_builtin_class(ClassObject* c);       // a class of builtins.py as CPython's static type: its __module__, __doc__, __dict__, __class_getitem__
+void present_descriptor_kinds(ClassObject* c);   // a getset as a member or a getset, and a C type's own __dict__ (types.cpp)
 void present_native_class(ClassObject* c, const std::string& module);   // a class of the prelude as the module's C type
 std::string keyword_suggestion(const std::string& name, const std::vector<std::string>& known);   // _Py_CalculateSuggestions; "" for none
 void fill_abc(Module* m);                        // runtime/src/abc.cpp: the module _abc
@@ -1117,6 +1118,7 @@ bool bootstrap_hides(const Module* m, const Str* name);
 Ref i_bella_ga_get(Obj, Args a);
 Ref object_getattribute(Obj self, Args a);
 Ref instance_dict_of(Obj self);                  // the __dict__ of a class's instance, by its getset
+void drop_instance_dict(Obj self);               // the instance has no dict again, as when it was made (object.hpp's drop_dict)
 Ref i_bella_is_builtin(Obj, Args a);
 Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives

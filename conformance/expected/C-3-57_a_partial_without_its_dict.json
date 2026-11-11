@@ -1,0 +1,12 @@
+{
+ "case": "C-3-57_a_partial_without_its_dict.py",
+ "clause": "C-3-57",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Modules/_functoolsmodule.c (partial_setstate, partial_reduce, partial_new), Objects/object.c (PyObject_GenericGetDict, PyObject_GenericSetDict)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "None True\n{'n': 1} True\nNone True AttributeError 3\n{} {} True\nTypeError None True\nNone True\n-- the dict it had\n['m', 'l'] m k\ngone k\nset ['m', 'l'] l None AttributeError 4 {}\ngone m\ngone l\n-- nobody held this one\ngone m2\ngone l2\n-- a subclass\nTypeError ['n'] True\ngone s n\nNone True True Sub\n-- what has no dict, and what never loses it\nAttributeError TypeError TypeError AttributeError TypeError\nend\n",
+ "stderr": "",
+ "exit_code": 0
+}

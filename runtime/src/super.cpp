@@ -146,6 +146,7 @@ void init_super() {
              {"__thisclass__", super_thisclass}, {"__self__", super_self}, {"__self_class__", super_self_class}}) {
         auto* g = new GetSet(name, c, get, readonly);
         g->deletable = true;
+        g->cls = types().member_descriptor;      // super_members: T_OBJECT members, read-only
         c->attrs.set(intern(name), Obj::of(g));
     }
 }

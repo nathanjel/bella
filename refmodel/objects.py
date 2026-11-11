@@ -1017,6 +1017,23 @@ class Runtime:
         obj.dict = d
         decref(old)
 
+    def drop_dict(self, obj: RefObject) -> None:
+        """A C type's own `Py_CLEAR(self->dict)` (partial.__setstate__ given no dict): the object has no dict again,
+        as when it was made, until an attribute is set or its __dict__ is asked for. What it held goes as the dict it
+        was (exposed first), released after the object let go of it. Not `del obj.__dict__` of a class's instance,
+        which CPython leaves in a state of its own (its inline values invalid: the next plain read gives it an ordinary
+        dict, the next write one that shares the class's keys), so the oracle has no operation for this one."""
+        if not obj.cls.has_dict:
+            raise AttributeError(f"'{obj.cls.name}' object has no attribute '__dict__'")
+        self.expose_dict(obj)
+        old = obj.dict
+        assert old is not None
+        if old.owner is obj:
+            old.owner = None                # dropped: its values are detached from obj
+        obj.dict = None
+        obj.exposed = False
+        decref(old)
+
 
 def _same(a: Any, b: Any) -> bool:
     if isinstance(a, (RefObject, RefClass, dict)) or isinstance(b, (RefObject, RefClass, dict)):
