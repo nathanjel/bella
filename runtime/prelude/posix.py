@@ -437,10 +437,11 @@ def _refuse(what: str) -> None:
     _sys("refuse", what)
 
 
-def _absent(name: str) -> object:
-    """What the module has in CPython and the runtime does not yet: a program may name it, and stops when it calls it."""
+def _absent(name: str, why: str = "") -> object:
+    """What the module has in CPython and the runtime does not yet: a program may name it, and stops when it calls it,
+    with what it waits for where that is known."""
     def absent(*args: object, **kwds: object) -> object:
-        _refuse("os." + name)
+        _refuse("os." + name + why)
 
     absent.__name__ = name
     absent.__qualname__ = name
@@ -685,6 +686,160 @@ def _tty(which: bytes, *values: object) -> object:   # a terminal call: its valu
     if type(result) is int and result < 0:
         _fail(-result)
     return result
+
+
+def _arglist(argv: object, count: int, first_empty: str) -> tuple[bytes, ...]:   # parse_arglist, and the check that follows it everywhere
+    out: list[bytes] = []
+    for i in range(count):
+        out.append(_fsconverter(argv[i]))  # type: ignore[index]
+    if not out[0]:
+        raise ValueError(first_empty)
+    return tuple(out)
+
+
+def _mapping_list(mapping: object, name: str) -> list[object]:   # PyMapping_Keys, PyMapping_Values
+    if type(mapping) is dict:
+        return list(dict.keys(mapping)) if name == "keys" else list(dict.values(mapping))
+    produced = getattr(mapping, name)()
+    if type(produced) is list:
+        return produced
+    try:
+        it = iter(produced)
+    except TypeError:
+        raise TypeError(_tp_name(mapping) + "." + name + "() returned a non-iterable (type " + _tp_name(produced) + ")") from None
+    return list(it)
+
+
+def _envlist(env: object) -> tuple[bytes, ...]:   # parse_envlist: each key and value by PyUnicode_FSConverter, "key=value"
+    count = len(env)  # type: ignore[arg-type]
+    keys = _mapping_list(env, "keys")
+    values = _mapping_list(env, "values")
+    out: list[bytes] = []
+    for i in range(count):
+        key = list.__getitem__(keys, i)
+        value = list.__getitem__(values, i)
+        name = _fsconverter(key)
+        text = _fsconverter(value)
+        if not name or b"=" in name[1:]:
+            raise ValueError("illegal environment variable name")
+        out.append(name + b"=" + text)
+    return tuple(out)
+
+
+def _format_i(value: object) -> int:             # PyArg_ParseTuple's "i"
+    out = _number_index(value)
+    if not -(2**63) <= out < 2**63:
+        raise OverflowError("Python int too large to convert to C long")
+    if out > 2147483647:
+        raise OverflowError("signed integer is greater than maximum")
+    if out < -2147483648:
+        raise OverflowError("signed integer is less than minimum")
+    return out
+
+
+def _format_k(value: object, message: str) -> int:   # PyArg_ParseTuple's "k": 64 bits of an int, with a warning for one that has more
+    if _type_lookup(value, "__index__") is _ABSENT:
+        raise TypeError(message)                 # converterr, which the format's own message replaces
+    out = _number_index(value)
+    if not -(2**63) <= out < 2**64:
+        _warn("integer value out of range", "DeprecationWarning")
+    return out & 0xFFFFFFFFFFFFFFFF
+
+
+def _file_actions(file_actions: object) -> tuple[tuple[object, ...], ...]:   # parse_file_actions: each one added as it is read
+    if type(file_actions) is not list and type(file_actions) is not tuple:   # PySequence_Fast
+        try:
+            it = iter(file_actions)  # type: ignore[call-overload]
+        except TypeError:
+            raise TypeError("file_actions must be a sequence or None") from None
+        file_actions = list(it)
+    out: list[tuple[object, ...]] = []
+    for action in file_actions:  # type: ignore[attr-defined]
+        if not issubclass(type(action), tuple) or tuple.__len__(action) == 0:
+            raise TypeError("Each file_actions element must be a non-empty tuple")
+        tag = _number_index(tuple.__getitem__(action, 0))
+        if not -(2**63) <= tag < 2**63:
+            raise OverflowError("Python int too large to convert to C long")
+        size = tuple.__len__(action)
+        parsed: tuple[object, ...]
+        if tag == POSIX_SPAWN_OPEN:
+            if size != 5:
+                raise TypeError("A open file_action tuple must have 5 elements")
+            fd = _format_i(tuple.__getitem__(action, 1))
+            path = _fsconverter(tuple.__getitem__(action, 2))
+            oflag = _format_i(tuple.__getitem__(action, 3))
+            mode = _format_k(tuple.__getitem__(action, 4), "A open file_action tuple must have 5 elements")
+            parsed = (0, fd, path, oflag, mode & 0xFFFFFFFF)
+        elif tag == POSIX_SPAWN_CLOSE:
+            if size != 2:
+                raise TypeError("A close file_action tuple must have 2 elements")
+            parsed = (1, _format_i(tuple.__getitem__(action, 1)))
+        elif tag == POSIX_SPAWN_DUP2:
+            if size != 3:
+                raise TypeError("A dup2 file_action tuple must have 3 elements")
+            first = _format_i(tuple.__getitem__(action, 1))
+            parsed = (2, first, _format_i(tuple.__getitem__(action, 2)))
+        else:
+            raise TypeError("Unknown file_actions identifier")
+        error = _sys("spawn", b"action", parsed)
+        if error:
+            _fail(error)
+        out.append(parsed)
+    return tuple(out)
+
+
+def _sigset(signals: object) -> tuple[int, ...]:   # _Py_Sigset_Converter: the numbers of an iterable, 1 to 64
+    out: list[int] = []
+    for item in signals:  # type: ignore[attr-defined]
+        number = _number_index(item)
+        if not -(2**63) <= number < 2**63:       # PyLong_AsLongAndOverflow: -1 and the overflow said
+            number = -1
+        if number <= 0 or number >= 65:
+            raise ValueError("signal number " + str(number) + " out of range [1; 64]")
+        if _sys("spawn", b"sigaddset", number):  # one the C library keeps for itself: allowed, with a warning
+            _warn("invalid signal number " + str(number) + ", please use valid_signals()", "RuntimeWarning")
+        else:
+            out.append(number)
+    return tuple(out)
+
+
+def _posix_spawn(name: str, searched: bool, args: tuple[object, ...], kwds: dict[str, object]) -> int:   # py_posix_spawn
+    path, argv, env, file_actions, setpgroup, resetids, setsid, setsigmask, setsigdef, scheduler = _unpack_keywords(
+        name, ("", "", "", "file_actions", "setpgroup", "resetids", "setsid", "setsigmask", "setsigdef", "scheduler"), 3, 3, 3, 0, args, kwds, _ABSENT)
+    data, shown = _path(name, "path", path)
+    reset = resetids is not _ABSENT and bool(resetids)
+    session = setsid is not _ABSENT and bool(setsid)
+    if not issubclass(type(argv), (list, tuple)):
+        raise TypeError(name + ": argv must be a tuple or list")
+    count = len(argv)  # type: ignore[arg-type]
+    if count < 1:
+        raise ValueError(name + ": argv must not be empty")
+    if env is not None and _type_lookup(env, "__getitem__") is _ABSENT:   # PyMapping_Check
+        raise TypeError(name + ": environment must be a mapping object or None")
+    if scheduler is not _ABSENT and scheduler is not None and not issubclass(type(scheduler), tuple):
+        raise TypeError(name + ": scheduler must be a tuple or None")
+    strings = _arglist(argv, count, name + ": argv first element cannot be empty")
+    environment = None if env is None else _envlist(env)
+    actions = None if file_actions is _ABSENT or file_actions is None else _file_actions(file_actions)
+    group = None if setpgroup is _ABSENT or setpgroup is None else _int(setpgroup)   # parse_posix_spawn_flags from here
+    if session:                                  # the pinned build has no POSIX_SPAWN_SETSID
+        raise NotImplementedError(name + ": setsid unavailable on this platform")
+    mask = None if setsigmask is _ABSENT else _sigset(setsigmask)
+    default = None if setsigdef is _ABSENT else _sigset(setsigdef)
+    policy = priority = None
+    if scheduler is not _ABSENT and scheduler is not None:
+        if tuple.__len__(scheduler) != 2:  # type: ignore[arg-type]
+            raise TypeError("A scheduler tuple must have two elements")
+        priority = _sched_priority(tuple.__getitem__(scheduler, 1))  # type: ignore[arg-type]
+        given = tuple.__getitem__(scheduler, 0)  # type: ignore[arg-type]
+        if given is not None:
+            policy = _int(given)
+    kind, value = _sys("spawn", b"spawnp" if searched else b"spawn", data, strings, environment, actions, group, reset, mask, default, policy, priority)
+    if kind == 1:
+        _fail(value)
+    if kind == 2:
+        _fail(value, shown)
+    return value  # type: ignore[no-any-return]
 
 
 def _fd_converter(value: object) -> int:         # _fd_converter
@@ -1239,7 +1394,9 @@ def _is_inputhook_installed(*args: object, **kwds: object) -> bool:   # os__is_i
     return False
 
 
-abort = _absent("abort")
+def abort(*args: object, **kwds: object) -> None:   # os_abort_impl
+    _noargs("abort", args, kwds)
+    _sys("abort")
 
 
 def chmod(*args: object, **kwds: object) -> None:   # os_chmod_impl: fchmod for a descriptor, fchmodat under dir_fd or for the link itself, else chmod
@@ -1366,8 +1523,32 @@ def eventfd_write(*args: object, **kwds: object) -> None:   # os_eventfd_write_i
         _fail(-code)
 
 
-execv = _absent("execv")
-execve = _absent("execve")
+def execv(*args: object, **kwds: object) -> None:   # os_execv_impl: the error names no file
+    _positional("execv", args, kwds, 2)
+    data, _shown = _path("execv", "path", args[0])
+    argv = args[1]
+    if not issubclass(type(argv), (list, tuple)):
+        raise TypeError("execv() arg 2 must be a tuple or list")
+    count = len(argv)  # type: ignore[arg-type]
+    if count < 1:
+        raise ValueError("execv() arg 2 must not be empty")
+    strings = _arglist(argv, count, "execv() arg 2 first element cannot be empty")
+    _fail(-_sys("exec", data, strings, None))
+
+
+def execve(*args: object, **kwds: object) -> None:   # os_execve_impl: by name or by descriptor (fexecve)
+    path, argv, env = _unpack("execve", args, kwds, ("path", "argv", "env"), 3, 3)
+    data, shown = _path("execve", "path", path, allow_fd=True)
+    if not issubclass(type(argv), (list, tuple)):
+        raise TypeError("execve: argv must be a tuple or list")
+    count = len(argv)  # type: ignore[arg-type]
+    if count < 1:
+        raise ValueError("execve: argv must not be empty")
+    if _type_lookup(env, "__getitem__") is _ABSENT:   # PyMapping_Check
+        raise TypeError("execve: environment must be a mapping object")
+    strings = _arglist(argv, count, "execve: argv first element cannot be empty")
+    environment = _envlist(env)
+    _fail(-_sys("exec", data, strings, environment), shown)
 
 
 def fchdir(*args: object, **kwds: object) -> None:   # os_fchdir_impl: fildes_converter, posix_fildes_fd
@@ -1399,8 +1580,8 @@ def fdatasync(*args: object, **kwds: object) -> None:   # os_fdatasync_impl
         _fail(-code)
 
 
-fork = _absent("fork")
-forkpty = _absent("forkpty")
+fork = _absent("fork", " ([P2+]: a process made by fork is a later phase, spec sections 3 and 7; posix_spawn starts a program)")
+forkpty = _absent("forkpty", " ([P2+]: a process made by fork is a later phase, spec sections 3 and 7)")
 
 
 def fpathconf(*args: object, **kwds: object) -> int:   # os_fpathconf_impl
@@ -1564,8 +1745,8 @@ def initgroups(*args: object, **kwds: object) -> None:   # os_initgroups_impl
     _set(b"initgroups", name, _id("gid", args[1]))
 
 
-kill = _absent("kill")
-killpg = _absent("killpg")
+kill = _absent("kill", " (it waits for the signal module: a signal sent to the process itself runs its handler inside the call)")
+killpg = _absent("killpg", " (it waits for the signal module: a signal sent to the process itself runs its handler inside the call)")
 
 
 def lchown(*args: object, **kwds: object) -> None:   # os_lchown_impl
@@ -1716,8 +1897,12 @@ def posix_openpt(*args: object, **kwds: object) -> int:   # os_posix_openpt_impl
     return _tty(b"posix_openpt", _int(_one("posix_openpt", args, kwds)))  # type: ignore[return-value]
 
 
-posix_spawn = _absent("posix_spawn")
-posix_spawnp = _absent("posix_spawnp")
+def posix_spawn(*args: object, **kwds: object) -> int:   # os_posix_spawn_impl
+    return _posix_spawn("posix_spawn", False, args, kwds)
+
+
+def posix_spawnp(*args: object, **kwds: object) -> int:   # os_posix_spawnp_impl
+    return _posix_spawn("posix_spawnp", True, args, kwds)
 
 
 def pread(*args: object, **kwds: object) -> bytes:   # os_pread_impl
@@ -2070,7 +2255,8 @@ def sysconf(*args: object, **kwds: object) -> int:   # os_sysconf_impl
     return value  # type: ignore[no-any-return]
 
 
-system = _absent("system")
+def system(*args: object, **kwds: object) -> int:   # os_system_impl: what the C library's system() returns
+    return _sys("system", _fsconverter(_unpack("system", args, kwds, ("command",), 1, 1)[0]))  # type: ignore[no-any-return]
 
 
 def tcgetpgrp(*args: object, **kwds: object) -> int:   # os_tcgetpgrp_impl
@@ -2216,11 +2402,39 @@ def utime(*args: object, **kwds: object) -> None:   # os_utime_impl
     code = _sys("utime", data, when, under, follows)
     if code < 0:
         _fail(-code, shown)
-wait = _absent("wait")
-wait3 = _absent("wait3")
-wait4 = _absent("wait4")
-waitid = _absent("waitid")
-waitpid = _absent("waitpid")
+
+
+def wait(*args: object, **kwds: object) -> tuple[int, int]:   # os_wait_impl
+    _noargs("wait", args, kwds)
+    result = _sys("wait", b"wait")
+    if type(result) is int:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+wait3 = _absent("wait3", " (its result holds a resource.struct_rusage, and resource is not in the phase-1 manifest; waitpid and waitid wait)")
+wait4 = _absent("wait4", " (its result holds a resource.struct_rusage, and resource is not in the phase-1 manifest; waitpid and waitid wait)")
+
+
+def waitid(*args: object, **kwds: object) -> object:   # os_waitid_impl: None where there is nothing to report
+    _positional("waitid", args, kwds, 3)
+    idtype = _int(args[0])
+    which = _int(args[1])
+    result = _sys("wait", b"waitid", idtype, which, _int(args[2]))
+    if result is None:
+        return None
+    if type(result) is int:
+        _fail(-result)
+    return waitid_result((result[0], _from_id(result[1]), result[2], result[3], result[4]))
+
+
+def waitpid(*args: object, **kwds: object) -> tuple[int, int]:   # os_waitpid_impl
+    _positional("waitpid", args, kwds, 2)
+    pid = _int(args[0])
+    result = _sys("wait", b"waitpid", pid, _int(args[1]))
+    if type(result) is int:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
 
 
 def waitstatus_to_exitcode(*args: object, **kwds: object) -> int:   # os_waitstatus_to_exitcode_impl

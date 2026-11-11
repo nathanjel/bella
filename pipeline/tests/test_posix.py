@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import pty
+import resource
 import shutil
 import subprocess
 import sys
@@ -489,6 +490,155 @@ def test_terminals_chroot_unshare_and_setns() -> None:
     same(TERMINAL_MESSAGES)
 
 
+# C-7-74: posix_spawn and posix_spawnp, the wait family, system, execv and execve: their words, the warnings of a file action's
+# mode and of a signal number the C library keeps, and the order of two refusals in one call. A child that starts is waited for.
+PROCESS_MESSAGES = r"""
+import os
+import warnings
+def m(f):
+    try:
+        with warnings.catch_warnings(record=True) as got:
+            warnings.simplefilter("always")
+            v = f()
+        if isinstance(v, int) and v > 0:
+            os.waitpid(v, 0)
+            v = "spawned"
+        return repr(v) + "".join(" (" + type(x.message).__name__ + ": " + str(x.message) + ")" for x in got)
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+SH = "/bin/sh"
+A = ["sh", "-c", "exit 0"]
+O, C, D = os.POSIX_SPAWN_OPEN, os.POSIX_SPAWN_CLOSE, os.POSIX_SPAWN_DUP2
+class I:
+    def __init__(self, v):
+        self.v = v
+    def __index__(self):
+        return self.v
+def fa(*actions):
+    return m(lambda: os.posix_spawn(SH, A, {}, file_actions=actions))
+out = "/dev/null"
+rows = {
+ "open mode str": fa((O, 1, out, os.O_WRONLY, "x")), "open mode float": fa((O, 1, out, os.O_WRONLY, 1.5)), "open fd str": fa((O, "x", out, 0, 0)), "open path int": fa((O, 1, 5, 0, 0)), "open oflag str": fa((O, 1, out, "x", 0)),
+ "open oflag big": fa((O, 1, out, 2**40, 0)), "open mode big": fa((O, 1, out, os.O_WRONLY, 2**70)), "open mode neg": fa((O, 1, out, os.O_WRONLY, -1)), "open mode index": fa((O, 1, out, os.O_WRONLY, I(0o600))), "open fd index": fa((O, I(1), out, os.O_WRONLY, 0)),
+ "open 6": fa((O, 1, out, 0, 0, 0)), "open fd -1": fa((O, -1, out, os.O_WRONLY, 0)), "open fd big": fa((O, 2**40, out, 0, 0)), "open path null": fa((O, 1, "a\0b", 0, 0)), "open bytes path": fa((O, 1, b"/dev/null", os.O_WRONLY, 0)),
+ "close str": fa((C, "x")), "close float": fa((C, 1.5)), "close -1": fa((C, -1)), "close big": fa((C, 2**40)), "close 3 items": fa((C, 1, 2)), "close huge fd": fa((C, 10**6)), "close none": fa((C, None)), "close 987": fa((C, 987)),
+ "dup2 str": fa((D, 1, "x")), "dup2 -1": fa((D, -1, 1)), "dup2 to -1": fa((D, 1, -1)), "dup2 2": fa((D, 1)), "dup2 ok": fa((D, 1, 2)), "dup2 bad src": fa((D, 987, 1)),
+ "tag str": fa(("x",)), "tag float": fa((1.5,)), "tag huge": fa((2**70,)), "tag index": fa((I(C), 987)), "tag none": fa((None,)), "tag bool": fa((True, 987)), "tag -1": fa((-1,)), "tag 3": fa((3, 5)), "closefrom": fa((getattr(os, "POSIX_SPAWN_CLOSEFROM", 3), 50)),
+ "list action": fa([C, 1]), "order: ebadf then unknown": fa((C, -1), (99,)), "order: unknown then ebadf": fa((99,), (C, -1)), "empty": fa(), "none": m(lambda: os.posix_spawn(SH, A, {}, file_actions=None)), "str": m(lambda: os.posix_spawn(SH, A, {}, file_actions="ab")),
+ "iterator": m(lambda: os.posix_spawn(SH, A, {}, file_actions=iter([(C, 987)]))), "generator bad": m(lambda: os.posix_spawn(SH, A, {}, file_actions=(x for x in [5]))), "dict": m(lambda: os.posix_spawn(SH, A, {}, file_actions={(C, 987): 1})),
+}
+for k, v in rows.items():
+    print(k, "|", v)
+def kw(**k):
+    return m(lambda: os.posix_spawn(SH, A, {}, **k))
+P = os.sched_param
+rows = {
+ "setpgroup str": kw(setpgroup="x"), "setpgroup none": kw(setpgroup=None), "setpgroup big": kw(setpgroup=2**40), "setpgroup -1": kw(setpgroup=-1), "setpgroup 2**30": kw(setpgroup=2**30), "setpgroup 0": kw(setpgroup=0), "setpgroup float": kw(setpgroup=1.5),
+ "resetids 1": kw(resetids=1), "resetids str": kw(resetids="x"), "resetids []": kw(resetids=[]), "setsid": kw(setsid=True), "setsid 0": kw(setsid=0), "setsid str": kw(setsid="yes"),
+ "sigmask int": kw(setsigmask=5), "sigmask 9999": kw(setsigmask=[9999]), "sigmask 0": kw(setsigmask=[0]), "sigmask -1": kw(setsigmask=[-1]), "sigmask 64": kw(setsigmask=[64]), "sigmask 65": kw(setsigmask=[65]), "sigmask 32": kw(setsigmask=[32]), "sigmask 33": kw(setsigmask=[33]),
+ "sigmask str": kw(setsigmask=["x"]), "sigmask huge": kw(setsigmask=[2**70]), "sigmask -huge": kw(setsigmask=[-(2**70)]), "sigmask float": kw(setsigmask=[1.5]), "sigmask range": kw(setsigmask=range(1, 65)), "sigmask none": kw(setsigmask=None), "sigmask empty": kw(setsigmask=[]),
+ "sigmask set": kw(setsigmask={2, 15}), "sigmask index": kw(setsigmask=[I(2)]), "sigdef 9": kw(setsigdef=[9]), "sigdef str": kw(setsigdef="ab"), "sigdef bad": kw(setsigdef=[1, 9999]),
+ "sched int": kw(scheduler=5), "sched 1": kw(scheduler=(1,)), "sched 3": kw(scheduler=(1, 2, 3)), "sched none param": kw(scheduler=(None, 5)), "sched ok none": kw(scheduler=(None, P(0))), "sched other": kw(scheduler=(os.SCHED_OTHER, P(0))),
+ "sched bad policy": kw(scheduler=(99, P(0))), "sched str policy": kw(scheduler=("x", P(0))), "sched big policy": kw(scheduler=(2**40, P(0))), "sched param str": kw(scheduler=(None, P("x"))), "sched batch": kw(scheduler=(os.SCHED_BATCH, P(0))),
+ "sched other prio 5": kw(scheduler=(os.SCHED_OTHER, P(5))), "sched list": kw(scheduler=[None, P(0)]), "sched none": kw(scheduler=None), "sched empty": kw(scheduler=()),
+ "order: sched type before argv item": m(lambda: os.posix_spawn(SH, ["sh", 5], {}, scheduler=5)), "order: env type before argv item": m(lambda: os.posix_spawn(SH, ["sh", 5], 5)), "order: argv item before env item": m(lambda: os.posix_spawn(SH, ["sh", 5], {"A": 5})),
+ "order: env before actions": m(lambda: os.posix_spawn(SH, A, {"A": 5}, file_actions=5)), "order: actions before flags": m(lambda: os.posix_spawn(SH, A, {}, file_actions=5, setpgroup="x")), "order: setpgroup before setsid": kw(setpgroup="x", setsid=True),
+ "order: setsid before sigmask": kw(setsid=True, setsigmask=5), "order: sigmask before sched": kw(setsigmask=5, scheduler=(1,)), "order: path before argv": m(lambda: os.posix_spawn(5, "abc", {})), "order: resetids conv before impl": m(lambda: os.posix_spawn(SH, "abc", {}, resetids=I(1))),
+ "env none": m(lambda: os.posix_spawn(SH, ["sh", "-c", 'test -n "$PATH"'], None)), "env keys": m(lambda: os.posix_spawn(SH, A, {b"A": b"b", "C": "d"})), "env empty key": m(lambda: os.posix_spawn(SH, A, {"": "x"})), "env =key": m(lambda: os.posix_spawn(SH, A, {"=A": "x"})),
+ "env key null": m(lambda: os.posix_spawn(SH, A, {"A\0": "x"})), "env val null": m(lambda: os.posix_spawn(SH, A, {"A": "x\0"})), "env list": m(lambda: os.posix_spawn(SH, A, [("A", "b")])), "env str": m(lambda: os.posix_spawn(SH, A, "ab")), "env tuple": m(lambda: os.posix_spawn(SH, A, ())),
+ "argv tuple": m(lambda: os.posix_spawn(SH, tuple(A), {})), "argv bytes": m(lambda: os.posix_spawn(SH, [b"sh", b"-c", b"exit 0"], {})), "argv gen": m(lambda: os.posix_spawn(SH, iter(A), {})), "path bytes": m(lambda: os.posix_spawn(b"/bin/sh", A, {})), "path fd": m(lambda: os.posix_spawn(0, A, {})),
+ "spawnp missing": m(lambda: os.posix_spawnp("no-such-program-here", A, {"PATH": "/bin"})), "spawnp ok": m(lambda: os.posix_spawnp("sh", A, {"PATH": "/bin:/usr/bin"})), "spawnp names itself": m(lambda: os.posix_spawnp("sh", [], {})), "spawnp env": m(lambda: os.posix_spawnp("sh", A, 5)),
+ "spawnp slash": m(lambda: os.posix_spawnp("/no/such", A, {})), "kw path": m(lambda: os.posix_spawn(path=SH, argv=A, env={})), "2 args": m(lambda: os.posix_spawn(SH, A)), "4 args": m(lambda: os.posix_spawn(SH, A, {}, ())), "unknown kw": m(lambda: os.posix_spawn(SH, A, {}, file_action=())),
+}
+for k, v in rows.items():
+    print(k, "|", v)
+print(os.POSIX_SPAWN_OPEN, os.POSIX_SPAWN_CLOSE, os.POSIX_SPAWN_DUP2, getattr(os, "POSIX_SPAWN_CLOSEFROM", None), os.posix_spawn.__doc__[:60], os.posix_spawnp.__doc__[:60])
+
+def w(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+print(w(lambda: os.wait()), w(lambda: os.wait(1)), w(lambda: os.wait(x=1)), w(lambda: os.waitpid(-1, 0)), w(lambda: os.waitpid(2**30, 0)), w(lambda: os.waitpid(0)), w(lambda: os.waitpid("x", 0)), w(lambda: os.waitpid(0, "x")),
+      w(lambda: os.waitpid(pid=0, options=0)), w(lambda: os.waitpid(2**40, 0)), w(lambda: os.waitpid(0, 0, 0)), w(lambda: os.waitpid(-1, 2**20)), w(lambda: os.waitpid(0, 2**40)), w(lambda: os.waitpid("x", "y")), w(lambda: os.waitpid(1.5, 0)),
+      w(lambda: os.waitid(os.P_ALL, 0, os.WEXITED)), w(lambda: os.waitid(os.P_ALL, 0)), w(lambda: os.waitid("x", 0, os.WEXITED)), w(lambda: os.waitid(os.P_PID, "x", os.WEXITED)), w(lambda: os.waitid(os.P_ALL, 0, "x")),
+      w(lambda: os.waitid(os.P_ALL, 0, 0)), w(lambda: os.waitid(99, 0, os.WEXITED)), w(lambda: os.waitid(os.P_PID, -1, os.WEXITED)), w(lambda: os.waitid(idtype=os.P_ALL, id=0, options=os.WEXITED)), w(lambda: os.waitid(os.P_PID, 2**40, os.WEXITED)),
+      w(lambda: os.waitid(2**40, 0, 0)), w(lambda: os.waitid(os.P_ALL, 0, 2**40)), w(lambda: os.waitid(os.P_PIDFD, 987, os.WEXITED)), w(lambda: os.waitid("x", "y", "z")), sep="\n")
+pid = os.posix_spawn(SH, ["sh", "-c", "exit 4"], {})
+got = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+print(repr(got).replace(str(pid), "PID").replace("si_uid=" + str(os.getuid()), "si_uid=UID"), os.waitpid(pid, 0) == (pid, 1024), got.__reduce__()[0].__name__, type(got).__mro__[1].__name__)
+print(w(lambda: os.system(5)), w(lambda: os.system()), w(lambda: os.system("a\0b")), w(lambda: os.system("true", 1)), w(lambda: os.system(comman="true")), w(lambda: os.system(command=b"exit 2")), w(lambda: os.system(None)),
+      w(lambda: os.system(bytearray(b"true"))), w(lambda: os.system("exit 300")), sep="\n")
+print(w(lambda: os.execv("/no/such/program", ["x"])), w(lambda: os.execv("/", ["x"])), w(lambda: os.execv(SH, [])), w(lambda: os.execv(SH, [""])), w(lambda: os.execv(SH, "abc")), w(lambda: os.execv(SH, ["sh", 5])), w(lambda: os.execv(SH)),
+      w(lambda: os.execv(5, ["x"])), w(lambda: os.execv(path=SH, argv=["x"])), w(lambda: os.execv(SH, ["sh\0x"])), w(lambda: os.execv(SH, ())), w(lambda: os.execv("a\0b", ["x"])), w(lambda: os.execv(SH, [b""])), w(lambda: os.execv(SH, iter(["x"]))),
+      w(lambda: os.execv(SH, ["x"], {})), w(lambda: os.execve("/no/such/program", ["x"], {})), w(lambda: os.execve(SH, ["sh"], 5)), w(lambda: os.execve(SH, [], {})), w(lambda: os.execve(SH, [""], {})), w(lambda: os.execve(SH, "abc", {})),
+      w(lambda: os.execve(SH, ["sh"], {"A=B": "c"})), w(lambda: os.execve(SH, ["sh"])), w(lambda: os.execve(987, ["sh"], {})), w(lambda: os.execve("/", ["x"], {})), w(lambda: os.execve(path="/no/such/program", argv=["x"], env={})),
+      w(lambda: os.execve(SH, ["sh"], {"A": "b\0"})), w(lambda: os.execve(SH, ["sh"], {"": "b"})), w(lambda: os.execve(SH, ["sh"], [("A", "b")])), w(lambda: os.execve(SH, ["sh"], {5: "b"})), w(lambda: os.execve(SH, [5], 5)),
+      w(lambda: os.execve(SH, [5], {5: 5})), w(lambda: os.execve(1.5, ["sh"], {})), w(lambda: os.execve(SH, ["sh"], {}, 1)), w(lambda: os.execve(SH, ["sh"], en={})), w(lambda: os.execve(None, ["sh"], {})), sep="\n")
+print(os.wait.__doc__[:40], os.waitpid.__doc__[:40], os.waitid.__doc__[:40], os.system.__doc__, os.execv.__doc__[:40], os.execve.__doc__[:40], os.abort.__doc__[:40], sep="\n")
+"""
+
+# What a child writes goes straight out; what the program printed is still in its buffer, and comes after.
+CHILDREN_AND_THE_BUFFER = r"""
+import os
+print("before, kept in the buffer")
+status = os.system("echo from the shell")
+pid = os.posix_spawn("/bin/sh", ["sh", "-c", "echo from a spawned shell"], {})
+print("after", status, os.waitpid(pid, 0)[1])
+"""
+
+# exec replaces the program: nothing is written out, no exit hook runs
+EXEC = r"""
+import atexit
+import os
+atexit.register(print, "never said")
+print("lost with the buffer")
+os.execv("/bin/sh", ["sh", "-c", "echo the program is now a shell"])
+"""
+
+# abort ends it by SIGABRT: nothing is written out, no exit hook runs
+ABORT = r"""
+import atexit
+import os
+import sys
+atexit.register(print, "never said")
+print("lost with the buffer")
+sys.stderr.write("said before\n")
+sys.stderr.flush()
+os.abort()
+"""
+
+
+def test_spawn_wait_system_and_exec() -> None:
+    same(PROCESS_MESSAGES)
+
+
+def test_what_a_child_writes_comes_before_the_buffer() -> None:
+    same(CHILDREN_AND_THE_BUFFER)
+
+
+def test_exec_replaces_the_program() -> None:
+    same(EXEC)
+
+
+def _no_core_file() -> None:
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def test_abort_ends_the_program_by_its_signal() -> None:
+    if shutil.which("g++") is None:
+        return
+    outcomes = []
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_text(ABORT, encoding="utf-8")
+        for command in ([sys.executable, str(prog)], [str(build(prog, "prog.py"))]):
+            done = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False, cwd=tmp, preexec_fn=_no_core_file)  # noqa: PLW1509
+            outcomes.append((done.stdout, done.stderr, done.returncode))
+    assert outcomes[0] == outcomes[1], outcomes
+    assert outcomes[0] == ("", "said before\n", -6), outcomes[0]
+
+
 def test_login_tty_makes_the_terminal_the_process_own() -> None:
     if shutil.which("g++") is None:
         return
@@ -569,8 +719,8 @@ def test_a_write_goes_straight_out_and_exit_does_not_flush() -> None:
 
 
 def test_what_the_runtime_has_not_stops_by_name() -> None:
-    for body, name in (("os.fork()", "os.fork"), ("os.forkpty()", "os.forkpty"), ("os.waitpid(0, 0)", "os.waitpid"),
-                       ("os.kill(0, 0)", "os.kill"), ("os.system('true')", "os.system"), ("from posix import abort; abort()", "os.abort"), ("os.write(1, memoryview(b''))", "memoryview")):
+    for body, name in (("os.fork()", "os.fork ([P2+]"), ("os.forkpty()", "os.forkpty ([P2+]"), ("os.wait3(0)", "os.wait3 (its result holds a resource.struct_rusage"),
+                       ("os.wait4(0, 0)", "os.wait4"), ("os.kill(0, 0)", "os.kill (it waits for the signal module"), ("os.killpg(0, 0)", "os.killpg"), ("os.write(1, memoryview(b''))", "memoryview")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"import os\nprint('start')\nif __name__ == '__main__':\n    try:\n        {body}\n    except BaseException:\n        print('raised')\n", encoding="utf-8")

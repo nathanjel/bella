@@ -9,6 +9,7 @@
 #include <grp.h>
 #include <pty.h>
 #include <signal.h>
+#include <spawn.h>
 #include <utmp.h>
 #include <sched.h>
 #include <sys/eventfd.h>
@@ -340,6 +341,148 @@ Ref p_dev(Args a) {                              // (b"major" | b"minor", dev) o
     dev_t dev = static_cast<dev_t>(i64_of(a.pos(1)));
     return int_from_u64(which == "major" ? major(dev) : minor(dev));
 }
+// ---- starting a program and waiting for it (C-7-74)
+namespace {
+std::vector<char*> c_strings(Obj tuple) {        // a tuple of bytes as a NULL-terminated array; the bytes outlive the call
+    auto& items = static_cast<Tuple*>(tuple.object())->items;
+    std::vector<char*> out;
+    out.reserve(items.size() + 1);
+    for (Obj item : items) out.push_back(const_cast<char*>(bytes_data(item).c_str()));
+    out.push_back(nullptr);
+    return out;
+}
+// one file action as the Python side parsed it, (0, fd, path, oflag, mode), (1, fd) or (2, fd, fd2): what adding it says
+int add_action(posix_spawn_file_actions_t* actions, Obj action) {
+    auto& a = static_cast<Tuple*>(action.object())->items;
+    int tag = int_of(a[0]);
+    if (tag == 0) return posix_spawn_file_actions_addopen(actions, int_of(a[1]), text_of(a[2]), int_of(a[3]), static_cast<mode_t>(i64_of(a[4])));
+    if (tag == 1) return posix_spawn_file_actions_addclose(actions, int_of(a[1]));
+    return posix_spawn_file_actions_adddup2(actions, int_of(a[1]), int_of(a[2]));
+}
+bool signal_set(Obj numbers, sigset_t* set) {    // None for a set not given
+    sigemptyset(set);
+    if (numbers == None()) return false;
+    for (Obj n : static_cast<Tuple*>(numbers.object())->items) sigaddset(set, int_of(n));
+    return true;
+}
+}  // namespace
+// (b"action", action): the error of adding it, 0 for none. (b"sigaddset", number): whether the C library takes the number.
+// (b"spawn" or b"spawnp", path, argv, env or None, actions or None, pgroup or None, resetids, sigmask or None, sigdef or None,
+// policy or None, priority or None): (0, pid), (1, the error of setting an attribute), (2, the error of posix_spawn itself)
+Ref p_spawn(Args a) {
+    const std::string& which = bytes_data(a.pos(0));
+    if (which == "action") {
+        posix_spawn_file_actions_t probe;
+        if (int e = posix_spawn_file_actions_init(&probe)) return int_from_i64(e);
+        int e = add_action(&probe, a.pos(1));
+        posix_spawn_file_actions_destroy(&probe);
+        return int_from_i64(e);
+    }
+    if (which == "sigaddset") {
+        sigset_t set;
+        sigemptyset(&set);
+        return int_from_i64(sigaddset(&set, int_of(a.pos(1))) != 0 ? errno : 0);
+    }
+    auto answer = [](int kind, std::int64_t value) {
+        Ref k = int_from_i64(kind), v = int_from_i64(value);
+        return tuple_new({k.get(), v.get()});
+    };
+    std::vector<char*> argv = c_strings(a.pos(2));
+    std::vector<char*> env;
+    char** envp = ::environ;                     // env None: the program's own, as it is now
+    if (a.pos(3) != None()) {
+        env = c_strings(a.pos(3));
+        envp = env.data();
+    }
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_t* actionsp = nullptr;
+    if (a.pos(4) != None()) {
+        if (int e = posix_spawn_file_actions_init(&actions)) return answer(1, e);
+        actionsp = &actions;
+        for (Obj action : static_cast<Tuple*>(a.pos(4).object())->items)
+            if (int e = add_action(actionsp, action)) {
+                posix_spawn_file_actions_destroy(actionsp);
+                return answer(1, e);
+            }
+    }
+    posix_spawnattr_t attr;
+    int error = posix_spawnattr_init(&attr);
+    short flags = 0;
+    sigset_t set;
+    if (error == 0 && a.pos(5) != None()) {
+        error = posix_spawnattr_setpgroup(&attr, static_cast<pid_t>(int_of(a.pos(5))));
+        flags |= POSIX_SPAWN_SETPGROUP;
+    }
+    if (truth(a.pos(6))) flags |= POSIX_SPAWN_RESETIDS;
+    if (error == 0 && signal_set(a.pos(7), &set)) {
+        error = posix_spawnattr_setsigmask(&attr, &set);
+        flags |= POSIX_SPAWN_SETSIGMASK;
+    }
+    if (error == 0 && signal_set(a.pos(8), &set)) {
+        error = posix_spawnattr_setsigdefault(&attr, &set);
+        flags |= POSIX_SPAWN_SETSIGDEF;
+    }
+    if (error == 0 && a.pos(10) != None()) {     // a scheduler: the policy if one is given, then the parameters
+        if (a.pos(9) != None()) {
+            error = posix_spawnattr_setschedpolicy(&attr, int_of(a.pos(9)));
+            flags |= POSIX_SPAWN_SETSCHEDULER;
+        }
+        if (error == 0) {
+            sched_param param{};
+            param.sched_priority = int_of(a.pos(10));
+            error = posix_spawnattr_setschedparam(&attr, &param);
+            flags |= POSIX_SPAWN_SETSCHEDPARAM;
+        }
+    }
+    if (error == 0) error = posix_spawnattr_setflags(&attr, flags);
+    pid_t pid = 0;
+    int spawned = 0;
+    if (error == 0)
+        spawned = which == "spawnp" ? posix_spawnp(&pid, text_of(a.pos(1)), actionsp, &attr, argv.data(), envp)
+                                    : posix_spawn(&pid, text_of(a.pos(1)), actionsp, &attr, argv.data(), envp);
+    if (actionsp != nullptr) posix_spawn_file_actions_destroy(actionsp);
+    posix_spawnattr_destroy(&attr);
+    if (error != 0) return answer(1, error);
+    if (spawned != 0) return answer(2, spawned);
+    return answer(0, pid);
+}
+// (b"wait"), (b"waitpid", pid, options): (pid, status); (b"waitid", idtype, id, options): None where nothing is reported, else
+// si_pid, si_uid, si_signo, si_status, si_code. Again after a signal; an error as a number
+Ref p_wait(Args a) {
+    const std::string& which = bytes_data(a.pos(0));
+    if (which == "waitid") {
+        siginfo_t si;
+        si.si_pid = 0;
+        int r;
+        do r = waitid(static_cast<idtype_t>(int_of(a.pos(1))), static_cast<id_t>(int_of(a.pos(2))), &si, int_of(a.pos(3)));
+        while (r < 0 && errno == EINTR);
+        if (r < 0) return failed();
+        if (si.si_pid == 0) return none_ref();
+        Ref p = int_from_i64(si.si_pid), u = int_from_u64(si.si_uid), g = int_from_i64(si.si_signo), s = int_from_i64(si.si_status), c = int_from_i64(si.si_code);
+        return tuple_new({p.get(), u.get(), g.get(), s.get(), c.get()});
+    }
+    int status = 0;
+    pid_t pid;
+    do pid = which == "wait" ? wait(&status) : waitpid(static_cast<pid_t>(int_of(a.pos(1))), &status, int_of(a.pos(2)));
+    while (pid < 0 && errno == EINTR);
+    if (pid < 0) return failed();
+    Ref p = int_from_i64(pid), s = int_from_i64(status);
+    return tuple_new({p.get(), s.get()});
+}
+Ref p_system(Args a) { return int_from_i64(system(text_of(a.pos(0)))); }   // os_system_impl: what system() gives, as it is
+// (path or descriptor, argv, env or None): execv, execve, fexecve. It comes back only to say why not
+Ref p_exec(Args a) {
+    std::vector<char*> argv = c_strings(a.pos(1));
+    if (a.pos(2) == None()) {
+        execv(text_of(a.pos(0)), argv.data());
+    } else {
+        std::vector<char*> env = c_strings(a.pos(2));
+        if (is_int(a.pos(0))) fexecve(int_of(a.pos(0)), argv.data(), env.data());
+        else execve(text_of(a.pos(0)), argv.data(), env.data());
+    }
+    return failed();
+}
+Ref p_abort(Args) { std::abort(); }              // os_abort_impl: no buffer is written out, no hook runs
 // ---- pseudo-terminals, and the process moved elsewhere (C-7-72): (which, ...)
 Ref p_tty(Args a) {
     const std::string& which = bytes_data(a.pos(0));
@@ -1092,7 +1235,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"setid", p_setid}, {"tty", p_tty}, {"chroot", p_chroot}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"timerfd", p_timerfd}, {"setid", p_setid}, {"tty", p_tty}, {"spawn", p_spawn}, {"wait", p_wait}, {"system", p_system}, {"exec", p_exec}, {"abort", p_abort}, {"chroot", p_chroot}, {"sched", p_sched}, {"pidfd_open", p_pidfd_open}, {"ctermid", p_ctermid}, {"getlogin", p_getlogin}, {"getgrouplist", p_getgrouplist}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
         {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},
