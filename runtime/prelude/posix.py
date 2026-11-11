@@ -16,6 +16,7 @@ __hidden_classes__ = ["ScandirIterator"]       # posix.ScandirIterator: a type o
 try:
     _number_index                                # noqa: B018  # PyNumber_Index, given by the runtime
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
+    _sequence_check                              # noqa: B018  # PySequence_Check
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _structseq                                   # noqa: B018  # bootstrap.py's: a type of named tuples
     _sys                                         # noqa: B018  # the system calls, by name
@@ -33,6 +34,7 @@ except NameError:
 
     _number_index: Callable[..., int] = _missing
     _tp_name: Callable[..., str] = _missing
+    _sequence_check: Callable[..., bool] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
     _structseq: Callable[..., Any] = _missing
     _sys: Callable[..., Any] = _missing
@@ -591,6 +593,81 @@ def _confname(value: object, table: object) -> int:   # conv_confname: a name of
     if _type_lookup(value, "__index__") is _ABSENT:
         raise TypeError("configuration names must be strings or integers")
     return _int(value)
+
+
+def _between(name: str, args: tuple[object, ...], kwds: dict[str, object], low: int, high: int) -> None:   # _PyArg_CheckPositional with a range
+    if kwds:
+        raise TypeError("posix." + name + "() takes no keyword arguments")
+    if len(args) < low:
+        raise TypeError(name + " expected at least " + str(low) + " argument" + ("" if low == 1 else "s") + ", got " + str(len(args)))
+    if len(args) > high:
+        raise TypeError(name + " expected at most " + str(high) + " argument" + ("" if high == 1 else "s") + ", got " + str(len(args)))
+
+
+def _unsigned(value: object, kind: str, bits: int) -> int:   # _PyLong_UnsignedInt_Converter, _PyLong_UnsignedLongLong_Converter
+    out = _number_index(value)
+    if out < 0:
+        raise ValueError("Cannot convert negative int")
+    if out >= 1 << bits:
+        raise OverflowError("Python int too large for C " + kind)
+    return out
+
+
+def _unsigned_bits(value: object) -> int:        # unsigned_int(bitwise=True): the low 32 bits; what neither a C int nor an unsigned holds is deprecated
+    out = _number_index(value)
+    if not -2147483648 <= out <= 4294967295:
+        _warn("integer value out of range", "DeprecationWarning")
+    return out & 0xFFFFFFFF
+
+
+def _buffers(buffers: object, count: int, writable: bool) -> list[object]:   # iov_setup: each item's buffer, in the sequence's order
+    out: list[object] = []
+    for i in range(count):
+        item = buffers[i]  # type: ignore[index]
+        if issubclass(type(item), bytearray) or (not writable and issubclass(type(item), bytes)):
+            out.append(item)
+        elif issubclass(type(item), bytes):
+            raise BufferError("Object is not writable.")
+        elif _type_lookup(item, "__buffer__") is not _ABSENT:
+            _refuse("os: a buffer that is not bytes or bytearray")
+        else:
+            raise TypeError("a bytes-like object is required, not '" + type(item).__name__ + "'")
+    return out
+
+
+def _read_vector(shown: str, fd: int, buffers: object, offset: int | None, flags: int) -> int:   # os_readv_impl, os_preadv_impl
+    if not _sequence_check(buffers):
+        raise TypeError(shown + "() arg 2 must be a sequence")
+    count = len(buffers)  # type: ignore[arg-type]
+    if flags != 0:                               # the pinned build has no preadv2
+        raise NotImplementedError("preadv2: flags unavailable on this platform")
+    targets = _buffers(buffers, count, True)
+    sizes = tuple([bytearray.__len__(b) for b in targets])  # type: ignore[arg-type]
+    result = _sys("readv", fd, sizes) if offset is None else _sys("readv", fd, sizes, offset)
+    if type(result) is int:
+        _fail(-result)
+    at = 0
+    total = len(result)
+    for b in targets:                            # as the kernel fills them: each to its end before the next
+        if at >= total:
+            break
+        size = min(bytearray.__len__(b), total - at)  # type: ignore[arg-type]
+        bytearray.__setitem__(b, slice(0, size), result[at:at + size])  # type: ignore[arg-type]
+        at += size
+    return total
+
+
+def _write_vector(shown: str, fd: int, buffers: object, offset: int | None, flags: int) -> int:   # os_writev_impl, os_pwritev_impl
+    if not _sequence_check(buffers):
+        raise TypeError(shown + "() arg 2 must be a sequence")
+    count = len(buffers)  # type: ignore[arg-type]
+    if flags != 0:                               # the pinned build has no pwritev2
+        raise NotImplementedError("pwritev2: flags unavailable on this platform")
+    parts = tuple([bytes(b) for b in _buffers(buffers, count, False)])  # type: ignore[call-overload]
+    result = _sys("writev", fd, parts) if offset is None else _sys("writev", fd, parts, offset)
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
 
 
 def _fd_converter(value: object) -> int:         # _fd_converter
@@ -1224,9 +1301,31 @@ def dup2(*args: object, **kwds: object) -> int:   # os_dup2_impl
     return result  # type: ignore[no-any-return]
 
 
-eventfd = _absent("eventfd")
-eventfd_read = _absent("eventfd_read")
-eventfd_write = _absent("eventfd_write")
+def eventfd(*args: object, **kwds: object) -> int:   # os_eventfd_impl
+    initval, flags = _unpack("eventfd", args, kwds, ("initval", "flags"), 1, 2)
+    start = _unsigned(initval, "unsigned int", 32)
+    result = _sys("eventfd", b"make", start, EFD_CLOEXEC if flags is _ABSENT else _int(flags))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
+
+
+def eventfd_read(*args: object, **kwds: object) -> int:   # os_eventfd_read_impl
+    result = _sys("eventfd", b"read", _fildes(_unpack("eventfd_read", args, kwds, ("fd",), 1, 1)[0]))
+    if type(result) is int:
+        _fail(-result)
+    return result[0]  # type: ignore[no-any-return]
+
+
+def eventfd_write(*args: object, **kwds: object) -> None:   # os_eventfd_write_impl
+    fd, value = _unpack("eventfd_write", args, kwds, ("fd", "value"), 2, 2)
+    descriptor = _fildes(fd)
+    count = _unsigned(value, "unsigned long long", 64)
+    code = _sys("eventfd", b"write", descriptor, count - 2**64 if count >= 2**63 else count)
+    if code < 0:
+        _fail(-code)
+
+
 execv = _absent("execv")
 execve = _absent("execve")
 
@@ -1449,15 +1548,36 @@ def makedev(*args: object, **kwds: object) -> int:   # os_makedev_impl: each par
     return -1 if device == 18446744073709551615 else device  # type: ignore[no-any-return]  # _PyLong_FromDev
 
 
-memfd_create = _absent("memfd_create")
+def memfd_create(*args: object, **kwds: object) -> int:   # os_memfd_create_impl
+    name, flags = _unpack("memfd_create", args, kwds, ("name", "flags"), 1, 2)
+    data = _fsconverter(name)
+    result = _sys("memfd", data, MFD_CLOEXEC if flags is _ABSENT else _unsigned_bits(flags))
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
 
 
 def minor(*args: object, **kwds: object) -> int:   # os_minor_impl
     return _major_minor(_sys("dev", b"minor", _dev(_one("minor", args, kwds))))
 
 
-mkfifo = _absent("mkfifo")
-mknod = _absent("mknod")
+def mkfifo(*args: object, **kwds: object) -> None:   # os_mkfifo_impl: posix_error, which names no file
+    path, mode, dir_fd = _unpack("mkfifo", args, kwds, ("path", "mode", "dir_fd"), 1, 2)
+    data, _shown = _path("mkfifo", "path", path)
+    bits = 0o666 if mode is _ABSENT else _int(mode)
+    code = _sys("mknod", data, bits, None, _dir_fd(dir_fd))
+    if code < 0:
+        _fail(-code)
+
+
+def mknod(*args: object, **kwds: object) -> None:   # os_mknod_impl
+    path, mode, device, dir_fd = _unpack("mknod", args, kwds, ("path", "mode", "device", "dir_fd"), 1, 3)
+    data, _shown = _path("mknod", "path", path)
+    bits = 0o600 if mode is _ABSENT else _int(mode)
+    number = 0 if device is _ABSENT else _dev(device)
+    code = _sys("mknod", data, bits, number, _dir_fd(dir_fd))
+    if code < 0:
+        _fail(-code)
 
 
 def nice(*args: object, **kwds: object) -> int:   # os_nice_impl: the new priority, which may be -1 without an error
@@ -1536,7 +1656,13 @@ def pread(*args: object, **kwds: object) -> bytes:   # os_pread_impl
     return result  # type: ignore[no-any-return]
 
 
-preadv = _absent("preadv")
+def preadv(*args: object, **kwds: object) -> int:   # os_preadv_impl
+    _between("preadv", args, kwds, 3, 4)
+    fd = _int(args[0])
+    offset = _off(args[2])
+    return _read_vector("preadv2", fd, args[1], offset, _int(args[3]) if len(args) > 3 else 0)
+
+
 ptsname = _absent("ptsname")
 
 
@@ -1554,9 +1680,31 @@ def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
     return result  # type: ignore[no-any-return]
 
 
-pwritev = _absent("pwritev")
-readinto = _absent("readinto")
-readv = _absent("readv")
+def pwritev(*args: object, **kwds: object) -> int:   # os_pwritev_impl
+    _between("pwritev", args, kwds, 3, 4)
+    fd = _int(args[0])
+    offset = _off(args[2])
+    return _write_vector("pwritev", fd, args[1], offset, _int(args[3]) if len(args) > 3 else 0)
+
+
+def readinto(*args: object, **kwds: object) -> int:   # os_readinto_impl
+    _positional("readinto", args, kwds, 2)
+    fd = _int(args[0])
+    buffer = args[1]
+    if not issubclass(type(buffer), bytearray):  # Py_buffer(accept={rwbuffer})
+        if not issubclass(type(buffer), bytes) and _type_lookup(buffer, "__buffer__") is not _ABSENT:
+            _refuse("os.readinto() into a buffer that is not a bytearray")
+        raise TypeError("readinto() argument 2 must be read-write bytes-like object, not " + _tp_name(buffer))
+    result = _sys("read", fd, bytearray.__len__(buffer))  # type: ignore[arg-type]
+    if type(result) is int:
+        _fail(-result)
+    bytearray.__setitem__(buffer, slice(0, len(result)), result)  # type: ignore[arg-type]
+    return len(result)
+
+
+def readv(*args: object, **kwds: object) -> int:   # os_readv_impl
+    _positional("readv", args, kwds, 2)
+    return _read_vector("readv", _int(args[0]), args[1], None, 0)
 
 
 def removexattr(*args: object, **kwds: object) -> None:   # os_removexattr_impl
@@ -1664,7 +1812,21 @@ def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
     code = _sys("xattr", b"set", data, follows, name, bytes(value), bits)  # type: ignore[arg-type]
     if code < 0:
         _fail(-code, shown)
-splice = _absent("splice")
+
+
+def splice(*args: object, **kwds: object) -> int:   # os_splice_impl: the offsets convert in the function, after the flags
+    src, dst, count, offset_src, offset_dst, flags = _unpack("splice", args, kwds, ("src", "dst", "count", "offset_src", "offset_dst", "flags"), 3, 6)
+    source, target = _int(src), _int(dst)
+    size = _ssize(count)
+    if size < 0:
+        raise ValueError("count cannot be negative")
+    bits = 0 if flags is _ABSENT else _unsigned(flags, "unsigned int", 32)
+    start = None if offset_src is _ABSENT or offset_src is None else _off(offset_src)
+    place = None if offset_dst is _ABSENT or offset_dst is None else _off(offset_dst)
+    result = _sys("splice", source, target, size, start, place, bits)
+    if result < 0:
+        _fail(-result)
+    return result  # type: ignore[no-any-return]
 
 
 def statvfs(*args: object, **kwds: object) -> object:   # os_statvfs_impl
@@ -1800,4 +1962,8 @@ def waitstatus_to_exitcode(*args: object, **kwds: object) -> int:   # os_waitsta
     raise ValueError("invalid wait status: " + str(status))
 
 
-writev = _absent("writev")
+def writev(*args: object, **kwds: object) -> int:   # os_writev_impl
+    _positional("writev", args, kwds, 2)
+    return _write_vector("writev", _int(args[0]), args[1], None, 0)
+
+

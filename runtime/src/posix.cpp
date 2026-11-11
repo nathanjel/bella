@@ -6,7 +6,10 @@
 #include <sys/random.h>
 #include <sys/resource.h>
 #include <sys/sendfile.h>
+#include <sys/eventfd.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <sys/statvfs.h>
 #include <sys/sysmacros.h>
 #include <sys/wait.h>
@@ -331,6 +334,71 @@ Ref p_dev(Args a) {                              // (b"major" | b"minor", dev) o
         return int_from_u64(makedev(static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(1)))), static_cast<unsigned>(static_cast<std::uint64_t>(i64_of(a.pos(2))))));
     dev_t dev = static_cast<dev_t>(i64_of(a.pos(1)));
     return int_from_u64(which == "major" ? major(dev) : minor(dev));
+}
+// ---- several buffers at once, and descriptors with no file (C-7-69)
+// readv and preadv: (fd, sizes[, offset]). One call into buffers of the sizes the program's have; the bytes come back whole, for
+// the prelude to lay into the program's buffers in the order the kernel filled them
+Ref p_readv(Args a) {
+    auto& sizes = static_cast<Tuple*>(a.pos(1).object())->items;
+    std::vector<std::string> parts(sizes.size());
+    std::vector<iovec> iov(sizes.size());
+    try {
+        for (std::size_t i = 0; i < sizes.size(); ++i) {
+            parts[i].resize(static_cast<std::size_t>(i64_of(sizes[i])));
+            iov[i] = {parts[i].data(), parts[i].size()};
+        }
+    } catch (const std::bad_alloc&) {
+        raise_new("MemoryError", "");
+    }
+    ssize_t n;
+    do n = a.npos > 2 ? preadv(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()), i64_of(a.pos(2))) : readv(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()));
+    while (n < 0 && errno == EINTR);
+    if (n < 0) return failed();
+    std::string out;
+    out.reserve(static_cast<std::size_t>(n));
+    for (std::size_t i = 0; i < parts.size() && out.size() < static_cast<std::size_t>(n); ++i) out.append(parts[i], 0, static_cast<std::size_t>(n) - out.size());
+    return bytes_new(out);
+}
+Ref p_writev(Args a) {                           // (fd, parts[, offset]): writev, pwritev
+    auto& parts = static_cast<Tuple*>(a.pos(1).object())->items;
+    std::vector<iovec> iov(parts.size());
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        const std::string& data = bytes_data(parts[i]);
+        iov[i] = {const_cast<char*>(data.data()), data.size()};
+    }
+    ssize_t n;
+    do n = a.npos > 2 ? pwritev(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()), i64_of(a.pos(2))) : writev(int_of(a.pos(0)), iov.data(), static_cast<int>(iov.size()));
+    while (n < 0 && errno == EINTR);
+    return result(n);
+}
+// eventfd: (b"make", initval, flags), (b"read", fd) -> (value,), (b"write", fd, value as 64 bits read signed)
+Ref p_eventfd(Args a) {
+    const std::string& which = bytes_data(a.pos(0));
+    if (which == "make") return result(eventfd(static_cast<unsigned>(i64_of(a.pos(1))), int_of(a.pos(2))));
+    if (which == "write") return result(eventfd_write(int_of(a.pos(1)), static_cast<eventfd_t>(i64_of(a.pos(2)))));
+    eventfd_t value = 0;
+    if (eventfd_read(int_of(a.pos(1)), &value) != 0) return failed();
+    Ref v = int_from_u64(value);
+    return tuple_new({v.get()});
+}
+Ref p_memfd(Args a) { return result(memfd_create(text_of(a.pos(0)), static_cast<unsigned>(i64_of(a.pos(1))))); }   // (name, flags)
+Ref p_mknod(Args a) {                            // (path, mode, device or None for a fifo, dir_fd): mknodat, mkfifoat; again after a signal
+    int r;
+    do r = a.pos(2) == None() ? mkfifoat(dir_fd_of(a, 3), text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))))
+                              : mknodat(dir_fd_of(a, 3), text_of(a.pos(0)), static_cast<mode_t>(int_of(a.pos(1))), static_cast<dev_t>(i64_of(a.pos(2))));
+    while (r != 0 && errno == EINTR);
+    return result(r);
+}
+Ref p_splice(Args a) {                           // (src, dst, count, offset_src or None, offset_dst or None, flags)
+    off_t in = 0, out = 0;
+    off_t* from = a.pos(3) == None() ? nullptr : &in;
+    off_t* to = a.pos(4) == None() ? nullptr : &out;
+    if (from != nullptr) in = static_cast<off_t>(i64_of(a.pos(3)));
+    if (to != nullptr) out = static_cast<off_t>(i64_of(a.pos(4)));
+    ssize_t r;
+    do r = splice(int_of(a.pos(0)), from, int_of(a.pos(1)), to, static_cast<std::size_t>(i64_of(a.pos(2))), static_cast<unsigned>(i64_of(a.pos(5))));
+    while (r < 0 && errno == EINTR);
+    return result(r);
 }
 // ---- the file system and the configured limits (C-7-68)
 Ref p_statvfs(Args a) {                          // (path or fd, again after a signal): _pystatvfs_fromstructstatvfs's eleven
@@ -812,7 +880,7 @@ const std::map<std::string_view, Primitive>& primitives() {
     static const std::map<std::string_view, Primitive> table{
         {"stat", p_stat}, {"getcwd", p_getcwd}, {"listdir", p_listdir}, {"opendir", p_opendir}, {"readdir", p_readdir}, {"closedir", p_closedir}, {"dup", p_dup}, {"rmdir", p_rmdir}, {"unlink", p_unlink}, {"mkdir", p_mkdir},
         {"rename", p_rename}, {"chdir", p_chdir}, {"access", p_access}, {"readlink", p_readlink}, {"symlink", p_symlink}, {"link", p_link},
-        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
+        {"open", p_open}, {"close", p_close}, {"copy_file_range", p_copy_file_range}, {"readv", p_readv}, {"writev", p_writev}, {"eventfd", p_eventfd}, {"memfd", p_memfd}, {"mknod", p_mknod}, {"splice", p_splice}, {"sendfile", p_sendfile}, {"chmod", p_chmod}, {"utime", p_utime}, {"xattr", p_xattr}, {"read", p_read}, {"write", p_write}, {"lseek", p_lseek}, {"isatty", p_isatty}, {"statvfs", p_statvfs}, {"conf", p_conf}, {"chown", p_chown}, {"ids", p_ids}, {"loadavg", p_loadavg}, {"sched_yield", p_sched_yield}, {"getrandom", p_getrandom}, {"wstatus", p_wstatus}, {"dev", p_dev}, {"dup2", p_dup2}, {"pipe", p_pipe}, {"inheritable", p_inheritable}, {"blocking", p_blocking}, {"closerange", p_closerange}, {"fildes", p_fildes}, {"sync", p_sync},
         {"truncate", p_truncate}, {"pread", p_pread}, {"pwrite", p_pwrite}, {"lockf", p_lockf}, {"posix_f", p_posix_f}, {"fsync", p_fsync}, {"ftruncate", p_ftruncate},
         {"strerror", p_strerror}, {"umask", p_umask}, {"urandom", p_urandom}, {"cpu_count", p_cpu_count}, {"terminal_size", p_terminal_size},
         {"uname", p_uname}, {"times", p_times}, {"getpid", p_getpid}, {"getppid", p_getppid}, {"getuid", p_getuid}, {"geteuid", p_geteuid},

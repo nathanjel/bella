@@ -124,6 +124,7 @@ C-7-65_descriptors.py
 C-7-66_wait_statuses_and_device_numbers.py
 C-7-67_ownership_and_ids.py
 C-7-68_file_system_and_configuration_limits.py
+C-7-69_vectored_io_and_descriptors_without_files.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-03_locals_detached.py

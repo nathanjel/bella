@@ -235,6 +235,61 @@ print([os.pathconf(".", n) for n in sorted(os.pathconf_names)])
 """
 
 
+# C-7-69: readv, preadv, writev, pwritev, readinto, eventfd, memfd_create, mkfifo, mknod and splice. The words of what they refuse,
+# the DeprecationWarning of memfd_create's flags outside an int and an unsigned (unsigned_int(bitwise=True)), and what the pinned
+# build says of the flags of preadv and pwritev, which it has not got (no preadv2).
+VECTOR_MESSAGES = r"""
+import os
+import warnings
+def m(f):
+    try:
+        with warnings.catch_warnings(record=True) as got:
+            warnings.simplefilter("always")
+            v = f()
+        return repr(v) + "".join(" (" + type(x.message).__name__ + ": " + str(x.message) + ")" for x in got)
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class Big:
+    def __index__(self):
+        return 2 ** 32
+class Len:
+    def __len__(self):
+        raise RuntimeError("no length")
+    def __getitem__(self, i):
+        return bytearray(1)
+r, w = os.pipe()
+e = os.eventfd(0)
+print(m(lambda: os.eventfd(-1)), m(lambda: os.eventfd(2 ** 32)), m(lambda: os.eventfd(2 ** 70)), m(lambda: os.eventfd("1")), m(lambda: os.eventfd(1.5)), m(lambda: os.eventfd(Big())), m(lambda: os.eventfd(0, 2 ** 40)), m(lambda: os.eventfd()),
+      m(lambda: os.eventfd(0, 0, 0)), m(lambda: os.eventfd(0, flag=0)), m(lambda: os.eventfd(0, 12345)), m(lambda: os.eventfd_write(e, -1)), m(lambda: os.eventfd_write(e, 2 ** 64)), m(lambda: os.eventfd_write(e, "1")),
+      m(lambda: os.eventfd_write(e, 1.5)), m(lambda: os.eventfd_write(e, 2 ** 64 - 1)), m(lambda: os.eventfd_write(e)), m(lambda: os.eventfd_write("e", 1)), m(lambda: os.eventfd_write("e", -1)), m(lambda: os.eventfd_read()),
+      m(lambda: os.eventfd_read("e")), m(lambda: os.eventfd_read(1.5)), m(lambda: os.eventfd_read(e, 1)), m(lambda: os.eventfd_read(987)), m(lambda: os.eventfd_write(987, 1)), sep="\n")
+print(m(lambda: os.memfd_create("n", -1)), m(lambda: os.memfd_create("n", -2 ** 31)), m(lambda: os.memfd_create("n", -2 ** 31 - 1)), m(lambda: os.memfd_create("n", 2 ** 32 - 1)), m(lambda: os.memfd_create("n", 2 ** 32) > 0),
+      m(lambda: os.memfd_create("n", 2 ** 70 + 1) > 0), m(lambda: os.memfd_create("n", -2 ** 40) > 0), m(lambda: os.memfd_create("n", "x")), m(lambda: os.memfd_create("n", 1.5)), m(lambda: os.memfd_create(5)), m(lambda: os.memfd_create(None)),
+      m(lambda: os.memfd_create("a\0b")), m(lambda: os.memfd_create(b"a\0b")), m(lambda: os.memfd_create()), m(lambda: os.memfd_create("n", 0, 0)), m(lambda: os.memfd_create(bytearray(b"n"))), m(lambda: os.memfd_create(nam="n")),
+      m(lambda: os.memfd_create("n" * 250)), sep="\n")
+print(m(lambda: os.splice(r, w, -1)), m(lambda: os.splice(r, w, 1, None, None, -1)), m(lambda: os.splice(r, w, 1, None, None, 2 ** 32)), m(lambda: os.splice(r, w, "4")), m(lambda: os.splice(r, w, 4, "0")), m(lambda: os.splice(r, w, 2 ** 70)),
+      m(lambda: os.splice(r, w)), m(lambda: os.splice(r, w, 4, None, None, 0, 0)), m(lambda: os.splice(r, w, 4, flag=0)), m(lambda: os.splice(r, w, 4, None, None, "0")), m(lambda: os.splice(r, w, 4, 2 ** 70)), m(lambda: os.splice(r, w, 4, flags=1.5)),
+      m(lambda: os.splice(r, w, 4, 2 ** 70, None, -1)), m(lambda: os.splice(r, w, 4, 2 ** 70, "x")), m(lambda: os.splice(r, w, -1, flags=-1)), m(lambda: os.splice("r", w, -1)), m(lambda: os.splice(r, w, 4, 0)), m(lambda: os.splice(987, w, 4)), sep="\n")
+print(m(lambda: os.readv(r, 5)), m(lambda: os.readv(r, [b"xx"])), m(lambda: os.readv(r, ["xx"])), m(lambda: os.readv(r, [None])), m(lambda: os.readv(r)), m(lambda: os.readv(fd=r, buffers=[])), m(lambda: os.readv(r, [], 1)), m(lambda: os.readv("f", [])),
+      m(lambda: os.readv(1.5, [])), m(lambda: os.readv(r, iter([]))), m(lambda: os.readv(r, {})), m(lambda: os.readv(r, Len())), m(lambda: os.readv("f", 5)), m(lambda: os.readv(987, [bytearray(1)])), m(lambda: os.readv(r, [bytearray(1)] * 1025)),
+      m(lambda: os.preadv(r, 5, 0)), m(lambda: os.preadv(r, [], 0, 1)), m(lambda: os.preadv(r, [])), m(lambda: os.preadv(r, [], "0")), m(lambda: os.preadv(r, [], 0, "0")), m(lambda: os.preadv(r, [], 0, 2 ** 40)), m(lambda: os.preadv(r, [], 2 ** 70)),
+      m(lambda: os.preadv(r, [], 0, 0, 0)), m(lambda: os.preadv(r, [], offset=0)), m(lambda: os.preadv(r, [], 1.5)), m(lambda: os.preadv(r, 5, 0, 1)), m(lambda: os.preadv(r, [5], 0, 1)), m(lambda: os.preadv(r, Len(), 0, 1)),
+      m(lambda: os.preadv(r, [bytearray(1)], 0)), sep="\n")
+print(m(lambda: os.writev(w, 5)), m(lambda: os.writev(w, b"ab")), m(lambda: os.writev(w, ["ab"])), m(lambda: os.writev(w)), m(lambda: os.writev(w, [], 0)), m(lambda: os.writev(fd=w, buffers=[])), m(lambda: os.writev(w, [b"a", None])),
+      m(lambda: os.writev(987, [b"a"])), m(lambda: os.pwritev(w, 5, 0)), m(lambda: os.pwritev(w, [], 0, 1)), m(lambda: os.pwritev(w, [])), m(lambda: os.pwritev(w, [], "0")), m(lambda: os.pwritev(w, 5, 0, 1)), m(lambda: os.pwritev(w, [b"a"], 0)),
+      m(lambda: os.pwritev(w, [], 0, 0, 0)), m(lambda: os.readinto(r, b"xx")), m(lambda: os.readinto(r, "xx")), m(lambda: os.readinto(r, 5)), m(lambda: os.readinto(r)), m(lambda: os.readinto(r, bytearray(1), 1)),
+      m(lambda: os.readinto(fd=r, buffer=bytearray(1))), m(lambda: os.readinto("f", bytearray(1))), m(lambda: os.readinto("f", b"x")), m(lambda: os.readinto(987, bytearray(1))), sep="\n")
+print(m(lambda: os.mkfifo("/tmp")), m(lambda: os.mkfifo()), m(lambda: os.mkfifo(5)), m(lambda: os.mkfifo("x", "0")), m(lambda: os.mkfifo("x", 0, 3)), m(lambda: os.mkfifo("x", dir_fd="t")), m(lambda: os.mkfifo("a\0b")), m(lambda: os.mkfifo("x", mod=1)),
+      m(lambda: os.mkfifo(0)), m(lambda: os.mkfifo("no such directory here/x")), m(lambda: os.mknod()), m(lambda: os.mknod("x", "0")), m(lambda: os.mknod("x", 0o600, "0")), m(lambda: os.mknod("x", 0o600, -5)), m(lambda: os.mknod("x", 0o600, 2 ** 70)),
+      m(lambda: os.mknod("x", 0o600, 0, 3)), m(lambda: os.mknod("x", 0o600, 1.5)), m(lambda: os.mknod("/tmp", 0o600, 2 ** 64)), m(lambda: os.mknod("/tmp")), m(lambda: os.mknod("no such directory here/x")), m(lambda: os.mknod(b"a\0b")),
+      os.readv.__doc__[:30], os.eventfd.__doc__[:30], os.mkfifo.__doc__[:30], sep="\n")
+"""
+
+
+def test_vectors_eventfd_memfd_nodes_and_splice() -> None:
+    same(VECTOR_MESSAGES)
+
+
 def test_statvfs_and_configuration_limits() -> None:
     same(LIMITS_MESSAGES)
 
