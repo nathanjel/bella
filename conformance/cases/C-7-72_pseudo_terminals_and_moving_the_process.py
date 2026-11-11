@@ -6,7 +6,8 @@
 tcgetpgrp and tcsetpgrp, login_tty; and three calls that move the process elsewhere, chroot, unshare and setns, as far as a
 process without the privilege gets. What each returns, what it refuses, and what its OSError carries."""
 # ruff: noqa: E501, PTH
-# A pseudo-terminal's name is the machine's (/dev/pts/ and a number): what is printed is where it is and that two ways of asking agree.
+# A pseudo-terminal's name is the machine's (/dev/pts/ and a number, and the multiplexer is /dev/ptmx or /dev/pts/ptmx): what is
+# printed is where it is and that two ways of asking agree.
 import os
 import stat
 import tempfile
@@ -53,7 +54,7 @@ def main() -> None:
     print("openpty:", master > 2, slave > 2, master != slave, os.get_inheritable(master), os.get_inheritable(slave), os.isatty(master), os.isatty(slave), stat.S_ISCHR(os.fstat(slave).st_mode), arrived, os.read(slave, 100),
           os.device_encoding(slave), m(lambda: os.openpty(1)), m(lambda: os.openpty(x=1)))  # type: ignore[call-arg]
     shown = os.ttyname(slave)
-    print("ttyname:", type(shown).__name__, shown.startswith("/dev/pts/"), shown[9:].isdigit(), os.ptsname(master) == shown, os.ttyname(master), os.ttyname(Index(slave)) == shown, os.stat(shown).st_rdev == os.fstat(slave).st_rdev,  # type: ignore[arg-type]
+    print("ttyname:", type(shown).__name__, shown.startswith("/dev/pts/"), shown[9:].isdigit(), os.ptsname(master) == shown, os.ttyname(master).endswith("/ptmx"), os.stat(os.ttyname(master)).st_rdev == os.fstat(master).st_rdev, os.ttyname(Index(slave)) == shown, os.stat(shown).st_rdev == os.fstat(slave).st_rdev,  # type: ignore[arg-type]
           m(lambda: os.ttyname(plain)), m(lambda: os.ttyname(987)), m(lambda: os.ttyname("x")), m(lambda: os.ttyname()), m(lambda: os.ttyname(fd=slave)), m(lambda: os.ttyname(1.5)), m(lambda: os.ttyname(2**40)),  # type: ignore[arg-type, call-arg]
           m(lambda: os.ttyname(Fileno(slave))))  # type: ignore[arg-type]
 
@@ -73,12 +74,13 @@ def main() -> None:
           m(lambda: os.tcsetpgrp("x", 1)), m(lambda: os.tcsetpgrp(slave, "x")), m(lambda: os.tcsetpgrp(fd=slave, pgid=1)), m(lambda: os.tcsetpgrp(slave, 2**40)), m(lambda: os.tcsetpgrp(slave, 1, 2)), m(lambda: os.tcsetpgrp(slave, -1)))  # type: ignore[arg-type, call-arg]
     print("login_tty refuses:", m(lambda: os.login_tty(987)), m(lambda: os.login_tty("x")), m(lambda: os.login_tty()), m(lambda: os.login_tty(fd=slave)), m(lambda: os.login_tty(Fileno(987))), m(lambda: os.login_tty(1.5)))  # type: ignore[arg-type, call-arg]
 
-    # elsewhere: a root that is not there, no namespace to leave, a descriptor that is no namespace
+    # elsewhere: a root that is not there; of unshare and setns, what is refused before the system is asked (a container's
+    # filter answers the calls themselves in its own way, so those are compared on one machine only)
     print("chroot, unshare and setns:", m(lambda: os.chroot(os.path.join(d, "missing"))) == "FileNotFoundError: " + repr((2, "No such file or directory", os.path.join(d, "missing"))),
           m(lambda: os.chroot(os.fsencode(name))) == "NotADirectoryError: " + repr((20, "Not a directory", os.fsencode(name))), m(lambda: os.chroot(path=name)) == "NotADirectoryError: " + repr((20, "Not a directory", name)),
-          m(lambda: os.chroot(5)), m(lambda: os.chroot()), m(lambda: os.chroot("a\0b")), m(lambda: os.chroot(name, 1)), m(lambda: os.chroot(None)), os.unshare(0), os.unshare(flags=Index(0)), m(lambda: os.unshare()),  # type: ignore[arg-type, call-arg, func-returns-value]
-          m(lambda: os.unshare("x")), m(lambda: os.unshare(-1)), m(lambda: os.unshare(2**40)), m(lambda: os.unshare(0, 0)), m(lambda: os.setns(987)), m(lambda: os.setns(plain)), m(lambda: os.setns()), m(lambda: os.setns("x")),  # type: ignore[arg-type, call-arg]
-          m(lambda: os.setns(fd=987, nstype=0)), m(lambda: os.setns(987, "x")), m(lambda: os.setns(987, 0, 0)), m(lambda: os.setns(Fileno(987))), m(lambda: os.setns(987, 2**40)), m(lambda: os.setns(plain, os.CLONE_NEWNET)))  # type: ignore[arg-type, call-arg]
+          m(lambda: os.chroot(5)), m(lambda: os.chroot()), m(lambda: os.chroot("a\0b")), m(lambda: os.chroot(name, 1)), m(lambda: os.chroot(None)), m(lambda: os.unshare()),  # type: ignore[arg-type, call-arg]
+          m(lambda: os.unshare("x")), m(lambda: os.unshare(2**40)), m(lambda: os.unshare(0, 0)), m(lambda: os.unshare(flag=0)), m(lambda: os.setns()), m(lambda: os.setns("x")),  # type: ignore[arg-type, call-arg]
+          m(lambda: os.setns(987, "x")), m(lambda: os.setns(987, 0, 0)), m(lambda: os.setns(Fileno("x"))), m(lambda: os.setns(987, 2**40)), m(lambda: os.setns(987, nstyp=0)), m(lambda: os.setns(1.5)))  # type: ignore[arg-type, call-arg]
 
     for descriptor in (plain, master, slave, multiplexer):
         os.close(descriptor)
