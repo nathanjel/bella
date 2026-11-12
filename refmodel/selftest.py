@@ -21,7 +21,7 @@ def run(iterations: int, seed: int, ops_per_world: int = 60) -> tuple[int, int, 
     rng = random.Random(seed)
     worlds = ops = hits = misses = deaths = 0
     while ops < iterations:
-        world = World()
+        world = World(cycles=True)
         worlds += 1
         try:
             for _ in range(ops_per_world):
@@ -30,6 +30,8 @@ def run(iterations: int, seed: int, ops_per_world: int = 60) -> tuple[int, int, 
                 ops += 1
         except ModelError as exc:
             raise ModelError(f"{exc}\nlog:\n" + "\n".join(map(repr, world.log))) from None
+        finally:
+            world.close()
         hits += sum(s.hits for s in world.sites.values())
         misses += sum(s.misses for s in world.sites.values())
         deaths += world.deaths_compared
@@ -50,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"MODEL INVARIANT VIOLATED (seed {args.seed}):\n{exc}", file=sys.stderr)
         return 1
     print(f"refmodel selftest: {ops} operations over {worlds} worlds, seed {args.seed}: model == CPython; "
-          f"inline caches: {hits} hits, {misses} misses; {deaths} deaths in CPython's order")
+          f"inline caches: {hits} hits, {misses} misses; {deaths} deaths in CPython's order (a collection's as a multiset)")
     return 0
 
 

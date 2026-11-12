@@ -13,15 +13,25 @@ finaliser, a CPython ``__del__``); descriptors are tagged too and are held only 
 they are installed in, so replacing one kills it while cache entries may still name it (RL-20).
 ``drop`` lets an object die and puts a fresh one of the same class in its place. After every
 operation the two death logs must be equal, in order.
+
+Cycles (step 3c, ``World(cycles=True)``): a value may also be one of the program's objects, so
+objects hold each other and a dropped object can live on in a cycle; ``collect`` runs a collection
+of one generation on both sides (CPython's automatic collector is off while such a world lives,
+and both sides start with a full collection, so each object is in the same generation on both).
+The deaths a collection causes are compared as a multiset: the specification leaves the order of
+a group's finalisers unspecified (section 9, D-04). A value that is one of the program's objects
+reads back as its place in the program's list, or "elsewhere" once dropped.
 """
 from __future__ import annotations
 
 import functools
+import gc
 import random
 import weakref
 from dataclasses import dataclass, field
 from typing import Any
 
+from refmodel import collector
 from refmodel import objects as O
 from refmodel.objects import ModelError, RefClass, RefObject, RefWeak, Runtime, Site, decref, incref, weak_ref, make_descriptor_class
 
@@ -48,12 +58,18 @@ class Tagged:
         self._log.append(self.tag)
 
 
+CURRENT: World | None = None             # the world whose program objects _norm names
+
+
 def _norm(v: Any) -> Any:
-    """Tagged values compare by tag on both sides, and an object that revives by its number."""
+    """Tagged values compare by tag on both sides, an object that revives by its number, and one of the
+    program's objects by its place in the program's list."""
     if hasattr(v, "revival"):
         return ("R", v.revival)
     if isinstance(v, (RefObject, Tagged)) and getattr(v, "tag", None) is not None:
         return ("T", v.tag)
+    if CURRENT is not None and (isinstance(v, RefObject) or type(v) in CURRENT.real_classes):
+        return ("O", CURRENT.which(v))
     if isinstance(v, (list, tuple)):
         return type(v)(_norm(x) for x in v)
     return v
@@ -83,7 +99,12 @@ class DescriptorPair:
 class World:
     """A model world and a CPython world built from the same class definitions."""
 
-    def __init__(self) -> None:
+    def __init__(self, cycles: bool = False) -> None:
+        global CURRENT
+        CURRENT = self
+        self.cycles = cycles
+        if cycles:
+            gc.disable()                          # collections on CPython's side only when an operation asks
         O.HEAP = self.heap = O.Heap()
         self.real_deaths: list[Any] = []
         self.deaths_compared = 0
@@ -157,6 +178,10 @@ class World:
         ]
         for m, _ in self.objects:
             incref(m)                                  # the program's variables hold them
+        self.real_classes: weakref.WeakSet[type] = weakref.WeakSet(rc for _, rc in self.classes)
+        if cycles:                                     # every object in the oldest generation on both sides
+            collector.collect(self.heap, 2)
+            gc.collect()
         # one inline cache per literal-name call site, plus one computed-name site
         self.sites: dict[str, Site] = {name: Site() for name in NAMES}
         self.sites["<computed>"] = Site()
@@ -164,6 +189,18 @@ class World:
         self.log: list[tuple[Any, ...]] = []
 
     # ---- runtime-created classes (review log D-1) ------------------------------------------
+    def which(self, v: Any) -> Any:
+        """One of the program's objects as its place in the program's list, from either side."""
+        for i, pair in enumerate(self.objects):
+            if v is pair[0] or v is pair[1]:
+                return i
+        return "elsewhere"
+
+    def close(self) -> None:
+        """CPython's automatic collector back on after a world with cycles."""
+        if self.cycles:
+            gc.enable()
+
     def _make_runtime_class(self, variant: int) -> tuple[RefClass, type]:
         """A new model class and a new CPython class on every call, in one of five shapes."""
         A, RA = self.classes[0]
@@ -205,6 +242,10 @@ class World:
             vm = RefObject(self.tracked_m, tag=v[1])
             incref(vm)
             return vm, Tagged(v[1], self.real_deaths)
+        if isinstance(v, tuple) and v[0] == "O":           # one of the program's objects
+            m, r = self.objects[v[1]]
+            incref(m)
+            return m, r
         return v, v
 
     def new_tag(self) -> tuple[str, str]:
@@ -615,6 +656,123 @@ class World:
             incref(m)
         return ("value", mc.name), ("value", rc.__name__)
 
+    def op_ring(self, classes: tuple[int, ...], name: str, extra: str, tags: tuple[Any, ...], weaks: tuple[Any, ...],
+                reviver: str | None, hold: int | None) -> tuple[Outcome, Outcome]:
+        """A cycle the program lets go of (step 3c): new objects of the given classes, each holding the next through
+        `name` and its tag through `extra`; a weak reference to each where `weaks` says (True: with a callback, False:
+        without), kept by the program; if `reviver` names an attribute, the first object holds there an object whose
+        finaliser keeps it and which holds the second object, so that a collection finalises the group and finds it
+        resurrected; if `hold` is an object of the program's, that object holds the first through `name`, so that the
+        ring lives until it lets go. Each assignment's outcome, on both sides."""
+        n = len(classes)
+        ms: list[RefObject] = []
+        rs: list[Any] = []
+        for c in classes:
+            mc, rc = self.classes[c]
+            ms.append(RefObject(mc))
+            incref(ms[-1])
+            rs.append(rc())
+        out_m: list[Outcome] = []
+        out_r: list[Outcome] = []
+
+        def both(fm: Any, fr: Any) -> None:
+            out_m.append(_outcome(fm))
+            out_r.append(_outcome(fr))
+
+        def stored(m: RefObject, attr: str) -> bool:
+            """Not through one of the world's data descriptors: their stores are keyed by id() and forget only the
+            program's objects, while these die in a collection and their ids are taken again."""
+            found = m.cls.lookup(attr)
+            if found is not None and isinstance(found[0], RefObject) and O.is_data_descriptor(found[0]):
+                out_m.append(("skipped", attr))
+                out_r.append(("skipped", attr))
+                return False
+            return True
+
+        for k in range(n):
+            if stored(ms[k], name):
+                both(functools.partial(self.rt.setattr, ms[k], name, ms[(k + 1) % n]), functools.partial(setattr, rs[k], name, rs[(k + 1) % n]))
+        for k, tag in enumerate(tags):
+            if not stored(ms[k], extra):
+                continue
+            vm, vr = self.value(tag)
+            both(functools.partial(self.rt.setattr, ms[k], extra, vm), functools.partial(setattr, rs[k], extra, vr))
+            decref(vm)
+            del vm, vr
+        for k, kind in enumerate(weaks):
+            if kind is not None:
+                self._ring_weak(ms[k], rs[k], kind, both)
+        if reviver is not None:
+            number = self.revivals
+            self.revivals += 1
+            log_m, log_r, kept_m, kept_r = self.heap.deaths, self.real_deaths, self.kept_m, self.kept_r
+
+            def fin_m(obj: RefObject) -> None:
+                log_m.append(("fin", number))
+                incref(obj)
+                kept_m.append(obj)
+
+            class Real:
+                __slots__ = ("value", "__weakref__")
+                revival = number
+
+                def __del__(self) -> None:
+                    log_r.append(("fin", number))
+                    kept_r.append(self)
+
+            cm = RefClass("Reviver", slots=("value", "__weakref__"), attrs={"__del__": fin_m})
+            vm = RefObject(cm)
+            vm.revival = number  # type: ignore[attr-defined]
+            incref(vm)
+            vr = Real()
+            self.rt.setattr(vm, "value", ms[1 % n])
+            vr.value = rs[1 % n]  # type: ignore[attr-defined]
+            self.reviver_weaks.append((weak_ref(vm), weakref.ref(vr)))
+            if stored(ms[0], reviver):
+                both(functools.partial(self.rt.setattr, ms[0], reviver, vm), functools.partial(setattr, rs[0], reviver, vr))
+            decref(vm)
+            del vm, vr
+        if hold is not None:
+            hm, hr = self.objects[hold]
+            both(functools.partial(self.rt.setattr, hm, name, ms[0]), functools.partial(setattr, hr, name, rs[0]))
+        for m in reversed(ms):                     # CPython's side lets go of its list last to first (list_dealloc)
+            decref(m)
+        del ms, rs
+        return ("value", out_m), ("value", out_r)
+
+    def _ring_weak(self, m: RefObject, r: Any, with_callback: bool, both: Any) -> None:
+        """A weak reference to a ring's object on each side, kept by the program; its callback logs its number."""
+        number = self.weak_numbers
+        self.weak_numbers += 1
+        log_m, log_r = self.heap.deaths, self.real_deaths
+
+        def callback_m(w: RefWeak) -> None:
+            log_m.append(("cb", number, w() is None))
+
+        def callback_r(w: Any) -> None:
+            log_r.append(("cb", number, w() is None))
+
+        got: list[Any] = []
+
+        def model() -> None:
+            got.append(weak_ref(m, callback_m if with_callback else None))
+
+        def real() -> None:
+            got.append(weakref.ref(r, callback_r if with_callback else None))
+
+        both(model, real)
+        if len(got) == 2:
+            self.weaks.append((got[0], got[1]))
+        elif got and isinstance(got[0], RefWeak):
+            decref(got[0])
+
+    def op_collect(self, generation: int) -> tuple[Outcome, Outcome]:
+        """gc.collect(generation) on both sides; what dies is compared as a multiset (apply). The number found is not
+        compared: CPython's includes the oracle's own garbage (the classes op_revive makes)."""
+        collector.collect(self.heap, generation)
+        gc.collect(generation)
+        return ("value", None), ("value", None)
+
     def op_demote_descriptor(self, desc_i: int) -> tuple[Outcome, Outcome]:
         """Remove __set__ from a descriptor's class: a data descriptor becomes non-data, so
         instance storage it used to hide becomes visible again."""
@@ -629,6 +787,9 @@ class World:
         m, r = getattr(self, f"op_{kind}")(*args)
         if m != r:
             raise Mismatch(f"{op}: model {m!r} != cpython {r!r}\nlog:\n" + "\n".join(map(repr, self.log)))
+        if kind == "collect":                      # a group's order is unspecified (D-04): the same deaths, any order
+            self.heap.deaths.sort(key=repr)
+            self.real_deaths.sort(key=repr)
         if self.heap.deaths != self.real_deaths:
             raise Mismatch(f"{op}: deaths in the model {self.heap.deaths} != in cpython {self.real_deaths}\nlog:\n"
                            + "\n".join(map(repr, self.log)))
@@ -656,6 +817,20 @@ class World:
     # ---- random operation source --------------------------------------------------------
     def random_op(self, rng: random.Random) -> tuple[Any, ...]:
         n_obj = len(self.objects)
+        if self.cycles:
+            roll = rng.random()
+            if roll < 0.06:
+                return ("collect", rng.choice((0, 0, 1, 2)))
+            if roll < 0.10:
+                return ("drop", rng.randrange(n_obj))     # what a cycle holds lives on
+            if roll < 0.16:
+                k = rng.choice((1, 1, 2, 3, 4))
+                classes = tuple(rng.choice([c for c in range(len(self.classes)) if c != RUNTIME_CLASS]) for _ in range(k))
+                tags = tuple(self.new_tag() for _ in range(k))
+                weaks = tuple(rng.choice((None, None, True, False)) for _ in range(k))
+                reviver = rng.choice(NAMES) if rng.random() < 0.25 else None
+                hold = rng.randrange(RUNTIME_OBJECTS[0]) if rng.random() < 0.3 else None
+                return ("ring", classes, rng.choice(NAMES), rng.choice(NAMES), tags, weaks, reviver, hold)
         roll = rng.random()
         if roll < 0.03:
             return ("recreate_class", rng.randrange(RUNTIME_VARIANTS))
@@ -686,6 +861,10 @@ class World:
             return ("get", rng.randrange(n_obj), rng.choice(NAMES), rng.random() < 0.2)
         if roll < 0.58:
             value = self.new_tag() if rng.random() < 0.4 else rng.randrange(100)
+            if self.cycles and rng.random() < 0.3:
+                # one of the program's objects: objects hold each other; not one of the runtime-created class's,
+                # which recreate_class drops with its class (the oracle stands in for the collector there)
+                return ("set", rng.randrange(n_obj), rng.choice(NAMES), ("O", rng.randrange(RUNTIME_OBJECTS[0])))
             return ("set", rng.randrange(n_obj), rng.choice(NAMES), value)
         if roll < 0.68:
             return ("del", rng.randrange(n_obj), rng.choice(NAMES))

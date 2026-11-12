@@ -11,19 +11,24 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import assume, settings, strategies as st  # noqa: E402
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule  # noqa: E402
 
-from refmodel.oracle import NAMES, RUNTIME_VARIANTS, World  # noqa: E402
+from refmodel.oracle import NAMES, RUNTIME_CLASS, RUNTIME_OBJECTS, RUNTIME_VARIANTS, World  # noqa: E402
 
 objects = st.integers(0, 11)
 classes = st.integers(0, 8)
 names = st.sampled_from(NAMES)
 values = st.one_of(st.integers(0, 99), st.just("tagged"))      # "tagged": a fresh object whose death is compared
+held = st.integers(0, RUNTIME_OBJECTS[0] - 1)                    # objects another may hold (recreate_class drops the rest)
+ring_classes = st.lists(st.integers(0, 7).filter(lambda c: c != RUNTIME_CLASS), min_size=1, max_size=4)
 
 
 class AttributeModel(RuleBasedStateMachine):
     def __init__(self) -> None:
         super().__init__()
-        self.world = World()
+        self.world = World(cycles=True)
         assert len(self.world.objects) == 12 and len(self.world.classes) == 9
+
+    def teardown(self) -> None:
+        self.world.close()
 
     @rule(obj=objects, name=names, computed=st.booleans())
     def get(self, obj: int, name: str, computed: bool) -> None:
@@ -35,6 +40,25 @@ class AttributeModel(RuleBasedStateMachine):
     @rule(obj=objects, name=names, value=values)
     def set(self, obj: int, name: str, value: int | str) -> None:
         self.world.apply(("set", obj, name, self._value(value)))
+
+    @rule(obj=objects, name=names, other=held)
+    def link(self, obj: int, name: str, other: int) -> None:
+        """One of the program's objects holds another: cycles."""
+        self.world.apply(("set", obj, name, ("O", other)))
+
+    @rule(classes=ring_classes, name=names, extra=names, weaks=st.lists(st.sampled_from((None, True, False)), min_size=4, max_size=4),
+          reviver=st.one_of(st.none(), names), hold=st.one_of(st.none(), held))
+    def ring(self, classes: list[int], name: str, extra: str, weaks: list[bool | None], reviver: str | None, hold: int | None) -> None:
+        tags = tuple(self.world.new_tag() for _ in classes)
+        self.world.apply(("ring", tuple(classes), name, extra, tags, tuple(weaks[:len(classes)]), reviver, hold))
+
+    @rule(generation=st.integers(0, 2))
+    def collect(self, generation: int) -> None:
+        self.world.apply(("collect", generation))
+
+    @rule()
+    def release_kept(self) -> None:
+        self.world.apply(("release_kept",))
 
     @rule(obj=objects)
     def drop(self, obj: int) -> None:

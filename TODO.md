@@ -516,7 +516,11 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
              stop more once these are past. Then the rest of the start-up modules run at start-up (`encodings` and its codecs do, with C-7-29).
        * 3c, its first half done: weak references and resurrection (C-9-03, C-9-04, C-9-10), in the model
          first (`RefWeak`, the oracle's `weak_new`, `revive`), then the header and `_weakref`.
-       * 3c, what is left: the cycle collector, `gc`, model first: C-3-12, C-9-01, C-9-02, C-9-07; it
+       * 3c, the collector in the model done 2026-11-12 (`refmodel/collector.py`, CPython's gc.c; DECISIONS): the
+         header next, once the author has chosen how it finds its objects (CPython's lists, recommended, or trial
+         deletion over candidate roots), what `gc.collect()` returns, and when a lean build collects; then `make
+         object-test` with `World(cycles=True)`.
+       * 3c, what is left: the cycle collector in the header, `gc`: C-3-12, C-9-01, C-9-02, C-9-07; it
          replaces the exit walk, which today finalises a list's items first to last and in breadth-first
          order, where CPython's teardown releases what it can by reference count. `_abc` takes real weak references then, which only the collector can tell
          from today's strong ones (a class is in a cycle with its own mro). With it, a caught exception

@@ -64,10 +64,14 @@ What is modelled (design document, section 3, as revised by review rounds two an
   object lives on with its weak references, its finaliser spent; otherwise the list is cleared and
   the callbacks run, each with its reference held, before any slot or the dict is released.
 
+* The cycle collector (step 3c): ``GcState`` keeps CPython's three generations of tracked objects
+  (every counted object from its creation, as in CPython); each object has its type's ``traverse``
+  and ``gc_clear``; ``refmodel/collector.py`` is Python/gc.c over them.
+
 What is not modelled yet: ``__setattr__``/``__delattr__``/``__getattribute__`` overrides,
-``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, the cycle collector,
-and classes as counted objects (a class dies only by ``RefClass.dispose``; its cycles are the
-collector's, spec D-04). Each is a TODO with a conformance case first.
+``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, and classes as
+counted objects (a class dies only by ``RefClass.dispose``; its cycles are the collector's, spec
+D-04, and C-3-12 waits for them). Each is a TODO with a conformance case first.
 """
 from __future__ import annotations
 
@@ -141,15 +145,103 @@ SHARED_KEYS_MAX = 30          # SHARED_KEYS_MAX_SIZE (Objects/dictobject.c): a c
 # Lifetimes
 # ---------------------------------------------------------------------------------------------
 
+class GcList:
+    """One of the cycle collector's lists (a ring of PyGC_Head in Python/gc.c): its objects in order. A tracked object
+    is in exactly one list; ``GcState.where`` says which."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.items: dict[int, Any] = {}
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __iter__(self) -> Any:
+        return iter(list(self.items.values()))
+
+    def first(self) -> Any:
+        return next(iter(self.items.values()))
+
+    def __repr__(self) -> str:
+        return f"<GcList {self.name} {len(self.items)}>"
+
+
+class GcState:
+    """The collector's state (GCState, Python/gc.c, CPython 3.15.2: the three generations, not 3.14's incremental
+    collector): which objects are tracked and in which generation, in the order they were tracked, and the counts that
+    schedule a collection. The algorithm is refmodel/collector.py's; this is what the objects need while they live.
+    Every model object that is a counted object of its own is tracked from its creation to its death, as an instance of
+    a class, a dict and a weak reference are in CPython; a dict that stands for the values an object keeps in itself
+    is not an object, and is not tracked."""
+
+    NUM_GENERATIONS = 3
+
+    def __init__(self) -> None:
+        self.generations = [GcList(f"generation {i}") for i in range(self.NUM_GENERATIONS)]
+        self.thresholds = [2000, 10, 10]          # _PyGC_InitState
+        self.counts = [0, 0, 0]
+        self.enabled = True
+        self.collecting = False
+        self.scheduled = False                    # _PY_GC_SCHEDULED_BIT: run at the next look
+        self.long_lived_total = 0
+        self.long_lived_pending = 0
+        self.where: dict[int, GcList] = {}
+
+    def link(self, obj: Any) -> None:
+        """A new object (_PyObject_GC_Link, then _PyObject_GC_TRACK): it is counted toward the first generation's
+        threshold, which, once passed, schedules a collection for the next look (_Py_ScheduleGC), and it is tracked."""
+        self.counts[0] += 1
+        if self.counts[0] > self.thresholds[0] and self.enabled and self.thresholds[0] and not self.collecting:
+            self.scheduled = True
+        self.track(obj)
+
+    def is_tracked(self, obj: Any) -> bool:
+        return id(obj) in self.where
+
+    def track(self, obj: Any) -> None:
+        """_PyObject_GC_TRACK: at the end of the first generation."""
+        if self.is_tracked(obj):
+            raise ModelError(f"{obj!r} tracked twice")
+        self.append(obj, self.generations[0])
+
+    def untrack(self, obj: Any) -> None:
+        """PyObject_GC_UnTrack: out of whatever list holds it, a collection's own lists included; nothing if it is not
+        tracked."""
+        lst = self.where.pop(id(obj), None)
+        if lst is not None:
+            del lst.items[id(obj)]
+
+    def free(self, obj: Any) -> None:
+        """PyObject_GC_Del: the object's memory goes, and it no longer counts toward the threshold."""
+        self.untrack(obj)
+        if self.counts[0] > 0:
+            self.counts[0] -= 1
+
+    def append(self, obj: Any, lst: GcList) -> None:
+        lst.items[id(obj)] = obj
+        self.where[id(obj)] = lst
+
+    def move(self, obj: Any, lst: GcList) -> None:
+        """gc_list_move: out of its list, to the end of `lst`."""
+        self.untrack(obj)
+        self.append(obj, lst)
+
+    def merge(self, src: GcList, dst: GcList) -> None:
+        """gc_list_merge: every object of `src`, in order, to the end of `dst`."""
+        for obj in list(src.items.values()):
+            self.move(obj, dst)
+
+
 class Heap:
     """What the lifetime checks need to see: the live classes (whose versions validate cache
-    entries), the sites, and the deaths of tagged objects, in order."""
+    entries), the sites, and the deaths of tagged objects, in order; and the collector's lists."""
 
     def __init__(self) -> None:
         # held weakly: the registry must not keep a dead class alive (C-3-12)
         self.classes: weakref.WeakSet[RefClass] = weakref.WeakSet()
         self.sites: weakref.WeakSet[Site] = weakref.WeakSet()
         self.deaths: list[Any] = []
+        self.gc = GcState()
 
     def died(self, obj: RefObject) -> None:
         """RL-20: an entry a live class still validates never names an object that dies."""
@@ -161,6 +253,11 @@ class Heap:
 
 
 HEAP = Heap()
+
+
+def _counted(v: Any) -> bool:
+    """A value that is a counted object of the model's (a class is not one yet, nor an int or a tag)."""
+    return isinstance(v, (RefObject, RefDict, RefWeak))
 
 
 def incref(v: Any) -> None:
@@ -193,6 +290,13 @@ class RefDict(dict[Any, Any]):
         self.owner: RefObject | None = None
         self.refs = 0
         self.alive = True
+        self.heap = HEAP
+
+    def made(self) -> RefDict:
+        """The dict is an object of the program's from now on (a dict made by exposure, a copy, a new dict given to an
+        object): CPython tracks every dict from its creation (3.14+, GH-127010)."""
+        self.heap.gc.link(self)
+        return self
 
     def __hash__(self) -> int:  # type: ignore[override]
         return id(self)
@@ -213,11 +317,28 @@ class RefDict(dict[Any, Any]):
         return order
 
     def dealloc(self) -> None:
+        self.heap.gc.untrack(self)          # dict_dealloc: PyObject_GC_UnTrack first
         self.alive = False
         values = [self[k] for k in self._release_order()]
         self.clear()
         for v in values:
             decref(v)
+        self.heap.gc.free(self)
+
+    def traverse(self) -> list[Any]:
+        """dict_traverse: the values in the table's order (a split table's in its keys' order), and for a table whose
+        keys are not all str, each entry's value, then its key."""
+        out: list[Any] = []
+        str_keys = all(type(k) is str for k in self)
+        for k in self._release_order():
+            out.append(self[k])
+            if not str_keys:
+                out.append(k)
+        return [v for v in out if _counted(v)]
+
+    def gc_clear(self) -> None:
+        """dict_tp_clear: PyDict_Clear, what the program's clear() does."""
+        self.clear_()
 
     # ---- the program's operations on the dict (vars(obj)[k] = v, ...), measured on 3.15.2 ----
     def store(self, key: Any, value: Any) -> None:
@@ -257,7 +378,7 @@ class RefDict(dict[Any, Any]):
             decref(v)
 
     def copy_(self) -> RefDict:
-        d = RefDict(self, split=self.split)
+        d = RefDict(self, split=self.split).made()
         for v in d.values():
             incref(v)
         return d
@@ -498,10 +619,15 @@ class RefObject:
         self.alive = True
         self.finalized = False              # PEP 442: its finaliser has run (finalize, or dealloc)
         self.weakrefs: list[RefWeak] = []   # CPython's order: the basic reference, then the newest first
-        self.tag = tag                      # a tagged object's death is logged (the oracle compares the logs)
+        self.tag = tag                      # a tagged object's finaliser logs its tag (the oracle compares the logs)
         self.heap = cls.heap
         # a built-in base's own data: a dict subclass's instance is a dict (its entries here)
         self.payload: RefDict | None = RefDict() if "__payload__" in cls.native else None
+        self.heap.gc.link(self)             # every instance of a class is tracked (type_new_alloc: Py_TPFLAGS_HAVE_GC)
+
+    def has_finalizer(self) -> bool:
+        """tp_finalize: a class with __del__; a tagged object stands for one whose __del__ logs its tag."""
+        return self.tag is not None or self.cls.lookup("__del__") is not None
 
     def clear_weakrefs(self) -> None:
         """PyObject_ClearWeakRefs: the basic references go first, with no callback; each of the rest is
@@ -530,6 +656,8 @@ class RefObject:
         if self.finalized:
             return
         self.finalized = True
+        if self.tag is not None:
+            self.heap.deaths.append(self.tag)
         fin = self.cls.lookup("__del__")
         if fin is not None:
             fin[0](self)
@@ -539,18 +667,66 @@ class RefObject:
         (each class's sorted by name, as type_new stores them), then the built-in base's clear
         function (BaseException_clear: the dict, args, the traceback, the cause, the context), in
         which the dict means the __dict__-backed values in the class's shared-keys order, or the
-        dict's release once it is an object of its own (measured on 3.15.2)."""
-        if not self.finalized:                  # PyObject_CallFinalizerFromDealloc: the call holds a count
-            self.refs = 1
-            self.finalize()
-            self.refs -= 1
-            if self.refs > 0:                   # resurrected: it lives on, with its weak references
-                return
+        dict's release once it is an object of its own (measured on 3.15.2). The collector's
+        tracking: untracked first, tracked again around the finaliser (a resurrected object is in
+        the first generation again, at its end), freed last."""
+        gc = self.heap.gc
+        gc.untrack(self)
+        if self.has_finalizer():
+            gc.track(self)
+            if not self.finalized:              # PyObject_CallFinalizerFromDealloc: the call holds a count
+                self.refs = 1
+                self.finalize()
+                self.refs -= 1
+                if self.refs > 0:               # resurrected: it lives on, with its weak references
+                    return
+            gc.untrack(self)
         self.alive = False
-        if self.tag is not None:
-            self.heap.deaths.append(self.tag)
         self.heap.died(self)
         self.clear_weakrefs()
+        self._clear_contents()
+        gc.free(self)
+
+    def traverse(self) -> list[Any]:
+        """subtype_traverse: each class's __slots__ in the base chain (traverse_slots, in member order: sorted), then
+        the managed dict (PyObject_VisitManagedDict: the dict when there is one, GH-130327, else the values the object
+        keeps, in its class's keys' order), then the type (not a counted object in the model), then the built-in base's
+        own traverse (BaseException_traverse: the dict, args, notes, the traceback, the cause, the context, in the order
+        its clear function has them; dict_traverse for a dict's entries)."""
+        out: list[Any] = []
+        for c in self.cls.mro:
+            for name in sorted(c._own_slot_names()):
+                out.append(self.inline.get(name, UNSET))
+        for name in self.cls.native:
+            if name == "__dict__":
+                out.extend(self._dict_referents())
+            elif name == "__payload__":
+                assert self.payload is not None
+                str_keys = all(type(k) is str for k in self.payload)
+                for k, v in self.payload.items():
+                    out.append(v)
+                    if not str_keys:
+                        out.append(k)
+            else:
+                out.append(self.inline[name])
+        return [v for v in out if _counted(v)]
+
+    def _dict_referents(self) -> list[Any]:
+        if self.exposed:
+            return [self.dict]
+        held: dict[str, Any] = {n: v for n, v in self.inline.items() if n in self.cls.promoted_fields and v is not UNSET}
+        if self.dict is not None:
+            held.update(self.dict)
+        return [held[k] for k in self.cls.keys if k in held] + [held[k] for k in self.order if k in held and k not in self.cls.keys]
+
+    def gc_clear(self) -> None:
+        """subtype_clear: each class's __slots__ in the base chain (clear_slots), the managed dict
+        (PyObject_ClearManagedDict: the values the object keeps, in its keys' order, or the dict let go of, detached
+        from the object first), then the built-in base's clear function. No finaliser, no weak reference: the
+        collector has seen to those."""
+        self._clear_contents()
+
+    def _clear_contents(self) -> None:
         for c in self.cls.mro:
             for name in sorted(c._own_slot_names()):     # CPython sorts each class's slots (type_new)
                 v = self.inline.get(name, UNSET)
@@ -561,8 +737,8 @@ class RefObject:
                 self._release_dict()
             elif name == "__payload__":
                 assert self.payload is not None
-                items, self.payload = list(self.payload.items()), None
-                for k, v in items:             # dict_dealloc: the entries in order, each key first
+                items, self.payload = list(self.payload.items()), RefDict()
+                for k, v in items:             # dict_dealloc and PyDict_Clear: the entries in order, each key first
                     decref(k)
                     decref(v)
             else:
@@ -572,6 +748,7 @@ class RefObject:
     def _release_dict(self) -> None:
         if self.exposed:
             d, self.dict = self.dict, None
+            self.exposed = False            # no dict and no values: what a dealloc after the collector's clear finds
             assert d is not None
             if d.owner is self:
                 d.owner = None              # its values are detached from the dead object
@@ -601,17 +778,37 @@ class RefWeak:
         self.basic = callback is None
         self.refs = 0
         self.alive = True
+        self.heap = target.heap
+        self.heap.gc.link(self)             # a weak reference is a tracked object (its callback is a reference)
 
     def __call__(self) -> RefObject | None:
         return self.target
 
     def dealloc(self) -> None:
-        """weakref_dealloc: it leaves its target's list, and its callback is never called."""
+        """weakref_dealloc: untracked, it leaves its target's list, and its callback is never called."""
+        self.heap.gc.untrack(self)
         self.alive = False
+        self.unlink()
+        self.heap.gc.free(self)
+
+    def unlink(self) -> None:
+        """clear_weakref: out of its target's list, its callback dropped (_PyWeakref_ClearRef keeps the callback)."""
+        self.clear_ref()
+        self.callback = None
+
+    def clear_ref(self) -> None:
+        """_PyWeakref_ClearRef: out of its target's list, the target forgotten; the callback stays."""
         if self.target is not None:
             self.target.weakrefs.remove(self)
             self.target = None
-        self.callback = None
+
+    def traverse(self) -> list[Any]:
+        """gc_traverse: the callback, a Python callable here and not a counted object of the model's."""
+        return []
+
+    def gc_clear(self) -> None:
+        """gc_clear: clear_weakref_lock_held, then the callback released."""
+        self.unlink()
 
 
 def weak_ref(target: RefObject, callback: Any = None) -> RefWeak:
@@ -726,7 +923,7 @@ class Runtime:
         when it is a write, a delete or its __dict__ (ensure_managed_dict: new_dict_with_shared_keys). An object of a class
         that keeps no values in the object gets it at the first write, delete or __dict__, of its class's kind
         (ensure_nonmanaged_dict), and a read asks for none. No user code runs and nothing is released."""
-        d = RefDict(split=obj.cls if split else None)
+        d = RefDict(split=obj.cls if split else None).made()
         d.refs = 1
         obj.dict = d
         obj.exposed = True
@@ -1058,7 +1255,7 @@ class Runtime:
         if obj.exposed:
             assert obj.dict is not None
             return obj.dict
-        d = RefDict(split=cls)
+        d = RefDict(split=cls).made()
         for name in obj.order:                       # the references move: no count changes
             if name in cls.promoted_fields:
                 d[name] = obj.inline[name]
@@ -1081,7 +1278,7 @@ class Runtime:
         if not isinstance(d, dict):
             raise TypeError("__dict__ must be set to a dictionary")
         if not isinstance(d, RefDict):
-            d = RefDict(d)                           # an ordinary dict: insertion order
+            d = RefDict(d).made()                    # an ordinary dict: insertion order
             for v in d.values():
                 incref(v)
         self.expose_dict(obj)

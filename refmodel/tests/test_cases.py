@@ -19,6 +19,7 @@ from refmodel.objects import (
     RefObject,
     Runtime,
     Site,
+    decref,
     incref,
     make_descriptor_class,
 )
@@ -406,6 +407,7 @@ def test_dead_class_entries_never_match_a_new_class_c_3_12() -> None:
             K = RefClass(name, **layout)  # type: ignore[arg-type]
             versions.append(K.version)
             o = RefObject(K)
+            incref(o)                       # the program's variable; its release below lets the object go
             if stored is not None:
                 rt.setattr(o, "x", stored)
             misses = site.misses
@@ -416,6 +418,7 @@ def test_dead_class_entries_never_match_a_new_class_c_3_12() -> None:
             assert site.misses == misses + 1, name
             assert first == rt.getattr(o, "x", site) == (stored or "class attribute")
             ref = weakref.ref(K)
+            decref(o)
             del K, o
             gc.collect()
             assert ref() is None, f"a cache entry kept {name} alive"
@@ -1084,3 +1087,182 @@ def test_a_list_of_weak_references_is_in_cpythons_order() -> None:
     w = RefObject(W)
     O.incref(w)
     assert O.weak_ref(w)() is w
+
+
+# ---- the cycle collector (step 3c): refmodel/collector.py against CPython's ---------------------------------------
+
+def _cpython_cycle(resurrect: bool) -> tuple[list[str], int]:
+    """C-9-07's shape on CPython, with its collector off but for the one collection asked."""
+    events: list[str] = []
+    keep: list[object] = []
+    refs: list[weakref.ref[object]] = []
+
+    class Node:
+        def __del__(self) -> None:
+            events.append(f"del plain={refs[0]() is None} callback={refs[1]() is None}")
+            if resurrect:
+                keep.append(self)
+
+    was = gc.isenabled()
+    gc.disable()
+    try:
+        gc.collect()
+        n = Node()
+        n.me = n  # type: ignore[attr-defined]
+        refs.append(weakref.ref(n))
+        refs.append(weakref.ref(n, lambda _: events.append("callback")))
+        del n
+        found = gc.collect()
+        events.append(f"after plain={refs[0]() is None} callback={refs[1]() is None} kept={len(keep)}")
+        keep.clear()
+        gc.collect()
+        events.append(f"released plain={refs[0]() is None}")
+    finally:
+        if was:
+            gc.enable()
+    return events, found
+
+
+def _model_cycle(resurrect: bool) -> tuple[list[str], int]:
+    from refmodel import collector
+    from refmodel import objects as O
+    from refmodel.objects import weak_ref
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        events: list[str] = []
+        keep: list[RefObject] = []
+        refs: list[O.RefWeak] = []
+
+        def fin(obj: RefObject) -> None:
+            events.append(f"del plain={refs[0]() is None} callback={refs[1]() is None}")
+            if resurrect:
+                incref(obj)
+                keep.append(obj)
+
+        rt = Runtime()
+        node = RefClass("Node", attrs={"__del__": fin}, heap=heap)
+        n = RefObject(node)
+        incref(n)
+        rt.setattr(n, "me", n)
+        refs.append(weak_ref(n))
+        refs.append(weak_ref(n, lambda _: events.append("callback")))
+        decref(n)
+        found = collector.collect(heap)
+        events.append(f"after plain={refs[0]() is None} callback={refs[1]() is None} kept={len(keep)}")
+        for obj in reversed(keep):
+            decref(obj)
+        keep.clear()
+        collector.collect(heap)
+        events.append(f"released plain={refs[0]() is None}")
+        return events, found
+    finally:
+        O.HEAP = saved
+
+
+def test_the_cyclic_sequence_is_cpythons_c_9_07() -> None:
+    """C-9-01, C-9-02, C-9-07 in the model: the callback before the finaliser, a weak reference without a callback
+    alive inside it and through a resurrection, and the number a collection finds, as CPython 3.15.2 gives them."""
+    for resurrect in (False, True):
+        assert _model_cycle(resurrect) == _cpython_cycle(resurrect), resurrect
+
+
+def test_generations_are_cpythons() -> None:
+    """Which generation a survivor is in after collections of each generation, and that a young collection leaves
+    alone what an older object holds: the model against CPython's gc.get_objects(generation)."""
+    from refmodel import collector
+    from refmodel import objects as O
+
+    class R:
+        pass
+
+    def cpython() -> list[list[int]]:
+        gc.disable()
+        try:
+            gc.collect()
+            old = R()
+            gc.collect()                       # old in the oldest generation
+            objs = [R() for _ in range(4)]
+            objs[0].peer = objs[1]  # type: ignore[attr-defined]
+            objs[1].peer = objs[0]  # type: ignore[attr-defined]  # a young cycle
+            old.held = objs[2]  # type: ignore[attr-defined]
+            objs[2].peer = objs[2]  # type: ignore[attr-defined]  # a young cycle an old object holds
+            objs[3].peer = objs[3]  # type: ignore[attr-defined]
+            keep = [objs[3]]
+            del objs
+            out: list[list[int]] = []
+            for generation in (0, 1, 0, 2):
+                found = gc.collect(generation)
+                members = [old, old.held, keep[0]]  # type: ignore[attr-defined]
+                out.append([found] + [next(g for g in range(3) if any(x is m for x in gc.get_objects(g))) for m in members])
+            return out
+        finally:
+            gc.enable()
+
+    def model() -> list[list[int]]:
+        saved = O.HEAP
+        heap = O.HEAP = O.Heap()
+        try:
+            rt = Runtime()
+            K = RefClass("R", heap=heap)
+            collector.collect(heap)
+            old = RefObject(K)
+            incref(old)
+            collector.collect(heap)
+            objs = [RefObject(K) for _ in range(4)]
+            for o in objs:
+                incref(o)
+            rt.setattr(objs[0], "peer", objs[1])
+            rt.setattr(objs[1], "peer", objs[0])
+            rt.setattr(old, "held", objs[2])
+            rt.setattr(objs[2], "peer", objs[2])
+            rt.setattr(objs[3], "peer", objs[3])
+            keep = objs[3]
+            for o in objs[:3]:
+                decref(o)
+            out: list[list[int]] = []
+            for generation in (0, 1, 0, 2):
+                found = collector.collect(heap, generation)
+                members = [old, rt.getattr(old, "held"), keep]
+                out.append([found] + [int(heap.gc.where[id(m)].name.split()[-1]) for m in members])
+            return out
+        finally:
+            O.HEAP = saved
+
+    assert model() == cpython()
+
+
+def test_a_collection_is_scheduled_by_the_threshold_and_runs_at_a_look() -> None:
+    """_PyObject_GC_Link: the 2001st new object schedules a collection, which runs at the next look (_Py_RunGC) and
+    takes the first generation; a disabled collector runs none, a threshold of 0 schedules none."""
+    from refmodel import collector
+    from refmodel import objects as O
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        K = RefClass("K", heap=heap)
+        made = []
+
+        def scheduled() -> bool:
+            return heap.gc.scheduled
+
+        for _ in range(2000):
+            made.append(RefObject(K))
+            incref(made[-1])
+        assert not scheduled() and heap.gc.counts[0] == 2000
+        made.append(RefObject(K))
+        incref(made[-1])
+        assert scheduled()
+        assert collector.look(heap) == 0 and not scheduled()
+        assert heap.gc.counts == [0, 1, 0] and len(heap.gc.generations[1]) == 2001
+        heap.gc.enabled = False
+        heap.gc.counts[0] = 2000
+        RefObject(K).refs = 1
+        assert not scheduled()                    # disabled: nothing scheduled
+        heap.gc.enabled, heap.gc.thresholds[0] = True, 0
+        RefObject(K).refs = 1
+        assert not scheduled()                    # threshold 0: automatic collection off
+    finally:
+        O.HEAP = saved
