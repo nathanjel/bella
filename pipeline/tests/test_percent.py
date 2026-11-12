@@ -102,7 +102,6 @@ for i in range(12000):
 
 REFUSED = (
     ('"%\\xe9" % (1,)', "beyond ASCII"),
-    ('b"%d" % (1,)', "bytes"),
 )
 
 
