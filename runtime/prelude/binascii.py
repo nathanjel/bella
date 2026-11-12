@@ -1,6 +1,6 @@
-"""binascii, in Python (Modules/binascii.c): base64 both ways with 3.15's parameters (padded, wrapcol, newline, alphabet; strict_mode,
+"""binascii, in Python (Modules/binascii.c): base64 and base32 both ways with 3.15's parameters (padded, wrapcol, newline, alphabet; strict_mode,
 ignorechars, canonical), hex both ways, crc32, the two exceptions and the alphabets, each the C's rules and messages. uu, quoted-printable,
-crc_hqx, base32, ascii85 and base85 stop by name until a target needs them. The converters are the clinic's: an `ascii_buffer` takes an
+crc_hqx, ascii85 and base85 stop by name until a target needs them. The converters are the clinic's: an `ascii_buffer` takes an
 ASCII str or a bytes-like object, a `Py_buffer` a bytes-like object only."""
 
 __all__ = ["ASCII85_ALPHABET", "BASE32HEX_ALPHABET", "BASE32_ALPHABET", "BASE64_ALPHABET", "BASE85_ALPHABET", "BINHEX_ALPHABET",
@@ -350,6 +350,146 @@ def b2a_base64(*args: object, **kwds: object) -> bytes:
     return bytes(out)
 
 
+# ---- base32 (binascii_a2b_base32_impl, binascii_b2a_base32_impl) -----------------------------------------------------------
+# The C decodes whole groups of eight valid characters at a group's start by a fast path that gives what its loop gives for
+# them, so the loop alone is written here. Unlike base64's, the count of pads is never set back.
+
+_BASE32_PAD = 61                                 # '='
+_TABLE_A2B_BASE32 = _reverse_table(BASE32_ALPHABET, 32, _BASE32_PAD)
+
+
+def a2b_base32(*args: object, **kwds: object) -> bytes:
+    """Decode a line of base32 data.
+
+  padded
+    When set to false, padding in input is not required.
+  ignorechars
+    A byte string containing characters to ignore from the input.
+  canonical
+    When set to true, reject non-zero padding bits per RFC 4648 section 3.5."""
+    data, padded, alphabet, ignorechars, canonical = _unpack("a2b_base32", args, kwds, 1, ("padded", "alphabet", "ignorechars", "canonical"))
+    ascii_data = _ascii_buffer(data)
+    is_padded = True if padded is _ABSENT else bool(padded)
+    table = _TABLE_A2B_BASE32 if alphabet is _ABSENT else _reverse_table(_bytes_arg("a2b_base32", "alphabet", alphabet), 32, _BASE32_PAD)
+    ignore: bytes | None = None if ignorechars is _ABSENT else _buffer(ignorechars)
+    is_canonical = False if canonical is _ABSENT else bool(canonical)
+    if ignore is not None and len(ignore) == 0:
+        ignore = None
+
+    def ignored(c: int) -> bool:                 # ignorechar
+        return ignore is not None and c in ignore
+
+    out = bytearray()
+    leftchar = 0
+    octa_pos = 0
+    pads = 0
+    for this_ch in ascii_data:
+        if is_padded and this_ch == _BASE32_PAD:   # a pad sequence, at the positions it may take
+            pads += 1
+            if octa_pos in (2, 4, 5, 7) and octa_pos + pads <= 8:
+                continue
+            # RFC 4648, section 3.3: a pad before the end may be ignored, and so may excess pads
+            if ignored(_BASE32_PAD):
+                continue
+            if octa_pos in (1, 3, 6):
+                break                            # the error below
+            raise Error("Leading padding not allowed" if octa_pos == 0 and len(out) == 0 else "Excess padding not allowed")
+        v = table[this_ch]
+        if v >= 32:                              # RFC 4648, section 3.3
+            if not ignored(this_ch):
+                raise Error("Padding not allowed" if this_ch == _BASE32_PAD else "Only base32 data is allowed")
+            continue
+        if pads and not ignored(_BASE32_PAD):    # data in the middle of the padding (RFC 4648, section 3.3)
+            raise Error("Excess data after padding" if octa_pos + pads == 8 else "Discontinuous padding not allowed")
+        if octa_pos == 0:
+            octa_pos = 1
+            leftchar = v
+        elif octa_pos == 1:
+            octa_pos = 2
+            out.append(((leftchar << 3) | (v >> 2)) & 0xFF)
+            leftchar = v & 0x03
+        elif octa_pos == 2:
+            octa_pos = 3
+            leftchar = (leftchar << 5) | v
+        elif octa_pos == 3:
+            octa_pos = 4
+            out.append(((leftchar << 1) | (v >> 4)) & 0xFF)
+            leftchar = v & 0x0F
+        elif octa_pos == 4:
+            octa_pos = 5
+            out.append(((leftchar << 4) | (v >> 1)) & 0xFF)
+            leftchar = v & 0x01
+        elif octa_pos == 5:
+            octa_pos = 6
+            leftchar = (leftchar << 5) | v
+        elif octa_pos == 6:
+            octa_pos = 7
+            out.append(((leftchar << 2) | (v >> 3)) & 0xFF)
+            leftchar = v & 0x07
+        else:
+            octa_pos = 0
+            out.append(((leftchar << 5) | v) & 0xFF)
+            leftchar = 0
+    if octa_pos in (1, 3, 6):
+        raise Error("Invalid base32-encoded string: number of data characters (" + str(len(out) // 5 * 8 + octa_pos)
+                    + ") cannot be 1, 3, or 6 more than a multiple of 8")
+    if is_padded and octa_pos != 0 and octa_pos + pads < 8:
+        raise Error("Incorrect padding")
+    if is_canonical and leftchar != 0:           # RFC 4648, section 3.5
+        raise Error("Non-zero padding bits")
+    return bytes(out)
+
+
+def b2a_base32(*args: object, **kwds: object) -> bytes:
+    """Base32-code line of data.
+
+  padded
+    When set to false, omit padding in the output."""
+    data, padded, wrapcol, alphabet = _unpack("b2a_base32", args, kwds, 1, ("padded", "wrapcol", "alphabet"))
+    bin_data = _buffer(data)
+    is_padded = True if padded is _ABSENT else bool(padded)
+    width = 0 if wrapcol is _ABSENT else _size_t(wrapcol)
+    table = BASE32_ALPHABET if alphabet is _ABSENT else _buffer(alphabet)
+    if len(table) != 32:
+        raise ValueError("alphabet must have length 32")
+    bin_len = len(bin_data)
+    out_len = (bin_len + 4) // 5 * 8
+    pads = (5 - (bin_len % 5)) % 5 * 8 // 5
+    if not is_padded:
+        out_len -= pads
+        pads = 0
+    if width and out_len:
+        width = 8 if width < 8 else width // 8 * 8   # each line a whole number of bytes
+        out_len += (out_len - 1) // width
+    if out_len > 2**63 - 1:
+        raise Error("Too much data for base32")
+    out = bytearray()
+    i = 0
+    while i + 5 <= bin_len:
+        val = (bin_data[i] << 32) | (bin_data[i + 1] << 24) | (bin_data[i + 2] << 16) | (bin_data[i + 3] << 8) | bin_data[i + 4]
+        for shift in (35, 30, 25, 20, 15, 10, 5, 0):
+            out.append(table[(val >> shift) & 0x1F])
+        i += 5
+    rest = bin_len - i
+    if rest == 1:
+        val = bin_data[i]
+        out += bytes((table[(val >> 3) & 0x1F], table[(val << 2) & 0x1F]))
+    elif rest == 2:
+        val = (bin_data[i] << 8) | bin_data[i + 1]
+        out += bytes(table[(val >> k) & 0x1F] for k in (11, 6, 1)) + bytes((table[(val << 4) & 0x1F],))
+    elif rest == 3:
+        val = (bin_data[i] << 16) | (bin_data[i + 1] << 8) | bin_data[i + 2]
+        out += bytes(table[(val >> k) & 0x1F] for k in (19, 14, 9, 4)) + bytes((table[(val << 1) & 0x1F],))
+    elif rest == 4:
+        val = (bin_data[i] << 24) | (bin_data[i + 1] << 16) | (bin_data[i + 2] << 8) | bin_data[i + 3]
+        out += bytes(table[(val >> k) & 0x1F] for k in (27, 22, 17, 12, 7, 2)) + bytes((table[(val << 3) & 0x1F],))
+    for _ in range(pads):
+        out.append(_BASE32_PAD)
+    if width and out_len:
+        out = _wraplines(out, width)
+    return bytes(out)
+
+
 # ---- crc32 (internal_crc32, or zlib's: the same answer) --------------------------------------------------------------------
 
 def _crc32_table() -> list[int]:
@@ -525,8 +665,6 @@ b2a_uu = _unwritten("b2a_uu")
 a2b_qp = _unwritten("a2b_qp")
 b2a_qp = _unwritten("b2a_qp")
 crc_hqx = _unwritten("crc_hqx")
-a2b_base32 = _unwritten("a2b_base32")
-b2a_base32 = _unwritten("b2a_base32")
 a2b_ascii85 = _unwritten("a2b_ascii85")
 b2a_ascii85 = _unwritten("b2a_ascii85")
 a2b_base85 = _unwritten("a2b_base85")

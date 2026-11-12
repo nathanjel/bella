@@ -362,6 +362,38 @@ def test_binascii() -> None:
     same(BINASCII)
 
 
+# base32 both ways (binascii_a2b_base32_impl, binascii_b2a_base32_impl): every message of the decoder, the pads at the positions
+# they may take and the ones they may not, ignorechars, canonical, the encoder's wrapping and alphabet, and base64's b32 functions
+BASE32 = r"""
+import binascii, base64
+def m(f):
+    try:
+        return repr(f())
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+for text in (b"", b"MY======", b"MZXQ====", b"MZXW6===", b"MZXW6YQ=", b"MZXW6YTB", b"MY", b"MZXQ", b"M", b"MZX", b"MZXW6Y",
+             b"=MY======", b"MY=======", b"MY===", b"MY=====x", b"MY==x===", b"M=Y=====", b"MY======MY======", b"my======",
+             b"MZ======", b"MY== ====", b"MY\n======", b"1Y======", b"MZXW6YTBOI======"):
+    print(text, m(lambda: binascii.a2b_base32(text)), m(lambda: binascii.a2b_base32(text, padded=False)),
+          m(lambda: binascii.a2b_base32(text, canonical=True)), m(lambda: binascii.a2b_base32(text, ignorechars=b"= \n")),
+          m(lambda: binascii.a2b_base32(text, ignorechars=b"\n")), m(lambda: binascii.a2b_base32(text, alphabet=binascii.BASE32HEX_ALPHABET)))
+for data in (b"", b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar", bytes(range(23))):
+    print(data, binascii.b2a_base32(data), binascii.b2a_base32(data, padded=False), binascii.b2a_base32(data, wrapcol=1),
+          binascii.b2a_base32(data, wrapcol=17), binascii.b2a_base32(data, alphabet=binascii.BASE32HEX_ALPHABET))
+print(m(lambda: binascii.a2b_base32()), m(lambda: binascii.a2b_base32(b"", 1)), m(lambda: binascii.a2b_base32(b"", paded=1)),
+      m(lambda: binascii.a2b_base32(b"", alphabet="A" * 32)), m(lambda: binascii.a2b_base32(b"", alphabet=b"AB")),
+      m(lambda: binascii.a2b_base32("MY======\xe9")), m(lambda: binascii.a2b_base32(1)), m(lambda: binascii.a2b_base32(b"", strict_mode=True)))
+print(m(lambda: binascii.b2a_base32(b"x", alphabet=b"abc")), m(lambda: binascii.b2a_base32("x")), m(lambda: binascii.b2a_base32(b"x", wrapcol=-1)),
+      m(lambda: binascii.b2a_base32(b"x", wrapcol="3")), m(lambda: binascii.b2a_base32(b"x", newline=True)), m(lambda: binascii.b2a_base32(b"x", 1)))
+print(base64.b32encode(b"ab"), base64.b32decode(b"MFRA===="), base64.b32hexencode(b"ab"), base64.b32hexdecode(b"C5H0===="),
+      base64.b32decode(b"mfra====", casefold=True), m(lambda: base64.b32decode(b"MFRA")), base64.b32decode(b"MFRA====", map01=b"L"))
+"""
+
+
+def test_base32() -> None:
+    same(BASE32)
+
+
 def test_struct() -> None:
     """_struct's complex and float conversions, the half float's rounding and limits, the standard and native complex paths, Struct's
     methods by keyword, the cache's messages, Pascal and char strings at their edges, the iterator's length hint."""
@@ -989,7 +1021,7 @@ def test_exception_groups() -> None:
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.crc32(b'a', -1)", "unsigned 32-bit"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\nif __name__ == '__main__':\n    typing.TypeVar('T', bound='Fwd')", "a ForwardRef built at runtime"),
-             ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
+             ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b85encode(b'a')", "binascii.b2a_base85"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
              ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("import warnings\nwarnings.warn_explicit('m', UserWarning, 'f', 1, module_globals={'__name__': 'x'})", "module_globals"),
