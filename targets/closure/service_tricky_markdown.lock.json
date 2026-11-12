@@ -37,7 +37,7 @@
    "name": "__future__",
    "kind": "source",
    "status": "compiled",
-   "reached_by": "codeop:eager:44",
+   "reached_by": "codeop:eager:35",
    "dynamic_unknown_lines": [],
    "path": "__future__.py",
    "edges": []
@@ -144,14 +144,28 @@
      "importer": "_collections_abc",
      "target": "abc",
      "cls": "eager",
-     "line": 40,
+     "line": 35,
      "func": ""
     },
     {
      "importer": "_collections_abc",
      "target": "sys",
      "cls": "eager",
-     "line": 41,
+     "line": 36,
+     "func": ""
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "_types",
+     "cls": "eager",
+     "line": 90,
+     "func": ""
+    },
+    {
+     "importer": "_collections_abc",
+     "target": "_types",
+     "cls": "eager",
+     "line": 92,
      "func": ""
     },
     {
@@ -165,49 +179,35 @@
      "importer": "_collections_abc",
      "target": "_types",
      "cls": "eager",
-     "line": 97,
-     "func": ""
-    },
-    {
-     "importer": "_collections_abc",
-     "target": "_types",
-     "cls": "eager",
-     "line": 99,
-     "func": ""
-    },
-    {
-     "importer": "_collections_abc",
-     "target": "_types",
-     "cls": "eager",
-     "line": 101,
+     "line": 102,
      "func": ""
     },
     {
      "importer": "_collections_abc",
      "target": "annotationlib",
      "cls": "lazy",
-     "line": 486,
+     "line": 488,
      "func": "_CallableGenericAlias.__repr__"
     },
     {
      "importer": "_collections_abc",
      "target": "warnings",
      "cls": "lazy",
-     "line": 1070,
+     "line": 1072,
      "func": "_DeprecateByteStringMeta.__new__"
     },
     {
      "importer": "_collections_abc",
      "target": "warnings",
      "cls": "lazy",
-     "line": 1079,
+     "line": 1081,
      "func": "_DeprecateByteStringMeta.__instancecheck__"
     },
     {
      "importer": "_collections_abc",
      "target": "warnings",
      "cls": "lazy",
-     "line": 1177,
+     "line": 1179,
      "func": "__getattr__"
     }
    ]
@@ -636,7 +636,7 @@
    "name": "_types",
    "kind": "builtin",
    "status": "core",
-   "reached_by": "_collections_abc:eager:96",
+   "reached_by": "_collections_abc:eager:90",
    "dynamic_unknown_lines": [],
    "path": null,
    "edges": []
@@ -720,7 +720,7 @@
    "name": "annotationlib",
    "kind": "source",
    "status": "shim",
-   "reached_by": "_collections_abc:lazy:486",
+   "reached_by": "_collections_abc:lazy:488",
    "dynamic_unknown_lines": [],
    "path": "runtime/shims/annotationlib.py",
    "edges": [
@@ -728,64 +728,64 @@
      "importer": "annotationlib",
      "target": "ast",
      "cls": "eager",
-     "line": 16,
+     "line": 3,
      "func": ""
     },
     {
      "importer": "annotationlib",
      "target": "builtins",
      "cls": "eager",
-     "line": 17,
+     "line": 4,
      "func": ""
     },
     {
      "importer": "annotationlib",
      "target": "enum",
      "cls": "eager",
-     "line": 18,
+     "line": 5,
      "func": ""
     },
     {
      "importer": "annotationlib",
      "target": "keyword",
      "cls": "eager",
-     "line": 19,
+     "line": 6,
      "func": ""
     },
     {
      "importer": "annotationlib",
      "target": "sys",
      "cls": "eager",
-     "line": 20,
+     "line": 7,
      "func": ""
     },
     {
      "importer": "annotationlib",
      "target": "types",
      "cls": "eager",
-     "line": 21,
+     "line": 8,
      "func": ""
     },
     {
      "importer": "annotationlib",
      "target": "typing",
      "cls": "lazy",
-     "line": 263,
+     "line": 245,
      "func": "ForwardRef._evaluate"
     },
     {
      "importer": "annotationlib",
      "target": "warnings",
      "cls": "lazy",
-     "line": 264,
+     "line": 246,
      "func": "ForwardRef._evaluate"
     },
     {
      "importer": "annotationlib",
      "target": "copy",
      "cls": "lazy",
-     "line": 309,
-     "func": "ForwardRef.__resolved_str__"
+     "line": 1252,
+     "func": "_bella_ast_expr"
     }
    ]
   },
@@ -901,7 +901,7 @@
    "name": "ast",
    "kind": "source",
    "status": "compiled",
-   "reached_by": "annotationlib:eager:16",
+   "reached_by": "annotationlib:eager:3",
    "dynamic_unknown_lines": [],
    "path": "ast.py",
    "edges": [
@@ -1062,14 +1062,14 @@
      "importer": "codeop",
      "target": "__future__",
      "cls": "eager",
-     "line": 44,
+     "line": 35,
      "func": ""
     },
     {
      "importer": "codeop",
      "target": "warnings",
      "cls": "eager",
-     "line": 45,
+     "line": 36,
      "func": ""
     }
    ]
@@ -1296,7 +1296,7 @@
    "name": "copy",
    "kind": "source",
    "status": "compiled",
-   "reached_by": "annotationlib:lazy:309",
+   "reached_by": "annotationlib:lazy:1252",
    "dynamic_unknown_lines": [],
    "path": "copy.py",
    "edges": [
@@ -3369,7 +3369,7 @@
    "name": "keyword",
    "kind": "source",
    "status": "compiled",
-   "reached_by": "annotationlib:eager:19",
+   "reached_by": "annotationlib:eager:6",
    "dynamic_unknown_lines": [],
    "path": "keyword.py",
    "edges": []

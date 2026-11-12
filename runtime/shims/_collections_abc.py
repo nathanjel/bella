@@ -6,11 +6,6 @@
 Unit tests are in test_collections.
 """
 
-# Bella phase-1 shim (manifest.toml [phase1.shim]; decision P-2 in docs/DECISIONS.md, 2026-11-02).
-# CPython 3.15.2's Lib/_collections_abc.py (PSF License 2.0, docs/licences.md L-01), unchanged
-# except where a line says "bella:". CPython's module probes four types at import by making the
-# objects; the shim imports them from _types, which exports the same objects.
-
 ############ Maintenance notes #########################################
 #
 # ABCs are different from other standard library modules in that they
@@ -90,15 +85,22 @@ dict_values = type({}.values())
 dict_items = type({}.items())
 ## misc ##
 mappingproxy = type(type.__dict__)
-# bella: the four types below are taken from _types (core), as types.py takes them, instead of
-# bella: being probed, which makes and closes a coroutine and an async generator and reads a
-# bella: frame's locals (decision P-2, 2026-11-02; async is [P2+]). They are the same objects.
-from _types import FrameLocalsProxyType as framelocalsproxy  # bella: type(sys._getframe().f_locals)
-from _types import GeneratorType as generator  # bella: type((lambda: (yield))())
+# bella: def _get_framelocalsproxy():  (the four types are taken from _types: see the end of the file)
+# bella:     return type(sys._getframe().f_locals)
+from _types import FrameLocalsProxyType as framelocalsproxy  # bella: framelocalsproxy = _get_framelocalsproxy()
+# bella: del _get_framelocalsproxy
+from _types import GeneratorType as generator  # bella: generator = type((lambda: (yield))())
 ## coroutine ##
-from _types import CoroutineType as coroutine  # bella: type of a coroutine, made and closed
+# bella: async def _coro(): pass
+# bella: _coro = _coro()
+from _types import CoroutineType as coroutine  # bella: coroutine = type(_coro)
+# bella: _coro.close()  # Prevent ResourceWarning
+# bella: del _coro
 ## asynchronous generator ##
-from _types import AsyncGeneratorType as async_generator  # bella: type of an async generator
+# bella: async def _ag(): yield
+# bella: _ag = _ag()
+from _types import AsyncGeneratorType as async_generator  # bella: async_generator = type(_ag)
+# bella: del _ag
 
 
 ### ONE-TRICK PONIES ###
@@ -1179,3 +1181,11 @@ def __getattr__(attr):
         globals()["ByteString"] = _deprecated_ByteString
         return _deprecated_ByteString
     raise AttributeError(f"module 'collections.abc' has no attribute {attr!r}")
+
+
+# Bella phase-1 shim (manifest.toml [phase1.shim]; decision P-2 in docs/DECISIONS.md, 2026-11-02).
+# CPython 3.15.2's Lib/_collections_abc.py (PSF License 2.0, docs/licences.md L-01), unchanged
+# except where a line says "bella:", and every line of CPython's at its own line number. The four
+# types CPython probes for at import, by making a frame's locals, a generator, a coroutine and an
+# async generator (and closing the coroutine), are taken from _types (core), as types.py takes them
+# (async is [P2+]); they are the same objects. The lines they replace stay as comments in place.

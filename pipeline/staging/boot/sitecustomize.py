@@ -200,24 +200,48 @@ def _entry_point(annotate: object) -> tuple[tuple[str, ...], Any]:
     return entry
 
 
+def _hand_written(annotate: object) -> bool:
+    """A function the compiler did not generate: no entry point, and none the build declined."""
+    key = _key_of(annotate)
+    return isinstance(annotate, _FunctionType) and (key is None or key not in _entry_points)
+
+
+def _value_only(annotate: Any) -> Any:
+    """FORWARDREF's stand-in for the re-run of a function the compiler did not generate (the compiled
+    runtime's i_value_only_call): the function with its own globals, its NotImplementedError raised as
+    it is, anything else refused. Model only in one respect: this stand-in is a frame of its own, which
+    the compiled one is not, so a traceback through it has one frame more."""
+    def rerun(format: int) -> Any:
+        try:
+            annotate(format)
+        except NotImplementedError:
+            raise
+        except Exception:
+            pass
+        _refuse("[P2+] annotationlib: FORWARDREF of an annotate function the compiler did not generate, which supports "
+                "VALUE_WITH_FAKE_GLOBALS, re-runs its __code__ (decision S-1)")
+    return rerun
+
+
 class _Hooks:
     """What the shim asks the runtime (in Bella, what the compiler provides)."""
 
     @staticmethod
-    def has_entry_point(annotate: object) -> bool:
-        key = _key_of(annotate)
-        return key is not None and key in _entry_points
-
-    @staticmethod
-    def annotate_freevars(annotate: object) -> tuple[str, ...]:
+    def annotate_freevars(annotate: Any) -> tuple[str, ...]:
+        if _hand_written(annotate):
+            freevars: tuple[str, ...] = annotate.__code__.co_freevars
+            return freevars
         return _entry_point(annotate)[0]
 
     @staticmethod
     def annotate_with(annotate: object, globals: dict[str, Any], closure: tuple[Any, ...] | None = None,
-                      argdefs: object = None, kwdefaults: object = None) -> Any:
+                      argdefs: object = None, kwdefaults: object = None, value_only: bool = False) -> Any:
         """The function CPython builds from annotate.__code__ with these globals and cells: the
         entry point, with them as the defaults of its last two parameters, so that calling it adds
-        its own frame alone, as the rebuilt function's call does."""
+        its own frame alone, as the rebuilt function's call does; with value_only, for a function
+        the compiler did not generate, the stand-in."""
+        if value_only and _hand_written(annotate):
+            return _value_only(annotate)
         freevars, code = _entry_point(annotate)
         cells = dict(zip(freevars, closure or (), strict=True))
         return _FunctionType(code, {"_rt": _rt, "__builtins__": builtins}, None, (globals, cells))

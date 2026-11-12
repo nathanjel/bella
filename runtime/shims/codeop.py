@@ -32,15 +32,6 @@ Compile():
     but with 'memory' in the sense described above.
 """
 
-# Bella phase-1 shim (manifest.toml [phase1.shim]; spec sections 4 and 7, review log D-4, 2026-11-01).
-# CPython 3.15.2's Lib/codeop.py (PSF License 2.0, docs/licences.md L-01), unchanged except where a line
-# says "bella:". traceback imports this module at module level and calls compile_command only to suggest
-# a keyword for a SyntaxError carrying the parser's metadata; a compiled program has no compiler at
-# runtime (E-01), so the two places that would compile stop the program with the E-08 refusal, which no
-# except clause catches (traceback makes the call inside suppress(Exception)). `_bella` is provided by
-# the runtime: refuse(message) stops the program. A program's own `import codeop` stays a compile-time
-# error (E-08).
-
 import __future__
 import warnings
 
@@ -123,8 +114,7 @@ class Compile:
         if kwargs.get('incomplete_input', True) is False:
             flags &= ~PyCF_DONT_IMPLY_DEDENT
             flags &= ~PyCF_ALLOW_INCOMPLETE_INPUT
-        _bella.refuse("E-08: codeop compiles source text at runtime, and a compiled program has no compiler (E-01)")  # type: ignore[name-defined]  # noqa: F821  # bella: provided by the runtime
-        codeob = compile(source, filename, symbol, flags, True)  # bella: never reached
+        codeob = _bella.refuse("E-08: codeop compiles source text at runtime, and a compiled program has no compiler (E-01)")  # type: ignore[name-defined]  # noqa: F821  # bella: provided by the runtime
         if flags & PyCF_ONLY_AST:
             return codeob  # this is an ast.Module in this case
         for feature in _features:
@@ -162,3 +152,13 @@ class CommandCompiler:
           malformed literals).
         """
         return _maybe_compile(self.compiler, source, filename, symbol, flags=self.compiler.flags)
+
+
+# Bella phase-1 shim (manifest.toml [phase1.shim]; spec sections 4 and 7, review log D-4, 2026-11-01).
+# CPython 3.15.2's Lib/codeop.py (PSF License 2.0, docs/licences.md L-01), unchanged except where a
+# line says "bella:", and every line of CPython's at its own line number. traceback imports this
+# module at module level and calls compile_command only to suggest a keyword for a SyntaxError
+# carrying the parser's metadata; a compiled program has no compiler at runtime (E-01), so the two
+# places that would compile stop the program with the E-08 refusal, which no except clause catches
+# (traceback makes the call inside suppress(Exception)). `_bella` is provided by the runtime:
+# refuse(message) stops the program. A program's own `import codeop` stays a compile-time error (E-08).

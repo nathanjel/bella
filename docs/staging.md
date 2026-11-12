@@ -253,22 +253,32 @@ functions, the probes now cover.
   * which module and class annotations are conditional, and their indices: all of a module's,
     only those under a compound statement in a class;
   * `*args: *Ts` and the two result shapes.
-* **The shim** (`runtime/shims/annotationlib.py`) is CPython's module with nine marked changes:
+* **The shim** (`runtime/shims/annotationlib.py`) is CPython's module with nine marked changes,
+  each on as many lines as it replaces, so that every line of CPython's keeps its line number
+  and a traceback through the module has CPython's lines (2026-11-12, C-3-67;
+  `tools/tests/test_shims.py` holds every shim to it). What the shim adds, its header and three
+  helpers, comes after CPython's last line:
   * the three function rebuilds call the entry point;
-  * `_build_closure` reads the entry point's free variables;
+  * `_build_closure` reads the entry point's free variables, or a hand-written function's own;
   * `ForwardRef.evaluate` of an expression and `eval_str=True` refuse with `[P2+]`;
   * `__resolved_str__` fixes names on a copy of the tree instead of re-parsing its string;
-  * FORWARDREF of a hand-written annotate function does what CPython's code does when that
-    function raises `NotImplementedError`;
+  * FORWARDREF's rebuild asks for a stand-in (`value_only=True`) when the compiler did not
+    generate the function: the runtime's stand-in, a built-in with no frame of its own, calls
+    the function with its own globals and raises its `NotImplementedError` as it is, which is
+    what CPython's re-run of a function that supports VALUE only raises; CPython's own lines
+    then answer VALUE. Anything else needs the re-run against substitute globals and is refused.
+    The replay's stand-in is a Python function, a frame more in the traceback of that
+    `NotImplementedError`, so C-3-67 prints only its class (the frames are compared compiled,
+    in `pipeline/tests/test_entry_points.py`);
   * `transmogrify` asks the runtime for `obj.__class__ = ForwardRef` (`_bella.set_class`):
     a program's `__class__` assignment is \[P2+\], and the runtime switches only between two
     classes whose instances have one layout and no dict, as `_Stringifier` and `ForwardRef`
     do (`RefObject.set_class`);
   * the header.
 
-  An annotate function the compiler did not generate has no entry point. If its fallback needs
-  the re-run, it is refused. The same entry points serve PEP 695 evaluate functions: type-alias
-  values, bounds, constraints and defaults.
+  An annotate function the compiler did not generate has no entry point. STRING of it, and
+  FORWARDREF where its fallback needs the re-run, are refused. The same entry points serve PEP
+  695 evaluate functions: type-alias values, bounds, constraints and defaults.
 * **Identity.** An entry point is filed under its function's file, qualified name, first line,
   and a hash of every instruction's source position (`annotate_rt.entry_key`), which the replay
   computes the same way for a live function. Two definitions with one name on one line therefore
@@ -282,9 +292,9 @@ functions, the probes now cover.
   file, qualified name and first line, the key a compiled function's code has (no positions).
   An evaluator whose key another code object of the module shares is declined. The runtime also
   checks that the function has one positional-only parameter and the evaluator's free variables,
-  and stops by name otherwise. `has_entry_point`, `annotate_freevars` and `annotate_with` answer
-  from the table; the function `annotate_with` returns is a built-in, so the evaluator's frame is
-  the only one it adds, as the rebuilt function's is in CPython. Making the key agree with CPython's
+  and stops by name otherwise. `annotate_freevars` and `annotate_with` answer from the table;
+  the function `annotate_with` returns is a built-in, so the evaluator's frame is the only one it
+  adds, as the rebuilt function's is in CPython. Making the key agree with CPython's
   code found two differences, now fixed. A decorated class's annotate function starts at the first
   decorator's line (the class body's `co_firstlineno`). A module-level generic function's annotate
   function is named `__annotate__` alone (`_PyCompile_SetQualname` stops at an annotation scope

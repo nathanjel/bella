@@ -303,7 +303,7 @@ Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_p
 // compiles a module's entry points into one unit, which defines each and appends it to `_entries`, and the main unit lists them
 // with the file, qualified name and first line of the function each belongs to, which the build checked no other code of the
 // module shares. A function finds its own by its code; one the build declined stops by name, and so does a function the
-// compiler did not generate (CPython rebuilds a function from its __code__).
+// compiler did not generate (CPython rebuilds a function from its __code__), except in FORWARDREF's stand-in below.
 namespace {
 std::span<const AnnotateEntry>& annotate_entries() {
     static std::span<const AnnotateEntry> table;
@@ -364,6 +364,20 @@ Ref i_entry_call(Obj self, Args a) {             // the function annotationlib c
     auto* state = static_cast<Tuple*>(self.object());
     return invoke(state->items[0], {a.pos(0), state->items[1], state->items[2]});
 }
+// FORWARDREF's stand-in for the re-run of a function the compiler did not generate: the function called with its own globals. When it
+// raises NotImplementedError, so does CPython's re-run of a function that supports VALUE only, and CPython then answers VALUE; it is
+// raised as it is, with no frame of the stand-in's. Anything else, an answer or another error, needs the re-run against substitute
+// globals: [P2+]. An exception that is no Exception goes through, as CPython's `except Exception` lets it
+Ref i_value_only_call(Obj self, Args a) {
+    positional_only(a, "__annotate__", 1, 1);
+    try {
+        invoke(self, {a.pos(0)});
+    } catch (const PyError& e) {
+        if (isinstance(e.exc.get(), exception_class("NotImplementedError")) || !isinstance(e.exc.get(), exception_class("Exception"))) throw;
+    }
+    throw NotImplemented("[P2+] annotationlib: FORWARDREF of an annotate function the compiler did not generate, which supports "
+                         "VALUE_WITH_FAKE_GLOBALS, re-runs its __code__ (decision S-1)");
+}
 }  // namespace
 void register_annotate_entries(std::span<const AnnotateEntry> entries) { annotate_entries() = entries; }
 // transmogrify's `obj.__class__ = ForwardRef` (RefObject.set_class): object_set_class between two classes of the shim whose instances
@@ -383,28 +397,36 @@ Ref i_shim_set_class(Obj, Args a) {
     inst->cls = to;
     return none_ref();
 }
-Ref i_shim_has_entry_point(Obj, Args a) {
-    positional_only(a, "has_entry_point", 1, 1);
-    return Ref::steal(boolean(entry_of(a.pos(0)) != nullptr));
-}
+// annotate_freevars(annotate): the names _build_closure pairs with the function's cells, an entry point's or, for a function the
+// compiler did not generate, its own code's (FORWARDREF builds the closure before it asks for the stand-in, which reads none of them)
 Ref i_shim_annotate_freevars(Obj, Args a) {
     positional_only(a, "annotate_freevars", 1, 1);
-    const AnnotateEntry& e = entry_needed(a.pos(0));
     std::vector<Obj> names;
-    for (const char* n : e.freevars) names.push_back(str_new(n).release());
+    if (const AnnotateEntry* e = entry_of(a.pos(0))) {
+        for (const char* n : e->freevars) names.push_back(str_new(n).release());
+    } else if (is_kind(a.pos(0), Kind::PyFunction) && !presents_as_builtin(a.pos(0))) {
+        for (const char* n : static_cast<PyFunction*>(a.pos(0).object())->code->freevars) names.push_back(str_new(n).release());
+    } else {
+        entry_needed(a.pos(0));
+    }
     return tuple_steal(std::move(names));
 }
-// annotate_with(annotate, globals, closure=None, argdefs=None, kwdefaults=None): what types.FunctionType(annotate.__code__, globals,
-// closure=closure, ...) gives CPython's annotationlib, a function of the format: the entry point called with the globals and
-// with the cells by name. An annotate function has no defaults, so argdefs and kwdefaults change nothing.
+// annotate_with(annotate, globals, closure=None, argdefs=None, kwdefaults=None, value_only=False): what types.FunctionType(
+// annotate.__code__, globals, closure=closure, ...) gives CPython's annotationlib, a function of the format: the entry point called
+// with the globals and with the cells by name. An annotate function has no defaults, so argdefs and kwdefaults change nothing. A
+// function the compiler did not generate has no entry point: with value_only (FORWARDREF), the stand-in above; otherwise a stop.
 Ref i_shim_annotate_with(Obj, Args a) {
     if (a.npos != 2) raise_new("TypeError", "annotate_with() takes 2 positional arguments");
     Obj closure = None();
+    bool value_only = false;
     for (std::size_t i = 0; i < a.nkw; ++i) {
         std::string_view k = a.kwnames[i]->text;
         if (k == "closure") closure = a.kw(i);
+        else if (k == "value_only") value_only = truth(a.kw(i));
         else if (k != "argdefs" && k != "kwdefaults") raise_new("TypeError", "annotate_with() got an unexpected keyword argument '" + std::string(k) + "'");
     }
+    if (value_only && entry_of(a.pos(0)) == nullptr && is_kind(a.pos(0), Kind::PyFunction) && !presents_as_builtin(a.pos(0)))
+        return own(new Builtin("__annotate__", i_value_only_call, a.pos(0), Binding::Function));
     const AnnotateEntry& e = entry_needed(a.pos(0));
     Ref cells = dict_new();
     std::size_t given = closure == None() ? 0 : static_cast<Tuple*>(closure.object())->items.size();
@@ -431,7 +453,7 @@ Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the mo
         Ref hooks = own(new Module("_bella"));
         auto* h = static_cast<Module*>(hooks.get().object());
         for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
-                 {"has_entry_point", i_shim_has_entry_point}, {"annotate_freevars", i_shim_annotate_freevars},
+                 {"annotate_freevars", i_shim_annotate_freevars},
                  {"annotate_with", i_shim_annotate_with}, {"set_class", i_shim_set_class}, {"refuse", i_bella_refuse}}) {
             Ref b = own(new Builtin(n, fn));
             dict_set(h->dict, Obj::of(N(n)), b.get());

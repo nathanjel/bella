@@ -65,6 +65,7 @@ C-3-63_subclasses_of_set_and_frozenset.py
 C-3-64_subclasses_of_bytes_and_bytearray.py
 C-3-65_typing_class_syntax_entry_points.py
 C-3-66_match_runtime_half.py
+C-3-67_annotationlib_frames.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

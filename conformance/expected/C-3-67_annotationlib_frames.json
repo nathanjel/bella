@@ -1,0 +1,12 @@
+{
+ "case": "C-3-67_annotationlib_frames.py",
+ "clause": "C-3-67",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Gate 1c: compiled tracebacks through annotationlib showed the shim's line numbers (C-3-65)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "function VALUE NameError [30, 46, 1002, 1203, 38] None\nclass VALUE NameError [30, 47, 1002, 1198, 43] None\ncall_annotate_function NameError [30, 48, 756, 38] None\nfunction FORWARDREF {'x': ('ForwardRef', 'Undefined'), 'return': ('NoneType', None)}\nForwardRef.evaluate NameError [30, 51, 218] None\nhand-written with a closure {'x': <class 'int'>, 'tag': 'closed over'}\nhand-written without one {'y': <class 'str'>}\nhand-written by get_annotations {'y': <class 'str'>}\nhand-written VALUE raising LookupError [30, 92, 1018, 1178, 839, 61] NotImplementedError\nhand-written VALUE {'y': <class 'str'>}\n",
+ "stderr": "",
+ "exit_code": 0
+}
