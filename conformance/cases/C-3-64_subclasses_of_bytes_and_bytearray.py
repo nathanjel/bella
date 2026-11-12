@@ -74,6 +74,43 @@ print("buffer methods make bytearrays:", type(b.upper()).__name__, type(b + b"x"
 print("buffer repr:", repr(b), repr(Buffer()))
 o = Odd(b"abc")
 print("odd:", list(o), len(o), 7 in o, hash(o), o + b"x", b"x" + o, bytes(o), o == b"abc", o.decode(), o.upper())
+class Overriding(bytes):
+    def __len__(self) -> int:
+        return 99
+
+    def __iter__(self) -> Iterator[int]:
+        return iter([0])
+
+    def __contains__(self, item: object) -> bool:
+        return True
+
+    def __getitem__(self, index: object) -> int:  # type: ignore[override]
+        return -1
+
+
+class OverridingBuffer(bytearray):
+    def __len__(self) -> int:
+        return 99
+
+    def __iter__(self) -> Iterator[int]:
+        return iter([0])
+
+    def __contains__(self, item: object) -> bool:
+        return True
+
+    def __getitem__(self, index: object) -> int:  # type: ignore[override]
+        return -1
+
+
+over = Overriding(b"abc")
+part = bytes.__getitem__(over, slice(0, 2))
+print("the base's own: bytes", bytes.__len__(over), list(bytes.__iter__(over)), bytes.__contains__(over, 120), bytes.__contains__(over, b"bc"),
+      bytes.__getitem__(over, 0), bytes.__getitem__(over, -1), type(part).__name__, part, len(over), list(over), 120 in over, over[0])
+over_buffer = OverridingBuffer(b"abc")
+part_buffer = bytearray.__getitem__(over_buffer, slice(0, 2))
+print("the base's own: bytearray", bytearray.__len__(over_buffer), list(bytearray.__iter__(over_buffer)), bytearray.__contains__(over_buffer, 120),
+      bytearray.__contains__(over_buffer, b"bc"), bytearray.__getitem__(over_buffer, 0), bytearray.__getitem__(over_buffer, -1),
+      type(part_buffer).__name__, part_buffer, len(over_buffer), list(over_buffer), 120 in over_buffer, over_buffer[0])
 p = Plain(b"pq")
 p.tag = "kept"  # type: ignore[attr-defined]
 c = copy.copy(p)

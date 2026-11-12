@@ -423,6 +423,8 @@ void fill_struct(Module* m);                      // runtime/prelude/_struct.py:
 void fill_time(Module* m);                        // runtime/prelude/time.py: clocks, broken-down time, strftime, the zone
 void fill_math_integer(Module* m);                // runtime/prelude/_math_integer.py: math.integer
 void fill_cmath(Module* m);                       // runtime/prelude/cmath.py
+void fill_unicodedata(Module* m);                 // runtime/prelude/unicodedata.py
+Ref i_ucd_call(Obj, Args a);                      // unicodedata's primitives (runtime/src/unicodedata.cpp)
 void fill_math(Module* m);                        // runtime/prelude/math.py, with math.integer's six and the submodule
 void fill_md5(Module* m);                         // runtime/prelude/_md5.py, over hashes.cpp
 void fill_sha1(Module* m);                        // runtime/prelude/_sha1.py

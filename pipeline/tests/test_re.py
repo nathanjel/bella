@@ -64,7 +64,7 @@ def test_callable_iterator_and_unicode_tables() -> None:
 
 
 def test_what_is_absent_stops_by_name() -> None:
-    for body, name in (("import re\nre.compile(r'\\N{DIGIT ONE}')", "unicodedata"), ("import re\nre.compile('a').search(memoryview(b'a'))", "memoryview"), ("import re\nprint(re.compile('a').findall.__doc__)", "__doc__")):
+    for body, name in (("import re\nre.compile('a').search(memoryview(b'a'))", "memoryview"), ("import re\nprint(re.compile('a').findall.__doc__)", "__doc__")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"print('start')\n{body}\n", encoding="utf-8")

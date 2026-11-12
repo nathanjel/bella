@@ -472,6 +472,62 @@ def test_cmath() -> None:
     same(CMATH)
 
 
+# unicodedata (runtime/prelude/unicodedata.py over runtime/src/unicodedata.cpp): the words of every error the clinic and the C
+# raise, lookup's name from each kind of argument, the read-only members, the capsule's repr, and a sample of the whole database
+# in both versions (DECISIONS 2026-11-12 has the full sweep)
+UNICODEDATA = r"""
+import unicodedata, zlib
+U = unicodedata.ucd_3_2_0
+def m(f, *a, **k):
+    try:
+        return repr(f(*a, **k)).split(" at 0x")[0]
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+class S(str):
+    def __len__(self):
+        return 5
+class B(bytes):
+    def __len__(self):
+        return 500
+for f in (unicodedata.decimal, U.decimal, unicodedata.digit, unicodedata.numeric, unicodedata.name, U.name, unicodedata.category,
+          U.category, unicodedata.combining, unicodedata.mirrored, unicodedata.decomposition, unicodedata.block,
+          unicodedata.grapheme_cluster_break, unicodedata.isxidstart, unicodedata.lookup, U.lookup, unicodedata.normalize, U.normalize,
+          unicodedata.is_normalized, unicodedata.iter_graphemes):
+    print(f.__name__, "|", m(f), "|", m(f, 1), "|", m(f, "ab"), "|", m(f, S("ab")), "|", m(f, "a", "b", "c", "d"), "|", m(f, x=1), "|",
+          m(f, None), "|", m(f, "a", 2), "|", m(f, "a"), "|", m(f, b"a"), "|", m(f, bytearray(b"a")))
+for name in ("NO SUCH NAME", "A" * 256, "A" * 257, b"\xff\xfeA", "\ud800", "NULL\x00X", "caf\xe9", B(b"NULL"), "LATIN SMALL LETTER A", b"LATIN SMALL LETTER A",
+             "HANGUL SYLLABLE GAX", "CJK UNIFIED IDEOGRAPH-110000", "KEYCAP NUMBER SIGN"):
+    print("lookup", m(unicodedata.lookup, name), "|", m(U.lookup, name))
+print(m(unicodedata.decimal, "x"), m(unicodedata.digit, "x"), m(unicodedata.numeric, "x"), m(unicodedata.name, "\x00"), m(U.name, "ȡ"),
+      m(unicodedata.normalize, "NFX", "a"), m(unicodedata.is_normalized, "NFX", "a"), m(unicodedata.normalize, "NFC\x00", "a"))
+print(m(unicodedata.iter_graphemes, "a", "b"), m(unicodedata.iter_graphemes, "a", 2**70), m(unicodedata.iter_graphemes, "a", 0, -2**70),
+      m(unicodedata.iter_graphemes, "a", 1.5))
+seg = next(unicodedata.iter_graphemes("ab"))
+print(m(setattr, seg, "start", 1), "|", m(setattr, seg, "x", 1), "|", m(delattr, seg, "end"), "|", m(type(seg)), "|",
+      m(type(unicodedata.iter_graphemes(""))), "|", m(setattr, U, "unidata_version", "x"), "|", m(setattr, U, "y", 1), "|", m(unicodedata.UCD))
+print(m(unicodedata.UCD.name, unicodedata, "a"), "|", m(unicodedata.UCD.name, "a"), "|", m(unicodedata.UCD.name), "|", m(unicodedata.UCD.lookup, U, 1))
+print(repr(unicodedata._ucnhash_CAPI).split(" at 0x")[0], type(vars(type(seg))["start"]).__name__, vars(type(seg))["end"].__doc__)
+# every 61st code point: each property in both databases, the name and its lookup, the four forms
+crc = 0
+for cp in range(0, 0x110000, 61):
+    ch = chr(cp)
+    for db in (unicodedata, U):
+        n = db.name(ch, None)
+        row = (db.category(ch), db.bidirectional(ch), db.combining(ch), db.east_asian_width(ch), db.mirrored(ch), db.decomposition(ch),
+               db.decimal(ch, None), db.digit(ch, None), db.numeric(ch, None), n, n is None or db.lookup(n) == ch,
+               [db.normalize(f, ch + "́") for f in ("NFC", "NFD", "NFKC", "NFKD")])
+        crc = zlib.crc32(repr(row).encode("utf-8", "surrogatepass"), crc)
+    crc = zlib.crc32(repr((unicodedata.block(ch), unicodedata.grapheme_cluster_break(ch), unicodedata.indic_conjunct_break(ch),
+                           unicodedata.extended_pictographic(ch), unicodedata.isxidstart(ch), unicodedata.isxidcontinue(ch),
+                           [str(g) for g in unicodedata.iter_graphemes(ch + "‍" + ch)])).encode("utf-8", "surrogatepass"), crc)
+print("sample", crc)
+"""
+
+
+def test_unicodedata() -> None:
+    same(UNICODEDATA)
+
+
 def test_struct() -> None:
     """_struct's complex and float conversions, the half float's rounding and limits, the standard and native complex paths, Struct's
     methods by keyword, the cache's messages, Pascal and char strings at their edges, the iterator's length hint."""

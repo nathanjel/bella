@@ -1086,3 +1086,31 @@ time; the program's own stay at `-O1`).
 * **NaN signs.** IEEE 754 does not interpret the sign of a NaN that an operation makes from two NaNs, and x86 gives the first operand's. CPython's build is the pin's, the same binary in the image. Clang vectorises `_Py_c_quot` and turns `a.imag*ratio - a.real` into `-a.real + ratio*a.imag`, which is the same number but takes the other NaN. The port follows the pin's machine code, with the first operand's NaN taken explicitly. The runtime's compiled `+` and `*` take the second operand's NaN (GCC commutes them), so the port does not rely on them.
 * **Tests.** C-7-80 rounds what passes through libm (the libm rule of 2026-11-08) and prints classes of errors. `pipeline/tests/test_system_modules.py::test_cmath` compares every digit, sign and message on one host. The import-stop row in `test_compiled_imports.py` moved from cmath to `resource`, a C module outside the manifest.
 * **Found on the way, with the author.** Of two NaN operands, CPython's float `+` and `*` give the left one's and Bella's compiled ones give the right one's; `-` and `/` agree. Complex `+` differs too: CPython's gives the right operand's NaN, a vectorisation artifact of the pin. Whether NaN signs follow the pin's machine code or are left unspecified, like libm's last bits, is a question for the author.
+
+
+**2026-11-12 — `unicodedata` (C-7-81; C-7-15 passes compiled).** `unicodedata` is \[P1\] since review log D-8 and was not in the runtime. Its tables are CPython's own. `tools/unicodedata_source.py` copies the pin's three generated headers whole, from the release whose SHA-256 it names, as `tools/tokenizer_source.py` does for the lexer: Modules/unicodedata_db.h, Modules/unicodename_db.h and Objects/unicodetype_db.h become `runtime/src/unicodedata_db.inc`, `unicodename_db.inc` and `unicodetype_db.inc`, about 2.3 MB. `--check` compares them with a source tree; it runs by hand when the pin moves. Licence register L-03 covers the data; the port of unicodedata.c comes under CPython's licence stack, still open there, and the work proceeds.
+* **The port.** `runtime/src/unicodedata.cpp` is Modules/unicodedata.c's algorithms in its shape and order, on code points instead of str objects:
+  * a character's record and its changes back to 3.2.0;
+  * the decomposition's text;
+  * NFD and NFKD with the canonical ordering (both of the C's sorts), NFC and NFKC, and the quick check;
+  * the names both ways (Hangul syllables, the derived names, the DAWG, the aliases and named sequences);
+  * the blocks and TR29's grapheme rules.
+
+  Objects/unicodectype.c's lookups over the type records answer decimal, digit, numeric and the XID predicates. The two places where the C would overflow a fixed array (its decomposition stack of 20 and its list of 20 skipped characters) stop by name instead; the tables never reach them.
+* **The prelude.** `runtime/prelude/unicodedata.py` does what the C does with objects, through one primitive, `_ucd_call`:
+  * the clinic's conversions and their words: a character is a str of length one, read as stored (`PyUnicode_GET_LENGTH`, not `len()`); `lookup` takes a str's UTF-8 or a bytes object's bytes, refuses a bytearray as not read-only, and says "a bytes-like object is required" for the rest;
+  * the module's functions and the UCD type's methods, one C function each, given the module or the 3.2.0 database as self;
+  * `ucd_3_2_0`, made by the module alone;
+  * the grapheme iterator and its Segment objects, types of no module name;
+  * `_ucnhash_CAPI`, an instance of `types.CapsuleType` with CPython's repr.
+
+  A string comes back itself where the current database's quick check says it is normalised; a str subclass comes back as a str. The names table now has the module's types and PyCapsule.
+* **Checked.** A sweep took every code point through both databases: each property, the name and its lookup back, the four forms and `is_normalized`, plus the 3.15 properties. It also covered the four forms and the grapheme clusters of 3,000 composable starters before and after 81 combining marks. Compiled, all eighteen of its checksums equal CPython's. The sweep takes 11m38s compiled against 26s under CPython: each call goes through the prelude, which a measurement may one day move into C++. C-7-81 prints the database's corner cases and the class of every error. `pipeline/tests/test_system_modules.py::test_unicodedata` compares the words of every error and every 61st code point on one host.
+* **Found on the way, and fixed.** `bytes.__len__`, `__iter__`, `__contains__` and `__getitem__` called on a subclass's instance ran the subclass's overrides, and so did bytearray's, because the slot wrappers called `len()`, `iter()`, `in` and `[]`. They now read the object's own bytes, as tuple's and str's slots do (`runtime/src/slots.cpp`). C-3-64 has the rows.
+* **Stop rows.** test_re's row for `\N{DIGIT ONE}` went, since it compiles now. The runtime's own stops that wait for the Unicode database are still there, and the type records they need are in the runtime now:
+  * `int()`, `float()` and `complex()` of a str beyond ASCII;
+  * a format specification or field name beyond ASCII;
+  * the `namereplace` error handler;
+  * a `__slots__` name beyond ASCII.
+
+  `lookup` of a memoryview waits for memoryview (\[P2+\]); C-7-81 leaves it out.

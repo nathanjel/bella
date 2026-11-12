@@ -147,6 +147,11 @@ Ref str_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int_f
 Ref str_iter_slot(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return own(new Iterator(Iterator::StrIt, self)); }
 Ref str_contains_slot(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return Ref::steal(boolean(str_contains(self, a.pos(0)))); }
 Ref str_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return str_subscript(self, a.pos(0)); }
+// bytes' and bytearray's own: their bytes, whatever a subclass says (bytes.__len__(self) inside a __len__)
+Ref bytes_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int_from_i64(static_cast<std::int64_t>(bytes_data(self).size())); }
+Ref bytes_iter_slot(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return own(new Iterator(Iterator::BytesIt, self)); }
+Ref bytes_contains_slot(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return Ref::steal(boolean(bytes_contains(self, a.pos(0)))); }
+Ref bytes_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return bytes_getitem(self, a.pos(0)); }
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
 Ref own_iter(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return iter(self); }
@@ -367,6 +372,12 @@ void init_slots() {
     slot(fd, "__hash__", frozendict_hash_slot);
     for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.slice, t.bytes, t.bytearray}) comparisons(c);
     for (ClassObject* c : {t.tuple, t.range, t.frozenset, t.slice, t.bytes}) slot(c, "__hash__", own_hash);
+    for (ClassObject* c : {t.bytes, t.bytearray}) {
+        slot(c, "__len__", bytes_len_slot);
+        slot(c, "__iter__", bytes_iter_slot);
+        slot(c, "__contains__", bytes_contains_slot);
+        slot(c, "__getitem__", bytes_getitem_slot);
+    }
     for (ClassObject* c : {t.list, t.tuple, t.range, t.set, t.frozenset, t.bytes, t.bytearray}) {
         slot(c, "__len__", own_len);
         slot(c, "__iter__", own_iter);

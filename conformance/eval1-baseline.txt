@@ -137,6 +137,7 @@ C-7-74_starting_a_program_and_waiting_for_it.py
 C-7-77_the_gc_module.py
 C-7-79_utf16_utf32_codecs.py
 C-7-80_cmath.py
+C-7-81_unicodedata_database.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

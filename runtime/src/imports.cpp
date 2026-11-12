@@ -44,6 +44,7 @@ namespace prelude_struct { Ref module_body(Module* m); }      // runtime/prelude
 namespace prelude_time { Ref module_body(Module* m); }        // runtime/prelude/time.py
 namespace prelude_math_integer { Ref module_body(Module* m); }   // runtime/prelude/_math_integer.py
 namespace prelude_cmath { Ref module_body(Module* m); }       // runtime/prelude/cmath.py
+namespace prelude_unicodedata { Ref module_body(Module* m); }   // runtime/prelude/unicodedata.py
 namespace prelude_math { Ref module_body(Module* m); }        // runtime/prelude/math.py
 namespace prelude_md5 { Ref module_body(Module* m); }         // runtime/prelude/_md5.py
 namespace prelude_sha1 { Ref module_body(Module* m); }        // runtime/prelude/_sha1.py
@@ -522,7 +523,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"cmath", {fill_cmath}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"cmath", {fill_cmath}}, {"unicodedata", {fill_unicodedata}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
         {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_imp", {fill_imp}}, {"atexit", {fill_atexit}}, {"_signal", {fill_signal}}, {"gc", {fill_gc}}};
     return table;
 }
@@ -1093,6 +1094,10 @@ void fill_math(Module* m) {                      // math_exec: the module, then 
 void fill_cmath(Module* m) {
     fill_in_python(m, "cmath", "cmath", prelude_cmath::module_body,
                    {{"_libm", i_libm}, {"_as_c_complex", i_as_c_complex}, {"_bella_refuse", i_bella_refuse}});
+}
+void fill_unicodedata(Module* m) {
+    fill_in_python(m, "unicodedata", "unicodedata", prelude_unicodedata::module_body,
+                   {{"_ucd_call", i_ucd_call}, {"_tp_name", i_tp_name}, {"_bella_refuse", i_bella_refuse}});
 }
 namespace {
 void fill_digest(Module* m, const char* name, Ref (*body)(Module*)) {   // the digest modules share their primitives (hashes.cpp)
