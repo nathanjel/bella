@@ -68,9 +68,9 @@ std::uint32_t unicode_to_lower(std::uint32_t ch) { return mapped_case(UNICODE_LO
 std::uint32_t unicode_to_upper(std::uint32_t ch) { return mapped_case(UNICODE_UPPER, ch); }
 // Objects/unicodeobject.c: what int(), float() and complex() parse a str as. ASCII is itself; past it a Unicode space is a space and a
 // decimal digit its ASCII digit, and the first character that is neither (DEL among them) is a '?' that ends the text
-std::string decimal_and_space_to_ascii(const Str* s) {
-    if (s->ascii) return s->text;
-    std::string out;
+const std::string& decimal_and_space_to_ascii(const Str* s, std::string& out) {
+    if (s->ascii) return s->text;                // "If the string is already ASCII, just return the same string"
+    out.clear();
     out.reserve(s->length);
     for (std::size_t i = 0; i < s->length; ++i) {
         std::uint32_t ch = s->at(i);

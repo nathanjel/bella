@@ -111,6 +111,17 @@ part_buffer = bytearray.__getitem__(over_buffer, slice(0, 2))
 print("the base's own: bytearray", bytearray.__len__(over_buffer), list(bytearray.__iter__(over_buffer)), bytearray.__contains__(over_buffer, 120),
       bytearray.__contains__(over_buffer, b"bc"), bytearray.__getitem__(over_buffer, 0), bytearray.__getitem__(over_buffer, -1),
       type(part_buffer).__name__, part_buffer, len(over_buffer), list(over_buffer), 120 in over_buffer, over_buffer[0])
+
+
+class Rehashed(bytes):
+    def __hash__(self) -> int:
+        return super().__hash__()
+
+
+rehashed = Rehashed(b"abc")
+by_bytes: dict[bytes, str] = {rehashed: "found"}
+print("the base's own hash:", hash(rehashed) == hash(b"abc"), bytes.__hash__(Odd(b"abc")) == hash(b"abc"), hash(Odd(b"abc")), by_bytes[b"abc"],
+      rehashed in {b"abc"}, b"abc" in {rehashed})
 p = Plain(b"pq")
 p.tag = "kept"  # type: ignore[attr-defined]
 c = copy.copy(p)

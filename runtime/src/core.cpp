@@ -443,16 +443,7 @@ std::int64_t full_hash(Obj v) {
             return str_hash(static_cast<Str*>(o));
         case Kind::Bytes: {                      // bytes_hash: the same SipHash as a str of the same units; a subclass's own, below
             if (has_attributes(o) && type_lookup(o->cls, intern("__hash__")) != type_lookup(types().bytes, intern("__hash__"))) break;
-            auto* b = static_cast<BytesObject*>(o);
-            if (b->hash == -1) {
-                if (b->data.empty()) b->hash = 0;
-                else {
-                    auto h = static_cast<std::int64_t>(siphash13(secret().k0, secret().k1,
-                        reinterpret_cast<const unsigned char*>(b->data.data()), b->data.size()));
-                    b->hash = h == -1 ? -2 : h;
-                }
-            }
-            return b->hash;
+            return bytes_hash(v);
         }
         case Kind::DictView:                     // keys and items views are unhashable; values views hash by identity
             if (static_cast<DictView*>(o)->which != DictView::Values) raise_new("TypeError", "unhashable type: '" + type_of(v)->name + "'");
@@ -484,16 +475,7 @@ std::int64_t full_hash(Obj v) {
             auto* so = static_cast<SetObject*>(o);
             if (!so->frozen) break;
             if (has_attributes(o) && type_lookup(o->cls, intern("__hash__")) != type_lookup(types().frozenset, intern("__hash__"))) break;
-            auto shuffle = [](std::uint64_t h) { return ((h ^ 89869747UL) ^ (h << 16)) * 3644798167UL; };
-            std::uint64_t hash = 0;
-            for (const auto& e : so->table) hash ^= shuffle(static_cast<std::uint64_t>(e.hash));
-            if ((so->table.size() - so->fill) & 1) hash ^= shuffle(0);
-            if ((so->fill - so->used) & 1) hash ^= shuffle(static_cast<std::uint64_t>(-1));
-            hash ^= (static_cast<std::uint64_t>(so->used) + 1) * 1927868237UL;
-            hash ^= (hash >> 11) ^ (hash >> 25);
-            hash = hash * 69069U + 907133923UL;
-            if (hash == static_cast<std::uint64_t>(-1)) hash = 590923713UL;
-            return static_cast<std::int64_t>(hash);
+            return frozenset_hash(v);
         }
         case Kind::Range: {                      // range_hash: as (len, start, step), None where they do not matter
             Ref n = range_length_big(v), start = range_field(v, 0), step = range_field(v, 2);
@@ -539,6 +521,32 @@ std::int64_t full_hash(Obj v) {
 }
 }  // namespace
 std::uint64_t keyed_hash(std::uint64_t key, const unsigned char* src, std::size_t len) { return siphash13(key, 0, src, len); }   // _Py_KeyedHash
+
+std::int64_t bytes_hash(Obj v) {                 // bytes_hash: the same SipHash as a str of the same units, whatever a subclass says
+    auto* b = static_cast<BytesObject*>(v.object());
+    if (b->hash == -1) {
+        if (b->data.empty()) b->hash = 0;
+        else {
+            auto h = static_cast<std::int64_t>(siphash13(secret().k0, secret().k1,
+                reinterpret_cast<const unsigned char*>(b->data.data()), b->data.size()));
+            b->hash = h == -1 ? -2 : h;
+        }
+    }
+    return b->hash;
+}
+std::int64_t frozenset_hash(Obj v) {             // frozenset_hash_impl, whatever a subclass says
+    auto* so = static_cast<SetObject*>(v.object());
+    auto shuffle = [](std::uint64_t h) { return ((h ^ 89869747UL) ^ (h << 16)) * 3644798167UL; };
+    std::uint64_t hash = 0;
+    for (const auto& e : so->table) hash ^= shuffle(static_cast<std::uint64_t>(e.hash));
+    if ((so->table.size() - so->fill) & 1) hash ^= shuffle(0);
+    if ((so->fill - so->used) & 1) hash ^= shuffle(static_cast<std::uint64_t>(-1));
+    hash ^= (static_cast<std::uint64_t>(so->used) + 1) * 1927868237UL;
+    hash ^= (hash >> 11) ^ (hash >> 25);
+    hash = hash * 69069U + 907133923UL;
+    if (hash == static_cast<std::uint64_t>(-1)) hash = 590923713UL;
+    return static_cast<std::int64_t>(hash);
+}
 
 std::int64_t tuple_hash(const Tuple* t) {
     // tuplehash: xxHash's mixing, as Objects/tupleobject.c

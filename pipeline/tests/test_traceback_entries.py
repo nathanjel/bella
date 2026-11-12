@@ -236,3 +236,13 @@ def test_capture_locals_stops() -> None:
         prog.write_text(source, encoding="utf-8")
         got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, cwd=tmp)
     assert (got.returncode, got.stdout) == (70, "start\n") and "traceback's capture_locals (the locals of a frame, E-02)" in got.stderr, got
+
+
+if __name__ == "__main__":
+    test_the_words()
+    test_unittest_reports_only_the_tests_own_entries()
+    test_the_choice_of_a_suggestion()
+    test_clear_frames()
+    test_a_texts_entries_keep_its_namespace()
+    test_a_programs_own_modules_beside_it()
+    test_capture_locals_stops()

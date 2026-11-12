@@ -683,11 +683,31 @@ std::string backslashed(char32_t c) {
     raise(exc.get());
 }
 
+// _PyUnicode_GetNameCAPI: the name C API is unicodedata's capsule, which PyCapsule_Import("unicodedata._ucnhash_CAPI") fetches at
+// the first use and the interpreter keeps: the module is imported (and stays in sys.modules), its attribute read, and what is
+// no capsule refused. A failure leaves nothing kept, so the next use tries again
+void unicode_name_capi() {
+    static bool kept = false;
+    if (kept) return;
+    Ref module;
+    try {
+        Ref name = str_new("unicodedata");
+        module = import_module_level(name.get(), Obj{}, Obj{}, Obj{}, 0);   // PyImport_ImportModule
+    } catch (PyError&) {                          // whatever it raised: PyErr_Format replaces it
+        raise_new("ImportError", "PyCapsule_Import could not import module \"unicodedata\"");
+    }
+    Ref capsule = getattr(module.get(), intern("_ucnhash_CAPI"));
+    if (type_of(capsule.get())->name != "PyCapsule" || has_python_type(capsule.get()))   // PyCapsule_IsValid: the runtime makes this one capsule
+        raise_new("AttributeError", "PyCapsule_Import \"unicodedata._ucnhash_CAPI\" is not valid");
+    kept = true;
+}
+
 // what a handler writes for [start, end) of an encode, shared by the codecs
 void encode_fallback(std::string& out, const Str* s, std::size_t start, std::size_t end, const std::string& errors) {
     if (errors == "backslashreplace") {
         for (std::size_t k = start; k < end; ++k) out += backslashed(s->at(k));
     } else if (errors == "namereplace") {         // PyCodec_NameReplaceErrors: \N{NAME}, or the hex escape for a character without one
+        unicode_name_capi();
         std::string name;
         for (std::size_t k = start; k < end; ++k) out += unicode_name(s->at(k), name) ? "\\N{" + name + "}" : backslashed(s->at(k));
     } else {                                      // xmlcharrefreplace
@@ -1794,6 +1814,10 @@ void init_bytes() {
 Ref i_codecs_call(Obj, Args a) {
     const std::string& name = as_str(a.pos(0))->text;
     Args r{a.data + 1, a.npos - 1, nullptr, 0};
+    if (name == "name_capi") {                   // (): _PyUnicode_GetNameCAPI, before the handler reads its exception
+        unicode_name_capi();
+        return none_ref();
+    }
     if (name == "charname") {                    // (code point): the name C API's getname, None for none
         std::string found;
         return unicode_name(static_cast<std::uint32_t>(r.pos(0).small_value()), found) ? str_new(found) : none_ref();

@@ -109,3 +109,5 @@ def test_the_unicode_database_in_the_builtins() -> None:
 if __name__ == "__main__":
     for item in PROGRAMS:
         test_as_cpython(item)
+    test_beyond_ascii()
+    test_the_unicode_database_in_the_builtins()

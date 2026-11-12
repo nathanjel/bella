@@ -148,9 +148,7 @@ Ref exchange_handler(int signum, Obj fresh) {    // set_handler(signum, Py_NewRe
 // an object of the type types.FrameType is, with nothing in it: what CPython's has is the names table's `frame:` rows, so reading
 // f_lineno stops by name
 ClassObject* frame_class() {
-    ClassObject* c = builtin_class("frame");     // made with mro {c} and no metaclass; builtin_type() gives it object and type
-    if (c->cls == nullptr) builtin_type("frame", {types().object});   // `_types` not filled yet: what its no_instances_yet("frame") makes, once
-    return c;
+    return no_instances_yet("frame");            // once, whichever asks first: `_types` when it is filled, or a handler given a frame
 }
 Ref frame_argument() {
     if (lean_build || detail::current_frame() == nullptr) return none_ref();

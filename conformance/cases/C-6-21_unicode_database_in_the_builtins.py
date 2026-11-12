@@ -70,6 +70,8 @@ print("handler", attempt(lambda: codecs.namereplace_errors(UnicodeEncodeError("a
       attempt(lambda: codecs.namereplace_errors(UnicodeDecodeError("utf-8", b"\xff", 0, 1, "why"))),
       call(codecs.namereplace_errors, ValueError("x")), attempt(lambda: b"\xff".decode("utf-8", "namereplace")),
       attempt(lambda: b"\xff".decode("ascii", "namereplace")), codecs.lookup_error("namereplace") is codecs.namereplace_errors)
+print("handler's position", *(call(codecs.namereplace_errors, UnicodeEncodeError("ascii", "a\xe9c", start, end, "why"))
+                             for start, end in ((2, 1), (2, 0), (3, 1), (1, 1), (1, 2), (5, 9), (-1, 2), (0, 3))))
 
 
 def slotted(names: tuple[str, ...]) -> str:

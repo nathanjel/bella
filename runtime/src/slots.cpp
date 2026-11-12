@@ -152,6 +152,10 @@ Ref bytes_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int
 Ref bytes_iter_slot(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return own(new Iterator(Iterator::BytesIt, self)); }
 Ref bytes_contains_slot(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return Ref::steal(boolean(bytes_contains(self, a.pos(0)))); }
 Ref bytes_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return bytes_getitem(self, a.pos(0)); }
+// bytes' and frozenset's own hash: the object's bytes or elements, whatever a subclass says (super().__hash__() inside a __hash__)
+Ref bytes_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(bytes_hash(self)); }
+Ref frozenset_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(frozenset_hash(self)); }
+// the hash of a type no class can inherit from (range, slice, code): hash() finds no override to run
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
 Ref own_iter(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return iter(self); }
@@ -371,19 +375,23 @@ void init_slots() {
     slot(fd, "__ror__", dict_or_slot<true>);
     slot(fd, "__hash__", frozendict_hash_slot);
     for (ClassObject* c : {t.str, t.list, t.tuple, t.range, t.set, t.frozenset, t.slice, t.bytes, t.bytearray}) comparisons(c);
-    for (ClassObject* c : {t.tuple, t.range, t.frozenset, t.slice, t.bytes}) slot(c, "__hash__", own_hash);
+    for (ClassObject* c : {t.range, t.slice}) slot(c, "__hash__", own_hash);
+    slot(t.bytes, "__hash__", bytes_hash_slot);
+    slot(t.frozenset, "__hash__", frozenset_hash_slot);
     for (ClassObject* c : {t.bytes, t.bytearray}) {
         slot(c, "__len__", bytes_len_slot);
         slot(c, "__iter__", bytes_iter_slot);
         slot(c, "__contains__", bytes_contains_slot);
         slot(c, "__getitem__", bytes_getitem_slot);
     }
-    for (ClassObject* c : {t.list, t.tuple, t.range, t.set, t.frozenset, t.bytes, t.bytearray}) {
+    // list, set and frozenset: len(), iter() and `in` read a built-in object's own storage before they look for a method, so the
+    // generic forms answer for a subclass's instance too (pipeline/tests/test_review_2026_11_12.py sweeps every one of them)
+    for (ClassObject* c : {t.list, t.range, t.set, t.frozenset}) {
         slot(c, "__len__", own_len);
         slot(c, "__iter__", own_iter);
         slot(c, "__contains__", own_contains);
     }
-    for (ClassObject* c : {t.list, t.tuple, t.range, t.bytes, t.bytearray}) slot(c, "__getitem__", own_getitem);
+    for (ClassObject* c : {t.list, t.range}) slot(c, "__getitem__", own_getitem);
     for (ClassObject* c : {t.range_iterator, t.longrange_iterator, t.tuple_iterator, t.list_iterator, t.list_reverseiterator, t.str_iterator,
                            t.dict_keyiterator, t.dict_valueiterator, t.dict_itemiterator, t.dict_reversekeyiterator, t.dict_reversevalueiterator,
                            t.dict_reverseitemiterator, t.bytes_iterator, t.bytearray_iterator, t.iterator, t.set_iterator}) {

@@ -104,7 +104,8 @@ for handler in (codecs.strict_errors, codecs.ignore_errors, codecs.replace_error
 enc_error = UnicodeEncodeError("ascii", "a€\U0001f600b", 1, 3, "why")
 dec_error = UnicodeDecodeError("ascii", b"a\xff\xfeb", 1, 3, "why")
 tr_error = UnicodeTranslateError("a€b", 1, 2, "why")
-for handler in (codecs.ignore_errors, codecs.replace_errors, codecs.xmlcharrefreplace_errors, codecs.backslashreplace_errors, codecs.lookup_error("surrogateescape"), codecs.lookup_error("surrogatepass")):
+for handler in (codecs.ignore_errors, codecs.replace_errors, codecs.xmlcharrefreplace_errors, codecs.backslashreplace_errors, codecs.namereplace_errors,
+                codecs.lookup_error("surrogateescape"), codecs.lookup_error("surrogatepass")):
     print([handler(e) if failed(lambda: handler(e)) == "no error" else failed(lambda: handler(e)) for e in (enc_error, dec_error, tr_error)], failed(lambda: handler(ValueError())), failed(lambda: handler(1)), failed(lambda: handler()))  # type: ignore[arg-type,call-arg,no-untyped-call]
 print(failed(lambda: codecs.strict_errors(enc_error)), failed(lambda: codecs.strict_errors(KeyError("k"))), failed(lambda: codecs.strict_errors(1)))  # type: ignore[arg-type,no-untyped-call]
 print(codecs.lookup_error("surrogateescape")(UnicodeDecodeError("utf-8", b"a\x80\xffb", 1, 3, "why")), codecs.lookup_error("surrogateescape")(UnicodeEncodeError("utf-8", "a\udc80\udcffb", 1, 3, "why")), codecs.lookup_error("surrogatepass")(UnicodeEncodeError("utf-8", "a\ud800b", 1, 2, "why")), codecs.lookup_error("surrogatepass")(UnicodeDecodeError("utf-8", b"a\xed\xa0\x80b", 1, 2, "why")))

@@ -520,15 +520,19 @@ Module*& bootstrap_module() {
     static Module* m = nullptr;
     return m;
 }
-ClassObject* no_instances_yet(const char* name, const char* module = nullptr) {
+}  // namespace
+// A C type the runtime has no instances of yet, or makes itself (types' names for them, a handler's frame, unicodedata's capsule):
+// the class, made once, whichever asks first
+ClassObject* no_instances_yet(const char* name, const char* module) {
     ClassObject* c = builtin_class(name);
-    if (c->cls == nullptr) builtin_type(name, {types().object});   // once: signals.cpp makes "frame" when a handler is given one first
+    if (c->cls == nullptr) builtin_type(name, {types().object});
     if (module != nullptr) {
         Obj text = Obj::of(intern(module));
-        c->attrs.set(N("__module__"), text);
+        c->attrs.set(intern("__module__"), text);
     }
     return c;
 }
+namespace {
 // _types (Modules/_typesmodule.c): the types without a builtin name. A type with no instances yet
 // (a generator, a code object: step 3b, E-02) exists as a class, as `types` needs it; what CPython
 // has of it and the runtime does not is refused by the names table.

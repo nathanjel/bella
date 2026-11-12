@@ -194,7 +194,8 @@ Ref float_from_text(const std::string& given, Obj shown) {
 
 Ref float_from_string(Obj v) {                   // PyFloat_FromString
     if (const Str* s = as_str(v)) {
-        return float_from_text(decimal_and_space_to_ascii(s), v);   // _PyUnicode_TransformDecimalAndSpaceToASCII
+        std::string transformed;
+        return float_from_text(decimal_and_space_to_ascii(s, transformed), v);   // _PyUnicode_TransformDecimalAndSpaceToASCII
     }
     if (is_bytes_like(v)) return float_from_text(bytes_data(v), v);
     raise_new("TypeError", "float() argument must be a string or a real number, not '" + type_of(v)->name + "'");

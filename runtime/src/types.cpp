@@ -1057,7 +1057,8 @@ Ref int_from_text(const std::string& t, std::int64_t base, Invalid invalid) {
 
 Ref int_from_str(const Str* s, std::int64_t base) {
     // PyLong_FromUnicodeObject: the text as _PyUnicode_TransformDecimalAndSpaceToASCII has it, the message the str itself
-    return int_from_text(decimal_and_space_to_ascii(s), base, [&]() -> Ref {
+    std::string transformed;
+    return int_from_text(decimal_and_space_to_ascii(s, transformed), base, [&]() -> Ref {
         Ref r = repr_of(Obj::of(s));
         const Str* rs = as_str(r.get());
         std::u32string shown;                       // %.200R: the repr, cut at 200 code points

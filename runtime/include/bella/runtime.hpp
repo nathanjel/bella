@@ -429,7 +429,8 @@ void fill_unicodedata(Module* m);                 // runtime/prelude/unicodedata
 Ref i_ucd_call(Obj, Args a);                      // unicodedata's primitives (runtime/src/unicodedata.cpp)
 int unicode_to_decimal(std::uint32_t ch);         // Py_UNICODE_TODECIMAL: -1 for none (runtime/src/unicodedata.cpp, the type records)
 bool unicode_name(std::uint32_t ch, std::string& out);   // the name C API's getname, aliases and named sequences included
-std::string decimal_and_space_to_ascii(const Str* s);   // _PyUnicode_TransformDecimalAndSpaceToASCII (runtime/src/unicode.cpp)
+// _PyUnicode_TransformDecimalAndSpaceToASCII (runtime/src/unicode.cpp): an ASCII str's own text, else the transformed text in `buffer`
+const std::string& decimal_and_space_to_ascii(const Str* s, std::string& buffer);
 bool is_identifier(const Str* s);                 // PyUnicode_IsIdentifier
 void fill_math(Module* m);                        // runtime/prelude/math.py, with math.integer's six and the submodule
 void fill_md5(Module* m);                         // runtime/prelude/_md5.py, over hashes.cpp
@@ -720,6 +721,8 @@ Ref float_binary(BinOp op, Obj a, Obj b);        // nb_add and its kin: an int o
 Ref float_divmod(Obj a, Obj b);
 std::int64_t float_hash(Obj self);               // _Py_HashDouble
 std::int64_t tuple_hash(const Tuple* t);         // tuple_hash: the items, whatever a subclass says
+std::int64_t bytes_hash(Obj v);                  // bytes_hash: the bytes, whatever a subclass says
+std::int64_t frozenset_hash(Obj v);              // frozenset_hash_impl: the elements, whatever a subclass says
 std::int64_t double_hash(double v, const void* instance);   // _Py_HashDouble(inst, v)
 double string_to_double(const char* s, const char* last, const char*& end);   // PyOS_string_to_double on [s, last), no error: `end` says where it stopped
 std::string without_underscores(const std::string& given, const char* what, Obj shown);   // _Py_string_to_number_with_underscores's check
@@ -1150,6 +1153,7 @@ Ref i_bella_is_builtin(Obj, Args a);
 Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
 Ref i_bella_discover(Obj, Args a);               // bootstrap_external.py's: PathFinder.discover's path entry finder
+ClassObject* no_instances_yet(const char* name, const char* module = nullptr);   // a C type without instances yet, made once (imports.cpp)
 Ref i_bella_exec(Obj, Args a);
 Ref i_bella_refuse(Obj, Args a);
 Ref i_bella_caller_module(Obj, Args a);                      // caller(): the nearest program frame's module name

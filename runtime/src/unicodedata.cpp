@@ -1544,11 +1544,7 @@ const char* block(Py_UCS4 c)                    // unicodedata_block_impl
 }  // namespace unicodedata_c
 
 namespace {
-ClassObject* capsule_class() {                  // PyCapsule_Type, which types.CapsuleType names
-    ClassObject* c = builtin_class("PyCapsule");
-    if (c->cls == nullptr) builtin_type("PyCapsule", {types().object});
-    return c;
-}
+ClassObject* capsule_class() { return no_instances_yet("PyCapsule"); }   // PyCapsule_Type, which types.CapsuleType names
 Ref capsule_repr(Obj self, Args a) {             // capsule_repr: the one capsule the runtime makes is unicodedata's
     positional_only(a, "__repr__", 0, 0);
     char buf[96];
@@ -1560,7 +1556,7 @@ Ref capsule_repr(Obj self, Args a) {             // capsule_repr: the one capsul
 
 namespace unicodedata_c {
 Py_UCS4 code_arg(Obj v) { return static_cast<Py_UCS4>(v.small_value()); }
-Ref text(const char* s) { return Ref::share(Obj::of(intern(s))); }
+Ref text(const char* s) { return str_new(s); }  // PyUnicode_FromString: a new str, but for the empty one and one Latin-1 character
 std::int64_t i64_arg(Obj v) {
     std::int64_t out = 0;
     int_fits_i64(v, out);
@@ -1591,9 +1587,23 @@ Ref dispatch(Args a) {
     if (op == "extended_pictographic") return Ref::steal(boolean(_getrecord_ex(code_arg(arg(0)))->ext_pict != 0));
     if (op == "isxidstart") return Ref::steal(boolean(unicodetype::_PyUnicode_IsXidStart(code_arg(arg(0))) != 0));
     if (op == "isxidcontinue") return Ref::steal(boolean(unicodetype::_PyUnicode_IsXidContinue(code_arg(arg(0))) != 0));
+    // The iterator's and the segment's fields are C struct members in CPython, which no program can reach; here they are the prelude
+    // object's slots, which a program can write. Fields the C could not hold or could not walk (another kind of object, a negative
+    // position, an end past the string, a state outside its enum) are not read: that stops by name. Any other value is walked as the C
+    // would walk it
+    auto fields_changed = []() -> void { throw NotImplemented("a unicodedata iterator or segment whose fields the program changed (CPython has no such attributes)"); };
     if (op == "next_break") {                    // (str, (start, pos, end, gcb, ep_state, incb_state, ri_flag)) -> (break or -1, state)
+        const Str* text_arg = as_str(arg(0));
+        if (text_arg == nullptr || !is_kind(arg(1), Kind::Tuple) || static_cast<Tuple*>(arg(1).object())->items.size() != 7) fields_changed();
         auto& st = static_cast<Tuple*>(arg(1).object())->items;
-        _PyGraphemeBreak iter{as_str(arg(0)), i64_arg(st[0]), i64_arg(st[1]), i64_arg(st[2]), static_cast<int>(i64_arg(st[3])),
+        for (Obj field : st)
+            if (!is_int(field)) fields_changed();
+        const std::int64_t length = static_cast<std::int64_t>(text_arg->length);
+        // the walk reads the string at pos while pos < end: a start past the end is the C's own (iter_graphemes(s, 5, 2)) and finds nothing
+        if (i64_arg(st[1]) < 0 || i64_arg(st[2]) > length ||
+            i64_arg(st[4]) < ExtPictState_Init || i64_arg(st[4]) > ExtPictState_Matched || i64_arg(st[5]) < InCBState_Init || i64_arg(st[5]) > InCBState_Matched)
+            fields_changed();
+        _PyGraphemeBreak iter{text_arg, i64_arg(st[0]), i64_arg(st[1]), i64_arg(st[2]), static_cast<int>(i64_arg(st[3])),
                               static_cast<ExtPictState>(i64_arg(st[4])), static_cast<InCBState>(i64_arg(st[5])), i64_arg(st[6]) != 0};
         Py_ssize_t at = _Py_NextGraphemeBreak(&iter);
         Ref b = int_from_i64(at), s0 = int_from_i64(iter.start), s1 = int_from_i64(iter.pos), s2 = int_from_i64(iter.end), s3 = int_from_i64(iter.gcb),
@@ -1601,11 +1611,19 @@ Ref dispatch(Args a) {
         Ref state = tuple_new({s0.get(), s1.get(), s2.get(), s3.get(), s4.get(), s5.get(), s6.get()});
         return tuple_new({b.get(), state.get()});
     }
+    if (op == "unidata_version") return str_new(UNIDATA_VERSION);   // the databases' own words (unicodedata_db.inc, unicodename_db.inc)
+    if (op == "name_maxlen") return int_from_i64(NAME_MAXLEN);
     if (op == "length") return int_from_i64(static_cast<std::int64_t>(as_str(arg(0))->length));   // PyUnicode_GET_LENGTH
     if (op == "substring") {                     // (str, start, end): PyUnicode_Substring
         const Str* s = as_str(arg(0));
-        std::int64_t start = i64_arg(arg(1)), end = i64_arg(arg(2));
-        if (start == 0 && end >= static_cast<std::int64_t>(s->length)) return from_object(arg(0));   // unicode_result_unchanged
+        if (s == nullptr || !is_int(arg(1)) || !is_int(arg(2))) fields_changed();
+        std::int64_t start, end;
+        if (!int_fits_i64(arg(1), start) || !int_fits_i64(arg(2), end)) fields_changed();   // a Py_ssize_t in the C
+        const std::int64_t length = static_cast<std::int64_t>(s->length);
+        end = std::min(end, length);
+        if (start == 0 && end == length) return from_object(arg(0));   // unicode_result_unchanged
+        if (start < 0 || end < 0) raise_new("IndexError", "string index out of range");
+        if (start >= length || end < start) return str_new("");
         std::u32string out;
         for (std::int64_t i = start; i < end; ++i) out += s->at(static_cast<std::size_t>(i));
         return str_from_codepoints(out);

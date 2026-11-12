@@ -29,8 +29,8 @@ except NameError:
     _bella_new_instance: Callable[..., Any] = _missing
     _bella_refuse: Callable[..., Any] = _missing
 
-unidata_version = "17.0.0"                       # UNIDATA_VERSION
-_NAME_MAXLEN = 256
+unidata_version = _ucd_call("unidata_version")   # UNIDATA_VERSION, as the copied database says it
+_NAME_MAXLEN = _ucd_call("name_maxlen")          # NAME_MAXLEN, as the copied names say it
 _SSIZE_MAX = 2**63 - 1                           # PY_SSIZE_T_MAX
 
 

@@ -5,8 +5,8 @@ str.encode and bytes.decode know the names PyUnicode_AsEncodedString and PyUnico
 (`_codecs_call("hooks", ...)`), as those go to _PyCodec_EncodeText and _PyCodec_DecodeText. `_start` is the end of _PyCodec_InitRegistry:
 the runtime calls it before the program's first line, and it imports `encodings`, whose search function finds the phase-1 codecs.
 
-Not written: UTF-7, the escape codecs and charmap (they stop by name), the namereplace handler (it needs the Unicode
-database), and a handler a program registers when a built-in codec would call it.
+Not written: UTF-7, the escape codecs and charmap (they stop by name), and a handler a program registers when a built-in
+codec would call it.
 """
 
 __all__ = ["_normalize_encoding", "_unregister_error", "ascii_decode", "ascii_encode", "charmap_build", "charmap_decode", "charmap_encode", "decode", "encode",
@@ -519,15 +519,16 @@ def namereplace_errors(*args: object, **kwds: object) -> object:
     exc = _handler_arg("namereplace_errors", args, kwds)   # PyCodec_NameReplaceErrors
     if not _is(exc, UnicodeEncodeError):
         _wrong_exception_type(exc)
+    _codecs_call("name_capi")                    # _PyUnicode_GetNameCAPI: unicodedata's capsule, imported at the first use
     obj, _n, start, end, _distance = _params(exc, False)
     out: list[str] = []
-    i = start
-    while i < end:
+    i = start                                    # the C's imax: it gives back where its loop stopped, not `end` as its siblings do,
+    while i < end:                               # so a range that ends before it starts leaves the position at its start
         code = ord(str.__getitem__(obj, i))  # type: ignore[arg-type]
         name = _codecs_call("charname", code)
         out.append(_hex(code) if name is None else "\\N{" + name + "}")
         i += 1
-    return "".join(out), end
+    return "".join(out), i
 
 
 def surrogatepass(*args: object, **kwds: object) -> object:

@@ -80,6 +80,12 @@ same = "already plain"
 accented = "\xe9"
 print("itself", [unicodedata.normalize(form, same) is same for form in FORMS], [UCD.normalize(form, same) is same for form in FORMS],
       [unicodedata.normalize(form, accented) is accented for form in FORMS])
+# each answer is a new str, but for the empty one and one Latin-1 character, which are one object each
+print("a new str", unicodedata.category("a") is unicodedata.category("a"), unicodedata.east_asian_width("a") is unicodedata.east_asian_width("b"),
+      unicodedata.block("a") is unicodedata.block("a"), unicodedata.grapheme_cluster_break("a") is unicodedata.grapheme_cluster_break("a"),
+      unicodedata.indic_conjunct_break("a") is unicodedata.indic_conjunct_break("a"), unicodedata.name("a") is unicodedata.name("a"),
+      unicodedata.decomposition("\xe9") is unicodedata.decomposition("\xe9"), "| one object:", unicodedata.bidirectional("a") is unicodedata.bidirectional("b"),
+      unicodedata.east_asian_width("\u3042") is unicodedata.east_asian_width("\u3044"), unicodedata.decomposition("a") is unicodedata.decomposition("b"))
 
 
 class Sub(str):

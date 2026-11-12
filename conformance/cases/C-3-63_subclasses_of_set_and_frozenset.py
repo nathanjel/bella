@@ -76,6 +76,17 @@ print("noisy:", list(n), len(n), anything in n, 1 in n, n | {4}, sorted(set(n)),
       sorted({0}.union(n)), n == {1, 2, 3}, sorted(frozenset(n)))
 eq = Equal([1])
 print("equal:", eq == frozenset([2]), hash(eq), {eq: 1}.get(Equal([5])), frozenset([1]) == eq, eq in {Equal([9])})
+
+
+class Rehashed(frozenset[int]):
+    def __hash__(self) -> int:
+        return super().__hash__()
+
+
+rehashed = Rehashed([1, 2])
+by_set: dict[frozenset[int], str] = {rehashed: "found"}
+print("the base's own hash:", hash(rehashed) == hash(frozenset([1, 2])), frozenset.__hash__(Equal([2])) == hash(frozenset([2])), hash(Equal([2])),
+      by_set[frozenset([1, 2])], rehashed in {frozenset([1, 2])}, frozenset([1, 2]) in {rehashed})
 r = weakref.ref(t)
 print("weak:", r() is t)
 c = copy.copy(t)
