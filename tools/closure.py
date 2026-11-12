@@ -1157,7 +1157,8 @@ def _compute_closure(manifest: Manifest, program: Program | None) -> tuple[dict[
     # [replaced]: functions an adaptation replaces; they must exist, and the adaptation must be named
     for module, funcs in sorted(manifest.replaced.items()):
         if module not in infos:
-            problems.append(f"[replaced] names {module}, which the closure does not reach")
+            if program is None:                  # a program's closure need not reach every module phase 1 adapts
+                problems.append(f"[replaced] names {module}, which the closure does not reach")
             continue
         if module not in manifest.adaptations:
             problems.append(f"[replaced] names functions of {module}, which has no entry in [adaptations]")
