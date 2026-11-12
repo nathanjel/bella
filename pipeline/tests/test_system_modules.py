@@ -394,6 +394,37 @@ def test_base32() -> None:
     same(BASE32)
 
 
+# UTF-16 and UTF-32 (C-7-79 has the bytes, the texts and the ranges): every reason a decoder gives and the encoder's, the
+# messages of the twelve _codecs functions' converters, and a byteorder outside a C int
+WIDE_CODECS = r"""
+import codecs
+def m(f):
+    try:
+        return repr(f())
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+for codec in ("utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be"):
+    for data in (b"a", b"\x00\xd8", b"\x00\xdc\x00\x00", b"=\xd8a\x00", b"\x00\xd8\x00\x00", b"\x00\x00\x11\x00", b"a\x00\x00"):
+        print(codec, data, m(lambda: data.decode(codec)), m(lambda: data.decode(codec, "surrogatepass")))
+    print(codec, m(lambda: "a\ud800".encode(codec)), m(lambda: "\udc80".encode(codec, "surrogateescape")), m(lambda: "\udc80".encode(codec, "nope")))
+for name in ("utf_16_decode", "utf_16_le_decode", "utf_16_ex_decode", "utf_32_be_decode", "utf_32_ex_decode"):
+    f = getattr(codecs, name)
+    print(name, m(lambda: f()), m(lambda: f("ab")), m(lambda: f(b"", 1)), m(lambda: f(b"", None, False, 0, 0)), m(lambda: f(b"", errors="x")),
+          m(lambda: f(b"", "a\0b")))
+print(m(lambda: codecs.utf_16_ex_decode(b"", None, 2**31)), m(lambda: codecs.utf_16_ex_decode(b"", None, -2**31 - 1)),
+      m(lambda: codecs.utf_16_ex_decode(b"", None, "1")), m(lambda: codecs.utf_32_ex_decode(b"", None, 1.0)), codecs.utf_16_ex_decode(b"", None, -2**31))
+for name in ("utf_16_encode", "utf_16_le_encode", "utf_32_encode", "utf_32_be_encode"):
+    f = getattr(codecs, name)
+    print(name, m(lambda: f()), m(lambda: f(b"a")), m(lambda: f("a", 1)), m(lambda: f("a", None, 0, 0)), m(lambda: f("a", errors=None)))
+print(m(lambda: codecs.utf_16_encode("a", None, 2**40)), m(lambda: codecs.utf_32_encode("a", None, "x")), codecs.utf_32_encode("\ud800", "surrogatepass", 7))
+print(m(lambda: codecs.utf_16_le_decode(bytearray(b"a\x00"))), m(lambda: codecs.utf_16_le_decode(1)), m(lambda: "x".encode("utf-16", errors=1)))
+"""
+
+
+def test_wide_codecs() -> None:
+    same(WIDE_CODECS)
+
+
 def test_struct() -> None:
     """_struct's complex and float conversions, the half float's rounding and limits, the standard and native complex paths, Struct's
     methods by keyword, the cache's messages, Pascal and char strings at their edges, the iterator's length hint."""

@@ -1062,3 +1062,15 @@ time; the program's own stay at `-O1`).
 * **The replay** (`sitecustomize.py`) gives the same answers, with one difference: its stand-in is a Python function, so the `NotImplementedError`'s traceback has a frame more. C-3-67 prints only the context's class; `pipeline/tests/test_entry_points.py` compares its frames compiled.
 * **codeop**: the refusal is `codeob = _bella.refuse(...)` on CPython's line 117, in place of a refusal and an unreached `compile`.
 * **Evidence.** C-3-67 passes compiled on every frame's line: NameError through `get_annotations` and `call_annotate_function`, `ForwardRef.evaluate`, and the hand-written rows, closure included. It is not in the eval1 and eval2 baselines: their tracebacks carry the interpreter's frames, and CPython's own annotationlib re-runs their host functions. The closure locks moved with the shims' import lines, which are now CPython's.
+
+**2026-11-12 — UTF-16 and UTF-32 (C-7-79), and base32 (C-7-07).** The specification lists UTF-16 and UTF-32 among phase 1's codecs (section 7, Text); `str.encode`, `bytes.decode` and `codecs` stopped at them, and C-7-07 stopped first at `binascii.b2a_base32`.
+* **The codecs** are in `runtime/src/bytes.cpp`, from `_PyUnicode_EncodeUTF16` and 32, `PyUnicode_DecodeUTF16Stateful` and 32, and stringlib's `utf16_decode`. byteorder 0 writes the native order's BOM and reads one to choose the order; below 0 is little-endian, above 0 big-endian, and the host is little-endian, as the reference's build is. Each decode error names `utf-16-le`, `utf-16-be`, `utf-32-le` or `utf-32-be` and covers the C's range:
+  * UTF-16: `truncated data`, `unexpected end of data`, `illegal encoding`, `illegal UTF-16 surrogate`;
+  * UTF-32: `truncated data`, the surrogate range, `code point not in range(0x110000)`.
+
+  A handler's new position may fall inside a unit, and decoding goes on from there. A stateful call that is not final keeps a trailing part unit, or a high surrogate at the end, for the next call.
+* **The encoders** call the handler for one character at a time, as the C does. Bytes it gives must be whole units and text must be ASCII, so `surrogateescape` fails for every surrogate. The UTF-32 encoder names itself plain `utf-32` for a byteorder other than -1, 0 and 1, so `surrogatepass` writes the native order's bytes even into a big-endian stream; that is CPython's answer too.
+* **The handlers.** `surrogatepass` decodes UTF-16 and UTF-32 surrogates as `PyCodec_SurrogatePassErrors` does. `surrogateescape` takes at most four bytes; no UTF-8 error covers more, so UTF-8 is unchanged.
+* **`_codecs`'** twelve functions take CPython's parameters by position, in the clinic's order: the buffer, errors, the byteorder as a C int, then final. The ex decoders return the byteorder they ended with.
+* **base32.** `binascii.a2b_base32` and `b2a_base32` come from `binascii_a2b_base32_impl` and `b2a_base32_impl` (`cee9417`).
+* **Evidence.** C-7-79 passes on all three legs, and C-7-07 now passes compiled. `pipeline/tests/test_system_modules.py::test_wide_codecs` and `test_base32` compare every message with CPython's.

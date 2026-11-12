@@ -143,6 +143,7 @@ C-7-73_a_pipe_nobody_reads.py
 C-7-74_starting_a_program_and_waiting_for_it.py
 C-7-75_signals_where_the_program_asks.py
 C-7-77_the_gc_module.py
+C-7-79_utf16_utf32_codecs.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-03_locals_detached.py

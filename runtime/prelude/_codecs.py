@@ -5,7 +5,7 @@ str.encode and bytes.decode know the names PyUnicode_AsEncodedString and PyUnico
 (`_codecs_call("hooks", ...)`), as those go to _PyCodec_EncodeText and _PyCodec_DecodeText. `_start` is the end of _PyCodec_InitRegistry:
 the runtime calls it before the program's first line, and it imports `encodings`, whose search function finds the phase-1 codecs.
 
-Not written: UTF-7, UTF-16, UTF-32, the escape codecs and charmap (they stop by name), the namereplace handler (it needs the Unicode
+Not written: UTF-7, the escape codecs and charmap (they stop by name), the namereplace handler (it needs the Unicode
 database), and a handler a program registers when a built-in codec would call it.
 """
 
@@ -22,6 +22,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _codecs_call                                 # noqa: B018  # the runtime's codecs and what it keeps of an exception, by name
+    _number_index                                # noqa: B018  # PyNumber_Index, with its messages
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -32,6 +33,7 @@ except NameError:
     _tp_name: Callable[..., str] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
     _codecs_call: Callable[..., Any] = _missing
+    _number_index: Callable[..., int] = _missing
 
 _ABSENT = object()
 _search_path: list[object] = []                  # interp->codecs.search_path
@@ -654,20 +656,60 @@ def readbuffer_encode(*args: object, **kwds: object) -> tuple[bytes, int]:
     return data, bytes.__len__(data)
 
 
-utf_16_decode = _unwritten("utf_16_decode", "the codec 'utf-16' (phase 1; not written yet)")
-utf_16_le_decode = _unwritten("utf_16_le_decode", "the codec 'utf-16' (phase 1; not written yet)")
-utf_16_be_decode = _unwritten("utf_16_be_decode", "the codec 'utf-16' (phase 1; not written yet)")
-utf_16_ex_decode = _unwritten("utf_16_ex_decode", "the codec 'utf-16' (phase 1; not written yet)")
-utf_16_encode = _unwritten("utf_16_encode", "the codec 'utf-16' (phase 1; not written yet)")
-utf_16_le_encode = _unwritten("utf_16_le_encode", "the codec 'utf-16' (phase 1; not written yet)")
-utf_16_be_encode = _unwritten("utf_16_be_encode", "the codec 'utf-16' (phase 1; not written yet)")
-utf_32_decode = _unwritten("utf_32_decode", "the codec 'utf-32' (phase 1; not written yet)")
-utf_32_le_decode = _unwritten("utf_32_le_decode", "the codec 'utf-32' (phase 1; not written yet)")
-utf_32_be_decode = _unwritten("utf_32_be_decode", "the codec 'utf-32' (phase 1; not written yet)")
-utf_32_ex_decode = _unwritten("utf_32_ex_decode", "the codec 'utf-32' (phase 1; not written yet)")
-utf_32_encode = _unwritten("utf_32_encode", "the codec 'utf-32' (phase 1; not written yet)")
-utf_32_le_encode = _unwritten("utf_32_le_encode", "the codec 'utf-32' (phase 1; not written yet)")
-utf_32_be_encode = _unwritten("utf_32_be_encode", "the codec 'utf-32' (phase 1; not written yet)")
+
+
+def _c_int(value: object) -> int:                # the clinic's int: PyLong_AsInt
+    n = _number_index(value)
+    if n < -2**31 or n >= 2**31:
+        raise OverflowError("Python int too large to convert to C int")
+    return n
+
+
+def _wide_decoder(name: str, codec: str, byteorder: int | None) -> object:
+    """utf_16_decode and the others: (data, errors=None, final=False, /), and the ex decoder (byteorder None here) with byteorder=0
+    before final, whose result says the order it ended with."""
+    def decode_function(*args: object, **kwds: object) -> tuple[object, ...]:
+        n = _positional(name, args, kwds, 1, 4 if byteorder is None else 3)
+        data: bytes = _codecs_call("buffer", args[0])
+        errors = _errors(name, 2, args)
+        if byteorder is None:
+            order = _c_int(args[2]) if n > 2 else 0
+            final = n > 3 and (True if args[3] else False)
+        else:
+            order = byteorder
+            final = n > 2 and (True if args[2] else False)
+        text, consumed, order = _codecs_call("decode_wide", codec, data, errors, order, final)
+        return (text, consumed, order) if byteorder is None else (text, consumed)
+    decode_function.__name__ = decode_function.__qualname__ = name
+    return decode_function
+
+
+def _wide_encoder(name: str, codec: str, byteorder: int | None) -> object:
+    """utf_16_encode(str, errors=None, byteorder=0, /), and the -le and -be ones without a byteorder."""
+    def encode_function(*args: object, **kwds: object) -> tuple[bytes, int]:
+        _positional(name, args, kwds, 1, 3 if byteorder is None else 2)
+        text = _text(name, args[0])
+        errors = _errors(name, 2, args)
+        order = (_c_int(args[2]) if len(args) > 2 else 0) if byteorder is None else byteorder
+        return _codecs_call("encode_wide", codec, text, errors, order), str.__len__(text)
+    encode_function.__name__ = encode_function.__qualname__ = name
+    return encode_function
+
+
+utf_16_decode = _wide_decoder("utf_16_decode", "utf-16", 0)
+utf_16_le_decode = _wide_decoder("utf_16_le_decode", "utf-16", -1)
+utf_16_be_decode = _wide_decoder("utf_16_be_decode", "utf-16", 1)
+utf_16_ex_decode = _wide_decoder("utf_16_ex_decode", "utf-16", None)
+utf_16_encode = _wide_encoder("utf_16_encode", "utf-16", None)
+utf_16_le_encode = _wide_encoder("utf_16_le_encode", "utf-16", -1)
+utf_16_be_encode = _wide_encoder("utf_16_be_encode", "utf-16", 1)
+utf_32_decode = _wide_decoder("utf_32_decode", "utf-32", 0)
+utf_32_le_decode = _wide_decoder("utf_32_le_decode", "utf-32", -1)
+utf_32_be_decode = _wide_decoder("utf_32_be_decode", "utf-32", 1)
+utf_32_ex_decode = _wide_decoder("utf_32_ex_decode", "utf-32", None)
+utf_32_encode = _wide_encoder("utf_32_encode", "utf-32", None)
+utf_32_le_encode = _wide_encoder("utf_32_le_encode", "utf-32", -1)
+utf_32_be_encode = _wide_encoder("utf_32_be_encode", "utf-32", 1)
 utf_7_decode = _unwritten("utf_7_decode", "_codecs.utf_7_decode (not a phase-1 codec: specification section 7)")
 utf_7_encode = _unwritten("utf_7_encode", "_codecs.utf_7_encode (not a phase-1 codec: specification section 7)")
 unicode_escape_decode = _unwritten("unicode_escape_decode", "_codecs.unicode_escape_decode (not a phase-1 codec: specification section 7)")

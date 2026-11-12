@@ -793,9 +793,9 @@ std::size_t decode_fallback(std::u32string& out, std::string_view s, std::size_t
                             const char* encoding, const char* reason) {
     if (errors == "ignore") return end;
     if (errors == "replace") { out += U'\xFFFD'; return end; }
-    if (errors == "surrogateescape") {
+    if (errors == "surrogateescape") {           // PyCodec_SurrogateEscapeErrors: at most four bytes, each 0x80 or more
         std::size_t k = start;
-        for (; k < end && u(s[k]) >= 0x80; ++k) out += static_cast<char32_t>(0xDC00 + u(s[k]));
+        for (; k < end && k - start < 4 && u(s[k]) >= 0x80; ++k) out += static_cast<char32_t>(0xDC00 + u(s[k]));
         if (k == start) raise_decode_error(encoding, s, start, end, reason);
         return k;
     }
@@ -808,6 +808,19 @@ std::size_t decode_fallback(std::u32string& out, std::string_view s, std::size_t
         u(s[start + 1]) >= 0xA0 && u(s[start + 1]) <= 0xBF && u(s[start + 2]) >= 0x80 && u(s[start + 2]) <= 0xBF) {
         out += static_cast<char32_t>(((u(s[start]) & 0x0F) << 12) | ((u(s[start + 1]) & 0x3F) << 6) | (u(s[start + 2]) & 0x3F));
         return start + 3;
+    }
+    if (errors == "surrogatepass") {             // PyCodec_SurrogatePassErrors: one surrogate, in the order the codec's name gives
+        std::string_view name(encoding);
+        std::size_t width = name.starts_with("utf-32") ? 4 : name.starts_with("utf-16") ? 2 : 0;
+        if (width != 0 && s.size() - start >= width) {
+            bool little = name.ends_with("-le");
+            std::uint32_t ch = 0;
+            for (std::size_t k = 0; k < width; ++k) ch |= static_cast<std::uint32_t>(u(s[start + k])) << (8 * (little ? k : width - 1 - k));
+            if (ch >= 0xD800 && ch <= 0xDFFF) {
+                out += static_cast<char32_t>(ch);
+                return start + width;
+            }
+        }
     }
     if (errors == "xmlcharrefreplace") raise_new("TypeError", "don't know how to handle UnicodeDecodeError in error callback");
     if (errors != "strict" && errors != "surrogatepass") unknown_handler(errors);
@@ -828,6 +841,141 @@ Ref decode_utf8(std::string_view s, const std::string& errors, std::size_t* cons
         i = decode_fallback(out, s, i, end, errors, "utf-8", reason);
     }
     if (consumed != nullptr) *consumed = i;
+    return str_from_codepoints(out);
+}
+// UTF-16 and UTF-32 (Objects/unicodeobject.c: _PyUnicode_EncodeUTF16 and 32, PyUnicode_DecodeUTF16Stateful and 32; stringlib's
+// utf16_decode). byteorder: 0 the native order with a byte order mark, which the encoder writes and the decoder reads to choose
+// the order; below 0 little-endian, above 0 big-endian. This host is little-endian, as the reference's build is.
+namespace {
+bool is_surrogate(std::uint32_t c) { return c >= 0xD800 && c <= 0xDFFF; }
+void put_unit(std::string& out, std::uint32_t unit, std::size_t width, bool little) {
+    for (std::size_t k = 0; k < width; ++k) out += static_cast<char>((unit >> (8 * (little ? k : width - 1 - k))) & 0xFF);
+}
+std::uint32_t read_unit(std::string_view s, std::size_t at, std::size_t width, bool little) {
+    std::uint32_t v = 0;
+    for (std::size_t k = 0; k < width; ++k) v |= static_cast<std::uint32_t>(u(s[at + k])) << (8 * (little ? k : width - 1 - k));
+    return v;
+}
+}  // namespace
+// the encoders call the handler for one character at a time, (pos, pos + 1), with "surrogates not allowed": bytes it gives must be
+// whole units, text must be ASCII (each character a unit of the stream's order), or the encoder raises for that character
+std::string encode_utf_wide(const Str* s, Obj text, const std::string& errors, int byteorder, std::size_t width) {
+    bool little = byteorder <= 0;
+    std::string name = width == 2 ? (byteorder < 0 ? "utf-16-le" : byteorder > 0 ? "utf-16-be" : "utf-16")
+                                  : (byteorder == -1 ? "utf-32-le" : byteorder == 1 ? "utf-32-be" : "utf-32");
+    std::string out;
+    if (byteorder == 0) put_unit(out, 0xFEFF, width, little);
+    for (std::size_t i = 0, n = s->length; i < n; ++i) {
+        std::uint32_t c = s->at(i);
+        if (!is_surrogate(c)) {
+            if (width == 2 && c >= 0x10000) {
+                put_unit(out, 0xD800 | ((c - 0x10000) >> 10), 2, little);
+                put_unit(out, 0xDC00 | ((c - 0x10000) & 0x3FF), 2, little);
+            } else {
+                put_unit(out, c, width, little);
+            }
+            continue;
+        }
+        if (errors == "ignore") continue;
+        if (errors == "replace") { put_unit(out, '?', width, little); continue; }
+        if (errors == "backslashreplace" || errors == "xmlcharrefreplace") {
+            std::string rep;
+            encode_fallback(rep, s, i, i + 1, errors);
+            for (char ch : rep) put_unit(out, u(ch), width, little);
+            continue;
+        }
+        if (errors == "surrogatepass") {          // the handler's bytes are in the order of the codec's name ("utf-32": the native one)
+            std::string_view n(name);
+            put_unit(out, c, width, n.ends_with("-be") ? false : true);
+            continue;
+        }
+        // surrogateescape gives one byte, no whole unit (or refuses a surrogate below U+DC80 with the same exception); strict raises
+        if (errors != "strict" && errors != "surrogateescape") unknown_handler(errors);
+        raise_encode_error(name.c_str(), text, i, i + 1, "surrogates not allowed");
+    }
+    return out;
+}
+Ref decode_utf16(std::string_view s, const std::string& errors, int* byteorder, std::size_t* consumed) {
+    std::size_t q = 0, e = s.size();
+    int bo = byteorder != nullptr ? *byteorder : 0;
+    if (bo == 0 && e >= 2) {                      // a leading byte order mark decides the order, and is skipped
+        std::uint32_t bom = (static_cast<std::uint32_t>(u(s[1])) << 8) | u(s[0]);
+        if (bom == 0xFEFF) { q = 2; bo = -1; }
+        else if (bom == 0xFFFE) { q = 2; bo = 1; }
+        if (byteorder != nullptr) *byteorder = bo;
+    }
+    if (q == e) {
+        if (consumed != nullptr) *consumed = e;
+        return str_new("");
+    }
+    bool little = bo <= 0;
+    const char* encoding = little ? "utf-16-le" : "utf-16-be";
+    std::u32string out;
+    for (;;) {
+        int code = 0;                             // utf16_decode: 0 fewer than two bytes left, 1 a high surrogate at the end,
+        while (e - q >= 2) {                      // 2 a low surrogate first, 3 a high one not followed by a low one
+            std::uint32_t ch = read_unit(s, q, 2, little);
+            q += 2;
+            if (!is_surrogate(ch)) { out += static_cast<char32_t>(ch); continue; }
+            if (ch >= 0xDC00) { code = 2; break; }
+            if (e - q < 2) { code = 1; break; }
+            std::uint32_t ch2 = read_unit(s, q, 2, little);
+            q += 2;
+            if (ch2 < 0xDC00 || ch2 > 0xDFFF) { code = 3; break; }
+            out += static_cast<char32_t>(0x10000 + (((ch & 0x3FF) << 10) | (ch2 & 0x3FF)));
+        }
+        std::size_t start = 0, end = 0;
+        const char* reason = nullptr;
+        if (code == 0) {
+            if (q == e || consumed != nullptr) break;
+            reason = "truncated data", start = q, end = e;
+        } else if (code == 1) {
+            q -= 2;
+            if (consumed != nullptr) break;
+            reason = "unexpected end of data", start = q, end = e;
+        } else if (code == 2) {
+            reason = "illegal encoding", start = q - 2, end = start + 2;
+        } else {
+            reason = "illegal UTF-16 surrogate", start = q - 4, end = start + 2;
+        }
+        q = decode_fallback(out, s, start, end, errors, encoding, reason);
+    }
+    if (consumed != nullptr) *consumed = q;
+    return str_from_codepoints(out);
+}
+Ref decode_utf32(std::string_view s, const std::string& errors, int* byteorder, std::size_t* consumed) {
+    std::size_t q = 0, e = s.size();
+    int bo = byteorder != nullptr ? *byteorder : 0;
+    if (bo == 0 && e >= 4) {
+        std::uint32_t bom = read_unit(s, 0, 4, true);
+        if (bom == 0x0000FEFF) { bo = -1; q = 4; }
+        else if (bom == 0xFFFE0000) { bo = 1; q = 4; }
+        if (byteorder != nullptr) *byteorder = bo;
+    }
+    if (q == e) {
+        if (consumed != nullptr) *consumed = e;
+        return str_new("");
+    }
+    bool little = bo <= 0;
+    const char* encoding = little ? "utf-32-le" : "utf-32-be";
+    std::u32string out;
+    for (;;) {
+        const char* reason = nullptr;
+        std::size_t start = 0, end = 0;
+        while (e - q >= 4) {
+            std::uint32_t ch = read_unit(s, q, 4, little);
+            if (is_surrogate(ch)) { reason = "code point in surrogate code point range(0xd800, 0xe000)", start = q, end = q + 4; break; }
+            if (ch >= 0x110000) { reason = "code point not in range(0x110000)", start = q, end = q + 4; break; }
+            out += static_cast<char32_t>(ch);
+            q += 4;
+        }
+        if (reason == nullptr) {
+            if (q == e || consumed != nullptr) break;
+            reason = "truncated data", start = q, end = e;
+        }
+        q = decode_fallback(out, s, start, end, errors, encoding, reason);
+    }
+    if (consumed != nullptr) *consumed = q;
     return str_from_codepoints(out);
 }
 Ref decode_ascii(std::string_view s, const std::string& errors) {
@@ -859,8 +1007,8 @@ Ref decode_with(std::string_view s, const std::string* encoding, const std::stri
         case Codec::Utf8: return decode_utf8(s, e);
         case Codec::Ascii: return decode_ascii(s, e);
         case Codec::Latin1: return decode_latin1(s);
-        case Codec::Utf16: throw NotImplemented("the codec 'utf-16' (phase 1; not written yet)");
-        case Codec::Utf32: throw NotImplemented("the codec 'utf-32' (phase 1; not written yet)");
+        case Codec::Utf16: return decode_utf16(s, e, nullptr, nullptr);
+        case Codec::Utf32: return decode_utf32(s, e, nullptr, nullptr);
         case Codec::Registry: break;
     }
     Ref data = bytes_new(s);
@@ -874,8 +1022,8 @@ Ref encode_with(Obj text, const std::string* encoding, const std::string* errors
         case Codec::Utf8: return bytes_new(encode_utf8(s, text, e));
         case Codec::Ascii: return bytes_new(encode_ucs1(s, text, 128, e));
         case Codec::Latin1: return bytes_new(encode_ucs1(s, text, 256, e));
-        case Codec::Utf16: throw NotImplemented("the codec 'utf-16' (phase 1; not written yet)");
-        case Codec::Utf32: throw NotImplemented("the codec 'utf-32' (phase 1; not written yet)");
+        case Codec::Utf16: return bytes_new(encode_utf_wide(s, text, e, 0, 2));
+        case Codec::Utf32: return bytes_new(encode_utf_wide(s, text, e, 0, 4));
         case Codec::Registry: break;
     }
     return registry_call(codec_hooks().text_encode, text, *encoding, errors);
@@ -1659,6 +1807,21 @@ Ref i_codecs_call(Obj, Args a) {
         std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
         const Str* s = as_str(r.pos(1));
         return bytes_new(codec == "utf-8" ? encode_utf8(s, r.pos(1), errors) : encode_ucs1(s, r.pos(1), codec == "ascii" ? 128 : 256, errors));
+    }
+    if (name == "decode_wide") {                 // ("utf-16" or "utf-32", bytes, errors or None, byteorder, final): (str, consumed, byteorder)
+        std::string data = bytes_data(r.pos(1));
+        std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
+        int order = static_cast<int>(r.pos(3).small_value());
+        bool final = truth(r.pos(4));
+        std::size_t consumed = data.size();       // overwritten unless final
+        Ref text = as_str(r.pos(0))->text == "utf-16" ? decode_utf16(data, errors, &order, final ? nullptr : &consumed)
+                                                      : decode_utf32(data, errors, &order, final ? nullptr : &consumed);
+        return tuple_new({text.get(), Obj::small(static_cast<std::int64_t>(consumed)), Obj::small(order)});
+    }
+    if (name == "encode_wide") {                 // ("utf-16" or "utf-32", str, errors or None, byteorder): bytes
+        std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
+        int order = static_cast<int>(r.pos(3).small_value());
+        return bytes_new(encode_utf_wide(as_str(r.pos(1)), r.pos(1), errors, order, as_str(r.pos(0))->text == "utf-16" ? 2 : 4));
     }
     if (name == "buffer") return bytes_new(buffer_of(r.pos(0)));   // PyObject_GetBuffer: the bytes of a bytes-like object
     if (name == "field") {                       // (exc, name, default): what the exception holds, raw
