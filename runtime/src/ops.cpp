@@ -119,6 +119,7 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (as_int(a, x) && as_int(b, y)) return int_binary(op, x, y, is_kind(a, Kind::Bool) && is_kind(b, Kind::Bool));
     if (is_int(a) && is_int(b)) return big_binary(op, a, b);
     if (op == BinOp::Mod && as_str(a) != nullptr) return str_mod(a, b);   // unicode_mod, whatever b is
+    if (op == BinOp::Mod && is_bytes_like(a)) return bytes_format(a, b, is_kind(a, Kind::ByteArray));   // bytes_mod, bytearray_mod
     if (op == BinOp::Or && (is_kind(a, Kind::Class) || is_kind(b, Kind::Class))) return type_or(a, b);   // type_or, on either side
     if (is_complex(a) || is_complex(b)) return complex_binary(op, a, b);
     if (is_float(a) || is_float(b)) return float_binary(op, a, b);

@@ -1188,6 +1188,322 @@ struct Percent {
 };
 }  // namespace
 
+namespace {
+// bytes % args and bytearray % args (PEP 461; Objects/bytesobject.c, _PyBytes_FormatEx, CPython 3.15.2): the C's loop over the
+// format's octets, its conversions (format_obj, formatlong, formatfloat, byte_converter) and its words. A format octet is read
+// as the C's `char` where the C reads it so (signed: an octet past 0x7f is no flag, no digit, no letter) and masked where it
+// masks it.
+struct BytesPercent {
+    std::string_view fmt;
+    std::size_t at = 0;                          // the C's fmt - format
+    std::int64_t fmtcnt = 0;
+    std::int64_t arglen = 0, argidx = 0;
+    Ref args;
+    Obj dict;
+    Ref key;                                     // the mapping key being formatted, a bytes
+    std::string out;
+
+    int peek() const { return at < fmt.size() ? static_cast<signed char>(fmt[at]) : 0; }   // *fmt (the buffer ends in NUL)
+    int next() { int c = peek(); ++at; return c; }                                        // *fmt++
+    int next_masked() { int c = peek() & 0xff; ++at; return c; }                         // Py_CHARMASK(*fmt++)
+    static bool digit(int c) { return c >= '0' && c <= '9'; }
+    [[noreturn]] void error(const char* exc, const std::string& message) const {   // FORMAT_ERROR
+        if (!key.get().is_unset()) {
+            Ref shown = repr_of(key.get());
+            raise_new(exc, "format argument " + as_str(shown.get())->text + ": " + message);
+        }
+        if (argidx >= 0) raise_new(exc, "format argument " + std::to_string(argidx) + ": " + message);
+        raise_new(exc, "format argument: " + message);
+    }
+    Obj next_arg(bool allow_one) {               // getnextarg
+        if (argidx < arglen) {
+            std::int64_t index = argidx++;
+            if (arglen >= 0) return static_cast<Tuple*>(args.get().object())->items[static_cast<std::size_t>(index)];
+            if (allow_one) return args.get();
+        }
+        raise_new("TypeError", "not enough arguments for format string (got " + std::to_string(arglen < 0 ? 1 : arglen) + ")");
+    }
+    std::string long_text(Obj iobj, bool alt, int prec, int type) {   // _PyUnicode_FormatLong
+        if (prec > INT_MAX - 3) raise_new("OverflowError", "precision too large");
+        int base = type == 'o' ? 8 : type == 'x' || type == 'X' ? 16 : 10;
+        std::string text = base == 10 ? big_text(iobj) : int_in_base(iobj, base);
+        bool negative = text[0] == '-';
+        std::string prefix = negative ? "-" : "";
+        std::string_view rest = std::string_view(text).substr(negative ? 1 : 0);
+        if (base != 10) {
+            if (alt) prefix += rest.substr(0, 2);
+            rest.remove_prefix(2);
+        }
+        std::string body(rest);
+        if (prec > static_cast<int>(body.size())) body.insert(0, static_cast<std::size_t>(prec) - body.size(), '0');
+        std::string result = prefix + body;
+        if (type == 'X') for (char& ch : result) if (ch >= 'a' && ch <= 'x') ch = static_cast<char>(ch - 32);
+        return result;
+    }
+    std::string format_long(Obj v, int flags, int prec, int type) {   // formatlong
+        if (is_int(v)) return long_text(v, (flags & F_ALT) != 0, prec, type);
+        ClassObject* cls = type_of(v);
+        bool number = is_float(v) || is_kind(v, Kind::Complex) || is_kind(v, Kind::ComplexInstance);   // PyNumber_Check
+        for (const char* name : {"__index__", "__int__", "__float__"})
+            if (!type_lookup(cls, intern(name)).is_unset()) number = true;
+        if (number) {
+            Ref iobj;
+            try {
+                iobj = type == 'o' || type == 'x' || type == 'X' ? int_index_of(v) : int_from_number(v);
+            } catch (const PyError& e) {
+                if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            }
+            if (!iobj.get().is_unset()) return long_text(iobj.get(), (flags & F_ALT) != 0, prec, type);
+        }
+        error("TypeError", std::string("%") + static_cast<char>(type) + " requires " +
+                               (type == 'o' || type == 'x' || type == 'X' ? "an integer" : "a real number") + ", not " + fully_qualified_name(cls));
+    }
+    std::string format_float(Obj v, int flags, int prec, int type) {   // formatfloat
+        double x = 0.0;
+        try {
+            x = float_as_double(v);
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            error("TypeError", std::string("%") + static_cast<char>(type) + " requires a real number, not " + fully_qualified_name(type_of(v)));
+        }
+        return double_to_string(x, static_cast<char>(type), prec < 0 ? 6 : prec, (flags & F_ALT) != 0 ? DTSF_ALT : 0);
+    }
+    char byte_converter(Obj v) {                 // byte_converter
+        if (is_bytes_like(v)) {
+            const std::string& s = bytes_data(v);
+            if (s.size() != 1)
+                error("TypeError", std::string("%c requires an integer in range(256) or a single byte, not a ") +
+                                       (is_kind(v, Kind::Bytes) ? "bytes" : "bytearray") + " object of length " + std::to_string(s.size()));
+            return s[0];
+        }
+        if (is_int(v) || !type_lookup(type_of(v), intern("__index__")).is_unset()) {   // PyIndex_Check, then PyLong_AsLongAndOverflow
+            Ref index = int_index_of(v);
+            std::int64_t x = 0;
+            if (!as_int(index.get(), x) || x < 0 || x > 255) error("OverflowError", "%c argument not in range(256)");
+            return static_cast<char>(x);
+        }
+        error("TypeError", "%c requires an integer in range(256) or a single byte, not " + fully_qualified_name(type_of(v)));
+    }
+    std::string format_obj(Obj v) {              // format_obj: the octets of a bytes-like object, or of what __bytes__ gives
+        if (is_bytes_like(v)) return bytes_data(v);
+        if (!type_lookup(type_of(v), intern("__bytes__")).is_unset()) {
+            Ref r = call_special(v, "__bytes__", {});
+            if (!is_kind(r.get(), Kind::Bytes))
+                raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__bytes__() must return a bytes, not " + fully_qualified_name(type_of(r.get())));
+            return bytes_data(r.get());
+        }
+        if (!type_lookup(type_of(v), intern("__buffer__")).is_unset()) throw NotImplemented("[P2+] the buffer protocol (__buffer__)");
+        error("TypeError", "%b requires a bytes-like object, or an object that implements __bytes__, not " + fully_qualified_name(type_of(v)));
+    }
+    std::string position(std::size_t fmtstart) const { return std::to_string(fmtstart - 1); }   // the '%''s
+    void run() {
+        while (--fmtcnt >= 0) {
+            if (peek() != '%') {                 // a run of plain octets up to the next %
+                std::size_t found = fmt.find('%', at + 1);
+                std::size_t limit = at + 1 + static_cast<std::size_t>(fmtcnt);
+                std::int64_t len = found != std::string_view::npos && found < limit ? static_cast<std::int64_t>(found - at) : fmtcnt + 1;
+                out.append(fmt.substr(at, static_cast<std::size_t>(len)));
+                at += static_cast<std::size_t>(len);
+                fmtcnt -= len - 1;
+                continue;
+            }
+            int flags = 0;
+            std::int64_t width = -1;
+            int prec = -1;
+            int c = 0;
+            ++at;
+            if (peek() == '%') {
+                out += '%';
+                ++at;
+                --fmtcnt;
+                continue;
+            }
+            key = Ref{};
+            std::size_t fmtstart = at;
+            if (peek() == '(') {
+                if (dict.is_unset()) raise_new("TypeError", "format requires a mapping, not " + fully_qualified_name(type_of(args.get())));
+                ++at;
+                --fmtcnt;
+                std::size_t keystart = at;
+                int pcount = 1;
+                while (pcount > 0 && --fmtcnt >= 0) {
+                    if (peek() == ')') --pcount;
+                    else if (peek() == '(') ++pcount;
+                    ++at;
+                }
+                if (fmtcnt < 0 || pcount > 0) raise_new("ValueError", "stray % or incomplete format key at position " + position(fmtstart));
+                key = bytes_new(fmt.substr(keystart, at - keystart - 1));
+                args = getitem(dict, key.get());
+                arglen = -3;
+                argidx = -4;
+            } else if (arglen < -1) {
+                raise_new("ValueError", "format requires a parenthesised mapping key at position " + position(fmtstart));
+            }
+            while (--fmtcnt >= 0) {              // flags
+                c = next();
+                if (c == '-') flags |= F_LJUST;
+                else if (c == '+') flags |= F_SIGN;
+                else if (c == ' ') flags |= F_BLANK;
+                else if (c == '#') flags |= F_ALT;
+                else if (c == '0') flags |= F_ZERO;
+                else break;
+            }
+            if (c == '*') {                      // width
+                if (arglen < -1) raise_new("ValueError", "* cannot be used with a parenthesised mapping key at position " + position(fmtstart));
+                Obj v = next_arg(false);
+                if (!is_int(v)) error("TypeError", "* requires int, not " + fully_qualified_name(type_of(v)));
+                if (!as_int(v, width) || width == INT64_MIN) error("OverflowError", "too big for width");   // PyLong_AsSsize_t
+                if (width < 0) {
+                    flags |= F_LJUST;
+                    width = -width;
+                }
+                if (--fmtcnt >= 0) c = next();
+            } else if (c >= 0 && digit(c)) {
+                width = c - '0';
+                while (--fmtcnt >= 0) {
+                    c = next_masked();
+                    if (!digit(c)) break;
+                    if (width > (INT64_MAX - (c - '0')) / 10) raise_new("ValueError", "width too big at position " + position(fmtstart));
+                    width = width * 10 + (c - '0');
+                }
+            }
+            if (c == '.') {                      // precision
+                prec = 0;
+                if (--fmtcnt >= 0) c = next();
+                if (c == '*') {
+                    if (arglen < -1) raise_new("ValueError", "* cannot be used with a parenthesised mapping key at position " + position(fmtstart));
+                    Obj v = next_arg(false);
+                    if (!is_int(v)) error("TypeError", "* requires int, not " + fully_qualified_name(type_of(v)));
+                    std::int64_t p = 0;
+                    if (!as_int(v, p) || p > INT_MAX || p < INT_MIN) error("OverflowError", "too big for precision");   // PyLong_AsInt
+                    prec = p < 0 ? 0 : static_cast<int>(p);
+                    if (--fmtcnt >= 0) c = next();
+                } else if (c >= 0 && digit(c)) {
+                    prec = c - '0';
+                    while (--fmtcnt >= 0) {
+                        c = next_masked();
+                        if (!digit(c)) break;
+                        if (prec > (INT_MAX - (c - '0')) / 10) raise_new("ValueError", "precision too big at position " + position(fmtstart));
+                        prec = prec * 10 + (c - '0');
+                    }
+                }
+            }
+            if (fmtcnt >= 0 && (c == 'h' || c == 'l' || c == 'L')) {
+                if (--fmtcnt >= 0) c = next();
+            }
+            if (fmtcnt < 0) raise_new("ValueError", "stray % at position " + position(fmtstart));
+            Obj v = next_arg(true);
+            int sign = 0;
+            char fill = ' ';
+            std::string text;
+            switch (c) {
+                case 'r':
+                case 'a': {                      // %r is only for 2/3 code; %a: PyObject_ASCII
+                    Ref s = ascii_of(v);
+                    text = as_str(s.get())->text;
+                    if (prec >= 0 && static_cast<std::int64_t>(text.size()) > prec) text.resize(static_cast<std::size_t>(prec));
+                    break;
+                }
+                case 's':
+                case 'b':
+                    text = format_obj(v);
+                    if (prec >= 0 && static_cast<std::int64_t>(text.size()) > prec) text.resize(static_cast<std::size_t>(prec));
+                    break;
+                case 'i': case 'd': case 'u': case 'o': case 'x': case 'X':
+                    text = format_long(v, flags, prec, c);
+                    sign = 1;
+                    if (flags & F_ZERO) fill = '0';
+                    break;
+                case 'e': case 'E': case 'f': case 'F': case 'g': case 'G':
+                    text = format_float(v, flags, prec, c);
+                    sign = 1;
+                    if (flags & F_ZERO) fill = '0';
+                    break;
+                case 'c':
+                    text = std::string(1, byte_converter(v));
+                    break;
+                default: {
+                    std::string here = std::to_string(at - 1);
+                    int masked = c & 0xff;
+                    if ((masked >= 'a' && masked <= 'z') || (masked >= 'A' && masked <= 'Z'))   // Py_ISALPHA
+                        raise_new("ValueError", std::string("unsupported format %") + static_cast<char>(c) + " at position " + position(fmtstart));
+                    if (c == '\'') raise_new("ValueError", "stray % at position " + position(fmtstart) + " or unexpected format character \"'\" at position " + here);
+                    if (c >= 32 && c < 127)
+                        raise_new("ValueError", "stray % at position " + position(fmtstart) + " or unexpected format character '" + static_cast<char>(c) + "' at position " + here);
+                    char code[8];
+                    std::snprintf(code, sizeof code, "0x%02x", static_cast<unsigned>(masked));
+                    raise_new("ValueError", "stray % at position " + position(fmtstart) + " or unexpected format character with code " + code + " at position " + here);
+                }
+            }
+            std::size_t p = 0;
+            auto len = static_cast<std::int64_t>(text.size());
+            if (sign) {
+                if (text[0] == '-' || text[0] == '+') {
+                    sign = text[0];
+                    ++p;
+                    --len;
+                } else if (flags & F_SIGN) sign = '+';
+                else if (flags & F_BLANK) sign = ' ';
+                else sign = 0;
+            }
+            if (width < len) width = len;
+            if (sign) {
+                if (fill != ' ') out += static_cast<char>(sign);
+                if (width > len) --width;
+            }
+            bool prefixed = (flags & F_ALT) && (c == 'o' || c == 'x' || c == 'X');
+            if (prefixed) {
+                if (fill != ' ') {
+                    out.append(text, p, 2);
+                    p += 2;
+                }
+                width -= 2;
+                if (width < 0) width = 0;
+                len -= 2;
+            }
+            if (width > len && !(flags & F_LJUST)) {
+                out.append(static_cast<std::size_t>(width - len), fill);
+                width = len;
+            }
+            if (fill == ' ') {
+                if (sign) out += static_cast<char>(sign);
+                if (prefixed) {
+                    out.append(text, p, 2);
+                    p += 2;
+                }
+            }
+            out.append(text, p, static_cast<std::size_t>(len));
+            if (width > len) out.append(static_cast<std::size_t>(width - len), ' ');
+            if (!dict.is_unset() && argidx < arglen) raise_new("TypeError", "not all arguments converted during bytes formatting");
+        }
+        if (argidx < arglen && dict.is_unset())
+            raise_new("TypeError", "not all arguments converted during bytes formatting (required " + std::to_string(arglen < 0 ? 0 : argidx) +
+                                       ", got " + std::to_string(arglen < 0 ? 1 : arglen) + ")");
+    }
+};
+}  // namespace
+
+Ref bytes_format(Obj format, Obj args, bool bytearray) {   // _PyBytes_FormatEx: a bytes, or a bytearray for a bytearray's %
+    std::string octets = bytes_data(format);                // a copy: what the conversions run may change a bytearray
+    BytesPercent ctx;
+    ctx.fmt = octets;
+    ctx.fmtcnt = static_cast<std::int64_t>(octets.size());
+    ctx.args = Ref::share(args);
+    if (is_kind(args, Kind::Tuple)) {
+        ctx.arglen = static_cast<std::int64_t>(static_cast<Tuple*>(args.object())->items.size());
+        ctx.argidx = 0;
+    } else {
+        ctx.arglen = -1;
+        ctx.argidx = -2;
+    }
+    // a mapping: mp_subscript, and no tuple, bytes, str or bytearray
+    if (!type_lookup(type_of(args), intern("__getitem__")).is_unset() && !is_kind(args, Kind::Tuple) && !is_bytes_like(args) && as_str(args) == nullptr)
+        ctx.dict = args;
+    ctx.run();
+    if (bytearray) return own(new BytesObject(Kind::ByteArray, std::move(ctx.out)));
+    return bytes_new(ctx.out);
+}
+
 bool is_mapping(Obj v) { return mapping_check(v); }
 Ref str_mod(Obj format, Obj args) {              // PyUnicode_Format
     Percent ctx;

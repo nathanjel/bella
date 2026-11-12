@@ -115,6 +115,21 @@ Ref str_rmod_slot(Obj self, Args a) {            // wrap_binaryfunc_r: a left op
     if (as_str(a.pos(0)) == nullptr) return not_implemented();
     return str_mod(a.pos(0), self);
 }
+template <Kind K>
+Ref bytes_mod_slot(Obj self, Args a) {           // bytes_mod, bytearray_mod: wrap_binaryfunc_l
+    const char* name = K == Kind::Bytes ? "bytes" : "bytearray";
+    wrapper_args(a, "__mod__", 1);
+    if (!is_kind(self, K)) raise_new("TypeError", std::string("descriptor '__mod__' requires a '") + name + "' object but received a '" + type_of(self)->name + "'");
+    return bytes_format(self, a.pos(0), K == Kind::ByteArray);
+}
+template <Kind K>
+Ref bytes_rmod_slot(Obj self, Args a) {          // wrap_binaryfunc_r: a left operand of another kind declines
+    const char* name = K == Kind::Bytes ? "bytes" : "bytearray";
+    wrapper_args(a, "__rmod__", 1);
+    if (!is_kind(self, K)) raise_new("TypeError", std::string("descriptor '__rmod__' requires a '") + name + "' object but received a '" + type_of(self)->name + "'");
+    if (!is_kind(a.pos(0), K)) return not_implemented();
+    return bytes_format(a.pos(0), self, K == Kind::ByteArray);
+}
 Ref own_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return repr_of(self); }
 Ref tuple_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(tuple_hash(static_cast<Tuple*>(self.object()))); }
 Ref tuple_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return tuple_subscript(self, a.pos(0)); }
@@ -301,6 +316,10 @@ void init_slots() {
     slot(t.type, "__ror__", type_ror_slot);
     slot(t.str, "__mod__", str_mod_slot);
     slot(t.str, "__rmod__", str_rmod_slot);
+    slot(t.bytes, "__mod__", bytes_mod_slot<Kind::Bytes>);
+    slot(t.bytes, "__rmod__", bytes_rmod_slot<Kind::Bytes>);
+    slot(t.bytearray, "__mod__", bytes_mod_slot<Kind::ByteArray>);
+    slot(t.bytearray, "__rmod__", bytes_rmod_slot<Kind::ByteArray>);
     ClassObject* fl = t.float_;
     comparisons(fl);
     slot(fl, "__add__", float_slot<BinOp::Add, false>);

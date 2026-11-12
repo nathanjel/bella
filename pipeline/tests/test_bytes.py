@@ -22,7 +22,35 @@ SHOW = """def show(f):
         print(type(e).__name__, e)
 """
 
+PERCENT = r"""
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class Raw:
+    def __bytes__(self): return b"raw"
+class Bad:
+    def __bytes__(self): return "not bytes"
+class Sub(bytes): pass
+class Arr(bytearray): pass
+cases = [lambda: b"%s" % "str", lambda: b"%d" % "1", lambda: b"%x" % 1.5, lambda: b"%o" % "1", lambda: b"%f" % "x", lambda: b"%c" % 256, lambda: b"%c" % -1,
+         lambda: b"%c" % b"ab", lambda: b"%c" % bytearray(), lambda: b"%c" % 1.5, lambda: b"%c" % 2**70, lambda: b"%d %d" % (1,), lambda: b"%d" % (1, 2),
+         lambda: b"abc" % 1, lambda: b"%z" % 1, lambda: b"%(x)d" % (1,), lambda: b"%(x)d" % {}, lambda: b"%" % (), lambda: b"%(x" % {}, lambda: b"%*d" % ("x", 1),
+         lambda: b"%.*f" % ("x", 1.0), lambda: b"%*d" % (2**70, 1), lambda: b"%.*f" % (2**40, 1.0), lambda: b"%(x)*d" % {b"x": 1}, lambda: b"%d %(x)d" % {b"x": 1},
+         lambda: b"%-3%" % (), lambda: b"%\x80" % 1, lambda: b"%'" % 1, lambda: b"%!" % 1, lambda: b"%(x)s" % {b"x": Bad()}, lambda: b"%s" % Bad(), lambda: b"%b" % 1,
+         lambda: b"%(x)c" % {b"x": "no"}, lambda: b"%s" % (), lambda: b"%d" % None, lambda: b"%i" % 3j, lambda: b"%#x|%#X|%#o|%08.3f|%-+6d|%x" % (255, 255, 8, -3.14159, 5, -255),
+         lambda: b"%s" % Raw(), lambda: Sub(b"%s-%d") % (b"a", 1), lambda: Arr(b"%s") % b"q", lambda: b"%s" % Sub(b"sub"), lambda: b"%(k)s" % {b"k": b"v"},
+         lambda: b"%5.2s|%-6a|%3c|%.0f|%.0e|%#.0f|%g" % (b"abcd", "z", 65, 2.5, 2.5, 2.5, 1e100), lambda: b"%d" % 10**30, lambda: b"%x" % -(10**20),
+         lambda: bytearray(b"%d") % 7, lambda: type(Arr(b"%d") % 1).__name__, lambda: b"x" % [1, 2], lambda: b"%%%s" % b"!",
+         lambda: b"\x00%d\x00" % 1, lambda: b"%.3d|%+.0d|% 05d" % (-5, 0, 42), lambda: bytes.__mod__(b"%d", 4),
+         lambda: bytes.__mod__("str", 1), lambda: bytes.__rmod__(b"x", 1), lambda: bytearray.__rmod__(bytearray(b"%d"), 1), lambda: 1 % b"x", lambda: "%s" % b"x"]
+for f in cases:
+    print(m(f))
+"""
+
 PROGRAMS: list[tuple[str, str]] = [
+    ('percent_messages', PERCENT),
     ('construction_messages', SHOW + "class BadBytes:\n    def __bytes__(self):\n        return 1\nclass Raises:\n    def __bytes__(self):\n        raise KeyError('k')\nclass I:\n    def __index__(self):\n        return -1\nclass IBad:\n    def __index__(self):\n        raise TypeError('no')\n    def __iter__(self):\n        return iter([7])\nclass IRaises:\n    def __index__(self):\n        raise KeyError('k')\nfor f in (lambda: bytes('x'), lambda: bytes(-1), lambda: bytes([256]), lambda: bytes([-1]), lambda: bytes(['a']), lambda: bytes(None), lambda: bytes(b'x', 'utf-8'), lambda: bytes('x', 1), lambda: bytes('x', 'utf-8', 1), lambda: bytes(1, 'utf-8'), lambda: bytes(1, errors='x'), lambda: bytes('x', errors='strict'), lambda: bytes(encoding='utf-8'), lambda: bytes(errors='strict'), lambda: bytes(BadBytes()), lambda: bytes(Raises()), lambda: bytes(object()), lambda: bytes(1, 2, 3, 4), lambda: bytes(x=1), lambda: bytes(b'a', source=b'b'), lambda: bytes(I()), lambda: bytes(IBad()), lambda: bytes(IRaises()), lambda: bytes(int)):\n    show(f)\n"),
     ('bytearray_construction_messages', SHOW + "for f in (lambda: bytearray('x'), lambda: bytearray(-1), lambda: bytearray([256]), lambda: bytearray([-1]), lambda: bytearray(['a']), lambda: bytearray(None), lambda: bytearray(b'x', 'utf-8'), lambda: bytearray('x', 1), lambda: bytearray(1, 'utf-8'), lambda: bytearray(encoding='utf-8'), lambda: bytearray(errors='strict'), lambda: bytearray(object()), lambda: bytearray(1, 2, 3, 4), lambda: bytearray(x=1), lambda: bytearray.__new__(bytearray), lambda: bytearray.__new__(int), lambda: bytes.__new__(int), lambda: bytes.__new__()):\n    show(f)\nb = bytearray(b'abc')\nprint(b.__init__(b'xy'), b, b.__init__(), b, b.__init__(2), b)\n"),
     ('identity_of_what_methods_return', "x = b'abc def'\nw = b'word'\nprint(x[:] is x, x[0:7] is x, x[::1] is x, x[::-1] is x, x + b'' is x, b'' + x is x, x * 1 is x, 1 * x is x)\nprint(w.strip() is w, w.lstrip() is w, w.rstrip() is w, w.strip(b'z') is w, w.split()[0] is w, w.split(b',')[0] is w, w.rsplit()[0] is w, w.rsplit(b',')[0] is w, w.splitlines()[0] is w, w.partition(b',')[0] is w, w.rpartition(b',')[2] is w)\nprint(w.replace(b'z', b'y') is w, w.replace(b'o', b'o') is w, w.replace(b'', b'') is w, w.replace(b'o', b'x', 0) is w, w.replace(b'longerthanthis', b'') is w, w.removeprefix(b'z') is w, w.removesuffix(b'z') is w, w.removeprefix(b'') is w, w.center(1) is w, w.ljust(4) is w, w.rjust(0) is w, w.zfill(4) is w, w.expandtabs() is w, w.translate(None) is w, w.translate(bytes(range(256))) is w)\nprint(w.upper() is w, w.lower() is w, w.swapcase() is w, w.title() is w, w.capitalize() is w, bytes(w) is w, w.__bytes__() is w, b''.join([w]) is w, b'-'.join([w]) is w, b'-'.join((w,)) is w)\nsep = b','\nprint(b'a,b'.partition(sep)[1] is sep, b'a,b'.rpartition(sep)[1] is sep, b'a,b'.partition(bytearray(b','))[1])\nprint(bytes() is bytes(), b'' is bytes(0), bytes([65]) is bytes([65]), bytes([255]) is bytes((255,)), bytes(b'ab'[:1]) is b'a'[:1], b'ab'[:0] is b'', b'ab'[0:1] is b'cab'[1:2])\nb = bytearray(b'a')\nprint(b[:] is b, b.strip() is b, b.replace(b'z', b'y') is b, b.center(0) is b, b.copy() is b, b.zfill(0) is b, b.translate(None) is b, b.removeprefix(b'z') is b, b.expandtabs() is b, b.split()[0] is b, b.partition(b',')[0] is b)\n"),
@@ -64,9 +92,6 @@ def _refused(src: str, reason: str) -> None:
 
 
 REFUSED = {
-    "percent_of_bytes": ("print(b'%d' % 1)\n", "'bytes' % 'int'"),
-    "percent_of_bytearray": ("print(bytearray(b'%d') % 1)\n", "'bytearray' % 'int'"),
-    "the_method_of_percent": ("b''.__mod__\n", "bytes.__mod__"),
     "memoryview": ("memoryview(b'')\n", "[P2+]"),
     "a_buffer": ("class B:\n    def __buffer__(self, flags):\n        return None\nbytes(B())\n", "[P2+]"),
     "a_buffer_as_an_argument": ("class B:\n    def __buffer__(self, flags):\n        return None\nb'a'.find(B())\n", "[P2+]"),

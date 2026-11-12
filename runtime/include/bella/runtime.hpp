@@ -397,6 +397,7 @@ void init_bytes();
 bool is_bytes_like(Obj v);
 std::string& bytes_data(Obj v);
 Ref bytes_new(std::string_view s);
+Ref bytes_format(Obj format, Obj args, bool bytearray);   // bytes % args, bytearray % args (_PyBytes_FormatEx)
 Obj bytes_constant(const char* data, std::size_t size);   // a module's constant: it keeps the count
 Ref bytes_repr(Obj v);
 Ref bytes_getitem(Obj self, Obj key);

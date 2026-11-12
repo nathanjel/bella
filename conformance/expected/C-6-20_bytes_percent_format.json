@@ -1,0 +1,12 @@
+{
+ "case": "C-6-20_bytes_percent_format.py",
+ "clause": "C-6-20",
+ "spec": "section 6 (bytes, bytearray)",
+ "status": "P1",
+ "source": "PEP 461; Objects/bytesobject.c (CPython 3.15.2: _PyBytes_FormatEx, format_obj, formatlong, formatfloat, byte_converter)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "b'1 -2 3' b'ff FF 10 0xff 0o10 0XFF'\nb'   42|42   |00042|+42| 42|007|+07'\nb'1.500000 2.35 1.234568e+04 1.230E-04 1e+20 1E-05     3.1416|2.50e+00  |'\nb'ABC' b'    x|y  |'\nb'bytes array <raw>' b'abc|   ab|cd   |'\nb\"'text' 'na\\\\xefve' 1.5\" b\"'abc|\"\nb'1-two' b'    1|2   |3.14'\nb'7' b'7' b'%%' b'100%'\nb'1' b'' TypeError ValueError\nbytes bytearray bytearray(b'a-b') bytes\nrefused: TypeError TypeError OverflowError TypeError TypeError TypeError ValueError TypeError KeyError ValueError TypeError TypeError TypeError TypeError ValueError OverflowError\nleft over: b'abc' b'abc' TypeError accepted TypeError\n",
+ "stderr": "",
+ "exit_code": 0
+}
