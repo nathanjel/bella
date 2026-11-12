@@ -383,6 +383,40 @@ def test_math() -> None:
     same(MATH)
 
 
+MODULE_ANNOTATIONS = r"""
+import sys, types
+z: int = 1
+me = sys.modules[__name__]
+print(me.__annotations__, "__annotations__" in vars(me))
+m = types.ModuleType("m")
+print(m.__annotate__, "__annotate__" in vars(m), m.__annotations__, "__annotations__" in vars(m))
+m.__annotate__ = lambda f: {"x": f}
+print("__annotations__" in vars(m), m.__annotations__, m.__annotations__ is m.__annotations__)
+m.__annotations__ = {"y": 2}
+print("__annotate__" in vars(m), m.__annotate__, m.__annotations__)
+del m.__annotations__
+for f in (lambda: delattr(m, "__annotations__"), lambda: delattr(m, "__annotate__"), lambda: setattr(m, "__annotate__", 5)):
+    try:
+        f()
+    except (AttributeError, TypeError) as e:
+        print(type(e).__name__, e)
+m.__annotate__ = lambda f: [f]
+try:
+    m.__annotations__
+except TypeError as e:
+    print("TypeError", e)
+m.__annotate__ = None
+print(m.__annotations__, vars(m)["__annotate__"])
+"""
+
+
+def test_module_annotations() -> None:
+    """ModuleType's __annotations__ and __annotate__ (moduleobject.c): made from __annotate__(1) and kept in the module's dict, an
+    empty dict without one, __annotate__ None when absent and kept so, each store dropping the other, the deleters and the
+    TypeErrors' words."""
+    same(MODULE_ANNOTATIONS)
+
+
 def test_function_annotations() -> None:
     """function.__annotations__ under PEP 649: made once from __annotate__ and cached, an empty dict for a bare function, the setter's
     type check and its clearing of __annotate__, the deleter, __annotate__'s own rules, a non-dict answer refused, methods."""
@@ -955,7 +989,6 @@ def test_exception_groups() -> None:
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.crc32(b'a', -1)", "unsigned 32-bit"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\nif __name__ == '__main__':\n    typing.TypeVar('T', bound='Fwd')", "a ForwardRef built at runtime"),
-             ("def f[T: int]():\n    pass\nimport annotationlib\nannotationlib.call_evaluate_function(f.__type_params__[0].evaluate_bound, annotationlib.Format.STRING)", "second entry point"),
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import binascii\nbinascii.crc32(b'a', -1)", "unsigned 32-bit"), ("import base64\nbase64.b32encode(b'a')", "binascii.b2a_base32"),
              ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),

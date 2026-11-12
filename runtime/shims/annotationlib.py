@@ -8,8 +8,10 @@
 # against the globals and cells it is given. Evaluating the text of a reference or of an
 # annotation needs a compiler at runtime and is refused. `_bella` is provided by the runtime:
 # has_entry_point(annotate), annotate_freevars(annotate) and annotate_with(annotate, globals,
-# closure, ...) (both refuse a function the compiler did not generate), and refuse(message),
-# which stops the program.
+# closure, ...) (both refuse a function the compiler did not generate), set_class(obj, cls),
+# the `obj.__class__ = cls` that turns a _Stringifier into a ForwardRef (a program's __class__
+# assignment is [P2+]; the runtime does it between two classes of one layout), and
+# refuse(message), which stops the program.
 
 import ast
 import builtins
@@ -730,7 +732,7 @@ class _StringifierDict(dict):
 
     def transmogrify(self, cell_dict):
         for obj in self.stringifiers:
-            obj.__class__ = ForwardRef
+            _bella.set_class(obj, ForwardRef)  # bella: a program's __class__ assignment is [P2+]; these two share a layout
             obj.__stringifier_dict__ = None  # not needed for ForwardRef
             if isinstance(obj.__ast_node__, str):
                 obj.__arg__ = obj.__ast_node__

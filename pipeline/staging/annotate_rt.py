@@ -18,12 +18,14 @@ annotations.py generates it). Each function does what its opcode does, including
     unpack1              UNPACK_SEQUENCE 1 (`*args: *Ts`)
 
 and `entry_key`, the identity under which the build files an entry point and the model finds it
-for a live function (in Bella the compiler attaches the entry point to the function instead).
+for a live function (a compiled program's runtime finds one by the function's code's file, qualified
+name and first line instead, pipeline/build.py).
 
-It imports only what start-up has loaded: the replay model loads this file before the program.
+It imports only what start-up has loaded: the replay model loads this file before the program, and
+a compiled program runs it as a module of the runtime's own, in no sys.modules (pipeline/build.py,
+RUNTIME_PYTHON).
 """
 import builtins
-import os
 import sys
 
 TYPE_CHECKING = False
@@ -121,6 +123,8 @@ def entry_key(code: Any) -> str:
     two definitions can share the first three (two aliases on one line, review 2026-11-02
     astra-low-06, A6-1), not the positions. A tuple of ints and None hashes the same in every
     process, whatever PYTHONHASHSEED is."""
+    import os                 # the build's and the replay's: a compiled program's runtime keys a function otherwise
+
     positions = hash(tuple(code.co_positions())) & 0xFFFF_FFFF_FFFF_FFFF
     return f"{os.path.realpath(code.co_filename)}::{code.co_qualname}::{code.co_firstlineno}::{positions:016x}"
 

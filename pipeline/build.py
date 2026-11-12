@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import builtins
 import fcntl
+import ast
 import hashlib
+import json
 import marshal
 import os
 import re
@@ -59,6 +61,7 @@ from pipeline.l2 import grammar as G  # noqa: E402
 from pipeline.l2 import wf as wf2  # noqa: E402
 from pipeline.l2.lifetimes import lifetimes  # noqa: E402
 from pipeline.l2.lower import to_l2  # noqa: E402
+from pipeline.staging import annotations as annotation_entries  # noqa: E402
 
 REFUSED = 70
 BUILD = ROOT / "build" / "compiled"
@@ -94,6 +97,9 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "_tokenize.py", ROOT / "runtime" / "prelude" / "_imp.py",
                     ROOT / "runtime" / "prelude" / "atexit.py", ROOT / "runtime" / "prelude" / "_signal.py",
                     ROOT / "runtime" / "prelude" / "gc.py"]
+# the runtime's own modules written in Python, compiled with the prelude and in no sys.modules: the loads of the annotate
+# functions' second entry points (decision S-1), the replay's file and the compiled program's one (runtime/src/imports.cpp)
+RUNTIME_PYTHON = [ROOT / "pipeline" / "staging" / "annotate_rt.py"]
 # standard-library modules that stand for a C accelerator CPython has and the closure omits (manifest.toml [adaptations],
 # decimal and datetime): CPython's C looks for signals nowhere in them, so their units have no looks (pipeline/backend/cpp.py)
 LOOK_FREE = frozenset({"_pydecimal", "_pydatetime"})
@@ -123,13 +129,13 @@ LEAN_DEFINE = "-DBELLA_LEAN"
 
 
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mode: str = "exec",
-           future: frozenset[str] = frozenset(), looks: bool = True) -> str:
+           future: frozenset[str] = frozenset(), looks: bool = True, tree: ast.Module | None = None) -> str:
     # the passes walk the tree by recursion, and a chain of operators, calls or elif branches is as deep as it is long: the
     # limit eval1's run has (pipeline/l1/run.py), and past it a refusal by name, not a traceback (review F17 #14)
     limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(limit, 20000))
     try:
-        module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future)))
+        module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future, tree=tree)))
         wf2.check(module, lifetimes=True)
         return emit_module(module, namespace, filename, prelude, looks)
     except RecursionError:
@@ -154,6 +160,76 @@ def lowered_unit(source: str, filename: str, namespace: str, mode: str = "exec",
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, kept)
     return text
+
+
+# ---- the second entry points of a module's annotate functions (decision S-1, docs/staging.md section 6) ----
+@dataclass(frozen=True)
+class EntryRow:
+    filename: str
+    qualname: str
+    first_line: int
+    freevars: tuple[str, ...]
+    namespace: str | None                  # the unit that defines it; None: the build declined it
+    index: int
+    why: str
+
+
+def annotate_entries(source: str, filename: str, namespace: str) -> tuple[list[EntryRow], str | None]:
+    """The rows a module's compiler-generated annotate functions get in the main unit's table, and the unit of their entry
+    points (none if no function has one). pipeline/staging/annotations.py writes and checks each evaluator from the source,
+    against the code CPython compiles from it, as the replay's are; here they are lowered with the positions of the
+    annotations they evaluate, so that a traceback through one has CPython's lines and columns. The unit defines each in turn
+    and appends it to `_entries`; the runtime gives it `_rt`, annotate_rt.py compiled with the prelude. A compiled function
+    finds its entry point by its code's file, qualified name and first line, which CPython's positions disambiguate and this
+    key does not: an evaluator whose key another code object of the module has is declined. Kept under build/compiled/entries
+    by what decides it, as a lowered unit is."""
+    key = _key(source.encode(), filename.encode(), namespace.encode(), *_pipeline_bytes(), " ".join(sorted(header_macros())).encode())
+    kept = BUILD / "entries" / f"{namespace.replace('::', '_')}-{key}.json"
+    if kept.exists():
+        data = json.loads(kept.read_text(encoding="utf-8"))
+        return [EntryRow(r[0], r[1], r[2], tuple(r[3]), r[4], r[5], r[6]) for r in data["rows"]], data["cpp"]
+    found, declined = annotation_entries.evaluators_for_text(source, filename)
+    counts: dict[tuple[str, int], int] = {}
+    pending = [compile(source, filename, "exec", dont_inherit=True)]
+    while pending:
+        code = pending.pop()
+        counts[(code.co_qualname, code.co_firstlineno)] = counts.get((code.co_qualname, code.co_firstlineno), 0) + 1
+        pending += [c for c in code.co_consts if isinstance(c, type(code))]
+    rows: list[EntryRow] = []
+    body: list[ast.stmt] = []
+    for evaluator in sorted(found.values(), key=lambda e: (e.firstlineno, e.qualname)):
+        assert evaluator.tree is not None
+        if counts.get((evaluator.qualname, evaluator.firstlineno), 0) != 1:
+            rows.append(EntryRow(filename, evaluator.qualname, evaluator.firstlineno, evaluator.freevars, None, -1,
+                                 "another function of the module has its qualified name and first line, by which a compiled program finds it"))
+            continue
+        rows.append(EntryRow(filename, evaluator.qualname, evaluator.firstlineno, evaluator.freevars, namespace, len(body) // 2, ""))
+        keep = ast.Expr(ast.Call(ast.Attribute(ast.Name("_entries", ast.Load()), "append", ast.Load()), [ast.Name("__annotate__", ast.Load())], []))
+        body += [evaluator.tree, ast.fix_missing_locations(ast.copy_location(keep, evaluator.tree))]
+    # a compiler-generated function without one (a function named __annotate__ that matched no owner is the program's own)
+    for line in declined:
+        where, reason = line.split(": ", 1)
+        if "matched to 0 annotation owners" not in reason:
+            _, qualname, first, _ = where.rsplit("::", 3)
+            rows.append(EntryRow(filename, qualname, int(first), (), None, -1, reason))
+    cpp = to_cpp("", filename, namespace, tree=ast.Module(body, [])) if body else None
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    tmp = kept.with_name(kept.name + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"rows": [[r.filename, r.qualname, r.first_line, list(r.freevars), r.namespace, r.index, r.why] for r in rows],
+                               "cpp": cpp}), encoding="utf-8")
+    os.replace(tmp, kept)
+    return rows, cpp
+
+
+def _entries_cpp(rows: list[EntryRow]) -> tuple[str, str]:
+    """The table of entry points, and the line of main() that registers it."""
+    if not rows:
+        return "", ""
+    decls = sorted({f"namespace {r.namespace} {{ ::bella::Ref module_body(::bella::Module* m); }}" for r in rows if r.namespace})
+    items = ",\n".join(f"    {{{c_string(r.filename)}, {c_string(r.qualname)}, {r.first_line}, {{{', '.join(c_string(n) for n in r.freevars)}}}, "
+                       f"{'::' + r.namespace + '::module_body' if r.namespace else 'nullptr'}, {r.index}, {c_string(r.why)}}}" for r in rows)
+    table = f"static const ::bella::AnnotateEntry ANNOTATE_ENTRIES[] = {{\n{items}\n}};\n"
+    return "\n".join(decls) + "\n" + table, f"    ::bella::register_annotate_entries(std::span<const ::bella::AnnotateEntry>(ANNOTATE_ENTRIES, {len(rows)}));\n"
 
 
 def _key(*parts: bytes) -> str:
@@ -197,7 +273,7 @@ class _Lock:
 def _runtime_key(cxx: str, std: str) -> str:
     """What the runtime library is built from. No fidelity: one library serves an exact build and a lean one."""
     return _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED, *VENDORED_C, *VENDORED_H]), *(p.read_bytes() for p, _ in PRELUDE),
-                *(p.read_bytes() for p in NATIVE_IN_PYTHON), *_pipeline_bytes(),
+                *(p.read_bytes() for p in [*NATIVE_IN_PYTHON, *RUNTIME_PYTHON]), *_pipeline_bytes(),
                 " ".join([cxx, std, *RUNTIME_FLAGS, *PRELUDE_FLAGS, *VENDORED_FLAGS]).encode())
 
 
@@ -209,7 +285,7 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
             return lib
         out.mkdir(parents=True, exist_ok=True)
         units = [(u, RUNTIME_FLAGS) for u in SOURCES] + [(u, VENDORED_FLAGS) for u in VENDORED_C]
-        for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON]:
+        for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON, *RUNTIME_PYTHON]:
             cpp = out / f"prelude_{p.stem}.cpp"
             cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem.lstrip('_')}", prelude=True),
                            encoding="utf-8")
@@ -473,10 +549,11 @@ def _staged_cpp(rows: list[StagedRow], refused: dict[str, str], unstaged: dict[s
             f"    ::bella::register_staged({texts_span}, {refused_span}, {unstaged_span}, {compiles_span});\n")
 
 
-def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, str] = ("", "")) -> str:
+def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, str] = ("", ""), annotate: tuple[str, str] = ("", "")) -> str:
     """main(): the runtime's start with the prelude, the main module's body, its __file__ (the
     absolute path, a link not followed, as CPython keeps it), sys.path[0] (the directory of the
-    file a link leads to), and the registry of the modules compiled with it."""
+    file a link leads to), the registry of the modules compiled with it, and the tables of the staged texts and of the annotate
+    functions' entry points."""
     preludes = "\n".join(f"namespace bella::prelude_{p.stem} {{ ::bella::Ref module_body(::bella::Module* m); }}" for p, _ in PRELUDE)
     bodies = ", ".join(f"{{{c_string(name)}, ::bella::prelude_{p.stem}::module_body}}" for p, name in PRELUDE)
     decls = "\n".join(["namespace bella::m_main { ::bella::Ref module_body(::bella::Module* m); }",
@@ -497,8 +574,8 @@ def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, 
     table = f"static const ::bella::ModuleEntry MODULES[] = {{\n{entries}\n}};\n"
     count = len(rows)
     return ('// The main unit, compiled by Bella: the start, and the modules compiled with the program.\n'
-            '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + staged[0] +
-            "\nint main(int argc, char** argv) {\n" + staged[1] +
+            '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + staged[0] + annotate[0] +
+            "\nint main(int argc, char** argv) {\n" + staged[1] + annotate[1] +
             f"    ::bella::set_stdlib_dir({c_string(getattr(sys, '_stdlib_dir', None) or str(STDLIB))});\n" +
             "    ::bella::set_lean(BELLA_IS_LEAN);\n" +      # the header's, 1 under -DBELLA_LEAN and 0 without: one text for both builds
             f"    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {c_string(os.path.abspath(main_file))},\n"
@@ -542,18 +619,29 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
         raise ValueError(f"fidelity {fidelity!r}: a build is {' or '.join(FIDELITIES)}")
     lib = runtime_library(cxx, std)              # the same library for both
     modules = find_program_modules(program)
-    main_cpp = to_cpp(read_source(program), filename, "bella::m_main")
+    main_source = read_source(program)
+    main_cpp = to_cpp(main_source, filename, "bella::m_main")
     if keep is not None:
         keep.parent.mkdir(parents=True, exist_ok=True)
         keep.write_text(main_cpp, encoding="utf-8")
     units = [(main_cpp, program.stem, PROGRAM_FLAGS)]
+    entry_rows: list[EntryRow] = []
+
+    def entry_points(source: str, shown: str, namespace: str, name: str, flags: list[str]) -> None:
+        rows, cpp = annotate_entries(source, shown, "bella::annotate_" + namespace.removeprefix("bella::"))
+        entry_rows.extend(rows)
+        if cpp is not None:
+            units.append((cpp, f"{name}-annotate", flags))
+    entry_points(main_source, filename, "bella::m_main", program.stem, PROGRAM_FLAGS)
     for m in modules:
         if m.path is not None:
             # a frozen module's code says `<frozen os>`, as CPython's does
             shown = f"<frozen {m.name}>" if m.frozen else str(m.origin or m.path)
             library = m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB)
-            units.append((lowered_unit(read_source(m.path), shown, namespace_of(m.name), looks=m.name not in LOOK_FREE), m.name,
+            source = read_source(m.path)
+            units.append((lowered_unit(source, shown, namespace_of(m.name), looks=m.name not in LOOK_FREE), m.name,
                           LIBRARY_FLAGS if library else PROGRAM_FLAGS))
+            entry_points(source, shown, namespace_of(m.name), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS)
     said: list[str] = []
     rows, refused, unstaged, compiles = staged_tables(program, modules, said)
     for line in said if notes else ():           # not under --run, whose streams are the program's own
@@ -564,7 +652,8 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
     for name in sorted({r.namespace for r in compiles if r.namespace}):
         made = next(r for r in compiles if r.namespace == name)
         units.append((lowered_unit(made.text, made.filename, name, made.mode, made.future), name.rpartition("::")[2], LIBRARY_FLAGS))
-    units.append((main_unit(program, modules, _staged_cpp(rows, refused, unstaged, compiles)), f"{program.stem}-main", PROGRAM_FLAGS))
+    units.append((main_unit(program, modules, _staged_cpp(rows, refused, unstaged, compiles), _entries_cpp(entry_rows)), f"{program.stem}-main",
+                  PROGRAM_FLAGS))
     with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
         objs = list(pool.map(lambda u: _object(u[0], u[1], cxx, std, _unit_flags(u[2], fidelity)), units))
     # the runtime's debug information is most of a binary, and every program would carry a copy

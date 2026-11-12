@@ -1450,8 +1450,41 @@ void set_type_doc(Obj self, Obj value) {
     check_special(c, value, "__doc__");
     c->set_attr(N("__doc__"), value);
 }
-// __bases__ is settable in CPython (type_set_bases, with its layout checks); not here yet
-void set_type_bases(Obj, Obj) { throw NotImplemented("assigning a class's __bases__"); }
+// type_set_bases: check_set_special_type_attr, then type_check_new_bases's checks of the tuple and of each item in order. The
+// bases the class has (typing's NamedTuple assigns them to every class it makes) give every MRO of its hierarchy again as it was,
+// and leave the rest of type_set_bases_unlocked to see: the class leaves each base's subclasses and joins them again, last, and
+// it and its subclasses are modified (RefClass.reassign_bases). Other bases change what every lookup walks, and a metaclass's
+// own mro() would run: both stop by name.
+void set_type_bases(Obj self, Obj v) {
+    ClassObject* c = self_class(self);
+    check_special(c, v, "__bases__");
+    if (!is_kind(v, Kind::Tuple))
+        raise_new("TypeError", "can only assign tuple to " + c->name + ".__bases__, not " + type_of(v)->name);
+    const auto& items = static_cast<Tuple*>(v.object())->items;
+    if (items.empty()) raise_new("TypeError", "can only assign non-empty tuple to " + c->name + ".__bases__, not ()");
+    std::vector<ClassObject*> given;
+    for (Obj item : items) {
+        ClassObject* b = as_class(item);
+        if (b == nullptr) raise_new("TypeError", c->name + ".__bases__ must be tuple of classes, not '" + type_of(item)->name + "'");
+        if (is_subclass(b, c)) raise_new("TypeError", "a __bases__ item causes an inheritance cycle");
+        given.push_back(b);
+    }
+    std::vector<ClassObject*> had = c->bases.empty() ? std::vector<ClassObject*>{types().object} : c->bases;
+    if (given != had) throw NotImplemented("assigning a class's __bases__ other bases than it has (a new MRO for every lookup)");
+    std::vector<ClassObject*> hierarchy{c};
+    for (std::size_t i = 0; i < hierarchy.size(); ++i) {
+        ClassObject* meta = type_of(Obj::of(hierarchy[i]));
+        if (meta != types().type) {
+            auto found = meta->lookup(N("mro"));
+            if (found && found->second != types().type)
+                throw NotImplemented("assigning __bases__ in a hierarchy whose metaclass '" + meta->name + "' defines mro() (mro_internal calls it)");
+        }
+        hierarchy.insert(hierarchy.end(), hierarchy[i]->subclasses.begin(), hierarchy[i]->subclasses.end());
+    }
+    for (ClassObject* b : c->bases) std::erase(b->subclasses, c);
+    for (ClassObject* b : c->bases) b->subclasses.push_back(c);
+    c->bump();
+}
 Ref type_dict(Obj self) { return own(new Proxy(self_class(self))); }
 Ref type_mro_attr(Obj self) {
     std::vector<Obj> items;
@@ -1644,6 +1677,13 @@ void set_fn_dict(Obj self, Obj d) {              // PyObject_GenericSetDict: any
     fn_of(self)->dict = Ref::share(d);
 }
 Ref method_func(Obj self) { return Ref::share(static_cast<Method*>(self.object())->func); }
+Ref cell_new_m(Obj, Args a) {                    // cell_new: types.CellType(), empty, or types.CellType(contents)
+    new_wrapper_class(a, types().cell);
+    Args r = rest(a);
+    if (r.nkw != 0) raise_new("TypeError", "cell() takes no keyword arguments");
+    if (r.npos > 1) raise_new("TypeError", "cell expected at most 1 argument, got " + std::to_string(r.npos));
+    return make_cell(r.npos == 1 ? r.pos(0) : Obj{});
+}
 Ref method_new(Obj, Args a) {                    // method(func, obj): any callable bound to obj
     new_wrapper_class(a, types().method);
     Args r = rest(a);
@@ -3196,6 +3236,7 @@ void init_types() {
         g->deletable = true;
         t.builtin->attrs.set(N("__module__"), Obj::of(g));
     }
+    method(t.cell, "__new__", cell_new_m, Binding::Function);
     getset(t.cell, "cell_contents", cell_contents_get, cell_contents_set);
     static_cast<GetSet*>(t.cell->attrs.find(N("cell_contents"))->object())->deletable = true;   // del empties the cell
     // mappingproxy, slice

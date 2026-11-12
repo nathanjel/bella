@@ -11,12 +11,15 @@ C-3-08_rich_comparison_returns_object.py
 C-3-09_getattr_after_attributeerror.py
 C-3-10_attribute_hooks_run_once.py
 C-3-11_class_attribute_becomes_descriptor.py
+C-3-13_annotations_at_runtime.py
 C-3-14_comprehension_unpacking.py
 C-3-15_generator_close_and_throw.py
 C-3-16_except_star.py
 C-3-18_class_assignment.py
 C-3-19_getattribute_override.py
 C-3-20_copy_protocol.py
+C-3-21_annotate_formats.py
+C-3-22_forwardref_unbound_name.py
 C-3-23_forwardref_evaluate_expression.py
 C-3-24_signatures_at_runtime.py
 C-3-25_calls_and_parameters.py
@@ -59,6 +62,7 @@ C-3-61_the_lines_of_a_with_statement.py
 C-3-62_except_star_in_full.py
 C-3-63_subclasses_of_set_and_frozenset.py
 C-3-64_subclasses_of_bytes_and_bytearray.py
+C-3-65_typing_class_syntax_entry_points.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

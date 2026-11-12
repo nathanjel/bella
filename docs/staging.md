@@ -253,13 +253,17 @@ functions, the probes now cover.
   * which module and class annotations are conditional, and their indices: all of a module's,
     only those under a compound statement in a class;
   * `*args: *Ts` and the two result shapes.
-* **The shim** (`runtime/shims/annotationlib.py`) is CPython's module with eight marked changes:
+* **The shim** (`runtime/shims/annotationlib.py`) is CPython's module with nine marked changes:
   * the three function rebuilds call the entry point;
   * `_build_closure` reads the entry point's free variables;
   * `ForwardRef.evaluate` of an expression and `eval_str=True` refuse with `[P2+]`;
   * `__resolved_str__` fixes names on a copy of the tree instead of re-parsing its string;
   * FORWARDREF of a hand-written annotate function does what CPython's code does when that
     function raises `NotImplementedError`;
+  * `transmogrify` asks the runtime for `obj.__class__ = ForwardRef` (`_bella.set_class`):
+    a program's `__class__` assignment is \[P2+\], and the runtime switches only between two
+    classes whose instances have one layout and no dict, as `_Stringifier` and `ForwardRef`
+    do (`RefObject.set_class`);
   * the header.
 
   An annotate function the compiler did not generate has no entry point. If its fallback needs
@@ -269,6 +273,25 @@ functions, the probes now cover.
   and a hash of every instruction's source position (`annotate_rt.entry_key`), which the replay
   computes the same way for a live function. Two definitions with one name on one line therefore
   differ, and a duplicate identity is declined, never overwritten (A6-1).
+* **In a compiled program** (2026-11-12, C-3-65). The build runs the same generator over each
+  module it compiles (`annotate_entries` in `pipeline/build.py`) and lowers the evaluators it
+  keeps into one unit per module, with the positions of the annotations they evaluate, so a
+  traceback through one has CPython's lines. The unit defines each in turn and appends it to
+  `_entries`; the runtime gives it `_rt`, `annotate_rt.py` compiled with the prelude into a module
+  that is in no `sys.modules`. The main unit's table names each entry point by its function's
+  file, qualified name and first line, the key a compiled function's code has (no positions).
+  An evaluator whose key another code object of the module shares is declined. The runtime also
+  checks that the function has one positional-only parameter and the evaluator's free variables,
+  and stops by name otherwise. `has_entry_point`, `annotate_freevars` and `annotate_with` answer
+  from the table; the function `annotate_with` returns is a built-in, so the evaluator's frame is
+  the only one it adds, as the rebuilt function's is in CPython. Making the key agree with CPython's
+  code found two differences, now fixed. A decorated class's annotate function starts at the first
+  decorator's line (the class body's `co_firstlineno`). A module-level generic function's annotate
+  function is named `__annotate__` alone (`_PyCompile_SetQualname` stops at an annotation scope
+  under the module). The rest of what typing's class syntax needs came with it:
+  * `__bases__` assigned the bases a class has, which `NamedTuple` does (`RefClass.reassign_bases`);
+  * `types.CellType(...)`;
+  * `module.__annotations__` and `module.__annotate__` as ModuleType's getsets.
 * **Checked at build time**, for every annotate function. An entry point is kept only if both
   checks agree:
   * its loads (kind, name, order) are the bytecode's;
@@ -279,7 +302,12 @@ functions, the probes now cover.
   mutate the generator to prove it. Over the closure and the corpus no annotate or evaluate
   function mismatches; 2 are declined, the hand-written ones.
 * **Evidence.**
-  * C-3-13, C-3-21 and C-3-22 print CPython's output under the replay. C-3-22 covers a
+  * C-3-13, C-3-21 and C-3-22 print CPython's output under the replay, and since 2026-11-12
+    compiled. C-3-65 adds, compiled, the class syntax of `NamedTuple` and `TypedDict`, a
+    closure's annotations, a traceback through an entry point, and the keys of a decorated class, a
+    module-level generic function, a generic method and the module. `eval1` and `eval2` run
+    CPython's own annotationlib, which re-runs the evaluator's host function rather than the
+    annotations, so these cases are not in their baselines. C-3-22 covers a
     self-referential dataclass, names defined later, class attributes, private names, a closure
     variable before and after binding, conditional module annotations, an annotation with an
     effect, and exceptions with their arguments.

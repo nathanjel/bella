@@ -1284,6 +1284,10 @@ void setattr(Obj obj, const Str* name, Obj value) {
                 raise_new("TypeError", "__class__ assignment only supported for mutable types or ModuleType subclasses");
             throw NotImplemented("[P2+] __class__ assignment (spec section 3)");
         }
+        if (Obj found = type_lookup(type_of(obj), name); is_kind(found, Kind::GetSet)) {   // ModuleType's own: __annotations__, __annotate__
+            static_cast<GetSet*>(found.object())->set(obj, value);
+            return;
+        }
         if (auto* m = static_cast<Module*>(obj.object()); bootstrap_hides(m, name)) refuse_bootstrap_assignment(m, name);
         dict_set(static_cast<Module*>(obj.object())->dict, Obj::of(name), value);
         return;
@@ -1334,6 +1338,10 @@ void delattr(Obj obj, const Str* name) {
     }
     if (is_kind(obj, Kind::Module)) {            // _PyObject_GenericSetAttrWithDict's deletion
         if (name == intern("__dict__")) raise_new("AttributeError", "readonly attribute");
+        if (Obj found = type_lookup(type_of(obj), name); is_kind(found, Kind::GetSet)) {   // ModuleType's own, through their setters
+            static_cast<GetSet*>(found.object())->set(obj, Obj{});
+            return;
+        }
         if (bootstrap_hides(static_cast<Module*>(obj.object()), name) ||     // not an attribute of the module, as in CPython
             !dict_del(static_cast<Module*>(obj.object())->dict, Obj::of(name)))
             raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");

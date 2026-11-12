@@ -1,0 +1,12 @@
+{
+ "case": "C-3-65_typing_class_syntax_entry_points.py",
+ "clause": "C-3-65",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "decision S-1 (docs/staging.md section 6); Lib/typing.py 3.15.2 (NamedTupleMeta, _TypedDictMeta: call_annotate_function(..., FORWARDREF))",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "('x', 'y', 'label') {'y': 0.0, 'label': ''} Point(x=1, y=0.0, label='') {'x': <class 'int'>, 'y': ForwardRef('float'), 'label': <class 'str'>}\n('value', 'next', 'parent') Node(value=3, next=None, parent=None) {'value': <class 'int'>, 'next': \"ForwardRef('Later | None')\", 'parent': \"ForwardRef('Node | None')\"}\n{'value': 'int', 'next': 'Later | None', 'parent': 'Node | None'}\n['_Movie__secret', 'director', 'sequel', 'title'] ['year']\n{'title': <class 'str'>, 'year': typing.NotRequired[int], 'sequel': \"ForwardRef('Movie | None')\", 'director': \"ForwardRef('Person')\", '_Movie__secret': \"ForwardRef('Later')\"}\n{'title': 'str', 'year': 'NotRequired[int]', 'sequel': 'Movie | None', 'director': 'Person', '_Movie__secret': 'Later'}\n{'value': <class 'int'>, 'next': __main__.Later | None, 'parent': \"ForwardRef('Node | None')\"} {'title': <class 'str'>, 'year': typing.NotRequired[int], 'sequel': \"ForwardRef('Movie | None')\", 'director': <class '__main__.Person'>, '_Movie__secret': <class '__main__.Later'>}\nbefore: {'a': <class 'int'>, 'b': \"ForwardRef('unbound')\", 'c': \"ForwardRef('Missing')\", 'return': <class 'int'>}\nafter: {'a': <class 'int'>, 'b': <class 'str'>, 'c': \"ForwardRef('Missing')\", 'return': <class 'int'>}\nstring: {'a': 'bound', 'b': 'unbound', 'c': 'Missing', 'return': 'bound'}\nclosure: ('bound', 'unbound') 2\nSTRING ZeroDivisionError 5 87\nFORWARDREF ZeroDivisionError 5 87\nDecorated.__annotate__ 105 ('__classdict__',) {'a': \"ForwardRef('Undefined1')\"}\n__annotate__ 110 ('T',) {'a': T, 'b': \"ForwardRef('Undefined2')\", 'return': T}\nBox.get.__annotate__ 115 ('T', 'U', '__classdict__') {'u': U, 'v': \"ForwardRef('Undefined3')\", 'return': T | U}\n__annotate__ 5 () {'level': \"ForwardRef('Undefined4')\"}\n",
+ "stderr": "",
+ "exit_code": 0
+}

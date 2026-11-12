@@ -1322,3 +1322,102 @@ def test_a_base_that_keeps_its_own_weak_references_clears_them_after_the_dict() 
 
     assert model(True) == cpython(set)
     assert model(False) == cpython(list)
+
+
+def test_assigning_the_bases_a_class_has_moves_it_last_among_the_subclasses() -> None:
+    """typing's NamedTuple assigns each class it makes the bases it has (type_set_bases): the MROs come out as they were,
+    the class is last among each base's subclasses, and it and its subclasses get new versions (a cached lookup misses).
+    The model's subclass lists against CPython's __subclasses__()."""
+    from refmodel import objects as O
+
+    A = type("A", (), {})
+    B = type("B", (A,), {})
+    C = type("C", (A,), {})
+    D = type("D", (B,), {})
+    E = type("E", (C,), {})
+    mros = [k.__mro__ for k in (A, B, C, D, E)]
+    B.__bases__ = (A,)
+    C.__bases__ = C.__bases__
+    def subclasses(x: type) -> list[str]:
+        found: list[type] = x.__subclasses__()
+        return [k.__name__ for k in found]
+
+    expected = [subclasses(x) for x in (A, B, C)]
+    assert [k.__mro__ for k in (A, B, C, D, E)] == mros
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        a = RefClass("A", heap=heap)
+        b = RefClass("B", (a,), heap=heap)
+        c = RefClass("C", (a,), heap=heap)
+        d = RefClass("D", (b,), heap=heap)
+        e = RefClass("E", (c,), heap=heap)
+        before = {k.name: k.version for k in (a, b, c, d, e)}
+        model_mros = [k.mro for k in (a, b, c, d, e)]
+        b.reassign_bases((a,))
+        c.reassign_bases(c.bases)
+        assert [[k.name for k in x.subclasses] for x in (a, b, c)] == expected
+        assert [k.mro for k in (a, b, c, d, e)] == model_mros
+        assert {n for n, v in before.items() if {k.name: k.version for k in (a, b, c, d, e)}[n] != v} == {"B", "C", "D", "E"}
+        try:
+            d.reassign_bases((a,))
+        except O.ModelError:
+            pass
+        else:
+            raise AssertionError("other bases are not modelled")
+    finally:
+        O.HEAP = saved
+
+
+def test_an_object_given_a_class_of_its_layout_keeps_its_fields_and_misses_the_cache() -> None:
+    """annotationlib's transmogrify makes each _Stringifier a ForwardRef (`obj.__class__ = ForwardRef`, two classes of one
+    __slots__): the slots keep their values, a method is the new class's, and a site that cached the old class's entry
+    misses. The model against CPython; a class with an instance dict is not modelled."""
+    from refmodel import objects as O
+    from refmodel.objects import Site
+
+    slots = ("first", "__weakref__", "second")
+
+    def method(name: str) -> Callable[[object], str]:
+        return lambda self: name
+
+    A = type("A", (), {"__slots__": slots, "kind": method("A")})
+    B = type("B", (), {"__slots__": slots, "kind": method("B")})
+    o = A()
+    o.first = 1
+    seen = [o.kind()]
+    o.__class__ = B
+    seen += [o.kind(), o.first]
+    try:
+        seen.append(o.second)
+    except AttributeError:
+        seen.append("unset")
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        rt = Runtime()
+        fa, fb = RefClass("fa", heap=heap), RefClass("fb", heap=heap)
+        a = RefClass("A", slots=slots, attrs={"kind": fa}, heap=heap)
+        b = RefClass("B", slots=slots, attrs={"kind": fb}, heap=heap)
+        m = RefObject(a)
+        incref(m)
+        rt.setattr(m, "first", 1)
+        site = Site(heap)
+        got: list[object] = ["A" if rt.getattr(m, "kind", site) is fa else "?"]
+        m.set_class(b)
+        got += ["B" if rt.getattr(m, "kind", site) is fb else "?", rt.getattr(m, "first")]
+        try:
+            rt.getattr(m, "second")
+        except AttributeError:
+            got.append("unset")
+        assert got == seen and site.hits == 0 and site.misses == 2
+        try:
+            m.set_class(RefClass("C", heap=heap))
+        except O.ModelError:
+            pass
+        else:
+            raise AssertionError("an object of another layout is not modelled")
+    finally:
+        O.HEAP = saved

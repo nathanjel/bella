@@ -62,6 +62,7 @@ namespace prelude_tokenize { Ref module_body(Module* m); }    // runtime/prelude
 namespace prelude_imp { Ref module_body(Module* m); }         // runtime/prelude/_imp.py
 namespace prelude_atexit { Ref module_body(Module* m); }      // runtime/prelude/atexit.py
 namespace prelude_gc { Ref module_body(Module* m); }          // runtime/prelude/gc.py
+namespace prelude_annotate_rt { Ref module_body(Module* m); }   // pipeline/staging/annotate_rt.py: the S-1 entry points' loads
 namespace prelude_signal { Ref module_body(Module* m); }      // runtime/prelude/_signal.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
@@ -296,13 +297,126 @@ Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_p
     Ref origin = str_new(it->second.origin);
     return tuple_new({origin.get(), boolean(it->second.package), boolean(it->second.kind == ModuleKind::Frozen)});
 }
-// what the annotationlib shim asks the runtime (`_bella`, docs/staging.md S-1): the second entry point of an annotate function is
-// not in compiled programs yet, so no function has one, and what needs it stops by name instead of failing on the name
+// ---- what the annotationlib shim asks the runtime (`_bella`, docs/staging.md section 6, decision S-1) ----
+// A compiler-generated __annotate__ has a second entry point: its annotations evaluated against the globals and cells given, each
+// name loaded as its opcode loads it (pipeline/staging/annotations.py writes it, annotate_rt.py has the loads). pipeline/build.py
+// compiles a module's entry points into one unit, which defines each and appends it to `_entries`, and the main unit lists them
+// with the file, qualified name and first line of the function each belongs to, which the build checked no other code of the
+// module shares. A function finds its own by its code; one the build declined stops by name, and so does a function the
+// compiler did not generate (CPython rebuilds a function from its __code__).
+namespace {
+std::span<const AnnotateEntry>& annotate_entries() {
+    static std::span<const AnnotateEntry> table;
+    return table;
+}
+const AnnotateEntry* entry_of(Obj annotate) {
+    if (!is_kind(annotate, Kind::PyFunction) || presents_as_builtin(annotate)) return nullptr;
+    const Code* code = static_cast<PyFunction*>(annotate.object())->code;
+    for (const AnnotateEntry& e : annotate_entries()) {
+        if (e.first_line != code->first_line || std::string_view(e.qualname) != code->qualname || std::string_view(e.filename) != code->filename)
+            continue;
+        if (e.body == nullptr)
+            throw NotImplemented(std::string("[P2+] annotationlib: the build declined the entry point of ") + code->qualname + ": " + e.why);
+        bool same = code->argcount == 1 && code->posonlyargcount == 1 && code->freevars.size() == e.freevars.size();
+        for (std::size_t i = 0; same && i < e.freevars.size(); ++i) same = std::string_view(code->freevars[i]) == e.freevars[i];
+        if (!same)       // the build's key found another function: a defect of the compiler's, never an answer
+            throw NotImplemented(std::string("annotationlib: the entry point filed under ") + code->qualname + " does not fit the function (its parameters or free variables)");
+        return &e;
+    }
+    return nullptr;
+}
+const AnnotateEntry& entry_needed(Obj annotate) {
+    const AnnotateEntry* e = entry_of(annotate);
+    if (e == nullptr)
+        throw NotImplemented("[P2+] annotationlib: FORWARDREF and STRING of an annotate function the compiler did not generate re-run its "
+                             "__code__ (spec section 3; docs/staging.md, decision S-1)");
+    return *e;
+}
+Module* annotate_rt() {                          // the loads' helpers: a module of the runtime's own, in no sys.modules
+    static Module* rt = [] {
+        Module* m = new_module("annotate_rt");
+        forget_module(m);
+        prelude_annotate_rt::module_body(m);
+        return m;
+    }();
+    return rt;
+}
+Obj entry_function(const AnnotateEntry& e) {     // borrowed: its unit's `_entries` keep it
+    static std::vector<std::pair<ModuleBody, Ref>> run;   // each unit runs once, at the first entry point asked of it
+    auto it = std::ranges::find(run, e.body, &std::pair<ModuleBody, Ref>::first);
+    if (it == run.end()) {
+        Module* m = new_module("<annotate entry points>");
+        forget_module(m);
+        Ref made = list_new({});
+        dict_set(m->dict, Obj::of(N("_rt")), Obj::of(annotate_rt()));
+        dict_set(m->dict, Obj::of(N("_entries")), made.get());
+        e.body(m);
+        run.emplace_back(e.body, std::move(made));
+        it = std::prev(run.end());
+    }
+    auto* entries = static_cast<List*>(it->second.get().object());
+    if (e.index < 0 || static_cast<std::size_t>(e.index) >= entries->items.size())
+        throw NotImplemented("annotationlib: an entry point its unit did not define");
+    return entries->items[static_cast<std::size_t>(e.index)];
+}
+Ref i_entry_call(Obj self, Args a) {             // the function annotationlib calls: the entry point, with the globals and cells
+    positional_only(a, "__annotate__", 1, 1);
+    auto* state = static_cast<Tuple*>(self.object());
+    return invoke(state->items[0], {a.pos(0), state->items[1], state->items[2]});
+}
+}  // namespace
+void register_annotate_entries(std::span<const AnnotateEntry> entries) { annotate_entries() = entries; }
+// transmogrify's `obj.__class__ = ForwardRef` (RefObject.set_class): object_set_class between two classes of the shim whose instances
+// have one layout and no dict, every field staying where it is; anything else is a program's __class__ assignment, [P2+]
+Ref i_shim_set_class(Obj, Args a) {
+    positional_only(a, "set_class", 2, 2);
+    Obj obj = a.pos(0);
+    if (!is_kind(obj, Kind::Instance) || !is_kind(a.pos(1), Kind::Class))
+        throw NotImplemented("[P2+] __class__ assignment (spec section 3): annotationlib's of an object that is not a class's instance");
+    auto* inst = static_cast<Instance*>(obj.object());
+    auto* to = static_cast<ClassObject*>(a.pos(1).object());
+    const ClassObject* from = inst->cls;
+    bool same = to->heap_type && from->heap_type && !to->has_dict && !from->has_dict && to->has_weakref == from->has_weakref &&
+                to->bases == from->bases && to->slot_fields == from->slot_fields && to->native_fields == from->native_fields &&
+                to->promoted_fields == from->promoted_fields && to->field_index == from->field_index;
+    if (!same) throw NotImplemented("[P2+] __class__ assignment (spec section 3): annotationlib's from '" + from->name + "' to '" + to->name + "', another layout");
+    inst->cls = to;
+    return none_ref();
+}
 Ref i_shim_has_entry_point(Obj, Args a) {
     positional_only(a, "has_entry_point", 1, 1);
-    return Ref::steal(boolean(false));
+    return Ref::steal(boolean(entry_of(a.pos(0)) != nullptr));
 }
-Ref i_shim_entry_point(Obj, Args) { throw NotImplemented("annotationlib: an annotate function re-run against other globals (the S-1 second entry point)"); }
+Ref i_shim_annotate_freevars(Obj, Args a) {
+    positional_only(a, "annotate_freevars", 1, 1);
+    const AnnotateEntry& e = entry_needed(a.pos(0));
+    std::vector<Obj> names;
+    for (const char* n : e.freevars) names.push_back(str_new(n).release());
+    return tuple_steal(std::move(names));
+}
+// annotate_with(annotate, globals, closure=None, argdefs=None, kwdefaults=None): what types.FunctionType(annotate.__code__, globals,
+// closure=closure, ...) gives CPython's annotationlib, a function of the format: the entry point called with the globals and
+// with the cells by name. An annotate function has no defaults, so argdefs and kwdefaults change nothing.
+Ref i_shim_annotate_with(Obj, Args a) {
+    if (a.npos != 2) raise_new("TypeError", "annotate_with() takes 2 positional arguments");
+    Obj closure = None();
+    for (std::size_t i = 0; i < a.nkw; ++i) {
+        std::string_view k = a.kwnames[i]->text;
+        if (k == "closure") closure = a.kw(i);
+        else if (k != "argdefs" && k != "kwdefaults") raise_new("TypeError", "annotate_with() got an unexpected keyword argument '" + std::string(k) + "'");
+    }
+    const AnnotateEntry& e = entry_needed(a.pos(0));
+    Ref cells = dict_new();
+    std::size_t given = closure == None() ? 0 : static_cast<Tuple*>(closure.object())->items.size();
+    if (closure != None() && !is_kind(closure, Kind::Tuple)) raise_new("TypeError", "closure must be a tuple");
+    if (given != e.freevars.size())              // zip(freevars, closure or (), strict=True), as the replay's hook does
+        raise_new("ValueError", "zip() argument 2 is " + std::string(given < e.freevars.size() ? "shorter" : "longer") + " than argument 1");
+    for (std::size_t i = 0; i < given; ++i)
+        dict_set(static_cast<Dict*>(cells.get().object()), Obj::of(N(e.freevars[i])), static_cast<Tuple*>(closure.object())->items[i]);
+    Obj fn = entry_function(e);
+    Ref state = tuple_new({fn, a.pos(1), cells.get()});
+    return own(new Builtin("__annotate__", i_entry_call, state.get(), Binding::Function));
+}
 Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the module's namespace
     positional_only(a, "_bella_exec", 2, 2);
     const Str* name = as_str(a.pos(0));
@@ -317,8 +431,8 @@ Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the mo
         Ref hooks = own(new Module("_bella"));
         auto* h = static_cast<Module*>(hooks.get().object());
         for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
-                 {"has_entry_point", i_shim_has_entry_point}, {"annotate_freevars", i_shim_entry_point},
-                 {"annotate_with", i_shim_entry_point}, {"refuse", i_bella_refuse}}) {
+                 {"has_entry_point", i_shim_has_entry_point}, {"annotate_freevars", i_shim_annotate_freevars},
+                 {"annotate_with", i_shim_annotate_with}, {"set_class", i_shim_set_class}, {"refuse", i_bella_refuse}}) {
             Ref b = own(new Builtin(n, fn));
             dict_set(h->dict, Obj::of(N(n)), b.get());
         }
@@ -1885,6 +1999,50 @@ Module* as_module(Obj self, const char* method) {
 }
 }  // namespace
 
+// ModuleType's __annotate__ and __annotations__ (module_get_annotate, module_set_annotate, module_get_annotations,
+// module_set_annotations). __annotations__ is computed by calling __annotate__(1) and kept in the module's dict, unless the module
+// is still initialising; storing either drops the other.
+Ref module_annotate_get(Obj self) {
+    Module* m = as_module(self, "__annotate__");
+    Obj annotate = dict_get(m->dict, Obj::of(N("__annotate__")));
+    if (annotate.is_unset()) {
+        dict_set(m->dict, Obj::of(N("__annotate__")), None());
+        return none_ref();
+    }
+    return Ref::share(annotate);
+}
+void module_annotate_set(Obj self, Obj value) {
+    Module* m = as_module(self, "__annotate__");
+    if (value.is_unset()) raise_new("TypeError", "cannot delete __annotate__ attribute");
+    if (value != None() && !is_callable(value)) raise_new("TypeError", "__annotate__ must be callable or None");
+    dict_set(m->dict, Obj::of(N("__annotate__")), value);
+    if (value != None()) dict_del(m->dict, Obj::of(N("__annotations__")));
+}
+Ref module_annotations_get(Obj self) {
+    Module* m = as_module(self, "__annotations__");
+    Ref held = Ref::share(Obj::of(m->dict));
+    if (Obj kept = dict_get(m->dict, Obj::of(N("__annotations__"))); !kept.is_unset()) return Ref::share(kept);
+    Ref spec = Ref::share(dict_get(m->dict, Obj::of(N("__spec__"))));
+    bool initializing = spec_is_initializing(spec.get());
+    Ref annotate = Ref::share(dict_get(m->dict, Obj::of(N("__annotate__"))));
+    Ref annotations;
+    if (!annotate.get().is_unset() && is_callable(annotate.get())) {
+        annotations = invoke(annotate.get(), {Obj::small(1)});
+        if (!is_kind(annotations.get(), Kind::Dict))
+            raise_new("TypeError", "__annotate__() must return a dict, not " + fully_qualified_name(type_of(annotations.get())));
+    } else {
+        annotations = dict_new();
+    }
+    if (!initializing) dict_set(m->dict, Obj::of(N("__annotations__")), annotations.get());
+    return annotations;
+}
+void module_annotations_set(Obj self, Obj value) {
+    Module* m = as_module(self, "__annotations__");
+    if (!value.is_unset()) dict_set(m->dict, Obj::of(N("__annotations__")), value);
+    else if (!dict_del(m->dict, Obj::of(N("__annotations__")))) raise_new("AttributeError", "__annotations__");
+    dict_del(m->dict, Obj::of(N("__annotate__")));
+}
+
 Ref module_repr_m(Obj self, Args a) {            // module_repr: importlib._bootstrap._module_repr
     positional_only(a, "__repr__", 0, 0);
     as_module(self, "__repr__");
@@ -1985,6 +2143,12 @@ void init_imports(Module* sys) {
     method(mt, "__repr__", module_repr_m);
     method(mt, "__dir__", module_dir_m);
     mt->attrs.set(N("__dict__"), Obj::of(new GetSet("__dict__", mt, module_dict_get, nullptr)));
+    for (auto [name, get, set] : {std::tuple{"__annotations__", module_annotations_get, module_annotations_set},
+                                  std::tuple{"__annotate__", module_annotate_get, module_annotate_set}}) {
+        auto* g = new GetSet(name, mt, get, set);
+        g->deletable = true;                     // the setters answer a delete themselves
+        mt->attrs.set(N(name), Obj::of(g));
+    }
     Ref modules = dict_new();
     interp_modules() = static_cast<Dict*>(modules.get().object());
     incref(modules.get());                       // the interpreter's own count, for the program's lifetime

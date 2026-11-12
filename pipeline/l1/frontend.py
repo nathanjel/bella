@@ -323,6 +323,8 @@ class _Annotations:
         tail: list[ast.stmt] = []
         if entries:
             fn = _annotate_function(entries, ast.Name(id=condition_name, ctx=ast.Load()), self.future, c)
+            if c.decorator_list:      # the class body's first line, its code's co_firstlineno: the first decorator's (compiler_class)
+                fn.lineno = c.decorator_list[0].lineno
             fn.bella_store = "__annotate_func__"  # type: ignore[attr-defined]
             fn.bella_classdict = True  # type: ignore[attr-defined]
             tail.append(fn)
@@ -854,6 +856,7 @@ class _ClassBodies:
         self.future = future                 # PEP 563
         # (kind, qualname, names declared global there, first positional parameter, in a class)
         self.stack: list[tuple[str, str, frozenset[str], str | None, bool]] = [("module", "", frozenset(), None, False)]
+        self.module_generic = 0              # inside a module-level generic scope, at this depth of the stack (0: not)
 
     def qualname(self, name: str) -> str:
         kind, qual, globals_, _, _ = self.stack[-1]
@@ -919,11 +922,15 @@ class _ClassBodies:
         if getattr(f, "bella_transparent", False):
             # a generic scope: its own qualname, and none in what it defines (an annotation scope)
             f.bella_qualname = self.qualname(f.name)  # type: ignore[union-attr]
+            outer, self.module_generic = self.module_generic, len(self.stack) if self.stack[-1][0] == "module" else 0
             f.body = self.block(f.body)
+            self.module_generic = outer
             return f
         annotated = getattr(f, "bella_annotate_for", None)
-        f.bella_qualname = (f"{self.qualname(annotated)}.__annotate__" if annotated  # type: ignore[union-attr]
-                            else self.qualname(f.name))
+        # _PyCompile_SetQualname: a unit whose parent is an annotation scope right under the module is named by its name
+        # alone, before the function's name would be added: a module-level generic function's annotate is __annotate__
+        f.bella_qualname = ("__annotate__" if annotated and self.module_generic == len(self.stack)  # type: ignore[union-attr]
+                            else f"{self.qualname(annotated)}.__annotate__" if annotated else self.qualname(f.name))
         globals_, _ = declarations(f.body)
         params = [*f.args.posonlyargs, *f.args.args]
         own = list(_own_scope(f.body))
@@ -2616,11 +2623,13 @@ def replace_functions(tree: ast.Module, filename: str) -> None:
 
 
 def lower(source: str, filename: str = "<module>", mode: str = "exec",
-          inherit_future: frozenset[str] = frozenset()) -> L.Module:
+          inherit_future: frozenset[str] = frozenset(), tree: ast.Module | None = None) -> L.Module:
     """Parse and lower a program to L1 through the registered passes in fact order. Mode "eval"
     lowers an expression (a staged eval text): the module's last statement is its value.
     `inherit_future` are the caller's __future__ features (a staged exec text compiled in the
-    context of the function that runs it)."""
+    context of the function that runs it). `tree`: a module the build made rather than parsed, whose
+    positions are another text's (the S-1 entry points of a module's annotations, pipeline/build.py);
+    `source` is then unused and no function of it is replaced."""
     check_host_grammar()
     if mode == "eval":
         expression = _parse(source, filename, "eval", inherit_future)
@@ -2628,6 +2637,8 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
         check_compile(expression, filename, mode, inherit_future)
         tree = ast.Module([ast.fix_missing_locations(ast.copy_location(ast.Expr(expression.body), expression.body))], [])
         tree.bella_eval = True  # type: ignore[attr-defined]
+    elif tree is not None:
+        mark_looking_breaks(tree, check_compile(tree, filename, mode, inherit_future))
     else:
         parsed = _parse(source, filename, "exec", inherit_future)
         assert isinstance(parsed, ast.Module)

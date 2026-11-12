@@ -28,8 +28,13 @@ CLASS_ATTRIBUTES = 'class C:\n    "first"\nC.__doc__ = "second"\nprint(C.__doc__
 REFUSED_STORES = (
     "class C:\n    pass\nC.__type_params__ = ()",
     "class C:\n    pass\nC.__basicsize__ = 3",
-    "class C:\n    pass\nC.__bases__ = (object,)",
+    "class A:\n    pass\nclass C:\n    pass\nC.__bases__ = (A,)",
 )
+
+# type_set_bases with the bases a class has (typing's NamedTuple does it): the class last among its base's subclasses, the MROs
+# as they were; and the TypeErrors of the tuple and its items, in CPython's words
+SAME_BASES = 'class A:\n    pass\nclass B(A):\n    pass\nclass C(A):\n    pass\nB.__bases__ = (A,)\nprint([k.__name__ for k in A.__subclasses__()], B.__mro__)\nclass D:\n    pass\nD.__bases__ = (object,)\nprint(D.__bases__, D.__mro__)\nfor v in ((), [A], (1,), (B,), (A,)):\n    try:\n        A.__bases__ = v\n    except TypeError as e:\n        print("TypeError", e)\nfor f in (lambda: setattr(int, "__bases__", (object,)), lambda: delattr(B, "__bases__")):\n    try:\n        f()\n    except TypeError as e:\n        print("TypeError", e)\n'
+
 
 
 def test_metaclasses_in_enum_and_abc_shapes() -> None:
@@ -38,6 +43,10 @@ def test_metaclasses_in_enum_and_abc_shapes() -> None:
 
 def test_class_attributes_kept_by_type() -> None:
     same(CLASS_ATTRIBUTES)
+
+
+def test_bases_assigned_the_bases_a_class_has() -> None:
+    same(SAME_BASES)
 
 
 def test_class_stores_cpython_takes_through_descriptors_are_refused() -> None:

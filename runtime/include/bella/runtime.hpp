@@ -900,6 +900,7 @@ void dunder_args(Obj self, Args a, const char* name, std::size_t n);
 // The prelude's builtins look like CPython's (docs/emitter.md section 1): an exported function is
 // a builtin_function_or_method, never bound as a method; an exported class is immutable.
 bool presents_as_builtin(Obj f);
+bool is_callable(Obj v);                         // PyCallable_Check
 bool immutable_type(const ClassObject* c);
 bool c_type(const ClassObject* c);                           // a type of CPython's: static, or one the prelude presents
 void note_prelude_class(const ClassObject* c);    // a class the prelude writes in Python for one CPython has in C
@@ -1066,6 +1067,19 @@ struct StagedCompile {
 };
 void register_staged(std::span<const StagedText> texts, std::span<const StagedSite> refused, std::span<const StagedSite> unstaged,
                      std::span<const StagedCompile> compiles = {});
+// The second entry point of a compiler-generated __annotate__ (decision S-1, docs/staging.md section 6), found by the function's
+// code: file, qualified name, first line. `body` runs the unit that defines it (it appends to `_entries`, `index` is its place);
+// nullptr: the build declined it, for `why`.
+struct AnnotateEntry {
+    const char* filename;
+    const char* qualname;
+    int first_line;
+    std::vector<const char*> freevars;
+    Ref (*body)(Module*);
+    int index;
+    const char* why;
+};
+void register_annotate_entries(std::span<const AnnotateEntry> entries);
 Ref b_eval(Obj, Args a);
 Ref b_exec(Obj, Args a);
 Ref b_compile(Obj, Args a);

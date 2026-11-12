@@ -566,6 +566,20 @@ class RefClass:
         for s in self.subclasses:
             s.bump()
 
+    def reassign_bases(self, bases: tuple[RefClass, ...]) -> None:
+        """type_set_bases with the bases the class has (typing's NamedTuple does it to every class it makes): each MRO in
+        its hierarchy is computed again and comes out as it was, so what changes is the rest of type_set_bases_unlocked.
+        The class leaves every base's subclasses and joins them again, now last (remove_all_subclasses, then
+        add_all_subclasses), and it and its subclasses are modified. Other bases would change what lookups walk: not
+        modelled, and the runtime refuses them."""
+        if bases != self.bases:
+            raise ModelError("__bases__ assigned other bases than the class has")
+        for b in self.bases:
+            b.subclasses.remove(self)
+        for b in self.bases:
+            b.subclasses.append(self)
+        self.bump()
+
     def unregister(self) -> None:
         """The class is dying: its bases stop propagating versions to it. Cache entries need no
         cleanup, since its versions are never issued again (review log D-1)."""
@@ -629,6 +643,18 @@ class RefObject:
         # a built-in base's own data: a dict subclass's instance is a dict (its entries here)
         self.payload: RefDict | None = RefDict() if "__payload__" in cls.native else None
         self.heap.gc.link(self)             # every instance of a class is tracked (type_new_alloc: Py_TPFLAGS_HAVE_GC)
+
+    def set_class(self, cls: RefClass) -> None:
+        """object_set_class between two classes whose instances have one layout and no dict (annotationlib's
+        _Stringifier and ForwardRef share their __slots__; the runtime does it for its annotationlib shim only, since a
+        program's __class__ assignment is [P2+]): every field stays where it is and every lookup from now on walks the
+        new class, whose versions no cache entry of the old one can match. Other layouts (an instance dict to hand over,
+        compatible_for_assignment's checks) are not modelled."""
+        old = self.cls
+        same = (cls.slot_fields, cls.native_fields, cls.promoted_fields) == (old.slot_fields, old.native_fields, old.promoted_fields)
+        if not same or cls.has_dict or old.has_dict or cls.has_weakref != old.has_weakref or cls.bases != old.bases:
+            raise ModelError(f"__class__ from {old.name} to {cls.name}: another layout")
+        self.cls = cls
 
     def has_finalizer(self) -> bool:
         """tp_finalize: a class with __del__; a tagged object stands for one whose __del__ logs its tag."""

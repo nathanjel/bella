@@ -216,11 +216,16 @@ class _Hooks:
     def annotate_with(annotate: object, globals: dict[str, Any], closure: tuple[Any, ...] | None = None,
                       argdefs: object = None, kwdefaults: object = None) -> Any:
         """The function CPython builds from annotate.__code__ with these globals and cells: the
-        entry point, called with them."""
+        entry point, with them as the defaults of its last two parameters, so that calling it adds
+        its own frame alone, as the rebuilt function's call does."""
         freevars, code = _entry_point(annotate)
-        entry: Any = _FunctionType(code, {"_rt": _rt, "__builtins__": builtins})
         cells = dict(zip(freevars, closure or (), strict=True))
-        return lambda format: entry(format, globals, cells)
+        return _FunctionType(code, {"_rt": _rt, "__builtins__": builtins}, None, (globals, cells))
+
+    @staticmethod
+    def set_class(obj: object, cls: type) -> None:
+        """transmogrify's `obj.__class__ = ForwardRef`, which the shim asks of the runtime."""
+        obj.__class__ = cls
 
     @staticmethod
     def refuse(message: str) -> NoReturn:

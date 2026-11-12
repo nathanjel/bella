@@ -55,6 +55,9 @@ class Evaluator:
     freevars: tuple[str, ...]
     source: str
     code: types.CodeType
+    qualname: str = ""              # CPython's annotate function's: what a compiled program finds its entry point by
+    firstlineno: int = 0
+    tree: ast.FunctionDef | None = None   # the evaluator with the annotations' own positions, for the compiled program
 
 
 @dataclass
@@ -524,7 +527,11 @@ def evaluators_for_source(path: str) -> tuple[dict[str, Evaluator], list[str]]:
     """(the evaluators of the module at `path`, by entry key; what was declined, as
     "key: reason")."""
     with open(path, "rb") as f:
-        source = f.read()
+        return evaluators_for_text(f.read(), path)
+
+
+def evaluators_for_text(source: bytes | str, path: str) -> tuple[dict[str, Evaluator], list[str]]:
+    """evaluators_for_source of a module's text, its code's file name `path`."""
     tree = ast.parse(source, path)
     pep563 = any(isinstance(s, ast.ImportFrom) and s.module == "__future__" and any(a.name == "annotations" for a in s.names)
                  for s in tree.body)
@@ -551,6 +558,7 @@ def evaluators_for_source(path: str) -> tuple[dict[str, Evaluator], list[str]]:
         except Unsupported as exc:
             declined.append(f"{key}: {exc} in an annotation")
             continue
+        kept = copy.deepcopy(fn)            # compile() below fills in what the tree leaves out
         module_code = compile(ast.Module([fn], []), path, "exec", dont_inherit=True)
         evaluator = next(c for c in module_code.co_consts if isinstance(c, types.CodeType))
         if loads != _cpython_loads(annotate):
@@ -566,5 +574,5 @@ def evaluators_for_source(path: str) -> tuple[dict[str, Evaluator], list[str]]:
             declined.append(f"{key}: MISMATCH two annotate functions share this identity")
             del evaluators[key]
             continue
-        evaluators[key] = Evaluator(key, freevars, ast.unparse(fn), evaluator)
+        evaluators[key] = Evaluator(key, freevars, ast.unparse(fn), evaluator, annotate.co_qualname, annotate.co_firstlineno, kept)
     return evaluators, declined

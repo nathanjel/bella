@@ -1336,12 +1336,14 @@ Ref sys_getframemodulename(Obj, Args a) {         // sys__getframemodulename_imp
     Obj name = dict_get(f->module->dict, Obj::of(intern("__name__")));
     return name.is_unset() ? none_ref() : Ref::share(name);
 }
+}  // namespace
 bool is_callable(Obj v) {                        // PyCallable_Check: tp_call, which slot_tp_call fills for a class that defines __call__
     Kind k = v.is_object() ? v.object()->kind : Kind::Bool;
     bool yes = k == Kind::PyFunction || k == Kind::Builtin || k == Kind::Method || k == Kind::Class || k == Kind::Function;
     if (k == Kind::Instance || (!yes && is_subclass_instance(v))) yes = v.object()->cls->has("__call__");   // a built-in's subclass too
     return yes;
 }
+namespace {
 Ref b_callable(Obj, Args a) {
     onearg(a, "callable");
     return Ref::steal(boolean(is_callable(a.pos(0))));
