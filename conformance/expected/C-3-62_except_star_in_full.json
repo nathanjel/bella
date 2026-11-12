@@ -1,0 +1,12 @@
+{
+ "case": "C-3-62_except_star_in_full.py",
+ "clause": "C-3-62",
+ "spec": "section 3 (try/except*), section 8 (tracebacks)",
+ "status": "P1",
+ "source": "Python/codegen.c (codegen_try_star_except), Python/ceval.c (_PyEval_ExceptionGroupMatch, CHECK_EG_MATCH),",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "handled in the first clause is its match: True ['g', ['ValueError(1,)']]\nhandled in the second clause is its match: True ['g', ['TypeError(2,)']]\nhandled after the statement: None\nbare raise: False ['outer', ['ValueError(1,)', ['inner', ['TypeError(2,)', 'ValueError(3,)']]]] [4] None None\nnothing matched: False ['g', ['ValueError(1,)']] [4]\na naked exception re-raised: ['', [\"KeyError('k',)\"]] [-39, 3] [2] None None\na clause raises: ['', [\"OSError('new',)\", ['g', ['TypeError(2,)']]]] [-54] [[4], [2]] ExceptionGroup True True None\nseveral clauses raise: ['', ['ValueError(9,)', 'TypeError(2,)']]\ninvalid: TypeError ValueError\ninvalid: TypeError ValueError\ninvalid: TypeError ValueError\ninvalid: TypeError ValueError\ninvalid: TypeError ValueError\nfirst clause ran\na refusal's context: ['g', ['ValueError(1,)']]\nelse and finally: ['body', 'else', 'finally', 'handler', \"finally sees ['g', ['TypeError(2,)']]\", \"then ['g', ['TypeError(2,)']]\"]\nmatched part: Mine ['derived mine', ['ValueError(1,)']] ['a note']\nrest: Mine ['derived mine', ['TypeError(2,)']] ['a note'] False\na bare exception nothing matched: ValueError('bare',)\na tuple matched a bare one: ['', [\"ValueError('bare',)\"]] True\n",
+ "stderr": "",
+ "exit_code": 0
+}

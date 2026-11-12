@@ -11,7 +11,6 @@ from typing import Any
 
 from pipeline.l1.eval1 import Interpreter
 from pipeline.l1.frontend import FRONTEND_PASSES, lower
-from pipeline.l1.grammar import Unsupported
 from pipeline.l1.wf import WellFormednessError, check
 from pipeline.passes import manager
 from pipeline.passes.spec import REGISTRY, Discharge, Fact, Level, Obligation, PassSpec, RegisteredPass
@@ -160,13 +159,7 @@ def test_unbound_name_is_a_compile_time_error() -> None:
 
 
 def test_unsupported_constructs_are_named_not_approximated() -> None:
-    for src, needle in (("try:\n    pass\nexcept* E:\n    pass\n", "TryStar"),):
-        try:
-            lower(src, "<test>")
-        except Unsupported as exc:
-            assert needle in str(exc)
-        else:
-            raise AssertionError(f"{src!r} lowered silently")
+    # (try/except*, the last construct refused here, is lowered since 2026-11-12: desugar-try-star, C-3-16, C-3-62)
     # what CPython's compiler rejects is rejected as CPython rejects it, before any refusal
     # (review 2026-11-02): an await outside a function
     try:

@@ -813,6 +813,53 @@ def test_importlib() -> None:
     same(IMPORTLIB)
 
 
+EXCEPT_STAR = r"""
+import sys
+def m(f):
+    try:
+        f()
+        return "nothing raised"
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e) + " | context " + type(e.__context__).__name__
+def star(t, exc):
+    def f():
+        try:
+            raise exc
+        except* t:
+            pass
+    return f
+print(m(star(ExceptionGroup, ValueError())), m(star((ValueError, BaseExceptionGroup), ValueError())), m(star(int, ValueError())), m(star((ValueError, 1), ValueError())), m(star("x", ExceptionGroup("g", [ValueError()]))))
+class Odd(ExceptionGroup):
+    def split(self, t):
+        return self.answer
+for answer in ([1, 2], (1,), (), None, (None, None, 3)):
+    g = Odd("odd", [ValueError(1)])
+    g.answer = answer
+    print(repr(answer), m(star(ValueError, g)))
+class Meta(type):
+    def __subclasscheck__(cls, sub):
+        return True
+class Sneaky(Exception, metaclass=Meta):
+    pass
+print(m(star(Sneaky, ValueError())))
+def gen():
+    try:
+        raise ExceptionGroup("g", [ValueError(1), TypeError(2)])
+    except* ValueError as e:
+        yield "in the clause: " + str(type(sys.exception()).__name__) + " " + str([type(x).__name__ for x in e.exceptions])
+    except* TypeError:
+        yield "second clause"
+print(m(lambda: print(list(gen()))))
+"""
+
+
+def test_except_star() -> None:
+    """try/except* (the frontend's desugar-try-star over the runtime's eg_match and prep_reraise_star): the words of what a clause's
+    type is refused for, a split method that answers what CHECK_EG_MATCH refuses, a __subclasscheck__ that PyObject_IsSubclass asks,
+    and clauses that yield."""
+    same(EXCEPT_STAR)
+
+
 def test_exception_groups() -> None:
     """BaseExceptionGroup and ExceptionGroup (Objects/exceptions.c) without except*: split and subgroup by a type, a tuple and a
     predicate, the class chosen by what is nested, the metadata the parts keep, contextlib.suppress over a group, and the

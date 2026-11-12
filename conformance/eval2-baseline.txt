@@ -14,6 +14,7 @@ C-3-11_class_attribute_becomes_descriptor.py
 C-3-12_dead_class_cache_entries.py
 C-3-14_comprehension_unpacking.py
 C-3-15_generator_close_and_throw.py
+C-3-16_except_star.py
 C-3-17_match.py
 C-3-20_copy_protocol.py
 C-3-24_signatures_at_runtime.py

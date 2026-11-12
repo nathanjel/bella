@@ -268,7 +268,9 @@ class _Runtime:
         before any handler runs. The helpers the translation calls do have frames, and a
         traceback would keep their arguments alive, so where generated code catches an exception
         their entries are unlinked from it, and from the exceptions it chains, and their frames
-        cleared (review 2026-11-02, A8-2)."""
+        cleared (review 2026-11-02, A8-2). An exception the except* desugaring raised gets back the context and traceback
+        it had (eval1._restore)."""
+        E1._restore(exc)
         seen: set[int] = set()
         todo: list[BaseException | None] = [exc]
         while todo:
@@ -991,6 +993,8 @@ class Interpreter:
             return E1._map_add
         if name == "set_add":
             return set.add
+        if name in E1._STAR:
+            return E1._STAR[name]
         if name == "set_type_params":
             return E1._set_type_params
         if name == "unpack":

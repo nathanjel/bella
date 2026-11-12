@@ -23,6 +23,7 @@ class Level(Enum):
 class Fact(Enum):
     NO_CHAINED_COMPARE = "no chained comparisons"
     NO_WITH = "no with statements"
+    NO_TRY_STAR = "no try statements with except* clauses"
     NO_COMPREHENSIONS = "no comprehensions"
     NO_FSTRINGS = "no f-strings"
     NO_DECORATORS = "no decorators"

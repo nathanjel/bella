@@ -812,6 +812,21 @@ void reraise() {
     throw PyError{Ref::share(handled().back()), detail::BARE_RAISE};   // records nothing here (RL-221)
 }
 
+void reraise_as_is(Obj exc) {                    // RERAISE of a value: no context taken, no entry for this frame
+    throw PyError{Ref::share(exc), detail::BARE_RAISE};
+}
+
+Ref handled_exception() {                        // sys.exception(): the exception being handled, None for none
+    return handled().empty() ? none_ref() : Ref::share(handled().back());
+}
+
+void set_handled_exception(Obj exc) {             // PyErr_SetHandledException: the innermost handler's exception replaced
+    if (handled().empty()) return;
+    incref(exc);
+    Obj old = std::exchange(handled().back(), exc);
+    decref(old);
+}
+
 Obj unsupported_constant(const char* what) { throw NotImplemented(what); }
 Obj str_constant_cps(std::initializer_list<char32_t> cps) {
     return Obj::of(new Str(std::u32string_view(cps.begin(), cps.size()), true));
@@ -863,19 +878,25 @@ void raise_type(Obj value, Obj cause, bool has_cause) {
     raise(exc.get());
 }
 
-bool exception_matches(Obj exc, Obj spec) {
-    // CHECK_EXC_MATCH: the clause's types are checked before any is matched; a tuple's items must
-    // each be an exception class (_PyEval_CheckExceptTypeValid), then PyErr_GivenExceptionMatches
+void check_except_type_valid(Obj spec) {         // _PyEval_CheckExceptTypeValid: a class, or a tuple whose items each are one
     static const char* const CANNOT_CATCH = "catching classes that do not inherit from BaseException is not allowed";
     if (is_kind(spec, Kind::Tuple)) {
-        auto& items = static_cast<Tuple*>(spec.object())->items;
-        for (Obj s : items)
+        for (Obj s : static_cast<Tuple*>(spec.object())->items)
             if (!is_exception_class(s)) raise_new("TypeError", CANNOT_CATCH);
-        for (Obj s : items)
+        return;
+    }
+    if (!is_exception_class(spec)) raise_new("TypeError", CANNOT_CATCH);
+}
+
+bool exception_matches(Obj exc, Obj spec) {
+    // CHECK_EXC_MATCH: the clause's types are checked before any is matched (_PyEval_CheckExceptTypeValid), then
+    // PyErr_GivenExceptionMatches
+    check_except_type_valid(spec);
+    if (is_kind(spec, Kind::Tuple)) {
+        for (Obj s : static_cast<Tuple*>(spec.object())->items)
             if (is_subclass(type_of(exc), static_cast<ClassObject*>(s.object()))) return true;
         return false;
     }
-    if (!is_exception_class(spec)) raise_new("TypeError", CANNOT_CATCH);
     return is_subclass(type_of(exc), static_cast<ClassObject*>(spec.object()));
 }
 
@@ -894,6 +915,16 @@ Traceback* add_entry(Obj exc, const Code& code, int line, std::uint64_t id) {
     return tb;
 }
 }  // namespace
+
+void traceback_from_current_frame(Obj exc) {     // _PyTraceBack_FromFrame(NULL, f) as exc's traceback: one entry, the frame's line now
+    detail::FrameRecord* f = detail::current_frame();
+    if (f == nullptr) return;
+    if (f->id == 0) f->id = ++frame_ids;
+    auto* tb = new Traceback(f->code, f->line, none_ref());
+    tb->frame = f->id;
+    Ref held = own(tb);
+    set_exception_field(exc, "__traceback__", held.get());
+}
 
 void detail::arrive(const Code& code, int line, std::uint64_t& id, PyError& e) noexcept {
     try {

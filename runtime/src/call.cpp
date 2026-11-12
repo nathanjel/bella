@@ -2113,13 +2113,40 @@ Ref i_super(Obj, Args a) {                       // zero-argument super() in a f
     return zero_argument_super(a.pos(0), a.pos(1), a.pos(2));
 }
 
+// try/except* (the frontend's desugar-try-star): the exception being handled, CHECK_EG_MATCH (the match then handled, as
+// PyErr_SetHandledException makes it), the raise that makes the match handled in the clause (it is already: compiled, the
+// raise records nothing and takes no context), _PyExc_PrepReraiseStar, and RERAISE
+Ref i_exception(Obj, Args a) {
+    positional_only(a, "exception", 0, 0);
+    return handled_exception();
+}
+Ref i_eg_match(Obj, Args a) {
+    positional_only(a, "eg_match", 2, 2);
+    auto [rest, match] = eg_match(a.pos(0), a.pos(1));
+    if (match.get() != None()) set_handled_exception(match.get());
+    return tuple_new({rest.get(), match.get()});
+}
+Ref i_raise_handled(Obj, Args a) {
+    positional_only(a, "raise_handled", 1, 1);
+    reraise_as_is(a.pos(0));
+}
+Ref i_prep_reraise_star(Obj, Args a) {
+    positional_only(a, "prep_reraise_star", 2, 2);
+    return prep_reraise_star(a.pos(0), a.pos(1));
+}
+Ref i_reraise_star(Obj, Args a) {
+    positional_only(a, "reraise_star", 1, 1);
+    reraise_as_is(a.pos(0));
+}
+
 void register_intrinsics() {
     static bool done = false;
     if (done) return;
     done = true;
     for (auto [name, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
              {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack},
-             {"call_args_tuple", i_call_args_tuple}, {"super", i_super}}) {
+             {"call_args_tuple", i_call_args_tuple}, {"super", i_super}, {"exception", i_exception}, {"eg_match", i_eg_match},
+             {"raise_handled", i_raise_handled}, {"prep_reraise_star", i_prep_reraise_star}, {"reraise_star", i_reraise_star}}) {
         Ref b = own(new Builtin(name, fn));
         dict_set(intrinsics(), Obj::of(intern(name)), b.get());
     }

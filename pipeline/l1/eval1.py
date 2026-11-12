@@ -1396,6 +1396,8 @@ class Interpreter:
                 return _map_add
             if e.name == "set_add":
                 return set.add
+            if e.name in _STAR:
+                return _STAR[e.name]
             if e.name == "set_type_params":
                 return _set_type_params
             if e.name == "unpack":
@@ -1491,7 +1493,117 @@ class _Carrier(BaseException):
 
 
 def _unwrap(exc: BaseException) -> BaseException:
-    return exc.inner if isinstance(exc, _Carrier) else exc
+    exc = exc.inner if isinstance(exc, _Carrier) else exc
+    _restore(exc)
+    return exc
+
+
+# ---- except* (the frontend's desugar-try-star): CPython 3.15.2's CHECK_EG_MATCH and _PyExc_PrepReraiseStar, ported ----
+# An evaluator runs on CPython, which cannot be told which exception is being handled: the desugaring raises the match and
+# catches it to make it so, and re-raises the statement's result the same way. A raise sets the exception's context and
+# adds the evaluator's frames to its traceback, which CPython's PyErr_SetHandledException and RERAISE do not; what they
+# were is kept here and put back where an evaluator catches the exception (_unwrap, eval2's strip). Compiled, the
+# runtime sets the handled exception and re-raises without either (runtime/src/types.cpp).
+_PUT_BACK: dict[int, tuple[BaseException, Any, Any]] = {}
+_HANDLED: dict[int, tuple[BaseException, Any]] = {}      # a match made the handled exception, and its traceback then
+
+
+def _restore(exc: BaseException) -> None:
+    kept = _PUT_BACK.pop(id(exc), None)
+    if kept is not None and kept[0] is exc:
+        exc.__traceback__, exc.__context__ = kept[1], kept[2]
+        _HANDLED[id(exc)] = (exc, kept[1])
+
+
+def _raise_keeping(exc: BaseException) -> None:
+    _PUT_BACK[id(exc)] = (exc, exc.__traceback__, exc.__context__)
+    raise exc
+
+
+def _star_exception() -> BaseException | None:
+    """sys.exception(), for the desugaring. A bare raise of the match in a clause (RERAISE) adds nothing to its traceback in
+    CPython; here eval1's own frames went on in front, so the traceback it had when it became the handled one is put back."""
+    exc = sys.exception()
+    kept = _HANDLED.get(id(exc)) if exc is not None else None
+    if exc is not None and kept is not None and kept[0] is exc:
+        tb = exc.__traceback__
+        while tb is not None and tb is not kept[1]:
+            tb = tb.tb_next
+        if tb is kept[1]:
+            exc.__traceback__ = kept[1]
+    return exc
+
+
+def _check_except_star_type(right: Any) -> None:
+    """_PyEval_CheckExceptStarTypeValid: _PyEval_CheckExceptTypeValid, then no BaseExceptionGroup (PyObject_IsSubclass)."""
+    classes = tuple(tuple.__iter__(right)) if isinstance(right, tuple) else (right,)
+    for c in classes:
+        if not (isinstance(c, type) and BaseException in c.__mro__):
+            raise TypeError("catching classes that do not inherit from BaseException is not allowed")
+    if any(issubclass(c, BaseExceptionGroup) for c in classes):
+        raise TypeError("catching ExceptionGroup with except* is not allowed. Use except instead.")
+
+
+def eg_match(exc: Any, match_type: Any) -> tuple[Any, Any]:
+    """CHECK_EG_MATCH (_PyEval_ExceptionGroupMatch): (rest, match). The match's traceback, for a bare exception wrapped,
+    would be this frame's (_PyTraceBack_FromFrame); an evaluator's frame is none of the program's, so it has none."""
+    _check_except_star_type(match_type)
+    if exc is None:
+        return None, None
+    classes = tuple(tuple.__iter__(match_type)) if isinstance(match_type, tuple) else (match_type,)
+    if any(c in type(exc).__mro__ for c in classes):          # PyErr_GivenExceptionMatches
+        if isinstance(exc, BaseExceptionGroup):
+            return None, exc
+        return None, BaseExceptionGroup("", (exc,))
+    if isinstance(exc, BaseExceptionGroup):
+        pair = exc.split(match_type)                           # PyObject_CallMethod: the method the instance has
+        if type(pair) is not tuple:                            # %.200s of the two tp_names
+            raise TypeError(f"{type(exc).__name__}.split must return a tuple, not {type(pair).__name__}")
+        if len(pair) < 2:
+            raise TypeError(f"{type(exc).__name__}.split must return a 2-tuple, got tuple of size {len(pair)}")
+        return pair[1], pair[0]
+    return exc, None
+
+
+def _leaf_ids(exc: BaseException | None, ids: set[int]) -> None:   # collect_exception_group_leaf_ids
+    if exc is None:
+        return
+    if not isinstance(exc, BaseExceptionGroup):
+        ids.add(id(exc))
+        return
+    for e in exc.exceptions:
+        _leaf_ids(e, ids)
+
+
+def prep_reraise_star(orig: BaseException, excs: list[Any]) -> Any:
+    """_PyExc_PrepReraiseStar: what the statement re-raises. Those whose traceback, cause and context are orig's were
+    re-raised and keep orig's nesting (exception_group_projection: orig's subgroup of their leaves, through derive); the
+    rest were raised in the clauses and join them in a new group. The notes field the C compares is never set (3.15
+    keeps __notes__ in the instance's dict), so it is equal for all."""
+    if not excs:
+        return None
+    if not isinstance(orig, BaseExceptionGroup):
+        return excs[0]                                         # a bare exception, wrapped: one clause ran at most
+    raised: list[BaseException] = []
+    reraised: list[BaseException] = []
+    for e in excs:
+        if e is None:
+            continue
+        same = e.__traceback__ is orig.__traceback__ and e.__cause__ is orig.__cause__ and e.__context__ is orig.__context__
+        (reraised if same else raised).append(e)
+    ids: set[int] = set()
+    for e in reraised:
+        _leaf_ids(e, ids)
+    reraised_eg = BaseExceptionGroup.subgroup(orig, lambda leaf: not isinstance(leaf, BaseExceptionGroup) and id(leaf) in ids)
+    if not raised:
+        return reraised_eg
+    if reraised_eg is not None:
+        raised.append(reraised_eg)
+    return BaseExceptionGroup("", raised) if len(raised) > 1 else raised[0]
+
+
+_STAR: dict[str, Callable[..., Any]] = {"exception": _star_exception, "eg_match": eg_match, "raise_handled": _raise_keeping,
+                                        "prep_reraise_star": prep_reraise_star, "reraise_star": _raise_keeping}
 
 
 def _matches(exc: BaseException, spec: Any) -> bool:

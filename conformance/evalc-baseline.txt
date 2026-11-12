@@ -13,6 +13,7 @@ C-3-10_attribute_hooks_run_once.py
 C-3-11_class_attribute_becomes_descriptor.py
 C-3-14_comprehension_unpacking.py
 C-3-15_generator_close_and_throw.py
+C-3-16_except_star.py
 C-3-18_class_assignment.py
 C-3-19_getattribute_override.py
 C-3-20_copy_protocol.py
@@ -55,6 +56,7 @@ C-3-58_an_instance_without_its_dict.py
 C-3-59_the_dict_an_instance_has.py
 C-3-60_a_class_has_thirty_places.py
 C-3-61_the_lines_of_a_with_statement.py
+C-3-62_except_star_in_full.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

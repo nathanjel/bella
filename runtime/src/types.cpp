@@ -2199,7 +2199,12 @@ Ref beg_derive(Obj self, Args a) {               // BaseExceptionGroup.derive(ex
     onearg(a, "BaseExceptionGroup.derive");
     return invoke(Obj::of(exception_class("BaseExceptionGroup")), {exception_field(self, "msg"), a.pos(0)});
 }
-enum class Matcher { ByType, ByPredicate };
+enum class Matcher { ByType, ByPredicate, InstanceIds };
+struct SplitMatcher {                            // exceptiongroup_split_recursive's matcher_type and matcher_value
+    Matcher type;
+    Obj value;
+    const std::unordered_set<const Object*>* ids = nullptr;   // InstanceIds: the leaves wanted (a set of PyLong ids in the C)
+};
 Matcher matcher_type(Obj value) {                // get_matcher_type
     if (callable_object(value) && !is_kind(value, Kind::Class)) return Matcher::ByPredicate;
     if (is_exception_class(value)) return Matcher::ByType;
@@ -2210,9 +2215,10 @@ Matcher matcher_type(Obj value) {                // get_matcher_type
     }
     raise_new("TypeError", "expected an exception type, a tuple of exception types, or a callable (other than a class)");
 }
-bool split_matches(Obj exc, Matcher type, Obj value) {   // exceptiongroup_split_check_match
-    if (type == Matcher::ByType) return exception_matches(exc, value);   // PyErr_GivenExceptionMatches
-    Ref answer = invoke(value, {exc});
+bool split_matches(Obj exc, const SplitMatcher& m) {   // exceptiongroup_split_check_match
+    if (m.type == Matcher::ByType) return exception_matches(exc, m.value);   // PyErr_GivenExceptionMatches
+    if (m.type == Matcher::InstanceIds) return !is_exception_group(exc) && m.ids->contains(exc.object());   // a leaf, by identity
+    Ref answer = invoke(m.value, {exc});
     return truth(answer.get());
 }
 Ref beg_subset(Obj orig, Obj excs) {             // exceptiongroup_subset: orig.derive(excs) with orig's metadata, Unset for no excs
@@ -2245,8 +2251,8 @@ struct SplitDepth {                              // _Py_EnterRecursiveCall(" in 
     }
     ~SplitDepth() { --depth(); }
 };
-std::pair<Ref, Ref> split_recursive(Obj exc, Matcher type, Obj value, bool construct_rest) {   // exceptiongroup_split_recursive
-    if (split_matches(exc, type, value)) return {Ref::share(exc), Ref{}};   // a full match
+std::pair<Ref, Ref> split_recursive(Obj exc, const SplitMatcher& m, bool construct_rest) {   // exceptiongroup_split_recursive
+    if (split_matches(exc, m)) return {Ref::share(exc), Ref{}};   // a full match
     if (!is_exception_group(exc)) return {Ref{}, construct_rest ? Ref::share(exc) : Ref{}};   // a leaf and no match
     Ref match_list = list_new({});               // a partial match
     Ref rest_list = construct_rest ? list_new({}) : Ref{};
@@ -2256,7 +2262,7 @@ std::pair<Ref, Ref> split_recursive(Obj exc, Matcher type, Obj value, bool const
         std::pair<Ref, Ref> part;
         {
             SplitDepth guard;
-            part = split_recursive(inner.get(), type, value, construct_rest);
+            part = split_recursive(inner.get(), m, construct_rest);
         }
         if (!part.first.get().is_unset()) list_append(match_list.get(), part.first.get());
         if (!part.second.get().is_unset()) list_append(rest_list.get(), part.second.get());
@@ -2268,15 +2274,105 @@ std::pair<Ref, Ref> split_recursive(Obj exc, Matcher type, Obj value, bool const
 Ref beg_split(Obj self, Args a) {                // BaseExceptionGroup.split(matcher_value, /) -> (match, rest)
     onearg(a, "BaseExceptionGroup.split");
     Matcher type = matcher_type(a.pos(0));
-    auto [match, rest] = split_recursive(self, type, a.pos(0), true);
+    auto [match, rest] = split_recursive(self, SplitMatcher{type, a.pos(0)}, true);
     return tuple_new({match.get().is_unset() ? None() : match.get(), rest.get().is_unset() ? None() : rest.get()});
 }
 Ref beg_subgroup(Obj self, Args a) {             // BaseExceptionGroup.subgroup(matcher_value, /) -> match
     onearg(a, "BaseExceptionGroup.subgroup");
     Matcher type = matcher_type(a.pos(0));
-    auto parts = split_recursive(self, type, a.pos(0), false);
+    auto parts = split_recursive(self, SplitMatcher{type, a.pos(0)}, false);
     return parts.first.get().is_unset() ? none_ref() : std::move(parts.first);
 }
+}  // namespace
+
+// ---- except* (Python/ceval.c: CHECK_EG_MATCH, _PyEval_ExceptionGroupMatch; Objects/exceptions.c: _PyExc_PrepReraiseStar,
+// exception_group_projection, is_same_exception_metadata), what the frontend's desugaring of try/except* calls ----
+std::pair<Ref, Ref> eg_match(Obj exc_value, Obj match_type) {   // (rest, match)
+    // _PyEval_CheckExceptStarTypeValid: the except clause's check, then no exception group type (PyObject_IsSubclass)
+    check_except_type_valid(match_type);
+    bool group = false;
+    if (is_kind(match_type, Kind::Tuple)) {
+        for (Obj item : static_cast<Tuple*>(match_type.object())->items)
+            if (object_issubclass(item, Obj::of(exception_class("BaseExceptionGroup")))) {
+                group = true;
+                break;
+            }
+    } else {
+        group = object_issubclass(match_type, Obj::of(exception_class("BaseExceptionGroup")));
+    }
+    if (group) raise_new("TypeError", "catching ExceptionGroup with except* is not allowed. Use except instead.");
+    if (exc_value == None()) return {none_ref(), none_ref()};
+    if (exception_matches(exc_value, match_type)) {   // a full match of the exception itself
+        if (is_exception_group(exc_value)) return {none_ref(), Ref::share(exc_value)};
+        // a bare exception, wrapped: _PyExc_CreateExceptionGroup("", (exc,)), its traceback this frame's (_PyTraceBack_FromFrame)
+        Ref excs = tuple_new({exc_value});
+        Ref msg = str_new("");
+        Ref wrapped = invoke(Obj::of(exception_class("BaseExceptionGroup")), {msg.get(), excs.get()});
+        traceback_from_current_frame(wrapped.get());
+        return {none_ref(), std::move(wrapped)};
+    }
+    if (is_exception_group(exc_value)) {             // a partial match: split, as the instance's split method does it
+        Ref split = getattr(exc_value, intern("split"));
+        Ref pair = invoke(split.get(), {match_type});
+        if (!is_kind(pair.get(), Kind::Tuple) || is_subclass_instance(pair.get()))   // PyTuple_CheckExact
+            raise_new("TypeError", type_of(exc_value)->name + ".split must return a tuple, not " + type_of(pair.get())->name);
+        auto& items = static_cast<Tuple*>(pair.get().object())->items;
+        if (items.size() < 2)                         // longer tuples allowed, for backwards compatibility
+            raise_new("TypeError", type_of(exc_value)->name + ".split must return a 2-tuple, got tuple of size " + std::to_string(items.size()));
+        return {Ref::share(items[1]), Ref::share(items[0])};
+    }
+    return {Ref::share(exc_value), none_ref()};
+}
+
+namespace {
+void leaf_ids(Obj exc, std::unordered_set<const Object*>& ids) {   // collect_exception_group_leaf_ids
+    if (exc == None()) return;
+    if (!is_exception_group(exc)) {
+        ids.insert(exc.object());
+        return;
+    }
+    Ref excs = Ref::share(exception_field(exc, "excs"));
+    for (Obj e : static_cast<Tuple*>(excs.get().object())->items) {
+        SplitDepth guard;                            // _Py_EnterRecursiveCall(" in collect_exception_group_leaf_ids")
+        leaf_ids(e, ids);
+    }
+}
+bool same_metadata(Obj e1, Obj e2) {              // is_same_exception_metadata: the notes field is never set in 3.15, so equal
+    for (const char* f : {"__traceback__", "__cause__", "__context__"})
+        if (exception_field(e1, f) != exception_field(e2, f)) return false;
+    return true;
+}
+}  // namespace
+
+Ref prep_reraise_star(Obj orig, Obj excs) {      // _PyExc_PrepReraiseStar: what the statement re-raises, None for nothing
+    auto& items = static_cast<List*>(excs.object())->items;
+    if (items.empty()) return none_ref();
+    if (!is_exception_group(orig)) return Ref::share(items[0]);   // a bare exception, wrapped: one clause ran at most
+    Ref raised = list_new({});
+    std::vector<Obj> reraised;
+    std::vector<Ref> snapshot;                   // the list's items, held while derive and the comparisons run
+    for (Obj e : items) snapshot.push_back(Ref::share(e));
+    for (const Ref& e : snapshot) {
+        if (e.get() == None()) continue;
+        if (same_metadata(e.get(), orig)) reraised.push_back(e.get());
+        else list_append(raised.get(), e.get());
+    }
+    // exception_group_projection: orig's part made of the reraised groups' leaves, with orig's nesting (derive)
+    std::unordered_set<const Object*> ids;
+    for (Obj e : reraised) leaf_ids(e, ids);
+    auto parts = split_recursive(orig, SplitMatcher{Matcher::InstanceIds, Obj{}, &ids}, false);
+    Ref reraised_eg = parts.first.get().is_unset() ? none_ref() : std::move(parts.first);
+    auto& got = static_cast<List*>(raised.get().object())->items;
+    if (got.empty()) return reraised_eg;
+    if (reraised_eg.get() != None()) list_append(raised.get(), reraised_eg.get());
+    if (got.size() > 1) {
+        Ref msg = str_new("");
+        return invoke(Obj::of(exception_class("BaseExceptionGroup")), {msg.get(), raised.get()});   // _PyExc_CreateExceptionGroup
+    }
+    return Ref::share(got[0]);
+}
+
+namespace {
 // ---- SyntaxError ----
 Ref syntax_error_init(Obj self, Args a) {        // SyntaxError_init
     if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");

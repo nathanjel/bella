@@ -57,7 +57,7 @@ def test_units_are_keyed_as_cpython_keys_code_objects() -> None:
 def test_the_verdict_comes_from_the_frontend() -> None:
     verdict = scope.lowers_today()
     assert verdict["if"] and verdict["return"]
-    assert verdict["match"] and verdict["type alias (PEP 695)"] and not verdict["except*"]   # except* not yet
+    assert verdict["match"] and verdict["type alias (PEP 695)"] and verdict["except*"]   # except* since 2026-11-12 (desugar-try-star)
 
 
 if __name__ == "__main__":

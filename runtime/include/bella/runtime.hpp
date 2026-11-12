@@ -305,6 +305,11 @@ struct PyError {
 [[noreturn]] void raise_type(Obj type_or_instance, Obj cause = Obj{}, bool has_cause = false);
 ClassObject* exception_class(const char* name);
 bool exception_matches(Obj exc, Obj spec);       // except clause matching (a class or a tuple of them)
+void check_except_type_valid(Obj spec);           // _PyEval_CheckExceptTypeValid
+// try/except* (the frontend's desugar-try-star; runtime/src/types.cpp): CHECK_EG_MATCH's (rest, match), and what the
+// statement re-raises (_PyExc_PrepReraiseStar), None for nothing
+std::pair<Ref, Ref> eg_match(Obj exc, Obj match_type);
+Ref prep_reraise_star(Obj orig, Obj excs);
 Obj traceback_of(Obj exc);
 bool is_exception_instance(Obj v);               // PyExceptionInstance_Check
 bool is_sequence(Obj v);                         // PySequence_Check
@@ -556,6 +561,10 @@ bool with_attribute_storage(Obj v, F&& f) {
 Obj exception_field(Obj exc, const char* name);
 void set_exception_field(Obj exc, const char* name, Obj value);   // the new value kept before the old is released
 [[noreturn]] void reraise();                     // bare `raise`: the exception being handled
+[[noreturn]] void reraise_as_is(Obj exc);         // RERAISE of a value: no context taken, no traceback entry for this frame
+Ref handled_exception();                          // sys.exception()
+void set_handled_exception(Obj exc);              // PyErr_SetHandledException: the innermost handler's exception replaced
+void traceback_from_current_frame(Obj exc);       // _PyTraceBack_FromFrame(NULL, f): exc's traceback, one entry for the frame running
 // Inside a catch block: the caught exception goes on, as the one being propagated again (a
 // finally block or an except clause's test may have raised and caught others meanwhile).
 [[noreturn]] inline void rethrow(const PyError& e) {
@@ -598,6 +607,7 @@ struct FrameRecord {
     FrameRecord* caller;
     int line;
     int comprehensions = 0;                      // the inlined comprehensions running in this frame now (PEP 709): their variables are its own
+    std::uint64_t id = 0;                        // given when the frame first records an exception (its traceback entries carry it)
 };
 FrameRecord*& current_frame();
 // an inlined comprehension's line is its enclosing frame's (PEP 709): the nearest shown caller takes it
@@ -610,7 +620,6 @@ template <std::size_t N>
 class FrameGuard : public detail::FrameRecord {
     std::array<Ref*, N> locals_;
     int uncaught_;
-    std::uint64_t id_ = 0;                       // given when the frame first records an exception
 public:
     template <class... L>
     explicit FrameGuard(const Code& c, Module* m, L&... locals)
@@ -620,12 +629,12 @@ public:
         if (c.shown) detail::current_frame() = this;
         else if (c.inlined && caller != nullptr) ++caller->comprehensions;
     }
-    void arrived(PyError& e) noexcept { detail::arrive(*code, line, id_, e); }
+    void arrived(PyError& e) noexcept { detail::arrive(*code, line, id, e); }
     ~FrameGuard() {
         detail::leave_frame();
         detail::current_frame() = caller;
         if (!code->shown && code->inlined && caller != nullptr) --caller->comprehensions;
-        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, line, id_, locals_.data(), N);
+        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, line, id, locals_.data(), N);
     }
     FrameGuard(const FrameGuard&) = delete;
     FrameGuard& operator=(const FrameGuard&) = delete;

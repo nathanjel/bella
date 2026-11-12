@@ -1618,6 +1618,95 @@ def desugar_with(tree: ast.Module) -> ast.Module:
     return _as_module(ast.fix_missing_locations(_With().visit(tree)))
 
 
+class _TryStar(ast.NodeTransformer):
+    """try/except* as CPython compiles it (codegen_try_star_except, CPython 3.15.2), over an ordinary try whose one
+    handler catches everything (PUSH_EXC_INFO) and runs each except* clause in order on what the previous ones left:
+
+        orig = <the exception>; rest = orig; raised = []
+        rest, match = %eg_match(rest, T)       CHECK_EG_MATCH: the type checked, the exception split or wrapped; the
+                                               match becomes the exception being handled (PyErr_SetHandledException)
+        if match is not None:                  the clause, with the match handled (a bare raise re-raises it, a new
+            ...                                exception takes it as its context); what it raises is appended to raised
+        raised.append(rest)
+        res = %prep_reraise_star(orig, raised) _PyExc_PrepReraiseStar
+        if res is not None: %reraise_star(res) RERAISE: the frame adds no traceback entry for it
+
+    The clause runs inside `try: %raise_handled(match) except: ...`, which is how an evaluator running on CPython makes
+    the match the exception being handled (it cannot set it); compiled, %eg_match has already set it, and the raise adds
+    nothing. Every statement of the clause's own work is at the except* line (LOC(handler)). The else and finally blocks
+    are the statement's own; a return, break or continue in a clause is CPython's SyntaxError before this runs."""
+
+    def visit_TryStar(self, node: ast.TryStar) -> Any:
+        self.generic_visit(node)
+        orig, rest, raised, pair, match, res = (_tmp("eg"), _tmp("rest"), _tmp("raised"), _tmp("pair"), _tmp("match"), _tmp("res"))
+
+        def name(n: str) -> ast.Name:
+            return ast.Name(id=n, ctx=ast.Load())
+
+        def call(intrinsic: str, *args: ast.expr) -> ast.Call:
+            return ast.Call(func=_intrinsic(intrinsic), args=list(args), keywords=[])
+
+        def at[N: ast.AST](where: ast.AST, *stmts: N) -> list[N]:
+            out: list[N] = []
+            for s in stmts:
+                for n in ast.walk(s):
+                    if "lineno" in n._attributes and not hasattr(n, "lineno"):
+                        ast.copy_location(n, where)
+                out.append(s)
+            return out
+
+        first = node.handlers[0]
+        handler_body: list[ast.stmt] = at(first,
+                                          _assign(orig, call("exception")),
+                                          _assign(rest, name(orig)),
+                                          _assign(raised, ast.List(elts=[], ctx=ast.Load())))
+        for h in node.handlers:
+            assert h.type is not None, "except* has a type (the grammar's)"
+            handler_body += at(h, _assign(pair, call("eg_match", name(rest), h.type)),
+                               _assign(rest, _item(pair, 0)), _assign(match, _item(pair, 1)), _assign(pair, ast.Constant(None)))
+            clause: list[ast.stmt] = []
+            if h.name is not None:
+                clause += at(h, _assign(h.name, name(match)))
+            clause += at(h, _assign(match, ast.Constant(None)))
+            gather = ast.Try(body=list(h.body), handlers=at(h, ast.ExceptHandler(type=None, name=None, body=at(h, ast.Expr(ast.Call(
+                func=ast.Attribute(value=name(raised), attr="append", ctx=ast.Load()), args=[call("exception")], keywords=[]))))),
+                orelse=[], finalbody=[])
+            clause += at(h, gather)
+            if h.name is not None:                   # name = None; del name, on both ways out of the clause
+                clause += at(h, _assign(h.name, ast.Constant(None)), ast.Delete(targets=[ast.Name(id=h.name, ctx=ast.Del())]))
+            handled = ast.Try(body=at(h, ast.Expr(call("raise_handled", name(match)))),
+                              handlers=at(h, ast.ExceptHandler(type=None, name=None, body=clause)), orelse=[], finalbody=[])
+            handler_body += at(h, ast.If(test=ast.Compare(left=name(match), ops=[ast.IsNot()], comparators=[ast.Constant(None)]),
+                                         body=[handled], orelse=[]))
+        last = node.handlers[-1]
+        handler_body += at(last,
+                           ast.Expr(ast.Call(func=ast.Attribute(value=name(raised), attr="append", ctx=ast.Load()), args=[name(rest)], keywords=[])),
+                           _assign(rest, ast.Constant(None)),
+                           _assign(res, call("prep_reraise_star", name(orig), name(raised))),
+                           _assign(orig, ast.Constant(None)), _assign(raised, ast.Constant(None)),
+                           ast.If(test=ast.Compare(left=name(res), ops=[ast.IsNot()], comparators=[ast.Constant(None)]),
+                                  body=[ast.Expr(call("reraise_star", name(res)))], orelse=[]))
+        out = ast.Try(body=node.body, handlers=at(first, ast.ExceptHandler(type=None, name=None, body=handler_body)),
+                      orelse=node.orelse, finalbody=node.finalbody)
+        return ast.copy_location(out, node)
+
+
+@register(PassSpec(
+    name="desugar-try-star", source=Level.L0, target=Level.L0,
+    produces=frozenset({Fact.NO_TRY_STAR}),
+    obligations=(
+        Obligation("wf", "output contains no TryStar node"),
+        Obligation("semantics", "codegen_try_star_except: each clause in order on what the previous left (CHECK_EG_MATCH: the type checked, "
+                                "a group split, a bare exception wrapped, the match handled), what the clauses raise gathered, "
+                                "_PyExc_PrepReraiseStar's result re-raised with no entry for this frame; else and finally the statement's own"),
+        Obligation("terminates", "one expansion per try statement"),
+    ),
+    discharge=Discharge.TESTED, status="tested",
+))
+def desugar_try_star(tree: ast.Module) -> ast.Module:
+    return _as_module(ast.fix_missing_locations(_TryStar().visit(tree)))
+
+
 def _walrus_targets(nodes: Sequence[ast.AST]) -> list[str]:
     """PEP 572: the names a comprehension's walrus expressions bind (nested comprehensions
     included, lambdas not: they are scopes of their own), in the order the loop binds them."""
@@ -2330,7 +2419,7 @@ class _ToL1WithWalrus(_ToL1):
 
 @register(PassSpec(
     name="to-l1", source=Level.L0, target=Level.L1,
-    requires=frozenset({Fact.NO_CHAINED_COMPARE, Fact.NO_WITH, Fact.NO_COMPREHENSIONS, Fact.NO_FSTRINGS, Fact.NO_DECORATORS,
+    requires=frozenset({Fact.NO_CHAINED_COMPARE, Fact.NO_WITH, Fact.NO_TRY_STAR, Fact.NO_COMPREHENSIONS, Fact.NO_FSTRINGS, Fact.NO_DECORATORS,
                         Fact.CLASS_BODIES_EXPLICIT, Fact.PRIVATE_NAMES_MANGLED, Fact.NO_IMPORTS, Fact.SINGLE_TARGETS, Fact.NO_MATCH,
                         Fact.ANNOTATIONS_EXPLICIT, Fact.NO_TYPE_PARAMS, Fact.FUNCTION_ANNOTATIONS_EXPLICIT}),
     produces=frozenset({Fact.EXPLICIT_TRUTH}),
@@ -2346,7 +2435,7 @@ def to_l1(tree: ast.Module) -> L.Module:
 
 
 FRONTEND_PASSES = ["desugar-annotations", "desugar-type-params", "desugar-function-annotations", "desugar-class-body", "desugar-private-names", "desugar-imports", "desugar-several-targets", "desugar-match",
-                   "desugar-chained-compare", "desugar-with",
+                   "desugar-chained-compare", "desugar-try-star", "desugar-with",
                    "desugar-listcomp", "desugar-fstring", "desugar-decorators", "to-l1"]
 
 
