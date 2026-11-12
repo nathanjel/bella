@@ -104,17 +104,6 @@ struct Proxy : Object {                          // a mappingproxy over a class'
 };
 // CPython's set table (Objects/setobject.c): linear probes, then perturbation; deleted entries
 // are dummies; iteration in table order, which D-05 matches for value-hashed elements
-struct SetObject : Object {
-    struct Entry {
-        Obj key;                                 // Unset: empty (hash 0) or a dummy (hash -1)
-        std::int64_t hash = 0;
-    };
-    std::vector<Entry> table;
-    std::size_t fill = 0, used = 0;
-    std::size_t finger = 0;                      // where set.pop looks next
-    bool frozen;
-    explicit SetObject(bool frozen_set);
-};
 struct Method : Object {                         // a bound method: func and self, owned
     Obj func;
     Obj self;
@@ -543,6 +532,10 @@ bool with_attribute_storage(Obj v, F&& f) {
     }
     if (is_kind(v, Kind::List) && has_attributes(v.object())) {
         f(static_cast<ListInstance*>(v.object()));
+        return true;
+    }
+    if (is_kind(v, Kind::Set) && has_attributes(v.object())) {
+        f(static_cast<SetInstance*>(v.object()));
         return true;
     }
     if (is_kind(v, Kind::Str) && has_attributes(v.object())) {

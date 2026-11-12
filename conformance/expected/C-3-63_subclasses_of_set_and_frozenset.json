@@ -1,0 +1,12 @@
+{
+ "case": "C-3-63_subclasses_of_set_and_frozenset.py",
+ "clause": "C-3-63",
+ "spec": "section 3 (classes: a subclass of a built-in type), section 6 (set, frozenset)",
+ "status": "P1",
+ "source": "Objects/setobject.c (CPython 3.15.2: set_new, set_init, frozenset_new, set_repr, the number and sequence slots of",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "tags: ['a', 'b'] me {'owner': 'me'} Tags True 2 True\nafter add and |=: ['a', 'b', 'c', 'd'] Tags me\noperators make sets: set set set set set set set\nrepr: Tags() Tags({'x'}) Frozen() Frozen({3}) Slotted({1})\nfrozen: [1, 2, 3] Frozen True key frozenset True True Frozen\nfrozenset of a Frozen is a new frozenset: frozenset True\nslotted: slot False [5]\nslotted refuses: AttributeError\nnoisy: [3, 2, 1] 100 True False Noisy.__or__ [1, 2, 3] [1, 2, 3] True [0, 1, 2, 3] True [1, 2, 3]\nequal: True 7 1 True True\nweak: True\ncopy: Tags ['a', 'b', 'c', 'd'] me True\nreduce: True tuple\nreduce of a set subclass: True ['a', 'b', 'c', 'd'] {'owner': 'me'}\nmethods with a subclass argument: [1, 2] [2] True [4]\nempty again: Tags() False nobody\nmro: ['Tags', 'set', 'object'] frozenset True\n",
+ "stderr": "",
+ "exit_code": 0
+}

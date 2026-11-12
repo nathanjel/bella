@@ -526,8 +526,9 @@ SetObject* set_self(Obj v) { return static_cast<SetObject*>(v.object()); }
 void no_kw(Args a, const char* who) {
     if (a.nkw != 0) raise_new("TypeError", std::string(who) + "() takes no keyword arguments");
 }
-Ref set_new_fn(Obj, Args a) {                   // set_new: the arguments are __init__'s
-    new_wrapper_class(a, types().set);
+Ref set_new_fn(Obj, Args a) {                   // set_new: the arguments are __init__'s (a subclass's: its storage beside the table)
+    ClassObject* cls = new_wrapper_class(a, types().set);
+    if (cls != types().set) return own(new SetInstance(cls, false));
     return own(new SetObject(false));
 }
 Ref set_init_m(Obj self, Args a) {              // set_init
@@ -538,23 +539,34 @@ Ref set_init_m(Obj self, Args a) {              // set_init
     return none_ref();
 }
 Ref frozenset_new_fn(Obj, Args a) {             // frozenset_new, make_new_frozenset
-    new_wrapper_class(a, types().frozenset);
-    no_kw(a, "frozenset");
-    if (a.npos > 2) raise_new("TypeError", "frozenset expected at most 1 argument, got " + std::to_string(a.npos - 1));
-    if (a.npos == 2 && is_kind(a.pos(1), Kind::Set) && set_self(a.pos(1))->frozen) return Ref::share(a.pos(1));
-    Ref s = own(new SetObject(true));
+    ClassObject* cls = new_wrapper_class(a, types().frozenset);
+    // keywords refused for the type itself, and for a subclass while its __init__ is still frozenset's (tp_init)
+    if (cls == types().frozenset || type_lookup(cls, intern("__init__")) == type_lookup(types().frozenset, intern("__init__"))) no_kw(a, "frozenset");
+    if (a.npos > 2) raise_new("TypeError", cls->name + " expected at most 1 argument, got " + std::to_string(a.npos - 1));   // tp_name
+    // an exact frozenset given to the exact type is itself (PyFrozenSet_CheckExact on both)
+    if (cls == types().frozenset && a.npos == 2 && is_kind(a.pos(1), Kind::Set) && set_self(a.pos(1))->frozen && !is_subclass_instance(a.pos(1)))
+        return Ref::share(a.pos(1));
+    Ref s = cls == types().frozenset ? own(new SetObject(true)) : own(new SetInstance(cls, true));
     if (a.npos == 2) set_update(s.get(), a.pos(1));
     return s;
 }
-std::string named(Obj self, const char* name) { return type_of(self)->name + "." + name; }
-Ref set_copy_m(Obj self, Args a) {              // set_copy_impl, frozenset_copy_impl
+std::string named(Obj self, const char* name) { return std::string(set_self(self)->frozen ? "frozenset." : "set.") + name; }   // the method's own
+Ref set_copy_m(Obj self, Args a) {              // set_copy_impl, frozenset_copy_impl: an exact frozenset is itself; else a new one of the base type
     noargs(a, named(self, "copy"));
-    return set_self(self)->frozen ? Ref::share(self) : copy_set(self);
+    return set_self(self)->frozen && !is_subclass_instance(self) ? Ref::share(self) : copy_set(self);
 }
 Ref set_clear_m(Obj self, Args a) {
     noargs(a, named(self, "clear"));
     clear_set(set_self(self));
     return none_ref();
+}
+Ref set_reduce_m(Obj self, Args a) {            // set_reduce: (type(self), (list(self),), self.__getstate__()), the list through the type's iteration
+    noargs(a, named(self, "__reduce__"));
+    Ref keys = invoke(Obj::of(types().list), {self});
+    Ref args = tuple_new({keys.get()});
+    Ref getstate = getattr(self, intern("__getstate__"));   // _PyObject_GetState
+    Ref state = invoke(getstate.get(), {});
+    return tuple_new({Obj::of(type_of(self)), args.get(), state.get()});
 }
 Ref set_pop_m(Obj self, Args a) {               // set_pop_impl
     noargs(a, named(self, "pop"));
@@ -690,9 +702,12 @@ Ref set_contains_m(Obj self, Args a) {
     dunder_args(self, a, "__contains__", 1);
     return Ref::steal(boolean(set_contains(set_self(self), a.pos(0))));
 }
-Ref set_iter_m(Obj self, Args a) {
+Ref set_iter_m(Obj self, Args a) {               // set_iter: the table's own iterator, whatever a subclass's __iter__ says
     dunder_args(self, a, "__iter__", 0);
-    return iter(self);
+    auto* it = new Iterator(Iterator::SetIt, self);
+    Ref r = own(it);
+    it->size = static_cast<std::int64_t>(set_self(self)->used);
+    return r;
 }
 }  // namespace
 
@@ -717,6 +732,7 @@ void init_sets() {
         add("__len__", set_len_m);
         add("__contains__", set_contains_m);
         add("__iter__", set_iter_m);
+        add("__reduce__", set_reduce_m);
         if (c == t.set) {
             add("add", set_add_m);
             add("discard", set_discard_m);

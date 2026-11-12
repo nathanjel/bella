@@ -2650,6 +2650,10 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                 for (Obj x : static_cast<List*>(o)->items) todo.push_back(x);
                 break;
             case Kind::Set:
+                if (has_attributes(o)) {
+                    attribute_values(static_cast<SetInstance*>(o), todo);
+                    found.push_back(Ref::share(v));
+                }
                 for (auto& e : static_cast<SetObject*>(o)->table) todo.push_back(e.key);
                 break;
             case Kind::Cell:

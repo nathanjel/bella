@@ -479,9 +479,10 @@ std::int64_t full_hash(Obj v) {
             auto h = pointer_hash(m->self.is_object() ? m->self.object() : nullptr) ^ hash_of(m->func);
             return h == -1 ? -2 : h;
         }
-        case Kind::Set: {                        // frozenset_hash_impl; a set's __hash__ is None, below
+        case Kind::Set: {                        // frozenset_hash_impl; a set's __hash__ is None, below; a subclass's own, below
             auto* so = static_cast<SetObject*>(o);
             if (!so->frozen) break;
+            if (has_attributes(o) && type_lookup(o->cls, intern("__hash__")) != type_lookup(types().frozenset, intern("__hash__"))) break;
             auto shuffle = [](std::uint64_t h) { return ((h ^ 89869747UL) ^ (h << 16)) * 3644798167UL; };
             std::uint64_t hash = 0;
             for (const auto& e : so->table) hash ^= shuffle(static_cast<std::uint64_t>(e.hash));

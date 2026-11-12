@@ -1266,3 +1266,59 @@ def test_a_collection_is_scheduled_by_the_threshold_and_runs_at_a_look() -> None
         assert not scheduled()                    # threshold 0: automatic collection off
     finally:
         O.HEAP = saved
+
+
+def test_a_base_that_keeps_its_own_weak_references_clears_them_after_the_dict() -> None:
+    """C-3-63: a subclass of set dies with its finaliser, its slots, its dict, then set_dealloc's weak references and its elements
+    (set keeps its own weak reference list); a subclass of list clears the weak references before the slots (subtype_dealloc).
+    The model's order against CPython's, measured with a callback and tags."""
+    from refmodel import objects as O
+    from refmodel.objects import weak_ref
+
+    def cpython(base: type) -> list[str]:
+        log: list[str] = []
+
+        class Tag:
+            def __init__(self, n: str) -> None:
+                self.n = n
+
+            def __del__(self) -> None:
+                log.append(self.n)
+
+        K = type("K", (base,), {"__slots__": ("slot", "__dict__", "__weakref__") if base is list else ("slot", "__dict__")})
+        o = K([Tag("element")])
+        o.slot = Tag("slot")
+        o.attr = Tag("dict")
+        r = weakref.ref(o, lambda _: log.append("callback"))
+        del o
+        assert r() is None
+        return log
+
+    def model(base_weaklist: bool) -> list[str]:
+        saved = O.HEAP
+        heap = O.HEAP = O.Heap()
+        try:
+            rt = Runtime()
+            tracked = RefClass("Tag", heap=heap)
+            K = RefClass("K", slots=("slot", "__dict__", "__weakref__"), native=("__dict__", "__payload__"), base_weaklist=base_weaklist, heap=heap)
+            o = RefObject(K)
+            incref(o)
+            element = RefObject(tracked, tag="element")
+            incref(element)
+            assert o.payload is not None
+            o.payload.put(element, None)
+            decref(element)
+            for name, tag in (("slot", "slot"), ("attr", "dict")):
+                v = RefObject(tracked, tag=tag)
+                incref(v)
+                rt.setattr(o, name, v)
+                decref(v)
+            w = weak_ref(o, lambda _: heap.deaths.append("callback"))
+            decref(o)
+            assert w() is None
+            return list(heap.deaths)
+        finally:
+            O.HEAP = saved
+
+    assert model(True) == cpython(set)
+    assert model(False) == cpython(list)

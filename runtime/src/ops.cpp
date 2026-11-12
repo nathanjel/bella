@@ -539,7 +539,7 @@ bool contains(Obj container, Obj item) {
     if (is_kind(container, Kind::Dict) && !overridden(container, "__contains__"))
         return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
     if (is_kind(container, Kind::Dict)) return truth(call_special(container, "__contains__", {item}).get());
-    if (is_kind(container, Kind::Set)) return set_contains(static_cast<SetObject*>(container.object()), item);
+    if (is_kind(container, Kind::Set) && !overridden(container, "__contains__")) return set_contains(static_cast<SetObject*>(container.object()), item);
     if (is_bytes_like(container)) return bytes_contains(container, item);
     if (as_str(container) != nullptr && !overridden(container, "__contains__")) return str_contains(container, item);
     if (is_kind(container, Kind::Range)) {           // range_contains: arithmetic for an exact int or a bool, else the search
@@ -767,7 +767,9 @@ bool truth(Obj v) {
         case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
         case Kind::Range: return static_cast<Range*>(o)->length != 0;
         case Kind::BigInt: return true;
-        case Kind::Set: return static_cast<SetObject*>(o)->used != 0;
+        case Kind::Set:
+            if (!is_subclass_instance(v) || (!overridden(v, "__bool__") && !overridden(v, "__len__"))) return static_cast<SetObject*>(o)->used != 0;
+            return truth_by_methods(v);
         case Kind::IntInstance:
             if (!overridden(v, "__bool__")) return !int_is_zero(v);
             return truth_by_methods(v);
@@ -1049,6 +1051,7 @@ ClassObject* builtin_of(Obj v) {
         case Kind::ComplexInstance: return types().complex_;
         case Kind::Tuple: return types().tuple;
         case Kind::List: return types().list;
+        case Kind::Set: return static_cast<SetObject*>(v.object())->frozen ? types().frozenset : types().set;
         default: return types().object;
     }
 }
@@ -1661,7 +1664,7 @@ Ref iter(Obj obj) {
     if (is_kind(obj, Kind::List) && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::ListIt, obj));
     if (as_str(obj) != nullptr && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::StrIt, obj));
     if (is_bytes_like(obj)) return own(new Iterator(Iterator::BytesIt, obj));
-    if (is_kind(obj, Kind::Set)) {
+    if (is_kind(obj, Kind::Set) && !overridden(obj, "__iter__")) {
         auto* it = new Iterator(Iterator::SetIt, obj);
         Ref r = own(it);
         it->size = static_cast<std::int64_t>(static_cast<SetObject*>(obj.object())->used);

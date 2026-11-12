@@ -995,6 +995,35 @@ struct ListInstance : List {
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
+struct SetObject : Object {
+    struct Entry {
+        Obj key;                                 // Unset: empty (hash 0) or a dummy (hash -1)
+        std::int64_t hash = 0;
+    };
+    std::vector<Entry> table;
+    std::size_t fill = 0, used = 0;
+    std::size_t finger = 0;                      // where set.pop looks next
+    bool frozen;
+    explicit SetObject(bool frozen_set);
+};
+// An instance of a program's subclass of set or frozenset (decision 2026-11-03: a subclass of a built-in type is that type's
+// object): kind Set, flag HAS_ATTRIBUTES, the attribute storage beside the table. set itself keeps a weak reference list, so the
+// instance's weak references are cleared by set_dealloc, after its slots and its dict (subtype_dealloc leaves them to the base).
+struct SetInstance : SetObject {
+    std::vector<Obj> fields;
+    DictObject* dict = nullptr;
+    std::vector<const Str*> order;
+    std::int64_t tag = -1;
+    SetInstance(ClassObject* c, bool frozen_set) : SetObject(frozen_set) {
+        cls = c;
+        instance_made(c);
+        flags |= HAS_ATTRIBUTES;
+        fields.assign(c->field_index.size(), Obj{});
+    }
+    bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
+    Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    bool has_field(const Str* n) const { return cls->field_index.contains(n); }
+};
 // An instance of a program's subclass of str: kind stays Str, as PyUnicode_Check says yes of it, and the attribute storage is beside the
 // text. What reads the text needs no change; what only an exact str does asks is_exact_str; what a subclass may override asks first.
 struct StrInstance : Str {
@@ -1575,6 +1604,7 @@ inline void bury(Object* o) {
             case Kind::Str: delete static_cast<StrInstance*>(o); break;   // an exact str's death is its destroyer's
             case Kind::Tuple: delete static_cast<TupleInstance*>(o); break;   // an exact tuple's death is its destroyer's
             case Kind::List: delete static_cast<ListInstance*>(o); break;     // an exact list's death is its destroyer's
+            case Kind::Set: delete static_cast<SetInstance*>(o); break;       // an exact set's death is its destroyer's
             case Kind::Function: delete static_cast<Function*>(o); break;
             case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
             case Kind::Marker: delete static_cast<Marker*>(o); break;
@@ -1742,9 +1772,10 @@ inline void finalize_once(T* obj) {
     }
 }
 
-// Returns false when the finaliser left a count: the object lives on, its finaliser spent (PEP 442).
+// Returns false when the finaliser left a count: the object lives on, its finaliser spent (PEP 442). `base_weak`: the built-in base
+// keeps its own weak reference list (set's), which its dealloc clears after the slots and the dict, so they are left to the caller.
 template <class T>
-inline bool release_attributes(T* obj) {
+inline bool release_attributes(T* obj, bool base_weak = false) {
     auto fin = (obj->flags & FINALIZED) ? std::nullopt : obj->cls->lookup(intern("__del__"));
     obj->flags |= FINALIZED;
     if (fin) {
@@ -1758,7 +1789,7 @@ inline bool release_attributes(T* obj) {
     obj->flags |= DEAD;
     if (heap().on_death) heap().on_death(obj);
     if (heap().checking) detail::check_not_named(obj);
-    if (obj->flags & HAS_WEAKREFS) clear_weakrefs(obj);
+    if (!base_weak && (obj->flags & HAS_WEAKREFS)) clear_weakrefs(obj);
     for (ClassObject* c : obj->cls->mro) {
         // each class's slots sorted by name, as CPython sorts them when it makes the class
         auto names = c->own_slot_names();
@@ -1832,6 +1863,19 @@ inline void dealloc(Object* o) {
                 if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
                 std::vector<Obj> items = std::move(l->items);   // list_dealloc reads ob_item as it was
                 for (auto it = items.rbegin(); it != items.rend(); ++it) decref(*it);
+                detail::bury(o);
+                return;
+            }
+            [[fallthrough]];
+        case Kind::Set:
+            if (o->kind == Kind::Set && has_attributes(o)) {     // subtype_dealloc, then set_dealloc: the weak references, the table in order
+                auto* s = static_cast<SetInstance*>(o);
+                if (!detail::release_attributes(s, true)) return;
+                if (o->flags & HAS_WEAKREFS) clear_weakrefs(o);
+                if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
+                auto table = std::move(s->table);
+                for (auto& e : table)
+                    if (!e.key.is_unset()) decref(e.key);
                 detail::bury(o);
                 return;
             }

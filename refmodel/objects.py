@@ -424,6 +424,7 @@ class RefClass:
         heap: Heap | None = None,
         native: tuple[str, ...] | None = None,
         dict_kind: str | None = None,
+        base_weaklist: bool | None = None,
     ) -> None:
         self.name = name
         self.bases = tuple(bases)
@@ -493,6 +494,10 @@ class RefClass:
         else:
             self.native = next((c.native for c in self.mro[1:] if c.native_declared), ("__dict__",))
         self.native_fields = tuple(n for n in self.native if n not in ("__dict__", "__payload__"))
+        # A built-in base that keeps its own weak reference list (set's tp_weaklistoffset): subtype_dealloc leaves the weak
+        # references to the base's dealloc, which clears them after the slots and the dict, before its own data (set_dealloc).
+        # A class that says nothing has its MRO's (inherited with the layout).
+        self.base_weaklist: bool = base_weaklist if base_weaklist is not None else any(c.base_weaklist for c in self.mro[1:])
         for n in self.native_fields:
             if n in self.slot_fields or n in self.promoted:
                 raise ValueError(f"{n!r} is a field of a built-in base")
@@ -683,8 +688,9 @@ class RefObject:
             gc.untrack(self)
         self.alive = False
         self.heap.died(self)
-        self.clear_weakrefs()
-        self._clear_contents()
+        if not self.cls.base_weaklist:
+            self.clear_weakrefs()
+        self._clear_contents(late_weakrefs=self.cls.base_weaklist)
         gc.free(self)
 
     def traverse(self) -> list[Any]:
@@ -726,7 +732,7 @@ class RefObject:
         collector has seen to those."""
         self._clear_contents()
 
-    def _clear_contents(self) -> None:
+    def _clear_contents(self, late_weakrefs: bool = False) -> None:
         for c in self.cls.mro:
             for name in sorted(c._own_slot_names()):     # CPython sorts each class's slots (type_new)
                 v = self.inline.get(name, UNSET)
@@ -737,6 +743,8 @@ class RefObject:
                 self._release_dict()
             elif name == "__payload__":
                 assert self.payload is not None
+                if late_weakrefs:                   # the base's dealloc: its weak references, then its own data
+                    self.clear_weakrefs()
                 items, self.payload = list(self.payload.items()), RefDict()
                 for k, v in items:             # dict_dealloc and PyDict_Clear: the entries in order, each key first
                     decref(k)

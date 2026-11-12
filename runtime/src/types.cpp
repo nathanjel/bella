@@ -699,7 +699,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
         if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
-        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().str && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().list && bc != types().float_ &&
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().str && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().list && bc != types().float_ && bc != types().set && bc != types().frozenset &&
             bc != types().module &&              // a class statement over ModuleType (importlib.util._LazyModule): instances and __class__ assignment stop by name
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");

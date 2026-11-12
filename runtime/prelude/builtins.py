@@ -579,7 +579,7 @@ def _frozenset_repr(self: frozenset[object]) -> str:
 def _set_like_repr(self: set[object] | frozenset[object]) -> str:
     """set_repr: set() when empty; the type's name around the braces for a subclass and frozenset."""
     name = type(self).__name__
-    if not self:
+    if (set.__len__ if isinstance(self, set) else frozenset.__len__)(self) == 0:   # so->used: not what a subclass's __len__ says
         return name + "()"
     if not _enter(self):
         return name + "(...)"

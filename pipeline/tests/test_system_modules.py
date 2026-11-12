@@ -853,6 +853,46 @@ print(m(lambda: print(list(gen()))))
 """
 
 
+SET_SUBCLASSES = r"""
+import weakref
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class P(set): pass
+class F(frozenset): pass
+class G(frozenset):
+    def __init__(self, *args, **kwargs):
+        self.kw = kwargs
+print(m(lambda: P(1, 2)), m(lambda: P(x=1)), m(lambda: F(1, 2)), m(lambda: F(x=1)), m(lambda: G([1], x=1).kw), m(lambda: P().copy(1)), m(lambda: F().copy(1)),
+      m(lambda: P().__reduce__(1)), m(lambda: P([1]).pop(2)), m(lambda: P().clear(1)), m(lambda: set.__init__(P(), 1, 2)), m(lambda: frozenset.__new__(F, 1, 2)))
+log = []
+class Tag:
+    def __init__(self, n): self.n = n
+    def __del__(self): log.append("value " + self.n)
+class Dying(set):
+    __slots__ = ("slot", "__dict__")
+    def __del__(self): log.append("finaliser")
+d = Dying([Tag("element")])
+d.slot = Tag("slot")
+d.attr = Tag("in dict")
+r = weakref.ref(d, lambda _: log.append("callback"))
+del d
+print(log)
+class AtExit(frozenset):
+    def __del__(self): print("finalised at exit:", sorted(self))
+kept = AtExit([2, 1])
+"""
+
+
+def test_set_subclasses() -> None:
+    """Subclasses of set and frozenset (C-3-63's words and order): the refusals of their constructors and methods, which name the
+    subclass where CPython's tp_name does and the base where the method's name does; a dying instance's finaliser, its slots and
+    dict, then its weak references (set's own list, set_dealloc clears it), then its elements; one alive at exit finalised."""
+    same(SET_SUBCLASSES)
+
+
 def test_except_star() -> None:
     """try/except* (the frontend's desugar-try-star over the runtime's eg_match and prep_reraise_star): the words of what a clause's
     type is refused for, a split method that answers what CHECK_EG_MATCH refuses, a __subclasscheck__ that PyObject_IsSubclass asks,
