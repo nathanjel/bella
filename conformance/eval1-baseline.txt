@@ -52,6 +52,7 @@ C-3-59_the_dict_an_instance_has.py
 C-3-60_a_class_has_thirty_places.py
 C-3-63_subclasses_of_set_and_frozenset.py
 C-3-64_subclasses_of_bytes_and_bytearray.py
+C-3-66_match_runtime_half.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

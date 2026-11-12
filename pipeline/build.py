@@ -98,8 +98,9 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "atexit.py", ROOT / "runtime" / "prelude" / "_signal.py",
                     ROOT / "runtime" / "prelude" / "gc.py"]
 # the runtime's own modules written in Python, compiled with the prelude and in no sys.modules: the loads of the annotate
-# functions' second entry points (decision S-1), the replay's file and the compiled program's one (runtime/src/imports.cpp)
-RUNTIME_PYTHON = [ROOT / "pipeline" / "staging" / "annotate_rt.py"]
+# functions' second entry points (decision S-1), the replay's file and the compiled program's one (runtime/src/imports.cpp),
+# and match's MATCH_* instructions, which eval1 and eval2 run too (runtime/src/call.cpp, load_match)
+RUNTIME_PYTHON = [ROOT / "pipeline" / "staging" / "annotate_rt.py", ROOT / "runtime" / "prelude" / "match.py"]
 # standard-library modules that stand for a C accelerator CPython has and the closure omits (manifest.toml [adaptations],
 # decimal and datetime): CPython's C looks for signals nowhere in them, so their units have no looks (pipeline/backend/cpp.py)
 LOOK_FREE = frozenset({"_pydecimal", "_pydatetime"})

@@ -1004,7 +1004,7 @@ class Interpreter:
         if name == "interpolation":
             return templatelib.Interpolation
         if name in E1._MATCH_HELPERS:
-            return self.runtime(E1._MATCH_HELPERS[name])
+            return self.runtime(name)
         return getattr(builtins, name)
 
     def call_intrinsic(self, rt: _Runtime, name: str, ns: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
@@ -1035,7 +1035,7 @@ class Interpreter:
             loaded: dict[str, Any] = {}
             for module in ("build_class", "match"):
                 lowered = E1._lowered(E1._PRELUDE / f"{module}.py")
-                loaded.update(self.run_module(lifetimes(to_l2(lowered)), f"bella.{module}"))
+                loaded.update(self.run_in(lifetimes(to_l2(lowered)), {"__name__": f"bella.{module}", **E1._PRIMITIVES}))
             self.prelude = loaded
         return self.prelude[name]
 

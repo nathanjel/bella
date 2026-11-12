@@ -285,8 +285,27 @@ def _function_str(fn: Any) -> str:
     return f"{qualname}()"
 
 
+_NEW_HEAD, _NEW_TAIL = "NoneType.__new__(", " is not a subtype of NoneType"
+_NONE_NEW: Any = type(None).__new__
+
+
 def _tp_name(t: type) -> str:
-    return t.__name__ if t.__flags__ & (1 << 9) or t.__module__ == "builtins" else f"{t.__module__}.{t.__qualname__}"
+    """A type's tp_name, which no attribute of the class tells: a C type made from a spec keeps the spec's whole name
+    (re.Pattern, itertools.count), a class statement's is its __name__. tp_new_wrapper (Objects/typeobject.c) writes it twice
+    in the message it raises for a class that is no subtype of the one whose __new__ it is, and no class but NoneType is a
+    subtype of NoneType; the message, whose two halves are known, gives it back whole."""
+    if t is type(None):
+        return "NoneType"
+    try:
+        _NONE_NEW(t)
+    except TypeError as exc:
+        text = str(exc.args[0])
+    else:                                       # pragma: no cover  # NoneType's __new__ makes no other class's instance
+        raise AssertionError(t)
+    size = (len(text) - len(_NEW_HEAD) - len("): ") - len(_NEW_TAIL)) // 2
+    name = text[len(_NEW_HEAD):len(_NEW_HEAD) + size]
+    assert text == f"{_NEW_HEAD}{name}): {name}{_NEW_TAIL}", text
+    return name
 
 
 def _fully_qualified(t: type) -> str:
@@ -483,8 +502,8 @@ class Interpreter:
         no lowering happens while program code runs."""
         if self.prelude is None:
             loaded: dict[str, Any] = {}
-            for module in ("build_class", "match"):
-                loaded.update(self.run_module(_lowered(_PRELUDE / f"{module}.py"), f"bella.{module}").vars)
+            for module in ("build_class", "match"):    # match.py is given the runtime's primitive, as the compiled one is
+                loaded.update(self.run_in(_lowered(_PRELUDE / f"{module}.py"), {"__name__": f"bella.{module}", **_PRIMITIVES}).vars)
             self.prelude = loaded
 
     def runtime(self, name: str) -> Any:
@@ -1407,7 +1426,7 @@ class Interpreter:
             if e.name == "interpolation":
                 return templatelib.Interpolation
             if e.name in _MATCH_HELPERS:
-                return self.runtime(_MATCH_HELPERS[e.name])
+                return self.runtime(e.name)
             return getattr(builtins, e.name)
         if isinstance(e, L.ClassBody):
             return ClassBodyFunction(self, e, scope)
@@ -1481,8 +1500,8 @@ _ABSENT = object()
 
 
 _STACK_USE_GUIDELINE = 30          # _PY_STACK_USE_GUIDELINE (Include/internal/pycore_compile.h)
-_MATCH_HELPERS = {"match_is_sequence": "is_sequence", "match_is_mapping": "is_mapping", "match_keys": "match_keys",
-                  "mapping_rest": "mapping_rest", "match_class": "match_class"}
+_MATCH_HELPERS = frozenset({"match_is_sequence", "match_is_mapping", "match_keys", "mapping_rest", "match_class"})   # match.py's
+_PRIMITIVES = {"_bella_tp_name_of": _tp_name}    # the runtime's that the prelude's match.py takes
 
 
 class _Carrier(BaseException):

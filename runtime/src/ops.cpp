@@ -1865,7 +1865,9 @@ void unpack(Obj value, std::span<Ref> targets, int star) {
             throw;
         }
         std::size_t limit = star < 0 ? targets.size() + 1 : SIZE_MAX;
-        while (items.size() < limit) {
+        std::size_t rest = star < 0 ? SIZE_MAX : static_cast<std::size_t>(star);   // the starred target's list: PySequence_List(it),
+        while (items.size() < limit) {                                             // which asks the iterator's hint first
+            if (items.size() == rest) length_hint(it.get());
             Ref v = for_next(it.get());
             if (is_end(v)) break;
             items.push_back(std::move(v));
@@ -2027,8 +2029,24 @@ void list_append(Obj list, Obj value) {
 }
 // PyObject_LengthHint, for the generic extend (list(x), tuple(x)): __len__ (a TypeError from it
 // set aside), else __length_hint__ (a TypeError or NotImplemented: no hint); only an object of a
-// Python class can tell it was asked, so only such objects are
+// Python class can tell it was asked, so only such objects are, and the built-in iterator that
+// passes the question on to one: iter_len (Objects/iterobject.c), the old protocol's iterator over a
+// sequence it has not yet exhausted, asks the sequence's length when its type has one (the starred
+// rest of an unpacking is the list the iterator extends)
 void length_hint(Obj v) {
+    if (is_kind(v, Kind::Iterator)) {
+        auto* it = static_cast<Iterator*>(v.object());
+        if (it->of != Iterator::SeqIt || it->seq.is_unset()) return;
+        v = it->seq;                              // the sequence's own length: PySequence_Size, whose TypeError is no hint
+        if ((!is_heap_obj(v) && !is_subclass_instance(v)) || type_lookup(type_of(v), intern("__len__")).is_unset()) return;
+        try {
+            Ref r = call_special(v, "__len__", {});
+            length_value(r.get());
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        }
+        return;
+    }
     if (!is_heap_obj(v) && !is_subclass_instance(v)) return;
     if (!type_lookup(type_of(v), intern("__len__")).is_unset()) {
         try {

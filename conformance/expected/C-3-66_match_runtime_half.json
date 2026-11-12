@@ -1,0 +1,12 @@
+{
+ "case": "C-3-66_match_runtime_half.py",
+ "clause": "C-3-66",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Gate 1c, the targets' blockers: C-3-17, C-8-08 and C-8-09 compiled stopped at the intrinsic 'match_class'",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "logged A B C; read ['a', 'b', 'a', 'getattr nothing', 'a', 'sub', 'getattr sub', 'a', 'b', 'c']\nother; read []\nbool True\nMyInt itself MyInt True\nNamed by its args 4 0\nint 5\nfloat itself True\nstr itself True\nbytes itself True\nbytearray itself True\nfrozenset itself True\nset itself True\ndict itself True\nlist itself True\ntuple itself True\nOrderedDict itself True\nSeq three 1 2 3; did ['len', 'iter']\nSeq first 1 rest [2, 3, 4, 5]; did ['len', 'len', 'iter']\nSeq first 1 rest [2, 3, 4]; did ['len', 'len', 'iter']\nSeq one; did ['len', 'len', 'iter', 'len', 'len']\nRegistered ends 0 1; did ['len', 'len', 'getitem 0', 'len', 'getitem 1', 'getitem 2', 'len', 'getitem 0', 'len', 'getitem 1']\nstr no case; did []\nbytes no case; did []\nbytearray no case; did []\ndeque three 1 2 3; did []\nrange three 0 1 2; did []\nMapped a 1 rest [('b', 2), ('c', 3)] dict False; did ['len', 'len', 'get a', 'get b', 'len', 'get a', 'get z', 'len', 'get a', 'keys', 'iter', 'getitem a', 'getitem b', 'getitem c']\ndict a 1 rest [('q', 2)] dict False; did []\nOrderedDict a 5 rest [] dict False; did []\nlist no case; did []\nMapped no case; did ['len', 'len', 'len', 'len', 'get a']\n0 TypeError; read []\n1 TypeError; read []\n2 TypeError; read []\n3 TypeError; read []\n4 TypeError; read []\n5 TypeError; read []\n6 ValueError; read []\n7 KeyError; read ['boom']\n8 TypeError; read ['a']\n9 no positional sub-pattern: the list is never looked at\n10 TypeError; read []\nfell through\n",
+ "stderr": "",
+ "exit_code": 0
+}

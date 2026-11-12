@@ -1427,29 +1427,23 @@ Ref c_list(Obj, Args a) {
     return l;
 }
 
+// PyUnicode_Join: PySequence_Fast first, so the whole iterable is taken (and a list built for it asks its hint) before any
+// item is looked at; then _PyUnicode_JoinArray
 Ref str_join(Obj self, Args a) {
     onearg(a, "str.join");
     const Str* sep = as_str(self);
+    Ref seq = sequence_fast(a.pos(0), "can only join an iterable");
+    const std::vector<Obj>& items = is_kind(seq.get(), Kind::Tuple) ? static_cast<Tuple*>(seq.get().object())->items
+                                                                    : static_cast<List*>(seq.get().object())->items;
+    if (items.size() == 1 && is_exact_str(items[0])) return Ref::share(items[0]);   // /* Fast path: only one item */
     std::string out;
-    Ref it;
-    try {                                       // PySequence_Fast(seq, "can only join an iterable")
-        it = iter(a.pos(0));
-    } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
-        raise_new("TypeError", "can only join an iterable");
-    }
-    std::size_t i = 0;
-    Ref first;
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()), ++i) {
-        const Str* s = as_str(v.get());
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const Str* s = as_str(items[i]);
         if (s == nullptr)
-            raise_new("TypeError", "sequence item " + std::to_string(i) + ": expected str instance, " +
-                                       type_of(v.get())->name + " found");
+            raise_new("TypeError", "sequence item " + std::to_string(i) + ": expected str instance, " + type_of(items[i])->name + " found");
         if (i > 0) out += sep->text;
-        else first = Ref::share(v.get());
         out += s->text;
     }
-    if (i == 1 && is_exact_str(first.get())) return first;   // /* Fast path: only one item */
     return str_new(out);
 }
 
@@ -2174,6 +2168,27 @@ void register_intrinsics() {
 }
 }  // namespace
 
+namespace prelude_match { Ref module_body(Module* m); }   // runtime/prelude/match.py: MATCH_CLASS, MATCH_KEYS and the others
+namespace {
+// match's helpers: a module of the runtime's own, in no sys.modules, run at the first statement that needs one of them. Its
+// __intrinsics__ go to the runtime, as a prelude module's do, and it is given the one primitive it needs, a class's tp_name
+bool load_match(std::string_view name) {
+    static constexpr std::string_view helpers[] = {"match_is_sequence", "match_is_mapping", "match_keys", "mapping_rest", "match_class"};
+    if (std::ranges::find(helpers, name) == std::end(helpers)) return false;
+    static const bool loaded = [] {
+        Module* m = new_module("match");
+        forget_module(m);
+        Ref tp_name = own(new Builtin("_bella_tp_name_of", i_bella_tp_name_of));
+        dict_set(m->dict, Obj::of(intern("_bella_tp_name_of")), tp_name.get());
+        prelude_match::module_body(m);
+        for (Obj n : static_cast<List*>(dict_get(m->dict, Obj::of(intern("__intrinsics__"))).object())->items)
+            dict_set(intrinsics(), n, dict_get(m->dict, n));
+        return true;
+    }();
+    return loaded;
+}
+}  // namespace
+
 Ref builtin(const char* name) {
     register_intrinsics();
     Obj v = dict_get(intrinsics(), Obj::of(intern(name)));
@@ -2186,6 +2201,7 @@ Ref builtin(const char* name) {
                 v = dict_get(intrinsics(), Obj::of(intern(name)));
             }
     }
+    if (v.is_unset() && load_match(name)) v = dict_get(intrinsics(), Obj::of(intern(name)));
     if (v.is_unset()) throw NotImplemented(std::string("the intrinsic '") + name + "'");
     return Ref::share(v);
 }
