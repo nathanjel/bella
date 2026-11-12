@@ -648,6 +648,11 @@ struct ClassObject : Object {
     bool heap_type = false;                      // a class a program made (Py_TPFLAGS_HEAPTYPE)
     std::vector<ClassObject*> bases;
     std::vector<ClassObject*> mro;               // C3, self first
+    // tp_bases and tp_mro as objects (RefClass.bases, .mro): one each until replaced. bases_tuple is the tuple the class was
+    // made with or the one assigned to __bases__; either is made at the first read when the class has none yet (a C++ type,
+    // a class with no bases: a new (object,)), and the MRO's is dropped when the hierarchy's bases are assigned (mro_hierarchy)
+    Obj bases_tuple;                             // owned, or unset
+    Obj mro_tuple;                               // owned, or unset
     std::vector<ClassObject*> subclasses;
     NameMap attrs;                               // owns one count of each value
     std::uint64_t version = NO_VERSION;
@@ -727,6 +732,8 @@ struct ClassObject : Object {
         unregister();
         for (auto& [k, v] : attrs.take_all()) decref(v);
         if (dict_view != nullptr) decref(Obj::of(std::exchange(dict_view, nullptr)));
+        for (Obj* t : {&bases_tuple, &mro_tuple})
+            if (!t->is_unset()) decref(std::exchange(*t, Obj{}));
     }
 };
 

@@ -1324,6 +1324,40 @@ def test_a_base_that_keeps_its_own_weak_references_clears_them_after_the_dict() 
     assert model(False) == cpython(list)
 
 
+def test_a_class_keeps_one_mro_and_one_bases_object_until_its_bases_are_assigned() -> None:
+    """tp_mro and tp_bases are objects: each read gives the same one. `__bases__` is the tuple the class was made with, or
+    the one assigned to it; assigning the bases makes the class and every subclass a new MRO tuple, equal to the old one.
+    The model's identities against CPython's."""
+    from refmodel import objects as O
+
+    A = type("A", (), {})
+    given = (A,)
+    B = type("B", given, {})
+    C = type("C", (B,), {})
+    reads = (A.__mro__ is A.__mro__, B.__bases__ is given, B.__mro__ is B.__mro__)
+    old_b, old_c, old_a = B.__mro__, C.__mro__, A.__mro__
+    assigned = (A,)
+    B.__bases__ = assigned
+    after = (B.__bases__ is assigned, B.__mro__ is old_b, B.__mro__ == old_b, C.__mro__ is old_c, C.__mro__ == old_c, A.__mro__ is old_a)
+    assert reads == (True, True, True) and after == (True, False, True, False, True, True)
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        a = RefClass("A", heap=heap)
+        made = (a,)
+        b = RefClass("B", made, heap=heap)
+        c = RefClass("C", (b,), heap=heap)
+        model_reads = (a.mro is a.mro, b.bases is made, b.mro is b.mro)
+        mb, mc, ma = b.mro, c.mro, a.mro
+        put = (a,)
+        b.reassign_bases(put)
+        model_after = (b.bases is put, b.mro is mb, b.mro == mb, c.mro is mc, c.mro == mc, a.mro is ma)
+        assert (model_reads, model_after) == (reads, after), (model_reads, model_after)
+    finally:
+        O.HEAP = saved
+
+
 def test_assigning_the_bases_a_class_has_moves_it_last_among_the_subclasses() -> None:
     """typing's NamedTuple assigns each class it makes the bases it has (type_set_bases): the MROs come out as they were,
     the class is last among each base's subclasses, and it and its subclasses get new versions (a cached lookup misses).

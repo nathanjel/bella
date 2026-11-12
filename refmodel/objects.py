@@ -427,6 +427,9 @@ class RefClass:
         base_weaklist: bool | None = None,
     ) -> None:
         self.name = name
+        # tp_bases and tp_mro are objects, one each until they are replaced: `__bases__` is the tuple the class was made
+        # with (type_new keeps the one it is given; a class with none gets a new (object,) of its own, which the model
+        # leaves out with object itself), and `__mro__` the tuple mro_internal made
         self.bases = tuple(bases)
         self.mro: tuple[RefClass, ...] = tuple(_c3(self))
         self.attrs: dict[str, Any] = dict(attrs or {})
@@ -574,11 +577,20 @@ class RefClass:
         modelled, and the runtime refuses them."""
         if bases != self.bases:
             raise ModelError("__bases__ assigned other bases than the class has")
+        self.bases = bases                       # tp_bases is the tuple assigned, the very object
+        self._mro_hierarchy()
         for b in self.bases:
             b.subclasses.remove(self)
         for b in self.bases:
             b.subclasses.append(self)
         self.bump()
+
+    def _mro_hierarchy(self) -> None:
+        """mro_hierarchy: the class's MRO computed again (mro_internal makes a new tuple, equal to the old one when the bases
+        are the same), then each subclass's, in the order of its base's subclasses."""
+        self.mro = tuple(_c3(self))
+        for s in list(self.subclasses):
+            s._mro_hierarchy()
 
     def unregister(self) -> None:
         """The class is dying: its bases stop propagating versions to it. Cache entries need no

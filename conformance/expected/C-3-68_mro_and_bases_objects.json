@@ -1,0 +1,12 @@
+{
+ "case": "C-3-68_mro_and_bases_objects.py",
+ "clause": "C-3-68",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "Gate 1c, noted with C-3-65: C.__bases__ and C.__mro__ were a new tuple at each read",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "one object: True True True\ndescriptor: True True\nbuilt-in: True True True\nthe tuple given: True none given: False (<class 'object'>,) ()\ntwo classes with no bases: True False\nassigned: True False\nmro again: [(True, True), (False, True), (False, True)]\nthen one object again: True True\n",
+ "stderr": "",
+ "exit_code": 0
+}

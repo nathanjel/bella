@@ -809,6 +809,10 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     c->cls = meta;
     c->qualname = qualname;
     c->heap_type = true;
+    if (!static_cast<Tuple*>(bases_obj.object())->items.empty()) {   // type_new keeps the tuple it is given as tp_bases
+        incref(bases_obj);
+        c->bases_tuple = bases_obj;
+    }
     c->dict_kind = dict_kind_of(c);
     bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict && !b->dict_without_getset; });
     // type_ready's order: the getsets (__dict__, __weakref__) and only then the members. The room for weak
@@ -1481,21 +1485,34 @@ void set_type_bases(Obj self, Obj v) {
         }
         hierarchy.insert(hierarchy.end(), hierarchy[i]->subclasses.begin(), hierarchy[i]->subclasses.end());
     }
+    incref(v);                                   // tp_bases is the tuple assigned, the very object
+    if (!c->bases_tuple.is_unset()) decref(c->bases_tuple);
+    c->bases_tuple = v;
+    for (ClassObject* h : hierarchy)              // mro_hierarchy: each MRO made again, a new tuple equal to the old one
+        if (!h->mro_tuple.is_unset()) decref(std::exchange(h->mro_tuple, Obj{}));
     for (ClassObject* b : c->bases) std::erase(b->subclasses, c);
     for (ClassObject* b : c->bases) b->subclasses.push_back(c);
     c->bump();
 }
 Ref type_dict(Obj self) { return own(new Proxy(self_class(self))); }
-Ref type_mro_attr(Obj self) {
-    std::vector<Obj> items;
-    for (ClassObject* m : self_class(self)->mro) items.push_back(Obj::of(m));
-    return tuple_copy(items);
+Ref type_mro_attr(Obj self) {                    // tp_mro: one tuple until the hierarchy's bases are assigned
+    ClassObject* c = self_class(self);
+    if (c->mro_tuple.is_unset()) {
+        std::vector<Obj> items;
+        for (ClassObject* m : c->mro) items.push_back(Obj::of(m));
+        c->mro_tuple = tuple_copy(items).release();
+    }
+    return Ref::share(c->mro_tuple);
 }
-Ref type_bases(Obj self) {
-    std::vector<Obj> items;
-    for (ClassObject* b : self_class(self)->bases) items.push_back(Obj::of(b));
-    if (items.empty() && self_class(self) != types().object) items.push_back(Obj::of(types().object));
-    return tuple_copy(items);
+Ref type_bases(Obj self) {                       // tp_bases: the tuple the class was made with or assigned, else one made once
+    ClassObject* c = self_class(self);
+    if (c->bases_tuple.is_unset()) {
+        std::vector<Obj> items;
+        for (ClassObject* b : c->bases) items.push_back(Obj::of(b));
+        if (items.empty() && c != types().object) items.push_back(Obj::of(types().object));
+        c->bases_tuple = tuple_copy(items).release();
+    }
+    return Ref::share(c->bases_tuple);
 }
 Ref type_base(Obj self) {
     ClassObject* c = self_class(self);
