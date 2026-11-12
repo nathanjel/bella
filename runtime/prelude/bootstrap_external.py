@@ -13,7 +13,8 @@ loaders of bootstrap.py run their compiled bodies, so this module keeps CPython'
   others (SourcelessFileLoader, ExtensionFileLoader, AppleFrameworkLoader, NamespaceLoader, NamespacePath) exist with their
   pure methods, stopping by name where they would read a file or load an extension;
 * the finders (PathFinder, FileFinder, WindowsRegistryFinder) exist for `importlib.machinery` and `isinstance`; a search stops by
-  name, since the closed world is resolved at build time (E-04) and `sys.path_hooks` has no entries.
+  name, since the closed world is resolved at build time (E-04) and `sys.path_hooks` has no entries, and `PathFinder.discover`
+  lists the modules the build found in each path entry (`_bella_discover`), as the registry stands for the path finders.
 
 The module runs as `_frozen_importlib_external`, so its classes say so in `__module__`, as CPython's do; `_bootstrap` is the
 `_frozen_importlib` module (bootstrap.py), set before this body runs as `_set_bootstrap_module` would set it.
@@ -702,10 +703,17 @@ class PathFinder:
         for entry in set(path):
             if not isinstance(entry, str):
                 continue
-            if (finder := cls._path_importer_cache(entry)) is None:
-                continue
-            if discover := getattr(finder, 'discover', None):
-                yield from discover(parent)
+            # bella: the closed world's path entry finder for `entry` (spec section 8; decision of 2026-11-03): the modules the build
+            # found in its directory, with the specs an import gives them, where CPython's FileFinder lists the directory and asks its
+            # find_spec for each; `_path_importer_cache` and FileFinder's __init__ make the directory absolute as below
+            if entry == '':
+                try:
+                    entry = _os_getcwd()
+                except (FileNotFoundError, PermissionError):
+                    continue
+            directory = _os_getcwd() if entry == '.' else _path_abspath(entry)
+            prefix = f'{parent.name}.' if parent else ''
+            yield from _bella_discover(directory, prefix)
 
     @staticmethod
     def find_distributions(*args, **kwargs):

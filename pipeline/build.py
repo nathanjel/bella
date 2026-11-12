@@ -94,7 +94,7 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "_bisect.py", ROOT / "runtime" / "prelude" / "_random.py",
                     ROOT / "runtime" / "prelude" / "_statistics.py", ROOT / "runtime" / "prelude" / "_heapq.py",
                     ROOT / "runtime" / "prelude" / "_opcode.py", ROOT / "runtime" / "prelude" / "_warnings.py",
-                    ROOT / "runtime" / "prelude" / "_tokenize.py", ROOT / "runtime" / "prelude" / "_imp.py",
+                    ROOT / "runtime" / "prelude" / "_tokenize.py", ROOT / "runtime" / "prelude" / "_suggestions.py", ROOT / "runtime" / "prelude" / "_imp.py",
                     ROOT / "runtime" / "prelude" / "atexit.py", ROOT / "runtime" / "prelude" / "_signal.py",
                     ROOT / "runtime" / "prelude" / "gc.py"]
 # the runtime's own modules written in Python, compiled with the prelude and in no sys.modules: the loads of the annotate

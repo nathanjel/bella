@@ -1,0 +1,12 @@
+{
+ "case": "C-7-83_traceback_from_its_entries.py",
+ "clause": "C-7-83",
+ "spec": "section 7 (traceback, formatting from source maps), D-06",
+ "status": "P1",
+ "source": "Lib/traceback.py (extract_tb, format_tb, StackSummary, FrameSummary, TracebackException, print_exc)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "entries: [(True, 34, '<module>'), (True, 26, 'outer')]\ncause's entries: [(24, 'outer'), (19, 'deeper'), (19, 'deeper'), (19, 'deeper'), (19, 'deeper'), (19, 'deeper'), (19, 'deeper'), (18, 'deeper')]\nlimits: ['outer', 'deeper'] ['deeper', 'deeper'] []\ntracebacklimit: ['outer'] 3\nnegative tracebacklimit: []\nformat_tb: ['  File \"<case>\", line 24, in outer', '  File \"<case>\", line 19, in deeper', '  File \"<case>\", line 19, in deeper', '  File \"<case>\", line 19, in deeper', '  [Previous line repeated 3 more times]', '  File \"<case>\", line 18, in deeper']\nsummary: StackSummary 2 FrameSummary 4 34 <module> 34 <module> <FrameSummary file <case>, line 34 in <module>> True None\nformat: ['  File \"<case>\", line 34, in <module>', '  File \"<case>\", line 26, in outer']\nfolded: ['  File \"<case>\", line 24, in outer', '  File \"<case>\", line 19, in deeper', '  File \"<case>\", line 19, in deeper', '  File \"<case>\", line 19, in deeper', '  [Previous line repeated 3 more times]', '  File \"<case>\", line 18, in deeper']\nTracebackException: KeyError 2 True False True ['outer', 'deeper', 'deeper', 'deeper', 'deeper', 'deeper', 'deeper', 'deeper']\nchain: ['Traceback (most recent call last):', '  File \"<case>\", line 24, in outer', '  File \"<case>\", line 19, in deeper', '  File \"<case>\", line 19, in deeper', '  File \"<case>\", line 19, in deeper', '  [Previous line repeated 3 more times]', '  File \"<case>\", line 18, in deeper', 'ValueError: deep', '', 'Traceback (most recent call last):', '  File \"<case>\", line 34, in <module>', '  File \"<case>\", line 26, in outer', \"KeyError: 'k'\"]\nformat_exception: ['Traceback (most recent call last):', '  File \"<case>\", line 34, in <module>', '  File \"<case>\", line 26, in outer', \"KeyError: 'k'\"]\nprint_exc: ['Traceback (most recent call last):', '  File \"<case>\", line 63, in <module>', \"KeyError: 'k'\"]\none entry: [(68, '<module>')] IndexError\nno traceback: [] [] ['ValueError: v']\n",
+ "stderr": "",
+ "exit_code": 0
+}

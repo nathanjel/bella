@@ -116,6 +116,7 @@ codeop = "for traceback only (review log D-4): the PyCF_* flags with CPython's v
 [adaptations]
 # Named adaptations the closure relies on (spec, section 7): without them these roots are open.
 logging = "findCaller receives call-site information from the compiler instead of sys._getframe (E-02)"
+"unittest.result" = "TestResult._is_relevant_tb_level reads the globals of the frame a traceback's entry stands for from the entry, where CPython reads the frame (E-02; see [replaced])"
 traceback = "formatting from source maps; file and line in release builds (D-06); imports the codeop shim, reached only to suggest a keyword for a SyntaxError carrying parser metadata (review log D-4); _find_incompatible_extension_module returns None, since a closed world has no extension module built for another Python version (see [replaced])"
 contextvars = "single-threaded implementation over _contextvars mapping"
 threading = "CPython's own module over the single-threaded _thread (see [phase1.shim]): Thread.start, and every wait only another thread could end, stop with the milestone name ([P2+]); the rest behaves as with one thread (2026-11-08, in place of a shim to write)"
@@ -141,8 +142,11 @@ pathlib = ["urllib.request", "urllib.error"]   # Path.as_uri, Path.from_uri: url
 
 [replaced]
 # Functions an adaptation in [adaptations] replaces: their imports do not count.
-traceback = ["_find_incompatible_extension_module"]   # imports importlib.resources.readers, which imports zipfile
+traceback = ["_find_incompatible_extension_module",  # imports importlib.resources.readers, which imports zipfile
+             "_walk_tb_with_full_positions", "StackSummary._extract_from_extended_frame_gen",   # frames and positions (E-02): file and line (D-06)
+             "clear_frames"]                                                                    # frame.clear() (E-02): the entry's locals
 logging = ["Logger.findCaller"]                         # walks frame objects (E-02): the compiler's call sites instead
+"unittest.result" = ["TestResult._is_relevant_tb_level"]   # a traceback entry's frame's globals (E-02): the entry's module's
 "re._compiler" = ["_bytes_to_codes"]                    # casts a memoryview ([P2+])
 
 # Every import whose name is computed (__import__(name), import_module(name)), reviewed site by

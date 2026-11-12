@@ -214,6 +214,8 @@ std::vector<Module*>& all_modules();             // every module made, oldest fi
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
     const Code* code;
     int line;
+    Ref module;                                  // the frame's module, whose dict is its f_globals, held as CPython's frame holds its globals (a staged
+                                                 // text's lives as its functions do); Unset: _PyTraceback_Add's entry, whose frame has an empty dict
     std::uint64_t frame = 0;                     // the frame (a FrameGuard's id) it records
     std::vector<Ref> locals;                     // the frame's locals, taken over during unwinding
     Ref next;
@@ -445,6 +447,7 @@ void fill_heapq(Module* m);                       // runtime/prelude/_heapq.py
 void fill_opcode(Module* m);                      // runtime/prelude/_opcode.py
 void fill_warnings(Module* m);                    // runtime/prelude/_warnings.py
 void fill_tokenize(Module* m);                    // runtime/prelude/_tokenize.py
+void fill_suggestions(Module* m);                  // runtime/prelude/_suggestions.py
 void fill_imp(Module* m);                         // runtime/prelude/_imp.py
 void fill_atexit(Module* m);                      // runtime/prelude/atexit.py
 void fill_signal(Module* m);                      // runtime/prelude/_signal.py, over runtime/src/signals.cpp
@@ -594,8 +597,8 @@ public:
 // guard if none caught it); when it leaves, the guard moves the locals into the frame's entry,
 // where they die with the traceback (RL-221; a caught exception keeping them is RL-222, step 3c).
 namespace detail {
-void arrive(const Code& code, int line, std::uint64_t& id, PyError& e) noexcept;
-void record_frame(const Code& code, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept;
+void arrive(const Code& code, Module* module, int line, std::uint64_t& id, PyError& e) noexcept;
+void record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept;
 void enter_frame();                              // RecursionError past the limit (spec D-17)
 void leave_frame() noexcept;
 // What a frame shows to the builtins that read their caller (globals(), a lazy import's declaration).
@@ -628,12 +631,12 @@ public:
         if (c.shown) detail::current_frame() = this;
         else if (c.inlined && caller != nullptr) ++caller->comprehensions;
     }
-    void arrived(PyError& e) noexcept { detail::arrive(*code, line, id, e); }
+    void arrived(PyError& e) noexcept { detail::arrive(*code, module, line, id, e); }
     ~FrameGuard() {
         detail::leave_frame();
         detail::current_frame() = caller;
         if (!code->shown && code->inlined && caller != nullptr) --caller->comprehensions;
-        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, line, id, locals_.data(), N);
+        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, module, line, id, locals_.data(), N);
     }
     FrameGuard(const FrameGuard&) = delete;
     FrameGuard& operator=(const FrameGuard&) = delete;
@@ -1146,6 +1149,7 @@ void drop_instance_dict(Obj self);               // the instance has no dict aga
 Ref i_bella_is_builtin(Obj, Args a);
 Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
+Ref i_bella_discover(Obj, Args a);               // bootstrap_external.py's: PathFinder.discover's path entry finder
 Ref i_bella_exec(Obj, Args a);
 Ref i_bella_refuse(Obj, Args a);
 Ref i_bella_caller_module(Obj, Args a);                      // caller(): the nearest program frame's module name

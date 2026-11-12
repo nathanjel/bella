@@ -1,0 +1,12 @@
+{
+ "case": "C-8-13_the_path_finders_discovery.py",
+ "clause": "C-8-13",
+ "spec": "section 8 (the closed world), section 7 (traceback)",
+ "status": "P1",
+ "source": "Lib/importlib/_bootstrap_external.py (PathFinder.discover, FileFinder.discover), Lib/traceback.py",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "imppkg: body runs; imppkg imppkg imppkg list 1\nimppkg.plain: body runs; imppkg.plain imppkg imppkg None\nimppkg: plain bound: 1 | plain in the package namespace: True\nimppkg.sub.deep: beyond the top-level package -> ImportError\nimppkg.sub: body runs; imppkg.sub 1 2\nlazy: generator generator\nunder the package: True True False False\na module's spec: ModuleSpec SourceFileLoader imppkg.plain imppkg True True None False False\na package's spec: SourceFileLoader imppkg.sub True True\nunder the subpackage: ['imppkg.sub.deep']\ntop level: True\nnot a package: generator ValueError\nfinders with the method: ['PathFinder']\nsuggestion: imppkg.plian True True\nsuggestion: imppkg.sbu True True\nsuggestion: imppkg.sub.deeep True True\nsuggestion: imppkg.zzzzzzzz True True\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -2143,8 +2143,16 @@ Ref traceback_next(Obj self) {                   // tb_next_get: the entry one c
     Obj next = static_cast<Traceback*>(self.object())->next.get();
     return is_kind(next, Kind::Traceback) ? Ref::share(next) : none_ref();
 }
-void traceback_next_set(Obj, Obj) {              // tb_next_set: a program may relink a traceback; the runtime's entries are its own yet
-    throw NotImplemented("assigning or deleting traceback.tb_next");
+// traceback_tb_next_set_impl: None or another entry, and no loop. A relinked traceback is the program's: the runtime gives a frame's
+// locals to the newest entry of that frame it still finds by walking the links (record_frame), as CPython's frame stays with the
+// entry that holds it
+void traceback_next_set(Obj self, Obj value) {
+    if (value.is_unset()) raise_new("TypeError", "can't delete tb_next attribute");
+    if (value != None() && !is_kind(value, Kind::Traceback))
+        raise_new("TypeError", "expected traceback object, got '" + type_of(value)->name + "'");
+    for (Obj cursor = value; is_kind(cursor, Kind::Traceback); cursor = static_cast<Traceback*>(cursor.object())->next.get())
+        if (cursor.object() == self.object()) raise_new("ValueError", "traceback loop detected");
+    static_cast<Traceback*>(self.object())->next = Ref::share(value);
 }
 Ref oserror_written_get(Obj self) {
     Obj v = exception_field(self, "written");
@@ -3058,37 +3066,69 @@ void add_note(Obj exc, const std::string& text) {
     list_append(notes.get(), note.get());
 }
 
-// Python/suggestions.c: levenshtein_distance's costs, _Py_CalculateSuggestions' choice
+// Python/suggestions.c: levenshtein_distance and _Py_CalculateSuggestions, over the names' UTF-8
 namespace {
-std::size_t edit_cost(std::string_view a, std::string_view b) {
-    constexpr std::size_t MOVE = 2, CASE = 1;
-    auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c; };
-    std::vector<std::size_t> row(b.size() + 1);
-    for (std::size_t j = 0; j <= b.size(); ++j) row[j] = j * MOVE;
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        std::size_t diag = row[0];
-        row[0] = (i + 1) * MOVE;
-        for (std::size_t j = 0; j < b.size(); ++j) {
-            std::size_t sub = a[i] == b[j] ? 0 : lower(a[i]) == lower(b[j]) ? CASE : MOVE;
-            std::size_t best = std::min({diag + sub, row[j] + MOVE, row[j + 1] + MOVE});
-            diag = row[j + 1];
-            row[j + 1] = best;
-        }
+constexpr std::size_t MAX_CANDIDATE_ITEMS = 750, MAX_STRING_SIZE = 40, MOVE_COST = 2, CASE_COST = 1;
+std::size_t substitution_cost(char a, char b) {
+    if ((a & 31) != (b & 31)) return MOVE_COST;  // not the same, not a case flip
+    if (a == b) return 0;
+    if ('A' <= a && a <= 'Z') a = static_cast<char>(a + ('a' - 'A'));
+    if ('A' <= b && b <= 'Z') b = static_cast<char>(b + ('a' - 'A'));
+    return a == b ? CASE_COST : MOVE_COST;
+}
+// max_cost + 1 for "more than max_cost", as the C answers when it gives up early
+std::size_t levenshtein_distance(std::string_view a, std::string_view b, std::size_t max_cost) {
+    while (!a.empty() && !b.empty() && a.front() == b.front()) {   // trim away common affixes
+        a.remove_prefix(1);
+        b.remove_prefix(1);
     }
-    return row[b.size()];
+    while (!a.empty() && !b.empty() && a.back() == b.back()) {
+        a.remove_suffix(1);
+        b.remove_suffix(1);
+    }
+    if (a.empty() || b.empty()) return (a.size() + b.size()) * MOVE_COST;
+    if (a.size() > MAX_STRING_SIZE || b.size() > MAX_STRING_SIZE) return max_cost + 1;
+    if (b.size() < a.size()) std::swap(a, b);    // prefer the shorter buffer
+    if ((b.size() - a.size()) * MOVE_COST > max_cost) return max_cost + 1;
+    std::size_t buffer[MAX_STRING_SIZE];
+    std::size_t tmp = MOVE_COST;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        buffer[i] = tmp;
+        tmp += MOVE_COST;
+    }
+    std::size_t result = 0;
+    for (std::size_t b_index = 0; b_index < b.size(); ++b_index) {
+        char code = b[b_index];
+        std::size_t distance = result = b_index * MOVE_COST;
+        std::size_t minimum = SIZE_MAX;
+        for (std::size_t index = 0; index < a.size(); ++index) {
+            std::size_t substitute = distance + substitution_cost(code, a[index]);
+            distance = buffer[index];
+            std::size_t insert_delete = std::min(result, distance) + MOVE_COST;
+            result = std::min(insert_delete, substitute);
+            buffer[index] = result;
+            if (result < minimum) minimum = result;
+        }
+        if (minimum > max_cost) return max_cost + 1;   // everything in this row is too big
+    }
+    return result;
 }
 }  // namespace
 std::string keyword_suggestion(const std::string& name, const std::vector<std::string>& known) {
+    if (known.size() >= MAX_CANDIDATE_ITEMS) return "";
     std::string suggestion;
-    std::size_t best = SIZE_MAX;
+    bool found = false;
+    std::size_t best = SIZE_MAX;                 // PY_SSIZE_T_MAX: no match beaten yet
     for (const std::string& it : known) {
         if (it == name) continue;
-        std::size_t limit = std::min((name.size() + it.size() + 3) * 2 / 6, best == SIZE_MAX ? SIZE_MAX : best - 1);
-        std::size_t cost = edit_cost(name, it);
-        if (cost > limit) continue;
-        if (suggestion.empty() || cost < best) {
+        // no more than 1/3 of the involved characters should need changed; don't take matches already beaten
+        std::size_t max_distance = std::min((name.size() + it.size() + 3) * MOVE_COST / 6, best - 1);
+        std::size_t current = levenshtein_distance(name, it, max_distance);
+        if (current > max_distance) continue;
+        if (!found || current < best) {
             suggestion = it;
-            best = cost;
+            best = current;
+            found = true;
         }
     }
     return suggestion;
@@ -3288,7 +3328,7 @@ void init_types() {
         auto* lineno = new GetSet("tb_lineno", t.traceback, traceback_lineno, nullptr);
         t.traceback->attrs.set(N("tb_lineno"), Obj::of(lineno));
         auto* next = new GetSet("tb_next", t.traceback, traceback_next, traceback_next_set);
-        next->deletable = true;                  // so that a deletion reaches the setter's stop, not "not writable"
+        next->deletable = true;                  // so that a deletion reaches the setter's TypeError, not "not writable"
         t.traceback->attrs.set(N("tb_next"), Obj::of(next));
         ClassObject* os = os_error();
         method(os, "__new__", oserror_new, Binding::Function);

@@ -908,10 +908,11 @@ namespace {
 std::uint64_t frame_ids = 0;                     // a frame's id, given on its first record: never reused
 
 // prepends (code, line) for frame `id` to exc's traceback, as PyTraceBack_Here does
-Traceback* add_entry(Obj exc, const Code& code, int line, std::uint64_t id) {
+Traceback* add_entry(Obj exc, const Code& code, Module* module, int line, std::uint64_t id) {
     Obj prev = traceback_of(exc);
     auto* tb = new Traceback(&code, line, Ref::share(prev.is_unset() ? None() : prev));
     tb->frame = id;
+    if (module != nullptr) tb->module = Ref::share(Obj::of(module));
     Ref held = own(tb);
     set_exception_field(exc, "__traceback__", held.get());
     return tb;
@@ -924,11 +925,12 @@ void traceback_from_current_frame(Obj exc) {     // _PyTraceBack_FromFrame(NULL,
     if (f->id == 0) f->id = ++frame_ids;
     auto* tb = new Traceback(f->code, f->line, none_ref());
     tb->frame = f->id;
+    if (f->module != nullptr) tb->module = Ref::share(Obj::of(f->module));
     Ref held = own(tb);
     set_exception_field(exc, "__traceback__", held.get());
 }
 
-void detail::arrive(const Code& code, int line, std::uint64_t& id, PyError& e) noexcept {
+void detail::arrive(const Code& code, Module* module, int line, std::uint64_t& id, PyError& e) noexcept {
     try {
         if (!code.shown) {                       // no frame in CPython: the caller records the call
             e.recorded = 0;
@@ -936,14 +938,14 @@ void detail::arrive(const Code& code, int line, std::uint64_t& id, PyError& e) n
         }
         if (id == 0) id = ++frame_ids;
         if (e.recorded == id) return;            // re-raised by this frame
-        if (e.recorded != BARE_RAISE && is_kind(e.exc.get(), Kind::Instance)) add_entry(e.exc.get(), code, line, id);
+        if (e.recorded != BARE_RAISE && is_kind(e.exc.get(), Kind::Instance)) add_entry(e.exc.get(), code, module, line, id);
         e.recorded = id;
     } catch (...) {
         // a frame record that cannot be made loses the entry, never the exception
     }
 }
 
-void detail::record_frame(const Code& code, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept {
+void detail::record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept {
     try {
         Obj exc = raising();
         auto* err = static_cast<PyError*>(const_cast<void*>(raising_owner()));
@@ -962,7 +964,7 @@ void detail::record_frame(const Code& code, int line, std::uint64_t& id, Ref* co
                 }
         } else {
             if (id == 0) id = ++frame_ids;
-            entry = add_entry(exc, code, line, id);
+            entry = add_entry(exc, code, module, line, id);
         }
         if (entry != nullptr)
             for (std::size_t i = 0; i < n; ++i) entry->locals.push_back(std::move(*locals[i]));

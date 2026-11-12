@@ -10721,6 +10721,8 @@ static constexpr CPythonDoc CPYTHON_DOCS[] = {
     {"_struct.pack_into", "Pack values and write the packed bytes into the buffer.\n\nPack the provided values according to the format string and write the\npacked bytes into the writable buffer starting at offset.  Note that the\noffset is a required argument.  A negative offset counts from the end of\nthe buffer.  See help(struct) for more on format strings."},
     {"_struct.unpack", "Return a tuple containing values unpacked according to the format string.\n\nThe buffer's size in bytes must be calcsize(format).  See help(struct)\nfor more on format strings."},
     {"_struct.unpack_from", "Return a tuple containing values unpacked according to the format string.\n\nThe buffer must contain at least calcsize(format) bytes starting at\noffset.  A negative offset counts from the end of the buffer.  See\nhelp(struct) for more on format strings."},
+    {"_suggestions", ""},
+    {"_suggestions._generate_suggestions", "Returns the candidate in candidates that's closest to item"},
     {"_thread", "This module provides primitive operations to write multi-threaded programs.\nThe 'threading' module provides a more convenient interface."},
     {"_thread._count", "Return the number of currently running Python threads, excluding\nthe main thread. The returned number comprises all threads created\nthrough `start_new_thread()` as well as `threading.Thread`, and not\nyet finished.\n\nThis function is meant for internal and specialized purposes only.\nIn most applications `threading.enumerate()` should be used instead."},
     {"_thread._excepthook", "Handle uncaught Thread.run() exception."},

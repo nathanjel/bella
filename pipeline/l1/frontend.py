@@ -2570,11 +2570,18 @@ _REPLACED = Path(__file__).resolve().parents[2] / "runtime" / "replaced"
 _STDLIB = Path(__import__("os").path.dirname(__import__("os").__file__)).resolve()
 
 
+# the names a replaced body may call, and the intrinsics they are: the call sites of the program's frames, and the code, the globals
+# and the clearing of the frame a traceback's entry stands for (runtime/src/call.cpp, i_call_sites and the three i_traceback_*;
+# eval1's _call_sites and _traceback_*)
+_REPLACED_INTRINSICS = {"__bella_call_sites__": "call_sites", "__bella_traceback_code__": "traceback_code",
+                        "__bella_traceback_globals__": "traceback_globals", "__bella_traceback_clear__": "traceback_clear"}
+
+
 def replace_functions(tree: ast.Module, filename: str) -> None:
     """manifest.toml [replaced]: a standard-library module whose adaptation replaces functions of CPython's text gets their
     bodies from runtime/replaced/<module>.py, where each def repeats the signature of the one of the same qualified name
     (a class there is only the path to its methods). CPython's docstring stays, and the new statements are at the line of
-    the body's first, so a code object keeps CPython's names and lines; `__bella_call_sites__` there is the intrinsic. A
+    the body's first, so a code object keeps CPython's names and lines; the names of _REPLACED_INTRINSICS there are intrinsics. A
     replacement that finds no such function, or another signature, is refused."""
     try:
         rel = Path(filename).resolve().relative_to(_STDLIB)
@@ -2611,8 +2618,8 @@ def replace_functions(tree: ast.Module, filename: str) -> None:
                     for node in ast.walk(s):
                         if "lineno" in node._attributes:
                             ast.copy_location(node, first)
-                        if isinstance(node, ast.Name) and node.id == "__bella_call_sites__":
-                            node.id = _INTRINSIC + "call_sites"
+                        if isinstance(node, ast.Name) and node.id in _REPLACED_INTRINSICS:
+                            node.id = _INTRINSIC + _REPLACED_INTRINSICS[node.id]
                 n.body = doc + stmts
                 done.add(qual)
             elif isinstance(n, ast.ClassDef):

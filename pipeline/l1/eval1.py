@@ -1626,9 +1626,37 @@ def _call_sites() -> list[tuple[str, int, str]]:
     return []
 
 
+def _traceback_code(tb: object, capture_locals: object) -> object:
+    """The code a traceback's entry stands for (runtime/replaced/traceback.py): an evaluator's entries are the host's, whose
+    frames are the evaluator's own; their code, so that the walk runs as compiled code's does."""
+    if not isinstance(tb, types.TracebackType):
+        return None
+    if capture_locals:
+        raise L.Refused("traceback's capture_locals (the locals of a frame, E-02)")
+    return tb.tb_frame.f_code
+
+
+def _traceback_globals(tb: object) -> object:
+    """The globals of the frame a traceback's entry stands for (runtime/replaced/unittest.result.py): the host's frame's."""
+    return tb.tb_frame.f_globals if isinstance(tb, types.TracebackType) else None
+
+
+def _traceback_clear(tb: object) -> bool:
+    """frame.clear() of the frame a traceback's entry stands for (runtime/replaced/traceback.py): the host's frame's, whose
+    refusal of a running frame clear_frames ignores."""
+    if not isinstance(tb, types.TracebackType):
+        return False
+    try:
+        tb.tb_frame.clear()
+    except RuntimeError:
+        pass
+    return True
+
+
 _STAR: dict[str, Callable[..., Any]] = {"exception": _star_exception, "eg_match": eg_match, "raise_handled": _raise_keeping,
                                         "prep_reraise_star": prep_reraise_star, "reraise_star": _raise_keeping,
-                                        "call_sites": _call_sites}
+                                        "call_sites": _call_sites, "traceback_code": _traceback_code,
+                                        "traceback_globals": _traceback_globals, "traceback_clear": _traceback_clear}
 
 
 def _matches(exc: BaseException, spec: Any) -> bool:

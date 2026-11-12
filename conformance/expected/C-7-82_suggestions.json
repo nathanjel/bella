@@ -1,0 +1,12 @@
+{
+ "case": "C-7-82_suggestions.py",
+ "clause": "C-7-82",
+ "spec": "section 7 (traceback)",
+ "status": "P1",
+ "source": "Modules/_suggestions.c, Modules/clinic/_suggestions.c.h, Python/suggestions.c (levenshtein_distance,",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "choices 'append' 'apple' 'Spam' None 'abd' None None 'ab' None 'caf\\xe9' None 'ab'\na third 'abcdefxyz' 'abcdefgxy' 'abcdefghx' 'xbcdefghy' None 'abcdefghiXYZ'\nforty bytes '<AbcdEfghIjklMnopQrstUvwxYzabCdefGhijKlmn>' None None '<abcdefghijklmnopqrstuvwxyzabcdefghijklm\\xe9>'\ncandidates 'spam' None None\nthe object itself True Name\narguments TypeError TypeError TypeError TypeError None TypeError TypeError TypeError TypeError TypeError TypeError\nsurrogates UnicodeEncodeError UnicodeEncodeError UnicodeEncodeError None\nattribute \". Did you mean '.append' instead of '.appendd'?\" \". Did you mean '._private' instead of '._privat'?\" '' ''\nfrom-import ImportError json dumsp \". Did you mean: 'dump'?\"\nname without a frame '' \". Did you forget to import 'json'?\"\n",
+ "stderr": "",
+ "exit_code": 0
+}

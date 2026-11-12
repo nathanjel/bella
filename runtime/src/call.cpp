@@ -2129,6 +2129,37 @@ Ref i_call_sites(Obj, Args a) {
     }
     return out;
 }
+// A traceback's entry stands for its frame where an adaptation reads the frame's code (traceback's StackSummary; runtime/replaced):
+// the code object of the entry's code, the one its function's __code__ gives, or None for what is no traceback, CPython's reads then
+// being the adaptation's. Capturing the frame's locals, which CPython reads off the frame, stops by name (E-02)
+Ref i_traceback_code(Obj, Args a) {
+    positional_only(a, "traceback_code", 2, 2);
+    if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
+    if (truth(a.pos(1))) throw NotImplemented("traceback's capture_locals (the locals of a frame, E-02)");
+    const Code* c = static_cast<Traceback*>(a.pos(0).object())->code;
+    if (c->object.get().is_unset()) c->object = own(new CodeObject(c));
+    return c->object;
+}
+// The globals of the frame a traceback's entry stands for (unittest's TestResult; runtime/replaced): its module's dict, an empty dict
+// for an entry no frame of the program's made (_PyTraceback_Add's, as CPython's has), None for what is no traceback
+Ref i_traceback_globals(Obj, Args a) {
+    positional_only(a, "traceback_globals", 1, 1);
+    if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
+    Obj m = static_cast<Traceback*>(a.pos(0).object())->module.get();
+    return m.is_unset() ? dict_new() : Ref::share(Obj::of(static_cast<Module*>(m.object())->dict));
+}
+// frame.clear() of the frame a traceback's entry stands for (traceback.clear_frames; runtime/replaced). A frame the exception left has
+// given the entry its locals (record_frame), and they go now, last first, as frame_tp_clear releases them. A frame still running has
+// given none: CPython's refuses with a RuntimeError, which clear_frames ignores. True for a traceback's entry, False for what is
+// none, which the adaptation then clears as CPython does
+Ref i_traceback_clear(Obj, Args a) {
+    positional_only(a, "traceback_clear", 1, 1);
+    if (!is_kind(a.pos(0), Kind::Traceback)) return Ref::steal(boolean(false));
+    std::vector<Ref> locals = std::move(static_cast<Traceback*>(a.pos(0).object())->locals);   // out of the entry first: a finaliser
+    static_cast<Traceback*>(a.pos(0).object())->locals.clear();                                // may reach the traceback
+    for (auto it = locals.rbegin(); it != locals.rend(); ++it) *it = Ref{};
+    return Ref::steal(boolean(true));
+}
 Ref i_exception(Obj, Args a) {
     positional_only(a, "exception", 0, 0);
     return handled_exception();
@@ -2160,7 +2191,8 @@ void register_intrinsics() {
              {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack},
              {"call_args_tuple", i_call_args_tuple}, {"super", i_super}, {"exception", i_exception}, {"eg_match", i_eg_match},
              {"raise_handled", i_raise_handled}, {"prep_reraise_star", i_prep_reraise_star}, {"reraise_star", i_reraise_star},
-             {"call_sites", i_call_sites}}) {
+             {"call_sites", i_call_sites}, {"traceback_code", i_traceback_code}, {"traceback_globals", i_traceback_globals},
+             {"traceback_clear", i_traceback_clear}}) {
         Ref b = own(new Builtin(name, fn));
         dict_set(intrinsics(), Obj::of(intern(name)), b.get());
     }
@@ -2311,7 +2343,9 @@ void format_unraisable(const std::string* context, Obj exc) {
     if (!is_kind(tb.get(), Kind::Traceback)) {
         tb = none_ref();
         if (detail::FrameRecord* frame = detail::current_frame(); frame != nullptr && is_exception_instance(exc)) {
-            tb = own(new Traceback(frame->code, frame->line, Ref{}));   // _PyTraceBack_FromFrame(NULL, frame), then PyException_SetTraceback
+            auto* entry = new Traceback(frame->code, frame->line, Ref{});   // _PyTraceBack_FromFrame(NULL, frame), then PyException_SetTraceback
+            if (frame->module != nullptr) entry->module = Ref::share(Obj::of(frame->module));
+            tb = own(entry);
             set_exception_field(exc, "__traceback__", tb.get());
         }
     }
@@ -2942,7 +2976,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                 }
                 if (std::string_view(pm_entry.name) == "_frozen_importlib_external") {   // bootstrap_external.py: _set_bootstrap_module's work, its primitives
                     put(pm->dict, "_bootstrap", Obj::of(bootstrap));
-                    for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{{"_bella_refuse", i_bella_refuse}, {"_cpython_table", i_cpython_table}}) {
+                    for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{{"_bella_refuse", i_bella_refuse}, {"_cpython_table", i_cpython_table},
+                                                                                                       {"_bella_discover", i_bella_discover}}) {
                         Ref b = own(new Builtin(n, fn));
                         put(pm->dict, n, b.get());
                     }

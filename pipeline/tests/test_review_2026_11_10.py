@@ -1027,7 +1027,8 @@ BOOTSTRAP_STOPS = {
     "_frozen_importlib.FrozenImporter.get_source (CPython has it": "import importlib.machinery as m\ndel m.FrozenImporter.get_source\nm.FrozenImporter.get_source",
     "_frozen_importlib_external.FileFinder.discover (CPython has it": "import importlib.machinery as m\ndel m.FileFinder.discover\nm.FileFinder('/x').discover",
     "_imp.get_frozen_object": "import importlib.machinery as m\nm.FrozenImporter.get_code('os')",
-    "PathFinder._path_importer_cache": "import importlib.machinery as m\nnext(m.PathFinder.discover())",
+    # asked outright: PathFinder.discover no longer reaches it, since it lists the modules the build found (C-8-13)
+    "PathFinder._path_importer_cache": "import importlib.machinery as m\nm.PathFinder._path_importer_cache('/x')",
     "FileFinder._find_children": "import importlib.machinery as m\nnext(m.FileFinder('/nowhere')._find_children())",
     "_frozen_importlib.SimpleNamespace": "import sys\nsys.modules['_frozen_importlib'].SimpleNamespace = 1",
 }
