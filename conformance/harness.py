@@ -65,7 +65,7 @@ CASES = ROOT / "cases"
 EXPECTED = ROOT / "expected"
 PROJECT = ROOT.parent
 
-_FRAME = re.compile(r'^(\s*)File "(.+?)", line (\d+)(, in .+)?$')
+_FRAME = re.compile(r'^((?:\s*\| )?\s*)File "(.+?)", line (\d+)(, in .+)?$')   # inside an exception group's box: after its margin
 _EXC_LINE = re.compile(r"^([A-Za-z_][\w.]*): (.*)$")
 _BUILTIN_EXC = {
     n for n in dir(builtins)
@@ -147,13 +147,16 @@ def mask_stderr(text: str, masked: frozenset[str] = frozenset()) -> str:
     the case declares (`masked`); everything else, user-supplied messages included, is compared."""
     out: list[str] = []
     skip_echo = False
+    margin = ""                                  # an exception group's ("    | "): the echo lines of its frames come after it
     for line in text.splitlines():
         m = _FRAME.match(line)
         if m:
             out.append(f'{m.group(1)}File "{Path(m.group(2)).name}", line {m.group(3)}{m.group(4) or ""}')
             skip_echo = True
+            margin = m.group(1)[:m.group(1).rfind("| ") + 2] if "| " in m.group(1) else ""
             continue
-        if skip_echo and (line.startswith("    ") or line.strip() == "" or set(line.strip()) <= set("~^")):
+        rest = line[len(margin):] if line.startswith(margin) else None
+        if skip_echo and rest is not None and (rest.startswith("    ") or rest.strip() == "" or set(rest.strip()) <= set("~^")):
             continue
         skip_echo = False
         e = _EXC_LINE.match(line)

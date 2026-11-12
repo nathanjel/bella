@@ -151,6 +151,7 @@ C-8-06_lazy_import_error_at_first_use.py
 C-8-07_lazy_modules_list.py
 C-8-10_import_system.py
 C-8-11_staged_compile.py
+C-8-12_the_report_of_an_exception_group.py
 C-9-03_refcount_disposal_order.py
 C-9-04_refcount_resurrection_keeps_weakref.py
 C-9-05_default_argument_lifetime.py

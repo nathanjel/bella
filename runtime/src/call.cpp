@@ -2304,81 +2304,220 @@ void report_unraisable(const std::string& context, Obj exc) { format_unraisable(
 void report_unraisable(Obj exc) { format_unraisable(nullptr, exc); }
 
 namespace {
-// What the report reads of an exception, by attribute access as traceback.TracebackException
-// does; `__notes__` may be absent (getattr(exc, '__notes__', None)).
+// The report CPython prints (traceback.TracebackException, compact, with its defaults: max_group_width 15, max_group_depth 10;
+// Lib/traceback.py, 3.15.2), file and line only (spec D-06). What it reads of each exception it reads by attribute access, when
+// it builds the exception's record: its str(), its __notes__ (getattr with a default), and, in its queue (last in, first out),
+// __cause__, __suppress_context__, __context__ and a group's parts; an exception already recorded ends a chain (RL-226), and
+// every record, a group's parts included, counts as recorded once built.
+struct Record {                                  // a TracebackException
+    Ref exc;
+    std::string type_name;                       // exc_type_str
+    std::string text;                            // _str: _safe_string(exc, 'exception')
+    Ref notes;                                   // __notes__, None for none
+    bool suppress = false;
+    Record* cause = nullptr;
+    Record* context = nullptr;
+    bool group = false;
+    std::vector<Record*> parts;
+};
 Ref report_attr(Obj exc, const char* name) {
     try {
         return getattr(exc, intern(name));
     } catch (const PyError& e) {
-        if (is_attribute_error(e) && std::string_view(name) == "__notes__") return none_ref();
         throw NotImplemented(std::string("the report of an uncaught exception whose ") + name + " raises");
     }
 }
-
-// One exception of the report: its traceback, then `Type: message`.
-void print_one(ErrSink& err, Obj exc) {
-    Obj tb = traceback_of(exc);
-    if (is_kind(tb, Kind::Traceback)) {
-        err.write("Traceback (most recent call last):\n");
-        for (Obj t = tb; is_kind(t, Kind::Traceback); t = static_cast<Traceback*>(t.object())->next.get()) {
-            auto* e = static_cast<Traceback*>(t.object());
-            // file and line only (spec D-06: release builds carry no source text)
-            err.write(std::string("  File \"") + e->code->filename + "\", line " + std::to_string(e->line) + ", in " +
-                      e->code->name + "\n");
+std::string safe_string(Obj v, const char* what, bool use_repr) {   // _safe_string: a bare except, so anything it raises
+    try {
+        Ref s = use_repr ? repr_of(v) : str_of(v);
+        return as_str(s.get())->text;
+    } catch (const PyError&) {
+        return std::string("<") + what + " " + (use_repr ? "repr" : "str") + "() failed>";
+    }
+}
+struct Records {
+    std::vector<std::unique_ptr<Record>> all;
+    std::unordered_set<const Object*> seen;      // _seen
+    Record* make(Obj exc) {                       // TracebackException.__init__, as far as the report reads it
+        seen.insert(exc.object());
+        auto r = std::make_unique<Record>();
+        r->exc = Ref::share(exc);
+        ClassObject* type = type_of(exc);
+        r->type_name = fully_qualified_name(type);
+        if (const Obj* mod = type->attrs.find(intern("__module__")); mod != nullptr && as_str(*mod) == nullptr)
+            r->type_name = "<unknown>." + type->qualname;     // a __module__ that is no str
+        r->text = safe_string(exc, "exception", false);
+        try {                                    // getattr(exc_value, '__notes__', None); what else it raises becomes the note
+            Ref notes = optional_getattr(exc, intern("__notes__"));
+            r->notes = notes.get().is_unset() ? none_ref() : std::move(notes);
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("Exception"))) throw;
+            Ref text = str_new("Ignored error getting __notes__: " + safe_string(e.exc.get(), "__notes__", true));
+            r->notes = list_new({text.get()});
+        }
+        r->suppress = truth(report_attr(exc, "__suppress_context__").get());
+        all.push_back(std::move(r));
+        return all.back().get();
+    }
+};
+bool is_exception_value(Obj v) { return is_kind(v, Kind::Instance) && is_subclass(type_of(v), exception_class("BaseException")); }
+Record* build_records(Records& rs, Obj exc) {
+    Record* top = rs.make(exc);
+    std::vector<std::pair<Record*, Ref>> queue{{top, Ref::share(exc)}};
+    while (!queue.empty()) {
+        auto [te, e] = std::move(queue.back());
+        queue.pop_back();
+        Ref cause = report_attr(e.get(), "__cause__");
+        Record* c = nullptr;
+        if (is_exception_value(cause.get()) && !rs.seen.contains(cause.get().object())) c = rs.make(cause.get());
+        bool need_context = c == nullptr && !truth(report_attr(e.get(), "__suppress_context__").get());   // compact
+        Ref context = report_attr(e.get(), "__context__");
+        Record* x = nullptr;
+        if (need_context && is_exception_value(context.get()) && !rs.seen.contains(context.get().object())) x = rs.make(context.get());
+        Ref parts;
+        if (is_exception_group(e.get())) {
+            parts = report_attr(e.get(), "exceptions");
+            te->group = true;
+            for (Obj part : static_cast<Tuple*>(parts.get().object())->items) te->parts.push_back(rs.make(part));
+        }
+        te->cause = c;
+        te->context = x;
+        if (c != nullptr) queue.emplace_back(c, report_attr(e.get(), "__cause__"));
+        if (x != nullptr) queue.emplace_back(x, report_attr(e.get(), "__context__"));
+        if (te->group) {
+            auto& items = static_cast<Tuple*>(parts.get().object())->items;
+            for (std::size_t i = 0; i < te->parts.size(); ++i) queue.emplace_back(te->parts[i], Ref::share(items[i]));
         }
     }
-    // format_exception_only: the type's __qualname__, its module unless __main__ or builtins, and
-    // _safe_string(exc, 'exception'): a str() that raises anything shows as <exception str() failed>
-    std::string name = fully_qualified_name(type_of(exc));
-    if (const Obj* mod = type_of(exc)->attrs.find(intern("__module__")); mod != nullptr && as_str(*mod) == nullptr)
-        name = "<unknown>." + type_of(exc)->qualname;     // TracebackException: a __module__ that is no str
-    std::string text;
-    try {
-        Ref str = str_of(exc);
-        text = as_str(str.get())->text;
-    } catch (const PyError&) {
-        text = "<exception str() failed>";
-    }
-    err.write(text.empty() ? name + "\n" : name + ": " + text + "\n");
+    return top;
 }
-
-// The report CPython prints (traceback.TracebackException, compact): the chain first, oldest
-// first, each link introduced by why it is there: an explicit cause, or the context unless
-// suppressed; an exception already in the chain ends it (RL-226).
-void print_traceback(Obj exc) {
+bool notes_sequence(Obj notes) {                 // isinstance(notes, collections.abc.Sequence) and not a str or bytes
+    if (is_kind(notes, Kind::Str) || is_kind(notes, Kind::Bytes)) return false;
+    if (is_kind(notes, Kind::List) || is_kind(notes, Kind::Tuple) || is_kind(notes, Kind::Range) || is_kind(notes, Kind::ByteArray)) return true;
+    Dict* modules = sys_modules();
+    Obj abc = dict_get(modules, Obj::of(intern("_collections_abc")));
+    if (abc.is_unset() || !is_kind(abc, Kind::Module)) {
+        // nothing registered anything with the ABCs: a type of the runtime's is one when CPython registers it, and a class of the
+        // program's could only be one by deriving from Sequence, which needs the module
+        return false;
+    }
+    Ref sequence = getattr(abc, intern("Sequence"));
+    return instance_of(notes, sequence.get());
+}
+struct PrintContext {                            // _ExceptionPrintContext
+    int depth = 0;
+    bool need_close = false;
+    std::string indent() const { return std::string(2 * depth, ' '); }
+};
+void emit(ErrSink& err, const PrintContext& ctx, std::string_view text, char margin = '|') {   // textwrap.indent, every line
+    std::string prefix = ctx.indent();
+    if (ctx.depth) prefix += std::string(1, margin) + " ";
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t nl = text.find('\n', at);
+        std::size_t stop = nl == std::string_view::npos ? text.size() : nl + 1;
+        err.write(prefix + std::string(text.substr(at, stop - at)));
+        at = stop;
+    }
+}
+void emit_stack(ErrSink& err, const PrintContext& ctx, Obj tb) {   // StackSummary.format: file and line (D-06)
+    for (Obj t = tb; is_kind(t, Kind::Traceback); t = static_cast<Traceback*>(t.object())->next.get()) {
+        auto* e = static_cast<Traceback*>(t.object());
+        emit(err, ctx, std::string("  File \"") + e->code->filename + "\", line " + std::to_string(e->line) + ", in " + e->code->name + "\n");
+    }
+}
+void emit_exception_only(ErrSink& err, const PrintContext& ctx, const Record& r) {   // format_exception_only(), depth 0
+    emit(err, ctx, r.text.empty() ? r.type_name + "\n" : r.type_name + ": " + r.text + "\n");
+    auto note_lines = [&](const std::string& note) {   // _format_note
+        std::size_t at = 0;
+        while (true) {
+            std::size_t nl = note.find('\n', at);
+            emit(err, ctx, note.substr(at, nl == std::string::npos ? std::string::npos : nl - at) + "\n");
+            if (nl == std::string::npos) break;
+            at = nl + 1;
+        }
+    };
+    Obj notes = r.notes.get();
+    if (notes != None() && notes_sequence(notes)) {
+        Ref items = invoke(Obj::of(types().list), {notes});   // `for note in self.__notes__`
+        for (Obj note : static_cast<List*>(items.get().object())->items) note_lines(safe_string(note, "note", false));
+    } else if (notes != None()) {
+        note_lines(safe_string(notes, "__notes__", true));
+    }
+}
+void format_record(ErrSink& err, PrintContext& ctx, Record* top) {   // TracebackException.format(chain=True)
     static const char* const CAUSE = "\nThe above exception was the direct cause of the following exception:\n\n";
     static const char* const CONTEXT = "\nDuring handling of the above exception, another exception occurred:\n\n";
-    ClassObject* base = exception_class("BaseException");
-    auto is_exception = [&](Obj v) { return is_kind(v, Kind::Instance) && is_subclass(type_of(v), base); };
-    std::vector<std::pair<const char*, Ref>> chain;     // (why the next one is shown, the exception)
-    std::unordered_set<const Object*> seen;
-    for (Ref e = Ref::share(exc); !e.get().is_unset();) {
-        seen.insert(e.get().object());
-        if (is_exception_group(e.get()))             // TracebackException's nested format (the `+-+---- 1 ----` boxes): not written yet
-            throw NotImplemented("the traceback of an uncaught exception group (its nested format)");
-        if (report_attr(e.get(), "__notes__").get() != None())
-            throw NotImplemented("the __notes__ of an uncaught exception (PEP 678)");
-        Ref cause = report_attr(e.get(), "__cause__");
-        Ref context = report_attr(e.get(), "__context__");
-        Ref suppress = report_attr(e.get(), "__suppress_context__");
-        const char* why = nullptr;
-        Ref next;
-        bool has_cause = is_exception(cause.get()) && !seen.contains(cause.get().object());
-        if (has_cause) {
-            why = CAUSE;
-            next = std::move(cause);
-        } else if (is_exception(context.get()) && !truth(suppress.get()) && !seen.contains(context.get().object())) {
-            why = CONTEXT;
-            next = std::move(context);
+    static constexpr int MAX_WIDTH = 15, MAX_DEPTH = 10;
+    std::vector<std::pair<const char*, Record*>> output;
+    for (Record* exc = top; exc != nullptr;) {
+        const char* msg = nullptr;
+        Record* next = nullptr;
+        if (exc->cause != nullptr) {
+            msg = CAUSE;
+            next = exc->cause;
+        } else if (exc->context != nullptr && !exc->suppress) {
+            msg = CONTEXT;
+            next = exc->context;
         }
-        chain.emplace_back(why, std::move(e));
-        e = std::move(next);
+        output.emplace_back(msg, exc);
+        exc = next;
     }
+    for (auto it = output.rbegin(); it != output.rend(); ++it) {
+        if (it->first != nullptr) emit(err, ctx, it->first);
+        Record* exc = it->second;
+        Obj tb = traceback_of(exc->exc.get());
+        bool stack = is_kind(tb, Kind::Traceback);
+        if (!exc->group) {
+            if (stack) {
+                emit(err, ctx, "Traceback (most recent call last):\n");
+                emit_stack(err, ctx, tb);
+            }
+            emit_exception_only(err, ctx, *exc);
+            continue;
+        }
+        if (ctx.depth > MAX_DEPTH) {
+            emit(err, ctx, "... (max_group_depth is " + std::to_string(MAX_DEPTH) + ")\n");
+            continue;
+        }
+        bool toplevel = ctx.depth == 0;
+        if (toplevel) ++ctx.depth;
+        if (stack) {
+            emit(err, ctx, "Exception Group Traceback (most recent call last):\n", toplevel ? '+' : '|');
+            emit_stack(err, ctx, tb);
+        }
+        emit_exception_only(err, ctx, *exc);
+        int num = static_cast<int>(exc->parts.size());
+        int n = num <= MAX_WIDTH ? num : MAX_WIDTH + 1;
+        ctx.need_close = false;
+        for (int i = 0; i < n; ++i) {
+            bool last = i == n - 1;
+            if (last) ctx.need_close = true;     // the closing frame may be added by a recursive call
+            bool truncated = i >= MAX_WIDTH;
+            std::string title = truncated ? "..." : std::to_string(i + 1);
+            err.write(ctx.indent() + (i == 0 ? "+-" : "  ") + "+---------------- " + title + " ----------------\n");
+            ++ctx.depth;
+            if (!truncated) {
+                format_record(err, ctx, exc->parts[i]);
+            } else {
+                int remaining = num - MAX_WIDTH;
+                emit(err, ctx, "and " + std::to_string(remaining) + " more exception" + (remaining > 1 ? "s" : "") + "\n");
+            }
+            if (last && ctx.need_close) {
+                err.write(ctx.indent() + "+------------------------------------\n");
+                ctx.need_close = false;
+            }
+            --ctx.depth;
+        }
+        if (toplevel) ctx.depth = 0;
+    }
+}
+void print_traceback(Obj exc) {
+    Records rs;
+    Record* top = build_records(rs, exc);
     ErrSink err;
-    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        if (it->first != nullptr) err.write(it->first);
-        print_one(err, it->second.get());
-    }
+    PrintContext ctx;
+    format_record(err, ctx, top);
     err.flush();
 }
 
