@@ -1,0 +1,12 @@
+{
+ "case": "C-3-64_subclasses_of_bytes_and_bytearray.py",
+ "clause": "C-3-64",
+ "spec": "section 3 (classes: a subclass of a built-in type), section 6 (bytes, bytearray)",
+ "status": "P1",
+ "source": "Objects/bytesobject.c (CPython 3.15.2: bytes_new, bytes_subtype_new, bytes_repr, bytes___getnewargs__),",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "name: b'ab' Name t {'tag': 't'} True 2 97 True True\nmethods make bytes: bytes bytes bytes bytes bytes bytes bytes False\nrepr: b'ab' b'' b'x' b'q'\nno weak reference: False True\nweakref refused: TypeError\nslots refused: TypeError\nbuffer: b'xyz!' Buffer slot {'extra': 1} 4 True\nbuffer methods make bytearrays: bytearray bytearray bytearray bytearray bytearray\nbuffer repr: Buffer(b'xyz!') Buffer(b'')\nodd: [0] 99 True 5 Odd.__add__ b'xabc' b'abc' True abc b'ABC'\ncopy of a bytes subclass: Plain b'pq' True kept\ncopy of a bytearray subclass: Buffer b'xyz!' slot {'extra': 1}\nnewargs: (b'ab',) (b'pq',)\njoin and in: b'a-b' True True True\nmro: ['Name', 'bytes', 'object'] ['Buffer', 'bytearray', 'object']\n",
+ "stderr": "",
+ "exit_code": 0
+}

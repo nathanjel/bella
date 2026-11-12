@@ -31,13 +31,14 @@ Ref yes_no(bool b) { return Ref::steal(boolean(b)); }
 unsigned char u(char c) { return static_cast<unsigned char>(c); }
 
 Ref new_bytearray(std::string s) { return own(new BytesObject(Kind::ByteArray, std::move(s))); }
+bool exact_bytes(Obj v) { return is_kind(v, Kind::Bytes) && !has_attributes(v.object()); }   // PyBytes_CheckExact
 Ref make_like(Obj self, std::string_view s) {     // what a method of either returns: its own kind
     return is_bytearray(self) ? new_bytearray(std::string(s)) : bytes_new(s);
 }
-// return_self: a bytes is its own copy; a bytearray never is
-Ref self_or_copy(Obj self) { return is_bytearray(self) ? new_bytearray(bytes_data(self)) : Ref::share(self); }
+// return_self: an exact bytes is its own copy; a bytearray never is, nor a subclass's instance (STRINGLIB_CHECK_EXACT)
+Ref self_or_copy(Obj self) { return exact_bytes(self) ? Ref::share(self) : make_like(self, bytes_data(self)); }
 Ref piece_of(Obj self, std::string_view p) {
-    return !is_bytearray(self) && p.size() == bytes_data(self).size() ? Ref::share(self) : make_like(self, p);
+    return exact_bytes(self) && p.size() == bytes_data(self).size() ? Ref::share(self) : make_like(self, p);
 }
 
 std::string_view buffer_of(Obj arg) {             // PyObject_GetBuffer
@@ -344,7 +345,7 @@ Ref partition_m(Obj self, Args a) {
     std::size_t at = reverse ? s.rfind(d) : s.find(d);
     Ref empty = make_like(self, "");
     if (at == std::string_view::npos) {
-        Ref whole = piece_of(self, s);
+        Ref whole = is_bytearray(self) ? make_like(self, s) : Ref::share(self);   // stringlib_partition: the object itself, a subclass's too
         Ref empty2 = make_like(self, "");
         return reverse ? tuple_new({empty.get(), empty2.get(), whole.get()}) : tuple_new({whole.get(), empty.get(), empty2.get()});
     }
@@ -370,7 +371,7 @@ Ref join_m(Obj self, Args a) {                    // stringlib_bytes_join
         list_extend(seq.get(), it.get());
     }
     const auto& items = is_kind(seq.get(), Kind::List) ? static_cast<List*>(seq.get().object())->items : static_cast<Tuple*>(seq.get().object())->items;
-    if (items.size() == 1 && !is_bytearray(self) && is_kind(items[0], Kind::Bytes)) return Ref::share(items[0]);
+    if (items.size() == 1 && !is_bytearray(self) && exact_bytes(items[0])) return Ref::share(items[0]);   // PyBytes_CheckExact
     std::string out;
     const std::string sep = bytes_data(self);
     for (std::size_t i = 0; i < items.size(); ++i) {
@@ -944,10 +945,14 @@ std::string from_iterator(Obj it, const char* range_message) {
     for (Ref v = for_next(it); !is_end(v); v = for_next(it)) out += static_cast<char>(byte_value(v.get(), range_message));
     return out;
 }
-Ref bytes_new_m(Obj self, Args a) {               // bytes_new_impl
+Ref bytes_new_exact(Args rest);
+Ref bytes_new_m(Obj self, Args a) {               // bytes_new_impl, and bytes_subtype_new for a subclass: the octets copied into its instance
     ClassObject* cls = new_wrapper_class(a, static_cast<ClassObject*>(self.object()));
-    (void)cls;
-    Args rest{a.data + 1, a.npos - 1, a.kwnames, a.nkw};
+    Ref made = bytes_new_exact(Args{a.data + 1, a.npos - 1, a.kwnames, a.nkw});
+    if (cls == types().bytes) return made;
+    return own(new BytesInstance(cls, Kind::Bytes, bytes_data(made.get())));
+}
+Ref bytes_new_exact(Args rest) {
     SourceArgs s = source_args(rest, "bytes");
     if (s.source.is_unset()) {
         if (!s.encoding.is_unset()) raise_new("TypeError", "encoding without a string argument");
@@ -983,8 +988,8 @@ Ref bytes_new_m(Obj self, Args a) {               // bytes_new_impl
             return bytes_new(std::string(static_cast<std::size_t>(size), '\0'));
         }
     }
-    if (is_kind(x, Kind::Bytes)) return Ref::share(x);   // PyBytes_FromObject: an exact bytes is itself
-    if (is_kind(x, Kind::ByteArray)) return bytes_new(bytes_data(x));
+    if (exact_bytes(x)) return Ref::share(x);   // PyBytes_FromObject: an exact bytes is itself; a subclass's octets are copied
+    if (is_bytes_like(x)) return bytes_new(bytes_data(x));
     if (!type_lookup(type_of(x), N("__buffer__")).is_unset()) throw NotImplemented("[P2+] the buffer protocol (__buffer__)");
     Ref it;
     try {
@@ -996,8 +1001,9 @@ Ref bytes_new_m(Obj self, Args a) {               // bytes_new_impl
     length_hint(x);                              // _PyBytes_FromIterator: the iterator first, then the hint
     return bytes_new(from_iterator(it.get(), "bytes must be in range(0, 256)"));
 }
-Ref bytearray_new_m(Obj self, Args a) {           // tp_new: an empty one; __init__ fills it
-    new_wrapper_class(a, static_cast<ClassObject*>(self.object()));
+Ref bytearray_new_m(Obj self, Args a) {           // tp_new: an empty one; __init__ fills it (a subclass's: its storage beside the octets)
+    ClassObject* cls = new_wrapper_class(a, static_cast<ClassObject*>(self.object()));
+    if (cls != types().bytearray) return own(new BytesInstance(cls, Kind::ByteArray, ""));
     return new_bytearray("");
 }
 void not_exported(Obj self) {                     // _canresize
@@ -1179,6 +1185,32 @@ Ref insert_m(Obj self, Args a) {
     s.insert(static_cast<std::size_t>(i), 1, static_cast<char>(v));
     return none_ref();
 }
+Ref common_reduce(Obj self, std::int64_t proto) {   // _common_reduce: the class, the octets as the protocol takes them, the state
+    Ref getstate = getattr(self, N("__getstate__"));   // _PyObject_GetState
+    Ref state = invoke(getstate.get(), {});
+    const std::string& s = bytes_data(self);
+    Ref args;
+    if (s.empty()) {
+        args = tuple_new({});
+    } else if (proto < 3) {                      // a str by latin-1, for Python 2's sake
+        std::u32string text;
+        for (char c : s) text += static_cast<char32_t>(static_cast<unsigned char>(c));
+        Ref latin1 = str_from_codepoints(text), codec = str_new("latin-1");
+        args = tuple_new({latin1.get(), codec.get()});
+    } else {
+        Ref octets = bytes_new(s);
+        args = tuple_new({octets.get()});
+    }
+    return tuple_new({Obj::of(type_of(self)), args.get(), state.get()});
+}
+Ref reduce_m(Obj self, Args a) {                 // bytearray.__reduce__
+    noargs(a, "bytearray.__reduce__");
+    return common_reduce(self, 2);
+}
+Ref reduce_ex_m(Obj self, Args a) {              // bytearray.__reduce_ex__(proto=0, /)
+    clinic(a, "__reduce_ex__", "bytearray.__reduce_ex__", 0, 1);
+    return common_reduce(self, a.npos == 1 ? c_int_arg(a.pos(0)) : 0);
+}
 Ref pop_m(Obj self, Args a) {
     clinic(a, "pop", "bytearray.pop", 0, 1);
     std::int64_t i = a.npos == 1 ? ssize_arg(a.pos(0)) : -1;
@@ -1249,11 +1281,12 @@ Ref imul_m(Obj self, Args a) {
 }
 Ref bytes_dunder_m(Obj self, Args a) {
     noargs(a, "bytes.__bytes__");
-    return is_kind(self, Kind::Bytes) ? Ref::share(self) : bytes_new(bytes_data(self));
+    return exact_bytes(self) ? Ref::share(self) : bytes_new(bytes_data(self));
 }
-Ref getnewargs_m(Obj self, Args a) {
+Ref getnewargs_m(Obj self, Args a) {             // bytes___getnewargs___impl: Py_BuildValue("(y#)"), a new bytes of the octets
     noargs(a, "bytes.__getnewargs__");
-    return tuple_new({self});
+    Ref copy = bytes_new(bytes_data(self));
+    return tuple_new({copy.get()});
 }
 Ref str_dunder_m(Obj self, Args a) {
     dunder_args(self, a, "__str__", 0);
@@ -1418,14 +1451,14 @@ Ref bytes_repr(Obj v) {                           // PyBytes_Repr, and bytearray
         else out += c;
     }
     out += quote;
-    return str_new(is_bytearray(v) ? "bytearray(" + out + ")" : out);
+    return str_new(is_bytearray(v) ? type_of(v)->name + "(" + out + ")" : out);   // bytearray_repr: the class's name
 }
 Ref bytes_getitem(Obj self, Obj key) {
     const std::string& s = bytes_data(self);
     const char* kind = is_bytearray(self) ? "bytearray" : "byte";
     if (is_kind(key, Kind::Slice)) {
         auto [start, stop, step, n] = slice_indices(key, static_cast<std::int64_t>(s.size()));
-        if (!is_bytearray(self) && start == 0 && step == 1 && n == static_cast<std::int64_t>(s.size())) return Ref::share(self);
+        if (exact_bytes(self) && start == 0 && step == 1 && n == static_cast<std::int64_t>(s.size())) return Ref::share(self);
         std::string out;
         for (std::int64_t k = 0, at = start; k < n; ++k, at += step) out += s[static_cast<std::size_t>(at)];
         return make_like(self, out);
@@ -1462,9 +1495,9 @@ Ref bytes_concat(Obj a, Obj b) {                  // bytes_concat, bytearray_con
     if (!is_bytes_like(b) && type_lookup(type_of(b), N("__buffer__")).is_unset())
         raise_new("TypeError", "can't concat " + type_of(b)->name + " to " + (is_bytearray(a) ? "bytearray" : "bytes"));
     std::string_view right = buffer_of(b);
-    if (!is_bytearray(a)) {                       // an empty side: the other, when it is an exact bytes
-        if (right.empty()) return Ref::share(a);
-        if (bytes_data(a).empty() && is_kind(b, Kind::Bytes)) return Ref::share(b);
+    if (!is_bytearray(a)) {                       // an empty side: the other, when it is an exact bytes (the left side asked first)
+        if (bytes_data(a).empty() && exact_bytes(b)) return Ref::share(b);
+        if (right.empty() && exact_bytes(a)) return Ref::share(a);
     }
     std::string out = bytes_data(a);
     out += right;
@@ -1479,7 +1512,7 @@ void bytes_iadd(Obj a, Obj b) {
 }
 Ref bytes_repeat(Obj self, std::int64_t count, bool in_place) {
     const std::string& s = bytes_data(self);
-    if (!is_bytearray(self) && (count == 1 || s.empty())) return count <= 0 ? bytes_new("") : Ref::share(self);
+    if (exact_bytes(self) && (count == 1 || s.empty())) return count <= 0 ? bytes_new("") : Ref::share(self);
     std::string out;
     if (count > 0) {
         if (s.size() * static_cast<std::size_t>(count) > (std::size_t{1} << 32)) throw NotImplemented("a bytes object of over 4 GB");
@@ -1574,6 +1607,8 @@ void init_bytes() {
     method(t.bytearray, "extend", extend_m);
     method(t.bytearray, "insert", insert_m);
     method(t.bytearray, "pop", pop_m);
+    method(t.bytearray, "__reduce__", reduce_m);
+    method(t.bytearray, "__reduce_ex__", reduce_ex_m);
     method(t.bytearray, "remove", remove_m);
     method(t.bytearray, "reverse", reverse_m);
     method(t.bytearray, "clear", clear_m);

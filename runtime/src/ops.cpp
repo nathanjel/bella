@@ -540,7 +540,7 @@ bool contains(Obj container, Obj item) {
         return !dict_get(static_cast<Dict*>(container.object()), item).is_unset();
     if (is_kind(container, Kind::Dict)) return truth(call_special(container, "__contains__", {item}).get());
     if (is_kind(container, Kind::Set) && !overridden(container, "__contains__")) return set_contains(static_cast<SetObject*>(container.object()), item);
-    if (is_bytes_like(container)) return bytes_contains(container, item);
+    if (is_bytes_like(container) && !overridden(container, "__contains__")) return bytes_contains(container, item);
     if (as_str(container) != nullptr && !overridden(container, "__contains__")) return str_contains(container, item);
     if (is_kind(container, Kind::Range)) {           // range_contains: arithmetic for an exact int or a bool, else the search
         if (item.is_small() || is_kind(item, Kind::Bool) || is_kind(item, Kind::BigInt)) return range_contains_int(container, item);
@@ -763,7 +763,9 @@ bool truth(Obj v) {
             if (!overridden(v, "__bool__") && !overridden(v, "__len__")) return !static_cast<List*>(o)->items.empty();
             return truth_by_methods(v);
         case Kind::Bytes:
-        case Kind::ByteArray: return !bytes_data(v).empty();
+        case Kind::ByteArray:
+            if (!is_subclass_instance(v) || (!overridden(v, "__bool__") && !overridden(v, "__len__"))) return !bytes_data(v).empty();
+            return truth_by_methods(v);
         case Kind::DictView: return static_cast<Dict*>(static_cast<DictView*>(o)->dict.object())->used != 0;
         case Kind::Range: return static_cast<Range*>(o)->length != 0;
         case Kind::BigInt: return true;
@@ -1052,6 +1054,8 @@ ClassObject* builtin_of(Obj v) {
         case Kind::Tuple: return types().tuple;
         case Kind::List: return types().list;
         case Kind::Set: return static_cast<SetObject*>(v.object())->frozen ? types().frozenset : types().set;
+        case Kind::Bytes: return types().bytes;
+        case Kind::ByteArray: return types().bytearray;
         default: return types().object;
     }
 }
@@ -1486,7 +1490,7 @@ Ref getitem(Obj obj, Obj key) {
     if (is_kind(obj, Kind::Tuple) && !overridden(obj, "__getitem__")) return tuple_subscript(obj, key);
     if (is_kind(obj, Kind::List) && !overridden(obj, "__getitem__")) return list_subscript(obj, key);
     if (as_str(obj) != nullptr && !overridden(obj, "__getitem__")) return str_subscript(obj, key);
-    if (is_bytes_like(obj)) return bytes_getitem(obj, key);
+    if (is_bytes_like(obj) && !overridden(obj, "__getitem__")) return bytes_getitem(obj, key);
     if (is_kind(obj, Kind::Range)) {                 // range_subscript
         if (slice) return range_slice(obj, key);
         if (!is_int(key) && !has_index_method(key))
@@ -1663,7 +1667,7 @@ Ref iter(Obj obj) {
     if (is_kind(obj, Kind::Tuple) && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::TupleIt, obj));
     if (is_kind(obj, Kind::List) && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::ListIt, obj));
     if (as_str(obj) != nullptr && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::StrIt, obj));
-    if (is_bytes_like(obj)) return own(new Iterator(Iterator::BytesIt, obj));
+    if (is_bytes_like(obj) && !overridden(obj, "__iter__")) return own(new Iterator(Iterator::BytesIt, obj));
     if (is_kind(obj, Kind::Set) && !overridden(obj, "__iter__")) {
         auto* it = new Iterator(Iterator::SetIt, obj);
         Ref r = own(it);

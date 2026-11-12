@@ -699,7 +699,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (std::find(bases.begin(), bases.end(), bc) != bases.end())       // A9-9
             raise_new("TypeError", "duplicate base class " + bc->name);
         if (bc->final_type) raise_new("TypeError", "type '" + bc->name + "' is not an acceptable base type");
-        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().str && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().list && bc != types().float_ && bc != types().set && bc != types().frozenset &&
+        if (!bc->heap_type && bc != types().object && bc != types().type && bc != types().dict && bc != types().frozendict && bc != types().str && bc != types().int_ && bc != types().complex_ && bc != types().tuple && bc != types().list && bc != types().float_ && bc != types().set && bc != types().frozenset && bc != types().bytes && bc != types().bytearray &&
             bc != types().module &&              // a class statement over ModuleType (importlib.util._LazyModule): instances and __class__ assignment stop by name
             !is_subclass(bc, exception_class("BaseException")))
             throw NotImplemented("subclassing the built-in type '" + bc->name + "'");
@@ -770,10 +770,12 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
                 if (k->text == m) raise_new("ValueError", "'" + s->text + "' in __slots__ conflicts with class variable");
             if (std::find(slots.begin(), slots.end(), m) == slots.end()) slots.push_back(m);   // A9-18
         }
-        // an int subclass's instances have a variable size: only __dict__ may be a slot
-        bool int_based = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_); });
-        if (int_based && std::any_of(slots.begin(), slots.end(), [](const std::string& n) { return n != "__dict__" && n != "__weakref__"; }))
-            raise_new("TypeError", "arbitrary __slots__ not supported for subtype of 'int'");
+        // an int's or a bytes's subclass has instances of a variable size: only __dict__ and __weakref__ may be slots
+        for (ClassObject* variable : {types().int_, types().bytes}) {
+            bool based = std::any_of(bases.begin(), bases.end(), [&](ClassObject* b) { return is_subclass(b, variable); });
+            if (based && std::any_of(slots.begin(), slots.end(), [](const std::string& n) { return n != "__dict__" && n != "__weakref__"; }))
+                raise_new("TypeError", "arbitrary __slots__ not supported for subtype of '" + variable->name + "'");
+        }
         spec.slots = slots;
     }
     for (auto& [k, v] : entries) spec.attrs.emplace_back(k->text, v);
@@ -821,7 +823,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
     bool base_has_weak = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_weakref; });
     bool asked_weak = c->slots && std::find(c->slots->begin(), c->slots->end(), N("__weakref__")) != c->slots->end();
-    if (!base_has_weak && !asked_weak && std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_) || is_subclass(b, types().tuple); }))   // tp_itemsize
+    if (!base_has_weak && !asked_weak && std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_) || is_subclass(b, types().tuple) || is_subclass(b, types().bytes); }))   // tp_itemsize
         c->has_weakref = false;
     if (c->has_weakref && !base_has_weak && !c->attrs.contains(N("__weakref__")))
         c->attrs.set(N("__weakref__"), Obj::of(weakref_getset()));

@@ -886,6 +886,51 @@ kept = AtExit([2, 1])
 """
 
 
+BYTES_SUBCLASSES = r"""
+import copy, weakref
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class B(bytes): pass
+class A(bytearray): pass
+b = B(b"ab")
+print(m(lambda: type("S", (bytes,), {"__slots__": ("x",)})), m(lambda: type("S", (bytes,), {"__slots__": ("__dict__",)}).__name__), m(lambda: weakref.ref(b)),
+      m(lambda: B(1, 2, 3, 4)), m(lambda: B("x")), m(lambda: B(-1)), m(lambda: A(1, 2, 3, 4)), m(lambda: A("x")), m(lambda: A().__reduce_ex__(1, 2)),
+      m(lambda: A().__reduce_ex__("x")), m(lambda: A().__reduce__(1)), m(lambda: b.__getnewargs__(1)), m(lambda: B(3)), m(lambda: A(2)))
+for name, f in [("partition miss", lambda: b.partition(b"-")[0]), ("rpartition miss", lambda: b.rpartition(b"-")[2]), ("sep", lambda: B(b"a-b").partition(B(b"-"))[1]),
+                ("strip", lambda: b.strip()), ("replace", lambda: b.replace(b"x", b"y")), ("slice", lambda: b[:]), ("times 1", lambda: b * 1), ("plus empty", lambda: b + b""),
+                ("empty plus", lambda: b"" + b), ("ljust", lambda: b.ljust(1)), ("split", lambda: b.split()[0]), ("splitlines", lambda: b.splitlines()[0]), ("join one", lambda: b"".join([b])),
+                ("bytes()", lambda: bytes(b)), ("__bytes__", lambda: b.__bytes__()), ("newargs", lambda: b.__getnewargs__()[0]), ("translate", lambda: b.translate(None)),
+                ("bytearray copy", lambda: A(b"q").copy()), ("bytearray slice", lambda: A(b"q")[:])]:
+    r = f(); print(name, type(r).__name__, r is b, r)
+print(A(b"x").__reduce_ex__(2)[:2], A(b"x").__reduce_ex__(3)[:2], A().__reduce__()[:2], type(copy.deepcopy(A(b"z"))).__name__, repr(A(b"\x00'")))
+log = []
+class Tag:
+    def __init__(self, n): self.n = n
+    def __del__(self): log.append("value " + self.n)
+class Dying(bytearray):
+    __slots__ = ("slot", "__dict__", "__weakref__")
+    def __del__(self): log.append("finaliser")
+d = Dying(b"x")
+d.slot = Tag("slot")
+d.attr = Tag("in dict")
+r = weakref.ref(d, lambda _: log.append("callback"))
+del d
+print(log)
+class AtExit(bytes):
+    def __del__(self): print("finalised at exit:", bytes(self))
+kept = AtExit(b"end")
+"""
+
+
+def test_bytes_subclasses() -> None:
+    """Subclasses of bytes and bytearray (C-3-64's words and order): the refusals, which methods hand back the object itself (an exact
+    bytes only, but partition's miss, which hands back any), bytearray's reductions, a dying instance's order, one finalised at exit."""
+    same(BYTES_SUBCLASSES)
+
+
 def test_set_subclasses() -> None:
     """Subclasses of set and frozenset (C-3-63's words and order): the refusals of their constructors and methods, which name the
     subclass where CPython's tp_name does and the base where the method's name does; a dying instance's finaliser, its slots and

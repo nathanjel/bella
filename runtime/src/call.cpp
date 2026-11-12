@@ -542,7 +542,7 @@ Ref b_len(Obj, Args a) {
         if (!int_fits_i64(length.get(), n)) raise_new("OverflowError", "Python int too large to convert to C ssize_t");
         return length;
     }
-    if (is_bytes_like(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(bytes_data(v).size())));
+    if (is_bytes_like(v) && !overrides_builtin_len(v)) return Ref::steal(Obj::small(static_cast<std::int64_t>(bytes_data(v).size())));
     bool has = false;
     Ref r = call_special(v, "__len__", {}, &has);
     if (has) return int_from_i64(length_value(r.get()));     // as truth takes it (A9-14)
@@ -2648,6 +2648,13 @@ void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found
                     found.push_back(Ref::share(v));
                 }
                 for (Obj x : static_cast<List*>(o)->items) todo.push_back(x);
+                break;
+            case Kind::Bytes:
+            case Kind::ByteArray:
+                if (has_attributes(o)) {
+                    attribute_values(static_cast<BytesInstance*>(o), todo);
+                    found.push_back(Ref::share(v));
+                }
                 break;
             case Kind::Set:
                 if (has_attributes(o)) {

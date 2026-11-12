@@ -58,6 +58,7 @@ C-3-60_a_class_has_thirty_places.py
 C-3-61_the_lines_of_a_with_statement.py
 C-3-62_except_star_in_full.py
 C-3-63_subclasses_of_set_and_frozenset.py
+C-3-64_subclasses_of_bytes_and_bytearray.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

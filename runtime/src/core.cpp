@@ -441,7 +441,8 @@ std::int64_t full_hash(Obj v) {
         case Kind::Str:
             if (has_attributes(o) && type_lookup(o->cls, intern("__hash__")) != type_lookup(types().str, intern("__hash__"))) break;
             return str_hash(static_cast<Str*>(o));
-        case Kind::Bytes: {                      // bytes_hash: the same SipHash as a str of the same units
+        case Kind::Bytes: {                      // bytes_hash: the same SipHash as a str of the same units; a subclass's own, below
+            if (has_attributes(o) && type_lookup(o->cls, intern("__hash__")) != type_lookup(types().bytes, intern("__hash__"))) break;
             auto* b = static_cast<BytesObject*>(o);
             if (b->hash == -1) {
                 if (b->data.empty()) b->hash = 0;

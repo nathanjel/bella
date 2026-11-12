@@ -64,8 +64,6 @@ def _refused(src: str, reason: str) -> None:
 
 
 REFUSED = {
-    "a_subclass_of_bytes": ("class B(bytes):\n    pass\n", "subclassing the built-in type 'bytes'"),
-    "a_subclass_of_bytearray": ("class B(bytearray):\n    pass\n", "subclassing the built-in type 'bytearray'"),
     "percent_of_bytes": ("print(b'%d' % 1)\n", "'bytes' % 'int'"),
     "percent_of_bytearray": ("print(bytearray(b'%d') % 1)\n", "'bytearray' % 'int'"),
     "the_method_of_percent": ("b''.__mod__\n", "bytes.__mod__"),
@@ -75,7 +73,9 @@ REFUSED = {
     "utf_16": ("'a'.encode('utf-16')\n", "the codec 'utf-16'"),
     "utf_32_decode": ("b'a'.decode('utf-32-le')\n", "the codec 'utf-32'"),
     "namereplace": ("'\\xe9'.encode('ascii', 'namereplace')\n", "namereplace"),
-    "pickling": ("bytearray(b'').__reduce__()\n", "__reduce__"),
+    # __reduce__ is written (C-3-64); its __getstate__ imports copyreg, as CPython's _PyType_GetSlotNames does, and a closure
+    # does not reach what a prelude function imports (TODO)
+    "pickling": ("bytearray(b'').__reduce__()\n", "importing 'copyreg'"),
     "sizeof": ("bytearray().__sizeof__()\n", "__sizeof__"),
 }
 

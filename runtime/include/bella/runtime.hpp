@@ -148,12 +148,6 @@ struct SuperObject : Object {                    // super(type, obj): each owned
     Obj obj_type;                                // obj's type, or obj when it is a class (__self_class__)
     SuperObject();
 };
-struct BytesObject : Object {                    // bytes and bytearray: their octets; a bytearray's change
-    std::string data;
-    std::int64_t hash = -1;                      // a bytes's, once computed
-    std::int64_t exports = 0;                    // a bytearray's ob_exports: while it is not 0 it cannot change size (re's scanner holds one)
-    BytesObject(Kind k, std::string d);
-};
 struct Native : Object {                         // an object of a C++ type with methods (sys.stdout)
     int tag = 0;
     explicit Native(ClassObject* c) : Object(Kind::Native) { cls = c; }
@@ -536,6 +530,10 @@ bool with_attribute_storage(Obj v, F&& f) {
     }
     if (is_kind(v, Kind::Set) && has_attributes(v.object())) {
         f(static_cast<SetInstance*>(v.object()));
+        return true;
+    }
+    if ((is_kind(v, Kind::Bytes) || is_kind(v, Kind::ByteArray)) && has_attributes(v.object())) {
+        f(static_cast<BytesInstance*>(v.object()));
         return true;
     }
     if (is_kind(v, Kind::Str) && has_attributes(v.object())) {

@@ -1024,6 +1024,29 @@ struct SetInstance : SetObject {
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
+struct BytesObject : Object {                    // bytes and bytearray: their octets; a bytearray's change
+    std::string data;
+    std::int64_t hash = -1;                      // a bytes's, once computed
+    std::int64_t exports = 0;                    // a bytearray's ob_exports: while it is not 0 it cannot change size (re's scanner holds one)
+    BytesObject(Kind k, std::string d);
+};
+// An instance of a program's subclass of bytes or bytearray: its kind stays the base's, flag HAS_ATTRIBUTES, the attribute storage
+// beside the octets. bytes has an item size, so its subclass gets no weak reference unless asked and no slots but __dict__.
+struct BytesInstance : BytesObject {
+    std::vector<Obj> fields;
+    DictObject* dict = nullptr;
+    std::vector<const Str*> order;
+    std::int64_t tag = -1;
+    BytesInstance(ClassObject* c, Kind k, std::string d) : BytesObject(k, std::move(d)) {
+        cls = c;
+        instance_made(c);
+        flags |= HAS_ATTRIBUTES;
+        fields.assign(c->field_index.size(), Obj{});
+    }
+    bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
+    Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    bool has_field(const Str* n) const { return cls->field_index.contains(n); }
+};
 // An instance of a program's subclass of str: kind stays Str, as PyUnicode_Check says yes of it, and the attribute storage is beside the
 // text. What reads the text needs no change; what only an exact str does asks is_exact_str; what a subclass may override asks first.
 struct StrInstance : Str {
@@ -1605,6 +1628,8 @@ inline void bury(Object* o) {
             case Kind::Tuple: delete static_cast<TupleInstance*>(o); break;   // an exact tuple's death is its destroyer's
             case Kind::List: delete static_cast<ListInstance*>(o); break;     // an exact list's death is its destroyer's
             case Kind::Set: delete static_cast<SetInstance*>(o); break;       // an exact set's death is its destroyer's
+            case Kind::Bytes:
+            case Kind::ByteArray: delete static_cast<BytesInstance*>(o); break;   // an exact one's death is its destroyer's
             case Kind::Function: delete static_cast<Function*>(o); break;
             case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
             case Kind::Marker: delete static_cast<Marker*>(o); break;
@@ -1863,6 +1888,16 @@ inline void dealloc(Object* o) {
                 if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
                 std::vector<Obj> items = std::move(l->items);   // list_dealloc reads ob_item as it was
                 for (auto it = items.rbegin(); it != items.rend(); ++it) decref(*it);
+                detail::bury(o);
+                return;
+            }
+            [[fallthrough]];
+        case Kind::Bytes:
+        case Kind::ByteArray:
+            if ((o->kind == Kind::Bytes || o->kind == Kind::ByteArray) && has_attributes(o)) {   // subtype_dealloc, then the octets
+                auto* b = static_cast<BytesInstance*>(o);
+                if (!detail::release_attributes(b)) return;
+                if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
                 detail::bury(o);
                 return;
             }
