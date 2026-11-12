@@ -87,6 +87,7 @@ C-6-17_complex.py
 C-6-18_exceptions_os_and_syntax.py
 C-6-19_dict_view_sets.py
 C-6-20_bytes_percent_format.py
+C-6-21_unicode_database_in_the_builtins.py
 C-7-03_phase1_omissions_observable.py
 C-7-05_core_data_collections_itertools_functools.py
 C-7-07_text_modules.py

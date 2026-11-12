@@ -644,7 +644,6 @@ void no_null(const std::string& text) {           // a C string: clinic's str co
     if (text.find('\0') != std::string::npos) raise_new("ValueError", "embedded null character");
 }
 [[noreturn]] void unknown_handler(const std::string& errors) {
-    if (errors == "namereplace") throw NotImplemented("the error handler namereplace (it needs the Unicode database)");
     if (!codec_hooks().unknown_handler.get().is_unset()) {   // the registry: LookupError, or a handler the program registered
         Ref name = str_new(errors);
         invoke(codec_hooks().unknown_handler.get(), {name.get()});
@@ -688,6 +687,9 @@ std::string backslashed(char32_t c) {
 void encode_fallback(std::string& out, const Str* s, std::size_t start, std::size_t end, const std::string& errors) {
     if (errors == "backslashreplace") {
         for (std::size_t k = start; k < end; ++k) out += backslashed(s->at(k));
+    } else if (errors == "namereplace") {         // PyCodec_NameReplaceErrors: \N{NAME}, or the hex escape for a character without one
+        std::string name;
+        for (std::size_t k = start; k < end; ++k) out += unicode_name(s->at(k), name) ? "\\N{" + name + "}" : backslashed(s->at(k));
     } else {                                      // xmlcharrefreplace
         for (std::size_t k = start; k < end; ++k) out += "&#" + std::to_string(static_cast<std::uint32_t>(s->at(k))) + ";";
     }
@@ -705,7 +707,7 @@ std::string encode_ucs1(const Str* s, Obj text, char32_t limit, const std::strin
         while (end < n && s->at(end) >= limit) ++end;
         if (errors == "replace") out.append(end - i, '?');
         else if (errors == "ignore") { }
-        else if (errors == "backslashreplace" || errors == "xmlcharrefreplace") encode_fallback(out, s, i, end, errors);
+        else if (errors == "backslashreplace" || errors == "xmlcharrefreplace" || errors == "namereplace") encode_fallback(out, s, i, end, errors);
         else if (errors == "surrogateescape") {
             std::size_t k = i;
             while (k < end && s->at(k) >= 0xDC80 && s->at(k) <= 0xDCFF) { out += static_cast<char>(s->at(k) - 0xDC00); ++k; }
@@ -730,7 +732,7 @@ std::string encode_utf8(const Str* s, Obj text, const std::string& errors) {
         if (errors == "replace") out.append(end - i, '?');
         else if (errors == "ignore") { }
         else if (errors == "surrogatepass") for (std::size_t k = i; k < end; ++k) put_utf8(out, s->at(k));
-        else if (errors == "backslashreplace" || errors == "xmlcharrefreplace") encode_fallback(out, s, i, end, errors);
+        else if (errors == "backslashreplace" || errors == "xmlcharrefreplace" || errors == "namereplace") encode_fallback(out, s, i, end, errors);
         else if (errors == "surrogateescape") {
             std::size_t k = i;
             while (k < end && s->at(k) >= 0xDC80 && s->at(k) <= 0xDCFF) { out += static_cast<char>(s->at(k) - 0xDC00); ++k; }
@@ -822,7 +824,7 @@ std::size_t decode_fallback(std::u32string& out, std::string_view s, std::size_t
             }
         }
     }
-    if (errors == "xmlcharrefreplace") raise_new("TypeError", "don't know how to handle UnicodeDecodeError in error callback");
+    if (errors == "xmlcharrefreplace" || errors == "namereplace") raise_new("TypeError", "don't know how to handle UnicodeDecodeError in error callback");
     if (errors != "strict" && errors != "surrogatepass") unknown_handler(errors);
     raise_decode_error(encoding, s, start, end, reason);
 }
@@ -878,7 +880,7 @@ std::string encode_utf_wide(const Str* s, Obj text, const std::string& errors, i
         }
         if (errors == "ignore") continue;
         if (errors == "replace") { put_unit(out, '?', width, little); continue; }
-        if (errors == "backslashreplace" || errors == "xmlcharrefreplace") {
+        if (errors == "backslashreplace" || errors == "xmlcharrefreplace" || errors == "namereplace") {
             std::string rep;
             encode_fallback(rep, s, i, i + 1, errors);
             for (char ch : rep) put_unit(out, u(ch), width, little);
@@ -1792,6 +1794,10 @@ void init_bytes() {
 Ref i_codecs_call(Obj, Args a) {
     const std::string& name = as_str(a.pos(0))->text;
     Args r{a.data + 1, a.npos - 1, nullptr, 0};
+    if (name == "charname") {                    // (code point): the name C API's getname, None for none
+        std::string found;
+        return unicode_name(static_cast<std::uint32_t>(r.pos(0).small_value()), found) ? str_new(found) : none_ref();
+    }
     if (name == "decode") {                      // (codec, bytes, errors or None, final): (str, consumed)
         std::string data = bytes_data(r.pos(1));
         std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;

@@ -97,7 +97,6 @@ REFUSED = {
     "a_buffer_as_an_argument": ("class B:\n    def __buffer__(self, flags):\n        return None\nb'a'.find(B())\n", "[P2+]"),
     "charmap": ("import codecs\ncodecs.charmap_decode(b'a')\n", "_codecs.charmap_decode (not a phase-1 codec"),
     "utf_7": ("import codecs\ncodecs.utf_7_encode('a')\n", "_codecs.utf_7_encode (not a phase-1 codec"),
-    "namereplace": ("'\\xe9'.encode('ascii', 'namereplace')\n", "namereplace"),
     # __reduce__ is written (C-3-64); its __getstate__ imports copyreg, as CPython's _PyType_GetSlotNames does, and a closure
     # does not reach what a prelude function imports (TODO)
     "pickling": ("bytearray(b'').__reduce__()\n", "importing 'copyreg'"),

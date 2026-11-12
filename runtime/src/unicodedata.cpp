@@ -1627,4 +1627,11 @@ Ref dispatch(Args a) {
 }  // namespace unicodedata_c
 
 Ref i_ucd_call(Obj, Args a) { return unicodedata_c::dispatch(a); }
+int unicode_to_decimal(std::uint32_t ch) { return unicodedata_c::unicodetype::_PyUnicode_ToDecimalDigit(ch); }   // Py_UNICODE_TODECIMAL
+bool unicode_name(std::uint32_t ch, std::string& out) {   // the name C API's getname (capi_getucname): aliases and named sequences too
+    char buffer[256];                                     /* NAME_MAXLEN in unicodename_db.h */
+    if (!unicodedata_c::_getucname(false, ch, buffer, sizeof(buffer), 1)) return false;
+    out = buffer;
+    return true;
+}
 }  // namespace bella

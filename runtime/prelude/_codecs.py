@@ -516,11 +516,18 @@ def backslashreplace_errors(*args: object, **kwds: object) -> object:
 
 
 def namereplace_errors(*args: object, **kwds: object) -> object:
-    exc = _handler_arg("namereplace_errors", args, kwds)
+    exc = _handler_arg("namereplace_errors", args, kwds)   # PyCodec_NameReplaceErrors
     if not _is(exc, UnicodeEncodeError):
         _wrong_exception_type(exc)
-    _refuse("the error handler namereplace (it needs the Unicode database)")
-    return None
+    obj, _n, start, end, _distance = _params(exc, False)
+    out: list[str] = []
+    i = start
+    while i < end:
+        code = ord(str.__getitem__(obj, i))  # type: ignore[arg-type]
+        name = _codecs_call("charname", code)
+        out.append(_hex(code) if name is None else "\\N{" + name + "}")
+        i += 1
+    return "".join(out), end
 
 
 def surrogatepass(*args: object, **kwds: object) -> object:

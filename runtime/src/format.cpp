@@ -179,10 +179,8 @@ bool is_sign(char32_t c) { return c == U' ' || c == U'+' || c == U'-'; }
 std::int64_t spec_integer(const Cps& s, std::size_t& pos, std::int64_t& result) {   // get_integer: how many it read
     std::int64_t accumulator = 0, consumed = 0;
     while (pos < s.size()) {
-        char32_t c = s[pos];
-        if (c > 127) throw NotImplemented("a format specification with a character beyond ASCII where a number may be (the Unicode database)");
-        if (c < U'0' || c > U'9') break;
-        std::int64_t digit = static_cast<std::int64_t>(c) - '0';
+        std::int64_t digit = unicode_to_decimal(s[pos]);   // Py_UNICODE_TODECIMAL: any decimal digit
+        if (digit < 0) break;
         if (accumulator > (INT64_MAX - digit) / 10) raise_new("ValueError", "Too many decimal digits in format string");
         accumulator = accumulator * 10 + digit;
         ++pos;
@@ -598,10 +596,8 @@ std::int64_t field_integer(const SubString& s) {  // get_integer of unicode_form
     if (s.start >= s.end) return -1;
     std::int64_t accumulator = 0;
     for (std::size_t i = s.start; i < s.end; ++i) {
-        char32_t c = (*s.str)[i];
-        if (c > 127) throw NotImplemented("a format field name beyond ASCII (whether it is a number needs the Unicode database)");
-        if (c < U'0' || c > U'9') return -1;
-        std::int64_t digit = static_cast<std::int64_t>(c) - '0';
+        std::int64_t digit = unicode_to_decimal((*s.str)[i]);   // Py_UNICODE_TODECIMAL: any decimal digit
+        if (digit < 0) return -1;
         if (accumulator > (INT64_MAX - digit) / 10) raise_new("ValueError", "Too many decimal digits in format string");
         accumulator = accumulator * 10 + digit;
     }
@@ -1106,9 +1102,13 @@ struct Percent {
         if (arg.ch == U'\'') raise_new("ValueError", "stray % at position " + at + " or unexpected format character \"'\" at position " + here);
         if (arg.ch >= 32 && arg.ch < 127)
             raise_new("ValueError", "stray % at position " + at + " or unexpected format character '" + static_cast<char>(arg.ch) + "' at position " + here);
-        if (arg.ch > 127) throw NotImplemented("a format character beyond ASCII in a % format's error (whether it is printable needs the Unicode database)");
-        char code[8];
+        char code[16];
         std::snprintf(code, sizeof code, "%04X", static_cast<unsigned>(arg.ch));
+        if (unicode_is_printable(arg.ch)) {        // Py_UNICODE_ISPRINTABLE: the character and its code
+            std::string shown;
+            Str::append_utf8(shown, arg.ch);
+            raise_new("ValueError", "stray % at position " + at + " or unexpected format character '" + shown + "' (U+" + code + ") at position " + here);
+        }
         raise_new("ValueError", "stray % at position " + at + " or unexpected format character U+" + code + " at position " + here);
     }
     Ref last_text;                               // what the last conversion gave

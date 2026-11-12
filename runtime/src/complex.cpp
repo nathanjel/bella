@@ -305,8 +305,7 @@ Ref from_string_inner(ClassObject* cls, const std::string& text) {   // complex_
 }
 Ref from_string(ClassObject* cls, Obj v) {       // complex_subtype_from_string
     const Str* s = as_str(v);
-    if (!s->ascii) throw NotImplemented("complex() of a str beyond ASCII (its digits and spaces need the Unicode database)");
-    return from_string_inner(cls, without_underscores(s->text, "complex", v));
+    return from_string_inner(cls, without_underscores(decimal_and_space_to_ascii(s), "complex", v));   // _PyUnicode_TransformDecimalAndSpaceToASCII
 }
 
 [[noreturn]] void deprecated_part(const char* part, Obj given) {

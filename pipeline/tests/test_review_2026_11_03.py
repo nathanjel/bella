@@ -69,7 +69,6 @@ FOUND: list[tuple[str, str]] = [
 REFUSED = {
     "a builtin": "locals()",
     "an attribute of sys": "import sys\nsys.getallocatedblocks",
-    "a str's digits beyond ASCII": "int('\\u0663')",   # '\u00e9'.upper() until 2026-11-10 (C-3-53)
     "an object method": "class C:\n    pass\nC().__sizeof__()",
     "before __getattr__": "class H:\n    def __getattr__(self, n):\n        print('hook', n)\nH().__sizeof__()",
     "a member of type": "class C:\n    pass\nC.__basicsize__",

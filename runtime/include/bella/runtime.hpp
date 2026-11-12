@@ -425,6 +425,10 @@ void fill_math_integer(Module* m);                // runtime/prelude/_math_integ
 void fill_cmath(Module* m);                       // runtime/prelude/cmath.py
 void fill_unicodedata(Module* m);                 // runtime/prelude/unicodedata.py
 Ref i_ucd_call(Obj, Args a);                      // unicodedata's primitives (runtime/src/unicodedata.cpp)
+int unicode_to_decimal(std::uint32_t ch);         // Py_UNICODE_TODECIMAL: -1 for none (runtime/src/unicodedata.cpp, the type records)
+bool unicode_name(std::uint32_t ch, std::string& out);   // the name C API's getname, aliases and named sequences included
+std::string decimal_and_space_to_ascii(const Str* s);   // _PyUnicode_TransformDecimalAndSpaceToASCII (runtime/src/unicode.cpp)
+bool is_identifier(const Str* s);                 // PyUnicode_IsIdentifier
 void fill_math(Module* m);                        // runtime/prelude/math.py, with math.integer's six and the submodule
 void fill_md5(Module* m);                         // runtime/prelude/_md5.py, over hashes.cpp
 void fill_sha1(Module* m);                        // runtime/prelude/_sha1.py

@@ -748,10 +748,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         for (Ref& item : items) {
             const Str* s = as_str(item.get());
             if (s == nullptr) raise_new("TypeError", "__slots__ items must be strings, not '" + type_of(item.get())->name + "'");
-            if (!s->ascii) throw NotImplemented("a __slots__ name beyond ASCII (identifier rules need the Unicode database)");
-            bool ident = !s->text.empty() && !std::isdigit(static_cast<unsigned char>(s->text[0])) &&
-                         std::all_of(s->text.begin(), s->text.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
-            if (!ident) raise_new("TypeError", "__slots__ must be identifiers");
+            if (!is_identifier(s)) raise_new("TypeError", "__slots__ must be identifiers");   // valid_identifier
             if (s->text == "__weakref__") {          // may_add_weak: no base with room
                 bool base_weak = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_weakref; });
                 if (base_weak || std::find(slots.begin(), slots.end(), "__weakref__") != slots.end())
@@ -1059,8 +1056,8 @@ Ref int_from_text(const std::string& t, std::int64_t base, Invalid invalid) {
 }
 
 Ref int_from_str(const Str* s, std::int64_t base) {
-    if (!s->ascii) throw NotImplemented("int() of a str beyond ASCII (its digits and spaces need the Unicode database)");
-    return int_from_text(s->text, base, [&]() -> Ref {
+    // PyLong_FromUnicodeObject: the text as _PyUnicode_TransformDecimalAndSpaceToASCII has it, the message the str itself
+    return int_from_text(decimal_and_space_to_ascii(s), base, [&]() -> Ref {
         Ref r = repr_of(Obj::of(s));
         const Str* rs = as_str(r.get());
         std::u32string shown;                       // %.200R: the repr, cut at 200 code points

@@ -1114,3 +1114,13 @@ time; the program's own stay at `-O1`).
   * a `__slots__` name beyond ASCII.
 
   `lookup` of a memoryview waits for memoryview (\[P2+\]); C-7-81 leaves it out.
+
+**2026-11-12 — the Unicode database in the builtins (C-6-21).** The runtime's stops that waited for the database are gone; each place now reads the pin's tables as the C does.
+* **Numbers from a str.** `int()`, `float()` and `complex()` of a str beyond ASCII parse it as `_PyUnicode_TransformDecimalAndSpaceToASCII` gives it (`decimal_and_space_to_ascii` in `runtime/src/unicode.cpp`):
+  * a Unicode space becomes a space, and a decimal digit its ASCII digit;
+  * the first character that is neither ends the text with a '?'; past ASCII, DEL is such a character, since the C's test is `ch < 127`;
+  * the message names the str as given, the digit limit counts the digits of the text, and underscores are the C's.
+* **Formatting.** A format specification's width and precision and a format field's index read any decimal digit (`Py_UNICODE_TODECIMAL`); zero padding stays the ASCII '0'. A `%` format's unknown character is shown with its code when `Py_UNICODE_ISPRINTABLE` says it is printable, and by its code alone when it is not.
+* **namereplace.** The handler writes the name C API's answer (`getname` with aliases and named sequences), or the hex escape where there is none. It does so inside the ASCII, Latin-1, UTF-8, UTF-16 and UTF-32 encoders and as `codecs.namereplace_errors` (the `_codecs` prelude, through a `charname` operation). A decoder given it raises the TypeError of a handler that cannot take a UnicodeDecodeError. Like CPython, a plane-15 code point where the database keeps its aliases and named sequences is written with that alias's name or that sequence's (U+F0000 becomes `\N{NULL}`).
+* **`__slots__`.** A slot's name is an identifier by `PyUnicode_IsIdentifier` (XID_Start or '_', then XID_Continue), now `is_identifier` in unicode.cpp, which `str.isidentifier` shares.
+* **Tests.** The stop rows went, from test_bytes, test_codecs, test_complex, test_percent, test_str_methods and test_review_2026_11_03. `test_str_methods.py::test_the_unicode_database_in_the_builtins` compares the words of every new path with CPython's.

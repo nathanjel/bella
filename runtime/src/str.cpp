@@ -520,12 +520,7 @@ Ref str_isprintable_m(Obj self, Args a) {        // true of nothing at all
 }
 Ref str_isidentifier_m(Obj self, Args a) {
     noargs(a, "str.isidentifier");
-    const Str* s = self_str(self, "isidentifier");   // PyUnicode_IsIdentifier
-    if (s->length == 0) return Ref::steal(boolean(false));
-    if (s->at(0) != U'_' && !unicode_is_xid_start(s->at(0))) return Ref::steal(boolean(false));
-    for (std::size_t i = 1; i < s->length; ++i)
-        if (!unicode_is_xid_continue(s->at(i))) return Ref::steal(boolean(false));
-    return Ref::steal(boolean(true));
+    return Ref::steal(boolean(is_identifier(self_str(self, "isidentifier"))));
 }
 Ref str_islower_m(Obj self, Args a) {            // unicode_islower_impl
     noargs(a, "str.islower");

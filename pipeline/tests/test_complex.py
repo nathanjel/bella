@@ -196,7 +196,6 @@ REFUSED = (
     ("complex(1j, 2)", "DeprecationWarning"),
     ("complex(2, 1j)", "DeprecationWarning"),
     ("complex(real=1j)", "DeprecationWarning"),
-    ("complex('\\xe9')", "beyond ASCII"),
     ("class C(complex):\n    pass\nclass D:\n    def __complex__(self):\n        return C(1)\ncomplex(D())", "subclass of complex"),
 )
 

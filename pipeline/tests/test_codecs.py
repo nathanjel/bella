@@ -113,7 +113,7 @@ def test_a_codec_the_program_registers() -> None:
 
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import codecs\ncodecs.utf_7_encode('a')", "utf_7_encode"), ("import codecs\ncodecs.unicode_escape_decode(b'a')", "unicode_escape_decode"),
-             ("import codecs\ncodecs.escape_decode(b'a')", "escape_decode"), ("import codecs\nprint('é'.encode('ascii', 'namereplace'))", "namereplace"),
+             ("import codecs\ncodecs.escape_decode(b'a')", "escape_decode"),
              ("import codecs\ncodecs.register_error('strict', print)", "strict"),
              ("import codecs\ncodecs.register_error('mine', lambda e: ('', e.end))\nprint('é'.encode('ascii', 'mine'))", "mine"),
              ("import codecs\ncodecs.register(lambda n: codecs.CodecInfo(None, lambda b, errors='strict': ('x', 1), name=n) if n == 'mine' else None)\nprint(b'a'.decode('mine'))", "memoryview"))

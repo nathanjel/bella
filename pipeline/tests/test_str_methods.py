@@ -1,18 +1,13 @@
 """str's methods on ASCII text, compiled, against CPython.
 
-Case C-6-14 shows the behaviour by exception class, as a case must; these compare messages too, and what stops by
-name: int() of a str beyond ASCII, whose digits need the database's decimal values. Beyond ASCII the methods use the
-Unicode database (runtime/src/unicode.cpp; C-3-53).
+Case C-6-14 shows the behaviour by exception class, as a case must; these compare messages too. Beyond ASCII the methods
+use the Unicode database (runtime/src/unicode.cpp; C-3-53), and so do int(), float() and complex() of a str, a format's
+digits, a % format's errors and __slots__ names (C-6-21, whose words are compared here).
 """
 from __future__ import annotations
 
-import subprocess
-import tempfile
-import textwrap
-from pathlib import Path
 from typing import Any
 
-from pipeline.build import build
 from pipeline.tests.test_review_2026_11_03 import same
 
 SHOW = """def show(f):
@@ -74,16 +69,29 @@ for f in (lambda: "é".lower(1), lambda: "é".isalpha(x=1), lambda: str.upper(1)
         print("TypeError", e)
 """
 
-REFUSED = (
-    ("int('\u0663')", "int() of a str beyond ASCII"),   # its digits need the database's decimal values, not written yet
-)
+# what the builtins ask the Unicode database (C-6-21), in the words of their errors
+DATABASE_IN_BUILTINS = r'''
+def m(f, *a):
+    try:
+        return repr(f(*a))
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+for text in ("\u0663\u0664", "\u0663x", "1\x7f\u0663", "\xbd", "\u3000", "\u0663\x00", "x" + "\u0663" * 300, "\u0663" * 5000,
+             "\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u0660" * 500, "\u0663_", "_\u0663", "\u0663__\u0664"):
+    print(m(int, text)[:400], "|", m(float, text)[:400], "|", m(complex, text)[:400])
+print(m(int, "\u0663", 99), m(int, "\u0660\u0667", 0), m(int, "\u0663\u0664", 2), m(int, "\u0660x\u0661g", 16))
+print(m(format, 5, "\u0663x\u0664"), m(format, 1, "\u0669" * 30), m(format, 1.5, ".\u0669" + "\u0669" * 25 + "f"),
+      m(("{" + "\u0669" * 25 + "}").format, 1), m("{\u0661}".format, 1), m("{0[\u0669\u0669\u0669]}".format, [1]))
+for t in ("%\xe9", "%\u0378", "%\U0001f600", "%\x7f", "%\u2028", "%\u3000", "%\u0663d", "%(a)\xe9", "%5\xe9", "abc%\U000e0001"):
+    print(repr(t), m(lambda t=t: t % 1 if "(" not in t else t % {"a": 1}))
+for names in (("\xe9",), ("\u0300a",), ("1\xe9",), ("\xe9", "__dict__", "__\xe9"), ("\xe9",) * 2):
+    print(m(lambda names=names: type("K", (), {"__slots__": names}).__slots__))
+'''
 
 
 def pytest_generate_tests(metafunc: Any) -> None:
     if "program" in metafunc.fixturenames:
         metafunc.parametrize("program", PROGRAMS, ids=[name for name, _ in PROGRAMS])
-    if "refused" in metafunc.fixturenames:
-        metafunc.parametrize("refused", REFUSED, ids=[text for _, text in REFUSED])
 
 
 def test_as_cpython(program: tuple[str, str]) -> None:
@@ -94,12 +102,8 @@ def test_beyond_ascii() -> None:
     same(BEYOND_ASCII)
 
 
-def test_what_needs_the_unicode_database_stops_by_name(refused: tuple[str, str]) -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        prog = Path(tmp, "prog.py")
-        prog.write_text(textwrap.dedent(refused[0]) + "\n", encoding="utf-8")
-        got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, timeout=60)
-    assert got.returncode == 70 and "not implemented" in got.stderr and refused[1] in got.stderr, got
+def test_the_unicode_database_in_the_builtins() -> None:
+    same(DATABASE_IN_BUILTINS)
 
 
 if __name__ == "__main__":

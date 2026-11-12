@@ -66,4 +66,34 @@ bool unicode_is_xid_start(std::uint32_t ch) { return in_ranges(UNICODE_XID_START
 bool unicode_is_xid_continue(std::uint32_t ch) { return in_ranges(UNICODE_XID_CONTINUE, ch); }
 std::uint32_t unicode_to_lower(std::uint32_t ch) { return mapped_case(UNICODE_LOWER, ch); }
 std::uint32_t unicode_to_upper(std::uint32_t ch) { return mapped_case(UNICODE_UPPER, ch); }
+// Objects/unicodeobject.c: what int(), float() and complex() parse a str as. ASCII is itself; past it a Unicode space is a space and a
+// decimal digit its ASCII digit, and the first character that is neither (DEL among them) is a '?' that ends the text
+std::string decimal_and_space_to_ascii(const Str* s) {
+    if (s->ascii) return s->text;
+    std::string out;
+    out.reserve(s->length);
+    for (std::size_t i = 0; i < s->length; ++i) {
+        std::uint32_t ch = s->at(i);
+        if (ch < 127) {
+            out += static_cast<char>(ch);
+        } else if (unicode_is_space(ch)) {
+            out += ' ';
+        } else {
+            int decimal = unicode_to_decimal(ch);
+            if (decimal < 0) {
+                out += '?';
+                break;
+            }
+            out += static_cast<char>('0' + decimal);
+        }
+    }
+    return out;
+}
+bool is_identifier(const Str* s) {               // PyUnicode_IsIdentifier: XID_Start or '_', then XID_Continue
+    if (s->length == 0) return false;
+    if (s->at(0) != U'_' && !unicode_is_xid_start(s->at(0))) return false;
+    for (std::size_t i = 1; i < s->length; ++i)
+        if (!unicode_is_xid_continue(s->at(i))) return false;
+    return true;
+}
 }  // namespace bella

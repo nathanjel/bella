@@ -5,13 +5,8 @@ argument at fault, and what stops by name.
 """
 from __future__ import annotations
 
-import subprocess
-import tempfile
-import textwrap
-from pathlib import Path
 from typing import Any
 
-from pipeline.build import build
 from pipeline.tests.test_review_2026_11_03 import same
 
 SHOW = """def show(f):
@@ -100,28 +95,13 @@ for i in range(12000):
 """),
 ]
 
-REFUSED = (
-    ('"%\\xe9" % (1,)', "beyond ASCII"),
-)
-
-
 def pytest_generate_tests(metafunc: Any) -> None:
     if "program" in metafunc.fixturenames:
         metafunc.parametrize("program", PROGRAMS, ids=[name for name, _ in PROGRAMS])
-    if "refused" in metafunc.fixturenames:
-        metafunc.parametrize("refused", REFUSED, ids=[text for _, text in REFUSED])
 
 
 def test_as_cpython(program: tuple[str, str]) -> None:
     same(program[1])
-
-
-def test_what_is_not_there_yet_stops_by_name(refused: tuple[str, str]) -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        prog = Path(tmp, "prog.py")
-        prog.write_text(textwrap.dedent(refused[0]) + "\n", encoding="utf-8")
-        got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, timeout=60)
-    assert got.returncode == 70 and "not implemented" in got.stderr and refused[1] in got.stderr, got
 
 
 if __name__ == "__main__":
