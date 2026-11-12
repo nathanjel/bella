@@ -87,7 +87,7 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "zlib.py", ROOT / "runtime" / "prelude" / "_ast.py", ROOT / "runtime" / "prelude" / "_typing.py",
                     ROOT / "runtime" / "prelude" / "_json.py", ROOT / "runtime" / "prelude" / "binascii.py",
                     ROOT / "runtime" / "prelude" / "_struct.py", ROOT / "runtime" / "prelude" / "time.py",
-                    ROOT / "runtime" / "prelude" / "_math_integer.py", ROOT / "runtime" / "prelude" / "math.py",
+                    ROOT / "runtime" / "prelude" / "_math_integer.py", ROOT / "runtime" / "prelude" / "math.py", ROOT / "runtime" / "prelude" / "cmath.py",
                     ROOT / "runtime" / "prelude" / "_md5.py", ROOT / "runtime" / "prelude" / "_sha1.py", ROOT / "runtime" / "prelude" / "_sha2.py",
                     ROOT / "runtime" / "prelude" / "_sha3.py", ROOT / "runtime" / "prelude" / "_blake2.py", ROOT / "runtime" / "prelude" / "_hmac.py",
                     ROOT / "runtime" / "prelude" / "_csv.py", ROOT / "runtime" / "prelude" / "_contextvars.py",

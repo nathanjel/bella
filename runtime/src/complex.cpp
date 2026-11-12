@@ -493,6 +493,13 @@ void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::
 }
 }  // namespace
 
+Ref i_as_c_complex(Obj, Args a) {                // PyComplex_AsCComplex for a prelude (cmath): (real, imag)
+    positional_only(a, "_as_c_complex", 1, 1);
+    Cx c = as_c_complex(a.pos(0));
+    Ref re = float_ref(c.real), im = float_ref(c.imag);
+    return tuple_new({re.get(), im.get()});
+}
+
 Ref complex_ref(double real, double imag) {
     auto* c = new Complex(real, imag);
     c->cls = types().complex_;

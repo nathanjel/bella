@@ -425,6 +425,53 @@ def test_wide_codecs() -> None:
     same(WIDE_CODECS)
 
 
+# cmath (C-7-80 has the classes of the special values and the errors, rounded): every digit and the sign of every zero and NaN on
+# a grid that crosses each function's paths, on this host's C library; the words of the errors; phase's ERANGE where atan2 underflows
+CMATH = r"""
+import cmath, math, random, struct
+def shown(v):
+    if isinstance(v, complex):
+        return struct.pack("<dd", v.real, v.imag).hex()
+    if isinstance(v, float):
+        return struct.pack("<d", v).hex()
+    if isinstance(v, tuple):
+        return "(" + " ".join(shown(i) for i in v) + ")"
+    return repr(v)
+def m(f, *a, **k):
+    try:
+        return shown(f(*a, **k))
+    except Exception as e:
+        return type(e).__name__ + ": " + str(e)
+rng = random.Random(80)
+values = [-math.inf, -2.5, -0.0, 0.0, 2.5, math.inf, math.nan, -math.nan, 5e-324, -1e-310, 1e308, -1.7e308, 1.0, -1.0, 0.71, 1.73, 709.5,
+          -710.0, 1e-20, 1e154, 0.5] + [rng.uniform(-4, 4) for _ in range(8)] + [math.ldexp(rng.uniform(-1, 1), rng.randint(-1074, 1023)) for _ in range(8)]
+for name in ("acos", "acosh", "asin", "asinh", "atan", "atanh", "cos", "cosh", "exp", "log", "log10", "sin", "sinh", "sqrt", "tan", "tanh", "phase", "polar"):
+    f = getattr(cmath, name)
+    for x in values:
+        print(name, x, *(m(f, complex(x, y)) for y in values))
+for x in values:
+    print("rect", x, *(m(cmath.rect, x, y) for y in values))
+    print("log base", x, *(m(cmath.log, complex(x, 0.5), complex(y, -1.5)) for y in values[:12]), *(m(cmath.log, x, y) for y in values[:12]))
+    print("isclose", x, *(m(cmath.isclose, complex(x, 1), complex(y, 1), rel_tol=0.25) for y in values[:12]))
+print(m(cmath.phase, complex(1e300, 5e-324)), m(cmath.phase, complex(-1e300, -5e-324)), m(cmath.polar, complex(1.5e308, 1.5e308)),
+      m(cmath.exp, complex(2.5, math.inf)), m(cmath.exp, 1000), m(cmath.atanh, 1), m(cmath.log, 0), m(cmath.log, 1, 1), m(cmath.rect, 1, math.inf))
+class Wrong:
+    def __complex__(self):
+        return 1.5
+class NoneComplex:
+    __complex__ = None
+for arg in ("x", None, 10**400, Wrong(), NoneComplex(), [1], b"1"):
+    print(m(cmath.sqrt, arg), m(cmath.log, 2, arg), m(cmath.rect, arg, 1), m(cmath.rect, 1, arg), m(cmath.isclose, arg, 1), m(cmath.isclose, 1, 1, abs_tol=arg))
+print(m(cmath.sqrt), m(cmath.sqrt, 1, 2), m(cmath.sqrt, z=1), m(cmath.log), m(cmath.log, 1, 2, 3), m(cmath.log, 1, base=2), m(cmath.rect, 1),
+      m(cmath.rect, 1, 2, 3), m(cmath.rect, 1, phi=2), m(cmath.isclose, 1), m(cmath.isclose, 1, 2, 3), m(cmath.isclose, a=1, b=1, c=2),
+      m(cmath.isclose, 1, a=1), m(cmath.isclose, 1, 1, rel_tol=-1), m(cmath.isclose, 1, 1, rel_tol=1, abs_toll=2), m(cmath.phase, 1, 2), m(cmath.polar))
+"""
+
+
+def test_cmath() -> None:
+    same(CMATH)
+
+
 def test_struct() -> None:
     """_struct's complex and float conversions, the half float's rounding and limits, the standard and native complex paths, Struct's
     methods by keyword, the cache's messages, Pascal and char strings at their edges, the iterator's length hint."""

@@ -422,6 +422,7 @@ void fill_binascii(Module* m);                    // runtime/prelude/binascii.py
 void fill_struct(Module* m);                      // runtime/prelude/_struct.py: the struct module's engine
 void fill_time(Module* m);                        // runtime/prelude/time.py: clocks, broken-down time, strftime, the zone
 void fill_math_integer(Module* m);                // runtime/prelude/_math_integer.py: math.integer
+void fill_cmath(Module* m);                       // runtime/prelude/cmath.py
 void fill_math(Module* m);                        // runtime/prelude/math.py, with math.integer's six and the submodule
 void fill_md5(Module* m);                         // runtime/prelude/_md5.py, over hashes.cpp
 void fill_sha1(Module* m);                        // runtime/prelude/_sha1.py
@@ -1145,6 +1146,7 @@ Ref i_bella_caller_module(Obj, Args a);                      // caller(): the ne
 Ref i_dict_next(Obj, Args a);                                // PyDict_Next for a prelude: (next position, key, value) or None
 Ref i_float_pack(Obj, Args a);                               // PyFloat_Pack2/4/8 for a prelude: (x, size, little_endian) -> bytes
 Ref i_float_unpack(Obj, Args a);                             // PyFloat_Unpack2/4/8 for a prelude: (data, little_endian) -> float
+Ref i_as_c_complex(Obj, Args a);                             // PyComplex_AsCComplex for a prelude: (real, imag) (complex.cpp)
 Ref i_libm(Obj, Args a);                                     // the C library's floating-point functions for a prelude (libm.cpp)
 Ref i_hash_new(Obj, Args a);                                 // the digests for a prelude (hashes.cpp): (algorithm, params) -> state
 Ref i_hash_update(Obj, Args a);                              // (state, data) -> state

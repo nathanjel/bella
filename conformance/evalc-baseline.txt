@@ -90,6 +90,7 @@ C-6-20_bytes_percent_format.py
 C-7-03_phase1_omissions_observable.py
 C-7-05_core_data_collections_itertools_functools.py
 C-7-07_text_modules.py
+C-7-08_number_modules.py
 C-7-09_date_modules.py
 C-7-12_zlib.py
 C-7-13_locale_and_gettext.py
@@ -157,6 +158,7 @@ C-7-76_signals_that_arrive.py
 C-7-77_the_gc_module.py
 C-7-78_logging_and_its_call_sites.py
 C-7-79_utf16_utf32_codecs.py
+C-7-80_cmath.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

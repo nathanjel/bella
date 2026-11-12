@@ -47,6 +47,7 @@ Binary binary_of(std::string_view name) {
     if (name == "fmod") return [](double x, double y) { return std::fmod(x, y); };
     if (name == "pow") return [](double x, double y) { return std::pow(x, y); };
     if (name == "copysign") return [](double x, double y) { return std::copysign(x, y); };
+    if (name == "hypot") return [](double x, double y) { return std::hypot(x, y); };   // cmath's, the library's own
     if (name == "nextafter") return [](double x, double y) { return std::nextafter(x, y); };
     // fmax and fmin as GCC expands the C's: a NaN yields the other, else the first argument where they compare equal (so
     // fmax(-0.0, 0.0) is -0.0, as CPython's build has it); the library call itself answers the second
