@@ -1,0 +1,12 @@
+{
+ "case": "C-7-77_the_gc_module.py",
+ "clause": "C-7-77",
+ "spec": "section 7 (gc), section 9",
+ "status": "P1",
+ "source": "Modules/gcmodule.c and Modules/clinic/gcmodule.c.h (CPython 3.15.2); Lib/weakref.py (finalize._exitfunc imports gc)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "enabled at start: True\nafter disable: False\nafter a second disable: False\nafter enable: True True\nthresholds: (2000, 10, 10)\none given: (700, 10, 10)\ntwo given: (5, 6, 10)\nthree given: (1, -4, 0)\nset_threshold 0 arguments: TypeError (1, -4, 0)\nset_threshold 4 arguments: TypeError (1, -4, 0)\nset_threshold 1 arguments: TypeError (1, -4, 0)\nset_threshold 1 arguments: TypeError (1, -4, 0)\nset_threshold 1 arguments: TypeError (1, -4, 0)\nset_threshold 1 arguments: OverflowError (1, -4, 0)\nset_threshold 1 arguments: OverflowError (1, -4, 0)\nset_threshold 2 arguments: accepted (2147483647, -2147483648, 0)\nset_threshold 1 arguments: OverflowError (2147483647, -2147483648, 0)\nset_threshold 2 arguments: TypeError (2147483647, -2147483648, 0)\ndebug: 0\ndebug after DEBUG_LEAK: 38\nset_debug: TypeError TypeError OverflowError TypeError TypeError 0\nconstants: 1 2 4 32 38\ngarbage: list [] True\ncallbacks: list []\npublic names: ['DEBUG_COLLECTABLE', 'DEBUG_LEAK', 'DEBUG_SAVEALL', 'DEBUG_STATS', 'DEBUG_UNCOLLECTABLE', 'callbacks', 'collect', 'disable', 'enable', 'freeze', 'garbage', 'get_count', 'get_debug', 'get_freeze_count', 'get_objects', 'get_referents', 'get_referrers', 'get_stats', 'get_threshold', 'is_finalized', 'is_tracked', 'isenabled', 'set_debug', 'set_threshold', 'unfreeze']\nmodule: gc This module provides access to the garbage collector for reference cycles.\ncollect's first line: Run the garbage collector.\ncollect: ValueError ValueError TypeError TypeError ValueError TypeError TypeError OverflowError\nno arguments: TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError\none argument: TypeError TypeError TypeError TypeError\nget_objects: ValueError ValueError TypeError TypeError TypeError\nmain body done\nfinalizer at exit, automatic collection: False\n",
+ "stderr": "",
+ "exit_code": 0
+}

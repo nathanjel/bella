@@ -61,6 +61,7 @@ namespace prelude_warnings { Ref module_body(Module* m); }    // runtime/prelude
 namespace prelude_tokenize { Ref module_body(Module* m); }    // runtime/prelude/_tokenize.py
 namespace prelude_imp { Ref module_body(Module* m); }         // runtime/prelude/_imp.py
 namespace prelude_atexit { Ref module_body(Module* m); }      // runtime/prelude/atexit.py
+namespace prelude_gc { Ref module_body(Module* m); }          // runtime/prelude/gc.py
 namespace prelude_signal { Ref module_body(Module* m); }      // runtime/prelude/_signal.py
 namespace prelude_weakref { Ref module_body(Module* m); }     // runtime/prelude/_weakref.py
 
@@ -385,7 +386,7 @@ struct NativeModule {
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
     static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
-        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_imp", {fill_imp}}, {"atexit", {fill_atexit}}, {"_signal", {fill_signal}}};
+        {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_imp", {fill_imp}}, {"atexit", {fill_atexit}}, {"_signal", {fill_signal}}, {"gc", {fill_gc}}};
     return table;
 }
 }  // namespace
@@ -991,6 +992,9 @@ void fill_tokenize(Module* m) {
     fill_in_python(m, "_tokenize", "_tokenize", prelude_tokenize::module_body, {{"_tp_name", i_tp_name}, {"_tokenizer", i_tokenizer}});
 }
 void fill_atexit(Module* m) { fill_in_python(m, "atexit", "atexit", prelude_atexit::module_body, {{"_unraisable", i_unraisable}}); }
+void fill_gc(Module* m) {
+    fill_in_python(m, "gc", "gc", prelude_gc::module_body, {{"_gc", i_gc}, {"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}});
+}
 void fill_signal(Module* m) {                    // its two types are named for `signal`, as CPython's are (signal.struct_siginfo, signal.ItimerError)
     fill_in_python(m, "_signal", "signal", prelude_signal::module_body,
                    {{"_tp_name", i_tp_name}, {"_structseq", i_structseq}, {"_warn", i_bella_import_warning}, {"_signals", i_signals}});

@@ -452,6 +452,7 @@ void fill_tokenize(Module* m);                    // runtime/prelude/_tokenize.p
 void fill_imp(Module* m);                         // runtime/prelude/_imp.py
 void fill_atexit(Module* m);                      // runtime/prelude/atexit.py
 void fill_signal(Module* m);                      // runtime/prelude/_signal.py, over runtime/src/signals.cpp
+void fill_gc(Module* m);                          // runtime/prelude/gc.py, over runtime/src/gc.cpp
 Dict* intrinsics();                               // what the prelude gives the runtime, not the program (a start-up prelude's or a module's __intrinsics__)
 void set_locale_from_environment();               // the start: _Py_SetLocaleFromEnv(LC_CTYPE) and PEP 538's coercion
 CodecHooks& codec_hooks();
@@ -1161,6 +1162,8 @@ void signals_init();                             // _PySignal_Init: _signal impo
 void signals_fini();                             // _PySignal_Fini: the table emptied, each slot before its object goes; a signal Python handled is the default's again
 int exit_by_sigint();                            // exit_sigint (Modules/main.c): SIGINT at its default and sent to the process itself; 130 if that came back
 Ref i_signals(Obj, Args a);                      // _signal.py's, and _thread.interrupt_main's: the signal core, by name
+Ref i_gc(Obj, Args a);                           // gc.py's: the collector's state, by name (runtime/src/gc.cpp)
+bool gc_is_enabled();                            // PyGC_IsEnabled
 
 // A module of the prelude, run before the program as the module it names (builtins, or
 // _frozen_importlib for runtime/prelude/bootstrap.py).

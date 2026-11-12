@@ -92,7 +92,8 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
                     ROOT / "runtime" / "prelude" / "_statistics.py", ROOT / "runtime" / "prelude" / "_heapq.py",
                     ROOT / "runtime" / "prelude" / "_opcode.py", ROOT / "runtime" / "prelude" / "_warnings.py",
                     ROOT / "runtime" / "prelude" / "_tokenize.py", ROOT / "runtime" / "prelude" / "_imp.py",
-                    ROOT / "runtime" / "prelude" / "atexit.py", ROOT / "runtime" / "prelude" / "_signal.py"]
+                    ROOT / "runtime" / "prelude" / "atexit.py", ROOT / "runtime" / "prelude" / "_signal.py",
+                    ROOT / "runtime" / "prelude" / "gc.py"]
 # standard-library modules that stand for a C accelerator CPython has and the closure omits (manifest.toml [adaptations],
 # decimal and datetime): CPython's C looks for signals nowhere in them, so their units have no looks (pipeline/backend/cpp.py)
 LOOK_FREE = frozenset({"_pydecimal", "_pydatetime"})
