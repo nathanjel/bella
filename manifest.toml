@@ -125,6 +125,7 @@ datetime = "C accelerator omitted so the pure-Python _pydatetime is used (see [o
 hashlib = "the OpenSSL module _hashlib is omitted (see [omissions]): the built-in digests are mapped, and pbkdf2_hmac and scrypt, which only _hashlib provides, are absent, as in a CPython built without OpenSSL"
 hmac = "_hashlib omitted; _hmac mapped like the digests (spec section 7: onto BearSSL or libsodium), so hmac behaves as in a CPython built without OpenSSL and hmac.digest still accepts any buffer as key (review log RL-61)"
 encodings = "codec lookup finds the phase-1 codecs listed in [dynamic]; any other encoding raises LookupError (the full registry is [P2+])"
+"re._compiler" = "_bytes_to_codes reads a charset's bitmap as the engine's code words from the bytes themselves, little-endian as every target is, where CPython casts a memoryview ([P2+]): the same list (see [replaced]; runtime/replaced/re._compiler.py)"
 
 [lazy_unsupported]
 # Imports inside functions whose target is outside the manifest: the importing function is
@@ -141,6 +142,8 @@ pathlib = ["urllib.request", "urllib.error"]   # Path.as_uri, Path.from_uri: url
 [replaced]
 # Functions an adaptation in [adaptations] replaces: their imports do not count.
 traceback = ["_find_incompatible_extension_module"]   # imports importlib.resources.readers, which imports zipfile
+logging = ["Logger.findCaller"]                         # walks frame objects (E-02): the compiler's call sites instead
+"re._compiler" = ["_bytes_to_codes"]                    # casts a memoryview ([P2+])
 
 # Every import whose name is computed (__import__(name), import_module(name)), reviewed site by
 # site on 2026-11-01 (review log RL-56): one table per module, one key per site, "<function>:

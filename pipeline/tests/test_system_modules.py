@@ -879,6 +879,7 @@ def test_what_is_absent_stops_by_name() -> None:
              ("import importlib.util, json\nimportlib.util.LazyLoader(json.__loader__).exec_module(json)", "__class__ assignment"), ("import _imp\n_imp.get_frozen_object('os')", "_imp.get_frozen_object"), ("import dis\ndis.get_executor(1, 2)", "_opcode.get_executor"),
              ("import sys\nr = sys.__unraisablehook__\nclass K:\n    def __del__(self): raise ValueError\nkept = []\nsys.unraisablehook = kept.append\nK()\n"
               "r(type(kept[0])((3, 4, None, None, None)))", "an exc_type that is no class"),
+             ("import sys\nsys._getframe()", "sys._getframe (a frame object"),
              ("import gc\ngc.collect()", "gc.collect (the cycle collector"), ("import gc\ngc.is_tracked([])", "gc.is_tracked (the cycle collector"),
              ("import gc\ngc.get_objects()", "gc.get_objects (CPython's object graph, E-05)"), ("import gc\ngc.freeze()", "gc.freeze (CPython's object graph, E-05)"),
              ("import threading\nthreading.Thread(target=print).start()", "creating a thread"),

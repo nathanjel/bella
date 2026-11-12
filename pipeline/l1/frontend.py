@@ -2559,6 +2559,62 @@ def future_features(tree: ast.Module) -> frozenset[str]:
     return frozenset(features)
 
 
+_REPLACED = Path(__file__).resolve().parents[2] / "runtime" / "replaced"
+_STDLIB = Path(__import__("os").path.dirname(__import__("os").__file__)).resolve()
+
+
+def replace_functions(tree: ast.Module, filename: str) -> None:
+    """manifest.toml [replaced]: a standard-library module whose adaptation replaces functions of CPython's text gets their
+    bodies from runtime/replaced/<module>.py, where each def repeats the signature of the one of the same qualified name
+    (a class there is only the path to its methods). CPython's docstring stays, and the new statements are at the line of
+    the body's first, so a code object keeps CPython's names and lines; `__bella_call_sites__` there is the intrinsic. A
+    replacement that finds no such function, or another signature, is refused."""
+    try:
+        rel = Path(filename).resolve().relative_to(_STDLIB)
+    except ValueError:
+        return
+    parts = list(rel.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    source = _REPLACED / (".".join(parts) + ".py")
+    if not parts or not source.exists():
+        return
+    wanted: dict[str, ast.FunctionDef] = {}
+
+    def collect(body: list[ast.stmt], prefix: str) -> None:
+        for n in body:
+            if isinstance(n, ast.FunctionDef):
+                wanted[prefix + n.name] = n
+            elif isinstance(n, ast.ClassDef):
+                collect(n.body, prefix + n.name + ".")
+    collect(ast.parse(source.read_text(encoding="utf-8"), str(source)).body, "")
+    done: set[str] = set()
+
+    def walk(body: list[ast.stmt], prefix: str) -> None:
+        for n in body:
+            qual = prefix + getattr(n, "name", "")
+            if isinstance(n, ast.FunctionDef) and qual in wanted:
+                new = wanted[qual]
+                if ast.dump(new.args) != ast.dump(n.args):
+                    raise L.Unsupported(f"{source.name}: {qual} does not repeat CPython's signature")
+                doc = n.body[:1] if ast.get_docstring(n) is not None else []
+                first = n.body[len(doc)] if len(n.body) > len(doc) else n.body[0]
+                stmts = [s for s in new.body if not (s is new.body[0] and ast.get_docstring(new) is not None)]
+                for s in stmts:
+                    for node in ast.walk(s):
+                        if "lineno" in node._attributes:
+                            ast.copy_location(node, first)
+                        if isinstance(node, ast.Name) and node.id == "__bella_call_sites__":
+                            node.id = _INTRINSIC + "call_sites"
+                n.body = doc + stmts
+                done.add(qual)
+            elif isinstance(n, ast.ClassDef):
+                walk(n.body, qual + ".")
+    walk(tree.body, "")
+    if done != set(wanted):
+        raise L.Unsupported(f"{source.name}: no function of CPython's for {sorted(set(wanted) - done)}")
+
+
 def lower(source: str, filename: str = "<module>", mode: str = "exec",
           inherit_future: frozenset[str] = frozenset()) -> L.Module:
     """Parse and lower a program to L1 through the registered passes in fact order. Mode "eval"
@@ -2576,6 +2632,7 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
         parsed = _parse(source, filename, "exec", inherit_future)
         assert isinstance(parsed, ast.Module)
         tree = parsed
+        replace_functions(tree, filename)
         mark_looking_breaks(tree, check_compile(tree, filename, mode, inherit_future))
     check_finally(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]

@@ -143,6 +143,7 @@ C-7-74_starting_a_program_and_waiting_for_it.py
 C-7-75_signals_where_the_program_asks.py
 C-7-76_signals_that_arrive.py
 C-7-77_the_gc_module.py
+C-7-78_logging_and_its_call_sites.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

@@ -1602,8 +1602,14 @@ def prep_reraise_star(orig: BaseException, excs: list[Any]) -> Any:
     return BaseExceptionGroup("", raised) if len(raised) > 1 else raised[0]
 
 
+def _call_sites() -> list[tuple[str, int, str]]:
+    """The call sites of the program's frames (runtime/replaced): an evaluator's frames are its own, none of the program's."""
+    return []
+
+
 _STAR: dict[str, Callable[..., Any]] = {"exception": _star_exception, "eg_match": eg_match, "raise_handled": _raise_keeping,
-                                        "prep_reraise_star": prep_reraise_star, "reraise_star": _raise_keeping}
+                                        "prep_reraise_star": prep_reraise_star, "reraise_star": _raise_keeping,
+                                        "call_sites": _call_sites}
 
 
 def _matches(exc: BaseException, spec: Any) -> bool:

@@ -1,0 +1,12 @@
+{
+ "case": "C-7-78_logging_and_its_call_sites.py",
+ "clause": "C-7-78",
+ "spec": "section 7 (logging, [P1]: findCaller takes call-site information the compiler supplies), E-02",
+ "status": "P1",
+ "source": "Lib/logging/__init__.py (CPython 3.15.2: Logger.findCaller, _is_internal_frame, LogRecord, the three styles,",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "sys has _getframe: True\nINFO case C-7-78_logging_and_its_call_sites.inner:24 C-7-78_logging_and_its_call_sites.py | in a function\nWARNING case C-7-78_logging_and_its_call_sites.<module>:58 C-7-78_logging_and_its_call_sites.py | one level up, by stacklevel\nWARNING case C-7-78_logging_and_its_call_sites.deeper:32 C-7-78_logging_and_its_call_sites.py | from deeper, one level up\nWARNING case C-7-78_logging_and_its_call_sites.<module>:60 C-7-78_logging_and_its_call_sites.py | as far up as there is\nERROR case C-7-78_logging_and_its_call_sites.method:37 C-7-78_logging_and_its_call_sites.py | in a method, 1 argument\nCRITICAL case C-7-78_logging_and_its_call_sites.static:41 C-7-78_logging_and_its_call_sites.py | in a static method\nINFO case C-7-78_logging_and_its_call_sites.generator:45 C-7-78_logging_and_its_call_sites.py | in a generator\nDEBUG case C-7-78_logging_and_its_call_sites.closure:53 C-7-78_logging_and_its_call_sites.py | in a closure over 2\nINFO case C-7-78_logging_and_its_call_sites.<module>:66 C-7-78_logging_and_its_call_sites.py | in a comprehension\nDEBUG case C-7-78_logging_and_its_call_sites.<module>:67 C-7-78_logging_and_its_call_sites.py | in the module's body\nfindCaller here: (68, '<module>')\nWARNING case.child C-7-78_logging_and_its_call_sites.<module>:73 C-7-78_logging_and_its_call_sites.py | shown through the parent's handler\nWARNING odd C-7-78_logging_and_its_call_sites.<module>:87 C-7-78_logging_and_its_call_sites.py | number 1\nWARNING/<module>/97: a % message\nWARNING/<module>/97: a { message\nWARNING/<module>/97: a $ message\nWARNING case C-7-78_logging_and_its_call_sites.<module>:100 C-7-78_logging_and_its_call_sites.py | through an adapter\na record made by hand: made by hand made.py maker 7 made\nlevels: WARNING Level 15 40\n",
+ "stderr": "before any handler: the last resort, on standard error\nno handler and no propagation: the last resort again\n",
+ "exit_code": 0
+}

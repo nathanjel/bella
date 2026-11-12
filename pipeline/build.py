@@ -165,8 +165,9 @@ def _key(*parts: bytes) -> str:
 
 @cache
 def _pipeline_bytes() -> tuple[bytes, ...]:
-    """Everything that decides what a program compiles to: the compiler's own sources."""
-    files = sorted((ROOT / "pipeline").rglob("*.py")) + sorted(INCLUDE.rglob("*.hpp"))
+    """Everything that decides what a program compiles to: the compiler's own sources, and the bodies the adaptations give the
+    functions they replace (runtime/replaced, manifest.toml [replaced])."""
+    files = sorted((ROOT / "pipeline").rglob("*.py")) + sorted(INCLUDE.rglob("*.hpp")) + sorted((ROOT / "runtime" / "replaced").glob("*.py"))
     return tuple(f.read_bytes() for f in files if "tests" not in f.relative_to(ROOT).parts)
 
 

@@ -1175,6 +1175,9 @@ Ref sys_exception(Obj, Args a) {                  // sys_exception_impl: what is
     const auto& stack = handled_exceptions();
     return stack.empty() ? none_ref() : Ref::share(stack.back());
 }
+Ref sys_getframe(Obj, Args) {                     // sys._getframe: there, as in CPython; a frame object is E-02's
+    throw NotImplemented("sys._getframe (a frame object: frame introspection, E-02)");
+}
 Ref sys_exc_info(Obj, Args a) {                   // sys_exc_info_impl: (type, value, traceback)
     noargs(a, "sys.exc_info");
     const auto& stack = handled_exceptions();
@@ -1661,6 +1664,7 @@ Module* make_sys(int argc, char** argv) {
     put_builtin(d, "unraisablehook", sys_unraisablehook);
     put(d, "__unraisablehook__", dict_get(d, Obj::of(intern("unraisablehook"))));
     put_builtin(d, "_getframemodulename", sys_getframemodulename);
+    put_builtin(d, "_getframe", sys_getframe);
     put(d, "maxsize", int_from_i64(INT64_MAX).get());
     put_builtin(d, "getrecursionlimit", sys_getrecursionlimit);
     put_builtin(d, "setrecursionlimit", sys_setrecursionlimit);
@@ -2116,6 +2120,19 @@ Ref i_super(Obj, Args a) {                       // zero-argument super() in a f
 // try/except* (the frontend's desugar-try-star): the exception being handled, CHECK_EG_MATCH (the match then handled, as
 // PyErr_SetHandledException makes it), the raise that makes the match handled in the clause (it is already: compiled, the
 // raise records nothing and takes no context), _PyExc_PrepReraiseStar, and RERAISE
+// The call sites the compiler gives each frame, this one's first: (file, line, function) of each frame CPython has, for the
+// functions an adaptation replaces where CPython walks frame objects (logging.Logger.findCaller; runtime/replaced)
+Ref i_call_sites(Obj, Args a) {
+    positional_only(a, "call_sites", 0, 0);
+    Ref out = list_new({});
+    for (detail::FrameRecord* f = detail::current_frame(); f != nullptr; f = f->caller) {
+        if (!f->code->shown) continue;
+        Ref file = str_new(f->code->filename), name = str_new(f->code->name), line = int_from_i64(f->line);
+        Ref site = tuple_new({file.get(), line.get(), name.get()});
+        list_append(out.get(), site.get());
+    }
+    return out;
+}
 Ref i_exception(Obj, Args a) {
     positional_only(a, "exception", 0, 0);
     return handled_exception();
@@ -2146,7 +2163,8 @@ void register_intrinsics() {
     for (auto [name, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
              {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack},
              {"call_args_tuple", i_call_args_tuple}, {"super", i_super}, {"exception", i_exception}, {"eg_match", i_eg_match},
-             {"raise_handled", i_raise_handled}, {"prep_reraise_star", i_prep_reraise_star}, {"reraise_star", i_reraise_star}}) {
+             {"raise_handled", i_raise_handled}, {"prep_reraise_star", i_prep_reraise_star}, {"reraise_star", i_reraise_star},
+             {"call_sites", i_call_sites}}) {
         Ref b = own(new Builtin(name, fn));
         dict_set(intrinsics(), Obj::of(intern(name)), b.get());
     }
