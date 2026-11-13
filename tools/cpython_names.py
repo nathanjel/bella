@@ -206,6 +206,8 @@ def native_modules(names):
     # module start-up makes has none, and a program's own `import importlib` sets it as CPython's does
     if "_frozen_importlib" in out:
         out["_frozen_importlib"] = [n for n in out["_frozen_importlib"] if n != "__file__"]
+    if "builtins" in out:        # without what site adds (SITE, below)
+        out["builtins"] = [n for n in out["builtins"] if n not in SITE]
     return out
 
 def bootstrap_classes():
@@ -253,7 +255,11 @@ def docs():
             out["new:" + tp_name(t)] = new.__doc__ or ""
     return out
 
-print(json.dumps({"docs": docs(), "builtins": sorted(dir(builtins)), "globals": GLOBALS, "sys": sorted(dir(sys)),
+# what site adds to builtins (exit, quit, help, copyright, credits, license) is not a compiled program's: the closed world runs no
+# site (spec section 6, Builtins; D-18), so those names are absent there, a NameError and not a name the runtime has yet to write
+SITE = sorted(n for n in dir(builtins) if type(getattr(builtins, n)).__module__ == "_sitebuiltins")
+assert SITE == ["copyright", "credits", "exit", "help", "license", "quit"], SITE
+print(json.dumps({"docs": docs(), "builtins": sorted(set(dir(builtins)) - set(SITE)), "globals": GLOBALS, "sys": sorted(dir(sys)),
                   "types": type_names(), "member_docs": MEMBER_DOCS, "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:]), "bootstrap_classes": bootstrap_classes()}))
 '''

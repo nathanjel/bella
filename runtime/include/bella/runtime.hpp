@@ -1193,6 +1193,7 @@ Ref i_bella_set_lazy_attributes(Obj, Args a);
 namespace detail {
 extern volatile int signal_breaker;
 }
+bool interrupt_occurred();                       // _PyOS_InterruptOccurred: whether a SIGINT came, which is then taken without its handler (input()'s read)
 void check_signals();                            // PyErr_CheckSignals, where the C calls it itself: the handlers of the signals that came, lowest number first; one that raises leaves the rest tripped
 void look_for_signals();                         // the evaluation loop's look, the breaker already tested (BELLA_LOOK): the signals bit cleared, check_signals(), set again if a handler raised; then the reports of failed wakeup writes queued when it began
 void look_for_signals_now();                     // Py_MakePendingCalls: the same, whatever the breaker says (before and after the program, a lock's wait)

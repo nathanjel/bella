@@ -2147,6 +2147,59 @@ Ref i_call_sites(Obj, Args a) {
     }
     return out;
 }
+// ---- input() at a terminal and breakpoint() (runtime/prelude/builtins.py) ----
+Ref i_bella_isatty(Obj, Args a) {                // isatty(fd), of a C long
+    positional_only(a, "_bella_isatty", 1, 1);
+    std::int64_t fd = 0;
+    return Ref::steal(boolean(int_fits_i64(a.pos(0), fd) && fd >= 0 && fd <= 0x7fffffff && isatty(static_cast<int>(fd)) != 0));
+}
+// PyOS_Readline, which is PyOS_StdioReadline while no readline module is loaded (Parser/myreadline.c): the C stdout flushed, the
+// prompt written to the C stderr, and a line read from the C stdin: its bytes with the newline, what came before the end of the
+// input when that came first, nothing at the end itself. A read a signal interrupts runs the handlers that are due (my_fgets:
+// PyErr_CheckSignals) and goes on unless one raised. None is the C's NULL: a SIGINT that came with a read error is taken as the
+// interrupt, and builtin_input raises KeyboardInterrupt unless a handler raised something
+Ref i_bella_readline(Obj, Args a) {
+    positional_only(a, "_bella_readline", 1, 1);
+    std::string prompt = bytes_data(a.pos(0));
+    std::fflush(stdout);
+    std::fputs(prompt.c_str(), stderr);
+    std::fflush(stderr);
+    std::string line;
+    for (;;) {
+        char buffer[256];
+        errno = 0;
+        std::clearerr(stdin);
+        if (std::fgets(buffer, sizeof buffer, stdin) != nullptr) {
+            line += buffer;
+            if (!line.empty() && line.back() == '\n') break;
+            continue;
+        }
+        int err = errno;
+        if (std::feof(stdin)) {                  // the end of the input: what was read stands
+            std::clearerr(stdin);
+            break;
+        }
+        if (err == EINTR) {
+            check_signals();
+            continue;
+        }
+        if (interrupt_occurred()) {
+            check_signals();
+            return none_ref();
+        }
+        break;                                   // an error: what was read stands
+    }
+    return bytes_new(line);
+}
+Ref i_bella_type_name(Obj, Args a) {             // PyErr_Format's %T: PyType_GetFullyQualifiedName of the object's type
+    positional_only(a, "_bella_type_name", 1, 1);
+    return str_new(fully_qualified_name(type_of(a.pos(0))));
+}
+Ref i_bella_getenv(Obj, Args a) {                // Py_GETENV: the process's environment as it is now, None for a name that is not in it
+    positional_only(a, "_bella_getenv", 1, 1);
+    const char* value = std::getenv(as_str(a.pos(0))->text.c_str());
+    return value == nullptr ? none_ref() : str_new(value);
+}
 // The frame a traceback's entry stands for, where an adaptation walks a traceback's frames (traceback's
 // _walk_tb_with_full_positions; runtime/replaced): a frame object of the runtime's, new at each asking, or None for what is no
 // traceback, CPython's walk then being the adaptation's
@@ -3001,6 +3054,13 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     Ref unpack = own(new Builtin("_unpack_keywords", i_unpack_keywords));   // _PyArg_UnpackKeywords, as every prelude has it
                     put(pm->dict, "_unpack_keywords", unpack.get());
                 }
+                if (std::string_view(pm_entry.name) == "builtins")   // builtins.py: input() and breakpoint()
+                    for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
+                             {"_bella_isatty", i_bella_isatty}, {"_bella_readline", i_bella_readline}, {"_bella_type_name", i_bella_type_name},
+                             {"_bella_getenv", i_bella_getenv}, {"_bella_refuse", i_bella_refuse}, {"_warn", i_bella_import_warning}}) {
+                        Ref b = own(new Builtin(n, fn));
+                        put(pm->dict, n, b.get());
+                    }
                 if (std::string_view(pm_entry.name) == "_frozen_importlib") {
                     bootstrap = pm;
                     set_bootstrap_module(pm);

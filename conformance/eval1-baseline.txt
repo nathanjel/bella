@@ -74,6 +74,7 @@ C-6-18_exceptions_os_and_syntax.py
 C-6-19_dict_view_sets.py
 C-6-20_bytes_percent_format.py
 C-6-21_unicode_database_in_the_builtins.py
+C-6-22_input_and_breakpoint.py
 C-7-01_hash_and_hmac_surface.py
 C-7-02_traceback_formats_module_not_found.py
 C-7-05_core_data_collections_itertools_functools.py

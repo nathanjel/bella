@@ -189,6 +189,11 @@ void report_wakeup_errors() {                    // make_pending_calls over the 
 }  // namespace
 
 // ---- the three ways in ------------------------------------------------------------------------------------------------------
+bool interrupt_occurred() {                      // _PyOS_InterruptOccurred: a SIGINT that came is taken, and its handler is not called
+    if (!tripped[SIGINT]) return false;
+    tripped[SIGINT] = 0;
+    return true;
+}
 void check_signals() {                           // PyErr_CheckSignals -> _PyErr_CheckSignalsTstate
     if (!is_tripped) return;
     is_tripped = 0;                              // before the walk: a signal that arrives during it sets the flag again

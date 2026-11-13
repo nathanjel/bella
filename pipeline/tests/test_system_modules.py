@@ -1226,8 +1226,8 @@ def test_a_name_the_program_deleted_is_absent() -> None:
     same(DELETED)
     same(GLOBALS_DELETED)
     same(BUILTIN_DELETED)
-    for body, name in (("import sys\ndel sys.maxsize\nsys.abi_info", "sys.abi_info"), ("import math\ndel math.pi\ninput", "the name 'input'"),
-                       ("import builtins, math\ndel math.pi\nbuiltins.input", "builtins.input")):
+    for body, name in (("import sys\ndel sys.maxsize\nsys.abi_info", "sys.abi_info"), ("import math\ndel math.pi\naiter", "the name 'aiter'"),
+                       ("import builtins, math\ndel math.pi\nbuiltins.anext", "builtins.anext")):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"print('start')\n{body}\n", encoding="utf-8")

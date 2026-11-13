@@ -95,6 +95,105 @@ def test_print_matches_the_builtin() -> None:
         assert got == want, f"print(*{args}, **{kwargs}):\n  prelude {got}\n  builtin {want}"
 
 
+class Stream:
+    """A stand-in for a standard stream that notes what input() asks of it."""
+
+    def __init__(self, log: list[str], name: str, lines: list[object], fd: object = None, broken: tuple[str, ...] = ()) -> None:
+        self.log, self.name, self.lines, self.fd, self.broken = log, name, lines, fd, broken
+
+    def flush(self) -> None:
+        self.log.append(self.name + ".flush")
+        if "flush" in self.broken:
+            raise OSError("flush failed")
+
+    def fileno(self) -> object:
+        self.log.append(self.name + ".fileno")
+        if self.fd is None:
+            raise io.UnsupportedOperation("fileno")
+        return self.fd
+
+    def write(self, text: str) -> int:
+        self.log.append(self.name + ".write " + repr(text))
+        if "write" in self.broken:
+            raise OSError("write failed")
+        return len(text)
+
+    def readline(self, *args: object) -> object:
+        self.log.append(self.name + ".readline" + repr(args))
+        return self.lines.pop(0) if self.lines else ""
+
+
+def asked(fn: Any, given: tuple[object, ...], lines: list[object], /, fd: object = None, out: tuple[str, ...] = (), err: tuple[str, ...] = (),
+          lost: str = "", **kwargs: object) -> tuple[object, ...]:
+    """fn(*given, **kwargs) with the three standard streams replaced: its result or its exception, and what it asked of the streams."""
+    log: list[str] = []
+    saved = sys.stdin, sys.stdout, sys.stderr
+    sys.stdin, sys.stdout, sys.stderr = Stream(log, "in", list(lines), fd), Stream(log, "out", [], None, out), Stream(log, "err", [], None, err)  # type: ignore[assignment]
+    if lost:
+        setattr(sys, lost, None)
+    try:
+        return ("ok", fn(*given, **kwargs), log)
+    except Exception as exc:  # noqa: BLE001 -- the exception is the observable
+        return ("raised", type(exc).__name__, str(exc), exc.args, log)
+    finally:
+        sys.stdin, sys.stdout, sys.stderr = saved
+
+
+def test_input_matches_the_builtin() -> None:
+    """Away from a terminal (the streams are stand-ins): the order of what input() asks, what it gives back and what it raises."""
+    prelude = load("builtins")
+    cases: list[tuple[tuple[object, ...], list[object], dict[str, Any]]] = [
+        ((), ["a line\n"], {}), (("prompt> ",), ["a line\n"], {}), ((5,), ["no newline"], {}), ((None,), ["\n"], {}), ((b"b",), ["x\n"], {}),
+        ((), ["two\n\n"], {}), ((), ["cr\r\n"], {}), ((), [], {}), ((), [b""], {}), ((), [b"bytes\n"], {}), ((), [b"x"], {}),
+        ((), [5], {}), ((), [None], {}), ((), [bytearray(b"x")], {}), (("p",), ["x\n"], {"fd": 7}), (("p",), ["x\n"], {"fd": -1}),
+        (("p",), ["x\n"], {"fd": "zero"}), (("p",), ["x\n"], {"fd": 2 ** 70}), (("p",), ["x\n"], {"fd": 1.5}), (("p",), ["x\n"], {"fd": True}),
+        (("p",), ["x\n"], {"out": ("write",)}), ((), ["x\n"], {"out": ("flush",), "err": ("flush",)}),
+        ((), ["x\n"], {"lost": "stdin"}), ((), ["x\n"], {"lost": "stdout"}), ((), ["x\n"], {"lost": "stderr"}),
+        (("a", "b"), ["x\n"], {}), ((), ["x\n"], {"prompt": "x"}),
+    ]
+    for prompt, lines, kwargs in cases:
+        want = asked(builtins.input, prompt, lines, **kwargs)
+        got = asked(prelude.input, prompt, lines, **kwargs)
+        assert got == want, f"input(*{prompt}) over {lines}, {kwargs}:\n  prelude {got}\n  builtin {want}"
+
+
+def test_breakpoint_matches_the_builtin_without_pdb() -> None:
+    """sys.breakpointhook as the program set it, PYTHONBREAKPOINT=0, and the default with pdb unimportable (what D-11 is)."""
+    import os
+    import warnings
+    prelude = load("builtins")
+    saved_hook, saved_pdb, saved_env = sys.breakpointhook, sys.modules.get("pdb"), os.environ.get("PYTHONBREAKPOINT")
+    try:
+        for fn in (builtins.breakpoint, prelude.breakpoint):
+            sys.breakpointhook = lambda *args, **kws: ("hook", args, kws)
+            assert fn(1, key=2) == ("hook", (1,), {"key": 2})
+        sys.breakpointhook = sys.__breakpointhook__
+        del sys.breakpointhook                   # the prelude's sys has none of its own
+        sys.modules["pdb"] = None  # type: ignore[assignment]
+        os.environ["PYTHONBREAKPOINT"] = "0"
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert prelude.breakpoint(1, key=2) is None and not caught
+        del os.environ["PYTHONBREAKPOINT"]
+        seen = []
+        for fn in (sys.__breakpointhook__, prelude.breakpoint):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                assert fn() is None
+            seen.append([(str(w.message), w.category) for w in caught])
+        assert seen[0] == seen[1] == [('Ignoring unimportable $PYTHONBREAKPOINT: "pdb.set_trace"', RuntimeWarning)], seen
+    finally:
+        sys.breakpointhook = saved_hook
+        if saved_pdb is None:
+            sys.modules.pop("pdb", None)
+        else:
+            sys.modules["pdb"] = saved_pdb
+        if saved_env is None:
+            os.environ.pop("PYTHONBREAKPOINT", None)
+        else:
+            os.environ["PYTHONBREAKPOINT"] = saved_env
+
+
 def test_print_does_nothing_without_a_stdout() -> None:
     prelude = load("builtins")
     saved = sys.stdout

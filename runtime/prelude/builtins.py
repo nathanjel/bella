@@ -6,7 +6,7 @@ function is checked against CPython directly, before Bella compiles it.
 """
 import sys
 
-__all__ = ["print", "property", "staticmethod", "classmethod"]
+__all__ = ["print", "input", "breakpoint", "property", "staticmethod", "classmethod"]
 # Py_ReprEnter and Py_ReprLeave, for the built-in modules written in Python; _GetSet, which the runtime makes CPython's descriptors
 __intrinsics__ = ["_enter", "_leave", "_GetSet"]
 
@@ -38,14 +38,162 @@ def print(*args: object, sep: object = " ", end: object = "\n", file: object = N
         file.flush()  # type: ignore[attr-defined]
 
 
+def _standard_stream(name: str) -> object:
+    """PySys_GetAttr and builtin_input's own test: the stream in sys's dict; one that is not there, or None, is lost."""
+    stream = sys.__dict__.get(name)
+    if stream is None:
+        raise RuntimeError("lost sys." + name)
+    return stream
+
+
+def _flush_quietly(stream: object) -> None:
+    """_PyFile_Flush with its error cleared (PyErr_Clear: whatever was raised)."""
+    try:
+        stream.flush()  # type: ignore[attr-defined]
+    except BaseException:  # noqa: BLE001, S110
+        pass
+
+
+def _is_the_terminal(stream: object, descriptor: int) -> bool:
+    """Whether `stream` is the process's own stream on that descriptor and a terminal: a stream without a fileno() is not, and a
+    fileno() that is no C long is an error."""
+    try:
+        number = stream.fileno()  # type: ignore[attr-defined]
+    except BaseException:  # noqa: BLE001
+        return False
+    fd = _number_index(number)                   # PyLong_AsLong
+    if not -0x8000000000000000 <= fd <= 0x7fffffffffffffff:
+        raise OverflowError("Python int too large to convert to C long")
+    return fd == descriptor and _bella_isatty(fd)
+
+
+_NO_TERMINAL = object()                          # the terminal's way gave up before reading: the other way is taken
+_NO_HOOK = object()                              # sys has no breakpointhook
+
+
+def _input_from_the_terminal(args: tuple[object, ...], fin: object, fout: object) -> object:
+    """The readline branch of builtin_input_impl: sys.stdin's encoding and errors, sys.stdout flushed, the prompt encoded as
+    sys.stdout would encode it, PyOS_Readline, and the line decoded as sys.stdin would decode it. A stream without an encoding
+    and errors that are str is no terminal's after all."""
+    try:
+        stdin_encoding = fin.encoding  # type: ignore[attr-defined]
+        stdin_errors = fin.errors  # type: ignore[attr-defined]
+    except BaseException:  # noqa: BLE001
+        return _NO_TERMINAL
+    if not isinstance(stdin_encoding, str) or not isinstance(stdin_errors, str):
+        return _NO_TERMINAL
+    str.encode(stdin_encoding)                   # PyUnicode_AsUTF8: a lone surrogate is an error
+    str.encode(stdin_errors)
+    _flush_quietly(fout)
+    prompt = b""
+    if args:
+        try:
+            stdout_encoding = fout.encoding  # type: ignore[attr-defined]
+            stdout_errors = fout.errors  # type: ignore[attr-defined]
+        except BaseException:  # noqa: BLE001
+            return _NO_TERMINAL
+        if not isinstance(stdout_encoding, str) or not isinstance(stdout_errors, str):
+            return _NO_TERMINAL
+        str.encode(stdout_encoding)
+        str.encode(stdout_errors)
+        prompt = str.encode(str(args[0]), stdout_encoding, stdout_errors)
+        if b"\0" in prompt:
+            raise ValueError("input: prompt string cannot contain null characters")
+    line = _bella_readline(prompt)               # PyOS_Readline: the line's bytes, none at the end of the input; None when interrupted
+    if line is None:
+        raise KeyboardInterrupt
+    if not line:
+        raise EOFError
+    line = line[:-1]                             # "strip trailing '\n'": the last byte, whatever it is
+    if line[-1:] == b"\r":
+        line = line[:-1]
+    return bytes.decode(line, stdin_encoding, stdin_errors)
+
+
+def input(*args: object, **kwds: object) -> object:  # noqa: A001
+    """input(prompt='', /), in builtin_input_impl's order: the three standard streams, each of which may be lost; sys.stderr
+    flushed; then readline's way when sys.stdin and sys.stdout are the process's own and terminals, else str(prompt) written to
+    sys.stdout, which is flushed, and sys.stdin.readline() without its newline (PyFile_GetLine). No event is audited: no hook can
+    be added (sys.addaudithook)."""
+    if kwds:
+        raise TypeError("input() takes no keyword arguments")
+    if len(args) > 1:
+        raise TypeError("input expected at most 1 argument, got " + str(len(args)))
+    fin = _standard_stream("stdin")
+    fout = _standard_stream("stdout")
+    ferr = _standard_stream("stderr")
+    _flush_quietly(ferr)
+    if _is_the_terminal(fin, 0) and _is_the_terminal(fout, 1):
+        line = _input_from_the_terminal(args, fin, fout)
+        if line is not _NO_TERMINAL:
+            return line
+    if args:
+        write = fout.write  # type: ignore[attr-defined]  # PyFile_WriteObject, Py_PRINT_RAW: the writer first, then str(prompt)
+        write(str(args[0]))
+    _flush_quietly(fout)
+    line = fin.readline()  # type: ignore[attr-defined]  # PyFile_GetLine(fin, -1)
+    if isinstance(line, bytes):
+        if not line:
+            raise EOFError("EOF when reading a line")
+        return line[:-1] if line[-1:] == b"\n" else line
+    if isinstance(line, str):
+        if not line:
+            raise EOFError("EOF when reading a line")
+        return line[:-1] if line[-1] == "\n" else line
+    raise TypeError(_bella_type_name(fin) + ".readline() must return a str, not " + _bella_type_name(line))
+
+
+def breakpoint(*args: object, **kws: object) -> object:  # noqa: A001
+    """builtin_breakpoint: sys.breakpointhook, called with the arguments. sys has no hook of its own here (the sys surface of
+    section 7), so one the program put there is called, and without one this is sys_breakpointhook where pdb cannot be imported
+    (D-11): nothing under PYTHONBREAKPOINT=0, else CPython's warning for a hook it cannot import, and the program goes on. A
+    hook named by PYTHONBREAKPOINT is an import by a computed name, and stops by name."""
+    hook = sys.__dict__.get("breakpointhook", _NO_HOOK)
+    if hook is not _NO_HOOK:
+        return hook(*args, **kws)  # type: ignore[operator]
+    named = _bella_getenv("PYTHONBREAKPOINT")
+    if named == "0":
+        return None
+    if named:
+        _bella_refuse("breakpoint() with PYTHONBREAKPOINT naming a hook (" + named + ": an import by a computed name)")
+    _warn('Ignoring unimportable $PYTHONBREAKPOINT: "pdb.set_trace"', "RuntimeWarning")
+    return None
+
+
 try:
     _bella_new_instance                          # noqa: B018  # PyType_GenericAlloc: an instance of the type, its fields unset
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords, with its refusals
-except NameError:                                # CPython runs this file (runtime/tests/test_prelude.py): what stands for the three
+    _number_index                                # noqa: B018  # _PyNumber_Index, then the int's value
+    _bella_isatty                                # noqa: B018  # isatty(fd)
+    _bella_readline                              # noqa: B018  # PyOS_Readline over PyOS_StdioReadline
+    _bella_type_name                             # noqa: B018  # PyErr_Format's %T: the type's fully qualified name
+    _bella_getenv                                # noqa: B018  # Py_GETENV
+    _bella_refuse                                # noqa: B018  # a stop by name
+    _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
+except NameError:                                # CPython runs this file (runtime/tests/test_prelude.py): what stands for them
+    import operator
+    import os
+    import warnings
     from collections.abc import Callable
 
     _bella_new_instance: Callable[..., object] = object.__new__
+    _number_index: Callable[[object], int] = operator.index
+    _bella_isatty: Callable[[int], bool] = os.isatty
+    _bella_getenv: Callable[[str], str | None] = os.environ.get
+
+    def _bella_readline(prompt: bytes) -> bytes | None:
+        raise AssertionError("no terminal under the tests")
+
+    def _bella_type_name(obj: object) -> str:
+        cls = type(obj)
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+
+    def _bella_refuse(what: str) -> None:
+        raise NotImplementedError(what)
+
+    def _warn(message: str, category: str) -> None:
+        warnings.warn(message, {"RuntimeWarning": RuntimeWarning}[category], stacklevel=3)
 
     def _tp_name(obj: object) -> str:
         return type(obj).__name__

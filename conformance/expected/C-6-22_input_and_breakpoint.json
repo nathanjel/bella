@@ -1,0 +1,12 @@
+{
+ "case": "C-6-22_input_and_breakpoint.py",
+ "clause": "C-6-22",
+ "spec": "section 6 (Builtins: input), D-11 (breakpoint), section 7 (the sys surface: stdin, stdout, stderr)",
+ "status": "P1",
+ "source": "Python/bltinmodule.c (builtin_input_impl, builtin_breakpoint), Objects/fileobject.c (PyFile_GetLine, PyFile_WriteObject),",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "a line: (\"'a line'\", ['err.flush', 'in.fileno', 'out.flush', 'in.readline()'])\na prompt: (\"'a line'\", ['err.flush', 'in.fileno', \"out.write 'prompt> '\", 'out.flush', 'in.readline()'])\na prompt that is no str: (\"'no newline'\", ['err.flush', 'in.fileno', \"out.write '5'\", 'out.flush', 'in.readline()']) '' out.write \"b'b'\"\none newline only: 'two\\n' 'cr\\r' '\\n' '\\r'\nthe end: EOFError EOFError EOFError\nbytes: b'bytes' b'x' b'\\n'\nneither: TypeError TypeError TypeError TypeError\na descriptor that is no terminal: (\"'x'\", ['err.flush', 'in.fileno', \"out.write 'p'\", 'out.flush', 'in.readline()']) 'x'\na descriptor that is no int: ('TypeError', ['err.flush', 'in.fileno']) OverflowError TypeError\nnothing to read with: ('AttributeError', ['err.flush', \"out.write 'p'\", 'out.flush'])\nnothing to write with: ('AttributeError', ['err.flush', 'in.fileno']) (\"'x'\", ['err.flush', 'in.fileno', 'bare.flush', 'in.readline()'])\na write that fails: ('OSError', ['err.flush', 'in.fileno', \"out.write 'p'\"])\na prompt that cannot be shown: ('ZeroDivisionError', ['err.flush', 'in.fileno'])\na flush that fails: (\"'x'\", ['err.flush', 'in.fileno', 'out.flush', 'in.readline()'])\nlost: stdin RuntimeError RuntimeError\nlost: stdout RuntimeError RuntimeError\nlost: stderr RuntimeError RuntimeError\narguments: TypeError TypeError builtin_function_or_method input builtins\n? from a StringIO: 'first' 'second' '' 'last' EOFError\nfrom a BytesIO: b'bytes one' b'bytes two' EOFError\nfrom a text file: 'za\\u017c\\xf3\\u0142\\u0107\\r' 'x\\r' 'y'\nbreakpoint, switched off: None None builtin_function_or_method\n",
+ "stderr": "",
+ "exit_code": 0
+}
