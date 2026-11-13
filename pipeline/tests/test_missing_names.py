@@ -130,6 +130,37 @@ except TypeError as e:
 print(_locale._DATE_FMT, "_DATE_FMT" in vars(_locale), builtins.__debug__, "__debug__" in vars(builtins), __debug__, type(builtins.__debug__).__name__)
 """
 
+# A C type that names tp_getattro itself, as the generic function object has: its own __getattribute__ wrapper over object's
+# (collections, itertools, functools.partial, operator's getters, struct.Struct, unicodedata.UCD, ast.AST with __setattr__ and
+# __delattr__ too); and a native module's own __getattr__, which answers only for names CPython's module does not have
+GENERIC_ATTRIBUTE_SLOTS = r"""
+import ast, collections, functools, itertools, operator, struct, unicodedata, _struct, _tokenize, zlib
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+SAMPLES = [collections.deque([1]), collections.defaultdict(int), iter(collections.deque([1])), reversed(collections.deque([1])), functools.partial(len), itertools.chain(),
+           itertools.count(), itertools.cycle([1]), itertools.repeat(1), itertools.accumulate([1]), itertools.batched([1], 1), itertools.combinations([1], 1),
+           itertools.combinations_with_replacement([1], 1), itertools.compress([1], [1]), itertools.dropwhile(len, []), itertools.takewhile(len, []), itertools.filterfalse(len, []),
+           itertools.groupby([1]), next(itertools.groupby([1]))[1], itertools.islice([1], 1), itertools.pairwise([1]), itertools.permutations([1]), itertools.product([1]),
+           itertools.starmap(len, []), itertools.zip_longest([1]), itertools.tee([1])[0], operator.attrgetter("a"), operator.itemgetter(1), operator.methodcaller("a"),
+           struct.Struct("b"), unicodedata.ucd_3_2_0, ast.Pass(), ast.Name("x")]
+for obj in SAMPLES:
+    t = type(obj)
+    owner = next(c for c in t.__mro__ if "__getattribute__" in vars(c))
+    own = vars(owner)["__getattribute__"]
+    print(t.__name__, owner.__name__, type(own).__name__, type(obj.__getattribute__).__name__, own.__objclass__ is owner, own.__name__, own.__qualname__, own.__doc__,
+          own(obj, "__class__") is t, own(obj, "__doc__") == t.__doc__, m(lambda: own(obj, "nope")), m(lambda: own(obj, 5)), m(lambda: own(obj)), m(lambda: own(obj, "a", "b")),
+          m(lambda: own(5, "real")), m(lambda: own()), m(lambda: obj.__getattribute__(name="x")), type(obj.__getattribute__("__class__")).__name__)
+node = ast.Name("x")
+ast.AST.__setattr__(node, "left", 5)
+print(node.left, type(vars(ast.AST)["__setattr__"]).__name__, type(vars(ast.AST)["__delattr__"]).__name__, ast.AST.__setattr__.__objclass__ is ast.AST, m(lambda: ast.AST.__setattr__(5, "a", 1)),
+      m(lambda: ast.AST.__setattr__(node, 5, 1)), m(lambda: ast.AST.__delattr__(node, "left")), hasattr(node, "left"), m(lambda: ast.AST.__delattr__(node, "left")),
+      m(lambda: node.__setattr__("x")), ast.AST.__setattr__.__doc__, ast.AST.__delattr__.__doc__)
+print(m(lambda: zlib.nope), m(lambda: zlib.__getattr__("nope")), hasattr(zlib, "nope"))
+"""
+
 # every slot wrapper and every method of these types that the runtime has: its kind and its docstring
 DOCS = r"""
 import builtins, collections, functools, io, itertools, re, types, weakref
@@ -178,6 +209,10 @@ def test_four_names_of_four_modules() -> None:
     same(FOUR_NAMES)
 
 
+def test_the_generic_attribute_slots_a_c_type_names_itself() -> None:
+    same(GENERIC_ATTRIBUTE_SLOTS)
+
+
 def test_the_docstrings_of_slot_wrappers_and_methods() -> None:
     """Every row the compiled program prints is CPython's row; the rows it does not print are names the list of missing names has
     (the table's scope is the type's tp_name, which for these types is the qualified name without `builtins.`)."""
@@ -206,4 +241,5 @@ if __name__ == "__main__":
     test_the_callables_and_the_singletons_own_slots()
     test_the_containers_repr_is_a_slot_wrapper()
     test_four_names_of_four_modules()
+    test_the_generic_attribute_slots_a_c_type_names_itself()
     test_the_docstrings_of_slot_wrappers_and_methods()

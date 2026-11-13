@@ -7,10 +7,13 @@
 NoneType's own; a bound method's, a built-in's and a method-wrapper's equality and hash (the same function of the same
 object); `__call__` and `__repr__` of each kind, which do what calling and repr() do; the docstring of a slot's wrapper,
 which is the slot's and so the same for every type, and of a built-in type's method; and the containers' `__repr__`, a
-slot wrapper like any other."""
+slot wrapper like any other; and `__getattribute__` of a type written in C that names the generic lookup as its own."""
 import ast
 import builtins
+import collections
 import functools
+import itertools
+import operator
 import warnings
 import zlib
 from collections.abc import Callable
@@ -78,3 +81,15 @@ with warnings.catch_warnings(record=True) as caught:
 print("four names:", builtins.__debug__, __debug__, type(zlib.__getattr__).__name__, version, [w.category.__name__ for w in caught], attempt(lambda: zlib.nope),  # type: ignore[attr-defined]
       hasattr(zlib, "nope"), attempt(lambda: zlib.__getattr__()), _ast._is_abstract(ast.expr), _ast._is_abstract(ast.BinOp), _ast._is_abstract(int),  # type: ignore[attr-defined, call-arg]
       attempt(lambda: _ast._is_abstract([])), attempt(lambda: _ast._is_abstract()))  # type: ignore[attr-defined]
+
+
+def generic_lookup(sample: object) -> tuple[object, ...]:
+    """The type's own __getattribute__, called through the type: what it is, and what it answers and refuses."""
+    owner = next(c for c in type(sample).__mro__ if "__getattribute__" in vars(c))
+    lookup = vars(owner)["__getattribute__"]
+    return (owner.__name__, type(lookup).__name__, lookup.__objclass__ is owner, lookup(sample, "__class__") is type(sample),
+            attempt(lambda: lookup(sample, "nope")), attempt(lambda: lookup(sample, 5)), attempt(lambda: lookup(5, "real")), attempt(lambda: lookup(sample)))
+
+
+for one in (collections.deque([1]), itertools.count(), functools.partial(len), operator.itemgetter(0), ast.Pass()):
+    print("the generic lookup, by name:", *generic_lookup(one))

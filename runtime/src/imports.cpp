@@ -2035,6 +2035,7 @@ Ref module_getattr(Obj obj, const Str* name, bool suppress) {
         if (suppress && is_resolving(attr.get())) return Ref{};   // only direct reentry means unavailable
         return lazy_reify(attr.get(), name, Obj::of(m->dict));
     }
+    refuse_absent_attribute(obj, name);          // before the module's own __getattr__: a name CPython's module has never reaches it
     Ref hook = resolved_dict_item(m->dict, N("__getattr__"));
     if (!hook.get().is_unset()) {
         Ref name_ref = Ref::share(Obj::of(name));
@@ -2045,7 +2046,6 @@ Ref module_getattr(Obj obj, const Str* name, bool suppress) {
             return Ref{};
         }
     }
-    refuse_absent_attribute(obj, name);
     if (suppress) return Ref{};
     Obj mod_name = dict_get(m->dict, Obj::of(N("__name__")));
     if (mod_name.is_unset() || as_str(mod_name) == nullptr)

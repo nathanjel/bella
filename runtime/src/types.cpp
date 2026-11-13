@@ -3008,6 +3008,21 @@ void present_methods(ClassObject* c) {
         if (kind == "wrapper_descriptor") b->cls = types().wrapper_descriptor;
         decref(c->attrs.set(name, Obj::of(b)));
     }
+    // A C type that names tp_getattro or tp_setattro itself, as the generic functions object has (PyObject_GenericGetAttr,
+    // PyObject_GenericSetAttr; the names table's generic_getattro and generic_setattro): its own wrappers over object's
+    auto own_wrapper = [c](const char* name, NativeFn fn) {
+        if (c->attrs.contains(N(name))) return;
+        auto* b = new Builtin(name, fn, Obj{}, Binding::Method);
+        b->owner = c;
+        b->cls = types().wrapper_descriptor;
+        b->flags |= IMMORTAL;
+        c->attrs.set(N(name), Obj::of(b));
+    };
+    if (cpython_has("generic_getattro", c->name)) own_wrapper("__getattribute__", object_getattribute);
+    if (cpython_has("generic_setattro", c->name)) {
+        own_wrapper("__setattr__", object_setattr);
+        own_wrapper("__delattr__", object_delattr);
+    }
     present_descriptor_kinds(c);
 }
 // A prelude function that stands for one of a C++ type's own methods (the containers' __repr__: a prelude's __type_methods__):
