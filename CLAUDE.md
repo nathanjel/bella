@@ -82,10 +82,21 @@ make checks             the same without the two closure steps
 `make check` runs the two closure steps first (they write the locks the others read), then the
 rest at once (`make -j$(JOBS)`, each step's output kept together); pytest (pytest-xdist), the
 conformance harness, the target runner and the slice spread their own work over `BELLA_JOBS`
-workers. Both default to the CPU count; `JOBS=1` runs everything serially. About 3 minutes on 16
-CPUs, of which two are `fib.py` interpreted by `eval1` in the slice (one program, one process).
+workers. Both default to the CPU count; `JOBS=1` runs everything serially. About 80 minutes on 16
+CPUs (2026-11-13), of which the compiled corpus is 42 and pytest 24.
 Tests must not depend on their order or on running alone: one that does passes serially and
 fails on a worker.
+
+So the full set is not run per step (the author's decision, 2026-11-13; `docs/DECISIONS.md`). Per
+step: the new or changed case on the legs it should pass; the test modules of the area touched;
+`make lint` (and a cold mypy on a new case) and `make verify`; `python tools/missing_names.py` when
+a name was added; `make targets-compiled` when the runtime changed. A new case joins a baseline on
+the strength of its own run. CI runs the smoke job on a push and the full check every night on
+main's head (02:00 UTC; also on demand, "Run workflow", and for a pull request); a green night
+moves the tag `nightly-green` to the commit it checked. Before starting work, read the last
+night's result (`gh run list --workflow ci.yml --event schedule --limit 3`): a red night is fixed
+first, by focused runs over that day's commits. A gate claim ("all six targets agree") still gets
+a full run before it is made.
 
 On a developer machine run them through uv (`uv sync --extra dev` once, then `uv run make test`):
 the project requires uv 0.13.6 and uses only uv-managed interpreters, so `.venv` holds the same

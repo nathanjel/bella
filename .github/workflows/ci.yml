@@ -1,12 +1,21 @@
 name: ci
+# A push runs the smoke job alone. The full check on the pinned toolchain (about two hours) runs every night on main's head, on
+# demand (a gate claim: Actions, "Run workflow"), and for a pull request; a green night moves the tag nightly-green to the commit it
+# checked (docs/DECISIONS.md, 2026-11-13: checks per step and the nightly).
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "0 2 * * *"            # 02:00 UTC, main's head
+  workflow_dispatch:
 
 jobs:
   pinned:
     name: GCC 16.2.0 + CPython 3.15.2 (Docker)
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write              # the nightly moves the tag nightly-green
     steps:
       - uses: actions/checkout@v4
       - name: Build the pinned toolchain image
@@ -25,9 +34,15 @@ jobs:
         with:
           name: toolchain-probes
           path: toolchain-probes.md
+      - name: Mark this commit as the last one a nightly found green
+        if: success() && github.event_name == 'schedule'
+        run: |
+          git tag -f nightly-green "$GITHUB_SHA"
+          git push -f origin nightly-green
 
   unpinned-smoke:
     name: developer-machine smoke (runner's g++, c++23)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
