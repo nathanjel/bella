@@ -477,7 +477,13 @@ Ref unary_pos(Obj a) {
 }
 Ref unary_invert(Obj a) {
     std::int64_t x;
-    if (is_kind(a, Kind::Bool)) throw NotImplemented("~ on a bool (a DeprecationWarning in CPython 3.15)");
+    if (is_kind(a, Kind::Bool)) {                // bool_invert: its warning (an error under a filter that makes it one), then the int's
+        warn_ex("DeprecationWarning",
+                "Bitwise inversion '~' on bool is deprecated and will be removed in Python 3.16. This returns the bitwise inversion of the "
+                "underlying int object and is usually not what you expect from negating a bool. Use the 'not' operator for boolean "
+                "negation or ~int(x) if you really want the bitwise inversion of the underlying int.");
+        return int_from_i64(static_cast<BoolObject*>(a.object())->value ? -2 : -1);
+    }
     if (as_int(a, x) && !overridden(a, "__invert__")) return int_from_i64(~x);
     if (is_int(a) && !overridden(a, "__invert__")) return big_invert(a);
     return unary_special(a, "__invert__", "~");

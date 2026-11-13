@@ -72,6 +72,7 @@ C-3-70_a_closures_cell.py
 C-3-71_the_iterators_own_methods.py
 C-3-72_reduce_of_the_callables.py
 C-3-73_a_mappingproxys_operators.py
+C-3-74_comparisons_that_decline.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

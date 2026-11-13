@@ -57,6 +57,7 @@ Ref int_neg(Obj self, Args a) { wrapper_args(a, "__neg__", 0); return big_negate
 Ref int_pos(Obj self, Args a) { wrapper_args(a, "__pos__", 0); return big_plain(self); }
 Ref int_abs(Obj self, Args a) { wrapper_args(a, "__abs__", 0); return big_absolute(self); }
 Ref int_invert(Obj self, Args a) { wrapper_args(a, "__invert__", 0); return big_invert(self); }
+Ref bool_invert(Obj self, Args a) { wrapper_args(a, "__invert__", 0); return unary_invert(self); }   // bool's own slot: the operator, with its warning
 Ref int_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(!int_is_zero(self))); }
 Ref int_int(Obj self, Args a) { wrapper_args(a, "__int__", 0); return big_plain(self); }
 Ref int_index(Obj self, Args a) { wrapper_args(a, "__index__", 0); return big_plain(self); }
@@ -364,6 +365,7 @@ void init_slots() {
     // bool's own: its repr, and & | ^ that keep a bool
     ClassObject* b = t.bool_;
     slot(b, "__repr__", own_repr);
+    slot(b, "__invert__", bool_invert);
     slot(b, "__and__", int_slot<BinOp::And, false>);
     slot(b, "__rand__", int_slot<BinOp::And, true>);
     slot(b, "__or__", int_slot<BinOp::Or, false>);

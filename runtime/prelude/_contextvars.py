@@ -131,6 +131,18 @@ class Context:
             return NotImplemented
         return not _vars_equal(self._vars, other._vars)
 
+    def __lt__(self, other: object) -> object:   # context_tp_richcompare: only == and != compare
+        return NotImplemented
+
+    def __le__(self, other: object) -> object:
+        return NotImplemented
+
+    def __gt__(self, other: object) -> object:
+        return NotImplemented
+
+    def __ge__(self, other: object) -> object:
+        return NotImplemented
+
     __hash__ = None  # type: ignore[assignment]
 
     def get(self, *args: object, **kwds: object) -> object:

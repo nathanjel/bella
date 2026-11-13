@@ -1295,6 +1295,7 @@ Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one mod
     return Ref::share(Obj::of(n.made));
 }
 
+void warn_ex(const char* category, const std::string& message) { runtime_warning(category, message); }   // for the rest of the runtime
 Ref i_bella_import_warning(Obj, Args a) {        // _warnings.warn(msg, ImportWarning), or of the category named second: see runtime_warning
     positional_only(a, "_bella_import_warning", 1, 2);
     runtime_warning(a.npos == 2 ? as_str(a.pos(1))->text.c_str() : "ImportWarning", as_str(a.pos(0))->text);

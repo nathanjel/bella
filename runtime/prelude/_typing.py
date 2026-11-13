@@ -455,6 +455,18 @@ to static type checkers.
             return NotImplemented
         return self._origin != other._origin  # type: ignore[attr-defined]
 
+    def __lt__(self, other: object) -> object:   # paramspecattr_richcompare: only == and != compare
+        return NotImplemented
+
+    def __le__(self, other: object) -> object:
+        return NotImplemented
+
+    def __gt__(self, other: object) -> object:
+        return NotImplemented
+
+    def __ge__(self, other: object) -> object:
+        return NotImplemented
+
     __hash__ = None  # type: ignore[assignment]
 
     def __mro_entries__(self, bases: object, /) -> object:
@@ -501,6 +513,18 @@ to static type checkers.
         if type(other) is not type(self):
             return NotImplemented
         return self._origin != other._origin  # type: ignore[attr-defined]
+
+    def __lt__(self, other: object) -> object:   # paramspecattr_richcompare: only == and != compare
+        return NotImplemented
+
+    def __le__(self, other: object) -> object:
+        return NotImplemented
+
+    def __gt__(self, other: object) -> object:
+        return NotImplemented
+
+    def __ge__(self, other: object) -> object:
+        return NotImplemented
 
     __hash__ = None  # type: ignore[assignment]
 

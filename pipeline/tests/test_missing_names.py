@@ -414,6 +414,71 @@ for make in (lambda: UnicodeEncodeError("ascii", "abc", 0, 1, "why"), lambda: Un
 """
 
 
+# the six types whose comparison is == and != only, by name and by operator, with every arity; ~ on a bool with its warning
+DECLINED = r"""
+import contextvars, types, typing, warnings, weakref
+
+def m(f):
+    try:
+        return f()
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+
+class K:
+    pass
+k = K()
+P = typing.ParamSpec("P")
+samples = {"ns": (types.SimpleNamespace(a=1), types.SimpleNamespace(a=1), types.SimpleNamespace(a=2)), "ref": (weakref.ref(k), weakref.ref(k), weakref.ref(K)),
+           "ctx": (contextvars.copy_context(), contextvars.copy_context(), contextvars.Context()), "args": (P.args, P.args, typing.ParamSpec("Q").args),
+           "kwargs": (P.kwargs, P.kwargs, typing.ParamSpec("Q").kwargs), "ga": (list[int], list[int], list[str])}
+for label, (a, same, other) in samples.items():
+    t = type(a)
+    print(label, t.__name__, [n for n in ("__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__", "__hash__") if n in vars(t)],
+          sorted({type(vars(t)[n]).__name__ for n in ("__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__") if n in vars(t)}))
+    for name in ("__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"):
+        f = vars(t).get(name)
+        if f is None:
+            print("  ", name, "absent")
+            continue
+        print("  ", name, m(lambda: f(a, same)), m(lambda: f(a, other)), m(lambda: f(a, 5)), m(lambda: f(a)), m(lambda: f(5, a)), m(lambda: f(a, a, a)), f.__doc__)
+    print("  ", m(lambda: a < same), m(lambda: a <= 5), m(lambda: 5 > a), m(lambda: a == same), m(lambda: a != other), m(lambda: a == 5))
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    print(~True, ~False, True.__invert__(), bool.__invert__(False), m(lambda: bool.__invert__(5)), m(lambda: True.__invert__(1)), type(vars(bool)["__invert__"]).__name__, vars(bool)["__invert__"].__doc__,
+          int.__invert__(True), ~int(True), [(x.category.__name__, str(x.message), x.lineno) for x in w][:1], len(w))
+class B(int):
+    pass
+print(~B(1))
+warnings.simplefilter("error")
+print(m(lambda: ~True))
+
+import sys
+def where(w):
+    return [(x.category.__name__, str(x.message), x.lineno, x.filename.rpartition("/")[2]) for x in w]
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    a = ~True
+    b = True.__invert__()
+    c = bool.__invert__(False)
+    import operator
+    d = operator.invert(True)
+    e = [~flag for flag in (True, False)]
+    print(a, b, c, d, e, where(w))
+warnings.resetwarnings()
+warnings.simplefilter("default")
+import io
+buffer = io.StringIO()
+real, sys.stderr = sys.stderr, buffer
+try:
+    for _ in range(2):
+        x = ~True
+    y = ~False
+finally:
+    sys.stderr = real
+print("\n".join(line.rpartition("/")[2] if "prog.py:" in line else line for line in buffer.getvalue().splitlines()))
+"""
+
+
 def test_the_names_the_runtime_lacks_are_the_listed_ones() -> None:
     """A name that goes missing fails here, and one that arrives is taken off the list (python tools/missing_names.py --update)."""
     if shutil.which("g++") is None:
@@ -452,6 +517,10 @@ def test_a_mappingproxys_operators() -> None:
 
 def test_a_unicode_errors_members() -> None:
     same(UNICODE_ERRORS)
+
+
+def test_comparisons_that_decline_and_a_bool_inverted() -> None:
+    same(DECLINED)
 
 
 def test_a_proxys_hash_is_its_mappings_whatever_the_seed() -> None:

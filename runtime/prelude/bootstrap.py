@@ -920,6 +920,18 @@ is (int,)."""
             return NotImplemented
         return GenericAlias.__eq__(self, other) is not True
 
+    def __lt__(self, other):   # ga_richcompare: only == and != compare
+        return NotImplemented
+
+    def __le__(self, other):
+        return NotImplemented
+
+    def __gt__(self, other):
+        return NotImplemented
+
+    def __ge__(self, other):
+        return NotImplemented
+
     def __or__(self, other):
         return _union_type_or(self, other)
 
@@ -1340,6 +1352,23 @@ class SimpleNamespace:
     def __eq__(self, other):
         if isinstance(self, SimpleNamespace) and isinstance(other, SimpleNamespace):
             return self.__dict__ == other.__dict__
+        return NotImplemented
+
+    def __ne__(self, other):                     # namespace_richcompare: == and != are the two dicts', the orderings decline
+        if isinstance(self, SimpleNamespace) and isinstance(other, SimpleNamespace):
+            return self.__dict__ != other.__dict__
+        return NotImplemented
+
+    def __lt__(self, other):   # a type with a comparison of its own has all six names
+        return NotImplemented
+
+    def __le__(self, other):
+        return NotImplemented
+
+    def __gt__(self, other):
+        return NotImplemented
+
+    def __ge__(self, other):
         return NotImplemented
 
     __hash__ = None

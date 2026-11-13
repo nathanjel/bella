@@ -147,6 +147,22 @@ class ReferenceType:
             return self is not other
         return obj != other_obj
 
+    def __lt__(self, other: object) -> object:   # weakref_richcompare: only == and != compare
+        _receiver(self, "__lt__")
+        return NotImplemented
+
+    def __le__(self, other: object) -> object:
+        _receiver(self, "__le__")
+        return NotImplemented
+
+    def __gt__(self, other: object) -> object:
+        _receiver(self, "__gt__")
+        return NotImplemented
+
+    def __ge__(self, other: object) -> object:
+        _receiver(self, "__ge__")
+        return NotImplemented
+
     __hash__ = __hash__                          # defining __eq__ must not make it unhashable
 
 
