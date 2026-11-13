@@ -7,7 +7,7 @@ on stream handles; which calls, when a stream ends, what is saved and every mess
 __all__ = ["DEFLATED", "DEF_BUF_SIZE", "DEF_MEM_LEVEL", "MAX_WBITS", "ZLIB_RUNTIME_VERSION", "ZLIB_VERSION", "Z_BEST_COMPRESSION",
            "Z_BEST_SPEED", "Z_BLOCK", "Z_DEFAULT_COMPRESSION", "Z_DEFAULT_STRATEGY", "Z_FILTERED", "Z_FINISH", "Z_FIXED", "Z_FULL_FLUSH",
            "Z_HUFFMAN_ONLY", "Z_NO_COMPRESSION", "Z_NO_FLUSH", "Z_PARTIAL_FLUSH", "Z_RLE", "Z_SYNC_FLUSH", "Z_TREES", "_ZlibDecompressor",
-           "adler32", "adler32_combine", "compress", "compressobj", "crc32", "crc32_combine", "decompress", "decompressobj", "error"]
+           "__getattr__", "adler32", "adler32_combine", "compress", "compressobj", "crc32", "crc32_combine", "decompress", "decompressobj", "error"]
 
 __name__ = "zlib"
 
@@ -20,6 +20,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _zlib                                        # noqa: B018  # zlib.cpp: the library's calls by name
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
+    _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -31,6 +32,7 @@ except NameError:
     _bella_refuse: Callable[..., Any] = _missing
     _zlib: Callable[..., Any] = _missing
     _unpack_keywords: Callable[..., Any] = _missing
+    _warn: Callable[..., Any] = _missing
 
     def _tp_name(o: object) -> str:
         return type(o).__name__
@@ -690,3 +692,17 @@ Given the CRC-32 checksum 'crc1' of a sequence A and the
 CRC-32 checksum 'crc2' of a sequence B of length 'len2',
 return the CRC-32 checksum of A and B concatenated."""
     return _combine("crc32_combine", args, kwds)
+
+
+def __getattr__(*args: object, **kwds: object) -> object:
+    """Module __getattr__"""
+    # zlib_getattr (METH_VARARGS, PyArg_UnpackTuple): the deprecated __version__, and for any other name the module's own error
+    if kwds:
+        raise TypeError("__getattr__() takes no keyword arguments")
+    if len(args) != 1:
+        raise TypeError("__getattr__ expected 1 argument, got " + str(len(args)))
+    name = args[0]
+    if isinstance(name, str) and str.__eq__(name, "__version__"):
+        _warn("'__version__' is deprecated and slated for removal in Python 3.20", "DeprecationWarning")
+        return "1.0"
+    raise AttributeError("module 'zlib' has no attribute " + repr(name))

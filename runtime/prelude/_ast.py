@@ -4,7 +4,7 @@ __match_args__, docstring, _field_types and the class attributes that are its op
 ast_type_reduce, ast_type_replace and ast_repr. Instantiating an abstract node class is a DeprecationWarning in CPython and stops by name here.
 The parser is not here: compile() with PyCF_ONLY_AST, and so ast.parse(), stop by name."""
 
-__all__ = ["AST", "Add", "And", "AnnAssign", "Assert", "Assign", "AsyncFor", "AsyncFunctionDef", "AsyncWith", "Attribute", "AugAssign", "Await", "BinOp", "BitAnd", "BitOr", "BitXor", "BoolOp", "Break", "Call", "ClassDef", "Compare", "Constant", "Continue", "Del", "Delete", "Dict", "DictComp", "Div", "Eq", "ExceptHandler", "Expr", "Expression", "FloorDiv", "For", "FormattedValue", "FunctionDef", "FunctionType", "GeneratorExp", "Global", "Gt", "GtE", "If", "IfExp", "Import", "ImportFrom", "In", "Interactive", "Interpolation", "Invert", "Is", "IsNot", "JoinedStr", "LShift", "Lambda", "List", "ListComp", "Load", "Lt", "LtE", "MatMult", "Match", "MatchAs", "MatchClass", "MatchMapping", "MatchOr", "MatchSequence", "MatchSingleton", "MatchStar", "MatchValue", "Mod", "Module", "Mult", "Name", "NamedExpr", "Nonlocal", "Not", "NotEq", "NotIn", "Or", "ParamSpec", "Pass", "Pow", "PyCF_ALLOW_TOP_LEVEL_AWAIT", "PyCF_ONLY_AST", "PyCF_OPTIMIZED_AST", "PyCF_TYPE_COMMENTS", "RShift", "Raise", "Return", "Set", "SetComp", "Slice", "Starred", "Store", "Sub", "Subscript", "TemplateStr", "Try", "TryStar", "Tuple", "TypeAlias", "TypeIgnore", "TypeVar", "TypeVarTuple", "UAdd", "USub", "UnaryOp", "While", "With", "Yield", "YieldFrom", "alias", "arg", "arguments", "boolop", "cmpop", "comprehension", "excepthandler", "expr", "expr_context", "keyword", "match_case", "mod", "operator", "pattern", "stmt", "type_ignore", "type_param", "unaryop", "withitem"]
+__all__ = ["_is_abstract", "AST", "Add", "And", "AnnAssign", "Assert", "Assign", "AsyncFor", "AsyncFunctionDef", "AsyncWith", "Attribute", "AugAssign", "Await", "BinOp", "BitAnd", "BitOr", "BitXor", "BoolOp", "Break", "Call", "ClassDef", "Compare", "Constant", "Continue", "Del", "Delete", "Dict", "DictComp", "Div", "Eq", "ExceptHandler", "Expr", "Expression", "FloorDiv", "For", "FormattedValue", "FunctionDef", "FunctionType", "GeneratorExp", "Global", "Gt", "GtE", "If", "IfExp", "Import", "ImportFrom", "In", "Interactive", "Interpolation", "Invert", "Is", "IsNot", "JoinedStr", "LShift", "Lambda", "List", "ListComp", "Load", "Lt", "LtE", "MatMult", "Match", "MatchAs", "MatchClass", "MatchMapping", "MatchOr", "MatchSequence", "MatchSingleton", "MatchStar", "MatchValue", "Mod", "Module", "Mult", "Name", "NamedExpr", "Nonlocal", "Not", "NotEq", "NotIn", "Or", "ParamSpec", "Pass", "Pow", "PyCF_ALLOW_TOP_LEVEL_AWAIT", "PyCF_ONLY_AST", "PyCF_OPTIMIZED_AST", "PyCF_TYPE_COMMENTS", "RShift", "Raise", "Return", "Set", "SetComp", "Slice", "Starred", "Store", "Sub", "Subscript", "TemplateStr", "Try", "TryStar", "Tuple", "TypeAlias", "TypeIgnore", "TypeVar", "TypeVarTuple", "UAdd", "USub", "UnaryOp", "While", "With", "Yield", "YieldFrom", "alias", "arg", "arguments", "boolop", "cmpop", "comprehension", "excepthandler", "expr", "expr_context", "keyword", "match_case", "mod", "operator", "pattern", "stmt", "type_ignore", "type_param", "unaryop", "withitem"]
 
 __name__ = "_ast"
 
@@ -1138,6 +1138,28 @@ ParamSpec._field_types = {'name': str, 'default_value': expr | None}
 TypeVarTuple._field_types = {'name': str, 'default_value': expr | None}
 # add_ast_annotations, and the classes' module: ast, not _ast (the C's tp_name is ast.X)
 AST.__module__ = "ast"
+_ABSTRACT_TYPES = {AST, mod, stmt, expr, expr_context, boolop, operator, unaryop, cmpop, excepthandler, pattern, type_ignore, type_param}   # state->abstract_types
+
+
+def _is_abstract(*args: object, **kwds: object) -> bool:
+    # ast_is_abstract (METH_O): PySet_Contains(state->abstract_types, cls), whose refusal of what cannot be hashed is the set's own
+    if kwds:
+        raise TypeError("_ast._is_abstract() takes no keyword arguments")
+    if len(args) != 1:
+        raise TypeError("_ast._is_abstract() takes exactly one argument (" + str(len(args)) + " given)")
+    cls = args[0]
+    unhashable = None
+    try:
+        hash(cls)
+    except TypeError as exc:
+        if type(exc) is not TypeError:
+            raise
+        unhashable = str(exc)                    # set_unhashable_type: a new TypeError, the first one gone
+    if unhashable is not None:
+        raise TypeError("cannot use '" + _full_name(cls) + "' as a set element (" + unhashable + ")")
+    return cls in _ABSTRACT_TYPES
+
+
 for _node in (mod, Module, Interactive, Expression, FunctionType, stmt, FunctionDef, AsyncFunctionDef, ClassDef, Return, Delete, Assign, TypeAlias, AugAssign, AnnAssign, For, AsyncFor, While, If, With, AsyncWith, Match, Raise, Try, TryStar, Assert, Import, ImportFrom, Global, Nonlocal, Expr, Pass, Break, Continue, expr, BoolOp, NamedExpr, BinOp, UnaryOp, Lambda, IfExp, Dict, Set, ListComp, SetComp, DictComp, GeneratorExp, Await, Yield, YieldFrom, Compare, Call, FormattedValue, Interpolation, JoinedStr, TemplateStr, Constant, Attribute, Subscript, Starred, Name, List, Tuple, Slice, expr_context, Load, Store, Del, boolop, And, Or, operator, Add, Sub, Mult, MatMult, Div, Mod, Pow, LShift, RShift, BitOr, BitXor, BitAnd, FloorDiv, unaryop, Invert, Not, UAdd, USub, cmpop, Eq, NotEq, Lt, LtE, Gt, GtE, Is, IsNot, In, NotIn, comprehension, excepthandler, ExceptHandler, arguments, arg, keyword, alias, withitem, match_case, pattern, MatchValue, MatchSingleton, MatchSequence, MatchMapping, MatchClass, MatchStar, MatchAs, MatchOr, type_ignore, TypeIgnore, type_param, TypeVar, ParamSpec, TypeVarTuple):
     _node.__module__ = "ast"
     if "_field_types" in vars(_node):            # the abstract classes have none

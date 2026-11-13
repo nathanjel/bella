@@ -1746,6 +1746,11 @@ Ref builtin_doc(Obj self) {                      // from the table, for the ones
         if (b->cls == types().builtin_method) return none_ref();   // a bound METH_METHOD (builtin_method): CPython 3.15.2 answers None
         // a method the prelude writes with a docstring: the C's ml_doc as CPython shows it (one without: the C may have one, so it stops below)
         if (Obj written = b->written.get(); is_kind(written, Kind::PyFunction) && fn_doc(written).get() != None()) return fn_doc(written);
+        if (b->owner != nullptr)                 // a type's own method: the table's method:<tp_name>.<name> row
+            if (auto text = cpython_doc_text("method:" + b->owner->name + "." + b->name)) {
+                if (text->empty()) return none_ref();
+                return Ref::share(Obj::of(intern(std::string(*text))));
+            }
     }
     Ref module = builtin_module(self), name = builtin_name(self);
     const Str* m = as_str(module.get());
@@ -1763,6 +1768,17 @@ Ref builtin_doc(Obj self) {                      // from the table, for the ones
             return Ref::share(Obj::of(intern(std::string(*text))));
         }
     throw NotImplemented("builtin_function_or_method.__doc__ of '" + as_str(name.get())->text + "' (CPython has it; the runtime does not yet)");
+}
+// wrapperdescr_get_doc and wrapper_doc: the slot's own text (d_base->doc), which is one per slot name but for a few types whose
+// slot is another of the same name (a weak proxy's nb_inplace_add where a sequence has sq_inplace_concat): the table's
+// wrapper:<type>.<name> row if there is one, else wrapper:<name>
+Ref wrapper_doc(Obj self) {
+    auto* b = static_cast<Builtin*>(self.object());
+    auto answer = [](std::string_view text) { return text.empty() ? none_ref() : Ref::share(Obj::of(intern(std::string(text)))); };
+    if (b->owner != nullptr)
+        if (auto text = cpython_doc_text("wrapper:" + b->owner->name + "." + b->name)) return answer(*text);
+    if (auto text = cpython_doc_text("wrapper:" + b->name)) return answer(*text);
+    throw NotImplemented("the __doc__ of the slot wrapper '" + b->name + "' (CPython has it; the runtime does not yet)");
 }
 Ref builtin_qualname(Obj self) {                 // meth_get__qualname__
     Ref name = builtin_name(self);
@@ -2994,6 +3010,19 @@ void present_methods(ClassObject* c) {
     }
     present_descriptor_kinds(c);
 }
+// A prelude function that stands for one of a C++ type's own methods (the containers' __repr__: a prelude's __type_methods__):
+// the descriptor the names table says CPython's type has under that name, as present_methods makes one for a prelude's class
+void present_type_method(ClassObject* c, const Str* name) {
+    const Obj* held = c->attrs.find(name);
+    std::string_view kind = cpython_attribute_kind(c, name->text);
+    if (held == nullptr || !is_kind(*held, Kind::PyFunction) || (kind != "wrapper_descriptor" && kind != "method_descriptor")) return;
+    auto* b = new Builtin(name->text, nullptr, Obj{}, Binding::Method);
+    b->owner = c;
+    b->written = Ref::share(*held);
+    b->flags |= IMMORTAL;
+    if (kind == "wrapper_descriptor") b->cls = types().wrapper_descriptor;
+    decref(c->attrs.set(name, Obj::of(b)));
+}
 void forget_python_origin(ClassObject* c) {
     for (const char* n : {"__slots__", "__firstlineno__", "__static_attributes__", "__weakref__"})   // a C type's list has no getset
         if (c->attrs.contains(N(n))) c->del_attr(N(n));
@@ -3224,6 +3253,7 @@ void init_types() {
         member("__objclass__", builtin_objclass);
         getset(c, "__qualname__", builtin_descr_qualname);
         if (c == t.method_descriptor || c == t.classmethod_descriptor) getset(c, "__doc__", builtin_doc);   // method_get_doc: the ml_doc
+        if (c == t.wrapper_descriptor || c == t.method_wrapper) getset(c, "__doc__", wrapper_doc);
     }
     getset(t.method_wrapper, "__self__", builtin_self);
     for (ClassObject* c : {t.getset_descriptor, t.member_descriptor}) {

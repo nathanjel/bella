@@ -158,6 +158,9 @@ Ref frozenset_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); retu
 // the hash of a type no class can inherit from (range, slice, code): hash() finds no override to run
 Ref own_hash(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(hash_of(self)); }
 Ref own_bool(Obj self, Args a) { wrapper_args(a, "__bool__", 0); return Ref::steal(boolean(truth(self))); }
+// tp_call under its wrapper (wrap_call: the arguments and keywords as given), for the runtime's own callables, whose calls the
+// runtime makes itself and never through this name
+Ref own_call(Obj self, Args a) { return invoke(self, a); }
 Ref own_iter(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return iter(self); }
 Ref own_next(Obj self, Args a) {                 // the C++ iterators' tp_iternext as a slot wrapper: StopIteration at the end
     wrapper_args(a, "__next__", 0);
@@ -421,6 +424,19 @@ void init_slots() {
     slot(t.list, "sort", list_sort_m);
     slot(t.none, "__bool__", own_bool);
     slot(t.none, "__hash__", own_hash);
+    // The singletons' and the callables' own slots, as attributes. No class inherits from these types and the runtime does each
+    // operation itself (repr_of, hash_of, native_compare, invoke), so each wrapper is that operation by its name.
+    comparisons(t.none);                         // _Py_BaseObject_RichCompare, which NoneType has as its own tp_richcompare
+    slot(t.notimplemented, "__bool__", own_bool);   // notimplemented_bool: a TypeError since 3.14
+    for (ClassObject* c : {t.notimplemented, t.ellipsis, t.function, t.method, t.builtin, t.method_wrapper, t.wrapper_descriptor, t.method_descriptor,
+                           t.classmethod_descriptor, t.getset_descriptor, t.member_descriptor})
+        slot(c, "__repr__", own_repr);
+    for (ClassObject* c : {t.function, t.method, t.builtin, t.method_wrapper, t.wrapper_descriptor, t.method_descriptor, t.classmethod_descriptor})
+        slot(c, "__call__", own_call);
+    for (ClassObject* c : {t.method, t.builtin, t.method_wrapper}) {   // method_richcompare and method_hash, meth_*, wrapper_*
+        comparisons(c);
+        slot(c, "__hash__", own_hash);
+    }
     for (ClassObject* c : {t.dict_keys, t.dict_items}) {   // dictviews_as_number and dictview_richcompare
         slot(c, "__or__", dictview_slot<BinOp::Or, false>);
         slot(c, "__ror__", dictview_slot<BinOp::Or, true>);

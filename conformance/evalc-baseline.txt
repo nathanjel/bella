@@ -67,6 +67,7 @@ C-3-65_typing_class_syntax_entry_points.py
 C-3-66_match_runtime_half.py
 C-3-67_annotationlib_frames.py
 C-3-68_mro_and_bases_objects.py
+C-3-69_the_callables_own_slots.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

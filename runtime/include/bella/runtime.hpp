@@ -394,6 +394,7 @@ Ref i_bella_structseq_hidden(Obj, Args a);
 Ref call_builtin(Builtin* b, Obj self, Args a);   // a built-in's call: fn, or what the prelude wrote
 void check_classmethod_type(const Builtin* b, Obj type);   // classmethod_get's checks of what it binds to
 void present_methods(ClassObject* c);             // a prelude's class: its methods are what the names table says
+void present_type_method(ClassObject* c, const Str* name);   // one prelude function put on a C++ type, the same way
 Ref i_keyword_suggestion(Obj, Args a);            // _Py_CalculateSuggestions, for a prelude's messages
 Ref i_unpack_keywords(Obj, Args a);               // _PyArg_UnpackKeywords, for a prelude's function that takes keywords
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py

@@ -1493,6 +1493,7 @@ Module* make_builtins() {
     put(d, "False", boolean(false));
     put(d, "NotImplemented", Obj::of(NOTIMPLEMENTED));
     put(d, "Ellipsis", Obj::of(ELLIPSIS));
+    put(d, "__debug__", boolean(true));          // config.optimization_level == 0: assertions are on (D-09)
     put_builtin(d, "len", b_len);
     put_builtin(d, "eval", b_eval);
     put_builtin(d, "exec", b_exec);
@@ -3139,8 +3140,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                         if (e.key.is_unset()) continue;
                         Obj cls = is_kind(e.key, Kind::Class) ? e.key : dict_get(builtins_module()->dict, e.key);   // a type, or a builtin's name
                         for (auto& m : static_cast<Dict*>(e.value.object())->entries)
-                            if (!m.key.is_unset())
+                            if (!m.key.is_unset()) {
                                 static_cast<ClassObject*>(cls.object())->set_attr(intern(as_str(m.key)->text), m.value);
+                                present_type_method(static_cast<ClassObject*>(cls.object()), intern(as_str(m.key)->text));   // CPython's slot wrapper
+                            }
                     }
             }
             init_slots();

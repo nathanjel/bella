@@ -64,6 +64,8 @@ ITEMSIZE = set()
 STATE = set()
 SHORTNAME = set()
 MEMBER_DOCS = {}                                 # a member's or a getset's own __doc__, as "<tp_name>.<name>", "" for none
+WRAPPER_DOCS = {}                                # a slot wrapper's __doc__ (the slot's own text) by name, then by the type that has it
+METHOD_DOCS = {}                                 # a type's own method's __doc__ (its ml_doc as CPython shows it), as "<tp_name>.<name>", "" for none
 
 def tp_name(t):
     """PyTypeObject.tp_name, what %T and "'%s' object has no attribute" print: a static type's or a spec's is "module.Name"; a type
@@ -94,6 +96,12 @@ def type_names():
             for n, v in vars(t).items():
                 if type(v).__name__ in ("member_descriptor", "getset_descriptor"):
                     MEMBER_DOCS[key + "." + n] = v.__doc__ if isinstance(v.__doc__, str) else ""
+                if type(v).__name__ == "wrapper_descriptor":
+                    WRAPPER_DOCS.setdefault(n, {})[key] = v.__doc__ if isinstance(v.__doc__, str) else ""
+                if type(v).__name__ in ("method_descriptor", "classmethod_descriptor"):
+                    METHOD_DOCS[key + "." + n] = v.__doc__ if isinstance(v.__doc__, str) else ""
+                if type(v).__name__ == "staticmethod" and type(v.__func__).__name__ == "builtin_function_or_method":   # str.maketrans
+                    METHOD_DOCS[key + "." + n] = v.__func__.__doc__ if isinstance(v.__func__.__doc__, str) else ""
             if t.__module__ != "builtins" and "." not in key:
                 SHORTNAME.add(t.__module__ + "." + t.__qualname__)
             if t.__weakrefoffset__:              # _PyType_SUPPORTS_WEAKREFS
@@ -228,7 +236,7 @@ def docs():
     import atexit, binascii, cmath, errno, unicodedata, gc, grp, itertools, math, math.integer, posix, pwd, re, struct, time, typing, zlib, _ast, _bisect, _blake2, _contextvars, _heapq, _opcode, _warnings, _tokenize, _suggestions, _imp, _random, _statistics, _csv, _hmac, _md5, _sha1, _sha2, _sha3, _struct, _codecs, _collections, _functools, _io, _json, _locale, _operator, _sre, _stat, _string, _thread, _typing, _weakref, _signal
     out = {"atexit": atexit.__doc__, "gc": gc.__doc__, "_signal": _signal.__doc__, "posix": posix.__doc__, "sys.copyright": sys.copyright, "sys": sys.__doc__, "builtins": builtins.__doc__, "itertools": itertools.__doc__, "_operator": _operator.__doc__, "_collections": _collections.__doc__, "errno": errno.__doc__, "_functools": _functools.__doc__, "_io": _io.__doc__, "pwd": pwd.__doc__, "grp": grp.__doc__, "_locale": _locale.__doc__, "_typing": _typing.__doc__, "_json": _json.__doc__, "zlib": zlib.__doc__, "binascii": binascii.__doc__, "_struct": _struct.__doc__, "time": time.__doc__, "math": math.__doc__, "math.integer": math.integer.__doc__, "cmath": cmath.__doc__, "unicodedata": unicodedata.__doc__, "_md5": _md5.__doc__, "_sha1": _sha1.__doc__, "_sha2": _sha2.__doc__, "_sha3": _sha3.__doc__, "_blake2": _blake2.__doc__, "_hmac": _hmac.__doc__, "_csv": _csv.__doc__, "_contextvars": _contextvars.__doc__, "_bisect": _bisect.__doc__, "_random": _random.__doc__, "_statistics": _statistics.__doc__, "_heapq": _heapq.__doc__, "_opcode": _opcode.__doc__, "_warnings": _warnings.__doc__, "_tokenize": _tokenize.__doc__, "_suggestions": _suggestions.__doc__, "_imp": _imp.__doc__, "_stat": _stat.__doc__, "_string": _string.__doc__, "_thread": _thread.__doc__, "_weakref": _weakref.__doc__}
     out = {k: (v if v is not None else "") for k, v in out.items()}   # a module without a docstring (_md5, _hmac): an empty row, None at run time
-    for module in (builtins, sys, atexit, gc, _signal, errno, itertools, posix, pwd, grp, zlib, binascii, _struct, time, math, math.integer, cmath, unicodedata, _md5, _sha1, _sha2, _sha3, _blake2, _hmac, _csv, _contextvars, _bisect, _random, _statistics, _heapq, _opcode, _warnings, _tokenize, _suggestions, _imp, _sre, _codecs, _io, _json, _locale, _typing, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
+    for module in (builtins, sys, atexit, gc, _ast, _signal, errno, itertools, posix, pwd, grp, zlib, binascii, _struct, time, math, math.integer, cmath, unicodedata, _md5, _sha1, _sha2, _sha3, _blake2, _hmac, _csv, _contextvars, _bisect, _random, _statistics, _heapq, _opcode, _warnings, _tokenize, _suggestions, _imp, _sre, _codecs, _io, _json, _locale, _typing, _collections, _functools, _operator, _stat, _string, _thread, _weakref):
         for v in vars(module).values():           # their functions', as `<__module__>.<__name__>`, "" for none (no built-in's is empty)
             if isinstance(v, types.BuiltinFunctionType) and isinstance(v.__module__, str):
                 out[v.__module__ + "." + v.__name__] = v.__doc__ or ""
@@ -260,7 +268,7 @@ def docs():
 SITE = sorted(n for n in dir(builtins) if type(getattr(builtins, n)).__module__ == "_sitebuiltins")
 assert SITE == ["copyright", "credits", "exit", "help", "license", "quit"], SITE
 print(json.dumps({"docs": docs(), "builtins": sorted(set(dir(builtins)) - set(SITE)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "member_docs": MEMBER_DOCS, "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "member_docs": MEMBER_DOCS, "wrapper_docs": WRAPPER_DOCS, "method_docs": METHOD_DOCS, "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:]), "bootstrap_classes": bootstrap_classes()}))
 '''
 
@@ -288,6 +296,12 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
     version = ".".join(map(str, sys.version_info[:3]))
     docs = dict(data["docs"])
     docs.update({"member:" + key: text for key, text in data["member_docs"].items()})   # what a member descriptor's __doc__ answers
+    docs.update({"method:" + key: text for key, text in data["method_docs"].items()})   # what a type's own method's __doc__ answers
+    for name, by_type in data["wrapper_docs"].items():   # a slot wrapper's: the slot's text under wrapper:<name>, and <type>.<name> for a type whose slot says otherwise
+        texts = sorted(by_type.values())
+        usual = max(sorted(set(texts)), key=texts.count)
+        docs["wrapper:" + name] = usual
+        docs.update({"wrapper:" + key + "." + name: text for key, text in by_type.items() if text != usual})
     return version, sorted(names), sorted(docs.items())
 
 
