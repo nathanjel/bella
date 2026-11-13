@@ -90,7 +90,9 @@ fails on a worker.
 So the full set is not run per step (the author's decision, 2026-11-13; `docs/DECISIONS.md`). Per
 step: the new or changed case on the legs it should pass; the test modules of the area touched;
 `make lint` (and a cold mypy on a new case) and `make verify`; `python tools/missing_names.py` when
-a name was added; `make targets-compiled` when the runtime changed. A new case joins a baseline on
+a name was added, and then also the tests that hold a stop by name, since one of them may have
+held this one (`pytest pipeline/tests -k "stops or refused or absent or stop or lacks"`, about four
+minutes); `make targets-compiled` when the runtime changed. A new case joins a baseline on
 the strength of its own run. CI runs the smoke job on a push and the full check every night on
 main's head (02:00 UTC; also on demand, "Run workflow", and for a pull request); a green night
 moves the tag `nightly-green` to the commit it checked. Before starting work, read the last
