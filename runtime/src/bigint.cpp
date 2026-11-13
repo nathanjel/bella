@@ -861,5 +861,18 @@ Ref long_range_next(std::vector<Obj>& state) {
     decref(std::exchange(state[2], left.release()));
     return value;
 }
+Ref long_range_left(std::vector<Obj>& state) {   // longrange_iterator___reduce___impl: range(start, start + len * step, step)
+    Ref stop = obj_add(state[0], obj_mul(state[2], state[1]).get());
+    return range_from_ints(state[0], stop.get(), state[1]);
+}
+void long_range_move(std::vector<Obj>& state, Obj by) {   // longrange_iterator___setstate___impl: clipped to what is left
+    Ref clipped = Ref::share(by);
+    if (big_compare(by, zero().get()) < 0) clipped = zero();
+    else if (big_compare(state[2], by) < 0) clipped = Ref::share(state[2]);
+    Ref start = obj_add(state[0], obj_mul(clipped.get(), state[1]).get());
+    Ref left = obj_sub(state[2], clipped.get());
+    decref(std::exchange(state[0], start.release()));
+    decref(std::exchange(state[2], left.release()));
+}
 
 }  // namespace bella

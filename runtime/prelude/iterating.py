@@ -59,6 +59,32 @@ class callable_iterator:                         # iter(callable, sentinel): Obj
         self._sentinel = None
         raise StopIteration
 
+    def __reduce__(self, *args: object, **kwds: object) -> object:   # calliter_reduce
+        _no_arguments("callable_iterator.__reduce__", args, kwds)
+        if self._callable is not None:         # exhausted: both are gone (None stands for C's NULL here, and a sentinel may be None)
+            return (iter, (self._callable, self._sentinel))
+        return (iter, ((),))
+
+
+_SSIZE_MAX = 9223372036854775807                 # PY_SSIZE_T_MAX
+
+
+def _no_arguments(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> None:
+    """A METH_NOARGS method's check."""
+    if kwds:
+        raise TypeError(name + "() takes no keyword arguments")
+    if args:
+        raise TypeError(name + "() takes no arguments (" + str(len(args)) + " given)")
+
+
+def _one_argument(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> object:
+    """A METH_O method's check, and its argument."""
+    if kwds:
+        raise TypeError(name + "() takes no keyword arguments")
+    if len(args) != 1:
+        raise TypeError(name + "() takes exactly one argument (" + str(len(args)) + " given)")
+    return args[0]
+
 
 def _callable_iterator(function: object, sentinel: object) -> object:
     if not callable(function):
@@ -112,12 +138,29 @@ class reversed:
         self._seq = None
         raise StopIteration
 
-    def __length_hint__(self) -> int:            # reversed_len
-        if self._seq is None:
+    def __length_hint__(self, *args: object, **kwds: object) -> int:   # reversed_len: the sequence's length is asked while an index stands
+        _no_arguments("reversed.__length_hint__", args, kwds)
+        if self._index == -1:
             return 0
         size = len(self._seq)  # type: ignore[arg-type]
         position = self._index + 1
         return 0 if size < position else position
+
+    def __reduce__(self, *args: object, **kwds: object) -> object:   # reversed_reduce
+        _no_arguments("reversed.__reduce__", args, kwds)
+        if self._index != -1:
+            return (type(self), (self._seq,), self._index)
+        return (type(self), ((),))
+
+    def __setstate__(self, *args: object, **kwds: object) -> None:   # reversed_setstate: PyLong_AsSsize_t, clipped to the sequence as it is now
+        state = _one_argument("reversed.__setstate__", args, kwds)
+        if not isinstance(state, int):
+            raise TypeError("an integer is required")
+        if not -_SSIZE_MAX - 1 <= state <= _SSIZE_MAX:
+            raise OverflowError("Python int too large to convert to C ssize_t")
+        if self._index != -1:                    # an exhausted one stays so
+            size = len(self._seq)  # type: ignore[arg-type]
+            self._index = -1 if state < -1 else size - 1 if state > size - 1 else int(state)
 
 
 class enumerate:
@@ -177,6 +220,10 @@ enumerate is useful for obtaining an indexed list:
         count = self._count
         self._count = count + 1
         return (count, item)
+
+    def __reduce__(self, *args: object, **kwds: object) -> object:   # enum_reduce: the iterator it holds, and the count it stands at
+        _no_arguments("enumerate.__reduce__", args, kwds)
+        return (type(self), (self._it, self._count))
 
 
 def _strict_argument(kwds: dict[str, object], name: str) -> bool:
@@ -246,6 +293,15 @@ raise a ValueError.
             i += 1
         return tuple(result)
 
+    def __reduce__(self, *args: object, **kwds: object) -> object:   # zip_reduce: the iterators it holds
+        _no_arguments("zip.__reduce__", args, kwds)
+        if self._strict:
+            return (type(self), self._its, True)
+        return (type(self), self._its)
+
+    def __setstate__(self, *args: object, **kwds: object) -> None:   # zip_setstate
+        self._strict = bool(_one_argument("zip.__setstate__", args, kwds))
+
 
 class map:
     """Make an iterator that computes the function using arguments from
@@ -284,6 +340,15 @@ raise a ValueError."""
             i += 1
         return self._func(*items)
 
+    def __reduce__(self, *args: object, **kwds: object) -> object:   # map_reduce: the function and the iterators it holds
+        _no_arguments("map.__reduce__", args, kwds)
+        if self._strict:
+            return (type(self), (self._func, *self._its), True)
+        return (type(self), (self._func, *self._its))
+
+    def __setstate__(self, *args: object, **kwds: object) -> None:   # map_setstate
+        self._strict = bool(_one_argument("map.__setstate__", args, kwds))
+
 
 class filter:
     """Return an iterator yielding those items of iterable for which function(item)
@@ -312,6 +377,10 @@ is true. If function is None, return the items that are true."""
             item = next(self._it)
             if (item if check_true else func(item)):
                 return item
+
+    def __reduce__(self, *args: object, **kwds: object) -> object:   # filter_reduce
+        _no_arguments("filter.__reduce__", args, kwds)
+        return (type(self), (self._func, self._it))
 
 
 def _min_max(name: str, args: tuple[object, ...], kwds: dict[str, object], smaller: bool) -> object:

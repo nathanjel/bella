@@ -1696,7 +1696,7 @@ Ref iter(Obj obj) {
     if (is_kind(obj, Kind::Set) && !overridden(obj, "__iter__")) {
         auto* it = new Iterator(Iterator::SetIt, obj);
         Ref r = own(it);
-        it->size = static_cast<std::int64_t>(static_cast<SetObject*>(obj.object())->used);
+        it->size = it->len = static_cast<std::int64_t>(static_cast<SetObject*>(obj.object())->used);
         return r;
     }
     // a view of the dict's own types: an OrderedDict's (odict_keys, a C subtype) is iterated as its type says
@@ -1759,33 +1759,36 @@ Ref for_next(Obj itv) {
     switch (it->of) {
         case Iterator::RangeIt: {
             auto* r = static_cast<Range*>(it->seq.object());
-            if (it->pos >= r->length) return finish();
+            if (it->pos >= r->length) return Ref{};      // rangeiter_next: nothing to let go of, and __reduce__ says where it stands
             auto at = static_cast<std::uint64_t>(r->start) + static_cast<std::uint64_t>(r->step) * static_cast<std::uint64_t>(it->pos++);
             return int_from_i64(static_cast<std::int64_t>(at));   // range_iter has seen that each value fits
         }
         case Iterator::LongRangeIt: {
-            Ref v = long_range_next(static_cast<List*>(it->seq.object())->items);
-            if (v.get().is_unset()) return finish();
-            return v;
+            return long_range_next(static_cast<List*>(it->seq.object())->items);   // longrangeiter_next: its start, step and length stay
         }
         case Iterator::TupleIt: {
             auto& items = static_cast<Tuple*>(it->seq.object())->items;
             if (static_cast<std::size_t>(it->pos) >= items.size()) return finish();
             return Ref::share(items[static_cast<std::size_t>(it->pos++)]);
         }
+        // listiter_next, listreviter_next, bytearrayiter_next: an index below 0 gives nothing and keeps the sequence (where
+        // __setstate__ put it, or a reverse iterator that has given its last item); one past the sequence lets go of it
         case Iterator::ListIt: {
             auto& items = static_cast<List*>(it->seq.object())->items;
-            if (static_cast<std::size_t>(it->pos) >= items.size()) return finish();
+            if (it->pos < 0) return Ref{};
+            if (static_cast<std::size_t>(it->pos) >= items.size()) { it->pos = -1; return finish(); }
             return Ref::share(items[static_cast<std::size_t>(it->pos++)]);
         }
-        case Iterator::ListRevIt: {                  // listreviter_next: the list as it is at each step
+        case Iterator::ListRevIt: {                  // the list as it is at each step
             auto& items = static_cast<List*>(it->seq.object())->items;
-            if (it->pos < 0 || static_cast<std::size_t>(it->pos) >= items.size()) { it->pos = -1; return finish(); }
+            if (it->pos < 0) return Ref{};
+            if (static_cast<std::size_t>(it->pos) >= items.size()) { it->pos = -1; return finish(); }
             return Ref::share(items[static_cast<std::size_t>(it->pos--)]);
         }
         case Iterator::BytesIt: {                    // a bytearray's as it is at each step
             const std::string& s = bytes_data(it->seq);
-            if (static_cast<std::size_t>(it->pos) >= s.size()) return finish();
+            if (it->pos < 0) return Ref{};
+            if (static_cast<std::size_t>(it->pos) >= s.size()) { it->pos = -1; return finish(); }
             return Ref::steal(Obj::small(static_cast<unsigned char>(s[static_cast<std::size_t>(it->pos++)])));
         }
         case Iterator::StrIt: {
@@ -1802,10 +1805,12 @@ Ref for_next(Obj itv) {
             while (static_cast<std::size_t>(it->pos) < st->table.size() && st->table[static_cast<std::size_t>(it->pos)].key.is_unset())
                 ++it->pos;
             if (static_cast<std::size_t>(it->pos) >= st->table.size()) return finish();
+            --it->len;
             return Ref::share(st->table[static_cast<std::size_t>(it->pos++)].key);
         }
         case Iterator::SeqIt: {                  // the old protocol: __getitem__(0), (1)... until IndexError
-            Ref index = Ref::steal(Obj::small(it->pos));
+            if (it->pos == INT64_MAX) raise_new("OverflowError", "iter index too large");   // iter_iternext; __setstate__ can put it there
+            Ref index = int_from_i64(it->pos);
             try {
                 Ref v = getitem(it->seq, index.get());
                 ++it->pos;
@@ -1825,9 +1830,16 @@ Ref for_next(Obj itv) {
                 it->size = -2;
                 raise_new("RuntimeError", "dictionary changed size during iteration");
             }
+            // a table rebuilt shorter under it (a resize packs the entries) leaves it past the end, and it ends there; a
+            // split table keeps its order
+            if (d->split == nullptr && it->pos >= static_cast<std::int64_t>(d->entries.size())) return finish();
             std::int64_t i = std::min(it->pos, static_cast<std::int64_t>(d->entries.size()) - 1);
             while (i >= 0 && d->entries[static_cast<std::size_t>(i)].key.is_unset()) --i;
             if (i < 0) return finish();
+            if (it->len == 0) {                      // an entry it did not expect: the rebuilt table put one back under it
+                finish();
+                raise_new("RuntimeError", "dictionary keys changed during iteration");
+            }
             it->pos = i - 1;
             --it->len;
             auto& e = d->entries[static_cast<std::size_t>(i)];
@@ -1860,6 +1872,133 @@ Ref for_next(Obj itv) {
         }
     }
     return Ref{};
+}
+
+// ---- what a built-in iterator answers about itself: __length_hint__, __reduce__ and __setstate__ ----
+// One function for each name, over the iterator's kind; the receiver is an iterator of the type the method was taken from
+// (a method descriptor checks that), and none of these types has subclasses.
+namespace {
+std::int64_t ssize_state(Obj v) {                // PyLong_AsSsize_t: an int itself, which an object with __index__ is not
+    if (!is_int(v)) raise_new("TypeError", "an integer is required");
+    std::int64_t x;
+    if (!int_fits_i64(v, x)) raise_new("OverflowError", "Python int too large to convert to C ssize_t");
+    return x;
+}
+std::int64_t sequence_size(const Iterator* it) {   // of a list's, a tuple's, a str's and a bytes-like's iterator
+    switch (it->of) {
+        case Iterator::TupleIt: return static_cast<std::int64_t>(static_cast<Tuple*>(it->seq.object())->items.size());
+        case Iterator::StrIt: return static_cast<std::int64_t>(static_cast<Str*>(it->seq.object())->length);
+        case Iterator::BytesIt: return static_cast<std::int64_t>(bytes_data(it->seq).size());
+        default: return static_cast<std::int64_t>(static_cast<List*>(it->seq.object())->items.size());
+    }
+}
+bool of_a_table(const Iterator* it) {            // a dict's or a set's: its size when it began, and what is still to come
+    switch (it->of) {
+        case Iterator::RangeIt: case Iterator::LongRangeIt: case Iterator::TupleIt: case Iterator::ListIt: case Iterator::ListRevIt:
+        case Iterator::StrIt: case Iterator::BytesIt: case Iterator::SeqIt: return false;
+        default: return true;
+    }
+}
+std::int64_t table_used(const Iterator* it) {
+    if (it->of == Iterator::SetIt) return static_cast<std::int64_t>(static_cast<SetObject*>(it->seq.object())->used);
+    return static_cast<std::int64_t>(static_cast<Dict*>(it->seq.object())->used);
+}
+}  // namespace
+Ref iterator_length_hint(Obj self, Args a) {
+    noargs(a, type_of(self)->name + ".__length_hint__");
+    auto* it = static_cast<Iterator*>(self.object());
+    auto count = [](std::int64_t n) { return int_from_i64(n < 0 ? 0 : n); };
+    if (it->seq.is_unset()) return count(0);
+    if (of_a_table(it)) return count(it->size == table_used(it) ? it->len : 0);   // dictiter_len, setiter_len: nothing once the size has changed
+    switch (it->of) {
+        case Iterator::RangeIt: return count(static_cast<Range*>(it->seq.object())->length - it->pos);
+        case Iterator::LongRangeIt: return Ref::share(static_cast<List*>(it->seq.object())->items[2]);   // an int of any size
+        case Iterator::ListIt:
+        case Iterator::BytesIt: return count(it->pos < 0 ? 0 : sequence_size(it) - it->pos);   // listiter_len, bytearrayiter_length_hint
+        case Iterator::ListRevIt: return count(sequence_size(it) < it->pos + 1 ? 0 : it->pos + 1);   // listreviter_len
+        case Iterator::SeqIt: {                      // iter_len: the sequence's length now, if its type has one
+            if (type_lookup(type_of(it->seq), intern("__len__")).is_unset()) return Ref::share(Obj::of(NOTIMPLEMENTED));
+            Ref size = invoke(builtin("len").get(), {it->seq});
+            std::int64_t n = 0;
+            int_fits_i64(size.get(), n);
+            return count(it->seq.is_unset() ? 0 : n - it->pos);
+        }
+        default: return count(sequence_size(it) - it->pos);   // tupleiter_len, unicodeiter_len, striter_len
+    }
+}
+Ref iterator_reduce(Obj self, Args a) {
+    noargs(a, type_of(self)->name + ".__reduce__");
+    auto* it = static_cast<Iterator*>(self.object());
+    // E-06: the builtins' `iter` and `reversed` are the ones the program began with (_PyEval_GetBuiltin)
+    auto over = [](const char* by, Ref of) { Ref args = tuple_new({of.get()}); return tuple_new({builtin(by).get(), args.get()}); };
+    auto at = [](const char* by, Obj seq, Obj state) { Ref args = tuple_new({seq}); return tuple_new({builtin(by).get(), args.get(), state}); };
+    auto standing = [&](const char* by) { Ref index = int_from_i64(it->pos); return at(by, it->seq, index.get()); };
+    bool live = !it->seq.is_unset();
+    switch (it->of) {
+        case Iterator::ListIt: return live && it->pos >= 0 ? standing("iter") : over("iter", list_new({}));           // listiter_reduce_general
+        case Iterator::ListRevIt: return live && it->pos >= 0 ? standing("reversed") : over("reversed", list_new({}));
+        case Iterator::StrIt: return live ? standing("iter") : over("iter", str_new(""));                             // unicodeiter_reduce
+        case Iterator::BytesIt: return live && it->pos >= 0 ? standing("iter") : over("iter", tuple_new({}));         // striter_reduce, bytearrayiter_reduce
+        case Iterator::TupleIt:
+        case Iterator::SeqIt: return live ? standing("iter") : over("iter", tuple_new({}));                           // tupleiter_reduce, iter_reduce
+        case Iterator::RangeIt: {                    // range_iterator___reduce___impl: the range of what is left, in C longs
+            auto* r = static_cast<Range*>(it->seq.object());
+            auto from = [&](std::int64_t n) { return static_cast<std::int64_t>(static_cast<std::uint64_t>(r->start) + static_cast<std::uint64_t>(n) * static_cast<std::uint64_t>(r->step)); };
+            Ref left = own(new Range(from(it->pos), from(r->length), r->step));
+            return at("iter", left.get(), None());
+        }
+        case Iterator::LongRangeIt: {
+            Ref left = long_range_left(static_cast<List*>(it->seq.object())->items);
+            return at("iter", left.get(), None());
+        }
+        default: {                                   // dictiter_reduce, setiter_reduce: a copy of the iterator run to its end, this one left where it is
+            Ref left = list_new({});
+            if (live) {
+                auto* copy = new Iterator(it->of, it->seq);
+                Ref held = own(copy);
+                copy->pos = it->pos;
+                copy->size = it->size;
+                copy->len = it->len;
+                for (Ref v = for_next(held.get()); !is_end(v); v = for_next(held.get())) list_append(left.get(), v.get());
+            }
+            return over("iter", std::move(left));
+        }
+    }
+}
+Ref iterator_setstate(Obj self, Args a) {
+    onearg(a, type_of(self)->name + ".__setstate__");
+    auto* it = static_cast<Iterator*>(self.object());
+    Obj state = a.pos(0);
+    if (it->of == Iterator::RangeIt) {               // range_iterator___setstate___impl: PyLong_AsLong, clipped to what is left, from where it stands
+        Ref index = int_index_of(state);
+        std::int64_t by;
+        if (!int_fits_i64(index.get(), by)) raise_new("OverflowError", "Python int too large to convert to C long");
+        it->pos += std::clamp<std::int64_t>(by, 0, static_cast<Range*>(it->seq.object())->length - it->pos);
+        return Ref::share(None());
+    }
+    if (it->of == Iterator::LongRangeIt) {
+        if (!state.is_small() && !is_kind(state, Kind::BigInt))   // PyLong_CheckExact
+            raise_new("TypeError", "state must be an int, not " + fully_qualified_name(type_of(state)));
+        long_range_move(static_cast<List*>(it->seq.object())->items, state);
+        return Ref::share(None());
+    }
+    std::int64_t index = ssize_state(state);
+    if (it->seq.is_unset()) return Ref::share(None());   // exhausted: it stays so
+    switch (it->of) {
+        case Iterator::ListIt: it->pos = std::clamp<std::int64_t>(index, -1, sequence_size(it)); break;           // listiter_setstate
+        case Iterator::ListRevIt: it->pos = std::clamp<std::int64_t>(index, -1, sequence_size(it) - 1); break;    // listreviter_setstate
+        case Iterator::BytesIt:
+            if (is_kind(it->seq, Kind::ByteArray)) {     // bytearrayiter_setstate: one that stands below 0 stays there
+                if (it->pos >= 0) it->pos = std::clamp<std::int64_t>(index, -1, sequence_size(it));
+                break;
+            }
+            [[fallthrough]];
+        case Iterator::TupleIt:
+        case Iterator::StrIt: it->pos = std::clamp<std::int64_t>(index, 0, sequence_size(it)); break;             // tupleiter_setstate, unicodeiter_setstate, striter_setstate
+        case Iterator::SeqIt: it->pos = std::max<std::int64_t>(index, 0); break;                                   // iter_setstate: no end to clip to
+        default: break;                              // a dict's and a set's have no __setstate__
+    }
+    return Ref::share(None());
 }
 
 void unpack(Obj value, std::span<Ref> targets, int star) {

@@ -56,7 +56,8 @@ Types& types() {
         x.tuple_iterator = builtin_type("tuple_iterator", {x.object});
         x.list_iterator = builtin_type("list_iterator", {x.object});
         x.list_reverseiterator = builtin_type("list_reverseiterator", {x.object});
-        x.str_iterator = builtin_type("str_ascii_iterator", {x.object});
+        x.str_ascii_iterator = builtin_type("str_ascii_iterator", {x.object});
+        x.str_iterator = builtin_type("str_iterator", {x.object});
         x.dict_keyiterator = builtin_type("dict_keyiterator", {x.object});
         x.module = builtin_type("module", {x.object});
         x.traceback = builtin_type("traceback", {x.object});
@@ -147,7 +148,11 @@ Iterator::Iterator(Of o, Obj s) : Object(Kind::Iterator), of(o), seq(s) {
         case TupleIt: cls = types().tuple_iterator; break;
         case ListIt: cls = types().list_iterator; break;
         case ListRevIt: cls = types().list_reverseiterator; break;
-        case StrIt: cls = types().str_iterator; break;
+        case StrIt: {                            // unicode_iter: the ASCII iterator for a compact ASCII str, which a subclass's instance is not
+            auto* str = static_cast<Str*>(s.object());
+            cls = str->cls == types().str && str->ascii ? types().str_ascii_iterator : types().str_iterator;
+            break;
+        }
         case BytesIt: cls = is_kind(s, Kind::ByteArray) ? types().bytearray_iterator : types().bytes_iterator; break;
         case DictRevKeysIt: cls = types().dict_reversekeyiterator; break;
         case DictRevValuesIt: cls = types().dict_reversevalueiterator; break;

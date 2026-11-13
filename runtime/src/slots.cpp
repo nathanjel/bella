@@ -399,10 +399,13 @@ void init_slots() {
     }
     for (ClassObject* c : {t.list, t.range}) slot(c, "__getitem__", own_getitem);
     for (ClassObject* c : {t.range_iterator, t.longrange_iterator, t.tuple_iterator, t.list_iterator, t.list_reverseiterator, t.str_iterator,
-                           t.dict_keyiterator, t.dict_valueiterator, t.dict_itemiterator, t.dict_reversekeyiterator, t.dict_reversevalueiterator,
-                           t.dict_reverseitemiterator, t.bytes_iterator, t.bytearray_iterator, t.iterator, t.set_iterator}) {
+                           t.str_ascii_iterator, t.dict_keyiterator, t.dict_valueiterator, t.dict_itemiterator, t.dict_reversekeyiterator,
+                           t.dict_reversevalueiterator, t.dict_reverseitemiterator, t.bytes_iterator, t.bytearray_iterator, t.iterator, t.set_iterator}) {
         slot(c, "__iter__", own_iter);           // PyObject_SelfIter and tp_iternext, as the attributes it.__iter__ and it.__next__
         slot(c, "__next__", own_next);
+        slot(c, "__length_hint__", iterator_length_hint);   // each type's own methods (ops.cpp): what is left, and where it stands
+        slot(c, "__reduce__", iterator_reduce);
+        if (cpython_has(c->name, "__setstate__")) slot(c, "__setstate__", iterator_setstate);   // a dict's and a set's have none
     }
     slot(t.str, "__repr__", str_repr_slot);
     slot(t.str, "__hash__", str_hash_slot);

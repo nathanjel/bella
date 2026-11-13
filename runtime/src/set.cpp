@@ -706,7 +706,7 @@ Ref set_iter_m(Obj self, Args a) {               // set_iter: the table's own it
     dunder_args(self, a, "__iter__", 0);
     auto* it = new Iterator(Iterator::SetIt, self);
     Ref r = own(it);
-    it->size = static_cast<std::int64_t>(set_self(self)->used);
+    it->size = it->len = static_cast<std::int64_t>(set_self(self)->used);
     return r;
 }
 }  // namespace

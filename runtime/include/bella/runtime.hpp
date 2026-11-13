@@ -125,7 +125,7 @@ struct Iterator : Object {                       // the C++ types' iterators
     Obj seq;                                     // owned (Unset once exhausted, as CPython's)
     std::int64_t pos = 0;
     std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
-    std::int64_t len = 0;                        // a dict iterator's entries still to come (dictiterobject.len)
+    std::int64_t len = 0;                        // a dict's or a set's iterator's entries still to come (dictiterobject.len, setiterobject.len)
     Iterator(Of o, Obj s);
 };
 struct DictView : Object {                       // dict.keys(), values(), items(): live views of the dict
@@ -239,7 +239,7 @@ struct Types {
         *list_iterator, *str_iterator, *dict_keyiterator, *module, *traceback, *float_, *complex_, *union_, *generator,
         *method_descriptor, *classmethod_descriptor, *wrapper_descriptor, *method_wrapper, *builtin_method, *getset_descriptor, *member_descriptor, *super_, *lazy_import, *mappingproxy, *slice, *iterator, *set,
         *frozenset, *set_iterator, *dict_keys, *dict_values, *dict_items, *dict_valueiterator, *dict_itemiterator,
-        *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator, *code;
+        *bytes, *bytearray, *bytes_iterator, *bytearray_iterator, *memoryview, *list_reverseiterator, *code, *str_ascii_iterator;
 };
 Types& types();
 extern Singleton* const NONE;
@@ -525,6 +525,11 @@ void add_note(Obj exc, const std::string& text); // _PyErr_FormatNote
 Ref type_repr_of(Obj v);                         // type.__repr__ itself
 void list_extend_star(Obj list, Obj value);      // LIST_EXTEND
 void length_hint(Obj v);                         // PyObject_LengthHint, where a program's class can tell it was asked
+Ref iterator_length_hint(Obj self, Args a);      // a built-in iterator's __length_hint__, __reduce__ and __setstate__ (ops.cpp)
+Ref iterator_reduce(Obj self, Args a);
+Ref iterator_setstate(Obj self, Args a);
+Ref long_range_left(std::vector<Obj>& state);    // a long range's iterator: the range of what is left, and the state moved on (bigint.cpp)
+void long_range_move(std::vector<Obj>& state, Obj by);
 Ref repr_unchecked(Obj v);                       // tp_repr, whatever it gives
 // calls f with the attribute storage of an Instance or a DictInstance; false for other objects
 template <class F>

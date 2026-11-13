@@ -54,9 +54,13 @@ for m in [*MODULES, types]:
         reach(value)
 def function():
     yield
+class Old:
+    def __getitem__(self, index):
+        raise IndexError
 for sample in ([], (), {{}}, set(), frozenset(), "", b"", bytearray(), 1, 1.0, 1j, True, None, NotImplemented, ..., range(1), slice(1), iter([]), iter(()),
-               iter(""), iter({{}}), {{}}.keys(), {{}}.values(), {{}}.items(), iter({{}}.values()), iter({{}}.items()), iter(set()), iter(range(1)), iter(b""),
-               iter(bytearray()), reversed([]), reversed({{}}), enumerate([]), zip(), map(len, []), filter(None, []), function(), function, len, [].append,
+               iter(""), iter("\u017c"), iter({{}}), {{}}.keys(), {{}}.values(), {{}}.items(), iter({{}}.values()), iter({{}}.items()), iter(set()), iter(range(1)),
+               iter(range(2 ** 70, 2 ** 70 + 1)), iter(b""), iter(bytearray()), iter(Old()), iter(list, 0), reversed([]), reversed({{}}), reversed({{}}.values()),
+               reversed({{}}.items()), reversed(Old.__mro__), enumerate([]), zip(), map(len, []), filter(None, []), function(), function, len, [].append,
                list.append, list.__add__, [].__add__, dict.fromkeys, type.__dict__["__dict__"], sys.stdout, sys.version_info, sys.flags, sys.float_info,
                sys.int_info, sys.hash_info, sys.implementation, function.__code__, type.__dict__, property(), staticmethod(len), classmethod(len),
                super(type, type), BaseException(), (lambda: sample).__closure__):  # noqa: F821

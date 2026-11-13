@@ -3173,9 +3173,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             for (ClassObject* c : exception_classes()) present_descriptor_kinds(c);
             adopt_functions(builtins_module());
             adopt_functions(native_modules()["sys"]);
-            auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own
-                if (!c->attrs.contains(intern("__doc__")))
-                    if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !as_str(doc)->text.empty()) c->set_attr(intern("__doc__"), doc);
+            auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own: None for a type without one
+                if (c->attrs.contains(intern("__doc__"))) return;   // (type_dict_set_doc), which hides object's from its instances
+                if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !as_str(doc)->text.empty()) c->set_attr(intern("__doc__"), doc);
+                else if (cpython_attribute_kind(c, "__doc__") == "NoneType") c->set_attr(intern("__doc__"), None());
             };
             for (ClassObject* c : builtin_types()) own_doc(c);
             for (ClassObject* c : exception_classes()) own_doc(c);
