@@ -403,7 +403,7 @@ Ref load_global(Module* m, const Str* name) {
         v = dict_get(ns, Obj::of(name));
     }
     if (v.is_unset()) {
-        if (m->builtins == nullptr) refuse_absent_global(name);
+        if (m->builtins == nullptr) refuse_absent_global(m, name);
         raise_name_error(name);
     }
     if (is_kind(v, Kind::LazyImport)) return lazy_reify(v, name, Obj::of(ns));
@@ -1811,13 +1811,30 @@ void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, con
             throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
     }
 }
+// A native module's names once it was filled. One of them that is absent later is one the program deleted, by `del`, delattr or
+// the module's dict: absent as in CPython (AttributeError, NameError for a builtin), where a name of CPython's the module never had
+// is the runtime's to write (a stop by name)
+static std::unordered_map<const Module*, std::unordered_set<std::string>>& filled_names() {
+    static std::unordered_map<const Module*, std::unordered_set<std::string>> table;
+    return table;
+}
+void note_filled(const Module* m) {
+    auto& names = filled_names()[m];
+    for (auto& e : m->dict->entries)
+        if (!e.key.is_unset())
+            if (const Str* k = as_str(e.key)) names.insert(k->text);
+}
+bool was_filled(const Module* m, std::string_view name) {
+    auto it = filled_names().find(m);
+    return it != filled_names().end() && it->second.contains(std::string(name));
+}
 void refuse_absent_attribute(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Module)) {
         auto* m = static_cast<Module*>(obj.object());
         const std::string& mod = as_str(m->name.get())->text;
         auto it = native_modules().find(mod);
         bool tabled = (it != native_modules().end() && it->second == m) || is_bootstrap_prelude(m);   // its names are the table's
-        if (tabled && cpython_has(mod, name->text))
+        if (tabled && cpython_has(mod, name->text) && !was_filled(m, name->text))
             throw NotImplemented(mod + "." + name->text + " (CPython has it; the runtime does not yet)");
     }
     if (is_kind(obj, Kind::Class)) refuse_in(static_cast<ClassObject*>(obj.object())->mro, name);
@@ -1854,8 +1871,9 @@ void refuse_unimplemented_operator(const char* scope, Obj a, const std::string& 
     if (cpython_has(scope, name(a) + sym + name(b)))
         throw NotImplemented("'" + type_of(a)->name + "' " + sym + " '" + type_of(b)->name + "' (CPython has it; the runtime does not yet)");
 }
-void refuse_absent_global(const Str* name) {
-    if (cpython_has("builtins", name->text) || cpython_has("globals", name->text))
+void refuse_absent_global(const Module* m, const Str* name) {
+    if (was_filled(builtins_module(), name->text)) return;   // a builtin the program deleted: NameError
+    if (cpython_has("builtins", name->text) || (cpython_has("globals", name->text) && !was_filled(m, name->text)))   // nor a module's own first names
         throw NotImplemented("the name '" + name->text + "' (CPython has it; the runtime does not yet)");
 }
 
@@ -2129,16 +2147,40 @@ Ref i_call_sites(Obj, Args a) {
     }
     return out;
 }
-// A traceback's entry stands for its frame where an adaptation reads the frame's code (traceback's StackSummary; runtime/replaced):
-// the code object of the entry's code, the one its function's __code__ gives, or None for what is no traceback, CPython's reads then
-// being the adaptation's. Capturing the frame's locals, which CPython reads off the frame, stops by name (E-02)
-Ref i_traceback_code(Obj, Args a) {
-    positional_only(a, "traceback_code", 2, 2);
+// The frame a traceback's entry stands for, where an adaptation walks a traceback's frames (traceback's
+// _walk_tb_with_full_positions; runtime/replaced): a frame object of the runtime's, new at each asking, or None for what is no
+// traceback, CPython's walk then being the adaptation's
+Ref i_traceback_frame(Obj, Args a) {
+    positional_only(a, "traceback_frame", 1, 1);
     if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
+    auto* tb = static_cast<Traceback*>(a.pos(0).object());
+    return own(new FrameObject(tb->code, tb->module));
+}
+// The code of such a frame, where an adaptation reads a frame's code (traceback's StackSummary): the code object its function's
+// __code__ gives, or None for what is no frame of the runtime's (a traceback where a frame is wanted, an object of the program's
+// own making), CPython's reads then being the adaptation's. Capturing the frame's locals, which CPython reads off the frame,
+// stops by name (E-02)
+Ref i_frame_code(Obj, Args a) {
+    positional_only(a, "frame_code", 2, 2);
+    if (!is_kind(a.pos(0), Kind::Frame)) return none_ref();
     if (truth(a.pos(1))) throw NotImplemented("traceback's capture_locals (the locals of a frame, E-02)");
-    const Code* c = static_cast<Traceback*>(a.pos(0).object())->code;
+    const Code* c = static_cast<FrameObject*>(a.pos(0).object())->code;
     if (c->object.get().is_unset()) c->object = own(new CodeObject(c));
     return c->object;
+}
+// The running stack as traceback.walk_stack gives it (extract_stack, format_stack and print_stack asked for no frame;
+// runtime/replaced): a frame and the line it is at for each frame a traceback would show, this frame's first
+Ref i_stack(Obj, Args a) {
+    positional_only(a, "stack", 0, 0);
+    Ref out = list_new({});
+    for (detail::FrameRecord* f = detail::current_frame(); f != nullptr; f = f->caller) {
+        if (!f->code->shown) continue;
+        Ref frame = own(new FrameObject(f->code, f->module != nullptr ? Ref::share(Obj::of(f->module)) : Ref{}));
+        Ref line = int_from_i64(f->line);
+        Ref pair = tuple_new({frame.get(), line.get()});
+        list_append(out.get(), pair.get());
+    }
+    return out;
 }
 // The globals of the frame a traceback's entry stands for (unittest's TestResult; runtime/replaced): its module's dict, an empty dict
 // for an entry no frame of the program's made (_PyTraceback_Add's, as CPython's has), None for what is no traceback
@@ -2191,8 +2233,8 @@ void register_intrinsics() {
              {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack},
              {"call_args_tuple", i_call_args_tuple}, {"super", i_super}, {"exception", i_exception}, {"eg_match", i_eg_match},
              {"raise_handled", i_raise_handled}, {"prep_reraise_star", i_prep_reraise_star}, {"reraise_star", i_reraise_star},
-             {"call_sites", i_call_sites}, {"traceback_code", i_traceback_code}, {"traceback_globals", i_traceback_globals},
-             {"traceback_clear", i_traceback_clear}}) {
+             {"call_sites", i_call_sites}, {"traceback_frame", i_traceback_frame}, {"frame_code", i_frame_code}, {"stack", i_stack},
+             {"traceback_globals", i_traceback_globals}, {"traceback_clear", i_traceback_clear}}) {
         Ref b = own(new Builtin(name, fn));
         dict_set(intrinsics(), Obj::of(intern(name)), b.get());
     }
@@ -3152,6 +3194,9 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             // runtime started. If its handler raises, that is reported below and the program is not run
             look_for_signals_now();
             ran = true;
+            note_filled(builtins_module());        // from here on a name missing from them is one the program deleted
+            note_filled(native_modules()["sys"]);
+            note_filled(main);
             main_body(main);
             flush_io();
         } catch (const PyError& e) {

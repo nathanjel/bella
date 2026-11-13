@@ -5,13 +5,18 @@ frontend puts its body there (pipeline/l1/frontend.py, replace_functions).
 _find_incompatible_extension_module looks for an extension module built for another Python version on sys.path, to
 suggest it when an import fails; a closed world has none, so it finds none.
 
-A traceback is formatted from the source maps, file and line (D-06): where CPython walks a traceback's frames and reads
-each one's code positions (co_positions, E-02), _walk_tb_with_full_positions gives each entry itself with its line and no
-positions, and StackSummary._extract_from_extended_frame_gen reads an entry's file and function from the code it stands
-for (`__bella_traceback_code__`, the code object its function's __code__ gives) and gives its summary no source line, so
-that nothing is looked up: no line follows the file and line, and a summary's `line` is empty. What is no traceback's
-entry (an object of the program's own making that stands for a traceback or a frame) is walked and read as CPython
-walks and reads it; capturing a frame's locals stops by name.
+A traceback is formatted from the source maps, file and line (D-06). Where CPython walks a traceback's frames and reads
+each one's code positions (co_positions, E-02), _walk_tb_with_full_positions gives for each entry the frame it stands for
+as the runtime has one (`__bella_traceback_frame__`: an object of the type `frame` with nothing a program can read) with
+the entry's line and no positions, and StackSummary._extract_from_extended_frame_gen reads such a frame's file and function
+from its code (`__bella_frame_code__`, the code object its function's __code__ gives) and gives its summary no source line,
+so that nothing is looked up: no line follows the file and line, and a summary's `line` is empty. What is no such frame
+(an object of the program's own making that stands for a traceback or a frame, a traceback where a frame is wanted) is
+walked and read as CPython walks and reads it; capturing a frame's locals stops by name.
+
+extract_stack, format_stack and print_stack, asked for the running stack (no frame given), take it from the runtime
+(`__bella_stack__`: a frame and the line it is at for each frame, this one's first, as walk_stack gives them) where
+CPython asks sys._getframe; a frame given is walked as CPython walks it.
 
 clear_frames clears each frame of a traceback (frame.clear()): an entry gives up the locals of the frame it stands for
 (`__bella_traceback_clear__`), which it holds once the exception has left that frame; a frame still running keeps its
@@ -20,6 +25,33 @@ own, where CPython's refuses to be cleared and clear_frames goes on."""
 
 def _find_incompatible_extension_module(module_name):  # type: ignore[no-untyped-def]
     return None
+
+
+def print_stack(f=None, limit=None, file=None):  # type: ignore[no-untyped-def]
+    if f is None:
+        stack = StackSummary.extract(__bella_stack__()[1:], limit=limit)  # type: ignore[name-defined]  # noqa: F821  # the caller's frame first
+        stack.reverse()
+        print_list(stack, file=file)  # type: ignore[name-defined]  # noqa: F821
+        return
+    print_list(extract_stack(f, limit=limit), file=file)  # type: ignore[name-defined]  # noqa: F821
+
+
+def format_stack(f=None, limit=None):  # type: ignore[no-untyped-def]
+    if f is None:
+        stack = StackSummary.extract(__bella_stack__()[1:], limit=limit)  # type: ignore[name-defined]  # noqa: F821  # the caller's frame first
+        stack.reverse()
+        return format_list(stack)  # type: ignore[name-defined]  # noqa: F821
+    return format_list(extract_stack(f, limit=limit))  # type: ignore[name-defined]  # noqa: F821
+
+
+def extract_stack(f=None, limit=None):  # type: ignore[no-untyped-def]
+    if f is None:
+        stack = StackSummary.extract(__bella_stack__()[1:], limit=limit)  # type: ignore[name-defined]  # noqa: F821  # the caller's frame first
+        stack.reverse()
+        return stack
+    stack = StackSummary.extract(walk_stack(f), limit=limit)  # type: ignore[name-defined]  # noqa: F821
+    stack.reverse()
+    return stack
 
 
 def clear_frames(tb):  # type: ignore[no-untyped-def]
@@ -35,8 +67,9 @@ def clear_frames(tb):  # type: ignore[no-untyped-def]
 
 def _walk_tb_with_full_positions(tb):  # type: ignore[no-untyped-def]
     while tb is not None:
-        if __bella_traceback_code__(tb, False) is not None:  # type: ignore[name-defined]  # noqa: F821  # a traceback's entry
-            yield tb, (tb.tb_lineno, None, None, None)
+        frame = __bella_traceback_frame__(tb)  # type: ignore[name-defined]  # noqa: F821  # an entry's frame, as the runtime has one
+        if frame is not None:
+            yield frame, (tb.tb_lineno, None, None, None)
         else:
             positions = _get_code_position(tb.tb_frame.f_code, tb.tb_lasti)  # type: ignore[name-defined]  # noqa: F821
             # Yield tb_lineno when co_positions does not have a line number to
@@ -68,7 +101,7 @@ class StackSummary:
         result = klass()
         fnames = set()
         for f, (lineno, end_lineno, colno, end_colno) in frame_gen:
-            co = __bella_traceback_code__(f, capture_locals)  # type: ignore[name-defined]  # noqa: F821  # an entry's code, else None
+            co = __bella_frame_code__(f, capture_locals)  # type: ignore[name-defined]  # noqa: F821  # the code of a frame of the runtime's, else None
             if co is not None:
                 filename = co.co_filename
                 fnames.add(filename)

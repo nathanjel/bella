@@ -222,6 +222,16 @@ struct Traceback : Object {                      // one frame's entry; `next` go
     Traceback(const Code* c, int l, Ref nx);
 };
 
+// A frame as the standard library's adaptations hold one (docs/dialect-spec.md E-02; runtime/replaced/traceback.py): an object
+// of the type types.FrameType is, made by the runtime for a traceback's entry or a frame of the running stack, with nothing a
+// program can read (what CPython's has is the names table's `frame:` rows, so reading f_code stops by name). The adaptations
+// read its code through the runtime
+struct FrameObject : Object {
+    const Code* code;
+    Ref module;                                  // as a traceback entry's: a staged text's code lives as its namespace does
+    FrameObject(const Code* c, Ref m);
+};
+
 // ---- the builtin types and singletons (made at start-up) ----
 struct Types {
     ClassObject *object, *type, *int_, *bool_, *str, *none, *notimplemented, *ellipsis, *tuple, *list,
@@ -337,6 +347,8 @@ Ref i_cpython_table(Obj, Args a);                 // _cpython_table(key): a row 
 Ref i_source_hash(Obj, Args a);                   // _source_hash(key, bytes): _imp.source_hash's bytes                // _frame(n) for runtime/prelude/_warnings.py: (globals, filename, lineno) of a caller's frame
 Ref sequence_concat(Obj self, Obj other);        // sq_concat of str, list, tuple
 Ref sequence_repeat(Obj self, Obj count);        // sq_repeat of str, list, tuple
+Ref sequence_inplace_concat(Obj self, Obj other);   // sq_inplace_concat of list
+Ref sequence_inplace_repeat(Obj self, Obj count);   // sq_inplace_repeat of list
 void fill_itertools(Module* m);                   // runtime/src/imports.cpp, running runtime/prelude/itertools.py
 void fill_operator(Module* m);                    // and runtime/prelude/_operator.py
 void fill_thread(Module* m);                      // and runtime/prelude/_thread.py
@@ -899,7 +911,7 @@ void refuse_absent_attribute(Obj obj, const Str* name);
 // a store or delete of a name the runtime's classes lack where CPython's built-in base has a data
 // descriptor (a member or getset: StopIteration.value): CPython sets the field, never the __dict__
 void refuse_absent_data_descriptor(Obj obj, const Str* name);
-void refuse_absent_global(const Str* name);
+void refuse_absent_global(const Module* m, const Str* name);
 // An operator CPython handles for these operands' types (the table's binop, iop and cmp entries)
 // and the runtime does not: refused rather than answered with a TypeError CPython would not raise.
 void refuse_unimplemented_operator(const char* scope, Obj a, const std::string& sym, Obj b);
@@ -1130,6 +1142,8 @@ Ref module_new_m(Obj, Args a);
 Ref module_init_m(Obj self, Args a);
 ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases);   // a C++ type's class
 void note_native_module(const char* name, Module* m);   // its absent names are refused by the table
+void note_filled(const Module* m);               // a module is filled (a native module, or a program's before its body runs): the names it has
+bool was_filled(const Module* m, std::string_view name);   // now are the runtime's, and one absent later is one the program deleted
 std::string_view native_module_name(const Module* m);   // empty for any other module
 void set_bootstrap_module(Module* m);
 void set_stdlib_dir(const char* dir);             // sys._stdlib_dir, the build's interpreter's (pipeline/build.py main_unit), before run_main

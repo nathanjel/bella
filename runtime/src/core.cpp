@@ -193,6 +193,7 @@ std::vector<Module*>& all_modules() {
 }
 LazyImport::LazyImport() : Object(Kind::LazyImport) { cls = types().lazy_import; }
 CodeObject::CodeObject(const Code* c) : Object(Kind::CodeKind), code(c) { cls = types().code; }
+FrameObject::FrameObject(const Code* c, Ref m) : Object(Kind::Frame), code(c), module(std::move(m)) { cls = no_instances_yet("frame"); }
 Traceback::Traceback(const Code* c, int l, Ref nx) : Object(Kind::Traceback), code(c), line(l), next(std::move(nx)) {
     cls = types().traceback;
 }
@@ -262,6 +263,7 @@ bool register_deaths() {
     destroyer(Kind::Iterator) = [](Object* o) { decref(std::exchange(static_cast<Iterator*>(o)->seq, Obj{})); destroy<Iterator>(o); };
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::CodeKind) = [](Object* o) { destroy<CodeObject>(o); };
+    destroyer(Kind::Frame) = [](Object* o) { destroy<FrameObject>(o); };
     destroyer(Kind::Traceback) = [](Object* o) {
         auto* t = static_cast<Traceback*>(o);      // tb_dealloc: the deeper entries, then this frame
         t->next = Ref{};

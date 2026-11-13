@@ -511,6 +511,7 @@ Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the mo
         }
         dict_set(m->dict, Obj::of(N("_bella")), hooks.get());
     }
+    note_filled(m);                              // its first names: one of them absent later is one the module deleted
     it->second.body(m);
     return none_ref();
 }
@@ -1138,6 +1139,7 @@ void fill_math(Module* m) {                      // math_exec: the module, then 
         note_native_module("math.integer", n.made);
         n.fill(n.made);
         adopt_functions(n.made);
+        note_filled(n.made);
     }
     Ref key = str_new("math.integer");
     dict_set(sys_modules(), key.get(), Obj::of(n.made));   // _PyImport_SetModuleString("math.integer", intmath)
@@ -1287,6 +1289,7 @@ Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one mod
         note_native_module(name.c_str(), n.made);
         n.fill(n.made);
         adopt_functions(n.made);
+        note_filled(n.made);
     }
     return Ref::share(Obj::of(n.made));
 }
@@ -2145,7 +2148,8 @@ Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the
     for (auto& e : m->dict->entries)
         if (!e.key.is_unset()) dict_set(d, e.key, None());
     if (std::string_view native = native_module_name(m); !native.empty())
-        for (std::string_view n : cpython_names_of(native)) dict_set(d, Obj::of(intern(n)), None());
+        for (std::string_view n : cpython_names_of(native))
+            if (!was_filled(m, n)) dict_set(d, Obj::of(intern(n)), None());   // not one the program deleted
     Ref keys = list_new({});
     for (auto& e : d->entries)
         if (!e.key.is_unset()) list_append(keys.get(), e.key);

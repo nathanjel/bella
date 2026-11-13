@@ -170,6 +170,9 @@ Ref own_contains(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return 
 Ref own_getitem(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return getitem(self, a.pos(0)); }
 Ref own_add(Obj self, Args a) { wrapper_args(a, "__add__", 1); return sequence_concat(self, a.pos(0)); }
 Ref own_mul(Obj self, Args a) { wrapper_args(a, "__mul__", 1); return sequence_repeat(self, a.pos(0)); }
+// list_inplace_concat and list_inplace_repeat under their wrappers: the list itself, extended or repeated
+Ref list_iadd_slot(Obj self, Args a) { wrapper_args(a, "__iadd__", 1); return sequence_inplace_concat(self, a.pos(0)); }
+Ref list_imul_slot(Obj self, Args a) { wrapper_args(a, "__imul__", 1); return sequence_inplace_repeat(self, a.pos(0)); }
 Ref list_reversed(Obj self, Args a) {
     noargs(a, "list.__reversed__");
     Ref it = own(new Iterator(Iterator::ListRevIt, self));
@@ -410,6 +413,8 @@ void init_slots() {
         slot(c, "__rmul__", own_mul);
     }
     for (ClassObject* c : {t.range, t.slice, t.none, t.bytes, t.bytearray}) slot(c, "__repr__", own_repr);
+    slot(t.list, "__iadd__", list_iadd_slot);
+    slot(t.list, "__imul__", list_imul_slot);
     slot(t.list, "__reversed__", list_reversed);
     slot(t.list, "__delitem__", list_delitem_slot);  // its other item methods are call.cpp's (method_descriptor and wrappers)
     slot(t.range, "__reversed__", range_reversed);

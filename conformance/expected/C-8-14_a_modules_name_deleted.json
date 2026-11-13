@@ -1,0 +1,12 @@
+{
+ "case": "C-8-14_a_modules_name_deleted.py",
+ "clause": "C-8-14",
+ "spec": "section 8 (modules), section 3 (attribute lookup)",
+ "status": "P1",
+ "source": "Objects/moduleobject.c (_Py_module_getattro_impl), Python/ceval.c (the global lookup, import_from)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "there: ('there',) imported\ndel: ('AttributeError', 'pi', True, False, 'a default', False, False) ('ImportError', 'math', True) AttributeError True\nagain: AttributeError KeyError AttributeError AttributeError ('AttributeError', 'never', True, False, 'a default', False, False)\nset again: True imported pi\nthrough vars: ('AttributeError', 'tau', True, False, 'a default', False, False) ('ImportError', 'math', True)\na type: ('AttributeError', 'chain', True, False, 'a default', False, False) ('ImportError', 'itertools', True) AttributeError ['a', 'b']\nsys: ('AttributeError', 'maxsize', True, False, 'a default', False, False) ('ImportError', 'sys', True)\nothers: ('AttributeError', 'monotonic', True, False) ('AttributeError', 'ENOENT', True, False) ('ImportError', 'errno', True) ('AttributeError', 'digits', True, False) ('ImportError', 'string', True)\nthe module's own: NameError False False\nback: True\n",
+ "stderr": "",
+ "exit_code": 0
+}

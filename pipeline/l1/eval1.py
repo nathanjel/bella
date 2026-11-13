@@ -1626,14 +1626,25 @@ def _call_sites() -> list[tuple[str, int, str]]:
     return []
 
 
-def _traceback_code(tb: object, capture_locals: object) -> object:
-    """The code a traceback's entry stands for (runtime/replaced/traceback.py): an evaluator's entries are the host's, whose
-    frames are the evaluator's own; their code, so that the walk runs as compiled code's does."""
-    if not isinstance(tb, types.TracebackType):
+def _traceback_frame(tb: object) -> object:
+    """The frame a traceback's entry stands for (runtime/replaced/traceback.py): an evaluator's entries are the host's, whose
+    frames are the evaluator's own; the host's frame, so that the walk runs as compiled code's does."""
+    return tb.tb_frame if isinstance(tb, types.TracebackType) else None
+
+
+def _frame_code(frame: object, capture_locals: object) -> object:
+    """The code of such a frame (runtime/replaced/traceback.py): the host's frame's; None for what is no frame."""
+    if not isinstance(frame, types.FrameType):
         return None
     if capture_locals:
         raise L.Refused("traceback's capture_locals (the locals of a frame, E-02)")
-    return tb.tb_frame.f_code
+    return frame.f_code
+
+
+def _stack() -> list[tuple[object, int]]:
+    """The running stack as traceback.walk_stack gives it (runtime/replaced/traceback.py): an evaluator's frames are its own,
+    none of the program's."""
+    return []
 
 
 def _traceback_globals(tb: object) -> object:
@@ -1655,8 +1666,8 @@ def _traceback_clear(tb: object) -> bool:
 
 _STAR: dict[str, Callable[..., Any]] = {"exception": _star_exception, "eg_match": eg_match, "raise_handled": _raise_keeping,
                                         "prep_reraise_star": prep_reraise_star, "reraise_star": _raise_keeping,
-                                        "call_sites": _call_sites, "traceback_code": _traceback_code,
-                                        "traceback_globals": _traceback_globals, "traceback_clear": _traceback_clear}
+                                        "call_sites": _call_sites, "traceback_frame": _traceback_frame, "frame_code": _frame_code,
+                                        "stack": _stack, "traceback_globals": _traceback_globals, "traceback_clear": _traceback_clear}
 
 
 def _matches(exc: BaseException, spec: Any) -> bool:

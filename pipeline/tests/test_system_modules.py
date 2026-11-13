@@ -1152,6 +1152,89 @@ def test_exception_groups() -> None:
     same(EXCEPTION_GROUPS)
 
 
+# A name the program deleted from a native module is absent as CPython's is (C-8-14 is the case; these are the words, the
+# deletions it does not make, and a module whose dict was emptied); a name of CPython's the runtime never had still stops.
+# Nothing here deletes a name of `builtins`: that is not a dialect program's to do (E-06)
+DELETED = r"""
+import itertools, math, sys, time, _io, posix, errno
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+def imported(module, name):
+    try:
+        exec(f"from {module} import {name}", {})
+    except ImportError as e:
+        return type(e).__name__ + ": " + str(e).split(" (")[0] + " " + repr((e.name, e.name_from))
+    return "imported"
+pi = math.pi
+del math.pi
+print(m(lambda: math.pi), hasattr(math, "pi"), getattr(math, "pi", "gone"), "pi" in dir(math), "pi" in vars(math), imported("math", "pi"))
+print(m(lambda: delattr(math, "pi")), m(lambda: vars(math).pop("pi")), m(lambda: delattr(math, "never")), m(lambda: math.never), imported("math", "never"))
+math.pi = pi
+print(math.pi == pi, imported("math", "pi"), list(vars(math))[-1])
+vars(math).pop("tau")
+print(m(lambda: math.tau), hasattr(math, "tau"), imported("math", "tau"))
+del vars(itertools)["chain"]
+print(m(lambda: itertools.chain), imported("itertools", "chain"), m(lambda: itertools.chain.from_iterable))
+delattr(sys, "maxsize")
+print(m(lambda: sys.maxsize), hasattr(sys, "maxsize"), imported("sys", "maxsize"))
+del time.monotonic, _io.BytesIO, posix.getpid, errno.ENOENT
+print(m(lambda: time.monotonic), m(lambda: _io.BytesIO), m(lambda: posix.getpid), m(lambda: errno.ENOENT), imported("errno", "ENOENT"))
+math.__dict__.clear()
+print(m(lambda: math.sqrt), m(lambda: math.__name__), dir(math), imported("math", "sqrt"))
+"""
+
+
+# a module's own first names, deleted: the lookup goes on to builtins, which has some of them (its own __name__, __doc__, __spec__)
+GLOBALS_DELETED = r"""
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+kept = __file__
+del __file__
+print(m(lambda: __file__), "__file__" in globals())
+__file__ = kept
+del __name__, __doc__, __spec__, __loader__, __package__
+print(m(lambda: __name__), m(lambda: __doc__), m(lambda: __spec__), m(lambda: __loader__), m(lambda: __package__))
+print(m(lambda: __builtins__) [:20], m(lambda: __annotations__)[:40], m(lambda: __cached__)[:60])
+"""
+
+
+# Outside the dialect (E-06: the names of builtins are not a program's to assign or delete, so that they can be bound at compile
+# time). Held only so that what happens today is CPython's answer and not a stop that says the runtime lacks the name; the row
+# goes when builtins are bound at compile time
+BUILTIN_DELETED = r"""
+import builtins
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+kept = builtins.zip
+del builtins.zip
+print(m(lambda: zip), m(lambda: builtins.zip), hasattr(builtins, "zip"), "zip" in dir(builtins))
+builtins.zip = kept
+print(m(lambda: list(zip("ab", "cd"))))
+"""
+
+
+def test_a_name_the_program_deleted_is_absent() -> None:
+    same(DELETED)
+    same(GLOBALS_DELETED)
+    same(BUILTIN_DELETED)
+    for body, name in (("import sys\ndel sys.maxsize\nsys.abi_info", "sys.abi_info"), ("import math\ndel math.pi\ninput", "the name 'input'"),
+                       ("import builtins, math\ndel math.pi\nbuiltins.input", "builtins.input")):
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_text(f"print('start')\n{body}\n", encoding="utf-8")
+            got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, cwd=tmp)
+        assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr and name in got.stderr, (body, got)
+
+
 def test_what_is_absent_stops_by_name() -> None:
     cases = (("import zlib\nzlib.crc32(b'a', -1)", "unsigned 32-bit"), ("import ast\nast.parse('1')", "compile()"),
              ("import ast\nast.expr()", "abstract AST node class"), ("import typing\nif __name__ == '__main__':\n    typing.TypeVar('T', bound='Fwd')", "a ForwardRef built at runtime"),
@@ -1635,6 +1718,7 @@ if __name__ == "__main__":
     test_an_unclosed_file_shown_on_standard_error()
     test_a_file_still_open_on_the_way_out()
     test_the_runtime_warnings_of_io_and_os_on_standard_error()
+    test_a_name_the_program_deleted_is_absent()
     test_what_is_absent_stops_by_name()
     test_binascii()
     test_base32()

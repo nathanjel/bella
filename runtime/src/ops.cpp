@@ -333,6 +333,8 @@ bool set_like_operator(BinOp op) { return op == BinOp::And || op == BinOp::Or ||
 // raise for an operand they cannot take; only the `+` and `*` operators try its reflected method
 Ref sequence_concat(Obj self, Obj other) { return builtin_concat(self, other, false); }
 Ref sequence_repeat(Obj self, Obj count) { return repeat(self, int_from_i64(index_value(count)).get(), false); }
+Ref sequence_inplace_concat(Obj self, Obj other) { return builtin_concat(self, other, true); }
+Ref sequence_inplace_repeat(Obj self, Obj count) { return repeat(self, int_from_i64(index_value(count)).get(), true); }
 
 // PySequence_Check: a class's __getitem__ gives it sq_item; a mapping's mp_subscript does not
 static bool sequence_check(Obj v) {
@@ -1011,6 +1013,10 @@ Ref repr_unchecked(Obj v) {
             return str_new("<bound method " + as_str(fname.get())->text + " of " + as_str(self.get())->text + ">");
         }
         case Kind::Instance: return call_special(v, "__repr__", {});
+        case Kind::Frame:                        // frame_repr: the file, the line the frame is at and its function, which a frame of
+        case Kind::Native:                       // the runtime's does not give (E-02), so object's repr would be another text
+            if (o->cls == no_instances_yet("frame")) throw NotImplemented("the repr of a frame (its file, line and function: E-02)");
+            break;
         default: break;
     }
     // the containers' repr is the prelude's (installed as their __repr__), as are the rest

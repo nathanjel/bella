@@ -166,6 +166,7 @@ C-7-80_cmath.py
 C-7-81_unicodedata_database.py
 C-7-82_suggestions.py
 C-7-83_traceback_from_its_entries.py
+C-7-84_traceback_of_the_running_stack.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py
@@ -178,6 +179,7 @@ C-8-10_import_system.py
 C-8-11_staged_compile.py
 C-8-12_the_report_of_an_exception_group.py
 C-8-13_the_path_finders_discovery.py
+C-8-14_a_modules_name_deleted.py
 C-9-03_refcount_disposal_order.py
 C-9-04_refcount_resurrection_keeps_weakref.py
 C-9-05_default_argument_lifetime.py

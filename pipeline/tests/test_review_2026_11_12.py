@@ -15,8 +15,7 @@ from pipeline.tests.test_review_2026_11_03 import same
 
 # RL-430. Every built-in a class may inherit from, every method it has: a subclass overrides the one method and asks the base for
 # it. The base's own, called directly, never runs the override (it reads the object's storage), and through the override it runs
-# once. bytes.__hash__ and frozenset.__hash__ went back through hash() to the override, without end. list.__iadd__ and
-# list.__imul__ are left out: read as attributes they stop by name (TODO).
+# once. bytes.__hash__ and frozenset.__hash__ went back through hash() to the override, without end.
 BASES_OWN = r"""
 def show(value):
     if type(value).__name__.endswith(("iterator", "_iterator", "reverseiterator")) or type(value).__name__ in ("generator", "reversed"):
@@ -41,7 +40,7 @@ BINARY = ["__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__", "
           "__lshift__", "__rlshift__", "__rshift__", "__rrshift__", "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__", "__contains__",
           "__getitem__", "__format__", "count", "index", "union", "intersection", "difference", "symmetric_difference", "issubset", "issuperset",
           "isdisjoint", "get", "startswith", "endswith", "find", "join", "__matmul__", "__iadd__", "__imul__", "__ior__", "__iand__", "__ixor__", "__isub__"]
-SAMPLES = [(list, [1, 2], {"__mul__": 2, "__rmul__": 2, "__getitem__": 0, "__contains__": 1, "count": 1, "index": 1, "__format__": ""}),
+SAMPLES = [(list, [1, 2], {"__mul__": 2, "__rmul__": 2, "__imul__": 2, "__getitem__": 0, "__contains__": 1, "count": 1, "index": 1, "__format__": ""}),
            (tuple, (1, 2), {"__mul__": 2, "__rmul__": 2, "__getitem__": 0, "__contains__": 1, "count": 1, "index": 1, "__format__": ""}),
            (str, "ab", {"__mul__": 2, "__rmul__": 2, "__getitem__": 0, "__contains__": "a", "count": "a", "index": "a", "__format__": "", "__mod__": (),
                         "startswith": "a", "endswith": "b", "find": "b", "join": ["x", "y"]}),
@@ -73,7 +72,7 @@ def probe(base, value, name, args):
 
 for base, value, special in SAMPLES:
     for name in UNARY + BINARY:
-        if base is list and name in ("__iadd__", "__imul__") or not hasattr(base, name):
+        if not hasattr(base, name):
             continue
         if name in UNARY:
             args = ()

@@ -2573,7 +2573,8 @@ _STDLIB = Path(__import__("os").path.dirname(__import__("os").__file__)).resolve
 # the names a replaced body may call, and the intrinsics they are: the call sites of the program's frames, and the code, the globals
 # and the clearing of the frame a traceback's entry stands for (runtime/src/call.cpp, i_call_sites and the three i_traceback_*;
 # eval1's _call_sites and _traceback_*)
-_REPLACED_INTRINSICS = {"__bella_call_sites__": "call_sites", "__bella_traceback_code__": "traceback_code",
+_REPLACED_INTRINSICS = {"__bella_call_sites__": "call_sites", "__bella_traceback_frame__": "traceback_frame",
+                        "__bella_frame_code__": "frame_code", "__bella_stack__": "stack",
                         "__bella_traceback_globals__": "traceback_globals", "__bella_traceback_clear__": "traceback_clear"}
 
 

@@ -271,3 +271,29 @@ print(type(c2).__name__, c2, c2.tag, c2[1] is lg[1])  # type: ignore[attr-define
 rx = lg.__reduce_ex__(2)
 print(rx[0].__name__, rx[1], rx[2], list(rx[3]), rx[4], lg.__reduce__()[0].__name__, lg.__reduce__()[1][1:])  # type: ignore[union-attr]
 print(copy.copy(Slots([4])), copy.deepcopy(L([[1]])), type(copy.deepcopy(L([[1]]))).__name__)
+
+
+# ---- the in-place operators as attributes: list's own, which a subclass's override asks for
+class Counted(list):  # type: ignore[type-arg]
+    calls = 0
+
+    def __iadd__(self, other: object) -> "Counted":  # type: ignore[misc]
+        Counted.calls += 1
+        return super().__iadd__(other)  # type: ignore[arg-type]
+
+    def __imul__(self, n: int) -> "Counted":  # type: ignore[misc,override]
+        Counted.calls += 1
+        return super().__imul__(n)
+
+
+counted = Counted([1])
+kept = counted
+counted += [2]
+counted *= 2
+print(counted, type(counted).__name__, counted is kept, Counted.calls, counted.__iadd__((3,)) is kept, counted.__imul__(1) is kept, Counted.calls)
+print(list.__iadd__(counted, "ab") is kept, list.__imul__(counted, 2) is kept, Counted.calls, counted, len(counted))
+plain = [1]
+print(list.__iadd__(plain, [2]) is plain, plain.__imul__(2) is plain, list(plain), list(plain.__iadd__(iter((3,)))), list(list.__imul__(plain, 0)), plain,
+      type(list.__iadd__).__name__, type(plain.__imul__).__name__, "__iadd__" in vars(list), "__imul__" in vars(list), "__iadd__" in vars(L),
+      failed(lambda: list.__iadd__(plain, 5)), failed(lambda: list.__imul__(plain, "a")), failed(lambda: list.__iadd__((1,), [])),  # type: ignore[arg-type,type-var]
+      failed(lambda: list.__imul__(plain)), failed(lambda: plain.__iadd__()), failed(lambda: plain.__imul__(2 ** 70)))  # type: ignore[call-arg]

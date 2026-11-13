@@ -1,6 +1,6 @@
-"""traceback formatted from a traceback's entries, the path finder's discovery and _suggestions, compiled, against CPython: the
-words of the errors the cases compare by class (C-7-82, C-7-83, C-8-13), discovery of a program's own modules beside it, and what
-stops by name."""
+"""traceback formatted from a traceback's entries and from the running stack, the path finder's discovery and _suggestions,
+compiled, against CPython: the words of the errors the cases compare by class (C-7-82, C-7-83, C-7-84, C-8-13), discovery of a
+program's own modules beside it, and what stops by name."""
 from __future__ import annotations
 
 import shutil
@@ -189,6 +189,43 @@ except ModuleNotFoundError as exc:
     print(traceback.format_exception_only(exc)[-1].rstrip().endswith(". Did you mean: 'helper'?"))
 """
 
+# the running stack (C-7-84): a staged text's frames, the words for what is no frame, a traceback where a frame is wanted (its entry
+# stands for its frame only inside traceback), and the frame the walk of a traceback gives, handed back to StackSummary
+RUNNING = r"""
+import io, re, traceback
+def named(line):
+    return re.sub(r'File ".*?"', 'File "<prog>"', line)
+def rows(stack):
+    return [(fs.filename.rpartition("/")[2], fs.lineno, fs.name) for fs in stack]
+def m(f):
+    try:
+        return repr(f())
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+ns = {"traceback": traceback}
+exec("stack = traceback.extract_stack()\ndef f():\n    return traceback.extract_stack()\nstack2 = f()\n", ns)
+print(rows(ns["stack"]), rows(ns["stack2"]), rows(eval("traceback.extract_stack()")), rows(eval("traceback.extract_stack(limit=1)")))
+def raises():
+    raise KeyError(1)
+try:
+    raises()
+except KeyError as exc:
+    tb = exc.__traceback__
+for bad in (5, "frame", tb, int, [(tb, 1)]):
+    print(m(lambda: traceback.extract_stack(bad)), m(lambda: traceback.format_stack(bad)), m(lambda: traceback.print_stack(bad)))
+print(m(lambda: traceback.StackSummary.extract(iter([(tb, 1)]))), m(lambda: traceback.StackSummary.extract([(5, 1)])), m(lambda: traceback.StackSummary.extract([5])),
+      m(lambda: traceback.StackSummary.extract([(tb.tb_next, 1)], capture_locals=True)), m(lambda: traceback.StackSummary.extract([])))
+walked = list(traceback._walk_tb_with_full_positions(tb))
+print(len(walked), [type(frame).__name__ for frame, _ in walked], [positions[0] for _, positions in walked])
+print(rows(traceback.StackSummary.extract([(frame, 7) for frame, _ in walked])), rows(traceback.StackSummary.extract([(walked[1][0], 3)] * 2, limit=1)))
+def inner(**kwds):
+    return traceback.extract_stack(**kwds)
+print(rows(inner(f=None)), rows(inner(f=None, limit=1)), rows(inner(limit=-1)), m(lambda: inner(g=1)), m(lambda: traceback.extract_stack(None, None, None)))
+out = io.StringIO()
+print(traceback.print_stack(file=out), [named(line) for line in out.getvalue().splitlines() if not line.startswith("    ")])
+print(m(lambda: traceback.print_stack(file=5)), [named(chunk.split("\n")[0]) for chunk in traceback.format_stack(None, 1)])
+"""
+
 
 def test_the_words() -> None:
     same(WORDS)
@@ -226,6 +263,30 @@ def test_a_programs_own_modules_beside_it() -> None:
     assert (got.returncode, got.stdout) == (0, "True\nTrue\n"), got
 
 
+def test_the_running_stack() -> None:
+    same(RUNNING)
+
+
+def test_a_frame_is_not_the_programs_to_read() -> None:
+    """E-02: the frames of the running stack are not given (walk_stack asks sys._getframe), and the frame the walk of a traceback
+    gives is one of the type `frame` with nothing of CPython's to read."""
+    if shutil.which("g++") is None:
+        return
+    cases = (("import traceback\nlist(traceback.walk_stack(None))", "sys._getframe (a frame object"),
+             ("import traceback\ntry:\n    1 / 0\nexcept ZeroDivisionError as exc:\n    frame, _ = next(traceback._walk_tb_with_full_positions(exc.__traceback__))\n"
+              "    frame.f_code", "frame.f_code"),
+             ("import traceback\ntry:\n    1 / 0\nexcept ZeroDivisionError as exc:\n    list(traceback.walk_tb(exc.__traceback__))", "tb_frame"),
+             ("import traceback\ntry:\n    1 / 0\nexcept ZeroDivisionError as exc:\n    frame, _ = next(traceback._walk_tb_with_full_positions(exc.__traceback__))\n"
+              "    repr(frame)", "the repr of a frame"),
+             ("import os, signal\nsignal.signal(signal.SIGUSR1, lambda signum, frame: print(repr(frame)))\nos.kill(os.getpid(), signal.SIGUSR1)", "the repr of a frame"))
+    for body, name in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_text(f"print('start')\n{body}\n", encoding="utf-8")
+            got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, cwd=tmp)
+        assert (got.returncode, got.stdout) == (70, "start\n") and "not implemented" in got.stderr and name in got.stderr, (body, got)
+
+
 def test_capture_locals_stops() -> None:
     if shutil.which("g++") is None:
         return
@@ -245,4 +306,6 @@ if __name__ == "__main__":
     test_clear_frames()
     test_a_texts_entries_keep_its_namespace()
     test_a_programs_own_modules_beside_it()
+    test_the_running_stack()
+    test_a_frame_is_not_the_programs_to_read()
     test_capture_locals_stops()
