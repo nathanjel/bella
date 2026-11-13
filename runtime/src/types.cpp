@@ -1713,20 +1713,27 @@ Ref builtin_name(Obj self) {
     if (is_kind(self, Kind::PyFunction)) return static_cast<PyFunction*>(self.object())->name;     // the prelude's
     return str_new(static_cast<Builtin*>(self.object())->name);
 }
-Ref builtin_self(Obj self) {
+// m_self: what a built-in is bound to, Unset where the C has NULL. A static method's is its type (type_add_method binds it),
+// which __reduce__ reads; __self__ reads PyCFunction_GET_SELF, which is NULL for METH_STATIC (str.maketrans.__self__ is None)
+Ref builtin_bound(Obj self, bool for_self = false) {
     if (is_kind(self, Kind::PyFunction)) {       // the prelude's: print.__self__, posix.stat.__self__
         Ref module = fn_module(self);
-        if (module.get() == None()) return none_ref();   // the error handlers of _codecs: made with no module and no self
+        if (module.get() == None()) return Ref{};   // the error handlers of _codecs: made with no module and no self
         if (const Str* s = as_str(module.get()))
             if (Module* home = native_module_named(s->text)) return Ref::share(Obj::of(home));
         return Ref::share(Obj::of(builtins_module()));
     }
     auto* b = static_cast<Builtin*>(self.object());
     if (b->home != nullptr) return Ref::share(Obj::of(b->home));
-    if (b->self.is_unset() && b->binding == Binding::Function && b->owner != nullptr &&
-        cpython_attribute_kind(b->owner, b->name) == "builtin_function_or_method")
-        return Ref::share(Obj::of(b->owner));                       // object.__new__.__self__ is object
-    return b->self.is_unset() ? none_ref() : Ref::share(b->self);
+    if (b->self.is_unset() && b->binding == Binding::Function && b->owner != nullptr) {
+        std::string_view kind = cpython_attribute_kind(b->owner, b->name);   // a type's own function: tp_new's, or a static method's
+        if (kind == "builtin_function_or_method" || (kind == "staticmethod" && !for_self)) return Ref::share(Obj::of(b->owner));
+    }
+    return b->self.is_unset() ? Ref{} : Ref::share(b->self);
+}
+Ref builtin_self(Obj self) {
+    Ref bound = builtin_bound(self, true);
+    return bound.get().is_unset() ? none_ref() : std::move(bound);
 }
 Ref builtin_objclass(Obj self) {                 // wrapper_objclass, descr_get's member
     auto* b = static_cast<Builtin*>(self.object());
@@ -1738,6 +1745,64 @@ Ref builtin_descr_qualname(Obj self) {           // descr_get_qualname, wrapper_
     Ref owner = builtin_objclass(self);
     Ref qualname = getattr(owner.get(), N("__qualname__"));
     return str_new(as_str(qualname.get())->text + "." + b->name);
+}
+// ---- __reduce__ of a range, a slice, the two named singletons and the callables: how each says it is made again ----
+// E-06: the builtins' getattr is the one the program began with (_PyEval_GetBuiltin)
+Ref getattr_of(Obj of, Obj name) {
+    Ref args = tuple_new({of, name});
+    return tuple_new({builtin("getattr").get(), args.get()});
+}
+Ref builtin_reduce(Obj self, Args a) {           // meth_reduce: a module's function by its name, a method through what it is bound to
+    noargs(a, "builtin_function_or_method.__reduce__");
+    Ref bound = builtin_bound(self), name = builtin_name(self);
+    if (bound.get().is_unset() || is_kind(bound.get(), Kind::Module)) return name;
+    return getattr_of(bound.get(), name.get());
+}
+Ref method_reduce(Obj self, Args a) {            // method___reduce___impl: the function's __name__, a private one mangled with the class's name
+    noargs(a, "method.__reduce__");
+    auto* m = static_cast<Method*>(self.object());
+    Ref name = getattr(m->func, N("__name__"));
+    const Str* ident = as_str(name.get());
+    auto ends_with = [](const std::string& s, std::string_view tail) { return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0; };
+    if (ident != nullptr && ident->length >= 3 && ident->text.starts_with("__") && !ends_with(ident->text, "__")) {   // _Py_IsPrivateName
+        Obj cls = is_kind(m->self, Kind::Class) ? m->self : Obj::of(type_of(m->self));
+        Ref class_name = getattr(cls, N("__name__"));    // PyType_GetName
+        const Str* priv = as_str(class_name.get());
+        // _Py_Mangle: not a name with a dot, not with a class of underscores only; the class's leading underscores go
+        std::size_t lead = priv == nullptr ? std::string::npos : priv->text.find_first_not_of('_');
+        if (lead != std::string::npos && ident->text.find('.') == std::string::npos) name = str_new("_" + priv->text.substr(lead) + ident->text);
+    }
+    return getattr_of(m->self, name.get());
+}
+Ref descr_reduce(Obj self, Args a) {             // descr_reduce: getattr of the type it is of (PyDescr_TYPE) and its name
+    noargs(a, type_of(self)->name + ".__reduce__");
+    Ref owner = getattr(self, N("__objclass__")), name = getattr(self, N("__name__"));
+    return getattr_of(owner.get(), name.get());
+}
+Ref wrapper_reduce(Obj self, Args a) {           // wrapper_reduce: getattr of what it is bound to and its name
+    noargs(a, "method-wrapper.__reduce__");
+    Ref bound = getattr(self, N("__self__")), name = getattr(self, N("__name__"));
+    return getattr_of(bound.get(), name.get());
+}
+Ref ellipsis_reduce(Obj, Args a) {
+    noargs(a, "ellipsis.__reduce__");
+    return str_new("Ellipsis");
+}
+Ref notimplemented_reduce(Obj, Args a) {
+    noargs(a, "NotImplementedType.__reduce__");
+    return str_new("NotImplemented");
+}
+Ref range_reduce(Obj self, Args a) {             // range_reduce: its type and its three fields
+    noargs(a, "range.__reduce__");
+    Ref start = range_field(self, 0), stop = range_field(self, 1), step = range_field(self, 2);
+    Ref fields = tuple_new({start.get(), stop.get(), step.get()});
+    return tuple_new({Obj::of(type_of(self)), fields.get()});
+}
+Ref slice_reduce(Obj self, Args a) {             // slice_reduce
+    noargs(a, "slice.__reduce__");
+    auto* s = static_cast<SliceObject*>(self.object());
+    Ref fields = tuple_new({s->start, s->stop, s->step});
+    return tuple_new({Obj::of(type_of(self)), fields.get()});
 }
 Ref builtin_module(Obj self);
 Ref builtin_doc(Obj self) {                      // from the table, for the ones written in Python as for those in C++; a method's waits
@@ -3327,6 +3392,14 @@ void init_types() {
     method(t.method, "__new__", method_new, Binding::Function);
     getset(t.method, "__self__", method_self);
     getset(t.method, "__doc__", method_doc);
+    method(t.method, "__reduce__", method_reduce);
+    method(t.builtin, "__reduce__", builtin_reduce);
+    for (ClassObject* c : {t.method_descriptor, t.wrapper_descriptor, t.member_descriptor}) method(c, "__reduce__", descr_reduce);   // descr_methods
+    method(t.method_wrapper, "__reduce__", wrapper_reduce);
+    method(t.ellipsis, "__reduce__", ellipsis_reduce);
+    method(t.notimplemented, "__reduce__", notimplemented_reduce);
+    method(t.range, "__reduce__", range_reduce);
+    method(t.slice, "__reduce__", slice_reduce);
     getset(t.builtin, "__name__", builtin_name);
     getset(t.builtin, "__self__", builtin_self);
     getset(t.builtin, "__qualname__", builtin_qualname);

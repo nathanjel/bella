@@ -221,6 +221,81 @@ print(repr(("summary", [].__len__.__doc__, (1).__add__.__doc__, "".__mod__.__doc
 """
 
 
+# how a range, a slice, the two named singletons and the callables say they are made again: each answer, through the object and the type
+REDUCE = r"""
+import collections, copy, functools, math, os, sys, types
+def m(f):
+    try:
+        return f()
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class K:
+    def meth(self):
+        return "meth"
+    def __private(self):
+        return "private"
+    def reach(self):
+        return self.__private
+    @classmethod
+    def cm(cls):
+        return "cm"
+    @staticmethod
+    def sm():
+        return "sm"
+    def __repr__(self):
+        return "K()"
+class _Lead(K):
+    def __mine(self):
+        return "mine"
+    def own(self):
+        return self.__mine
+class ___:
+    def __u(self):
+        return "u"
+    def own(self):
+        return self.__u
+    def __repr__(self):
+        return "___()"
+class Slotted:
+    __slots__ = ("x", "__y")
+class Named:
+    __name__ = 5
+    def __call__(self, *a):
+        return a
+class StrName(str):
+    pass
+class NamedSub:
+    __name__ = StrName("__sub")
+    def __call__(self, *a):
+        return a
+def f():
+    pass
+k, items, queue = K(), [1], collections.deque([2])
+VALUES = [range(1, 10, 2), range(2**70), slice(1, None, k), ..., NotImplemented, len, math.sqrt, print, sys.exit, os.getcwd, os.stat, functools.reduce, items.append, "ab".upper,
+          (5).bit_length, dict.fromkeys, str.maketrans, bytes.maketrans, int.from_bytes, queue.append, None.__format__, k.__dir__, object.__new__, list.__new__, k.meth, k.reach(),
+          K.cm, _Lead().own(), _Lead().reach(), ___().own(), types.MethodType(len, items), types.MethodType(Named(), k), types.MethodType(NamedSub(), k),
+          types.MethodType(functools.partial(len), k), types.MethodType(K, 1), (1).__add__, k.__init__, items.__len__, None.__eq__, list.append,
+          int.__add__, slice.start, Slotted.x, vars(Slotted)["_Slotted__y"], collections.deque.append, object.__init__, type.__call__, functools.partial.func]
+for v in VALUES:
+    t = type(v)
+    print(t.__name__, "__reduce__" in vars(t), m(lambda: v.__reduce__()), m(lambda: v.__reduce_ex__(4)), m(lambda: v.__reduce_ex__(0)), m(lambda: t.__reduce__(v)))
+    for bad in (lambda: v.__reduce__(1), lambda: v.__reduce__(x=1), lambda: t.__reduce__(), lambda: t.__reduce__(v, 1), lambda: t.__reduce_ex__(v), lambda: v.__reduce_ex__("a")):
+        print("   ", m(bad))
+for t in (range, slice, type(...), type(NotImplemented), type(len), type(k.meth), type((1).__add__), type(list.append), type(int.__add__), type(slice.start)):
+    d = vars(t)["__reduce__"]
+    print(t.__name__, type(d).__name__, repr(d), d.__name__, d.__qualname__, d.__objclass__ is t, d.__doc__, m(lambda: d(5)), m(lambda: d(k)), m(lambda: d(f)), m(lambda: d(None)))
+for v in (int.real, vars(dict)["fromkeys"], f, None, sys, type, K, k, property(), staticmethod(f), super(K, k), iter(()).__reduce__):
+    print(type(v).__name__, "__reduce__" in vars(type(v)), m(lambda: v.__reduce__())[:60] if isinstance(m(lambda: v.__reduce__()), str) else "made")
+print(str.maketrans.__self__, bytes.maketrans.__self__, dict.fromkeys.__self__, object.__new__.__self__, len.__self__ is sys.modules["builtins"], math.sqrt.__self__ is math, items.append.__self__ is items,
+      None.__format__.__self__, K.sm.__call__.__self__ is K.sm, f.__call__.__reduce__()[1] == (f, "__call__"), K.sm.__call__.__reduce__()[1][0] is K.sm, f.__call__.__reduce__()[0] is getattr)
+for v in (k.meth, k.reach(), K.cm, _Lead().own(), ___().own(), (1).__add__, items.__len__, list.append, int.__add__, slice.start, Slotted.x, items.append, len, range(3), slice(1), ..., NotImplemented):
+    c, d = m(lambda: copy.copy(v)), m(lambda: copy.deepcopy(v))
+    print(type(v).__name__, c is v, c == v, d is v, d == v if type(v).__name__ != "method" else d(), m(lambda: getattr(c, "__self__", None) is getattr(v, "__self__", None)))
+for bad in (types.MethodType(len, items), types.MethodType(functools.partial(len), k), types.MethodType(Named(), k)):
+    print(m(lambda: copy.copy(bad)), m(lambda: copy.deepcopy(bad)) if not isinstance(m(lambda: copy.deepcopy(bad)), types.MethodType) else "a method")
+"""
+
+
 def test_the_names_the_runtime_lacks_are_the_listed_ones() -> None:
     """A name that goes missing fails here, and one that arrives is taken off the list (python tools/missing_names.py --update)."""
     if shutil.which("g++") is None:
@@ -247,6 +322,10 @@ def test_the_generic_attribute_slots_a_c_type_names_itself() -> None:
 
 def test_a_cell_compares_by_what_it_holds() -> None:
     same(CELLS)
+
+
+def test_how_the_callables_are_made_again() -> None:
+    same(REDUCE)
 
 
 def test_the_docstrings_of_slot_wrappers_and_methods() -> None:

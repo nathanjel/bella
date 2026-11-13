@@ -31,7 +31,6 @@ FrameLocalsProxy:setdefault
 FrameLocalsProxy:update
 FrameLocalsProxy:values
 ItimerError:__weakref__
-NotImplementedType:__reduce__
 PyCapsule:__doc__
 UnicodeTranslateError:encoding
 UnsupportedOperation:__weakref__
@@ -64,7 +63,6 @@ async_generator:asend
 async_generator:athrow
 bool:__invert__
 boolop:__weakref__
-builtin_function_or_method:__reduce__
 builtin_function_or_method:__text_signature__
 builtins:__build_class__
 builtins:aiter
@@ -113,7 +111,6 @@ coroutine:cr_suspended
 coroutine:send
 coroutine:throw
 dict:__sizeof__
-ellipsis:__reduce__
 error:__weakref__
 excepthandler:__weakref__
 expr:__weakref__
@@ -157,7 +154,6 @@ mappingproxy:__or__
 mappingproxy:__reversed__
 mappingproxy:__ror__
 match_case:__weakref__
-member_descriptor:__reduce__
 memoryview:__buffer__
 memoryview:__delitem__
 memoryview:__enter__
@@ -197,12 +193,9 @@ memoryview:suboffsets
 memoryview:tobytes
 memoryview:tolist
 memoryview:toreadonly
-method-wrapper:__reduce__
 method-wrapper:__text_signature__
 method:__get__
 method:__getattribute__
-method:__reduce__
-method_descriptor:__reduce__
 method_descriptor:__text_signature__
 mod:__weakref__
 module:__getattribute__
@@ -217,9 +210,7 @@ operator:__weakref__
 pattern:__weakref__
 range:__bool__
 range:__new__
-range:__reduce__
 set:__sizeof__
-slice:__reduce__
 stmt:__weakref__
 str:__sizeof__
 super:__getattribute__
@@ -312,5 +303,4 @@ weakref.ReferenceType:__gt__
 weakref.ReferenceType:__le__
 weakref.ReferenceType:__lt__
 withitem:__weakref__
-wrapper_descriptor:__reduce__
 wrapper_descriptor:__text_signature__
