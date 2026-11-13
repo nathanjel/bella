@@ -520,8 +520,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          exit; `collect`, `get_count`, `get_stats`, `is_tracked` and `is_finalized` stop by name until the collector is in
          the header, and the object-graph functions stay stops (E-05).
        * 3c, the collector in the model done 2026-11-12 (`refmodel/collector.py`, CPython's gc.c; DECISIONS): the
-         header next, once the author has chosen how it finds its objects (CPython's lists, recommended, or trial
-         deletion over candidate roots), what `gc.collect()` returns, and when a lean build collects; then `make
+         author chose how the header finds its objects on 2026-11-14 (DECISIONS): trial deletion over candidate
+         roots, so the model's collector is rewritten that way first (it is gc.c's lists today), then the header;
+         still the author's: what gc's numbers say without generations, and when a collection runs; then `make
          object-test` with `World(cycles=True)`.
        * 3c, what is left: the cycle collector in the header, `gc`: C-3-12, C-9-01, C-9-02, C-9-07; it
          replaces the exit walk, which today finalises a list's items first to last and in breadth-first
