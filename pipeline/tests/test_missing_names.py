@@ -161,6 +161,38 @@ print(node.left, type(vars(ast.AST)["__setattr__"]).__name__, type(vars(ast.AST)
 print(m(lambda: zlib.nope), m(lambda: zlib.__getattr__("nope")), hasattr(zlib, "nope"))
 """
 
+# cell_richcompare (by what the cells hold, an empty one before anything else), no hash, and cell_repr
+CELLS = r"""
+import re, types
+def m(f):
+    try:
+        return re.sub(r"0x[0-9a-f]+", "0x", repr(f()))
+    except BaseException as e:
+        return type(e).__name__ + ": " + re.sub(r"0x[0-9a-f]+", "0x", str(e))
+def cell(value):
+    return (lambda: value).__closure__[0]
+one, uno, two, text, empty, nothing = cell(1), cell(1), cell(2), cell("a"), types.CellType(), types.CellType()
+CELLS = {"one": one, "uno": uno, "two": two, "text": text, "empty": empty, "nothing": nothing}
+t = type(one)
+print(sorted(n for n in vars(t) if n in ("__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__", "__hash__", "__repr__", "__new__", "cell_contents")), vars(t)["__hash__"],
+      type(vars(t)["__eq__"]).__name__, type(one.__eq__).__name__, type(vars(t)["__repr__"]).__name__)
+for a in CELLS:
+    for b in CELLS:
+        x, y = CELLS[a], CELLS[b]
+        print(a, b, m(lambda: x == y), m(lambda: x != y), m(lambda: x < y), m(lambda: x <= y), m(lambda: x > y), m(lambda: x >= y), m(lambda: x.__eq__(y)), m(lambda: x.__lt__(y)),
+              m(lambda: t.__ge__(x, y)))
+print(m(lambda: one == 1), m(lambda: one != 1), m(lambda: one < 1), m(lambda: one.__eq__(1)), m(lambda: one.__lt__(None)), m(lambda: 1 == one), m(lambda: one == None),
+      m(lambda: t.__eq__(1, one)), m(lambda: one.__eq__()), m(lambda: one.__eq__(one, one)), m(lambda: one.__eq__(other=one)))
+print(m(lambda: hash(one)), m(lambda: {one}), m(lambda: {one: 1}), m(lambda: one.__hash__), m(lambda: one in [uno]), m(lambda: [one, two, uno].count(one)), m(lambda: sorted([two, one, empty], key=None) == [empty, one, two]),
+      m(lambda: max(one, two) is two), m(lambda: min([two, empty, one]) is empty))
+print(m(lambda: repr(one)), m(lambda: repr(text)), m(lambda: repr(empty)), m(lambda: one.__repr__()), m(lambda: str(empty)), m(lambda: t.__repr__(1)), m(lambda: f"{empty}"),
+      m(lambda: repr(cell(None))), m(lambda: repr(cell([]))), m(lambda: repr(cell(one))))
+class Named:
+    pass
+Named.__name__ = "N" * 100
+print(m(lambda: repr(cell(Named()))), m(lambda: cell(Named()) == cell(Named())), m(lambda: cell([1]) == cell([1])), m(lambda: cell([1]) < cell([2])), m(lambda: cell(1.0) == one), m(lambda: cell(float("nan")) == cell(float("nan"))))
+"""
+
 # every slot wrapper and every method of these types that the runtime has: its kind and its docstring
 DOCS = r"""
 import builtins, collections, functools, io, itertools, re, types, weakref
@@ -213,6 +245,10 @@ def test_the_generic_attribute_slots_a_c_type_names_itself() -> None:
     same(GENERIC_ATTRIBUTE_SLOTS)
 
 
+def test_a_cell_compares_by_what_it_holds() -> None:
+    same(CELLS)
+
+
 def test_the_docstrings_of_slot_wrappers_and_methods() -> None:
     """Every row the compiled program prints is CPython's row; the rows it does not print are names the list of missing names has
     (the table's scope is the type's tp_name, which for these types is the qualified name without `builtins.`)."""
@@ -242,4 +278,5 @@ if __name__ == "__main__":
     test_the_containers_repr_is_a_slot_wrapper()
     test_four_names_of_four_modules()
     test_the_generic_attribute_slots_a_c_type_names_itself()
+    test_a_cell_compares_by_what_it_holds()
     test_the_docstrings_of_slot_wrappers_and_methods()

@@ -83,14 +83,6 @@ bytes_iterator:__doc__
 bytes_iterator:__length_hint__
 bytes_iterator:__reduce__
 bytes_iterator:__setstate__
-cell:__eq__
-cell:__ge__
-cell:__gt__
-cell:__hash__
-cell:__le__
-cell:__lt__
-cell:__ne__
-cell:__repr__
 classmethod_descriptor:__text_signature__
 cmpop:__weakref__
 code:__new__

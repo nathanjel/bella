@@ -433,6 +433,9 @@ void init_slots() {
         slot(c, "__repr__", own_repr);
     for (ClassObject* c : {t.function, t.method, t.builtin, t.method_wrapper, t.wrapper_descriptor, t.method_descriptor, t.classmethod_descriptor})
         slot(c, "__call__", own_call);
+    comparisons(t.cell);                         // cell_richcompare; with it and no tp_hash, a cell is unhashable (__hash__ is None)
+    slot(t.cell, "__repr__", own_repr);
+    t.cell->attrs.set(intern("__hash__"), None());
     for (ClassObject* c : {t.method, t.builtin, t.method_wrapper}) {   // method_richcompare and method_hash, meth_*, wrapper_*
         comparisons(c);
         slot(c, "__hash__", own_hash);

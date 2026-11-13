@@ -653,6 +653,11 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
         bool eq = a == b || (s0 != nullptr && s1 != nullptr && s0->group == s1->group);
         return Ref::steal(boolean(eq == (op == CmpOp::Eq)));
     }
+    if (is_kind(a, Kind::Cell) && is_kind(b, Kind::Cell)) {   // cell_richcompare: by what they hold, an empty cell before anything else
+        Obj x = static_cast<Cell*>(a.object())->value, y = static_cast<Cell*>(b.object())->value;
+        if (!x.is_unset() && !y.is_unset()) return compare(op, x, y);   // PyObject_RichCompare, the whole protocol and its TypeError
+        return Ref::steal(boolean(ordered(op, y.is_unset() ? 1 : 0, x.is_unset() ? 1 : 0)));   // Py_RETURN_RICHCOMPARE(b == NULL, a == NULL, op)
+    }
     if ((op == CmpOp::Eq || op == CmpOp::Ne) && a == b && !is_heap_obj(a)) return Ref::steal(boolean(op == CmpOp::Eq));
     return Ref::steal(Obj::of(NOTIMPLEMENTED));
 }
@@ -1013,6 +1018,11 @@ Ref repr_unchecked(Obj v) {
             return str_new("<bound method " + as_str(fname.get())->text + " of " + as_str(self.get())->text + ">");
         }
         case Kind::Instance: return call_special(v, "__repr__", {});
+        case Kind::Cell: {                       // cell_repr
+            Obj held = static_cast<Cell*>(o)->value;
+            if (held.is_unset()) return str_new("<cell at " + address(v) + ": empty>");
+            return str_new("<cell at " + address(v) + ": " + type_of(held)->name.substr(0, 80) + " object at " + address(held) + ">");
+        }
         case Kind::Frame:                        // frame_repr: the file, the line the frame is at and its function, which a frame of
         case Kind::Native:                       // the runtime's does not give (E-02), so object's repr would be another text
             if (o->cls == no_instances_yet("frame")) throw NotImplemented("the repr of a frame (its file, line and function: E-02)");

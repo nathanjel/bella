@@ -1,0 +1,12 @@
+{
+ "case": "C-3-70_a_closures_cell.py",
+ "clause": "C-3-70",
+ "spec": "section 3 (functions: __closure__ and its cells)",
+ "status": "P1",
+ "source": "Objects/cellobject.c (cell_richcompare, cell_repr; no tp_hash)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "a cell's own: True False True True False True True True True NotImplemented True True TypeError TypeError TypeError None True True True True wrapper_descriptor method-wrapper\n",
+ "stderr": "",
+ "exit_code": 0
+}
