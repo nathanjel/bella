@@ -522,8 +522,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
        * 3c, the collector in the model done 2026-11-12 (`refmodel/collector.py`, CPython's gc.c; DECISIONS): the
          author chose how the header finds its objects on 2026-11-14 (DECISIONS): trial deletion over candidate
          roots, so the model's collector is rewritten that way first (it is gc.c's lists today), then the header;
-         still the author's: what gc's numbers say without generations, and when a collection runs; then `make
-         object-test` with `World(cycles=True)`.
+         decided the same day: gc's numbers are the runtime's own and every collection is a full one (D-04 gets
+         the observable and a lint rule), the candidate buffer's size triggers a collection (growing with the heap:
+         taken, for the author to overrule), and a lean build collects only when asked, at the runtime's looks and
+         at exit (D-24 gets it); then `make object-test` with `World(cycles=True)`.
        * 3c, what is left: the cycle collector in the header, `gc`: C-3-12, C-9-01, C-9-02, C-9-07; it
          replaces the exit walk, which today finalises a list's items first to last and in breadth-first
          order, where CPython's teardown releases what it can by reference count. `_abc` takes real weak references then, which only the collector can tell
