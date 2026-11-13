@@ -296,6 +296,124 @@ for bad in (types.MethodType(len, items), types.MethodType(functools.partial(len
 """
 
 
+# a mappingproxy's `|` on either side, `|=`, reversed() and comparisons, with CPython's words
+PROXY = r"""
+import collections, types
+def m(f):
+    try:
+        return f()
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+class K:
+    marker = 1
+class Ror:
+    def __ror__(self, other):
+        return ("ror", type(other).__name__)
+class Declines:
+    def __or__(self, other):
+        print("  asked with", type(other).__name__)
+        return NotImplemented
+    __ror__ = __or__
+class Table:
+    def __getitem__(self, key):
+        return key
+    def __len__(self):
+        return 1
+    def __iter__(self):
+        return iter([1])
+    def __repr__(self):
+        return "Table()"
+    def __hash__(self):
+        return 11
+class Peek:
+    def __eq__(self, other):
+        print("  compared with", type(other).__name__)
+        return NotImplemented
+    __hash__ = None
+def ior(a, b):
+    a |= b
+    return a
+backing = {1: 2}
+P = types.MappingProxyType
+mp, od, fd, tb, cls = P(backing), P(collections.OrderedDict(a=1)), P(frozendict(a=1)), P(Table()), vars(K)
+others = [{3: 4}, mp, od, fd, 5, None, "a", [(1, 2)], {1}, frozenset({1}), {1: 2}.keys(), {1: 2}.items(), {1: 2}.values(), int, 1.5, Ror(), Declines(), object(), collections.OrderedDict(b=2),
+          frozendict(b=2), collections.ChainMap({9: 9}), collections.Counter("ab"), types.SimpleNamespace(), list[int], int | str]
+def shown(v):
+    if isinstance(v, (dict, frozendict)) and "marker" in v:
+        return (type(v).__name__, sorted((repr(k) for k in v if not str(k).startswith("__") or k == "__doc__")))
+    if isinstance(v, (set, frozenset)):
+        return (type(v).__name__, sorted(map(repr, v)))
+    return v
+for proxy in (mp, od, fd, tb, cls):
+    print(type(proxy).__name__, type(m(lambda: proxy.copy())).__name__)
+    for other in others:
+        if type(other).__name__ in ("object", "Ror", "Declines"):
+            print(" ", type(other).__name__, shown(m(lambda: proxy | other)), "/", shown(m(lambda: other | proxy)), "/", shown(m(lambda: ior(proxy, other))), "/", shown(m(lambda: proxy.__or__(other))), "/", shown(m(lambda: proxy.__ror__(other))))
+        else:
+            print(" ", shown(m(lambda: proxy | other)), "/", shown(m(lambda: other | proxy)), "/", shown(m(lambda: ior(proxy, other))), "/", shown(m(lambda: ior(type(other)(other) if isinstance(other, (dict, set)) else other, proxy))),
+                  "/", shown(m(lambda: proxy.__or__(other))), "/", shown(m(lambda: proxy.__ror__(other))), "/", m(lambda: proxy.__ior__(other)))
+    for name in ("__or__", "__ror__", "__ior__", "__lt__", "__le__", "__gt__", "__ge__", "__eq__", "__ne__"):
+        d = vars(P)[name]
+        print(" ", name, type(d).__name__, d.__doc__, m(lambda: getattr(proxy, name)()), m(lambda: getattr(proxy, name)(1, 2)), m(lambda: d({}, {})), m(lambda: d()), m(lambda: getattr(proxy, name)(x=1)),
+              shown(m(lambda: getattr(proxy, name)(proxy))) if name not in ("__ior__",) else "-", m(lambda: getattr(proxy, name)(5)) if name not in ("__or__", "__ror__", "__ior__") else "-")
+    d = vars(P)["__reversed__"]
+    print("  __reversed__", type(d).__name__, d.__doc__, m(lambda: [k for k in reversed(proxy) if not str(k).startswith("__")]), m(lambda: type(proxy.__reversed__()).__name__), m(lambda: proxy.__reversed__(1)),
+          m(lambda: d({})), m(lambda: d()), m(lambda: proxy.__reversed__(x=1)))
+    for sym, f in (("<", lambda a, b: a < b), ("<=", lambda a, b: a <= b), (">", lambda a, b: a > b), (">=", lambda a, b: a >= b), ("==", lambda a, b: a == b), ("!=", lambda a, b: a != b)):
+        print(" ", sym, m(lambda: f(proxy, proxy)), m(lambda: f(proxy, {})), m(lambda: f({}, proxy)), m(lambda: f(proxy, 5)), m(lambda: f(5, proxy)), m(lambda: f(proxy, Peek())), m(lambda: f(Peek(), proxy)))
+    print("  hash", m(lambda: hash(proxy)) if proxy is not fd else hash(proxy) == hash(frozendict(a=1)), m(lambda: proxy.__hash__()) if proxy is not fd else proxy.__hash__() == hash(frozendict(a=1)))
+print(backing, K.marker, sorted(k for k in vars(K) if not k.startswith("__")), UnicodeTranslateError("abc", 0, 1, "why").encoding)
+e = UnicodeTranslateError("abc", 0, 1, "why")
+e.encoding = "set"
+print(e.encoding, str(e), vars(UnicodeTranslateError)["encoding"].__doc__, m(lambda: UnicodeTranslateError.encoding.__get__(5)))
+del e.encoding
+print(e.encoding)
+"""
+
+
+# the five members of a Unicode error (PyMember_SetOne over UnicodeError_members) and what str() makes of them: three objects that can be
+# anything or deleted, two numbers that are ints and stay, the reason asked for its str() before the encoding, the object checked last
+UNICODE_ERRORS = r"""
+def m(f):
+    try:
+        return f()
+    except BaseException as e:
+        return type(e).__name__ + ": " + str(e)
+def gone(e, name):
+    delattr(e, name)
+    return getattr(e, name)
+for make in (lambda: UnicodeEncodeError("ascii", "abc", 0, 1, "why"), lambda: UnicodeDecodeError("ascii", b"abc", 0, 1, "why"), lambda: UnicodeTranslateError("abc", 0, 1, "why")):
+    for name in ("encoding", "object", "start", "end", "reason"):
+        e = make()
+        print(type(e).__name__, name, m(lambda: gone(e, name)), m(lambda: gone(e, name)), m(lambda: str(e)), m(lambda: setattr(e, name, 5)), m(lambda: getattr(e, name)), m(lambda: str(e)))
+class Loud:
+    def __init__(self, name):
+        self.name = name
+    def __str__(self):
+        print("  str of", self.name)
+        return self.name
+for make in (lambda: UnicodeEncodeError("ascii", "abc", 0, 1, "why"), lambda: UnicodeDecodeError("ascii", b"abc", 0, 1, "why"), lambda: UnicodeTranslateError("abc", 0, 1, "why")):
+    e = make()
+    e.reason, e.encoding = Loud("reason"), Loud("encoding")
+    print(str(e))
+    for bad in ("x", 1.5, None, 2**70, True, -3):
+        print(m(lambda: setattr(e, "start", bad)), m(lambda: e.start), m(lambda: setattr(e, "end", bad)), m(lambda: e.end), type(e.start).__name__, m(lambda: str(e)))
+    e = make()
+    for obj in ("zz", b"zz", bytearray(b"zz"), 5, None, "", b""):
+        e.object = obj
+        print(repr(obj), m(lambda: str(e)))
+    e = make()
+    e.start, e.end = 0, 3
+    print(str(e), type(vars(type(e))["start"]).__name__, vars(type(e))["start"].__doc__, vars(type(e))["encoding"].__doc__, e.args)
+    class Drops:
+        def __str__(self):
+            del e.object
+            return "dropped"
+    e.reason = Drops()
+    print(m(lambda: str(e)), e.object)
+"""
+
+
 def test_the_names_the_runtime_lacks_are_the_listed_ones() -> None:
     """A name that goes missing fails here, and one that arrives is taken off the list (python tools/missing_names.py --update)."""
     if shutil.which("g++") is None:
@@ -326,6 +444,28 @@ def test_a_cell_compares_by_what_it_holds() -> None:
 
 def test_how_the_callables_are_made_again() -> None:
     same(REDUCE)
+
+
+def test_a_mappingproxys_operators() -> None:
+    same(PROXY)
+
+
+def test_a_unicode_errors_members() -> None:
+    same(UNICODE_ERRORS)
+
+
+def test_a_proxys_hash_is_its_mappings_whatever_the_seed() -> None:
+    """A hash is 64 bits, and a small int holds 63: the proxy's own hash was cut for most seeds."""
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_text("import types\nfor m in (frozendict(a=1), frozendict(), frozendict({'k': (1, 'x'), 2.5: None})):\n"
+                        "    print(hash(types.MappingProxyType(m)) == hash(m), types.MappingProxyType(m).__hash__() == m.__hash__())\n", encoding="utf-8")
+        exe = build(prog, "prog.py")
+        for seed in range(12):
+            got = subprocess.run([str(exe)], capture_output=True, text=True, check=False, env=dict(os.environ, PYTHONHASHSEED=str(seed)), cwd=tmp)
+            assert got.stdout == "True True\n" * 3, (seed, got.stdout, got.stderr)
 
 
 def test_the_docstrings_of_slot_wrappers_and_methods() -> None:

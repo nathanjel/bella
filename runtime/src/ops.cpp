@@ -120,6 +120,9 @@ Ref native_binary(BinOp op, Obj a, Obj b) {
     if (is_int(a) && is_int(b)) return big_binary(op, a, b);
     if (op == BinOp::Mod && as_str(a) != nullptr) return str_mod(a, b);   // unicode_mod, whatever b is
     if (op == BinOp::Mod && is_bytes_like(a)) return bytes_format(a, b, is_kind(a, Kind::ByteArray));   // bytes_mod, bytearray_mod
+    // mappingproxy_or, on either side: each proxy stands for its mapping and the two are or-ed as any two objects are, so it
+    // answers or raises and never declines (the other operand's own slot has declined a proxy before this one is asked)
+    if (op == BinOp::Or && (is_kind(a, Kind::Proxy) || is_kind(b, Kind::Proxy))) return binary(BinOp::Or, proxy_stands_for(a), proxy_stands_for(b));
     if (op == BinOp::Or && (is_kind(a, Kind::Class) || is_kind(b, Kind::Class))) return type_or(a, b);   // type_or, on either side
     if (is_complex(a) || is_complex(b)) return complex_binary(op, a, b);
     if (is_float(a) || is_float(b)) return float_binary(op, a, b);
@@ -427,6 +430,8 @@ Ref inplace(BinOp op, Obj a, Obj b) {
         dict_update_arg(a, b);
         return Ref::share(a);
     }
+    if (op == BinOp::Or && is_kind(a, Kind::Proxy))    // mappingproxy_ior
+        raise_new("TypeError", "'|=' is not supported by mappingproxy; use '|' instead");
     Ref r = binary_op1(op, a, b);
     if (!not_implemented(r)) return r;
     r = sequence_op(op, a, b, true);

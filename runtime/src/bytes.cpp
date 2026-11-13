@@ -1473,9 +1473,20 @@ Ref unicode_get(Obj self) {
     static constexpr std::array<const char*, 5> names{"encoding", "object", "start", "end", "reason"};
     return unicode_field(self, names[static_cast<std::size_t>(which)]);
 }
+// PyMember_SetOne over UnicodeError_members: encoding, object and reason are objects of any type, and deleting one leaves it
+// NULL (it reads None); start and end are Py_ssize_t, so an int that fits, kept as that number, and never deleted
 template <int which>
 void unicode_set(Obj self, Obj value) {
     static constexpr std::array<const char*, 5> names{"encoding", "object", "start", "end", "reason"};
+    if (which == 2 || which == 3) {
+        if (value.is_unset()) raise_new("TypeError", "can't delete numeric/char attribute");
+        if (!is_int(value)) raise_new("TypeError", "an integer is required");   // PyLong_AsSsize_t
+        std::int64_t x;
+        if (!int_fits_i64(value, x)) raise_new("OverflowError", "Python int too large to convert to C ssize_t");
+        Ref exact = int_from_i64(x);
+        set_exception_field(self, names[static_cast<std::size_t>(which)], exact.get());
+        return;
+    }
     set_exception_field(self, names[static_cast<std::size_t>(which)], value);
 }
 void set_unicode_args(Obj self, Args a) {
@@ -1531,47 +1542,57 @@ Ref translate_error_init(Obj self, Args a) {
     set_exception_field(self, "reason", a.pos(3));
     return none_ref();
 }
-std::string text_of(Obj v) {
+std::string text_of(Obj v) {                     // PyObject_Str, which says <NULL> of a member that was deleted
+    if (v.is_unset()) return "<NULL>";
     Ref s = str_of(v);
     return as_str(s.get())->text;
+}
+// The object as the three __str__ read it, after str() of the reason and the encoding (which may have changed it):
+// check_unicode_error_attribute
+Obj error_object(Obj self, bool as_bytes) {
+    Obj object = exception_field(self, "object");
+    if (object.is_unset()) raise_new("TypeError", "UnicodeError 'object' attribute is not set");
+    if (as_bytes ? !is_kind(object, Kind::Bytes) : as_str(object) == nullptr)
+        raise_new("TypeError", std::string("UnicodeError 'object' attribute must be a ") + (as_bytes ? "bytes" : "string"));
+    return object;
 }
 std::string character_shown(const Str* object, std::int64_t start) {
     char32_t c = object->at(static_cast<std::size_t>(start));
     return c <= 0xFF ? "\\x" + hex_text(c, 2) : c <= 0xFFFF ? "\\u" + hex_text(c, 4) : "\\U" + hex_text(c, 8);
 }
-Ref encode_error_str(Obj self, Args) {            // UnicodeEncodeError_str
-    Obj object = exception_field(self, "object");
-    if (object.is_unset()) return str_new("");
-    std::string encoding = text_of(exception_field(self, "encoding")), reason = text_of(exception_field(self, "reason"));
+Ref encode_error_str(Obj self, Args) {            // UnicodeEncodeError_str: the reason's str() first, then the encoding's
+    if (exception_field(self, "object").is_unset()) return str_new("");
+    std::string reason = text_of(exception_field(self, "reason"));
+    std::string encoding = text_of(exception_field(self, "encoding"));
     std::int64_t start = 0, end = 0;
+    const Str* text = as_str(error_object(self, false));
     as_int(exception_field(self, "start"), start);
     as_int(exception_field(self, "end"), end);
-    const Str* text = as_str(object);
-    if (text != nullptr && start >= 0 && start < static_cast<std::int64_t>(text->length) && end == start + 1)
+    if (start >= 0 && start < static_cast<std::int64_t>(text->length) && end == start + 1)
         return str_new("'" + encoding + "' codec can't encode character '" + character_shown(text, start) + "' in position " + std::to_string(start) + ": " + reason);
     return str_new("'" + encoding + "' codec can't encode characters in position " + std::to_string(start) + "-" + std::to_string(end - 1) + ": " + reason);
 }
 Ref decode_error_str(Obj self, Args) {            // UnicodeDecodeError_str
-    Obj object = exception_field(self, "object");
-    if (object.is_unset()) return str_new("");
-    std::string encoding = text_of(exception_field(self, "encoding")), reason = text_of(exception_field(self, "reason"));
+    if (exception_field(self, "object").is_unset()) return str_new("");
+    std::string reason = text_of(exception_field(self, "reason"));
+    std::string encoding = text_of(exception_field(self, "encoding"));
     std::int64_t start = 0, end = 0;
+    Obj object = error_object(self, true);
     as_int(exception_field(self, "start"), start);
     as_int(exception_field(self, "end"), end);
-    if (is_bytes_like(object) && start >= 0 && start < static_cast<std::int64_t>(bytes_data(object).size()) && end == start + 1)
+    if (start >= 0 && start < static_cast<std::int64_t>(bytes_data(object).size()) && end == start + 1)
         return str_new("'" + encoding + "' codec can't decode byte 0x" + hex_text(u(bytes_data(object)[static_cast<std::size_t>(start)]), 2) +
                        " in position " + std::to_string(start) + ": " + reason);
     return str_new("'" + encoding + "' codec can't decode bytes in position " + std::to_string(start) + "-" + std::to_string(end - 1) + ": " + reason);
 }
 Ref translate_error_str(Obj self, Args) {         // UnicodeTranslateError_str
-    Obj object = exception_field(self, "object");
-    if (object.is_unset()) return str_new("");
+    if (exception_field(self, "object").is_unset()) return str_new("");
     std::string reason = text_of(exception_field(self, "reason"));
     std::int64_t start = 0, end = 0;
+    const Str* text = as_str(error_object(self, false));
     as_int(exception_field(self, "start"), start);
     as_int(exception_field(self, "end"), end);
-    const Str* text = as_str(object);
-    if (text != nullptr && start >= 0 && start < static_cast<std::int64_t>(text->length) && end == start + 1)
+    if (start >= 0 && start < static_cast<std::int64_t>(text->length) && end == start + 1)
         return str_new("can't translate character '" + character_shown(text, start) + "' in position " + std::to_string(start) + ": " + reason);
     return str_new("can't translate characters in position " + std::to_string(start) + "-" + std::to_string(end - 1) + ": " + reason);
 }
@@ -1583,7 +1604,9 @@ void method(ClassObject* c, const char* name, NativeFn fn, Binding b = Binding::
 }
 template <int which>
 void unicode_getset(ClassObject* c, const char* name) {
-    c->attrs.set(intern(name), Obj::of(new GetSet(name, c, unicode_get<which>, unicode_set<which>)));
+    auto* member = new GetSet(name, c, unicode_get<which>, unicode_set<which>);
+    member->deletable = true;                    // unicode_set says which of them can be
+    c->attrs.set(intern(name), Obj::of(member));
 }
 }  // namespace
 
@@ -1804,6 +1827,7 @@ void init_bytes() {
     ClassObject* trans = exception_class("UnicodeTranslateError");
     method(trans, "__init__", translate_error_init);
     method(trans, "__str__", translate_error_str);
+    unicode_getset<0>(trans, "encoding");        // the three share PyUnicodeErrorObject: a translate error's is never set, and reads None
     unicode_getset<1>(trans, "object");
     unicode_getset<2>(trans, "start");
     unicode_getset<3>(trans, "end");

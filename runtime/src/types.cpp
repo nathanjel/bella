@@ -1954,11 +1954,36 @@ Ref proxy_repr(Obj self, Args a) {
 Ref proxy_str(Obj self, Args a) { dunder_args(self, a, "__str__", 0); return str_of(class_dict(self)); }
 Ref proxy_hash(Obj self, Args a) {               // mappingproxy_hash: the mapping's, and a dict has none
     dunder_args(self, a, "__hash__", 0);
-    return Ref::steal(Obj::small(hash_of(class_dict(self))));
+    return int_from_i64(hash_of(class_dict(self)));   // all 64 bits: a small int holds 63
 }
-// mappingproxy_richcompare: the mapping against the other, for == and != only
-Ref proxy_eq(Obj self, Args a) { dunder_args(self, a, "__eq__", 1); return compare(CmpOp::Eq, class_dict(self), a.pos(0)); }
-Ref proxy_ne(Obj self, Args a) { dunder_args(self, a, "__ne__", 1); return compare(CmpOp::Ne, class_dict(self), a.pos(0)); }
+// mappingproxy_richcompare: the mapping against the other, for == and != only; the four orderings decline. An exact dict is
+// not handed to an object of another kind: that one is given a copy (gh-152405), so its __eq__ cannot reach a type's own dict.
+// (CPython hands an exact OrderedDict the dict itself; the copy it gets here compares the same and nothing can tell them apart.)
+Ref proxy_compare(Obj self, Obj other, CmpOp op) {
+    Obj mapping = class_dict(self);
+    if (is_exact_dict(mapping) && !is_exact_dict(other) && !is_exact_frozendict(other) && !is_kind(other, Kind::Proxy)) {
+        Ref copy = dict_copy(static_cast<Dict*>(mapping.object()));
+        return compare(op, copy.get(), other);
+    }
+    return compare(op, mapping, other);
+}
+Ref proxy_eq(Obj self, Args a) { dunder_args(self, a, "__eq__", 1); return proxy_compare(self, a.pos(0), CmpOp::Eq); }
+Ref proxy_ne(Obj self, Args a) { dunder_args(self, a, "__ne__", 1); return proxy_compare(self, a.pos(0), CmpOp::Ne); }
+template <const char* const& name>
+Ref proxy_unordered(Obj self, Args a) { dunder_args(self, a, name, 1); return Ref::share(Obj::of(NOTIMPLEMENTED)); }
+constexpr const char* PROXY_LT = "__lt__";
+constexpr const char* PROXY_LE = "__le__";
+constexpr const char* PROXY_GT = "__gt__";
+constexpr const char* PROXY_GE = "__ge__";
+// mappingproxy_or, the number slot on either side: each proxy stands for its mapping, and the two are or-ed as any two objects
+// are (PyNumber_Or, so the answer is the mapping's, and so is the TypeError); |= is refused in words of its own
+Ref proxy_or(Obj self, Args a) { dunder_args(self, a, "__or__", 1); return binary(BinOp::Or, class_dict(self), proxy_stands_for(a.pos(0))); }
+Ref proxy_ror(Obj self, Args a) { dunder_args(self, a, "__ror__", 1); return binary(BinOp::Or, proxy_stands_for(a.pos(0)), class_dict(self)); }
+Ref proxy_ior(Obj self, Args a) {
+    dunder_args(self, a, "__ior__", 1);
+    raise_new("TypeError", "'|=' is not supported by mappingproxy; use '|' instead");
+}
+Ref proxy_reversed(Obj self, Args a) { noargs(a, "mappingproxy.__reversed__"); return proxy_mapping_call(self, "__reversed__"); }   // the mapping's own
 
 // slices
 Ref slice_new(Obj, Args a) {                   // __new__(cls, ...): the class comes first
@@ -2430,6 +2455,7 @@ Ref beg_subgroup(Obj self, Args a) {             // BaseExceptionGroup.subgroup(
     return parts.first.get().is_unset() ? none_ref() : std::move(parts.first);
 }
 }  // namespace
+Obj proxy_stands_for(Obj v) { return is_kind(v, Kind::Proxy) ? class_dict(v) : v; }   // a mappingproxy's mapping, anything else itself
 
 // ---- except* (Python/ceval.c: CHECK_EG_MATCH, _PyEval_ExceptionGroupMatch; Objects/exceptions.c: _PyExc_PrepReraiseStar,
 // exception_group_projection, is_same_exception_metadata), what the frontend's desugaring of try/except* calls ----
@@ -3428,6 +3454,14 @@ void init_types() {
     method(t.mappingproxy, "__hash__", proxy_hash);
     method(t.mappingproxy, "__eq__", proxy_eq);
     method(t.mappingproxy, "__ne__", proxy_ne);
+    method(t.mappingproxy, "__lt__", proxy_unordered<PROXY_LT>);
+    method(t.mappingproxy, "__le__", proxy_unordered<PROXY_LE>);
+    method(t.mappingproxy, "__gt__", proxy_unordered<PROXY_GT>);
+    method(t.mappingproxy, "__ge__", proxy_unordered<PROXY_GE>);
+    method(t.mappingproxy, "__or__", proxy_or);
+    method(t.mappingproxy, "__ror__", proxy_ror);
+    method(t.mappingproxy, "__ior__", proxy_ior);
+    method(t.mappingproxy, "__reversed__", proxy_reversed);
     method(t.slice, "__new__", slice_new, Binding::Function);
     for (auto [name, get] : std::initializer_list<std::pair<const char*, Ref (*)(Obj)>>{{"start", slice_start}, {"stop", slice_stop}, {"step", slice_step}}) {
         auto* m = new GetSet(name, t.slice, get, nullptr);   // PyMemberDef in CPython, as range's are

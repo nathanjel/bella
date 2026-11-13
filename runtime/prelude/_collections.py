@@ -1078,8 +1078,11 @@ def _od_add_pairs(self: object, pairs: object) -> None:   # mutablemapping_add_p
 
 
 def _od_update_arg(self: object, arg: object) -> None:   # mutablemapping_update_arg
-    if type(arg) is dict or type(arg) is frozendict:    # PyAnyDict_CheckExact: its items, listed first
-        _od_add_pairs(self, dict.items(arg))  # type: ignore[arg-type]
+    if type(arg) is dict:                        # PyAnyDict_CheckExact: its items, listed first (PyDict_Items, a frozendict's too)
+        _od_add_pairs(self, dict.items(arg))
+        return
+    if type(arg) is frozendict:
+        _od_add_pairs(self, frozendict.items(arg))
         return
     keys = getattr(arg, "keys", _NULL)
     if keys is not _NULL:

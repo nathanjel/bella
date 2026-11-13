@@ -1,0 +1,12 @@
+{
+ "case": "C-3-73_a_mappingproxys_operators.py",
+ "clause": "C-3-73",
+ "spec": "section 3 (the data model: what a type has of its own), section 6 (builtins: reversed)",
+ "status": "P1",
+ "source": "Objects/descrobject.c (mappingproxy_or, mappingproxy_ior, mappingproxy_reversed, mappingproxy_richcompare, mappingproxy_hash)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "or: {1: 2, 3: 4} {3: 4, 1: 2} {1: 2} {1: 2, 5: 6} {5: 6, 1: 2} dict False True OrderedDict({'a': 1, 'b': 2}) OrderedDict OrderedDict({'b': 2, 'a': 1}) OrderedDict frozendict({'a': 1, 'b': 2}) frozendict ('Table.__or__', 'int') TypeError ('Table.__or__', 'dict') {1: 2}\nor, of a class's: ['extra', 'marker'] ['extra', 'marker'] dict ['marker'] 2 1 False\nwhat the other operand is given: ('ror', 'dict', True) ('or', 'mappingproxy', False) TypeError TypeError ['mappingproxy', 'dict', ('reflected', 'dict')]\nor, refused: TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError [1] [1, 7] TypeError\nor, by name: {1: 2, 3: 4} {3: 4, 1: 2} TypeError TypeError {1: 2, 5: 6} {1: 2, 9: 9} TypeError TypeError TypeError ['wrapper_descriptor', 'wrapper_descriptor', 'wrapper_descriptor', 'method_descriptor', 'wrapper_descriptor', 'wrapper_descriptor']\nin place: TypeError TypeError TypeError {7: 8, 1: 2} TypeError TypeError TypeError {1: 2} TypeError\nreversed: [1] dict_reversekeyiterator [5, 3, 1] ['a'] odict_iterator True ['marker'] AttributeError AttributeError dict_reversekeyiterator TypeError ['a']\ncompared: True True True True False True True False True True True True True True False True\nnot ordered: ['TypeError', 'TypeError', 'TypeError', 'TypeError'] TypeError TypeError NotImplemented NotImplemented NotImplemented NotImplemented TypeError TypeError True False False True\nwhat another object is compared with: True True False [('dict', False, True), ('mappingproxy', False, None), ('dict', False, True)]\na dict of a kind is given the mapping: True True True [('OrderedDict', False, False), ('Table.__eq__', 'Peek'), ('frozendict', False, None)]\nand cannot change it: False 1 False False {1: 2} True 1\nhashed: TypeError True TypeError 5 TypeError 1\n",
+ "stderr": "",
+ "exit_code": 0
+}

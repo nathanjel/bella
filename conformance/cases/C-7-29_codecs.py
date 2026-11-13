@@ -104,6 +104,8 @@ for handler in (codecs.strict_errors, codecs.ignore_errors, codecs.replace_error
 enc_error = UnicodeEncodeError("ascii", "a€\U0001f600b", 1, 3, "why")
 dec_error = UnicodeDecodeError("ascii", b"a\xff\xfeb", 1, 3, "why")
 tr_error = UnicodeTranslateError("a€b", 1, 2, "why")
+print("what the three errors carry:", [(e.encoding, e.object, e.start, e.end, e.reason) for e in (enc_error, dec_error, tr_error)],
+      type(vars(UnicodeTranslateError)["encoding"]).__name__, "encoding" in vars(UnicodeError))
 for handler in (codecs.ignore_errors, codecs.replace_errors, codecs.xmlcharrefreplace_errors, codecs.backslashreplace_errors, codecs.namereplace_errors,
                 codecs.lookup_error("surrogateescape"), codecs.lookup_error("surrogatepass")):
     print([handler(e) if failed(lambda: handler(e)) == "no error" else failed(lambda: handler(e)) for e in (enc_error, dec_error, tr_error)], failed(lambda: handler(ValueError())), failed(lambda: handler(1)), failed(lambda: handler()))  # type: ignore[arg-type,call-arg,no-untyped-call]

@@ -32,7 +32,6 @@ FrameLocalsProxy:update
 FrameLocalsProxy:values
 ItimerError:__weakref__
 PyCapsule:__doc__
-UnicodeTranslateError:encoding
 UnsupportedOperation:__weakref__
 _contextvars.Context:__ge__
 _contextvars.Context:__gt__
@@ -145,14 +144,6 @@ itertools.product:__sizeof__
 keyword:__weakref__
 lazy_import:__getattribute__
 list:__sizeof__
-mappingproxy:__ge__
-mappingproxy:__gt__
-mappingproxy:__ior__
-mappingproxy:__le__
-mappingproxy:__lt__
-mappingproxy:__or__
-mappingproxy:__reversed__
-mappingproxy:__ror__
 match_case:__weakref__
 memoryview:__buffer__
 memoryview:__delitem__

@@ -801,6 +801,7 @@ void dict_set_hashed(Dict* d, Obj key, std::int64_t hash, Obj value);   // a key
 bool dict_del(Dict* d, Obj key);
 Ref dict_new();
 Ref dict_copy(Dict* d);                                      // dict.copy() (copy_lock_held)
+Obj proxy_stands_for(Obj v);                                 // a mappingproxy's mapping (a class's dict, live), anything else itself (types.cpp)
 Ref dict_subscript(Obj self, Obj key);                       // a dict's own d[k]: a subclass's __missing__, else KeyError
 Ref dict_iter(Obj self);                                     // a dict's own iterator (dict.__iter__)
 void dict_merge_dict(Dict* target, Dict* other);             // dict_dict_merge, override: update and {**d}
