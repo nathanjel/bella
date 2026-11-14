@@ -1633,7 +1633,7 @@ UNCLOSED_AT_EXIT = {
 }
 # CPython's default hook adds this line beneath a warning that has a source, when tracemalloc can be imported and is not tracing.
 # tracemalloc is excluded (E-03) and the manifest leaves it out of warnings' imports, so the compiled program takes the hook's
-# other path and has no such line: open with the author (docs/DECISIONS.md, C-7-62). Compared without it, and its absence checked.
+# other path and has no such line: accepted under D-20 (the author's decision, 2026-11-14). Compared without it, and its absence checked.
 TRACEMALLOC_HINT = "ResourceWarning: Enable tracemalloc to get the object allocation traceback\n"
 
 
