@@ -9,13 +9,16 @@ on:
     - cron: "0 2 * * *"            # 02:00 UTC, main's head
   workflow_dispatch:
 
+permissions:
+  contents: read                   # every job, unless it says otherwise (mark-green)
+
 jobs:
   pinned:
     name: GCC 16.2.0 + CPython 3.15.2 (Docker)
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: write              # the nightly moves the tag nightly-green
+      contents: read               # the code under test never runs beside a token that can write (mark-green has that one)
     steps:
       - uses: actions/checkout@v4
       - name: Build the pinned toolchain image
@@ -34,8 +37,17 @@ jobs:
         with:
           name: toolchain-probes
           path: toolchain-probes.md
+
+  mark-green:
+    name: move nightly-green
+    needs: pinned                  # runs only when the full check succeeded
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write              # to move the tag, and nothing of the project runs here
+    steps:
+      - uses: actions/checkout@v4
       - name: Mark this commit as the last one a nightly found green
-        if: success() && github.event_name == 'schedule'
         run: |
           git tag -f nightly-green "$GITHUB_SHA"
           git push -f origin nightly-green
