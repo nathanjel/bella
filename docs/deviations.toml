@@ -74,6 +74,7 @@ summary = "breakpoint() prints a warning and continues"
 status = "decided"
 decision = 9
 lint = "yes"
+note = "the warning is the one CPython's sys.breakpointhook gives for a hook it cannot import, a RuntimeWarning at the caller's line with the text 'Ignoring unimportable $PYTHONBREAKPOINT: \"pdb.set_trace\"' (the author's decision of 2026-11-14, over a text of Bella's own): what a CPython without pdb prints for the same program; nothing under PYTHONBREAKPOINT=0, as in CPython. The plain explanation is the lint rule's"
 
 [deviations.D-12]
 summary = "__file__ is the source path recorded at build, not a path on the running machine"
