@@ -94,7 +94,7 @@ a name was added, and then also the tests that hold a stop by name, since one of
 held this one (`pytest pipeline/tests -k "stops or refused or absent or stop or lacks"`, about four
 minutes); `make targets-compiled` when the runtime changed. A new case joins a baseline on
 the strength of its own run. CI runs the smoke job on a push and the full check every night on
-main's head (02:00 UTC; also on demand, "Run workflow", and for a pull request); a green night
+main's head (02:00 UTC; also on demand, "Run workflow"; a pull request runs the smoke job only); a green night
 moves the tag `nightly-green` to the commit it checked. Before starting work, read the last
 night's result (`gh run list --workflow ci.yml --event schedule --limit 3`): a red night is fixed
 first, by focused runs over that day's commits. A gate claim ("all six targets agree") still gets

@@ -1,7 +1,8 @@
 name: ci
-# A push runs the smoke job alone. The full check on the pinned toolchain (about two hours) runs every night on main's head, on
-# demand (a gate claim: Actions, "Run workflow"), and for a pull request; a green night moves the tag nightly-green to the commit it
-# checked (docs/DECISIONS.md, 2026-11-13: checks per step and the nightly).
+# A push and a pull request run the smoke job alone. The full check on the pinned toolchain (about two hours) runs every night on
+# main's head and on demand (a gate claim, or a pull request's branch before it is merged: Actions, "Run workflow"); a green night
+# moves the tag nightly-green to the commit it checked (docs/DECISIONS.md, 2026-11-13: checks per step and the nightly; 2026-11-14:
+# pull requests).
 on:
   push:
   pull_request:
@@ -15,7 +16,7 @@ permissions:
 jobs:
   pinned:
     name: GCC 16.2.0 + CPython 3.15.2 (Docker)
-    if: github.event_name != 'push'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read               # the code under test never runs beside a token that can write (mark-green has that one)
