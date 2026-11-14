@@ -8,6 +8,7 @@ python3 -m pipeline.tests.test_review_2026_11_01
 from __future__ import annotations
 
 import ast
+import atexit
 import contextlib
 import io
 import shutil
@@ -23,6 +24,7 @@ from pipeline.slice import run_cpp, run_cpython, run_eval1
 from pipeline.tests.test_frontend_eval1 import both
 
 _TMP = Path(tempfile.mkdtemp(prefix="bella-review-"))
+atexit.register(shutil.rmtree, _TMP, ignore_errors=True)   # one per importing process (a pytest worker), gone with it
 _HAVE_CXX = shutil.which("g++") is not None
 
 

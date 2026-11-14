@@ -3,6 +3,7 @@
 builtins, which a compiled program does not have (spec section 6; D-18)."""
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import shutil
@@ -157,6 +158,7 @@ print(m(leaves))
 
 def _both(source: str) -> tuple[Path, Path]:
     tmp = Path(tempfile.mkdtemp())
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)       # the caller runs the program there, so it goes with the process
     prog = tmp / "prog.py"
     prog.write_text(textwrap.dedent(source), encoding="utf-8")
     return prog, build(prog, "prog.py")
