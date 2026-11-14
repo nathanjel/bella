@@ -73,12 +73,13 @@ static_assert(std::atomic<int>::is_always_lock_free && std::atomic<unsigned>::is
 
 namespace detail {
 volatile std::sig_atomic_t signal_breaker = 0;   // _PY_SIGNALS_PENDING_BIT | _PY_CALLS_TO_DO_BIT (the one pending call there is)
+constinit volatile std::sig_atomic_t signal_tripped = 0;        // is_tripped
 }
 
 namespace {
 constexpr unsigned WAKEUP_ERRORS = 32;           // MAXPENDINGCALLS_MAIN: a report past it is dropped, as _PyEval_AddPendingCall's is
 
-constinit volatile std::sig_atomic_t is_tripped = 0;
+constinit volatile std::sig_atomic_t& is_tripped = detail::signal_tripped;   // read inline by check_signals_if_tripped()
 constinit volatile std::sig_atomic_t tripped[NSIG] = {};        // Handlers[i].tripped
 constinit volatile std::sig_atomic_t wakeup_fd = -1;            // wakeup.fd
 constinit volatile std::sig_atomic_t wakeup_warn = 1;           // wakeup.warn_on_full_buffer

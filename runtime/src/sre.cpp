@@ -17,11 +17,27 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <utility>
 
 #include "bella/runtime.hpp"
 
 namespace bella {
 namespace {
+// PyErr_CheckSignals as MAYBE_CHECK_SIGNALS calls it, every 4096 steps of a match (C-7-85). The engine is C: it answers
+// SRE_ERROR_INTERRUPTED and gives back what it holds on its way out, so what a handler raised waits here until the engine has
+// returned, and pattern_error lets it fly
+thread_local std::exception_ptr sre_interrupted;
+int sre_check_signals() {
+    if (!detail::signal_tripped || detail::looks_held != 0) return 0;
+    try {
+        check_signals();
+    } catch (...) {
+        sre_interrupted = std::current_exception();
+        return -1;
+    }
+    return 0;
+}
 using Py_ssize_t = std::ptrdiff_t;
 using Py_UCS1 = std::uint8_t;
 using Py_UCS2 = std::uint16_t;
@@ -38,7 +54,7 @@ constexpr Py_ssize_t PY_SSIZE_T_MAX = INT64_MAX;
 #define PyMem_Malloc std::malloc
 #define PyMem_Realloc std::realloc
 #define PyMem_Free std::free
-#define PyErr_CheckSignals() 0
+#define PyErr_CheckSignals() sre_check_signals()
 
 #define Py_UNICODE_ISDECIMAL unicode_is_decimal
 #define Py_UNICODE_ISSPACE unicode_is_space
@@ -974,6 +990,7 @@ Ref i_run(Obj, Args a) {
     }
     if (status < 0) {                            // pattern_error
         finish();
+        if (status == SRE_ERROR_INTERRUPTED) std::rethrow_exception(std::exchange(sre_interrupted, nullptr));   // "An exception has already been raised, so let it fly"
         if (status == SRE_ERROR_RECURSION_LIMIT) raise_new("RecursionError", "maximum recursion limit exceeded");
         if (status == SRE_ERROR_MEMORY) raise_new("MemoryError", "");
         raise_new("RuntimeError", "internal error in regular expression engine");

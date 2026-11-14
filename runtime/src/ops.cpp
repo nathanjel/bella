@@ -946,7 +946,10 @@ static std::string descr_repr(const char* kind, const std::string& name, const C
 }
 std::string str_repr_of(const Str* s) { return str_repr(s); }
 Ref repr_unchecked(Obj v) {
-    if (v.is_small()) return str_new(int_text(v.small_value()));
+    if (v.is_small()) {
+        if (v.small_value() != 0) check_signals_if_tripped();   // long_to_decimal_string_internal: SIGCHECK once a digit, so not for 0
+        return str_new(int_text(v.small_value()));
+    }
     Object* o = v.object();
     switch (o->kind) {
         case Kind::Bool: return str_new(static_cast<BoolObject*>(o)->value ? "True" : "False");
@@ -984,6 +987,7 @@ Ref repr_unchecked(Obj v) {
         case Kind::Range: {
             auto* r = static_cast<Range*>(o);
             if (r->big) return str_new(big_range_repr(v));
+            check_signals_if_tripped();              // range_repr: "%R" of its start, which is PyObject_Repr
             return str_new("range(" + int_text(r->start) + ", " + int_text(r->stop) +
                            (r->step == 1 ? "" : ", " + int_text(r->step)) + ")");
         }
@@ -1047,13 +1051,17 @@ Ref repr_unchecked(Obj v) {
     throw NotImplemented("repr() of '" + type_of(v)->name + "' objects");
 }
 
+// PyObject_Repr and PyObject_Str begin with PyErr_CheckSignals(): a handler that is owed runs before the object is asked, in the
+// frame that asks, and what it raises comes out of the call (C-7-85)
 Ref repr_of(Obj v) {                             // PyObject_Repr
+    check_signals_if_tripped();
     Ref r = repr_unchecked(v);
     if (as_str(r.get()) == nullptr)
         raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__repr__() must return a str, not " + fully_qualified_name(type_of(r.get())));
     return r;
 }
 Ref str_of(Obj v) {                              // PyObject_Str
+    check_signals_if_tripped();
     if (is_exact_str(v)) return Ref::share(v);
     bool own_str = is_kind(v, Kind::Instance) || is_kind(v, Kind::Proxy) ||
                    ((has_python_type(v) || is_subclass_instance(v)) &&

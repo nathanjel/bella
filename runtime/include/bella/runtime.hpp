@@ -1200,9 +1200,28 @@ Ref i_bella_set_lazy_attributes(Obj, Args a);
 // <csignal> stays out of this header: its macros decide which Python names the emitter renames.
 namespace detail {
 extern volatile int signal_breaker;
+extern volatile int signal_tripped;              // is_tripped: check_signals()'s own note, here so that its first test is inline
+inline int looks_held = 0;                       // HoldLooks: the one thread that runs handlers counts here
 }
 bool interrupt_occurred();                       // _PyOS_InterruptOccurred: whether a SIGINT came, which is then taken without its handler (input()'s read)
 void check_signals();                            // PyErr_CheckSignals, where the C calls it itself: the handlers of the signals that came, lowest number first; one that raises leaves the rest tripped
+// check_signals() where CPython's C calls PyErr_CheckSignals in work of its own (C-7-85): PyObject_Str and PyObject_Repr before
+// they ask the object, the rows of a long product and the words of a long quotient, an int's decimal text, a match every 4096
+// steps. Its first test is inline. A handler that is owed runs there, and what it raises comes out of that work. A prelude's
+// function stands for a C function and calls str() and repr() where that one calls PyObject_Str and PyObject_Repr, so it
+// looks where the C does; where the C function only prints a number of its own ("%zd" in a message) the prelude's str() of
+// that number looks and the C does not (D-25 (e))
+inline void check_signals_if_tripped() {
+    if (detail::signal_tripped && detail::looks_held == 0) [[unlikely]] check_signals();
+}
+// While one lives those checks are left out: the runtime's report of an exception stands for traceback's Python, and a handler
+// owed then runs at the look after the report (D-25 (f))
+struct HoldLooks {
+    HoldLooks() { ++detail::looks_held; }
+    ~HoldLooks() { --detail::looks_held; }
+    HoldLooks(const HoldLooks&) = delete;
+    HoldLooks& operator=(const HoldLooks&) = delete;
+};
 void look_for_signals();                         // the evaluation loop's look, the breaker already tested (BELLA_LOOK): the signals bit cleared, check_signals(), set again if a handler raised; then the reports of failed wakeup writes queued when it began
 void look_for_signals_now();                     // Py_MakePendingCalls: the same, whatever the breaker says (before and after the program, a lock's wait)
 void finish_pending_calls();                     // _Py_FinishPendingCalls: the queued reports of failed wakeup writes, all of them, and no handler (run_main, before atexit)

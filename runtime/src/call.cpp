@@ -2679,6 +2679,7 @@ void format_record(ErrSink& err, PrintContext& ctx, Record* top) {   // Tracebac
     }
 }
 void print_traceback(Obj exc) {
+    HoldLooks hold;                              // the report stands for traceback's Python: no check of the C's own in it (D-25 (f))
     Records rs;
     Record* top = build_records(rs, exc);
     ErrSink err;

@@ -1,8 +1,16 @@
 // bn: unsigned big numbers in 64-bit words, for `int` (runtime/src/bigint.cpp is the Python layer).
 //
 // A copy of SEL's `bn`, sel/cpp/sel.cpp at commit f6df7ff, the author's own code under MIT (decision of
-// 2026-11-02, docs/licences.md L-05). No change yet but this header; each one is to be named here, so
-// that fixes can be ported back. Included into `namespace bella` by bigint.cpp.
+// 2026-11-02, docs/licences.md L-05). Each change is named here, so that fixes can be ported back.
+// Included into `namespace bella` by bigint.cpp.
+//   2026-11-14  BN_LOOK(): a host's hook in the loops whose work can be long (a row of a basecase product or
+//               square, a word of a long division's quotient); nothing unless the includer defines it. Bella looks
+//               for signals there, where CPython's x_mul and x_divrem do (D-25 (e)); it may throw, and every
+//               caller holds what it owns in objects that give it back.
+
+#ifndef BN_LOOK
+#define BN_LOOK() ((void)0)
+#endif
 
 namespace bn {
 
@@ -408,6 +416,7 @@ void with_scratch(std::size_t len, F&& f) {
 // out = a * b by rows; out zeroed and at least a.size() + b.size() long.
 void basecase_mul(Out out, Span a, Span b) {
   for (std::size_t j = 0; j < b.size(); ++j) {
+    BN_LOOK();
     if (b[j] != 0) out[j + a.size()] = addmul_1(out.subspan(j), a, b[j]);
   }
 }
@@ -417,6 +426,7 @@ void basecase_mul(Out out, Span a, Span b) {
 void basecase_sqr(Out out, Span a) {
   const std::size_t n = a.size();
   for (std::size_t i = 0; i + 1 < n; ++i) {
+    BN_LOOK();
     out[i + n] = addmul_1(out.subspan(2 * i + 1), a.subspan(i + 1), a[i]);
   }
   std::uint64_t top = 0;
@@ -630,6 +640,7 @@ std::pair<Nat, Nat> knuth_div(Span u, Span v) {
   Nat q(m + 1, 0);
   const u128 vtop = vn[n - 1], vnext = vn[n - 2];
   for (std::size_t j = m + 1; j-- > 0;) {
+    BN_LOOK();
     // The estimate from the top two words: a one-word division while the top
     // word is below the divisor's (the normalised top word bounds it), else
     // B - 1 (Hacker's Delight's divmnu; the same answers as dividing the

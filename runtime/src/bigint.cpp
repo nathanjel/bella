@@ -29,6 +29,12 @@
 
 namespace bella {
 __extension__ typedef unsigned __int128 u128;
+// SIGCHECK (Objects/longobject.c), in the loops of bn that stand for x_mul's and x_divrem's: a handler runs inside a long
+// product or division, and what it raises ends it (C-7-85). Those loops run only for operands of two words or more each, which
+// CPython's compiler never folds away (its limit for a folded product or power is 128 bits) and CPython's own loops look at
+// too; an operand of one word between 2**30 and 2**64 is two or three of CPython's digits and looks there, not here (D-25 (e))
+thread_local int bn_looks_held = 0;              // where CPython's own code for the same work has no check (int() of a short text)
+#define BN_LOOK() do { if (bn_looks_held == 0) check_signals_if_tripped(); } while (0)
 #include "bn.inc"
 
 BigInt::BigInt(bool neg, std::vector<std::uint64_t> mag) : Object(Kind::BigInt), negative(neg), limbs(std::move(mag)) {
@@ -233,8 +239,14 @@ int& max_str_digits_setting() {
                                 " digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit");
 }
 std::string to_text(Obj v) {
+    // long_to_decimal_string_internal: SIGCHECK once for each of the int's digits, so any int but zero looks (the longer ones,
+    // which CPython hands to _pylong, look there as soon as that asks for a piece's text)
     std::int64_t small;
-    if (as_int(v, small)) return std::to_string(small);
+    if (as_int(v, small)) {
+        if (small != 0) check_signals_if_tripped();
+        return std::to_string(small);
+    }
+    check_signals_if_tripped();
     IntView x(v);
     int limit = max_str_digits_setting();
     if (limit > 0 && bn::digits(x.mag) > static_cast<std::size_t>(limit)) too_many_digits();
@@ -395,6 +407,13 @@ Ref int_from_digits(bool negative, std::string_view digits, int base) {
     }
     bn::Nat acc;
     if (base == 10) {
+        // long_from_non_binary_base has no check of its own; past 6000 digits CPython hands the text to _pylong, whose products
+        // are x_mul's and look
+        struct Held {
+            bool on;
+            explicit Held(bool h) : on(h) { if (on) ++bn_looks_held; }
+            ~Held() { if (on) --bn_looks_held; }
+        } held(digits.size() <= 6000);
         acc = bn::from_decimal(digits);
     } else if ((base & (base - 1)) == 0) {
         int bits = 0;
