@@ -41,8 +41,8 @@ accident).
 A case that declares `# deviation: D-nn` has two expectations: CPython's trace, and the trace
 of CPython made to show the deviation (`expected/<case>.D-nn.json`), which is what `check`
 requires of the runner. Only deviations that CPython can be made to show are accepted; today
-that is D-20 (the phase-1 omissions and codec set), simulated by blocking those modules at
-start-up (conformance/simulate/sitecustomize.py). `record` refuses a deviation case whose two
+those are D-20 (the phase-1 omissions and codec set) and D-27 (a program without the `warnings`
+module), simulated by blocking those modules at start-up (conformance/simulate/sitecustomize.py). `record` refuses a deviation case whose two
 traces are equal, since the declaration would then claim a difference that does not exist.
 """
 from __future__ import annotations
@@ -127,7 +127,13 @@ def _phase1_blocked(python: str) -> list[str]:
     return sorted(blocked)
 
 
-SIMULATIONS = {"D-20": _phase1_blocked}
+def _no_warnings_module(python: str) -> list[str]:
+    """D-27: a program that holds no `warnings` module. CPython's import of it fails, as for a module that is not installed,
+    and its C prints the warning itself."""
+    return ["warnings"]
+
+
+SIMULATIONS = {"D-20": _phase1_blocked, "D-27": _no_warnings_module}
 
 
 def simulation_env(deviation: str | None, python: str) -> dict[str, str]:

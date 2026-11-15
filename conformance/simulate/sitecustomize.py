@@ -2,7 +2,7 @@
 
 The harness puts this directory on PYTHONPATH and lists, in BELLA_SIMULATE_BLOCK, the modules
 phase 1 does not have (deviation D-20: the manifest's omissions and the codecs outside the
-phase-1 set). Blocking them here, before the case runs, makes CPython behave as the compiled
+phase-1 set) or the one a program without it does not hold (D-27: `warnings`). Blocking them here, before the case runs, makes CPython behave as the compiled
 program must: each import of one raises ImportError, as if the module were not installed.
 Nothing else is imported, so a case's own observations of sys.modules are not disturbed."""
 import os

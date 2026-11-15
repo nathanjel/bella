@@ -342,6 +342,7 @@ Ref b_sorted(Obj, Args a);
 Ref i_lookup_special(Obj, Args a);               // builtins.py's primitives
 Ref i_number_index(Obj, Args a);
 Ref i_warnings_frame(Obj, Args a);
+Ref i_find_source_encoding(Obj, Args a);          // runtime/src/tokenizer.cpp: (fd, filename, io) -> (the encoding or None, an error left behind)
 std::uint64_t keyed_hash(std::uint64_t key, const unsigned char* src, std::size_t len);   // _Py_KeyedHash: siphash13 with the key and 0 (core.cpp)
 Ref i_cpython_table(Obj, Args a);                 // _cpython_table(key): a row of the names table, or None
 Ref i_source_hash(Obj, Args a);                   // _source_hash(key, bytes): _imp.source_hash's bytes                // _frame(n) for runtime/prelude/_warnings.py: (globals, filename, lineno) of a caller's frame

@@ -4,11 +4,17 @@
 // touches objects is written here against the runtime, each function after the C one it is named for, so that the one can be read
 // against the other: the errors and warnings of Parser/tokenizer/helpers.c, the reader of Parser/tokenizer/readline_tokenizer.c
 // (the only source a TokenizerIter has), and the iterator of Python/Python-tokenize.c behind one primitive, `_tokenizer(name, ...)`.
+// Since 2026-11-15 also the reader of Parser/tokenizer/file_tokenizer.c with the coding spec of helpers.c, for the one thing the
+// C uses it for outside the compiler: the encoding of a source file whose line it prints under a warning (D-27).
 //
 // The C reports an error by setting the interpreter's error indicator and returning a code, and a tokenizer is left in the state
 // that return left it in: a second next() after an error answers from that state (another token, another error, a MemoryError
 // out of a freed buffer). So the indicator is kept as the C has it, a slot the functions below set and test, and what it holds is
 // thrown once the primitive is done.
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <climits>
 #include <cstdarg>
 #include <cstdint>
@@ -570,6 +576,489 @@ struct tok_state* _PyTokenizer_FromReadline(PyObject* readline, const char* enc,
     return tok;
 }
 
+// ---- Parser/tokenizer/helpers.c and file_tokenizer.c: a source file's encoding (_PyTokenizer_FindEncodingFilename), which the
+// C asks for when it prints a warning's source line itself (Python/traceback.c, display_source_line; the _warnings prelude).
+// The tokenizer reads the file through a FILE on a copy of the descriptor, as the C does, and runs until its second line: a
+// UTF-8 mark at the start, a coding spec in a comment on the first line, or on the second when the first is empty or a
+// comment, and whatever the lexer makes of what it reads on the way. What it raises stays in the indicator: the caller
+// tells an encoding found with an error behind it from one found cleanly, as the C's caller in effect does.
+
+PyObject*& source_io() {                          // the io module of the caller: PyImport_ImportModuleAttrString("io", "open")
+    static PyObject* module = nullptr;
+    return module;
+}
+
+void _PyTokenizer_raise_init_error(PyObject* filename) {
+    Obj e = indicator().exc.get();
+    if (e.is_unset() || !(isinstance(e, exception_class("LookupError")) || isinstance(e, exception_class("SyntaxError")) ||
+                          isinstance(e, exception_class("ValueError")) || isinstance(e, exception_class("UnicodeDecodeError")))) {
+        return;
+    }
+    Pending fetched = std::move(indicator());        // PyErr_Fetch
+    indicator() = Pending{};
+    try {
+        if (isinstance(fetched.exc.get(), exception_class("SyntaxError"))) {
+            setattr(fetched.exc.get(), intern("filename"), Obj::of(filename));
+            indicator() = std::move(fetched);
+            return;
+        }
+        Ref errstr = str_of(fetched.exc.get());
+        Ref zero = int_from_i64(0), minus = int_from_i64(-1);
+        Ref where = tuple_new({Obj::of(filename), zero.get(), minus.get(), None()});
+        Ref message = str_new("encoding problem: " + as_str(errstr.get())->text);
+        set_error("SyntaxError", {message.get(), where.get()});
+    } catch (const PyError& raised) {
+        set_pending(raised);
+    }
+}
+
+/* See whether the file starts with a BOM. If it does,
+   invoke the set_readline function with the new encoding.
+   Return 1 on success, 0 on failure.  */
+int _PyTokenizer_check_bom(int get_char(struct tok_state*), void unget_char(int, struct tok_state*),
+                           int /*set_readline*/(struct tok_state*, const char*), struct tok_state* tok) {
+    int ch1, ch2, ch3;
+    ch1 = get_char(tok);
+    tok->decoding_state = STATE_SEEK_CODING;
+    if (ch1 == EOF) {
+        return 1;
+    } else if (ch1 == 0xEF) {
+        ch2 = get_char(tok);
+        if (ch2 != 0xBB) {
+            unget_char(ch2, tok);
+            unget_char(ch1, tok);
+            return 1;
+        }
+        ch3 = get_char(tok);
+        if (ch3 != 0xBF) {
+            unget_char(ch3, tok);
+            unget_char(ch2, tok);
+            unget_char(ch1, tok);
+            return 1;
+        }
+    } else {
+        unget_char(ch1, tok);
+        return 1;
+    }
+    if (tok->encoding != NULL)
+        PyMem_Free(tok->encoding);
+    tok->encoding = _PyTokenizer_new_string("utf-8", 5, tok);
+    if (!tok->encoding)
+        return 0;
+    /* No need to set_readline: input is already utf-8 */
+    return 1;
+}
+
+const char* get_normal_name(const char* s) /* for utf-8 and latin-1 */ {
+    char buf[13];
+    int i;
+    for (i = 0; i < 12; i++) {
+        int c = s[i];
+        if (c == '\0')
+            break;
+        else if (c == '_')
+            buf[i] = '-';
+        else
+            buf[i] = (char)Py_TOLOWER(c);
+    }
+    buf[i] = '\0';
+    if (strcmp(buf, "utf-8") == 0 || strncmp(buf, "utf-8-", 6) == 0)
+        return "utf-8";
+    else if (strcmp(buf, "latin-1") == 0 || strcmp(buf, "iso-8859-1") == 0 || strcmp(buf, "iso-latin-1") == 0 ||
+             strncmp(buf, "latin-1-", 8) == 0 || strncmp(buf, "iso-8859-1-", 11) == 0 || strncmp(buf, "iso-latin-1-", 12) == 0)
+        return "iso-8859-1";
+    else
+        return s;
+}
+
+/* Return the coding spec in S, or NULL if none is found.  */
+int get_coding_spec(const char* s, char** spec, Py_ssize_t size, struct tok_state* tok) {
+    Py_ssize_t i;
+    *spec = NULL;
+    /* Coding spec must be in a comment, and that comment must be
+     * the only statement on the source code line. */
+    for (i = 0; i < size - 6; i++) {
+        if (s[i] == '#')
+            break;
+        if (s[i] != ' ' && s[i] != '\t' && s[i] != '\014')
+            return 1;
+    }
+    for (; i < size - 6; i++) { /* XXX inefficient search */
+        const char* t = s + i;
+        if (memcmp(t, "coding", 6) == 0) {
+            const char* begin = NULL;
+            t += 6;
+            if (t[0] != ':' && t[0] != '=')
+                continue;
+            do {
+                t++;
+            } while (t[0] == ' ' || t[0] == '\t');
+
+            begin = t;
+            while (Py_ISALNUM(t[0]) || t[0] == '-' || t[0] == '_' || t[0] == '.')
+                t++;
+
+            if (begin < t) {
+                char* r = _PyTokenizer_new_string(begin, t - begin, tok);
+                const char* q;
+                if (!r)
+                    return 0;
+                q = get_normal_name(r);
+                if (r != q) {
+                    PyMem_Free(r);
+                    r = _PyTokenizer_new_string(q, strlen(q), tok);
+                    if (!r)
+                        return 0;
+                }
+                *spec = r;
+                break;
+            }
+        }
+    }
+    return 1;
+}
+
+/* Check whether the line contains a coding spec. If it does,
+   invoke the set_readline function for the new encoding.
+   This function receives the tok_state and the new encoding.
+   Return 1 on success, 0 on failure.  */
+int _PyTokenizer_check_coding_spec(const char* line, Py_ssize_t size, struct tok_state* tok,
+                                   int set_readline(struct tok_state*, const char*)) {
+    char* cs;
+    if (tok->cont_line) {
+        /* It's a continuation line, so it can't be a coding spec. */
+        tok->decoding_state = STATE_NORMAL;
+        return 1;
+    }
+    if (!get_coding_spec(line, &cs, size, tok)) {
+        return 0;
+    }
+    if (!cs) {
+        Py_ssize_t i;
+        for (i = 0; i < size; i++) {
+            if (line[i] == '#' || line[i] == '\n' || line[i] == '\r')
+                break;
+            if (line[i] != ' ' && line[i] != '\t' && line[i] != '\014') {
+                /* Stop checking coding spec after a line containing
+                 * anything except a comment. */
+                tok->decoding_state = STATE_NORMAL;
+                break;
+            }
+        }
+        return 1;
+    }
+    tok->decoding_state = STATE_NORMAL;
+    if (tok->encoding == NULL) {
+        assert(tok->decoding_readline == NULL);
+        if (strcmp(cs, "utf-8") != 0 && !set_readline(tok, cs)) {
+            _PyTokenizer_raise_init_error(tok->filename);
+            _PyTokenizer_error_ret(tok);
+            PyMem_Free(cs);
+            return 0;
+        }
+        tok->encoding = cs;
+    } else { /* then, compare cs with BOM */
+        if (strcmp(tok->encoding, cs) != 0) {
+            tok->line_start = line;
+            tok->cur = (char*)line;
+            assert(size <= INT_MAX);
+            _PyTokenizer_syntaxerror_known_range(tok, 0, (int)size, "encoding problem: %s with BOM", cs);
+            PyMem_Free(cs);
+            _PyTokenizer_error_ret(tok);
+            return 0;
+        }
+        PyMem_Free(cs);
+    }
+    return 1;
+}
+
+/* Fetch the next byte from TOK. */
+int fp_getc(struct tok_state* tok) { return getc(tok->fp); }
+
+/* Unfetch the last byte back into TOK.  */
+void fp_ungetc(int c, struct tok_state* tok) { ungetc(c, tok->fp); }
+
+/* Set the readline function for TOK to a StreamReader's
+   readline function. The StreamReader is named ENC. */
+int fp_setreadl(struct tok_state* tok, const char* enc) {
+    int fd;
+    long pos;
+
+    fd = fileno(tok->fp);
+    /* Due to buffering the file offset for fd can be different from the file
+     * position of tok->fp. ... Instead we step back one byte and read to
+     * the end of line.*/
+    pos = ftell(tok->fp);
+    if (pos == -1 || lseek(fd, (off_t)(pos > 0 ? pos - 1 : pos), SEEK_SET) == (off_t)-1) {
+        Ref number = int_from_i64(errno);            // PyErr_SetFromErrnoWithFilename(PyExc_OSError, NULL)
+        Ref words = str_new(std::strerror(errno));
+        set_error("OSError", {number.get(), words.get()});
+        return 0;
+    }
+    try {
+        Ref open = getattr(Obj::of(source_io()), intern("open"));
+        Ref descriptor = int_from_i64(fd), mode = str_new("r"), buffering = int_from_i64(-1), encoding = str_new(enc);
+        Ref stream = invoke(open.get(), {descriptor.get(), mode.get(), buffering.get(), encoding.get(), None(), None(), boolean(false)});
+        Ref readline = getattr(stream.get(), intern("readline"));
+        stream = Ref{};
+        Py_XDECREF(tok->decoding_readline);          // Py_XSETREF(tok->decoding_readline, readline)
+        tok->decoding_readline = readline.release().object();
+        if (pos > 0) {
+            Ref bufobj = invoke(Obj::of(tok->decoding_readline), Args{});
+        }
+    } catch (const PyError& raised) {
+        set_pending(raised);
+        return 0;
+    }
+    return 1;
+}
+
+char* _Py_UniversalNewlineFgetsWithSize(char* buf, int n, FILE* stream, PyObject* /*fobj*/, size_t* size) {   // Objects/fileobject.c
+    char* p = buf;
+    int c;
+
+    while (--n > 0 && (c = getc(stream)) != EOF) {
+        if (c == '\r') {
+            // A \r is translated into a \n, and we skip an adjacent \n, if any.
+            c = getc(stream);
+            if (c != '\n') {
+                ungetc(c, stream);
+                c = '\n';
+            }
+        }
+        *p++ = (char)c;
+        if (c == '\n') {
+            break;
+        }
+    }
+    *p = '\0';
+    if (p == buf) {
+        return NULL;
+    }
+    *size = p - buf;
+    return buf;
+}
+
+int tok_readline_raw(struct tok_state* tok) {
+    do {
+        if (!_PyLexer_tok_reserve_buf(tok, BUFSIZ)) {
+            return 0;
+        }
+        int n_chars = (int)(tok->end - tok->inp);
+        size_t line_size = 0;
+        char* line = _Py_UniversalNewlineFgetsWithSize(tok->inp, n_chars, tok->fp, NULL, &line_size);
+        if (line == NULL) {
+            return 1;
+        }
+        tok->inp += line_size;
+        if (tok->inp == tok->buf) {
+            return 0;
+        }
+    } while (tok->inp[-1] != '\n');
+    return 1;
+}
+
+int tok_readline_recode(struct tok_state* tok) {
+    Ref line;
+    std::string buf;
+    if (tok->decoding_buffer == NULL) {
+        try {
+            line = invoke(Obj::of(tok->decoding_readline), Args{});   // PyObject_CallNoArgs(tok->decoding_readline)
+        } catch (const PyError& raised) {
+            set_pending(raised);
+            _PyTokenizer_error_ret(tok);
+            return 0;
+        }
+    } else {
+        line = Ref::steal(Obj::of(tok->decoding_buffer));
+        tok->decoding_buffer = NULL;
+    }
+    if (as_str(line.get()) == nullptr) {             // PyUnicode_AsUTF8AndSize of what is no str
+        set_error("TypeError", {Ref(str_new("bad argument type for built-in operation")).get()});
+        _PyTokenizer_error_ret(tok);
+        return 0;
+    }
+    try {
+        buf = utf8_with_errors(line.get(), "strict");
+    } catch (const PyError& raised) {
+        set_pending(raised);
+        _PyTokenizer_error_ret(tok);
+        return 0;
+    }
+    Py_ssize_t buflen = static_cast<Py_ssize_t>(buf.size());
+    // Make room for the null terminator *and* potentially
+    // an extra newline character that we may need to artificially
+    // add.
+    size_t buffer_size = buflen + 2;
+    if (!_PyLexer_tok_reserve_buf(tok, buffer_size)) {
+        return 0;
+    }
+    memcpy(tok->inp, buf.data(), buflen);
+    tok->inp += buflen;
+    *tok->inp = '\0';
+    return 1;
+}
+
+int tok_underflow_file(struct tok_state* tok) {
+    if (tok->decoding_state == STATE_INIT) {
+        /* We have not yet determined the encoding.
+           If an encoding is found, use the file-pointer
+           reader functions from now on. */
+        if (!_PyTokenizer_check_bom(fp_getc, fp_ungetc, fp_setreadl, tok)) {
+            _PyTokenizer_error_ret(tok);
+            return 0;
+        }
+        assert(tok->decoding_state != STATE_INIT);
+    }
+    int raw = tok->decoding_readline == NULL;
+    if (raw && tok->decoding_state != STATE_NORMAL) {
+        /* Keep the first line in the buffer to validate it later if
+         * the encoding has not yet been determined. */
+    } else if (tok->start == NULL && !INSIDE_FSTRING(tok)) {
+        tok->cur = tok->inp = tok->buf;
+    }
+    /* Read until '\n' or EOF */
+    if (!raw) {
+        /* We already have a codec associated with this input. */
+        if (!tok_readline_recode(tok)) {
+            return 0;
+        }
+    } else {
+        /* We want a 'raw' read. */
+        if (!tok_readline_raw(tok)) {
+            return 0;
+        }
+    }
+    if (tok->inp == tok->cur) {
+        tok->done = E_EOF;
+        return 0;
+    }
+    tok->implicit_newline = 0;
+    if (tok->inp[-1] != '\n') {
+        assert(tok->inp + 1 < tok->end);
+        /* Last line does not end in \n, fake one */
+        *tok->inp++ = '\n';
+        *tok->inp = '\0';
+        tok->implicit_newline = 1;
+    }
+
+    ADVANCE_LINENO();
+    if (tok->decoding_state != STATE_NORMAL) {
+        if (!_PyTokenizer_check_coding_spec(tok->cur, strlen(tok->cur), tok, fp_setreadl)) {
+            return 0;
+        }
+        if (tok->lineno >= 2) {
+            tok->decoding_state = STATE_NORMAL;
+        }
+    }
+    if (raw && tok->decoding_state == STATE_NORMAL) {
+        const char* line = tok->lineno <= 2 ? tok->buf : tok->cur;
+        int lineno = tok->lineno <= 2 ? 1 : tok->lineno;
+        if (!tok->encoding) {
+            /* The default encoding is UTF-8, so make sure we don't have any
+               non-UTF-8 sequences in it. */
+            if (!_PyTokenizer_ensure_utf8(line, tok, lineno)) {
+                _PyTokenizer_error_ret(tok);
+                return 0;
+            }
+        } else {
+            try {                                    // PyUnicode_Decode(line, strlen(line), tok->encoding, NULL)
+                std::string encoding = tok->encoding;
+                Ref tmp = unicode_decode(std::string_view(line, strlen(line)), &encoding, nullptr);
+            } catch (const PyError& raised) {
+                set_pending(raised);
+                _PyTokenizer_error_ret(tok);
+                return 0;
+            }
+        }
+    }
+    assert(tok->done == E_OK);
+    return tok->done == E_OK;
+}
+
+/* Set up tokenizer for file */
+struct tok_state* _PyTokenizer_FromFile(FILE* fp, const char* enc, const char* /*ps1*/, const char* /*ps2*/) {
+    struct tok_state* tok = _PyTokenizer_tok_new();
+    if (tok == NULL)
+        return NULL;
+    if ((tok->buf = (char*)PyMem_Malloc(BUFSIZ)) == NULL) {
+        _PyTokenizer_Free(tok);
+        PyErr_NoMemory();
+        return NULL;
+    }
+    tok->cur = tok->inp = tok->buf;
+    tok->end = tok->buf + BUFSIZ;
+    tok->fp = fp;
+    tok->underflow = &tok_underflow_file;            // no prompts: a file that is not interactive
+    if (enc != NULL) {
+        /* Must copy encoding declaration since it
+           gets copied into the parse tree. */
+        tok->encoding = _PyTokenizer_new_string(enc, strlen(enc), tok);
+        if (!tok->encoding) {
+            _PyTokenizer_Free(tok);
+            return NULL;
+        }
+        tok->decoding_state = STATE_NORMAL;
+    }
+    return tok;
+}
+
+FILE* fdopen_borrow(int fd) {
+    fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);              // _Py_dup: a copy that a child does not inherit
+    if (fd < 0) {
+        Ref number = int_from_i64(errno);
+        Ref words = str_new(std::strerror(errno));
+        set_error("OSError", {number.get(), words.get()});
+        return NULL;
+    }
+    return fdopen(fd, "r");
+}
+
+/* Get the encoding of a Python file. Check for the coding cookie and check if
+   the file starts with a BOM.
+
+   _PyTokenizer_FindEncodingFilename() returns NULL when it can't find the
+   encoding in the first or second line of the file (in which case the encoding
+   should be assumed to be UTF-8).
+
+   The char* returned is malloc'ed via PyMem_Malloc() and thus must be freed
+   by the caller. */
+char* _PyTokenizer_FindEncodingFilename(int fd, PyObject* filename) {
+    struct tok_state* tok;
+    FILE* fp;
+    char* encoding = NULL;
+
+    fp = fdopen_borrow(fd);
+    if (fp == NULL) {
+        return NULL;
+    }
+    tok = _PyTokenizer_FromFile(fp, NULL, NULL, NULL);
+    if (tok == NULL) {
+        fclose(fp);
+        return NULL;
+    }
+    Py_INCREF(filename);
+    tok->filename = filename;
+    struct token token;
+    // We don't want to report warnings here because it could cause infinite recursion
+    // if fetching the encoding shows a warning.
+    tok->report_warnings = 0;
+    while (tok->lineno < 2 && tok->done == E_OK) {
+        _PyToken_Init(&token);
+        _PyTokenizer_Get(tok, &token);
+        _PyToken_Free(&token);
+    }
+    fclose(fp);
+    if (tok->encoding) {
+        encoding = (char*)PyMem_Malloc(strlen(tok->encoding) + 1);
+        if (encoding) {
+            strcpy(encoding, tok->encoding);
+        }
+    }
+    _PyTokenizer_Free(tok);
+    return encoding;
+}
+
 // ---- Python/Python-tokenize.c: the iterator
 
 struct tokenizeriterobject {
@@ -927,5 +1416,30 @@ Ref i_tokenizer(Obj, Args a) {
         return none_ref();
     }
     throw NotImplemented("_tokenizer: " + name);
+}
+
+// (fd, filename, io): the encoding a source file's first two lines name, or None, and whether the tokenizer left an error
+// behind. The C's caller (display_source_line) drops the error only when there is no encoding; with one, the error is still
+// set when it goes on, which the _warnings prelude answers as the C then does.
+Ref i_find_source_encoding(Obj, Args a) {
+    positional_only(a, "_find_source_encoding", 3, 3);
+    Pending saved = std::move(indicator());          // a call into the program may run another tokenizer
+    indicator() = Pending{};
+    PyObject* outer_io = source_io();
+    source_io() = a.pos(2).object();
+    char* found = nullptr;
+    try {
+        found = _PyTokenizer_FindEncodingFilename(static_cast<int>(index_value(a.pos(0))), a.pos(1).object());
+    } catch (...) {                                  // a stop by name, on its way out
+        source_io() = outer_io;
+        indicator() = std::move(saved);
+        throw;
+    }
+    Pending raised = std::move(indicator());
+    indicator() = std::move(saved);
+    source_io() = outer_io;
+    Ref encoding = found != nullptr ? str_new(found) : none_ref();
+    PyMem_Free(found);
+    return tuple_new({encoding.get(), boolean(!raised.exc.get().is_unset())});
 }
 }  // namespace bella

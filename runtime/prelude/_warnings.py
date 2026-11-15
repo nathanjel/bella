@@ -20,6 +20,10 @@ try:
     _frame                                       # noqa: B018  # the frame n callers above the one calling into this module: (globals, filename, lineno), or None
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _bella_shutting_down                         # noqa: B018  # _Py_IsInterpreterFinalizing
+    _bella_import_if_held                        # noqa: B018  # (importer, name): importer(name), where a module of that name the program does not hold is not found
+    _find_source_encoding                        # noqa: B018  # (fd, filename, io): _PyTokenizer_FindEncodingFilename's answer or None, and whether it left an error set
+    _fd_seek                                     # noqa: B018  # lseek(fd, offset, SEEK_SET) worked
+    _bella_holds                                 # noqa: B018  # the program holds a module of this name
 except NameError:
     import operator
     from collections.abc import Callable
@@ -51,6 +55,16 @@ except NameError:
         import sys as _s
         return _s.is_finalizing()
 
+    def _bella_import_if_held(importer: Callable[[str], object], name: str) -> object:
+        return importer(name)
+
+    _find_source_encoding: Callable[[int, str, object], tuple[str | None, bool]] = _missing
+    _fd_seek: Callable[[int, int], bool] = _missing
+
+    def _bella_holds(name: str) -> bool:
+        return True
+
+import _io
 import sys
 
 import _contextvars
@@ -71,8 +85,8 @@ _state: dict[str, object] = {"filters": filters, "once_registry": _onceregistry,
 
 def _warnings_attr(name: str, try_import: bool) -> object:   # get_warnings_attr: the warnings module's attribute, or _ABSENT
     if try_import and not _bella_shutting_down():   # "don't try to import after the start of the Python finalization"
-        try:
-            wm = __import__("warnings")
+        try:                                     # PyImport_Import. A program that holds no `warnings` module has none to find: the
+            wm = _bella_import_if_held(__import__, "warnings")   # import fails as for a module that is not installed (D-27)
         except ImportError:
             return _ABSENT
     else:
@@ -277,10 +291,160 @@ def _show_warning(filename: object, lineno: int, text: object, category: object,
         except BaseException:  # noqa: BLE001, S110
             pass
         return
-    assert isinstance(filename, str)             # _Py_DisplaySourceLine(f_stderr, filename, lineno, 2, NULL, NULL)
-    if (str.__len__(filename) > 0 and filename[0] == "<" and filename[-1] == ">") or _bella_shutting_down():
+    assert isinstance(filename, str)
+    if _bella_shutting_down():
         return
-    _bella_refuse("_warnings' own printing of a warning's source line (show_warning, with the warnings module not there to ask)")
+    try:
+        _display_source_line(f_stderr, filename, lineno)
+    except BaseException:  # noqa: BLE001, S110
+        pass
+
+
+def _display_source_line(f: object, filename: str, lineno: int) -> None:   # _Py_DisplaySourceLine(f, filename, lineno, 2, NULL, NULL)
+    """The line `lineno` of the file, read for this one use: opened in bytes by io.open (by its name, else by the last part of
+    its name in each directory of sys.path), decoded as its first two lines say (UTF-8 when they say nothing), without the
+    spaces, tabs and form feeds before it, two spaces before it and a new line after. Nothing for a name in angle brackets, a
+    file that cannot be opened or rewound, or a line it does not have. Whatever is raised on the way ends it; the caller
+    drops it."""
+    if str.__len__(filename) > 0 and filename[0] == "<" and filename[-1] == ">":   # "things like <string> or <stdin>"
+        return
+    try:
+        io = _bella_import_if_held(__import__, "io")   # PyImport_ImportModule("io"), and any failure is the end of it
+    except ImportError:
+        if _bella_holds("io") or dict.get(sys.modules, "io", _ABSENT) is not _ABSENT:
+            raise
+        io = _io                                 # a program that holds no io module: io.open and io.TextIOWrapper are _io's own
+    try:
+        binary = io.open(filename, "rb")  # type: ignore[attr-defined]
+    except BaseException:  # noqa: BLE001
+        binary = _find_source_file(filename, io)
+        if binary is None:
+            return
+    fd = _as_file_descriptor(binary)
+    found, failed = _find_source_encoding(fd, filename, io)   # the tokenizer over the file's first lines, until its second
+    if not _fd_seek(fd, 0):
+        return
+    if found is not None and failed:
+        # The C drops the tokenizer's error only when it found no encoding. With one (a UTF-8 mark, a coding spec) and an
+        # error after it (a spec that contradicts the mark, a NUL, a first token that is none), the error is still set when
+        # io.TextIOWrapper is called: the call fails before the type makes its object, and the C closes the file and prints
+        # no line. Measured on 3.15.2. A TextIOWrapper the program put in io would run first, with that error set.
+        if getattr(io, "TextIOWrapper", _ABSENT) is not _io.TextIOWrapper:
+            _bella_refuse("_warnings' reading of a source file through an io.TextIOWrapper the program replaced, after the tokenizer failed on the file's first lines")
+        try:
+            binary.close()
+        except BaseException:  # noqa: BLE001, S110
+            pass
+        return
+    try:
+        fob = io.TextIOWrapper(binary, "utf-8" if found is None else found)  # type: ignore[attr-defined]
+    except BaseException:  # noqa: BLE001
+        try:
+            binary.close()
+        except BaseException:  # noqa: BLE001, S110
+            pass
+        return
+    del binary
+    line: object = None
+    for _ in range(lineno):
+        try:
+            line = _get_line(fob)
+        except BaseException:  # noqa: BLE001
+            line = None
+            break
+    try:
+        fob.close()
+    except BaseException:  # noqa: BLE001, S110
+        pass
+    if not issubclass(type(line), str):
+        return
+    assert isinstance(line, str)
+    start = 0
+    while start < str.__len__(line) and line[start] in " \t\f":
+        start += 1
+    if start:
+        line = line[start:]
+    _file_write("  ", f)                         # _Py_WriteIndent(2, f)
+    _file_write(line, f)
+    _file_write("\n", f)
+
+
+def _get_line(f: object) -> object:              # PyFile_GetLine(f, -1): a line without its new line; the file's end is an EOFError
+    line = f.readline()  # type: ignore[attr-defined]
+    if isinstance(line, bytes):
+        if not line:
+            raise EOFError("EOF when reading a line")
+        return line[:-1] if line[-1:] == b"\n" else line
+    if isinstance(line, str):
+        if not line:
+            raise EOFError("EOF when reading a line")
+        return line[:-1] if line[-1] == "\n" else line
+    raise TypeError("object.readline() returned non-string")
+
+
+def _as_file_descriptor(value: object) -> int:   # PyObject_AsFileDescriptor
+    if issubclass(type(value), int):
+        if issubclass(type(value), bool):
+            _bella_refuse("_warnings' RuntimeWarning for a bool used as the descriptor of a warning's source file (a warning inside the showing of one)")
+        fd = int.__index__(value)  # type: ignore[arg-type]
+    else:
+        method = getattr(value, "fileno", _ABSENT)
+        if method is _ABSENT:
+            raise TypeError("argument must be an int, or have a fileno() method")
+        given = method()  # type: ignore[operator]
+        if not issubclass(type(given), int):
+            raise TypeError("fileno() returned a non-integer")
+        if issubclass(type(given), bool):
+            _bella_refuse("_warnings' RuntimeWarning for a bool used as the descriptor of a warning's source file (a warning inside the showing of one)")
+        fd = int.__index__(given)
+    if fd < -2**31 or fd >= 2**31:
+        raise OverflowError("Python int too large to convert to C int")
+    if fd < 0:
+        raise ValueError("file descriptor cannot be a negative integer (" + str(fd) + ")")
+    return fd
+
+
+_MAXPATHLEN = 4096
+
+
+def _find_source_file(filename: str, io: object) -> object:   # _Py_FindSourceFile: the tail of the name in sys.path's directories, or None
+    try:
+        filepath = str.encode(filename, "utf-8", "surrogateescape")   # PyUnicode_EncodeFSDefault
+    except BaseException:  # noqa: BLE001
+        return None
+    nul = bytes.find(filepath, b"\0")            # the C's strings end at a NUL
+    if nul >= 0:
+        filepath = filepath[:nul]
+    tail = filepath[bytes.rfind(filepath, b"/") + 1:]
+    syspath = dict.get(sys.__dict__, "path", _ABSENT)
+    if not issubclass(type(syspath), list):
+        return None
+    assert isinstance(syspath, list)
+    try:
+        opener = io.open  # type: ignore[attr-defined]
+    except BaseException:  # noqa: BLE001
+        return None
+    for i in range(list.__len__(syspath)):
+        if i >= list.__len__(syspath):           # PyList_GetItem on a list that has shrunk
+            break
+        entry = list.__getitem__(syspath, i)
+        if not issubclass(type(entry), str):
+            continue
+        try:
+            path = str.encode(entry, "utf-8", "surrogateescape")
+        except BaseException:  # noqa: BLE001
+            continue
+        if bytes.__len__(path) + 1 + bytes.__len__(tail) >= _MAXPATHLEN:   # "Too long"
+            continue
+        if bytes.find(path, b"\0") >= 0:         # "v contains '\0'"
+            continue
+        if path and path[-1:] != b"/":
+            path += b"/"
+        try:
+            return opener(bytes.decode(path + tail, "utf-8"), "rb")   # the name as the C builds it: UTF-8, or no call
+        except BaseException:  # noqa: BLE001, S112
+            continue
+    return None
 
 
 def _call_show_warning(category: object, text: object, message: object, filename: object, lineno: int, sourceline: object,

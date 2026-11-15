@@ -175,6 +175,7 @@ C-7-82_suggestions.py
 C-7-83_traceback_from_its_entries.py
 C-7-84_traceback_of_the_running_stack.py
 C-7-85_signals_inside_the_runtimes_own_work.py
+C-7-86_a_warning_without_the_warnings_module.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-04_import_at_statement_position.py

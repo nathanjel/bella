@@ -277,21 +277,50 @@ const std::string& program_directory() { return sys_path_0(); }
 
 Dict* sys_modules() { return interp_modules(); }
 
+// A module CPython's C imports for itself and does without when the import fails (`warnings` when a warning is shown, `io`
+// when its source line is read): for the one call below, a module of that name the program does not hold is not found, as
+// one that is not installed, where any other import of it stops by name (the author's decision of 2026-11-14, D-27).
+namespace {
+const std::string*& absent_if_not_held() {
+    static const std::string* name = nullptr;
+    return name;
+}
+}  // namespace
+Ref i_bella_import_if_held(Obj, Args a) {         // (importer, name): importer(name), builtins.__import__ as the caller read it
+    positional_only(a, "_bella_import_if_held", 2, 2);
+    struct Scope {
+        const std::string* was;
+        explicit Scope(const std::string* name) : was(absent_if_not_held()) { absent_if_not_held() = name; }
+        ~Scope() { absent_if_not_held() = was; }
+    } scope(&as_str(a.pos(1))->text);
+    return invoke(a.pos(0), {a.pos(1)});
+}
+Ref i_bella_holds(Obj, Args a) {                  // the program holds a module of this name: its own, or the library's, compiled in
+    positional_only(a, "_bella_holds", 1, 1);
+    auto it = registry().find(as_str(a.pos(0))->text);
+    return Ref::steal(boolean(it != registry().end() && it->second.kind != ModuleKind::Omitted && it->second.kind != ModuleKind::Refused));
+}
+
 // The prelude's primitives for bootstrap.py, which no program can name.
 Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_package, frozen), or None
     positional_only(a, "_bella_find", 1, 1);
     const Str* name = as_str(a.pos(0));
     auto it = registry().find(name->text);
-    if (it != registry().end() && it->second.kind == ModuleKind::Refused)   // frozen in CPython: found whatever the path says
+    const bool may_be_absent = absent_if_not_held() != nullptr && *absent_if_not_held() == name->text;
+    if (it != registry().end() && it->second.kind == ModuleKind::Refused) {   // frozen in CPython: found whatever the path says
+        if (may_be_absent) return none_ref();
         throw NotImplemented("importing '" + name->text + "' (a frozen module of CPython's the build does not compile: step 3b)");
+    }
     if (name->text == "importlib._bootstrap" || name->text == "importlib._bootstrap_external")
         // CPython's frozen table aliases these to _frozen_importlib's code, and importing one outside importlib's package (which
         // puts the frozen modules in sys.modules under these names) runs a second, uninitialised copy: reached only through a
         // program's own package named importlib, under <frozen importlib.machinery>
         throw NotImplemented("importing '" + name->text + "' as a frozen module of its own (a second copy of the import system, which only a program's own importlib package reaches)");
     if (it == registry().end()) {
-        if (is_stdlib_name(a.pos(0)))
+        if (is_stdlib_name(a.pos(0))) {
+            if (may_be_absent) return none_ref();
             throw NotImplemented("importing '" + name->text + "' (the standard library: step 3b)");
+        }
         return none_ref();
     }
     if (it->second.kind == ModuleKind::Omitted) return none_ref();
@@ -1185,10 +1214,18 @@ void fill_heapq(Module* m) { fill_in_python(m, "_heapq", "_heapq", prelude_heapq
 void fill_opcode(Module* m) {
     fill_in_python(m, "_opcode", "_opcode", prelude_opcode::module_body, {{"_bella_refuse", i_bella_refuse}, {"_number_index", i_number_index}});
 }
+Ref i_fd_seek(Obj, Args a) {                     // lseek(fd, offset, SEEK_SET) worked
+    positional_only(a, "_fd_seek", 2, 2);
+    std::int64_t fd = 0, offset = 0;
+    int_fits_i64(a.pos(0), fd);
+    int_fits_i64(a.pos(1), offset);
+    return Ref::steal(boolean(::lseek(static_cast<int>(fd), static_cast<off_t>(offset), SEEK_SET) != static_cast<off_t>(-1)));
+}
 void fill_warnings(Module* m) {
     fill_in_python(m, "_warnings", "_warnings", prelude_warnings::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame},
-                    {"_bella_shutting_down", i_bella_shutting_down}});
+                    {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_import_if_held", i_bella_import_if_held},
+                    {"_find_source_encoding", i_find_source_encoding}, {"_fd_seek", i_fd_seek}, {"_bella_holds", i_bella_holds}});
 }
 void fill_suggestions(Module* m) { fill_in_python(m, "_suggestions", "_suggestions", prelude_suggestions::module_body, {{"_tp_name", i_tp_name}}); }
 void fill_tokenize(Module* m) {
