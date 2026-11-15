@@ -146,14 +146,17 @@ Ref exchange_handler(int signum, Obj fresh) {    // set_handler(signum, Py_NewRe
 
 // ---- the frame a handler is given (docs/dialect-spec.md E-02): None when no frame of the program is running, which is CPython's
 // rule (_PyThreadState_GetFrame is NULL: a call from the exit path, a built-in called by atexit), and in a lean build; else
-// an object of the type types.FrameType is, with nothing in it: what CPython's has is the names table's `frame:` rows, so reading
-// f_lineno stops by name
-ClassObject* frame_class() {
-    return no_instances_yet("frame");            // once, whichever asks first: `_types` when it is filled, or a handler given a frame
-}
-Ref frame_argument() {
-    if (lean_build || detail::current_frame() == nullptr) return none_ref();
-    return own(new Native(frame_class()));
+// an object of the type types.FrameType is, with nothing in it for the program: what CPython's has is the names table's
+// `frame:` rows, so reading f_lineno stops by name. It stands for the frame the signal interrupted while the handlers of this
+// arrival run (`live`), so that traceback can list the stack from it and repr() can say where it is (the author's decision of
+// 2026-11-14); when they are done its frames go on, and it is not read again.
+Ref frame_argument(const std::shared_ptr<bool>& live) {
+    detail::FrameRecord* interrupted = detail::current_frame();
+    if (lean_build || interrupted == nullptr) return none_ref();
+    auto* frame = new FrameObject(interrupted->code, interrupted->module != nullptr ? Ref::share(Obj::of(interrupted->module)) : Ref{});
+    frame->record = interrupted;
+    frame->live = live;
+    return own(frame);
 }
 
 // ---- the report of a wakeup write that failed: the pending call of trip_signal, run by a look and never by check_signals()
@@ -198,6 +201,10 @@ bool interrupt_occurred() {                      // _PyOS_InterruptOccurred: a S
 void check_signals() {                           // PyErr_CheckSignals -> _PyErr_CheckSignalsTstate
     if (!is_tripped) return;
     is_tripped = 0;                              // before the walk: a signal that arrives during it sets the flag again
+    struct Pass {                                // the frame can be read for as long as this arrival's handlers run
+        std::shared_ptr<bool> live = std::make_shared<bool>(true);
+        ~Pass() { *live = false; }
+    } pass;
     Ref frame;                                   // one object for the pass, made at its first handler
     for (int i = 1; i < NSIG; ++i) {
         if (!tripped[i]) continue;
@@ -211,7 +218,7 @@ void check_signals() {                           // PyErr_CheckSignals -> _PyErr
             }
             continue;
         }
-        if (frame.get().is_unset()) frame = frame_argument();
+        if (frame.get().is_unset()) frame = frame_argument(pass.live);
         Ref number = int_from_i64(i);
         try {
             invoke(func.get(), {number.get(), frame.get()});   // Py_BuildValue("(iO)", i, frame); what it returns is dropped

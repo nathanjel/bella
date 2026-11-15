@@ -1038,8 +1038,18 @@ Ref repr_unchecked(Obj v) {
             if (held.is_unset()) return str_new("<cell at " + address(v) + ": empty>");
             return str_new("<cell at " + address(v) + ": " + type_of(held)->name.substr(0, 80) + " object at " + address(held) + ">");
         }
-        case Kind::Frame:                        // frame_repr: the file, the line the frame is at and its function, which a frame of
-        case Kind::Native:                       // the runtime's does not give (E-02), so object's repr would be another text
+        case Kind::Frame: {                      // frame_repr: "<frame at %p, file %R, line %d, code %S>"
+            auto* frame = static_cast<FrameObject*>(o);
+            if (frame->record != nullptr) {      // the frame a signal handler was given: the frame it interrupted, while its handlers run
+                if (!*frame->live)
+                    throw NotImplemented("the repr of the frame a signal handler was given, after its handlers have run (the line it was at then: E-02)");
+                Ref file = str_new(frame->code->filename);
+                return str_new("<frame at " + address(v) + ", file " + as_str(repr_of(file.get()).get())->text + ", line " +
+                               std::to_string(frame->record->line) + ", code " + frame->code->name + ">");
+            }
+            throw NotImplemented("the repr of a frame (its file, line and function: E-02)");   // which no other frame of the runtime's gives
+        }
+        case Kind::Native:                       // object's repr would be another text than CPython's
             if (o->cls == no_instances_yet("frame")) throw NotImplemented("the repr of a frame (its file, line and function: E-02)");
             break;
         default: break;

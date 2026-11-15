@@ -16,7 +16,8 @@ walked and read as CPython walks and reads it; capturing a frame's locals stops 
 
 extract_stack, format_stack and print_stack, asked for the running stack (no frame given), take it from the runtime
 (`__bella_stack__`: a frame and the line it is at for each frame, this one's first, as walk_stack gives them) where
-CPython asks sys._getframe; a frame given is walked as CPython walks it.
+CPython asks sys._getframe. Given the frame a signal handler was passed, they take from the runtime the stack the signal
+found (`__bella_stack__(f)`), while the handlers of that arrival run; any other frame given is walked as CPython walks it.
 
 clear_frames clears each frame of a traceback (frame.clear()): an entry gives up the locals of the frame it stands for
 (`__bella_traceback_clear__`), which it holds once the exception has left that frame; a frame still running keeps its
@@ -49,7 +50,8 @@ def extract_stack(f=None, limit=None):  # type: ignore[no-untyped-def]
         stack = StackSummary.extract(__bella_stack__()[1:], limit=limit)  # type: ignore[name-defined]  # noqa: F821  # the caller's frame first
         stack.reverse()
         return stack
-    stack = StackSummary.extract(walk_stack(f), limit=limit)  # type: ignore[name-defined]  # noqa: F821
+    walked = __bella_stack__(f)  # type: ignore[name-defined]  # noqa: F821  # the stack a signal found, of the frame its handler was given; else None
+    stack = StackSummary.extract(walk_stack(f) if walked is None else walked, limit=limit)  # type: ignore[name-defined]  # noqa: F821
     stack.reverse()
     return stack
 

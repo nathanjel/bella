@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <exception>
 #include <initializer_list>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -230,9 +231,15 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 // of the type types.FrameType is, made by the runtime for a traceback's entry or a frame of the running stack, with nothing a
 // program can read (what CPython's has is the names table's `frame:` rows, so reading f_code stops by name). The adaptations
 // read its code through the runtime
+namespace detail { struct FrameRecord; }
 struct FrameObject : Object {
     const Code* code;
     Ref module;                                  // as a traceback entry's: a staged text's code lives as its namespace does
+    // The frame a signal handler is given stands for the frame the signal interrupted, for as long as the handlers of that
+    // arrival run (`*live`): traceback lists the stack from it and repr() says where it is. Afterwards its frames have gone
+    // on, and the record is not to be read. Any other frame object has none.
+    detail::FrameRecord* record = nullptr;
+    std::shared_ptr<bool> live;
     FrameObject(const Code* c, Ref m);
 };
 

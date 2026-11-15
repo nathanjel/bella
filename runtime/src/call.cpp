@@ -2268,11 +2268,23 @@ Ref i_frame_code(Obj, Args a) {
     return c->object;
 }
 // The running stack as traceback.walk_stack gives it (extract_stack, format_stack and print_stack asked for no frame;
-// runtime/replaced): a frame and the line it is at for each frame a traceback would show, this frame's first
+// runtime/replaced): a frame and the line it is at for each frame a traceback would show, this frame's first. Given the
+// frame a signal handler was passed, the same from the frame the signal interrupted, while that arrival's handlers run;
+// afterwards the lines its frames were at are gone, and the walk stops by name. None for anything else given: a frame
+// with no record (a traceback entry's, one of an earlier listing) and what is no frame are CPython's walk to read.
 Ref i_stack(Obj, Args a) {
-    positional_only(a, "stack", 0, 0);
+    positional_only(a, "stack", 0, 1);
+    detail::FrameRecord* from = detail::current_frame();
+    if (a.npos == 1) {
+        if (!is_kind(a.pos(0), Kind::Frame)) return none_ref();
+        auto* given = static_cast<FrameObject*>(a.pos(0).object());
+        if (given->record == nullptr) return none_ref();
+        if (!*given->live)
+            throw NotImplemented("traceback's walk of the frame a signal handler was given, after its handlers have run (the lines its frames were at then: E-02)");
+        from = given->record;
+    }
     Ref out = list_new({});
-    for (detail::FrameRecord* f = detail::current_frame(); f != nullptr; f = f->caller) {
+    for (detail::FrameRecord* f = from; f != nullptr; f = f->caller) {
         if (!f->code->shown) continue;
         Ref frame = own(new FrameObject(f->code, f->module != nullptr ? Ref::share(Obj::of(f->module)) : Ref{}));
         Ref line = int_from_i64(f->line);

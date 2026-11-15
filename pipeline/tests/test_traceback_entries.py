@@ -278,7 +278,12 @@ def test_a_frame_is_not_the_programs_to_read() -> None:
              ("import traceback\ntry:\n    1 / 0\nexcept ZeroDivisionError as exc:\n    list(traceback.walk_tb(exc.__traceback__))", "tb_frame"),
              ("import traceback\ntry:\n    1 / 0\nexcept ZeroDivisionError as exc:\n    frame, _ = next(traceback._walk_tb_with_full_positions(exc.__traceback__))\n"
               "    repr(frame)", "the repr of a frame"),
-             ("import os, signal\nsignal.signal(signal.SIGUSR1, lambda signum, frame: print(repr(frame)))\nos.kill(os.getpid(), signal.SIGUSR1)", "the repr of a frame"))
+             ("import os, signal\nkept = []\nsignal.signal(signal.SIGUSR1, lambda signum, frame: kept.append(frame))\nos.kill(os.getpid(), signal.SIGUSR1)\nrepr(kept[0])",
+              "the repr of the frame a signal handler was given, after its handlers have run"),
+             ("import os, signal, traceback\nkept = []\nsignal.signal(signal.SIGUSR1, lambda signum, frame: kept.append(frame))\nos.kill(os.getpid(), signal.SIGUSR1)\n"
+              "traceback.extract_stack(kept[0])", "traceback's walk of the frame a signal handler was given, after its handlers have run"),
+             ("import os, signal\nsignal.signal(signal.SIGUSR1, lambda signum, frame: frame.f_lineno)\nos.kill(os.getpid(), signal.SIGUSR1)", "f_lineno"),
+             ("import os, signal, traceback\nsignal.signal(signal.SIGUSR1, lambda signum, frame: list(traceback.walk_stack(frame)))\nos.kill(os.getpid(), signal.SIGUSR1)", "f_lineno"))
     for body, name in cases:
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")

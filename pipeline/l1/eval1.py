@@ -1641,10 +1641,10 @@ def _frame_code(frame: object, capture_locals: object) -> object:
     return frame.f_code
 
 
-def _stack() -> list[tuple[object, int]]:
+def _stack(frame: object = None) -> list[tuple[object, int]] | None:
     """The running stack as traceback.walk_stack gives it (runtime/replaced/traceback.py): an evaluator's frames are its own,
-    none of the program's."""
-    return []
+    none of the program's. A frame given is the host's, for CPython's walk to read (None)."""
+    return [] if frame is None else None
 
 
 def _traceback_globals(tb: object) -> object:
