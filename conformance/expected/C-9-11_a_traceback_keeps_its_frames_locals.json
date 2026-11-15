@@ -1,0 +1,12 @@
+{
+ "case": "C-9-11_a_traceback_keeps_its_frames_locals.py",
+ "clause": "C-9-11",
+ "spec": "section 9 (lifetimes), section 7 (traceback)",
+ "status": "P1",
+ "source": "Python/traceback.c (tb_dealloc: an entry holds its frame), Python/frame.c (take_ownership: a frame object that is",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "caught and returned:\n  the call is over\n  released: its second local\n  released: the first local of the frame that caught\n  the exception is gone\ncaught from below:\n  the call is over\n  released: a local of the frame that raised\n  released: a local of the frame that caught from below\n  the exception is gone\ndropped before the frame ended:\n  released: a local of a frame that dropped the exception\n  the frame is over\nstored by the frame that caught:\n  the call is over\n  released: a local of a frame that stored the exception\n  the list is empty\nwithout its traceback:\n  released: a local of the frame that raised\n  released: a local of the frame that caught from below\n  the traceback is gone\nwith_traceback(None):\n  released: its second local\n  released: the first local of the frame that caught\n  the traceback is gone True\ntwo exceptions of one frame:\n  caught: KeyError ValueError\n  the second is gone\n  released: a local of a frame two exceptions passed\n  the first is gone\na frame the exception passed through:\n  caught\n  released: a local of the frame that raised\n  released: a local of a frame the exception passed through\n  the exception is gone\nclear_frames:\n  released: a local of the frame that caught from below\n  released: a local of the frame that raised\n  cleared\n  the exception is gone\na copy of the traceback's entry keeps it too:\n  the exception is gone\n  released: its second local\n  released: the first local of the frame that caught\n  the entry is gone\n",
+ "stderr": "",
+ "exit_code": 0
+}

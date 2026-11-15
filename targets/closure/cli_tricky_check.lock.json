@@ -5287,9 +5287,7 @@
    "kind": "source",
    "status": "compiled",
    "reached_by": "_py_warnings:lazy:901",
-   "dynamic_unknown_lines": [
-    1921
-   ],
+   "dynamic_unknown_lines": [],
    "path": "traceback.py",
    "edges": [
     {
@@ -5491,14 +5489,14 @@
     {
      "importer": "traceback",
      "target": "unicodedata",
-     "cls": "lazy",
+     "cls": "replaced",
      "line": 1887,
      "func": "_compute_suggestion_error"
     },
     {
      "importer": "traceback",
      "target": "_suggestions",
-     "cls": "optional",
+     "cls": "replaced",
      "line": 1961,
      "func": "_compute_suggestion_error"
     },

@@ -8,7 +8,8 @@ is at the call: the names in the order of the code's variables (the parameters, 
 the text, then the variables inner functions share, then the ones taken from outside), without those that are not bound;
 a dict of its own each time, which nothing writes back from. In a module's body and a class's they are the namespace
 itself. The frame is the one that called, whatever name the builtin goes by and whoever was handed it: a helper that calls
-what it was given gets its own."""
+what it was given gets its own. A variable that only a comprehension reads or assigns is a plain one, and the comprehension's
+own are not the frame's once it is done (PEP 709)."""
 # ruff: noqa: B007, B009, F841, F842  # variables bound to be seen, and the builtins reached by getattr
 import builtins
 import functools
@@ -138,6 +139,12 @@ def under_other_names() -> None:
     print("in a generator expression:", next(list(locals()) for item in (1,)), next(dir() for item in (1,)))
 
 
+def used_by_comprehensions(factor: int, table: list[list[int]]) -> dict[str, object]:
+    scaled = [[cell * factor for cell in row] for row in table]
+    totals = [last := sum(row) for row in table]
+    return locals()
+
+
 def attempt(thunk: Callable[[], object]) -> str:
     try:
         thunk()
@@ -168,6 +175,8 @@ steps = generator(2)
 print("a generator's own, at each stop:", next(steps), next(steps), next(steps))
 print("each frame its own:", nested_frames(2))
 under_other_names()
+print("what comprehensions read and assign:", used_by_comprehensions(2, [[1, 2], [3]]), used_by_comprehensions.__code__.co_varnames,
+      used_by_comprehensions.__code__.co_cellvars)
 print("too many arguments:", attempt(lambda: locals(1)), attempt(lambda: locals(x=1)), attempt(lambda: vars(1, 2)), attempt(lambda: dir(1, 2)), attempt(lambda: vars(x=1)))  # type: ignore[call-arg, call-overload]
 print("a module's are its globals:", locals() is globals(), vars() is globals(), dir() == sorted(globals()), "parameters" in dir(), "steps" in locals())
 

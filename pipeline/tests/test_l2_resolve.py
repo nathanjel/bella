@@ -42,6 +42,12 @@ def _ours(s: Scope, out: dict[str, list[Scope]]) -> dict[str, list[Scope]]:
     return out
 
 
+def _comprehensions(s: Scope) -> list[Scope]:
+    """The comprehensions L1 made functions of in this scope, those inside them too: CPython inlines them all."""
+    found = [c for c in s.children if c.qualname.rsplit(".", 1)[-1].startswith("_comp")]
+    return found + [inner for c in found for inner in _comprehensions(c)]
+
+
 def differences(path: Path) -> list[str]:
     src = path.read_text(encoding="utf-8")
     try:
@@ -65,7 +71,7 @@ def differences(path: Path) -> list[str]:
             continue
         if any(getattr(c.node, "kind", "") in ("coroutine", "async generator") for c in s.children):
             continue                     # what an unlowered async body captures is unknown
-        comps = [c for c in s.children if c.qualname.rsplit(".", 1)[-1].startswith("_comp")]
+        comps = _comprehensions(s)
         if comps and ours[2] == cpython[2]:
             # PEP 709: CPython inlines what L1 makes a function, so the comprehensions' own
             # variables join the function's tables and the cells they capture stay locals

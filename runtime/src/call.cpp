@@ -707,6 +707,33 @@ Ref b_globals(Obj, Args a) {                     // globals(): the calling frame
 // namespace itself. A function's frame gives a dict of its own each time (PEP 667: dict(frame.f_locals)), made from the
 // frame's variables as they are now, in the order of the code's names, without those that are not bound; a variable shared
 // with inner functions or taken from outside is its cell's value.
+// A function's frame as a dict: each name CPython's code has that is bound, in CPython's order, from where the frame keeps it
+// (`at`: the variable of that place among the frame's own, Code::frame_slots)
+template <class At>
+Ref function_locals(const Code& code, At at) {
+    Ref made = dict_new();
+    auto* d = static_cast<Dict*>(made.get().object());
+    std::size_t i = 0;
+    auto add = [&](const char* name) {
+        int where = i < code.frame_slots.size() ? code.frame_slots[i] : -1;
+        ++i;
+        if (where < 0) return;
+        Obj value = at(where / 2);
+        if ((where & 1) != 0 && !value.is_unset()) value = static_cast<Cell*>(value.object())->value;
+        if (value.is_unset()) return;
+        dict_set(d, Obj::of(intern(name)), value);
+    };
+    auto among = [](const std::vector<const char*>& names, const char* name) {
+        for (const char* n : names)
+            if (std::strcmp(n, name) == 0) return true;
+        return false;
+    };
+    for (const char* name : code.varnames) add(name);
+    for (const char* name : code.cellvars)
+        if (!among(code.varnames, name)) add(name);
+    for (const char* name : code.freevars) add(name);
+    return made;
+}
 }  // namespace
 Ref frame_locals(const char* asked) {
     detail::FrameRecord* f = detail::current_frame();
@@ -718,28 +745,7 @@ Ref frame_locals(const char* asked) {
         if (!f->ns.is_unset()) return Ref::share(f->ns);
         return Ref::share(Obj::of(f->module->locals != nullptr ? f->module->locals : f->module->dict));
     }
-    Ref made = dict_new();
-    auto* d = static_cast<Dict*>(made.get().object());
-    std::size_t i = 0;
-    auto add = [&](const char* name, bool cell) {
-        int slot = i < code.frame_slots.size() ? code.frame_slots[i] : -1;
-        ++i;
-        if (slot < 0 || f->slots == nullptr) return;
-        Obj value = f->slots[slot]->get();
-        if (cell && !value.is_unset()) value = static_cast<Cell*>(value.object())->value;
-        if (value.is_unset()) return;
-        dict_set(d, Obj::of(intern(name)), value);
-    };
-    auto among = [](const std::vector<const char*>& names, const char* name) {
-        for (const char* n : names)
-            if (std::strcmp(n, name) == 0) return true;
-        return false;
-    };
-    for (const char* name : code.varnames) add(name, among(code.cellvars, name));
-    for (const char* name : code.cellvars)
-        if (!among(code.varnames, name)) add(name, true);
-    for (const char* name : code.freevars) add(name, true);
-    return made;
+    return function_locals(code, [f](int slot) { return f->slots == nullptr ? Obj{} : f->slots[slot]->get(); });
 }
 namespace {
 Ref b_locals(Obj, Args a) {
@@ -2301,6 +2307,53 @@ Ref i_traceback_globals(Obj, Args a) {
     Obj m = static_cast<Traceback*>(a.pos(0).object())->module.get();
     return m.is_unset() ? dict_new() : Ref::share(Obj::of(static_cast<Module*>(m.object())->dict));
 }
+// The names the frame a traceback's entry stands for can see, where traceback looks for the name that was probably meant
+// (_compute_suggestion_error; runtime/replaced): its f_locals, f_globals and f_builtins, or None for what is no traceback of
+// the runtime's, CPython's reads then being the adaptation's. The locals are the frame's as locals() would give them: of a
+// frame still running, the frame's own now; of one an exception left, what the entry of that exception took over, read
+// through the frame's link when this entry is another exception's (the first of two that one frame saw); a module's body
+// and a class's have their namespace. An entry no frame of the program's made has an empty dict for both, as CPython's has.
+// A frame that is over and whose locals went with it, or with the entry that had them, stops by name: CPython's frame
+// object would still have them (RL-222, which waits for the collector), and so would a generator's that waits.
+Ref i_traceback_names(Obj, Args a) {
+    positional_only(a, "traceback_names", 1, 1);
+    if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
+    auto* tb = static_cast<Traceback*>(a.pos(0).object());
+    auto* module = tb->module.get().is_unset() ? nullptr : static_cast<Module*>(tb->module.get().object());
+    Ref globals = module == nullptr ? dict_new() : Ref::share(Obj::of(module->dict));
+    Ref builtins = Ref::share(Obj::of(module == nullptr || module->builtins == nullptr ? builtins_module()->dict : module->builtins));
+    const Code& code = *tb->code;
+    detail::FrameRecord* running = nullptr;
+    for (detail::FrameRecord* f = detail::current_frame(); f != nullptr && tb->frame != 0; f = f->caller)
+        if (f->id == tb->frame) {
+            running = f;
+            break;
+        }
+    if (running != nullptr && running->comprehensions > 0)
+        throw NotImplemented("traceback's suggestion from a frame with a list, set or dict comprehension running in it (its variables are the frame's, PEP 709)");
+    const Traceback* left = tb->left ? tb : tb->link && tb->link->holder != nullptr ? tb->link->holder : nullptr;
+    const bool is_module = std::string_view(code.name) == "<module>";
+    Ref locals;
+    if (module == nullptr) {
+        locals = dict_new();
+    } else if ((code.flags & 0x1) == 0 && is_module) {   // a module's body: its namespace, which stays
+        locals = Ref::share(Obj::of(module->locals != nullptr ? module->locals : module->dict));
+    } else if (running != nullptr) {
+        if ((code.flags & 0x1) == 0) locals = Ref::share(running->ns);   // a class body's namespace
+        else locals = function_locals(code, [running](int slot) { return running->slots == nullptr ? Obj{} : running->slots[slot]->get(); });
+    } else if (left != nullptr) {
+        if ((code.flags & 0x1) == 0) {
+            locals = left->ns;
+        } else {
+            const std::vector<Ref>& kept = left->locals;
+            locals = function_locals(code, [&kept](int slot) { return static_cast<std::size_t>(slot) < kept.size() ? kept[static_cast<std::size_t>(slot)].get() : Obj{}; });
+        }
+    } else {
+        throw NotImplemented("traceback's suggestion from a frame that is over, whose locals went with it (in CPython its traceback keeps them: RL-222, with the collector)");
+    }
+    if (locals.get().is_unset()) throw NotImplemented("traceback's suggestion from a class body's frame without its namespace (E-02)");
+    return tuple_new({locals.get(), globals.get(), builtins.get()});
+}
 // frame.clear() of the frame a traceback's entry stands for (traceback.clear_frames; runtime/replaced). A frame the exception left has
 // given the entry its locals (record_frame), and they go now, last first, as frame_tp_clear releases them. A frame still running has
 // given none: CPython's refuses with a RuntimeError, which clear_frames ignores. True for a traceback's entry, False for what is
@@ -2345,7 +2398,7 @@ void register_intrinsics() {
              {"call_args_tuple", i_call_args_tuple}, {"super", i_super}, {"exception", i_exception}, {"eg_match", i_eg_match},
              {"raise_handled", i_raise_handled}, {"prep_reraise_star", i_prep_reraise_star}, {"reraise_star", i_reraise_star},
              {"call_sites", i_call_sites}, {"traceback_frame", i_traceback_frame}, {"frame_code", i_frame_code}, {"stack", i_stack},
-             {"traceback_globals", i_traceback_globals}, {"traceback_clear", i_traceback_clear}}) {
+             {"traceback_globals", i_traceback_globals}, {"traceback_clear", i_traceback_clear}, {"traceback_names", i_traceback_names}}) {
         Ref b = own(new Builtin(name, fn));
         dict_set(intrinsics(), Obj::of(intern(name)), b.get());
     }

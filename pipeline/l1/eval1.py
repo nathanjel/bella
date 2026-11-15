@@ -1652,6 +1652,13 @@ def _traceback_globals(tb: object) -> object:
     return tb.tb_frame.f_globals if isinstance(tb, types.TracebackType) else None
 
 
+def _traceback_names(tb: object) -> tuple[object, object, object] | None:
+    """The names the frame a traceback's entry stands for can see (runtime/replaced/traceback.py): the host's frame's."""
+    if not isinstance(tb, types.TracebackType):
+        return None
+    return (tb.tb_frame.f_locals, tb.tb_frame.f_globals, tb.tb_frame.f_builtins)
+
+
 def _traceback_clear(tb: object) -> bool:
     """frame.clear() of the frame a traceback's entry stands for (runtime/replaced/traceback.py): the host's frame's, whose
     refusal of a running frame clear_frames ignores."""
@@ -1667,7 +1674,8 @@ def _traceback_clear(tb: object) -> bool:
 _STAR: dict[str, Callable[..., Any]] = {"exception": _star_exception, "eg_match": eg_match, "raise_handled": _raise_keeping,
                                         "prep_reraise_star": prep_reraise_star, "reraise_star": _raise_keeping,
                                         "call_sites": _call_sites, "traceback_frame": _traceback_frame, "frame_code": _frame_code,
-                                        "stack": _stack, "traceback_globals": _traceback_globals, "traceback_clear": _traceback_clear}
+                                        "stack": _stack, "traceback_globals": _traceback_globals, "traceback_clear": _traceback_clear,
+                                        "traceback_names": _traceback_names}
 
 
 def _matches(exc: BaseException, spec: Any) -> bool:

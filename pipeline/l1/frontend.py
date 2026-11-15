@@ -1724,6 +1724,18 @@ def _walrus_targets(nodes: Sequence[ast.AST]) -> list[str]:
             return
         if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name) and n.target.id not in out:
             out.append(n.target.id)
+        if isinstance(n, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            # a comprehension inside: the symbol table's order, which is co_varnames' (measured on 3.15.2): the generators,
+            # then a dict's key and its value, or the element (review log RL-447)
+            for generator in n.generators:
+                walk(generator)
+            if isinstance(n, ast.DictComp):
+                for part in (n.key, n.value):    # one of them is None only for ** in the comprehension (PEP 798), which is refused
+                    if part is not None:
+                        walk(part)
+            else:
+                walk(n.elt)
+            return
         for child in ast.iter_child_nodes(n):
             walk(child)
     for n in nodes:
@@ -2577,7 +2589,8 @@ _STDLIB = Path(__import__("os").path.dirname(__import__("os").__file__)).resolve
 # eval1's _call_sites and _traceback_*)
 _REPLACED_INTRINSICS = {"__bella_call_sites__": "call_sites", "__bella_traceback_frame__": "traceback_frame",
                         "__bella_frame_code__": "frame_code", "__bella_stack__": "stack",
-                        "__bella_traceback_globals__": "traceback_globals", "__bella_traceback_clear__": "traceback_clear"}
+                        "__bella_traceback_globals__": "traceback_globals", "__bella_traceback_clear__": "traceback_clear",
+                        "__bella_traceback_names__": "traceback_names"}
 
 
 def replace_functions(tree: ast.Module, filename: str) -> None:

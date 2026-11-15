@@ -320,12 +320,16 @@ class Emitter:
         inlined = "true" if dict(c.meta).get("inlined", False) and not self.prelude else "false"   # the prelude stands for C, which has none
         def strings(ns: list[str]) -> str:
             return "{" + ", ".join(c_string(n) for n in ns) + "}"
-        # where the frame keeps each of those names (what locals() reads): its place among the variables the frame guard is
-        # given, which are the code's own in this order (see function()); -1 for a name with no variable (never bound)
+        # where the frame keeps each of those names (what locals() reads): twice its place among the variables the frame guard
+        # is given, which are the code's own in this order (see function()), and one more when the variable is a cell there;
+        # -1 for a name with no variable (never bound). A cell of the frame need not be one of co_cellvars: a variable that
+        # only an inlined comprehension reads or assigns is a cell here (the comprehension is a function of its own) and a
+        # fast local in CPython (PEP 709).
         frame_locals = [*c.varnames, *(n for n in c.cellvars if n not in c.varnames), *c.freevars]
+        frame_cells = {*c.cellvars, *c.freevars}
         internal = {public[p.name]: p.name for p in params}
         named = [*names, *(n for n in cellvars if n not in names), *freevars]
-        slots = [frame_locals.index(internal.get(n, n)) if internal.get(n, n) in frame_locals else -1 for n in named]
+        slots = [2 * frame_locals.index(m) + (m in frame_cells) if (m := internal.get(n, n)) in frame_locals else -1 for n in named]
         return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(self.filename)}, "
                 f"{c.first_line}, {len(positional)}, {posonly}, {len(kwonly)}, {str(varargs).lower()}, "
                 f"{str(varkw).lower()}, {strings(names)}, {doc}, {shown}, {strings(cellvars)}, {strings(freevars)}, {flags}, {inlined}, "

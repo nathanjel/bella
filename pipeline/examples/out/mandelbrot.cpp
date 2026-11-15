@@ -26,7 +26,7 @@ static Obj K_1, K_2, K_3, K_4, K_5, K_6;
 
 static const rt::Code code_module{"<module>", "<module>", "mandelbrot.py", 1, 0, 0, 0, false, false, {}, nullptr, true, {}, {}, 0, false, {}};
 static const rt::Code code_escape_time_annotate{"__annotate__", "escape_time.__annotate__", "mandelbrot.py", 7, 1, 1, 0, false, false, {"format"}, nullptr, true, {}, {}, 3, false, {0}};
-static const rt::Code code_escape_time{"escape_time", "escape_time", "mandelbrot.py", 7, 3, 0, 0, false, false, {"cr", "ci", "limit", "zr", "zi", "n", "zr2", "zi2"}, nullptr, true, {}, {}, 3, false, {0, 1, 2, 3, 4, 5, 6, 7}};
+static const rt::Code code_escape_time{"escape_time", "escape_time", "mandelbrot.py", 7, 3, 0, 0, false, false, {"cr", "ci", "limit", "zr", "zi", "n", "zr2", "zi2"}, nullptr, true, {}, {}, 3, false, {0, 2, 4, 6, 8, 10, 12, 14}};
 
 static Ref f_escape_time_annotate(rt::PyFunction* fn, rt::Args args);
 static Ref f_escape_time(rt::PyFunction* fn, rt::Args args);

@@ -400,17 +400,27 @@ def comprehension_fast(s: Scope) -> set[str]:
     """The names this scope holds as cells only because an inlined comprehension assigns them (`nonlocal` in the hoisted
     function): CPython stores them as fast locals, as no closure sees them. A nested function capturing one, through the
     comprehension or beside it, makes it a cell for both."""
-    def free_below(scope: Scope, name: str) -> bool:
-        for child in scope.children:
-            if _is_inlined(scope, child):
-                if free_below(child, name):
-                    return True
-            elif child.scopes.get(name) == FREE:
-                return True
-        return False
-
     return {n for n, kind in s.scopes.items()
-            if kind == CELL and n not in s.params and n not in s.synthetic and not free_below(s, n)}
+            if kind == CELL and n not in s.params and n not in s.synthetic and not _captured_by_a_closure(s, n)}
+
+
+def _captured_by_a_closure(scope: Scope, name: str) -> bool:
+    """Whether a scope with a frame of its own (a function, a lambda, a generator expression, a class body) below `scope`
+    captures `name`, directly or through the comprehensions CPython inlines (PEP 709): those read and assign the enclosing
+    code's fast locals, and make no cell."""
+    for child in scope.children:
+        if _is_inlined(scope, child):
+            if _captured_by_a_closure(child, name):
+                return True
+        elif child.scopes.get(name) == FREE:
+            return True
+    return False
+
+
+def _cpython_cells(s: Scope) -> set[str]:
+    """The cells of this scope that are cells in CPython too: those a closure captures, and a class body's own two."""
+    return {n for n in s.cellvars
+            if n not in s.synthetic and (s.scopes.get(n) != CELL or _captured_by_a_closure(s, n))}
 
 
 def _is_inlined(parent: Scope, child: Scope) -> bool:
@@ -437,7 +447,7 @@ def _inlined_varnames(s: Scope) -> tuple[str, ...]:
 
 
 def _inlined_cells(s: Scope) -> set[str]:
-    cells = {n for n in s.cellvars if n not in s.synthetic}
+    cells = _cpython_cells(s)
     for _, child in s.inlined_at:
         cells |= _inlined_cells(child)
     return cells
@@ -445,10 +455,11 @@ def _inlined_cells(s: Scope) -> set[str]:
 
 def co_cellvars(s: Scope) -> tuple[str, ...]:
     """CPython's co_cellvars: the cells that are fast locals too (parameters, an inlined comprehension's variables that a
-    closure captures) in co_varnames' order, then the other cells sorted; a name an inlined comprehension only assigns
-    outward is no cell (`comprehension_fast`); the compiler's own names left out."""
+    closure captures) in co_varnames' order, then the other cells sorted; a name only inlined comprehensions read or
+    assign, this code's or a comprehension's own, is no cell (`_cpython_cells`; review log RL-445); the compiler's own
+    names left out."""
     varnames = co_varnames(s)
-    cells = {n for n in s.cellvars if n not in s.synthetic} - comprehension_fast(s)
+    cells = _cpython_cells(s)
     for _, child in s.inlined_at:
         cells |= _inlined_cells(child)
     return tuple(n for n in varnames if n in cells) + tuple(sorted(cells - set(varnames)))

@@ -145,7 +145,11 @@ pathlib = ["urllib.request", "urllib.error"]   # Path.as_uri, Path.from_uri: url
 traceback = ["_find_incompatible_extension_module",  # imports importlib.resources.readers, which imports zipfile
              "_walk_tb_with_full_positions", "StackSummary._extract_from_extended_frame_gen",   # frames and positions (E-02): file and line (D-06)
              "clear_frames",                                                                    # frame.clear() (E-02): the entry's locals
-             "extract_stack", "format_stack", "print_stack"]                                    # sys._getframe (E-02): the runtime's frame chain
+             "extract_stack", "format_stack", "print_stack",                                    # sys._getframe (E-02): the runtime's frame chain
+             "_compute_suggestion_error"]                                                       # the frame that raised (E-02): the names its entry has;
+                                                                                                # CPython's body otherwise, so its imports are the same (unicodedata
+                                                                                                # and _suggestions, which the runtime has; the module an ImportError
+                                                                                                # names, already imported)
 logging = ["Logger.findCaller"]                         # walks frame objects (E-02): the compiler's call sites instead
 "unittest.result" = ["TestResult._is_relevant_tb_level"]   # a traceback entry's frame's globals (E-02): the entry's module's
 "re._compiler" = ["_bytes_to_codes"]                    # casts a memoryview ([P2+])
@@ -176,9 +180,6 @@ logging = ["Logger.findCaller"]                         # walks frame objects (E
 
 [dynamic.inspect]
 "_main: mod_name" = []             # the `python -m inspect` command line
-
-[dynamic.traceback]
-"_compute_suggestion_error: exc_value.name" = []   # the module an ImportError names, already imported
 
 [dynamic."unittest.loader"]
 # test modules by name; discovery finds only the test modules compiled into the program

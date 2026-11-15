@@ -4,8 +4,9 @@
 The case has the kinds of frame; here are the shapes of a function's variables that the table of a code record has to get
 right (Code::frame_slots: where each name CPython's code object has is kept among the frame's variables): every kind of
 parameter, names bound by every statement that binds, cells and free variables of several depths, `__class__`, a generator
-between its yields, generic functions, names a comprehension used and gave back, deleted and never bound ones. And the
-stop that stays: inside a list, set or dict comprehension, whose variables are the frame's around it while it runs (PEP 709).
+between its yields, generic functions, names a comprehension used and gave back, deleted and never bound ones; a
+variable that only a comprehension reads or assigns, which is a cell of the compiled frame and a plain local of CPython's,
+with the code object's own tables for it (review log RL-445, RL-446). And the stop that stays: inside a list, set or dict comprehension, whose variables are the frame's around it while it runs (PEP 709).
 
 Run under pytest or directly: python3 -m pipeline.tests.test_frame_locals
 """
@@ -127,6 +128,92 @@ def after_comprehensions(n):
 
 
 print(after_comprehensions(3))
+
+
+def used_by_comprehensions(k, seq, table):
+    read = [x * k for x in seq]
+    assigned = [last := x for x in seq]
+    nested = [[c * k + last for c in row] for row in table]
+    both = [[(inner := c) for c in row if (outer := row)] for row in table]
+    by_a_lambda = [lambda: (x, k) for x in seq]
+    return list(locals().items())[:9], dir()
+
+
+print(used_by_comprehensions(2, [1, 2], [[3]]))
+for function in (used_by_comprehensions,):
+    print(function.__code__.co_varnames, function.__code__.co_cellvars, function.__code__.co_freevars, function.__code__.co_nlocals)
+
+
+def code_tables():
+    def read_by_a_comprehension(y):
+        k = 2
+        return [x * k for x in y]
+
+    def parameter_read_by_a_comprehension(k, y):
+        return [x * k for x in y]
+
+    def comprehension_variable_read_by_a_nested_one(table, first):
+        return [[cell + y for cell in row] for row in table for y in first]
+
+    def three_deep(cube):
+        return [[[a + b + c for c in line] for b, line in plane] for a, plane in cube]
+
+    def read_by_a_lambda_in_a_comprehension(y):
+        return [lambda: x for x in y]
+
+    def nested_then_a_lambda(table):
+        return [[lambda: (row, cell) for cell in row] for row in table]
+
+    def nested_then_a_generator(table):
+        return [[list(cell + q for q in row) for cell in row] for row in table]
+
+    def a_local_read_by_a_nested_comprehension(table):
+        k = 1
+        return [[cell + k for cell in row] for row in table]
+
+    def a_class_in_a_comprehension(y):
+        return [type("C", (), {"v": x}) for x in y], [[x for _ in (1,)] for x in y]
+
+    def a_set_and_a_dict(k, y):
+        return {x + k for x in y}, {x: k for x in y}, {x: [z * k for z in v] for x, v in y}
+
+    def a_walrus_then_a_closure(seq):
+        found = [hit := x for x in seq]
+        return lambda: hit
+
+    def a_real_class_body(k, seq):
+        class Local:
+            doubled = [x for x in seq]
+            factor = k
+        return Local
+
+    # the names comprehensions bind outward, in the symbol table's order: a condition's before the element's
+    def bound_in_a_nested_one(table):
+        both = [[(inner := c) for c in row if (outer := row)] for row in table]
+        return inner, outer
+
+    def bound_in_a_dict(pairs):
+        made = [{(key := k): (value := v) for k, v in row if (kept := k)} for row in pairs]
+        return key, value, kept
+
+    def bound_in_a_generator(table):
+        return sum(sum((cell := c) for c in row if (seen := c)) for row in table)
+
+    def bound_in_one(seq):
+        return [(element := x) for x in seq if (condition := x)]
+
+    def bound_by_two_generators(table):
+        return [(z := c) for row in table if (a := row) for c in row if (b := c)]
+
+    return [(f.__name__, f.__code__.co_varnames, f.__code__.co_cellvars, f.__code__.co_freevars)
+            for f in (read_by_a_comprehension, parameter_read_by_a_comprehension, comprehension_variable_read_by_a_nested_one, three_deep,
+                      read_by_a_lambda_in_a_comprehension, nested_then_a_lambda, nested_then_a_generator, a_local_read_by_a_nested_comprehension,
+                      a_class_in_a_comprehension, a_set_and_a_dict, a_walrus_then_a_closure, a_real_class_body, bound_in_a_nested_one,
+                      bound_in_a_dict, bound_in_a_generator, bound_in_one, bound_by_two_generators)]
+
+
+for row in code_tables():
+    print(row)
 
 
 def cells(a, b, c):

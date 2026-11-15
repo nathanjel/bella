@@ -175,8 +175,10 @@ struct Code {
     int flags = 0;                               // co_flags, from the kind of code (specification E-02 as narrowed in v0.14)
     bool inlined = false;                        // a program's list, set or dict comprehension: CPython runs it in the frame around it (PEP 709)
     // Where a frame of this code keeps each variable CPython's has a name for, in CPython's order (co_varnames, then the
-    // co_cellvars not among them, then co_freevars): its place among the locals the frame's guard is given, or -1 for a
-    // name the compiled function has no variable for (it is never bound). What locals() is made from.
+    // co_cellvars not among them, then co_freevars): twice its place among the locals the frame's guard is given, plus one
+    // when the variable is a cell there (which co_cellvars does not say: a variable only an inlined comprehension uses is
+    // a cell of the compiled frame and a fast local of CPython's); -1 for a name the compiled function has no variable
+    // for (it is never bound). What locals() is made from.
     std::vector<int> frame_slots;
     mutable bool module_rebound = false;         // a function of this code had its __module__ rebound: a frame's name is no longer its globals'
     mutable Ref object;                          // its code object, made at the first f.__code__ (one per record: equality is identity)
@@ -216,6 +218,15 @@ struct Module : Object {
 void forget_module(const Module* m);             // the runtime's own: cleared by nothing at exit
 std::vector<Module*>& all_modules();             // every module made, oldest first (immortal: D-19)
 
+struct Traceback;
+namespace detail {
+// The entries of one frame know of each other through this: which of them took over the frame's variables when an exception
+// left it, for as long as that entry lives. CPython's entries hold one frame object between them; here the variables stay
+// with the one entry (who holds them how long is D-12's, RL-222: with the collector), and the others may read them there.
+struct FrameLink {
+    Traceback* holder = nullptr;
+};
+}
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
     const Code* code;
     int line;
@@ -223,6 +234,9 @@ struct Traceback : Object {                      // one frame's entry; `next` go
                                                  // text's lives as its functions do); Unset: _PyTraceback_Add's entry, whose frame has an empty dict
     std::uint64_t frame = 0;                     // the frame (a FrameGuard's id) it records
     std::vector<Ref> locals;                     // the frame's locals, taken over during unwinding
+    bool left = false;                           // an exception left the frame, and `locals` are what it had then (record_frame)
+    Ref ns;                                      // a class body's namespace, kept as its frame is left (its f_locals)
+    std::shared_ptr<detail::FrameLink> link;     // shared with the frame's other entries: which of them has its locals
     Ref next;
     Traceback(const Code* c, int l, Ref nx);
 };
@@ -629,8 +643,8 @@ public:
 // guard if none caught it); when it leaves, the guard moves the locals into the frame's entry,
 // where they die with the traceback (RL-221; a caught exception keeping them is RL-222, step 3c).
 namespace detail {
-void arrive(const Code& code, Module* module, int line, std::uint64_t& id, PyError& e) noexcept;
-void record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept;
+void arrive(const Code& code, Module* module, int line, std::uint64_t& id, std::shared_ptr<FrameLink>& link, PyError& e) noexcept;
+void record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n, Obj ns, std::shared_ptr<FrameLink>& link) noexcept;
 void enter_frame();                              // RecursionError past the limit (spec D-17)
 void leave_frame() noexcept;
 // What a frame shows to the builtins that read their caller (globals(), a lazy import's declaration).
@@ -644,6 +658,7 @@ struct FrameRecord {
     std::uint64_t id = 0;                        // given when the frame first records an exception (its traceback entries carry it)
     Ref* const* slots = nullptr;                 // the frame's variables, as its guard was given them (Code::frame_slots says which is which)
     Obj ns{};                                    // a class body's namespace: what locals() is there (a module's is its module's)
+    std::shared_ptr<FrameLink> link;             // made with the frame's first traceback entry: what its entries share
 };
 FrameRecord*& current_frame();
 // an inlined comprehension's line is its enclosing frame's (PEP 709): the nearest shown caller takes it
@@ -666,12 +681,12 @@ public:
         if (c.shown) detail::current_frame() = this;
         else if (c.inlined && caller != nullptr) ++caller->comprehensions;
     }
-    void arrived(PyError& e) noexcept { detail::arrive(*code, module, line, id, e); }
+    void arrived(PyError& e) noexcept { detail::arrive(*code, module, line, id, link, e); }
     ~FrameGuard() {
         detail::leave_frame();
         detail::current_frame() = caller;
         if (!code->shown && code->inlined && caller != nullptr) --caller->comprehensions;
-        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, module, line, id, locals_.data(), N);
+        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, module, line, id, locals_.data(), N, ns, link);
     }
     FrameGuard(const FrameGuard&) = delete;
     FrameGuard& operator=(const FrameGuard&) = delete;

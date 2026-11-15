@@ -272,6 +272,7 @@ bool register_deaths() {
     destroyer(Kind::Traceback) = [](Object* o) {
         auto* t = static_cast<Traceback*>(o);      // tb_dealloc: the deeper entries, then this frame
         t->next = Ref{};
+        if (t->link && t->link->holder == t) t->link->holder = nullptr;   // the frame's other entries have nowhere to read them now
         for (auto it = t->locals.rbegin(); it != t->locals.rend(); ++it) *it = Ref{};
         destroy<Traceback>(o);
     };
@@ -922,11 +923,13 @@ Obj traceback_of(Obj exc) { return is_exception_instance(exc) ? exception_field(
 namespace {
 std::uint64_t frame_ids = 0;                     // a frame's id, given on its first record: never reused
 
-// prepends (code, line) for frame `id` to exc's traceback, as PyTraceBack_Here does
-Traceback* add_entry(Obj exc, const Code& code, Module* module, int line, std::uint64_t id) {
+// prepends (code, line) for frame `id` to exc's traceback, as PyTraceBack_Here does; the frame's entries share its link
+Traceback* add_entry(Obj exc, const Code& code, Module* module, int line, std::uint64_t id, std::shared_ptr<detail::FrameLink>& link) {
     Obj prev = traceback_of(exc);
     auto* tb = new Traceback(&code, line, Ref::share(prev.is_unset() ? None() : prev));
     tb->frame = id;
+    if (!link) link = std::make_shared<detail::FrameLink>();
+    tb->link = link;
     if (module != nullptr) tb->module = Ref::share(Obj::of(module));
     Ref held = own(tb);
     set_exception_field(exc, "__traceback__", held.get());
@@ -940,12 +943,14 @@ void traceback_from_current_frame(Obj exc) {     // _PyTraceBack_FromFrame(NULL,
     if (f->id == 0) f->id = ++frame_ids;
     auto* tb = new Traceback(f->code, f->line, none_ref());
     tb->frame = f->id;
+    if (!f->link) f->link = std::make_shared<detail::FrameLink>();
+    tb->link = f->link;
     if (f->module != nullptr) tb->module = Ref::share(Obj::of(f->module));
     Ref held = own(tb);
     set_exception_field(exc, "__traceback__", held.get());
 }
 
-void detail::arrive(const Code& code, Module* module, int line, std::uint64_t& id, PyError& e) noexcept {
+void detail::arrive(const Code& code, Module* module, int line, std::uint64_t& id, std::shared_ptr<FrameLink>& link, PyError& e) noexcept {
     try {
         if (!code.shown) {                       // no frame in CPython: the caller records the call
             e.recorded = 0;
@@ -953,14 +958,15 @@ void detail::arrive(const Code& code, Module* module, int line, std::uint64_t& i
         }
         if (id == 0) id = ++frame_ids;
         if (e.recorded == id) return;            // re-raised by this frame
-        if (e.recorded != BARE_RAISE && is_kind(e.exc.get(), Kind::Instance)) add_entry(e.exc.get(), code, module, line, id);
+        if (e.recorded != BARE_RAISE && is_kind(e.exc.get(), Kind::Instance)) add_entry(e.exc.get(), code, module, line, id, link);
         e.recorded = id;
     } catch (...) {
         // a frame record that cannot be made loses the entry, never the exception
     }
 }
 
-void detail::record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n) noexcept {
+void detail::record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n, Obj ns,
+                          std::shared_ptr<FrameLink>& link) noexcept {
     try {
         Obj exc = raising();
         auto* err = static_cast<PyError*>(const_cast<void*>(raising_owner()));
@@ -979,10 +985,14 @@ void detail::record_frame(const Code& code, Module* module, int line, std::uint6
                 }
         } else {
             if (id == 0) id = ++frame_ids;
-            entry = add_entry(exc, code, module, line, id);
+            entry = add_entry(exc, code, module, line, id, link);
         }
-        if (entry != nullptr)
+        if (entry != nullptr) {
             for (std::size_t i = 0; i < n; ++i) entry->locals.push_back(std::move(*locals[i]));
+            entry->left = true;
+            if (!ns.is_unset()) entry->ns = Ref::share(ns);
+            if (entry->link) entry->link->holder = entry;   // the frame's other entries read them here, while this one lives
+        }
     } catch (...) {
         // a frame record that cannot be made loses the entry, never the exception
     }
