@@ -2239,7 +2239,20 @@ Ref module_init_m(Obj self, Args a) {            // module___init___impl: module
 // dir(obj): type(obj).__dir__(obj), as a sorted list (PyObject_Dir, _dir_object)
 Ref b_dir(Obj, Args a) {
     positional_only(a, "dir", 0, 1);
-    if (a.npos == 0) throw NotImplemented("dir() without an argument (the calling frame's names)");
+    if (a.npos == 0) {                           // _dir_locals: the sorted keys of the calling frame's locals
+        Ref locals = frame_locals("dir()");
+        Ref names;
+        if (is_exact_dict(locals.get())) {
+            names = invoke(Obj::of(types().list), {locals.get()});   // PyDict_Keys
+        } else {                                 // PyMapping_Keys: the mapping's own keys(), as a list
+            Ref keys = getattr(locals.get(), N("keys"));
+            Ref answer = invoke(keys.get(), Args{});
+            names = is_kind(answer.get(), Kind::List) && !has_attributes(answer.get().object()) ? std::move(answer)
+                                                                                                  : invoke(Obj::of(types().list), {answer.get()});
+        }
+        list_sort_m(names.get(), Args{});        // PyList_Sort
+        return names;
+    }
     Obj obj = a.pos(0);
     bool found = false;
     Ref result = call_special(obj, "__dir__", {}, &found);

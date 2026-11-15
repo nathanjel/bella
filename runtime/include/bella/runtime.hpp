@@ -173,6 +173,10 @@ struct Code {
     std::vector<const char*> freevars;
     int flags = 0;                               // co_flags, from the kind of code (specification E-02 as narrowed in v0.14)
     bool inlined = false;                        // a program's list, set or dict comprehension: CPython runs it in the frame around it (PEP 709)
+    // Where a frame of this code keeps each variable CPython's has a name for, in CPython's order (co_varnames, then the
+    // co_cellvars not among them, then co_freevars): its place among the locals the frame's guard is given, or -1 for a
+    // name the compiled function has no variable for (it is never bound). What locals() is made from.
+    std::vector<int> frame_slots;
     mutable bool module_rebound = false;         // a function of this code had its __module__ rebound: a frame's name is no longer its globals'
     mutable Ref object;                          // its code object, made at the first f.__code__ (one per record: equality is identity)
 };
@@ -342,6 +346,7 @@ Ref b_sorted(Obj, Args a);
 Ref i_lookup_special(Obj, Args a);               // builtins.py's primitives
 Ref i_number_index(Obj, Args a);
 Ref i_warnings_frame(Obj, Args a);
+Ref frame_locals(const char* asked);              // runtime/src/call.cpp: the calling frame's locals, for locals(), vars() and dir()
 Ref i_find_source_encoding(Obj, Args a);          // runtime/src/tokenizer.cpp: (fd, filename, io) -> (the encoding or None, an error left behind)
 std::uint64_t keyed_hash(std::uint64_t key, const unsigned char* src, std::size_t len);   // _Py_KeyedHash: siphash13 with the key and 0 (core.cpp)
 Ref i_cpython_table(Obj, Args a);                 // _cpython_table(key): a row of the names table, or None
@@ -630,6 +635,8 @@ struct FrameRecord {
     int line;
     int comprehensions = 0;                      // the inlined comprehensions running in this frame now (PEP 709): their variables are its own
     std::uint64_t id = 0;                        // given when the frame first records an exception (its traceback entries carry it)
+    Ref* const* slots = nullptr;                 // the frame's variables, as its guard was given them (Code::frame_slots says which is which)
+    Obj ns{};                                    // a class body's namespace: what locals() is there (a module's is its module's)
 };
 FrameRecord*& current_frame();
 // an inlined comprehension's line is its enclosing frame's (PEP 709): the nearest shown caller takes it
@@ -647,6 +654,7 @@ public:
     explicit FrameGuard(const Code& c, Module* m, L&... locals)
         : detail::FrameRecord{&c, m, detail::current_frame(), c.first_line}, locals_{&locals...},
           uncaught_(std::uncaught_exceptions()) {
+        slots = locals_.data();
         detail::enter_frame();
         if (c.shown) detail::current_frame() = this;
         else if (c.inlined && caller != nullptr) ++caller->comprehensions;

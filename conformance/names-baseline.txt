@@ -61,7 +61,6 @@ builtin_function_or_method:__text_signature__
 builtins:__build_class__
 builtins:aiter
 builtins:anext
-builtins:locals
 bytearray:__alloc__
 bytearray:__buffer__
 bytearray:__release_buffer__

@@ -320,9 +320,16 @@ class Emitter:
         inlined = "true" if dict(c.meta).get("inlined", False) and not self.prelude else "false"   # the prelude stands for C, which has none
         def strings(ns: list[str]) -> str:
             return "{" + ", ".join(c_string(n) for n in ns) + "}"
+        # where the frame keeps each of those names (what locals() reads): its place among the variables the frame guard is
+        # given, which are the code's own in this order (see function()); -1 for a name with no variable (never bound)
+        frame_locals = [*c.varnames, *(n for n in c.cellvars if n not in c.varnames), *c.freevars]
+        internal = {public[p.name]: p.name for p in params}
+        named = [*names, *(n for n in cellvars if n not in names), *freevars]
+        slots = [frame_locals.index(internal.get(n, n)) if internal.get(n, n) in frame_locals else -1 for n in named]
         return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(self.filename)}, "
                 f"{c.first_line}, {len(positional)}, {posonly}, {len(kwonly)}, {str(varargs).lower()}, "
-                f"{str(varkw).lower()}, {strings(names)}, {doc}, {shown}, {strings(cellvars)}, {strings(freevars)}, {flags}, {inlined}}};")
+                f"{str(varkw).lower()}, {strings(names)}, {doc}, {shown}, {strings(cellvars)}, {strings(freevars)}, {flags}, {inlined}, "
+                f"{{{', '.join(map(str, slots))}}}}};")
 
     @staticmethod
     def param_order(c: G.Code) -> list[G.Param]:
@@ -367,6 +374,8 @@ class Emitter:
             self.out.append(f"    Ref {self.vars[n]};")
         guard = ", ".join(["", *(self.vars[n] for n in frame_locals)])
         self.out.append(f"    rt::FrameGuard frame({fn.cname}, M{guard});")
+        if c.kind == "classbody":
+            self.out.append("    frame.ns = ns;                             // what locals() is in a class body")
         # the frontend's variables for what CPython keeps on its stack, and a list, set or dict
         # comprehension helper's iterator (PEP 709 inlines those; a generator's is a real frame's
         # argument): dropped newest first when an exception leaves, before the frame is recorded,

@@ -702,9 +702,53 @@ Ref b_globals(Obj, Args a) {                     // globals(): the calling frame
     if (f == nullptr) throw NotImplemented("globals() outside any frame");
     return Ref::share(Obj::of(f->module->dict));
 }
+// _PyEval_GetFrameLocals: what locals(), vars() and dir() without an argument read, of the frame that called (the nearest
+// one CPython has: a function of the prelude stands for C and has none). A module's body and a class's give their
+// namespace itself. A function's frame gives a dict of its own each time (PEP 667: dict(frame.f_locals)), made from the
+// frame's variables as they are now, in the order of the code's names, without those that are not bound; a variable shared
+// with inner functions or taken from outside is its cell's value.
+}  // namespace
+Ref frame_locals(const char* asked) {
+    detail::FrameRecord* f = detail::current_frame();
+    if (f == nullptr) throw NotImplemented(std::string(asked) + " outside any frame");
+    if (f->comprehensions > 0)                   // _PyFrame_HasHiddenLocals: the comprehension's variables are the frame's, for as long as it runs
+        throw NotImplemented(std::string(asked) + " inside a list, set or dict comprehension (its variables are the frame's around it, PEP 709)");
+    const Code& code = *f->code;
+    if ((code.flags & 0x1) == 0) {               // not CO_OPTIMIZED: frame->f_locals as it is
+        if (!f->ns.is_unset()) return Ref::share(f->ns);
+        return Ref::share(Obj::of(f->module->locals != nullptr ? f->module->locals : f->module->dict));
+    }
+    Ref made = dict_new();
+    auto* d = static_cast<Dict*>(made.get().object());
+    std::size_t i = 0;
+    auto add = [&](const char* name, bool cell) {
+        int slot = i < code.frame_slots.size() ? code.frame_slots[i] : -1;
+        ++i;
+        if (slot < 0 || f->slots == nullptr) return;
+        Obj value = f->slots[slot]->get();
+        if (cell && !value.is_unset()) value = static_cast<Cell*>(value.object())->value;
+        if (value.is_unset()) return;
+        dict_set(d, Obj::of(intern(name)), value);
+    };
+    auto among = [](const std::vector<const char*>& names, const char* name) {
+        for (const char* n : names)
+            if (std::strcmp(n, name) == 0) return true;
+        return false;
+    };
+    for (const char* name : code.varnames) add(name, among(code.cellvars, name));
+    for (const char* name : code.cellvars)
+        if (!among(code.varnames, name)) add(name, true);
+    for (const char* name : code.freevars) add(name, true);
+    return made;
+}
+namespace {
+Ref b_locals(Obj, Args a) {
+    noargs(a, "locals");                         // METH_NOARGS
+    return frame_locals("locals()");
+}
 Ref b_vars(Obj, Args a) {
     clinic(a, "vars", "vars", 0, 1);
-    if (a.npos == 0) throw NotImplemented("vars() without an argument (the calling frame's locals)");
+    if (a.npos == 0) return frame_locals("vars()");
     try {
         return getattr(a.pos(0), intern("__dict__"));
     } catch (const PyError& e) {
@@ -1522,6 +1566,7 @@ Module* make_builtins() {
     put_builtin(d, "__lazy_import__", b_lazy_import);
     put_builtin(d, "dir", b_dir);
     put_builtin(d, "globals", b_globals);
+    put_builtin(d, "locals", b_locals);
     put(d, "slice", Obj::of(t.slice));
     put(d, "super", Obj::of(t.super_));
     put(d, "set", Obj::of(t.set));

@@ -1861,6 +1861,8 @@ class _Comprehensions(ast.NodeTransformer):
             body=_hoist(body, "function", frozenset(declared_global), module_frame=frame),   # comprehensions in the element, conditions or inner loops
             decorator_list=[], returns=None, type_params=[])
         fn.bella_store = fname  # type: ignore[attr-defined]
+        if kind == "genexp":
+            fn.bella_public = {arg: ".0"}  # type: ignore[attr-defined]  # the name CPython's code object and locals() have for it
         fn.bella_inlined = kind != "genexp"  # type: ignore[attr-defined]
         fn.bella_module_frame = frame  # type: ignore[attr-defined]
         fn.bella_qualname = getattr(node, "bella_qualname", None)  # type: ignore[attr-defined]
