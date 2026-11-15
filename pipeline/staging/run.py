@@ -43,6 +43,15 @@ def phase1_blocked() -> list[str]:
     return blocked
 
 
+def declares(script: Path, deviation: str) -> bool:
+    """Whether the script is a conformance case that declares the deviation in its header (`# deviation: D-nn`)."""
+    try:
+        head = script.read_text(encoding="utf-8").split('"""', 1)[0]
+    except (OSError, UnicodeDecodeError):
+        return False
+    return any(line.replace(" ", "") == f"#deviation:{deviation}" for line in head.splitlines())
+
+
 def _key(paths: list[Path], *extra: str) -> str:
     h = hashlib.sha256(sys.version.encode())
     for p in paths:
@@ -158,7 +167,13 @@ def main(argv: list[str] | None = None) -> int:
     safe_path = any(o == "-P" or (o.startswith("-") and not o.startswith("--") and "P" in o[1:]) for o in python_options)
     optimize = optimisation_level(python_options)
     artefacts = [stdlib_artefact(blocked, optimize), program_artefact(script, ours.program_lock, blocked, safe_path, optimize)]
-    env = dict(os.environ, BELLA_STAGING="replay", BELLA_SIMULATE_BLOCK=",".join(blocked),
+    # D-27: a compiled program that holds no `warnings` module has its warnings printed as CPython's C prints them. The replay
+    # is CPython with the whole library, where the same takes the import blocked; and it cannot be blocked for every program
+    # whose imports do not reach it, since CPython itself imports `traceback`, and with it `warnings`, to report an uncaught
+    # exception (C-8-12), which a compiled program's own report does not need. So a case that declares D-27 is run as the
+    # harness records its second expectation, at run time only: the dry run is the build's.
+    absent = [*blocked, "warnings"] if declares(script, "D-27") else blocked
+    env = dict(os.environ, BELLA_STAGING="replay", BELLA_SIMULATE_BLOCK=",".join(absent),
                BELLA_STAGING_ARTEFACTS=os.pathsep.join(str(a.with_suffix(".bin")) for a in artefacts),
                BELLA_STAGING_SHIMS=str(SHIMS), BELLA_STAGING_MECHANISM=ours.mechanism,
                BELLA_STAGING_RT=str(HERE / "annotate_rt.py"),

@@ -129,7 +129,9 @@ def _phase1_blocked(python: str) -> list[str]:
 
 def _no_warnings_module(python: str) -> list[str]:
     """D-27: a program that holds no `warnings` module. CPython's import of it fails, as for a module that is not installed,
-    and its C prints the warning itself."""
+    and its C prints the warning itself. A case that declares it must not end in an uncaught exception: CPython imports
+    `traceback` to report one, and `traceback` imports `warnings`, so its report would be the C's too, which a compiled
+    program's is not (seen with C-8-12 under the staging replay, 2026-11-15)."""
     return ["warnings"]
 
 
