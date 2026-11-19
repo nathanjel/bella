@@ -172,7 +172,9 @@ def main(argv: list[str] | None = None) -> int:
     # whose imports do not reach it, since CPython itself imports `traceback`, and with it `warnings`, to report an uncaught
     # exception (C-8-12), which a compiled program's own report does not need. So a case that declares D-27 is run as the
     # harness records its second expectation, at run time only: the dry run is the build's.
-    absent = [*blocked, "warnings"] if declares(script, "D-27") else blocked
+    # D-28 likewise: the runtime's own report of an exception is CPython's without `traceback`, and a case that declares it
+    # imports nothing that needs the module.
+    absent = [*blocked, *(name for deviation, name in (("D-27", "warnings"), ("D-28", "traceback")) if declares(script, deviation))]
     env = dict(os.environ, BELLA_STAGING="replay", BELLA_SIMULATE_BLOCK=",".join(absent),
                BELLA_STAGING_ARTEFACTS=os.pathsep.join(str(a.with_suffix(".bin")) for a in artefacts),
                BELLA_STAGING_SHIMS=str(SHIMS), BELLA_STAGING_MECHANISM=ours.mechanism,

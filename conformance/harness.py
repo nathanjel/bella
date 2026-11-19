@@ -41,9 +41,11 @@ accident).
 A case that declares `# deviation: D-nn` has two expectations: CPython's trace, and the trace
 of CPython made to show the deviation (`expected/<case>.D-nn.json`), which is what `check`
 requires of the runner. Only deviations that CPython can be made to show are accepted; today
-those are D-20 (the phase-1 omissions and codec set) and D-27 (a program without the `warnings`
-module), simulated by blocking those modules at start-up (conformance/simulate/sitecustomize.py). `record` refuses a deviation case whose two
-traces are equal, since the declaration would then claim a difference that does not exist.
+those are D-20 (the phase-1 omissions and codec set), D-27 (a program without the `warnings`
+module) and D-28 (the runtime's own report of an exception, which has no `traceback` module to add
+to its last line), simulated by blocking those modules at start-up (conformance/simulate/sitecustomize.py).
+`record` refuses a deviation case whose two traces are equal, since the declaration would then claim
+a difference that does not exist.
 """
 from __future__ import annotations
 
@@ -135,7 +137,16 @@ def _no_warnings_module(python: str) -> list[str]:
     return ["warnings"]
 
 
-SIMULATIONS = {"D-20": _phase1_blocked, "D-27": _no_warnings_module}
+def _no_traceback_module(python: str) -> list[str]:
+    """D-28: the report the runtime prints itself ends with the exception's own message. CPython prints that when its import
+    of `traceback` fails (Python/pythonrun.c, _PyErr_Display falling back to print_exception), and the two agree on every
+    exception that is not a group and has no notes: CPython's C prints a group as one exception and leaves the notes out,
+    where a compiled program prints both as `traceback` does. So a case that declares it reports no group and no note, and
+    imports nothing that imports `traceback` (measured 2026-11-19; pipeline/tests/test_runtime_reports.py has the rest)."""
+    return ["traceback"]
+
+
+SIMULATIONS = {"D-20": _phase1_blocked, "D-27": _no_warnings_module, "D-28": _no_traceback_module}
 
 
 def simulation_env(deviation: str | None, python: str) -> dict[str, str]:
