@@ -259,12 +259,258 @@ del c
 print(saved)
 print("end")
 """),
+    # throw(type, value, traceback), which CPython takes with a DeprecationWarning (C-3-75): every kind of first, second and
+    # third argument against every state of the generator, with what the next() after it gives. Until 2026-11-19 two and
+    # three arguments stopped by name, and what is no exception was raised inside the generator, not in the caller (RL-451)
+    ("throw with a value and a traceback", r"""
+import traceback
+import warnings
+
+warnings.simplefilter("ignore")
+ABSENT = object()
+
+
+class Narrow(ValueError):
+    pass
+
+
+class Refuses(Exception):
+    def __init__(self, *args):
+        raise LookupError("cannot be made of", *args)
+
+
+class Returns5(Exception):
+    def __new__(cls, *args):
+        return 5
+
+
+class NotAnException:
+    pass
+
+
+class TupleSub(tuple):
+    pass
+
+
+def old_traceback():
+    try:
+        raise KeyError("old")
+    except KeyError as exc:
+        return exc.__traceback__
+
+
+TB = old_traceback()
+
+
+def describe(exc):
+    names = [entry.name for entry in traceback.extract_tb(exc.__traceback__)]
+    return f"{type(exc).__name__}{exc.args!r} via {names}"
+
+
+def catcher():
+    seen = "start"
+    while True:
+        try:
+            yield seen
+        except GeneratorExit:
+            raise
+        except BaseException as exc:
+            seen = describe(exc)
+
+
+def plain():
+    yield "a"
+    yield "b"
+
+
+def delegates():
+    yield from catcher()
+
+
+def delegates_twice():
+    yield from delegates()
+
+
+def delegates_to_plain():
+    try:
+        yield from plain()
+    except ValueError as exc:
+        yield "the delegator caught " + describe(exc)
+
+
+class WithThrow:
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return "it"
+
+    def throw(self, *args):
+        return ("its throw got", len(args), [type(a).__name__ for a in args])
+
+
+class ThrowRaises(WithThrow):
+    def throw(self, *args):
+        raise OSError("from its throw", len(args))
+
+
+class NoThrow:
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return "it"
+
+
+def delegates_to(kind):
+    yield from kind()
+
+
+def started(make):
+    made = make()
+    next(made)
+    return made
+
+
+def finished():
+    made = plain()
+    list(made)
+    return made
+
+
+MAKERS = {
+    "not started": catcher,
+    "suspended": lambda: started(catcher),
+    "plain, suspended": lambda: started(plain),
+    "delegating": lambda: started(delegates),
+    "delegating twice": lambda: started(delegates_twice),
+    "delegating to a plain one": lambda: started(delegates_to_plain),
+    "to an object with throw": lambda: started(lambda: delegates_to(WithThrow)),
+    "to an object whose throw raises": lambda: started(lambda: delegates_to(ThrowRaises)),
+    "to an object without throw": lambda: started(lambda: delegates_to(NoThrow)),
+    "finished": finished,
+}
+TYPS = {
+    "ValueError": lambda: ValueError, "Narrow": lambda: Narrow, "Refuses": lambda: Refuses, "Returns5": lambda: Returns5,
+    "ValueError()": lambda: ValueError("instance"), "Narrow()": lambda: Narrow("narrow instance"),
+    "GeneratorExit": lambda: GeneratorExit, "GeneratorExit()": lambda: GeneratorExit("exit"),
+    "StopIteration": lambda: StopIteration, "StopIteration()": lambda: StopIteration("stop"),
+    "KeyboardInterrupt": lambda: KeyboardInterrupt, "5": lambda: 5, "NotAnException": lambda: NotAnException,
+    "NotAnException()": lambda: NotAnException(), "None": lambda: None, "'text'": lambda: "text",
+}
+VALS = {
+    "": lambda: ABSENT, "None": lambda: None, "'text'": lambda: "text", "('a', 1)": lambda: ("a", 1), "()": lambda: (),
+    "TupleSub": lambda: TupleSub(("t", 2)), "ValueError()": lambda: ValueError("value"), "Narrow()": lambda: Narrow("narrow value"),
+    "KeyError()": lambda: KeyError("k"), "5": lambda: 5, "[1, 2]": lambda: [1, 2], "ValueError": lambda: ValueError,
+}
+TBS = {"": lambda: ABSENT, "None": lambda: None, "TB": lambda: TB, "'no'": lambda: "no", "5": lambda: 5}
+
+for maker_name, make in MAKERS.items():
+    for typ_name, typ in TYPS.items():
+        for val_name, val in VALS.items():
+            for tb_name, tb in TBS.items():
+                args = [a for a in (typ(), val(), tb()) if a is not ABSENT]
+                if val_name == "" and tb_name != "":
+                    continue
+                made = make()
+                try:
+                    out = repr(made.throw(*args))
+                except BaseException as exc:
+                    out = "raised " + describe(exc)
+                try:
+                    after = repr(next(made))
+                except BaseException as exc:
+                    after = "then " + type(exc).__name__
+                made.close()
+                print(f"{maker_name} | throw({', '.join(n for n in (typ_name, val_name, tb_name) if n)}) -> {out} | next: {after}")
+
+# the warning: for two and three arguments, and none for one; as an error it leaves the generator alone
+warnings.resetwarnings()
+for args in ((ValueError,), (ValueError, "v"), (ValueError, "v", None), (ValueError("i"), None), (5, 6), (ValueError, "v", "no")):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        made = started(catcher)
+        try:
+            made.throw(*args)
+        except TypeError as exc:
+            print("TypeError", exc)
+    print(len(args), [(w.category.__name__, str(w.message), w.lineno) for w in caught])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        made = started(catcher)
+        try:
+            print("as an error:", made.throw(*args))
+        except (DeprecationWarning, TypeError) as exc:
+            print("as an error:", type(exc).__name__, "| the generator:", next(made))
+print(plain().throw.__name__, type(plain().throw).__name__)
+for wrong in ((), (1, 2, 3, 4)):
+    try:
+        plain().throw(*wrong)
+    except TypeError as exc:
+        print("TypeError", exc)
+try:
+    plain().throw(ValueError, value=1)
+except TypeError as exc:
+    print("TypeError", exc)
+"""),
+    # PEP 479: the RuntimeError made of a StopIteration that leaves a generator has no entry for that generator's frame
+    # (CPython re-raises it past the place that adds one); the StopIteration behind it has (RL-452)
+    ("the traceback of a StopIteration that left", r"""
+import traceback
+
+
+def raises_in_its_body():
+    yield 1
+    raise StopIteration("from the body")
+
+
+def calls_next():
+    yield 1
+    yield next(iter(()))
+
+
+def inner():
+    yield 1
+    raise StopIteration("inner")
+
+
+def outer():
+    yield from inner()
+
+
+def catches_it():
+    try:
+        yield from inner()
+    except RuntimeError as exc:
+        yield ("caught in the delegator", names(exc), names(exc.__cause__))
+
+
+def names(exc):
+    return [entry.name for entry in traceback.extract_tb(exc.__traceback__)]
+
+
+for make in (raises_in_its_body, calls_next, outer, catches_it):
+    made = make()
+    next(made)
+    try:
+        print(make.__name__, next(made))
+    except RuntimeError as exc:
+        print(make.__name__, type(exc).__name__, exc.args, names(exc), "cause", type(exc.__cause__).__name__, names(exc.__cause__),
+              exc.__cause__ is exc.__context__, exc.__suppress_context__)
+print(list(x for x in [1, 2]), "a generator expression that ends is not one")
+try:
+    list(next(iter(())) for _ in [1])
+except RuntimeError as exc:
+    print("genexpr", names(exc), names(exc.__cause__))
+made = raises_in_its_body()
+next(made)
+next(made)
+"""),
 ]
 
 REFUSED = (
     ("def f():\n    yield\nf().gi_code", "gi_code"),
     ("def f():\n    yield\nf().gi_frame", "gi_frame"),
-    ("def f():\n    yield\nf().throw(ValueError, ValueError(), None)", "DeprecationWarning"),
 )
 
 

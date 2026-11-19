@@ -96,20 +96,50 @@ Ref returned_or_value(Ref result, bool returned) {  // gen_send: its return is S
 }
 
 bool is_exception_class(Obj v) { return is_kind(v, Kind::Class) && is_subclass(static_cast<ClassObject*>(v.object()), exception_class("BaseException")); }
-// gen_set_exception, one argument: what would be raised. A class that cannot be made raises what it raised
-Ref exception_of(Obj typ) {
-    if (is_exception_class(typ)) return invoke(typ, {});
-    if (is_exception_instance(typ)) return Ref::share(typ);
-    raise_new("TypeError", "exceptions must be classes or instances deriving from BaseException, not " + type_of(typ)->name);
-}
-Ref set_exception_pending(Generator* g, Obj typ) {
-    try {
-        g->pending = exception_of(typ);
-    } catch (const PyError& e) {
-        g->pending = e.exc;
+// _PyErr_CreateException: the class called with the value, which is no argument, a tuple's items or the one argument
+Ref create_exception(Obj typ, Obj val) {
+    Ref made;
+    if (val.is_unset() || val == None()) {
+        made = invoke(typ, {});
+    } else if (is_kind(val, Kind::Tuple)) {      // PyTuple_Check: a subclass's instance too
+        made = call_ex(typ, val, Obj{});
+    } else {
+        made = invoke(typ, {val});
     }
-    return g->pending;
+    if (!is_exception_instance(made.get())) {
+        Ref shown = repr_of(typ);
+        raise_new("TypeError", "calling " + as_str(shown.get())->text + " should have returned an instance of BaseException, not " + type_of(made.get())->name);
+    }
+    return made;
 }
+// gen_set_exception: what throw(typ, val, tb) raises in the generator. What cannot be thrown fails here, in the caller, and
+// the generator stays where it was: a third argument that is no traceback, an instance with a value beside it, what is no
+// exception. A class is made of the value as PyErr_NormalizeException makes it (the value itself when it is an instance of
+// the class), and when the making fails, what it raised is thrown in its place, with the traceback given if it has none
+Ref exception_of(Obj typ, Obj val = Obj{}, Obj tb = Obj{}) {
+    if (!tb.is_unset() && tb == None()) tb = Obj{};
+    if (!tb.is_unset() && !is_kind(tb, Kind::Traceback)) raise_new("TypeError", "throw() third argument must be a traceback object");
+    Ref exc;
+    if (is_exception_class(typ)) {
+        try {
+            if (!val.is_unset() && is_exception_instance(val) && is_subclass(type_of(val), static_cast<ClassObject*>(typ.object())))
+                exc = Ref::share(val);
+            else
+                exc = create_exception(typ, val);
+        } catch (const PyError& e) {
+            if (!tb.is_unset() && traceback_of(e.exc.get()).is_unset()) set_exception_field(e.exc.get(), "__traceback__", tb);
+            return e.exc;
+        }
+    } else if (is_exception_instance(typ)) {
+        if (!val.is_unset() && val != None()) raise_new("TypeError", "instance exception may not have a separate value");
+        exc = Ref::share(typ);
+    } else {
+        raise_new("TypeError", "exceptions must be classes or instances deriving from BaseException, not " + type_of(typ)->name);
+    }
+    if (!tb.is_unset()) set_exception_field(exc.get(), "__traceback__", tb);   // PyErr_Restore with a traceback: the exception's own from here
+    return exc;
+}
+void set_exception_pending(Generator* g, Obj typ, Obj val, Obj tb) { g->pending = exception_of(typ, val, tb); }
 Ref throw_current(Generator* g) {                 // gen_throw_current_exception
     bool returned = false;
     Ref result = resume(g, returned);
@@ -129,11 +159,11 @@ void close_iter(Obj yf) {
     Ref meth = optional_getattr(yf, N("close"));
     if (!meth.get().is_unset()) Ref ignored = invoke(meth.get(), {});
 }
-Ref gen_throw_impl(Generator* g, Obj typ) {       // _gen_throw
+Ref gen_throw_impl(Generator* g, Obj typ, Obj val = Obj{}, Obj tb = Obj{}) {   // _gen_throw
     if (g->state == GenState::Executing) already_executing();
-    if (g->state == GenState::Finished) throw PyError(exception_of(typ));
+    if (g->state == GenState::Finished) throw PyError(exception_of(typ, val, tb));
     if (g->delegate.get().is_unset() || g->state != GenState::Suspended) {
-        set_exception_pending(g, typ);
+        set_exception_pending(g, typ, val, tb);
         return throw_current(g);
     }
     Ref yf = g->delegate;
@@ -147,7 +177,7 @@ Ref gen_throw_impl(Generator* g, Obj typ) {       // _gen_throw
             failed = true;
         }
         g->state = GenState::Suspended;
-        if (!failed) set_exception_pending(g, typ);
+        if (!failed) set_exception_pending(g, typ, val, tb);
         return throw_current(g);
     }
     Ref ret;
@@ -155,11 +185,15 @@ Ref gen_throw_impl(Generator* g, Obj typ) {       // _gen_throw
     bool failed = false;
     try {
         if (is_kind(yf.get(), Kind::Generator)) {
-            ret = gen_throw_impl(gen_self(yf.get()), typ);
+            ret = gen_throw_impl(gen_self(yf.get()), typ, val, tb);
         } else {
             Ref meth = optional_getattr(yf.get(), N("throw"));
             has_throw = !meth.get().is_unset();
-            if (has_throw) ret = invoke(meth.get(), {typ});
+            if (has_throw) {                         // PyObject_CallFunctionObjArgs(meth, typ, val, tb, NULL): as many as were given
+                if (val.is_unset()) ret = invoke(meth.get(), {typ});
+                else if (tb.is_unset()) ret = invoke(meth.get(), {typ, val});
+                else ret = invoke(meth.get(), {typ, val, tb});
+            }
         }
     } catch (const PyError& e) {
         g->pending = e.exc;
@@ -168,7 +202,7 @@ Ref gen_throw_impl(Generator* g, Obj typ) {       // _gen_throw
     g->state = GenState::Suspended;
     if (failed) return throw_current(g);
     if (!has_throw) {                            // throw_here
-        set_exception_pending(g, typ);
+        set_exception_pending(g, typ, val, tb);
         return throw_current(g);
     }
     return ret;
@@ -195,8 +229,8 @@ Ref throw_m(Obj self, Args a) {                   // gen_throw
     if (a.nkw != 0) raise_new("TypeError", "generator.throw() takes no keyword arguments");
     if (a.npos < 1) raise_new("TypeError", "throw expected at least 1 argument, got 0");
     if (a.npos > 3) raise_new("TypeError", "throw expected at most 3 arguments, got " + std::to_string(a.npos));
-    if (a.npos > 1) throw NotImplemented("generator.throw(type, value, traceback) (a DeprecationWarning in CPython)");
-    return gen_throw_impl(gen_self(self), a.pos(0));
+    if (a.npos > 1) warn_ex("DeprecationWarning", "the (type, exc, tb) signature of throw() is deprecated, use the single-arg signature instead.");
+    return gen_throw_impl(gen_self(self), a.pos(0), a.npos > 1 ? a.pos(1) : Obj{}, a.npos > 2 ? a.pos(2) : Obj{});
 }
 Ref del_m(Obj self, Args a) {                     // tp_finalize's wrapper
     wrapper_args(a, "__del__", 0);
@@ -373,7 +407,10 @@ Ref gen_delegate_step(Generator* g) {
     Ref error = invoke(Obj::of(exception_class("RuntimeError")), {message.get()});
     setattr(error.get(), N("__cause__"), e.exc.get());
     setattr(error.get(), N("__context__"), e.exc.get());
-    throw PyError(std::move(error));
+    // RERAISE, which does not pass the `error:` label: the generator's frame adds no entry to the error made here, so its
+    // traceback starts at the caller, and the StopIteration behind it has the generator's (RL-452). The frame recorded `e`
+    // when it arrived, and the new error is marked as that frame's own
+    throw PyError(std::move(error), e.recorded);
 }
 void gen_caught(Generator* g, int k, const PyError& e) { g->errors[static_cast<std::size_t>(k)] = std::make_unique<PyError>(e); }
 void gen_handling_push(Generator* g, int k) {     // the except clause's PUSH_EXC_INFO
