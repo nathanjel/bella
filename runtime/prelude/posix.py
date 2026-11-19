@@ -707,10 +707,13 @@ def _mapping_list(mapping: object, name: str) -> list[object]:   # PyMapping_Key
     produced = getattr(mapping, name)()
     if type(produced) is list:
         return produced
+    it = None                                    # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
         it = iter(produced)
     except TypeError:
-        raise TypeError(_tp_name(mapping) + "." + name + "() returned a non-iterable (type " + _tp_name(produced) + ")") from None
+        pass
+    if it is None:
+        raise TypeError(_tp_name(mapping) + "." + name + "() returned a non-iterable (type " + _tp_name(produced) + ")")
     return list(it)
 
 
@@ -752,10 +755,13 @@ def _format_k(value: object, message: str) -> int:   # PyArg_ParseTuple's "k": 6
 
 def _file_actions(file_actions: object) -> tuple[tuple[object, ...], ...]:   # parse_file_actions: each one added as it is read
     if type(file_actions) is not list and type(file_actions) is not tuple:   # PySequence_Fast
+        it = None                                # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
         try:
             it = iter(file_actions)  # type: ignore[call-overload]
         except TypeError:
-            raise TypeError("file_actions must be a sequence or None") from None
+            pass
+        if it is None:
+            raise TypeError("file_actions must be a sequence or None")
         file_actions = list(it)
     out: list[tuple[object, ...]] = []
     for action in file_actions:  # type: ignore[attr-defined]

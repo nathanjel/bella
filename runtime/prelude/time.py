@@ -78,10 +78,11 @@ def _fail(code: int) -> None:                    # PyErr_SetFromErrno(OSError)
 
 def _object_to_time_t(value: object) -> int:     # _PyTime_ObjectToTime_t with _PyTime_ROUND_FLOOR: an index, or else a real number
     if hasattr(type(value), "__index__"):
+        n = _TIME_T_MAX + 1                      # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
         try:
             n = _index(value)
         except OverflowError:
-            raise OverflowError("timestamp out of range for platform time_t") from None
+            pass
         if n < _TIME_T_MIN or n > _TIME_T_MAX:
             raise OverflowError("timestamp out of range for platform time_t")
         return n
@@ -95,10 +96,11 @@ def _object_to_time_t(value: object) -> int:     # _PyTime_ObjectToTime_t with _
 
 def _seconds_to_ns(value: object, round_up: bool) -> int:   # _PyTime_FromSecondsObject: nanoseconds, floored or rounded towards +inf
     if hasattr(type(value), "__index__"):
+        sec = 2**63                              # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
         try:
             sec = _index(value)
         except OverflowError:
-            raise OverflowError("timestamp out of range for C PyTime_t") from None
+            pass
         if sec < -(2**63) or sec > 2**63 - 1 or not (-(2**63) <= sec * _SEC_TO_NS <= 2**63 - 1):
             raise OverflowError("timestamp out of range for C PyTime_t")
         return sec * _SEC_TO_NS
@@ -135,10 +137,11 @@ def _clock_float(clk_id: int) -> float:          # time_clock_gettime_impl: tv_s
 
 
 def _clockid(value: object) -> int:              # time_clockid_converter: PyLong_AsInt, every failure a TypeError
+    n = _INT_MAX + 1                             # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
         n = _index(value)
     except Exception:
-        raise TypeError("clk_id should be integer, not " + _tp_name(value)) from None
+        pass
     if n < _INT_MIN or n > _INT_MAX:
         raise TypeError("clk_id should be integer, not " + _tp_name(value))
     return n

@@ -16,6 +16,8 @@ try:
     _float_pack                                  # noqa: B018  # PyFloat_Pack2/4/8: (x, size, little_endian[, cast]) -> bytes
     _float_unpack                                # noqa: B018  # PyFloat_Unpack2/4/8: (data, little_endian[, cast]) -> float
     _number_index                                # noqa: B018  # PyNumber_Index
+    _as_double                                   # noqa: B018  # PyFloat_AsDouble: the runtime's, with its warning for a float's subclass
+    _as_c_complex                                # noqa: B018  # PyComplex_AsCComplex: (real, imag)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -35,6 +37,13 @@ except NameError:
     def _number_index(o: object) -> int:
         import operator
         return operator.index(o)
+
+    def _as_double(value: object) -> float:      # for probing this file under CPython
+        return float(value)  # type: ignore[arg-type]
+
+    def _as_c_complex(value: object) -> tuple[float, float]:
+        z = complex(value)  # type: ignore[call-overload]
+        return z.real, z.imag
 
 class error(Exception):  # noqa: N801           # PyErr_NewException("struct.error", NULL, NULL)
     pass
@@ -80,32 +89,6 @@ def _ssize(value: object) -> int:                # the clinic's Py_ssize_t conve
     if n < -(2**63) or n > _SSIZE_MAX:
         raise OverflowError("Python int too large to convert to C ssize_t")
     return n
-
-
-def _as_double(value: object) -> float:          # PyFloat_AsDouble
-    if issubclass(type(value), float):
-        return float.__float__(value)  # type: ignore[arg-type]
-    to_float = getattr(type(value), "__float__", None)
-    if to_float is not None:
-        result = to_float(value)
-        if not issubclass(type(result), float):
-            raise TypeError(_tp_name(value) + ".__float__ returned non-float (type " + _tp_name(result) + ")")
-        return float.__float__(result)
-    if hasattr(type(value), "__index__"):
-        return float(_index(value))
-    raise TypeError("must be real number, not " + _tp_name(value))
-
-
-def _as_complex(value: object) -> complex:       # PyComplex_AsCComplex
-    if issubclass(type(value), complex):     # the object's own cval, not a subclass's property
-        return complex(complex.real.__get__(value), complex.imag.__get__(value))  # type: ignore[attr-defined]
-    to_complex = getattr(type(value), "__complex__", None)
-    if to_complex is not None:
-        result = to_complex(value)
-        if not issubclass(type(result), complex):
-            raise TypeError("__complex__ returned non-complex (type " + _tp_name(result) + ")")
-        return complex(result.real, result.imag)
-    return complex(_as_double(value), 0.0)
 
 
 def _unpack_args(name: str, args: tuple[object, ...], kwds: dict[str, object], names: tuple[str, ...], minpos: int,
@@ -304,20 +287,25 @@ def _pack_item(code: str, kind: str, size: int, value: object, little: bool) -> 
         if not issubclass(type(value), bytes) or bytes.__len__(value) != 1:  # type: ignore[arg-type]
             raise error("char format requires a bytes object of length 1")
         return bytes(value)  # type: ignore[arg-type]
+    failed = False                               # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     if kind == "float":
         try:
             x = _as_double(value)
         except Exception:
-            raise error("required argument is not a float") from None
+            failed = True
+        if failed:
+            raise error("required argument is not a float")
         return _float_pack(x, size, little)
     try:                                         # complex
-        z = _as_complex(value)
+        real, imag = _as_c_complex(value)
     except Exception:
-        raise error("required argument is not a complex") from None
+        failed = True
+    if failed:
+        raise error("required argument is not a complex")
     # np_float_complex casts, an infinity past float's range and no NaN fix; init_endian_tables puts it in the little-endian
     # (and so the '=') table too, where the sizes agree, so only '>' and '!' pack through PyFloat_Pack4
     half = size // 2
-    return _float_pack(z.real, half, little, little) + _float_pack(z.imag, half, little, little)
+    return _float_pack(real, half, little, little) + _float_pack(imag, half, little, little)
 
 
 def _unpack_item(kind: str, data: bytes, little: bool) -> object:
@@ -366,12 +354,15 @@ def _pack_into(codes: list[_Code], size: int, length: int, little: bool, values:
                 if n > 0:
                     out[at] = n
             else:
+                too_large = False
                 try:
                     out[at:at + code.size] = _pack_item(code.code, code.kind, code.size, v, little)
                 except OverflowError:
-                    if issubclass(type(v), int):
-                        raise error("int too large to convert") from None
-                    raise
+                    if not issubclass(type(v), int):
+                        raise
+                    too_large = True             # PyErr_SetString over the pending error: raised outside the handler
+                if too_large:
+                    raise error("int too large to convert")
             at += code.size
 
 

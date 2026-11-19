@@ -300,7 +300,8 @@ class Scanner:
         try:
             return _scan_once(self, memo, str.__str__(pystr), index)
         except _StopScan as stop:
-            raise StopIteration(stop.args[0]) from None
+            at = stop.args[0]
+        raise StopIteration(at)                  # raise_stop_iteration: an exception of its own, raised outside the handler
 
 
 def _skip_whitespace(pystr: str, idx: int, end_idx: int) -> int:

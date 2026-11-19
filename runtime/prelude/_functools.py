@@ -380,11 +380,14 @@ class KeyWrapper:
 def _key_call(lhs: object, other: object) -> object:   # keyobject_richcompare
     if type(other) is not type(lhs):
         raise TypeError("other argument must be K instance")
+    unset = False                                # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
         x = lhs._k_obj  # type: ignore[attr-defined]
         y = other._k_obj  # type: ignore[attr-defined]
     except AttributeError:
-        raise AttributeError("object") from None
+        unset = True
+    if unset:
+        raise AttributeError("object")
     return lhs._k_cmp(x, y)  # type: ignore[attr-defined]
 
 
@@ -431,10 +434,13 @@ calculates ((((1 + 2) + 3) + 4) + 5)."""
         raise TypeError("argument for reduce() given by name ('initial') and position (3)")
     func, seq = args[0], args[1]
     result = args[2] if len(args) > 2 else kwds.get("initial", _ABSENT)
+    it = None                                    # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
         it = iter(seq)  # type: ignore[call-overload]
     except TypeError:
-        raise TypeError("reduce() arg 2 must support iteration") from None
+        pass
+    if it is None:
+        raise TypeError("reduce() arg 2 must support iteration")
     for op2 in it:
         if result is _ABSENT:
             result = op2

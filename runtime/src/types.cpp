@@ -1093,8 +1093,12 @@ Ref number_long(Obj x) {
         if (!is_int(r.get()))
             raise_new("TypeError", fully_qualified_name(type_of(x)) + ".__int__() must return an int, not " +
                                        fully_qualified_name(type_of(r.get())));
-        if (!r.get().is_small() && !is_kind(r.get(), Kind::BigInt))   // CPython copies a strict subclass's value with a DeprecationWarning
-            throw NotImplemented("__int__ returning an instance of a subclass of int (a DeprecationWarning in CPython)");
+        if (!r.get().is_small() && !is_kind(r.get(), Kind::BigInt)) {   // a strict subclass's value, copied, with a DeprecationWarning (issue 17576)
+            warn_ex("DeprecationWarning", fully_qualified_name(type_of(x)) + ".__int__() must return an int, not " + fully_qualified_name(type_of(r.get())) +
+                                              ".  The ability to return an instance of a strict subclass of int "
+                                              "is deprecated, and may be removed in a future version of Python.");
+            return big_plain(r.get());
+        }
         return r;
     }
     if (is_int(x)) return big_plain(x);           // a bool, an int subclass's instance: nb_int, an exact copy

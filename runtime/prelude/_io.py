@@ -1417,9 +1417,12 @@ def _bf_write(self: _Buffered, data: bytes) -> int:   # _io_BufferedWriter_write
         if self._h_pos > self._l_write_end:
             self._l_write_end = self._h_pos
         return length
+    blocked = False
     try:
         _bf_flush_unlocked(self)
     except BlockingIOError:
+        blocked = True                           # PyErr_Clear: what follows is not done while handling it
+    if blocked:
         if self._d_readable:
             _bf_reset_read(self)
         kept = self._l_write_end - self._k_write_pos
@@ -1437,7 +1440,7 @@ def _bf_write(self: _Buffered, data: bytes) -> int:   # _io_BufferedWriter_write
         self._f_buffer[self._l_write_end:self._l_write_end + avail] = data[:avail]
         self._l_write_end += avail
         self._h_pos += avail
-        raise BlockingIOError(_EAGAIN, "write could not complete without blocking", avail) from None
+        raise BlockingIOError(_EAGAIN, "write could not complete without blocking", avail)
     offset = _bf_raw_offset(self)
     if offset != 0:
         _bf_raw_seek(self, -offset, 1)
@@ -1907,14 +1910,20 @@ _bf_make_methods(BufferedRandom, "BufferedRandom", True, True)
 
 # ---- BufferedRWPair ----
 
+_ABSENT_FORWARD = object()
+
+
 def _rw_forward(target: object, name: str, args: tuple[object, ...]) -> object:   # _forward_call
     if target is None:
         raise ValueError("I/O operation on uninitialized object")
+    func = _ABSENT_FORWARD                       # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
         func = getattr(target, name)
     except AttributeError:
-        raise AttributeError(name) from None
-    return func(*args)
+        pass
+    if func is _ABSENT_FORWARD:
+        raise AttributeError(name)
+    return func(*args)  # type: ignore[operator]
 
 
 class BufferedRWPair(_BufferedIOBase):

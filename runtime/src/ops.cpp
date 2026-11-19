@@ -823,9 +823,11 @@ Ref int_index_of(Obj v) {
         Ref r = call_special(v, "__index__", {}, &has);
         if (has) {                                   // _PyNumber_Index
             if (r.get().is_small() || is_kind(r.get(), Kind::BigInt)) return r;
-            if (is_int(r.get())) throw NotImplemented("__index__ returning a strict subclass of int (a DeprecationWarning in CPython)");
-            raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__index__() must return an int, not " +
-                                       fully_qualified_name(type_of(r.get())));
+            std::string said = fully_qualified_name(type_of(v)) + ".__index__() must return an int, not " + fully_qualified_name(type_of(r.get()));
+            if (!is_int(r.get())) raise_new("TypeError", said);
+            warn_ex("DeprecationWarning", said + ".  The ability to return an instance of a strict subclass of int "   // issue 17576
+                                                 "is deprecated, and may be removed in a future version of Python.");
+            return big_plain(r.get());               // PyNumber_Index: _PyLong_Copy
         }
     }
     raise_new("TypeError", "'" + type_of(v)->name + "' object cannot be interpreted as an integer");

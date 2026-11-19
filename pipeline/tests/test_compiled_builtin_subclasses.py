@@ -13,12 +13,7 @@ Run under pytest or directly: python3 -m pipeline.tests.test_compiled_builtin_su
 """
 from __future__ import annotations
 
-import shutil
-import subprocess
-import tempfile
-from pathlib import Path
 
-from pipeline.build import build
 from pipeline.tests.test_review_2026_11_03 import same
 
 DICT_DISPATCH = "class Loud(dict):\n    def __getitem__(self, k):\n        print('getitem', k)\n        return dict.__getitem__(self, k)\n    def __setitem__(self, k, v):\n        print('setitem', k)\n        dict.__setitem__(self, k, v)\n    def __missing__(self, k):\n        print('missing', k)\n        return 0\n    def keys(self):\n        print('keys')\n        return dict.keys(self)\n    def __iter__(self):\n        print('iter')\n        return dict.__iter__(self)\n    def __len__(self):\n        print('len')\n        return dict.__len__(self)\n    def __contains__(self, k):\n        print('contains', k)\n        return dict.__contains__(self, k)\nd = Loud(a=1)\nprint('-- built', d)\nd['b'] = 2\nprint(d['a'], d['zz'])\nprint('get', d.get('a'), d.get('q'))\nprint('--update'); x = {}; x.update(d); print(x)\nprint('--merge'); print({**d})\nprint('--kwargs'); print((lambda **k: k)(**d))\nprint('--copy'); c = d.copy(); print(type(c).__name__, c)\nprint('--or'); print(type(d | {'c': 3}).__name__)\nprint('--dict()'); print(dict(d))\nprint('--in'); print('a' in d)\nprint('--len'); print(len(d))\nprint('--list'); print(list(d))\nprint('--eq'); print(d == {'a': 1, 'b': 2})\nprint('--repr'); print(repr(d))\nclass Plain(dict):\n    pass\np = Plain({1: 2}, x=3)\nprint(p, type(p).__name__, Plain.fromkeys('ab', 0), type(Plain.fromkeys('ab')).__name__)\nns_log = []\nclass Recording(dict):\n    def __setitem__(self, k, v):\n        ns_log.append(k)\n        dict.__setitem__(self, k, v)\nclass Meta(type):\n    @classmethod\n    def __prepare__(mcls, name, bases):\n        return Recording()\nclass K(metaclass=Meta):\n    a = 1\n    def f(self): pass\nprint(ns_log, type(K.__dict__).__name__)\n"
@@ -56,16 +51,23 @@ def test_a_str_constant_keeps_its_nul() -> None:
     same(NUL_IN_A_CONSTANT)
 
 
-def test_int_from_an_int_subclass_returned_by_int_is_refused() -> None:
-    """CPython copies the value with a DeprecationWarning, which the runtime cannot issue yet."""
-    if shutil.which("g++") is None:
-        return
-    body = "class S(int):\n    pass\nclass R:\n    def __int__(self):\n        return S(4)\nint(R())"
-    with tempfile.TemporaryDirectory() as tmp:
-        prog = Path(tmp, "prog.py")
-        prog.write_text("print('start')\n" + body + "\nprint('not reached')\n", encoding="utf-8")
-        got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, cwd=tmp)
-    assert (got.returncode, got.stdout) == (70, "start\n") and "bella: not implemented" in got.stderr, got
+INT_FROM_A_SUBCLASS = """
+import warnings
+class S(int):
+    pass
+class R:
+    def __int__(self):
+        return S(4)
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    v = int(R())
+print(type(v).__name__, v, [(w.category.__name__, w.lineno, str(w.message)) for w in caught])
+"""
+
+
+def test_int_from_an_int_subclass_returned_by_int_warns() -> None:
+    """CPython copies the value with a DeprecationWarning; until 2026-11-19 the runtime stopped by name there (C-6-23)."""
+    same(INT_FROM_A_SUBCLASS)
 
 
 if __name__ == "__main__":

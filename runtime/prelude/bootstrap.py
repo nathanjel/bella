@@ -2023,10 +2023,13 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
             extra, has_extra = kwds["dict"], True
         else:
             extra, has_extra = None, False
-        try:                                     # PySequence_Fast: only a failure to iterate has its words
+        it = None
+        try:                                     # PySequence_Fast: only a failure to iterate has its words, set over the pending error
             it = iter(arg)
         except TypeError:
-            raise TypeError("constructor requires a sequence") from None
+            pass
+        if it is None:
+            raise TypeError("constructor requires a sequence")
         items = list(it)
         if has_extra and not issubclass(type(extra), dict):
             raise TypeError(shown + "() takes a dict as second arg, if any")

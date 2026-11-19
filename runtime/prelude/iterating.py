@@ -124,14 +124,17 @@ class reversed:
     def __next__(self) -> object:                # reversed_next
         index = self._index
         if index >= 0:
+            ended = False
             try:
                 item = self._seq[index]  # type: ignore[index]
             except BaseException as e:
                 self._index = -1
                 self._seq = None
-                if isinstance(e, (IndexError, StopIteration)):
-                    raise StopIteration from None
-                raise
+                if not isinstance(e, (IndexError, StopIteration)):
+                    raise
+                ended = True                     # PyErr_Clear: the iterator ends, and what next() raises then has no context of it
+            if ended:
+                raise StopIteration
             self._index = index - 1
             return item
         self._index = -1

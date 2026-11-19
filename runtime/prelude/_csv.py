@@ -51,18 +51,6 @@ class Error(Exception):
 Error.__module__ = "_csv"
 
 
-def _index(value: object) -> int:                # PyNumber_Index
-    if issubclass(type(value), int):
-        return int.__index__(value)  # type: ignore[arg-type]
-    index = getattr(type(value), "__index__", None)
-    if index is None:
-        raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
-    result = index(value)
-    if not issubclass(type(result), int):
-        raise TypeError("__index__ returned non-int (type " + _tp_name(result) + ")")
-    return int.__index__(result)
-
-
 # ---- Dialect ----------------------------------------------------------------------------------------------------------------
 
 _DIALECT_KWS = ("dialect", "delimiter", "doublequote", "escapechar", "lineterminator", "quotechar", "quoting", "skipinitialspace", "strict")
@@ -279,15 +267,18 @@ in CSV format.
         self._reset()
         d: Dialect = self._dialect
         while True:
+            ended = False
             try:
                 line = next(self._input)
             except StopIteration:
+                ended = True                     # PyIter_Next: the input's end, its StopIteration cleared
+            if ended:
                 if len(self._field) != 0 or self._state == _IN_QUOTED_FIELD:
                     if d.strict:
-                        raise Error("unexpected end of data") from None
+                        raise Error("unexpected end of data")
                     self._save_field()
                     break
-                raise
+                raise StopIteration              # tp_iternext's NULL: a StopIteration of next()'s own, without the input's value
             if not issubclass(type(line), str):
                 raise Error("iterator should return strings, not " + _tp_name(line) + " (the file should be opened in text mode)")
             if self._fields is None:
@@ -529,10 +520,13 @@ Non-string elements will be converted to string."""
 
     def _writerow(self, seq: object) -> object:  # csv_writerow
         d: Dialect = self._dialect
+        it = None                                # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
         try:
             it = iter(seq)  # type: ignore[call-overload]
         except TypeError:
-            raise Error("iterable expected, not " + _tp_name(seq)) from None
+            pass
+        if it is None:
+            raise Error("iterable expected, not " + _tp_name(seq))
         self._rec = []
         self._num_fields = 0
         null_field = False

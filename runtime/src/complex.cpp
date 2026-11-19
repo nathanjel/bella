@@ -238,9 +238,12 @@ bool try_special(Obj op, Ref& out) {
         out = std::move(res);
         return true;
     }
-    if (!is_complex(res.get()))
-        raise_new("TypeError", fully_qualified_name(type_of(op)) + ".__complex__() must return a complex, not " + fully_qualified_name(type_of(res.get())));
-    throw NotImplemented("__complex__ returning an instance of a subclass of complex (a DeprecationWarning in CPython)");
+    std::string said = fully_qualified_name(type_of(op)) + ".__complex__() must return a complex, not " + fully_qualified_name(type_of(res.get()));
+    if (!is_complex(res.get())) raise_new("TypeError", said);
+    warn_ex("DeprecationWarning", said + ".  The ability to return an instance of a strict subclass of complex "   // issue 29894
+                                         "is deprecated, and may be removed in a future version of Python.");
+    out = std::move(res);
+    return true;
 }
 Cx as_c_complex(Obj op) {                        // PyComplex_AsCComplex
     if (is_complex(op)) return value_of(op);
@@ -309,8 +312,9 @@ Ref from_string(ClassObject* cls, Obj v) {       // complex_subtype_from_string
     return from_string_inner(cls, without_underscores(decimal_and_space_to_ascii(s, transformed), "complex", v));   // _PyUnicode_TransformDecimalAndSpaceToASCII
 }
 
-[[noreturn]] void deprecated_part(const char* part, Obj given) {
-    throw NotImplemented(std::string("complex() argument '") + part + "' of type " + fully_qualified_name(type_of(given)) + " (a DeprecationWarning in CPython)");
+// a complex number as the real or the imaginary part: taken, with a DeprecationWarning that has the TypeError's words
+void deprecated_part(const char* part, Obj given) {
+    warn_ex("DeprecationWarning", std::string("complex() argument '") + part + "' must be a real number, not " + fully_qualified_name(type_of(given)));
 }
 Ref new_impl(ClassObject* cls, Obj r, Obj i) {   // complex_new_impl
     Ref zero = int_from_i64(0);
@@ -336,9 +340,15 @@ Ref new_impl(ClassObject* cls, Obj r, Obj i) {   // complex_new_impl
     }
     double imag = real_imag;
     if (!i.is_unset()) {
-        if (is_complex(i)) deprecated_part("imag", i);
-        Ref as_float = number_float(i);
-        imag = float_value(as_float.get());
+        if (is_complex(i)) {                         // ci_is_complex: its imaginary part comes off the real one
+            deprecated_part("imag", i);
+            Cx c = value_of(i);
+            imag = c.real;
+            real -= c.imag;
+        } else {
+            Ref as_float = number_float(i);
+            imag = float_value(as_float.get());
+        }
         if (real_is_complex) imag += real_imag;
     }
     return make(cls, real, imag);

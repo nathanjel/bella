@@ -203,12 +203,14 @@ Ref float_from_string(Obj v) {                   // PyFloat_FromString
 
 bool has_special(Obj v, const char* name) { return !type_lookup(type_of(v), N(name)).is_unset(); }
 
-// a method's result where the C wants a float: an instance of a strict subclass is deprecated
+// a method's result where the C wants a float: an instance of a strict subclass is taken with a DeprecationWarning (issue
+// 26983), which is an error under a filter that makes it one
 void check_float_result(Obj o, Obj res) {
     if (is_kind(res, Kind::Float)) return;
-    if (!is_float(res))
-        raise_new("TypeError", fully_qualified_name(type_of(o)) + ".__float__() must return a float, not " + fully_qualified_name(type_of(res)));
-    throw NotImplemented("__float__ returning an instance of a subclass of float (a DeprecationWarning in CPython)");
+    std::string said = fully_qualified_name(type_of(o)) + ".__float__() must return a float, not " + fully_qualified_name(type_of(res));
+    if (!is_float(res)) raise_new("TypeError", said);
+    warn_ex("DeprecationWarning", said + ".  The ability to return an instance of a strict subclass of float "
+                                         "is deprecated, and may be removed in a future version of Python.");
 }
 
 Ref float_new_impl(Obj x) {                      // float_new_impl for float itself
@@ -480,7 +482,7 @@ Ref number_float(Obj o) {                        // PyNumber_Float
     if (has_special(o, "__float__")) {
         Ref res = call_special(o, "__float__", {});
         check_float_result(o, res.get());
-        return res;
+        return is_kind(res.get(), Kind::Float) ? std::move(res) : float_ref(float_value(res.get()));   // the value, as a float
     }
     if (has_special(o, "__index__")) {
         Ref i = int_index_of(o);
