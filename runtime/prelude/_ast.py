@@ -1,7 +1,7 @@
 """_ast, in Python: the node classes of the pin's Python.asdl as Python/Python-ast.c makes them, each with its _fields, _attributes,
 __match_args__, docstring, _field_types and the class attributes that are its optional fields' defaults, generated from CPython 3.15.2
 (tools: the table in this file is the pin's; regenerate it there when the pin moves). AST's own methods are the C's: ast_type_init,
-ast_type_reduce, ast_type_replace and ast_repr. Instantiating an abstract node class is a DeprecationWarning in CPython and stops by name here.
+ast_type_reduce, ast_type_replace and ast_repr; instantiating an abstract node class warns as ast_type_init does.
 The parser is not here: compile() with PyCF_ONLY_AST, and so ast.parse(), stop by name."""
 
 __all__ = ["_is_abstract", "AST", "Add", "And", "AnnAssign", "Assert", "Assign", "AsyncFor", "AsyncFunctionDef", "AsyncWith", "Attribute", "AugAssign", "Await", "BinOp", "BitAnd", "BitOr", "BitXor", "BoolOp", "Break", "Call", "ClassDef", "Compare", "Constant", "Continue", "Del", "Delete", "Dict", "DictComp", "Div", "Eq", "ExceptHandler", "Expr", "Expression", "FloorDiv", "For", "FormattedValue", "FunctionDef", "FunctionType", "GeneratorExp", "Global", "Gt", "GtE", "If", "IfExp", "Import", "ImportFrom", "In", "Interactive", "Interpolation", "Invert", "Is", "IsNot", "JoinedStr", "LShift", "Lambda", "List", "ListComp", "Load", "Lt", "LtE", "MatMult", "Match", "MatchAs", "MatchClass", "MatchMapping", "MatchOr", "MatchSequence", "MatchSingleton", "MatchStar", "MatchValue", "Mod", "Module", "Mult", "Name", "NamedExpr", "Nonlocal", "Not", "NotEq", "NotIn", "Or", "ParamSpec", "Pass", "Pow", "PyCF_ALLOW_TOP_LEVEL_AWAIT", "PyCF_ONLY_AST", "PyCF_OPTIMIZED_AST", "PyCF_TYPE_COMMENTS", "RShift", "Raise", "Return", "Set", "SetComp", "Slice", "Starred", "Store", "Sub", "Subscript", "TemplateStr", "Try", "TryStar", "Tuple", "TypeAlias", "TypeIgnore", "TypeVar", "TypeVarTuple", "UAdd", "USub", "UnaryOp", "While", "With", "Yield", "YieldFrom", "alias", "arg", "arguments", "boolop", "cmpop", "comprehension", "excepthandler", "expr", "expr_context", "keyword", "match_case", "mod", "operator", "pattern", "stmt", "type_ignore", "type_param", "unaryop", "withitem"]
@@ -11,6 +11,7 @@ __name__ = "_ast"
 try:
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
+    _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -20,6 +21,7 @@ except NameError:
 
     _bella_refuse: Callable[..., Any] = _missing
     _tp_name: Callable[..., str] = _missing
+    _warn: Callable[..., Any] = _missing
 
 PyCF_ONLY_AST = 1024
 PyCF_TYPE_COMMENTS = 4096
@@ -28,7 +30,7 @@ PyCF_OPTIMIZED_AST = 33792
 
 _GENERIC_ALIAS = type(list[int])                # Py_GenericAliasType
 _UNION = type(int | None)                        # _PyUnion_Type
-_ABSTRACT: frozenset[str] = frozenset(('boolop', 'cmpop', 'excepthandler', 'expr', 'expr_context', 'mod', 'operator', 'pattern', 'stmt', 'type_ignore', 'type_param', 'unaryop'))
+_ABSTRACT_TYPES: set[type] = set()               # state->abstract_types: filled below, when the classes are there
 _NO_REPR_DEPTH = 3
 
 
@@ -112,8 +114,8 @@ class AST:
     def __init__(*args: object, **kwds: object) -> None:  # noqa: N805
         self = args[0]
         cls = type(self)
-        if cls.__name__ in _ABSTRACT and cls.__module__ == "ast":
-            _bella_refuse("instantiating the abstract AST node class " + _full_name(self) + " (a DeprecationWarning: warnings, step 3b)")
+        if cls in _ABSTRACT_TYPES:               # the class itself: one derived from it is not abstract, whatever it is called
+            _warn("Instantiating abstract AST node class " + _full_name(self) + " is deprecated. This will become an error in Python 3.20", "DeprecationWarning")
         fields = cls._fields
         numfields = len(fields)
         remaining = set(fields)

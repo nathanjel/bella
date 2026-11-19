@@ -1124,7 +1124,9 @@ void fill_zlib(Module* m) {
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_zlib", i_zlib},
                     {"_warn", i_bella_import_warning}});
 }
-void fill_ast(Module* m) { fill_in_python(m, "_ast", "ast", prelude_ast::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
+void fill_ast(Module* m) {
+    fill_in_python(m, "_ast", "ast", prelude_ast::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_warn", i_bella_import_warning}});
+}
 Ref i_bella_bootstrap(Obj, Args a) {             // a call of _frozen_importlib's function by name: what the prelude shares with bootstrap.py
     if (a.npos < 1 || a.nkw != 0) raise_new("TypeError", "_bella_bootstrap() takes a name and positional arguments");
     Obj fn = dict_get(bootstrap_module()->dict, Obj::of(intern(as_str(a.pos(0))->text)));
@@ -1144,7 +1146,8 @@ void fill_json(Module* m) {
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_dict_next", i_dict_next}});
 }
 void fill_binascii(Module* m) {
-    fill_in_python(m, "binascii", "binascii", prelude_binascii::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}});
+    fill_in_python(m, "binascii", "binascii", prelude_binascii::module_body,
+                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_warn", i_bella_import_warning}});
 }
 void fill_struct(Module* m) {
     fill_in_python(m, "_struct", "_struct", prelude_struct::module_body,

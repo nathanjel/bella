@@ -15,6 +15,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _number_index                                # noqa: B018  # PyNumber_Index
+    _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -23,6 +24,7 @@ except NameError:
         raise ImportError("this file needs the runtime's primitives")
 
     _bella_refuse: Callable[..., Any] = _missing
+    _warn: Callable[..., Any] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
 
     def _tp_name(o: object) -> str:
@@ -107,11 +109,11 @@ def _size_t(value: object) -> int:               # the clinic's size_t: PyLong_A
     return n
 
 
-def _unsigned_int_mask(value: object) -> int:    # unsigned_int(bitwise=True): PyLong_AsUnsignedLongMask, then the C's unsigned int
+def _unsigned_int_mask(value: object) -> int:    # unsigned_int(bitwise=True): the low 32 bits; what neither a C int nor an unsigned holds is deprecated
     n = _index(value)
-    if n < 0 or n >= 2**32:                      # 3.15 masks it and warns (DeprecationWarning "integer value out of range"); not written
-        _bella_refuse("binascii.crc32() with a crc outside the unsigned 32-bit range (3.15 masks it with a DeprecationWarning)")
-    return n
+    if not -(2**31) <= n < 2**32:                # PyLong_AsNativeBytes wanted more than the four bytes
+        _warn("integer value out of range", "DeprecationWarning")
+    return n & 0xFFFFFFFF
 
 
 _ABSENT: object = object()

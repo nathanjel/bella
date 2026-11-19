@@ -158,6 +158,8 @@ C-7-80_cmath.py
 C-7-81_unicodedata_database.py
 C-7-82_suggestions.py
 C-7-83_traceback_from_its_entries.py
+C-7-90_an_unsigned_argument_out_of_range.py
+C-7-91_an_abstract_ast_node_class_instantiated.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-03_locals_detached.py

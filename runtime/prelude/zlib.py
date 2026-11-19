@@ -118,14 +118,14 @@ def _ssize(value: object, name: str, allow_negative: bool) -> int:   # Py_ssize_
     return n
 
 
-def _unsigned(value: object, name: str) -> int:   # unsigned_int(bitwise=True): a value out of range warns in 3.15, then wraps
+def _unsigned(value: object, name: str) -> int:   # unsigned_int(bitwise=True): the low 32 bits; what neither a C int nor an unsigned holds is deprecated
     if not issubclass(type(value), int):
         if not hasattr(type(value), "__index__"):
             raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
     n = _number_index(value)
-    if n < 0 or n > _UINT_MAX:
-        _bella_refuse("zlib." + name + " with a start value outside an unsigned 32-bit int (3.15 warns of its removal)")
-    return n
+    if not -2147483648 <= n <= _UINT_MAX:        # PyLong_AsNativeBytes wanted more than the four bytes
+        _warn("integer value out of range", "DeprecationWarning")
+    return n & _UINT_MAX
 
 
 def _arguments(fname: str, names: tuple[str, ...], maxpos: int, minpos: int, args: tuple[object, ...], kwds: dict[str, object]) -> list[object]:
