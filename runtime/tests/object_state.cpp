@@ -233,6 +233,24 @@ int main() {
         attempt("the base's own member, a store", [&] { return set(b, "own", Obj::small(2)); });
         attempt("and a read", [&] { return get(b, "own"); });
         decref(b);
+        // a slot under the name of a field of the built-in base: the base's field is a cell behind it (RL-564)
+        auto* BE = make_class({.name = "BaseException", .native = Names{"__dict__", "args", "cause"}});
+        for (const char* n : {"args", "cause"}) BE->set_attr(N(n), Obj::of(new SlotDescriptor(N(n))));
+        auto* E = make_class({.name = "E", .bases = {BE}, .slots = Names{"args", "__dict__"}});
+        auto* K = make_class({.name = "K", .bases = {E}, .attrs = {{"base_args", *BE->attrs.find(N("args"))}}});
+        std::cout << "  cells behind the name: " << BE->shadowed.size() << ' ' << E->shadowed.size() << ' ' << K->shadowed.size() << '\n';
+        Instance* k = new_instance(K);
+        incref(k);
+        setattr(k, N("base_args"), tagged(11).get());
+        attempt("the slot before any store", [&] { return get(k, "args"); });
+        setattr(k, N("args"), tagged(12).get());
+        setattr(k, N("cause"), tagged(13).get());
+        setattr(k, N("other"), tagged(14).get());
+        attempt("the slot", [&] { return get(k, "args"); });
+        attempt("the base's field", [&] { return get(k, "base_args"); });
+        deaths.clear();
+        decref(k);
+        show_deaths("after the object");
     }
     decref(plain);
     decref(p);

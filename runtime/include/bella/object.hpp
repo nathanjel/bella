@@ -681,7 +681,7 @@ struct ClassObject : Object {
     // The slots a nearer class of the MRO declares again (RefClass.shadowed_fields; RL-541): CPython makes a member for
     // each declaration, each with a cell. The name's cell (field_index) is the nearest declaring class's; a declaration
     // behind it keeps a cell at a place of its own, which that class's member alone reads.
-    struct ShadowedSlot {
+    struct ShadowedSlot {                        // owner null: a field of the built-in base under a slot's name (RL-564)
         ClassObject* owner;
         const Str* name;
         std::uint32_t place;
@@ -947,13 +947,14 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     for (const Str* n : c->native)
         if (n != intern("__dict__")) {
             auto in = [n](const std::vector<const Str*>& v) { return std::find(v.begin(), v.end(), n) != v.end(); };
-            if (in(c->slot_fields) || in(c->promoted_fields)) throw ModelError("'" + n->text + "' is a field of a built-in base");
+            if (in(c->promoted_fields)) throw ModelError("'" + n->text + "' is a field of a built-in base");
             c->native_fields.push_back(n);
         }
     std::uint32_t i = 0;
     for (const Str* h : c->hidden_fields) c->state_index[h] = i++;      // first: a field keeps its place in every class that derives
     for (const Str* s : c->slot_fields) c->field_index[s] = i++;
-    for (const Str* n : c->native_fields) c->field_index[n] = i++;
+    for (const Str* n : c->native_fields)                // one under a slot's name has its cell behind the slot's, below
+        if (!c->field_index.contains(n)) c->field_index[n] = i++;
     for (const Str* p : c->promoted_fields) c->field_index[p] = i++;
     {   // a declaration that a nearer class repeats: a cell of its own, the base-most first (RefClass.shadowed_fields)
         std::unordered_map<const Str*, const ClassObject*> nearest;
@@ -965,6 +966,10 @@ inline ClassObject* make_class(const ClassSpec& spec) {
                     behind.emplace_back(k, s);
             }
         for (auto it = behind.rbegin(); it != behind.rend(); ++it) c->shadowed.push_back({it->first, it->second, i++});
+        // a slot under the name of a field of the built-in base (class E(Exception): __slots__ = ("args",)): the base's field
+        // is a declaration behind the name's, with no class to name
+        for (const Str* n : c->native_fields)
+            if (std::find(c->slot_fields.begin(), c->slot_fields.end(), n) != c->slot_fields.end()) c->shadowed.push_back({nullptr, n, i++});
     }
     c->keys = std::make_shared<SharedKeys>();
     std::vector<std::string> statics = spec.static_attributes;
@@ -1278,10 +1283,9 @@ inline const ClassObject::ShadowedSlot* slot_behind(const ClassObject* cls, cons
 }
 template <class T>
 inline Obj& slot_cell(T* obj, const ClassObject* owner, const Str* name) {
-    if (owner != nullptr) {
-        if (owner->hidden.contains(name)) return obj->state(name);
+    if (owner != nullptr && owner->hidden.contains(name)) return obj->state(name);
+    if (!obj->cls->shadowed.empty())
         if (const auto* behind = slot_behind(obj->cls, owner, name)) return obj->fields[behind->place];
-    }
     return obj->field(name);
 }
 // The cell a member reads and stores: its own declaration's, whatever name a class has the member under (_member_cells)
@@ -2005,7 +2009,7 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
     if (obj->cls->native.empty()) detail::release_instance_dict(obj);
     for (const Str* n : obj->cls->native) {
         if (n == intern("__dict__")) detail::release_instance_dict(obj);
-        else decref(std::exchange(obj->field(n), Obj{}));
+        else decref(std::exchange(slot_cell(obj, nullptr, n), Obj{}));
     }
     return true;
 }

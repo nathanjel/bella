@@ -661,6 +661,9 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
+* **Open from review A24** (2026-11-20): a tuple keeps its hash once it was asked for, as CPython's does since 3.14 (RL-574: a
+  second `hash(t)`, or a second lookup of one key, calls the elements' `__hash__` again; `enumerate` and `zip` forget it when
+  they use their result tuple again); a step with a case. RL-565 is with the sweep named below. RL-572 is the author's.
 * **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too):
   `struct.Struct.__new__` with no format (RL-549, with the Struct step below); and, as a sweep of its own, the order each
   built-in type written in Python lets go of its fields against its C clear function (RL-550 set the rule, the declared order, and

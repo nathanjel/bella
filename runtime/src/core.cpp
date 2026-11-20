@@ -848,10 +848,11 @@ std::vector<ClassObject*> exception_classes() {
 bool is_exception_instance(Obj v) {
     return is_kind(v, Kind::Instance) && is_subclass(v.object()->cls, exception_class("BaseException"));
 }
-Obj exception_field(Obj exc, const char* name) { return static_cast<Instance*>(exc.object())->field(intern(name)); }
+// The exception's own field, as the C reads its struct: a slot a deriving class has under the name is another cell (RL-564)
+Obj exception_field(Obj exc, const char* name) { return slot_cell(static_cast<Instance*>(exc.object()), nullptr, intern(name)); }
 void set_exception_field(Obj exc, const char* name, Obj value) {
     incref(value);
-    decref(std::exchange(static_cast<Instance*>(exc.object())->field(intern(name)), value));
+    decref(std::exchange(slot_cell(static_cast<Instance*>(exc.object()), nullptr, intern(name)), value));
 }
 
 namespace {

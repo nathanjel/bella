@@ -231,7 +231,8 @@ Ref descr_get(Obj found, Obj obj, Obj type) {
                 Ref out;
                 with_attribute_storage(obj, [&](auto* inst) {
                     Obj v = member_cell(inst, d);
-                    if (v.is_unset()) raise_attribute_error(obj, d->name, "'" + fully_qualified_name(type_of(obj)) + "' object has no attribute '" + d->name->text + "'");
+                    // PyMember_GetOne: the message alone; the name and the object are the attribute lookup's to add (RL-568)
+                    if (v.is_unset()) raise_new("AttributeError", "'" + fully_qualified_name(type_of(obj)) + "' object has no attribute '" + d->name->text + "'");
                     out = Ref::share(v);
                 });
                 return out;
@@ -507,12 +508,11 @@ ClassObject* solid_base(ClassObject* c) {
 }
 ClassObject* tp_base(ClassObject* c) {
     ClassObject *base = nullptr, *winner = nullptr;
-    for (ClassObject* b : c->bases) {
+    for (ClassObject* b : c->bases) {            // best_base: the first base whose solid base is the most derived
         ClassObject* s = solid_base(b);
-        if (winner == nullptr || is_subclass(s, winner)) {
-            winner = s;
-            base = b;
-        }
+        if (winner != nullptr && is_subclass(winner, s)) continue;
+        winner = s;
+        base = b;
     }
     return base != nullptr ? base : types().object;
 }
@@ -691,14 +691,17 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     if (!is_kind(ns_obj, Kind::Dict))
         raise_new("TypeError", "type.__new__() argument 3 must be dict or frozendict, not " + type_of(ns_obj)->name);
     if (name->text.find('\0') != std::string::npos) raise_new("ValueError", "type name must not contain null characters");
-    {                                            // best_base: one instance layout must extend the others
+    ClassObject* best = types().object;          // best_base: one instance layout must extend the others; the base that has it
+    {
         ClassObject* winner = nullptr;
         for (Obj b : static_cast<Tuple*>(bases_obj.object())->items) {
             ClassObject* bc = as_class(b);
             if (bc == nullptr) continue;         // "bases must be types", below
             ClassObject* candidate = solid_base(bc);
-            if (winner == nullptr || is_subclass(candidate, winner)) winner = candidate;
-            else if (!is_subclass(winner, candidate)) raise_new("TypeError", "multiple bases have instance lay-out conflict");
+            if (winner == nullptr) winner = candidate, best = bc;
+            else if (is_subclass(winner, candidate)) continue;
+            else if (is_subclass(candidate, winner)) winner = candidate, best = bc;
+            else raise_new("TypeError", "multiple bases have instance lay-out conflict");
         }
     }
     std::vector<ClassObject*> bases;
@@ -751,15 +754,17 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             Ref it = iter(slots_value);
             for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) items.push_back(std::move(v));
         }
-        // type_new_visit_slots: identifiers; __dict__ once and only where no base has a dict;
+        // type_new_visit_slots: every item a str and an identifier; __dict__ and __weakref__ once each, and only where the
+        // best base has none (may_add_dict, may_add_weak: another base's is added afterwards, RL-566). Then
+        // type_new_copy_slots: a name a class variable has is refused, after every item was looked at (RL-569);
         // a repeated ordinary name is accepted (CPython makes it twice, the last one wins)
-        bool base_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict && !b->dict_without_getset; });
+        bool base_dict = best->has_dict && !best->dict_without_getset;
         for (Ref& item : items) {
             const Str* s = as_str(item.get());
             if (s == nullptr) raise_new("TypeError", "__slots__ items must be strings, not '" + type_of(item.get())->name + "'");
             if (!is_identifier(s)) raise_new("TypeError", "__slots__ must be identifiers");   // valid_identifier
-            if (s->text == "__weakref__") {          // may_add_weak: no base with room
-                bool base_weak = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_weakref; });
+            if (s->text == "__weakref__") {          // may_add_weak: the best base has no room
+                bool base_weak = best->has_weakref;
                 if (base_weak || std::find(slots.begin(), slots.end(), "__weakref__") != slots.end())
                     raise_new("TypeError", "__weakref__ slot disallowed: we already got one");
                 slots.push_back(s->text);
@@ -771,6 +776,10 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
                 slots.push_back(s->text);
                 continue;
             }
+        }
+        for (Ref& item : items) {
+            const Str* s = as_str(item.get());
+            if (s->text == "__weakref__" || s->text == "__dict__") continue;
             std::string m = mangle(name->text, s->text);
             for (auto& [k, v] : entries)
                 if (k->text == m) raise_new("ValueError", "'" + s->text + "' in __slots__ conflicts with class variable");
@@ -811,6 +820,8 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         c = make_class(spec);
     } catch (const bella::TypeError&) {                     // the C3 merge failed (A9-9)
         raise_new("TypeError", "Cannot create a consistent method resolution order (MRO) for bases " + mro_conflict(bases));
+    } catch (const ModelError& e) {                         // a layout the object model has no account of: a stop, not an abort (RL-564)
+        throw NotImplemented("the class '" + name->text + "': " + e.what());
     }
     c->cls = meta;
     c->qualname = qualname;
@@ -820,7 +831,9 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         c->bases_tuple = bases_obj;
     }
     c->dict_kind = dict_kind_of(c);
-    bool base_has_dict = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_dict && !b->dict_without_getset; });
+    // What the class adds to its layout is what the best base lacks (type_new_slots: may_add_dict, may_add_weak; another
+    // base's dict or weak list is added to it, type_new_slots_bases; RL-566), and it has a getset for each thing it adds
+    bool base_has_dict = best->has_dict && !best->dict_without_getset;
     // type_ready's order: the getsets (__dict__, __weakref__) and only then the members. The room for weak
     // references comes by itself unless the object has a variable size, as an int's has; a slot asks for it there
     std::vector<std::pair<const Str*, Ref>> members;
@@ -831,9 +844,10 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     c->dict_without_getset = slots_refuse_dict;
     if (c->has_dict && !base_has_dict && !slots_refuse_dict && !c->attrs.contains(N("__dict__")))    // the class body's stands
         c->attrs.set(N("__dict__"), Obj::of(instance_dict_getset()));
-    bool base_has_weak = std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return b->has_weakref; });
-    bool asked_weak = c->slots && std::find(c->slots->begin(), c->slots->end(), N("__weakref__")) != c->slots->end();
-    if (!base_has_weak && !asked_weak && std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_) || is_subclass(b, types().tuple) || is_subclass(b, types().bytes); }))   // tp_itemsize
+    bool base_has_weak = best->has_weakref;
+    // a class with no __slots__ over a base of variable size adds no room (type_new_slots: base->tp_itemsize == 0); one with
+    // __slots__ has what it asks for and what another base has (type_new_slots_bases)
+    if (!base_has_weak && !c->slots && std::any_of(bases.begin(), bases.end(), [](ClassObject* b) { return is_subclass(b, types().int_) || is_subclass(b, types().tuple) || is_subclass(b, types().bytes); }))   // tp_itemsize
         c->has_weakref = false;
     if (c->has_weakref && !base_has_weak && !c->attrs.contains(N("__weakref__")))
         c->attrs.set(N("__weakref__"), Obj::of(weakref_getset()));
@@ -1529,7 +1543,7 @@ Ref type_bases(Obj self) {                       // tp_bases: the tuple the clas
 Ref type_base(Obj self) {
     ClassObject* c = self_class(self);
     if (c == types().object) return none_ref();
-    return Ref::share(Obj::of(c->bases.empty() ? types().object : c->bases[0]));
+    return Ref::share(Obj::of(tp_base(c)));      // the best base, which is not always the first (class Y(Mixin, int): int)
 }
 // type.__flags__. A type written in C has the pin's, from the names table. A program's class has what a class that says nothing has
 // on its first base written in C (the table's heapflags:), less the dict and the weak reference its __slots__ leave out, with its
@@ -2996,6 +3010,13 @@ Ref i_bella_pickle_layout(Obj, Args a) {         // _PyObject's itemsize and bas
     ClassObject* c = as_class(a.pos(0));
     while (!c_type(c) && !c->bases.empty()) c = tp_base(c);   // a subclass has its base's C fields (property's, staticmethod's)
     return int_from_i64(cpython_has("itemsize", c->name) ? 2 : cpython_has("state", c->name) ? 1 : 0);
+}
+Ref i_bella_slot_cells(Obj, Args a) {            // how many slots tp_basicsize has room for: one for each declaration (RL-541, RL-567)
+    positional_only(a, "_bella_slot_cells", 1, 1);
+    ClassObject* c = as_class(a.pos(0));
+    std::size_t cells = c->slot_fields.size();
+    for (const auto& behind : c->shadowed) cells += behind.owner != nullptr;
+    return int_from_i64(static_cast<std::int64_t>(cells));
 }
 Ref i_bella_no_tp_new(Obj, Args a) {             // tp_new is NULL: a static type with object for its base and no __new__ of its own
     positional_only(a, "_bella_no_tp_new", 1, 1);

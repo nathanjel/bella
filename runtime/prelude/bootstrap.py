@@ -2134,7 +2134,9 @@ def _getstate_default(obj, required):            # object_getstate_default
         raise TypeError("cannot pickle " + _bella_tp_name_of(cls) + " objects")
     state = _bella_instance_dict(obj)
     slotnames = _get_slotnames(cls)
-    if required and layout == 1:
+    # tp_basicsize against what the dict, the weak list and the names account for: a C type's own fields, or more slots
+    # in the object than names (a class that sets __slotnames__ itself; copyreg's has a name for each declaration, RL-567)
+    if required and (layout == 1 or _bella_slot_cells(cls) > (list.__len__(slotnames) if slotnames is not None else 0)):
         raise TypeError("cannot pickle '" + _bella_tp_name_of(cls) + "' object")
     if slotnames is not None and list.__len__(slotnames) > 0:
         slots = {}

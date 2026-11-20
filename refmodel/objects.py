@@ -509,7 +509,7 @@ class RefClass:
                     continue
                 if nearest.setdefault(n, c) is not c:
                     behind.append((c, n))
-        self.shadowed_fields: tuple[tuple[RefClass, str], ...] = tuple(dict.fromkeys(reversed(behind)))
+        self.shadowed_fields: tuple[tuple[RefClass | None, str], ...] = tuple(dict.fromkeys(reversed(behind)))
         for p in self.promoted:
             if p in self.slot_fields:
                 raise ValueError(f"promoted field {p!r} collides with a slot")
@@ -544,8 +544,12 @@ class RefClass:
         # references to the base's dealloc, which clears them after the slots and the dict, before its own data (set_dealloc).
         # A class that says nothing has its MRO's (inherited with the layout).
         self.base_weaklist: bool = base_weaklist if base_weaklist is not None else any(c.base_weaklist for c in self.mro[1:])
+        # A slot under the name of a field of the built-in base (class E(Exception): __slots__ = ("args",)) is the name's
+        # cell. The base's field is a declaration behind it, as a base class's slot of the name is, with no class to name:
+        # the built-in's own reads and stores reach it, and so does the base's descriptor (RL-564).
+        self.shadowed_fields += tuple((None, n) for n in self.native_fields if n in self.slot_fields)
         for n in self.native_fields:
-            if n in self.slot_fields or n in self.promoted:
+            if n in self.promoted_fields:
                 raise ValueError(f"{n!r} is a field of a built-in base")
 
     def set_mro(self, mro: list[RefClass]) -> None:
@@ -690,11 +694,10 @@ def _cell_of(obj: RefObject, owner: RefClass | None, name: str) -> tuple[dict[An
     when the class keeps it as a field of the built-in type's own (a member CPython's type shows: partial's func); in a
     cell of the declaration's own when a class nearer in the object's MRO declares the name again; among the inline
     values, under the name, in every other case (None: a built-in's native field)."""
-    if owner is not None:
-        if name in owner.hidden:
-            return obj.state, name
-        if (owner, name) in obj.shadowed:
-            return obj.shadowed, (owner, name)
+    if owner is not None and name in owner.hidden:
+        return obj.state, name
+    if (owner, name) in obj.shadowed:
+        return obj.shadowed, (owner, name)
     return obj.inline, name
 
 
@@ -729,7 +732,7 @@ class RefObject:
         self.inline: dict[str, Any] = {n: UNSET for n in cls.slot_fields + cls.native_fields + cls.promoted_fields}
         self.state: dict[str, Any] = {n: UNSET for n in cls.hidden_fields}     # a built-in type's fields that have no name
         # the cells of the slots a nearer class declares again: each its declaring class's and the name
-        self.shadowed: dict[tuple[RefClass, str], Any] = {k: UNSET for k in cls.shadowed_fields}
+        self.shadowed: dict[tuple[RefClass | None, str], Any] = {k: UNSET for k in cls.shadowed_fields}
         self.order: list[str] = []          # first-assignment order of __dict__-backed names
         self.dict: RefDict | None = None    # before exposure: the attributes not promoted; after: the object's __dict__
         self.exposed = False
@@ -843,7 +846,8 @@ class RefObject:
                     if not str_keys:
                         out.append(k)
             else:
-                out.append(self.inline[name])
+                cells, key = _cell_of(self, None, name)
+                out.append(cells[key])
         return [v for v in out if _counted(v)]
 
     def _dict_referents(self) -> list[Any]:
@@ -884,7 +888,8 @@ class RefObject:
                     decref(k)
                     decref(v)
             else:
-                v, self.inline[name] = self.inline[name], UNSET
+                cells, key = _cell_of(self, None, name)
+                v, cells[key] = cells[key], UNSET
                 decref(v)
 
     def _release_dict(self) -> None:

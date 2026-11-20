@@ -1270,7 +1270,13 @@ Ref object_getattribute(Obj self, Args a) {
     if (is_kind(self, Kind::Class)) throw NotImplemented("object.__getattribute__ of a class");
     if (!type_lookup(type_of(self), intern("__getattr__")).is_unset())
         throw NotImplemented("object.__getattribute__ of an object whose class has __getattr__");
-    if (is_kind(self, Kind::Instance) || is_subclass_instance(self)) return instance_member(self, intern(n->text));
+    if (is_kind(self, Kind::Instance) || is_subclass_instance(self)) {
+        // PyObject_GenericGetAttr with a member: the member's own error for an empty cell, to which this adds no name and no
+        // object. They are the attribute lookup's to add (PyObject_GetAttr), and this was called by itself (RL-568)
+        if (Obj found = type_lookup(type_of(self), intern(n->text)); is_kind(found, Kind::SlotDescriptor))
+            return descr_get(found, self, Obj::of(type_of(self)));
+        return instance_member(self, intern(n->text));
+    }
     return generic_getattr(self, intern(n->text));
 }
 Ref i_bella_ga_get(Obj, Args a) {                // bootstrap.py's: a generic alias's own member

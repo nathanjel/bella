@@ -592,14 +592,30 @@ def long_literals(source: bytes) -> list[tuple[int, int, str]]:
     author's decision of 2026-11-20; case C-8-18). The digits are counted without the underscores; a literal of zeros, a
     literal of another base, a float and an imaginary number have no limit."""
     threshold = sys.int_info.str_digits_check_threshold
+    # the file tokenizer reads with universal newlines: a carriage return alone ends a line too (RL-570)
+    source = source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    lines = source.splitlines(keepends=True)
+    encoding = "utf-8"
     found: list[tuple[int, int, str]] = []
     for token in tokenize.tokenize(io.BytesIO(source).readline):
+        if token.type == tokenize.ENCODING:
+            encoding = "utf-8" if token.string == "utf-8-sig" else token.string
         if token.type != tokenize.NUMBER or not re.fullmatch(r"[0-9](?:_?[0-9])*", token.string):
             continue
         digits = sum(c != "_" for c in token.string)
         if digits > threshold and token.string.strip("0_"):
-            found.append((digits, token.start[0], token.line))
+            found.append((digits, token.start[0], _program_text(lines, token.start[0], encoding)))
     return found
+
+
+def _program_text(lines: list[bytes], lineno: int, encoding: str) -> str:
+    """The text of a line as the SyntaxError has it (err_programtext, Python/errors.c): the line is read into a buffer of
+    1000, so the first 999 bytes of it and no more (RL-571), without the mark of the byte order on the first line, decoded
+    with what does not decode replaced (a character the cut divides)."""
+    chunk = lines[lineno - 1][:999]
+    if lineno == 1 and chunk.startswith(b"\xef\xbb\xbf"):
+        chunk = chunk[3:]
+    return chunk.decode(encoding, "replace")
 
 
 def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, str] = ("", ""), annotate: tuple[str, str] = ("", "")) -> str:

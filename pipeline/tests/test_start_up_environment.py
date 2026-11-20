@@ -493,6 +493,43 @@ def test_a_literal_longer_than_the_limit_of_digits() -> None:
         assert refused == ["2:650", "3:660", "4:670", "8:680", "12:690", "13:700", "13:710", "14:720", "15:730"], refused
 
 
+def test_the_line_echoed_for_a_literal_over_the_limit() -> None:
+    """Review A24 (RL-570, RL-571, RL-573): the report of that SyntaxError has the line's number and its text, and the
+    comparison above masks the text as it masks any source line of a traceback. Here the text itself is compared, for
+    the lines whose number or text CPython has otherwise than a plain reading of the file: a first line after the mark
+    of the byte order, lines that end in a carriage return alone or with a line feed, a line longer than the 999 bytes
+    `err_programtext` reads, and one whose 999th byte is the first half of a character."""
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_bytes(b"\xef\xbb\xbfa = " + b"9" * 650 + b"\r"
+                         + b"b = " + b"_".join([b"4"] * 660) + b"\r\n"
+                         + b'ss = "' + "\u017c".encode() * 600 + b'"; d = ' + b"5" * 670 + b"\n"
+                         + b"# a line of no literal\n"
+                         + b"e = " + b"6" * 680 + b"\n"
+                         + b'print("ran", len(ss))\n')
+        exe = str(build(prog, "prog.py"))
+        base = {name: value for name, value in os.environ.items() if not name.startswith("PYTHON")} | {"PYTHONHASHSEED": "0"}
+        seen: list[tuple[str, int]] = []
+        for limit in ("640", "650", "660", "670", "680"):
+            env = base | {"PYTHONINTMAXSTRDIGITS": limit}
+            sides = [subprocess.run(cmd, capture_output=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
+                     for cmd in ([sys.executable, "prog.py"], [exe])]
+            reference, compiled = sides
+            assert (compiled.returncode, compiled.stdout) == (reference.returncode, reference.stdout), (limit, compiled, reference)
+            theirs, ours = reference.stderr.split(b"\n"), compiled.stderr.split(b"\n")
+            assert ours[1:] == theirs[1:], (limit, ours[1:], theirs[1:])             # the text and the SyntaxError's line, byte for byte
+            if reference.returncode:
+                assert reference.returncode == 1 and theirs[0].rpartition(b", line ")[2] == ours[0].rpartition(b", line ")[2], (theirs[0], ours[0])
+                seen.append((theirs[0].rpartition(b", line ")[2].decode(), len(theirs[1])))
+            else:
+                assert reference.stdout == b"ran 600\n", reference
+        # the line of each refusal, and how long its echo is: four spaces and at most 999 bytes of the line, a divided
+        # character replaced (three bytes for the one it stands for)
+        assert seen == [("1", 4 + 654), ("2", 4 + 999), ("3", 4 + 998 + 3), ("5", 4 + 684)], seen
+
+
 def test_an_imported_modules_literal_is_as_from_its_cached_code() -> None:
     """The other half of that decision: a module's literals are converted when the program is built, as CPython converts
     them when it compiles the module and not when it runs it from its cached code. So a compiled program imports a
