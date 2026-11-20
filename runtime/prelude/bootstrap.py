@@ -2119,7 +2119,7 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
 
 # ---- what sys has as named tuples and values: Python/sysmodule.c, and what the library reads when it imports
 
-def _bella_sys_surface(thread_version, hash_randomization):
+def _bella_sys_surface(thread_version, hash_randomization, int_max_str_digits):
     version_info = _bella_structseq("version_info", "sys", ["major", "minor", "micro", "releaselevel", "serial"], 5, has_new=False, says_module=False)
     flags = _bella_structseq("flags", "sys", ["debug", "inspect", "interactive", "optimize", "dont_write_bytecode", "no_user_site", "no_site", "ignore_environment", "verbose", "bytes_warning", "quiet",
                                               "hash_randomization", "isolated", "dev_mode", "utf8_mode", "warn_default_encoding", "safe_path", "int_max_str_digits", "gil", "thread_inherit_context",
@@ -2133,7 +2133,7 @@ def _bella_sys_surface(thread_version, hash_randomization):
     version = _bella_structseq_make(version_info, [3, 15, 2, "final", 0], [])
     return {
         "version_info": version,
-        "flags": _bella_structseq_make(flags, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, hash_randomization, 0, False, 1, 0, False, 4300], [1, 0, 0, -1]),
+        "flags": _bella_structseq_make(flags, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, hash_randomization, 0, False, 1, 0, False, int_max_str_digits], [1, 0, 0, -1]),
         "float_info": float_info([1.7976931348623157e+308, 1024, 308, 2.2250738585072014e-308, -1021, -307, 15, 53, 2.220446049250313e-16, 2, 1]),
         "int_info": int_info([30, 4, 4300, 640]),
         "hash_info": hash_info([64, 2305843009213693951, 314159, 0, 1000003, "siphash13", 64, 128, 0]),

@@ -639,6 +639,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   runtime fills `sys.warnoptions` from the variable and applies the options at start-up, with a port of the option parser
   (`warnings._setoption` and what it calls, about 60 lines) so that a program without `warnings` (D-27) has them too. Then a
   case, D-18 narrowed, and `pipeline/tests/test_start_up_environment.py` turned round.
+* The other variables of CPython's start-up that D-18's row names as ignored (the author, 2026-11-20; RL-527), each when a
+  program needs it: `PYTHONDEVMODE` and `PYTHONWARNDEFAULTENCODING` go with `PYTHONWARNINGS` (they are warning filters and one
+  warning more), `PYTHONOPTIMIZE` with D-09's build-profile switch. The record they would join is `StartUp`
+  (`runtime/src/core.cpp`), and C-8-16 the case.
 * `hashlib.pbkdf2_hmac` (over the mapped HMAC) and `hashlib.scrypt` (libsodium) as an adaptation
   of `hashlib`, closing that part of deviation D-20 (review log D-6, option 2). When a target
   program needs either; then add a case, narrow D-20, and record it in `docs/DECISIONS.md`.
@@ -647,8 +651,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-454 to RL-522). Left after the round's commit:
 
-* **For the author** (questions, not fixes): the other variables of CPython's start-up that a compiled program does not read and
-  the Environment paragraph does not name (RL-527; `PYTHONWARNINGS` itself was decided on 2026-11-20: ignored for now, RL-483);
+* **For the author** (questions, not fixes; the variables of CPython's start-up were decided on 2026-11-20: `PYTHONWARNINGS`
+  ignored for now, RL-483, and of the others three honoured and the rest named as ignored, RL-527, C-8-16):
   `PYTHONIOENCODING`, which the runtime honours and D-15 says is ignored (RL-526); the colour of an uncaught exception's report
   at a terminal (RL-528); where a built-in type that is written in Python keeps its state, so that a subclass's
   attribute of the same private name cannot overwrite it (RL-507, about 110 classes); whether a module-level object's `__del__` runs

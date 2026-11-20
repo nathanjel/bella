@@ -231,7 +231,7 @@ Ref bitwise(BinOp op, Obj a, Obj b) {            // infinite two's complement, o
 }
 
 int& max_str_digits_setting() {
-    static int digits = 4300;                    // _PY_LONG_DEFAULT_MAX_STR_DIGITS
+    static int digits = start_up().int_max_str_digits;   // PYTHONINTMAXSTRDIGITS, else _PY_LONG_DEFAULT_MAX_STR_DIGITS
     return digits;
 }
 [[noreturn]] void too_many_digits() {
@@ -646,6 +646,8 @@ Ref set_digits(Obj, Args a) {                    // sys.set_int_max_str_digits(m
     std::int64_t n;
     if (!int_fits_i64(i.get(), n) || n > INT32_MAX || n < INT32_MIN) raise_new("OverflowError", "Python int too large to convert to C int");
     if (n != 0 && n < 640) raise_new("ValueError", "maxdigits must be >= 640 or 0 for unlimited");
+    Ref flag = int_from_i64(n);                  // _PySys_SetIntMaxStrDigits: sys.flags.int_max_str_digits first, and the limit if that went well
+    sys_set_flag(17, flag.get());
     max_str_digits_setting() = static_cast<int>(n);
     return none_ref();
 }

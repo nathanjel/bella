@@ -982,7 +982,10 @@ Ref p_urandom(Args a) {
     }
     return bytes_new(buf);
 }
-Ref p_cpu_count(Args) { return int_from_i64(sysconf(_SC_NPROCESSORS_ONLN)); }
+Ref p_cpu_count(Args) {                          // os_cpu_count_impl: the configuration's (PYTHON_CPU_COUNT), else the system's
+    if (start_up().cpu_count > 0) return int_from_i64(start_up().cpu_count);
+    return int_from_i64(sysconf(_SC_NPROCESSORS_ONLN));
+}
 Ref p_terminal_size(Args a) {
     winsize w{};
     if (ioctl(int_of(a.pos(0)), TIOCGWINSZ, &w) != 0) return failed();

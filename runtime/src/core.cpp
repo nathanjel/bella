@@ -3,9 +3,14 @@
 #include "bella/runtime.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <random>
+#include <string>
+
+#include <unistd.h>
 
 namespace bella {
 
@@ -352,6 +357,67 @@ Ref list_new(std::initializer_list<Obj> items) {
     return own(l);
 }
 
+// ---- what the environment said at the start (Python/initconfig.c, Python/preconfig.c) ----
+namespace {
+// Py_ExitStatusException of a _PyStatus_ERR before the interpreter exists: fatal_error writes to descriptor 2 and exit(1)
+[[noreturn]] void refuse_to_start(const char* function, const char* message) {
+    std::string text = std::string("Fatal Python error: ") + function + ": " + message + "\nPython runtime state: preinitialized\n\n";
+    for (std::size_t done = 0; done < text.size();) {
+        ssize_t n = ::write(2, text.data() + done, text.size() - done);
+        if (n <= 0) break;
+        done += static_cast<std::size_t>(n);
+    }
+    std::_Exit(1);
+}
+const char* environment(const char* name) {     // _Py_GetEnv: a variable set to nothing is a variable not set
+    const char* value = std::getenv(name);
+    return value != nullptr && *value != '\0' ? value : nullptr;
+}
+bool str_to_int(const char* text, int& out) {    // _Py_str_to_int: strtol's number and nothing after it, within an int
+    char* end = nullptr;
+    errno = 0;
+    long value = std::strtol(text, &end, 10);
+    if (*end != '\0' || errno == ERANGE || value < INT_MIN || value > INT_MAX) return false;
+    out = static_cast<int>(value);
+    return true;
+}
+StartUp read_start_up() {
+    StartUp s;
+    if (const char* text = environment("PYTHONUNBUFFERED")) {     // _Py_get_env_flag: text and a number below zero count as 1
+        int flag = 0;
+        if (!str_to_int(text, flag) || flag < 0) flag = 1;
+        s.buffered_stdio = flag < 1;
+    }
+    // A seed that cannot be taken is told of before the other two (measured on 3.15.2; case C-8-16)
+    if (const char* text = environment("PYTHONHASHSEED"); text != nullptr && std::strcmp(text, "random") != 0) {   // config_init_hash_seed
+        char* end = nullptr;
+        errno = 0;
+        unsigned long seed = std::strtoul(text, &end, 10);
+        if (*end != '\0' || seed > 4294967295UL || (errno == ERANGE && seed == ULONG_MAX))
+            refuse_to_start("config_init_hash_seed", "PYTHONHASHSEED must be \"random\" or an integer in range [0; 4294967295]");
+        s.use_hash_seed = true;
+        s.hash_seed = seed;
+    }
+    if (const char* text = environment("PYTHONINTMAXSTRDIGITS")) {   // config_init_int_max_str_digits; 640 is _PY_LONG_MAX_STR_DIGITS_THRESHOLD
+        int digits = 0;
+        if (!str_to_int(text, digits) || (digits != 0 && digits < 640))
+            refuse_to_start("config_init_int_max_str_digits", "PYTHONINTMAXSTRDIGITS: invalid limit; must be >= 640 or 0 for unlimited.");
+        s.int_max_str_digits = digits;
+    }
+    if (const char* text = environment("PYTHON_CPU_COUNT")) {        // config_init_cpu_count; its words are the option's
+        int count = -1;
+        if (std::strcmp(text, "default") != 0 && (!str_to_int(text, count) || count < 1))
+            refuse_to_start("config_init_cpu_count", "-X cpu_count=n option: n is missing or an invalid number, n must be greater than 0");
+        s.cpu_count = count;
+    }
+    return s;
+}
+}  // namespace
+const StartUp& start_up() {
+    static const StartUp s = read_start_up();
+    return s;
+}
+
 // ---- hashing: CPython's functions (Python/pyhash.c, Objects/longobject.c) ----
 namespace {
 constexpr std::uint64_t HASH_MODULUS = (std::uint64_t{1} << 61) - 1;
@@ -361,9 +427,9 @@ struct HashSecret {
     std::uint64_t k0 = 0, k1 = 0;
     HashSecret() {
         unsigned char key[24] = {};
-        const char* env = std::getenv("PYTHONHASHSEED");
-        if (env != nullptr && std::strcmp(env, "random") != 0) {
-            unsigned long seed = std::strtoul(env, nullptr, 10);
+        const StartUp& config = start_up();
+        if (config.use_hash_seed) {
+            unsigned long seed = config.hash_seed;
             if (seed != 0) {                       // lcg_urandom, Python/bootstrap_hash.c
                 std::uint32_t x = static_cast<std::uint32_t>(seed);
                 for (unsigned char& b : key) {

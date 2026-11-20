@@ -3572,16 +3572,18 @@ def text_encoding(*args: object, **kwds: object) -> object:
     return args[0]
 
 
-def _std_stream(fd: int, name: str, mode: str, encoding: str, errors: str) -> object:
+def _std_stream(fd: int, name: str, mode: str, encoding: str, errors: str, buffered: bool) -> object:
     """create_stdio (Python/pylifecycle.c): open(fd, mode, -1, closefd=False), the raw named, line buffering on a tty and for stderr,
     then a TextIOWrapper with the encoding and errors the configuration chose (PYTHONIOENCODING, else UTF-8 by D-15) and newline "\n",
-    with its mode set."""
-    buf = open(fd, mode, -1, None, None, None, False)
-    raw = buf.raw  # type: ignore[attr-defined]
-    raw.name = name
+    with its mode set. Without buffered streams (PYTHONUNBUFFERED) a stream that writes is over the raw file itself and writes
+    through, and none is line buffered; standard input keeps its buffer, which the text layer's read1() needs."""
+    buffering = 0 if not buffered and mode == "wb" else -1
+    buf = open(fd, mode, buffering, None, None, None, False)
+    raw = buf.raw if buffering else buf  # type: ignore[attr-defined]
+    raw.name = name  # type: ignore[attr-defined]
     isatty = True if raw.isatty() else False
-    line_buffering = isatty or fd == 2
-    stream = TextIOWrapper(buf, encoding, errors, "\n", line_buffering, False)
+    line_buffering = buffered and (isatty or fd == 2)
+    stream = TextIOWrapper(buf, encoding, errors, "\n", line_buffering, not buffered)
     stream.mode = mode[:1]  # type: ignore[attr-defined]
     return stream
 

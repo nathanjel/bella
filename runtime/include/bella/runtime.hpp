@@ -792,6 +792,19 @@ std::int64_t big_hash(Obj v);                    // long_hash
 std::string big_text(Obj v);                     // str(v), under the limit of digits
 Ref int_round(Obj self, Obj ndigits);            // int.__round__; ndigits may be unset or None
 int max_str_digits();                            // sys.get_int_max_str_digits()
+// What the variables of CPython's start-up that a compiled program reads said when it started (Python/initconfig.c; the
+// specification's Environment paragraph). Read once, at the first use, and the same from then on whatever the program does
+// to its environment; a value CPython refuses ends the program there as CPython ends (fatal_error: two lines and an empty
+// one on descriptor 2, status 1)
+struct StartUp {
+    bool buffered_stdio = true;                  // PYTHONUNBUFFERED: off for any text but a number below one
+    bool use_hash_seed = false;                  // PYTHONHASHSEED: a number; not "random", not nothing
+    unsigned long hash_seed = 0;
+    int int_max_str_digits = 4300;               // PYTHONINTMAXSTRDIGITS; _PY_LONG_DEFAULT_MAX_STR_DIGITS without it
+    int cpu_count = -1;                          // PYTHON_CPU_COUNT; -1: what the system says ("default", or nothing)
+};
+const StartUp& start_up();
+void sys_set_flag(std::size_t pos, Obj value);   // _PySys_SetFlagObj: sys.flags becomes a new object with the one field changed
 Ref int_from_digits(bool negative, std::string_view digits, int base);   // digits valid for the base, no underscores
 Obj big_int_constant(const char* text);          // a generated program's literal, decimal or 0x; the caller keeps it
 void fill_int_builtins(Dict* builtins);

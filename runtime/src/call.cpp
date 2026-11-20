@@ -1335,9 +1335,16 @@ Ref sys_audit(Obj, Args a) {                      // sys_audit: no hook can be a
     if (event->text.find('\0') != std::string::npos) raise_new("ValueError", "embedded null character");
     return none_ref();
 }
-Ref sys_get_cpu_count_config(Obj, Args a) {       // -X cpu_count and PYTHON_CPU_COUNT are an interpreter's; a compiled program has no such option
+Ref sys_get_cpu_count_config(Obj, Args a) {       // config->cpu_count: PYTHON_CPU_COUNT as it was at the start, -1 without it
     noargs(a, "sys._get_cpu_count_config");
-    return int_from_i64(-1);
+    return int_from_i64(start_up().cpu_count);
+}
+// _PySys_SetFlagObj: a new flags object with every field of sys.flags but the one, put in its place. What the program kept of
+// the old one says what it said. The fields are read as C reads them, by their place in the object, so a sys.flags that is
+// no longer the runtime's own has no answer here
+ClassObject*& sys_flags_class() {
+    static ClassObject* cls = nullptr;
+    return cls;
 }
 Ref sys_getfilesystemencoding(Obj, Args a) {      // UTF-8 mode, as PEP 686 has it for the pin: no locale changes it here
     noargs(a, "sys.getfilesystemencoding");
@@ -3378,9 +3385,34 @@ static void ignore_what_cpython_ignores() {
     std::signal(SIGXFSZ, SIG_IGN);
 }
 
+void sys_set_flag(std::size_t pos, Obj value) {
+    auto* sys_dict = native_modules()["sys"]->dict;
+    Obj old = dict_get(sys_dict, Obj::of(intern("flags")));
+    if (old.is_unset()) raise_new("RuntimeError", "lost sys.flags");
+    if (type_of(old) != sys_flags_class())
+        throw NotImplemented("a field of sys.flags set when sys.flags is no longer the object the program started with (CPython reads the fields from the object's memory, whatever it is)");
+    auto* was = static_cast<TupleInstance*>(old.object());
+    auto* made = new TupleInstance(type_of(old));
+    Ref flags = own(made);
+    for (std::size_t i = 0; i < was->items.size(); ++i) {
+        Obj field = i == pos ? value : was->items[i];
+        incref(field);
+        made->items.push_back(field);
+    }
+    Ref past = Ref::share(was->fields[0]);
+    made->fields[0] = past.release();
+    put(sys_dict, "flags", flags.get());
+}
 int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
              std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
     int status = 0;
+    // What the environment said, before anything else: a value CPython refuses ends the program here (core.cpp). Without
+    // buffered streams the C library's three are unbuffered too (config_init_stdio)
+    if (!start_up().buffered_stdio) {
+        std::setvbuf(stdin, nullptr, _IONBF, BUFSIZ);
+        std::setvbuf(stdout, nullptr, _IONBF, BUFSIZ);
+        std::setvbuf(stderr, nullptr, _IONBF, BUFSIZ);
+    }
     bool interrupted = false;                    // _PyRuntime.signals.unhandled_keyboard_interrupt: the process ends by SIGINT
     bool exited = false;                         // Py_Exit from inside the report: no look after the program
     bool ran = false;                            // the program's first line was reached
@@ -3599,10 +3631,9 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             if (bootstrap != nullptr) {                   // sys's named tuples, which are made in Python
                 char buffer[64] = "";
                 confstr(_CS_GNU_LIBPTHREAD_VERSION, buffer, sizeof buffer);
-                std::int64_t randomized = 1;              // config.use_hash_seed == 0 || config.hash_seed != 0
-                if (const char* seed = std::getenv("PYTHONHASHSEED"); seed != nullptr && *seed != '\0' && std::string_view(seed) != "random" && std::strtoul(seed, nullptr, 10) == 0) randomized = 0;
-                Ref version = str_new(buffer), flag = int_from_i64(randomized);
-                Ref surface = invoke(dict_get(bootstrap->dict, Obj::of(intern("_bella_sys_surface"))), {version.get(), flag.get()});
+                std::int64_t randomized = !start_up().use_hash_seed || start_up().hash_seed != 0;   // config.use_hash_seed == 0 || config.hash_seed != 0
+                Ref version = str_new(buffer), flag = int_from_i64(randomized), digits = int_from_i64(start_up().int_max_str_digits);
+                Ref surface = invoke(dict_get(bootstrap->dict, Obj::of(intern("_bella_sys_surface"))), {version.get(), flag.get(), digits.get()});
                 auto* sys_dict = native_modules()["sys"]->dict;
                 Ref names = list_new({});
                 for (std::string_view n : cpython_names_of("stdlib")) list_append(names.get(), Obj::of(intern(std::string(n))));
@@ -3612,6 +3643,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     if (e.key.is_unset()) continue;
                     if (as_str(e.key)->text == "_bella_unraisable_args") unraisable_args_type() = Ref::share(e.value);   // no module's
                     else dict_set(sys_dict, e.key, e.value);
+                    if (as_str(e.key)->text == "flags") sys_flags_class() = type_of(e.value);
                 }
             }
             // importlib._bootstrap._setup: the built-in modules' specs and loaders
@@ -3646,10 +3678,11 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     }
                     if (!err.empty()) errors = std::string(err);
                 }
+                Obj buffered = boolean(start_up().buffered_stdio);   // PYTHONUNBUFFERED
                 auto make = [&](int fd, const char* name, const char* mode, const std::string& errs) -> Ref {
                     if (fcntl(fd, F_GETFD) < 0) return none_ref();
                     Ref fdo = int_from_i64(fd), n = str_new(name), m = str_new(mode), enc = str_new(encoding), e = str_new(errs);
-                    return invoke(io_hooks().std_stream.get(), {fdo.get(), n.get(), m.get(), enc.get(), e.get()});
+                    return invoke(io_hooks().std_stream.get(), {fdo.get(), n.get(), m.get(), enc.get(), e.get(), buffered});
                 };
                 Ref in = make(0, "<stdin>", "rb", errors);
                 put(sys_dict, "stdin", in.get());
