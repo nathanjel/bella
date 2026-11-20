@@ -663,11 +663,10 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
 * **Open from review A24** (2026-11-20): a tuple keeps its hash once it was asked for, as CPython's does since 3.14 (RL-574: a
   second `hash(t)`, or a second lookup of one key, calls the elements' `__hash__` again; `enumerate` and `zip` forget it when
-  they use their result tuple again); a step with a case. RL-565 is with the sweep named below. RL-572 is the author's.
-* **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too):
-  `struct.Struct.__new__` with no format (RL-549, with the Struct step below); and, as a sweep of its own, the order each
-  built-in type written in Python lets go of its fields against its C clear function (RL-550 set the rule, the declared order, and
-  checked `partial`, `enumerate` and `zip`), the place of the weak references among them (RL-565).
+  they use their result tuple again); a step with a case. RL-572 is the author's.
+* **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too, the
+  sweep of the order in which a built-in type lets go of what it holds on 2026-11-21): `struct.Struct.__new__` with no format
+  (RL-549, with the Struct step below).
 * **A step of its own:** the line of a traceback entry inside a statement of several lines (RL-494): CPython gives an attribute or a
   method call the line of the attribute's name, a decorator's call the decorator's line, a failed `assert` the line of its test,
   `raise (` ... `)` the line of the `raise`; the frontend gives each expression its first line. 17 of the reviewer's 140 constructs.
@@ -692,7 +691,7 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   (RL-497); `NameError.name` after `del` of what is not bound (RL-498); NameError against UnboundLocalError for a deleted local read
   in a comprehension and a nonlocal deleted twice (RL-499); `print()` after `del sys.stdout` (RL-500); a Unicode error's `start`
   and `end` past 2**62 and as given to the constructor (RL-504, RL-505); `object.__lt__` and its three siblings called by name
-  with the wrong arguments (RL-506); a weak reference to a SimpleNamespace (RL-508); `breakpoint()` after `del
+  with the wrong arguments (RL-506); `breakpoint()` after `del
   sys.breakpointhook` (RL-509).
 
 ## Housekeeping

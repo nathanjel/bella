@@ -352,7 +352,8 @@ def _property_del_doc(self: object) -> None:     # PyMember_SetOne given nothing
 
 
 class property:
-    __slots__ = ("_getter_doc", "_prop_del", "_prop_doc", "_prop_get", "_prop_name", "_prop_set")
+    # property_dealloc's order: the getter, the setter, the deleter, the doc, the name
+    __slots__ = ("_prop_get", "_prop_set", "_prop_del", "_prop_doc", "_prop_name", "_getter_doc")
 
     fget = _GetSet(lambda self: _fget_of(self), member=True)
     fset = _GetSet(lambda self: _fset_of(self), member=True)

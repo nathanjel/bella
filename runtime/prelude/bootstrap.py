@@ -1285,6 +1285,7 @@ class SimpleNamespace:
     # bella: Objects/namespaceobject.c in Python; the class is types.SimpleNamespace
 
     __module__ = 'types'
+    __slots__ = ("__dict__",)                    # ns_dict, and no list of weak references (RL-508)
 
     def __init__(self, /, *args, **kwargs):
         _namespace_self('__init__', self)

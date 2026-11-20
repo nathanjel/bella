@@ -4,8 +4,9 @@ Codex's Astra at low effort read the step that gives each declaration of a slot 
 digits for a main program's literals (C-8-18) and the fixes of A23; the review log has its eleven findings as RL-564 to
 RL-574. Each program here is wider than the report's reproduction and holds it; standard output, the exit status and
 standard error must agree. RL-570, RL-571 and RL-573 are held by `test_start_up_environment.py` (the line echoed for a
-literal over the limit), RL-565 by the sweep of the order in which a built-in type lets go of what it holds
-(`test_release_order.py`), RL-574 by its case; RL-572 is the author's.
+literal over the limit); RL-565 has its program here and the sweep of the order in which a built-in type lets go of what
+it holds (`test_release_order.py`); RL-576 is what the reviewer's probes showed and its report did not name; RL-508 is of
+review S22, fixed with the sweep. RL-574 is open; RL-572 is the author's.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_20_a24
 """
@@ -281,6 +282,76 @@ def b6():
     print(sorted(n for n in vars(Good) if not n.startswith("__") or n in ("__qualname__", "__classcell__")))
 for i, b in enumerate((b1, b2, b3, b4, b5, b6), 1):
     attempt("b" + str(i), b)
+'''),
+    ('RL-565', 'a weak reference of an object whose built-in base has the list is cleared by the base', r'''
+import functools
+import io
+from collections import deque
+from weakref import ref
+
+class Mark:
+    def __init__(self, n):
+        self.n = n
+    def __del__(self):
+        print(self.n)
+
+for base, args in ((deque, ()), (functools.partial, (abs,)), (io.BytesIO, ()), (io.StringIO, ())):
+    class A(base):
+        __slots__ = ('x',)
+    class B(A):
+        __slots__ = ('x',)
+    a = B(*args)
+    B.x.__set__(a, Mark('sub'))
+    A.x.__set__(a, Mark('base'))
+    w = ref(a, lambda w: print('weak'))
+    del a
+    print(base.__name__, w() is None)
+'''),
+    ('RL-576', "an empty slot's error names the member, under whatever name it was looked up", r'''
+import functools
+
+class D:
+    __slots__ = ("x",)
+
+class F(D):
+    __slots__ = ("x",)
+    other = D.x
+
+class P(functools.partial):
+    saved = functools.partial.func
+
+f = F()
+p = P(abs)
+for label, action in (("read under another name", lambda: f.other), ("delete under another name", lambda: delattr(f, "other")),
+                      ("the member's own __get__", lambda: D.x.__get__(f)), ("read by the name", lambda: f.x),
+                      ("delete by the name", lambda: delattr(f, "x")), ("getattr with the other name", lambda: getattr(f, "other")),
+                      ("object.__getattribute__ with the other name", lambda: object.__getattribute__(f, "other")),
+                      ("object.__delattr__ with the other name", lambda: object.__delattr__(f, "other")),
+                      ("a built-in type's member under another name", lambda: p.saved)):
+    try:
+        print(label, "|", action())
+    except AttributeError as e:
+        print(label, "|", str(e), "|", e.name, "|", e.obj is f)
+print(hasattr(f, "other"), getattr(f, "other", "default"))
+'''),
+    ('RL-508', 'a SimpleNamespace takes no weak reference; a class that derives from it does', r'''
+import types
+import weakref
+
+class Sub(types.SimpleNamespace):
+    pass
+
+for label, obj in (("SimpleNamespace", types.SimpleNamespace(a=1)), ("a class over it", Sub(a=1))):
+    try:
+        r = weakref.ref(obj)
+        print(label, "takes one", r() is obj, obj.a)
+    except TypeError as e:
+        print(label, "TypeError", e)
+print("__weakref__" in vars(types.SimpleNamespace), "__dict__" in vars(types.SimpleNamespace), "__slots__" in vars(types.SimpleNamespace))
+print("__weakref__" in vars(Sub), "__dict__" in vars(Sub))
+ns = types.SimpleNamespace(b=2)
+ns.c = 3
+print(ns, vars(ns), ns == types.SimpleNamespace(b=2, c=3))
 '''),
 ]
 

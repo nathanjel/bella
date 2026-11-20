@@ -463,7 +463,9 @@ def _dot_joined(attr: object) -> object:
 # ---- methodcaller ----
 class methodcaller:
     __module__ = "operator"
-    __slots__ = ("_a_name", "_b_args", "_c_kwds")
+    # methodcaller_clear's order. The C keeps the arguments a second time, as one tuple for the call (the positional
+    # ones, then the keywords' values), and that tuple is the last to hold them: they go last one first
+    __slots__ = ("_a_name", "_b_args", "_c_kwds", "_d_vectorcall_args")
 
     def __new__(cls, *args: object, **kwds: object) -> object:
         if len(args) < 1:
@@ -475,6 +477,7 @@ class methodcaller:
         self._c_kwds = kwds
         self._a_name = name
         self._b_args = args[1:]
+        self._d_vectorcall_args = args[1:] + tuple(kwds.values())
         return self
 
     def __call__(self, *args: object, **kwds: object) -> object:

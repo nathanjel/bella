@@ -1768,6 +1768,90 @@ def test_a_slot_declared_again_is_a_second_cell() -> None:
     assert _deaths() == ["kept"]
 
 
+def test_a_built_in_types_dealloc_has_its_own_order() -> None:
+    """RL-565 and the sweep of what a built-in type lets go of: a type written in C clears its weak references and its dict
+    where its dealloc does, and an object of a class that derives from it lets go of that class's slots and of a dict
+    the class added before the type's dealloc runs. The model, told each type's order, against CPython's deque (weak
+    references, then the items), partial (weak references, the function, the arguments, the keywords, its dict) and
+    BytesIO (its dict, then the weak references)."""
+    import collections
+    import functools
+    import io
+
+    from refmodel import objects as O
+
+    def cpython(base: type, slots: tuple[str, ...] | None, make: Callable[[type, Callable[[str], object]], object]) -> list[str]:
+        log: list[str] = []
+
+        class Tag:
+            def __init__(self, n: str) -> None:
+                self.n = n
+
+            def __call__(self) -> None:
+                return None
+
+            def __del__(self) -> None:
+                log.append(self.n)
+
+        K = type("K", (base,), {} if slots is None else {"__slots__": slots})
+        o = make(K, Tag)
+        names = ("x",) if slots is None else tuple(sorted(slots))
+        for name in names:
+            setattr(o, name, Tag("." + name))
+        r = weakref.ref(o, lambda _: log.append("weak"))
+        del o
+        assert r() is None
+        return log
+
+    def model(fields: tuple[str, ...], release: tuple[str, ...], own_dict: bool, slots: tuple[str, ...] | None) -> list[str]:
+        saved = O.HEAP
+        heap = O.HEAP = O.Heap()
+        try:
+            rt = Runtime()
+            tracked = RefClass("Tag", heap=heap)
+            base_slots = fields + (("__dict__",) if own_dict else ()) + ("__weakref__",)
+            B = RefClass("B", slots=base_slots, hidden=fields, release=release, heap=heap)
+            K = RefClass("K", (B,), slots=slots, heap=heap)
+            o = RefObject(K)
+            incref(o)
+            for field in fields:
+                v = RefObject(tracked, tag=field)
+                incref(v)
+                rt.state_set(o, field, v)
+                decref(v)
+            for name in (("x",) if slots is None else tuple(sorted(slots))):
+                v = RefObject(tracked, tag="." + name)
+                incref(v)
+                rt.setattr(o, name, v)
+                decref(v)
+            w = O.weak_ref(o, lambda _: heap.deaths.append("weak"))
+            decref(o)
+            assert w() is None
+            return list(heap.deaths)
+        finally:
+            O.HEAP = saved
+
+    def a_deque(K: type, tag: Callable[[str], object]) -> object:
+        return K([tag("items")])
+
+    def a_partial(K: type, tag: Callable[[str], object]) -> object:
+        return K(tag("func"), tag("args"), kw=tag("keywords"))
+
+    def a_stream(K: type, tag: Callable[[str], object]) -> object:
+        return K(b"ab")
+
+    for slots in (None, ("b", "a")):
+        assert model(("items",), ("__weakref__", "items"), False, slots) == cpython(collections.deque, slots, a_deque), slots
+        assert (model(("func", "args", "keywords"), ("__weakref__", "func", "args", "keywords", "__dict__"), True, slots)
+                == cpython(functools.partial, slots, a_partial)), slots
+        assert model((), ("__dict__", "__weakref__"), True, slots) == cpython(io.BytesIO, slots, a_stream), slots
+    try:
+        RefClass("short", slots=("a", "b"), hidden=("a", "b"), release=("a",))
+        raise AssertionError("a dealloc that names one field of two")
+    except ValueError:
+        pass
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

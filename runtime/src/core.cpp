@@ -284,9 +284,9 @@ bool register_deaths() {
     destroyer(Kind::Native) = [](Object* o) { destroy<Native>(o); };
     destroyer(Kind::Slice) = [](Object* o) {
         auto* s = static_cast<SliceObject*>(o);
+        decref(std::exchange(s->step, Obj{}));              // slice_dealloc's order: the step, the start, the stop
         decref(std::exchange(s->start, Obj{}));
         decref(std::exchange(s->stop, Obj{}));
-        decref(std::exchange(s->step, Obj{}));
         destroy<SliceObject>(o);
     };
     destroyer(Kind::Proxy) = [](Object* o) { destroy<Proxy>(o); };

@@ -1156,13 +1156,19 @@ bool alias_keeps(const Str* name) {
     }();
     return std::find(kept.begin(), kept.end(), name) != kept.end();
 }
+// What an empty slot's error says: PyMember_GetOne names the member, which a class may have under another name; the name
+// looked up is the error's `name`, which the attribute lookup adds (RL-576)
+static const Str* member_named(Obj obj, const Str* name) {
+    Obj found = type_lookup(type_of(obj), name);
+    return is_kind(found, Kind::SlotDescriptor) ? static_cast<SlotDescriptor*>(found.object())->name : name;
+}
 Ref instance_member(Obj obj, const Str* name) {
     Ref out;
     with_attribute_storage(obj, [&](auto* inst) {
         try {
             out = bella::getattr(inst, name);
         } catch (const bella::AttributeError&) {
-            raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+            raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + member_named(obj, name)->text + "'");
         } catch (const bella::TypeError& e) {
             raise_new("TypeError", e.what());
         }
@@ -1190,7 +1196,7 @@ Ref getattr_impl(Obj obj, const Str* name) {
             try {
                 out = bella::getattr(inst, name);
             } catch (const bella::AttributeError&) {
-                raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+                raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + member_named(obj, name)->text + "'");
             } catch (const bella::TypeError& e) {
                 raise_new("TypeError", e.what());
             }
@@ -1354,7 +1360,7 @@ void raise_set_failed(Obj obj, const Str* name, const std::string& what) {
 void raise_delete_failed(Obj obj, const Str* name, const std::string& what) {
     refuse_without_dict(obj, name, what);
     if (what.find(' ') != std::string::npos) raise_attribute_error(obj, name, what);
-    if (is_kind(type_lookup(type_of(obj), name), Kind::SlotDescriptor)) raise_new("AttributeError", name->text);
+    if (is_kind(type_lookup(type_of(obj), name), Kind::SlotDescriptor)) raise_new("AttributeError", member_named(obj, name)->text);
     raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
 }
 

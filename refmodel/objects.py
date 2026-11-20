@@ -445,6 +445,7 @@ class RefClass:
         hidden: tuple[str, ...] = (),
         members: tuple[str, ...] = (),
         readonly: tuple[str, ...] = (),
+        release: tuple[str, ...] | None = None,
     ) -> None:
         self.name = name
         # tp_bases and tp_mro are objects, one each until they are replaced: `__bases__` is the tuple the class was made
@@ -544,6 +545,16 @@ class RefClass:
         # references to the base's dealloc, which clears them after the slots and the dict, before its own data (set_dealloc).
         # A class that says nothing has its MRO's (inherited with the layout).
         self.base_weaklist: bool = base_weaklist if base_weaklist is not None else any(c.base_weaklist for c in self.mro[1:])
+        # A built-in type's dealloc (tp_dealloc of a type written in C; RL-565 and the sweep of 2026-11-20): the order in
+        # which it lets go of what its struct holds, by the names of its fields, its own and its built-in bases', with
+        # "__weakref__" where it clears its list of weak references and "__dict__" where it lets go of its dict, if it
+        # has them. An object of a class that derives from the type lets go of that class's slots and of a dict that class
+        # added first (subtype_dealloc), and then the type's dealloc runs; the weak references go before everything only
+        # when the list is not the type's own.
+        self.release: tuple[str, ...] | None = tuple(release) if release is not None else None
+        if self.release is not None and sorted(n for n in self.release if n not in ("__dict__", "__weakref__")) != sorted(self.hidden_fields):
+            raise ValueError("a built-in type's dealloc names each of its fields once")
+        self.dealloc_base: RefClass | None = next((c for c in self.mro if c.release is not None), None)
         # A slot under the name of a field of the built-in base (class E(Exception): __slots__ = ("args",)) is the name's
         # cell. The base's field is a declaration behind it, as a base class's slot of the name is, with no class to name:
         # the built-in's own reads and stores reach it, and so does the base's descriptor (RL-564).
@@ -820,9 +831,10 @@ class RefObject:
             gc.untrack(self)
         self.alive = False
         self.heap.died(self)
-        if not self.cls.base_weaklist:
+        base = self.cls.dealloc_base
+        if not self.cls.base_weaklist and (base is None or base.release is None or "__weakref__" not in base.release):
             self.clear_weakrefs()
-        self._clear_contents(late_weakrefs=self.cls.base_weaklist)
+        self._clear_contents(late_weakrefs=self.cls.base_weaklist, dying=True)
         gc.free(self)
 
     def traverse(self) -> list[Any]:
@@ -869,13 +881,30 @@ class RefObject:
         """Where the object keeps the slots a class of its MRO declares: by name, the hidden ones apart."""
         return _SlotsOf(self, c)
 
-    def _clear_contents(self, late_weakrefs: bool = False) -> None:
+    def _clear_contents(self, late_weakrefs: bool = False, dying: bool = False) -> None:
+        base = self.cls.dealloc_base
         for c in self.cls.mro:
+            if c is base:
+                break
             for name in c._release_order():              # CPython sorts each class's slots (type_new)
                 kept = self._slots_of(c)
                 v = kept.get(name, UNSET)
                 kept.set(name, UNSET)
                 decref(v)
+        if base is not None:                             # the built-in type's own dealloc, in its order
+            assert base.release is not None
+            if "__dict__" not in base.release:           # a dict a deriving class added: gone before the type's dealloc runs
+                self._release_dict()
+            for name in base.release:
+                if name == "__weakref__":
+                    if dying:                            # the collector's clear has seen to them already
+                        self.clear_weakrefs()
+                elif name == "__dict__":
+                    self._release_dict()
+                else:
+                    v, self.state[name] = self.state[name], UNSET
+                    decref(v)
+            return
         for name in self.cls.native:
             if name == "__dict__":
                 self._release_dict()

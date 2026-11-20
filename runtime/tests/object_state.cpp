@@ -252,6 +252,50 @@ int main() {
         decref(k);
         show_deaths("after the object");
     }
+    std::cout << "8. a built-in type's dealloc: where it clears its weak references and its dict (RL-565)\n";
+    {
+        struct Kind8 { const char* name; Names fields; Names release; bool own_dict; };
+        for (const Kind8& kind : {Kind8{"deque", {"items"}, {"__weakref__", "items"}, false},
+                                  Kind8{"partial", {"func", "args"}, {"__weakref__", "func", "args", "__dict__"}, true},
+                                  Kind8{"BytesIO", {}, {"__dict__", "__weakref__"}, true},
+                                  Kind8{"enumerate", {"it"}, {"it"}, false}}) {
+            Names base_slots = kind.fields;
+            if (kind.own_dict) base_slots.push_back("__dict__");
+            if (std::find(kind.release.begin(), kind.release.end(), "__weakref__") != kind.release.end()) base_slots.push_back("__weakref__");
+            auto* B = make_class({.name = kind.name, .slots = base_slots, .hidden = kind.fields, .release = kind.release});
+            for (int shape = 0; shape < 3; ++shape) {            // the type itself, a class with a dict, a class with slots
+                ClassObject* K = shape == 0 ? B : shape == 1 ? make_class({.name = "K", .bases = {B}})
+                                                              : make_class({.name = "K", .bases = {B}, .slots = Names{"b", "a", "__weakref__"}});
+                if (shape == 2 && B->has_weakref) K = make_class({.name = "K", .bases = {B}, .slots = Names{"b", "a"}});
+                Instance* o = new_instance(K);
+                incref(o);
+                std::int64_t n = 20;
+                for (const auto& f : kind.fields) state_set(o, N(f.c_str()), tagged(n++).get());
+                if (shape == 1 || (shape == 0 && kind.own_dict)) setattr(o, N("x"), tagged(30).get());
+                if (shape == 2) {
+                    setattr(o, N("a"), tagged(31).get());
+                    setattr(o, N("b"), tagged(32).get());
+                }
+                deaths.clear();
+                bool watched = K->has_weakref;
+                if (watched) {
+                    auto* callback = new Function([](std::span<const Obj>) -> Obj {
+                        deaths.push_back("weak");
+                        return Obj::small(0);
+                    });
+                    Object* holder = new Marker("weak");
+                    incref(holder);
+                    weak_link(holder, o, Obj::of(callback), WeakKind::Other);
+                    decref(o);
+                    show_deaths((std::string(kind.name) + ", shape " + std::to_string(shape)).c_str());
+                    decref(holder);
+                } else {
+                    decref(o);
+                    show_deaths((std::string(kind.name) + ", shape " + std::to_string(shape) + ", no weak reference").c_str());
+                }
+            }
+        }
+    }
     decref(plain);
     decref(p);
     return 0;

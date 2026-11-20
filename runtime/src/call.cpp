@@ -1871,6 +1871,27 @@ void note_prelude_class(const ClassObject* c) {
         if (!cpython_attribute_kind(cls, s->text).empty()) members.push_back(s);
     }
     if (!names.empty()) hide_slots(cls, names, members, readonly, boolean);
+    // The type's dealloc (RL-565), for a type CPython writes in C (one it writes in Python has __firstlineno__ in the names
+    // table, and its objects die as any class's do). The class says the order in __release__ where it is not the common
+    // one: the weak references first, the fields as the classes declare them, the dict last.
+    static const Str* const said_release = intern("__release__");
+    std::vector<const Str*> order;
+    bool said = false;
+    if (const Obj* listed = cls->attrs.find(said_release); listed != nullptr && is_kind(*listed, Kind::Tuple)) {
+        for (Obj n : static_cast<Tuple*>(listed->object())->items) order.push_back(intern(as_str(n)->text));
+        cls->del_attr(said_release);
+        said = true;
+    }
+    if (cpython_attribute_kind(cls, "__firstlineno__").empty()) {
+        if (!said) {
+            if (cls->has_weakref) order.push_back(intern("__weakref__"));
+            for (ClassObject* k : cls->mro)
+                for (const Str* s : k->own_slot_names())
+                    if (k->hidden.contains(s)) order.push_back(s);
+            if (cls->has_dict) order.push_back(intern("__dict__"));
+        }
+        set_release(cls, std::move(order));
+    }
     // A static type has no __module__ in its dict: its module is its tp_name's, which type_module answers (RL-554). The names
     // table has the entry for the types that do have one (those C makes from a spec); the class statement's goes where the
     // answer stays what it was.

@@ -688,6 +688,14 @@ struct ClassObject : Object {
         bool operator==(const ShadowedSlot&) const = default;
     };
     std::vector<ShadowedSlot> shadowed;
+    // A built-in type's dealloc (RefClass.release; RL-565): the order in which it lets go of what its struct holds, by the
+    // names of its fields, its own and its built-in bases', with __weakref__ where it clears its weak references and
+    // __dict__ where it lets go of its dict, if it has them. An object of a class that derives from the type lets go of
+    // that class's slots and of a dict that class added first, and then this runs. `dealloc_base` is the nearest class
+    // of the MRO that has one: the class itself, a base, or null (a class over object, or over a type of the header's own).
+    std::optional<std::vector<const Str*>> release;
+    bool release_has_weak = false, release_has_dict = false;
+    ClassObject* dealloc_base = nullptr;
     std::size_t field_count() const { return field_index.size() + state_index.size() + shadowed.size(); }
     bool has_dict = false;
     DictKind dict_kind = DictKind::Inline;       // which dict an instance has; a class that says nothing has its solid base's
@@ -812,7 +820,36 @@ struct ClassSpec {
     std::vector<std::string> hidden = {};                            // of its slots, the fields with no name (RefClass hidden)
     std::vector<std::string> members = {};                           // of the hidden, those the type shows (RefClass members)
     std::vector<std::string> readonly = {};                          // of its slots, the read-only members (RefClass readonly)
+    std::optional<std::vector<std::string>> release = std::nullopt;  // a built-in type's dealloc order (RefClass release)
 };
+
+// RefClass(release=...), also for a class that exists (the prelude's, presented as CPython's after its class statement):
+// the class and every class that derives from it so far find their nearest dealloc again.
+inline void set_release(ClassObject* c, std::vector<const Str*> order) {
+    static const Str* const weak = intern("__weakref__");
+    static const Str* const dict = intern("__dict__");
+    std::vector<const Str*> named, fields = c->hidden_fields;
+    for (const Str* n : order)
+        if (n != weak && n != dict) named.push_back(n);
+    std::sort(named.begin(), named.end());
+    std::sort(fields.begin(), fields.end());
+    if (named != fields) throw ModelError("a built-in type's dealloc names each of its fields once: '" + c->name + "'");
+    c->release_has_weak = std::find(order.begin(), order.end(), weak) != order.end();
+    c->release_has_dict = std::find(order.begin(), order.end(), dict) != order.end();
+    c->release = std::move(order);
+    std::vector<ClassObject*> todo{c};
+    while (!todo.empty()) {
+        ClassObject* k = todo.back();
+        todo.pop_back();
+        k->dealloc_base = nullptr;
+        for (ClassObject* m : k->mro)
+            if (m->release) {
+                k->dealloc_base = m;
+                break;
+            }
+        for (ClassObject* sub : k->subclasses) todo.push_back(sub);
+    }
+}
 
 // RefClass(hidden=...), for a class that exists: the built-in types the prelude writes are made by its class statements
 // and presented as CPython's afterwards, and this is part of that. The fields keep their places, in the class and in every
@@ -970,6 +1007,17 @@ inline ClassObject* make_class(const ClassSpec& spec) {
         // is a declaration behind the name's, with no class to name
         for (const Str* n : c->native_fields)
             if (std::find(c->slot_fields.begin(), c->slot_fields.end(), n) != c->slot_fields.end()) c->shadowed.push_back({nullptr, n, i++});
+    }
+    if (spec.release) {
+        std::vector<const Str*> order;
+        for (const auto& n : *spec.release) order.push_back(intern(n));
+        set_release(c, std::move(order));
+    } else {
+        for (ClassObject* m : c->mro)
+            if (m->release) {
+                c->dealloc_base = m;
+                break;
+            }
     }
     c->keys = std::make_shared<SharedKeys>();
     std::vector<std::string> statics = spec.static_attributes;
@@ -1997,13 +2045,28 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
     obj->flags |= DEAD;
     if (heap().on_death) heap().on_death(obj);
     if (heap().checking) detail::check_not_named(obj);
-    if (!base_weak && (obj->flags & HAS_WEAKREFS)) clear_weakrefs(obj);
+    // the weak references go before everything unless the list is the built-in base's own, which its dealloc clears
+    ClassObject* base = obj->cls->dealloc_base;
+    if (!base_weak && (base == nullptr || !base->release_has_weak) && (obj->flags & HAS_WEAKREFS)) clear_weakrefs(obj);
     for (ClassObject* c : obj->cls->mro) {
+        if (c == base) break;
         // each class's slots sorted by name, as CPython sorts them when it makes the class; a built-in type's fields in the
         // order it declares them, which is its clear function's (RefClass._release_order)
         auto names = c->own_slot_names();
         if (c->hidden.empty()) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
         for (const Str* s : names) decref(std::exchange(slot_cell(obj, c, s), Obj{}));
+    }
+    if (base != nullptr) {                       // the built-in type's own dealloc, in its order (RefObject._clear_contents)
+        static const Str* const weak = intern("__weakref__");
+        static const Str* const dict = intern("__dict__");
+        if (!base->release_has_dict) detail::release_instance_dict(obj);     // a dict a deriving class added: gone before it runs
+        for (const Str* n : *base->release) {
+            if (n == weak) {
+                if (obj->flags & HAS_WEAKREFS) clear_weakrefs(obj);
+            } else if (n == dict) detail::release_instance_dict(obj);
+            else decref(std::exchange(obj->state(n), Obj{}));
+        }
+        return true;
     }
     // the built-in base's clear function: its fields, the dict at its place (RefObject.dealloc)
     if (obj->cls->native.empty()) detail::release_instance_dict(obj);

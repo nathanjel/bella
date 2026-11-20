@@ -1135,6 +1135,7 @@ class OrderedDict(dict):  # type: ignore[type-arg]
     __module__ = "collections"
     __doc__ = "Dictionary that remembers insertion order"
     __slots__ = ("_a_od", "__dict__", "__weakref__")
+    __release__ = ("__dict__", "__weakref__", "_a_od")       # odict_dealloc: its dict, the weak references, the nodes
 
     def __init__(*args: object, **kwds: object) -> None:   # odict_init
         _wrapper(args[:1], {}, OrderedDict, "__init__", 0)

@@ -208,6 +208,40 @@ def main() -> None:
     heap.deaths.clear()
     decref(k)
     print("  after the object:", [f"t{t}" for t in heap.deaths])
+    print("8. a built-in type's dealloc: where it clears its weak references and its dict (RL-565)")
+    for kind, fields, release, own_dict in (("deque", ("items",), ("__weakref__", "items"), False),
+                                            ("partial", ("func", "args"), ("__weakref__", "func", "args", "__dict__"), True),
+                                            ("BytesIO", (), ("__dict__", "__weakref__"), True),
+                                            ("enumerate", ("it",), ("it",), False)):
+        base_slots = fields + (("__dict__",) if own_dict else ()) + (("__weakref__",) if "__weakref__" in release else ())
+        B = RefClass(kind, slots=base_slots, hidden=fields, release=release, heap=heap)
+        for shape in range(3):                       # the type itself, a class with a dict, a class with slots
+            if shape == 0:
+                K = B
+            elif shape == 1:
+                K = RefClass("K", (B,), heap=heap)
+            else:
+                K = RefClass("K", (B,), slots=("b", "a") if B.has_weakref else ("b", "a", "__weakref__"), heap=heap)
+            o = RefObject(K)
+            incref(o)
+            n = 20
+            for f in fields:
+                rt.state_set(o, f, tagged(n))
+                n += 1
+            if shape == 1 or (shape == 0 and own_dict):
+                rt.setattr(o, "x", tagged(30))
+            if shape == 2:
+                rt.setattr(o, "a", tagged(31))
+                rt.setattr(o, "b", tagged(32))
+            heap.deaths.clear()
+            if K.has_weakref:
+                w = O.weak_ref(o, lambda _: heap.deaths.append("weak"))
+                decref(o)
+                print(f"  {kind}, shape {shape}:", [t if t == "weak" else f"t{t}" for t in heap.deaths])
+                del w
+            else:
+                decref(o)
+                print(f"  {kind}, shape {shape}, no weak reference:", [f"t{t}" for t in heap.deaths])
     decref(plain)
     decref(p)
 

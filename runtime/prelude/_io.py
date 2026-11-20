@@ -2083,6 +2083,7 @@ def _bio_write_bytes(self: BytesIO, data: bytes) -> int:   # write_bytes
 
 class BytesIO(_BufferedIOBase):
     __slots__ = ("_a_buf", "_b_pos", "_c_string_size", "_d_exports")
+    __release__ = ("_a_buf", "_b_pos", "_c_string_size", "_d_exports", "__dict__", "__weakref__")   # bytesio_dealloc: the weak references last
 
     def __new__(cls, *args: object, **kwds: object) -> BytesIO:
         self: BytesIO = _bella_new_instance(cls)
@@ -3297,6 +3298,9 @@ def _sio_readline(self: StringIO, limit: int) -> str:   # _stringio_readline
 
 class StringIO(_TextIOBase):
     __slots__ = ("_a_ok", "_b_closed", "_c_decoder", "_d_text", "_e_pos", "_f_readuniversal", "_g_readtranslate", "_h_writenl", "_i_readnl")
+    # stringio_dealloc: what it holds and its dict (stringio_clear), then the weak references
+    __release__ = ("_a_ok", "_b_closed", "_c_decoder", "_d_text", "_e_pos", "_f_readuniversal", "_g_readtranslate", "_h_writenl", "_i_readnl",
+                   "__dict__", "__weakref__")
 
     def __new__(cls, *args: object, **kwds: object) -> StringIO:
         self: StringIO = _bella_new_instance(cls)

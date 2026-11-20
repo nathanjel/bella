@@ -343,7 +343,7 @@ each of the iterables.  Stops when the shortest iterable is exhausted.
 If strict is true and one of the arguments is exhausted before the others,
 raise a ValueError."""
 
-    __slots__ = ("_func", "_its", "_strict")
+    __slots__ = ("_its", "_func", "_strict")       # map_dealloc's order: the iterators, then the function
 
     def __new__(cls, *args: object, **kwds: object) -> object:   # map_new
         strict = _strict_argument(kwds, "map")
