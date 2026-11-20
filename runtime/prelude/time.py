@@ -149,6 +149,8 @@ def _clockid(value: object) -> int:              # time_clockid_converter: PyLon
 
 def _c_int(value: object) -> int:                # PyArg_ParseTuple's "i": PyLong_AsLong, then the int's range
     n = _index(value)
+    if not -(2**63) <= n < 2**63:                # PyLong_AsLong's own words, before the int's range (RL-523)
+        raise OverflowError("Python int too large to convert to C long")
     if n > _INT_MAX:
         raise OverflowError("signed integer is greater than maximum")
     if n < _INT_MIN:

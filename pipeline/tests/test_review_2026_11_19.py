@@ -577,6 +577,80 @@ print("deleting the writer")
 del w
 print("deleted; closes", Raw.closes)
 '''),
+    ('RL-461', 'the warning printer and a line that is a str subclass', r'''
+import io
+import sys
+import _io
+import _warnings
+
+sys.modules["warnings"] = None
+with _io.open("src.txt", "w") as f:
+    f.write("one\ntwo\n")
+
+
+class Line(str):
+    def __getitem__(self, i):
+        return "Q"
+
+    def __len__(self):
+        return 1
+
+    def __str__(self):
+        return "stringified"
+
+
+class Lines:
+    def __init__(self, lines):
+        self.lines = list(lines)
+
+    def readline(self):
+        return self.lines.pop(0) if self.lines else ""
+
+    def close(self):
+        pass
+
+
+class Wrote:
+    def __init__(self):
+        self.pieces = []
+
+    def write(self, text):
+        self.pieces.append((type(text).__name__, str.__str__(text)))
+
+
+for given in ([Line("  indented subclass\n"), Line("  second\n")], [Line("no new line")], [b"bytes line\n"], [5]):
+    io.TextIOWrapper = lambda b, e, given=given: Lines(given)
+    kept, sys.stderr = sys.stderr, Wrote()
+    try:
+        _warnings.warn_explicit("m", UserWarning, "src.txt", 1)
+        _warnings.warn_explicit("m", UserWarning, "src.txt", 2)
+        pieces = sys.stderr.pieces
+    finally:
+        sys.stderr = kept
+    print(pieces)
+'''),
+    ('RL-523', 'time: an int field past a C long', r'''
+import time
+
+
+class Index:
+    def __init__(self, value):
+        self.value = value
+
+    def __index__(self):
+        return self.value
+
+
+CALLS = (("asctime year", lambda v: time.asctime((v, 1, 1, 0, 0, 0, 0, 1, 0))), ("mktime mon", lambda v: time.mktime((2000, v, 1, 0, 0, 0, 0, 1, 0))),
+         ("strftime sec", lambda v: time.strftime("%S", (2000, 1, 1, 0, 0, v, 0, 1, 0))), ("clock_getres", time.clock_getres))
+for value in (2**31 - 1, 2**31, 2**40, 2**63 - 1, 2**63, 2**64, 2**100, -2**31, -2**31 - 1, -2**63, -2**63 - 1, -2**100, Index(2**70), Index(2**31)):
+    for name, call in CALLS:
+        shown = f"Index({value.value})" if isinstance(value, Index) else value
+        try:
+            print(name, shown, "->", type(call(value)).__name__)
+        except (OverflowError, ValueError, OSError) as exc:
+            print(name, shown, "->", type(exc).__name__, exc)
+'''),
 ]
 
 

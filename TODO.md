@@ -663,7 +663,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   seekable (RL-475), an int that does not fit from `read()` or `readinto()` (RL-476), the errno of a BlockingIOError (RL-478: 0 in
   CPython there, to check in the image first).
 * **Words:** `not None` where the clinic says so (RL-477; a sweep of every prelude function called with None is the way to find
-  the rest); `dir()`'s two messages (RL-491).
+  the rest); `dir()`'s two messages (RL-491); a type's name cut where the C's format cuts it (`%.200s` and the like, RL-524).
+* **An observation not reduced:** a warning from a `__del__` that CPython runs at exit (RL-525), with the collector.
 * **Warnings:** a registry version too large for a C long (RL-484); a stack level of -2**63 (RL-485).
 * **Names and frames:** `locals()` of a generator expression shows the iterator where 3.15 shows a list, tuple, range, str or dict
   itself (RL-488); `__classdictcell__` holds a mappingproxy (RL-489); the frame a handler is given is a new object at each arrival

@@ -373,15 +373,23 @@ def _display_source_line(f: object, filename: str, lineno: int) -> None:   # _Py
 
 def _get_line(f: object) -> object:              # PyFile_GetLine(f, -1): a line without its new line; the file's end is an EOFError
     line = f.readline()  # type: ignore[attr-defined]
-    if isinstance(line, bytes):
-        if not line:
+    # the C reads the object's own characters, whatever a subclass's __len__, __getitem__ or __eq__ would answer, and a line
+    # that ends in a new line is cut to a str or bytes of its own (RL-461, the rest of it)
+    if issubclass(type(line), bytes):
+        size = bytes.__len__(line)
+        if size == 0:
             raise EOFError("EOF when reading a line")
-        return line[:-1] if line[-1:] == b"\n" else line
-    if isinstance(line, str):
-        if not line:
+        return bytes.__getitem__(line, slice(0, size - 1)) if bytes.__getitem__(line, size - 1) == 10 else line
+    if issubclass(type(line), str):
+        size = str.__len__(line)
+        if size == 0:
             raise EOFError("EOF when reading a line")
-        return line[:-1] if line[-1] == "\n" else line
-    raise TypeError("object.readline() returned non-string")
+        return str.__getitem__(line, slice(0, size - 1)) if str.__getitem__(line, size - 1) == "\n" else line
+    cls = type(f)
+    owner = cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+    got = type(line)
+    given = got.__qualname__ if got.__module__ in ("builtins", "__main__") else got.__module__ + "." + got.__qualname__
+    raise TypeError(owner + ".readline() must return a str, not " + given)
 
 
 def _as_file_descriptor(value: object) -> int:   # PyObject_AsFileDescriptor
