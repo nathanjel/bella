@@ -2671,6 +2671,33 @@ def _tw_decoder_setstate(self: TextIOWrapper, start_pos: int, dec_flags: object)
         self._h_decoder.setstate((b"", dec_flags))  # type: ignore[attr-defined]
 
 
+# textio.c's encodefuncs: a codec that names itself one of these is encoded by the C's own function for it, and its
+# incremental encoder is never asked. Two of them write something else than the encoder would: away from the start of a
+# stream UTF-16 and UTF-32 have no byte-order mark and the machine's byte order, whatever the encoder's state, and a stream
+# that cannot seek is never at its start (RL-531)
+_ENCODEFUNCS = ("ascii", "iso8859-1", "utf-8", "utf-16-be", "utf-16-le", "utf-16", "utf-32-be", "utf-32-le", "utf-32")
+_NATIVE_ORDER = "-le" if bytes.__getitem__(str.encode("a", "utf-16"), slice(2, 3)) == b"a" else "-be"
+
+
+def _tw_encodefunc(codec_info: object) -> object:   # the end of _textiowrapper_set_encoder
+    name = getattr(codec_info, "name", None)
+    if isinstance(name, str):
+        for known in _ENCODEFUNCS:
+            if str.__eq__(name, known):
+                return known
+    return None
+
+
+def _tw_encode(self: TextIOWrapper, text: str) -> object:   # write()'s choice between the two
+    name = self._zz_encodefunc
+    if name is None:
+        return self._i_encoder.encode(text)  # type: ignore[attr-defined]
+    if not self._s_encoding_start_of_stream and (name == "utf-16" or name == "utf-32"):
+        name = name + _NATIVE_ORDER                # utf16le_encode: no mark, and a failure names utf-16-le
+    self._s_encoding_start_of_stream = False       # also when the encoding fails: the C sets it before it looks
+    return str.encode(text, name, self._t_errors)  # type: ignore[arg-type]
+
+
 def _tw_encoder_reset(self: TextIOWrapper, start_of_stream: bool) -> None:   # _textiowrapper_encoder_reset
     if start_of_stream:
         self._i_encoder.reset()  # type: ignore[attr-defined]
@@ -2684,7 +2711,7 @@ class TextIOWrapper(_TextIOBase):
     __slots__ = ("_a_ok", "_b_detached", "_c_buffer", "_d_encoding", "_e_chunk_size", "_f_telling", "_g_has_read1", "_h_decoder", "_i_encoder",
                  "_j_decoded_chars", "_k_decoded_chars_used", "_l_b2cratio", "_m_snapshot", "_n_pending", "_o_pending_count", "_p_readtranslate",
                  "_q_readuniversal", "_r_readnl", "_s_encoding_start_of_stream", "_t_errors", "_u_seekable", "_v_line_buffering", "_w_write_through",
-                 "_x_writetranslate", "_y_writenl", "_z_in_repr", "_finalizing")
+                 "_x_writetranslate", "_y_writenl", "_z_in_repr", "_zz_encodefunc", "_finalizing")
 
     def __new__(cls, *args: object, **kwds: object) -> TextIOWrapper:
         self: TextIOWrapper = _bella_new_instance(cls)
@@ -2714,6 +2741,7 @@ class TextIOWrapper(_TextIOBase):
         self._x_writetranslate = False
         self._y_writenl = None
         self._z_in_repr = False
+        self._zz_encodefunc = None
         self._finalizing = False
         return self
 
@@ -2750,6 +2778,7 @@ class TextIOWrapper(_TextIOBase):
         self._d_encoding = None
         self._h_decoder = None
         self._i_encoder = None
+        self._zz_encodefunc = None
         self._r_readnl = None
         self._j_decoded_chars = None
         self._k_decoded_chars_used = 0
@@ -2776,6 +2805,7 @@ class TextIOWrapper(_TextIOBase):
                 self._h_decoder = IncrementalNewlineDecoder(self._h_decoder, self._p_readtranslate)
         if buffer.writable():  # type: ignore[attr-defined]
             self._i_encoder = codec_info.incrementalencoder(errors)
+            self._zz_encodefunc = _tw_encodefunc(codec_info)
         self._u_seekable = self._f_telling = True if buffer.seekable() else False  # type: ignore[attr-defined]
         self._g_has_read1 = hasattr(buffer, "read1")
         self._s_encoding_start_of_stream = False
@@ -2818,8 +2848,7 @@ class TextIOWrapper(_TextIOBase):
             text = str.replace(text, "\n", self._y_writenl)   # PyUnicode_Replace: not a subclass's replace
         text_needflush = self._w_write_through
         needflush = self._v_line_buffering and (haslf or str.find(text, "\r") != -1)
-        b = self._i_encoder.encode(text)  # type: ignore[attr-defined]
-        self._s_encoding_start_of_stream = False
+        b = _tw_encode(self, text)
         if not isinstance(b, bytes):
             raise TypeError("encoder should return a bytes object, not '" + _tp_name(b) + "'")
         bytes_len = bytes.__len__(b)

@@ -179,6 +179,76 @@ sys.exit("message on stderr")
 """)
 
 
+# textio.c encodes nine codecs with functions of its own, by the codec's name, and for UTF-16 and UTF-32 those write the
+# byte-order mark only at the start of a stream that can seek (RL-531)
+THE_MARK = r'''
+import io
+import os
+import tempfile
+
+for encoding in ("utf-16", "utf-32", "utf-8-sig", "utf-16-le", "utf-32-be", "UTF16", "utf_32", "latin-1", "ascii", "utf-8"):
+    r, w = os.pipe()
+    text = io.TextIOWrapper(io.FileIO(w, "w"), encoding=encoding, errors="replace")
+    text.write("")
+    text.write("ab")
+    text.write("c\u20ac")
+    text.flush()
+    print("a pipe,", encoding, os.read(r, 100))
+    text.close()
+    os.close(r)
+    r, w = os.pipe()
+    text = io.TextIOWrapper(io.BufferedWriter(io.FileIO(w, "w")), encoding=encoding, errors="backslashreplace", write_through=True)
+    text.write("ab")
+    text.write("\udc80")
+    text.flush()
+    print("a buffered pipe,", encoding, os.read(r, 100))
+    text.close()
+    os.close(r)
+    with tempfile.TemporaryFile() as raw:
+        text = io.TextIOWrapper(raw, encoding=encoding)
+        text.write("ab")
+        text.flush()
+        raw.seek(0)
+        print("a file,", encoding, raw.read())
+        text.seek(0)
+        text.write("cd")
+        text.flush()
+        raw.seek(0)
+        print("  written again from its start:", raw.read())
+        text.seek(0, 2)
+        text.write("ef")
+        text.flush()
+        second = io.TextIOWrapper(raw, encoding=encoding)       # a wrapper made when the file is past its start
+        second.write("gh")
+        second.flush()
+        raw.seek(0)
+        print("  at its end, and through a second wrapper:", raw.read())
+        second.detach()
+        text.detach()
+    try:
+        r, w = os.pipe()
+        text = io.TextIOWrapper(io.FileIO(w, "w"), encoding=encoding)
+        text.write("\udc80")
+        text.flush()
+        print("a lone surrogate,", encoding, os.read(r, 100))
+    except UnicodeEncodeError as e:
+        print("a lone surrogate,", encoding, "UnicodeEncodeError", e.encoding, e.start, e.end)
+    text.close()
+    os.close(r)
+    with tempfile.TemporaryFile() as raw:           # the first write fails: is the file still at its start for the second?
+        text = io.TextIOWrapper(raw, encoding=encoding)
+        try:
+            text.write("\udc80")
+        except UnicodeEncodeError as e:
+            print("a file whose first write fails,", encoding, e.encoding, end=" ")
+        text.write("ab")
+        text.flush()
+        raw.seek(0)
+        print(raw.read())
+        text.detach()
+'''
+
+
 def test_bases_and_memory_streams() -> None:
     same(BASES_AND_MEMORY)
 
@@ -206,6 +276,10 @@ def test_what_leaves_the_program() -> None:
         expected = "\n".join(line for line in ref.stderr.splitlines() if not line.startswith("    ") and not line.startswith("  File"))
         actual = "\n".join(line for line in got.stderr.splitlines() if not line.startswith("  File"))
         assert (got.stdout, got.returncode, actual) == (ref.stdout, ref.returncode, expected), (src, got, ref)
+
+
+def test_the_byte_order_mark_and_where_a_stream_starts() -> None:
+    same(THE_MARK)
 
 
 def test_what_is_absent_stops_by_name() -> None:
