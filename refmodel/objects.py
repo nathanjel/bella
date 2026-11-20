@@ -54,6 +54,13 @@ What is modelled (design document, section 3, as revised by review rounds two an
   its ``__dict__``; a lookup the class answers alone (a data descriptor, a slot) leaves it as it is. CPython also tells
   a method call's load from a plain one (``_PyObject_GetMethod`` asks nothing of the instance), which neither the model
   nor the compiler does: deviation D-23.
+* The state of a built-in type that is written in Python (RL-507; the author's decision of 2026-11-20): a field of
+  CPython's C struct has no name, so a class may declare some of its ``__slots__`` *hidden*
+  (``RefClass(hidden=...)``). A hidden field is kept in the object and released as the slot it is declared as, but the
+  class has no descriptor for it: no lookup by name finds it, ``getattr``, ``setattr`` and ``delattr`` under that
+  name are the object's own business (its ``__dict__``, a slot or a property of a class that derives from the type),
+  and only the type's own code reaches the field, through ``Runtime.state_get``, ``state_set`` and ``state_del``,
+  which run no hook of any class. A hidden field and a program's attribute of the same name are two things.
 * ``CacheEntry.found`` is borrowed: it holds no count. The model checks the property the C++
   header relies on: no entry that a live class's version still validates names an object that
   dies, and no cached lookup reads a dead ``found``.
@@ -425,6 +432,7 @@ class RefClass:
         native: tuple[str, ...] | None = None,
         dict_kind: str | None = None,
         base_weaklist: bool | None = None,
+        hidden: tuple[str, ...] = (),
     ) -> None:
         self.name = name
         # tp_bases and tp_mro are objects, one each until they are replaced: `__bases__` is the tuple the class was made
@@ -460,13 +468,18 @@ class RefClass:
         own_weak = (slots is None) or ("__weakref__" in slots)
         self.has_weakref: bool = own_weak or any(b.has_weakref for b in self.bases)
         own_slots = tuple(s for s in (self.slots or ()) if s not in ("__dict__", "__weakref__"))
+        # the fields of a built-in type's C struct: slots with no name in the class (the module's account)
+        self.hidden: frozenset[str] = frozenset(hidden)
+        if not self.hidden <= set(own_slots):
+            raise ValueError("a hidden field is one of the class's own __slots__")
         for s in own_slots:
-            if s in self.attrs:
+            if s in self.attrs and s not in self.hidden:
                 raise ValueError(f"{s!r} in __slots__ conflicts with class variable")
         for s in sorted(own_slots):                # type_new_slots sorts them; tp_members' order is the dict's
-            self.attrs[s] = SlotDescriptor(s)
-        inherited_slots = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names()))
-        self.slot_fields = inherited_slots
+            if s not in self.hidden:
+                self.attrs[s] = SlotDescriptor(s)
+        self.slot_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names() if n not in c.hidden))
+        self.hidden_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names() if n in c.hidden))
         for p in self.promoted:
             if p in self.slot_fields:
                 raise ValueError(f"promoted field {p!r} collides with a slot")
@@ -636,10 +649,25 @@ def is_data_descriptor(found: Any) -> bool:
 # Objects
 # ---------------------------------------------------------------------------------------------
 
+class _SlotsOf:
+    """The cells of one class's own slots in an object: a hidden one is in the object's state, any other among its
+    inline values."""
+
+    def __init__(self, obj: RefObject, c: RefClass) -> None:
+        self.obj, self.hidden = obj, c.hidden
+
+    def get(self, name: str, default: Any) -> Any:
+        return (self.obj.state if name in self.hidden else self.obj.inline).get(name, default)
+
+    def set(self, name: str, value: Any) -> None:
+        (self.obj.state if name in self.hidden else self.obj.inline)[name] = value
+
+
 class RefObject:
     def __init__(self, cls: RefClass, tag: Any = None) -> None:
         self.cls = cls
         self.inline: dict[str, Any] = {n: UNSET for n in cls.slot_fields + cls.native_fields + cls.promoted_fields}
+        self.state: dict[str, Any] = {n: UNSET for n in cls.hidden_fields}     # a built-in type's fields that have no name
         self.order: list[str] = []          # first-assignment order of __dict__-backed names
         self.dict: RefDict | None = None    # before exposure: the attributes not promoted; after: the object's __dict__
         self.exposed = False
@@ -663,7 +691,8 @@ class RefObject:
         new class, whose versions no cache entry of the old one can match. Other layouts (an instance dict to hand over,
         compatible_for_assignment's checks) are not modelled."""
         old = self.cls
-        same = (cls.slot_fields, cls.native_fields, cls.promoted_fields) == (old.slot_fields, old.native_fields, old.promoted_fields)
+        same = ((cls.slot_fields, cls.native_fields, cls.promoted_fields, cls.hidden_fields)
+                == (old.slot_fields, old.native_fields, old.promoted_fields, old.hidden_fields))
         if not same or cls.has_dict or old.has_dict or cls.has_weakref != old.has_weakref or cls.bases != old.bases:
             raise ModelError(f"__class__ from {old.name} to {cls.name}: another layout")
         self.cls = cls
@@ -740,7 +769,7 @@ class RefObject:
         out: list[Any] = []
         for c in self.cls.mro:
             for name in sorted(c._own_slot_names()):
-                out.append(self.inline.get(name, UNSET))
+                out.append(self._slots_of(c).get(name, UNSET))
         for name in self.cls.native:
             if name == "__dict__":
                 out.extend(self._dict_referents())
@@ -770,11 +799,16 @@ class RefObject:
         collector has seen to those."""
         self._clear_contents()
 
+    def _slots_of(self, c: RefClass) -> _SlotsOf:
+        """Where the object keeps the slots a class of its MRO declares: by name, the hidden ones apart."""
+        return _SlotsOf(self, c)
+
     def _clear_contents(self, late_weakrefs: bool = False) -> None:
         for c in self.cls.mro:
             for name in sorted(c._own_slot_names()):     # CPython sorts each class's slots (type_new)
-                v = self.inline.get(name, UNSET)
-                self.inline[name] = UNSET
+                kept = self._slots_of(c)
+                v = kept.get(name, UNSET)
+                kept.set(name, UNSET)
                 decref(v)
         for name in self.cls.native:
             if name == "__dict__":
@@ -1175,6 +1209,31 @@ class Runtime:
                 if entry is not None:
                     site.install(entry)
         return self._execute(plan, obj, name)
+
+    # ---- a built-in type's own fields (RL-507): no lookup, no hook, no descriptor ----
+    def has_state(self, obj: RefObject, name: str) -> bool:
+        return name in obj.cls.hidden_fields
+
+    def state_get(self, obj: RefObject, name: str) -> Any:
+        """The type's own read of its field; one never stored, or deleted, is an AttributeError of the name alone, as
+        a member's is."""
+        v = obj.state[name]
+        if v is UNSET:
+            raise AttributeError(name)
+        return v
+
+    def state_set(self, obj: RefObject, name: str, value: Any) -> None:
+        old = obj.state[name]
+        incref(value)
+        obj.state[name] = value
+        decref(old)
+
+    def state_del(self, obj: RefObject, name: str) -> None:
+        old = obj.state[name]
+        if old is UNSET:
+            raise AttributeError(name)
+        obj.state[name] = UNSET
+        decref(old)
 
     def setattr(self, obj: RefObject, name: str, value: Any) -> None:
         """Every store keeps the new value before it releases the old one."""

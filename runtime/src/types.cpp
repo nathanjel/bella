@@ -192,6 +192,12 @@ static Ref bind_builtin(Builtin* b, Obj receiver) {
     return bound;
 }
 
+// The cell a member reads: its class's slot, which is a field with no name once the class is presented as the C type whose
+// struct has it (object.hpp's hide_slots). The prelude's own code holds such a member where it kept one aside.
+template <class T>
+static Obj& member_cell(T* inst, const SlotDescriptor* d) {
+    return d->owner != nullptr && d->owner->hidden.contains(d->name) ? inst->state(d->name) : inst->field(d->name);
+}
 void check_member_applies(const SlotDescriptor* d, Obj obj) {   // descr_check
     if (!isinstance(obj, d->owner))
         raise_new("TypeError", "descriptor '" + d->name->text + "' for '" + d->owner->name + "' objects doesn't apply to a '" + type_of(obj)->name + "' object");
@@ -230,7 +236,7 @@ Ref descr_get(Obj found, Obj obj, Obj type) {
                 check_member_applies(d, obj);
                 Ref out;
                 with_attribute_storage(obj, [&](auto* inst) {
-                    Obj v = inst->field(d->name);
+                    Obj v = member_cell(inst, d);
                     if (v.is_unset()) raise_attribute_error(obj, d->name, "'" + fully_qualified_name(type_of(obj)) + "' object has no attribute '" + d->name->text + "'");
                     out = Ref::share(v);
                 });
@@ -297,7 +303,7 @@ Ref getset_set(Obj self, Args a) {
         check_member_applies(d, a.pos(0));
         with_attribute_storage(a.pos(0), [&](auto* inst) {
             incref(a.pos(1));
-            decref(std::exchange(inst->field(d->name), a.pos(1)));
+            decref(std::exchange(member_cell(inst, d), a.pos(1)));
         });
         return none_ref();
     }
@@ -317,8 +323,8 @@ Ref getset_delete(Obj self, Args a) {
         auto* d = static_cast<SlotDescriptor*>(self.object());
         check_member_applies(d, a.pos(0));
         with_attribute_storage(a.pos(0), [&](auto* inst) {
-            if (inst->field(d->name).is_unset()) raise_new("AttributeError", d->name->text);   // PyMember_SetOne: the name, and nothing held
-            decref(std::exchange(inst->field(d->name), Obj{}));
+            if (member_cell(inst, d).is_unset()) raise_new("AttributeError", d->name->text);   // PyMember_SetOne: the name, and nothing held
+            decref(std::exchange(member_cell(inst, d), Obj{}));
         });
         return none_ref();
     }
@@ -515,6 +521,14 @@ ClassObject* tp_base(ClassObject* c) {
     return base != nullptr ? base : types().object;
 }
 
+// [P2+] (spec section 3): a class that overrides __getattribute__ makes no instance, whatever would make it: object.__new__,
+// the call of the class, a built-in type's own __new__ under a class that derives from it (RL-533: a class that derived
+// from deque or dict ran with its override never asked)
+void refuse_getattribute_override(ClassObject* cls) {
+    if (cls->has("__getattribute__") && type_lookup(cls, N("__getattribute__")) != type_lookup(types().object, N("__getattribute__")) &&
+        !is_kind(type_lookup(cls, N("__getattribute__")), Kind::Builtin))   // _thread._local's is no program's
+        throw NotImplemented("[P2+] a class that overrides __getattribute__ (spec section 3)");
+}
 Ref object_new(Obj, Args a) {
     if (a.npos < 1) raise_new("TypeError", "object.__new__(): not enough arguments");
     ClassObject* cls = as_class(a.pos(0));
@@ -547,9 +561,7 @@ Ref object_new(Obj, Args a) {
         raise_new("TypeError", "Can't instantiate abstract class " + cls->name + " without an implementation for abstract method" +
                                    (names.size() > 1 ? "s" : "") + " '" + joined + "'");
     }
-    if (cls->has("__getattribute__") && type_lookup(cls, N("__getattribute__")) != type_lookup(types().object, N("__getattribute__")) &&
-        !is_kind(type_lookup(cls, N("__getattribute__")), Kind::Builtin))   // _thread._local's is no program's
-        throw NotImplemented("[P2+] a class that overrides __getattribute__ (spec section 3)");
+    refuse_getattribute_override(cls);
     return own(new_instance(cls));
 }
 
@@ -570,6 +582,7 @@ Ref type_call(ClassObject* cls, Args a) {
     if (cls == types().type && a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(observed_type(a.pos(0))));
     if (cls == types().type && a.npos != 3) raise_new("TypeError", "type() takes 1 or 3 arguments");
     if (cls == types().super_) return super_call(a);                  // super's own vectorcall
+    if (cls->heap_type) refuse_getattribute_override(cls);
     Obj new_attr = type_lookup(cls, N("__new__"));
     if (new_attr.is_unset()) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
     if (new_attr == object_new_fn() && (!cls->heap_type || cls->disallow_instantiation) && cls != types().object) refuse_construction(cls);
@@ -2814,16 +2827,16 @@ Ref bootstrap_call(const char* name, Obj arg) {
 }
 Ref ga_parameters(Obj self) { return bootstrap_call("_ga_parameters", self); }
 Ref ga_unpacked_tuple_args(Obj self) { return bootstrap_call("_ga_unpacked_tuple_args", self); }
-Ref sentinel_name_get(Obj self) { return getattr(self, N("_s_name")); }
+Ref sentinel_name_get(Obj self) { return state_get(self, N("_s_name")); }
 Ref sentinel_module_get(Obj self) {
-    Ref v = optional_getattr(self, N("_s_module"));
+    Ref v = optional_state(self, N("_s_module"));
     if (v.get().is_unset()) raise_attribute_error(self, N("__module__"), "'sentinel' object has no attribute '__module__'");
     return v;
 }
 void sentinel_module_set(Obj self, Obj v) {
-    if (!v.is_unset()) setattr(self, N("_s_module"), v);
-    else if (optional_getattr(self, N("_s_module")).get().is_unset()) raise_attribute_error(self, N("__module__"), "__module__");
-    else delattr(self, N("_s_module"));
+    if (!v.is_unset()) state_set(self, N("_s_module"), v);
+    else if (optional_state(self, N("_s_module")).get().is_unset()) raise_attribute_error(self, N("__module__"), "__module__");
+    else state_del(self, N("_s_module"));
 }
 Ref union_name(Obj) { return str_new("Union"); }
 Ref union_origin(Obj) { return Ref::share(Obj::of(types().union_)); }
@@ -2920,6 +2933,7 @@ Ref i_bella_new_instance(Obj, Args a) {
     positional_only(a, "_bella_new_instance", 1, 1);
     ClassObject* c = as_class(a.pos(0));
     if (c == nullptr) raise_new("TypeError", "_bella_new_instance(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
+    refuse_getattribute_override(c);
     return own(new_instance(c));
 }
 
@@ -2943,8 +2957,7 @@ Ref i_bella_structseq_finish(Obj, Args a) {      // (cls, module, fields, has_ne
     positional_only(a, "_bella_structseq_finish", 4, 4);
     static constexpr auto members = structseq_members(std::make_index_sequence<32>{});
     auto* c = as_class(a.pos(0));
-    present_native_class(c, as_str(a.pos(1))->text);
-    c->del_attr(N("_s_past"));
+    present_native_class(c, as_str(a.pos(1))->text);      // and _s_past is a field with no name from here (note_prelude_class)
     c->disallow_instantiation = !truth(a.pos(3));
     auto& fields = static_cast<List*>(a.pos(2).object())->items;
     for (std::size_t i = 0; i < fields.size(); ++i) {

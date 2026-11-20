@@ -20,6 +20,8 @@ try:
     _repr_enter                                  # noqa: B018  # Py_ReprEnter: false when it is in there already
     _repr_leave                                  # noqa: B018  # Py_ReprLeave
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
+    _bella_state_set                             # noqa: B018  # a C function's store into its struct's field (RL-507)
+    _bella_state_get                             # noqa: B018  # and its read, where the name is a value
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _hash_of                                     # noqa: B018  # PyObject_Hash, once: the C passes the hash on
     _set_hashed                                  # noqa: B018  # the dict's own operations with a hash already taken
@@ -37,6 +39,8 @@ except NameError:
         raise ImportError("this file needs the runtime's primitives")
 
     _bella_new_instance: Callable[..., Any] = _missing
+    _bella_state_set = object.__setattr__
+    _bella_state_get = getattr
     _number_index: Callable[..., int] = _missing
     _tp_name: Callable[..., str] = _missing
     _count_element: Callable[..., None] = _missing
@@ -777,7 +781,10 @@ class _deque_reverse_iterator:
 # ---- defaultdict
 
 def _factory(self: object) -> object:            # dd->default_factory: the field itself, and None before __init__
-    return getattr(self, "_a_factory", None)
+    try:
+        return self._a_factory  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
 
 
 class defaultdict(dict):  # type: ignore[type-arg]
@@ -1361,7 +1368,7 @@ class odict_iterator:
         self = args[0]
         tmp = _bella_new_instance(odict_iterator)
         for name in ("_a_odict", "_b_current", "_c_size", "_d_state", "_e_kind"):
-            setattr(tmp, name, getattr(self, name))
+            _bella_state_set(tmp, name, _bella_state_get(self, name))
         return (iter, (list(tmp),))
 
 

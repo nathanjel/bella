@@ -10,6 +10,7 @@ __name__ = "_struct"
 
 try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
+    _bella_state_set                             # noqa: B018  # a C function's store into its struct's field (RL-507)
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
@@ -26,6 +27,7 @@ except NameError:
         raise ImportError("this file needs the runtime's primitives")
 
     _bella_new_instance = object.__new__
+    _bella_state_set = object.__setattr__
     _bella_refuse: Callable[..., Any] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
     _float_pack: Callable[..., bytes] = _missing
@@ -415,10 +417,10 @@ class Struct:
         text = _format_text(format)
         codes, size, length, little = _prepare(text)
         object.__setattr__(self, "format", text)
-        object.__setattr__(self, "_codes", codes)
+        _bella_state_set(self, "_codes", codes)
         object.__setattr__(self, "size", size)
-        object.__setattr__(self, "_length", length)
-        object.__setattr__(self, "_little", little)
+        _bella_state_set(self, "_length", length)
+        _bella_state_set(self, "_little", little)
         return self
 
     def __init__(self, *args: object, **kwds: object) -> None:   # s_init: __new__ did the work; a second format would warn

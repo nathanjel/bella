@@ -1455,3 +1455,117 @@ def test_an_object_given_a_class_of_its_layout_keeps_its_fields_and_misses_the_c
             raise AssertionError("an object of another layout is not modelled")
     finally:
         O.HEAP = saved
+
+
+def test_the_state_of_a_built_in_type_has_no_name() -> None:
+    """RL-507 (the author's decision of 2026-11-20; case C-3-76): what a built-in type keeps for its own work has no name.
+    A class that derives from it uses the name for itself, as an attribute, a slot or a property, and the type's own
+    reads and stores go to its field and through no hook. The model against CPython's enumerate, whose count is the
+    field."""
+    from refmodel import objects as O
+
+    class Page(enumerate[str]):
+        def __init__(self, rows: list[str], start: int = 0) -> None:
+            self._count = len(rows)
+
+    page = Page(["a", "b"], 1)
+    seen: list[object] = [hasattr(enumerate("a"), "_count"), "_count" in vars(enumerate), sorted(vars(page)), page._count, next(page), page._count]
+    del page._count
+    seen += [sorted(vars(page)), next(page)]
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        rt = Runtime()
+        asked: list[str] = []
+
+        def missing(obj: RefObject, name: str) -> object:
+            asked.append(name)
+            raise AttributeError(name)
+
+        E = RefClass("enumerate", slots=("_count", "_it"), hidden=("_count", "_it"), heap=heap)
+        P = RefClass("Page", (E,), attrs={"__getattr__": missing}, heap=heap)
+        assert E.lookup("_count") is None and E.slot_fields == () and E.hidden_fields == ("_count", "_it") and not E.has_dict
+        plain, p = RefObject(E), RefObject(P)
+        incref(plain)
+        incref(p)
+        rt.state_set(plain, "_count", 0)
+        rt.state_set(p, "_count", 1)                       # enumerate's own store, when the object is made
+        try:
+            rt.getattr(plain, "_count")
+            raise AssertionError("a field has no name")
+        except AttributeError:
+            pass
+        try:
+            rt.setattr(plain, "_count", 5)                 # and an enumerate has no __dict__ to take one
+            raise AssertionError("a field has no name")
+        except AttributeError:
+            pass
+        assert rt.state_get(plain, "_count") == 0
+
+        def step(obj: RefObject) -> int:                   # enum_next: the count it stands at, and one more kept
+            at = rt.state_get(obj, "_count")
+            rt.state_set(obj, "_count", at + 1)
+            return int(at)
+
+        got: list[object] = [False, E.lookup("_count") is not None]
+        rt.setattr(p, "_count", 2)                         # the program's: self._count = len(rows)
+        got += [sorted(rt.expose_dict(p)), rt.getattr(p, "_count"), (step(p), "a"), rt.getattr(p, "_count")]
+        rt.delattr(p, "_count")
+        got += [sorted(rt.expose_dict(p)), (step(p), "b")]
+        assert got == seen, (got, seen)
+        assert asked == []                                 # the type's own reads asked nothing of the class
+        try:
+            rt.getattr(p, "_count")
+        except AttributeError:
+            pass
+        assert asked == ["_count"] and rt.state_get(p, "_count") == 3
+
+        # a slot and a kept attribute of a deriving class under the name: cells of their own (the shape of trio's _IdRef)
+        R = RefClass("ref", slots=("_hash",), hidden=("_hash",), heap=heap)
+        IR = RefClass("IdRef", (R,), slots=("_hash",), heap=heap)
+        K = RefClass("Kept", (R,), promoted=("_hash",), heap=heap)
+        for cls in (IR, K):
+            o = RefObject(cls)
+            incref(o)
+            rt.state_set(o, "_hash", 7)
+            rt.setattr(o, "_hash", 1000)
+            assert (rt.getattr(o, "_hash"), rt.state_get(o, "_hash")) == (1000, 7)
+            rt.delattr(o, "_hash")
+            assert rt.state_get(o, "_hash") == 7
+            rt.state_del(o, "_hash")
+            for again in (rt.state_get, rt.state_del):
+                try:
+                    again(o, "_hash")
+                    raise AssertionError("deleted")
+                except AttributeError:
+                    pass
+            decref(o)
+        assert IR.slot_fields == ("_hash",) and IR.hidden_fields == ("_hash",) and K.hidden_fields == ("_hash",)
+
+        # lifetimes: a hidden field is released as the slot it is declared as, each class's sorted by name; a store keeps
+        # the new value before it lets the old one go
+        T = RefClass("T", heap=heap)
+        M = RefClass("M", slots=("b", "_a", "c"), hidden=("_a", "c"), heap=heap)
+        m = RefObject(M)
+        incref(m)
+        for name, tag in (("c", "c"), ("b", "b"), ("_a", "a")):
+            held = RefObject(T, tag=tag)
+            if name in M.hidden:
+                rt.state_set(m, name, held)
+            else:
+                rt.setattr(m, name, held)
+        assert [v.tag for v in m.traverse()] == ["a", "b", "c"]
+        rt.state_set(m, "c", RefObject(T, tag="c2"))
+        assert heap.deaths == ["c"]
+        decref(m)
+        assert heap.deaths == ["c", "a", "b", "c2"]
+        try:
+            RefClass("W", slots=("x",), hidden=("y",), heap=heap)
+            raise AssertionError("a hidden field is a slot of the class")
+        except ValueError:
+            pass
+        decref(plain)
+        decref(p)
+    finally:
+        O.HEAP = saved

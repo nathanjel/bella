@@ -644,7 +644,7 @@ class FrozenImporter:
 
 _ga_absent = object()
 _ga_get = _bella_ga_get                          # a member, read past that forwarding
-_ga_set = object.__setattr__
+_ga_set = _bella_state_set                       # a C function's store into its struct
 _GA_OWN = ('__class__', '__origin__', '__args__', '__unpacked__', '__parameters__',
            '__typing_unpacked_tuple_args__', '__mro_entries__', '__reduce_ex__', '__reduce__')
 
@@ -868,15 +868,11 @@ is (int,)."""
         # bella: the members are read-only, and the parameters' slot is not CPython's to show
         if name in ('__origin__', '__args__', '__unpacked__'):
             raise AttributeError('readonly attribute')
-        if name == '_ga_parameters':
-            raise AttributeError(f"'types.GenericAlias' object has no attribute '{name}' and no __dict__ for setting new attributes")
-        _ga_set(self, name, value)
+        object.__setattr__(self, name, value)
 
     def __delattr__(self, name):
         if name in ('__origin__', '__args__', '__unpacked__'):
             raise AttributeError('readonly attribute')
-        if name == '_ga_parameters':
-            raise AttributeError(f"'types.GenericAlias' object has no attribute '{name}' and no __dict__ for setting new attributes")
         object.__delattr__(self, name)
 
     def __repr__(self):
@@ -1056,7 +1052,7 @@ Create a unique sentinel object with the given name."""
 # (make_union alone makes one, as _bella_new_instance), and gives it __name__, __qualname__, __origin__ and
 # __parameters__ as getsets. type.__or__ and type.__ror__ are the runtime's and come here, as _union_type_or.
 
-_union_set = object.__setattr__
+_union_set = _bella_state_set
 _UNION_OWN = ('_union_hashable', '_union_unhashable', '_union_params')
 
 
@@ -1222,17 +1218,13 @@ E.g. for int | str"""
         self, name, value = args
         if name == '__args__':
             raise AttributeError('readonly attribute')
-        if name in _UNION_OWN:
-            raise AttributeError(f"'typing.Union' object has no attribute '{name}' and no __dict__ for setting new attributes")
-        _union_set(self, name, value)
+        object.__setattr__(self, name, value)
 
     def __delattr__(*args, **kwds):
         _union_wrapper(args, kwds, '__delattr__', 1)
         self, name = args
         if name == '__args__':
             raise AttributeError('readonly attribute')
-        if name in _UNION_OWN:
-            raise AttributeError(f"'typing.Union' object has no attribute '{name}' and no __dict__ for setting new attributes")
         object.__delattr__(self, name)
 
     def __repr__(*args, **kwds):

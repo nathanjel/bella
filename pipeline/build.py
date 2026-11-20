@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import builtins
 import fcntl
+import functools
 import ast
 import hashlib
 import json
@@ -129,6 +130,36 @@ FIDELITIES = ("exact", "lean")
 LEAN_DEFINE = "-DBELLA_LEAN"
 
 
+def _constant_names(tree: ast.Module, expr: ast.expr) -> tuple[str, ...]:
+    """A `__slots__` value as the prelude writes one: a literal, a module-level name bound to one, or a sum of those."""
+    if isinstance(expr, ast.Name):
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == expr.id for t in node.targets):
+                return _constant_names(tree, node.value)
+        raise Unsupported(f"the prelude's __slots__: {expr.id} is no constant of its module")
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+        return _constant_names(tree, expr.left) + _constant_names(tree, expr.right)
+    value = ast.literal_eval(expr)
+    return (value,) if isinstance(value, str) else tuple(value)
+
+
+@functools.cache
+def prelude_state() -> frozenset[str]:
+    """The names the prelude's classes declare as `__slots__`. A built-in type CPython writes in C keeps its state in the
+    fields of a struct, which have no names (RL-507; the author's decision of 2026-11-20): in a prelude unit an attribute of
+    one of these names is the type's own field where the object's type keeps one, and the emitter says so
+    (pipeline/backend/cpp.py, Emitter.state). The runtime library's key holds every file read here."""
+    names: set[str] = set()
+    for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON, *RUNTIME_PYTHON]:
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    if isinstance(item, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__slots__" for t in item.targets):
+                        names.update(_constant_names(tree, item.value))
+    return frozenset(names - {"__dict__", "__weakref__"})
+
+
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mode: str = "exec",
            future: frozenset[str] = frozenset(), looks: bool = True, tree: ast.Module | None = None) -> str:
     # the passes walk the tree by recursion, and a chain of operators, calls or elif branches is as deep as it is long: the
@@ -138,7 +169,7 @@ def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mo
     try:
         module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future, tree=tree)))
         wf2.check(module, lifetimes=True)
-        return emit_module(module, namespace, filename, prelude, looks)
+        return emit_module(module, namespace, filename, prelude, looks, prelude_state() if prelude else frozenset())
     except RecursionError:
         raise Unsupported(f"{filename}: a chain of operators, calls or branches too long for the compiler's passes") from None
     finally:

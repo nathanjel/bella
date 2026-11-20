@@ -4,6 +4,7 @@ The machines are the runtime's (runtime/src/format.cpp), the ones str.format its
 """
 
 __all__ = ["formatter_field_name_split", "formatter_parser"]
+__hidden_classes__ = ["formatteriterator", "fieldnameiterator"]   # types of the builtins that are no names of the module
 
 __name__ = "_string"
 

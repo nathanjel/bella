@@ -151,7 +151,8 @@ def type_names():
                sys.stdout, NotImplemented, Ellipsis, None, tb, tb.tb_frame, gen(), slice(1), Probe().__init__, iter(list[int]),
                t"", t"{0}".interpolations[0], iter(t""),
                __import__("collections").OrderedDict().keys(), __import__("collections").OrderedDict().values(),
-               __import__("collections").OrderedDict().items(), iter(__import__("collections").OrderedDict())]
+               __import__("collections").OrderedDict().items(), iter(__import__("collections").OrderedDict()),
+               __import__("_string").formatter_parser(""), __import__("_string").formatter_field_name_split("a")[1]]
     import grp, itertools, posix, pwd, re, struct, time, typing, unicodedata, zlib, _ast, _blake2, _contextvars, _csv, _hmac, _random, _tokenize, _md5, _sha1, _sha2, _sha3, _struct, _codecs, _collections, _functools, _io, _json, _locale, _operator, _sre, _stat, _string, _thread, _typing, _weakref, _signal
     for v in [unraisable_args(), unicodedata.UCD, type(unicodedata.iter_graphemes("")), type(next(unicodedata.iter_graphemes("a"))), type(unicodedata._ucnhash_CAPI), type(posix.scandir(".")), type(typing.NoDefault), type(typing.TypeVar("T", bound=int).evaluate_bound), *vars(_typing).values(), _json.make_scanner, _json.make_encoder, type(sys.version_info), type(sys.flags), type(sys.float_info), type(sys.int_info), type(sys.hash_info), type(sys.thread_info), re.Pattern, re.Match, type(re.compile('').scanner('')), type(_sre.template('', [''])), *vars(_sre).values(), *vars(_io).values(), *vars(_ast).values(), pwd.struct_passwd, grp.struct_group, *vars(posix).values(), *vars(builtins).values(), *vars(types).values(), *vars(itertools).values(), *vars(_operator).values(), *vars(_collections).values(), *vars(_functools).values(), type(_functools.cmp_to_key(None)), _struct.Struct, type(struct.iter_unpack('b', b'a')), time.struct_time, _md5.MD5Type, _sha1.SHA1Type, *vars(_sha2).values(), *vars(_sha3).values(), *vars(_blake2).values(), _hmac.HMAC, _csv.Dialect, _csv.Reader, _csv.Writer, _csv.Error, type(zlib.compressobj()), type(zlib.decompressobj()), zlib._ZlibDecompressor, zlib.error, _contextvars.Context, _contextvars.ContextVar, _contextvars.Token, type(_contextvars.Token.MISSING), type(_contextvars.copy_context().keys()), type(_contextvars.copy_context().values()), type(_contextvars.copy_context().items()), _random.Random, _tokenize.TokenizerIter, *vars(_thread).values(), *vars(_weakref).values(), _signal.struct_siginfo, _signal.ItimerError]:
         add(v)
@@ -263,7 +264,8 @@ def docs():
     samples += [type(iter([])), type(iter(())), type(iter("")), type({}.keys()), type({}.values()), type({}.items()), type(iter({})),
                 type(iter(set())), type(iter(range(1))), type(iter(range(2**64))), type(None), type(NotImplemented), type(Ellipsis), type(sys.stdout),
                 type(iter(b"")), type(iter(bytearray())), type(reversed({})), type(reversed({}.values())), type(reversed({}.items())),
-                type(t""), type(t"{0}".interpolations[0]), type(iter(t""))]
+                type(t""), type(t"{0}".interpolations[0]), type(iter(t"")),
+                type(__import__("_string").formatter_parser("")), type(__import__("_string").formatter_field_name_split("a")[1])]
     for t in samples:                             # a type's doc under its own scope: _md5.md5 is a function and a type, with different docs
         out["type:" + tp_name(t)] = t.__doc__ if isinstance(t.__doc__, str) else ""
         new = vars(t).get("__new__")              # tp_new's builtin, a builtin_function_or_method bound to the type: its doc under new:<tp_name>

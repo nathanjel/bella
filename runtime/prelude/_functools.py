@@ -15,6 +15,7 @@ try:
     _repr_enter                                  # noqa: B018  # Py_ReprEnter: false when it is in there already
     _repr_leave                                  # noqa: B018  # Py_ReprLeave
     _bella_new_instance                          # noqa: B018  # an instance of a type with no __new__ of its own
+    _bella_state_set                             # noqa: B018  # a C function's store into its struct's field (RL-507)
     _has_dict                                    # noqa: B018  # the C's self->dict is not NULL
     _drop_dict                                   # noqa: B018  # the C's Py_CLEAR(self->dict)
     _method_new                                  # noqa: B018  # PyMethod_New
@@ -35,6 +36,7 @@ except NameError:
     _repr_enter: Callable[..., bool] = _missing
     _repr_leave: Callable[..., None] = _missing
     _bella_new_instance: Callable[..., Any] = _missing
+    _bella_state_set = object.__setattr__
     _has_dict: Callable[..., bool] = _missing
     _drop_dict: Callable[..., None] = _missing
     _method_new: Callable[..., Any] = _missing
@@ -45,7 +47,7 @@ except NameError:
     _is_callable: Callable[..., bool] = _missing
 
 _SSIZE_MAX = 2**63 - 1
-_set = object.__setattr__
+_set = _bella_state_set                          # a C function's store into its struct: no class's __setattr__ is asked
 _ABSENT = object()
 
 
@@ -208,17 +210,13 @@ and keywords."""
         self, name, value = args
         if name in ("func", "args", "keywords"):
             raise AttributeError("readonly attribute")
-        if name == "_p_phcount":
-            raise AttributeError("'" + _tp_name(self) + "' object has no attribute '_p_phcount'")
-        _set(self, name, value)  # type: ignore[arg-type]
+        object.__setattr__(self, name, value)  # type: ignore[arg-type]
 
     def __delattr__(*args: object, **kwds: object) -> None:
         _wrapper(args, kwds, partial, "__delattr__", 1)
         self, name = args
         if name in ("func", "args", "keywords"):
             raise AttributeError("readonly attribute")
-        if name == "_p_phcount":
-            raise AttributeError("'" + _tp_name(self) + "' object has no attribute '_p_phcount'")
         object.__delattr__(self, name)  # type: ignore[arg-type]
 
     def __call__(*args: object, **kwds: object) -> object:      # partial_call

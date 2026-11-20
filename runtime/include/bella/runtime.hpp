@@ -895,6 +895,15 @@ inline bool test(Ref& b) {                       // an If consumes its test
     return v;
 }
 Ref getattr(Obj obj, const Str* name);
+// A built-in type's own field (RL-507; object.hpp's state_get): what a prelude unit's `self._name` is, for the names the
+// prelude's classes declare as slots. An object whose type keeps a field under the name gives the field, with no lookup and
+// no hook of any class; any other object is asked as getattr, setattr and delattr ask it.
+Ref state_get(Obj obj, const Str* name);
+Ref optional_state(Obj obj, const Str* name);                // Unset when the field holds nothing
+void state_set(Obj obj, const Str* name, Obj value);
+void state_del(Obj obj, const Str* name);
+Ref i_bella_state_get(Obj, Args a);                          // (obj, name), where the name is a value
+Ref i_bella_state_set(Obj, Args a);                          // (obj, name, value)
 void setattr(Obj obj, const Str* name, Obj value);
 void delattr(Obj obj, const Str* name);
 Ref getitem(Obj obj, Obj key);

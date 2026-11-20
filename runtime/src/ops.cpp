@@ -1201,6 +1201,62 @@ Ref getattr_impl(Obj obj, const Str* name) {
 }
 }  // namespace
 
+// ---- a built-in type's own fields (RL-507) ----
+namespace {
+Obj* state_cell(Obj obj, const Str* name) {
+    if (!obj.is_object()) return nullptr;
+    const ClassObject* cls = type_of(obj);
+    if (cls->state_index.empty()) return nullptr;
+    auto at = cls->state_index.find(name);
+    if (at == cls->state_index.end()) return nullptr;
+    Obj* cell = nullptr;
+    with_attribute_storage(obj, [&](auto* inst) { cell = &inst->fields[at->second]; });
+    return cell;
+}
+}  // namespace
+Ref state_get(Obj obj, const Str* name) {
+    Obj* cell = state_cell(obj, name);
+    if (cell == nullptr) return getattr(obj, name);
+    if (cell->is_unset()) raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+    return Ref::share(*cell);
+}
+Ref optional_state(Obj obj, const Str* name) {
+    Obj* cell = state_cell(obj, name);
+    if (cell == nullptr) return optional_getattr(obj, name);
+    return cell->is_unset() ? Ref{} : Ref::share(*cell);
+}
+void state_set(Obj obj, const Str* name, Obj value) {
+    Obj* cell = state_cell(obj, name);
+    if (cell == nullptr) {
+        setattr(obj, name, value);
+        return;
+    }
+    incref(value);
+    decref(std::exchange(*cell, value));         // the new value is kept before the old one is let go
+}
+void state_del(Obj obj, const Str* name) {
+    Obj* cell = state_cell(obj, name);
+    if (cell == nullptr) {
+        delattr(obj, name);
+        return;
+    }
+    if (cell->is_unset()) raise_new("AttributeError", name->text);   // PyMember_SetOne: the name, and nothing held
+    decref(std::exchange(*cell, Obj{}));
+}
+Ref i_bella_state_get(Obj, Args a) {
+    positional_only(a, "_bella_state_get", 2, 2);
+    return state_get(a.pos(0), intern(as_str(a.pos(1))->text));
+}
+// the store of a C function into its own struct: the field, or, for a member CPython's type has too, the member's store
+// (PyObject_GenericSetAttr: whatever __setattr__ a class that derives from the type has)
+Ref i_bella_state_set(Obj, Args a) {
+    positional_only(a, "_bella_state_set", 3, 3);
+    const Str* name = intern(as_str(a.pos(1))->text);
+    if (state_cell(a.pos(0), name) != nullptr) state_set(a.pos(0), name, a.pos(2));
+    else invoke(type_lookup(types().object, intern("__setattr__")), {a.pos(0), a.pos(1), a.pos(2)});
+    return none_ref();
+}
+
 // object.__getattribute__: PyObject_GenericGetAttr, so never a class's __getattr__, which the
 // instances' path runs and has no way to skip yet
 Ref object_getattribute(Obj self, Args a) {
@@ -1216,7 +1272,9 @@ Ref object_getattribute(Obj self, Args a) {
 }
 Ref i_bella_ga_get(Obj, Args a) {                // bootstrap.py's: a generic alias's own member
     positional_only(a, "_bella_ga_get", 2, 2);
-    return instance_member(a.pos(0), intern(as_str(a.pos(1))->text));
+    const Str* name = intern(as_str(a.pos(1))->text);
+    if (state_cell(a.pos(0), name) != nullptr) return state_get(a.pos(0), name);
+    return instance_member(a.pos(0), name);
 }
 
 // a getset with no setter says "not writable"; a member (PyMemberDef) "readonly attribute", whether the runtime has it as a
@@ -1293,17 +1351,9 @@ void raise_delete_failed(Obj obj, const Str* name, const std::string& what) {
     raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
 }
 
-// a field of a C type written in Python, which the C type does not show: no subclass's __setattr__ runs when
-// its own code stores one (a name CPython's type has, as GenericAlias's __parameters__, is a program's to set)
-static bool native_slot(Obj obj, const Str* name) {
-    Obj found = type_lookup(type_of(obj), name);
-    if (!is_kind(found, Kind::SlotDescriptor)) return false;
-    auto* owner = static_cast<SlotDescriptor*>(found.object())->owner;
-    return c_type(owner) && cpython_attribute_kind(owner, name->text.c_str()).empty();
-}
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
-        if (overrides(obj, "__setattr__") && !native_slot(obj, name)) {
+        if (overrides(obj, "__setattr__")) {
             call_special(obj, "__setattr__", {Obj::of(name), value});
             return;
         }

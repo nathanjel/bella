@@ -9,6 +9,7 @@ __name__ = "_blake2"
 
 try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
+    _bella_state_set                             # noqa: B018  # a C function's store into its struct's field (RL-507)
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
@@ -25,6 +26,7 @@ except NameError:
         raise ImportError("this file needs the runtime's primitives")
 
     _bella_new_instance = object.__new__
+    _bella_state_set = object.__setattr__
     _bella_refuse: Callable[..., Any] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
     _hash_new: Callable[..., bytes] = _missing
@@ -139,10 +141,10 @@ def _new(name: str, cls: type, args: tuple[object, ...], kwds: dict[str, object]
         raise OverflowError("'node_offset' is too large")
     self = _bella_new_instance(cls)
     params = (digest_size, key, salt, person, fanout, depth, leaf_size, int.to_bytes(node_offset, 8, "little"), node_depth, inner_size, last_node)
-    object.__setattr__(self, "_state", _hash_new(name, params))
-    object.__setattr__(self, "_size", digest_size)
+    _bella_state_set(self, "_state", _hash_new(name, params))
+    _bella_state_set(self, "_size", digest_size)
     if data is not _ABSENT:
-        object.__setattr__(self, "_state", _hash_update(self._state, _buffer(data)))  # type: ignore[attr-defined]
+        _bella_state_set(self, "_state", _hash_update(self._state, _buffer(data)))  # type: ignore[attr-defined]
     return self
 
 

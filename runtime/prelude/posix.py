@@ -20,6 +20,7 @@ try:
     _structseq                                   # noqa: B018  # bootstrap.py's: a type of named tuples
     _sys                                         # noqa: B018  # the system calls, by name
     _bella_new_instance                          # noqa: B018  # tp_alloc: an instance of a type a program cannot make
+    _bella_state_set                             # noqa: B018  # a C function's store into its struct's field (RL-507)
     _unraisable                                  # noqa: B018  # PyErr_FormatUnraisable: a message and the exception
     _resource_warning                            # noqa: B018  # PyErr_ResourceWarning: a message and the object left open
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
@@ -38,6 +39,7 @@ except NameError:
     _structseq: Callable[..., Any] = _missing
     _sys: Callable[..., Any] = _missing
     _bella_new_instance: Callable[..., Any] = _missing
+    _bella_state_set = object.__setattr__
     _unraisable: Callable[..., Any] = _missing
     _resource_warning: Callable[..., Any] = _missing
     _warn: Callable[..., Any] = _missing
@@ -323,7 +325,7 @@ def _entry_test_mode(self: DirEntry, follow: bool, mode_bits: int) -> bool:   # 
     return kind == 1 if mode_bits == 0o040000 else kind == 2
 
 
-_entry_set = object.__setattr__
+_entry_set = _bella_state_set
 
 
 class ScandirIterator:

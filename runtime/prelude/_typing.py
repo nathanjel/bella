@@ -12,6 +12,7 @@ __name__ = "_typing"
 
 try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
+    _bella_state_set                             # noqa: B018  # a C function's store into its struct's field (RL-507)
     _bella_caller_module                         # noqa: B018  # caller(): the calling function's __module__
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
@@ -22,6 +23,7 @@ except NameError:
     from typing import Any
 
     _bella_new_instance = object.__new__
+    _bella_state_set = object.__setattr__
 
     def _bella_class_set(cls: type, name: str, value: object) -> None:
         pass                                     # under CPython the prelude is read, not run: the member is the C's
@@ -207,7 +209,7 @@ def _default_of(default_value: object, evaluate_default: object, store: object, 
     if evaluate_default is None:
         return NoDefault
     computed = evaluate_default()  # type: ignore[operator]
-    setattr(store, name, computed)
+    _bella_state_set(store, name, computed)
     return computed
 
 

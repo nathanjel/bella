@@ -105,7 +105,7 @@ slice:
 int-test:
 	$(PY) runtime/tests/int_differential.py --cxx $(CXX) --std $(CXXSTD) --cases 2000
 
-object-test: object-test-lockstep object-test-sanitized object-test-reentrancy
+object-test: object-test-lockstep object-test-sanitized object-test-reentrancy object-test-state
 
 object-test-lockstep:
 	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 3000
@@ -121,6 +121,15 @@ object-test-reentrancy:
 	ASAN_OPTIONS=detect_leaks=0 build/object-test/reentrancy > build/object-test/reentrancy.header
 	diff build/object-test/reentrancy.cpython build/object-test/reentrancy.header
 	@echo "object.hpp: user code emptying the class it runs from: header == CPython (ASan, UBSan)"
+
+object-test-state:
+	@mkdir -p build/object-test
+	$(CXX) -std=$(CXXSTD) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
+	    -Iruntime/include runtime/tests/object_state.cpp -o build/object-test/state
+	$(PY) runtime/tests/object_state.py > build/object-test/state.model
+	ASAN_OPTIONS=detect_leaks=0 build/object-test/state > build/object-test/state.header
+	diff build/object-test/state.model build/object-test/state.header
+	@echo "object.hpp: a built-in type's fields that have no name: header == model (ASan, UBSan)"
 
 FLOAT_CASES ?= 300000
 float-diff:

@@ -36,6 +36,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -669,6 +670,13 @@ struct ClassObject : Object {
     bool native_declared = false;
     std::vector<const Str*> native_fields;
     std::unordered_map<const Str*, std::uint32_t> field_index;   // slot fields, native fields, then promoted fields
+    // A built-in type's fields that have no name (RefClass.hidden; RL-507): slots it declares that have no descriptor in
+    // the class. `hidden` is this class's own, `hidden_fields` the MRO's, and `state_index` their places in an instance's
+    // fields, apart from field_index: a class that derives from the type may have a slot or a kept attribute of the name.
+    std::unordered_set<const Str*> hidden;
+    std::vector<const Str*> hidden_fields;
+    std::unordered_map<const Str*, std::uint32_t> state_index;
+    std::size_t field_count() const { return field_index.size() + state_index.size(); }
     bool has_dict = false;
     DictKind dict_kind = DictKind::Inline;       // which dict an instance has; a class that says nothing has its solid base's
     bool has_weakref = false;                    // room for weak references (RefClass.has_weakref)
@@ -789,7 +797,44 @@ struct ClassSpec {
     std::vector<std::string> static_attributes = {};
     std::optional<std::vector<std::string>> native = std::nullopt;   // a built-in type's C fields (RefClass native)
     std::optional<DictKind> dict_kind = std::nullopt;                // which dict an instance has; nullopt: the solid base's
+    std::vector<std::string> hidden = {};                            // of its slots, the fields with no name (RefClass hidden)
 };
+
+// RefClass(hidden=...), for a class that exists: the built-in types the prelude writes are made by its class statements
+// and presented as CPython's afterwards, and this is part of that. The fields keep their places, in the class and in every
+// class that derives from it so far, so objects made before are as they were; the descriptors go, under new versions.
+// Before any class of a program derives from it.
+inline void hide_slots(ClassObject* c, const std::vector<const Str*>& names) {
+    std::vector<ClassObject*> todo{c}, family;
+    while (!todo.empty()) {
+        ClassObject* k = todo.back();
+        todo.pop_back();
+        if (std::find(family.begin(), family.end(), k) != family.end()) continue;
+        family.push_back(k);
+        for (ClassObject* sub : k->subclasses) todo.push_back(sub);
+    }
+    for (const Str* n : names) {
+        if (c->hidden.contains(n)) continue;
+        auto own = c->own_slot_names();
+        if (std::find(own.begin(), own.end(), n) == own.end()) throw ModelError("a hidden field is one of the class's own __slots__");
+        c->hidden.insert(n);
+        if (const Obj* d = c->attrs.find(n); d != nullptr && d->is_object() && d->object()->kind == Kind::SlotDescriptor) c->del_attr(n);
+        for (ClassObject* k : family) {
+            // another class of the family that declares the name shares the cell, as slots of one name do: hidden there too
+            auto at = k->field_index.find(n);
+            if (at == k->field_index.end()) continue;
+            k->state_index[n] = at->second;
+            k->field_index.erase(at);
+            std::erase(k->slot_fields, n);
+            k->hidden_fields.push_back(n);
+            auto theirs = k->own_slot_names();
+            if (k != c && std::find(theirs.begin(), theirs.end(), n) != theirs.end()) {
+                k->hidden.insert(n);
+                if (const Obj* d = k->attrs.find(n); d != nullptr && d->is_object() && d->object()->kind == Kind::SlotDescriptor) k->del_attr(n);
+            }
+        }
+    }
+}
 
 // RefClass.__init__
 inline ClassObject* make_class(const ClassSpec& spec) {
@@ -817,11 +862,16 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     c->forwards_attributes = std::any_of(c->bases.begin(), c->bases.end(), [](ClassObject* b) { return b->forwards_attributes; });
     {
         auto own = c->own_slot_names();
+        for (const auto& h : spec.hidden) {
+            if (std::find(own.begin(), own.end(), intern(h)) == own.end()) throw ModelError("a hidden field is one of the class's own __slots__");
+            c->hidden.insert(intern(h));
+        }
         for (const Str* s : own)
-            if (c->attrs.contains(s)) throw ModelError("'" + s->text + "' in __slots__ conflicts with class variable");
+            if (c->attrs.contains(s) && !c->hidden.contains(s)) throw ModelError("'" + s->text + "' in __slots__ conflicts with class variable");
         // type_new_slots sorts them, and tp_members' order is the class dict's (code points: UTF-8's order)
         std::sort(own.begin(), own.end(), [](const Str* x, const Str* y) { return x->text < y->text; });
         for (const Str* s : own) {
+            if (c->hidden.contains(s)) continue;         // a field of the C struct: no member of the type
             auto* d = new SlotDescriptor(s);
             d->owner = c;
             incref(d);
@@ -832,7 +882,7 @@ inline ClassObject* make_class(const ClassSpec& spec) {
         if (std::find(out.begin(), out.end(), n) == out.end()) out.push_back(n);
     };
     for (auto it = c->mro.rbegin(); it != c->mro.rend(); ++it)
-        for (const Str* s : (*it)->own_slot_names()) add_unique(c->slot_fields, s);
+        for (const Str* s : (*it)->own_slot_names()) add_unique((*it)->hidden.contains(s) ? c->hidden_fields : c->slot_fields, s);
     for (const Str* p : c->promoted)
         if (std::find(c->slot_fields.begin(), c->slot_fields.end(), p) != c->slot_fields.end())
             throw ModelError("promoted field '" + p->text + "' collides with a slot");
@@ -867,6 +917,7 @@ inline ClassObject* make_class(const ClassSpec& spec) {
             c->native_fields.push_back(n);
         }
     std::uint32_t i = 0;
+    for (const Str* h : c->hidden_fields) c->state_index[h] = i++;      // first: a field keeps its place in every class that derives
     for (const Str* s : c->slot_fields) c->field_index[s] = i++;
     for (const Str* n : c->native_fields) c->field_index[n] = i++;
     for (const Str* p : c->promoted_fields) c->field_index[p] = i++;
@@ -891,10 +942,11 @@ struct Instance : Object {
     explicit Instance(ClassObject* c) : Object(Kind::Instance) {
         cls = c;
         instance_made(c);
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 inline Instance* new_instance(ClassObject* c) { return new Instance(c); }
@@ -911,10 +963,11 @@ struct DictInstance : DictObject {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 // An instance of a program's subclass of int: its value and the subclass's attribute storage. The
@@ -932,10 +985,11 @@ struct IntInstance : Object {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 // A float, and an instance of a program's subclass of float: as IntInstance, with a value that is the same
@@ -954,10 +1008,11 @@ struct FloatInstance : Float {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 // A tuple, and an instance of a program's subclass of tuple. Its kind stays Tuple, as PyTuple_Check says
@@ -975,10 +1030,11 @@ struct TupleInstance : Tuple {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 // A list, and an instance of a program's subclass of list (C-3-51): as Tuple and TupleInstance, its kind stays List, as
@@ -996,10 +1052,11 @@ struct ListInstance : List {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 struct SetObject : Object {
@@ -1025,10 +1082,11 @@ struct SetInstance : SetObject {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 struct BytesObject : Object {                    // bytes and bytearray: their octets; a bytearray's change
@@ -1048,10 +1106,11 @@ struct BytesInstance : BytesObject {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 // An instance of a program's subclass of str: kind stays Str, as PyUnicode_Check says yes of it, and the attribute storage is beside the
@@ -1065,10 +1124,11 @@ struct StrInstance : Str {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 // A complex, and an instance of a program's subclass of complex: as Float and FloatInstance.
@@ -1086,10 +1146,11 @@ struct ComplexInstance : Complex {
         cls = c;
         instance_made(c);
         flags |= HAS_ATTRIBUTES;
-        fields.assign(c->field_index.size(), Obj{});
+        fields.assign(c->field_count(), Obj{});
     }
     bool exposed() const { return (flags & DICT_EXPOSED) != 0; }
     Obj& field(const Str* n) { return fields[cls->field_index.at(n)]; }
+    Obj& state(const Str* n) { return fields[cls->state_index.at(n)]; }
     bool has_field(const Str* n) const { return cls->field_index.contains(n); }
 };
 inline bool has_attributes(const Object* o) { return (o->flags & HAS_ATTRIBUTES) != 0; }
@@ -1417,6 +1478,27 @@ inline void unshare(T* obj) {
 }  // namespace detail
 
 // Every store keeps the new value before it releases the old one.
+// Runtime.state_get, state_set and state_del: a built-in type's own field (RL-507), with no lookup and no hook of any
+// class. The value read is borrowed; one never stored, or deleted, is an AttributeError of the name alone.
+template <class T>
+inline Obj state_get(T* obj, const Str* name) {
+    Obj v = obj->state(name);
+    if (v.is_unset()) throw AttributeError(name->text);
+    return v;
+}
+template <class T>
+inline void state_set(T* obj, const Str* name, Obj value) {
+    incref(value);
+    decref(std::exchange(obj->state(name), value));      // the new value is kept before the old one is let go
+}
+template <class T>
+inline void state_del(T* obj, const Str* name) {
+    Obj old = obj->state(name);
+    if (old.is_unset()) throw AttributeError(name->text);
+    obj->state(name) = Obj{};
+    decref(old);
+}
+
 template <class T>
 inline void setattr(T* obj, const Str* name, Obj value) {
     ClassObject* cls = obj->cls;
@@ -1826,7 +1908,7 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
         // each class's slots sorted by name, as CPython sorts them when it makes the class
         auto names = c->own_slot_names();
         std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
-        for (const Str* s : names) decref(std::exchange(obj->field(s), Obj{}));
+        for (const Str* s : names) decref(std::exchange(c->hidden.contains(s) ? obj->state(s) : obj->field(s), Obj{}));
     }
     // the built-in base's clear function: its fields, the dict at its place (RefObject.dealloc)
     if (obj->cls->native.empty()) detail::release_instance_dict(obj);

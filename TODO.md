@@ -478,7 +478,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
            * The format mini-language, `str.format`, `format_map` and `_string` done (C-6-15, `runtime/src/format.cpp`).
            * `str %` done (C-6-16, `runtime/src/format.cpp`).
            * `complex` done (C-6-17, `runtime/src/complex.cpp`).
-           * `typing.Union` done (C-3-39, `runtime/prelude/bootstrap.py`): `int | str`, and `isinstance` of one. `|` with what is not unionable asks `typing`; a program that has not imported it stops by name, as it is not in its closure. `vars()` of a C type written in Python still lists its private slots and its own `__new__`, and lacks `__getattribute__`.
+           * `typing.Union` done (C-3-39, `runtime/prelude/bootstrap.py`): `int | str`, and `isinstance` of one. `|` with what is not unionable asks `typing`; a program that has not imported it stops by name, as it is not in its closure. `vars()` of a C type written in Python still lists its own `__new__`, and lacks `__getattribute__` (its private slots are fields with no name since 2026-11-20: RL-507, C-3-76).
            * Subclasses of `tuple` done (C-3-40): the object is a `TupleInstance` whose kind stays `Tuple`, as `PyTuple_Check` says yes of it; `is_exact_tuple` says what only an exact one does. `match` on one waits for `match` itself. `__class__` assignment stays [P2+].
            * Staged texts reach compiled programs (`runtime/src/staged.cpp`, `staged_tables` in `pipeline/build.py`): the dry runs' texts are compiled into the binary, and `eval` and `exec` run the one the site asks for, in the namespaces given, or stop with E-01. Still to do: a separate locals mapping (the second entry point, S-1, which `dataclasses` needs), `compile()`'s staged code objects, the manifest's refused and unsupported functions at their call, and a text's `__future__` flags against the caller's. `namedtuple` now stops at its generator expression.
            * Generators done (C-3-41, `runtime/src/generator.cpp`, the emitter's `generator`): the state machine of design section 10.3. Still to do: coroutines and async generators on the same machinery, `gi_code` and `gi_frame` (no code or frame objects yet), and a generator in a reference cycle, which waits for 3c's collector (`throw(type, value, tb)` done 2026-11-19, C-3-75).
@@ -653,8 +653,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 
 * **For the author** (questions, not fixes; the variables of CPython's start-up were decided on 2026-11-20: `PYTHONWARNINGS`
   ignored for now, RL-483; of the others three honoured and the rest named as ignored, RL-527, C-8-16; `PYTHONIOENCODING`
-  honoured and D-15 narrowed, RL-526, C-8-17; no colour in the runtime's report, D-28 widened, RL-528): where a built-in type that is written in Python keeps its state, so that a subclass's
-  attribute of the same private name cannot overwrite it (RL-507, about 110 classes); whether a module-level object's `__del__` runs
+  honoured and D-15 narrowed, RL-526, C-8-17; no colour in the runtime's report, D-28 widened, RL-528; the state of a built-in type that is written in Python has no name,
+  RL-507, C-3-76): whether a module-level object's `__del__` runs
   at exit when `sys` still reaches the module's globals through a hook the program installed (RL-514; D-07 speaks of order only).
 * **A step of its own:** the line of a traceback entry inside a statement of several lines (RL-494): CPython gives an attribute or a
   method call the line of the attribute's name, a decorator's call the decorator's line, a failed `assert` the line of its test,

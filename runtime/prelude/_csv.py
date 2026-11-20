@@ -264,7 +264,7 @@ in CSV format.
         return self
 
     def __next__(self) -> list[object]:          # Reader_iternext
-        self._reset()
+        _parse_reset(self)
         d: Dialect = self._dialect
         while True:
             ended = False
@@ -276,7 +276,7 @@ in CSV format.
                 if len(self._field) != 0 or self._state == _IN_QUOTED_FIELD:
                     if d.strict:
                         raise Error("unexpected end of data")
-                    self._save_field()
+                    _parse_save_field(self)
                     break
                 raise StopIteration              # tp_iternext's NULL: a StopIteration of next()'s own, without the input's value
             if not issubclass(type(line), str):
@@ -285,124 +285,13 @@ in CSV format.
                 raise Error("iterator has already advanced the reader")
             self._line_num += 1
             for c in str.__str__(line):  # type: ignore[arg-type]  # the text itself: a subclass's __iter__ is not consulted
-                self._process(c)
-            self._process(_EOL)
+                _parse_process_char(self, c)
+            _parse_process_char(self, _EOL)
             if self._state == _START_RECORD:
                 break
         fields = self._fields
         self._fields = None
         return fields  # type: ignore[return-value]
-
-    def _reset(self) -> None:                    # parse_reset
-        self._fields = []
-        self._field = []
-        self._state = _START_RECORD
-        self._unquoted = False
-
-    def _save_field(self) -> None:               # parse_save_field
-        d: Dialect = self._dialect
-        quoting = d.quoting
-        text = "".join(self._field)
-        field: object
-        if self._unquoted and len(self._field) == 0 and quoting in (QUOTE_NOTNULL, QUOTE_STRINGS):
-            field = None
-        else:
-            field = text
-            if self._unquoted and len(self._field) != 0 and quoting in (QUOTE_NONNUMERIC, QUOTE_STRINGS):
-                field = float(text)
-            self._field = []
-        self._fields.append(field)  # type: ignore[union-attr]
-
-    def _add_char(self, c: str) -> None:         # parse_add_char
-        if len(self._field) >= _field_limit:
-            raise Error("field larger than field limit (" + str(_field_limit) + ")")
-        self._field.append(c)
-
-    def _process(self, c: object) -> None:       # parse_process_char
-        d: Dialect = self._dialect
-        state = self._state
-        if state == _START_RECORD:
-            if c is _EOL:
-                return
-            if c == "\n" or c == "\r":
-                self._state = _EAT_CRNL
-                return
-            self._state = state = _START_FIELD
-        if state == _START_FIELD:
-            self._unquoted = True
-            if c == "\n" or c == "\r" or c is _EOL:
-                self._save_field()
-                self._state = _START_RECORD if c is _EOL else _EAT_CRNL
-            elif c == d.quotechar and d.quoting != QUOTE_NONE:
-                self._unquoted = False
-                self._state = _IN_QUOTED_FIELD
-            elif c == d.escapechar:
-                self._state = _ESCAPED_CHAR
-            elif c == " " and d.skipinitialspace:
-                pass
-            elif c == d.delimiter:
-                self._save_field()
-            else:
-                self._add_char(c)  # type: ignore[arg-type]
-                self._state = _IN_FIELD
-        elif state == _ESCAPED_CHAR:
-            if c == "\n" or c == "\r":
-                self._add_char(c)  # type: ignore[arg-type]
-                self._state = _AFTER_ESCAPED_CRNL
-                return
-            if c is _EOL:
-                c = "\n"
-            self._add_char(c)  # type: ignore[arg-type]
-            self._state = _IN_FIELD
-        elif state == _AFTER_ESCAPED_CRNL or state == _IN_FIELD:
-            if state == _AFTER_ESCAPED_CRNL and c is _EOL:
-                return
-            if c == "\n" or c == "\r" or c is _EOL:
-                self._save_field()
-                self._state = _START_RECORD if c is _EOL else _EAT_CRNL
-            elif c == d.escapechar:
-                self._state = _ESCAPED_CHAR
-            elif c == d.delimiter:
-                self._save_field()
-                self._state = _START_FIELD
-            else:
-                self._add_char(c)  # type: ignore[arg-type]
-        elif state == _IN_QUOTED_FIELD:
-            if c is _EOL:
-                pass
-            elif c == d.escapechar:
-                self._state = _ESCAPE_IN_QUOTED_FIELD
-            elif c == d.quotechar and d.quoting != QUOTE_NONE:
-                self._state = _QUOTE_IN_QUOTED_FIELD if d.doublequote else _IN_FIELD
-            else:
-                self._add_char(c)  # type: ignore[arg-type]
-        elif state == _ESCAPE_IN_QUOTED_FIELD:
-            if c is _EOL:
-                c = "\n"
-            self._add_char(c)  # type: ignore[arg-type]
-            self._state = _IN_QUOTED_FIELD
-        elif state == _QUOTE_IN_QUOTED_FIELD:
-            if d.quoting != QUOTE_NONE and c == d.quotechar:
-                self._add_char(c)  # type: ignore[arg-type]
-                self._state = _IN_QUOTED_FIELD
-            elif c == d.delimiter:
-                self._save_field()
-                self._state = _START_FIELD
-            elif c == "\n" or c == "\r" or c is _EOL:
-                self._save_field()
-                self._state = _START_RECORD if c is _EOL else _EAT_CRNL
-            elif not d.strict:
-                self._add_char(c)  # type: ignore[arg-type]
-                self._state = _IN_FIELD
-            else:
-                raise Error("'" + d.delimiter + "' expected after '" + str(d.quotechar) + "'")
-        elif state == _EAT_CRNL:
-            if c == "\n" or c == "\r":
-                pass
-            elif c is _EOL:
-                self._state = _START_RECORD
-            else:
-                raise Error("new-line character seen in unquoted field - do you need to open the file with newline=''?")
 
     @property
     def dialect(self) -> Dialect:
@@ -415,6 +304,123 @@ in CSV format.
 
 reader.__module__ = "_csv"
 Reader = reader
+
+
+# The C's own functions over the struct (parse_reset, parse_save_field, parse_add_char, parse_process_char): no names of
+# the type, as there (RL-507)
+def _parse_reset(self: Reader) -> None:                    # parse_reset
+    self._fields = []
+    self._field = []
+    self._state = _START_RECORD
+    self._unquoted = False
+
+
+def _parse_save_field(self: Reader) -> None:               # parse_save_field
+    d: Dialect = self._dialect
+    quoting = d.quoting
+    text = "".join(self._field)
+    field: object
+    if self._unquoted and len(self._field) == 0 and quoting in (QUOTE_NOTNULL, QUOTE_STRINGS):
+        field = None
+    else:
+        field = text
+        if self._unquoted and len(self._field) != 0 and quoting in (QUOTE_NONNUMERIC, QUOTE_STRINGS):
+            field = float(text)
+        self._field = []
+    self._fields.append(field)  # type: ignore[union-attr]
+
+
+def _parse_add_char(self: Reader, c: str) -> None:         # parse_add_char
+    if len(self._field) >= _field_limit:
+        raise Error("field larger than field limit (" + str(_field_limit) + ")")
+    self._field.append(c)
+
+
+def _parse_process_char(self: Reader, c: object) -> None:       # parse_process_char
+    d: Dialect = self._dialect
+    state = self._state
+    if state == _START_RECORD:
+        if c is _EOL:
+            return
+        if c == "\n" or c == "\r":
+            self._state = _EAT_CRNL
+            return
+        self._state = state = _START_FIELD
+    if state == _START_FIELD:
+        self._unquoted = True
+        if c == "\n" or c == "\r" or c is _EOL:
+            _parse_save_field(self)
+            self._state = _START_RECORD if c is _EOL else _EAT_CRNL
+        elif c == d.quotechar and d.quoting != QUOTE_NONE:
+            self._unquoted = False
+            self._state = _IN_QUOTED_FIELD
+        elif c == d.escapechar:
+            self._state = _ESCAPED_CHAR
+        elif c == " " and d.skipinitialspace:
+            pass
+        elif c == d.delimiter:
+            _parse_save_field(self)
+        else:
+            _parse_add_char(self, c)  # type: ignore[arg-type]
+            self._state = _IN_FIELD
+    elif state == _ESCAPED_CHAR:
+        if c == "\n" or c == "\r":
+            _parse_add_char(self, c)  # type: ignore[arg-type]
+            self._state = _AFTER_ESCAPED_CRNL
+            return
+        if c is _EOL:
+            c = "\n"
+        _parse_add_char(self, c)  # type: ignore[arg-type]
+        self._state = _IN_FIELD
+    elif state == _AFTER_ESCAPED_CRNL or state == _IN_FIELD:
+        if state == _AFTER_ESCAPED_CRNL and c is _EOL:
+            return
+        if c == "\n" or c == "\r" or c is _EOL:
+            _parse_save_field(self)
+            self._state = _START_RECORD if c is _EOL else _EAT_CRNL
+        elif c == d.escapechar:
+            self._state = _ESCAPED_CHAR
+        elif c == d.delimiter:
+            _parse_save_field(self)
+            self._state = _START_FIELD
+        else:
+            _parse_add_char(self, c)  # type: ignore[arg-type]
+    elif state == _IN_QUOTED_FIELD:
+        if c is _EOL:
+            pass
+        elif c == d.escapechar:
+            self._state = _ESCAPE_IN_QUOTED_FIELD
+        elif c == d.quotechar and d.quoting != QUOTE_NONE:
+            self._state = _QUOTE_IN_QUOTED_FIELD if d.doublequote else _IN_FIELD
+        else:
+            _parse_add_char(self, c)  # type: ignore[arg-type]
+    elif state == _ESCAPE_IN_QUOTED_FIELD:
+        if c is _EOL:
+            c = "\n"
+        _parse_add_char(self, c)  # type: ignore[arg-type]
+        self._state = _IN_QUOTED_FIELD
+    elif state == _QUOTE_IN_QUOTED_FIELD:
+        if d.quoting != QUOTE_NONE and c == d.quotechar:
+            _parse_add_char(self, c)  # type: ignore[arg-type]
+            self._state = _IN_QUOTED_FIELD
+        elif c == d.delimiter:
+            _parse_save_field(self)
+            self._state = _START_FIELD
+        elif c == "\n" or c == "\r" or c is _EOL:
+            _parse_save_field(self)
+            self._state = _START_RECORD if c is _EOL else _EAT_CRNL
+        elif not d.strict:
+            _parse_add_char(self, c)  # type: ignore[arg-type]
+            self._state = _IN_FIELD
+        else:
+            raise Error("'" + d.delimiter + "' expected after '" + str(d.quotechar) + "'")
+    elif state == _EAT_CRNL:
+        if c == "\n" or c == "\r":
+            pass
+        elif c is _EOL:
+            self._state = _START_RECORD
+        else:
+            raise Error("new-line character seen in unquoted field - do you need to open the file with newline=''?")
 
 
 def _unpack(fname: str, args: tuple[object, ...], low: int, high: int) -> None:   # PyArg_UnpackTuple
@@ -438,7 +444,7 @@ of the CSV file (which can span multiple input lines).
 """
     self: reader = _bella_new_instance(Reader)
     self._line_num = 0
-    self._reset()
+    _parse_reset(self)
     _unpack("reader", args, 1, 2)
     self._input = iter(args[0])  # type: ignore[call-overload]
     self._dialect = _call_dialect(args[1] if len(args) > 1 else _ABSENT, kwds)
@@ -466,48 +472,6 @@ in CSV format from sequence input.
 
     __slots__ = ("_dialect", "_num_fields", "_rec", "_write")
 
-    def _append(self, field: str | None, quoted: bool) -> None:   # join_append and join_append_data
-        d: Dialect = self._dialect
-        if field is not None and type(field) is not str:
-            field = str.__str__(field)           # PyUnicode_DATA and PyUnicode_GET_LENGTH: the text, not a subclass's __len__ or __iter__
-        length = 0 if field is None else len(field)
-        if length == 0 and d.delimiter == " " and d.skipinitialspace:
-            if d.quoting == QUOTE_NONE or (field is None and d.quoting in (QUOTE_STRINGS, QUOTE_NOTNULL)):
-                raise Error("empty field must be quoted if delimiter is a space and skipinitialspace is true")
-            quoted = True
-        out: list[str] = []
-        if self._num_fields > 0:
-            out.append(d.delimiter)
-        body: list[str] = []
-        if field is not None:
-            for c in field:
-                want_escape = False
-                if c == d.delimiter or c == d.escapechar or c == d.quotechar or c == "\n" or c == "\r" or str.find(d.lineterminator, c) >= 0:
-                    if d.quoting == QUOTE_NONE:
-                        want_escape = True
-                    else:
-                        if c == d.quotechar:
-                            if d.doublequote:
-                                body.append(d.quotechar)
-                            else:
-                                want_escape = True
-                        elif c == d.escapechar:
-                            want_escape = True
-                        if not want_escape:
-                            quoted = True
-                    if want_escape:
-                        if d.escapechar is None:
-                            raise Error("need to escape, but no escapechar set")
-                        body.append(d.escapechar)
-                body.append(c)
-        if quoted:
-            out.append(d.quotechar)  # type: ignore[arg-type]
-        out += body
-        if quoted:
-            out.append(d.quotechar)  # type: ignore[arg-type]
-        self._rec += out
-        self._num_fields += 1
-
     def writerow(self, *args: object, **kwds: object) -> object:
         """Construct and write a CSV record from an iterable of fields.
 
@@ -516,46 +480,7 @@ Non-string elements will be converted to string."""
             raise TypeError("writer.writerow() takes no keyword arguments")
         if len(args) != 1:
             raise TypeError("writer.writerow() takes exactly one argument (" + str(len(args)) + " given)")
-        return self._writerow(args[0])
-
-    def _writerow(self, seq: object) -> object:  # csv_writerow
-        d: Dialect = self._dialect
-        it = None                                # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
-        try:
-            it = iter(seq)  # type: ignore[call-overload]
-        except TypeError:
-            pass
-        if it is None:
-            raise Error("iterable expected, not " + _tp_name(seq))
-        self._rec = []
-        self._num_fields = 0
-        null_field = False
-        for field in it:
-            if d.quoting == QUOTE_NONNUMERIC:
-                quoted = not _number_check(field)
-            elif d.quoting == QUOTE_ALL:
-                quoted = True
-            elif d.quoting == QUOTE_STRINGS:
-                quoted = issubclass(type(field), str)
-            elif d.quoting == QUOTE_NOTNULL:
-                quoted = field is not None
-            else:
-                quoted = False
-            null_field = field is None
-            if issubclass(type(field), str):
-                self._append(field, quoted)
-            elif null_field:
-                self._append(None, quoted)
-            else:
-                self._append(str(field), quoted)
-        if self._num_fields > 0 and len(self._rec) == 0:
-            if d.quoting == QUOTE_NONE or (null_field and d.quoting in (QUOTE_STRINGS, QUOTE_NOTNULL)):
-                raise Error("single empty field record must be quoted")
-            self._num_fields -= 1
-            self._append(None, True)
-        self._rec.append(d.lineterminator)
-        line = "".join(self._rec)
-        return self._write(line)
+        return _csv_writerow(self, args[0])
 
     def writerows(self, *args: object, **kwds: object) -> None:
         """Construct and write a series of iterables to a csv file.
@@ -566,7 +491,7 @@ Non-string elements will be converted to string."""
         if len(args) != 1:
             raise TypeError("writer.writerows() takes exactly one argument (" + str(len(args)) + " given)")
         for row in args[0]:  # type: ignore[attr-defined]
-            self._writerow(row)
+            _csv_writerow(self, row)
 
     @property
     def dialect(self) -> Dialect:
@@ -575,6 +500,90 @@ Non-string elements will be converted to string."""
 
 writer.__module__ = "_csv"
 Writer = writer
+
+
+# join_append with join_append_data, and csv_writerow: the C's own functions, no names of the type
+def _join_append(self: Writer, field: str | None, quoted: bool) -> None:   # join_append and join_append_data
+    d: Dialect = self._dialect
+    if field is not None and type(field) is not str:
+        field = str.__str__(field)           # PyUnicode_DATA and PyUnicode_GET_LENGTH: the text, not a subclass's __len__ or __iter__
+    length = 0 if field is None else len(field)
+    if length == 0 and d.delimiter == " " and d.skipinitialspace:
+        if d.quoting == QUOTE_NONE or (field is None and d.quoting in (QUOTE_STRINGS, QUOTE_NOTNULL)):
+            raise Error("empty field must be quoted if delimiter is a space and skipinitialspace is true")
+        quoted = True
+    out: list[str] = []
+    if self._num_fields > 0:
+        out.append(d.delimiter)
+    body: list[str] = []
+    if field is not None:
+        for c in field:
+            want_escape = False
+            if c == d.delimiter or c == d.escapechar or c == d.quotechar or c == "\n" or c == "\r" or str.find(d.lineterminator, c) >= 0:
+                if d.quoting == QUOTE_NONE:
+                    want_escape = True
+                else:
+                    if c == d.quotechar:
+                        if d.doublequote:
+                            body.append(d.quotechar)
+                        else:
+                            want_escape = True
+                    elif c == d.escapechar:
+                        want_escape = True
+                    if not want_escape:
+                        quoted = True
+                if want_escape:
+                    if d.escapechar is None:
+                        raise Error("need to escape, but no escapechar set")
+                    body.append(d.escapechar)
+            body.append(c)
+    if quoted:
+        out.append(d.quotechar)  # type: ignore[arg-type]
+    out += body
+    if quoted:
+        out.append(d.quotechar)  # type: ignore[arg-type]
+    self._rec += out
+    self._num_fields += 1
+
+
+def _csv_writerow(self: Writer, seq: object) -> object:  # csv_writerow
+    d: Dialect = self._dialect
+    it = None                                # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
+    try:
+        it = iter(seq)  # type: ignore[call-overload]
+    except TypeError:
+        pass
+    if it is None:
+        raise Error("iterable expected, not " + _tp_name(seq))
+    self._rec = []
+    self._num_fields = 0
+    null_field = False
+    for field in it:
+        if d.quoting == QUOTE_NONNUMERIC:
+            quoted = not _number_check(field)
+        elif d.quoting == QUOTE_ALL:
+            quoted = True
+        elif d.quoting == QUOTE_STRINGS:
+            quoted = issubclass(type(field), str)
+        elif d.quoting == QUOTE_NOTNULL:
+            quoted = field is not None
+        else:
+            quoted = False
+        null_field = field is None
+        if issubclass(type(field), str):
+            _join_append(self, field, quoted)
+        elif null_field:
+            _join_append(self, None, quoted)
+        else:
+            _join_append(self, str(field), quoted)
+    if self._num_fields > 0 and len(self._rec) == 0:
+        if d.quoting == QUOTE_NONE or (null_field and d.quoting in (QUOTE_STRINGS, QUOTE_NOTNULL)):
+            raise Error("single empty field record must be quoted")
+        self._num_fields -= 1
+        _join_append(self, None, True)
+    self._rec.append(d.lineterminator)
+    line = "".join(self._rec)
+    return self._write(line)
 
 
 def _writer_new(*args: object, **kwds: object) -> writer:

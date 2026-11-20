@@ -147,11 +147,17 @@ class _Function:
 
 
 class Emitter:
-    def __init__(self, module: G.Module, namespace: str, filename: str, prelude: bool = False, looks: bool = True) -> None:
+    def __init__(self, module: G.Module, namespace: str, filename: str, prelude: bool = False, looks: bool = True,
+                 state: frozenset[str] = frozenset()) -> None:
         self.module = module
         self.namespace = namespace
         self.filename = filename
         self.prelude = prelude                   # the prelude: C functions in CPython, no frames
+        # The prelude's units only: the names its classes declare as slots. A built-in type's C function reads a field of
+        # its struct, which has no name (RL-507): an attribute of one of these names is that field where the object's type
+        # keeps one, with no lookup and no hook of any class, and the attribute it ever was on any other object
+        # (rt::state_get, state_set, state_del).
+        self.state = state
         self.looks = looks and not prelude       # BELLA_LOOK where CPython's eval loop looks; not in what stands for its C
         self.consts: dict[tuple[str, object], str] = {}
         self.const_init: list[str] = []
@@ -1091,11 +1097,11 @@ class Emitter:
             case G.Compare(op, x, y):
                 return f"rt::compare(rt::CmpOp::{_COMPARE[op]}, {a(x)}, {a(y)})"
             case G.GetAttr(obj, name):
-                return f"rt::getattr({a(obj)}, {self.name(name)})"
+                return f"rt::{'state_get' if name in self.state else 'getattr'}({a(obj)}, {self.name(name)})"
             case G.SetAttr(obj, name, value):
-                return f"rt::setattr({a(obj)}, {self.name(name)}, {a(value)})"
+                return f"rt::{'state_set' if name in self.state else 'setattr'}({a(obj)}, {self.name(name)}, {a(value)})"
             case G.DelAttr(obj, name):
-                return f"rt::delattr({a(obj)}, {self.name(name)})"
+                return f"rt::{'state_del' if name in self.state else 'delattr'}({a(obj)}, {self.name(name)})"
             case G.GetItem(obj, key):
                 return f"rt::getitem({a(obj)}, {a(key)})"
             case G.SetItem(obj, key, value):
@@ -1291,5 +1297,6 @@ def _returns_through_finally(body: tuple[G.Stmt, ...], in_finally: bool = False)
     return False
 
 
-def emit_module(module: G.Module, namespace: str, filename: str, prelude: bool = False, looks: bool = True) -> str:
-    return Emitter(module, namespace, filename, prelude, looks).emit()
+def emit_module(module: G.Module, namespace: str, filename: str, prelude: bool = False, looks: bool = True,
+                state: frozenset[str] = frozenset()) -> str:
+    return Emitter(module, namespace, filename, prelude, looks, state).emit()

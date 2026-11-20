@@ -1848,7 +1848,17 @@ std::optional<std::string_view> cpython_doc_text(std::string_view name) {
 }
 
 bool cpython_has(std::string_view scope, std::string_view name) { return cpython_find(scope, name) != nullptr; }
-void note_prelude_class(const ClassObject* c) { prelude_classes().insert(c); }
+// A class the prelude wrote is CPython's C type from here. The fields of the C struct have no names (RL-507; the author's
+// decision of 2026-11-20): of the slots the class declares, those that are no member of CPython's type lose theirs
+// (object.hpp, hide_slots), and only the prelude's own code reaches them after this (state_get, state_set, state_del).
+void note_prelude_class(const ClassObject* c) {
+    prelude_classes().insert(c);
+    auto* cls = const_cast<ClassObject*>(c);
+    std::vector<const Str*> names;
+    for (const Str* s : cls->own_slot_names())
+        if (!cls->hidden.contains(s) && cpython_attribute_kind(cls, s->text).empty()) names.push_back(s);
+    if (!names.empty()) hide_slots(cls, names);
+}
 std::vector<std::string_view> cpython_names_of(std::string_view scope) {   // its rows, in the table's order
     std::string prefix = std::string(scope) + ":";
     std::vector<std::string_view> out;
@@ -3536,6 +3546,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_tp_name", tp_name.get());
                     Ref alloc = own(new Builtin("_bella_new_instance", i_bella_new_instance));
                     put(pm->dict, "_bella_new_instance", alloc.get());
+                    Ref state_read = own(new Builtin("_bella_state_get", i_bella_state_get));
+                    put(pm->dict, "_bella_state_get", state_read.get());
+                    Ref state_store = own(new Builtin("_bella_state_set", i_bella_state_set));
+                    put(pm->dict, "_bella_state_set", state_store.get());
                     Ref unpack = own(new Builtin("_unpack_keywords", i_unpack_keywords));   // _PyArg_UnpackKeywords, as every prelude has it
                     put(pm->dict, "_unpack_keywords", unpack.get());
                 }
@@ -3587,7 +3601,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     for (Obj n : static_cast<List*>(all.object())->items) {
                         Obj v = dict_get(pm->dict, n);
                         if (is_kind(v, Kind::Class)) {
-                            prelude_classes().insert(static_cast<ClassObject*>(v.object()));
+                            note_prelude_class(static_cast<ClassObject*>(v.object()));
                             forget_python_origin(static_cast<ClassObject*>(v.object()));
                             static_cast<ClassObject*>(v.object())->has_weakref = cpython_has("weakref", static_cast<ClassObject*>(v.object())->name);
                         }
@@ -3601,7 +3615,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                         if (own_module != nullptr && as_str(*own_module) != nullptr && as_str(*own_module)->text != "builtins") {
                             present_native_class(c, as_str(*own_module)->text);
                         } else {
-                            prelude_classes().insert(c);
+                            note_prelude_class(c);
                             forget_python_origin(c);
                             present_methods(c);
                             c->final_type = cpython_has("final", c->name);

@@ -640,7 +640,7 @@ namespace {
 // _PyObject_IsUniquelyReferenced of what an attribute holds: the attribute's count, and this read's
 Ref i_held_once(Obj, Args a) {
     positional_only(a, "_held_once", 2, 2);
-    Ref value = getattr(a.pos(0), intern(as_str(a.pos(1))->text));
+    Ref value = state_get(a.pos(0), intern(as_str(a.pos(1))->text));
     return Ref::steal(boolean(value.get().is_object() && value.get().object()->refs == 2));
 }
 Ref i_tuple_set(Obj, Args a) {                   // PyTuple_SET_ITEM and the Py_DECREF of what was there
@@ -761,6 +761,10 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
     {                                            // tp_alloc: what a type's __new__ makes its instance with, in every such file
         Ref alloc = own(new Builtin("_bella_new_instance", i_bella_new_instance));
         dict_set(ns->dict, Obj::of(N("_bella_new_instance")), alloc.get());
+        Ref state_read = own(new Builtin("_bella_state_get", i_bella_state_get));   // a C function's read and store of its struct's field
+        dict_set(ns->dict, Obj::of(N("_bella_state_get")), state_read.get());       // where the name is a value (RL-507)
+        Ref state_store = own(new Builtin("_bella_state_set", i_bella_state_set));
+        dict_set(ns->dict, Obj::of(N("_bella_state_set")), state_store.get());
         Ref setter = own(new Builtin("_bella_module_set", i_bella_module_set, Obj::of(m), Binding::Function));   // PyModule_Add, later
         dict_set(ns->dict, Obj::of(N("_bella_module_set")), setter.get());
         Ref unpack = own(new Builtin("_unpack_keywords", i_unpack_keywords));   // _PyArg_UnpackKeywords, in every such file
@@ -871,7 +875,7 @@ Ref i_native_thread_id(Obj, Args a) {
     positional_only(a, "_native_thread_id", 0, 0);
     return int_from_i64(gettid());
 }
-Ref handle_ident(Obj self) { return getattr(self, N("_a_ident")); }
+Ref handle_ident(Obj self) { return state_get(self, N("_a_ident")); }
 Ref local_getattribute(Obj self, Args a) {       // local_getattro: the rest is the generic path's
     if (a.npos == 1 && a.nkw == 0 && as_str(a.pos(0)) != nullptr && as_str(a.pos(0))->text == "__dict__") return instance_dict_of(self);
     return object_getattribute(self, a);
@@ -882,7 +886,6 @@ void fill_thread(Module* m) {
                     {"_native_thread_id", i_native_thread_id}, {"_signals", i_signals}, {"_bella_refuse", i_bella_refuse}});
     auto* local = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N("_local"))).object());
     Ref dict_getset = Ref::steal(local->attrs.pop(N("__dict__")));   // local_getattro answers for __dict__: the type has no getset
-    Ref self_reference = Ref::steal(local->attrs.pop(N("_a_self_reference")));
     local->dict_without_getset = true;
     auto* getattribute = new Builtin("__getattribute__", local_getattribute, Obj{}, Binding::Method);
     getattribute->owner = local;
@@ -919,23 +922,23 @@ Ref i_count_element(Obj, Args a) {
     return none_ref();
 }
 Ref deque_maxlen(Obj self) {                     // deque_get_maxlen
-    Ref bound = getattr(self, N("_c_maxlen"));
+    Ref bound = state_get(self, N("_c_maxlen"));
     return bound.get().is_small() && bound.get().small_value() < 0 ? none_ref() : bound;
 }
 Ref factory_get(Obj self) {                      // a T_OBJECT member: None when there is none
-    Ref value = optional_getattr(self, N("_a_factory"));
+    Ref value = optional_state(self, N("_a_factory"));
     return value.get().is_unset() ? none_ref() : value;
 }
 void factory_set(Obj self, Obj value) {
     if (!value.is_unset()) {
-        setattr(self, N("_a_factory"), value);
-    } else if (!optional_getattr(self, N("_a_factory")).get().is_unset()) {
-        delattr(self, N("_a_factory"));
+        state_set(self, N("_a_factory"), value);
+    } else if (!optional_state(self, N("_a_factory")).get().is_unset()) {
+        state_del(self, N("_a_factory"));
     }
 }
-Ref getter_doc(Obj self) { return getattr(self, N("_b_doc")); }
+Ref getter_doc(Obj self) { return state_get(self, N("_b_doc")); }
 void getter_doc_set(Obj self, Obj value) {
-    setattr(self, N("_b_doc"), value.is_unset() ? None() : value);
+    state_set(self, N("_b_doc"), value.is_unset() ? None() : value);
 }
 Ref i_hash_of(Obj, Args a);                       // _functools's, below: a hash taken once, then the dict's own operations with it
 Ref i_get_hashed(Obj, Args a);
@@ -1048,12 +1051,12 @@ Ref i_is_callable(Obj, Args a) {                 // PyCallable_Check
     return Ref::steal(boolean(!type_lookup(type_of(v), N("__call__")).is_unset()));
 }
 Ref key_obj_get(Obj self) {                      // keyobject's member: unset reads as None, and del unsets it
-    Ref v = optional_getattr(self, N("_k_obj"));
+    Ref v = optional_state(self, N("_k_obj"));
     return v.get().is_unset() ? none_ref() : v;
 }
 void key_obj_set(Obj self, Obj value) {
-    if (!value.is_unset()) setattr(self, N("_k_obj"), value);
-    else if (!optional_getattr(self, N("_k_obj")).get().is_unset()) delattr(self, N("_k_obj"));
+    if (!value.is_unset()) state_set(self, N("_k_obj"), value);
+    else if (!optional_state(self, N("_k_obj")).get().is_unset()) state_del(self, N("_k_obj"));
 }
 void fill_functools(Module* m) {
     fill_in_python(m, "_functools", "functools", prelude_functools::module_body,
