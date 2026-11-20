@@ -306,7 +306,9 @@ def _display_source_line(f: object, filename: str, lineno: int) -> None:   # _Py
     spaces, tabs and form feeds before it, two spaces before it and a new line after. Nothing for a name in angle brackets, a
     file that cannot be opened or rewound, or a line it does not have. Whatever is raised on the way ends it; the caller
     drops it."""
-    if str.__len__(filename) > 0 and filename[0] == "<" and filename[-1] == ">":   # "things like <string> or <stdin>"
+    # "things like <string> or <stdin>": PyUnicode_READ_CHAR, so the characters themselves, whatever a subclass's
+    # __getitem__ would answer (RL-461)
+    if str.__len__(filename) > 0 and str.__getitem__(filename, 0) == "<" and str.__getitem__(filename, -1) == ">":
         return
     try:
         io = _bella_import_if_held(__import__, "io")   # PyImport_ImportModule("io"), and any failure is the end of it
@@ -360,10 +362,10 @@ def _display_source_line(f: object, filename: str, lineno: int) -> None:   # _Py
         return
     assert isinstance(line, str)
     start = 0
-    while start < str.__len__(line) and line[start] in " \t\f":
+    while start < str.__len__(line) and str.__getitem__(line, start) in " \t\f":
         start += 1
     if start:
-        line = line[start:]
+        line = str.__getitem__(line, slice(start, None))
     _file_write("  ", f)                         # _Py_WriteIndent(2, f)
     _file_write(line, f)
     _file_write("\n", f)

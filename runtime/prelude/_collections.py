@@ -852,7 +852,7 @@ def _dd_or(left: object, right: object) -> object:
         self, other = left, right
     else:
         self, other = right, left
-    if not issubclass(type(other), dict):
+    if not issubclass(type(other), (dict, frozendict)):   # PyAnyDict_Check (RL-503)
         return NotImplemented
     new = type(self)(_factory(self), left)  # type: ignore[call-arg]
     dict.update(new, right)  # type: ignore[arg-type, call-overload]

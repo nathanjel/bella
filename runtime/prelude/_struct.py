@@ -291,14 +291,14 @@ def _pack_item(code: str, kind: str, size: int, value: object, little: bool) -> 
     if kind == "float":
         try:
             x = _as_double(value)
-        except Exception:
+        except BaseException:  # noqa: BLE001  # PyFloat_AsDouble failed, whatever with (RL-457)
             failed = True
         if failed:
             raise error("required argument is not a float")
         return _float_pack(x, size, little)
     try:                                         # complex
         real, imag = _as_c_complex(value)
-    except Exception:
+    except BaseException:  # noqa: BLE001
         failed = True
     if failed:
         raise error("required argument is not a complex")

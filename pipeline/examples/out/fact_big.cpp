@@ -81,9 +81,9 @@ static Ref f_factorial_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format3;
     Ref _ann4;
+    rt::bind(fn, args, {&_format3});
     rt::FrameGuard frame(code_factorial_annotate, M, _format3, _ann4);
     rt::StackValues stack_values(_ann4, _format3);
-    rt::bind(fn, args, {&_format3});
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 4;
@@ -118,8 +118,8 @@ static Ref f_factorial(rt::PyFunction* fn, rt::Args args) {
     Ref n;
     Ref result;
     Ref i;
-    rt::FrameGuard frame(code_factorial, M, n, result, i);
     rt::bind(fn, args, {&n});
+    rt::FrameGuard frame(code_factorial, M, n, result, i);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 5;

@@ -69,6 +69,8 @@ class _Collector:
     def __init__(self, synthetic: frozenset[str]) -> None:
         self.synthetic = synthetic
         self.by_node: dict[int, Scope] = {}
+        # the inlined comprehensions' helpers defined in a scope and not called yet: scope id -> helper name -> (scope, its scope, its def)
+        self.waiting: dict[int, dict[str, tuple[Scope, Scope, L.FunctionDef]]] = {}
 
     def new(self, kind: str, node: object, qualname: str, parent: Scope | None) -> Scope:
         s = Scope(kind, node, qualname, synthetic=self.synthetic, parent=parent)
@@ -81,6 +83,7 @@ class _Collector:
         s = self.new("module", m, "<module>", None)
         s.globals |= m.globals
         self.block(m.body, s)
+        self.stand(s)
         return s
 
     def function(self, f: L.FunctionDef, parent: Scope, bind: bool = True) -> None:
@@ -92,8 +95,6 @@ class _Collector:
         if f.annotate is not None:
             self.function(f.annotate, parent, bind=False)     # attached to f, bound to no name
         s = self.new("function", f, f.qualname or f.name, parent)
-        if f.inlined and parent is not None:
-            parent.inlined_at.append((len(parent.order), s))
         s.can_see_class = f.classdict
         s.module_frame = f.module_frame
         s.params += _param_order(f.params)
@@ -102,18 +103,43 @@ class _Collector:
         s.globals |= f.globals
         s.nonlocals |= f.nonlocals
         for n in [*sorted(f.globals), *sorted(f.nonlocals)]:
-            s.see(n)
+            if not (f.inlined and n in f.globals):            # an inlined comprehension's global is a := target: seen where it is bound
+                s.see(n)
         if f.classdict:
             s.see("__classdict__")
         self.block(f.body, s)
+        self.stand(s)
         if bind:
             parent.bind(f.store or f.name)
+        if f.inlined and parent is not None:
+            # An inlined comprehension (PEP 709) stands where its helper is called, which is where CPython's symbol table
+            # meets it: the helper is defined before the outermost statement around the comprehension (once, also for a
+            # comprehension in a loop's body), so its own place says nothing inside a nested block (RL-487)
+            self.waiting.setdefault(id(parent), {})[f.store or f.name] = (parent, s, f)
+        else:
+            self.binds_outward(f, parent)
+
+    def binds_outward(self, f: L.FunctionDef, parent: Scope) -> None:
         for n in f.enclosing_binds:                           # in the comprehension's order: CPython's co_varnames
             if f.binds_through and parent.parent is not None:   # an annotation scope between: the function around it binds, it sees
                 parent.parent.bind(n)
                 parent.see(n)
             else:
                 parent.bind(n)
+
+    def arrive(self, name: str, s: Scope) -> None:
+        """The helper `name` of an inlined comprehension is called here: the comprehension's variables, and the names it
+        assigns outward, take their place among this scope's names."""
+        found = self.waiting.get(id(s), {}).pop(name, None)
+        if found is not None:
+            parent, scope, f = found
+            parent.inlined_at.append((len(parent.order), scope))
+            self.binds_outward(f, parent)
+
+    def stand(self, s: Scope) -> None:
+        """The end of a scope: a helper that was never called (none is) stands at the end."""
+        for name in list(self.waiting.get(id(s), {})):
+            self.arrive(name, s)
 
     def lambda_(self, e: L.Lambda, parent: Scope) -> None:
         for p in e.params:
@@ -125,6 +151,7 @@ class _Collector:
             s.bind(p.name)
         self.block(e.prelude, s)
         self.expr(e.body, s)
+        self.stand(s)
 
     def class_body(self, e: L.ClassBody, parent: Scope) -> None:
         s = self.new("class", e, e.qualname, parent)
@@ -133,6 +160,7 @@ class _Collector:
         s.needs_class_cell = e.classcell
         s.needs_classdict = e.classdict
         self.block(e.body, s)
+        self.stand(s)
 
     # ---- statements ----------------------------------------------------------------------------
 
@@ -228,6 +256,7 @@ class _Collector:
     def expr(self, e: L.Expr, s: Scope) -> None:
         match e:
             case L.Name(id=name):
+                self.arrive(name, s)
                 if name != "__bind__" and not expression_temporary(name, s.synthetic):
                     s.see(name)
                 if name == "super" and s.function_like:
@@ -241,6 +270,14 @@ class _Collector:
                 return
             case L.Intrinsic(name="classcell") if s.kind != "class":
                 s.see("__class__")            # a method's __class__ cell
+                return
+            case L.Call(func=L.Name(id=name), args=args) if name in self.waiting.get(id(s), {}):
+                # the call of an inlined comprehension's helper: its argument is the comprehension's first iterable, which
+                # is evaluated in this scope before the comprehension is met (so a comprehension that feeds another one
+                # comes first), and then the comprehension stands here
+                for a in args:
+                    self.expr(a, s)
+                self.arrive(name, s)
                 return
             case L.Call(func=L.Name(id="__bind__"), args=(L.Const(value=str() as name), value)):
                 self.expr(value, s)
@@ -412,8 +449,8 @@ def _captured_by_a_closure(scope: Scope, name: str) -> bool:
         if _is_inlined(scope, child):
             if _captured_by_a_closure(child, name):
                 return True
-        elif child.scopes.get(name) == FREE:
-            return True
+        elif child.scopes.get(name) == FREE or name in child.freevars:
+            return True                          # freevars: also what a class body binds itself and forwards to its methods (RL-460)
     return False
 
 
@@ -435,7 +472,10 @@ def _inlined_varnames(s: Scope) -> tuple[str, ...]:
     out: list[str] = []
     seen: set[str] = set()
     for n in s.order:
-        if s.scopes.get(n) in (LOCAL, CELL) and n not in s.synthetic and n not in seen:
+        # a global the comprehension assigns with := is isolated like its own variables (the symbol is bound in the
+        # comprehension, so CPython gives it a fast local of the enclosing code that nothing ever stores to; RL-490)
+        own = s.scopes.get(n) in (LOCAL, CELL) or (s.scopes.get(n) == GLOBAL_EXPLICIT and n in s.globals)
+        if own and n not in s.synthetic and n not in seen:
             seen.add(n)
             out.append(n)
     for _, child in sorted(s.inlined_at, key=lambda pair: pair[0]):

@@ -376,6 +376,10 @@ class Emitter:
                          "    [[maybe_unused]] rt::Module* M = fn->module;"]
         for n in frame_locals:
             self.out.append(f"    Ref {self.vars[n]};")
+        if c.kind not in ("classbody", "module"):
+            # initialize_locals, before the frame runs: an argument list that does not fit is the caller's TypeError, with
+            # no entry for this function in its traceback and nothing of the call kept by one (RL-482)
+            self.out.append(f"    rt::bind(fn, args, {{{', '.join('&' + self.vars[n] for n in params)}}});")
         guard = ", ".join(["", *(self.vars[n] for n in frame_locals)])
         self.out.append(f"    rt::FrameGuard frame({fn.cname}, M{guard});")
         if c.kind == "classbody":
@@ -394,10 +398,6 @@ class Emitter:
             for i, n in enumerate(c.freevars):
                 self.out.append(f"    {self.vars[n]} = fn->closure[{i}];")
         elif c.kind != "module":
-            if params:
-                self.out.append(f"    rt::bind(fn, args, {{{', '.join('&' + self.vars[n] for n in params)}}});")
-            else:
-                self.out.append("    rt::bind(fn, args, {});")
             for i, n in enumerate(c.freevars):
                 self.out.append(f"    {self.vars[n]} = fn->closure[{i}];")
             for n in c.cellvars:
@@ -491,8 +491,8 @@ class Emitter:
                 f"    Ref made = rt::make_generator(fn, {fn.cname}, {fn.entry}_resume, {len(self.slots)}, {len(self.int_slots)}, {len(self.rows) + 1});",
                 "    auto* gen1 = static_cast<rt::Generator*>(made.get().object());"]
         out += [f"    Ref& {self.vars[n]} = gen1->slots[{self.slots[self.vars[n]]}];" for n in frame_locals]
+        out.append(f"    rt::bind(fn, args, {{{', '.join('&' + self.vars[n] for n in params)}}});   // before the frame, as for a function (RL-482)")
         out.append(f"    rt::FrameGuard frame({fn.cname}, M);")
-        out.append(f"    rt::bind(fn, args, {{{', '.join('&' + self.vars[n] for n in params)}}});")
         out += [f"    {self.vars[n]} = fn->closure[{i}];" for i, n in enumerate(c.freevars)]
         for n in c.cellvars:
             out.append(f"    {self.vars[n]} = rt::make_cell({self.vars[n]}.get());" if n in params else f"    {self.vars[n]} = rt::make_cell();")

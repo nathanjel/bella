@@ -131,9 +131,9 @@ static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format3;
     Ref _ann4;
+    rt::bind(fn, args, {&_format3});
     rt::FrameGuard frame(code_steps_annotate, M, _format3, _ann4);
     rt::StackValues stack_values(_ann4, _format3);
-    rt::bind(fn, args, {&_format3});
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 4;
@@ -167,8 +167,8 @@ static Ref f_steps(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref n;
     Ref count;
-    rt::FrameGuard frame(code_steps, M, n, count);
     rt::bind(fn, args, {&n});
+    rt::FrameGuard frame(code_steps, M, n, count);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
     frame.line = 5;

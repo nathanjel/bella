@@ -89,7 +89,7 @@ print("a quotient:", cut_short(lambda: big // half), "|", cut_short(lambda: big 
 print("a power:", cut_short(lambda: 3 ** 400_000_000), "|", cut_short(lambda: pow(3, 400_000_000)))
 print("to decimal:", cut_short(lambda: str(1 << 30_000_000)), "|", cut_short(lambda: repr(big >> 250_000_000)), "|", cut_short(lambda: f"{big >> 250_000_000}"))
 print("from decimal:", cut_short(lambda: int("7" * 9_000_000)))
-print("the numbers afterwards:", big.bit_length(), half % 1000, (big >> 299_999_990) * 3, str(half)[:1] if False else "kept")
+print("the numbers afterwards:", big.bit_length(), half % 1000, (big >> 299_999_990) * 3)
 big = half = 0                           # the long ones are let go
 signal.signal(signal.SIGALRM, signal.SIG_DFL)
 

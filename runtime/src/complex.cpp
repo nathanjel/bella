@@ -333,6 +333,7 @@ Ref new_impl(ClassObject* cls, Obj r, Obj i) {   // complex_new_impl
         real = c.real;
         real_imag = c.imag;
         real_is_complex = true;
+        tmp = Ref{};                             // "r was a newly created complex number": released here, before anything else is asked (RL-458)
         if (!number_slots(orig_r)) deprecated_part("real", orig_r);
     } else {
         Ref as_float = number_float(r);

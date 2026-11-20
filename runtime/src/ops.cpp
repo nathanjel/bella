@@ -2220,8 +2220,20 @@ void list_append(Obj list, Obj value) {
 // sequence it has not yet exhausted, asks the sequence's length when its type has one (the starred
 // rest of an unpacking is the list the iterator extends)
 void length_hint(Obj v) {
+    // A range too long for a Py_ssize_t has no len(), and that OverflowError is the hint's (range_length, and
+    // longrangeiter_len through PyLong_AsSsize_t): list(range(2**63)) fails at once and does not start (RL-470)
+    auto too_long = [](Obj length) {
+        std::int64_t n;
+        if (!int_fits_i64(length, n)) raise_new("OverflowError", "Python int too large to convert to C ssize_t");
+    };
+    if (is_kind(v, Kind::Range)) {
+        Ref length = range_length_big(v);
+        too_long(length.get());
+        return;
+    }
     if (is_kind(v, Kind::Iterator)) {
         auto* it = static_cast<Iterator*>(v.object());
+        if (it->of == Iterator::LongRangeIt && !it->seq.is_unset()) too_long(static_cast<List*>(it->seq.object())->items[2]);
         if (it->of != Iterator::SeqIt || it->seq.is_unset()) return;
         v = it->seq;                              // the sequence's own length: PySequence_Size, whose TypeError is no hint
         if ((!is_heap_obj(v) && !is_subclass_instance(v)) || type_lookup(type_of(v), intern("__len__")).is_unset()) return;

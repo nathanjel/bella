@@ -1770,7 +1770,7 @@ Ref method_reduce(Obj self, Args a) {            // method___reduce___impl: the 
     auto ends_with = [](const std::string& s, std::string_view tail) { return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0; };
     if (ident != nullptr && ident->length >= 3 && ident->text.starts_with("__") && !ends_with(ident->text, "__")) {   // _Py_IsPrivateName
         Obj cls = is_kind(m->self, Kind::Class) ? m->self : Obj::of(type_of(m->self));
-        Ref class_name = getattr(cls, N("__name__"));    // PyType_GetName
+        Ref class_name = str_new(static_cast<ClassObject*>(cls.object())->name);   // PyType_GetName: the type's own, not what a metaclass answers (RL-463)
         const Str* priv = as_str(class_name.get());
         // _Py_Mangle: not a name with a dot, not with a class of underscores only; the class's leading underscores go
         std::size_t lead = priv == nullptr ? std::string::npos : priv->text.find_first_not_of('_');

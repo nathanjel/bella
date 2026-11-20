@@ -639,6 +639,40 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   of `hashlib`, closing that part of deviation D-20 (review log D-6, option 2). When a target
   program needs either; then add a case, narrow D-20, and record it in `docs/DECISIONS.md`.
 
+## Open from reviews S22 and A22 (2026-11-19)
+
+The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-454 to RL-522). Left after the round's commit:
+
+* **For the author** (questions, not fixes): `PYTHONWARNINGS` and `sys.warnoptions` (RL-483: honoured, or listed as ignored in the
+  specification's Environment paragraph); where a built-in type that is written in Python keeps its state, so that a subclass's
+  attribute of the same private name cannot overwrite it (RL-507, about 110 classes); whether a module-level object's `__del__` runs
+  at exit when `sys` still reaches the module's globals through a hook the program installed (RL-514; D-07 speaks of order only).
+* **A step of its own:** the line of a traceback entry inside a statement of several lines (RL-494): CPython gives an attribute or a
+  method call the line of the attribute's name, a decorator's call the decorator's line, a failed `assert` the line of its test,
+  `raise (` ... `)` the line of the `raise`; the frontend gives each expression its first line. 17 of the reviewer's 140 constructs.
+  To do with a case of those constructs and CPython's rules (`update_start_location_to_match_attr`, `maybe_optimize_method_call`,
+  the decorator and assert locations in Python/codegen.c).
+* **Suggestions:** the builtins' namespace in CPython's order, so that a tie picks the same name (RL-492); discovery of top-level
+  modules for a ModuleNotFoundError (RL-493); a ModuleNotFoundError whose `name` is no str (RL-495).
+* **Conversions and containers:** `struct`'s integer codes when `__index__` itself raises OverflowError, and `"P"` out of range
+  (RL-466: it depends on the code and on native or standard size, so the prelude has to know which table a code is from);
+  `float()` of a str subclass with `__index__` (RL-467); a deque's index converted twice (RL-468); a store into a tuple, str,
+  bytes, range or Match with an `__index__` key (RL-469); `time.asctime` with a weekday past a C int and `list.index` with a
+  float subclass that has `__index__` (RL-521).
+* **`io` with a raw of the program's own:** what a bad `write()` answer becomes (RL-474), a `BufferedRandom` over what is not
+  seekable (RL-475), an int that does not fit from `read()` or `readinto()` (RL-476), the errno of a BlockingIOError (RL-478: 0 in
+  CPython there, to check in the image first).
+* **Words:** `not None` where the clinic says so (RL-477; a sweep of every prelude function called with None is the way to find
+  the rest); `dir()`'s two messages (RL-491).
+* **Warnings:** a registry version too large for a C long (RL-484); a stack level of -2**63 (RL-485).
+* **Names and frames:** `locals()` of a generator expression shows the iterator where 3.15 shows a list, tuple, range, str or dict
+  itself (RL-488); `__classdictcell__` holds a mappingproxy (RL-489); the frame a handler is given is a new object at each arrival
+  (RL-497); `NameError.name` after `del` of what is not bound (RL-498); NameError against UnboundLocalError for a deleted local read
+  in a comprehension and a nonlocal deleted twice (RL-499); `print()` after `del sys.stdout` (RL-500); a Unicode error's `start`
+  and `end` past 2**62 and as given to the constructor (RL-504, RL-505); `object.__lt__` and its three siblings called by name
+  with the wrong arguments (RL-506); a weak reference to a SimpleNamespace (RL-508); `breakpoint()` after `del
+  sys.breakpointhook` (RL-509).
+
 ## Housekeeping
 
 * ~~`uv lock` and commit `uv.lock`; pin the `gcc:16.x` image tag after `docker pull`.~~ Done

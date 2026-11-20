@@ -279,9 +279,9 @@ static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format6;
     Ref _ann7;
+    rt::bind(fn, args, {&_format6});
     rt::FrameGuard frame(code_gcd_annotate, M, _format6, _ann7);
     rt::StackValues stack_values(_ann7, _format6);
-    rt::bind(fn, args, {&_format6});
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
     frame.line = 4;
@@ -321,8 +321,8 @@ static Ref f_gcd(rt::PyFunction* fn, rt::Args args) {
     Ref a;
     Ref b;
     Ref r;
-    rt::FrameGuard frame(code_gcd, M, a, b, r);
     rt::bind(fn, args, {&a, &b});
+    rt::FrameGuard frame(code_gcd, M, a, b, r);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9;
     frame.line = 5;
@@ -361,9 +361,9 @@ static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format9;
     Ref _ann10;
+    rt::bind(fn, args, {&_format9});
     rt::FrameGuard frame(code_signs_annotate, M, _format9, _ann10);
     rt::StackValues stack_values(_ann10, _format9);
-    rt::bind(fn, args, {&_format9});
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
     frame.line = 12;
@@ -402,8 +402,8 @@ static Ref f_signs(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref a;
     Ref b;
-    rt::FrameGuard frame(code_signs, M, a, b);
     rt::bind(fn, args, {&a, &b});
+    rt::FrameGuard frame(code_signs, M, a, b);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t27, t28, t29, t30, t31, t32, t33, t34;
     frame.line = 13;

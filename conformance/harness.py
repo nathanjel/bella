@@ -95,6 +95,9 @@ def read_header(path: Path) -> Header:
     for line in path.read_text(encoding="utf-8").splitlines()[:12]:
         m = re.match(r"^#\s*(clause|spec|status|source|expect|mask|deviation):\s*(.+?)\s*$", line)
         if m:
+            if m.group(1) == "deviation" and "deviation" in fields:
+                # one simulation a case: the harness would record under the last and the staging replay block for both (RL-520)
+                raise ValueError(f"{path.name}: two '# deviation:' lines; a case declares one deviation")
             fields[m.group(1)] = m.group(2)
     mask = frozenset(t.strip() for t in fields.get("mask", "").split(",") if t.strip())
     unknown = mask - _BUILTIN_EXC

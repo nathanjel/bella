@@ -1116,8 +1116,10 @@ def _bf_minus_last_block(self: _Buffered, size: int) -> int:   # MINUS_LAST_BLOC
     return self._g_buffer_size * (size // self._g_buffer_size)
 
 
-def _bf_closed(self: _Buffered) -> bool:         # IS_CLOSED, buffered_closed
+def _bf_closed(self: _Buffered) -> bool:         # IS_CLOSED: no buffer any more, else the raw's `closed`
     _bf_check_initialized(self)
+    if len(self._f_buffer) == 0:                 # close() freed it, also a close whose raw close failed: closed for every later write, flush and close (gh-138720; RL-522)
+        return True
     return True if getattr(self._a_raw, "closed") else False  # noqa: B009
 
 
@@ -1760,7 +1762,7 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
             res = self._a_raw.close()  # type: ignore[attr-defined]
         except BaseException as e:
             if exc is not None:
-                raise e from exc
+                e.__context__ = exc              # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472)
             raise
         finally:
             self._f_buffer = bytearray()
@@ -2005,7 +2007,7 @@ class BufferedRWPair(_BufferedIOBase):
             ret = _rw_forward(self._a_reader, "close", ())
         except BaseException as e:
             if exc is not None:
-                raise e from exc
+                e.__context__ = exc              # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472)
             raise
         if exc is not None:
             raise exc
@@ -2916,7 +2918,7 @@ class TextIOWrapper(_TextIOBase):
             res = self._c_buffer.close()  # type: ignore[attr-defined]
         except BaseException as e:
             if exc is not None:
-                raise e from exc
+                e.__context__ = exc              # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472)
             raise
         if exc is not None:
             raise exc
@@ -3543,7 +3545,8 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
         try:
             result.close()  # type: ignore[attr-defined]
         except BaseException as e:  # noqa: BLE001
-            raise e from exc
+            e.__context__ = exc                  # _PyErr_ChainExceptions1 (RL-472)
+            raise
         raise
 
 

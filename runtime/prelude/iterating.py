@@ -130,7 +130,7 @@ class reversed:
             except BaseException as e:
                 self._index = -1
                 self._seq = None
-                if not isinstance(e, (IndexError, StopIteration)):
+                if not issubclass(type(e), (IndexError, StopIteration)):   # PyErr_ExceptionMatches asks the type (RL-464)
                     raise
                 ended = True                     # PyErr_Clear: the iterator ends, and what next() raises then has no context of it
             if ended:
@@ -156,14 +156,15 @@ class reversed:
         return (type(self), ((),))
 
     def __setstate__(self, *args: object, **kwds: object) -> None:   # reversed_setstate: PyLong_AsSsize_t, clipped to the sequence as it is now
-        state = _one_argument("reversed.__setstate__", args, kwds)
-        if not isinstance(state, int):
+        given = _one_argument("reversed.__setstate__", args, kwds)
+        if not issubclass(type(given), int):
             raise TypeError("an integer is required")
+        state = int.__index__(given)             # the int's own value, whatever a subclass's __int__ or comparisons say (RL-462)
         if not -_SSIZE_MAX - 1 <= state <= _SSIZE_MAX:
             raise OverflowError("Python int too large to convert to C ssize_t")
         if self._index != -1:                    # an exhausted one stays so
             size = len(self._seq)  # type: ignore[arg-type]
-            self._index = -1 if state < -1 else size - 1 if state > size - 1 else int(state)
+            self._index = -1 if state < -1 else size - 1 if state > size - 1 else state
 
 
 class enumerate:
@@ -287,12 +288,16 @@ raise a ValueError.
         result = []
         i = 0
         for it in its:
+            ended = False
             try:
                 result.append(next(it))
             except StopIteration:
-                if self._strict:
-                    _check_strict("zip", its, i)
-                raise
+                if not self._strict:
+                    raise                        # the iterator's own StopIteration, as its tp_iternext left it
+                ended = True                     # check: it is cleared, and what follows is not raised while handling it (RL-473)
+            if ended:
+                _check_strict("zip", its, i)
+                raise StopIteration              # all are exhausted: next()'s own
             i += 1
         return tuple(result)
 
@@ -334,12 +339,16 @@ raise a ValueError."""
         items = []
         i = 0
         for it in its:
+            ended = False
             try:
                 items.append(next(it))
             except StopIteration:
-                if self._strict:
-                    _check_strict("map", its, i)
-                raise
+                if not self._strict:
+                    raise                        # the iterator's own StopIteration, as its tp_iternext left it
+                ended = True                     # check: cleared, as in zip (RL-473)
+            if ended:
+                _check_strict("map", its, i)
+                raise StopIteration
             i += 1
         return self._func(*items)
 

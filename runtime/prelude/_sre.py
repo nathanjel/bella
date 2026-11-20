@@ -240,8 +240,14 @@ def _pos_args(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> t
 def _matched(self: object, name: str, mode: int, args: tuple[object, ...], kwds: dict[str, object]) -> object:
     string, pos, endpos = _pos_args(name, args, kwds)
     _length, pos, endpos = _state(self, string, pos, endpos)
-    marks = _run(self, string, pos, endpos, pos, False, mode)
-    return None if marks is None else _new_match(self, string, pos, endpos, marks)  # type: ignore[arg-type]
+    # state_init holds the string's buffer until state_fini, for every entry point: a signal handler that runs inside the
+    # engine (C-7-85) cannot resize the bytearray being matched, its extend() is a BufferError (RL-496)
+    _sre_call("export", string, 1)
+    try:
+        marks = _run(self, string, pos, endpos, pos, False, mode)
+        return None if marks is None else _new_match(self, string, pos, endpos, marks)  # type: ignore[arg-type]
+    finally:
+        _sre_call("export", string, -1)
 
 
 def _compile_template(pattern: object, repl: object) -> object:   # compile_template
@@ -379,18 +385,22 @@ class Pattern:
         groups = self._c_groups  # type: ignore[attr-defined]
         start = pos
         must_advance = False
-        while start <= endpos:
-            marks = _run(self, string, pos, endpos, start, must_advance, 2)
-            if marks is None:
-                break
-            if groups == 0:
-                out.append(_sre_call("slice", string, marks[0], marks[1]))  # type: ignore[index]
-            elif groups == 1:
-                out.append(_span_of(string, marks, 1, True))  # type: ignore[arg-type]
-            else:
-                out.append(tuple([_span_of(string, marks, i + 1, True) for i in range(groups)]))  # type: ignore[arg-type]
-            must_advance = marks[1] == marks[0]  # type: ignore[index]
-            start = marks[1]  # type: ignore[index]
+        _sre_call("export", string, 1)           # state_init to state_fini, as in _matched
+        try:
+            while start <= endpos:
+                marks = _run(self, string, pos, endpos, start, must_advance, 2)
+                if marks is None:
+                    break
+                if groups == 0:
+                    out.append(_sre_call("slice", string, marks[0], marks[1]))  # type: ignore[index]
+                elif groups == 1:
+                    out.append(_span_of(string, marks, 1, True))  # type: ignore[arg-type]
+                else:
+                    out.append(tuple([_span_of(string, marks, i + 1, True) for i in range(groups)]))  # type: ignore[arg-type]
+                must_advance = marks[1] == marks[0]  # type: ignore[index]
+                start = marks[1]  # type: ignore[index]
+        finally:
+            _sre_call("export", string, -1)
         return out
 
     def finditer(*args: object, **kwds: object) -> object:  # noqa: N805
@@ -412,17 +422,21 @@ class Pattern:
         last = 0
         start = 0
         must_advance = False
-        while not limit or n < limit:
-            marks = _run(self, string, 0, endpos, start, must_advance, 2)
-            if marks is None:
-                break
-            out.append(_sre_call("slice", string, last, marks[0]))  # type: ignore[index]
-            for i in range(groups):
-                out.append(_span_of(string, marks, i + 1, False))  # type: ignore[arg-type]
-            n += 1
-            must_advance = marks[1] == marks[0]  # type: ignore[index]
-            last = start = marks[1]  # type: ignore[index]
-        out.append(_sre_call("slice", string, last, endpos))
+        _sre_call("export", string, 1)           # state_init to state_fini, as in _matched
+        try:
+            while not limit or n < limit:
+                marks = _run(self, string, 0, endpos, start, must_advance, 2)
+                if marks is None:
+                    break
+                out.append(_sre_call("slice", string, last, marks[0]))  # type: ignore[index]
+                for i in range(groups):
+                    out.append(_span_of(string, marks, i + 1, False))  # type: ignore[arg-type]
+                n += 1
+                must_advance = marks[1] == marks[0]  # type: ignore[index]
+                last = start = marks[1]  # type: ignore[index]
+            out.append(_sre_call("slice", string, last, endpos))
+        finally:
+            _sre_call("export", string, -1)
         return out
 
     def sub(*args: object, **kwds: object) -> object:  # noqa: N805

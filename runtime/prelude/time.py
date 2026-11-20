@@ -140,7 +140,7 @@ def _clockid(value: object) -> int:              # time_clockid_converter: PyLon
     n = _INT_MAX + 1                             # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
         n = _index(value)
-    except Exception:
+    except BaseException:  # noqa: BLE001, S110  # PyLong_AsInt failed, whatever with: the converter's TypeError (RL-457)
         pass
     if n < _INT_MIN or n > _INT_MAX:
         raise TypeError("clk_id should be integer, not " + _tp_name(value))

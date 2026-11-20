@@ -122,10 +122,15 @@ Ref exception_of(Obj typ, Obj val = Obj{}, Obj tb = Obj{}) {
     Ref exc;
     if (is_exception_class(typ)) {
         try {
-            if (!val.is_unset() && is_exception_instance(val) && is_subclass(type_of(val), static_cast<ClassObject*>(typ.object())))
+            // PyObject_IsSubclass, so a metaclass's __subclasscheck__ is asked, and what it raises is what is thrown (RL-479)
+            if (!val.is_unset() && is_exception_instance(val) && object_issubclass(Obj::of(type_of(val)), typ))
                 exc = Ref::share(val);
             else
                 exc = create_exception(typ, val);
+            // PyErr_Restore: a value that is not of the class itself is given to the class once more. That is the first
+            // making's result when the class's __new__ answers with another class's instance (RL-480); a value that came
+            // as an instance of a subclass has made its own class the type, and is left
+            if (Obj::of(type_of(exc.get())) != typ && (val.is_unset() || exc.get() != val)) exc = create_exception(typ, exc.get());
         } catch (const PyError& e) {
             if (!tb.is_unset() && traceback_of(e.exc.get()).is_unset()) set_exception_field(e.exc.get(), "__traceback__", tb);
             return e.exc;
@@ -139,7 +144,6 @@ Ref exception_of(Obj typ, Obj val = Obj{}, Obj tb = Obj{}) {
     if (!tb.is_unset()) set_exception_field(exc.get(), "__traceback__", tb);   // PyErr_Restore with a traceback: the exception's own from here
     return exc;
 }
-void set_exception_pending(Generator* g, Obj typ, Obj val, Obj tb) { g->pending = exception_of(typ, val, tb); }
 Ref throw_current(Generator* g) {                 // gen_throw_current_exception
     bool returned = false;
     Ref result = resume(g, returned);
@@ -156,14 +160,43 @@ void close_iter(Obj yf) {
         gen_close(gen_self(yf));
         return;
     }
-    Ref meth = optional_getattr(yf, N("close"));
+    Ref meth;
+    try {
+        meth = optional_getattr(yf, N("close"));
+    } catch (const PyError& e) {                 // PyErr_FormatUnraisable, and no close is called (RL-481)
+        Ref shown = repr_of(yf);
+        report_unraisable("Exception ignored while closing generator " + as_str(shown.get())->text, e);
+        return;
+    }
     if (!meth.get().is_unset()) Ref ignored = invoke(meth.get(), {});
 }
+// gen_set_exception as _gen_throw calls it: with the frame marked as executing, so that the making of the exception cannot
+// close or resume the generator it is for (a call of the class's __init__ that tries gets "generator already executing",
+// which is then what is thrown in; RL-454). The state is put back whether it fails or not
+void pend_exception(Generator* g, GenState back, Obj typ, Obj val, Obj tb) {
+    g->state = GenState::Executing;
+    try {
+        g->pending = exception_of(typ, val, tb);
+    } catch (...) {
+        g->state = back;
+        throw;
+    }
+    g->state = back;
+}
+// "Link frame into the stack to enable complete backtraces": while what a generator delegates to is thrown into, the
+// generator's frame is the running one, so the stack listed there has it and a warning there is charged to its line (RL-456)
+struct LinkedFrame {
+    detail::FrameRecord record;
+    explicit LinkedFrame(Generator* g) : record{g->code, g->module, detail::current_frame(), g->line} { detail::current_frame() = &record; }
+    ~LinkedFrame() { detail::current_frame() = record.caller; }
+    LinkedFrame(const LinkedFrame&) = delete;
+    LinkedFrame& operator=(const LinkedFrame&) = delete;
+};
 Ref gen_throw_impl(Generator* g, Obj typ, Obj val = Obj{}, Obj tb = Obj{}) {   // _gen_throw
     if (g->state == GenState::Executing) already_executing();
     if (g->state == GenState::Finished) throw PyError(exception_of(typ, val, tb));
     if (g->delegate.get().is_unset() || g->state != GenState::Suspended) {
-        set_exception_pending(g, typ, val, tb);
+        pend_exception(g, g->state, typ, val, tb);
         return throw_current(g);
     }
     Ref yf = g->delegate;
@@ -176,35 +209,45 @@ Ref gen_throw_impl(Generator* g, Obj typ, Obj val = Obj{}, Obj tb = Obj{}) {   /
             g->pending = e.exc;
             failed = true;
         }
+        if (!failed) pend_exception(g, GenState::Suspended, typ, val, tb);
         g->state = GenState::Suspended;
-        if (!failed) set_exception_pending(g, typ, val, tb);
         return throw_current(g);
     }
     Ref ret;
+    Ref meth;
     bool has_throw = true;
     bool failed = false;
+    if (!is_kind(yf.get(), Kind::Generator)) {
+        try {                                    // the lookup's own error is the caller's, and the generator stays suspended (RL-455)
+            meth = optional_getattr(yf.get(), N("throw"));
+        } catch (...) {
+            g->state = GenState::Suspended;
+            throw;
+        }
+        has_throw = !meth.get().is_unset();
+    }
     try {
+        LinkedFrame linked(g);
         if (is_kind(yf.get(), Kind::Generator)) {
             ret = gen_throw_impl(gen_self(yf.get()), typ, val, tb);
-        } else {
-            Ref meth = optional_getattr(yf.get(), N("throw"));
-            has_throw = !meth.get().is_unset();
-            if (has_throw) {                         // PyObject_CallFunctionObjArgs(meth, typ, val, tb, NULL): as many as were given
-                if (val.is_unset()) ret = invoke(meth.get(), {typ});
-                else if (tb.is_unset()) ret = invoke(meth.get(), {typ, val});
-                else ret = invoke(meth.get(), {typ, val, tb});
-            }
+        } else if (has_throw) {                      // PyObject_CallFunctionObjArgs(meth, typ, val, tb, NULL): as many as were given
+            if (val.is_unset()) ret = invoke(meth.get(), {typ});
+            else if (tb.is_unset()) ret = invoke(meth.get(), {typ, val});
+            else ret = invoke(meth.get(), {typ, val, tb});
         }
     } catch (const PyError& e) {
         g->pending = e.exc;
         failed = true;
     }
-    g->state = GenState::Suspended;
-    if (failed) return throw_current(g);
-    if (!has_throw) {                            // throw_here
-        set_exception_pending(g, typ, val, tb);
+    if (failed) {
+        g->state = GenState::Suspended;
         return throw_current(g);
     }
+    if (!has_throw) {                            // throw_here
+        pend_exception(g, GenState::Suspended, typ, val, tb);
+        return throw_current(g);
+    }
+    g->state = GenState::Suspended;
     return ret;
 }
 

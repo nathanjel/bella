@@ -195,9 +195,9 @@ static Ref f_escape_time_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format3;
     Ref _ann4;
+    rt::bind(fn, args, {&_format3});
     rt::FrameGuard frame(code_escape_time_annotate, M, _format3, _ann4);
     rt::StackValues stack_values(_ann4, _format3);
-    rt::bind(fn, args, {&_format3});
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14;
     frame.line = 7;
@@ -247,8 +247,8 @@ static Ref f_escape_time(rt::PyFunction* fn, rt::Args args) {
     Ref n;
     Ref zr2;
     Ref zi2;
-    rt::FrameGuard frame(code_escape_time, M, cr, ci, limit, zr, zi, n, zr2, zi2);
     rt::bind(fn, args, {&cr, &ci, &limit});
+    rt::FrameGuard frame(code_escape_time, M, cr, ci, limit, zr, zi, n, zr2, zi2);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28, t29, t30, t31, t32, t33;
     frame.line = 8;

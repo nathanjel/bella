@@ -92,9 +92,9 @@ static Ref f_fib_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref _format3;
     Ref _ann4;
+    rt::bind(fn, args, {&_format3});
     rt::FrameGuard frame(code_fib_annotate, M, _format3, _ann4);
     rt::StackValues stack_values(_ann4, _format3);
-    rt::bind(fn, args, {&_format3});
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 4;
@@ -127,8 +127,8 @@ static Ref f_fib_annotate(rt::PyFunction* fn, rt::Args args) {
 static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
     Ref n;
-    rt::FrameGuard frame(code_fib, M, n);
     rt::bind(fn, args, {&n});
+    rt::FrameGuard frame(code_fib, M, n);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13;
     frame.line = 5;
