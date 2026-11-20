@@ -652,8 +652,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-454 to RL-522). Left after the round's commit:
 
 * **For the author** (questions, not fixes; the variables of CPython's start-up were decided on 2026-11-20: `PYTHONWARNINGS`
-  ignored for now, RL-483, and of the others three honoured and the rest named as ignored, RL-527, C-8-16):
-  `PYTHONIOENCODING`, which the runtime honours and D-15 says is ignored (RL-526); the colour of an uncaught exception's report
+  ignored for now, RL-483; of the others three honoured and the rest named as ignored, RL-527, C-8-16; `PYTHONIOENCODING`
+  honoured and D-15 narrowed, RL-526, C-8-17): the colour of an uncaught exception's report
   at a terminal (RL-528); where a built-in type that is written in Python keeps its state, so that a subclass's
   attribute of the same private name cannot overwrite it (RL-507, about 110 classes); whether a module-level object's `__del__` runs
   at exit when `sys` still reaches the module's globals through a hook the program installed (RL-514; D-07 speaks of order only).

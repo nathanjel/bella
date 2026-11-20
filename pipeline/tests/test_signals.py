@@ -63,23 +63,37 @@ def _limit_file_size() -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (262144, resource.getrlimit(resource.RLIMIT_FSIZE)[1]))
 
 
+# What a finaliser prints at the end leaves when the stream itself goes, and a failure there is dropped: no report, and the
+# exit status is not its (RL-532). With a line of the program's own before it, the one failure told of is the first flush's
+PRINTED_BY_A_FINALISER = r"""
+class Late:
+    def __del__(self) -> None:
+        print("printed by a finaliser")
+
+
+late = Late()
+"""
+
+
 def test_a_reader_that_has_gone() -> None:
     if shutil.which("g++") is None:
         return
-    outcomes = []
-    with tempfile.TemporaryDirectory() as tmp:
-        prog = Path(tmp, "prog.py")
-        prog.write_text(STDOUT_GONE, encoding="utf-8")
-        for command in ([sys.executable, str(prog)], [str(build(prog, "prog.py"))]):
-            r, w = os.pipe()
-            os.close(r)
-            try:
-                done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=w, stderr=subprocess.PIPE, text=True, check=False)
-            finally:
-                os.close(w)
-            outcomes.append((done.stderr, done.returncode))
-    assert outcomes[0] == outcomes[1], outcomes
-    assert outcomes[0] == ("caught: 32 Broken pipe\nException ignored while flushing sys.stdout:\nBrokenPipeError: [Errno 32] Broken pipe\n", 120), outcomes[0]
+    once = "Exception ignored while flushing sys.stdout:\nBrokenPipeError: [Errno 32] Broken pipe\n"
+    for source, want in ((STDOUT_GONE, ("caught: 32 Broken pipe\n" + once, 120)), (PRINTED_BY_A_FINALISER, ("", 0)),
+                         (PRINTED_BY_A_FINALISER + 'print("printed by the program")\n', (once, 120))):
+        outcomes = []
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_text(source, encoding="utf-8")
+            for command in ([sys.executable, str(prog)], [str(build(prog, "prog.py"))]):
+                r, w = os.pipe()
+                os.close(r)
+                try:
+                    done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=w, stderr=subprocess.PIPE, text=True, check=False)
+                finally:
+                    os.close(w)
+                outcomes.append((done.stderr, done.returncode))
+        assert outcomes[0] == outcomes[1] == want, (source, outcomes)
 
 
 def test_a_write_past_the_file_size_limit() -> None:

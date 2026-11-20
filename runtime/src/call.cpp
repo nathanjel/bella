@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <string_view>
 #include <fcntl.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <cstdint>
@@ -3385,6 +3386,42 @@ static void ignore_what_cpython_ignores() {
     std::signal(SIGXFSZ, SIG_IGN);
 }
 
+// Py_ExitStatusException of a _PyStatus_ERR once the core is up (fatal_error, Python/pylifecycle.c): two lines on descriptor
+// 2; the pending exception through sys.stderr, which until the three streams exist is a printer on descriptor 2 that writes
+// UTF-8 at once (PyFile_NewStdPrinter; _Py_FatalError_PrintExc); when the exception has no traceback, an empty line and the
+// thread's line with no frame beneath it (_Py_FatalError_DumpTracebacks, write_thread_id); exit(1)
+namespace {
+[[noreturn]] void fatal_while_starting(const char* function, const char* message, Obj exc) {
+    auto direct = [](const std::string& text) {
+        for (std::size_t done = 0; done < text.size();) {
+            ssize_t n = ::write(2, text.data() + done, text.size() - done);
+            if (n <= 0) break;
+            done += static_cast<std::size_t>(n);
+        }
+    };
+    direct(std::string("Fatal Python error: ") + function + ": " + message + "\nPython runtime state: core initialized\n");
+    bool has_traceback = is_kind(traceback_of(exc), Kind::Traceback);
+    try {
+        if (fcntl(2, F_GETFD) >= 0) {
+            Ref fd = int_from_i64(2), name = str_new("<stderr>"), mode = str_new("wb"), encoding = str_new("utf-8"), errors = str_new("backslashreplace");
+            Ref printer = invoke(io_hooks().std_stream.get(), {fd.get(), name.get(), mode.get(), encoding.get(), errors.get(), boolean(false)});
+            ErrSink err{printer.get()};
+            std::unordered_set<const Object*> seen;
+            print_plain(err, exc, seen);
+        }
+    } catch (const PyError&) {                   // what the printer cannot write is not written
+    }
+    if (!has_traceback) {
+        char line[64] = "", name[100] = "";
+        std::snprintf(line, sizeof line, "\nCurrent thread 0x%016lx", static_cast<unsigned long>(pthread_self()));
+        std::string text = line;
+        if (pthread_getname_np(pthread_self(), name, sizeof name) == 0 && name[0] != '\0') text += std::string(" [") + name + "]";
+        direct(text + " (most recent call first):\n");
+    }
+    std::_Exit(1);
+}
+}  // namespace
+
 void sys_set_flag(std::size_t pos, Obj value) {
     auto* sys_dict = native_modules()["sys"]->dict;
     Obj old = dict_get(sys_dict, Obj::of(intern("flags")));
@@ -3678,21 +3715,51 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     }
                     if (!err.empty()) errors = std::string(err);
                 }
+                // The variable's bytes are text as the file system's are (CONFIG_SET_BYTES_STR: UTF-8 with surrogateescape)
+                auto text_of = [](const std::string& bytes) -> Ref {
+                    Ref raw = bytes_new(bytes), utf8 = str_new("utf-8"), escape = str_new("surrogateescape");
+                    return str_from_bytes(raw.get(), utf8.get(), escape.get());
+                };
+                // init_stdio_encoding: the encoding becomes the name its codec has for itself (config_get_codec_name: latin-1 is
+                // iso8859-1, UTF8 is utf-8). A name that is no encoding ends the program here, as CPython ends; so does one outside
+                // the phase-1 codecs, which D-20 has as not installed. The registry is asked as _PyCodec_Lookup asks it; before the
+                // program's first line every codec in it is a text encoding, so the text lookup's own refusal cannot come
+                Ref encoding_name;
+                try {
+                    bool utf8 = true;            // encode_wstr_utf8, strictly: the variable's bytes were not UTF-8
+                    try {
+                        Ref raw = bytes_new(encoding), codec = str_new("utf-8"), strict = str_new("strict");
+                        Ref checked = str_from_bytes(raw.get(), codec.get(), strict.get());
+                    } catch (const PyError&) {
+                        utf8 = false;
+                    }
+                    if (!utf8) raise_new("RuntimeError", "cannot encode stdio_encoding");
+                    Ref given = text_of(encoding);
+                    Ref codec = invoke(codec_hooks().lookup_text.get(), {given.get(), None()});
+                    encoding_name = getattr(codec.get(), intern("name"));
+                    if (!is_kind(encoding_name.get(), Kind::Str)) raise_new("TypeError", std::string("a bytes-like object is required, not '") + type_of(encoding_name.get())->name + "'");
+                } catch (const PyError& e) {
+                    fatal_while_starting("init_stdio_encoding", "failed to get the Python codec name of the stdio encoding", e.exc.get());
+                }
                 Obj buffered = boolean(start_up().buffered_stdio);   // PYTHONUNBUFFERED
                 auto make = [&](int fd, const char* name, const char* mode, const std::string& errs) -> Ref {
                     if (fcntl(fd, F_GETFD) < 0) return none_ref();
-                    Ref fdo = int_from_i64(fd), n = str_new(name), m = str_new(mode), enc = str_new(encoding), e = str_new(errs);
-                    return invoke(io_hooks().std_stream.get(), {fdo.get(), n.get(), m.get(), enc.get(), e.get(), buffered});
+                    Ref fdo = int_from_i64(fd), n = str_new(name), m = str_new(mode), e = text_of(errs);
+                    return invoke(io_hooks().std_stream.get(), {fdo.get(), n.get(), m.get(), encoding_name.get(), e.get(), buffered});
                 };
-                Ref in = make(0, "<stdin>", "rb", errors);
-                put(sys_dict, "stdin", in.get());
-                put(sys_dict, "__stdin__", in.get());
-                Ref out = make(1, "<stdout>", "wb", errors);
-                put(sys_dict, "stdout", out.get());
-                put(sys_dict, "__stdout__", out.get());
-                Ref err = make(2, "<stderr>", "wb", "backslashreplace");
-                put(sys_dict, "stderr", err.get());
-                put(sys_dict, "__stderr__", err.get());
+                try {                            // init_sys_streams: a stream that cannot be made ends the program (errors that are no text, say)
+                    Ref in = make(0, "<stdin>", "rb", errors);
+                    put(sys_dict, "stdin", in.get());
+                    put(sys_dict, "__stdin__", in.get());
+                    Ref out = make(1, "<stdout>", "wb", errors);
+                    put(sys_dict, "stdout", out.get());
+                    put(sys_dict, "__stdout__", out.get());
+                    Ref err = make(2, "<stderr>", "wb", "backslashreplace");
+                    put(sys_dict, "stderr", err.get());
+                    put(sys_dict, "__stderr__", err.get());
+                } catch (const PyError& e) {
+                    fatal_while_starting("init_sys_streams", "can't initialize sys standard streams", e.exc.get());
+                }
             }
             hide_bootstrap_names();              // start-up is over: what the two import-system modules hold beyond CPython's names
             Module* main = make_main(main_file);
@@ -3753,8 +3820,11 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             // if it comes during the teardown, an ignored one stays ignored
             signals_fini();
             clear_modules(runtime_own);
-            if (!flush_std_stream("stdout", true)) status = 120;   // again, for what the finalisers printed
-            if (!flush_std_stream("stderr", false)) status = 120;
+            // What the finalisers printed goes out now. In CPython sys.stdout is None by this time (finalize_modules cleared
+            // sys), so its second flush_std_files does nothing, and the text leaves when the stream itself is finalised
+            // (iobase_finalize), where a failure is dropped: no report, and the status is not its (RL-532)
+            flush_std_stream("stdout", false);
+            flush_std_stream("stderr", false);
         }
     } catch (const NotImplemented& e) {
         try {

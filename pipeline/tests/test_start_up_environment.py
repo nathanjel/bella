@@ -4,6 +4,10 @@ Read (the author's decision of 2026-11-20, review log RL-527): `PYTHONUNBUFFERED
 and `PYTHONHASHSEED` as before. One probe is run under CPython and compiled with each value, and the two must agree on standard
 output, the exit status and standard error, to the letter where CPython refuses the value and ends before the program's first line.
 
+`PYTHONIOENCODING` is read too (the author's decision of the same day, RL-526; C-8-17): the three standard streams have the
+encoding and errors it names, under the name the codec has for itself; a name that is no encoding ends the program as CPython
+ends, and so does a codec outside the phase-1 set, which D-20 has as not installed.
+
 Not read: `PYTHONWARNINGS` (the author's decision of the same day, RL-483) and the others that only an interpreter has a use
 for or that the decision left out. Whatever such a variable says, a compiled program runs as CPython does without it, so there
 the compiled program with the variable is compared with CPython without it, and CPython with it must differ, or the row shows
@@ -13,6 +17,7 @@ Run under pytest or directly: python3 -m pipeline.tests.test_start_up_environmen
 """
 from __future__ import annotations
 
+import codecs
 import os
 import re
 import shutil
@@ -300,6 +305,92 @@ def test_streams_in_use_with_and_without_their_buffers() -> None:
             assert seen[0] != seen[1] or title.startswith("input"), f"{title}: nothing is seen of the buffers"
 
 
+# PYTHONIOENCODING: what the streams say of themselves, what they write and read, a report that goes through standard error
+ENCODED = '''
+import sys
+
+out = sys.stdout
+out.write(f"{sys.stdin.encoding} {sys.stdin.errors} | {out.encoding} {out.errors} | {sys.stderr.encoding} {sys.stderr.errors}\\n")
+out.write(f"{sys.__stdout__ is out} {sys.__stderr__.encoding} {type(out.buffer).__name__}\\n")
+for text in ("caf\\u00e9", "\\u20ac", "\\udc80", "\\U0001f600"):
+    try:
+        out.write(text + "\\n")
+    except (UnicodeEncodeError, LookupError) as e:
+        out.write(f"[{type(e).__name__}]\\n")
+out.flush()
+print("to standard error: caf\\u00e9 \\u20ac \\udc80", file=sys.stderr)
+try:
+    out.write(ascii(sys.stdin.read()) + "\\n")
+except (UnicodeDecodeError, LookupError) as e:
+    out.write(f"[{type(e).__name__}]\\n")
+out.flush()
+raise ValueError("uncaught, with caf\\u00e9")
+'''
+
+ENCODINGS = ["utf-8", "UTF-8", "utf8", "U8", "utf_8:strict", "utf 8", "utf-8 ", " utf-8", "latin-1", "latin1:replace", "L1", "ISO-8859-1:xmlcharrefreplace",
+             "iso8859_1:ignore", "ascii", "us-ascii:backslashreplace", "646:surrogateescape", ":replace", ":", "::", "utf-8:", ":strict",
+             "utf-8:surrogatepass", "utf-8:surrogateescape", "utf-8-sig", "utf-16", "UTF-16LE:replace", "utf-16-be", "utf-32", "utf_32_be",
+             "utf-8:no such way", "utf8:replace:strict", "nonsense", "nonsense:replace", "utf-9", "latin-1,utf-8", "mbcs", "utf-8:\udcff", "utf-8\udcff",
+             "utf-8:caf\u00e9", "-", "_", "utf--8", "UTF.8"]
+# a name that is not ASCII: 3.15's encodings warns of it (a DeprecationWarning nobody is shown) and so imports warnings, which
+# a program that does not hold the module cannot (D-27 is of the C's warnings): such a program stops by name
+NOT_ASCII = ["caf\u00e9", "\u20ac:replace"]
+# codecs CPython has and the phase-1 set has not (D-20): a compiled program ends as CPython does for a name that is no encoding
+OUTSIDE = ["cp1252", "utf-7", "rot13", "big5:replace", "idna", "cp437", "koi8-r", "mac-roman"]
+
+
+def test_the_encoding_of_the_standard_streams() -> None:
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_text(ENCODED, encoding="utf-8")
+        base = {name: value for name, value in os.environ.items() if not name.startswith("PYTHON")} | {"PYTHONHASHSEED": "0"}
+        commands = ([sys.executable, "prog.py"], [str(build(prog, "prog.py"))])
+
+        def run(cmd: list[str], value: str | None, **more: str) -> tuple[bytes, int, list[str]]:
+            env = base | more | ({} if value is None else {"PYTHONIOENCODING": value})
+            done = subprocess.run(cmd, capture_output=True, check=False, env=env, cwd=tmp, input=b"caf\xe9 \xc3\xa9\nmore\n")
+            codec = "utf-8"
+            if value is not None and done.returncode != 0 and not done.stderr.startswith(b"Fatal Python error"):
+                try:
+                    codec = codecs.lookup(value.split(":")[0] or "utf-8").name
+                except LookupError:
+                    pass
+            try:
+                text = done.stderr.decode(codec, "backslashreplace")
+            except UnicodeError:                 # a codec that has its own mind about errors (idna)
+                text = done.stderr.decode("utf-8", "backslashreplace")
+            text = re.sub(r"Current thread 0x[0-9a-f]{16}( \[[^]]*\])?", "Current thread", text)
+            return done.stdout, done.returncode, _report(text)
+
+        refused = 0
+        for value in (None, *ENCODINGS):
+            ref = run(commands[0], value)
+            assert run(commands[1], value) == ref, f"PYTHONIOENCODING={value!r}"
+            if ref[2][:1] == ["Fatal Python error: init_stdio_encoding: failed to get the Python codec name of the stdio encoding"]:
+                refused += 1
+                assert ref[0] == b"" and ref[1] == 1 and ref[2][-1] == "Current thread (most recent call first):", ref
+        assert refused == 9, refused
+        holding = Path(tmp, "holding.py")
+        holding.write_text("import warnings\n" + ENCODED, encoding="utf-8")
+        with_warnings = ([sys.executable, "holding.py"], [str(build(holding, "holding.py"))])
+        for value in NOT_ASCII:
+            ref = run(with_warnings[0], value)
+            assert ref[1] == 1 and ref[2][0].startswith("Fatal Python error: init_stdio_encoding"), ref
+            assert run(with_warnings[1], value) == ref, f"PYTHONIOENCODING={value!r}, in a program that holds warnings"
+            out, status, said = run(commands[1], value)
+            assert (out, status) == (b"", 70) and "importing 'warnings'" in said[0], (value, out, status, said)
+        for value in ("latin-1:replace", "nonsense"):
+            assert run(commands[1], value, PYTHONUNBUFFERED="1") == run(commands[0], value, PYTHONUNBUFFERED="1"), value
+        missing = run(commands[0], "no-such-codec")
+        assert missing[1] == 1 and "LookupError: unknown encoding: no-such-codec" in missing[2], missing
+        for value in OUTSIDE:
+            name = value.split(":")[0]
+            assert run(commands[0], value)[2][:1] != missing[2][:1], f"CPython has no {name} either: the row belongs in the other list"
+            assert run(commands[1], value) == (b"", 1, [line.replace("no-such-codec", name) for line in missing[2]]), value
+
+
 def test_sys_flags_when_the_limit_of_digits_is_set() -> None:
     """_PySys_SetFlagObj: sys.flags is a new object each time; the one the program kept says what it said (RL-530)."""
     if shutil.which("g++") is None:
@@ -343,6 +434,7 @@ if __name__ == "__main__":
     test_the_variables_that_are_read()
     test_the_variables_that_are_not_read()
     test_streams_in_use_with_and_without_their_buffers()
+    test_the_encoding_of_the_standard_streams()
     test_sys_flags_when_the_limit_of_digits_is_set()
     test_pythonwarnings_is_ignored_without_the_module()
     test_pythonwarnings_is_ignored_with_the_module()

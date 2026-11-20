@@ -95,10 +95,11 @@ lint = "no"
 note = "seeding compatibility is a conformance clause"
 
 [deviations.D-15]
-summary = "UTF-8 mode is always on and cannot be turned off (PYTHONUTF8=0, -X utf8=0); PYTHONIOENCODING and encoding=\"locale\" are ignored and mean UTF-8 (narrowed in v0.4: CPython 3.15 has UTF-8 mode on by default, PEP 686)"
+summary = "UTF-8 mode is always on and cannot be turned off (PYTHONUTF8=0, -X utf8=0); encoding=\"locale\" is ignored and means UTF-8 (narrowed in v0.4: CPython 3.15 has UTF-8 mode on by default, PEP 686; narrowed in v0.23: PYTHONIOENCODING is honoured for the standard streams, as CPython honours it)"
 status = "decided"
 decision = 10
 lint = "yes"
+note = "PYTHONIOENCODING by the author's decision of 2026-11-20 (of two: honoured, D-15 narrowed; ignored as decision 10 had it, with the runtime and the harness changed to that). The runtime had honoured it since the standard streams became _io objects (2026-11-07) and the harness sets it for every case, while this entry said it was ignored (review log RL-526). Case C-8-17 holds it. A codec outside the phase-1 set is D-20's: the program ends at its start as CPython ends for a name that is no encoding"
 
 [deviations.D-16]
 summary = "sys.implementation.name is 'bella' and platform.python_implementation() is 'Bella'; sys.implementation.cache_tag and __spec__.cached are None, and importlib.util.cache_from_source raises NotImplementedError, as CPython does for an implementation with no bytecode cache"
