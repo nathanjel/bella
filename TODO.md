@@ -656,12 +656,11 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-454 to RL-522). Left after the round's commit:
 
-* **For the author** (questions, not fixes; the variables of CPython's start-up were decided on 2026-11-20: `PYTHONWARNINGS`
-  ignored for now, RL-483; of the others three honoured and the rest named as ignored, RL-527, C-8-16; `PYTHONIOENCODING`
-  honoured and D-15 narrowed, RL-526, C-8-17; no colour in the runtime's report, D-28 widened, RL-528; the state of a built-in type that is written in Python has no name,
-  RL-507, C-3-76 and C-3-77; when a finaliser runs at exit if `sys` still reaches its module's globals, RL-514: exact, with the
-  collector, listed there): a decimal literal longer than a stricter `PYTHONINTMAXSTRDIGITS` given at launch (RL-555: CPython refuses
-  to compile the main program, the compiled one converted the literal at the build).
+* **For the author:** nothing open (2026-11-20). Decided that day: `PYTHONWARNINGS` ignored for now (RL-483); of the other start-up
+  variables three honoured and the rest named as ignored (RL-527, C-8-16); `PYTHONIOENCODING` honoured, D-15 narrowed (RL-526,
+  C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
+  C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
+  there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
 * **Open from review A23** (2026-11-20): a cell for each class that declares a slot of one name (RL-541: the model keys a slot by its
   name, so two classes of one MRO share it; seen only through the two members' own `__get__`); `struct.Struct.__new__` with no format
   (RL-549, with the Struct step below); `BytesIO.__sizeof__` and a buffered reader's with a deriving class's slots (RL-552, RL-553); a

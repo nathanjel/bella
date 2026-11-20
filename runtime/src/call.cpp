@@ -3471,6 +3471,32 @@ void sys_set_flag(std::size_t pos, Obj value) {
     made->fields[0] = past.release();
     put(sys_dict, "flags", flags.get());
 }
+// CPython compiles the main program at each start, under the limit of digits the environment gave: its parser makes a
+// SyntaxError of the first decimal literal longer than the limit (_PyPegen_number_token: the conversion's ValueError and
+// " - Consider hexadecimal...", the literal's line, no column), which ends the program before its first statement. A
+// compiled program converted its literals at the build, so its start looks at those the build noted (RL-555, C-8-18).
+namespace {
+std::span<const LongLiteral>& long_literals() {
+    static std::span<const LongLiteral> literals;
+    return literals;
+}
+void refuse_long_literal(const char* main_file) {
+    int limit = start_up().int_max_str_digits;
+    if (limit <= 0) return;
+    for (const LongLiteral& literal : long_literals()) {
+        if (literal.digits <= limit) continue;
+        Ref message = str_new("Exceeds the limit (" + std::to_string(limit) + " digits) for integer string conversion: value has " +
+                              std::to_string(literal.digits) + " digits; use sys.set_int_max_str_digits() to increase the limit" +
+                              " - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.");
+        Ref file = str_new(main_file), line = int_from_i64(literal.line), text = str_new(literal.text);
+        Ref where = build_tuple({file.get(), line.get(), Obj::small(0), text.get(), line.get(), Obj::small(0)});
+        Ref exc = invoke(Obj::of(exception_class("SyntaxError")), {message.get(), where.get()});
+        raise(exc.get());
+    }
+}
+}  // namespace
+void set_long_literals(std::span<const LongLiteral> literals) { long_literals() = literals; }
+
 int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
              std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
     int status = 0;
@@ -3817,6 +3843,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             note_filled(builtins_module());        // from here on a name missing from them is one the program deleted
             note_filled(native_modules()["sys"]);
             note_filled(main);
+            refuse_long_literal(main_file);
             main_body(main);
             flush_io();
         } catch (const PyError& e) {

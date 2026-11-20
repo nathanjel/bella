@@ -32,6 +32,7 @@ from __future__ import annotations
 import builtins
 import fcntl
 import functools
+import io
 import ast
 import hashlib
 import json
@@ -41,6 +42,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tokenize
 import typing
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -581,6 +583,25 @@ def _staged_cpp(rows: list[StagedRow], refused: dict[str, str], unstaged: dict[s
             f"    ::bella::register_staged({texts_span}, {refused_span}, {unstaged_span}, {compiles_span});\n")
 
 
+def long_literals(source: bytes) -> list[tuple[int, int, str]]:
+    """The decimal integer literals of a main program that a limit of digits could refuse: (digits, line, the line's text)
+    for each of more than 640 digits (sys.int_info.str_digits_check_threshold, below which no limit applies), in the order
+    of the text. CPython compiles a main program at each start, under the limit the environment gave, and its parser makes
+    a SyntaxError of the first literal longer than it (_PyPegen_number_token); a compiled program converted its literals at
+    the build, so its start checks these against the limit instead (runtime/src/call.cpp, refuse_long_literal; RL-555, the
+    author's decision of 2026-11-20; case C-8-18). The digits are counted without the underscores; a literal of zeros, a
+    literal of another base, a float and an imaginary number have no limit."""
+    threshold = sys.int_info.str_digits_check_threshold
+    found: list[tuple[int, int, str]] = []
+    for token in tokenize.tokenize(io.BytesIO(source).readline):
+        if token.type != tokenize.NUMBER or not re.fullmatch(r"[0-9](?:_?[0-9])*", token.string):
+            continue
+        digits = sum(c != "_" for c in token.string)
+        if digits > threshold and token.string.strip("0_"):
+            found.append((digits, token.start[0], token.line))
+    return found
+
+
 def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, str] = ("", ""), annotate: tuple[str, str] = ("", "")) -> str:
     """main(): the runtime's start with the prelude, the main module's body, its __file__ (the
     absolute path, a link not followed, as CPython keeps it), sys.path[0] (the directory of the
@@ -605,9 +626,15 @@ def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, 
     entries = ",\n".join(rows)
     table = f"static const ::bella::ModuleEntry MODULES[] = {{\n{entries}\n}};\n"
     count = len(rows)
+    literals = long_literals(main_file.read_bytes())
+    literal_table = literal_call = ""
+    if literals:
+        literal_rows = ",\n".join(f"    {{{digits}, {line}, {c_string(text)}}}" for digits, line, text in literals)
+        literal_table = f"static const ::bella::LongLiteral LONG_LITERALS[] = {{\n{literal_rows}\n}};\n"
+        literal_call = f"    ::bella::set_long_literals(std::span<const ::bella::LongLiteral>(LONG_LITERALS, {len(literals)}));\n"
     return ('// The main unit, compiled by Bella: the start, and the modules compiled with the program.\n'
-            '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + staged[0] + annotate[0] +
-            "\nint main(int argc, char** argv) {\n" + staged[1] + annotate[1] +
+            '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + literal_table + staged[0] + annotate[0] +
+            "\nint main(int argc, char** argv) {\n" + staged[1] + annotate[1] + literal_call +
             f"    ::bella::set_stdlib_dir({c_string(getattr(sys, '_stdlib_dir', None) or str(STDLIB))});\n" +
             "    ::bella::set_lean(BELLA_IS_LEAN);\n" +      # the header's, 1 under -DBELLA_LEAN and 0 without: one text for both builds
             f"    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {c_string(os.path.abspath(main_file))},\n"

@@ -438,3 +438,79 @@ if __name__ == "__main__":
     test_sys_flags_when_the_limit_of_digits_is_set()
     test_pythonwarnings_is_ignored_without_the_module()
     test_pythonwarnings_is_ignored_with_the_module()
+
+
+def _long_literals() -> str:
+    """One program with nine decimal literals, each longer than the one before and each in another place of the text."""
+    def nines(n: int) -> str:
+        return "9" * n
+    return "\n".join([
+        "import sys",
+        'A = f"{' + nines(650) + '}"',
+        "B: " + nines(660) + " = 1",
+        "def f(a=" + nines(670) + "):",
+        "    return a",
+        "def g(x):",
+        "    match x:",
+        "        case " + nines(680) + ":",
+        "            return 'matched'",
+        "    return 'no'",
+        "C = (1 +",
+        "     " + nines(690) + ")   # on a line of its own",
+        "D = (" + nines(700) + ", " + nines(710) + ")",
+        "E = -" + nines(720),
+        "F = " + "_".join(["7" * 73] * 10),              # 730 digits and nine underscores
+        "G = (0x" + "f" * 3000 + ", " + "0" * 800 + ", 1." + nines(800) + ", " + nines(800) + "j, '" + nines(800) + "')",
+        "print('ran', sys.get_int_max_str_digits(), len(A), f().bit_length(), g(1), C.bit_length(), len(D), E < 0, F.bit_length(), len(G))",
+        ""])
+
+
+def test_a_literal_longer_than_the_limit_of_digits() -> None:
+    """RL-555 (the author's decision of 2026-11-20; case C-8-18): CPython compiles the main program at each start under the
+    limit the environment gave, and its parser refuses the first decimal literal longer than the limit, wherever in the
+    text it is. Each limit here reaches the next literal: an f-string, an annotation, a default, a match pattern, a
+    continuation line, two on one line, a negated one, one with underscores. The compiled program says the same, line and
+    words, and runs where CPython runs."""
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_text(_long_literals(), encoding="utf-8")
+        exe = str(build(prog, "prog.py"))
+        base = {name: value for name, value in os.environ.items() if not name.startswith("PYTHON")} | {"PYTHONHASHSEED": "0"}
+        refused: list[str] = []
+        for limit in (None, "640", "650", "660", "670", "680", "690", "700", "710", "720", "730", "4300", "0"):
+            env = base if limit is None else base | {"PYTHONINTMAXSTRDIGITS": limit}
+            reference, compiled = _run([sys.executable, "prog.py"], env, tmp), _run([exe], env, tmp)
+            assert compiled == reference, (limit, compiled, reference)
+            done = subprocess.run([sys.executable, "prog.py"], capture_output=True, text=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
+            if done.returncode:
+                assert done.returncode == 1 and done.stdout == "" and "SyntaxError: Exceeds the limit" in done.stderr, done
+                refused.append(done.stderr.split(", line ")[1].split("\n")[0] + ":" + done.stderr.split("value has ")[1].split(" ")[0])
+            else:
+                assert done.stdout.startswith("ran "), done
+        # the line of each refusal and the digits it names: the first literal past each limit, in the order of the text
+        assert refused == ["2:650", "3:660", "4:670", "8:680", "12:690", "13:700", "13:710", "14:720", "15:730"], refused
+
+
+def test_an_imported_modules_literal_is_as_from_its_cached_code() -> None:
+    """The other half of that decision: a module's literals are converted when the program is built, as CPython converts
+    them when it compiles the module and not when it runs it from its cached code. So a compiled program imports a
+    module with a literal past the limit, and so does CPython once the module's code is cached; without cached code
+    CPython's import raises the SyntaxError, which is the difference the specification's Environment paragraph names."""
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "constants.py").write_text("LIMIT = " + "9" * 641 + "\n", encoding="utf-8")
+        prog = Path(tmp, "prog.py")
+        prog.write_text("print('main runs')\ntry:\n    import constants\n    print('imported:', constants.LIMIT.bit_length())\n"
+                        "except SyntaxError as e:\n    print('the import raised SyntaxError at line', e.lineno)\n", encoding="utf-8")
+        exe = str(build(prog, "prog.py"))
+        base = {name: value for name, value in os.environ.items() if not name.startswith("PYTHON")} | {"PYTHONHASHSEED": "0"}
+        strict = base | {"PYTHONINTMAXSTRDIGITS": "640"}
+        cold = _run([sys.executable, "prog.py"], strict | {"PYTHONDONTWRITEBYTECODE": "1"}, tmp)
+        assert cold[0] == "main runs\nthe import raised SyntaxError at line 1\n", cold
+        assert _run([sys.executable, "prog.py"], base, tmp)[0] == "main runs\nimported: 2130\n"        # and its code is cached now
+        cached = _run([sys.executable, "prog.py"], strict, tmp)
+        assert cached[0] == "main runs\nimported: 2130\n", cached
+        assert _run([exe], strict, tmp) == cached

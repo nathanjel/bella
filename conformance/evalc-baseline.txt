@@ -202,6 +202,7 @@ C-8-14_a_modules_name_deleted.py
 C-8-15_locals_vars_and_dir_of_a_frame.py
 C-8-16_the_variables_a_program_reads_at_its_start.py
 C-8-17_the_encoding_of_the_standard_streams.py
+C-8-18_a_literal_longer_than_the_limit_of_digits.py
 C-9-03_refcount_disposal_order.py
 C-9-04_refcount_resurrection_keeps_weakref.py
 C-9-05_default_argument_lifetime.py
