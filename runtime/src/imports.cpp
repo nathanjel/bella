@@ -636,7 +636,6 @@ Ref i_resource_warning(Obj, Args a) {
     return none_ref();
 }
 // ---- a built-in module written in Python (pipeline/build.py, NATIVE_IN_PYTHON) ----
-namespace {
 // _PyObject_IsUniquelyReferenced of what an attribute holds: the attribute's count, and this read's
 Ref i_held_once(Obj, Args a) {
     positional_only(a, "_held_once", 2, 2);
@@ -650,7 +649,6 @@ Ref i_tuple_set(Obj, Args a) {                   // PyTuple_SET_ITEM and the Py_
     decref(std::exchange(slot, a.pos(2)));
     return none_ref();
 }
-}  // namespace
 Ref i_keyword_suggestion(Obj, Args a) {
     positional_only(a, "_keyword_suggestion", 2, 2);
     std::vector<std::string> known;
@@ -1109,7 +1107,7 @@ Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
 }
 void fill_io(Module* m) {
     fill_in_python(m, "_io", "_io", prelude_io::module_body,
-                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sys", i_posix_sys}, {"_io_call", i_io_call}});
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sys", i_posix_sys}, {"_io_call", i_io_call}, {"_has_dict", i_has_dict}});
     dict_set(m->dict, Obj::of(N("BlockingIOError")), Obj::of(exception_class("BlockingIOError")));
 }
 void fill_pwd(Module* m) {

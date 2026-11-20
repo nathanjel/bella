@@ -613,6 +613,8 @@ struct Function : Object {
 struct SlotDescriptor : Object {                     // a real __slots__ member: a data descriptor
     const Str* name;
     ClassObject* owner = nullptr;                    // the class it was made for: what it says it applies to
+    bool readonly = false;                           // PyMemberDef's Py_READONLY: no store and no delete through the member
+    bool boolean = false;                            // a Py_T_BOOL member: True and False alone, and never deleted (the runtime's check)
     explicit SlotDescriptor(const Str* n);
 };
 
@@ -798,13 +800,16 @@ struct ClassSpec {
     std::optional<std::vector<std::string>> native = std::nullopt;   // a built-in type's C fields (RefClass native)
     std::optional<DictKind> dict_kind = std::nullopt;                // which dict an instance has; nullopt: the solid base's
     std::vector<std::string> hidden = {};                            // of its slots, the fields with no name (RefClass hidden)
+    std::vector<std::string> members = {};                           // of the hidden, those the type shows (RefClass members)
+    std::vector<std::string> readonly = {};                          // of its slots, the read-only members (RefClass readonly)
 };
 
 // RefClass(hidden=...), for a class that exists: the built-in types the prelude writes are made by its class statements
 // and presented as CPython's afterwards, and this is part of that. The fields keep their places, in the class and in every
 // class that derives from it so far, so objects made before are as they were; the descriptors go, under new versions.
 // Before any class of a program derives from it.
-inline void hide_slots(ClassObject* c, const std::vector<const Str*>& names) {
+inline void hide_slots(ClassObject* c, const std::vector<const Str*>& names, const std::vector<const Str*>& members = {},
+                       const std::vector<const Str*>& readonly = {}, const std::vector<const Str*>& boolean = {}) {
     std::vector<ClassObject*> todo{c}, family;
     while (!todo.empty()) {
         ClassObject* k = todo.back();
@@ -818,7 +823,15 @@ inline void hide_slots(ClassObject* c, const std::vector<const Str*>& names) {
         auto own = c->own_slot_names();
         if (std::find(own.begin(), own.end(), n) == own.end()) throw ModelError("a hidden field is one of the class's own __slots__");
         c->hidden.insert(n);
-        if (const Obj* d = c->attrs.find(n); d != nullptr && d->is_object() && d->object()->kind == Kind::SlotDescriptor) c->del_attr(n);
+        // a member CPython's type shows keeps its descriptor (RefClass members), which reads the field's cell from now on
+        bool shown = std::find(members.begin(), members.end(), n) != members.end();
+        if (const Obj* d = c->attrs.find(n); d != nullptr && d->is_object() && d->object()->kind == Kind::SlotDescriptor) {
+            if (!shown) c->del_attr(n);
+            else {
+                static_cast<SlotDescriptor*>(d->object())->readonly = std::find(readonly.begin(), readonly.end(), n) != readonly.end();
+                static_cast<SlotDescriptor*>(d->object())->boolean = std::find(boolean.begin(), boolean.end(), n) != boolean.end();
+            }
+        }
         for (ClassObject* k : family) {
             // another class of the family that declares the name shares the cell, as slots of one name do: hidden there too
             auto at = k->field_index.find(n);
@@ -866,14 +879,21 @@ inline ClassObject* make_class(const ClassSpec& spec) {
             if (std::find(own.begin(), own.end(), intern(h)) == own.end()) throw ModelError("a hidden field is one of the class's own __slots__");
             c->hidden.insert(intern(h));
         }
+        auto listed = [](const std::vector<std::string>& names, const Str* s) { return std::find(names.begin(), names.end(), s->text) != names.end(); };
+        for (const auto& m : spec.members)
+            if (!c->hidden.contains(intern(m))) throw ModelError("a member is one of the class's hidden fields");
+        for (const auto& r : spec.readonly)
+            if (std::find(own.begin(), own.end(), intern(r)) == own.end()) throw ModelError("a read-only member is one of the class's own __slots__");
         for (const Str* s : own)
-            if (c->attrs.contains(s) && !c->hidden.contains(s)) throw ModelError("'" + s->text + "' in __slots__ conflicts with class variable");
+            if (c->attrs.contains(s) && (!c->hidden.contains(s) || listed(spec.members, s)))
+                throw ModelError("'" + s->text + "' in __slots__ conflicts with class variable");
         // type_new_slots sorts them, and tp_members' order is the class dict's (code points: UTF-8's order)
         std::sort(own.begin(), own.end(), [](const Str* x, const Str* y) { return x->text < y->text; });
         for (const Str* s : own) {
-            if (c->hidden.contains(s)) continue;         // a field of the C struct: no member of the type
+            if (c->hidden.contains(s) && !listed(spec.members, s)) continue;   // a field of the C struct: no member of the type
             auto* d = new SlotDescriptor(s);
             d->owner = c;
+            d->readonly = listed(spec.readonly, s);
             incref(d);
             c->attrs.set(s, Obj::of(d));
         }
@@ -1220,8 +1240,14 @@ inline Obj call(Obj fn, std::initializer_list<Obj> args) {
 
 // ---- inline caches (refmodel CacheEntry, Site) ----
 enum class Plan : std::uint8_t {
-    DataDescriptor, Slot, Field, InstanceDict, ClassAttr, NonDataDescriptor, GetAttrHook, UncachedValue, Raise
+    DataDescriptor, Slot, Field, InstanceDict, ClassAttr, NonDataDescriptor, GetAttrHook, UncachedValue, Raise,
+    State                          // a member whose cell is a field of the built-in type's own (RefClass members)
 };
+// The cell a member reads and stores: by its own name (a class may have it under another), among the object's fields, or
+// in its state when the class that declares the slot keeps it as a field of the built-in type's own (refmodel _member_cells)
+inline bool member_in_state(const SlotDescriptor* d) { return d->owner != nullptr && d->owner->hidden.contains(d->name); }
+template <class T>
+inline Obj& member_cell(T* obj, const SlotDescriptor* d) { return member_in_state(d) ? obj->state(d->name) : obj->field(d->name); }
 struct CacheEntry {                // immutable once installed
     std::uint64_t version;         // names the class and its state: no class pointer is kept
     const Str* name;
@@ -1326,8 +1352,13 @@ inline std::pair<LookupPlan, std::optional<CacheEntry>> plan_generic(T* obj, con
     };
     Obj hook = detail::hook_of(cls);       // slot_tp_getattr_hook looks __getattr__ up first (C-3-09)
     if (hit && is_data_descriptor(found)) {
-        if (found.object()->kind == Kind::SlotDescriptor)
-            return {{Plan::Slot, Obj{}, obj->field(name), hook}, entry(Plan::Slot)};
+        if (found.object()->kind == Kind::SlotDescriptor) {
+            // which cell is the class's matter, so the version covers it and the entry holds the kind alone. A member the
+            // class has under another name reads its own cell and is not cached: an entry reads the cell of the name looked up
+            auto* d = static_cast<SlotDescriptor*>(found.object());
+            Plan k = member_in_state(d) ? Plan::State : Plan::Slot;
+            return {{k, Obj{}, member_cell(obj, d), hook}, d->name == name ? entry(k) : std::nullopt};
+        }
         if (!found.object()->cls->has("__get__")) {
             auto [present, v] = detail::instance_storage(obj, name);
             return {{Plan::UncachedValue, Obj{}, present ? v : found, hook}, std::nullopt};
@@ -1357,11 +1388,13 @@ inline std::optional<LookupPlan> plan_cached(T* obj, const Str* name, const Site
     // found's class is read only now, after the version matched: the class still owns found
     if (e->found_version != NO_VERSION && e->found.object()->cls->version != e->found_version) return std::nullopt;
     Obj hook = detail::hook_of(cls);       // covered by the class version
-    if ((e->kind == Plan::Slot || e->kind == Plan::Field) && !obj->has_field(name))
+    if (((e->kind == Plan::Slot || e->kind == Plan::Field) && !obj->has_field(name)) || (e->kind == Plan::State && !obj->cls->state_index.contains(name)))
         throw ModelError("unsound cache: '" + name->text + "' cached as a field for a layout without it");
     switch (e->kind) {
         case Plan::Slot:
             return LookupPlan{Plan::Slot, Obj{}, obj->field(name), hook};
+        case Plan::State:
+            return LookupPlan{Plan::State, Obj{}, obj->state(name), hook};
         case Plan::Field: {
             if (obj->exposed()) return std::nullopt;
             Obj v = obj->field(name);
@@ -1427,6 +1460,7 @@ inline Ref execute(const LookupPlan& plan, T* obj, const Str* name) {
                 return Ref::steal(call(get.get(), {desc.get(), Obj::of(obj), Obj::of(obj->cls)}));
             }
             case Plan::Slot:
+            case Plan::State:
                 if (plan.value.is_unset()) throw AttributeError(name->text);
                 return Ref::share(plan.value);
             default:
@@ -1505,8 +1539,10 @@ inline void setattr(T* obj, const Str* name, Obj value) {
     if (auto hit = cls->lookup(name)) {
         Obj found = hit->first;
         if (found.is_object() && found.object()->kind == Kind::SlotDescriptor) {
+            auto* d = static_cast<SlotDescriptor*>(found.object());
+            if (d->readonly) throw AttributeError("readonly attribute");
             incref(value);
-            Obj old = std::exchange(obj->field(name), value);
+            Obj old = std::exchange(member_cell(obj, d), value);
             decref(old);
             return;
         }
@@ -1568,7 +1604,9 @@ inline void delattr(T* obj, const Str* name) {
     if (auto hit = cls->lookup(name)) {
         Obj found = hit->first;
         if (found.is_object() && found.object()->kind == Kind::SlotDescriptor) {
-            Obj& slot = obj->field(name);
+            auto* d = static_cast<SlotDescriptor*>(found.object());
+            if (d->readonly) throw AttributeError("readonly attribute");
+            Obj& slot = member_cell(obj, d);
             if (slot.is_unset()) throw AttributeError(name->text);
             decref(std::exchange(slot, Obj{}));
             return;
@@ -1905,9 +1943,10 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
     if (heap().checking) detail::check_not_named(obj);
     if (!base_weak && (obj->flags & HAS_WEAKREFS)) clear_weakrefs(obj);
     for (ClassObject* c : obj->cls->mro) {
-        // each class's slots sorted by name, as CPython sorts them when it makes the class
+        // each class's slots sorted by name, as CPython sorts them when it makes the class; a built-in type's fields in the
+        // order it declares them, which is its clear function's (RefClass._release_order)
         auto names = c->own_slot_names();
-        std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
+        if (c->hidden.empty()) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
         for (const Str* s : names) decref(std::exchange(c->hidden.contains(s) ? obj->state(s) : obj->field(s), Obj{}));
     }
     // the built-in base's clear function: its fields, the dict at its place (RefObject.dealloc)

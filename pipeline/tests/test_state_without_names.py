@@ -4,6 +4,8 @@ The prelude writes about 120 of CPython's C types in Python, and each keeps its 
 with no name in the compiled program: the sweep here asks every such type, by the modules that hold them and by an object of
 each, for every name any class of the prelude declares, under CPython and compiled. The compiled program may show no name
 that CPython does not, and must show every one of them that CPython does (partial's func, a buffered stream's _finalizing).
+After review A23 (RL-538, RL-544, RL-554) it also asks each type for what a class statement leaves (`__slots__` and its kin)
+and for a `__module__` entry, and each member a type shows for what a store of its own value says (a read-only one refuses).
 
 Run under pytest or directly: python3 -m pipeline.tests.test_state_without_names
 """
@@ -31,13 +33,18 @@ def private(name):
     return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
 
 
+def left(cls):
+    """What a class statement leaves in a class, and what the prelude says of its members: none of it is a C type's."""
+    return ",".join(n for n in ("__slots__", "__static_attributes__", "__firstlineno__", "__readonly__", "__boolean__") if n in vars(cls))
+
+
 print("---- the types the modules hold")
 for module in (_collections, _contextvars, _csv, _functools, _io, _json, _operator, _random, _sre, _string, _struct, _thread, _weakref,
                collections, contextvars, csv, functools, io, itertools, operator, random, re, struct, threading, types, typing,
                unicodedata, weakref, zlib, __builtins__):
     for attr, value in sorted(vars(module).items()):
-        if isinstance(value, type) and "__firstlineno__" not in vars(value):
-            print(module.__name__ + "." + attr, "|", ",".join(sorted(n for n in vars(value) if private(n))))
+        if isinstance(value, type):
+            print(module.__name__ + "." + attr, "|", ",".join(sorted(n for n in vars(value) if private(n))), "|", left(value))
 
 
 class Thing:
@@ -182,8 +189,20 @@ for label, obj in objects():
         except Exception as e:
             seen.append(name + "!" + type(e).__name__)
     in_classes = sorted({n for c in type(obj).__mro__ for n in vars(c) if private(n) and n in NAMES})
-    print(label, "|", ",".join(seen), "|", ",".join(in_classes))
+    stores = []
+    for name in seen:                            # a member the type shows: what a store of its own value says
+        if "!" not in name and type(getattr(type(obj), name, None)).__name__ == "member_descriptor":
+            try:
+                setattr(obj, name, getattr(obj, name))
+                stores.append(name + "=stored")
+            except Exception as e:
+                stores.append(name + "=" + type(e).__name__)
+    print(label, "|", ",".join(seen), "|", ",".join(in_classes), "|", ";".join(left(c) for c in type(obj).__mro__), "|",
+          repr(vars(type(obj)).get("__module__")), "|", ",".join(stores))
 '''
+
+
+OPENSSLS = frozenset({"md5", "sha1", "sha256", "sha512", "sha3_256", "shake_128", "blake2b", "blake2s"})
 
 
 def _table(text: str) -> dict[str, list[str]]:
@@ -212,16 +231,23 @@ def test_no_built_in_type_shows_the_names_of_its_state() -> None:
         for key, row in ours.items():
             if key not in theirs:
                 continue                             # a name of a module the runtime has and CPython does not: the names list's
-            if len(row) == 1:                        # a type a module holds: no private name that CPython's type lacks
+            if len(row) == 2:                        # a type a module holds
+                if theirs[key][1]:
+                    continue                         # written in Python in CPython too: its class statement's names are its own
                 types_seen += 1
                 extra = sorted(set(filter(None, row[0].split(","))) - set(filter(None, theirs[key][0].split(","))))
-                if extra:
+                if extra:                            # no private name that CPython's type lacks,
                     wrong.append(f"{key}: the type's dict has {extra}")
-            else:                                    # an object: the same answers for every name the prelude declares
-                objects_seen += 1
-                if row != theirs[key]:
-                    wrong.append(f"{key}: compiled {row}, CPython {theirs[key]}")
-        missing = sorted(k for k, row in theirs.items() if len(row) == 2 and k not in ours)
+                if row[1]:                           # and nothing a class statement leaves (RL-544)
+                    wrong.append(f"{key}: the type's dict has {row[1]}")
+            else:                                    # an object: the same answers for every name the prelude declares, the same
+                objects_seen += 1                    # leavings in its classes, the same __module__ entry, the same stores
+                theirs_row = theirs[key]
+                if key in OPENSSLS:                  # D-20: the reference's hash objects are OpenSSL's _hashlib.HASH, another
+                    row, theirs_row = row[:2] + row[4:], theirs_row[:2] + theirs_row[4:]   # type with another MRO and module
+                if row != theirs_row:
+                    wrong.append(f"{key}: compiled {row}, CPython {theirs_row}")
+        missing = sorted(k for k, row in theirs.items() if len(row) > 2 and k not in ours)
         assert not missing, missing
         assert not wrong, json.dumps(wrong, indent=1)
         assert objects_seen >= 95 and types_seen >= 150, (objects_seen, types_seen)

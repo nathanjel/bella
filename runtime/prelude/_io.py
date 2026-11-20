@@ -21,6 +21,7 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc
     _sys                                         # noqa: B018  # the system calls, by name (posix.cpp)
     _io_call                                     # noqa: B018  # the runtime's part, by name
+    _has_dict                                    # noqa: B018  # the C's self->dict is not NULL
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -34,6 +35,7 @@ except NameError:
     _bella_new_instance: Callable[..., Any] = _missing
     _sys: Callable[..., Any] = _missing
     _io_call: Callable[..., Any] = _missing
+    _has_dict: Callable[..., bool] = _missing
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 _ABSENT = object()
@@ -1026,8 +1028,14 @@ class FileIO(_RawIOBase):
         return self._i_finalizing
 
     @_finalizing.setter
-    def _finalizing(self, value: object) -> None:
-        self._i_finalizing = True if value else False
+    def _finalizing(self, value: object) -> None:                # a Py_T_BOOL member: True and False alone, never deleted
+        if value is not True and value is not False:
+            raise TypeError("attribute value type must be bool")
+        self._i_finalizing = value
+
+    @_finalizing.deleter
+    def _finalizing(self) -> None:
+        raise TypeError("can't delete numeric/char attribute")
 
 
 # ---- BufferedReader, BufferedWriter, BufferedRandom (bufferedio.c): one state, as the C's `buffered` struct ----
@@ -1883,6 +1891,7 @@ def _bf_mode_property(self: _Buffered) -> object:
 
 class BufferedReader(_BufferedIOBase):
     __slots__ = _BUFFERED_SLOTS
+    __boolean__ = ("_finalizing",)               # a Py_T_BOOL member (runtime/src/call.cpp, note_prelude_class)
     raw = property(_bf_raw_property)
     closed = property(_bf_closed_property)
     name = property(_bf_name_property)
@@ -1891,6 +1900,7 @@ class BufferedReader(_BufferedIOBase):
 
 class BufferedWriter(_BufferedIOBase):
     __slots__ = _BUFFERED_SLOTS
+    __boolean__ = ("_finalizing",)               # a Py_T_BOOL member (runtime/src/call.cpp, note_prelude_class)
     raw = property(_bf_raw_property)
     closed = property(_bf_closed_property)
     name = property(_bf_name_property)
@@ -1899,6 +1909,7 @@ class BufferedWriter(_BufferedIOBase):
 
 class BufferedRandom(_BufferedIOBase):
     __slots__ = _BUFFERED_SLOTS
+    __boolean__ = ("_finalizing",)               # a Py_T_BOOL member (runtime/src/call.cpp, note_prelude_class)
     raw = property(_bf_raw_property)
     closed = property(_bf_closed_property)
     name = property(_bf_name_property)
@@ -2271,8 +2282,8 @@ class BytesIO(_BufferedIOBase):
         _noargs("BytesIO.__getstate__", args, kwds)
         self: BytesIO = args[0]  # type: ignore[assignment]
         value = BytesIO.getvalue(self)
-        d = _optional_attr(self, "__dict__")
-        return value, self._b_pos, (None if d is _ABSENT or dict.__len__(d) == 0 else dict(d))  # type: ignore[arg-type,call-overload]
+        # bytesio_getstate: a copy of the dict the object has, None while it has none (an empty one is a dict: RL-548)
+        return value, self._b_pos, (dict(self.__dict__) if _has_dict(self) else None)  # type: ignore[attr-defined]
 
     def __setstate__(*args: object, **kwds: object) -> None:  # noqa: N805
         state = _one("BytesIO.__setstate__", args, kwds)
@@ -2291,7 +2302,10 @@ class BytesIO(_BufferedIOBase):
         if d is not None:
             if not isinstance(d, dict):
                 raise TypeError("third item of state should be a dict, got a " + _tp_name(d))
-            self.__dict__ = d  # type: ignore[attr-defined]
+            if _has_dict(self):                  # bytesio_setstate: PyDict_Update into the dict it has (RL-547),
+                dict.update(self.__dict__, d)    # type: ignore[attr-defined]
+            else:                                # or the given dict itself when it has none
+                self.__dict__ = d  # type: ignore[attr-defined]
 
     def __sizeof__(*args: object, **kwds: object) -> int:  # noqa: N805
         _noargs("BytesIO.__sizeof__", args, kwds)
@@ -2574,7 +2588,16 @@ def _tw_writeflush(self: TextIOWrapper) -> None:   # _textiowrapper_writeflush
     pending = self._n_pending
     self._n_pending = None
     self._o_pending_count = 0
-    data = b"".join(pending)
+    parts: list[bytes] = []
+    for item in pending:
+        if issubclass(type(item), str):          # a short ASCII text kept as it was, or what an encoder gave back: its bytes
+            try:
+                parts.append(str.encode(item, "latin-1"))   # type: ignore[arg-type]
+            except UnicodeEncodeError:
+                _refuse("TextIOWrapper: an encoder that returns its text, which is not Latin-1 (the C copies the string's memory)")
+        else:
+            parts.append(item)  # type: ignore[arg-type]
+    data = b"".join(parts)
     self._c_buffer.write(data)  # type: ignore[attr-defined]
 
 
@@ -2681,17 +2704,18 @@ _NATIVE_ORDER = "-le" if bytes.__getitem__(str.encode("a", "utf-16"), slice(2, 3
 
 def _tw_encodefunc(codec_info: object) -> object:   # the end of _textiowrapper_set_encoder
     name = getattr(codec_info, "name", None)
-    if isinstance(name, str):
+    if issubclass(type(name), str):              # PyUnicode_Check: the type, whatever __class__ says
         for known in _ENCODEFUNCS:
             if str.__eq__(name, known):
                 return known
     return None
 
 
-def _tw_encode(self: TextIOWrapper, text: str) -> object:   # write()'s choice between the two
+_ASCII_COMPATIBLE = ("ascii", "iso8859-1", "utf-8")   # is_asciicompat_encoding
+
+
+def _tw_encode(self: TextIOWrapper, text: str) -> object:   # the stream's encodefunc
     name = self._zz_encodefunc
-    if name is None:
-        return self._i_encoder.encode(text)  # type: ignore[attr-defined]
     if not self._s_encoding_start_of_stream and (name == "utf-16" or name == "utf-32"):
         name = name + _NATIVE_ORDER                # utf16le_encode: no mark, and a failure names utf-16-le
     self._s_encoding_start_of_stream = False       # also when the encoding fails: the C sets it before it looks
@@ -2712,6 +2736,7 @@ class TextIOWrapper(_TextIOBase):
                  "_j_decoded_chars", "_k_decoded_chars_used", "_l_b2cratio", "_m_snapshot", "_n_pending", "_o_pending_count", "_p_readtranslate",
                  "_q_readuniversal", "_r_readnl", "_s_encoding_start_of_stream", "_t_errors", "_u_seekable", "_v_line_buffering", "_w_write_through",
                  "_x_writetranslate", "_y_writenl", "_z_in_repr", "_zz_encodefunc", "_finalizing")
+    __boolean__ = ("_finalizing",)               # a Py_T_BOOL member
 
     def __new__(cls, *args: object, **kwds: object) -> TextIOWrapper:
         self: TextIOWrapper = _bella_new_instance(cls)
@@ -2845,13 +2870,22 @@ class TextIOWrapper(_TextIOBase):
             if str.find(text, "\n") != -1:
                 haslf = True
         if haslf and self._x_writetranslate and self._y_writenl is not None:
-            text = str.replace(text, "\n", self._y_writenl)   # PyUnicode_Replace: not a subclass's replace
+            text = text.replace("\n", self._y_writenl)   # _PyObject_CallMethod(text, "replace", ...): the text's own method
         text_needflush = self._w_write_through
         needflush = self._v_line_buffering and (haslf or str.find(text, "\r") != -1)
-        b = _tw_encode(self, text)
-        if not isinstance(b, bytes):
+        b: object
+        if self._zz_encodefunc is not None:
+            # a short ASCII text under an encoding that keeps ASCII is kept itself until the flush (bpo-43260)
+            if str.isascii(text) and str.__len__(text) <= self._e_chunk_size and self._zz_encodefunc in _ASCII_COMPATIBLE:
+                b = text
+                self._s_encoding_start_of_stream = False
+            else:
+                b = _tw_encode(self, text)
+        else:
+            b = self._i_encoder.encode(text)  # type: ignore[attr-defined]
+        if b is not text and not issubclass(type(b), bytes):
             raise TypeError("encoder should return a bytes object, not '" + _tp_name(b) + "'")
-        bytes_len = bytes.__len__(b)
+        bytes_len = str.__len__(b) if b is text else bytes.__len__(b)  # type: ignore[arg-type]
         if bytes_len >= self._e_chunk_size:
             while self._n_pending is not None:
                 _tw_writeflush(self)
@@ -3423,8 +3457,7 @@ class StringIO(_TextIOBase):
         _noargs("StringIO.__getstate__", args, kwds)
         self: StringIO = args[0]  # type: ignore[assignment]
         value = StringIO.getvalue(self)
-        d = _optional_attr(self, "__dict__")
-        return value, self._i_readnl, self._e_pos, (None if d is _ABSENT or dict.__len__(d) == 0 else dict(d))  # type: ignore[arg-type,call-overload]
+        return value, self._i_readnl, self._e_pos, (dict(self.__dict__) if _has_dict(self) else None)  # type: ignore[attr-defined]
 
     def __setstate__(*args: object, **kwds: object) -> None:  # noqa: N805
         state = _one("StringIO.__setstate__", args, kwds)
@@ -3445,7 +3478,10 @@ class StringIO(_TextIOBase):
         if d is not None:
             if not isinstance(d, dict):
                 raise TypeError("fourth item of state should be a dict, got a " + _tp_name(d))
-            self.__dict__ = d  # type: ignore[attr-defined]
+            if _has_dict(self):                  # stringio_setstate: as bytesio_setstate
+                dict.update(self.__dict__, d)    # type: ignore[attr-defined]
+            else:
+                self.__dict__ = d  # type: ignore[attr-defined]
 
     @property
     def closed(self) -> bool:

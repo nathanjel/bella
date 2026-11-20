@@ -192,12 +192,6 @@ static Ref bind_builtin(Builtin* b, Obj receiver) {
     return bound;
 }
 
-// The cell a member reads: its class's slot, which is a field with no name once the class is presented as the C type whose
-// struct has it (object.hpp's hide_slots). The prelude's own code holds such a member where it kept one aside.
-template <class T>
-static Obj& member_cell(T* inst, const SlotDescriptor* d) {
-    return d->owner != nullptr && d->owner->hidden.contains(d->name) ? inst->state(d->name) : inst->field(d->name);
-}
 void check_member_applies(const SlotDescriptor* d, Obj obj) {   // descr_check
     if (!isinstance(obj, d->owner))
         raise_new("TypeError", "descriptor '" + d->name->text + "' for '" + d->owner->name + "' objects doesn't apply to a '" + type_of(obj)->name + "' object");
@@ -301,6 +295,7 @@ Ref getset_set(Obj self, Args a) {
     if (is_kind(self, Kind::SlotDescriptor)) {   // member_set: the field itself, whatever the class's __setattr__ does
         auto* d = static_cast<SlotDescriptor*>(self.object());
         check_member_applies(d, a.pos(0));
+        check_member_store(d, a.pos(1));         // PyMember_SetOne: Py_READONLY, Py_T_BOOL
         with_attribute_storage(a.pos(0), [&](auto* inst) {
             incref(a.pos(1));
             decref(std::exchange(member_cell(inst, d), a.pos(1)));
@@ -322,6 +317,7 @@ Ref getset_delete(Obj self, Args a) {
     if (is_kind(self, Kind::SlotDescriptor)) {
         auto* d = static_cast<SlotDescriptor*>(self.object());
         check_member_applies(d, a.pos(0));
+        check_member_store(d, Obj{});
         with_attribute_storage(a.pos(0), [&](auto* inst) {
             if (member_cell(inst, d).is_unset()) raise_new("AttributeError", d->name->text);   // PyMember_SetOne: the name, and nothing held
             decref(std::exchange(member_cell(inst, d), Obj{}));
@@ -1300,6 +1296,7 @@ Ref object_setattr(Obj self, Args a) {
     const Str* n = as_str(a.pos(0));
     if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
     if (!is_kind(self, Kind::Instance) && !is_subclass_instance(self)) throw NotImplemented("object.__setattr__ on a C++ type's object");
+    refuse_readonly_member(self, intern(n->text), a.pos(1));
     if (type_lookup(type_of(self), intern(n->text)).is_unset()) refuse_absent_data_descriptor(self, intern(n->text));
     with_attribute_storage(self, [&](auto* inst) {
         try {
@@ -1315,6 +1312,7 @@ Ref object_delattr(Obj self, Args a) {
     const Str* n = as_str(a.pos(0));
     if (n == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(a.pos(0))->name + "'");
     if (!is_kind(self, Kind::Instance) && !is_subclass_instance(self)) throw NotImplemented("object.__delattr__ on a C++ type's object");
+    refuse_readonly_member(self, intern(n->text), Obj{});
     if (type_lookup(type_of(self), intern(n->text)).is_unset()) refuse_absent_data_descriptor(self, intern(n->text));
     with_attribute_storage(self, [&](auto* inst) {
         try {
@@ -2862,18 +2860,22 @@ void present_as_c_types(Module* bootstrap) {
     c->name_prefix = 6;
     c->attrs.set(N("__dict__"), Obj::of(new GetSet("__dict__", c, instance_dict, readonly_dict)));
     note_prelude_class(c);
+    forget_python_origin(c);
     present_methods(c);
     auto* ga = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("GenericAlias"))).object());
     ga->name = "types.GenericAlias";
     ga->name_prefix = 6;
     ga->forwards_attributes = true;
     note_prelude_class(ga);
+    forget_python_origin(ga);
     present_methods(ga);
     ga->has_weakref = cpython_has("weakref", "types.GenericAlias");
     auto* ga_iterator = static_cast<ClassObject*>(dict_get(bootstrap->dict, Obj::of(N("generic_alias_iterator"))).object());
     note_prelude_class(ga_iterator);
+    forget_python_origin(ga_iterator);
     present_methods(ga_iterator);
     ga_iterator->final_type = true;
+    ga_iterator->disallow_instantiation = cpython_attribute_kind(ga_iterator, "__new__").empty();
     getset(ga, "__parameters__", ga_parameters);
     getset(ga, "__typing_unpacked_tuple_args__", ga_unpacked_tuple_args);
     for (ClassObject* t : builtin_types())
@@ -2899,7 +2901,7 @@ void present_as_c_types(Module* bootstrap) {
     se->has_weakref = cpython_has("weakref", "sentinel");
     forget_python_origin(se);
     present_methods(se);
-    se->del_attr(N("__module__"));
+    if (se->attrs.contains(N("__module__"))) se->del_attr(N("__module__"));
     if (Obj doc = cpython_doc("type:sentinel"); doc != None()) se->set_attr(N("__doc__"), doc);
     for (auto [name, get, set] : std::initializer_list<std::tuple<const char*, Ref (*)(Obj), void (*)(Obj, Obj)>>{
              {"__name__", sentinel_name_get, nullptr}, {"__module__", sentinel_module_get, sentinel_module_set}}) {

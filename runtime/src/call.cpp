@@ -14,6 +14,7 @@
 #include <string_view>
 #include <fcntl.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <cstdint>
@@ -1851,13 +1852,33 @@ bool cpython_has(std::string_view scope, std::string_view name) { return cpython
 // A class the prelude wrote is CPython's C type from here. The fields of the C struct have no names (RL-507; the author's
 // decision of 2026-11-20): of the slots the class declares, those that are no member of CPython's type lose theirs
 // (object.hpp, hide_slots), and only the prelude's own code reaches them after this (state_get, state_set, state_del).
+// Every slot the class declares is a field of the struct, with a cell apart from what a class that derives from the type
+// may have under the name. One that CPython's type shows as a member (partial.func, a stream's _finalizing; the names table
+// says which) keeps its descriptor, which reads that cell; the class says in __readonly__ which of those have Py_READONLY
+// and in __boolean__ which are a Py_T_BOOL.
 void note_prelude_class(const ClassObject* c) {
     prelude_classes().insert(c);
     auto* cls = const_cast<ClassObject*>(c);
-    std::vector<const Str*> names;
-    for (const Str* s : cls->own_slot_names())
-        if (!cls->hidden.contains(s) && cpython_attribute_kind(cls, s->text).empty()) names.push_back(s);
-    if (!names.empty()) hide_slots(cls, names);
+    std::vector<const Str*> names, members, readonly, boolean;
+    for (auto [said, into] : {std::pair{intern("__readonly__"), &readonly}, std::pair{intern("__boolean__"), &boolean}})
+        if (const Obj* listed = cls->attrs.find(said); listed != nullptr && is_kind(*listed, Kind::Tuple)) {
+            for (Obj n : static_cast<Tuple*>(listed->object())->items) into->push_back(intern(as_str(n)->text));
+            cls->del_attr(said);
+        }
+    for (const Str* s : cls->own_slot_names()) {
+        if (cls->hidden.contains(s)) continue;
+        names.push_back(s);
+        if (!cpython_attribute_kind(cls, s->text).empty()) members.push_back(s);
+    }
+    if (!names.empty()) hide_slots(cls, names, members, readonly, boolean);
+    // A static type has no __module__ in its dict: its module is its tp_name's, which type_module answers (RL-554). The names
+    // table has the entry for the types that do have one (those C makes from a spec); the class statement's goes where the
+    // answer stays what it was.
+    static const Str* const module = intern("__module__");
+    if (const Obj* m = cls->attrs.find(module); m != nullptr && as_str(*m) != nullptr && cpython_attribute_kind(cls, "__module__").empty()) {
+        std::string derived = cls->name_prefix > 0 ? cls->name.substr(0, cls->name_prefix - 1) : "builtins";
+        if (as_str(*m)->text == derived) cls->del_attr(module);
+    }
 }
 std::vector<std::string_view> cpython_names_of(std::string_view scope) {   // its rows, in the table's order
     std::string prefix = std::string(scope) + ":";
@@ -3410,9 +3431,9 @@ namespace {
         }
     };
     direct(std::string("Fatal Python error: ") + function + ": " + message + "\nPython runtime state: core initialized\n");
-    bool has_traceback = is_kind(traceback_of(exc), Kind::Traceback);
+    bool has_traceback = !exc.is_unset() && is_kind(traceback_of(exc), Kind::Traceback);
     try {
-        if (fcntl(2, F_GETFD) >= 0) {
+        if (!exc.is_unset() && fcntl(2, F_GETFD) >= 0) {       // a status with no exception (a directory as standard input) prints none
             Ref fd = int_from_i64(2), name = str_new("<stderr>"), mode = str_new("wb"), encoding = str_new("utf-8"), errors = str_new("backslashreplace");
             Ref printer = invoke(io_hooks().std_stream.get(), {fd.get(), name.get(), mode.get(), encoding.get(), errors.get(), boolean(false)});
             ErrSink err{printer.get()};
@@ -3546,10 +3567,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_tp_name", tp_name.get());
                     Ref alloc = own(new Builtin("_bella_new_instance", i_bella_new_instance));
                     put(pm->dict, "_bella_new_instance", alloc.get());
-                    Ref state_read = own(new Builtin("_bella_state_get", i_bella_state_get));
-                    put(pm->dict, "_bella_state_get", state_read.get());
-                    Ref state_store = own(new Builtin("_bella_state_set", i_bella_state_set));
-                    put(pm->dict, "_bella_state_set", state_store.get());
+                    Ref held = own(new Builtin("_held_once", i_held_once));        // enumerate and zip use their result tuple
+                    put(pm->dict, "_held_once", held.get());                       // again while nothing else holds it (RL-551)
+                    Ref recycle = own(new Builtin("_tuple_set", i_tuple_set));
+                    put(pm->dict, "_tuple_set", recycle.get());
                     Ref unpack = own(new Builtin("_unpack_keywords", i_unpack_keywords));   // _PyArg_UnpackKeywords, as every prelude has it
                     put(pm->dict, "_unpack_keywords", unpack.get());
                 }
@@ -3761,6 +3782,11 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     Ref fdo = int_from_i64(fd), n = str_new(name), m = str_new(mode), e = text_of(errs);
                     return invoke(io_hooks().std_stream.get(), {fdo.get(), n.get(), m.get(), encoding_name.get(), e.get(), buffered});
                 };
+                {                                // init_sys_streams' first check: a directory as standard input, before any stream (RL-557)
+                    struct stat sb;
+                    if (fstat(0, &sb) == 0 && S_ISDIR(sb.st_mode))
+                        fatal_while_starting("init_sys_streams", "<stdin> is a directory, cannot continue", Obj{});
+                }
                 try {                            // init_sys_streams: a stream that cannot be made ends the program (errors that are no text, say)
                     Ref in = make(0, "<stdin>", "rb", errors);
                     put(sys_dict, "stdin", in.get());
@@ -3836,9 +3862,15 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             clear_modules(runtime_own);
             // What the finalisers printed goes out now. In CPython sys.stdout is None by this time (finalize_modules cleared
             // sys), so its second flush_std_files does nothing, and the text leaves when the stream itself is finalised
-            // (iobase_finalize), where a failure is dropped: no report, and the status is not its (RL-532)
-            flush_std_stream("stdout", false);
-            flush_std_stream("stderr", false);
+            // (iobase_finalize), where a failure is dropped: no report, and the status is not its (RL-532). So only a
+            // stream of _io's is asked: an object of the program's own in sys.__stdout__ is let go of with no call (RL-556)
+            for (const char* name : {"stdout", "stderr"}) {
+                Obj f = std_stream(name);
+                bool io_stream = false;
+                if (f.is_object())
+                    for (const ClassObject* c : type_of(f)->mro) io_stream = io_stream || (c_type(c) && c->name.starts_with("_io."));
+                if (io_stream) flush_std_stream(name, false);
+            }
         }
     } catch (const NotImplemented& e) {
         try {

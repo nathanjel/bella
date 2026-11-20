@@ -1,5 +1,5 @@
 """What runtime/tests/object_state.cpp prints, from the reference model: a built-in type's fields that have no name
-(RL-507; refmodel RefClass(hidden=...), Runtime.state_get, state_set, state_del). `make object-test` compares the two."""
+(RL-507; refmodel RefClass(hidden=..., members=..., readonly=...), Runtime.state_get, state_set, state_del). `make object-test` compares the two."""
 from __future__ import annotations
 
 import sys
@@ -75,7 +75,7 @@ def main() -> None:
         attempt(f"{cls.name}: deleted again", lambda o=o: rt.state_del(o, "_hash"))            # type: ignore[misc]
         decref(o)
 
-    print("4. released as the slots they are, each class's by name; a store keeps the new value first")
+    print("4. released in the order the built-in type declares them; a store keeps the new value first")
     M = RefClass("M", slots=("b", "_a", "c"), hidden=("_a", "c"), heap=heap)
     N = RefClass("N", (M,), slots=("a", "d"), hidden=("d",), heap=heap)
     m = RefObject(N)
@@ -116,6 +116,31 @@ def main() -> None:
     decref(t)
     decref(q)
     print("  after the object:", [f"t{t}" for t in heap.deaths])
+    print("6. a member the type shows: the type's own cell, under any name, and read-only where the type says")
+    Pt = RefClass("partial", slots=("func", "args", "_p"), hidden=("func", "args", "_p"), members=("func", "args"), readonly=("args",), heap=heap)
+    Sh = RefClass("Shadowed", (Pt,), attrs={"func": 99, "saved": Pt.attrs["args"]}, heap=heap)
+    o = RefObject(Sh)
+    incref(o)
+    rt.state_set(o, "func", 1)
+    rt.state_set(o, "args", 2)
+    print("  the class has them:", Pt.lookup("func") is not None, Pt.lookup("args") is not None, Pt.lookup("_p") is not None)
+    attempt("the name a deriving class has", lambda: rt.getattr(o, "func"))
+    attempt("the field", lambda: rt.state_get(o, "func"))
+    attempt("the member under another name", lambda: rt.getattr(o, "saved"))
+    attempt("a read-only member", lambda: rt.getattr(o, "args"))
+    attempt("a store through it", lambda: rt.setattr(o, "args", 5))
+    attempt("a delete through it", lambda: rt.delattr(o, "args"))
+    attempt("the type's own store", lambda: rt.state_set(o, "args", 7))
+    attempt("read again", lambda: rt.getattr(o, "args"))
+    q2 = RefObject(Pt)
+    incref(q2)
+    rt.state_set(q2, "func", 3)
+    attempt("a store through a member that takes one", lambda: rt.setattr(q2, "func", 4))
+    attempt("its field", lambda: rt.state_get(q2, "func"))
+    attempt("a delete through it", lambda: rt.delattr(q2, "func"))
+    attempt("its field then", lambda: rt.state_get(q2, "func"))
+    decref(q2)
+    decref(o)
     decref(plain)
     decref(p)
 

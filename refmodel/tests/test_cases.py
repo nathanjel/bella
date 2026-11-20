@@ -1543,8 +1543,9 @@ def test_the_state_of_a_built_in_type_has_no_name() -> None:
             decref(o)
         assert IR.slot_fields == ("_hash",) and IR.hidden_fields == ("_hash",) and K.hidden_fields == ("_hash",)
 
-        # lifetimes: a hidden field is released as the slot it is declared as, each class's sorted by name; a store keeps
-        # the new value before it lets the old one go
+        # lifetimes: a class with hidden fields lets go of its slots in the order it declares them (the C type's clear
+        # function), where a class of the program's sorts its own by name; a store keeps the new value before it lets the
+        # old one go
         T = RefClass("T", heap=heap)
         M = RefClass("M", slots=("b", "_a", "c"), hidden=("_a", "c"), heap=heap)
         m = RefObject(M)
@@ -1555,11 +1556,11 @@ def test_the_state_of_a_built_in_type_has_no_name() -> None:
                 rt.state_set(m, name, held)
             else:
                 rt.setattr(m, name, held)
-        assert [v.tag for v in m.traverse()] == ["a", "b", "c"]
+        assert [v.tag for v in m.traverse()] == ["b", "a", "c"]        # as the class declares them: its clear function's order
         rt.state_set(m, "c", RefObject(T, tag="c2"))
         assert heap.deaths == ["c"]
         decref(m)
-        assert heap.deaths == ["c", "a", "b", "c2"]
+        assert heap.deaths == ["c", "b", "a", "c2"]
         try:
             RefClass("W", slots=("x",), hidden=("y",), heap=heap)
             raise AssertionError("a hidden field is a slot of the class")
@@ -1586,10 +1587,9 @@ def test_a_member_cpython_shows_reads_the_types_own_field() -> None:
         __slots__ = ("func",)
 
     shadowed, slotted, plain = Shadowed(abs, -3), Slotted(abs, -4), functools.partial(abs, -5)
-    seen: list[object] = [plain.func is abs, shadowed.func is str, shadowed(), functools.partial.func.__get__(shadowed) is abs]  # type: ignore[attr-defined]
+    seen: list[object] = [plain.func is abs, shadowed.func is str, shadowed(), functools.partial.func.__get__(shadowed) is abs]
     try:
-        slotted.func
-        seen.append("the slot holds something")
+        seen.append(("the slot holds", slotted.func))
     except AttributeError:
         seen.append("the slot is empty")
     seen.append(slotted())
@@ -1612,14 +1612,13 @@ def test_a_member_cpython_shows_reads_the_types_own_field() -> None:
 
         def call(o: RefObject) -> int:                              # partial_call: the struct's fields, whatever the class has
             assert rt.state_get(o, "func") == "abs"
-            return abs(rt.state_get(o, "_p_phcount"))
+            return int(abs(rt.state_get(o, "_p_phcount")))
 
         site = Site(heap)
         got: list[object] = [rt.getattr(objects["partial"], "func", site) == "abs", rt.getattr(objects["Shadowed"], "func", site) == "str",
                              call(objects["Shadowed"]), rt.state_get(objects["Shadowed"], "func") == "abs"]
         try:
-            rt.getattr(objects["Slotted"], "func", site)
-            got.append("the slot holds something")
+            got.append(("the slot holds", rt.getattr(objects["Slotted"], "func", site)))
         except AttributeError:
             got.append("the slot is empty")
         got.append(call(objects["Slotted"]))
@@ -1630,9 +1629,12 @@ def test_a_member_cpython_shows_reads_the_types_own_field() -> None:
         rt.setattr(objects["partial"], "func", "other")
         assert rt.state_get(objects["partial"], "func") == "other" and rt.getattr(objects["partial"], "func", site) == "other"
         rt.delattr(objects["partial"], "func")
-        for read in (lambda: rt.getattr(objects["partial"], "func", site), lambda: rt.state_get(objects["partial"], "func")):
+        for gone in ("the member", "the field"):
             try:
-                read()
+                if gone == "the member":
+                    rt.getattr(objects["partial"], "func", site)
+                else:
+                    rt.state_get(objects["partial"], "func")
                 raise AssertionError("deleted")
             except AttributeError:
                 pass
@@ -1644,6 +1646,28 @@ def test_a_member_cpython_shows_reads_the_types_own_field() -> None:
             raise AssertionError("a member is a hidden field")
         except ValueError:
             pass
+        # a member under a second name reads its own cell (RL-535), and a read-only one refuses a store and a delete
+        A = RefClass("Aliased", (P,), attrs={"saved": P.attrs["func"]}, heap=heap)
+        a = RefObject(A)
+        incref(a)
+        rt.state_set(a, "func", "abs")
+        assert rt.getattr(a, "saved", site) == "abs" == rt.getattr(a, "saved", site)
+        RO = RefClass("ro", slots=("args",), hidden=("args",), members=("args",), readonly=("args",), heap=heap)
+        r = RefObject(RO)
+        incref(r)
+        rt.state_set(r, "args", (1,))
+        for refused in ("a store", "a delete"):
+            try:
+                if refused == "a store":
+                    rt.setattr(r, "args", (2,))
+                else:
+                    rt.delattr(r, "args")
+                raise AssertionError("read-only")
+            except AttributeError as e:
+                assert str(e) == "readonly attribute"
+        assert rt.getattr(r, "args") == (1,)
+        decref(a)
+        decref(r)
         for o in objects.values():
             decref(o)
     finally:

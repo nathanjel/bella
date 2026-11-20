@@ -16,10 +16,19 @@ try:
     _sequence_check                              # noqa: B018  # PySequence_Check
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
+    _held_once                                   # noqa: B018  # _PyObject_IsUniquelyReferenced of a field's value
+    _tuple_set                                   # noqa: B018  # PyTuple_SET_ITEM, on a tuple nothing else holds
 except NameError:
     import operator
 
     _bella_new_instance = object.__new__
+
+    def _held_once(obj: object, name: str) -> bool:
+        return False                             # under CPython a tuple is never used again
+
+    def _tuple_set(target: object, i: int, value: object) -> None:
+        raise ImportError("this file needs the runtime's primitives")
+
     _number_index = operator.index
 
     def _sequence_check(obj: object) -> bool:
@@ -179,7 +188,7 @@ defaults to zero) and a value yielded by the iterable argument.
 enumerate is useful for obtaining an indexed list:
     (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."""
 
-    __slots__ = ("_count", "_it")
+    __slots__ = ("_it", "_result", "_count")     # as enum_dealloc lets go of them: en_sit, en_result, the index
 
     def __new__(cls, *args: object, **kwds: object) -> object:   # enumerate_vectorcall
         nargs, names = len(args), list(kwds)
@@ -214,6 +223,7 @@ enumerate is useful for obtaining an indexed list:
         self = _bella_new_instance(cls)
         self._count = _number_index(start)
         self._it = iter(iterable)  # type: ignore[call-overload]
+        self._result = tuple([None, None])       # en_result: its own, to be used again; a constant could not be
         return self
 
     def __iter__(self) -> object:
@@ -223,6 +233,11 @@ enumerate is useful for obtaining an indexed list:
         item = next(self._it)
         count = self._count
         self._count = count + 1
+        if _held_once(self, "_result"):          # enum_next: the pair it gave last, when nothing else holds it. The item it
+            result = self._result                # gave stays alive in it until the next one, or the iterator, goes (RL-551)
+            _tuple_set(result, 0, count)
+            _tuple_set(result, 1, item)
+            return result
         return (count, item)
 
     def __reduce__(self, *args: object, **kwds: object) -> object:   # enum_reduce: the iterator it holds, and the count it stands at
@@ -268,13 +283,14 @@ raise a ValueError.
    >>> list(zip('abcdefg', range(3), range(4)))
    [('a', 0, 'b'), ('b', 1, 'c'), ('c', 2, 'd')]"""
 
-    __slots__ = ("_its", "_strict")
+    __slots__ = ("_its", "_result", "_strict")   # as zip_dealloc lets go of them: ittuple, result
 
     def __new__(cls, *args: object, **kwds: object) -> object:   # zip_new
         strict = _strict_argument(kwds, "zip")
         its = [iter(a) for a in args]  # type: ignore[call-overload]
         self = _bella_new_instance(cls)
         self._its = tuple(its)
+        self._result = tuple([None for _ in its])    # its own tuple, to be used again
         self._strict = strict
         return self
 
@@ -285,12 +301,16 @@ raise a ValueError.
         its = self._its
         if not its:
             raise StopIteration
-        result = []
+        # zip_next: the tuple it gave last when nothing else holds it, each place given its new item as the item comes
+        # (the old one is let go of then, before the next iterator is asked); a tuple of its own otherwise
+        again = _held_once(self, "_result")
+        recycled: object = self._result if again else None
+        fresh: list[object] = []
         i = 0
         for it in its:
             ended = False
             try:
-                result.append(next(it))
+                item = next(it)
             except StopIteration:
                 if not self._strict:
                     raise                        # the iterator's own StopIteration, as its tp_iternext left it
@@ -298,8 +318,13 @@ raise a ValueError.
             if ended:
                 _check_strict("zip", its, i)
                 raise StopIteration              # all are exhausted: next()'s own
+            if again:
+                _tuple_set(recycled, i, item)
+            else:
+                fresh.append(item)
+            del item
             i += 1
-        return tuple(result)
+        return recycled if again else tuple(fresh)
 
     def __reduce__(self, *args: object, **kwds: object) -> object:   # zip_reduce: the iterators it holds
         _no_arguments("zip.__reduce__", args, kwds)

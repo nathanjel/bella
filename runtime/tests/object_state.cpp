@@ -103,7 +103,7 @@ int main() {
         decref(o);
     }
 
-    std::cout << "4. released as the slots they are, each class's by name; a store keeps the new value first\n";
+    std::cout << "4. released in the order the built-in type declares them; a store keeps the new value first\n";
     {
         auto* M = make_class({.name = "M", .slots = Names{"b", "_a", "c"}, .hidden = {"_a", "c"}});
         auto* Nn = make_class({.name = "N", .bases = {M}, .slots = Names{"a", "d"}, .hidden = {"d"}});
@@ -149,6 +149,35 @@ int main() {
         decref(t);
         decref(q);
         show_deaths("after the object");
+    }
+    std::cout << "6. a member the type shows: the type's own cell, under any name, and read-only where the type says\n";
+    {
+        auto* Pt = make_class({.name = "partial", .slots = Names{"func", "args", "_p"}, .hidden = {"func", "args", "_p"},
+                               .members = {"func", "args"}, .readonly = {"args"}});
+        auto* Sh = make_class({.name = "Shadowed", .bases = {Pt}, .attrs = {{"func", Obj::small(99)}, {"saved", *Pt->attrs.find(N("args"))}}});
+        Instance* o = new_instance(Sh);
+        incref(o);
+        state_set(o, N("func"), Obj::small(1));
+        state_set(o, N("args"), Obj::small(2));
+        std::cout << "  the class has them: " << (Pt->lookup(N("func")) ? "True" : "False") << ' ' << (Pt->lookup(N("args")) ? "True" : "False") << ' '
+                  << (Pt->lookup(N("_p")) ? "True" : "False") << '\n';
+        attempt("the name a deriving class has", [&] { return get(o, "func"); });
+        attempt("the field", [&] { return field(o, "func"); });
+        attempt("the member under another name", [&] { return get(o, "saved"); });
+        attempt("a read-only member", [&] { return get(o, "args"); });
+        attempt("a store through it", [&] { return set(o, "args", Obj::small(5)); });
+        attempt("a delete through it", [&] { return del(o, "args"); });
+        attempt("the type's own store", [&] { state_set(o, N("args"), Obj::small(7)); return std::string("done"); });
+        attempt("read again", [&] { return get(o, "args"); });
+        Instance* q2 = new_instance(Pt);
+        incref(q2);
+        state_set(q2, N("func"), Obj::small(3));
+        attempt("a store through a member that takes one", [&] { return set(q2, "func", Obj::small(4)); });
+        attempt("its field", [&] { return field(q2, "func"); });
+        attempt("a delete through it", [&] { return del(q2, "func"); });
+        attempt("its field then", [&] { return field(q2, "func"); });
+        decref(q2);
+        decref(o);
     }
     decref(plain);
     decref(p);

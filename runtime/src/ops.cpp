@@ -1272,9 +1272,7 @@ Ref object_getattribute(Obj self, Args a) {
 }
 Ref i_bella_ga_get(Obj, Args a) {                // bootstrap.py's: a generic alias's own member
     positional_only(a, "_bella_ga_get", 2, 2);
-    const Str* name = intern(as_str(a.pos(1))->text);
-    if (state_cell(a.pos(0), name) != nullptr) return state_get(a.pos(0), name);
-    return instance_member(a.pos(0), name);
+    return instance_member(a.pos(0), intern(as_str(a.pos(1))->text));
 }
 
 // a getset with no setter says "not writable"; a member (PyMemberDef) "readonly attribute", whether the runtime has it as a
@@ -1351,12 +1349,26 @@ void raise_delete_failed(Obj obj, const Str* name, const std::string& what) {
     raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
 }
 
+// PyMember_SetOne on a member with Py_READONLY: "readonly attribute", which names nothing and holds no object, for a store
+// and a delete alike, by the name or through object.__setattr__ (RL-538). A Py_T_BOOL member takes True and False alone
+// and is never deleted (RL-543). `value` is Unset for a delete.
+void check_member_store(const SlotDescriptor* d, Obj value) {
+    if (d->readonly) raise_new("AttributeError", "readonly attribute");
+    if (!d->boolean) return;
+    if (value.is_unset()) raise_new("TypeError", "can't delete numeric/char attribute");
+    if (value != boolean(true) && value != boolean(false)) raise_new("TypeError", "attribute value type must be bool");
+}
+void refuse_readonly_member(Obj obj, const Str* name, Obj value) {
+    Obj found = type_lookup(type_of(obj), name);
+    if (is_kind(found, Kind::SlotDescriptor)) check_member_store(static_cast<SlotDescriptor*>(found.object()), value);
+}
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
         if (overrides(obj, "__setattr__")) {
             call_special(obj, "__setattr__", {Obj::of(name), value});
             return;
         }
+        refuse_readonly_member(obj, name, value);
         if (type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
         with_attribute_storage(obj, [&](auto* inst) {
             try {
@@ -1419,6 +1431,7 @@ void delattr(Obj obj, const Str* name) {
             call_special(obj, "__delattr__", {Obj::of(name)});
             return;
         }
+        refuse_readonly_member(obj, name, Obj{});
         if (type_lookup(type_of(obj), name).is_unset()) refuse_absent_data_descriptor(obj, name);
         with_attribute_storage(obj, [&](auto* inst) {
             try {

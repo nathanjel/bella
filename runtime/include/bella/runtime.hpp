@@ -902,6 +902,10 @@ Ref state_get(Obj obj, const Str* name);
 Ref optional_state(Obj obj, const Str* name);                // Unset when the field holds nothing
 void state_set(Obj obj, const Str* name, Obj value);
 void state_del(Obj obj, const Str* name);
+void check_member_store(const SlotDescriptor* d, Obj value);  // a member's own refusals: Py_READONLY, Py_T_BOOL; Unset: a delete
+void refuse_readonly_member(Obj obj, const Str* name, Obj value);   // the same, for the member a name finds
+Ref i_held_once(Obj, Args a);                               // (obj, name): nothing but the field holds its value
+Ref i_tuple_set(Obj, Args a);                               // (tuple, i, value): PyTuple_SET_ITEM and the old item let go
 Ref i_bella_state_get(Obj, Args a);                          // (obj, name), where the name is a value
 Ref i_bella_state_set(Obj, Args a);                          // (obj, name, value)
 void setattr(Obj obj, const Str* name, Obj value);

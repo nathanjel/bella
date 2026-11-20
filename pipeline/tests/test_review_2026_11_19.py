@@ -505,14 +505,11 @@ class E(Exception, metaclass=M):
     pass
 
 
-class Q(type):
-    @property
-    def __qualname__(cls):
-        return 5
-
-
-class F(Exception, metaclass=Q):
+class F(Exception):
     pass
+
+
+F.__qualname__ = "Renamed.Inside"      # a property of a metaclass under this name is refused when the metaclass is made (RL-562)
 
 
 class G(Exception):
@@ -522,6 +519,7 @@ class G(Exception):
 G.__module__ = 7
 for exc in (E("m"), F("f"), G("g"), E(), KeyError("k")):
     sys.__excepthook__(type(exc), exc, None)
+print("the five hook calls returned")   # reaches: the five hook calls returned
 sys.stderr = None
 raise SystemExit("bye on the C stream")
 '''),
@@ -670,6 +668,9 @@ def same(source: str) -> None:
         prog.write_text(source, encoding="utf-8")
         ref = subprocess.run([sys.executable, "prog.py"], capture_output=True, text=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
         got = subprocess.run([str(build(prog, "prog.py"))], capture_output=True, text=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
+    # a program says what it has to reach ("# reaches: text"): two runs that end alike before it prove nothing (RL-562)
+    for must in re.findall(r"# reaches: (.+)$", source, flags=re.MULTILINE):
+        assert must in ref.stdout, f"CPython never reached {must!r}:\n{ref.stdout}{ref.stderr}"
     have = (re.sub(r" at 0x[0-9a-f]+", "", got.stdout), got.returncode, _report(got.stderr))
     want = (re.sub(r" at 0x[0-9a-f]+", "", ref.stdout), ref.returncode, _report(ref.stderr))
     assert have == want, (f"\n--- compiled (exit {got.returncode})\n{got.stdout}{got.stderr}\n"

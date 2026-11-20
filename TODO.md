@@ -654,8 +654,17 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **For the author** (questions, not fixes; the variables of CPython's start-up were decided on 2026-11-20: `PYTHONWARNINGS`
   ignored for now, RL-483; of the others three honoured and the rest named as ignored, RL-527, C-8-16; `PYTHONIOENCODING`
   honoured and D-15 narrowed, RL-526, C-8-17; no colour in the runtime's report, D-28 widened, RL-528; the state of a built-in type that is written in Python has no name,
-  RL-507, C-3-76): whether a module-level object's `__del__` runs
-  at exit when `sys` still reaches the module's globals through a hook the program installed (RL-514; D-07 speaks of order only).
+  RL-507, C-3-76 and C-3-77): when a module-level object's `__del__` runs at exit if `sys` still reaches the module's globals through a
+  function the program put there (RL-514: measured on 2026-11-20, CPython does run it, at its last collection, after every module's
+  globals are cleared, so it can rarely do anything seen; the compiled program runs it while the modules are whole; D-07 speaks of
+  order only); a decimal literal longer than a stricter `PYTHONINTMAXSTRDIGITS` given at launch (RL-555: CPython refuses to compile
+  the main program, the compiled one converted the literal at the build).
+* **Open from review A23** (2026-11-20): a cell for each class that declares a slot of one name (RL-541: the model keys a slot by its
+  name, so two classes of one MRO share it; seen only through the two members' own `__get__`); `struct.Struct.__new__` with no format
+  (RL-549, with the Struct step below); `BytesIO.__sizeof__` and a buffered reader's with a deriving class's slots (RL-552, RL-553); a
+  deriving class's own `__dict__` property in `BytesIO.__getstate__` (under RL-548); and, as a sweep of its own, the order each
+  built-in type written in Python lets go of its fields against its C clear function (RL-550 set the rule, the declared order, and
+  checked `partial`, `enumerate` and `zip`).
 * **A step of its own:** the line of a traceback entry inside a statement of several lines (RL-494): CPython gives an attribute or a
   method call the line of the attribute's name, a decorator's call the decorator's line, a failed `assert` the line of its test,
   `raise (` ... `)` the line of the `raise`; the frontend gives each expression its first line. 17 of the reviewer's 140 constructs.

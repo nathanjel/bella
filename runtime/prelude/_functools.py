@@ -136,6 +136,7 @@ and keywords."""
 
     __module__ = "functools"
     __slots__ = ("func", "args", "keywords", "_p_phcount", "__dict__", "__weakref__")
+    __readonly__ = ("func", "args", "keywords")  # partial_memberlist's Py_READONLY (runtime/src/call.cpp, note_prelude_class)
 
     def __new__(*args: object, **kwds: object) -> partial:   # partial_new
         _new_receiver(args, partial, "functools.partial")
@@ -205,18 +206,14 @@ and keywords."""
             _set(self, "keywords", keywords)
         return self
 
-    def __setattr__(*args: object, **kwds: object) -> None:
-        _wrapper(args, kwds, partial, "__setattr__", 2)
+    def __setattr__(*args: object, **kwds: object) -> None:      # tp_setattro is PyObject_GenericSetAttr: the members say
+        _wrapper(args, kwds, partial, "__setattr__", 2)           # themselves that they are read-only
         self, name, value = args
-        if name in ("func", "args", "keywords"):
-            raise AttributeError("readonly attribute")
         object.__setattr__(self, name, value)  # type: ignore[arg-type]
 
     def __delattr__(*args: object, **kwds: object) -> None:
         _wrapper(args, kwds, partial, "__delattr__", 1)
         self, name = args
-        if name in ("func", "args", "keywords"):
-            raise AttributeError("readonly attribute")
         object.__delattr__(self, name)  # type: ignore[arg-type]
 
     def __call__(*args: object, **kwds: object) -> object:      # partial_call

@@ -64,7 +64,11 @@ What is modelled (design document, section 3, as revised by review rounds two an
   fields of the struct CPython's type does show, as members (``partial.func``): ``RefClass(members=...)`` names those
   of the hidden fields whose descriptor the class keeps. A program reads such a member by its name as it reads any
   slot, unless a class that derives from the type has its own attribute, slot or class attribute of the name, which
-  then shadows the member and still leaves the type's own code its field.
+  then shadows the member and still leaves the type's own code its field. A member may be read-only
+  (``RefClass(readonly=...)``, PyMemberDef's Py_READONLY): a store or a delete through it is an AttributeError, and
+  the type's own code stores the field as ever. A class with hidden fields releases its slots in the order it
+  declares them, which stands for the order of the C type's clear function (``partial_clear``: the function, the
+  arguments, the keywords); any other class releases its own sorted by name, as CPython sorts ``__slots__``.
 * ``CacheEntry.found`` is borrowed: it holds no count. The model checks the property the C++
   header relies on: no entry that a live class's version still validates names an object that
   dies, and no cached lookup reads a dead ``found``.
@@ -111,11 +115,12 @@ class ModelError(AssertionError):
 class SlotDescriptor:
     """Marker for a real ``__slots__`` member; a data descriptor by construction."""
 
-    __slots__ = ("name", "owner")
+    __slots__ = ("name", "owner", "readonly")
 
-    def __init__(self, name: str, owner: RefClass | None = None) -> None:
+    def __init__(self, name: str, owner: RefClass | None = None, readonly: bool = False) -> None:
         self.name = name
         self.owner = owner                  # the class that declares the slot; None: a built-in's native field
+        self.readonly = readonly            # PyMemberDef's Py_READONLY: no store and no delete through the member
 
     def __repr__(self) -> str:
         return f"<slot {self.name}>"
@@ -439,6 +444,7 @@ class RefClass:
         base_weaklist: bool | None = None,
         hidden: tuple[str, ...] = (),
         members: tuple[str, ...] = (),
+        readonly: tuple[str, ...] = (),
     ) -> None:
         self.name = name
         # tp_bases and tp_mro are objects, one each until they are replaced: `__bases__` is the tuple the class was made
@@ -486,7 +492,9 @@ class RefClass:
                 raise ValueError(f"{s!r} in __slots__ conflicts with class variable")
         for s in sorted(own_slots):                # type_new_slots sorts them; tp_members' order is the dict's
             if s not in self.hidden or s in self.members:
-                self.attrs[s] = SlotDescriptor(s, self)
+                self.attrs[s] = SlotDescriptor(s, self, s in readonly)
+        if not set(readonly) <= set(own_slots):
+            raise ValueError("a read-only member is one of the class's own __slots__")
         self.slot_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names() if n not in c.hidden))
         self.hidden_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names() if n in c.hidden))
         for p in self.promoted:
@@ -534,6 +542,12 @@ class RefClass:
 
     def _own_slot_names(self) -> tuple[str, ...]:
         return tuple(s for s in (self.slots or ()) if s != "__dict__")
+
+    def _release_order(self) -> tuple[str, ...]:
+        """Its own slots in the order an object lets go of them: a built-in type's fields as it declares them (its clear
+        function's order), a class's __slots__ sorted by name (type_new sorts them)."""
+        own = self._own_slot_names()
+        return own if self.hidden else tuple(sorted(own))
 
     def note_key(self, name: str) -> bool:
         """Records `name` in the shared keys; False when they are full and it is not there."""
@@ -783,7 +797,7 @@ class RefObject:
         its clear function has them; dict_traverse for a dict's entries)."""
         out: list[Any] = []
         for c in self.cls.mro:
-            for name in sorted(c._own_slot_names()):
+            for name in c._release_order():
                 out.append(self._slots_of(c).get(name, UNSET))
         for name in self.cls.native:
             if name == "__dict__":
@@ -820,7 +834,7 @@ class RefObject:
 
     def _clear_contents(self, late_weakrefs: bool = False) -> None:
         for c in self.cls.mro:
-            for name in sorted(c._own_slot_names()):     # CPython sorts each class's slots (type_new)
+            for name in c._release_order():              # CPython sorts each class's slots (type_new)
                 kept = self._slots_of(c)
                 v = kept.get(name, UNSET)
                 kept.set(name, UNSET)
@@ -1114,7 +1128,9 @@ class Runtime:
                 # entry holds the kind alone: no entry names a class or anything that does
                 cells = _member_cells(obj, found)
                 kind = STATE if cells is obj.state else SLOT
-                return _Plan(kind, None, cells[name], hook), entry(kind)
+                # a member a class has under another name (`saved = partial.args`) reads its own cell and is not cached:
+                # an entry is found by the name looked up, and reads the cell of that name
+                return _Plan(kind, None, cells[found.name], hook), (entry(kind) if found.name == name else None)
             assert isinstance(found, RefObject)
             if found.cls.lookup("__get__") is None:
                 # data descriptor without __get__: instance storage wins, then the descriptor itself
@@ -1264,10 +1280,12 @@ class Runtime:
         if hit is not None:
             found, _ = hit
             if isinstance(found, SlotDescriptor):
+                if found.readonly:
+                    raise AttributeError("readonly attribute")
                 cells = _member_cells(obj, found)
-                old = cells[name]
+                old = cells[found.name]             # the member's own name: a class may have it under another
                 incref(value)
-                cells[name] = value
+                cells[found.name] = value
                 decref(old)
                 return
             if is_data_descriptor(found):
@@ -1321,11 +1339,13 @@ class Runtime:
         if hit is not None:
             found, _ = hit
             if isinstance(found, SlotDescriptor):
+                if found.readonly:
+                    raise AttributeError("readonly attribute")
                 cells = _member_cells(obj, found)
-                old = cells[name]
+                old = cells[found.name]
                 if old is UNSET:
                     raise AttributeError(name)
-                cells[name] = UNSET
+                cells[found.name] = UNSET
                 decref(old)
                 return
             if is_data_descriptor(found):

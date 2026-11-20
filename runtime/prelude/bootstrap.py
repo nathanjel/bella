@@ -643,8 +643,6 @@ class FrozenImporter:
 # overriding __getattribute__ is [P2+], and a read here would find this class's own __doc__.
 
 _ga_absent = object()
-_ga_get = _bella_ga_get                          # a member, read past that forwarding
-_ga_set = _bella_state_set                       # a C function's store into its struct
 _GA_OWN = ('__class__', '__origin__', '__args__', '__unpacked__', '__parameters__',
            '__typing_unpacked_tuple_args__', '__mro_entries__', '__reduce_ex__', '__reduce__')
 
@@ -744,8 +742,8 @@ def _is_unpacked_typevartuple(arg):
 
 
 def _unpacked_tuple_args(arg):
-    if _ga_check(arg, GenericAlias) and _ga_get(arg, '__unpacked__') and _ga_get(arg, '__origin__') is tuple:
-        return _ga_get(arg, '__args__')
+    if _ga_check(arg, GenericAlias) and arg.__unpacked__ and arg.__origin__ is tuple:
+        return arg.__args__
     result = getattr(arg, '__typing_unpacked_tuple_args__', None)
     return result
 
@@ -806,26 +804,26 @@ def _subs_parameters(self, args, parameters, item):
 
 
 def _ga_parameters(self):
-    parameters = _ga_get(self, '_ga_parameters')
+    parameters = self._ga_parameters
     if parameters is None:
-        parameters = _make_parameters(_ga_get(self, '__args__'))
-        _ga_set(self, '_ga_parameters', parameters)
+        parameters = _make_parameters(self.__args__)
+        self._ga_parameters = parameters
     return parameters
 
 
 def _ga_unpacked_tuple_args(self):
-    if _ga_get(self, '__unpacked__') and _ga_get(self, '__origin__') is tuple:
-        return _ga_get(self, '__args__')
+    if self.__unpacked__ and self.__origin__ is tuple:
+        return self.__args__
     return None
 
 
 def _ga_make(cls, origin, args, starred=False):
     """setup_ga, and Py_GenericAlias with cls GenericAlias."""
     self = _bella_new_instance(cls)
-    _ga_set(self, '__origin__', origin)
-    _ga_set(self, '__args__', args if _ga_check(args, tuple) else (args,))
-    _ga_set(self, '__unpacked__', starred)
-    _ga_set(self, '_ga_parameters', None)
+    self.__origin__ = origin
+    self.__args__ = args if _ga_check(args, tuple) else (args,)
+    self.__unpacked__ = starred
+    self._ga_parameters = None
     return self
 
 
@@ -842,7 +840,7 @@ class generic_alias_iterator:
         self._ga_obj = None
         if obj is None:
             raise StopIteration
-        return _ga_make(GenericAlias, _ga_get(obj, '__origin__'), _ga_get(obj, '__args__'), True)
+        return _ga_make(GenericAlias, obj.__origin__, obj.__args__, True)
 
     def __reduce__(self):
         return (iter, (self._ga_obj,) if self._ga_obj is not None else ((),))
@@ -856,6 +854,7 @@ is (int,)."""
 
     __module__ = 'types'
     __slots__ = ('__origin__', '__args__', '__unpacked__', '_ga_parameters')
+    __readonly__ = ('__origin__', '__args__', '__unpacked__')   # bella: ga_members' Py_READONLY (runtime/src/call.cpp, note_prelude_class)
 
     def __new__(cls, *args, **kwds):
         if kwds:
@@ -864,37 +863,26 @@ is (int,)."""
             raise TypeError(f'GenericAlias expected 2 arguments, got {len(args)}')
         return _ga_make(cls, args[0], args[1])
 
-    def __setattr__(self, name, value):
-        # bella: the members are read-only, and the parameters' slot is not CPython's to show
-        if name in ('__origin__', '__args__', '__unpacked__'):
-            raise AttributeError('readonly attribute')
-        object.__setattr__(self, name, value)
-
-    def __delattr__(self, name):
-        if name in ('__origin__', '__args__', '__unpacked__'):
-            raise AttributeError('readonly attribute')
-        object.__delattr__(self, name)
-
     def __repr__(self):
         parts = []
-        for p in _ga_get(self, '__args__'):
+        for p in self.__args__:
             if type(p) is list:                        # a ParamSpec's list of type arguments
                 parts.append('[' + ', '.join([_typing_type_repr(x) for x in p]) + ']')
             else:
                 parts.append(_typing_type_repr(p))
         inner = ', '.join(parts) if parts else '()'    # tuple[()]
-        star = '*' if _ga_get(self, '__unpacked__') else ''
-        return star + _typing_type_repr(_ga_get(self, '__origin__')) + '[' + inner + ']'
+        star = '*' if self.__unpacked__ else ''
+        return star + _typing_type_repr(self.__origin__) + '[' + inner + ']'
 
     def __getitem__(self, item):
-        newargs = _subs_parameters(self, _ga_get(self, '__args__'), _ga_parameters(self), item)
-        return _ga_make(GenericAlias, _ga_get(self, '__origin__'), newargs, _ga_get(self, '__unpacked__'))
+        newargs = _subs_parameters(self, self.__args__, _ga_parameters(self), item)
+        return _ga_make(GenericAlias, self.__origin__, newargs, self.__unpacked__)
 
     def __hash__(self):
-        return hash(_ga_get(self, '__origin__')) ^ hash(_ga_get(self, '__args__'))
+        return hash(self.__origin__) ^ hash(self.__args__)
 
     def __call__(self, /, *args, **kwds):
-        obj = _ga_get(self, '__origin__')(*args, **kwds)
+        obj = self.__origin__(*args, **kwds)
         try:
             obj.__orig_class__ = self
         except (AttributeError, TypeError):
@@ -904,12 +892,12 @@ is (int,)."""
     def __eq__(self, other):
         if not _ga_check(other, GenericAlias):
             return NotImplemented
-        if _ga_get(self, '__unpacked__') != _ga_get(other, '__unpacked__'):
+        if self.__unpacked__ != other.__unpacked__:
             return False
-        a, b = _ga_get(self, '__origin__'), _ga_get(other, '__origin__')
+        a, b = self.__origin__, other.__origin__
         if not (a is b or a == b):                     # PyObject_RichCompareBool
             return False
-        return _ga_get(self, '__args__') == _ga_get(other, '__args__')
+        return self.__args__ == other.__args__
 
     def __ne__(self, other):
         if not _ga_check(other, GenericAlias):
@@ -935,7 +923,7 @@ is (int,)."""
         return _union_type_or(other, self)
 
     def __mro_entries__(self, bases, /):
-        return (_ga_get(self, '__origin__'),)
+        return (self.__origin__,)
 
     def __instancecheck__(self, instance, /):
         raise TypeError('isinstance() argument 2 cannot be a parameterized generic')
@@ -944,8 +932,8 @@ is (int,)."""
         raise TypeError('issubclass() argument 2 cannot be a parameterized generic')
 
     def __reduce__(self):
-        origin, args = _ga_get(self, '__origin__'), _ga_get(self, '__args__')
-        if _ga_get(self, '__unpacked__'):
+        origin, args = self.__origin__, self.__args__
+        if self.__unpacked__:
             return (next, (iter(_ga_make(GenericAlias, origin, args)),))
         return (type(self), (origin, args))
 
@@ -954,7 +942,7 @@ is (int,)."""
         return type(self).__reduce__(self)
 
     def __dir__(self):
-        names = dir(_ga_get(self, '__origin__'))
+        names = dir(self.__origin__)
         for name in _GA_OWN:
             if name not in names:
                 names.append(name)
@@ -999,9 +987,9 @@ Create a unique sentinel object with the given name."""
         if given is not None and not _ga_check(given, str):
             raise TypeError(f"sentinel() argument 'repr' must be str or None, not {_ga_type_name(given)}")
         self = _bella_new_instance(cls)
-        _ga_set(self, '_s_name', name)
-        _ga_set(self, '_s_module', _bella_caller_module())
-        _ga_set(self, '_s_repr', given)
+        self._s_name = name
+        self._s_module = _bella_caller_module()
+        self._s_repr = given
         return self
 
     def __repr__(self):
@@ -1052,7 +1040,6 @@ Create a unique sentinel object with the given name."""
 # (make_union alone makes one, as _bella_new_instance), and gives it __name__, __qualname__, __origin__ and
 # __parameters__ as getsets. type.__or__ and type.__ror__ are the runtime's and come here, as _union_type_or.
 
-_union_set = _bella_state_set
 _UNION_OWN = ('_union_hashable', '_union_unhashable', '_union_params')
 
 
@@ -1131,10 +1118,10 @@ class _UnionBuilder:
         if n == 1:
             return self.args[0]
         result = _bella_new_instance(Union)
-        _union_set(result, '__args__', tuple(self.args))
-        _union_set(result, '_union_hashable', frozenset(self.hashable))
-        _union_set(result, '_union_unhashable', None if self.unhashable is None else tuple(self.unhashable))
-        _union_set(result, '_union_params', None)
+        result.__args__ = tuple(self.args)
+        result._union_hashable = frozenset(self.hashable)
+        result._union_unhashable = None if self.unhashable is None else tuple(self.unhashable)
+        result._union_params = None
         return result
 
 
@@ -1169,7 +1156,7 @@ def _union_parameters(self):
     parameters = self._union_params
     if parameters is None:                             # union_init_parameters: once
         parameters = _make_parameters(self.__args__)
-        _union_set(self, '_union_params', parameters)
+        self._union_params = parameters
     return parameters
 
 
@@ -1212,20 +1199,7 @@ E.g. for int | str"""
 
     __module__ = 'typing'
     __slots__ = ('__args__',) + _UNION_OWN
-
-    def __setattr__(*args, **kwds):
-        _union_wrapper(args, kwds, '__setattr__', 2)
-        self, name, value = args
-        if name == '__args__':
-            raise AttributeError('readonly attribute')
-        object.__setattr__(self, name, value)
-
-    def __delattr__(*args, **kwds):
-        _union_wrapper(args, kwds, '__delattr__', 1)
-        self, name = args
-        if name == '__args__':
-            raise AttributeError('readonly attribute')
-        object.__delattr__(self, name)
+    __readonly__ = ('__args__',)                 # bella: union_members' Py_READONLY
 
     def __repr__(*args, **kwds):
         _union_wrapper(args, kwds, '__repr__', 0)

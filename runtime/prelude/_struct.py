@@ -403,6 +403,7 @@ class Struct:
     """Struct(format) --> compiled struct object"""
 
     __slots__ = ("__weakref__", "_codes", "_length", "_little", "format", "size")
+    __readonly__ = ("format", "size")            # s_members' Py_READONLY
 
     def __new__(cls, *args: object, **kwds: object) -> Struct:
         if cls is not Struct:
@@ -416,9 +417,9 @@ class Struct:
         self: Struct = _bella_new_instance(cls)
         text = _format_text(format)
         codes, size, length, little = _prepare(text)
-        object.__setattr__(self, "format", text)
+        _bella_state_set(self, "format", text)
         _bella_state_set(self, "_codes", codes)
-        object.__setattr__(self, "size", size)
+        _bella_state_set(self, "size", size)
         _bella_state_set(self, "_length", length)
         _bella_state_set(self, "_little", little)
         return self
@@ -431,14 +432,10 @@ class Struct:
             if not same:
                 _bella_refuse("Struct.__init__() with another format than __new__()'s (a FutureWarning in 3.15)")
 
-    def __setattr__(self, name: str, value: object) -> None:
-        if name in ("format", "size"):
-            raise AttributeError("readonly attribute")
-        object.__setattr__(self, name, value)
+    def __setattr__(self, name: str, value: object) -> None:     # tp_setattro is PyObject_GenericSetAttr: the two members
+        object.__setattr__(self, name, value)                     # say themselves that they are read-only
 
     def __delattr__(self, name: str) -> None:
-        if name in ("format", "size"):
-            raise AttributeError("readonly attribute")
         object.__delattr__(self, name)
 
     def __repr__(self) -> str:
