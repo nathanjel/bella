@@ -209,11 +209,10 @@ def _compiled(source: str) -> subprocess.CompletedProcess[str]:
 def test_fields_a_program_wrote_into_a_segment_or_an_iterator() -> None:
     if shutil.which("g++") is None:
         return
-    got = _compiled(FIELDS_READ)
-    assert (got.returncode, got.stdout) == (0, "abc\nbc\n''\n''\nIndexError string index out of range\n"), got
-    for source in FIELDS_STOP:
-        got = _compiled(source)
-        assert (got.returncode, got.stdout) == (70, "start\n") and "whose fields the program changed" in got.stderr, (source, got)
+    # Since 2026-11-20 (RL-507) these fields have no names: each store is the AttributeError CPython raises, and the
+    # program ends there on both sides. Before, a store reached the field and the runtime stopped by name.
+    for source in [FIELDS_READ, *FIELDS_STOP]:
+        same(source)
 
 
 def test_numbers_from_a_str() -> None:

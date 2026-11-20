@@ -992,6 +992,7 @@ void dunder_args(Obj self, Args a, const char* name, std::size_t n);
 bool presents_as_builtin(Obj f);
 bool is_callable(Obj v);                         // PyCallable_Check
 bool immutable_type(const ClassObject* c);
+std::string module_text(const ClassObject* c);               // a class's module as text: its dict's entry, or a static type's tp_name's
 bool c_type(const ClassObject* c);                           // a type of CPython's: static, or one the prelude presents
 void note_prelude_class(const ClassObject* c);    // a class the prelude writes in Python for one CPython has in C
 // type(v) and v.__class__: the runtime refuses an object it cannot present as CPython's yet (a

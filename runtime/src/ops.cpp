@@ -1178,6 +1178,9 @@ Ref getattr_impl(Obj obj, const Str* name) {
         Ref target = Ref::share(Obj::of(r->target));
         return getattr(target.get(), name);
     }
+    // union_getattro's cls_attrs: a union's __module__ is its type's, which no entry of the type's dict holds
+    if (obj.is_object() && types().union_ != nullptr && type_of(obj) == types().union_ && name == intern("__module__"))
+        return getattr(Obj::of(types().union_), name);
     if (obj.is_object() && obj.object()->cls->forwards_attributes && !alias_keeps(name)) {
         Ref origin = instance_member(obj, intern("__origin__"));
         return getattr(origin.get(), name);

@@ -1277,9 +1277,8 @@ Ref object_hash(Obj self, Args) {
 }
 Ref object_repr(Obj self, Args) {
     ClassObject* c = type_of(self);
-    std::string mod;
-    if (const Obj* m = c->attrs.find(N("__module__")))
-        if (const Str* ms = as_str(*m); ms != nullptr && ms->text != "builtins") mod = ms->text + ".";
+    std::string mod = module_text(c);            // object_repr: the type's module, which a static type's tp_name says
+    mod = mod.empty() || mod == "builtins" ? "" : mod + ".";
     char buf[32];
     std::snprintf(buf, sizeof buf, "%p", static_cast<void*>(self.object()));
     return str_new("<" + mod + c->qualname + " object at " + buf + ">");

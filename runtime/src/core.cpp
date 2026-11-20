@@ -713,10 +713,17 @@ Ref frozendict_empty(ClassObject* cls) {
     return own(d);
 }
 
-std::string fully_qualified_name(const ClassObject* c) {
+// A class's module as type_module answers it: its dict's entry, or, for a static type, which has none, its tp_name's
+// prefix ("" where there is neither)
+std::string module_text(const ClassObject* c) {
     if (const Obj* mod = c->attrs.find(intern("__module__")))
-        if (const Str* ms = as_str(*mod); ms != nullptr && ms->text != "builtins" && ms->text != "__main__")
-            return ms->text + "." + c->qualname;
+        if (const Str* ms = as_str(*mod)) return ms->text;
+    if (c_type(c)) return c->name_prefix > 0 ? c->name.substr(0, c->name_prefix - 1) : "builtins";
+    return {};
+}
+std::string fully_qualified_name(const ClassObject* c) {
+    std::string module = module_text(c);
+    if (!module.empty() && module != "builtins" && module != "__main__") return module + "." + c->qualname;
     return c->qualname;
 }
 namespace {

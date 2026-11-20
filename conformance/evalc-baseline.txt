@@ -75,6 +75,7 @@ C-3-73_a_mappingproxys_operators.py
 C-3-74_comparisons_that_decline.py
 C-3-75_generator_throw_with_a_value_and_a_traceback.py
 C-3-76_the_state_of_a_built_in_type_has_no_name.py
+C-3-77_the_members_a_built_in_type_shows.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py
