@@ -530,7 +530,12 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          replaces the exit walk, which today finalises a list's items first to last and in breadth-first
          order, where CPython's teardown releases what it can by reference count. `_abc` takes real weak references then, which only the collector can tell
          from today's strong ones (a class is in a cycle with its own mro). With it, a caught exception
-         keeps its frame's locals (RL-222, decided with D-12).
+         keeps its frame's locals (RL-222, decided with D-12). With it too (RL-514, the author's decision of 2026-11-20:
+         exact, with the collector): the exit is `finalize_modules`' sequence, so what `sys` and `builtins` still reach
+         when the modules leave `sys.modules` (a module's globals through a function stored in `sys`) is finalised at the
+         last collection, after every module's globals are None, and not while the modules are whole as the exit walk
+         does today; a case first (a finaliser that asks a module's global prints nothing then, one that holds what it
+         needs prints).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
     design's level table says every L2 expression carries the oracle's type. Closes in phase 2,
     when a pass produces `Fact.TYPES` (none does today, so none can require it). Until then no
@@ -654,11 +659,9 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **For the author** (questions, not fixes; the variables of CPython's start-up were decided on 2026-11-20: `PYTHONWARNINGS`
   ignored for now, RL-483; of the others three honoured and the rest named as ignored, RL-527, C-8-16; `PYTHONIOENCODING`
   honoured and D-15 narrowed, RL-526, C-8-17; no colour in the runtime's report, D-28 widened, RL-528; the state of a built-in type that is written in Python has no name,
-  RL-507, C-3-76 and C-3-77): when a module-level object's `__del__` runs at exit if `sys` still reaches the module's globals through a
-  function the program put there (RL-514: measured on 2026-11-20, CPython does run it, at its last collection, after every module's
-  globals are cleared, so it can rarely do anything seen; the compiled program runs it while the modules are whole; D-07 speaks of
-  order only); a decimal literal longer than a stricter `PYTHONINTMAXSTRDIGITS` given at launch (RL-555: CPython refuses to compile
-  the main program, the compiled one converted the literal at the build).
+  RL-507, C-3-76 and C-3-77; when a finaliser runs at exit if `sys` still reaches its module's globals, RL-514: exact, with the
+  collector, listed there): a decimal literal longer than a stricter `PYTHONINTMAXSTRDIGITS` given at launch (RL-555: CPython refuses
+  to compile the main program, the compiled one converted the literal at the build).
 * **Open from review A23** (2026-11-20): a cell for each class that declares a slot of one name (RL-541: the model keys a slot by its
   name, so two classes of one MRO share it; seen only through the two members' own `__get__`); `struct.Struct.__new__` with no format
   (RL-549, with the Struct step below); `BytesIO.__sizeof__` and a buffered reader's with a deriving class's slots (RL-552, RL-553); a
