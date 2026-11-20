@@ -16,6 +16,7 @@ Run under pytest or directly: python3 -m pipeline.tests.test_runtime_reports
 from __future__ import annotations
 
 import os
+import pty
 import re
 import shutil
 import subprocess
@@ -161,6 +162,90 @@ def test_a_module_of_the_standard_library_that_is_not_there() -> None:
                     ["ModuleNotFoundError: the program's own words", "ModuleNotFoundError: No module named 'bz2'"]], last
     assert [line for line in _report(ref.stderr) if not line.startswith("ModuleNotFoundError")] == \
            [line for line in _report(got.stderr) if not line.startswith("ModuleNotFoundError")], (got, ref)
+
+
+# ---- colour (D-28 as widened on 2026-11-20; review log RL-528) ----
+# CPython's report of an uncaught exception is traceback's, and traceback colours it: at a terminal, and anywhere when
+# PYTHON_COLORS=1 or FORCE_COLOR is set (Lib/_colorize.py, can_colorize). The runtime's own report never has colour, as the
+# report CPython prints without traceback has none. What a program asks traceback's own functions to print has none on
+# either side.
+COLOURED = r"""
+import sys
+import traceback
+
+
+def total(rows: list[int]) -> int:
+    return sum(rows) // len(rows)
+
+
+if "asked" in sys.argv:
+    try:
+        total([])
+    except ZeroDivisionError:
+        traceback.print_exc()
+    sys.exit(3)
+total([])
+"""
+ESCAPE = "\x1b["
+
+
+def _run_with_a_terminal(cmd: list[str], env: dict[str, str], cwd: str, terminal: bool) -> tuple[str, int]:
+    """Standard error on a pseudo-terminal, or in a pipe; what was written there, and the status."""
+    if not terminal:
+        done = subprocess.run(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=False)
+        return done.stderr, done.returncode
+    master, slave = pty.openpty()
+    with subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=slave) as proc:
+        os.close(slave)
+        data = b""
+        while True:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:                      # the other end is closed: the program is over
+                break
+            if not chunk:
+                break
+            data += chunk
+        os.close(master)
+        status = proc.wait()
+    return data.decode().replace("\r\n", "\n"), status
+
+
+def _coloured(text: str) -> list[str]:
+    return mask_stderr(re.sub(r'"[^"]*/([^"/]+)"', r'"\1"', text)).splitlines()
+
+
+def test_the_runtimes_report_has_no_colour() -> None:
+    if shutil.which("g++") is None:
+        return
+    settings: list[tuple[bool, dict[str, str]]] = [
+        (True, {}), (True, {"PYTHON_COLORS": "1"}), (True, {"FORCE_COLOR": "1"}), (True, {"NO_COLOR": "1"}), (True, {"PYTHON_COLORS": "0"}),
+        (True, {"TERM": "dumb"}), (True, {"NO_COLOR": "1", "FORCE_COLOR": "1"}), (True, {"PYTHON_COLORS": "1", "NO_COLOR": "1"}),
+        (False, {}), (False, {"PYTHON_COLORS": "1"}), (False, {"FORCE_COLOR": "1"}), (False, {"FORCE_COLOR": "1", "TERM": "dumb"})]
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_text(COLOURED, encoding="utf-8")
+        exe = str(build(prog, "prog.py"))
+        base = {name: value for name, value in os.environ.items() if not name.startswith("PYTHON") and name not in ("NO_COLOR", "FORCE_COLOR")}
+        base |= {"PYTHONHASHSEED": "0", "TERM": "xterm-256color"}
+        plain, status = _run_with_a_terminal([sys.executable, "prog.py"], base | {"NO_COLOR": "1"}, tmp, True)
+        assert status == 1 and ESCAPE not in plain and "ZeroDivisionError" in plain, plain
+        coloured = 0
+        for terminal, more in settings:
+            env = base | more
+            ref, _ = _run_with_a_terminal([sys.executable, "prog.py"], env, tmp, terminal)
+            got, got_status = _run_with_a_terminal([exe], env, tmp, terminal)
+            coloured += ESCAPE in ref
+            assert ESCAPE not in got, (terminal, more, got)
+            assert (_coloured(got), got_status) == (_coloured(plain), 1), (terminal, more, got)
+            # what the program asks traceback for is the same on both sides, and plain: only the report of an exception
+            # nothing caught asks whether it may colour (traceback._print_exception_bltin)
+            asked = [_run_with_a_terminal([*cmd, "asked"], env, tmp, terminal) for cmd in ([sys.executable, "prog.py"], [exe])]
+            assert (_coloured(asked[0][0]), asked[0][1]) == (_coloured(asked[1][0]), asked[1][1]), (terminal, more, asked)
+            assert asked[0][1] == 3 and ESCAPE not in asked[0][0] and ESCAPE not in asked[1][0], (terminal, more, asked)
+        # CPython colours in seven of them: a terminal; PYTHON_COLORS=1 at a terminal, in a pipe and over NO_COLOR; FORCE_COLOR
+        # at a terminal, in a pipe and over TERM=dumb
+        assert coloured == 7, coloured
 
 
 if __name__ == "__main__":
