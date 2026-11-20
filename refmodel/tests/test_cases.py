@@ -1569,3 +1569,82 @@ def test_the_state_of_a_built_in_type_has_no_name() -> None:
         decref(p)
     finally:
         O.HEAP = saved
+
+
+def test_a_member_cpython_shows_reads_the_types_own_field() -> None:
+    """RL-507, the members: partial's func, args and keywords are fields of its struct that the type shows. A program
+    reads one by its name; a class that derives from partial and has its own `func`, as a class attribute or a slot,
+    shadows the member and leaves the call its field. The model against CPython's functools.partial."""
+    import functools
+
+    from refmodel import objects as O
+
+    class Shadowed(functools.partial[int]):
+        func = str                                                  # type: ignore[assignment]
+
+    class Slotted(functools.partial[int]):
+        __slots__ = ("func",)
+
+    shadowed, slotted, plain = Shadowed(abs, -3), Slotted(abs, -4), functools.partial(abs, -5)
+    seen: list[object] = [plain.func is abs, shadowed.func is str, shadowed(), functools.partial.func.__get__(shadowed) is abs]  # type: ignore[attr-defined]
+    try:
+        slotted.func
+        seen.append("the slot holds something")
+    except AttributeError:
+        seen.append("the slot is empty")
+    seen.append(slotted())
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        rt = Runtime()
+        P = RefClass("partial", slots=("func", "_p_phcount"), hidden=("func", "_p_phcount"), members=("func",), heap=heap)
+        S = RefClass("Shadowed", (P,), attrs={"func": "str"}, heap=heap)
+        Q = RefClass("Slotted", (P,), slots=("func",), heap=heap)
+        assert P.lookup("func") is not None and P.lookup("_p_phcount") is None and P.hidden_fields == ("func", "_p_phcount")
+        assert Q.slot_fields == ("func",) and P.slot_fields == ()
+        objects = {}
+        for cls, value in ((P, -5), (S, -3), (Q, -4)):
+            o = objects[cls.name] = RefObject(cls)
+            incref(o)
+            rt.state_set(o, "func", "abs")                          # partial_new's own stores
+            rt.state_set(o, "_p_phcount", value)
+
+        def call(o: RefObject) -> int:                              # partial_call: the struct's fields, whatever the class has
+            assert rt.state_get(o, "func") == "abs"
+            return abs(rt.state_get(o, "_p_phcount"))
+
+        site = Site(heap)
+        got: list[object] = [rt.getattr(objects["partial"], "func", site) == "abs", rt.getattr(objects["Shadowed"], "func", site) == "str",
+                             call(objects["Shadowed"]), rt.state_get(objects["Shadowed"], "func") == "abs"]
+        try:
+            rt.getattr(objects["Slotted"], "func", site)
+            got.append("the slot holds something")
+        except AttributeError:
+            got.append("the slot is empty")
+        got.append(call(objects["Slotted"]))
+        assert got == seen, (got, seen)
+        hits = site.hits
+        assert rt.getattr(objects["partial"], "func", site) == "abs" and site.hits == hits + 1       # the member's read is cached
+        # a member is a slot of the type to a program: a store and a delete through it reach the field
+        rt.setattr(objects["partial"], "func", "other")
+        assert rt.state_get(objects["partial"], "func") == "other" and rt.getattr(objects["partial"], "func", site) == "other"
+        rt.delattr(objects["partial"], "func")
+        for read in (lambda: rt.getattr(objects["partial"], "func", site), lambda: rt.state_get(objects["partial"], "func")):
+            try:
+                read()
+                raise AssertionError("deleted")
+            except AttributeError:
+                pass
+        # the slot of the class that derives is its own cell
+        rt.setattr(objects["Slotted"], "func", "mine")
+        assert rt.getattr(objects["Slotted"], "func") == "mine" and rt.state_get(objects["Slotted"], "func") == "abs"
+        try:
+            RefClass("W", slots=("x", "y"), hidden=("x",), members=("y",), heap=heap)
+            raise AssertionError("a member is a hidden field")
+        except ValueError:
+            pass
+        for o in objects.values():
+            decref(o)
+    finally:
+        O.HEAP = saved

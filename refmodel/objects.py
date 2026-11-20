@@ -60,7 +60,11 @@ What is modelled (design document, section 3, as revised by review rounds two an
   class has no descriptor for it: no lookup by name finds it, ``getattr``, ``setattr`` and ``delattr`` under that
   name are the object's own business (its ``__dict__``, a slot or a property of a class that derives from the type),
   and only the type's own code reaches the field, through ``Runtime.state_get``, ``state_set`` and ``state_del``,
-  which run no hook of any class. A hidden field and a program's attribute of the same name are two things.
+  which run no hook of any class. A hidden field and a program's attribute of the same name are two things. Some
+  fields of the struct CPython's type does show, as members (``partial.func``): ``RefClass(members=...)`` names those
+  of the hidden fields whose descriptor the class keeps. A program reads such a member by its name as it reads any
+  slot, unless a class that derives from the type has its own attribute, slot or class attribute of the name, which
+  then shadows the member and still leaves the type's own code its field.
 * ``CacheEntry.found`` is borrowed: it holds no count. The model checks the property the C++
   header relies on: no entry that a live class's version still validates names an object that
   dies, and no cached lookup reads a dead ``found``.
@@ -107,10 +111,11 @@ class ModelError(AssertionError):
 class SlotDescriptor:
     """Marker for a real ``__slots__`` member; a data descriptor by construction."""
 
-    __slots__ = ("name",)
+    __slots__ = ("name", "owner")
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, owner: RefClass | None = None) -> None:
         self.name = name
+        self.owner = owner                  # the class that declares the slot; None: a built-in's native field
 
     def __repr__(self) -> str:
         return f"<slot {self.name}>"
@@ -433,6 +438,7 @@ class RefClass:
         dict_kind: str | None = None,
         base_weaklist: bool | None = None,
         hidden: tuple[str, ...] = (),
+        members: tuple[str, ...] = (),
     ) -> None:
         self.name = name
         # tp_bases and tp_mro are objects, one each until they are replaced: `__bases__` is the tuple the class was made
@@ -472,12 +478,15 @@ class RefClass:
         self.hidden: frozenset[str] = frozenset(hidden)
         if not self.hidden <= set(own_slots):
             raise ValueError("a hidden field is one of the class's own __slots__")
+        self.members: frozenset[str] = frozenset(members)      # of the hidden fields, those CPython's type shows
+        if not self.members <= self.hidden:
+            raise ValueError("a member is one of the class's hidden fields")
         for s in own_slots:
-            if s in self.attrs and s not in self.hidden:
+            if s in self.attrs and (s not in self.hidden or s in self.members):
                 raise ValueError(f"{s!r} in __slots__ conflicts with class variable")
         for s in sorted(own_slots):                # type_new_slots sorts them; tp_members' order is the dict's
-            if s not in self.hidden:
-                self.attrs[s] = SlotDescriptor(s)
+            if s not in self.hidden or s in self.members:
+                self.attrs[s] = SlotDescriptor(s, self)
         self.slot_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names() if n not in c.hidden))
         self.hidden_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names() if n in c.hidden))
         for p in self.promoted:
@@ -648,6 +657,12 @@ def is_data_descriptor(found: Any) -> bool:
 # ---------------------------------------------------------------------------------------------
 # Objects
 # ---------------------------------------------------------------------------------------------
+
+def _member_cells(obj: RefObject, member: SlotDescriptor) -> dict[str, Any]:
+    """Where a member reads and stores: among the object's inline values, or in its state when the class that declares
+    the slot keeps it as a field of the built-in type's own (a member CPython's type shows: partial's func)."""
+    return obj.state if member.owner is not None and member.name in member.owner.hidden else obj.inline
+
 
 class _SlotsOf:
     """The cells of one class's own slots in an object: a hidden one is in the object's state, any other among its
@@ -914,6 +929,7 @@ def weak_ref(target: RefObject, callback: Any = None) -> RefWeak:
 
 DATA_DESCRIPTOR = "DataDescriptor"
 SLOT = "Slot"
+STATE = "State"                  # a member whose cell is a field of the built-in type's own (RefClass.members)
 FIELD = "Field"
 INSTANCE_DICT = "InstanceDict"
 CLASS_ATTR = "ClassAttr"
@@ -1094,7 +1110,11 @@ class Runtime:
         # 1. data descriptor on the class (slots are data descriptors)
         if hit is not None and is_data_descriptor(found):
             if isinstance(found, SlotDescriptor):
-                return _Plan(SLOT, None, obj.inline[name], hook), entry(SLOT)
+                # which cell is the class's matter (the member's owner is of its MRO), so the version covers it and the
+                # entry holds the kind alone: no entry names a class or anything that does
+                cells = _member_cells(obj, found)
+                kind = STATE if cells is obj.state else SLOT
+                return _Plan(kind, None, cells[name], hook), entry(kind)
             assert isinstance(found, RefObject)
             if found.cls.lookup("__get__") is None:
                 # data descriptor without __get__: instance storage wins, then the descriptor itself
@@ -1133,11 +1153,13 @@ class Runtime:
             return None                 # the found object's own class changed (gained __get__ or __set__)
         hook_hit = cls.lookup("__getattr__")
         hook = hook_hit[0] if hook_hit is not None else None   # covered by the class version
-        if e.kind in (SLOT, FIELD) and name not in obj.inline:
+        if (e.kind in (SLOT, FIELD) and name not in obj.inline) or (e.kind == STATE and name not in obj.state):
             # the C++ analogue reads a field offset from another layout (review log RL-23)
             raise ModelError(f"unsound cache: {name} cached as {e.kind} for a layout without that field")
         if e.kind == SLOT:
             return _Plan(SLOT, None, obj.inline[name], hook)
+        if e.kind == STATE:
+            return _Plan(STATE, None, obj.state[name], hook)
         if e.kind == FIELD:
             if obj.exposed:
                 return None
@@ -1183,7 +1205,7 @@ class Runtime:
                         return self._call_get(found, obj)
                     finally:
                         decref(found)
-                if plan.kind == SLOT and plan.value is UNSET:
+                if plan.kind in (SLOT, STATE) and plan.value is UNSET:
                     raise AttributeError(name)
                 return plan.value
             except AttributeError:
@@ -1242,9 +1264,10 @@ class Runtime:
         if hit is not None:
             found, _ = hit
             if isinstance(found, SlotDescriptor):
-                old = obj.inline[name]
+                cells = _member_cells(obj, found)
+                old = cells[name]
                 incref(value)
-                obj.inline[name] = value
+                cells[name] = value
                 decref(old)
                 return
             if is_data_descriptor(found):
@@ -1298,10 +1321,11 @@ class Runtime:
         if hit is not None:
             found, _ = hit
             if isinstance(found, SlotDescriptor):
-                old = obj.inline[name]
+                cells = _member_cells(obj, found)
+                old = cells[name]
                 if old is UNSET:
                     raise AttributeError(name)
-                obj.inline[name] = UNSET
+                cells[name] = UNSET
                 decref(old)
                 return
             if is_data_descriptor(found):
