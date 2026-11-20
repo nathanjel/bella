@@ -661,11 +661,10 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
-* **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78): `struct.Struct.__new__` with no format
-  (RL-549, with the Struct step below); a
-  deriving class's own `__dict__` property in `BytesIO.__getstate__` (under RL-548); and, as a sweep of its own, the order each
+* **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too):
+  `struct.Struct.__new__` with no format (RL-549, with the Struct step below); and, as a sweep of its own, the order each
   built-in type written in Python lets go of its fields against its C clear function (RL-550 set the rule, the declared order, and
-  checked `partial`, `enumerate` and `zip`).
+  checked `partial`, `enumerate` and `zip`), the place of the weak references among them (RL-565).
 * **A step of its own:** the line of a traceback entry inside a statement of several lines (RL-494): CPython gives an attribute or a
   method call the line of the attribute's name, a decorator's call the decorator's line, a failed `assert` the line of its test,
   `raise (` ... `)` the line of the `raise`; the frontend gives each expression its first line. 17 of the reviewer's 140 constructs.

@@ -2940,6 +2940,7 @@ Ref i_bella_new_instance(Obj, Args a) {
 
 // What a class statement leaves that a type written in C does not have; the layout is held elsewhere
 Ref instance_dict_of(Obj self) { return instance_dict_getset()->get(self); }
+void instance_dict_set(Obj self, Obj d) { instance_dict_getset()->set(self, d); }
 Ref int_from_number(Obj x) { return number_long(x); }
 void present_native_class(ClassObject* c, const std::string& module);
 // Objects/structseq.c, under bootstrap.py's _bella_structseq: the fields of the sequence are the tuple's, those past it a

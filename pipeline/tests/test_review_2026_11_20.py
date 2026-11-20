@@ -294,6 +294,35 @@ for kind, state in ((io.BytesIO, (b"x", 0)), (io.StringIO, ("x", None, 0))):
     c = kind()
     print(kind.__name__, c.__getstate__()[-1], vars(c), c.__getstate__()[-1])
 '''),
+    ('RL-548', "a stream's state reads and replaces the dict it has, whatever a deriving class has under __dict__", r'''
+import io
+
+class B(io.BytesIO):
+    __dict__ = property(lambda self: {"lie": True})
+
+b = B(b"ab")
+print(b.__getstate__())
+b.x = 1
+print(b.__getstate__(), b.__dict__)
+b.__setstate__((b"cd", 0, {"given": 1}))
+print(b.__getstate__(), b.x, b.given)
+c = B()
+c.__setstate__((b"cd", 0, {"g": 2}))
+print(c.__getstate__(), c.g, c.__dict__)
+
+class S(io.StringIO):
+    __dict__ = property(lambda self: {"lie": True})
+
+s = S("ab")
+print(s.__getstate__())
+s.y = 2
+print(s.__getstate__(), s.__dict__)
+s.__setstate__(("cd", None, 0, {"given": 1}))
+print(s.__getstate__(), s.y, s.given)
+t = S()
+t.__setstate__(("cd", None, 0, {"g": 1}))
+print(t.__getstate__(), t.g)
+'''),
     ('RL-541', "A second subclass's same-named slot overwrites the first subclass's slot", r'''
 import collections
 

@@ -1230,6 +1230,7 @@ Ref i_bella_ga_get(Obj, Args a);
 Ref object_getattribute(Obj self, Args a);
 Ref instance_dict_of(Obj self);                  // the __dict__ of a class's instance, by its getset
 void drop_instance_dict(Obj self);               // the instance has no dict again, as when it was made (object.hpp's drop_dict)
+void instance_dict_set(Obj self, Obj d);         // the same getset's store: the given dict is the instance's from now on
 Ref i_bella_is_builtin(Obj, Args a);
 Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives

@@ -22,6 +22,7 @@ try:
     _sys                                         # noqa: B018  # the system calls, by name (posix.cpp)
     _io_call                                     # noqa: B018  # the runtime's part, by name
     _has_dict                                    # noqa: B018  # the C's self->dict is not NULL
+    _own_dict                                    # noqa: B018  # the C's self->dict, read or (with a second argument) replaced
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -36,6 +37,7 @@ except NameError:
     _sys: Callable[..., Any] = _missing
     _io_call: Callable[..., Any] = _missing
     _has_dict: Callable[..., bool] = _missing
+    _own_dict: Callable[..., Any] = _missing
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 _ABSENT = object()
@@ -2282,8 +2284,9 @@ class BytesIO(_BufferedIOBase):
         _noargs("BytesIO.__getstate__", args, kwds)
         self: BytesIO = args[0]  # type: ignore[assignment]
         value = BytesIO.getvalue(self)
-        # bytesio_getstate: a copy of the dict the object has, None while it has none (an empty one is a dict: RL-548)
-        return value, self._b_pos, (dict(self.__dict__) if _has_dict(self) else None)  # type: ignore[attr-defined]
+        # bytesio_getstate: a copy of the dict the object has, None while it has none (an empty one is a dict: RL-548). The
+        # C reads its field, so a deriving class's own `__dict__` is not asked
+        return value, self._b_pos, (dict(_own_dict(self)) if _has_dict(self) else None)
 
     def __setstate__(*args: object, **kwds: object) -> None:  # noqa: N805
         state = _one("BytesIO.__setstate__", args, kwds)
@@ -2303,9 +2306,9 @@ class BytesIO(_BufferedIOBase):
             if not isinstance(d, dict):
                 raise TypeError("third item of state should be a dict, got a " + _tp_name(d))
             if _has_dict(self):                  # bytesio_setstate: PyDict_Update into the dict it has (RL-547),
-                dict.update(self.__dict__, d)    # type: ignore[attr-defined]
+                dict.update(_own_dict(self), d)
             else:                                # or the given dict itself when it has none
-                self.__dict__ = d  # type: ignore[attr-defined]
+                _own_dict(self, d)
 
     def __sizeof__(*args: object, **kwds: object) -> int:  # noqa: N805
         _noargs("BytesIO.__sizeof__", args, kwds)
@@ -3457,7 +3460,7 @@ class StringIO(_TextIOBase):
         _noargs("StringIO.__getstate__", args, kwds)
         self: StringIO = args[0]  # type: ignore[assignment]
         value = StringIO.getvalue(self)
-        return value, self._i_readnl, self._e_pos, (dict(self.__dict__) if _has_dict(self) else None)  # type: ignore[attr-defined]
+        return value, self._i_readnl, self._e_pos, (dict(_own_dict(self)) if _has_dict(self) else None)
 
     def __setstate__(*args: object, **kwds: object) -> None:  # noqa: N805
         state = _one("StringIO.__setstate__", args, kwds)
@@ -3479,9 +3482,9 @@ class StringIO(_TextIOBase):
             if not isinstance(d, dict):
                 raise TypeError("fourth item of state should be a dict, got a " + _tp_name(d))
             if _has_dict(self):                  # stringio_setstate: as bytesio_setstate
-                dict.update(self.__dict__, d)    # type: ignore[attr-defined]
+                dict.update(_own_dict(self), d)
             else:
-                self.__dict__ = d  # type: ignore[attr-defined]
+                _own_dict(self, d)
 
     @property
     def closed(self) -> bool:

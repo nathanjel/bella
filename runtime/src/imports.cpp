@@ -1006,6 +1006,12 @@ Ref i_has_dict(Obj, Args a) {                    // the C's self->dict is not NU
     with_attribute_storage(a.pos(0), [&](auto* inst) { has = inst->dict != nullptr || inst->exposed() || !inst->order.empty(); });
     return Ref::steal(boolean(has));
 }
+Ref i_own_dict(Obj, Args a) {                    // the C's self->dict, read or replaced: the field, whatever a class has under __dict__
+    positional_only(a, "_own_dict", 1, 2);
+    if (a.npos == 1) return instance_dict_of(a.pos(0));
+    instance_dict_set(a.pos(0), a.pos(1));
+    return none_ref();
+}
 Ref i_drop_dict(Obj, Args a) {                   // the C's Py_CLEAR(self->dict), which no descriptor of the type allows
     positional_only(a, "_drop_dict", 1, 1);
     drop_instance_dict(a.pos(0));
@@ -1107,7 +1113,7 @@ Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
 }
 void fill_io(Module* m) {
     fill_in_python(m, "_io", "_io", prelude_io::module_body,
-                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sys", i_posix_sys}, {"_io_call", i_io_call}, {"_has_dict", i_has_dict}});
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sys", i_posix_sys}, {"_io_call", i_io_call}, {"_has_dict", i_has_dict}, {"_own_dict", i_own_dict}});
     dict_set(m->dict, Obj::of(N("BlockingIOError")), Obj::of(exception_class("BlockingIOError")));
 }
 void fill_pwd(Module* m) {
