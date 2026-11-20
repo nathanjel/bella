@@ -661,8 +661,7 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
-* **Open from review A23** (2026-11-20): a cell for each class that declares a slot of one name (RL-541: the model keys a slot by its
-  name, so two classes of one MRO share it; seen only through the two members' own `__get__`); `struct.Struct.__new__` with no format
+* **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78): `struct.Struct.__new__` with no format
   (RL-549, with the Struct step below); `BytesIO.__sizeof__` and a buffered reader's with a deriving class's slots (RL-552, RL-553); a
   deriving class's own `__dict__` property in `BytesIO.__getstate__` (under RL-548); and, as a sweep of its own, the order each
   built-in type written in Python lets go of its fields against its C clear function (RL-550 set the rule, the declared order, and

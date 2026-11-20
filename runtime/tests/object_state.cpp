@@ -28,6 +28,8 @@ void attempt(const std::string& what, const std::function<std::string()>& f) {
         std::cout << "  " << what << ": " << v << '\n';
     } catch (const AttributeError&) {
         std::cout << "  " << what << ": AttributeError\n";
+    } catch (const TypeError&) {
+        std::cout << "  " << what << ": TypeError\n";
     }
 }
 std::string get(Instance* o, const char* n) { return shown(getattr(o, N(n)).get()); }
@@ -178,6 +180,59 @@ int main() {
         attempt("its field then", [&] { return field(q2, "func"); });
         decref(q2);
         decref(o);
+    }
+    std::cout << "7. a slot a class declares again: a cell for each declaration (RL-541)\n";
+    deaths.clear();
+    {
+        auto* D = make_class({.name = "D", .slots = Names{"x", "a"}});
+        auto* F = make_class({.name = "F", .bases = {D}, .slots = Names{"x"}});
+        auto* G = make_class({.name = "G", .bases = {F}, .slots = Names{"x", "m"},
+                              .attrs = {{"base_x", *D->attrs.find(N("x"))}, {"middle_x", *F->attrs.find(N("x"))}}});
+        Instance* g = new_instance(G);
+        incref(g);
+        std::cout << "  cells behind the name: " << D->shadowed.size() << ' ' << F->shadowed.size() << ' ' << G->shadowed.size() << '\n';
+        attempt("the base's before any store", [&] { return get(g, "base_x"); });
+        setattr(g, N("x"), tagged(1).get());
+        setattr(g, N("base_x"), tagged(2).get());
+        setattr(g, N("middle_x"), tagged(3).get());
+        setattr(g, N("a"), tagged(4).get());
+        setattr(g, N("m"), tagged(5).get());
+        attempt("the name", [&] { return get(g, "x"); });
+        attempt("the base's member", [&] { return get(g, "base_x"); });
+        attempt("the middle class's member", [&] { return get(g, "middle_x"); });
+        Site site;
+        auto read = [&](const char* n) { return shown(getattr(g, N(n), &site).get()); };
+        std::string first = read("x") + read("x") + read("base_x") + read("base_x");
+        std::cout << "  one place, read twice each: " << first << ", hits " << site.hits << '\n';
+        Ref kept = Ref::share(*G->attrs.find(N("x")));
+        G->del_attr(N("x"));
+        attempt("the name once the class's member is gone", [&] { return read("x"); });
+        attempt("again", [&] { return read("x"); });
+        std::cout << "  hits " << site.hits << '\n';
+        attempt("a store by the name", [&] { return set(g, "x", tagged(6).get()); });
+        show_deaths("after the store");
+        attempt("the middle class's member", [&] { return get(g, "middle_x"); });
+        attempt("a delete by the name", [&] { return del(g, "x"); });
+        attempt("deleted again", [&] { return del(g, "x"); });
+        attempt("the base's member still", [&] { return get(g, "base_x"); });
+        G->set_attr(N("x"), kept.get());
+        attempt("the member put back", [&] { return get(g, "x"); });
+        attempt("the middle class's cell is empty", [&] { return get(g, "middle_x"); });
+        setattr(g, N("middle_x"), tagged(7).get());
+        deaths.clear();
+        decref(g);
+        show_deaths("after the object");
+        // a member of a class that is no base, which a class has under a name: it applies to none of that class's objects
+        auto* Else = make_class({.name = "Elsewhere", .slots = Names{"x"}});
+        auto* B = make_class({.name = "Borrowed", .bases = {D}, .slots = Names{}, .attrs = {{"x", *Else->attrs.find(N("x"))}, {"own", *D->attrs.find(N("x"))}}});
+        Instance* b = new_instance(B);
+        incref(b);
+        attempt("a member of a class that is no base: a read", [&] { return get(b, "x"); });
+        attempt("a store", [&] { return set(b, "x", Obj::small(1)); });
+        attempt("a delete", [&] { return del(b, "x"); });
+        attempt("the base's own member, a store", [&] { return set(b, "own", Obj::small(2)); });
+        attempt("and a read", [&] { return get(b, "own"); });
+        decref(b);
     }
     decref(plain);
     decref(p);

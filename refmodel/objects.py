@@ -497,6 +497,19 @@ class RefClass:
             raise ValueError("a read-only member is one of the class's own __slots__")
         self.slot_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names() if n not in c.hidden))
         self.hidden_fields = tuple(dict.fromkeys(n for c in reversed(self.mro) for n in c._own_slot_names() if n in c.hidden))
+        # A class that declares a slot one of its bases declares makes a second member with a cell of its own
+        # (type_new_descriptors: a member for each declaration, each at its own offset; RL-541). The name's cell is that
+        # of the nearest class of the MRO that declares it, which is where the lookup finds a member while every class
+        # has its own; a declaration behind it keeps a cell that its own member alone reads.
+        nearest: dict[str, RefClass] = {}
+        behind: list[tuple[RefClass, str]] = []
+        for c in self.mro:
+            for n in c._own_slot_names():
+                if n in c.hidden or n == "__weakref__":
+                    continue
+                if nearest.setdefault(n, c) is not c:
+                    behind.append((c, n))
+        self.shadowed_fields: tuple[tuple[RefClass, str], ...] = tuple(dict.fromkeys(reversed(behind)))
         for p in self.promoted:
             if p in self.slot_fields:
                 raise ValueError(f"promoted field {p!r} collides with a slot")
@@ -672,24 +685,42 @@ def is_data_descriptor(found: Any) -> bool:
 # Objects
 # ---------------------------------------------------------------------------------------------
 
-def _member_cells(obj: RefObject, member: SlotDescriptor) -> dict[str, Any]:
-    """Where a member reads and stores: among the object's inline values, or in its state when the class that declares
-    the slot keeps it as a field of the built-in type's own (a member CPython's type shows: partial's func)."""
-    return obj.state if member.owner is not None and member.name in member.owner.hidden else obj.inline
+def _cell_of(obj: RefObject, owner: RefClass | None, name: str) -> tuple[dict[Any, Any], Any]:
+    """Where the object keeps the slot `name` that `owner` declares, as the cells and the key among them: in its state
+    when the class keeps it as a field of the built-in type's own (a member CPython's type shows: partial's func); in a
+    cell of the declaration's own when a class nearer in the object's MRO declares the name again; among the inline
+    values, under the name, in every other case (None: a built-in's native field)."""
+    if owner is not None:
+        if name in owner.hidden:
+            return obj.state, name
+        if (owner, name) in obj.shadowed:
+            return obj.shadowed, (owner, name)
+    return obj.inline, name
+
+
+def _member_cells(obj: RefObject, member: SlotDescriptor) -> tuple[dict[Any, Any], Any]:
+    """Where a member reads and stores: the cell of its own declaration, whatever name a class has the member under.
+    A member applies to the objects of its class and of the classes that derive from it (descr_check): one a class
+    that is neither has under a name is a TypeError for a read, a store and a delete alike (RL-563)."""
+    if member.owner is not None and member.owner not in obj.cls.mro:
+        raise TypeError(f"descriptor '{member.name}' for '{member.owner.name}' objects doesn't apply to a '{obj.cls.name}' object")
+    return _cell_of(obj, member.owner, member.name)
 
 
 class _SlotsOf:
-    """The cells of one class's own slots in an object: a hidden one is in the object's state, any other among its
-    inline values."""
+    """The cells of one class's own slots in an object: a hidden one is in the object's state, one that a nearer class
+    declares again in a cell of this declaration's own, any other among its inline values."""
 
     def __init__(self, obj: RefObject, c: RefClass) -> None:
-        self.obj, self.hidden = obj, c.hidden
+        self.obj, self.c = obj, c
 
     def get(self, name: str, default: Any) -> Any:
-        return (self.obj.state if name in self.hidden else self.obj.inline).get(name, default)
+        cells, key = _cell_of(self.obj, self.c, name)
+        return cells.get(key, default)
 
     def set(self, name: str, value: Any) -> None:
-        (self.obj.state if name in self.hidden else self.obj.inline)[name] = value
+        cells, key = _cell_of(self.obj, self.c, name)
+        cells[key] = value
 
 
 class RefObject:
@@ -697,6 +728,8 @@ class RefObject:
         self.cls = cls
         self.inline: dict[str, Any] = {n: UNSET for n in cls.slot_fields + cls.native_fields + cls.promoted_fields}
         self.state: dict[str, Any] = {n: UNSET for n in cls.hidden_fields}     # a built-in type's fields that have no name
+        # the cells of the slots a nearer class declares again: each its declaring class's and the name
+        self.shadowed: dict[tuple[RefClass, str], Any] = {k: UNSET for k in cls.shadowed_fields}
         self.order: list[str] = []          # first-assignment order of __dict__-backed names
         self.dict: RefDict | None = None    # before exposure: the attributes not promoted; after: the object's __dict__
         self.exposed = False
@@ -720,8 +753,8 @@ class RefObject:
         new class, whose versions no cache entry of the old one can match. Other layouts (an instance dict to hand over,
         compatible_for_assignment's checks) are not modelled."""
         old = self.cls
-        same = ((cls.slot_fields, cls.native_fields, cls.promoted_fields, cls.hidden_fields)
-                == (old.slot_fields, old.native_fields, old.promoted_fields, old.hidden_fields))
+        same = ((cls.slot_fields, cls.native_fields, cls.promoted_fields, cls.hidden_fields, cls.shadowed_fields)
+                == (old.slot_fields, old.native_fields, old.promoted_fields, old.hidden_fields, old.shadowed_fields))
         if not same or cls.has_dict or old.has_dict or cls.has_weakref != old.has_weakref or cls.bases != old.bases:
             raise ModelError(f"__class__ from {old.name} to {cls.name}: another layout")
         self.cls = cls
@@ -1126,11 +1159,12 @@ class Runtime:
             if isinstance(found, SlotDescriptor):
                 # which cell is the class's matter (the member's owner is of its MRO), so the version covers it and the
                 # entry holds the kind alone: no entry names a class or anything that does
-                cells = _member_cells(obj, found)
+                cells, key = _member_cells(obj, found)
                 kind = STATE if cells is obj.state else SLOT
                 # a member a class has under another name (`saved = partial.args`) reads its own cell and is not cached:
-                # an entry is found by the name looked up, and reads the cell of that name
-                return _Plan(kind, None, cells[found.name], hook), (entry(kind) if found.name == name else None)
+                # an entry is found by the name looked up, and reads the cell of that name. So is the member of a
+                # declaration that a nearer class repeats, found by the name because the nearer class's is gone
+                return _Plan(kind, None, cells[key], hook), (entry(kind) if key == name else None)
             assert isinstance(found, RefObject)
             if found.cls.lookup("__get__") is None:
                 # data descriptor without __get__: instance storage wins, then the descriptor itself
@@ -1280,12 +1314,12 @@ class Runtime:
         if hit is not None:
             found, _ = hit
             if isinstance(found, SlotDescriptor):
+                cells, key = _member_cells(obj, found)       # the member's own cell: a class may have it under another name
                 if found.readonly:
                     raise AttributeError("readonly attribute")
-                cells = _member_cells(obj, found)
-                old = cells[found.name]             # the member's own name: a class may have it under another
+                old = cells[key]
                 incref(value)
-                cells[found.name] = value
+                cells[key] = value
                 decref(old)
                 return
             if is_data_descriptor(found):
@@ -1339,13 +1373,13 @@ class Runtime:
         if hit is not None:
             found, _ = hit
             if isinstance(found, SlotDescriptor):
+                cells, key = _member_cells(obj, found)
                 if found.readonly:
                     raise AttributeError("readonly attribute")
-                cells = _member_cells(obj, found)
-                old = cells[found.name]
+                old = cells[key]
                 if old is UNSET:
                     raise AttributeError(name)
-                cells[found.name] = UNSET
+                cells[key] = UNSET
                 decref(old)
                 return
             if is_data_descriptor(found):

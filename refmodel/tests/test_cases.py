@@ -1018,13 +1018,6 @@ def test_a_view_of_a_class_dict_changes_no_death() -> None:
     assert list(view.items()) == list(K.attrs.items()) == [("b", 5), ("c", 3), ("a", 4)]
 
 
-if __name__ == "__main__":
-    for name, fn in list(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print("ok", name)
-
-
 def test_a_finaliser_that_keeps_its_object_leaves_it_whole() -> None:
     """Spec section 9, C-9-04: the object lives on with its weak references and its fields, its finaliser
     spent; the second release runs no finaliser, and clears the references before the fields go."""
@@ -1672,3 +1665,111 @@ def test_a_member_cpython_shows_reads_the_types_own_field() -> None:
             decref(o)
     finally:
         O.HEAP = saved
+
+
+def test_a_slot_declared_again_is_a_second_cell() -> None:
+    """RL-541 (C-3-78): a class that declares a slot one of its bases declares makes a second member with a cell of its
+    own. The name reads the cell of the member the lookup finds; the base's member reads the base's cell under any name;
+    an object lets go of the most derived class's cells first. The model against CPython's own classes."""
+    from refmodel import objects as O
+
+    class D:
+        __slots__ = ("x",)
+        x: object
+
+    class F(D):
+        __slots__ = ("x",)
+        x: object
+
+    class G(F):
+        __slots__ = ("x", "y")
+        x: object
+        y: object
+        base_x = vars(D)["x"]
+        middle_x = vars(F)["x"]
+
+    g = G()
+    g.x = "G's"
+    g.base_x = "D's"
+    g.middle_x = "F's"
+    seen: list[object] = [g.x, g.base_x, g.middle_x]
+    kept = vars(G)["x"]
+    type.__delattr__(G, "x")                         # the name now finds F's member
+    seen.append(g.x)
+    g.x = "stored by the name"
+    seen += [g.middle_x, g.base_x, kept.__get__(g)]
+    del g.x
+    try:
+        seen.append(g.x)
+    except AttributeError:
+        seen.append("F's cell is empty")
+    seen += [g.base_x, kept.__get__(g)]
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        rt = Runtime()
+        MD = RefClass("D", slots=("x",), heap=heap)
+        MF = RefClass("F", (MD,), slots=("x",), heap=heap)
+        MG = RefClass("G", (MF,), slots=("x", "y"), attrs={"base_x": MD.attrs["x"], "middle_x": MF.attrs["x"]}, heap=heap)
+        assert MG.slot_fields == ("x", "y") and MG.shadowed_fields == ((MD, "x"), (MF, "x")) and MF.shadowed_fields == ((MD, "x"),)
+        assert MD.shadowed_fields == () and MD.attrs["x"] is not MF.attrs["x"]
+        o = RefObject(MG)
+        incref(o)
+        site = Site(heap)
+        rt.setattr(o, "x", "G's")
+        rt.setattr(o, "base_x", "D's")
+        rt.setattr(o, "middle_x", "F's")
+        got: list[object] = [rt.getattr(o, "x", site), rt.getattr(o, "base_x", site), rt.getattr(o, "middle_x", site)]
+        hits = site.hits
+        assert rt.getattr(o, "x", site) == "G's" and site.hits == hits + 1          # the name's own cell is cached,
+        assert rt.getattr(o, "base_x", site) == "D's" and site.hits == hits + 1     # a cell behind it never is
+        kept_member = MG.attrs["x"]
+        incref(kept_member)
+        MG.del_attr("x")
+        got.append(rt.getattr(o, "x", site))                                        # F's member, found by the name: F's cell
+        assert rt.getattr(o, "x", site) == "F's" and site.hits == hits + 1          # which no entry reads by the name
+        rt.setattr(o, "x", "stored by the name")
+        cells, key = O._member_cells(o, kept_member)
+        got += [rt.getattr(o, "middle_x", site), rt.getattr(o, "base_x", site), cells[key]]
+        rt.delattr(o, "x")
+        try:
+            got.append(rt.getattr(o, "x", site))
+        except AttributeError:
+            got.append("F's cell is empty")
+        got += [rt.getattr(o, "base_x", site), cells[key]]
+        assert got == seen, (got, seen)
+        decref(o)
+    finally:
+        O.HEAP = saved
+
+    # what goes first: the most derived class's cells, each class's sorted by name, the base's own cell of a name last
+    _fresh_heap()
+    rt = Runtime()
+    Low = RefClass("Low", slots=("a", "x", "z"))
+    High = RefClass("High", (Low,), slots=("m", "x"), attrs={"low_x": Low.attrs["x"]})
+    h = RefObject(High)
+    O.incref(h)
+    for name, tag in (("a", "Low.a"), ("low_x", "Low.x"), ("z", "Low.z"), ("m", "High.m"), ("x", "High.x")):
+        _store(rt, h, name, tag)
+    assert [getattr(v, "tag", None) for v in h.traverse()] == ["High.m", "High.x", "Low.a", "Low.x", "Low.z"]
+    O.decref(h)
+    assert _deaths() == ["High.m", "High.x", "Low.a", "Low.x", "Low.z"]
+    # a store over a value lets go of that cell's alone
+    h = RefObject(High)
+    O.incref(h)
+    _store(rt, h, "x", "first")
+    _store(rt, h, "low_x", "kept")
+    _store(rt, h, "x", "second")
+    assert _deaths() == ["first"]
+    rt.delattr(h, "x")
+    assert _deaths() == ["second"]
+    O.decref(h)
+    assert _deaths() == ["kept"]
+
+
+if __name__ == "__main__":
+    for name, fn in list(globals().items()):
+        if name.startswith("test_"):
+            fn()
+            print("ok", name)

@@ -1363,7 +1363,10 @@ void check_member_store(const SlotDescriptor* d, Obj value) {
 }
 void refuse_readonly_member(Obj obj, const Str* name, Obj value) {
     Obj found = type_lookup(type_of(obj), name);
-    if (is_kind(found, Kind::SlotDescriptor)) check_member_store(static_cast<SlotDescriptor*>(found.object()), value);
+    if (!is_kind(found, Kind::SlotDescriptor)) return;
+    auto* d = static_cast<SlotDescriptor*>(found.object());
+    if (d->owner != nullptr) check_member_applies(d, obj);       // descr_setcheck first: a member of a class that is no base (RL-563)
+    check_member_store(d, value);
 }
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {

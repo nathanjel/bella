@@ -1,0 +1,12 @@
+{
+ "case": "C-3-78_a_slot_a_class_declares_again.py",
+ "clause": "C-3-78",
+ "spec": "section 3 (the object model: __slots__)",
+ "status": "P1",
+ "source": "Objects/typeobject.c (type_new_descriptors, type_new_slots, subtype_dealloc, clear_slots), Objects/descrobject.c",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "---- two members, two cells\nby the name: F's | the base's member: AttributeError | the class's own: F's\nafter a store through the base's member: F's D's F's\nthe members: False <member 'x' of 'D' objects> <member 'x' of 'F' objects> D F\nthrough super(): D's | getattr: F's | object.__getattribute__: F's\nthe name deleted: AttributeError | D's | deleted again: AttributeError\nthe base's deleted: AttributeError | deleted again: AttributeError\nand stored again: back AttributeError\n---- an object of the base has the one cell\nthe base's only the base's only TypeError TypeError\n---- three declarations, and a class between that declares none\nthird ['first', 'second', 'third'] y second second first\nan object of the class between: TypeError\neach object its own: 2 1 third first\n---- the name reads the member the lookup finds\n[\"Top's\", \"Top's\", \"D's\", \"D's\"] | the member taken away still reads its cell: Top's\na store by the name goes where the lookup goes: stored by the name Top's\nthe member put back: Top's stored by the name\na class that has the base's member under the name: through D's member through F's member through D's member through F's member\none place, two classes: [\"F's own\", \"through D's member\", \"F's own\", \"through D's member\"]\n---- a member of a class that is no base applies to none of the class's objects\nTypeError TypeError TypeError AttributeError\nTypeError D's TypeError TypeError\n---- over a built-in type, whose own field of the name is a third\nQueue's Line's [2, 3, 4] 3\n---- a private name is another name in each class\nP's Q's ['_P__p', '_Q__p']\n---- what goes first\n  filled: High.x Low.x\n  gone: High.m\n  gone: High.x\n  gone: Low.a\n  gone: Low.x\n  gone: Low.z\n---- a store over a value lets go of that cell's alone\n  gone: High.x, first\n  then: High.x, second Low.x, kept\n  gone: High.x, second\n  deleted by the name\n  gone: Low.x, kept\n---- the end\n",
+ "stderr": "",
+ "exit_code": 0
+}

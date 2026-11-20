@@ -472,7 +472,7 @@ Ref i_shim_set_class(Obj, Args a) {
     const ClassObject* from = inst->cls;
     bool same = to->heap_type && from->heap_type && !to->has_dict && !from->has_dict && to->has_weakref == from->has_weakref &&
                 to->bases == from->bases && to->slot_fields == from->slot_fields && to->native_fields == from->native_fields &&
-                to->promoted_fields == from->promoted_fields && to->field_index == from->field_index;
+                to->promoted_fields == from->promoted_fields && to->field_index == from->field_index && to->shadowed == from->shadowed;
     if (!same) throw NotImplemented("[P2+] __class__ assignment (spec section 3): annotationlib's from '" + from->name + "' to '" + to->name + "', another layout");
     inst->cls = to;
     return none_ref();

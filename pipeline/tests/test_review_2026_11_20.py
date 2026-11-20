@@ -3,9 +3,9 @@
 Codex's Astra at medium effort read the range, with the day's change first (the state of a built-in type that the prelude
 writes has no name, RL-507); the review log has its 28 findings as RL-535 to RL-562. Each program here is the report's own
 reproduction, run under CPython and compiled: standard output, the exit status and standard error must agree. The findings
-left open (RL-541, RL-549, RL-552, RL-553) and the author's (RL-555) have no program here; RL-562 is the repair of a test of
+left open (RL-549, RL-552, RL-553) and the author's (RL-555) have no program here; RL-562 is the repair of a test of
 the review before (`test_review_2026_11_19.py`), and RL-557 has a test of its own below, since it needs a directory as
-standard input.
+standard input. RL-541 was done as a step of its own (C-3-78), with RL-563, which the session found beside it.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_20
 """
@@ -293,6 +293,41 @@ for kind, state in ((io.BytesIO, (b"x", 0)), (io.StringIO, ("x", None, 0))):
     print(kind.__name__, vars(b), vars(b) is given, b.__getstate__()[-1] is given, b.__getstate__()[-1])
     c = kind()
     print(kind.__name__, c.__getstate__()[-1], vars(c), c.__getstate__()[-1])
+'''),
+    ('RL-541', "A second subclass's same-named slot overwrites the first subclass's slot", r'''
+import collections
+
+class D(collections.deque):
+    __slots__ = ("_a_items",)
+
+class F(D):
+    __slots__ = ("_a_items",)
+o = F([2])
+D._a_items.__set__(o, "D")
+F._a_items.__set__(o, "F")
+print(D._a_items.__get__(o), F._a_items.__get__(o), list(o))
+'''),
+    ('RL-563', 'a member of a class that is no base, which a class has under a name, is read as a slot of the name', r'''
+class A:
+    __slots__ = ("x",)
+
+class B:
+    __slots__ = ("x",)
+
+class H(A):
+    __slots__ = ()
+    x = B.x
+
+h = H()
+A.x.__set__(h, "A's")
+for label, act in (("read", lambda: h.x), ("store", lambda: setattr(h, "x", 1)), ("delete", lambda: delattr(h, "x")),
+                   ("object.__setattr__", lambda: object.__setattr__(h, "x", 1)), ("object.__delattr__", lambda: object.__delattr__(h, "x")),
+                   ("object.__getattribute__", lambda: object.__getattribute__(h, "x")), ("getattr with a default", lambda: getattr(h, "x", "default"))):
+    try:
+        print(label, repr(act()))
+    except (TypeError, AttributeError) as e:
+        print(label, type(e).__name__, e)
+print(A.x.__get__(h))
 '''),
 ]
 

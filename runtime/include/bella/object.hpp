@@ -678,7 +678,17 @@ struct ClassObject : Object {
     std::unordered_set<const Str*> hidden;
     std::vector<const Str*> hidden_fields;
     std::unordered_map<const Str*, std::uint32_t> state_index;
-    std::size_t field_count() const { return field_index.size() + state_index.size(); }
+    // The slots a nearer class of the MRO declares again (RefClass.shadowed_fields; RL-541): CPython makes a member for
+    // each declaration, each with a cell. The name's cell (field_index) is the nearest declaring class's; a declaration
+    // behind it keeps a cell at a place of its own, which that class's member alone reads.
+    struct ShadowedSlot {
+        ClassObject* owner;
+        const Str* name;
+        std::uint32_t place;
+        bool operator==(const ShadowedSlot&) const = default;
+    };
+    std::vector<ShadowedSlot> shadowed;
+    std::size_t field_count() const { return field_index.size() + state_index.size() + shadowed.size(); }
     bool has_dict = false;
     DictKind dict_kind = DictKind::Inline;       // which dict an instance has; a class that says nothing has its solid base's
     bool has_weakref = false;                    // room for weak references (RefClass.has_weakref)
@@ -833,7 +843,11 @@ inline void hide_slots(ClassObject* c, const std::vector<const Str*>& names, con
             }
         }
         for (ClassObject* k : family) {
-            // another class of the family that declares the name shares the cell, as slots of one name do: hidden there too
+            // another class of the family that declares the name shares the cell, as a field of one name does: hidden
+            // there too. The runtime's own types declare a field once; one declared again before this, with a cell of
+            // its own behind the name's, is not a state this can make of it
+            for (const auto& behind : k->shadowed)
+                if (behind.name == n) throw ModelError("a field of a built-in type that a class of its family declared again: '" + n->text + "'");
             auto at = k->field_index.find(n);
             if (at == k->field_index.end()) continue;
             k->state_index[n] = at->second;
@@ -941,6 +955,17 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     for (const Str* s : c->slot_fields) c->field_index[s] = i++;
     for (const Str* n : c->native_fields) c->field_index[n] = i++;
     for (const Str* p : c->promoted_fields) c->field_index[p] = i++;
+    {   // a declaration that a nearer class repeats: a cell of its own, the base-most first (RefClass.shadowed_fields)
+        std::unordered_map<const Str*, const ClassObject*> nearest;
+        std::vector<std::pair<ClassObject*, const Str*>> behind;
+        for (ClassObject* k : c->mro)
+            for (const Str* s : k->own_slot_names()) {
+                if (k->hidden.contains(s)) continue;
+                if (nearest.try_emplace(s, k).first->second != k && std::find(behind.begin(), behind.end(), std::pair{k, s}) == behind.end())
+                    behind.emplace_back(k, s);
+            }
+        for (auto it = behind.rbegin(); it != behind.rend(); ++it) c->shadowed.push_back({it->first, it->second, i++});
+    }
     c->keys = std::make_shared<SharedKeys>();
     std::vector<std::string> statics = spec.static_attributes;
     std::sort(statics.begin(), statics.end());
@@ -1243,11 +1268,32 @@ enum class Plan : std::uint8_t {
     DataDescriptor, Slot, Field, InstanceDict, ClassAttr, NonDataDescriptor, GetAttrHook, UncachedValue, Raise,
     State                          // a member whose cell is a field of the built-in type's own (RefClass members)
 };
-// The cell a member reads and stores: by its own name (a class may have it under another), among the object's fields, or
-// in its state when the class that declares the slot keeps it as a field of the built-in type's own (refmodel _member_cells)
+// The cell of the slot `name` that `owner` declares (refmodel _cell_of): in the object's state when the class keeps it as a
+// field of the built-in type's own; at a place of the declaration's own when a nearer class of the object's MRO declares the
+// name again; among the object's fields, by the name, in every other case (no owner: a built-in's native field).
+inline const ClassObject::ShadowedSlot* slot_behind(const ClassObject* cls, const ClassObject* owner, const Str* name) {
+    for (const auto& s : cls->shadowed)              // empty for all but a class with a slot declared again
+        if (s.owner == owner && s.name == name) return &s;
+    return nullptr;
+}
+template <class T>
+inline Obj& slot_cell(T* obj, const ClassObject* owner, const Str* name) {
+    if (owner != nullptr) {
+        if (owner->hidden.contains(name)) return obj->state(name);
+        if (const auto* behind = slot_behind(obj->cls, owner, name)) return obj->fields[behind->place];
+    }
+    return obj->field(name);
+}
+// The cell a member reads and stores: its own declaration's, whatever name a class has the member under (_member_cells)
 inline bool member_in_state(const SlotDescriptor* d) { return d->owner != nullptr && d->owner->hidden.contains(d->name); }
 template <class T>
-inline Obj& member_cell(T* obj, const SlotDescriptor* d) { return member_in_state(d) ? obj->state(d->name) : obj->field(d->name); }
+inline Obj& member_cell(T* obj, const SlotDescriptor* d) { return slot_cell(obj, d->owner, d->name); }
+// descr_check: a member applies to the objects of its class and of the classes that derive from it. One that a class which
+// is neither has under a name is a TypeError for a read, a store and a delete alike (RL-563)
+inline void member_applies(const ClassObject* cls, const SlotDescriptor* d) {
+    if (d->owner == nullptr || d->owner == cls || std::find(cls->mro.begin(), cls->mro.end(), d->owner) != cls->mro.end()) return;
+    throw TypeError("descriptor '" + d->name->text + "' for '" + d->owner->name + "' objects doesn't apply to a '" + cls->name + "' object");
+}
 struct CacheEntry {                // immutable once installed
     std::uint64_t version;         // names the class and its state: no class pointer is kept
     const Str* name;
@@ -1354,10 +1400,14 @@ inline std::pair<LookupPlan, std::optional<CacheEntry>> plan_generic(T* obj, con
     if (hit && is_data_descriptor(found)) {
         if (found.object()->kind == Kind::SlotDescriptor) {
             // which cell is the class's matter, so the version covers it and the entry holds the kind alone. A member the
-            // class has under another name reads its own cell and is not cached: an entry reads the cell of the name looked up
+            // class has under another name reads its own cell and is not cached: an entry reads the cell of the name looked
+            // up. Nor is the member of a declaration that a nearer class repeats, found by the name once the nearer one's
+            // is gone from its class
             auto* d = static_cast<SlotDescriptor*>(found.object());
+            member_applies(cls, d);
             Plan k = member_in_state(d) ? Plan::State : Plan::Slot;
-            return {{k, Obj{}, member_cell(obj, d), hook}, d->name == name ? entry(k) : std::nullopt};
+            bool by_name = d->name == name && (cls->shadowed.empty() || slot_behind(cls, d->owner, d->name) == nullptr);
+            return {{k, Obj{}, member_cell(obj, d), hook}, by_name ? entry(k) : std::nullopt};
         }
         if (!found.object()->cls->has("__get__")) {
             auto [present, v] = detail::instance_storage(obj, name);
@@ -1540,6 +1590,7 @@ inline void setattr(T* obj, const Str* name, Obj value) {
         Obj found = hit->first;
         if (found.is_object() && found.object()->kind == Kind::SlotDescriptor) {
             auto* d = static_cast<SlotDescriptor*>(found.object());
+            member_applies(cls, d);
             if (d->readonly) throw AttributeError("readonly attribute");
             incref(value);
             Obj old = std::exchange(member_cell(obj, d), value);
@@ -1605,6 +1656,7 @@ inline void delattr(T* obj, const Str* name) {
         Obj found = hit->first;
         if (found.is_object() && found.object()->kind == Kind::SlotDescriptor) {
             auto* d = static_cast<SlotDescriptor*>(found.object());
+            member_applies(cls, d);
             if (d->readonly) throw AttributeError("readonly attribute");
             Obj& slot = member_cell(obj, d);
             if (slot.is_unset()) throw AttributeError(name->text);
@@ -1947,7 +1999,7 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
         // order it declares them, which is its clear function's (RefClass._release_order)
         auto names = c->own_slot_names();
         if (c->hidden.empty()) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
-        for (const Str* s : names) decref(std::exchange(c->hidden.contains(s) ? obj->state(s) : obj->field(s), Obj{}));
+        for (const Str* s : names) decref(std::exchange(slot_cell(obj, c, s), Obj{}));
     }
     // the built-in base's clear function: its fields, the dict at its place (RefObject.dealloc)
     if (obj->cls->native.empty()) detail::release_instance_dict(obj);
