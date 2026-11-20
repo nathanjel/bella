@@ -114,9 +114,10 @@ decision = 2
 lint = "yes"
 
 [deviations.D-18]
-summary = "PYTHONPATH, .pth and .start files, site, and the lazy-imports mode (PYTHON_LAZY_IMPORTS, -X lazy_imports; always normal) are ignored; sys.path reflects the build"
+summary = "PYTHONPATH, .pth and .start files, site, the lazy-imports mode (PYTHON_LAZY_IMPORTS, -X lazy_imports; always normal) and PYTHONWARNINGS are ignored; sys.path reflects the build; the warning filters a program starts with are those CPython has without PYTHONWARNINGS and -W, and sys.warnoptions is empty"
 status = "accepted"
 lint = "yes"
+note = "PYTHONWARNINGS by the author's decision of 2026-11-20 (of three: honoured everywhere, with CPython's option parser in the runtime; honoured in a program that holds `warnings`; ignored), taken for now, with the first kept to be looked at again (TODO, Later). Measured on 3.15.2: under PYTHONWARNINGS=error CPython has sys.warnoptions == ['error'] and raises the DeprecationWarning of `~True`; a compiled program has an empty list and prints the warning, as CPython does without the variable (pipeline/tests/test_start_up_environment.py; review log RL-483). The lint rule is the older one, for writes to sys.path: a variable of the environment is not in the program's text"
 
 [deviations.D-19]
 summary = "module objects are immortal; functions, classes and every other definition-time object are reference-counted like any other"

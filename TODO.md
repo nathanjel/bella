@@ -635,6 +635,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   GCC's own licence and libgccjit's (GPL; *to verify*) would need a licence register entry.
 * Settle the entries of the licence register, `docs/licences.md`, one by one when each becomes
   worth it (for example, when the component is about to be linked into an artefact).
+* Honour `PYTHONWARNINGS` everywhere (the author, 2026-11-20: ignored for now, this to be looked at again; RL-483, D-18): the
+  runtime fills `sys.warnoptions` from the variable and applies the options at start-up, with a port of the option parser
+  (`warnings._setoption` and what it calls, about 60 lines) so that a program without `warnings` (D-27) has them too. Then a
+  case, D-18 narrowed, and `pipeline/tests/test_start_up_environment.py` turned round.
 * `hashlib.pbkdf2_hmac` (over the mapped HMAC) and `hashlib.scrypt` (libsodium) as an adaptation
   of `hashlib`, closing that part of deviation D-20 (review log D-6, option 2). When a target
   program needs either; then add a case, narrow D-20, and record it in `docs/DECISIONS.md`.
@@ -643,8 +647,10 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-454 to RL-522). Left after the round's commit:
 
-* **For the author** (questions, not fixes): `PYTHONWARNINGS` and `sys.warnoptions` (RL-483: honoured, or listed as ignored in the
-  specification's Environment paragraph); where a built-in type that is written in Python keeps its state, so that a subclass's
+* **For the author** (questions, not fixes): the other variables of CPython's start-up that a compiled program does not read and
+  the Environment paragraph does not name (RL-527; `PYTHONWARNINGS` itself was decided on 2026-11-20: ignored for now, RL-483);
+  `PYTHONIOENCODING`, which the runtime honours and D-15 says is ignored (RL-526); the colour of an uncaught exception's report
+  at a terminal (RL-528); where a built-in type that is written in Python keeps its state, so that a subclass's
   attribute of the same private name cannot overwrite it (RL-507, about 110 classes); whether a module-level object's `__del__` runs
   at exit when `sys` still reaches the module's globals through a hook the program installed (RL-514; D-07 speaks of order only).
 * **A step of its own:** the line of a traceback entry inside a statement of several lines (RL-494): CPython gives an attribute or a
