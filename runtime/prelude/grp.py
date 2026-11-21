@@ -24,6 +24,15 @@ except NameError:
 struct_group = _structseq("struct_group", "grp", ["gr_name", "gr_passwd", "gr_gid", "gr_mem"], 4)
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _entry(fields: tuple[object, ...]) -> object:   # mkgrent
     name, passwd, gid, members = fields
     return struct_group((bytes.decode(name, "utf-8", "surrogateescape"), bytes.decode(passwd, "utf-8", "surrogateescape"), gid,  # type: ignore[arg-type]
@@ -43,7 +52,7 @@ def _argument(name: str, parameter: str, args: tuple[object, ...], kwds: dict[st
 def _gid(value: object) -> int:                  # _Py_Gid_Converter: -1 as gid_t has it; what an unsigned long cannot hold is greater than the maximum, what a gid_t cannot is less than the minimum
     if isinstance(value, float):
         raise TypeError("gid should be integer, not " + _tp_name(value))
-    if not isinstance(value, int) and not hasattr(type(value), "__index__"):
+    if not isinstance(value, int) and not _has_slot(value, "__index__"):
         raise TypeError("gid should be integer, not " + _tp_name(value))
     gid = _number_index(value)
     if gid == -1:

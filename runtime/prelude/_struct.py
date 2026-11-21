@@ -47,6 +47,15 @@ except NameError:
         z = complex(value)  # type: ignore[call-overload]
         return z.real, z.imag
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 class error(Exception):  # noqa: N801           # PyErr_NewException("struct.error", NULL, NULL)
     pass
 
@@ -64,7 +73,7 @@ _ABSENT: object = object()
 def _is_bytes_like(value: object) -> bool:
     if issubclass(type(value), (bytes, bytearray)):
         return True
-    if hasattr(type(value), "__buffer__"):
+    if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     return False
 
@@ -78,7 +87,7 @@ def _buffer(value: object) -> bytes:             # Py_buffer, read-only: the byt
 def _rw_buffer(value: object, function: str, position: int) -> bytearray:   # Py_buffer(accept={rwbuffer}): a bytearray, the one writable buffer
     if issubclass(type(value), bytearray):
         return value  # type: ignore[return-value]
-    if not issubclass(type(value), bytes) and hasattr(type(value), "__buffer__"):
+    if not issubclass(type(value), bytes) and _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError(function + "() argument " + str(position) + " must be read-write bytes-like object, not " + _tp_name(value))
 
@@ -262,7 +271,7 @@ def _range_error(code: str, size: int, unsigned: bool) -> error:   # _range_erro
 def _get_pylong(value: object) -> int:           # get_pylong
     if issubclass(type(value), int):
         return int.__index__(value)  # type: ignore[arg-type]
-    if hasattr(type(value), "__index__"):
+    if _has_slot(value, "__index__"):
         return _index(value)
     raise error("required argument is not an integer")
 

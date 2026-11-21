@@ -39,6 +39,15 @@ _C_MAPPINGS = ("dict", "mappingproxy", "collections.OrderedDict", "collections.d
                "weakref.ProxyType", "weakref.CallableProxyType", "_contextvars.Context")
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _c_mapping(a: object) -> bool:               # one of CPython's mapping types (mp_subscript, no sq_item), never a class of the program's named like one
     return _is_c_type(a) and _tp_name(a) in _C_MAPPINGS
 
@@ -61,7 +70,7 @@ def _arguments(fname: str, args: tuple[object, ...], kwds: dict[str, object]) ->
             raise ValueError("lo cannot be negative")
     hi = -1
     if hi_given is not _ABSENT and hi_given is not None:   # _Py_convert_optional_to_ssize_t
-        if not hasattr(type(hi_given), "__index__"):
+        if not _has_slot(hi_given, "__index__"):
             raise TypeError("argument should be integer or None, not '" + _tp_name(hi_given) + "'")
         hi = _ssize(hi_given, "cannot fit '" + _tp_name(hi_given) + "' into an index-sized integer")
     if key is _ABSENT:
@@ -70,7 +79,7 @@ def _arguments(fname: str, args: tuple[object, ...], kwds: dict[str, object]) ->
 
 
 def _size(a: object) -> int:                     # PySequence_Size
-    if not hasattr(type(a), "__len__"):
+    if not _has_slot(a, "__len__"):
         raise TypeError("object of type '" + _tp_name(a) + "' has no len()")
     if _c_mapping(a):
         raise TypeError(_tp_name(a) + " is not a sequence")
@@ -78,7 +87,7 @@ def _size(a: object) -> int:                     # PySequence_Size
 
 
 def _check_sq_item(a: object) -> None:           # get_sq_item: the sequence slot, or the C's two messages
-    if hasattr(type(a), "__getitem__"):
+    if _has_slot(a, "__getitem__"):
         if _c_mapping(a):                        # mp_subscript alone
             raise TypeError(_tp_name(a) + " is not a sequence")
         return                                   # a sequence type, or a class of the program (a subclass of dict too): the heap type has the slot

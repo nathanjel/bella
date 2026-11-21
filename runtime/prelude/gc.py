@@ -49,6 +49,15 @@ garbage = _gc("garbage")                         # gcstate->garbage, made with t
 callbacks = _gc("callbacks")                     # gcstate->callbacks
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _noargs(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> None:   # METH_NOARGS
     if kwds:
         raise TypeError("gc." + name + "() takes no keyword arguments")
@@ -148,7 +157,7 @@ def get_objects(*args: object, **kwds: object) -> list[object]:   # gc_get_objec
     (given,) = _unpack_keywords("get_objects", ("generation",), 0, 0, 1, 0, args, kwds, _ABSENT)
     generation = -1
     if given is not _ABSENT and given is not None:   # _Py_convert_optional_to_ssize_t
-        if not hasattr(type(given), "__index__"):
+        if not _has_slot(given, "__index__"):
             raise TypeError("argument should be integer or None, not '" + _tp_name(given) + "'")
         generation = _number_index(given)
         if generation < _SSIZE_MIN or generation > _SSIZE_MAX:

@@ -46,6 +46,15 @@ UU_ALPHABET = b' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]
 Z85_ALPHABET = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#"
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 class Error(ValueError):                         # PyErr_NewException("binascii.Error", PyExc_ValueError, NULL)
     pass
 
@@ -63,7 +72,7 @@ Incomplete.__module__ = "binascii"
 def _is_bytes_like(value: object) -> bool:
     if issubclass(type(value), (bytes, bytearray)):
         return True
-    if hasattr(type(value), "__buffer__"):
+    if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     return False
 

@@ -78,6 +78,15 @@ _UINT_MAX = 2**32 - 1
 _DEF_MAX_INITIAL_BUF_SIZE = 16 * 1024 * 1024
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 class error(Exception):  # noqa: N801
     pass
 
@@ -97,7 +106,7 @@ def _zlib_error(err: int, zmsg: object, msg: str) -> error:   # zlib_error
 def _buffer(value: object) -> bytes:             # Py_buffer: bytes, bytearray; the rest stops by name or is no buffer
     if issubclass(type(value), (bytes, bytearray)):
         return bytes(value)  # type: ignore[arg-type]
-    if hasattr(type(value), "__buffer__"):
+    if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError("a bytes-like object is required, not '" + _tp_name(value) + "'")
 
@@ -120,7 +129,7 @@ def _ssize(value: object, name: str, allow_negative: bool) -> int:   # Py_ssize_
 
 def _unsigned(value: object, name: str) -> int:   # unsigned_int(bitwise=True): the low 32 bits; what neither a C int nor an unsigned holds is deprecated
     if not issubclass(type(value), int):
-        if not hasattr(type(value), "__index__"):
+        if not _has_slot(value, "__index__"):
             raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
     n = _number_index(value)
     if not -2147483648 <= n <= _UINT_MAX:        # PyLong_AsNativeBytes wanted more than the four bytes
@@ -475,7 +484,7 @@ def decompressobj(*args: object, **kwds: object) -> Decompress:
     wbits = MAX_WBITS if given[0] is _ABSENT else _int(given[0])
     zdict: object = None                         # kept as given: a zlib stream reads its buffer when it asks for a dictionary
     if given[1] is not _ABSENT:
-        if not issubclass(type(given[1]), (bytes, bytearray)) and not hasattr(type(given[1]), "__buffer__"):
+        if not issubclass(type(given[1]), (bytes, bytearray)) and not _has_slot(given[1], "__buffer__"):
             raise TypeError("zdict argument must support the buffer protocol")
         zdict = given[1]
     err, handle, zmsg = _zlib("inflate_init", wbits)

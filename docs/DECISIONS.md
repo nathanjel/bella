@@ -1502,3 +1502,8 @@ time; the program's own stay at `-O1`).
 * **For the author, a wording (RL-623):** a tuple of constants is one object in CPython and made each time here; decision 1 accepts identity differences, and D-03's row does not name this one.
 * **The reviewer's saved outputs, compared pairwise:** nothing beyond the report (two stops that name themselves, D-20's tracemalloc line).
 * **Held by:** `pipeline/tests/test_review_2026_11_21_a28.py`, the harness's test.
+
+**2026-11-21 — a type's slots are read without its metaclass (RL-621, the class behind review A27's RL-616; no decision of the author's was needed).** Where CPython's C asks whether an argument is an index, a buffer, a sequence or a number, it reads a slot of the argument's type. The preludes that stand for those functions asked `hasattr(type(x), "__index__")`, an attribute lookup on the class, which asks the metaclass.
+* **What a program sees:** CPython's behaviour for an argument whose metaclass has a `__getattr__` or a property of a special name: the metaclass is not asked; a type without the slot is refused with CPython's `TypeError` (for a buffer the prelude had stopped by name, `[P2+] the buffer protocol`, on the metaclass's word), and a type with the slot is used as one.
+* **How:** `_has_slot(value, name)` in each of the 22 preludes, which reads the dicts of the classes of the type's MRO, as `_type_lookup` does in `_signal`, `posix` and `_functools`.
+* **Held by:** the sweep `pipeline/tests/test_slot_checks.py`: 37 functions, each with the two arguments, a process for each of 74 rows, compiled against CPython; 53 rows differed before the change.

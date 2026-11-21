@@ -55,6 +55,15 @@ _DEADLOCK = "a blocking wait on a lock no other thread can release (the threads 
 _ABSENT = object()
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _noargs(qualname: str, args: tuple[object, ...], kwds: dict[str, object]) -> None:   # METH_NOARGS
     if kwds:
         raise TypeError(qualname + "() takes no keyword arguments")
@@ -82,7 +91,7 @@ def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   
 
 
 def _from_seconds(obj: object) -> int:           # _PyTime_FromSecondsObject, _PyTime_ROUND_TIMEOUT
-    if hasattr(type(obj), "__index__"):          # PyIndex_Check
+    if _has_slot(obj, "__index__"):          # PyIndex_Check
         ns = _number_index(obj) * 1000000000
         if not _PYTIME_MIN <= ns <= _PYTIME_MAX:
             raise OverflowError("timestamp out of range for C PyTime_t")

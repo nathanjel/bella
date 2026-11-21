@@ -24,6 +24,15 @@ except NameError:
 struct_passwd = _structseq("struct_passwd", "pwd", ["pw_name", "pw_passwd", "pw_uid", "pw_gid", "pw_gecos", "pw_dir", "pw_shell"], 7)
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _entry(fields: tuple[object, ...]) -> object:   # mkpwent: the strings decoded as the filesystem's (PyUnicode_DecodeFSDefault)
     name, passwd, uid, gid, gecos, home, shell = fields
     return struct_passwd((bytes.decode(name, "utf-8", "surrogateescape"), bytes.decode(passwd, "utf-8", "surrogateescape"), uid, gid,  # type: ignore[arg-type]
@@ -41,7 +50,7 @@ def _one(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> object
 def _uid(value: object) -> int | None:           # _Py_Uid_Converter: an int, -1 as uid_t has it, out of range is None (an OverflowError the caller turns into KeyError)
     if isinstance(value, float):
         raise TypeError("uid should be integer, not " + _tp_name(value))
-    if not isinstance(value, int) and not hasattr(type(value), "__index__"):
+    if not isinstance(value, int) and not _has_slot(value, "__index__"):
         raise TypeError("uid should be integer, not " + _tp_name(value))
     uid = _number_index(value)
     if uid == -1:

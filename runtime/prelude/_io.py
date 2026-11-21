@@ -55,6 +55,15 @@ _O_CREAT, _O_EXCL, _O_TRUNC, _O_APPEND = 0o100, 0o200, 0o1000, 0o2000
 _S_IFMT, _S_IFDIR, _S_IFCHR = 0o170000, 0o040000, 0o020000
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 class UnsupportedOperation(OSError, ValueError):
     pass
 
@@ -138,7 +147,7 @@ def _positional(name: str, shown: str, args: tuple[object, ...], kwds: dict[str,
 def _ssize_or_none(value: object, absent: int = -1) -> int:   # Py_ssize_t(accept={int, NoneType}) = -1
     if value is _ABSENT or value is None:
         return absent
-    if not isinstance(value, int) and not hasattr(type(value), "__index__"):
+    if not isinstance(value, int) and not _has_slot(value, "__index__"):
         raise TypeError("argument should be integer or None, not '" + _tp_name(value) + "'")
     return _ssize(value)
 
@@ -159,7 +168,7 @@ def _int(value: object) -> int:                  # PyLong_AsInt
 
 def _off(value: object) -> int:                  # Py_off_t: PyLong_AsLongLong
     if not isinstance(value, int):
-        if hasattr(type(value), "__index__"):
+        if _has_slot(value, "__index__"):
             value = _number_index(value)
         else:
             raise TypeError("'" + _tp_name(value) + "' object cannot be interpreted as an integer")
@@ -231,7 +240,7 @@ def _fspath(path: object) -> object:             # PyOS_FSPath
 def _is_bytes_like(value: object) -> bool:
     if issubclass(type(value), (bytes, bytearray)):
         return True
-    if hasattr(type(value), "__buffer__"):
+    if _has_slot(value, "__buffer__"):
         _refuse("[P2+] the buffer protocol (__buffer__)")
     return False
 
@@ -239,7 +248,7 @@ def _is_bytes_like(value: object) -> bool:
 def _rw_buffer(value: object, method: str, argument: str = "argument") -> bytearray:   # Py_buffer(accept={rwbuffer}): a bytearray, the one writable buffer there is
     if issubclass(type(value), bytearray):
         return value  # type: ignore[return-value]
-    if not issubclass(type(value), bytes) and hasattr(type(value), "__buffer__"):
+    if not issubclass(type(value), bytes) and _has_slot(value, "__buffer__"):
         _refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError(method + "() " + argument + " must be read-write bytes-like object, not " + _tp_name(value))
 
@@ -691,7 +700,7 @@ class FileIO(_RawIOBase):
         if isinstance(nameobj, bool):
             _io_call("warn", "bool is used as a file descriptor", "RuntimeWarning")   # PyErr_WarnEx(PyExc_RuntimeWarning, ..., 1)
         fd = -1
-        if isinstance(nameobj, int) or hasattr(type(nameobj), "__index__"):
+        if isinstance(nameobj, int) or _has_slot(nameobj, "__index__"):
             fd = _int(nameobj)
             if fd < 0:
                 raise ValueError("negative file descriptor")
@@ -1148,7 +1157,7 @@ def _bf_raw_tell(self: _Buffered) -> int:        # _buffered_raw_tell
 
 
 def _off_t(res: object) -> int:                  # PyNumber_AsOff_t(res, ValueError)
-    if not isinstance(res, int) and not hasattr(type(res), "__index__"):
+    if not isinstance(res, int) and not _has_slot(res, "__index__"):
         raise TypeError("'" + _tp_name(res) + "' object cannot be interpreted as an integer")
     n = _number_index(res)
     if n > _SSIZE_MAX or n < -_SSIZE_MAX - 1:
@@ -3542,7 +3551,7 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
     closefd = True if closefd is _ABSENT else (True if closefd else False)
     if opener is _ABSENT:
         opener = None
-    is_number = isinstance(file, int) or hasattr(type(file), "__index__") or hasattr(type(file), "__int__") or hasattr(type(file), "__float__")
+    is_number = isinstance(file, int) or _has_slot(file, "__index__") or _has_slot(file, "__int__") or _has_slot(file, "__float__")
     path_or_fd = file if is_number else _fspath(file)
     if not is_number and not issubclass(type(path_or_fd), (str, bytes)):
         raise TypeError("invalid file: " + repr(file))

@@ -64,6 +64,15 @@ _SSIZE_MIN = -(2**63)
 _MUTATED = "deque mutated during iteration"
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _ssize(value: object, error: type = OverflowError) -> int:   # PyNumber_AsSsize_t(value, error)
     index = _number_index(value)
     if not _SSIZE_MIN <= index <= _SSIZE_MAX:
@@ -79,7 +88,7 @@ def _clinic_ssize(value: object) -> int:         # the clinic's Py_ssize_t: PyNu
 
 
 def _slice_index(value: object) -> int:          # _PyEval_SliceIndexNotNone: clipped
-    if not hasattr(type(value), "__index__"):
+    if not _has_slot(value, "__index__"):
         raise TypeError("slice indices must be integers or have an __index__ method")
     index = _number_index(value)
     return max(min(index, _SSIZE_MAX), _SSIZE_MIN)

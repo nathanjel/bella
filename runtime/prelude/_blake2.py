@@ -55,12 +55,21 @@ _PARAMETERS = ("data", "digest_size", "key", "salt", "person", "fanout", "depth"
                "last_node", "usedforsecurity", "string")
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _buffer(value: object) -> bytes:             # the data: GET_BUFFER_VIEW_OR_ERROUT
     if issubclass(type(value), str):
         raise TypeError("Strings must be encoded before hashing")
     if issubclass(type(value), (bytes, bytearray)):
         return bytes(value)  # type: ignore[arg-type]
-    if hasattr(type(value), "__buffer__"):
+    if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError("object supporting the buffer API required")
 
@@ -68,7 +77,7 @@ def _buffer(value: object) -> bytes:             # the data: GET_BUFFER_VIEW_OR_
 def _py_buffer(value: object) -> bytes:          # key, salt, person: the clinic's Py_buffer
     if issubclass(type(value), (bytes, bytearray)):
         return bytes(value)  # type: ignore[arg-type]
-    if hasattr(type(value), "__buffer__"):
+    if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError("a bytes-like object is required, not '" + _tp_name(value) + "'")
 

@@ -70,6 +70,15 @@ struct_time.__doc__ = ("The time value as returned by gmtime(), localtime(), and
 _index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _fail(code: int) -> None:                    # PyErr_SetFromErrno(OSError)
     if code == 4:                                # EINTR: errors.c runs the handlers before it makes the InterruptedError
         _sys("check")
@@ -77,7 +86,7 @@ def _fail(code: int) -> None:                    # PyErr_SetFromErrno(OSError)
 
 
 def _object_to_time_t(value: object) -> int:     # _PyTime_ObjectToTime_t with _PyTime_ROUND_FLOOR: an index, or else a real number
-    if hasattr(type(value), "__index__"):
+    if _has_slot(value, "__index__"):
         n = _TIME_T_MAX + 1                      # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
         try:
             n = _index(value)
@@ -95,7 +104,7 @@ def _object_to_time_t(value: object) -> int:     # _PyTime_ObjectToTime_t with _
 
 
 def _seconds_to_ns(value: object, round_up: bool) -> int:   # _PyTime_FromSecondsObject: nanoseconds, floored or rounded towards +inf
-    if hasattr(type(value), "__index__"):
+    if _has_slot(value, "__index__"):
         sec = 2**63                              # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
         try:
             sec = _index(value)

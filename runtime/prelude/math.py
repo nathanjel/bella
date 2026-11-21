@@ -65,6 +65,15 @@ _DBL_MIN = 2.2250738585072014e-308
 _index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _clinic_double(value: object) -> float:      # the clinic's `double`: PyFloat_AsDouble, a float itself read directly
     if type(value) is float:
         return value  # type: ignore[return-value]
@@ -714,7 +723,7 @@ def _loghelper(arg: object, name: str) -> float:
     try:
         x = _as_double(arg)
     except OverflowError:
-        if hasattr(type(arg), "__index__"):
+        if _has_slot(arg, "__index__"):
             return _loghelper_int(_index(arg), name)
         raise
     r, err = _m_log(name, x)

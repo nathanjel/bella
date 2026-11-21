@@ -687,11 +687,6 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
   object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
   identity differences; the row should name this one. To ask after Question 27.
-* **Next step (RL-621, found beside review A27's RL-616):** 39 tests on 37 lines in 23 preludes decide with
-  `hasattr(type(x), "__index__")` (18; `__buffer__` 16, `__getitem__` 2, `__len__`, `__int__`, `__float__` one each) where CPython reads a slot of the type (`PyIndex_Check`, `PyObject_CheckBuffer`);
-  `hasattr` on a class asks its metaclass. `_type_lookup` in each (as `_signal`, `posix` and now `_functools` have it), with a
-  sweep kept as a test: every one of these calls with an argument whose metaclass answers for the name and one whose
-  metaclass raises, compiled against CPython.
 * **Open from review A27** (2026-11-21): the line under a refused literal's SyntaxError is the build's, where CPython reads it
   from the file when it makes the error and falls back on what its tokenizer read (RL-617; low: seen only where the file
   changes between the build and the refusal). Exact is the file first, by `err_programtext`'s rules, and the build's text

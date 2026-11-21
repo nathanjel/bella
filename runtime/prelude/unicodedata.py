@@ -34,6 +34,15 @@ _NAME_MAXLEN = _ucd_call("name_maxlen")          # NAME_MAXLEN, as the copied na
 _SSIZE_MAX = 2**63 - 1                           # PY_SSIZE_T_MAX
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 # ---- the calling conventions and the clinic's converters ----
 def _type_name(value: object) -> str:            # _PyArg_BadArgument's "not %.50s"
     return "None" if value is None else _tp_name(value)[:50]
@@ -85,7 +94,7 @@ def _name_bytes(value: object) -> object:        # PyArg_Parse's "s#": a str's U
         return value
     if issubclass(type(value), (bytearray, memoryview)):
         raise TypeError("lookup() argument must be read-only bytes-like object, not " + _type_name(value))
-    if hasattr(type(value), "__buffer__"):
+    if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError("a bytes-like object is required, not '" + _tp_name(value) + "'")
 

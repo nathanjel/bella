@@ -42,6 +42,15 @@ _SSIZE_MAX = 2**63 - 1
 _compile_template_func: list[object] = []
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _unpack(name: str, args: tuple[object, ...], kwds: dict[str, object], names: tuple[str, ...], minpos: int, maxpos: int) -> list[object]:
     """_PyArg_UnpackKeywords with no positional-only parameters: the values, or _ABSENT for one not given."""
     nargs = len(args)
@@ -509,7 +518,7 @@ def _getindex(self: object, index: object) -> int:   # match_getindex
     if index is _ABSENT:
         return 0
     i = -1
-    if hasattr(type(index), "__index__"):
+    if _has_slot(index, "__index__"):
         i = _clamped_index(index)
     else:
         groupindex = self._c_pattern._d_groupindex  # type: ignore[attr-defined]

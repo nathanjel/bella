@@ -53,6 +53,15 @@ pyc_magic_number_token: int = int(_cpython_table("imp:pyc_magic_number_token"))
 _lock_depth = 0                                  # the interpreter's import lock, held by the one thread
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _noargs(fname: str, args: tuple[object, ...], kwds: dict[str, object]) -> None:   # METH_NOARGS
     if kwds:
         raise TypeError("_imp." + fname + "() takes no keyword arguments")
@@ -154,7 +163,7 @@ def source_hash(*args: object, **kwds: object) -> bytes:
     if k > 2**63 - 1 or k < -(2**63):
         raise OverflowError("Python int too large to convert to C long")
     if not isinstance(source, (bytes, bytearray)):
-        if hasattr(type(source), "__buffer__"):
+        if _has_slot(source, "__buffer__"):
             _bella_refuse("[P2+] the buffer protocol (__buffer__)")
         raise TypeError("a bytes-like object is required, not '" + _tp_name(source) + "'")
     return _source_hash(k, bytes(source))  # type: ignore[no-any-return]   # the C long's bits are the key's (a negative one wraps)

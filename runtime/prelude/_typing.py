@@ -56,6 +56,15 @@ Union = type(int | None)                         # _PyUnion_Type, the runtime's 
 _FORMAT_STRING = 4                               # _Py_ANNOTATE_FORMAT_STRING
 
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
+    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 class _Absent:
     pass
 
@@ -185,7 +194,7 @@ Internal type for implementing evaluation functions."""
             raise TypeError("constevaluator.__call__() takes exactly 1 argument (" + str(len(args)) + " given)")
         fmt = args[0]
         if not isinstance(fmt, int):                 # the clinic's int converter
-            if not hasattr(type(fmt), "__index__"):
+            if not _has_slot(fmt, "__index__"):
                 raise TypeError("'" + _tp_name(fmt) + "' object cannot be interpreted as an integer")
             fmt = fmt.__index__()
         value = self._value
