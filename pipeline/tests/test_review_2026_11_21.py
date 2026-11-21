@@ -3,7 +3,8 @@
 Codex's Astra at low effort read the step that gives a built-in type's dealloc its own order (RL-565, RL-577), the fixes of
 A24 and the streams' state methods; the review log has its 22 findings as RL-578 to RL-599. Each program here is the
 report's own reproduction, run under CPython and compiled: standard output, the exit status and standard error must
-agree. The findings left open (RL-583 to RL-585, RL-588, RL-591 to RL-594, RL-597 to RL-599) have no program here.
+agree. The findings left open (RL-583, RL-585, RL-588, RL-591 to RL-594, RL-597 to RL-599) have no program here;
+RL-584 was done later the same day and has one.
 The last program is RL-600's, found in the reviewer's probes after the round: the keys and results of a bounded
 `lru_cache`, which the prelude's ring of links held for good. Its row with a comparison that fails stops at the lookup of
 the third key (review A27, RL-619); the pop of the oldest link is reached by RL-619's program in
@@ -156,6 +157,79 @@ o = B()
 try: o.__setstate__((None, 0, {"v": 2}))
 except Exception as e: print(type(e).__name__, str(e))
 print(o.closed, o.__dict__, o.__getstate__())
+'''),
+    ('RL-584', 'the item iterators of dict and OrderedDict keep their own pair and give it again', r'''
+from collections import OrderedDict
+
+events: list[str] = []
+
+
+class V:
+    def __init__(self, n: str) -> None:
+        self.n = n
+
+    def __repr__(self) -> str:
+        return self.n
+
+    def __del__(self) -> None:
+        events.append(self.n)
+
+
+def said() -> list[str]:
+    out = list(events)
+    events.clear()
+    return out
+
+
+for kind in (dict, OrderedDict):
+    for backwards in (False, True):
+        label = kind.__name__ + (", reversed" if backwards else "")
+        d = kind()
+        for n in "abc":
+            d["k" + n] = V("v" + n)
+        it = reversed(d.items()) if backwards else iter(d.items())
+        k, v = next(it)                          # unpacked at once: the pair is the iterator's alone
+        first = repr(v)
+        del v
+        d[k] = None                              # the mapping lets go of the value; the iterator's pair has it still
+        events.append("replaced")
+        k2, v2 = next(it)                        # the same pair is given again, with the next key and value
+        del v2
+        events.append("advanced")
+        print(label, "| the first value goes at the next step:", first, said())
+        held = next(it)                          # the same pair once more, and the program keeps it: the second value is the mapping's alone again
+        try:
+            next(it)
+        except StopIteration:
+            events.append("exhausted")
+        d.clear()
+        events.append("cleared")
+        print(label, "| the second value goes with the mapping, the third is in the pair the program holds:", said())
+        del it
+        events.append("the iterator went")
+        print(label, "| the iterator's end takes nothing with it:", said(), held)
+        del held
+        print(label, "| the program's own:", said())
+    d = kind((n, V("w" + n)) for n in "xyz")
+    stepped = iter(d.items())
+    pairs = [hash(next(stepped)) == hash((n, d[n])) for n in "xyz"]
+    print(kind.__name__, "| a pair used again has the hash of what it holds now:", pairs)
+    items = list(d.items())
+    print(kind.__name__, "| pairs that are held are all different objects:", len({id(p) for p in items}) == 3, items)
+    del d, items, pairs, stepped
+    print(kind.__name__, "| let go:", sorted(said()))
+od = OrderedDict((n, V("o" + n)) for n in "pqr")
+it = iter(od.items())
+k, v = next(it)
+del v
+state = it.__reduce__()
+print("an OrderedDict's item iterator, reduced:", state[1], said())
+k, v = next(it)
+del v, state
+od.clear()
+print("and stepped once more:", said())
+del it
+print("and gone:", said())
 '''),
     ('RL-600', 'a bounded lru_cache lets go of its links, oldest first, at its end and when it is cleared', r'''
 import functools

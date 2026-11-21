@@ -976,7 +976,8 @@ void fill_collections(Module* m) {               // its types are named for `col
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_bella_refuse", i_bella_refuse}, {"_count_element", i_count_element},
                     {"_repr_enter", i_repr_enter}, {"_repr_leave", i_repr_leave}, {"_hash_of", i_hash_of}, {"_get_hashed", i_get_hashed},
                     {"_set_hashed", i_set_hashed}, {"_pop_hashed", i_pop_hashed}, {"_dict_index", i_dict_index}, {"_dict_shape", i_dict_shape},
-                    {"_odict_view", i_odict_view}, {"_view_subtype", i_view_subtype}, {"_view_dict", i_view_dict}});
+                    {"_odict_view", i_odict_view}, {"_view_subtype", i_view_subtype}, {"_view_dict", i_view_dict},
+                    {"_held_once", i_held_once}, {"_tuple_set", i_tuple_set}});
     auto cls = [&](const char* n) { return static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N(n))).object()); };
     cls("deque")->sequence_slots = true;
     auto member = [](ClassObject* c, const char* name, Ref (*get)(Obj), void (*set)(Obj, Obj)) {

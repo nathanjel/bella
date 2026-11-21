@@ -31,6 +31,8 @@ try:
     _odict_view                                  # noqa: B018  # _PyDictView_New(od, type)
     _view_subtype                                # noqa: B018  # a C subtype of a dict view's type
     _view_dict                                   # noqa: B018  # a view's dv_dict
+    _held_once                                   # noqa: B018  # _PyObject_IsUniquelyReferenced of a field's value
+    _tuple_set                                   # noqa: B018  # PyTuple_SET_ITEM, on a tuple nothing else holds
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -55,6 +57,8 @@ except NameError:
     _odict_view: Callable[..., Any] = _missing
     _view_subtype: Callable[..., Any] = _missing
     _view_dict: Callable[..., Any] = _missing
+    _held_once: Callable[..., bool] = _missing
+    _tuple_set: Callable[..., None] = _missing
 
     def _bella_refuse(text: str) -> NoReturn:
         raise ImportError(text)
@@ -1349,7 +1353,8 @@ _od_field = OrderedDict.__dict__["_a_od"]
 
 class odict_iterator:
     __module__ = "builtins"
-    __slots__ = ("_a_odict", "_b_current", "_c_size", "_d_state", "_e_kind")
+    # odictiter_dealloc's order: the odict, the current key, and an item iterator's own pair (di_result: RL-584)
+    __slots__ = ("_a_odict", "_b_current", "_c_size", "_d_state", "_e_kind", "_f_result")
 
     def __iter__(*args: object, **kwds: object) -> object:
         _wrapper(args, kwds, odict_iterator, "__iter__", 0)
@@ -1371,6 +1376,11 @@ class odict_iterator:
             raise _key_error(key)
         if not kind & _ITER_KEYS:
             return value
+        if _held_once(self, "_f_result"):            # not in use: the pair it gave last is given again, the old key and value let go
+            result = self._f_result  # type: ignore[attr-defined]
+            _tuple_set(result, 0, key)
+            _tuple_set(result, 1, value)
+            return result
         return (key, value)
 
     def __reduce__(*args: object, **kwds: object) -> object:   # odictiter_reduce: a copy's items, listed
@@ -1379,7 +1389,18 @@ class odict_iterator:
         tmp = _bella_new_instance(odict_iterator)
         for name in ("_a_odict", "_b_current", "_c_size", "_d_state", "_e_kind"):
             _bella_state_set(tmp, name, _bella_state_get(self, name))
-        return (iter, (list(tmp),))
+        if not (self._e_kind & _ITER_KEYS and self._e_kind & _ITER_VALUES):  # type: ignore[attr-defined]
+            _bella_state_set(tmp, "_f_result", _NULL)
+            return (iter, (list(tmp),))
+        # The C's copy is the struct's bytes: the two share the one reference to the pair, so the copy finds it not in use,
+        # gives it as its first item, and the iterator has it afterwards as a pair the list holds too
+        _bella_state_set(tmp, "_f_result", _bella_state_get(self, "_f_result"))
+        _bella_state_set(self, "_f_result", _NULL)
+        try:
+            listed = list(tmp)
+        finally:
+            _bella_state_set(self, "_f_result", _bella_state_get(tmp, "_f_result"))
+        return (iter, (listed,))
 
 
 def _odict_iter_new(od: object, kind: int) -> object:   # odictiter_new
@@ -1391,6 +1412,7 @@ def _odict_iter_new(od: object, kind: int) -> object:   # odictiter_new
     it._d_state = fields[_STATE]
     it._a_odict = od
     it._e_kind = kind
+    it._f_result = tuple([None, None]) if kind & _ITER_KEYS and kind & _ITER_VALUES else _NULL   # odictiter_new
     return it
 
 

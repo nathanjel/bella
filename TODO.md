@@ -697,8 +697,7 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   refuse. Exact needs where each literal stands among the warnings, which the build can ask of the host by compiling under a
   recorder that lifts the limit at the n-th warning (the compile succeeds while the literal comes after it).
 * **Open from review A25** (2026-11-21), each confirmed on both sides: `Struct.iter_unpack` keeps an export of its buffer where the
-  prelude copies it (RL-583, with the memoryview step); the item iterators of dict and OrderedDict keep their last pair, as
-  `enumerate` and `zip` do since RL-551 (RL-584); a BufferedRWPair's end, and an exact BytesIO's or StringIO's, runs no finaliser of
+  prelude copies it (RL-583, with the memoryview step); a BufferedRWPair's end, and an exact BytesIO's or StringIO's, runs no finaliser of
   IOBase's in CPython (RL-585, RL-598); `type_new` sorts slot names as objects, so a str subclass's `__lt__` is asked (RL-588); a
   slot named twice in one `__slots__` is two cells in CPython, seen by the default state's size test alone (RL-591); that test over a
   C type with fields needs the type's size (RL-592); a struct sequence lets go of its fields first one first (RL-593); an exhausted

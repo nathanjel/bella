@@ -1871,6 +1871,21 @@ Ref for_next(Obj itv) {
     auto* it = static_cast<Iterator*>(itv.object());
     if (it->seq.is_unset()) return Ref{};
     auto finish = [&]() { decref(std::exchange(it->seq, Obj{})); return Ref{}; };
+    // dictiter_iternextitem's end: the iterator's own pair again when nothing else holds it, the new key and value put in
+    // before the old ones are let go, and the hash it kept forgotten (_PyTuple_Recycle); else a new pair. The last pair's
+    // key and value so stay alive in the iterator until its next step or its end (RL-584)
+    auto pair = [&](Obj key, Obj value) {
+        auto* kept = static_cast<Tuple*>(it->result.object());
+        if (kept->refs != 1) return tuple_new({key, value});
+        incref(key);
+        incref(value);
+        Obj old_key = std::exchange(kept->items[0], key), old_value = std::exchange(kept->items[1], value);
+        kept->hash = -1;
+        Ref out = Ref::share(it->result);
+        decref(old_key);
+        decref(old_value);
+        return out;
+    };
     switch (it->of) {
         case Iterator::RangeIt: {
             auto* r = static_cast<Range*>(it->seq.object());
@@ -1960,7 +1975,7 @@ Ref for_next(Obj itv) {
             auto& e = d->entries[static_cast<std::size_t>(i)];
             if (it->of == Iterator::DictRevKeysIt) return Ref::share(e.key);
             if (it->of == Iterator::DictRevValuesIt) return Ref::share(e.value);
-            return tuple_new({e.key, e.value});
+            return pair(e.key, e.value);
         }
         case Iterator::DictKeysIt:
         case Iterator::DictValuesIt:
@@ -1983,7 +1998,7 @@ Ref for_next(Obj itv) {
             auto& e = d->entries[static_cast<std::size_t>(it->pos++)];
             if (it->of == Iterator::DictKeysIt) return Ref::share(e.key);
             if (it->of == Iterator::DictValuesIt) return Ref::share(e.value);
-            return tuple_new({e.key, e.value});
+            return pair(e.key, e.value);
         }
     }
     return Ref{};

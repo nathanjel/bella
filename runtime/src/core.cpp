@@ -148,6 +148,7 @@ Range::Range(std::int64_t a, std::int64_t b, std::int64_t c) : Object(Kind::Rang
     length = static_cast<std::int64_t>(n);       // range_from_ints makes sure that it fits
 }
 Iterator::Iterator(Of o, Obj s) : Object(Kind::Iterator), of(o), seq(s) {
+    if (o == DictItemsIt || o == DictRevItemsIt) result = tuple_new({None(), None()}).release();   // dictiter_new: PyTuple_Pack(2, Py_None, Py_None)
     switch (o) {
         case RangeIt: cls = types().range_iterator; break;
         case LongRangeIt: cls = types().longrange_iterator; break;
@@ -272,7 +273,12 @@ bool register_deaths() {
     destroyer(Kind::Float) = [](Object* o) { destroy<Float>(o); };
     destroyer(Kind::Complex) = [](Object* o) { destroy<Complex>(o); };
     destroyer(Kind::Generator) = [](Object* o) { gen_die(o); };
-    destroyer(Kind::Iterator) = [](Object* o) { decref(std::exchange(static_cast<Iterator*>(o)->seq, Obj{})); destroy<Iterator>(o); };
+    destroyer(Kind::Iterator) = [](Object* o) {  // dictiter_dealloc: the dict, then the pair it kept
+        auto* it = static_cast<Iterator*>(o);
+        decref(std::exchange(it->seq, Obj{}));
+        decref(std::exchange(it->result, Obj{}));
+        destroy<Iterator>(o);
+    };
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::CodeKind) = [](Object* o) { destroy<CodeObject>(o); };
     destroyer(Kind::Frame) = [](Object* o) { destroy<FrameObject>(o); };

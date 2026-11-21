@@ -127,6 +127,7 @@ struct Iterator : Object {                       // the C++ types' iterators
     std::int64_t pos = 0;
     std::int64_t size = -1;                      // a set's or dict's size when iteration began; -2: failed (sticky)
     std::int64_t len = 0;                        // a dict's or a set's iterator's entries still to come (dictiterobject.len, setiterobject.len)
+    Obj result;                                  // owned: a dict's item iterator's own pair (di_result), given again while nothing else holds it (RL-584); Unset for the others
     Iterator(Of o, Obj s);
 };
 struct DictView : Object {                       // dict.keys(), values(), items(): live views of the dict
