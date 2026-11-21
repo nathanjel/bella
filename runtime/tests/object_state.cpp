@@ -296,6 +296,63 @@ int main() {
             }
         }
     }
+    std::cout << "9. a chain longer than the native stack: what is put off, and when it goes (RL-624)\n";
+    {
+        auto chain = [&](const char* next, const char* value, int length, std::vector<Instance*>* nodes) {
+            auto* Node = make_class({.name = "Node", .slots = Names{next, value, "__weakref__"}});
+            Instance* head = nullptr;
+            for (int i = length - 1; i >= 0; --i) {              // node i holds node i + 1 and a value of its own, t(200 + i)
+                Instance* node = new_instance(Node);
+                incref(node);
+                if (head != nullptr) {
+                    setattr(node, N(next), Obj::of(head));
+                    decref(head);
+                }
+                setattr(node, N(value), tagged(200 + i).get());
+                head = node;
+                if (nodes != nullptr) nodes->insert(nodes->begin(), node);
+            }
+            return head;
+        };
+        detail::StackWatch& watch = detail::stack_watch;
+        for (auto [next, value] : {std::pair{"a_nxt", "b_pay"}, std::pair{"b_nxt", "a_pay"}}) {
+            for (int room : {-1, 4, 5, 7}) {
+                Instance* head = chain(next, value, 12, nullptr);
+                deaths.clear();
+                watch.room = room;
+                decref(head);
+                watch.room = -1;
+                std::cout << "  the next node in " << next << ", room for " << (room < 0 ? std::string("any") : std::to_string(room)) << ": [";
+                for (std::size_t i = 0; i < deaths.size(); ++i) std::cout << (i ? ", " : "") << "'" << deaths[i] << "'";
+                std::cout << "] | put off: " << watch.later << '\n';
+            }
+        }
+        std::vector<Instance*> nodes;
+        Instance* head = chain("a_nxt", "b_pay", 6, &nodes);
+        auto* callback = new Function([](std::span<const Obj>) -> Obj {
+            deaths.push_back("weak");
+            return Obj::small(0);
+        });
+        Object* holder = new Marker("weak");
+        incref(holder);
+        weak_link(holder, nodes[2], Obj::of(callback), WeakKind::Other);
+        deaths.clear();
+        watch.room = 3;                                      // no room even at the outermost dealloc: what is put off waits
+        decref(head);
+        std::cout << "  room for 3: [";
+        for (std::size_t i = 0; i < deaths.size(); ++i) std::cout << (i ? ", " : "") << "'" << deaths[i] << "'";
+        std::cout << "] | put off: " << watch.later << " | a weak reference to a node put off reaches: "
+                  << (weak_target(weak_record(holder)) == nullptr ? "nothing" : "the node") << '\n';
+        watch.room = -1;
+        deaths.clear();
+        {
+            Ref other = tagged(300);                         // the first dealloc that ends with room lets them go
+        }
+        std::cout << "  then, at another object's end: [";
+        for (std::size_t i = 0; i < deaths.size(); ++i) std::cout << (i ? ", " : "") << "'" << deaths[i] << "'";
+        std::cout << "] | put off: " << watch.later << '\n';
+        decref(holder);
+    }
     decref(plain);
     decref(p);
     return 0;

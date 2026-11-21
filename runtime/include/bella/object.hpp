@@ -85,7 +85,8 @@ enum class Kind : std::uint8_t {
 };
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
-enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4, FROZEN_DICT = 1u << 5, HAS_WEAKREFS = 1u << 6, WEAK_REFERENCE = 1u << 7, DICT_DROPPED = 1u << 8 };
+enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4, FROZEN_DICT = 1u << 5, HAS_WEAKREFS = 1u << 6, WEAK_REFERENCE = 1u << 7, DICT_DROPPED = 1u << 8,
+                            PUT_OFF = 1u << 9 };   // its count is 0 and its dealloc waits for room on the native stack (detail::dealloc_or_later)
 
 struct Object {
     ClassObject* cls = nullptr;
@@ -139,10 +140,83 @@ inline void incref(Object* o) {
     if (o->flags & DEAD) throw ModelError("a reference to a dead object was taken");
     ++o->refs;
 }
+
+// ---- the native stack (RL-624; Heap.margin, _dealloc in the model; _Py_Dealloc, _Py_RecursionLimit_GetMargin in CPython) ----
+// An object dies inside the dealloc of what held it, so a chain of objects is a chain of deallocs on the native stack, as
+// long as the chain: a linked list of some tens of thousands of nodes would not fit. CPython (3.14 and later) looks at the
+// stack pointer in _Py_Dealloc: where the margin above the stack's soft limit is nearly used (less than 2 of its units of
+// 16 KiB) an object that can hold others is put off, nothing of it run, and a dealloc that ends with room again (4 units
+// or more) lets everything put off go, the last first, from there. Below that depth nothing changes: the order is the
+// nesting's. The bounds are the thread's, measured when the program starts (measure_native_stack, runtime/src/core.cpp); a
+// program of the object model's own tests has none and is never short, unless it says how many deallocs fit (`room`), which
+// is the model's `stack_room` and what the lockstep test sets on both sides.
+namespace detail {
+struct StackWatch {
+    const char* soft_limit = nullptr;            // below it a recursion of the runtime's own raises RecursionError (check_native_stack)
+    const char* deposit_below = nullptr;         // the soft limit and 2 units: a margin of less than 2
+    const char* destroy_from = nullptr;          // the soft limit and 4 units: a margin of 4 or more
+    int room = -1;                               // the tests': how many deallocs fit inside one another; -1: the stack says
+    int depth = 0;                               // deallocs in flight, counted under `room` only
+    std::uint32_t later = 0;                     // how many are put off
+};
+inline constinit StackWatch stack_watch = {};
+inline std::vector<Object*>& put_off() {         // the last put there is the first to go (tstate->delete_later)
+    static std::vector<Object*> list;
+    return list;
+}
+inline bool holds_others(Kind kind, std::uint16_t flags) {   // Py_TPFLAGS_HAVE_GC: a plain number, text or code object holds nothing that dies with it
+    if (flags & HAS_ATTRIBUTES) return true;
+    switch (kind) {
+        case Kind::Str: case Kind::Singleton: case Kind::Bool: case Kind::BigInt: case Kind::Float: case Kind::Range:
+        case Kind::Complex: case Kind::Bytes: case Kind::ByteArray: case Kind::CodeKind: case Kind::Marker:
+            return false;
+        default:
+            return true;
+    }
+}
+inline void deposit(Object* o) {                 // _PyTrash_thread_deposit_object
+    o->flags |= PUT_OFF;
+    put_off().push_back(o);
+    ++stack_watch.later;
+}
+inline void destroy_later() {                    // _PyTrash_thread_destroy_chain: each from here, which may put more off
+    StackWatch& w = stack_watch;
+    while (w.later != 0) {
+        Object* o = put_off().back();
+        put_off().pop_back();
+        --w.later;
+        o->flags &= static_cast<std::uint16_t>(~PUT_OFF);
+        if (w.room >= 0) ++w.depth;
+        dealloc(o);
+        if (w.room >= 0) --w.depth;
+    }
+}
+[[gnu::noinline]] inline void dealloc_counted(Object* o) {   // the same two tests on the tests' count of deallocs in flight
+    StackWatch& w = stack_watch;
+    int margin = w.room - w.depth;
+    bool holds = holds_others(o->kind, o->flags);
+    if (margin < 2 && holds) return deposit(o);
+    ++w.depth;
+    dealloc(o);
+    --w.depth;
+    if (w.later != 0 && margin >= 4 && holds) destroy_later();
+}
+inline void dealloc_or_later(Object* o) {        // _Py_Dealloc
+    StackWatch& w = stack_watch;
+    if (w.room >= 0) [[unlikely]] return dealloc_counted(o);
+    const char* here = static_cast<const char*>(__builtin_frame_address(0));
+    Kind kind = o->kind;
+    std::uint16_t flags = o->flags;
+    if (here < w.deposit_below && holds_others(kind, flags)) [[unlikely]] return deposit(o);
+    dealloc(o);
+    if (w.later != 0 && here >= w.destroy_from && holds_others(kind, flags)) [[unlikely]] destroy_later();
+}
+}  // namespace detail
+
 inline void decref(Object* o) {
     if (o->flags & IMMORTAL) return;
     if (o->refs == 0) throw ModelError("an object released more often than it was held");
-    if (--o->refs == 0) dealloc(o);
+    if (--o->refs == 0) detail::dealloc_or_later(o);
 }
 inline void incref(Obj v) {
     if (v.is_object()) incref(v.object());
@@ -1930,6 +2004,11 @@ inline std::vector<WeakRecord*>* weak_list(const Object* target) {
     if (!(target->flags & HAS_WEAKREFS)) return nullptr;
     auto it = heap().weak_lists.find(target);
     return it == heap().weak_lists.end() ? nullptr : &it->second;
+}
+// What a weak reference reaches: nothing once its target has died, and nothing while the target's dealloc is put off
+// (its count is 0: _Py_TryIncref fails, and PyWeakref_GetRef answers that the object is gone)
+inline Object* weak_target(const WeakRecord* r) {
+    return r == nullptr || r->target == nullptr || (r->target->flags & PUT_OFF) ? nullptr : r->target;
 }
 inline WeakRecord* weak_record(const Object* holder) {
     if (!(holder->flags & WEAK_REFERENCE)) return nullptr;

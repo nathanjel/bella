@@ -650,7 +650,7 @@ public:
 namespace detail {
 void arrive(const Code& code, Module* module, int line, std::uint64_t& id, std::shared_ptr<FrameLink>& link, PyError& e) noexcept;
 void record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n, Obj ns, std::shared_ptr<FrameLink>& link) noexcept;
-void enter_frame();                              // RecursionError past the limit (spec D-17)
+void enter_frame();                              // RecursionError past the limit (spec D-17), and where the native stack is nearly used
 void leave_frame() noexcept;
 // What a frame shows to the builtins that read their caller (globals(), a lazy import's declaration).
 // A frame CPython does not have (the prelude's, an inlined comprehension's) is not linked in.
@@ -775,6 +775,16 @@ Ref float_binary(BinOp op, Obj a, Obj b);        // nb_add and its kin: an int o
 Ref float_divmod(Obj a, Obj b);
 std::int64_t float_hash(Obj self);               // _Py_HashDouble
 std::int64_t tuple_hash(const Tuple* t);         // tuple_hash: the items, whatever a subclass says
+// The native stack (RL-624; detail::stack_watch in bella/object.hpp). measure_native_stack reads the calling thread's bounds
+// and sets the soft limit and the two marks dealloc looks at; run_main calls it first. check_native_stack is CPython's
+// _Py_EnterRecursiveCall for the runtime's own recursion on a program's data (hashing a tuple of tuples, the repr and the
+// str of nested containers, comparisons): below the soft limit it raises RecursionError, `Stack overflow (used N kB)` and
+// `where`, where the program would otherwise end on the stack's guard page
+void measure_native_stack();
+[[noreturn]] void native_stack_overflow(const char* where);
+inline void check_native_stack(const char* where) {
+    if (static_cast<const char*>(__builtin_frame_address(0)) < detail::stack_watch.soft_limit) [[unlikely]] native_stack_overflow(where);
+}
 std::int64_t bytes_hash(Obj v);                  // bytes_hash: the bytes, whatever a subclass says
 std::int64_t frozenset_hash(Obj v);              // frozenset_hash_impl: the elements, whatever a subclass says
 std::int64_t double_hash(double v, const void* instance);   // _Py_HashDouble(inst, v)

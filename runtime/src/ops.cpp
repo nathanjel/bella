@@ -706,6 +706,7 @@ Ref compare_one_side(Obj self, Obj other, CmpOp op) { return compare_side(self, 
 // do_richcompare: a subclass's reflected method first, then the left operand's, then the
 // reflected; == and != fall back to identity, the orderings fail
 Ref compare(CmpOp op, Obj a, Obj b) {
+    check_native_stack(" in comparison");        // PyObject_RichCompare's _Py_EnterRecursiveCall
     switch (op) {
         case CmpOp::Is: return Ref::steal(boolean(a == b));
         case CmpOp::IsNot: return Ref::steal(boolean(a != b));
@@ -1067,6 +1068,7 @@ Ref repr_unchecked(Obj v) {
 // frame that asks, and what it raises comes out of the call (C-7-85)
 Ref repr_of(Obj v) {                             // PyObject_Repr
     check_signals_if_tripped();
+    check_native_stack(" while getting the repr of an object");
     Ref r = repr_unchecked(v);
     if (as_str(r.get()) == nullptr)
         raise_new("TypeError", fully_qualified_name(type_of(v)) + ".__repr__() must return a str, not " + fully_qualified_name(type_of(r.get())));
@@ -1075,6 +1077,7 @@ Ref repr_of(Obj v) {                             // PyObject_Repr
 Ref str_of(Obj v) {                              // PyObject_Str
     check_signals_if_tripped();
     if (is_exact_str(v)) return Ref::share(v);
+    check_native_stack(" while getting the str of an object");
     bool own_str = is_kind(v, Kind::Instance) || is_kind(v, Kind::Proxy) ||
                    ((has_python_type(v) || is_subclass_instance(v)) &&
                     type_lookup(type_of(v), intern("__str__")) != type_lookup(types().object, intern("__str__")));
@@ -1179,9 +1182,9 @@ Ref getattr_impl(Obj obj, const Str* name) {
     if (obj.is_object() && obj.object()->cls->dict_without_getset && name == intern("__dict__"))   // local_getattro
         return instance_dict_of(obj);
     if (obj.is_object() && obj.object()->cls->weak_proxy) {   // proxy_getattr
-        WeakRecord* r = weak_record(obj.object());
-        if (r == nullptr || r->target == nullptr) raise_new("ReferenceError", "weakly-referenced object no longer exists");
-        Ref target = Ref::share(Obj::of(r->target));
+        Object* reached = weak_target(weak_record(obj.object()));
+        if (reached == nullptr) raise_new("ReferenceError", "weakly-referenced object no longer exists");
+        Ref target = Ref::share(Obj::of(reached));
         return getattr(target.get(), name);
     }
     // union_getattro's cls_attrs: a union's __module__ is its type's, which no entry of the type's dict holds

@@ -671,13 +671,12 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   differs from CPython's for every program, in members and in order (CPython's start has `_thread`, `_weakref`, `marshal`,
   `posix`, `time`, `zipimport` there, and `site`'s imports unless `-S`; a compiled program `_contextvars`), and no deviation
   says so. Three ways: a deviation that says it; the start's modules as `python -S` has them; as `python` has them.
-* **First, because it ends a program (RL-624, review A28):** the runtime's own recursion has no guard on the native stack.
-  Hashing a tuple nested 100 000 deep under a stack of 1 MiB (300 000 under 8 MiB) is a RecursionError under CPython
-  (`_Py_EnterRecursiveCall`, which looks at the stack pointer since 3.14) and SIGSEGV compiled. A step with a case (the case
-  starts itself again under a small stack, by `sh -c 'ulimit -s ...; exec ...'`): the stack's bounds read at the start, a
-  guard that raises RecursionError where the runtime recurses on a program's data (hashing a tuple or a frozenset, `repr` and
-  `str` of nested containers, comparisons, `copy.deepcopy`'s own depth is Python's), and a sweep of those places. D-17 says the
-  counter of Python calls; what it should say of the native stack is the author's wording.
+* **For the author, a wording (RL-624's remainder, 2026-11-21):** a program that raises its recursion limit past what the native
+  stack holds gets a RecursionError where the stack is nearly used (`Stack overflow ... while calling a Python object`); it
+  ended on the stack's guard page before. CPython keeps a pure-Python recursion's frames on the heap and goes on. D-17 says
+  the counter; its row and the Resources sentence should say this too. And the other places the runtime recurses on a
+  program's data, to be swept with the same guard: `isinstance` and `issubclass` over nested tuples of classes, the
+  runtime's report of a long chain of causes, `copy.deepcopy` and `json` are Python's own depth.
 * **A starred tuple reaches a callable written in C as itself (RL-626, review A28):** `f(*t)` with an exact tuple hands `t` to
   `PyObject_Call`, and the runtime makes a new tuple for a prelude's `*args`. It shows in four places: an `lru_cache` key (the
   caller's tuple with the hash it keeps, so no `__hash__` call for a prehashed `t`), `MyError(*t).args is t` for a class over

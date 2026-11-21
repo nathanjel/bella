@@ -242,6 +242,46 @@ def main() -> None:
             else:
                 decref(o)
                 print(f"  {kind}, shape {shape}, no weak reference:", [f"t{t}" for t in heap.deaths])
+    print("9. a chain longer than the native stack: what is put off, and when it goes (RL-624)")
+
+    def chain(names: tuple[str, str], length: int) -> tuple[RefObject, list[RefObject]]:
+        Node = RefClass("Node", slots=(*names, "__weakref__"), heap=heap)
+        nodes: list[RefObject] = []
+        head: RefObject | None = None
+        for i in reversed(range(length)):            # node i holds node i + 1 and a value of its own, t(200 + i)
+            node = RefObject(Node)
+            incref(node)
+            if head is not None:
+                rt.setattr(node, names[0], head)
+                decref(head)
+            rt.setattr(node, names[1], tagged(200 + i))
+            head = node
+            nodes.insert(0, node)
+        assert head is not None
+        return head, nodes
+
+    for names in (("a_nxt", "b_pay"), ("b_nxt", "a_pay")):
+        for room in (None, 4, 5, 7):
+            head, _ = chain(names, 12)
+            heap.deaths.clear()
+            heap.stack_room = room
+            decref(head)
+            heap.stack_room = None
+            print(f"  the next node in {names[0]}, room for {room or 'any'}:", [f"t{t}" for t in heap.deaths], "| put off:", len(heap.delete_later))
+    head, nodes = chain(("a_nxt", "b_pay"), 6)
+    w = O.weak_ref(nodes[2], lambda _: heap.deaths.append("weak"))
+    heap.deaths.clear()
+    heap.stack_room = 3                              # no room even at the outermost dealloc: what is put off waits
+    decref(head)
+    print("  room for 3:", [f"t{t}" for t in heap.deaths], "| put off:", len(heap.delete_later),
+          "| a weak reference to a node put off reaches:", "nothing" if w() is None else "the node")
+    heap.stack_room = None
+    heap.deaths.clear()
+    other = tagged(300)
+    incref(other)
+    decref(other)                                    # the first dealloc that ends with room lets them go
+    print("  then, at another object's end:", [t if t == "weak" else f"t{t}" for t in heap.deaths], "| put off:", len(heap.delete_later))
+    del w
     decref(plain)
     decref(p)
 

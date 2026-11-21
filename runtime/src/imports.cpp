@@ -822,8 +822,8 @@ Ref i_weak_link(Obj, Args a) {
 Ref i_weak_get(Obj, Args a) {
     positional_only(a, "_weak_get", 1, 1);
     if (!a.pos(0).is_object()) return none_ref();
-    WeakRecord* r = weak_record(a.pos(0).object());
-    return r == nullptr || r->target == nullptr ? none_ref() : Ref::share(Obj::of(r->target));
+    Object* target = weak_target(weak_record(a.pos(0).object()));
+    return target == nullptr ? none_ref() : Ref::share(Obj::of(target));
 }
 Ref weak_callback_member(Obj self) {
     WeakRecord* r = weak_record(self.object());

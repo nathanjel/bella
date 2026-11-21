@@ -1,0 +1,12 @@
+{
+ "case": "C-8-20_data_deeper_than_the_native_stack.py",
+ "clause": "C-8-20",
+ "spec": "section 8 (Resources)",
+ "status": "P1",
+ "source": "Objects/object.c (_Py_Dealloc, _PyTrash_thread_deposit_object, _PyTrash_thread_destroy_chain, PyObject_Repr,",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "---- under the stack the program was given\na chain of objects with a finaliser: every one died once: True\na chain of objects with slots: True ['the callback']\na chain of tuples is let go\na chain of lists is let go\na chain of dicts is let go\na chain of all three is let go\n---- and under a small one\nunder a stack of 1 MiB -> status 0\n    a chain of objects with a finaliser: every one died once: True\n    a chain of objects with slots: True ['the callback']\n    a chain of tuples is let go\n    a chain of lists is let go\n    a chain of dicts is let go\n    a chain of all three is let go\n    hash of a tuple: RecursionError | again: RecursionError | as a key: RecursionError | in a set: RecursionError\n    repr: RecursionError RecursionError RecursionError | str: RecursionError | a format: RecursionError\n    ==: RecursionError RecursionError RecursionError | <: RecursionError | in: RecursionError | index: RecursionError\n    the same object is equal to itself with no walk: True True True\n    and the data is as it was: 1 1 ['after'] tuple\n    all of it is let go, and the program goes on: 45\n",
+ "stderr": "",
+ "exit_code": 0
+}

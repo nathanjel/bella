@@ -1,5 +1,6 @@
 // runtime/src/core.cpp -- the builtin types, their objects' deaths, strings, tuples, lists, the
 // dict, hashing, exceptions and frame records (bella/runtime.hpp).
+#include <pthread.h>
 #include "bella/runtime.hpp"
 
 #include <algorithm>
@@ -623,10 +624,44 @@ std::int64_t frozenset_hash(Obj v) {             // frozenset_hash_impl, whateve
     return static_cast<std::int64_t>(hash);
 }
 
+// ---- the native stack (RL-624) ----
+namespace {
+const char*& native_stack_top() {
+    static const char* top = nullptr;
+    return top;
+}
+}  // namespace
+void measure_native_stack() {
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) != 0) return;   // unknown: nothing is ever short, as before there was a watch
+    void* low = nullptr;
+    std::size_t size = 0;
+    if (pthread_attr_getstack(&attr, &low, &size) == 0 && low != nullptr && size != 0) {
+        // CPython's soft limit is two of its margins (16 KiB each) above the stack's end. An exception raised from compiled
+        // code, and what its handler then does, take more native stack than a bytecode loop's, so the part kept back here
+        // is larger; the two marks of dealloc are CPython's, 2 and 4 margins above the soft limit
+        constexpr std::size_t margin = std::size_t{1} << 14;
+        const char* base = static_cast<const char*>(low);
+        std::size_t kept_back = std::min<std::size_t>(size / 4, 12 * margin);
+        detail::StackWatch& w = detail::stack_watch;
+        w.soft_limit = base + kept_back;
+        w.deposit_below = w.soft_limit + 2 * margin;
+        w.destroy_from = w.soft_limit + 4 * margin;
+        native_stack_top() = base + size;
+    }
+    pthread_attr_destroy(&attr);
+}
+void native_stack_overflow(const char* where) {   // _Py_CheckRecursiveCall's words
+    const char* here = static_cast<const char*>(__builtin_frame_address(0));
+    long used = native_stack_top() != nullptr ? static_cast<long>((native_stack_top() - here) / 1024) : 0;
+    raise_new("RecursionError", "Stack overflow (used " + std::to_string(used) + " kB)" + where);
+}
+
 std::int64_t tuple_hash(const Tuple* t) {
     // tuplehash: xxHash's mixing, as Objects/tupleobject.c, and kept in the tuple once it is known (ob_hash). An item whose
     // __hash__ raises leaves nothing kept: the next call asks every item again
     if (t->hash != -1) return t->hash;
+    check_native_stack(" while hashing a tuple");   // tuple_hash's _Py_EnterRecursiveCall: an item may be a tuple, and so on down
     const auto& items = t->items;
     constexpr std::uint64_t P1 = 11400714785074694791ULL, P2 = 14029467366897019727ULL,
                             P5 = 2870177450012600261ULL;

@@ -2548,6 +2548,12 @@ void detail::enter_frame() {
         --recursion_depth();
         raise_new("RecursionError", "maximum recursion depth exceeded");
     }
+    // A compiled call is a native frame, so a limit a program raised past what the stack holds is met by the stack first:
+    // RecursionError there too, as CPython's C raises it where its own stack is nearly used (RL-624)
+    if (static_cast<const char*>(__builtin_frame_address(0)) < bella::detail::stack_watch.soft_limit) [[unlikely]] {
+        --recursion_depth();
+        native_stack_overflow(" while calling a Python object");
+    }
 }
 void detail::leave_frame() noexcept { --recursion_depth(); }
 detail::FrameRecord*& detail::current_frame() {
@@ -3567,6 +3573,7 @@ void set_compiler_warnings(std::span<const CompilerWarning> warnings) { compiler
 int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
              std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
     int status = 0;
+    measure_native_stack();                      // the main thread's bounds, before anything recurses (RL-624)
     // What the environment said, before anything else: a value CPython refuses ends the program here (core.cpp). Without
     // buffered streams the C library's three are unbuffered too (config_init_stdio)
     if (!start_up().buffered_stdio) {

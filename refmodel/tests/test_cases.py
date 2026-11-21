@@ -1852,6 +1852,59 @@ def test_a_built_in_types_dealloc_has_its_own_order() -> None:
         pass
 
 
+def test_a_chain_longer_than_the_native_stack() -> None:
+    """RL-624: an object dies inside the dealloc of what held it, so a chain of objects is a chain of deallocs on the
+    native stack. CPython's _Py_Dealloc looks at the stack (3.14 and later): where its margin is nearly used the object is
+    put off, and a dealloc that ends with room again lets everything put off go, the last first. Below that depth the
+    order is the nesting's, whatever the length; past it every object still dies once, in the order the two tests of
+    _Py_Dealloc give (a margin of less than 2 puts off, one of 4 or more lets go)."""
+    from refmodel import objects as O
+
+    def chain(length: int, names: tuple[str, str], room: int | None) -> list[object]:
+        """`names`: the slot of the next node and the slot of the node's own value; slots go in the order of their names."""
+        heap = _fresh_heap()
+        rt = Runtime()
+        Node = RefClass("Node", slots=names)
+        head: RefObject | None = None
+        for i in reversed(range(length)):                # node i holds node i + 1 and a value of its own
+            node = RefObject(Node, tag=f"n{i}")
+            O.incref(node)
+            if head is not None:
+                rt.setattr(node, names[0], head)
+                O.decref(head)
+            _store(rt, node, names[1], f"p{i}")
+            head = node
+        assert head is not None
+        O.HEAP.stack_room = room                         # the stack is short from here on
+        O.decref(head)
+        assert O.HEAP.dealloc_depth == 0 and heap is O.HEAP
+        if room is None or room >= 4:                    # the outermost dealloc ended with room: nothing is left put off
+            assert O.HEAP.delete_later == []
+        return _deaths()
+
+    nodes, values = [f"n{i}" for i in range(6)], [f"p{i}" for i in range(6)]
+    # room for any chain: each node, then what it holds, the next node before its own value or after
+    next_first, value_first = ("a_nxt", "b_pay"), ("b_nxt", "a_pay")
+    assert chain(6, next_first, None) == nodes + values[::-1]
+    assert chain(6, value_first, None) == [x for pair in zip(nodes, values, strict=True) for x in pair]
+    assert chain(6, next_first, 100) == nodes + values[::-1]
+    # room for four: n3 is put off when n2 lets go of it, and p2 after it; p1 and p0 go where they are; n0's dealloc
+    # ends with a margin of 4 and lets go of p2, then of n3, whose own chain puts p5 off
+    assert chain(6, next_first, 4) == ["n0", "n1", "n2", "p1", "p0", "p2", "n3", "n4", "n5", "p4", "p3", "p5"]
+    # where even the outermost dealloc has no room (a program deep in its own calls), what was put off waits for the
+    # first dealloc that ends with room, whatever object that is
+    waiting = chain(6, next_first, 3)
+    assert waiting == ["n0", "n1", "p0"] and len(O.HEAP.delete_later) == 2, (waiting, O.HEAP.delete_later)
+    O.HEAP.stack_room = None
+    O.decref(_tagged(O.HEAP, "another"))
+    assert _deaths() == ["another", "p1", "n2", "n3", "n4", "n5", "p5", "p4", "p3", "p2"] and O.HEAP.delete_later == []
+    for room in (4, 5, 7, 50):
+        for order in (next_first, value_first):
+            deaths = chain(300, order, room)
+            assert sorted(map(str, deaths)) == sorted([f"n{i}" for i in range(300)] + [f"p{i}" for i in range(300)]), (room, order)
+            assert [d for d in deaths if str(d).startswith("n")] == [f"n{i}" for i in range(300)], (room, order)   # a node before the one it held
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

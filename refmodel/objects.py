@@ -259,6 +259,19 @@ class Heap:
         self.sites: weakref.WeakSet[Site] = weakref.WeakSet()
         self.deaths: list[Any] = []
         self.gc = GcState()
+        # _Py_Dealloc's look at the native stack (CPython 3.14 and later; RL-624). `stack_room` is how many deallocs fit
+        # inside one another before the stack's margin is nearly used, None for a stack that is never short;
+        # `dealloc_depth` counts those in flight; `delete_later` has the objects whose end was put off, each with
+        # whether the collector tracked it, the last put there the first to go.
+        self.stack_room: int | None = None
+        self.dealloc_depth = 0
+        self.delete_later: list[tuple[Any, bool]] = []
+
+    def margin(self) -> int:
+        """_Py_RecursionLimit_GetMargin: how far the native stack is from its soft limit, in the unit of _Py_Dealloc's
+        two tests. In CPython that is the machine's (the stack pointer against a limit taken at the thread's start);
+        here it is the room less the deallocs in flight."""
+        return 1 << 30 if self.stack_room is None else self.stack_room - self.dealloc_depth
 
     def died(self, obj: RefObject) -> None:
         """RL-20: an entry a live class still validates never names an object that dies."""
@@ -290,7 +303,41 @@ def decref(v: Any) -> None:
             raise ModelError(f"{v!r} released more often than it was held")
         v.refs -= 1
         if v.refs == 0:
-            v.dealloc()
+            _dealloc(v)
+
+
+def _dealloc(v: Any) -> None:
+    """_Py_Dealloc. An object dies inside the dealloc of what held it, so a chain of objects is a chain of deallocs on
+    the native stack, as long as the chain. Where the stack's margin is nearly used (less than 2), the object is put
+    off (_PyTrash_thread_deposit_object: untracked if it was tracked, at the front of the thread's list) and nothing of
+    it runs yet, its finaliser included; a dealloc that ends with room again (a margin of 4 or more) lets everything
+    put off go, the last first, each from there (_PyTrash_thread_destroy_chain), which may put more off. So a chain
+    of any length ends, and below the depth at which the stack is short nothing changes: the order is the nesting's."""
+    heap = v.heap
+    margin = heap.margin()
+    if margin < 2:
+        tracked = heap.gc.is_tracked(v)
+        if tracked:
+            heap.gc.untrack(v)
+        v.put_off = True                # its count is 0: a weak reference no longer reaches it (_Py_TryIncref fails)
+        heap.delete_later.append((v, tracked))
+        return
+    heap.dealloc_depth += 1
+    try:
+        v.dealloc()
+    finally:
+        heap.dealloc_depth -= 1
+    if heap.delete_later and margin >= 4:
+        while heap.delete_later:
+            later, tracked = heap.delete_later.pop()
+            later.put_off = False
+            if tracked:
+                heap.gc.track(later)
+            heap.dealloc_depth += 1
+            try:
+                later.dealloc()
+            finally:
+                heap.dealloc_depth -= 1
 
 
 class RefDict(dict[Any, Any]):
@@ -958,6 +1005,8 @@ class RefWeak:
         self.heap.gc.link(self)             # a weak reference is a tracked object (its callback is a reference)
 
     def __call__(self) -> RefObject | None:
+        if self.target is not None and getattr(self.target, "put_off", False):
+            return None                 # PyWeakref_GetRef on an object whose dealloc is put off: gone
         return self.target
 
     def dealloc(self) -> None:
