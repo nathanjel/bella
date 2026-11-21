@@ -12,6 +12,8 @@ __name__ = "atexit"
 
 try:
     _unraisable                                  # noqa: B018  # PyErr_FormatUnraisable: a message (None if it did not format) and the exception
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -20,6 +22,10 @@ except NameError:
         raise ImportError("this file needs the runtime's primitives")
 
     _unraisable: Callable[..., Any] = _missing
+    _own_data: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 # struct atexit_state's callbacks: the interpreter's, so it outlives the module's entry in sys.modules
 _callbacks: list[tuple[object, tuple[object, ...], dict[str, object] | None]] = []
@@ -35,17 +41,20 @@ def _noargs(qualname: str, args: tuple[object, ...], kwds: dict[str, object]) ->
 def _atexit_call() -> None:                      # atexit_callfuncs: over a copy, and whatever was registered meanwhile goes unrun
     copy = list(_callbacks)
     for func, args, kwargs in copy:
+        failed: BaseException | None = None
         try:
             if kwargs is None:
                 func(*args)  # type: ignore[operator]
             else:
                 func(*args, **kwargs)  # type: ignore[operator]
         except BaseException as e:  # noqa: BLE001  # PyErr_FormatUnraisable takes whatever is set: SystemExit and KeyboardInterrupt too
-            try:
-                message: str | None = "Exception ignored in atexit callback " + repr(func)
+            failed = e
+        if failed is not None:                   # the error is pending, not handled, while the C makes its report: the repr and the
+            try:                                 # hook see what was handled around the callbacks (RL-728); %R is the characters (RL-748)
+                message: str | None = "Exception ignored in atexit callback " + _repr_text(func)
             except BaseException:  # noqa: BLE001  # PyUnicode_FromFormatV failed on %R: PyErr_Clear, and the report has no first line
                 message = None
-            _unraisable(message, e)
+            _unraisable(message, failed)
     _callbacks.clear()
 
 

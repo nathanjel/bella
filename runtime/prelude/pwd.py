@@ -10,6 +10,7 @@ try:
     _structseq                                   # noqa: B018  # bootstrap.py's: a type of named tuples
     _sys                                         # noqa: B018  # the system calls, by name
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -22,6 +23,9 @@ except NameError:
     _structseq: Callable[..., Any] = _missing
     _sys: Callable[..., Any] = _missing
     _has_slot: Callable[..., bool] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 struct_passwd = _structseq("struct_passwd", "pwd", ["pw_name", "pw_passwd", "pw_uid", "pw_gid", "pw_gecos", "pw_dir", "pw_shell"], 7)
 
@@ -77,7 +81,7 @@ def getpwnam(*args: object, **kwds: object) -> object:
         raise ValueError("embedded null byte")
     found = _sys("getpwnam", encoded)
     if found is None:
-        raise KeyError("getpwnam(): name not found: " + repr(name))
+        raise KeyError("getpwnam(): name not found: " + _repr_text(name))
     return _entry(found)
 
 

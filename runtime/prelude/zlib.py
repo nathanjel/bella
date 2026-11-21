@@ -23,6 +23,7 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -44,6 +45,9 @@ except NameError:
         return operator.index(o)
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 
 DEFLATED = 8
@@ -215,13 +219,21 @@ def _no_args(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> No
         raise TypeError(name + "() takes no arguments")
 
 
-class Compress:
-    __slots__ = ("_handle", "_initialised")
+class _Stream:
+    """The C's z_stream, by its handle: freed when the object that holds it goes, as that object's deallocator frees it. The
+    objects themselves have no __del__, as CPython's have none (RL-731)."""
+
+    __slots__ = ("_handle",)
+
+    def __init__(self, handle: int) -> None:
+        self._handle = handle
 
     def __del__(self) -> None:
-        if self._handle:
-            _zlib("free", self._handle)
-            self._handle = 0
+        _zlib("free", self._handle)
+
+
+class Compress:
+    __slots__ = ("_handle", "_initialised", "_stream")
 
     def compress(self, *args: object, **kwds: object) -> bytes:
         """Returns a bytes object containing compressed data.
@@ -288,6 +300,7 @@ def _copy_compress(self: Compress) -> Compress:  # zlib_Compress_copy_impl
         raise _zlib_error(err, None, "while copying compression object")
     other: Compress = _bella_new_instance(Compress)
     other._handle = handle
+    other._stream = _Stream(handle)
     other._initialised = True
     return other
 
@@ -334,6 +347,7 @@ def compressobj(*args: object, **kwds: object) -> Compress:
         raise _zlib_error(err, zmsg, "while creating compression object")
     self: Compress = _bella_new_instance(Compress)
     self._handle = handle
+    self._stream = _Stream(handle)
     self._initialised = True
     if zdict is not None:
         err = _zlib("deflate_setdict", handle, zdict)
@@ -344,13 +358,17 @@ def compressobj(*args: object, **kwds: object) -> Compress:
     return self
 
 
-class Decompress:
-    __slots__ = ("_eof", "_handle", "_initialised", "_unconsumed_tail", "_unused_data", "_zdict")
+def _save_unconsumed_input(self: Decompress, data: bytes, consumed: int, err: int) -> None:
+    """save_unconsumed_input: a function of the file's, as in the C; the type has no such name (the names beyond CPython's)."""
+    if err == _Z_STREAM_END and consumed < len(data):
+        self._unused_data += data[consumed:]
+        consumed = len(data)
+    if consumed < len(data) or self._unconsumed_tail:
+        self._unconsumed_tail = data[consumed:]
 
-    def __del__(self) -> None:
-        if self._handle:
-            _zlib("free", self._handle)
-            self._handle = 0
+
+class Decompress:
+    __slots__ = ("_eof", "_handle", "_initialised", "_stream", "_unconsumed_tail", "_unused_data", "_zdict")
 
     @property
     def unused_data(self) -> bytes:
@@ -363,13 +381,6 @@ class Decompress:
     @property
     def eof(self) -> bool:
         return self._eof
-
-    def _save_unconsumed_input(self, data: bytes, consumed: int, err: int) -> None:   # save_unconsumed_input
-        if err == _Z_STREAM_END and consumed < len(data):
-            self._unused_data += data[consumed:]
-            consumed = len(data)
-        if consumed < len(data) or self._unconsumed_tail:
-            self._unconsumed_tail = data[consumed:]
 
     def decompress(self, *args: object, **kwds: object) -> bytes:
         """Return a bytes object containing the decompressed version of the data.
@@ -394,7 +405,7 @@ Call the flush() method to clear these buffers."""
             raise OverflowError("zdict length does not fit in an unsigned int")
         if context == "setdict":
             raise _zlib_error(err, zmsg, "while setting zdict")
-        self._save_unconsumed_input(data, consumed, err)
+        _save_unconsumed_input(self, data, consumed, err)
         if err == _Z_STREAM_END:
             self._eof = True                     # inflateEnd waits for flush(), as the C keeps it
         elif err != _Z_OK and err != _Z_BUF_ERROR:
@@ -410,7 +421,7 @@ Call the flush() method to clear these buffers."""
             return b""
         data = self._unconsumed_tail
         err, out, consumed, zmsg, _context = _zlib("inflate", self._handle, data, -1, length, Z_FINISH, None)
-        self._save_unconsumed_input(data, consumed, err)
+        _save_unconsumed_input(self, data, consumed, err)
         if err == _Z_STREAM_END:
             self._eof = True
             self._initialised = False
@@ -451,6 +462,7 @@ def _copy_decompress(self: Decompress) -> Decompress:   # zlib_Decompress_copy_i
         raise _zlib_error(err, None, "while copying decompression object")
     other: Decompress = _bella_new_instance(Decompress)
     other._handle = handle
+    other._stream = _Stream(handle)
     other._initialised = True
     other._unused_data = self._unused_data
     other._unconsumed_tail = self._unconsumed_tail
@@ -491,6 +503,7 @@ def decompressobj(*args: object, **kwds: object) -> Decompress:
         raise _zlib_error(err, zmsg, "while creating decompression object")
     self: Decompress = _bella_new_instance(Decompress)
     self._handle = handle
+    self._stream = _Stream(handle)
     self._initialised = True
     self._unused_data = b""
     self._unconsumed_tail = b""
@@ -514,7 +527,7 @@ class _ZlibDecompressor:
     end of the dictionary. This must be the same dictionary as used by the
     compressor that produced the input data."""
 
-    __slots__ = ("_eof", "_handle", "_initialised", "_input", "_needs_input", "_unused_data", "_zdict")
+    __slots__ = ("_eof", "_handle", "_initialised", "_input", "_needs_input", "_stream", "_unused_data", "_zdict")
 
     def __new__(cls, *args: object, **kwds: object) -> _ZlibDecompressor:
         given = _arguments("_ZlibDecompressor", ("wbits", "zdict"), 2, 0, args, kwds)
@@ -529,6 +542,7 @@ class _ZlibDecompressor:
             raise _zlib_error(err, zmsg, "while creating decompression object")
         self: _ZlibDecompressor = _bella_new_instance(cls)
         self._handle = handle
+        self._stream = _Stream(handle)
         self._initialised = True
         self._eof = False
         self._needs_input = True
@@ -538,11 +552,6 @@ class _ZlibDecompressor:
         if zdict is not None and wbits < 0:
             _inflate_zdict(handle, _buffer(zdict))
         return self
-
-    def __del__(self) -> None:
-        if self._handle:
-            _zlib("free", self._handle)
-            self._handle = 0
 
     @property
     def eof(self) -> bool:
@@ -709,4 +718,4 @@ def __getattr__(*args: object, **kwds: object) -> object:
     if issubclass(type(name), str) and str.__eq__(name, "__version__"):
         _warn("'__version__' is deprecated and slated for removal in Python 3.20", "DeprecationWarning")
         return "1.0"
-    raise AttributeError("module 'zlib' has no attribute " + repr(name))
+    raise AttributeError("module 'zlib' has no attribute " + _repr_text(name))

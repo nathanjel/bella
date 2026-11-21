@@ -22,6 +22,7 @@ try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -52,6 +53,9 @@ except NameError:
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
     _own_data: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 class error(Exception):  # noqa: N801           # PyErr_NewException("struct.error", NULL, NULL)
     pass
@@ -448,7 +452,7 @@ class Struct:
         object.__delattr__(self, name)
 
     def __repr__(self) -> str:
-        return type(self).__name__ + "(" + repr(self.format) + ")"
+        return type(self).__name__ + "(" + _repr_text(self.format) + ")"
 
     def __sizeof__(self) -> int:
         return 64 + 32 * (len(self._codes) + 1)

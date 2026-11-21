@@ -130,8 +130,13 @@ def type_names():
                     pass
             if t.__itemsize__:                   # object_getstate_default's tests, for a type written in C
                 ITEMSIZE.add(key)
-            elif not t.__flags__ & (1 << 9) and t.__basicsize__ > object.__basicsize__ + (8 if t.__dictoffset__ and not t.__flags__ & (1 << 4) else 0) + (8 if t.__weakrefoffset__ > 0 else 0):
-                STATE.add(key)
+            else:                                # a heap type too: the C makes most of its own from a spec (itertools, _struct, _io), and
+                slots = 0                        # a class of the library's has a cell for each slot (copyreg._slotnames, which would write to the class)
+                for c in t.__mro__:
+                    declared = c.__dict__.get("__slots__", ()) if t.__flags__ & (1 << 9) else ()
+                    slots += sum(1 for n in ((declared,) if isinstance(declared, str) else declared) if n not in ("__dict__", "__weakref__"))
+                if t.__basicsize__ > object.__basicsize__ + (8 if t.__dictoffset__ and not t.__flags__ & (1 << 4) else 0) + (8 if t.__weakrefoffset__ > 0 else 0) + 8 * slots:
+                    STATE.add(key)
             if not t.__flags__ & (1 << 10):      # Py_TPFLAGS_BASETYPE
                 FINAL.add(key)
             if solid(t) is t:

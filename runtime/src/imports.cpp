@@ -770,9 +770,15 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         Ref slot = own(new Builtin("_has_slot", i_has_slot));   // a type's slot and what its MRO holds, read as the C reads them:
         dict_set(ns->dict, Obj::of(N("_has_slot")), slot.get());   // no attribute of a class is asked, so no metaclass answers (RL-644)
         Ref of_type = own(new Builtin("_type_lookup", i_type_lookup));
+        Ref of_class = own(new Builtin("_class_lookup", i_class_lookup));
+        dict_set(ns->dict, Obj::of(N("_class_lookup")), of_class.get());
         dict_set(ns->dict, Obj::of(N("_type_lookup")), of_type.get());
         Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));   // a pending error goes on as it is, after work the C did meanwhile
         dict_set(ns->dict, Obj::of(N("_raise_as_is")), as_is.get());
+        Ref repr_text = own(new Builtin("_repr_text", i_repr_text));   // %R and %S: the characters of what a __repr__ or a __str__
+        dict_set(ns->dict, Obj::of(N("_repr_text")), repr_text.get());   // returned, an exact str (RL-748's class)
+        Ref str_text = own(new Builtin("_str_text", i_str_text));
+        dict_set(ns->dict, Obj::of(N("_str_text")), str_text.get());
         Ref own_data = own(new Builtin("_own_data", i_own_data));   // an argument's own data, as the C reads it: nothing of a
         dict_set(ns->dict, Obj::of(N("_own_data")), own_data.get());   // subclass is called (RL-698)
         Ref buffer_bytes = own(new Builtin("_buffer_bytes", i_buffer_bytes));
@@ -1107,6 +1113,13 @@ Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
     if (name == "unraisable") return i_unraisable(Obj{}, r);   // (message or None, exception)
     if (name == "resource_warning") return i_resource_warning(Obj{}, r);   // (message, source)
     if (name == "warn") return i_bella_import_warning(Obj{}, r);   // (message, the category's name): PyErr_WarnEx(category, message, 1)
+    if (name == "errno") {                       // the C's errno, set (one argument) or read: _bufferedwriter_raw_write's "errno = 0"
+        if (r.npos == 1) {                       // before the raw stream's write and its "errnum = errno" after it (RL-751)
+            errno = static_cast<int>(r.pos(0).small_value());
+            return none_ref();
+        }
+        return int_from_i64(errno);
+    }
     if (name == "lookup_text") {                 // _PyCodec_LookupTextEncoding(encoding, NULL)
         ensure_codecs();
         return invoke(codec_hooks().lookup_text.get(), {r.pos(0), None()});
@@ -1120,7 +1133,8 @@ Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
 }
 void fill_io(Module* m) {
     fill_in_python(m, "_io", "_io", prelude_io::module_body,
-                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sys", i_posix_sys}, {"_io_call", i_io_call}, {"_has_dict", i_has_dict}, {"_own_dict", i_own_dict}});
+                   {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sys", i_posix_sys}, {"_io_call", i_io_call}, {"_has_dict", i_has_dict}, {"_own_dict", i_own_dict},
+                    {"_warn", i_bella_import_warning}});
     dict_set(m->dict, Obj::of(N("BlockingIOError")), Obj::of(exception_class("BlockingIOError")));
 }
 void fill_pwd(Module* m) {
@@ -2023,7 +2037,6 @@ Ref lazy_resolve_m(Obj self, Args a) {           // lazy_import.resolve(): METH_
     if (a.npos != 0) raise_new("TypeError", "lazy_import.resolve() takes no arguments (" + std::to_string(a.npos) + " given)");
     return lazy_resolve_impl(self, nullptr);
 }
-Ref lazy_new_m(Obj, Args) { raise_new("TypeError", "cannot create 'lazy_import' instances"); }
 }  // namespace
 
 // builtins.__lazy_import__(name, globals=None, locals=None, fromlist=None, level=0)
@@ -2331,7 +2344,7 @@ void init_imports(Module* sys) {
     import_func() = dict_get(builtins_module()->dict, Obj::of(N("__import__")));
     lazy_import_func() = dict_get(builtins_module()->dict, Obj::of(N("__lazy_import__")));
     ClassObject* lt = types().lazy_import;
-    method(lt, "__new__", lazy_new_m, Binding::Function);
+    lt->disallow_instantiation = true;           // no tp_new and no __new__ of its own: object's is what a program reads there (RL-744)
     method(lt, "__repr__", lazy_repr_m);
     method(lt, "resolve", lazy_resolve_m);
     lt->set_attr(N("__doc__"), cpython_doc("type:lazy_import"));

@@ -9,12 +9,16 @@ __hidden_classes__ = ["Template", "Interpolation", "TemplateIter"]
 try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     _bella_new_instance = object.__new__
 
     def _tp_name(obj: object) -> str:
         t = type(obj)
         return t.__name__ if t.__module__ in ("builtins", "__main__") else t.__module__ + "." + t.__name__
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 
 def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   # tp_new_wrapper's checks
@@ -92,7 +96,7 @@ class Interpolation:
         return self._format_spec
 
     def __repr__(self) -> str:                   # interpolation_repr: %s(%R, %R, %R, %R) with _PyType_Name
-        return type(self).__name__ + "(" + repr(self._value) + ", " + repr(self._expression) + ", " + repr(self._conversion) + ", " + repr(self._format_spec) + ")"
+        return type(self).__name__ + "(" + _repr_text(self._value) + ", " + _repr_text(self._expression) + ", " + _repr_text(self._conversion) + ", " + _repr_text(self._format_spec) + ")"
 
     def __reduce__(self) -> object:
         """__reduce__() -> (cls, state)"""
@@ -158,7 +162,7 @@ class Template:
         return tuple(i._value for i in self._interpolations)
 
     def __repr__(self) -> str:                   # template_repr
-        return type(self).__name__ + "(strings=" + repr(self._strings) + ", interpolations=" + repr(self._interpolations) + ")"
+        return type(self).__name__ + "(strings=" + _repr_text(self._strings) + ", interpolations=" + _repr_text(self._interpolations) + ")"
 
     def __iter__(self) -> TemplateIter:        # template_iter
         it: TemplateIter = _bella_new_instance(TemplateIter)

@@ -18,11 +18,15 @@ _type_mro = type.__dict__["__mro__"].__get__      # tp_mro, whatever a metaclass
 
 try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:                                # CPython runs this file (the evaluators and the tests): what stands for it
     _type_dict = type.__dict__["__dict__"].__get__
 
     def _has_slot(value: object, name: str) -> bool:
         return any(name in _type_dict(klass) for klass in _type_mro(type(value)))
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 
 def _is_type(obj: object) -> bool:
@@ -124,8 +128,8 @@ def build_class(body: object, name: str, /, *bases: object, **kwds: object) -> o
         except ValueError:
             empty = True                   # PyCell_GetRef finds nothing; no exception to chain
         if empty:
-            raise RuntimeError(f"__class__ not set defining {name!r} as {cls!r}. "
+            raise RuntimeError(f"__class__ not set defining {_repr_text(name)} as {_repr_text(cls)}. "
                                "Was __classcell__ propagated to type.__new__?")
         if cell_cls is not cls:
-            raise TypeError(f"__class__ set to {cell_cls!r} defining {name!r} as {cls!r}")
+            raise TypeError(f"__class__ set to {_repr_text(cell_cls)} defining {_repr_text(name)} as {_repr_text(cls)}")
     return cls

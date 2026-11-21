@@ -30,6 +30,7 @@ try:
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -53,6 +54,9 @@ except NameError:
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
     _own_data: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 AT_NO_AUTOMOUNT = 2048
 CLD_CONTINUED = 6
@@ -277,7 +281,7 @@ class DirEntry:
         return _entry_noargs("__fspath__", args, kwds)._e_path
 
     def __repr__(self) -> str:
-        return "<DirEntry " + repr(self._e_name) + ">"  # type: ignore[attr-defined]
+        return "<DirEntry " + _repr_text(self._e_name) + ">"  # type: ignore[attr-defined]
 
 
 def _entry_method(name: str, args: tuple[object, ...]) -> DirEntry:   # a method descriptor's check of its receiver
@@ -377,7 +381,7 @@ class ScandirIterator:
         _scandir_close(self)
         if not was_closed:
             try:
-                shown = repr(self)
+                shown = _repr_text(self)
             except BaseException:  # noqa: BLE001  # %R failed: PyErr_ResourceWarning returns its error, which is no Warning: dropped
                 return
             try:                                 # PyErr_ResourceWarning(op, 1, "unclosed scandir iterator %R", iterator)
@@ -2153,7 +2157,7 @@ def sched_setaffinity(*args: object, **kwds: object) -> None:   # os_sched_setaf
     cpus: list[int] = []
     for item in args[1]:  # type: ignore[attr-defined]
         if not _has_slot(item, "__index__"):
-            raise TypeError("expected an iterator of ints, but iterator yielded " + repr(type(item)))
+            raise TypeError("expected an iterator of ints, but iterator yielded " + _repr_text(type(item)))
         cpu = _number_index(item)
         if cpu >= 2**63:
             raise OverflowError("Python int too large to convert to C long")

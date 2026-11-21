@@ -36,6 +36,7 @@ try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _type_lookup                                 # noqa: B018  # _PyType_Lookup on the object's type: (value, name, absent)
     _raise_as_is                                 # noqa: B018  # a pending error goes on as it is: no context taken (RL-650)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -68,6 +69,9 @@ except NameError:
     _has_slot: Callable[..., bool] = _missing
     _type_lookup: Callable[..., object] = _missing
     _raise_as_is: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 _SSIZE_MAX = 2**63 - 1
 _SSIZE_MIN = -(2**63)
@@ -607,8 +611,8 @@ class deque:
             aslist = list(self)  # type: ignore[call-overload]
             maxlen = self._c_maxlen  # type: ignore[attr-defined]
             if maxlen >= 0:
-                return type(self).__name__ + "(" + repr(aslist) + ", maxlen=" + str(maxlen) + ")"
-            return type(self).__name__ + "(" + repr(aslist) + ")"
+                return type(self).__name__ + "(" + _repr_text(aslist) + ", maxlen=" + str(maxlen) + ")"
+            return type(self).__name__ + "(" + _repr_text(aslist) + ")"
         finally:
             _repr_leave(self)
 
@@ -836,7 +840,7 @@ class defaultdict(dict):  # type: ignore[type-arg]
             shown = "..."
         else:
             try:
-                shown = repr(factory)
+                shown = _repr_text(factory)
             finally:
                 _repr_leave(factory)
         return type(self).__name__ + "(" + shown + ", " + base + ")"
@@ -1177,7 +1181,7 @@ class OrderedDict(dict):  # type: ignore[type-arg]
         if not _repr_enter(self):
             return "..."
         try:
-            return type(self).__name__ + "(" + repr(_od_dict_copy(self)) + ")"
+            return type(self).__name__ + "(" + _repr_text(_od_dict_copy(self)) + ")"
         finally:
             _repr_leave(self)
 
@@ -1532,7 +1536,7 @@ class _tuplegetter:
     def __repr__(*args: object, **kwds: object) -> str:   # tuplegetter_repr
         _wrapper(args, kwds, _tuplegetter, "__repr__", 0)
         self = args[0]
-        return type(self).__name__ + "(" + str(self._a_index) + ", " + repr(self._b_doc) + ")"  # type: ignore[attr-defined]
+        return type(self).__name__ + "(" + str(self._a_index) + ", " + _repr_text(self._b_doc) + ")"  # type: ignore[attr-defined]
 
 
 def _count_elements(*args: object, **kwds: object) -> None:   # _collections__count_elements_impl(mapping, iterable, /)

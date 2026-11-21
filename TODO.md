@@ -712,11 +712,14 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s
   key, `os.pwrite`: 18 rows). Exact: an export held from the conversion on (a resize is then refused, as the view makes it)
   and the read where the C reads. With RL-583 and the memoryview model.
-* **The names beyond CPython's (`conformance/names-surplus.txt`, 2026-11-22; low):** 16 names a type of the runtime's has in its
-  own dict and CPython's inherits or has not: `__new__` on the four buffered types, `IncrementalNewlineDecoder`, `TextIOWrapper`
-  and `lazy_import`; `BufferedRWPair.__getstate__`; `__del__` on `itertools._tee_dataobject` and `zlib._ZlibDecompressor` (CPython
-  has a dealloc, no finaliser a subclass could call); `types.GenericAlias.__reduce_ex__`; `__module__`, `__slots__`,
-  `__firstlineno__` and `__static_attributes__` on `NoDefaultType`; `ast.AST.__annotate_func__`. Seen by `"name" in vars(cls)`.
+* **The names beyond CPython's (`conformance/names-surplus.txt`; low): seven left after review A33.** Six are the `__new__` of the
+  four buffered types, `IncrementalNewlineDecoder` and `TextIOWrapper`: CPython's types have none in their dict (the allocator
+  is object's), and the prelude's set the struct's zero state there. They check their arguments as `object_new` does (RL-726);
+  what stays is `"__new__" in vars(cls)` and `cls.__new__ is object.__new__`. To take them away the runtime's `object.__new__`
+  has to give an instance of such a type its zero state (a function of the prelude's kept beside the class, called where the
+  static base is found). The seventh is `itertools._tee_dataobject.__del__` (RL-731): its deallocator clears a chain of links
+  without recursion, which a holder object cannot do for it; it needs a deallocator a prelude can name that is no `__del__`
+  (the model first: the finaliser's lookup is `object.hpp`'s).
 * **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
   that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
   `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and

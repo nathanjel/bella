@@ -12,6 +12,8 @@ try:
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _str_text                                    # noqa: B018  # %S: the characters of an object's str, an exact str
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -22,6 +24,12 @@ except NameError:
     _bella_refuse: Callable[..., Any] = _missing
     _tp_name: Callable[..., str] = _missing
     _warn: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
+
+    def _str_text(value: object) -> str:         # a stand-in for CPython's run of this file
+        return str.__str__(str(value))
 
 PyCF_ONLY_AST = 1024
 PyCF_TYPE_COMMENTS = 4096
@@ -60,14 +68,14 @@ def _format_missing(missing: set[str], fields: tuple[str, ...]) -> str:   # form
 def _repr_list(value: object, depth: int) -> str:   # ast_repr_list: the first and the last item, an ellipsis between
     items: list[object] = list(value)  # type: ignore[call-overload]
     if not items:
-        return repr(value)
+        return repr(value)                # PyObject_Repr itself: the caller writes it
     is_list = issubclass(type(value), list)
     parts = [("[" if is_list else "(")]
     shown = items[:1] + (items[-1:] if len(items) > 1 else [])
     for i, item in enumerate(shown):
         if i > 0:
             parts.append(", ")
-        parts.append(_repr_depth(item, depth - 1) if issubclass(type(item), AST) else repr(item))
+        parts.append(_repr_depth(item, depth - 1) if issubclass(type(item), AST) else _repr_text(item))
         if i == 0 and len(items) > 2:
             parts.append(", ...")
     parts.append("]" if is_list else ")")
@@ -96,7 +104,9 @@ def _repr_depth(self: object, depth: int) -> str:   # ast_repr_max_depth
                 shown = repr(value)
             if i > 0:
                 parts.append(", ")
-            parts.append(field + "=" + shown)
+            # the name and the value's repr are written by PyUnicodeWriter_WriteStr, which is str() of each: a __repr__ that
+            # returns an instance of a str subclass has that instance's __str__ asked (RL-748's class)
+            parts.append(_str_text(field) + "=" + _str_text(shown))
         parts.append(")")
         return "".join(parts)
     finally:
@@ -107,9 +117,9 @@ _in_repr: list[object] = []                      # Py_ReprEnter's stack, by iden
 
 
 class AST:
-    _fields: tuple[str, ...] = ()
+    _fields = ()                                 # no annotation in the body: the C type has no __annotate_func__ (RL-734)
     __match_args__ = ()
-    _attributes: tuple[str, ...] = ()
+    _attributes = ()
 
     def __init__(*args: object, **kwds: object) -> None:  # noqa: N805
         self = args[0]
@@ -130,13 +140,13 @@ class AST:
             for key, value in kwds.items():
                 if key in fields:
                     if key not in remaining:
-                        raise TypeError(_full_name(self) + " got multiple values for argument " + repr(key))
+                        raise TypeError(_full_name(self) + " got multiple values for argument " + _repr_text(key))
                     remaining.discard(key)
                 else:
                     if attributes is None:
                         attributes = cls._attributes
                     if key not in attributes:
-                        raise TypeError(_full_name(self) + ".__init__ got an unexpected keyword argument " + repr(key))
+                        raise TypeError(_full_name(self) + ".__init__ got an unexpected keyword argument " + _repr_text(key))
                 setattr(self, key, value)
         if remaining:
             field_types = getattr(cls, "_field_types", None)
@@ -145,7 +155,7 @@ class AST:
             missing: set[str] = set()
             for name in list(remaining):
                 if name not in field_types:
-                    raise TypeError("Field " + repr(name) + " is missing from " + _full_name(self) + "._field_types")
+                    raise TypeError("Field " + _repr_text(name) + " is missing from " + _full_name(self) + "._field_types")
                 kind = field_types[name]
                 if issubclass(type(kind), type) and kind is expr_context:
                     setattr(self, name, _load_singleton)

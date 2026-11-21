@@ -6,7 +6,7 @@ wrote as text (pipeline/l1/frontend.py, _TypeParams) and take the lazy expressio
 
 __all__ = ["Generic", "NoDefault", "ParamSpec", "ParamSpecArgs", "ParamSpecKwargs", "TypeAliasType", "TypeVar", "TypeVarTuple", "Union", "_idfunc"]
 __intrinsics__ = ["type_params", "generic_class", "typealias", "set_type_params"]
-__hidden_classes__ = ["_ConstEvaluator"]         # a type of _typing's that is no name of the module
+__hidden_classes__ = ["_ConstEvaluator", "NoDefaultType"]   # types of _typing's that are no names of the module (NoDefaultType is one of builtins)
 
 __name__ = "_typing"
 
@@ -21,6 +21,8 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _str_text                                    # noqa: B018  # %S: the characters of an object's str, an exact str
 except NameError:
     from collections.abc import Callable
     from operator import index as _number_index
@@ -57,6 +59,12 @@ except NameError:
         return t.__name__ if t.__module__ in ("builtins", "__main__") else t.__module__ + "." + t.__name__
     _has_slot: Callable[..., bool] = _missing
     _own_data: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
+
+    def _str_text(value: object) -> str:         # a stand-in for CPython's run of this file
+        return str.__str__(str(value))
 
 Union = type(int | None)                         # _PyUnion_Type, the runtime's (typing.Union)
 _FORMAT_STRING = 4                               # _Py_ANNOTATE_FORMAT_STRING
@@ -136,17 +144,18 @@ def _type_repr(p: object) -> str:               # _Py_typing_type_repr
         return "..."
     if p is type(None):
         return "None"
+    # what the C has in hand it writes with PyUnicodeWriter_WriteStr, which is str() of it: of the repr's result too
     if hasattr(p, "__origin__") and hasattr(p, "__args__"):
-        return repr(p)
+        return _str_text(repr(p))
     qualname = getattr(p, "__qualname__", None)
     if qualname is None:
-        return repr(p)
+        return _str_text(repr(p))
     module = getattr(p, "__module__", None)
     if module is None:
-        return repr(p)
-    if issubclass(type(module), str) and module == "builtins":
-        return str(qualname)
-    return str(module) + "." + str(qualname)
+        return _str_text(repr(p))
+    if issubclass(type(module), str) and _own_data(module) == "builtins":
+        return _str_text(str(qualname))
+    return _str_text(module) + "." + _str_text(qualname)   # "%S.%S"
 
 
 class NoDefaultType:
@@ -182,7 +191,7 @@ Internal type for implementing evaluation functions."""
     __slots__ = ("_value",)
 
     def __repr__(self) -> str:
-        return "<constevaluator " + repr(self._value) + ">"
+        return "<constevaluator " + _repr_text(self._value) + ">"
 
     def __call__(self, *args: object, **kwds: object) -> object:   # constevaluator_call
         if kwds:
@@ -449,7 +458,7 @@ to static type checkers.
     def __repr__(self) -> str:                   # paramspecargs_repr
         if type(self._origin) is ParamSpec:
             return self._origin._name + ".args"
-        return repr(self._origin) + ".args"
+        return _repr_text(self._origin) + ".args"
 
     def __eq__(self, other: object) -> object:   # paramspecattr_richcompare
         if type(other) is not type(self):
@@ -508,7 +517,7 @@ to static type checkers.
     def __repr__(self) -> str:                   # paramspeckwargs_repr
         if type(self._origin) is ParamSpec:
             return self._origin._name + ".kwargs"
-        return repr(self._origin) + ".kwargs"
+        return _repr_text(self._origin) + ".kwargs"
 
     def __eq__(self, other: object) -> object:
         if type(other) is not type(self):
@@ -850,7 +859,7 @@ def _unpack_typevartuples(params: tuple[object, ...]) -> tuple[object, ...]:   #
 def _type_param_default(typeparam: object) -> object:   # get_type_param_default
     if type(typeparam) is TypeVar or type(typeparam) is ParamSpec or type(typeparam) is TypeVarTuple:
         return typeparam.__default__  # type: ignore[attr-defined]
-    raise TypeError("Expected a type param, got " + repr(typeparam))
+    raise TypeError("Expected a type param, got " + _repr_text(typeparam))
 
 
 def _check_type_params(type_params: tuple[object, ...]) -> object:   # typealias_check_type_params: None for an empty tuple
@@ -862,7 +871,7 @@ def _check_type_params(type_params: tuple[object, ...]) -> object:   # typealias
         dflt = _type_param_default(type_param)
         if dflt is NoDefault:
             if default_seen:
-                raise TypeError("non-default type parameter '" + repr(type_param) + "' follows default type parameter")
+                raise TypeError("non-default type parameter '" + _repr_text(type_param) + "' follows default type parameter")
         else:
             default_seen = True
     return type_params

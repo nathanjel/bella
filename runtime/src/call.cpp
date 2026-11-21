@@ -2058,6 +2058,26 @@ Ref i_type_lookup(Obj, Args a) {                 // (value, name, absent): what 
     Obj found = type_lookup(type_of(a.pos(0)), intern(as_str(a.pos(1))->text));
     return Ref::share(found.is_unset() ? a.pos(2) : found);
 }
+Ref i_class_lookup(Obj, Args a) {                // (class, name, absent): what the class itself has under the name along its MRO,
+    positional_only(a, "_class_lookup", 3, 3);   // as the C compares a type's slot (tp_new, tp_init) with a known function (RL-726)
+    if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "_class_lookup: a class is wanted");
+    Obj found = type_lookup(static_cast<ClassObject*>(a.pos(0).object()), intern(as_str(a.pos(1))->text));
+    return Ref::share(found.is_unset() ? a.pos(2) : found);
+}
+// The text the C formats into a message or a repr (PyUnicode_FromFormat's %R and %S, PyUnicodeWriter_WriteRepr): PyObject_Repr
+// or PyObject_Str of the object, and then the characters of what came back. A __repr__ of the program's may return an
+// instance of a str subclass, whose + (or slicing, or ==) a prelude that joined the result itself would reach (RL-748's
+// class): so a prelude takes the text here, an exact str
+Ref i_repr_text(Obj, Args a) {
+    positional_only(a, "_repr_text", 1, 1);
+    Ref r = repr_of(a.pos(0));
+    return is_exact_str(r.get()) ? r : str_new(as_str(r.get())->text);
+}
+Ref i_str_text(Obj, Args a) {
+    positional_only(a, "_str_text", 1, 1);
+    Ref r = str_of(a.pos(0));
+    return is_exact_str(r.get()) ? r : str_new(as_str(r.get())->text);
+}
 // What CPython's C reads of an argument once it has tested its type: the object's own data, through the concrete API
 // (PyUnicode_*, PyLong_As*, PyFloat_AS_DOUBLE, PyTuple_GET_ITEM, the buffer of a bytes), which calls nothing of the object's
 // class. A prelude that writes len(x), x[i], x == y, bytes(x) or int(x) on the argument reaches whatever a subclass of the
@@ -2640,6 +2660,22 @@ void print_traceback(Obj exc, bool chain);
 }  // namespace
 
 namespace {
+// what a report writes to: sys.stderr's write, called for each piece, and what it raises leaves
+struct ErrSink {
+    Obj file;
+    void write(const std::string& piece) {
+        Ref write = getattr(file, intern("write"));
+        Ref text = str_new(piece);
+        Ref first = invoke(write.get(), {text.get()});
+        Ref empty = str_new("");
+        Ref second = invoke(write.get(), {empty.get()});
+    }
+    void raw(const std::string& piece) {         // PyFile_WriteString, the C's
+        Ref write = getattr(file, intern("write"));
+        Ref text = str_new(piece);
+        Ref done = invoke(write.get(), {text.get()});
+    }
+};
 // write_unraisable_exc_file, the default hook's work on sys.stderr (nothing when sys has none, or None): a first line from
 // the message and the object, then the report of the exception. CPython hands the value to the traceback module
 // (_print_exception_bltin) and falls back on the class's name and the value's text when that fails, as it does for a value
@@ -2647,23 +2683,30 @@ namespace {
 void write_unraisable(Obj type, Obj value, Obj tb, Obj message, Obj object) {
     Obj file = std_stream("stderr");
     if (file.is_unset() || file == None()) return;
-    bool said = !message.is_unset() && message != None();
+    Ref held = Ref::share(file);
+    ErrSink err{file};                           // each piece a write of its own, and the first that fails ends the report: the
+    bool said = !message.is_unset() && message != None();   // error leaves, and the hook's caller reports the hook (RL-730)
     if (!object.is_unset() && object != None()) {
-        std::string head = "Exception ignored in: ";
         if (said) {
             Ref text = str_of(message);
-            head = as_str(text.get())->text + ": ";
+            err.raw(as_str(text.get())->text);
+            err.raw(": ");
+        } else {
+            err.raw("Exception ignored in: ");
         }
-        try {
-            Ref shown = repr_of(object);
-            head += as_str(shown.get())->text;
+        bool shown = false;
+        try {                                    // PyFile_WriteObject(obj, file, 0): what the repr or its write raises is cleared
+            Ref text = repr_of(object);
+            err.raw(as_str(text.get())->text);
+            shown = true;
         } catch (const PyError&) {
-            head += "<object repr() failed>";
         }
-        write_stderr(head + "\n");
+        if (!shown) err.raw("<object repr() failed>");
+        err.raw("\n");
     } else if (said) {
         Ref text = str_of(message);
-        write_stderr(as_str(text.get())->text + ":\n");
+        err.raw(as_str(text.get())->text);
+        err.raw(":\n");
     }
     if (is_exception_instance(value)) {          // _print_exception_bltin(value, file); when it fails, the one exception by the C
         print_traceback(value, false);
@@ -2705,7 +2748,10 @@ void format_unraisable(const std::string* context, Obj exc) {
     auto sys = native_modules().find("sys");
     Obj hook = sys != native_modules().end() && sys->second != nullptr ? dict_get(sys->second->dict, Obj::of(intern("unraisablehook"))) : Obj{};
     if (hook.is_unset() || hook == None() || unraisable_args_type().get().is_unset()) {
-        write_unraisable(type.get(), exc, tb.get(), message.get(), None());
+        try {                                    // "Call the default unraisable hook (ignore failure)"
+            write_unraisable(type.get(), exc, tb.get(), message.get(), None());
+        } catch (const PyError&) {
+        }
         return;
     }
     Ref held = Ref::share(hook);                 // the hook may replace itself
@@ -2717,7 +2763,10 @@ void format_unraisable(const std::string* context, Obj exc) {
         Obj raised = failed.exc.get();
         Ref failure = str_new("Exception ignored in sys.unraisablehook");
         Obj its = traceback_of(raised);
-        write_unraisable(Obj::of(type_of(raised)), raised, is_kind(its, Kind::Traceback) ? its : None(), failure.get(), held.get());
+        try {
+            write_unraisable(Obj::of(type_of(raised)), raised, is_kind(its, Kind::Traceback) ? its : None(), failure.get(), held.get());
+        } catch (const PyError&) {               // the default hook's own failure is ignored
+        }
     }
 }
 }  // namespace
@@ -2871,21 +2920,6 @@ bool notes_sequence(Obj notes) {                 // isinstance(notes, collection
 }
 // The report's writer: `print(line, file=file, end="")` for each piece traceback yields, so the file is given the piece and
 // then an empty string, and is not flushed (RL-516). What the file raises is the report's failure
-struct ErrSink {
-    Obj file;
-    void write(const std::string& piece) {
-        Ref write = getattr(file, intern("write"));
-        Ref text = str_new(piece);
-        Ref first = invoke(write.get(), {text.get()});
-        Ref empty = str_new("");
-        Ref second = invoke(write.get(), {empty.get()});
-    }
-    void raw(const std::string& piece) {         // PyFile_WriteString, the C's
-        Ref write = getattr(file, intern("write"));
-        Ref text = str_new(piece);
-        Ref done = invoke(write.get(), {text.get()});
-    }
-};
 struct PrintContext {                            // _ExceptionPrintContext
     int depth = 0;
     bool need_close = false;
@@ -3105,7 +3139,7 @@ void format_record(ErrSink& err, PrintContext& ctx, Record* top) {   // Tracebac
 // C's reading of sys.tracebacklimit (an int: nothing at all for zero or less, the newest that many; else the newest 1000),
 // repeated entries folded, then the class and str() of the value. A group is printed as any exception and notes are not
 // printed. Each piece is a write of its own, as the C makes them
-void print_plain_one(ErrSink& err, Obj value) {  // print_exception
+void print_plain_one(ErrSink& err, Obj value, bool past_traceback = false) {  // print_exception
     if (!is_exception_value(value)) {
         err.raw("TypeError: print_exception(): Exception expected for value, ");
         err.raw(type_of(value)->name);
@@ -3115,6 +3149,7 @@ void print_plain_one(ErrSink& err, Obj value) {  // print_exception
     if (is_subclass(type_of(value), exception_class("SyntaxError")))
         throw NotImplemented("the report of a SyntaxError by CPython's C, after its traceback module failed on the exception");
     Obj tb = exception_field(value, "__traceback__");
+    try {
     if (is_kind(tb, Kind::Traceback)) {
         std::vector<const Traceback*> all;
         for (Obj t = tb; is_kind(t, Kind::Traceback); t = static_cast<Traceback*>(t.object())->next.get()) all.push_back(static_cast<Traceback*>(t.object()));
@@ -3150,6 +3185,9 @@ void print_plain_one(ErrSink& err, Obj value) {  // print_exception
             }
             if (count > RECURSIVE_CUTOFF) err.raw(repeated_line(count));
         }
+    }
+    } catch (const PyError& e) {                 // write_unraisable_exc_file: "continue even if writing the traceback failed"
+        if (!past_traceback) rethrow(e);
     }
     ClassObject* type = type_of(value);          // print_exception_message
     const Str* mod = nullptr;
@@ -3229,15 +3267,16 @@ void print_traceback(Obj exc, bool chain) {
     try {
         std::unordered_set<const Object*> seen;
         if (chain) print_plain(err, exc, seen);
-        else print_plain_one(err, exc);
-    } catch (const PyError&) {
-        if (!chain) return;                      // write_unraisable_exc_file failed: the hook's caller clears the error and says nothing
+        else print_plain_one(err, exc, true);
+    } catch (const PyError& e) {
+        if (!chain) rethrow(e);                  // write_unraisable_exc_file failed: the hook has failed, and its caller reports that (RL-730)
         throw NotImplemented("the report of an exception when sys.stderr cannot be written (CPython writes the object's address and reference count to the C stream)");
     }
-    try {                                        // _PyFile_Flush, its error dropped
+    try {                                        // _PyFile_Flush, its error dropped by PyErr_Display and returned by the unraisable hook
         Ref flush = getattr(file, intern("flush"));
         Ref done = invoke(flush.get(), {});
-    } catch (const PyError&) {
+    } catch (const PyError& e) {
+        if (!chain) rethrow(e);
     }
 }
 void print_traceback(Obj exc) { print_traceback(exc, true); }
@@ -3766,8 +3805,14 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_has_slot", slot.get());                        // as the C reads them (RL-644)
                     Ref of_type = own(new Builtin("_type_lookup", i_type_lookup));
                     put(pm->dict, "_type_lookup", of_type.get());
+                    Ref of_class = own(new Builtin("_class_lookup", i_class_lookup));
+                    put(pm->dict, "_class_lookup", of_class.get());
                     Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));
                     put(pm->dict, "_raise_as_is", as_is.get());
+                    Ref repr_text = own(new Builtin("_repr_text", i_repr_text));   // %R and %S: the characters of a repr or a str
+                    put(pm->dict, "_repr_text", repr_text.get());                   // (RL-748's class)
+                    Ref str_text = own(new Builtin("_str_text", i_str_text));
+                    put(pm->dict, "_str_text", str_text.get());
                     Ref own_data = own(new Builtin("_own_data", i_own_data));       // an argument's own data, as the C reads it
                     put(pm->dict, "_own_data", own_data.get());                     // (RL-698)
                     Ref buffer_bytes = own(new Builtin("_buffer_bytes", i_buffer_bytes));

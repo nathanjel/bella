@@ -27,6 +27,10 @@ try:
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
+    _class_lookup                                # noqa: B018  # what a class has under a name along its MRO: a slot compared with a known function (RL-726)
+    _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -46,6 +50,12 @@ except NameError:
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
     _own_data: Callable[..., Any] = _missing
+    _warn: Callable[..., Any] = _missing
+    _class_lookup: Callable[..., Any] = _missing
+    _raise_as_is: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 _ABSENT = object()
@@ -157,6 +167,17 @@ def _ssize(value: object) -> int:                # Py_ssize_t's converter: __ind
     if out > _SSIZE_MAX or out < -_SSIZE_MAX - 1:
         raise OverflowError("Python int too large to convert to C ssize_t")
     return out
+
+
+def _format_k(value: object, message: str) -> int:
+    """PyArg_ParseTuple's "K": the low 64 bits of an int or of what __index__ gives, with a warning for a value that has
+    more (RL-741)."""
+    if not issubclass(type(value), int) and not _has_slot(value, "__index__"):
+        raise TypeError(message)                 # converterr, which the format's own message replaces
+    out = _number_index(value)
+    if not -(2**63) <= out < 2**64:
+        _warn("integer value out of range", "DeprecationWarning")
+    return out & 0xFFFFFFFFFFFFFFFF
 
 
 def _int(value: object) -> int:                  # PyLong_AsInt
@@ -278,11 +299,29 @@ def _check_closed(self: object) -> None:         # iobase_check_closed: the `clo
         raise ValueError("I/O operation on closed file.")
 
 
-def _check_ability(self: object, method: str, message: str) -> None:   # _PyIOBase_check_seekable and the others
+def _check_ability(self: object, method: str, message: str) -> bool:   # _PyIOBase_check_seekable and the others
     result = getattr(self, method)()
-    if result is not True:
-        if not result:
-            raise UnsupportedOperation(message)
+    if result is not True:                       # "res != Py_True": True itself, no other true value (RL-727)
+        raise UnsupportedOperation(message)
+    return True
+
+
+def _object_new_args(cls: type, own: type, args: tuple[object, ...], kwds: dict[str, object]) -> None:
+    """object_new's test of its arguments, for a type whose allocator is object's in CPython (the type has no tp_new of its
+    own): any are refused where the class has a __new__ of its own, so that tp_new is no longer object_new, or where its
+    __init__ is object's. `own` is the type of this file whose __new__ stands for the allocation (RL-726)."""
+    if args or kwds:
+        if _class_lookup(cls, "__new__", None) is not _class_lookup(own, "__new__", None):
+            raise TypeError("object.__new__() takes exactly one argument (the type to instantiate)")
+        if _class_lookup(cls, "__init__", None) is _OBJECT_INIT:
+            raise TypeError(_tp_name_of_class(cls) + "() takes no arguments")
+
+
+_OBJECT_INIT = object.__dict__["__init__"]
+
+
+def _tp_name_of_class(cls: type) -> str:         # tp_name of a class of the program's: its __name__
+    return type.__dict__["__name__"].__get__(cls)  # type: ignore[no-any-return]
 
 
 def _unsupported(message: str) -> None:
@@ -355,17 +394,17 @@ class _IOBase:
         _noargs("_IOBase._checkClosed", args, kwds)
         _check_closed(args[0])
 
-    def _checkSeekable(*args: object, **kwds: object) -> None:  # noqa: N802, N805
+    def _checkSeekable(*args: object, **kwds: object) -> bool:  # noqa: N802, N805
         _noargs("_IOBase._checkSeekable", args, kwds)
-        _check_ability(args[0], "seekable", "File or stream is not seekable.")
+        return _check_ability(args[0], "seekable", "File or stream is not seekable.")   # the checked result, True (RL-738)
 
-    def _checkReadable(*args: object, **kwds: object) -> None:  # noqa: N802, N805
+    def _checkReadable(*args: object, **kwds: object) -> bool:  # noqa: N802, N805
         _noargs("_IOBase._checkReadable", args, kwds)
-        _check_ability(args[0], "readable", "File or stream is not readable.")
+        return _check_ability(args[0], "readable", "File or stream is not readable.")
 
-    def _checkWritable(*args: object, **kwds: object) -> None:  # noqa: N802, N805
+    def _checkWritable(*args: object, **kwds: object) -> bool:  # noqa: N802, N805
         _noargs("_IOBase._checkWritable", args, kwds)
-        _check_ability(args[0], "writable", "File or stream is not writable.")
+        return _check_ability(args[0], "writable", "File or stream is not writable.")
 
     def close(*args: object, **kwds: object) -> None:  # noqa: N805
         _noargs("_IOBase.close", args, kwds)
@@ -390,14 +429,17 @@ class _IOBase:
                 self._finalizing = True
             except BaseException:  # noqa: BLE001, S110
                 pass
+            failed: BaseException | None = None
             try:
                 self.close()  # type: ignore[attr-defined]
             except BaseException as e:  # noqa: BLE001
-                try:
-                    message: str | None = "Exception ignored while finalizing file " + repr(self)
+                failed = e
+            if failed is not None:               # PyErr_FormatUnraisable has taken the pending error: the repr and the hook run
+                try:                             # with whatever was handled around the finaliser, not this error (RL-728)
+                    message: str | None = "Exception ignored while finalizing file " + _repr_text(self)   # %R: the characters (RL-748)
                 except BaseException:  # noqa: BLE001  # %R failed: PyErr_Clear, and the report is without its first line
                     message = None
-                _io_call("unraisable", message, e)
+                _io_call("unraisable", message, failed)
 
     def seekable(*args: object, **kwds: object) -> bool:  # noqa: N805
         _noargs("_IOBase.seekable", args, kwds)
@@ -604,17 +646,25 @@ class _TextIOBase(_IOBase):
         return None
 
     def read(*args: object, **kwds: object) -> object:  # noqa: N805
-        _positional("read", "_TextIOBase.read", args, kwds, 0, 1)
+        if _positional("read", "_TextIOBase.read", args, kwds, 0, 1):
+            _int(args[1])                        # size: int = -1, converted before the refusal (RL-740)
         _unsupported("read")
         return None
 
     def readline(*args: object, **kwds: object) -> object:  # noqa: N805
-        _positional("readline", "_TextIOBase.readline", args, kwds, 0, 1)
+        if _positional("readline", "_TextIOBase.readline", args, kwds, 0, 1):
+            _int(args[1])
         _unsupported("readline")
         return None
 
     def write(*args: object, **kwds: object) -> object:  # noqa: N805
         _positional("write", "_TextIOBase.write", args, kwds, 1, 1)
+        if not issubclass(type(args[1]), str):   # s: str, a C string: a str, in UTF-8, with no NUL
+            raise TypeError("write() argument 1 must be str, not " + _tp_name(args[1]))
+        text = _own_data(args[1])
+        str.encode(text, "utf-8")
+        if str.__contains__(text, "\0"):
+            raise ValueError("embedded null character")
         _unsupported("write")
         return None
 
@@ -682,16 +732,19 @@ def _fileio_dealloc_warn(self: FileIO, source: object) -> None:   # fileio_deall
     buffered file above this one, or this one). A warning the filters made an error is reported as unraisable, about this
     file; any other error is dropped, as the C drops it when it puts the exception it saved back."""
     if self._a_fd >= 0 and self._h_closefd:
+        warned: BaseException | None = None
         try:                                     # PyErr_ResourceWarning(source, 1, "unclosed file %R", source)
-            _io_call("resource_warning", "unclosed file " + repr(source), source)
+            _io_call("resource_warning", "unclosed file " + _repr_text(source), source)
         except Warning as e:                     # "spurious errors can appear at shutdown"
-            try:
-                message: str | None = "Exception ignored while finalizing file " + repr(self)
-            except BaseException:  # noqa: BLE001  # %R failed: PyErr_Clear, and the report is without its first line
-                message = None
-            _io_call("unraisable", message, e)
+            warned = e
         except BaseException:  # noqa: BLE001, S110
             pass
+        if warned is not None:                   # reported once the handler has ended, as the C reports a pending error (RL-728)
+            try:
+                message: str | None = "Exception ignored while finalizing file " + _repr_text(self)
+            except BaseException:  # noqa: BLE001  # %R failed: PyErr_Clear, and the report is without its first line
+                message = None
+            _io_call("unraisable", message, warned)
 
 
 class FileIO(_RawIOBase):
@@ -1052,7 +1105,7 @@ class FileIO(_RawIOBase):
             raise RuntimeError("reentrant call inside " + type_name + ".__repr__")
         self._l_in_repr = True
         try:
-            shown = repr(nameobj)
+            shown = _repr_text(nameobj)
         finally:
             self._l_in_repr = False
         return "<" + type_name + " name=" + shown + " mode='" + _fileio_mode_string(self) + "' closefd=" + ("True" if self._h_closefd else "False") + ">"
@@ -1135,7 +1188,7 @@ def _bf_new(cls: type) -> _Buffered:             # the struct's zero state: `ok`
 
 def _bf_enter(self: _Buffered) -> None:          # ENTER_BUFFERED; LEAVE_BUFFERED is `self._p_owner = False` in a finally
     if self._p_owner:                            # _enter_buffered_busy: one thread, so a lock that is held is held by this one, which
-        raise RuntimeError("reentrant call inside " + repr(self))   # came back in: a signal's handler, a raw stream's method
+        raise RuntimeError("reentrant call inside " + _repr_text(self))   # came back in: a signal's handler, a raw stream's method
     self._p_owner = True
 
 
@@ -1278,15 +1331,22 @@ def _bf_fill_buffer(self: _Buffered) -> int:     # _bufferedreader_fill_buffer
     return n
 
 
+_blocked_errno = 0                               # the C's errno where a raw write would have blocked: what _set_BlockingIOError reads
+
+
 def _bf_raw_write(self: _Buffered, data: bytes) -> int:   # _bufferedwriter_raw_write; -2 when the raw would block (None)
+    global _blocked_errno
     while True:                                  # "We then retry writing, ignoring the signal if no handler has raised" (RL-656)
         try:
-            res = self._a_raw.write(data)  # type: ignore[attr-defined]
+            _io_call("errno", 0)                 # "errno = 0;" before the call, and "errnum = errno;" after it: EAGAIN after a
+            res = self._a_raw.write(data)  # type: ignore[attr-defined]   # FileIO's write, 0 after a write written in Python (RL-751)
+            errnum = _io_call("errno")
             break
         except OSError as e:
             if not _trap_eintr(e):
                 raise
     if res is None:
+        _blocked_errno = errnum                  # "errno = errnum;"
         return -2
     n = -1                                       # "n = PyNumber_AsSsize_t(res, PyExc_ValueError); if (n < 0 || n > len)": a result that
     try:                                         # is no number is -1 with its error, and the OSError is set over that error: raised
@@ -1311,7 +1371,7 @@ def _bf_flush_unlocked(self: _Buffered) -> None:   # _bufferedwriter_flush_unloc
     while self._k_write_pos < self._l_write_end:
         n = _bf_raw_write(self, bytes(self._f_buffer[self._k_write_pos:self._l_write_end]))
         if n == -2:
-            raise BlockingIOError(_EAGAIN, "write could not complete without blocking", 0)
+            raise BlockingIOError(_blocked_errno, "write could not complete without blocking", 0)
         self._k_write_pos += n
         self._i_raw_pos = self._k_write_pos
         _sys("check")                            # "Partial writes can return successfully when interrupted by a signal (see write(2)).
@@ -1516,7 +1576,7 @@ def _bf_write(self: _Buffered, data: bytes) -> int:   # _io_BufferedWriter_write
         self._f_buffer[self._l_write_end:self._l_write_end + avail] = data[:avail]
         self._l_write_end += avail
         self._h_pos += avail
-        raise BlockingIOError(_EAGAIN, "write could not complete without blocking", avail)
+        raise BlockingIOError(_blocked_errno, "write could not complete without blocking", avail)
     offset = _bf_raw_offset(self)
     if offset != 0:
         _bf_raw_seek(self, -offset, 1)
@@ -1532,7 +1592,7 @@ def _bf_write(self: _Buffered, data: bytes) -> int:   # _io_BufferedWriter_write
                 _bf_adjust_position(self, self._g_buffer_size)
                 self._l_write_end = self._g_buffer_size
                 written += self._g_buffer_size
-                raise BlockingIOError(_EAGAIN, "write could not complete without blocking", written)
+                raise BlockingIOError(_blocked_errno, "write could not complete without blocking", written)
             break
         written += n
         remaining -= n
@@ -1614,7 +1674,7 @@ def _bf_repr(self: _Buffered) -> str:            # buffered_repr
         raise RuntimeError("reentrant call inside " + type_name + ".__repr__")
     self._o_in_repr = True
     try:
-        shown = repr(nameobj)
+        shown = _repr_text(nameobj)
     finally:
         self._o_in_repr = False
     return "<" + type_name + " name=" + shown + ">"
@@ -1632,6 +1692,8 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         raw, buffer_size = _bf_init_args(shown, args, kwds)
         self._b_ok = False
         self._c_detached = False
+        if can_read and can_write:               # _io_BufferedRandom___init___impl: seekable, then readable, then writable (RL-750)
+            _check_ability(raw, "seekable", "File or stream is not seekable.")
         if can_read:
             _check_ability(raw, "readable", "File or stream is not readable.")
         if can_write:
@@ -1919,6 +1981,7 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         return _bf_repr(self)
 
     def __new__(klass: type, *args: object, **kwds: object) -> _Buffered:
+        _object_new_args(klass, cls, args, kwds)
         return _bf_new(klass)
 
     members: dict[str, object] = {"__init__": init, "flush": flush, "tell": tell, "seek": seek, "truncate": truncate, "close": close, "detach": detach,
@@ -1935,7 +1998,7 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
     for name, member in members.items():
         member.__name__ = name  # type: ignore[attr-defined]
         member.__qualname__ = shown + "." + name  # type: ignore[attr-defined]
-        setattr(cls, name, member)
+        setattr(cls, name, staticmethod(member) if name == "__new__" else member)   # as a class statement makes it (RL-726)
 
 
 def _bf_raw_property(self: _Buffered) -> object:
@@ -2012,6 +2075,7 @@ class BufferedRWPair(_BufferedIOBase):
     __slots__ = ("_a_reader", "_b_writer")
 
     def __new__(cls, *args: object, **kwds: object) -> BufferedRWPair:
+        _object_new_args(cls, BufferedRWPair, args, kwds)
         self: BufferedRWPair = _bella_new_instance(cls)
         self._a_reader = None
         self._b_writer = None
@@ -2100,10 +2164,6 @@ class BufferedRWPair(_BufferedIOBase):
         if ret is not False:
             return ret
         return _rw_forward(self._a_reader, "isatty", ())
-
-    def __getstate__(*args: object, **kwds: object) -> object:  # noqa: N805
-        _noargs("BufferedRWPair.__getstate__", args, kwds)
-        raise TypeError("cannot pickle '" + type(args[0]).__name__ + "' instances")
 
     @property
     def closed(self) -> object:
@@ -2466,6 +2526,7 @@ class IncrementalNewlineDecoder:
     __slots__ = ("_a_ok", "_b_decoder", "_c_pendingcr", "_d_seennl", "_e_translate", "_f_errors")
 
     def __new__(cls, *args: object, **kwds: object) -> IncrementalNewlineDecoder:
+        _object_new_args(cls, IncrementalNewlineDecoder, args, kwds)
         self: IncrementalNewlineDecoder = _bella_new_instance(cls)
         self._a_ok = False
         self._b_decoder = None
@@ -2499,19 +2560,17 @@ class IncrementalNewlineDecoder:
             state = self._b_decoder.getstate()  # type: ignore[attr-defined]
             if not issubclass(type(state), tuple) or tuple.__len__(state) != 2:
                 raise TypeError("illegal decoder state")
-            buffer, flag = tuple.__getitem__(state, 0), tuple.__getitem__(state, 1)
-            if not issubclass(type(flag), int):
-                raise TypeError("illegal decoder state")
-            flag = int.__index__(flag) & ((1 << 64) - 1)
+            buffer = tuple.__getitem__(state, 0)
+            flag = _format_k(tuple.__getitem__(state, 1), "illegal decoder state")
         else:
             buffer = b""
             flag = 0
-        flag <<= 1
+        flag = (flag << 1) & 0xFFFFFFFFFFFFFFFF    # an unsigned long long's shift: the top bit is gone (RL-723)
         if self._c_pendingcr:
             flag |= 1
         return buffer, flag
 
-    def setstate(*args: object, **kwds: object) -> None:  # noqa: N805
+    def setstate(*args: object, **kwds: object) -> object:  # noqa: N805
         state = _one("IncrementalNewlineDecoder.setstate", args, kwds)
         self: IncrementalNewlineDecoder = args[0]  # type: ignore[assignment]
         if not self._a_ok:
@@ -2520,16 +2579,15 @@ class IncrementalNewlineDecoder:
             raise TypeError("state argument must be a tuple")
         if tuple.__len__(state) != 2:
             raise TypeError("setstate(): illegal state argument")
-        buffer, flag = tuple.__getitem__(state, 0), tuple.__getitem__(state, 1)
-        if not issubclass(type(flag), int):
-            raise TypeError("setstate(): illegal state argument")
-        flag = int.__index__(flag) & ((1 << 64) - 1)
+        buffer = tuple.__getitem__(state, 0)
+        flag = _format_k(tuple.__getitem__(state, 1), "setstate(): illegal state argument")
         self._c_pendingcr = (flag & 1) != 0
         flag >>= 1
-        if self._b_decoder is not None:
-            self._b_decoder.setstate((buffer, flag))  # type: ignore[attr-defined]
+        if self._b_decoder is not None:          # what the decoder's method returns is the result (RL-724)
+            return self._b_decoder.setstate((buffer, flag))  # type: ignore[attr-defined]
+        return None
 
-    def reset(*args: object, **kwds: object) -> None:  # noqa: N805
+    def reset(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("IncrementalNewlineDecoder.reset", args, kwds)
         self: IncrementalNewlineDecoder = args[0]  # type: ignore[assignment]
         if not self._a_ok:
@@ -2537,7 +2595,8 @@ class IncrementalNewlineDecoder:
         self._d_seennl = 0
         self._c_pendingcr = False
         if self._b_decoder is not None:
-            self._b_decoder.reset()  # type: ignore[attr-defined]
+            return self._b_decoder.reset()  # type: ignore[attr-defined]
+        return None
 
     @property
     def newlines(self) -> object:
@@ -2643,6 +2702,84 @@ def _tw_decoder_state(self: TextIOWrapper) -> tuple[bytes, object]:
     if not issubclass(type(dec_buffer), bytes):
         raise TypeError("illegal decoder state: the first item should be a bytes object, not '" + _tp_name(dec_buffer) + "'")
     return dec_buffer, dec_flags
+
+
+def _tw_tell_state(self: TextIOWrapper) -> tuple[int, int]:
+    """tell's DECODER_GETSTATE: the length of the decoder's pending bytes and its flag as a C int ("Oi": an int, or what
+    __index__ gives, within the type's range), converted before the first item is looked at (RL-737)."""
+    state = self._h_decoder.getstate()  # type: ignore[attr-defined]
+    if not issubclass(type(state), tuple):
+        raise TypeError("illegal decoder state")
+    if tuple.__len__(state) != 2:
+        raise TypeError("illegal decoder state")
+    dec_buffer = tuple.__getitem__(state, 0)
+    dec_flags = _int(tuple.__getitem__(state, 1))
+    if not issubclass(type(dec_buffer), bytes):
+        raise TypeError("illegal decoder state: the first item should be a bytes object, not '" + _tp_name(dec_buffer) + "'")
+    return bytes.__len__(dec_buffer), dec_flags
+
+
+def _tw_tell_decode(decoder: object, data: bytes) -> int:   # tell's DECODER_DECODE: decoder.decode(bytes), and how many characters came
+    decoded = decoder.decode(data)  # type: ignore[attr-defined]
+    if not issubclass(type(decoded), str):
+        raise TypeError("decoder should return a string result, not '" + _tp_name(decoded) + "'")
+    return str.__len__(decoded)
+
+
+def _tw_tell_cookie(self: TextIOWrapper, start_pos: int, dec_flags: int, next_input: bytes, chars_to_skip: int) -> int:
+    """_io_TextIOWrapper_tell_impl between taking the decoder's state and giving it back: the nearest point before the
+    position at which the decoder holds nothing, found by decoding the snapshot's bytes again. Every state the decoder is
+    given here is (b"", a plain int), as the C builds it from its cookie."""
+    decoder = self._h_decoder
+    total = bytes.__len__(next_input)
+    # the C asserts skip_bytes <= len(next_input) and, built without the assert, decodes past the snapshot's bytes when the
+    # ratio is stale after a seek (its result then comes from the terminating NUL); the cap keeps the asserted invariant
+    skip_bytes = min(int(self._l_b2cratio * chars_to_skip), total)
+    skip_back = 1
+    while skip_bytes > 0:                        # a fast search for a start point close to the position
+        _tw_decoder_setstate(self, start_pos, dec_flags)
+        chars_decoded = _tw_tell_decode(decoder, next_input[:skip_bytes])
+        if chars_decoded <= chars_to_skip:
+            pending, flags = _tw_tell_state(self)
+            if pending == 0:                     # before the position, and no bytes held in the decoder
+                dec_flags = flags
+                chars_to_skip -= chars_decoded
+                break
+            skip_bytes -= pending
+            skip_back = 1
+        else:
+            skip_bytes -= skip_back
+            skip_back = skip_back * 2
+    if skip_bytes <= 0:
+        skip_bytes = 0
+        _tw_decoder_setstate(self, start_pos, dec_flags)
+    start_pos += skip_bytes
+    if chars_to_skip == 0:
+        return _tw_pack_cookie(start_pos, dec_flags)
+    chars_decoded = 0                            # a byte at a time from there, noting the last safe start point on the way
+    bytes_to_feed = 0
+    need_eof = False
+    i = skip_bytes
+    while i < total:
+        chars_decoded += _tw_tell_decode(decoder, next_input[i:i + 1])
+        bytes_to_feed += 1
+        pending, flags = _tw_tell_state(self)
+        if pending == 0 and chars_decoded <= chars_to_skip:
+            start_pos += bytes_to_feed
+            chars_to_skip -= chars_decoded
+            dec_flags, bytes_to_feed, chars_decoded = flags, 0, 0
+        if chars_decoded >= chars_to_skip:
+            break
+        i += 1
+    if i == total:                               # not enough decoded data: the end of the input is signalled to get more
+        decoded = decoder.decode(b"", True)  # type: ignore[attr-defined]
+        if not issubclass(type(decoded), str):
+            raise TypeError("decoder should return a string result, not '" + _tp_name(decoded) + "'")
+        chars_decoded += str.__len__(decoded)
+        need_eof = True
+        if chars_decoded < chars_to_skip:
+            raise OSError("can't reconstruct logical file position")
+    return _tw_pack_cookie(start_pos, dec_flags, bytes_to_feed, need_eof, chars_to_skip)
 
 
 def _tw_read_chunk(self: TextIOWrapper, size_hint: int) -> bool:   # textiowrapper_read_chunk: True unless at the end
@@ -2764,17 +2901,26 @@ def _tw_readline(self: TextIOWrapper, limit: int) -> str:   # _textiowrapper_rea
 
 
 def _tw_pack_cookie(position: int, dec_flags: int = 0, bytes_to_feed: int = 0, need_eof: bool = False, chars_to_skip: int = 0) -> int:
-    """textiowrapper_build_cookie: the fields' C sizes, little-endian: start_pos (Py_off_t, 8 bytes), dec_flags, bytes_to_feed and
-    chars_to_skip (int, 4 bytes each), need_eof (char)."""
-    return position | (dec_flags << 64) | (bytes_to_feed << 96) | (chars_to_skip << 128) | ((1 if need_eof else 0) << 160)
+    """textiowrapper_build_cookie: the struct's bytes read as one unsigned number, little-endian: start_pos (Py_off_t, 8
+    bytes), dec_flags, bytes_to_feed and chars_to_skip (int, 4 bytes each), need_eof (char). Each field is its bits in that
+    width, so a decoder's flag of -1 is 0xFFFFFFFF in the cookie and the cookie is never negative (RL-736)."""
+    return ((position & 0xFFFFFFFFFFFFFFFF) | ((dec_flags & 0xFFFFFFFF) << 64) | ((bytes_to_feed & 0xFFFFFFFF) << 96) |
+            ((chars_to_skip & 0xFFFFFFFF) << 128) | ((1 if need_eof else 0) << 160))
 
 
-def _tw_unpack_cookie(bigint: int) -> tuple[int, int, int, bool, int]:   # textiowrapper_parse_cookie
-    rest, position = divmod(bigint, 1 << 64)
-    rest, dec_flags = divmod(rest, 1 << 32)
-    rest, bytes_to_feed = divmod(rest, 1 << 32)
-    need_eof, chars_to_skip = divmod(rest, 1 << 32)
-    return position, dec_flags, bytes_to_feed, need_eof != 0, chars_to_skip
+def _tw_signed(bits: int, width: int) -> int:    # a C integer of that width from its bits
+    return bits - (1 << width) if bits >> (width - 1) else bits
+
+
+def _tw_unpack_cookie(bigint: int) -> tuple[int, int, int, bool, int]:
+    """textiowrapper_parse_cookie: _PyLong_AsByteArray into the struct's 21 bytes, unsigned, and each field a signed C
+    integer of its width again."""
+    if bigint < 0:
+        raise OverflowError("can't convert negative int to unsigned")
+    if bigint >> 168:
+        raise OverflowError("int too big to convert")
+    return (_tw_signed(bigint & 0xFFFFFFFFFFFFFFFF, 64), _tw_signed((bigint >> 64) & 0xFFFFFFFF, 32), _tw_signed((bigint >> 96) & 0xFFFFFFFF, 32),
+            ((bigint >> 160) & 0xFF) != 0, _tw_signed((bigint >> 128) & 0xFFFFFFFF, 32))
 
 
 def _tw_set_newline(self: TextIOWrapper, newline: str | None) -> None:   # what __init__ keeps of newline: readnl, readuniversal, readtranslate, writetranslate, writenl
@@ -2787,7 +2933,7 @@ def _tw_set_newline(self: TextIOWrapper, newline: str | None) -> None:   # what 
         self._y_writenl = newline
 
 
-def _tw_decoder_setstate(self: TextIOWrapper, start_pos: int, dec_flags: object) -> None:
+def _tw_decoder_setstate(self: TextIOWrapper, start_pos: int, dec_flags: int) -> None:
     """_textiowrapper_decoder_setstate: at the start of the stream the decoder is reset, not given (b"", 0), for the codecs whose
     state at the start is not that (UTF-16's BOM); IncrementalNewlineDecoder's reset also forgets the newlines seen."""
     if start_pos == 0 and dec_flags == 0:
@@ -2841,6 +2987,7 @@ class TextIOWrapper(_TextIOBase):
     __boolean__ = ("_finalizing",)               # a Py_T_BOOL member
 
     def __new__(cls, *args: object, **kwds: object) -> TextIOWrapper:
+        _object_new_args(cls, TextIOWrapper, args, kwds)
         self: TextIOWrapper = _bella_new_instance(cls)
         self._a_ok = False
         self._b_detached = False
@@ -3161,7 +3308,7 @@ class TextIOWrapper(_TextIOBase):
         elif whence != 0:
             raise ValueError("invalid whence (" + str(whence) + ", should be 0, 1 or 2)")
         if cookie_obj < 0:  # type: ignore[operator]
-            raise ValueError("negative seek position " + repr(cookie_obj))
+            raise ValueError("negative seek position " + _repr_text(cookie_obj))
         self.flush()  # type: ignore[attr-defined]
         cookie = int(cookie_obj)  # type: ignore[call-overload]  # textiowrapper_parse_cookie: PyNumber_Long, which calls the __int__ of an int's subclass (RL-669)
         start_pos, dec_flags, bytes_to_feed, need_eof, chars_to_skip = _tw_unpack_cookie(cookie)
@@ -3202,64 +3349,36 @@ class TextIOWrapper(_TextIOBase):
         posobj = self._c_buffer.tell()  # type: ignore[attr-defined]
         if self._h_decoder is None or self._m_snapshot is None:
             return posobj
-        position = _number_index(posobj)
-        dec_flags, next_input = self._m_snapshot
+        position = _off(posobj)                  # PyLong_AsLongLong
+        # the snapshot's flag is the object the decoder gave: "iO" makes a C int of it here, and from here on the C has
+        # that int alone; the bytes are read where they lie (PyBytes_AS_STRING), whatever class they are of (RL-737)
+        dec_flags = _int(tuple.__getitem__(self._m_snapshot, 0))
+        next_input = _own_data(tuple.__getitem__(self._m_snapshot, 1))
         position -= bytes.__len__(next_input)
         chars_to_skip = self._k_decoded_chars_used
         if chars_to_skip == 0:
             return _tw_pack_cookie(position, dec_flags)
         decoder = self._h_decoder
         saved_state = decoder.getstate()  # type: ignore[attr-defined]
+        failed: BaseException | None = None
         try:
-            # the C asserts skip_bytes <= len(next_input) and, built without the assert, decodes past the snapshot's bytes when the
-            # ratio is stale after a seek (its result then comes from the terminating NUL); the cap keeps the asserted invariant
-            skip_bytes = min(int(self._l_b2cratio * chars_to_skip), bytes.__len__(next_input))
-            skip_back = 1
-            while skip_bytes > 0:
-                _tw_decoder_setstate(self, position, dec_flags)
-                n = str.__len__(_tw_decode(decoder, next_input[:skip_bytes], False))
-                if n <= chars_to_skip:
-                    b, d = _tw_decoder_state(self)
-                    if bytes.__len__(b) == 0:
-                        dec_flags = d
-                        chars_to_skip -= n
-                        break
-                    skip_bytes -= bytes.__len__(b)
-                    skip_back = 1
-                else:
-                    skip_bytes -= skip_back
-                    skip_back = skip_back * 2
-            else:
-                skip_bytes = 0
-                _tw_decoder_setstate(self, position, dec_flags)
-            start_pos = position + skip_bytes
-            start_flags = dec_flags
-            if chars_to_skip == 0:
-                return _tw_pack_cookie(start_pos, start_flags)
-            bytes_fed = 0
-            need_eof = False
-            chars_decoded = 0
-            i = skip_bytes
-            total = bytes.__len__(next_input)
-            while i < total:
-                bytes_fed += 1
-                chars_decoded += str.__len__(_tw_decode(decoder, next_input[i:i + 1], False))
-                dec_buffer, dec_flags = _tw_decoder_state(self)
-                if bytes.__len__(dec_buffer) == 0 and chars_decoded <= chars_to_skip:
-                    start_pos += bytes_fed
-                    chars_to_skip -= chars_decoded
-                    start_flags, bytes_fed, chars_decoded = dec_flags, 0, 0
-                if chars_decoded >= chars_to_skip:
-                    break
-                i += 1
-            else:
-                chars_decoded += str.__len__(_tw_decode(decoder, b"", True))
-                need_eof = True
-                if chars_decoded < chars_to_skip:
-                    raise OSError("can't reconstruct logical file position")
-            return _tw_pack_cookie(start_pos, start_flags, bytes_fed, need_eof, chars_to_skip)  # type: ignore[arg-type]
-        finally:
-            decoder.setstate(saved_state)  # type: ignore[attr-defined]
+            cookie = _tw_tell_cookie(self, position, dec_flags, next_input, chars_to_skip)
+        except BaseException as e:  # noqa: BLE001
+            failed = e
+        if failed is not None:
+            # "fail:": the C takes the pending error, gives the decoder its state back and chains (_PyErr_ChainExceptions1):
+            # setstate runs with the error pending, not handled, and what it raises has the error as its context (RL-742)
+            second: BaseException | None = None
+            try:
+                decoder.setstate(saved_state)  # type: ignore[attr-defined]
+            except BaseException as e:  # noqa: BLE001
+                second = e
+            if second is not None:
+                second.__context__ = failed
+                _raise_as_is(second)
+            _raise_as_is(failed)
+        decoder.setstate(saved_state)  # type: ignore[attr-defined]
+        return cookie
 
     def __next__(*args: object, **kwds: object) -> str:  # noqa: N805
         _noargs("TextIOWrapper.__next__", args, kwds)
@@ -3296,11 +3415,11 @@ class TextIOWrapper(_TextIOBase):
             except (AttributeError, ValueError):
                 nameobj = _ABSENT
             if nameobj is not _ABSENT:
-                parts.append(" name=" + repr(nameobj))
+                parts.append(" name=" + _repr_text(nameobj))
             modeobj = _optional_attr(self, "mode")
             if modeobj is not _ABSENT:
-                parts.append(" mode=" + repr(modeobj))
-            parts.append(" encoding=" + repr(self._d_encoding) + ">")
+                parts.append(" mode=" + _repr_text(modeobj))
+            parts.append(" encoding=" + _repr_text(self._d_encoding) + ">")
             return "".join(parts)
         finally:
             self._z_in_repr = False
@@ -3438,7 +3557,7 @@ class StringIO(_TextIOBase):
             if cut >= 0:
                 newline = newline[:cut]
         if newline is not None and newline != "" and newline != "\n" and newline != "\r" and newline != "\r\n":
-            raise ValueError("illegal newline value: " + repr(newline_obj))
+            raise ValueError("illegal newline value: " + _repr_text(newline_obj))
         if value is not _ABSENT and value is not None and not issubclass(type(value), str):
             raise TypeError("initial_value must be str or None, not " + _tp_name(value))
         self._a_ok = False
@@ -3649,7 +3768,7 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
     is_number = _has_slot(file, "__index__") or _has_slot(file, "__int__") or _has_slot(file, "__float__") or issubclass(type(file), complex)
     path_or_fd = file if is_number else _fspath(file)
     if not is_number and not issubclass(type(path_or_fd), (str, bytes)):
-        raise TypeError("invalid file: " + repr(file))
+        raise TypeError("invalid file: " + _repr_text(file))
     creating = reading = writing = appending = updating = text = binary = False
     shown: str = mode
     i = 0

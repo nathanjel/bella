@@ -26,6 +26,8 @@ try:
     _is_callable                                 # noqa: B018  # PyCallable_Check
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _str_text                                    # noqa: B018  # %S: the characters of an object's str, an exact str
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -49,6 +51,12 @@ except NameError:
     _is_callable: Callable[..., bool] = _missing
     _has_slot: Callable[..., bool] = _missing
     _own_data: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
+
+    def _str_text(value: object) -> str:         # a stand-in for CPython's run of this file
+        return str.__str__(str(value))
 
 _SSIZE_MAX = 2**63 - 1
 _set = _bella_state_set                          # a C function's store into its struct: no class's __setattr__ is asked
@@ -275,11 +283,11 @@ and keywords."""
             fn = self.func  # type: ignore[attr-defined]
             arglist = ""
             for item in self.args:  # type: ignore[attr-defined]
-                arglist = arglist + ", " + repr(item)
+                arglist = arglist + ", " + _repr_text(item)
             for key, value in self.keywords.items():  # type: ignore[attr-defined]
-                arglist = arglist + ", " + str(key) + "=" + repr(value)
+                arglist = arglist + ", " + _str_text(key) + "=" + _repr_text(value)
             cls = type(self)
-            return str(cls.__module__) + "." + str(cls.__qualname__) + "(" + repr(fn) + arglist + ")"
+            return _str_text(cls.__module__) + "." + _str_text(cls.__qualname__) + "(" + _repr_text(fn) + arglist + ")"   # "%S.%S(%R%U)"
         finally:
             _repr_leave(self)
 

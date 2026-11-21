@@ -673,17 +673,19 @@ def _typing_type_repr(p):
         return '...'
     if p is type(None):
         return 'None'
+    # what the C has in hand it writes with PyUnicodeWriter_WriteStr, which is str() of it: of the repr's result too, so a
+    # __repr__ that returns an instance of a str subclass has that instance's __str__ asked (RL-748's class)
     if hasattr(p, '__origin__') and hasattr(p, '__args__'):
-        return repr(p)                                 # it looks like a GenericAlias
+        return _str_text(repr(p))               # it looks like a GenericAlias
     qualname = getattr(p, '__qualname__', _ga_absent)
     if qualname is _ga_absent:
-        return repr(p)
+        return _str_text(repr(p))
     module = getattr(p, '__module__', None)
     if module is None:
-        return repr(p)
-    if _ga_check(module, str) and module == 'builtins':
-        return str(qualname)                           # builtins don't need a module name
-    return str(module) + '.' + str(qualname)
+        return _str_text(repr(p))
+    if _ga_check(module, str) and _own_data(module) == 'builtins':
+        return _str_text(str(qualname))                # builtins don't need a module name
+    return _str_text(module) + '.' + _str_text(qualname)   # "%S.%S"
 
 
 def _make_parameters(args):
@@ -761,7 +763,7 @@ def _subs_parameters(self, args, parameters, item):
     """_Py_subs_parameters: t = dict[T, list[S]]; t[str, int] has the new args (str, list[int])."""
     nparams = len(parameters)
     if nparams == 0:
-        raise TypeError(repr(self) + ' is not a generic class')
+        raise TypeError(_repr_text(self) + ' is not a generic class')
     item = _unpack_args(item)
     for param in parameters:
         prepare = getattr(param, '__typing_prepare_subst__', None)
@@ -770,7 +772,7 @@ def _subs_parameters(self, args, parameters, item):
     argitems = item if _ga_check(item, tuple) else (item,)
     nitems = len(argitems)
     if nitems != nparams:
-        raise TypeError(f"Too {'many' if nitems > nparams else 'few'} arguments for {self!r}; "
+        raise TypeError(f"Too {'many' if nitems > nparams else 'few'} arguments for {_repr_text(self)}; "
                         f'actual {nitems}, expected {nparams}')
     newargs = []
     for arg in tuple(args):
@@ -786,7 +788,7 @@ def _subs_parameters(self, args, parameters, item):
         if subst is not _ga_absent:
             iparam = _ga_index(parameters, arg)
             if iparam < 0:                             # stale: it gained __typing_subst__ later
-                raise TypeError(f'argument {arg!r} with __typing_subst__ was not found in __parameters__')
+                raise TypeError(f'argument {_repr_text(arg)} with __typing_subst__ was not found in __parameters__')
             new = subst(argitems[iparam])
         else:
             new = _subs_tvars(arg, parameters, argitems)
@@ -933,10 +935,6 @@ is (int,)."""
         if self.__unpacked__:
             return (next, (iter(_ga_make(GenericAlias, origin, args)),))
         return (type(self), (origin, args))
-
-    def __reduce_ex__(self, protocol, /):
-        # bella: object.__reduce_ex__, which asks a class's own __reduce__
-        return type(self).__reduce__(self)
 
     def __dir__(self):
         names = dir(self.__origin__)
@@ -1258,7 +1256,7 @@ E.g. for int | str"""
             raise TypeError('Union.__mro_entries__() takes no keyword arguments')
         if len(args) != 2:
             raise TypeError(f'Union.__mro_entries__() takes exactly one argument ({len(args) - 1} given)')
-        raise TypeError(f'Cannot subclass {args[0]!r}')
+        raise TypeError(f'Cannot subclass {_repr_text(args[0])}')
 
     @classmethod
     def __class_getitem__(*args, **kwds):
@@ -1308,7 +1306,7 @@ class SimpleNamespace:
             d = self.__dict__
             for key in list(d):
                 if isinstance(key, str) and len(key) > 0:
-                    pairs.append(f'{key}={d[key]!r}')
+                    pairs.append(_own_data(key) + '=' + _repr_text(d[key]))   # "%U=%R"
             return f'{name}({", ".join(pairs)})'
         finally:
             _repr_running.pop()
@@ -2033,7 +2031,7 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
         if len(args) != 1:
             raise TypeError("expected 0 arguments, got " + str(len(args) - 1))
         values = tuple.__iter__(args[0])
-        return shown + "(" + ", ".join([field + "=" + repr(next(values)) for field in named[:visible]]) + ")"
+        return shown + "(" + ", ".join([field + "=" + _repr_text(next(values)) for field in named[:visible]]) + ")"
 
     def __reduce__(*args, **kwds):               # structseq_reduce
         receiver(args, "__reduce__")
@@ -2059,7 +2057,7 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
             if field in kwds:
                 values[i] = kwds.pop(field)
         if kwds:
-            raise TypeError("Got unexpected field name(s): " + repr(list(kwds)))
+            raise TypeError("Got unexpected field name(s): " + _repr_text(list(kwds)))
         return _bella_structseq_make(cls, values[:visible], values[visible:])
 
     body = {"__new__": __new__, "__repr__": __repr__, "__reduce__": __reduce__, "__replace__": __replace__}

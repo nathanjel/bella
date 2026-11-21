@@ -21,6 +21,7 @@ try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -35,6 +36,9 @@ except NameError:
     _has_slot: Callable[..., bool] = _missing
     _own_data: Callable[..., Any] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 _builtin_abs = abs
 _builtin_pow = pow
@@ -396,8 +400,8 @@ class itemgetter:
             return "operator.itemgetter(...)"
         try:
             if self._nitems == 1:
-                return "operator.itemgetter(" + repr(self._item) + ")"
-            return "operator.itemgetter" + repr(self._item)
+                return "operator.itemgetter(" + _repr_text(self._item) + ")"
+            return "operator.itemgetter" + _repr_text(self._item)
         finally:
             _repr_leave(self)
 
@@ -444,8 +448,8 @@ class attrgetter:
             return "operator.attrgetter(...)"
         try:
             if self._nattrs == 1:
-                return "operator.attrgetter(" + repr(_dot_joined(self._attr[0])) + ")"
-            return "operator.attrgetter" + repr(tuple([_dot_joined(a) for a in self._attr]))
+                return "operator.attrgetter(" + _repr_text(_dot_joined(self._attr[0])) + ")"
+            return "operator.attrgetter" + _repr_text(tuple([_dot_joined(a) for a in self._attr]))
         finally:
             _repr_leave(self)
 
@@ -500,12 +504,12 @@ class methodcaller:
         if not _repr_enter(self):
             return "operator.methodcaller(...)"
         try:
-            parts = [repr(a) for a in self._b_args]
+            parts = [_repr_text(a) for a in self._b_args]
             for key in self._c_kwds:
-                parts.append(key + "=" + repr(self._c_kwds[key]))
+                parts.append(key + "=" + _repr_text(self._c_kwds[key]))
             if not parts:
-                return "operator.methodcaller(" + repr(self._a_name) + ")"
-            return "operator.methodcaller(" + repr(self._a_name) + ", " + ", ".join(parts) + ")"
+                return "operator.methodcaller(" + _repr_text(self._a_name) + ")"
+            return "operator.methodcaller(" + _repr_text(self._a_name) + ", " + ", ".join(parts) + ")"
         finally:
             _repr_leave(self)
 

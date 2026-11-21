@@ -1560,7 +1560,8 @@ std::string character_shown(const Str* object, std::int64_t start) {
     char32_t c = object->at(static_cast<std::size_t>(start));
     return c <= 0xFF ? "\\x" + hex_text(c, 2) : c <= 0xFFFF ? "\\u" + hex_text(c, 4) : "\\U" + hex_text(c, 8);
 }
-Ref encode_error_str(Obj self, Args) {            // UnicodeEncodeError_str: the reason's str() first, then the encoding's
+Ref encode_error_str(Obj self, Args a) {            // UnicodeEncodeError_str: the reason's str() first, then the encoding's
+    dunder_args(self, a, "__str__", 0);            // a slot wrapper counts its arguments (RL-752)
     if (exception_field(self, "object").is_unset()) return str_new("");
     std::string reason = text_of(exception_field(self, "reason"));
     std::string encoding = text_of(exception_field(self, "encoding"));
@@ -1572,7 +1573,8 @@ Ref encode_error_str(Obj self, Args) {            // UnicodeEncodeError_str: the
         return str_new("'" + encoding + "' codec can't encode character '" + character_shown(text, start) + "' in position " + std::to_string(start) + ": " + reason);
     return str_new("'" + encoding + "' codec can't encode characters in position " + std::to_string(start) + "-" + std::to_string(end - 1) + ": " + reason);
 }
-Ref decode_error_str(Obj self, Args) {            // UnicodeDecodeError_str
+Ref decode_error_str(Obj self, Args a) {            // UnicodeDecodeError_str
+    dunder_args(self, a, "__str__", 0);            // a slot wrapper counts its arguments (RL-752)
     if (exception_field(self, "object").is_unset()) return str_new("");
     std::string reason = text_of(exception_field(self, "reason"));
     std::string encoding = text_of(exception_field(self, "encoding"));
@@ -1585,7 +1587,8 @@ Ref decode_error_str(Obj self, Args) {            // UnicodeDecodeError_str
                        " in position " + std::to_string(start) + ": " + reason);
     return str_new("'" + encoding + "' codec can't decode bytes in position " + std::to_string(start) + "-" + std::to_string(end - 1) + ": " + reason);
 }
-Ref translate_error_str(Obj self, Args) {         // UnicodeTranslateError_str
+Ref translate_error_str(Obj self, Args a) {         // UnicodeTranslateError_str
+    dunder_args(self, a, "__str__", 0);            // a slot wrapper counts its arguments (RL-752)
     if (exception_field(self, "object").is_unset()) return str_new("");
     std::string reason = text_of(exception_field(self, "reason"));
     std::int64_t start = 0, end = 0;

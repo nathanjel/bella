@@ -19,6 +19,7 @@ try:
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -38,6 +39,9 @@ except NameError:
     _unpack_keywords: Callable[..., Any] = _missing
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 _GIL_MINSIZE = 2048
 _ABSENT: object = object()
@@ -75,7 +79,7 @@ def _algorithm(digestmod: object, allow_blake2: bool) -> str:   # find_hash_info
             if allow_blake2:
                 return name
             raise ValueError("invalid HACL* algorithm")
-    raise UnknownHashError("unsupported hash algorithm " + (str(digestmod) if issubclass(type(digestmod), str) else repr(digestmod)))
+    raise UnknownHashError("unsupported hash algorithm " + (str(digestmod) if issubclass(type(digestmod), str) else _repr_text(digestmod)))
 
 
 def _digest_of(name: str) -> tuple[int, int]:

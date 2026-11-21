@@ -20,6 +20,7 @@ try:
     _bella_create_builtin                        # noqa: B018  # the runtime's built-in module for a spec
     _bella_set_lazy_attributes                   # noqa: B018  # _imp._set_lazy_attributes
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -41,6 +42,9 @@ except NameError:
         import operator
         return operator.index(o)
     _has_slot: Callable[..., bool] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 import sys
 
@@ -110,7 +114,7 @@ def is_frozen(*args: object, **kwds: object) -> bool:
 def is_frozen_package(*args: object, **kwds: object) -> bool:
     name = _str_arg("is_frozen_package", _one("is_frozen_package", args, kwds))
     if name not in _FROZEN:
-        raise ImportError("No such frozen object named " + repr(name), name=name)
+        raise ImportError("No such frozen object named " + _repr_text(name), name=name)
     return name in _FROZEN_PACKAGES
 
 
@@ -134,7 +138,7 @@ def get_frozen_object(*args: object, **kwds: object) -> object:
     if not issubclass(type(name), str):
         raise TypeError("get_frozen_object() argument 1 must be str, not " + _tp_name(name))
     if name not in _FROZEN:
-        raise ImportError("No such frozen object named " + repr(name), name=name)
+        raise ImportError("No such frozen object named " + _repr_text(name), name=name)
     _bella_refuse("_imp.get_frozen_object (a frozen module's code object: a compiled program has none)")
 
 

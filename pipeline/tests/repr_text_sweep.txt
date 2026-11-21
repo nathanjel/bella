@@ -1,0 +1,139 @@
+import ast, collections, contextvars, functools, io, itertools, json, operator, os, pwd, re, sys, types, warnings
+import _collections
+from string.templatelib import Interpolation, Template
+log=[]
+def hit(name):
+    if name not in log: log.append(name)
+class Text(str):
+    """What a __repr__ or a __str__ of the program's returns: a str of a class of its own. The C formats its characters;
+    an operator of the class that runs is a prelude working on the object."""
+    def __radd__(self,left): hit("radd"); return "replaced"
+    def __add__(self,right): hit("add"); return "replaced"
+    def __getitem__(self,i): hit("getitem"); return "replaced"
+    def __len__(self): hit("len"); return 0
+    def __eq__(self,other): hit("eq"); return False
+    def __ne__(self,other): hit("ne"); return True
+    def __hash__(self): hit("hash"); return 0
+    def __str__(self): hit("str"); return "replaced"
+    def __mod__(self,other): hit("mod"); return "replaced"
+    def __mul__(self,other): hit("mul"); return "replaced"
+    def __contains__(self,other): hit("contains"); return True
+    def __iter__(self): hit("iter"); return iter("replaced")
+    def __format__(self,spec): hit("format"); return "replaced"
+class Shown:
+    def __repr__(self): return Text("shown")
+    def __str__(self): return Text("text")
+    def __call__(self,*a,**k): return None
+class Name(str):
+    def __repr__(self): return Text("name")
+    def __str__(self): return Text("named")
+class Num:
+    def __repr__(self): return Text("num")
+    def __index__(self): return 1
+    def __add__(self,other): return self
+    def __radd__(self,other): return self
+class Nan(float):
+    def __repr__(self): return Text("not a number")
+class Qualified:
+    __origin__=None
+    def __init__(self): self.__qualname__=Shown(); self.__module__=Shown()
+    def __repr__(self): return Text("qualified")
+class Raw(io.BytesIO): name=Shown()
+def fileio():
+    f=io.FileIO(os.devnull); f.name=Shown(); r=repr(f); f.close(); return r
+def text():
+    t=io.TextIOWrapper(Raw()); t.mode=Shown(); return repr(t)
+def prop():
+    class C: p=property()
+    C.__dict__["p"].__set_name__(C,Shown())
+    return C().p
+def action():
+    warnings.filters.insert(0,(Name("bogus"),None,Warning,None,0))
+    warnings.warn("x")
+def module_of_a_partial():
+    class P(functools.partial): pass
+    P.__module__=Shown()
+    return repr(P(len))
+def token():
+    v=contextvars.ContextVar("v",default=Shown())
+    return repr(v.set(1))
+ROWS=[
+lambda: repr(functools.partial(Shown())),
+lambda: repr(functools.partial(len,Shown(),k=Shown())),
+lambda: repr(functools.partial(len,**{Name("k"):1})),
+module_of_a_partial,
+lambda: repr(operator.itemgetter(Shown())),
+lambda: repr(operator.itemgetter(Shown(),Shown())),
+lambda: repr(operator.methodcaller("m",Shown(),k=Shown())),
+lambda: repr(operator.methodcaller(Name("m"))),
+lambda: repr(operator.attrgetter(Name("a"))),
+lambda: repr(operator.attrgetter(Name("a"),Name("b.c"))),
+lambda: repr(itertools.repeat(Shown())),
+lambda: repr(itertools.repeat(Shown(),3)),
+lambda: repr(itertools.count(Num())),
+lambda: repr(itertools.count(Num(),Num())),
+lambda: repr(staticmethod(Shown())),
+lambda: repr(classmethod(Shown())),
+lambda: repr([Shown()]),
+lambda: repr((Shown(),)),
+lambda: repr((Shown(),Shown())),
+lambda: repr({1:Shown()}),
+lambda: repr({Shown()}),
+lambda: repr(frozenset([Shown()])),
+lambda: repr({1:Shown()}.values()),
+lambda: repr({1:Shown()}.items()),
+lambda: repr(collections.deque([Shown()],3)),
+lambda: repr(collections.deque([Shown()])),
+lambda: repr(collections.OrderedDict({1:Shown()})),
+lambda: repr(collections.defaultdict(Shown(),{1:Shown()})),
+lambda: repr(collections.ChainMap({1:Shown()}).maps),
+lambda: repr(types.SimpleNamespace(a=Shown())),
+lambda: repr(types.MappingProxyType({1:Shown()})),
+lambda: repr(contextvars.ContextVar("v",default=Shown())),
+token,
+lambda: contextvars.copy_context()[Shown()],
+lambda: pwd.getpwnam(Name("no such user 33")),
+lambda: repr(ast.Constant(Shown())),
+lambda: repr(ast.Name(Name("x"))),
+lambda: repr(os.stat_result((Shown(),)*10)),
+lambda: repr(os.terminal_size((Shown(),Shown()))),
+lambda: repr(list[Shown()]),
+lambda: repr(dict[Shown(),int]),
+lambda: repr(list[Qualified()]),
+lambda: repr(Interpolation(Shown(),"x")),
+lambda: repr(Template("a",Interpolation(Shown(),"x"))),
+prop,
+action,
+fileio,
+text,
+lambda: repr(io.BufferedReader(Raw())),
+lambda: repr(io.BufferedRWPair(Raw(),Raw())),
+lambda: io.TextIOWrapper(io.BytesIO(),newline=Name("x")),
+lambda: open(Shown()),
+lambda: json.dumps(Nan("nan"),allow_nan=False),
+lambda: json.dumps({Name("k"):object()}),
+lambda: repr(re.compile(Name("a"))),
+lambda: repr(_collections._tuplegetter(0,Shown())),
+lambda: repr(functools.partial(functools.partial(Shown()),Shown())),
+lambda: repr(slice(Shown(),Shown(),Shown())),
+lambda: repr(types.MethodType(Shown(),Shown())),
+lambda: repr(Exception(Shown())),
+lambda: (repr(KeyError(Shown())),str(KeyError(Shown())),str(KeyError(Shown(),1)),str(OSError(Shown(),Shown())),str(OSError(2,Shown(),Shown()))),
+lambda: repr(BaseExceptionGroup(Name("m"),[ValueError(Shown())])),
+lambda: str(Exception(Shown())),
+lambda: (repr(UnicodeDecodeError(Name("enc"),b"ab",0,1,Name("why"))),str(UnicodeDecodeError(Name("enc"),b"ab",0,1,Name("why"))),str(UnicodeEncodeError(Name("enc"),"ab",0,1,Name("why")))),
+lambda: (str(ImportError(Shown(),name=Shown())),str(AttributeError(Shown(),name=Shown())),str(SyntaxError(Shown(),(Shown(),1,1,Shown())))),
+lambda: (str(StopIteration(Shown())),repr(StopIteration(Shown())),str(SystemExit(Shown())),str(BaseExceptionGroup(Shown(),[ValueError(1)]))),
+]
+def show(value):
+    if issubclass(type(value),str): return (type(value).__name__,str.__str__(value))
+    if type(value) is tuple: return tuple([show(v) for v in value])
+    return value
+if sys.argv[1]=="count":
+    print(len(ROWS))
+    raise SystemExit
+try:
+    result=ROWS[int(sys.argv[1])]()
+    seen=log[:]
+    print(show(result),seen)
+except BaseException as e: print(type(e).__name__,[type(n).__name__ for n in getattr(e,"__notes__",[])],log)

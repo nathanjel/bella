@@ -14,6 +14,7 @@ try:
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -27,6 +28,9 @@ except NameError:
     def _tp_name(o: object) -> str:
         return type(o).__name__
     _keyword_suggestion: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 _ABSENT: object = object()
 
@@ -94,7 +98,7 @@ def _iterator(cls: type, variables: dict[ContextVar, object], it: object) -> obj
 
 def _check_key(key: object) -> ContextVar:       # context_check_key_type
     if type(key) is not ContextVar:
-        raise TypeError("a ContextVar key was expected, got " + repr(key))
+        raise TypeError("a ContextVar key was expected, got " + _repr_text(key))
     return key
 
 
@@ -234,7 +238,7 @@ def _get() -> Context:                           # context_get
 def _enter(ctx: Context) -> None:                # _PyContext_Enter
     global _current
     if ctx._entered:
-        raise RuntimeError("cannot enter context: " + repr(ctx) + " is already entered")
+        raise RuntimeError("cannot enter context: " + _repr_text(ctx) + " is already entered")
     ctx._entered = True
     ctx._prev = _current
     _current = ctx
@@ -243,7 +247,7 @@ def _enter(ctx: Context) -> None:                # _PyContext_Enter
 def _exit(ctx: Context) -> None:                 # _PyContext_Exit
     global _current
     if not ctx._entered:
-        raise RuntimeError("cannot exit context: " + repr(ctx) + " has not been entered")
+        raise RuntimeError("cannot exit context: " + _repr_text(ctx) + " has not been entered")
     if _current is not ctx:
         raise RuntimeError("cannot exit context: thread state references a different context object")
     _current = ctx._prev
@@ -286,9 +290,9 @@ class ContextVar:
         return self._hash
 
     def __repr__(self) -> str:
-        text = "<ContextVar name=" + repr(self._name)
+        text = "<ContextVar name=" + _repr_text(self._name)
         if self._default is not _ABSENT:
-            text += " default=" + repr(self._default)
+            text += " default=" + _repr_text(self._default)
         return text + " at " + hex(id(self)) + ">"
 
     @property
@@ -346,7 +350,7 @@ The variable is reset to the value it had before the
             raise TypeError("ContextVar.reset() takes exactly one argument (" + str(len(args)) + " given)")
         token = args[0]
         if type(token) is not Token:
-            raise TypeError("expected an instance of Token, got " + repr(token))
+            raise TypeError("expected an instance of Token, got " + _repr_text(token))
         _reset(self, token)
 
 
@@ -359,12 +363,12 @@ def _assoc(var: ContextVar, value: object) -> None:   # contextvar_set: a new ma
 
 def _reset(var: ContextVar, token: Token) -> None:   # PyContextVar_Reset
     if token._used:
-        raise RuntimeError(repr(token) + " has already been used once")
+        raise RuntimeError(_repr_text(token) + " has already been used once")
     if var is not token._var:
-        raise ValueError(repr(token) + " was created by a different ContextVar")
+        raise ValueError(_repr_text(token) + " was created by a different ContextVar")
     ctx = _get()
     if ctx is not token._ctx:
-        raise ValueError(repr(token) + " was created in a different Context")
+        raise ValueError(_repr_text(token) + " was created in a different Context")
     token._used = True
     if token._old is _ABSENT:                    # contextvar_del
         if var not in ctx._vars:
@@ -385,7 +389,7 @@ class Token:
     __hash__ = None  # type: ignore[assignment]
 
     def __repr__(self) -> str:
-        return "<Token" + (" used" if self._used else "") + " var=" + repr(self._var) + " at " + hex(id(self)) + ">"
+        return "<Token" + (" used" if self._used else "") + " var=" + _repr_text(self._var) + " at " + hex(id(self)) + ">"
 
     @property
     def var(self) -> ContextVar:

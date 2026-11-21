@@ -368,8 +368,11 @@ Ref b_sorted(Obj, Args a);
 Ref i_lookup_special(Obj, Args a);               // builtins.py's primitives
 Ref i_has_slot(Obj, Args a);                     // a type's slot, by its own MRO and dicts (every prelude)
 Ref i_type_lookup(Obj, Args a);
+Ref i_class_lookup(Obj, Args a);
 Ref i_raise_as_is(Obj, Args a);                  // a pending error goes on as it is (every prelude)
 Ref i_own_data(Obj, Args a);                     // an argument's own data, as the C reads it (every prelude)
+Ref i_repr_text(Obj, Args a);                    // %R: the characters of an object's repr (every prelude)
+Ref i_str_text(Obj, Args a);                     // %S: the characters of an object's str
 Ref i_buffer_bytes(Obj, Args a);
 Ref i_dict_next_hashed(Obj, Args a);            // _PyDict_Next and _PyDict_SetItem_KnownHash (every prelude)
 Ref i_dict_set_hashed(Obj, Args a);

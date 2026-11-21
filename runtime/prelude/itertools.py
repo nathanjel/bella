@@ -26,6 +26,7 @@ try:
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -39,6 +40,9 @@ except NameError:
     _tuple_set: Callable[..., None] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
     _has_slot: Callable[..., bool] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 _SSIZE_MAX = 2**63 - 1
 _SSIZE_MIN = -(2**63)
@@ -1077,8 +1081,8 @@ class count:
             return name + "(" + str(self._cnt) + ")"
         step = self._long_step
         if issubclass(type(step), int) and int.__index__(step) == 1:
-            return name + "(" + repr(self._long_cnt) + ")"
-        return name + "(" + repr(self._long_cnt) + ", " + repr(step) + ")"
+            return name + "(" + _repr_text(self._long_cnt) + ")"
+        return name + "(" + _repr_text(self._long_cnt) + ", " + _repr_text(step) + ")"
 
 
 def _is_number(v: object) -> bool:               # PyNumber_Check; the runtime has no complex object yet
@@ -1114,8 +1118,8 @@ class repeat:
     def __repr__(self) -> str:
         name = type(self).__name__
         if self._cnt == -1:
-            return name + "(" + repr(self._element) + ")"
-        return name + "(" + repr(self._element) + ", " + str(self._cnt) + ")"
+            return name + "(" + _repr_text(self._element) + ")"
+        return name + "(" + _repr_text(self._element) + ", " + str(self._cnt) + ")"
 
     def __length_hint__(self, *args: object, **kwds: object) -> int:
         if kwds:

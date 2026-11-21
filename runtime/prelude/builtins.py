@@ -318,8 +318,8 @@ def _property_lacks(self: object, obj: object, what: str) -> AttributeError:   #
     name = _property_name(self)
     qualname = _type_qualname(type(obj))
     if name is not _NULL:
-        return AttributeError("property " + repr(name) + " of " + repr(qualname) + " object has no " + what)
-    return AttributeError("property of " + repr(qualname) + " object has no " + what)
+        return AttributeError("property " + _repr_text(name) + " of " + _repr_text(qualname) + " object has no " + what)
+    return AttributeError("property of " + _repr_text(qualname) + " object has no " + what)
 
 
 def _property_copy(old: object, fget: object, fset: object, fdel: object) -> object:   # property_copy
@@ -525,7 +525,7 @@ class staticmethod:
             raise TypeError("wrapper __repr__() takes no keyword arguments")
         if len(args) != 1:
             raise TypeError("expected 0 arguments, got " + str(len(args) - 1))
-        return "<staticmethod(" + repr(_sm_callable_of(self)) + ")>"
+        return "<staticmethod(" + _repr_text(_sm_callable_of(self)) + ")>"
 
 
 _sm_callable_of, _put_sm_callable = _field(staticmethod, "_sm_callable")
@@ -587,7 +587,7 @@ class classmethod:
             raise TypeError("wrapper __repr__() takes no keyword arguments")
         if len(args) != 1:
             raise TypeError("expected 0 arguments, got " + str(len(args) - 1))
-        return "<classmethod(" + repr(_cm_callable_of(self)) + ")>"
+        return "<classmethod(" + _repr_text(_cm_callable_of(self)) + ")>"
 
 
 _cm_callable_of, _put_cm_callable = _field(classmethod, "_cm_callable")
@@ -651,7 +651,7 @@ def _list_repr(self: list[object]) -> str:
     if not _enter(self):
         return "[...]"
     try:
-        return "[" + ", ".join([repr(x) for x in list.__iter__(self)]) + "]"
+        return "[" + ", ".join([_repr_text(x) for x in list.__iter__(self)]) + "]"
     finally:
         _leave(self)
 
@@ -665,20 +665,24 @@ def _tuple_repr(self: tuple[object, ...]) -> str:
         return "(...)"
     try:
         if len(items) == 1:
-            return "(" + repr(items[0]) + ",)"
-        return "(" + ", ".join([repr(x) for x in items]) + ")"
+            return "(" + _repr_text(items[0]) + ",)"
+        return "(" + ", ".join([_repr_text(x) for x in items]) + ")"
     finally:
         _leave(self)
 
 
 try:
     _dict_next                                   # noqa: B018  # PyDict_Next, given to this module by the compiled runtime
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     def _dict_next(d: dict[object, object], i: int) -> tuple[int, object, object] | None:
         """Run by CPython (runtime/tests/test_prelude.py): the entries as they are at each step.
         CPython walks its entry array, deleted slots included; this walk sees no deleted slots."""
         items = list(d.items())
         return (i + 1, *items[i]) if i < len(items) else None
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 
 def _dict_repr(self: dict[object, object]) -> str:
@@ -709,7 +713,7 @@ def _anydict_repr(self: dict[object, object] | frozendict[object, object]) -> st
             if entry is None:
                 break
             i, k, v = entry
-            parts.append(repr(k) + ": " + repr(v))
+            parts.append(_repr_text(k) + ": " + _repr_text(v))
         return "{" + ", ".join(parts) + "}"
     finally:
         _leave(self)
@@ -733,7 +737,7 @@ def _set_like_repr(self: set[object] | frozenset[object]) -> str:
     if not _enter(self):
         return name + "(...)"
     try:
-        inner = "{" + ", ".join([repr(x) for x in self]) + "}"
+        inner = "{" + ", ".join([_repr_text(x) for x in self]) + "}"
         return inner if type(self) is set else name + "(" + inner + ")"
     finally:
         _leave(self)
@@ -764,7 +768,7 @@ def _view_repr(self: object) -> str:
     if not _enter(self):
         return "..."
     try:
-        return type(self).__name__ + "(" + repr(list(self)) + ")"  # type: ignore[call-overload]  # a view is iterable
+        return type(self).__name__ + "(" + _repr_text(list(self)) + ")"  # type: ignore[call-overload]  # a view is iterable
     finally:
         _leave(self)
 

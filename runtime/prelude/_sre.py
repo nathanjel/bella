@@ -22,6 +22,7 @@ try:
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _dict_next_hashed                            # noqa: B018  # _PyDict_Next: (next position, key, value, hash) or None
     _dict_set_hashed                             # noqa: B018  # _PyDict_SetItem_KnownHash: (dict, key, value, hash)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -40,6 +41,9 @@ except NameError:
     _own_data: Callable[..., Any] = _missing
     _dict_next_hashed: Callable[..., Any] = _missing
     _dict_set_hashed: Callable[..., None] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 CODESIZE = 4
 MAGIC = 20230612
@@ -487,7 +491,7 @@ class Pattern:
                 flags &= ~value
         if flags:
             names.append(hex(flags & 0xFFFFFFFF))
-        shown = repr(self._a_pattern)[:200]
+        shown = _repr_text(self._a_pattern)[:200]
         return "re.compile(" + shown + ", " + "|".join(names) + ")" if names else "re.compile(" + shown + ")"
 
     def __hash__(self) -> int:                   # pattern_hash
@@ -657,7 +661,7 @@ class Match:
 
     def __repr__(self) -> str:                   # match_repr
         group0 = _getslice_by_index(self, 0, None)
-        return "<re.Match object; span=(" + str(self._h_mark[0]) + ", " + str(self._h_mark[1]) + "), match=" + repr(group0)[:50] + ">"
+        return "<re.Match object; span=(" + str(self._h_mark[0]) + ", " + str(self._h_mark[1]) + "), match=" + _repr_text(group0)[:50] + ">"
 
 
 def _group_arg(name: str, args: tuple[object, ...], kwds: dict[str, object], self: object) -> int:   # clinic: group=0, positional only

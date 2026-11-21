@@ -24,6 +24,7 @@ try:
     _codecs_call                                 # noqa: B018  # the runtime's codecs and what it keeps of an exception, by name
     _number_index                                # noqa: B018  # PyNumber_Index, with its messages
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -36,6 +37,7 @@ except NameError:
     _codecs_call: Callable[..., Any] = _missing
     _number_index: Callable[..., int] = _missing
     _own_data: Callable[..., Any] = _missing
+    _raise_as_is: Callable[..., Any] = _missing
 
 _ABSENT = object()
 _search_path: list[object] = []                  # interp->codecs.search_path
@@ -199,11 +201,24 @@ def _lookup_text(encoding: str, alternate_command: str | None) -> object:   # _P
 def _call_codec(function: object, value: object, encoding: str, errors: str | None, doing: str, bad_result: str) -> object:
     """_PyCodec_EncodeInternal and _PyCodec_DecodeInternal: the codec's function, a note on what it raises, and its first result."""
     encoding = _own_data(encoding)
+    failed: BaseException | None = None
     try:
         result = function(value) if errors is None else function(value, errors)  # type: ignore[operator]
-    except BaseException as exc:                 # _PyErr_FormatNote: BaseException's own add_note, whatever the class overrides
-        BaseException.add_note(exc, doing + " with '" + encoding + "' codec failed")
-        raise
+    except BaseException as exc:
+        failed = exc
+    if failed is not None:
+        # _PyErr_FormatNote, once the handler has ended: the error is pending, not handled, while the C adds its note, so a
+        # __notes__ of the class's sees what was handled around the call (RL-747); BaseException's own add_note, whatever
+        # the class overrides, and a note that cannot be added is an error with the first as its context
+        second: BaseException | None = None
+        try:
+            BaseException.add_note(failed, doing + " with '" + encoding + "' codec failed")
+        except BaseException as e:  # noqa: BLE001
+            second = e
+        if second is not None:
+            second.__context__ = failed
+            _raise_as_is(second)
+        _raise_as_is(failed)
     if not issubclass(type(result), tuple) or tuple.__len__(result) != 2:
         raise TypeError(bad_result)
     return tuple.__getitem__(result, 0)

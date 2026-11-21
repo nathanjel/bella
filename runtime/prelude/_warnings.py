@@ -25,6 +25,7 @@ try:
     _fd_seek                                     # noqa: B018  # lseek(fd, offset, SEEK_SET) worked
     _bella_holds                                 # noqa: B018  # the program holds a module of this name
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     import operator
     from collections.abc import Callable
@@ -65,6 +66,9 @@ except NameError:
     def _bella_holds(name: str) -> bool:
         return True
     _own_data: Callable[..., Any] = _missing
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 import _io
 import sys
@@ -521,7 +525,7 @@ def _warn_explicit(category: object, message: object, filename: object, lineno: 
                 assert issubclass(type(registry), dict)
                 rc = _update_registry(registry, text, category, False)
         elif action != "default":
-            raise RuntimeError("Unrecognized action (" + repr(given) + ") in warnings.filters:\n " + repr(item))
+            raise RuntimeError("Unrecognized action (" + _repr_text(given) + ") in warnings.filters:\n " + _repr_text(item))
     if rc:                                       # already warned for this module
         return
     _call_show_warning(category, text, message, filename, lineno, sourceline, None if source is _ABSENT else source, module)

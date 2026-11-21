@@ -785,8 +785,15 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             const Str* s = as_str(item.get());
             if (s->text == "__weakref__" || s->text == "__dict__") continue;
             std::string m = mangle(name->text, s->text);
-            for (auto& [k, v] : entries)
-                if (k->text == m) raise_new("ValueError", "'" + m + "' in __slots__ conflicts with class variable");   // the member's name, mangled (RL-589)
+            // PyDict_Contains(dict, slot) of the member's name, mangled (RL-589), which is the item itself where nothing was
+            // mangled: a name that is an instance of a str subclass has its own __hash__ and __eq__ asked (RL-733)
+            bool held = false;
+            if (m == s->text && !is_exact_str(item.get())) {
+                held = !dict_get(ns, item.get()).is_unset() && m != "__qualname__" && m != "__classcell__" && m != "__classdictcell__";
+            } else {
+                for (auto& [k, v] : entries) held |= k->text == m;
+            }
+            if (held) raise_new("ValueError", "'" + m + "' in __slots__ conflicts with class variable");
             if (std::find(slots.begin(), slots.end(), m) == slots.end()) slots.push_back(m);   // A9-18
         }
         // an int's or a bytes's subclass has instances of a variable size: only __dict__ and __weakref__ may be slots
@@ -799,20 +806,18 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         // itself; a name that is an instance of a str subclass has its own __lt__ asked, and what the sort leaves is the
         // order of the members in the class's dict and of the slots' release (RL-588)
         if (std::any_of(items.begin(), items.end(), [](const Ref& item) { return !is_exact_str(item.get()); })) {
-            Ref names = list_new({});
-            std::vector<std::string> seen;
+            Ref names = list_new({});            // every name, a repeated one too: the sort compares the two (RL-729)
             for (Ref& item : items) {
                 const Str* s = as_str(item.get());
                 if (s->text == "__weakref__" || s->text == "__dict__") continue;
                 std::string m = mangle(name->text, s->text);
-                if (std::find(seen.begin(), seen.end(), m) != seen.end()) continue;
-                seen.push_back(m);
                 Ref as_object = m == s->text ? Ref::share(item.get()) : str_new(m);
                 list_append(names.get(), as_object.get());
             }
             Ref sorted = list_sort_m(names.get(), Args{});
-            std::vector<std::string> ordered;
-            for (Obj v : static_cast<List*>(names.get().object())->items) ordered.push_back(as_str(v)->text);
+            std::vector<std::string> ordered;    // one cell a name (RL-591 is open)
+            for (Obj v : static_cast<List*>(names.get().object())->items)
+                if (std::find(ordered.begin(), ordered.end(), as_str(v)->text) == ordered.end()) ordered.push_back(as_str(v)->text);
             for (const std::string& s : slots)
                 if (s == "__dict__" || s == "__weakref__") ordered.push_back(s);
             slots = ordered;
@@ -1292,7 +1297,11 @@ Ref type_mro(Obj self, Args a) {
     for (ClassObject* m : c3(as_class(self))) list_append(l.get(), Obj::of(m));
     return l;
 }
-Ref type_repr(Obj self, Args) { return type_repr_of(self); }
+void no_arguments(Args a, const char* name);
+Ref type_repr(Obj self, Args a) {
+    no_arguments(a, "__repr__");
+    return type_repr_of(self);
+}
 
 // object's methods
 void one_argument(Args a, const char* name) {    // wrap_binaryfunc: check_num_args
@@ -1309,14 +1318,26 @@ Ref object_ne(Obj self, Args a) {             // inverts __eq__ unless it return
     if (r.get() == Obj::of(NOTIMPLEMENTED)) return r;
     return Ref::steal(boolean(!truth(r.get())));
 }
-Ref object_notimplemented(Obj, Args) { return Ref::steal(Obj::of(NOTIMPLEMENTED)); }
-Ref object_hash(Obj self, Args) {
+// object's orderings decline; called as object.__lt__(x), they are wrappers that count their arguments as any (RL-752)
+template <char A, char B>
+Ref object_ordering(Obj, Args a) {
+    static constexpr char name[] = {'_', '_', A, B, '_', '_', '\0'};
+    one_argument(a, name);
+    return Ref::steal(Obj::of(NOTIMPLEMENTED));
+}
+void no_arguments(Args a, const char* name) {    // wrap_unaryfunc, wrap_hashfunc: check_num_args
+    if (a.nkw != 0) raise_new("TypeError", std::string("wrapper ") + name + "() takes no keyword arguments");
+    if (a.npos != 0) raise_new("TypeError", "expected 0 arguments, got " + std::to_string(a.npos));
+}
+Ref object_hash(Obj self, Args a) {
+    no_arguments(a, "__hash__");
     // CPython rotates the address by 4 bits (_Py_HashPointer); the value depends on the address in
     // both, so only its consistency is observable: the address shifted by 4 fits a small int
     auto p = reinterpret_cast<std::uintptr_t>(self.object());
     return Ref::steal(Obj::small(static_cast<std::int64_t>(p >> 4)));
 }
-Ref object_repr(Obj self, Args) {
+Ref object_repr(Obj self, Args a) {
+    no_arguments(a, "__repr__");
     ClassObject* c = type_of(self);
     std::string mod = module_text(c);            // object_repr: the type's module, which a static type's tp_name says
     mod = mod.empty() || mod == "builtins" ? "" : mod + ".";
@@ -1324,9 +1345,14 @@ Ref object_repr(Obj self, Args) {
     std::snprintf(buf, sizeof buf, "%p", static_cast<void*>(self.object()));
     return str_new("<" + mod + c->qualname + " object at " + buf + ">");
 }
-Ref object_str(Obj self, Args) { return repr_unchecked(self); }   // object_str: tp_repr itself; PyObject_Str checks what comes back
+Ref object_str(Obj self, Args a) {               // object_str: tp_repr itself; PyObject_Str checks what comes back
+    no_arguments(a, "__str__");
+    return repr_unchecked(self);
+}
 Ref object_init_subclass(Obj self, Args a) {
     if (a.nkw != 0) raise_new("TypeError", as_class(self)->name + ".__init_subclass__() takes no keyword arguments");
+    if (a.npos != 0)                             // METH_NOARGS (RL-752)
+        raise_new("TypeError", as_class(self)->name + ".__init_subclass__() takes no arguments (" + std::to_string(a.npos) + " given)");
     return none_ref();
 }
 // object.__setattr__ and __delattr__ are slot wrappers: bound like methods, the object as self
@@ -1977,7 +2003,8 @@ Ref proxy_get(Obj self, Args a) {
         if (const Obj* v = proxied(self)->attrs.find(intern(k->text))) return Ref::share(*v);
     return a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
 }
-Ref proxy_len(Obj self, Args) {
+Ref proxy_len(Obj self, Args a) {
+    dunder_args(self, a, "__len__", 0);            // a slot wrapper counts its arguments (RL-752)
     if (proxied(self) == nullptr) return call_special(proxy_mapping(self), "__len__", {});
     return Ref::steal(Obj::small(static_cast<std::int64_t>(proxied(self)->attrs.size())));
 }
@@ -2664,7 +2691,8 @@ Ref exception_args(Obj self) {
     Obj v = exception_field(self, "args");
     return v.is_unset() ? tuple_new({}) : Ref::share(v);
 }
-Ref exception_str(Obj self, Args) {
+Ref exception_str(Obj self, Args a) {
+    dunder_args(self, a, "__str__", 0);            // a slot wrapper counts its arguments (RL-752)
     Ref args = exception_args(self);
     if (!is_kind(args.get(), Kind::Tuple)) return str_of(args.get());
     auto& items = static_cast<Tuple*>(args.get().object())->items;
@@ -2678,7 +2706,8 @@ Ref key_error_str(Obj self, Args a) {             // KeyError_str: one argument 
         return repr_of(static_cast<Tuple*>(args.get().object())->items[0]);
     return exception_str(self, a);
 }
-Ref exception_repr(Obj self, Args) {
+Ref exception_repr(Obj self, Args a) {
+    dunder_args(self, a, "__repr__", 0);            // a slot wrapper counts its arguments (RL-752)
     // BaseException_repr: Name(repr(arg)) for one argument, Name + repr(args) otherwise
     Ref args = exception_args(self);
     auto& items = static_cast<Tuple*>(args.get().object())->items;
@@ -3050,9 +3079,14 @@ Ref i_bella_no_tp_new(Obj, Args a) {             // tp_new is NULL: a static typ
     positional_only(a, "_bella_no_tp_new", 1, 1);
     for (ClassObject* c : as_class(a.pos(0))->mro) {
         if (c == types().object) return Ref::steal(boolean(false));
-        if (c->heap_type && !c_type(c)) continue;
+        if (c->heap_type && !c_type(c)) {        // a class of the program's: its own __new__ is a tp_new, else its base's
+            if (c->attrs.contains(N("__new__"))) return Ref::steal(boolean(false));
+            continue;
+        }
+        auto flags = cpython_type_number("flags", c);
+        if (flags && (*flags & (1 << 7))) return Ref::steal(boolean(true));   // Py_TPFLAGS_DISALLOW_INSTANTIATION: type_ready sets tp_new to NULL (RL-746)
         if (!cpython_attribute_kind(c, "__new__").empty()) return Ref::steal(boolean(false));
-        if (auto flags = cpython_type_number("flags", c); flags && (*flags & (1 << 9))) continue;   // a heap type of CPython's (PyType_FromSpec): tp_new inherited
+        if (flags && (*flags & (1 << 9))) continue;   // a heap type of CPython's (PyType_FromSpec): tp_new inherited
         if (tp_base(c) == types().object) return Ref::steal(boolean(true));
     }
     return Ref::steal(boolean(false));
@@ -3251,6 +3285,8 @@ void present_native_class(ClassObject* c, const std::string& module) {
     c->has_weakref = cpython_has("weakref", c->name);
     if (Obj doc = cpython_doc("type:" + c->name); doc != None())   // the type's own doc; an empty row says CPython has None
         c->set_attr(N("__doc__"), as_str(doc)->text.empty() ? None() : doc);
+    else if (!c->attrs.contains(N("__doc__")) && !cpython_attribute_kind(c, "__doc__").empty())   // a type the docs' table has no row
+        c->set_attr(N("__doc__"), None());                                                         // for: its dict has the name, as every type's has
     if (cpython_has(c->name, "__class_getitem__") && !c->attrs.contains(N("__class_getitem__")))   // Py_GenericAlias, unless the class has its own
         method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
     // a C type whose + is sq_concat (and * sq_repeat) has __add__ and no __radd__ in CPython: the right operand's __radd__ goes first
@@ -3356,7 +3392,10 @@ void init_types() {
     method(t.object, "__init__", object_init);
     method(t.object, "__eq__", object_eq);
     method(t.object, "__ne__", object_ne);
-    for (const char* n : {"__lt__", "__le__", "__gt__", "__ge__"}) method(t.object, n, object_notimplemented);
+    method(t.object, "__lt__", object_ordering<'l', 't'>);
+    method(t.object, "__le__", object_ordering<'l', 'e'>);
+    method(t.object, "__gt__", object_ordering<'g', 't'>);
+    method(t.object, "__ge__", object_ordering<'g', 'e'>);
     method(t.object, "__hash__", object_hash);
     method(t.object, "__repr__", object_repr);
     method(t.object, "__str__", object_str);

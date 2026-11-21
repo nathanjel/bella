@@ -13,6 +13,8 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name, and %T
     _dict_next                                   # noqa: B018  # PyDict_Next: the entries as they are at each step
     _raise_as_is                                 # noqa: B018  # a pending error goes on as it is: no context taken (RL-650)
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
     import operator
 
@@ -29,6 +31,12 @@ except NameError:
 
     def _raise_as_is(exc: BaseException) -> None:   # a stand-in for CPython's run: the runtime's takes no context
         raise exc
+
+    def _own_data(value: str) -> str:            # a stand-in: the characters
+        return str.__str__(value)
+
+    def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
+        return str.__str__(repr(value))
 
 
 class _Absent:
@@ -546,16 +554,14 @@ def _raise_noted(exc: BaseException, prefix: str, shown: object = _ABSENT) -> No
     program's that runs for it sees whatever was being handled around the call, not this error; a note that cannot be made
     is an error of its own with the first as its context (_PyErr_ChainExceptions1). The caller has left its handler (RL-707)."""
     second: BaseException | None = None
-    text = prefix
-    if shown is not _ABSENT:
-        try:
-            text = prefix + repr(shown)
-        except BaseException as e:
-            second = e
+    try:                                         # the text (%R: the repr's characters, RL-748) and the add: what either raises has
+        text = prefix if shown is _ABSENT else prefix + _repr_text(shown)   # the first error as its context (RL-725)
+        BaseException.add_note(exc, text)
+    except BaseException as e:
+        second = e
     if second is not None:
         second.__context__ = exc
         _raise_as_is(second)
-    BaseException.add_note(exc, text)
     _raise_as_is(exc)
 
 
@@ -563,7 +569,7 @@ def _encode_float(s: Encoder, obj: float) -> str:   # encoder_encode_float: PyFl
     value = float.__float__(obj)
     if value != value or value == _INF or value == -_INF:
         if not s._allow_nan:
-            raise ValueError("Out of range float values are not JSON compliant: " + repr(obj))
+            raise ValueError("Out of range float values are not JSON compliant: " + _repr_text(obj))
         if value > 0:
             return "Infinity"
         if value < 0:

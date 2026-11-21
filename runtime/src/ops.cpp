@@ -1032,10 +1032,12 @@ Ref repr_unchecked(Obj v) {
                 return str_new("<built-in function " + as_str(static_cast<PyFunction*>(o)->name.get())->text + ">");
             return str_new("<function " + as_str(static_cast<PyFunction*>(o)->qualname.get())->text + " at " + address(v) + ">");
         case Kind::Method: {
-            auto* m = static_cast<Method*>(o);
-            Ref fname = getattr(m->func, intern("__qualname__"));
+            auto* m = static_cast<Method*>(o);   // method_repr: __qualname__, else __name__, and "?" for none or one that is no str (RL-749)
+            Ref fname = optional_getattr(m->func, intern("__qualname__"));
+            if (fname.get().is_unset()) fname = optional_getattr(m->func, intern("__name__"));
+            const Str* named = fname.get().is_unset() ? nullptr : as_str(fname.get());
             Ref self = repr_of(m->self);
-            return str_new("<bound method " + as_str(fname.get())->text + " of " + as_str(self.get())->text + ">");
+            return str_new("<bound method " + (named != nullptr ? named->text : std::string("?")) + " of " + as_str(self.get())->text + ">");
         }
         case Kind::Instance: return call_special(v, "__repr__", {});
         case Kind::Cell: {                       // cell_repr

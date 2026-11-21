@@ -63,7 +63,8 @@ Ref super_init_m(Obj self, Args a) {
     init_fields(su_of(self), a.pos(0), a.npos > 1 ? a.pos(1) : Obj{});
     return none_ref();
 }
-Ref super_repr_m(Obj self, Args) {
+Ref super_repr_m(Obj self, Args a) {
+    dunder_args(self, a, "__repr__", 0);            // a slot wrapper counts its arguments (RL-752)
     SuperObject* su = su_of(self);
     if (!su->obj_type.is_unset())
         return str_new(std::string("<super: <class '") + name_or_null(su->type) + "'>, <" + name_or_null(su->obj_type) + " object>>");

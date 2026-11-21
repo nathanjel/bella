@@ -24,6 +24,13 @@ except NameError:
 
     _bella_tp_name_of: Callable[[type], str] = _missing
 
+try:
+    _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+except NameError:                                # the evaluators run this file under CPython and give it the first primitive alone
+
+    def _repr_text(value: object) -> str:
+        return str.__str__(repr(value))
+
 _SEQUENCE = 1 << 5          # Py_TPFLAGS_SEQUENCE: list, tuple, range, ...; Sequence.register sets it
 _MAPPING = 1 << 6           # Py_TPFLAGS_MAPPING: dict, mappingproxy, ...; Mapping.register sets it
 _MATCH_SELF = 1 << 22       # _Py_TPFLAGS_MATCH_SELF: bool, bytearray, bytes, dict, float, ...
@@ -51,7 +58,7 @@ def match_keys(subject: object, keys: tuple[object, ...]) -> tuple[object, ...] 
     values: list[object] = []
     for key in keys:
         if key in seen:
-            raise ValueError(f"mapping pattern checks duplicate key ({key!r})")
+            raise ValueError(f"mapping pattern checks duplicate key ({_repr_text(key)})")
         seen.add(key)
         value = get(key, dummy)
         if value is dummy:
@@ -73,7 +80,7 @@ def mapping_rest(subject: object, keys: tuple[object, ...]) -> dict[object, obje
 def _attr(subject: object, cls: type, name: str, seen: set[str] | None) -> tuple[bool, object]:
     if seen is not None:
         if name in seen:
-            raise TypeError(f"{_bella_tp_name_of(cls)}() got multiple sub-patterns for attribute {name!r}")
+            raise TypeError(f"{_bella_tp_name_of(cls)}() got multiple sub-patterns for attribute {_repr_text(name)}")
         seen.add(name)
     missing = False
     value: object = None

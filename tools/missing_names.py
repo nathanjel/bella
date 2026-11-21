@@ -9,8 +9,9 @@ name that goes missing is noticed.
 The names table (runtime/src/cpython_names.inc, tools/cpython_names.py) lists every name of CPython's built-in modules and of
 each built-in type. A compiled program that reads one of them the runtime does not have stops by name. This tool compiles one
 program that imports every native module of the manifest (mapped and core) and prints each module's own names and the own names
-of every type it can reach from them, from builtins, sys and types, and from a sample of objects; what the table has beyond
-that is the list. A line is `scope:name`, the scope a module's name or a type's tp_name as the table has it; `?:module.Name` is
+of every type it can reach from them, from builtins, sys and types, and from a sample of objects (those of the types only a
+function makes among them: zlib's compression object has no name that leads to it; review A33, RL-731); what the table has
+beyond that is the list. A line is `scope:name`, the scope a module's name or a type's tp_name as the table has it; `?:module.Name` is
 a type the table has no scope for.
 
 The list is not a to-do list as it stands: much of it is the dialect's own (frames and code objects, E-02; memoryview and the
@@ -71,6 +72,16 @@ for sample in ([], (), {{}}, set(), frozenset(), "", b"", bytearray(), 1, 1.0, 1
                list.append, list.__add__, [].__add__, dict.fromkeys, type.__dict__["__dict__"], sys.stdout, sys.version_info, sys.flags, sys.float_info,
                sys.int_info, sys.hash_info, sys.implementation, function.__code__, type.__dict__, property(), staticmethod(len), classmethod(len),
                super(type, type), BaseException(), (lambda: sample).__closure__):  # noqa: F821
+    reach(sample)
+# the types only a function makes: no name of a module leads to them (zlib's compression object had a __del__ of its own
+# that the list could not see: review A33, RL-731)
+for sample in (zlib.compressobj(), zlib.decompressobj(), _struct.iter_unpack("b", b"a"), unicodedata.iter_graphemes("a"),
+               next(unicodedata.iter_graphemes("a")), _contextvars.copy_context().keys(), _contextvars.copy_context().values(),
+               _contextvars.copy_context().items(), _contextvars.Token.MISSING, _string.formatter_parser(""),
+               _string.formatter_field_name_split("a")[1], posix.scandir("."), iter(_collections.OrderedDict()),
+               _collections.OrderedDict().keys(), _collections.OrderedDict().values(), _collections.OrderedDict().items(),
+               itertools.tee([1])[0], next(itertools.groupby([1]))[1], _functools.cmp_to_key(len)(1), _csv.reader([]),
+               _csv.writer(sys.stdout)):
     reach(sample)
 '''
 
