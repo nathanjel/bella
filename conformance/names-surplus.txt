@@ -1,0 +1,16 @@
+NoDefaultType:__firstlineno__
+NoDefaultType:__module__
+NoDefaultType:__slots__
+NoDefaultType:__static_attributes__
+_io.BufferedRWPair:__getstate__
+_io.BufferedRWPair:__new__
+_io.BufferedRandom:__new__
+_io.BufferedReader:__new__
+_io.BufferedWriter:__new__
+_io.IncrementalNewlineDecoder:__new__
+_io.TextIOWrapper:__new__
+ast.AST:__annotate_func__
+itertools._tee_dataobject:__del__
+lazy_import:__new__
+types.GenericAlias:__reduce_ex__
+zlib._ZlibDecompressor:__del__

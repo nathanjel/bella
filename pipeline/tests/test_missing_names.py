@@ -17,7 +17,7 @@ from pipeline.tests.test_review_2026_11_03 import same
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from tools.missing_names import BASELINE, measure  # noqa: E402
+from tools.missing_names import BASELINE, SURPLUS, measure, surplus  # noqa: E402
 
 # Each kind's own slots, called through the type and through the object, with no, one and two arguments, another object of the kind,
 # an int and None, a wrong self, and a keyword: method_richcompare and method_hash, meth_richcompare, wrapper_richcompare, NoneType's
@@ -485,6 +485,15 @@ def test_the_names_the_runtime_lacks_are_the_listed_ones() -> None:
         return
     found, listed = measure(), BASELINE.read_text(encoding="utf-8").split()
     assert found == listed, f"missing now: {sorted(set(found) - set(listed))}; there now: {sorted(set(listed) - set(found))}"
+
+
+def test_the_names_the_runtime_has_beyond_cpythons_are_the_listed_ones() -> None:
+    """A name a type of the runtime's has in its own dict and CPython's has not is found where CPython finds an inherited one
+    (review A32, RL-722): a new one fails here."""
+    if shutil.which("g++") is None:
+        return
+    found, listed = surplus(), SURPLUS.read_text(encoding="utf-8").split()
+    assert found == listed, f"beyond CPython's now: {sorted(set(found) - set(listed))}; gone now: {sorted(set(listed) - set(found))}"
 
 
 def test_the_callables_and_the_singletons_own_slots() -> None:

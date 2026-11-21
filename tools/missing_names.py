@@ -2,8 +2,9 @@
 """The names CPython has and the runtime lacks: a list kept under version control, so that what stops by name is known and a
 name that goes missing is noticed.
 
-    python tools/missing_names.py            check: what one compiled program finds missing is conformance/names-baseline.txt
-    python tools/missing_names.py --update   write the baseline from this run
+    python tools/missing_names.py            check: what one compiled program finds missing is conformance/names-baseline.txt,
+                                             and what it finds beyond CPython's is conformance/names-surplus.txt
+    python tools/missing_names.py --update   write both lists from this run
 
 The names table (runtime/src/cpython_names.inc, tools/cpython_names.py) lists every name of CPython's built-in modules and of
 each built-in type. A compiled program that reads one of them the runtime does not have stops by name. This tool compiles one
@@ -14,10 +15,15 @@ a type the table has no scope for.
 
 The list is not a to-do list as it stands: much of it is the dialect's own (frames and code objects, E-02; memoryview and the
 asynchronous types, [P2+]; the sys surface of section 7). It says what the runtime answers, not what it should.
+
+The other direction is the second list: a name a module or a type of the runtime's has in its own dict and CPython's has not.
+Such a name is found where CPython finds an inherited one (a BufferedReader with a `writable` of its own answered for its raw
+stream where CPython's inherits IOBase's and says False: review A32, RL-722), so a new one is noticed here.
 """
 from __future__ import annotations
 
 import ast
+import functools
 import os
 import re
 import subprocess
@@ -30,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 BASELINE = ROOT / "conformance" / "names-baseline.txt"
+SURPLUS = ROOT / "conformance" / "names-surplus.txt"
 # modules of the manifest no program imports (they stop by name at the import), and the two whose namespace is not listed (RL-419)
 NOT_IMPORTED = {"_math_integer", "marshal", "zipimport", "_frozen_importlib", "_frozen_importlib_external", "importlib._bootstrap",
                 "importlib._bootstrap_external"}
@@ -82,6 +89,16 @@ def table() -> dict[str, set[str]]:
 
 def measure() -> list[str]:
     """What the table has and one compiled program does not find, sorted."""
+    return compare()[0]
+
+
+def surplus() -> list[str]:
+    """What one compiled program finds in a module's or a type's own dict and the table has not, sorted."""
+    return compare()[1]
+
+
+@functools.cache
+def compare() -> tuple[list[str], list[str]]:
     from pipeline.build import build
     manifest = tomllib.loads((ROOT / "manifest.toml").read_text(encoding="utf-8"))["phase1"]
     modules = [m for m in manifest["mapped"] + manifest["core"] if m not in NOT_IMPORTED and m not in ("builtins", "sys")]
@@ -93,11 +110,16 @@ def measure() -> list[str]:
     if got.returncode != 0:
         raise SystemExit(f"missing_names: the program ended with {got.returncode}: {got.stderr.strip()[-600:]}")
     missing: set[str] = set()
+    beyond: set[str] = set()
+    # a type's members the names file lists in a table of their own: `member:type.name`
+    members = set(re.findall(r'\{"member:([^"]+)", "[^"]*"\}', (ROOT / "runtime" / "src" / "cpython_names.inc").read_text(encoding="utf-8")))
     for line in got.stdout.splitlines():
         kind, rest = line.split(" ", 1)
         if kind == "module":
             name, names = rest.split(" ", 1)
             missing |= {f"{name}:{n}" for n in scopes.get(name, set()) - set(ast.literal_eval(names))}
+            if name in scopes:
+                beyond |= {f"{name}:{n}" for n in set(ast.literal_eval(names)) - scopes[name]}
             continue
         module, qualname, short, names = rest.split(" ", 3)
         dotted = f"{module}.{qualname}"
@@ -106,14 +128,16 @@ def measure() -> list[str]:
             missing.add(f"?:{dotted}")
         else:
             missing |= {f"{scope}:{n}" for n in scopes[scope] - set(ast.literal_eval(names))}
-    return sorted(missing)
+            beyond |= {f"{scope}:{n}" for n in set(ast.literal_eval(names)) - scopes[scope] if f"{scope}.{n}" not in members}
+    return sorted(missing), sorted(beyond)
 
 
 def main() -> int:
-    found = measure()
+    found, beyond = compare()
     if "--update" in sys.argv[1:]:
         BASELINE.write_text("\n".join(found) + "\n", encoding="utf-8")
-        print(f"missing-names: {len(found)} names written to {BASELINE.relative_to(ROOT)}")
+        SURPLUS.write_text("\n".join(beyond) + "\n", encoding="utf-8")
+        print(f"missing-names: {len(found)} names written to {BASELINE.relative_to(ROOT)}, {len(beyond)} to {SURPLUS.relative_to(ROOT)}")
         return 0
     listed = BASELINE.read_text(encoding="utf-8").split()
     gone = sorted(set(found) - set(listed))
@@ -122,8 +146,15 @@ def main() -> int:
         print(f"MISSING NOW  {name}")
     for name in back:
         print(f"THERE NOW    {name}  (python tools/missing_names.py --update)")
-    print(f"missing-names: {len(found)} names the runtime lacks; baseline {len(listed)}")
-    return 1 if gone or back else 0
+    known = SURPLUS.read_text(encoding="utf-8").split()
+    new = sorted(set(beyond) - set(known))
+    left = sorted(set(known) - set(beyond))
+    for name in new:
+        print(f"BEYOND NOW   {name}  (CPython's has no such name of its own)")
+    for name in left:
+        print(f"GONE NOW     {name}  (python tools/missing_names.py --update)")
+    print(f"missing-names: {len(found)} names the runtime lacks; baseline {len(listed)}. {len(beyond)} names beyond CPython's; listed {len(known)}")
+    return 1 if gone or back or new or left else 0
 
 
 if __name__ == "__main__":
