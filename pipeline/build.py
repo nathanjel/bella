@@ -968,7 +968,7 @@ def main(argv: list[str]) -> int:
     named = run_filename(argv[0])                # __file__ and co_filename: the path made absolute as CPython 3.15 makes it
     try:
         exe = build(program, named, notes=not run, fidelity=fidelity, syntax_warnings=warns == "on", main_file=named)
-    except (Unsupported, SyntaxError) as exc:
+    except (Unsupported, L.DialectError, SyntaxError, wf2.WellFormednessError) as exc:   # as the evaluators refuse (RL-612)
         print(f"bella: refused: {exc}", file=sys.stderr)
         return REFUSED
     if out_path is not None:

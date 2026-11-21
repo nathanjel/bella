@@ -7,7 +7,8 @@ digits changed while a warning is shown (RL-605, a stop that names itself), the 
 by a path that is not normalised (RL-606), the note of a binary that two kinds of build share (RL-609), the encoding of
 a text whose lines end in a carriage return alone (RL-610), and the warnings CPython gives when its parser refuses a
 literal (RL-611). RL-608 is the harness's own (conformance/tests/test_harness.py). RL-602 and RL-603 are the build's
-note as designed, RL-604 is the author's, RL-607 is open.
+note as designed, RL-604 is the author's, RL-607 is open. RL-612 was in the reviewer's probes and not in its report: a
+program outside the dialect ended the build's command with a traceback.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_21_a26
 """
@@ -48,6 +49,23 @@ def test_the_builds_note_before_a_refusal() -> None:
                                                       "bella: refused: invalid syntax (prog.py, line 2)"], built.stderr
         ran = _command([*BUILDER, "--run", "prog.py"], tmp)
         assert ran.returncode == 70 and ran.stderr.decode().splitlines() == ["bella: refused: invalid syntax (prog.py, line 2)"], ran
+
+
+def test_a_program_outside_the_dialect_is_refused_by_the_command() -> None:
+    """RL-612: `return` out of a finally block is a compile-time error of the dialect (D-10), which the passes raise as a
+    DialectError. The evaluators' commands refuse it with status 70; the build's command let it through as a traceback
+    with status 1. CPython warns of the line and runs the program, and a build that only builds says that warning too."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = str(Path(tmp).resolve())
+        Path(tmp, "prog.py").write_text("def f() -> int:\n    try:\n        pass\n    finally:\n        return 1\nprint(f())\n", encoding="utf-8")
+        warned = [f"{tmp}/prog.py:5: SyntaxWarning: 'return' in a 'finally' block", "  return 1"]
+        refusal = "bella: refused: D-10: 'return' leaving a finally block is a compile-time error (line 5)"
+        reference = _command([sys.executable, "prog.py"], tmp)
+        assert (reference.returncode, reference.stdout, reference.stderr.decode().splitlines()) == (0, b"1\n", warned), reference
+        built = _command([*BUILDER, "prog.py"], tmp)
+        assert (built.returncode, built.stdout, built.stderr.decode().splitlines()) == (70, b"", [*warned, refusal]), built
+        ran = _command([*BUILDER, "--run", "prog.py"], tmp)
+        assert (ran.returncode, ran.stdout, ran.stderr.decode().splitlines()) == (70, b"", [refusal]), ran
 
 
 def test_the_limit_of_digits_changed_while_a_warning_is_shown() -> None:
