@@ -701,6 +701,18 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
   object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
   identity differences; the row should name this one. To ask next.
+* **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
+  that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
+  `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and
+  `__import__` (`remove_importlib_frames`); the runtime's `bootstrap.py` is a prelude, whose frames are never shown. A step of
+  its own, with the recursion limit's count of those frames (RL-639): the bootstrap's functions as shown frames, and the
+  removal for the import statement the runtime's to do. And the class RL-698 beyond the reviewer's sweep: each prelude
+  function that takes a str, bytes, int, tuple, list or dict, gone through against its C for a read of the object by a method.
+* **For the author (RL-695, review A31): an argument that is a temporary of the call lives until the call returns.**
+  `discard(X())` whose body does `del x` finalises the object inside the function under CPython, where the call moves its
+  stack reference into the callee's frame, and after the function returned compiled, where the caller's temporary holds a
+  count through the call. The same for a parameter the function rebinds. Exact needs a call that hands a temporary over to
+  the callee (the binding takes the caller's count; the caller lets go only of what was not taken). To ask after RL-626.
 * **Open from review A27** (2026-11-21): the line under a refused literal's SyntaxError is the build's, where CPython reads it
   from the file when it makes the error and falls back on what its tokenizer read (RL-617; low: seen only where the file
   changes between the build and the refusal). Exact is the file first, by `err_programtext`'s rules, and the build's text

@@ -773,6 +773,10 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(ns->dict, Obj::of(N("_type_lookup")), of_type.get());
         Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));   // a pending error goes on as it is, after work the C did meanwhile
         dict_set(ns->dict, Obj::of(N("_raise_as_is")), as_is.get());
+        Ref own_data = own(new Builtin("_own_data", i_own_data));   // an argument's own data, as the C reads it: nothing of a
+        dict_set(ns->dict, Obj::of(N("_own_data")), own_data.get());   // subclass is called (RL-698)
+        Ref buffer_bytes = own(new Builtin("_buffer_bytes", i_buffer_bytes));
+        dict_set(ns->dict, Obj::of(N("_buffer_bytes")), buffer_bytes.get());
     }
     for (auto [primitive, fn] : primitives) {
         Ref b = own(new Builtin(primitive, fn));

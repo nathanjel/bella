@@ -1511,8 +1511,8 @@ Ref unicode_error_init(Obj self, Args a, const char* name, bool decode) {
     } else if (as_str(a.pos(1)) == nullptr) {
         raise_new("TypeError", "argument 2 must be str, not " + type_of(a.pos(1))->name);
     }
-    size_argument(a.pos(2));
-    size_argument(a.pos(3));
+    Ref start = int_from_i64(size_argument(a.pos(2)));   // "n": the two are C integers in the struct, so what the exception has
+    Ref end = int_from_i64(size_argument(a.pos(3)));     // is their value as a plain int, whatever class the argument was of (RL-698)
     if (as_str(a.pos(4)) == nullptr) raise_new("TypeError", "argument 5 must be str, not " + type_of(a.pos(4))->name);
     set_exception_field(self, "encoding", a.pos(0));
     if (decode && !is_kind(a.pos(1), Kind::Bytes)) {
@@ -1521,8 +1521,8 @@ Ref unicode_error_init(Obj self, Args a, const char* name, bool decode) {
     } else {
         set_exception_field(self, "object", a.pos(1));
     }
-    set_exception_field(self, "start", a.pos(2));
-    set_exception_field(self, "end", a.pos(3));
+    set_exception_field(self, "start", start.get());
+    set_exception_field(self, "end", end.get());
     set_exception_field(self, "reason", a.pos(4));
     return none_ref();
 }
@@ -1533,12 +1533,12 @@ Ref translate_error_init(Obj self, Args a) {
     set_unicode_args(self, a);
     if (a.npos != 4) raise_new("TypeError", "function takes exactly 4 arguments (" + std::to_string(a.npos) + " given)");
     if (as_str(a.pos(0)) == nullptr) raise_new("TypeError", "argument 1 must be str, not " + type_of(a.pos(0))->name);
-    size_argument(a.pos(1));
-    size_argument(a.pos(2));
+    Ref start = int_from_i64(size_argument(a.pos(1)));
+    Ref end = int_from_i64(size_argument(a.pos(2)));
     if (as_str(a.pos(3)) == nullptr) raise_new("TypeError", "argument 4 must be str, not " + type_of(a.pos(3))->name);
     set_exception_field(self, "object", a.pos(0));
-    set_exception_field(self, "start", a.pos(1));
-    set_exception_field(self, "end", a.pos(2));
+    set_exception_field(self, "start", start.get());
+    set_exception_field(self, "end", end.get());
     set_exception_field(self, "reason", a.pos(3));
     return none_ref();
 }

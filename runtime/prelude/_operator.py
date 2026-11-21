@@ -19,6 +19,8 @@ try:
     _sequence_concat                             # noqa: B018  # PySequence_Concat, PySequence_InPlaceConcat
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -31,6 +33,8 @@ except NameError:
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
     _sequence_concat: Callable[..., object] = _missing
     _has_slot: Callable[..., bool] = _missing
+    _own_data: Callable[..., Any] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
 
 _builtin_abs = abs
 _builtin_pow = pow
@@ -301,6 +305,7 @@ def _compare_digest(*args: object, **kwds: object) -> bool:
     _positional("_compare_digest", len(args), 2, 2)
     a, b = args
     if issubclass(type(a), str) and issubclass(type(b), str):
+        a, b = _own_data(a), _own_data(b)        # PyUnicode_IS_ASCII and PyUnicode_DATA: the characters, whatever the class has (RL-698)
         if not a.isascii() or not b.isascii():   # type: ignore[attr-defined]
             raise TypeError("comparing strings with non-ASCII characters is not supported")
         left = a.encode("ascii")                 # type: ignore[attr-defined]
@@ -312,8 +317,8 @@ def _compare_digest(*args: object, **kwds: object) -> bool:
             raise TypeError("a bytes-like object is required, not '" + type(a).__name__ + "'")
         if not _has_buffer(b):
             raise TypeError("a bytes-like object is required, not '" + type(b).__name__ + "'")
-        left = bytes(a)  # type: ignore[call-overload]
-        right = bytes(b)  # type: ignore[call-overload]
+        left = _buffer_bytes(a)
+        right = _buffer_bytes(b)
     # _tscmp: the loop's length is b's, and every byte of it is looked at
     length = len(right)
     if len(left) == length:

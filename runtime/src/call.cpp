@@ -2058,6 +2058,36 @@ Ref i_type_lookup(Obj, Args a) {                 // (value, name, absent): what 
     Obj found = type_lookup(type_of(a.pos(0)), intern(as_str(a.pos(1))->text));
     return Ref::share(found.is_unset() ? a.pos(2) : found);
 }
+// What CPython's C reads of an argument once it has tested its type: the object's own data, through the concrete API
+// (PyUnicode_*, PyLong_As*, PyFloat_AS_DOUBLE, PyTuple_GET_ITEM, the buffer of a bytes), which calls nothing of the object's
+// class. A prelude that writes len(x), x[i], x == y, bytes(x) or int(x) on the argument reaches whatever a subclass of the
+// program's overrides (RL-698). So it takes the data once, and works on that:
+// _own_data(x): for an instance of a subclass of str, bytes, int, float or tuple the exact base object with the same data; an
+// exact one, and anything else, as it is. The mutable ones (list, dict, bytearray) are read by their base type's methods where
+// the C reads them live.
+Ref i_own_data(Obj, Args a) {
+    positional_only(a, "_own_data", 1, 1);
+    Obj v = a.pos(0);
+    if (!v.is_object()) return Ref::share(v);
+    switch (v.object()->kind) {
+        case Kind::IntInstance: return big_plain(v);
+        case Kind::FloatInstance: return float_ref(float_value(v));
+        case Kind::Str: return has_attributes(v.object()) ? str_new(as_str(v)->text) : Ref::share(v);
+        case Kind::Bytes: return has_attributes(v.object()) ? bytes_new(static_cast<BytesObject*>(v.object())->data) : Ref::share(v);
+        case Kind::Tuple: return has_attributes(v.object()) ? tuple_copy(static_cast<Tuple*>(v.object())->items) : Ref::share(v);
+        default: return Ref::share(v);
+    }
+}
+// _buffer_bytes(x): the octets of a bytes or a bytearray, or of an instance of a subclass of one, as an exact bytes: what a C
+// function reads through Py_buffer. An exact bytes is given back as it is.
+Ref i_buffer_bytes(Obj, Args a) {
+    positional_only(a, "_buffer_bytes", 1, 1);
+    Obj v = a.pos(0);
+    if (is_kind(v, Kind::Bytes) && !has_attributes(v.object())) return Ref::share(v);
+    if (!is_kind(v, Kind::Bytes) && !is_kind(v, Kind::ByteArray))
+        raise_new("TypeError", "a bytes-like object is required, not '" + type_of(v)->name + "'");
+    return bytes_new(static_cast<BytesObject*>(v.object())->data);
+}
 // An error that was pending while the C did something else (cleared a field, let a reference go) and then returned NULL:
 // a prelude catches it, does that work after its handler has ended, and sends the same exception on as it is, with no
 // context taken from what is handled around the call and no entry for the prelude's frame (RL-650).
@@ -3705,6 +3735,10 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_type_lookup", of_type.get());
                     Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));
                     put(pm->dict, "_raise_as_is", as_is.get());
+                    Ref own_data = own(new Builtin("_own_data", i_own_data));       // an argument's own data, as the C reads it
+                    put(pm->dict, "_own_data", own_data.get());                     // (RL-698)
+                    Ref buffer_bytes = own(new Builtin("_buffer_bytes", i_buffer_bytes));
+                    put(pm->dict, "_buffer_bytes", buffer_bytes.get());
                     Ref index = own(new Builtin("_number_index", i_number_index));
                     put(pm->dict, "_number_index", index.get());
                     Ref sequence = own(new Builtin("_sequence_check", i_sequence_check));

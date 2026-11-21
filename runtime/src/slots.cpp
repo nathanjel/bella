@@ -132,6 +132,7 @@ Ref bytes_rmod_slot(Obj self, Args a) {          // wrap_binaryfunc_r: a left op
     return bytes_format(a.pos(0), self, K == Kind::ByteArray);
 }
 Ref own_repr(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return repr_of(self); }
+Ref bytes_repr_slot(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return bytes_repr(self); }
 Ref tuple_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(tuple_hash(static_cast<Tuple*>(self.object()))); }
 Ref tuple_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return tuple_subscript(self, a.pos(0)); }
 Ref tuple_contains_slot(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return Ref::steal(boolean(tuple_contains(self, a.pos(0)))); }
@@ -420,7 +421,8 @@ void init_slots() {
         slot(c, "__mul__", own_mul);
         slot(c, "__rmul__", own_mul);
     }
-    for (ClassObject* c : {t.range, t.slice, t.none, t.bytes, t.bytearray}) slot(c, "__repr__", own_repr);
+    for (ClassObject* c : {t.range, t.slice, t.none}) slot(c, "__repr__", own_repr);
+    for (ClassObject* c : {t.bytes, t.bytearray}) slot(c, "__repr__", bytes_repr_slot);   // the type's own, which a subclass's __repr__ may call (RL-696)
     slot(t.list, "__iadd__", list_iadd_slot);
     slot(t.list, "__imul__", list_imul_slot);
     slot(t.list, "__reversed__", list_reversed);

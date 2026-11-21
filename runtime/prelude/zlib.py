@@ -22,6 +22,7 @@ try:
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -42,6 +43,7 @@ except NameError:
         import operator
         return operator.index(o)
     _has_slot: Callable[..., bool] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
 
 
 DEFLATED = 8
@@ -98,7 +100,7 @@ def _zlib_error(err: int, zmsg: object, msg: str) -> error:   # zlib_error
 
 def _buffer(value: object) -> bytes:             # Py_buffer: bytes, bytearray; the rest stops by name or is no buffer
     if issubclass(type(value), (bytes, bytearray)):
-        return bytes(value)  # type: ignore[arg-type]
+        return _buffer_bytes(value)
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError("a bytes-like object is required, not '" + _tp_name(value) + "'")

@@ -368,7 +368,13 @@ Ref gen_close(Generator* g) {                     // gen_close
         clear_frame(g);
         return none_ref();
     }
-    if (!failed) g->pending = invoke(Obj::of(exception_class("GeneratorExit")), {});
+    if (!failed) {
+        g->pending = invoke(Obj::of(exception_class("GeneratorExit")), {});
+        // PyErr_SetNone(PyExc_GeneratorExit): set while the caller's exception is the one being handled, which it so takes
+        // as its context; the generator's own, if it is in a handler, replaces it when the exception is raised there (RL-678)
+        auto& stack = handled_exceptions();
+        if (!stack.empty()) set_exception_field(g->pending.get(), "__context__", stack.back());
+    }
     bool returned = false;
     Ref value;
     try {

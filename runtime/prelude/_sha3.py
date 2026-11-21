@@ -18,6 +18,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -40,6 +41,7 @@ except NameError:
         return operator.index(o)
     _unpack_keywords: Callable[..., Any] = _missing
     _has_slot: Callable[..., bool] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
 
 _GIL_MINSIZE = 2048
 implementation = "HACL"
@@ -50,7 +52,7 @@ def _buffer(value: object) -> bytes:
     if issubclass(type(value), str):
         raise TypeError("Strings must be encoded before hashing")
     if issubclass(type(value), (bytes, bytearray)):
-        return bytes(value)  # type: ignore[arg-type]
+        return _buffer_bytes(value)
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError("object supporting the buffer API required")

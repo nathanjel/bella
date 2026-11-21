@@ -20,6 +20,8 @@ try:
     _as_double                                   # noqa: B018  # PyFloat_AsDouble: the runtime's, with its warning for a float's subclass
     _as_c_complex                                # noqa: B018  # PyComplex_AsCComplex: (real, imag)
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -48,6 +50,8 @@ except NameError:
         z = complex(value)  # type: ignore[call-overload]
         return z.real, z.imag
     _has_slot: Callable[..., bool] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
+    _own_data: Callable[..., Any] = _missing
 
 class error(Exception):  # noqa: N801           # PyErr_NewException("struct.error", NULL, NULL)
     pass
@@ -74,7 +78,7 @@ def _is_bytes_like(value: object) -> bool:
 def _buffer(value: object) -> bytes:             # Py_buffer, read-only: the bytes
     if not _is_bytes_like(value):
         raise TypeError("a bytes-like object is required, not '" + _tp_name(value) + "'")
-    return bytes(value)  # type: ignore[arg-type]
+    return _buffer_bytes(value)
 
 
 def _rw_buffer(value: object, function: str, position: int) -> bytearray:   # Py_buffer(accept={rwbuffer}): a bytearray, the one writable buffer
@@ -290,7 +294,7 @@ def _pack_item(code: str, kind: str, size: int, value: object, little: bool) -> 
     if kind == "char":
         if not issubclass(type(value), bytes) or bytes.__len__(value) != 1:  # type: ignore[arg-type]
             raise error("char format requires a bytes object of length 1")
-        return bytes(value)  # type: ignore[arg-type]
+        return _buffer_bytes(value)
     failed = False                               # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     if kind == "float":
         try:
@@ -329,8 +333,8 @@ def _unpack_item(kind: str, data: bytes, little: bool) -> object:
 
 def _pack_into(codes: list[_Code], size: int, length: int, little: bool, values: tuple[object, ...], out: bytearray, start: int) -> None:
     """s_pack_internal: the values into out at start, the struct's size of it zeroed first."""
-    for k in range(size):
-        out[start + k] = 0
+    # the writes are the buffer's own (memset, memcpy): nothing of a bytearray subclass's is called (RL-698)
+    bytearray.__setitem__(out, slice(start, start + size), bytes(size))
     i = 0
     for code in codes:
         at = start + code.offset
@@ -340,27 +344,29 @@ def _pack_into(codes: list[_Code], size: int, length: int, little: bool, values:
             if code.kind == "bytes":
                 if not issubclass(type(v), (bytes, bytearray)):
                     raise error("argument for 's' must be a bytes object")
-                n = min(len(v), code.size)  # type: ignore[arg-type]
+                data = _buffer_bytes(v)          # PyBytes_AS_STRING or PyByteArray_AS_STRING, and its size
+                n = min(bytes.__len__(data), code.size)
                 if n > 0:
-                    out[at:at + n] = bytes(v[:n])  # type: ignore[index]
+                    bytearray.__setitem__(out, slice(at, at + n), data[:n])
             elif code.kind == "pascal":
                 if not issubclass(type(v), (bytes, bytearray)):
                     raise error("argument for 'p' must be a bytes object")
-                n = len(v)  # type: ignore[arg-type]
+                data = _buffer_bytes(v)
+                n = bytes.__len__(data)
                 if code.size == 0:
                     n = 0
                 elif n > code.size - 1:
                     n = code.size - 1
                 if n > 0:
-                    out[at + 1:at + 1 + n] = bytes(v[:n])  # type: ignore[index]
+                    bytearray.__setitem__(out, slice(at + 1, at + 1 + n), data[:n])
                 if n > 255:
                     n = 255
                 if n > 0:
-                    out[at] = n
+                    bytearray.__setitem__(out, at, n)
             else:
                 too_large = False
                 try:
-                    out[at:at + code.size] = _pack_item(code.code, code.kind, code.size, v, little)
+                    bytearray.__setitem__(out, slice(at, at + code.size), _pack_item(code.code, code.kind, code.size, v, little))
                 except OverflowError:
                     if not issubclass(type(v), int):
                         raise
@@ -429,8 +435,9 @@ class Struct:
     def __init__(self, *args: object, **kwds: object) -> None:   # s_init: __new__ did the work; a second format would warn
         if args or kwds:
             format = args[0] if len(args) == 1 and not kwds else _unpack_args("Struct", args, kwds, ("format",), 1, 1)[0]
-            same = (issubclass(type(format), str) and str.isascii(format) and format == self.format) or (  # type: ignore[arg-type]
-                issubclass(type(format), bytes) and bytes.decode(format, "ascii", "surrogateescape") == self.format)  # type: ignore[arg-type]
+            format = _own_data(format)           # the format's characters: its class's __eq__ is not asked (RL-679)
+            same = (issubclass(type(format), str) and str.isascii(format) and format == self.format) or (
+                issubclass(type(format), bytes) and bytes.decode(format, "ascii", "surrogateescape") == self.format)
             if not same:
                 _bella_refuse("Struct.__init__() with another format than __new__()'s (a FutureWarning in 3.15)")
 
@@ -549,7 +556,7 @@ def _pack_into_buffer(s: Struct, name: str, position: int, buffer: object, offse
     offset = _ssize(offset_arg)
     if len(values) != s._length:
         raise error(name + " expected " + str(s._length) + " items for packing (got " + str(len(values)) + ")")
-    buflen = len(target)
+    buflen = bytearray.__len__(target)           # the buffer's length, whatever a subclass's __len__ says
     if offset < 0:
         if offset + s.size > 0:
             raise error("no space to pack " + str(s.size) + " bytes at offset " + str(offset))
@@ -600,22 +607,23 @@ def _iter_unpack(s: Struct, buffer: object) -> unpack_iterator:   # Struct_iter_
 # ---- the module's functions, over the cache (cache_struct_converter) --------------------------------------------------------
 
 _MAXCACHE = 100
-_cache: dict[str, Struct] = {}
+_cache: dict[object, Struct] = {}
 
 
 def _cached(format: object) -> Struct:
-    if issubclass(type(format), bytes):
-        key = bytes.decode(format, "ascii", "surrogateescape")  # type: ignore[arg-type]
-    elif issubclass(type(format), str):
-        key = str.__str__(format)  # type: ignore[arg-type]
-    else:
-        raise TypeError("Struct() argument 1 must be a str or bytes object, not " + _tp_name(format))
+    """cache_struct_converter: the cache is a dict whose key is the format object itself, so a format's own __hash__ and
+    __eq__ are asked (and an unhashable one is a TypeError), and the object is held until the cache is cleared; for a bytes
+    format the key is its text, decoded from the bytes themselves (RL-664)."""
+    key = bytes.decode(format, "ascii", "surrogateescape") if issubclass(type(format), bytes) else format  # type: ignore[arg-type]
     s = _cache.get(key)
     if s is None:
         s = Struct(key)
         if len(_cache) >= _MAXCACHE:
             _cache.clear()
-        _cache[key] = s
+        try:
+            _cache[key] = s
+        except BaseException:                    # "if (PyDict_SetItem(state->cache, key, s_object) == -1) PyErr_Clear();"
+            pass
     return s
 
 

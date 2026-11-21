@@ -369,6 +369,8 @@ Ref i_lookup_special(Obj, Args a);               // builtins.py's primitives
 Ref i_has_slot(Obj, Args a);                     // a type's slot, by its own MRO and dicts (every prelude)
 Ref i_type_lookup(Obj, Args a);
 Ref i_raise_as_is(Obj, Args a);                  // a pending error goes on as it is (every prelude)
+Ref i_own_data(Obj, Args a);                     // an argument's own data, as the C reads it (every prelude)
+Ref i_buffer_bytes(Obj, Args a);
 Ref i_number_index(Obj, Args a);
 Ref i_warnings_frame(Obj, Args a);
 Ref frame_locals(const char* asked);              // runtime/src/call.cpp: the calling frame's locals, for locals(), vars() and dir()

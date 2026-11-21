@@ -1,0 +1,1787 @@
+import sys, io, os, json, codecs, warnings, collections, functools, itertools, operator, struct, csv, _locale, time, math, zlib, binascii, hashlib, re, _string, typing, grp, pwd, signal, _thread, gc, _bisect, _heapq, _random
+log=[]
+def hit(n):
+    log.append(n)
+    if sys.argv[2]=="raise": raise ArithmeticError(n)
+class S(str):
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return str.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return str.__ge__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return str.__le__(self,*a,**kw)
+    def __rmod__(self,*a,**kw):
+        hit("__rmod__")
+        return str.__rmod__(self,*a,**kw)
+    def __rmul__(self,*a,**kw):
+        hit("__rmul__")
+        return str.__rmul__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return str.__or__(self,*a,**kw)
+    def __ror__(self,*a,**kw):
+        hit("__ror__")
+        return str.__ror__(self,*a,**kw)
+    def isascii(self,*a,**kw):
+        hit("isascii")
+        return str.isascii(self,*a,**kw)
+    def rfind(self,*a,**kw):
+        hit("rfind")
+        return str.rfind(self,*a,**kw)
+    def rsplit(self,*a,**kw):
+        hit("rsplit")
+        return str.rsplit(self,*a,**kw)
+    def rpartition(self,*a,**kw):
+        hit("rpartition")
+        return str.rpartition(self,*a,**kw)
+    def rstrip(self,*a,**kw):
+        hit("rstrip")
+        return str.rstrip(self,*a,**kw)
+    def lstrip(self,*a,**kw):
+        hit("lstrip")
+        return str.lstrip(self,*a,**kw)
+    def casefold(self,*a,**kw):
+        hit("casefold")
+        return str.casefold(self,*a,**kw)
+    def capitalize(self,*a,**kw):
+        hit("capitalize")
+        return str.capitalize(self,*a,**kw)
+    def splitlines(self,*a,**kw):
+        hit("splitlines")
+        return str.splitlines(self,*a,**kw)
+    def ljust(self,*a,**kw):
+        hit("ljust")
+        return str.ljust(self,*a,**kw)
+    def rjust(self,*a,**kw):
+        hit("rjust")
+        return str.rjust(self,*a,**kw)
+    def removeprefix(self,*a,**kw):
+        hit("removeprefix")
+        return str.removeprefix(self,*a,**kw)
+    def removesuffix(self,*a,**kw):
+        hit("removesuffix")
+        return str.removesuffix(self,*a,**kw)
+    def expandtabs(self,*a,**kw):
+        hit("expandtabs")
+        return str.expandtabs(self,*a,**kw)
+    def title(self,*a,**kw):
+        hit("title")
+        return str.title(self,*a,**kw)
+    def isalpha(self,*a,**kw):
+        hit("isalpha")
+        return str.isalpha(self,*a,**kw)
+    def isalnum(self,*a,**kw):
+        hit("isalnum")
+        return str.isalnum(self,*a,**kw)
+    def isdecimal(self,*a,**kw):
+        hit("isdecimal")
+        return str.isdecimal(self,*a,**kw)
+    def isspace(self,*a,**kw):
+        hit("isspace")
+        return str.isspace(self,*a,**kw)
+    def __bool__(self):
+        hit("__bool__")
+        return str.__len__(self)!=0
+    def __len__(self,*a,**kw):
+        hit("__len__")
+        return str.__len__(self,*a,**kw)
+    def __getitem__(self,*a,**kw):
+        hit("__getitem__")
+        return str.__getitem__(self,*a,**kw)
+    def __iter__(self,*a,**kw):
+        hit("__iter__")
+        return str.__iter__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return str.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return str.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return str.__lt__(self,*a,**kw)
+    def __hash__(self,*a,**kw):
+        hit("__hash__")
+        return str.__hash__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return str.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return str.__repr__(self,*a,**kw)
+    def __contains__(self,*a,**kw):
+        hit("__contains__")
+        return str.__contains__(self,*a,**kw)
+    def __add__(self,*a,**kw):
+        hit("__add__")
+        return str.__add__(self,*a,**kw)
+    def __mul__(self,*a,**kw):
+        hit("__mul__")
+        return str.__mul__(self,*a,**kw)
+    def __mod__(self,*a,**kw):
+        hit("__mod__")
+        return str.__mod__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return str.__format__(self,*a,**kw)
+    def encode(self,*a,**kw):
+        hit("encode")
+        return str.encode(self,*a,**kw)
+    def startswith(self,*a,**kw):
+        hit("startswith")
+        return str.startswith(self,*a,**kw)
+    def endswith(self,*a,**kw):
+        hit("endswith")
+        return str.endswith(self,*a,**kw)
+    def split(self,*a,**kw):
+        hit("split")
+        return str.split(self,*a,**kw)
+    def join(self,*a,**kw):
+        hit("join")
+        return str.join(self,*a,**kw)
+    def strip(self,*a,**kw):
+        hit("strip")
+        return str.strip(self,*a,**kw)
+    def lower(self,*a,**kw):
+        hit("lower")
+        return str.lower(self,*a,**kw)
+    def upper(self,*a,**kw):
+        hit("upper")
+        return str.upper(self,*a,**kw)
+    def find(self,*a,**kw):
+        hit("find")
+        return str.find(self,*a,**kw)
+    def index(self,*a,**kw):
+        hit("index")
+        return str.index(self,*a,**kw)
+    def count(self,*a,**kw):
+        hit("count")
+        return str.count(self,*a,**kw)
+    def isdigit(self,*a,**kw):
+        hit("isdigit")
+        return str.isdigit(self,*a,**kw)
+    def translate(self,*a,**kw):
+        hit("translate")
+        return str.translate(self,*a,**kw)
+    def replace(self,*a,**kw):
+        hit("replace")
+        return str.replace(self,*a,**kw)
+    def partition(self,*a,**kw):
+        hit("partition")
+        return str.partition(self,*a,**kw)
+    def format(self,*a,**kw):
+        hit("format")
+        return str.format(self,*a,**kw)
+class I(int):
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return int.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return int.__ge__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return int.__le__(self,*a,**kw)
+    def __rmod__(self,*a,**kw):
+        hit("__rmod__")
+        return int.__rmod__(self,*a,**kw)
+    def __rmul__(self,*a,**kw):
+        hit("__rmul__")
+        return int.__rmul__(self,*a,**kw)
+    def __rsub__(self,*a,**kw):
+        hit("__rsub__")
+        return int.__rsub__(self,*a,**kw)
+    def __sub__(self,*a,**kw):
+        hit("__sub__")
+        return int.__sub__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return int.__or__(self,*a,**kw)
+    def __ror__(self,*a,**kw):
+        hit("__ror__")
+        return int.__ror__(self,*a,**kw)
+    def __and__(self,*a,**kw):
+        hit("__and__")
+        return int.__and__(self,*a,**kw)
+    def __rand__(self,*a,**kw):
+        hit("__rand__")
+        return int.__rand__(self,*a,**kw)
+    def __xor__(self,*a,**kw):
+        hit("__xor__")
+        return int.__xor__(self,*a,**kw)
+    def __rxor__(self,*a,**kw):
+        hit("__rxor__")
+        return int.__rxor__(self,*a,**kw)
+    def __neg__(self,*a,**kw):
+        hit("__neg__")
+        return int.__neg__(self,*a,**kw)
+    def __abs__(self,*a,**kw):
+        hit("__abs__")
+        return int.__abs__(self,*a,**kw)
+    def __pos__(self,*a,**kw):
+        hit("__pos__")
+        return int.__pos__(self,*a,**kw)
+    def __floordiv__(self,*a,**kw):
+        hit("__floordiv__")
+        return int.__floordiv__(self,*a,**kw)
+    def __truediv__(self,*a,**kw):
+        hit("__truediv__")
+        return int.__truediv__(self,*a,**kw)
+    def __rtruediv__(self,*a,**kw):
+        hit("__rtruediv__")
+        return int.__rtruediv__(self,*a,**kw)
+    def __pow__(self,*a,**kw):
+        hit("__pow__")
+        return int.__pow__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return int.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return int.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return int.__lt__(self,*a,**kw)
+    def __hash__(self,*a,**kw):
+        hit("__hash__")
+        return int.__hash__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return int.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return int.__repr__(self,*a,**kw)
+    def __int__(self,*a,**kw):
+        hit("__int__")
+        return int.__int__(self,*a,**kw)
+    def __index__(self,*a,**kw):
+        hit("__index__")
+        return int.__index__(self,*a,**kw)
+    def __float__(self,*a,**kw):
+        hit("__float__")
+        return int.__float__(self,*a,**kw)
+    def __bool__(self,*a,**kw):
+        hit("__bool__")
+        return int.__bool__(self,*a,**kw)
+    def __add__(self,*a,**kw):
+        hit("__add__")
+        return int.__add__(self,*a,**kw)
+    def __radd__(self,*a,**kw):
+        hit("__radd__")
+        return int.__radd__(self,*a,**kw)
+    def __mul__(self,*a,**kw):
+        hit("__mul__")
+        return int.__mul__(self,*a,**kw)
+    def __mod__(self,*a,**kw):
+        hit("__mod__")
+        return int.__mod__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return int.__format__(self,*a,**kw)
+    def conjugate(self,*a,**kw):
+        hit("conjugate")
+        return int.conjugate(self,*a,**kw)
+    def bit_length(self,*a,**kw):
+        hit("bit_length")
+        return int.bit_length(self,*a,**kw)
+    def to_bytes(self,*a,**kw):
+        hit("to_bytes")
+        return int.to_bytes(self,*a,**kw)
+    def as_integer_ratio(self,*a,**kw):
+        hit("as_integer_ratio")
+        return int.as_integer_ratio(self,*a,**kw)
+    def is_integer(self,*a,**kw):
+        hit("is_integer")
+        return int.is_integer(self,*a,**kw)
+    def __trunc__(self,*a,**kw):
+        hit("__trunc__")
+        return int.__trunc__(self,*a,**kw)
+    def __floor__(self,*a,**kw):
+        hit("__floor__")
+        return int.__floor__(self,*a,**kw)
+    def __ceil__(self,*a,**kw):
+        hit("__ceil__")
+        return int.__ceil__(self,*a,**kw)
+class F(float):
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return float.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return float.__ge__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return float.__le__(self,*a,**kw)
+    def __rmod__(self,*a,**kw):
+        hit("__rmod__")
+        return float.__rmod__(self,*a,**kw)
+    def __rmul__(self,*a,**kw):
+        hit("__rmul__")
+        return float.__rmul__(self,*a,**kw)
+    def __rsub__(self,*a,**kw):
+        hit("__rsub__")
+        return float.__rsub__(self,*a,**kw)
+    def __sub__(self,*a,**kw):
+        hit("__sub__")
+        return float.__sub__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return float.__or__(self,*a,**kw)
+    def __ror__(self,*a,**kw):
+        hit("__ror__")
+        return float.__ror__(self,*a,**kw)
+    def __neg__(self,*a,**kw):
+        hit("__neg__")
+        return float.__neg__(self,*a,**kw)
+    def __abs__(self,*a,**kw):
+        hit("__abs__")
+        return float.__abs__(self,*a,**kw)
+    def __pos__(self,*a,**kw):
+        hit("__pos__")
+        return float.__pos__(self,*a,**kw)
+    def __floordiv__(self,*a,**kw):
+        hit("__floordiv__")
+        return float.__floordiv__(self,*a,**kw)
+    def __truediv__(self,*a,**kw):
+        hit("__truediv__")
+        return float.__truediv__(self,*a,**kw)
+    def __rtruediv__(self,*a,**kw):
+        hit("__rtruediv__")
+        return float.__rtruediv__(self,*a,**kw)
+    def __pow__(self,*a,**kw):
+        hit("__pow__")
+        return float.__pow__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return float.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return float.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return float.__lt__(self,*a,**kw)
+    def __hash__(self,*a,**kw):
+        hit("__hash__")
+        return float.__hash__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return float.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return float.__repr__(self,*a,**kw)
+    def __int__(self,*a,**kw):
+        hit("__int__")
+        return float.__int__(self,*a,**kw)
+    def __float__(self,*a,**kw):
+        hit("__float__")
+        return float.__float__(self,*a,**kw)
+    def __bool__(self,*a,**kw):
+        hit("__bool__")
+        return float.__bool__(self,*a,**kw)
+    def __add__(self,*a,**kw):
+        hit("__add__")
+        return float.__add__(self,*a,**kw)
+    def __radd__(self,*a,**kw):
+        hit("__radd__")
+        return float.__radd__(self,*a,**kw)
+    def __mul__(self,*a,**kw):
+        hit("__mul__")
+        return float.__mul__(self,*a,**kw)
+    def __mod__(self,*a,**kw):
+        hit("__mod__")
+        return float.__mod__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return float.__format__(self,*a,**kw)
+    def hex(self,*a,**kw):
+        hit("hex")
+        return float.hex(self,*a,**kw)
+    def conjugate(self,*a,**kw):
+        hit("conjugate")
+        return float.conjugate(self,*a,**kw)
+    def as_integer_ratio(self,*a,**kw):
+        hit("as_integer_ratio")
+        return float.as_integer_ratio(self,*a,**kw)
+    def is_integer(self,*a,**kw):
+        hit("is_integer")
+        return float.is_integer(self,*a,**kw)
+    def __trunc__(self,*a,**kw):
+        hit("__trunc__")
+        return float.__trunc__(self,*a,**kw)
+    def __floor__(self,*a,**kw):
+        hit("__floor__")
+        return float.__floor__(self,*a,**kw)
+    def __ceil__(self,*a,**kw):
+        hit("__ceil__")
+        return float.__ceil__(self,*a,**kw)
+class B(bytes):
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return bytes.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return bytes.__ge__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return bytes.__le__(self,*a,**kw)
+    def __rmod__(self,*a,**kw):
+        hit("__rmod__")
+        return bytes.__rmod__(self,*a,**kw)
+    def __rmul__(self,*a,**kw):
+        hit("__rmul__")
+        return bytes.__rmul__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return bytes.__or__(self,*a,**kw)
+    def __ror__(self,*a,**kw):
+        hit("__ror__")
+        return bytes.__ror__(self,*a,**kw)
+    def isascii(self,*a,**kw):
+        hit("isascii")
+        return bytes.isascii(self,*a,**kw)
+    def rfind(self,*a,**kw):
+        hit("rfind")
+        return bytes.rfind(self,*a,**kw)
+    def rsplit(self,*a,**kw):
+        hit("rsplit")
+        return bytes.rsplit(self,*a,**kw)
+    def rpartition(self,*a,**kw):
+        hit("rpartition")
+        return bytes.rpartition(self,*a,**kw)
+    def rstrip(self,*a,**kw):
+        hit("rstrip")
+        return bytes.rstrip(self,*a,**kw)
+    def lstrip(self,*a,**kw):
+        hit("lstrip")
+        return bytes.lstrip(self,*a,**kw)
+    def capitalize(self,*a,**kw):
+        hit("capitalize")
+        return bytes.capitalize(self,*a,**kw)
+    def splitlines(self,*a,**kw):
+        hit("splitlines")
+        return bytes.splitlines(self,*a,**kw)
+    def ljust(self,*a,**kw):
+        hit("ljust")
+        return bytes.ljust(self,*a,**kw)
+    def rjust(self,*a,**kw):
+        hit("rjust")
+        return bytes.rjust(self,*a,**kw)
+    def removeprefix(self,*a,**kw):
+        hit("removeprefix")
+        return bytes.removeprefix(self,*a,**kw)
+    def removesuffix(self,*a,**kw):
+        hit("removesuffix")
+        return bytes.removesuffix(self,*a,**kw)
+    def expandtabs(self,*a,**kw):
+        hit("expandtabs")
+        return bytes.expandtabs(self,*a,**kw)
+    def title(self,*a,**kw):
+        hit("title")
+        return bytes.title(self,*a,**kw)
+    def isalpha(self,*a,**kw):
+        hit("isalpha")
+        return bytes.isalpha(self,*a,**kw)
+    def isalnum(self,*a,**kw):
+        hit("isalnum")
+        return bytes.isalnum(self,*a,**kw)
+    def isspace(self,*a,**kw):
+        hit("isspace")
+        return bytes.isspace(self,*a,**kw)
+    def __bool__(self):
+        hit("__bool__")
+        return bytes.__len__(self)!=0
+    def __len__(self,*a,**kw):
+        hit("__len__")
+        return bytes.__len__(self,*a,**kw)
+    def __getitem__(self,*a,**kw):
+        hit("__getitem__")
+        return bytes.__getitem__(self,*a,**kw)
+    def __iter__(self,*a,**kw):
+        hit("__iter__")
+        return bytes.__iter__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return bytes.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return bytes.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return bytes.__lt__(self,*a,**kw)
+    def __hash__(self,*a,**kw):
+        hit("__hash__")
+        return bytes.__hash__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return bytes.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return bytes.__repr__(self,*a,**kw)
+    def __contains__(self,*a,**kw):
+        hit("__contains__")
+        return bytes.__contains__(self,*a,**kw)
+    def __add__(self,*a,**kw):
+        hit("__add__")
+        return bytes.__add__(self,*a,**kw)
+    def __mul__(self,*a,**kw):
+        hit("__mul__")
+        return bytes.__mul__(self,*a,**kw)
+    def __mod__(self,*a,**kw):
+        hit("__mod__")
+        return bytes.__mod__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return bytes.__format__(self,*a,**kw)
+    def __bytes__(self,*a,**kw):
+        hit("__bytes__")
+        return bytes.__bytes__(self,*a,**kw)
+    def decode(self,*a,**kw):
+        hit("decode")
+        return bytes.decode(self,*a,**kw)
+    def startswith(self,*a,**kw):
+        hit("startswith")
+        return bytes.startswith(self,*a,**kw)
+    def endswith(self,*a,**kw):
+        hit("endswith")
+        return bytes.endswith(self,*a,**kw)
+    def split(self,*a,**kw):
+        hit("split")
+        return bytes.split(self,*a,**kw)
+    def join(self,*a,**kw):
+        hit("join")
+        return bytes.join(self,*a,**kw)
+    def strip(self,*a,**kw):
+        hit("strip")
+        return bytes.strip(self,*a,**kw)
+    def lower(self,*a,**kw):
+        hit("lower")
+        return bytes.lower(self,*a,**kw)
+    def upper(self,*a,**kw):
+        hit("upper")
+        return bytes.upper(self,*a,**kw)
+    def find(self,*a,**kw):
+        hit("find")
+        return bytes.find(self,*a,**kw)
+    def index(self,*a,**kw):
+        hit("index")
+        return bytes.index(self,*a,**kw)
+    def count(self,*a,**kw):
+        hit("count")
+        return bytes.count(self,*a,**kw)
+    def isdigit(self,*a,**kw):
+        hit("isdigit")
+        return bytes.isdigit(self,*a,**kw)
+    def translate(self,*a,**kw):
+        hit("translate")
+        return bytes.translate(self,*a,**kw)
+    def replace(self,*a,**kw):
+        hit("replace")
+        return bytes.replace(self,*a,**kw)
+    def partition(self,*a,**kw):
+        hit("partition")
+        return bytes.partition(self,*a,**kw)
+    def hex(self,*a,**kw):
+        hit("hex")
+        return bytes.hex(self,*a,**kw)
+class A(bytearray):
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return bytearray.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return bytearray.__ge__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return bytearray.__le__(self,*a,**kw)
+    def __rmod__(self,*a,**kw):
+        hit("__rmod__")
+        return bytearray.__rmod__(self,*a,**kw)
+    def __rmul__(self,*a,**kw):
+        hit("__rmul__")
+        return bytearray.__rmul__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return bytearray.__or__(self,*a,**kw)
+    def __ror__(self,*a,**kw):
+        hit("__ror__")
+        return bytearray.__ror__(self,*a,**kw)
+    def __setitem__(self,*a,**kw):
+        hit("__setitem__")
+        return bytearray.__setitem__(self,*a,**kw)
+    def __delitem__(self,*a,**kw):
+        hit("__delitem__")
+        return bytearray.__delitem__(self,*a,**kw)
+    def __iadd__(self,*a,**kw):
+        hit("__iadd__")
+        return bytearray.__iadd__(self,*a,**kw)
+    def __imul__(self,*a,**kw):
+        hit("__imul__")
+        return bytearray.__imul__(self,*a,**kw)
+    def isascii(self,*a,**kw):
+        hit("isascii")
+        return bytearray.isascii(self,*a,**kw)
+    def rfind(self,*a,**kw):
+        hit("rfind")
+        return bytearray.rfind(self,*a,**kw)
+    def rsplit(self,*a,**kw):
+        hit("rsplit")
+        return bytearray.rsplit(self,*a,**kw)
+    def rpartition(self,*a,**kw):
+        hit("rpartition")
+        return bytearray.rpartition(self,*a,**kw)
+    def rstrip(self,*a,**kw):
+        hit("rstrip")
+        return bytearray.rstrip(self,*a,**kw)
+    def lstrip(self,*a,**kw):
+        hit("lstrip")
+        return bytearray.lstrip(self,*a,**kw)
+    def capitalize(self,*a,**kw):
+        hit("capitalize")
+        return bytearray.capitalize(self,*a,**kw)
+    def splitlines(self,*a,**kw):
+        hit("splitlines")
+        return bytearray.splitlines(self,*a,**kw)
+    def ljust(self,*a,**kw):
+        hit("ljust")
+        return bytearray.ljust(self,*a,**kw)
+    def rjust(self,*a,**kw):
+        hit("rjust")
+        return bytearray.rjust(self,*a,**kw)
+    def clear(self,*a,**kw):
+        hit("clear")
+        return bytearray.clear(self,*a,**kw)
+    def extend(self,*a,**kw):
+        hit("extend")
+        return bytearray.extend(self,*a,**kw)
+    def reverse(self,*a,**kw):
+        hit("reverse")
+        return bytearray.reverse(self,*a,**kw)
+    def removeprefix(self,*a,**kw):
+        hit("removeprefix")
+        return bytearray.removeprefix(self,*a,**kw)
+    def removesuffix(self,*a,**kw):
+        hit("removesuffix")
+        return bytearray.removesuffix(self,*a,**kw)
+    def expandtabs(self,*a,**kw):
+        hit("expandtabs")
+        return bytearray.expandtabs(self,*a,**kw)
+    def title(self,*a,**kw):
+        hit("title")
+        return bytearray.title(self,*a,**kw)
+    def isalpha(self,*a,**kw):
+        hit("isalpha")
+        return bytearray.isalpha(self,*a,**kw)
+    def isalnum(self,*a,**kw):
+        hit("isalnum")
+        return bytearray.isalnum(self,*a,**kw)
+    def isspace(self,*a,**kw):
+        hit("isspace")
+        return bytearray.isspace(self,*a,**kw)
+    def __bool__(self):
+        hit("__bool__")
+        return bytearray.__len__(self)!=0
+    def __bytes__(self):
+        hit("__bytes__")
+        return bytes(bytearray.copy(self))
+    def __len__(self,*a,**kw):
+        hit("__len__")
+        return bytearray.__len__(self,*a,**kw)
+    def __getitem__(self,*a,**kw):
+        hit("__getitem__")
+        return bytearray.__getitem__(self,*a,**kw)
+    def __iter__(self,*a,**kw):
+        hit("__iter__")
+        return bytearray.__iter__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return bytearray.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return bytearray.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return bytearray.__lt__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return bytearray.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return bytearray.__repr__(self,*a,**kw)
+    def __contains__(self,*a,**kw):
+        hit("__contains__")
+        return bytearray.__contains__(self,*a,**kw)
+    def __add__(self,*a,**kw):
+        hit("__add__")
+        return bytearray.__add__(self,*a,**kw)
+    def __mul__(self,*a,**kw):
+        hit("__mul__")
+        return bytearray.__mul__(self,*a,**kw)
+    def __mod__(self,*a,**kw):
+        hit("__mod__")
+        return bytearray.__mod__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return bytearray.__format__(self,*a,**kw)
+    def decode(self,*a,**kw):
+        hit("decode")
+        return bytearray.decode(self,*a,**kw)
+    def copy(self,*a,**kw):
+        hit("copy")
+        return bytearray.copy(self,*a,**kw)
+    def startswith(self,*a,**kw):
+        hit("startswith")
+        return bytearray.startswith(self,*a,**kw)
+    def endswith(self,*a,**kw):
+        hit("endswith")
+        return bytearray.endswith(self,*a,**kw)
+    def split(self,*a,**kw):
+        hit("split")
+        return bytearray.split(self,*a,**kw)
+    def join(self,*a,**kw):
+        hit("join")
+        return bytearray.join(self,*a,**kw)
+    def strip(self,*a,**kw):
+        hit("strip")
+        return bytearray.strip(self,*a,**kw)
+    def lower(self,*a,**kw):
+        hit("lower")
+        return bytearray.lower(self,*a,**kw)
+    def upper(self,*a,**kw):
+        hit("upper")
+        return bytearray.upper(self,*a,**kw)
+    def find(self,*a,**kw):
+        hit("find")
+        return bytearray.find(self,*a,**kw)
+    def index(self,*a,**kw):
+        hit("index")
+        return bytearray.index(self,*a,**kw)
+    def count(self,*a,**kw):
+        hit("count")
+        return bytearray.count(self,*a,**kw)
+    def isdigit(self,*a,**kw):
+        hit("isdigit")
+        return bytearray.isdigit(self,*a,**kw)
+    def translate(self,*a,**kw):
+        hit("translate")
+        return bytearray.translate(self,*a,**kw)
+    def replace(self,*a,**kw):
+        hit("replace")
+        return bytearray.replace(self,*a,**kw)
+    def partition(self,*a,**kw):
+        hit("partition")
+        return bytearray.partition(self,*a,**kw)
+    def hex(self,*a,**kw):
+        hit("hex")
+        return bytearray.hex(self,*a,**kw)
+    def insert(self,*a,**kw):
+        hit("insert")
+        return bytearray.insert(self,*a,**kw)
+    def append(self,*a,**kw):
+        hit("append")
+        return bytearray.append(self,*a,**kw)
+    def pop(self,*a,**kw):
+        hit("pop")
+        return bytearray.pop(self,*a,**kw)
+class T(tuple):
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return tuple.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return tuple.__ge__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return tuple.__le__(self,*a,**kw)
+    def __rmul__(self,*a,**kw):
+        hit("__rmul__")
+        return tuple.__rmul__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return tuple.__or__(self,*a,**kw)
+    def __ror__(self,*a,**kw):
+        hit("__ror__")
+        return tuple.__ror__(self,*a,**kw)
+    def __bool__(self):
+        hit("__bool__")
+        return tuple.__len__(self)!=0
+    def __len__(self,*a,**kw):
+        hit("__len__")
+        return tuple.__len__(self,*a,**kw)
+    def __getitem__(self,*a,**kw):
+        hit("__getitem__")
+        return tuple.__getitem__(self,*a,**kw)
+    def __iter__(self,*a,**kw):
+        hit("__iter__")
+        return tuple.__iter__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return tuple.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return tuple.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return tuple.__lt__(self,*a,**kw)
+    def __hash__(self,*a,**kw):
+        hit("__hash__")
+        return tuple.__hash__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return tuple.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return tuple.__repr__(self,*a,**kw)
+    def __contains__(self,*a,**kw):
+        hit("__contains__")
+        return tuple.__contains__(self,*a,**kw)
+    def __add__(self,*a,**kw):
+        hit("__add__")
+        return tuple.__add__(self,*a,**kw)
+    def __mul__(self,*a,**kw):
+        hit("__mul__")
+        return tuple.__mul__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return tuple.__format__(self,*a,**kw)
+    def index(self,*a,**kw):
+        hit("index")
+        return tuple.index(self,*a,**kw)
+    def count(self,*a,**kw):
+        hit("count")
+        return tuple.count(self,*a,**kw)
+class L(list):
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return list.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return list.__ge__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return list.__le__(self,*a,**kw)
+    def __rmul__(self,*a,**kw):
+        hit("__rmul__")
+        return list.__rmul__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return list.__or__(self,*a,**kw)
+    def __ror__(self,*a,**kw):
+        hit("__ror__")
+        return list.__ror__(self,*a,**kw)
+    def __setitem__(self,*a,**kw):
+        hit("__setitem__")
+        return list.__setitem__(self,*a,**kw)
+    def __delitem__(self,*a,**kw):
+        hit("__delitem__")
+        return list.__delitem__(self,*a,**kw)
+    def __iadd__(self,*a,**kw):
+        hit("__iadd__")
+        return list.__iadd__(self,*a,**kw)
+    def __imul__(self,*a,**kw):
+        hit("__imul__")
+        return list.__imul__(self,*a,**kw)
+    def clear(self,*a,**kw):
+        hit("clear")
+        return list.clear(self,*a,**kw)
+    def extend(self,*a,**kw):
+        hit("extend")
+        return list.extend(self,*a,**kw)
+    def reverse(self,*a,**kw):
+        hit("reverse")
+        return list.reverse(self,*a,**kw)
+    def sort(self,*a,**kw):
+        hit("sort")
+        return list.sort(self,*a,**kw)
+    def __bool__(self):
+        hit("__bool__")
+        return list.__len__(self)!=0
+    def __len__(self,*a,**kw):
+        hit("__len__")
+        return list.__len__(self,*a,**kw)
+    def __getitem__(self,*a,**kw):
+        hit("__getitem__")
+        return list.__getitem__(self,*a,**kw)
+    def __iter__(self,*a,**kw):
+        hit("__iter__")
+        return list.__iter__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return list.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return list.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return list.__lt__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return list.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return list.__repr__(self,*a,**kw)
+    def __contains__(self,*a,**kw):
+        hit("__contains__")
+        return list.__contains__(self,*a,**kw)
+    def __add__(self,*a,**kw):
+        hit("__add__")
+        return list.__add__(self,*a,**kw)
+    def __mul__(self,*a,**kw):
+        hit("__mul__")
+        return list.__mul__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return list.__format__(self,*a,**kw)
+    def __reversed__(self,*a,**kw):
+        hit("__reversed__")
+        return list.__reversed__(self,*a,**kw)
+    def copy(self,*a,**kw):
+        hit("copy")
+        return list.copy(self,*a,**kw)
+    def index(self,*a,**kw):
+        hit("index")
+        return list.index(self,*a,**kw)
+    def count(self,*a,**kw):
+        hit("count")
+        return list.count(self,*a,**kw)
+    def insert(self,*a,**kw):
+        hit("insert")
+        return list.insert(self,*a,**kw)
+    def append(self,*a,**kw):
+        hit("append")
+        return list.append(self,*a,**kw)
+    def pop(self,*a,**kw):
+        hit("pop")
+        return list.pop(self,*a,**kw)
+class D(dict):
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return dict.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return dict.__ge__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return dict.__le__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return dict.__or__(self,*a,**kw)
+    def __ror__(self,*a,**kw):
+        hit("__ror__")
+        return dict.__ror__(self,*a,**kw)
+    def __setitem__(self,*a,**kw):
+        hit("__setitem__")
+        return dict.__setitem__(self,*a,**kw)
+    def __delitem__(self,*a,**kw):
+        hit("__delitem__")
+        return dict.__delitem__(self,*a,**kw)
+    def clear(self,*a,**kw):
+        hit("clear")
+        return dict.clear(self,*a,**kw)
+    def setdefault(self,*a,**kw):
+        hit("setdefault")
+        return dict.setdefault(self,*a,**kw)
+    def popitem(self,*a,**kw):
+        hit("popitem")
+        return dict.popitem(self,*a,**kw)
+    def update(self,*a,**kw):
+        hit("update")
+        return dict.update(self,*a,**kw)
+    def __bool__(self):
+        hit("__bool__")
+        return dict.__len__(self)!=0
+    def __len__(self,*a,**kw):
+        hit("__len__")
+        return dict.__len__(self,*a,**kw)
+    def __getitem__(self,*a,**kw):
+        hit("__getitem__")
+        return dict.__getitem__(self,*a,**kw)
+    def __iter__(self,*a,**kw):
+        hit("__iter__")
+        return dict.__iter__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return dict.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return dict.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return dict.__lt__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return dict.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return dict.__repr__(self,*a,**kw)
+    def __contains__(self,*a,**kw):
+        hit("__contains__")
+        return dict.__contains__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return dict.__format__(self,*a,**kw)
+    def __reversed__(self,*a,**kw):
+        hit("__reversed__")
+        return dict.__reversed__(self,*a,**kw)
+    def items(self,*a,**kw):
+        hit("items")
+        return dict.items(self,*a,**kw)
+    def keys(self,*a,**kw):
+        hit("keys")
+        return dict.keys(self,*a,**kw)
+    def values(self,*a,**kw):
+        hit("values")
+        return dict.values(self,*a,**kw)
+    def get(self,*a,**kw):
+        hit("get")
+        return dict.get(self,*a,**kw)
+    def copy(self,*a,**kw):
+        hit("copy")
+        return dict.copy(self,*a,**kw)
+    def pop(self,*a,**kw):
+        hit("pop")
+        return dict.pop(self,*a,**kw)
+
+def warning(which):
+    warnings.simplefilter("ignore")
+    reg=D()
+    if which=="filter": warnings.filters.insert(0,T(("ignore",None,Warning,None,0)))
+    if which=="stack": return warnings.warn("x",stacklevel=I(1))
+    return warnings.warn_explicit(S("text"),UserWarning,S("f"),I(1),S("m"),reg)
+def csvrow(x):
+    f=io.StringIO()
+    csv.writer(f).writerow([x])
+    return f.getvalue()
+
+import _collections, string, _typing
+class Set(set):
+    def __iter__(self):
+        hit("__iter__")
+        return set.__iter__(self)
+class Frozen(frozenset):
+    def __iter__(self):
+        hit("__iter__")
+        return frozenset.__iter__(self)
+class P(S):
+    def __fspath__(self):
+        hit("__fspath__")
+        return "/unexpected"
+def registry():
+    with warnings.catch_warnings(record=True) as out:
+        warnings.simplefilter("default")
+        d=D()
+        for _ in range(2): warnings.warn_explicit("x",UserWarning,"a",1,"m",d)
+        return len(out)
+def spawn(args,env):
+    pid=os.posix_spawn("/bin/true",args,env)
+    return os.waitpid(pid,0)[1]
+def pipe_size():
+    import fcntl
+    r,w=os.pipe()
+    return fcntl.fcntl(w,fcntl.F_SETPIPE_SZ,I(4096))
+def assign(fmt,value):
+    return struct.unpack(fmt,struct.pack(fmt,value))
+
+import _json, _csv, _warnings, _operator, _functools
+def warnwith(item, filters=False):
+    with warnings.catch_warnings(record=True) as rec:
+        if filters: warnings.filters=L([item])
+        else: warnings.filters.insert(0,item)
+        warnings.warn_explicit("message",UserWarning,"file.py",1,"file")
+        return len(rec)
+def msg(which):
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        if which==0: warnings.warn(S("hi"),stacklevel=I(1))
+        else: warnings.warn_explicit("hi",UserWarning,S("path.py"),I(1))
+        return len(rec)
+def partialkw():
+    class P(functools.partial): pass
+    part=P(dict)
+    part.__setstate__((dict,(),D(a=1),None))
+    return part(b=2)
+def formatnames():
+    class X: pass
+    obj=X()
+    obj.a=X()
+    obj.a.b=1
+    return operator.attrgetter(S("a.b"))(obj)
+def initmode(): return io.FileIO("/dev/null",S("rb")).close()
+def reprseed(x):
+    gen=_random.Random()
+    gen.seed(x)
+    return gen.getrandbits(32)
+def zdict(x):
+    obj=zlib.compressobj(zdict=x)
+    return obj.compress(b"a")+obj.flush()
+def digest(h,x):
+    h.update(x)
+    return h.hexdigest()
+def decomp(x):
+    c=zlib.decompressobj()
+    return c.decompress(x,I(1))
+def field_names(x):
+    s=io.StringIO()
+    csv.DictWriter(s,fieldnames=x).writeheader()
+    return s.getvalue()
+import json.encoder,json.decoder
+class Items(dict):
+    def items(self):
+        hit("items")
+        return self.result
+def tuples(seq,sort):
+    d=Items(a=1)
+    d.result=seq
+    return json.dumps(d,sort_keys=sort)
+def cencoder(markers,indent):
+    f=json.encoder.c_make_encoder(markers,lambda x:"?",json.encoder.encode_basestring_ascii,indent,S(":"),S(","),False,False,True)
+    return f([1,[2]],0)
+def encoder_result(x):
+    return json.encoder.c_make_encoder(None,None,lambda s:x,None,":",",",False,False,True)("text",0)
+def state_of(x):
+    import codecs
+    class Decoder(codecs.IncrementalDecoder):
+        def decode(self,data,final=False): return "a" if data else ""
+        def getstate(self): return x
+        def setstate(self,s): pass
+        def reset(self): pass
+    def search(name):
+        if name=="a31_state":
+            return codecs.CodecInfo(codecs.lookup("ascii").encode,codecs.lookup("ascii").decode,incrementaldecoder=Decoder,name=name)
+    codecs.register(search)
+    f=io.TextIOWrapper(io.BytesIO(b"abc"),encoding="a31_state")
+    f.read(1)
+    return f.tell()
+def registry_warn(actions):
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("default")
+        d=D()
+        for _ in range(2): warnings.warn_explicit(S("text"),UserWarning,S("f.py"),I(1),S("f"),d)
+        return len(w)
+def customcodec(obj,field):
+    def search(name):
+        if name=="a31_obj":
+            return codecs.CodecInfo(lambda s,e="strict":obj,lambda b,e="strict":obj,name=name)
+    codecs.register(search)
+    if field=="text": return "a".encode("a31_obj")
+    return codecs.encode("a","a31_obj")
+def dialect(name):
+    csv.register_dialect(name,delimiter=",")
+    return csv.get_dialect(name).delimiter
+class Bag(dict):
+    def keys(self): hit("keys");return L(["K"])
+    def values(self): hit("values");return L(["ok"])
+def groupname(x): return re.fullmatch("(?P<foo>x)","x").group(x)
+class SS(set):
+    def __len__(self,*a,**kw):
+        hit("__len__")
+        return set.__len__(self,*a,**kw)
+    def __iter__(self,*a,**kw):
+        hit("__iter__")
+        return set.__iter__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return set.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return set.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return set.__lt__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return set.__le__(self,*a,**kw)
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return set.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return set.__ge__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return set.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return set.__repr__(self,*a,**kw)
+    def __contains__(self,*a,**kw):
+        hit("__contains__")
+        return set.__contains__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return set.__format__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return set.__or__(self,*a,**kw)
+    def __xor__(self,*a,**kw):
+        hit("__xor__")
+        return set.__xor__(self,*a,**kw)
+    def __and__(self,*a,**kw):
+        hit("__and__")
+        return set.__and__(self,*a,**kw)
+    def __sub__(self,*a,**kw):
+        hit("__sub__")
+        return set.__sub__(self,*a,**kw)
+    def copy(self,*a,**kw):
+        hit("copy")
+        return set.copy(self,*a,**kw)
+    def __bool__(self):
+        hit("__bool__")
+        return set.__len__(self)!=0
+class FF(frozenset):
+    def __len__(self,*a,**kw):
+        hit("__len__")
+        return frozenset.__len__(self,*a,**kw)
+    def __iter__(self,*a,**kw):
+        hit("__iter__")
+        return frozenset.__iter__(self,*a,**kw)
+    def __eq__(self,*a,**kw):
+        hit("__eq__")
+        return frozenset.__eq__(self,*a,**kw)
+    def __ne__(self,*a,**kw):
+        hit("__ne__")
+        return frozenset.__ne__(self,*a,**kw)
+    def __lt__(self,*a,**kw):
+        hit("__lt__")
+        return frozenset.__lt__(self,*a,**kw)
+    def __le__(self,*a,**kw):
+        hit("__le__")
+        return frozenset.__le__(self,*a,**kw)
+    def __gt__(self,*a,**kw):
+        hit("__gt__")
+        return frozenset.__gt__(self,*a,**kw)
+    def __ge__(self,*a,**kw):
+        hit("__ge__")
+        return frozenset.__ge__(self,*a,**kw)
+    def __hash__(self,*a,**kw):
+        hit("__hash__")
+        return frozenset.__hash__(self,*a,**kw)
+    def __str__(self,*a,**kw):
+        hit("__str__")
+        return frozenset.__str__(self,*a,**kw)
+    def __repr__(self,*a,**kw):
+        hit("__repr__")
+        return frozenset.__repr__(self,*a,**kw)
+    def __contains__(self,*a,**kw):
+        hit("__contains__")
+        return frozenset.__contains__(self,*a,**kw)
+    def __format__(self,*a,**kw):
+        hit("__format__")
+        return frozenset.__format__(self,*a,**kw)
+    def __or__(self,*a,**kw):
+        hit("__or__")
+        return frozenset.__or__(self,*a,**kw)
+    def __xor__(self,*a,**kw):
+        hit("__xor__")
+        return frozenset.__xor__(self,*a,**kw)
+    def __and__(self,*a,**kw):
+        hit("__and__")
+        return frozenset.__and__(self,*a,**kw)
+    def __sub__(self,*a,**kw):
+        hit("__sub__")
+        return frozenset.__sub__(self,*a,**kw)
+    def copy(self,*a,**kw):
+        hit("copy")
+        return frozenset.copy(self,*a,**kw)
+    def __bool__(self):
+        hit("__bool__")
+        return frozenset.__len__(self)!=0
+import hmac, _md5, _sha1, _sha2, _sha3, _blake2, _sre
+def mask(x):
+    old=signal.pthread_sigmask(signal.SIG_BLOCK,x)
+    signal.pthread_sigmask(signal.SIG_SETMASK,old)
+    return True
+def applied(x):
+    calls=[]
+    @functools.lru_cache(maxsize=3)
+    def f(arg):
+        calls.append(1)
+        return 1
+    f(x);f(x)
+    return len(calls)
+def splitflags(flags):
+    return re.compile(S("x"),flags).flags
+def clockfd():
+    if not hasattr(os,"F_SETPIPE_SZ"):return False
+    return True
+def random_seed(seed):
+    r=_random.Random(seed)
+    return r.getrandbits(31)
+def ns(x,n): return type(x).__name__
+def fillenv():
+    import os
+    before=os.environ.get("A31X")
+    os.environ.update(D(A31X=S("abc")))
+    return os.getenv(S("A31X"))
+def run(n):
+    if n=="0": return open("/dev/null",S("r")).close()
+    if n=="1": return open("/dev/null",encoding=S("utf8")).close()
+    if n=="2": return open("/dev/null",errors=S("strict")).close()
+    if n=="3": return open("/dev/null",newline=S("")).close()
+    if n=="4": return io.StringIO(S("abc")).getvalue()
+    if n=="5": return io.StringIO().write(S("ab"))
+    if n=="6": return io.TextIOWrapper(io.BytesIO(),encoding="utf8").write(S("ab"))
+    if n=="7": return io.BytesIO().write(B(b"ab"))
+    if n=="8": return io.BytesIO().write(A(b"ab"))
+    if n=="9": return io.StringIO().writelines(L(["a","b"]))
+    if n=="10": return io.BytesIO(b"abc").read(I(1))
+    if n=="11": return io.BytesIO().seek(I(1))
+    if n=="12": return os.stat(S("/dev/null")).st_size
+    if n=="13": return os.stat(B(b"/dev/null")).st_size
+    if n=="14": return os.getenv(S("A31_UNUSED"))
+    if n=="15": return os.putenv(S("A31_TEST"),S("ok"))
+    if n=="16": return os.urandom(I(0))
+    if n=="17": return os.strerror(I(2))
+    if n=="18": return os.close(os.open(S("/dev/null"),I(0)))
+    if n=="19": return os.write(1,B(b""))
+    if n=="20": return json.dumps(S("abc"))
+    if n=="21": return json.dumps(I(2))
+    if n=="22": return json.dumps(F(2))
+    if n=="23": return json.dumps(L([1]))
+    if n=="24": return json.dumps(T((2,)))
+    if n=="25": return json.dumps(D(a=1))
+    if n=="26": return json.dumps({S("abc"):1})
+    if n=="27": return json.dumps([1,2],indent=I(1),separators=T((",",":")))
+    if n=="28": return json.loads(S("[1]"))
+    if n=="29": return codecs.lookup(S("utf8")).name
+    if n=="30": return codecs.encode(S("ab"),S("ascii"),S("strict"))
+    if n=="31": return codecs.decode(B(b"ab"),S("ascii"),S("strict"))
+    if n=="32": return codecs.utf_8_encode(S("ab"))
+    if n=="33": return codecs.utf_8_decode(B(b"ab"))
+    if n=="34": return codecs.register_error(S("probe"),codecs.strict_errors)
+    if n=="35": return warning("filter")
+    if n=="36": return warning("reg")
+    if n=="37": return warning("stack")
+    if n=="38": return collections.deque([1,2],I(1)).maxlen
+    if n=="39": return collections.deque([1,2])[I(0)]
+    if n=="40": return collections.OrderedDict([(S("x"),1)])[S("x")]
+    if n=="41": return collections.Counter(S("aa"))["a"]
+    if n=="42": return functools.lru_cache()(lambda x: 1)(S("x"))
+    if n=="43": return functools.lru_cache()(lambda x: 1)(I(2))
+    if n=="44": return functools.reduce(operator.add,L([1,2]))
+    if n=="45": return next(itertools.count(I(1)))
+    if n=="46": return next(itertools.count(F(1)))
+    if n=="47": return list(itertools.repeat("a",I(1)))
+    if n=="48": return list(itertools.islice("ab",I(1)))
+    if n=="49": return list(itertools.combinations("ab",I(1)))
+    if n=="50": return list(itertools.product("ab",repeat=I(1)))
+    if n=="51": return operator.index(I(1))
+    if n=="52": return operator.length_hint(S("a"))
+    if n=="53": return operator.itemgetter(I(0))("a")
+    if n=="54": return operator.attrgetter(S("real"))(1)
+    if n=="55": return operator.methodcaller(S("upper"))("x")
+    if n=="56": return operator.concat(S("a"),"b")
+    if n=="57": return operator.countOf(L([1]),1)
+    if n=="58": return operator.indexOf(L([1]),1)
+    if n=="59": return struct.pack(S("i"),I(1))
+    if n=="60": return struct.pack("d",F(1))
+    if n=="61": return struct.pack("2s",B(b"xx"))
+    if n=="62": return struct.unpack("2s",B(b"ab"))
+    if n=="63": return struct.calcsize(B(b"i"))
+    if n=="64": return csvrow(S("a"))
+    if n=="65": return csvrow(I(1))
+    if n=="66": return csvrow(F(2))
+    if n=="67": return csv.reader(["a,b"],delimiter=S(",")).__next__()
+    if n=="68": return _locale.strcoll(S("ab"),"ac")
+    if n=="69": return _locale.strxfrm(S("ab"))
+    if n=="70": return _locale.setlocale(I(0),S("C"))
+    if n=="71": return time.gmtime(I(0))[0]
+    if n=="72": return time.localtime(I(0))[0]
+    if n=="73": return time.sleep(I(0))
+    if n=="74": return time.strftime(S("%Y"),T((2020,1,1,0,0,0,2,1,-1)))
+    if n=="75": return time.mktime(T((2020,1,1,0,0,0,2,1,-1)))
+    if n=="76": return tuple(time.struct_time(T((2020,1,1,0,0,0,2,1,-1))))
+    if n=="77": return zlib.compress(B(b"ab"),I(1))
+    if n=="78": return binascii.hexlify(B(b"a"))
+    if n=="79": return hashlib.sha256(B(b"x")).hexdigest()
+    if n=="80": return re.search(S("x"),S("x"),I(0)).group()
+    if n=="81": return re.sub("x",S("a"),S("x"))
+    if n=="82": return re.match("(?P<a>.)","z").group(S("a"))
+    if n=="83": return list(_string.formatter_parser(S("{x}")))
+    if n=="84": return typing.TypeVar(S("T")).__name__
+    if n=="85": return grp.getgrgid(I(0)).gr_gid
+    if n=="86": return pwd.getpwuid(I(0)).pw_uid
+    if n=="87": return grp.getgrnam(S("root")).gr_gid
+    if n=="88": return pwd.getpwnam(S("root")).pw_uid
+    if n=="89": return signal.getsignal(I(2)).name
+    if n=="90": return _thread.allocate_lock().acquire(timeout=I(0))
+    if n=="91": return _bisect.bisect_left(L([1,2]),2)
+    if n=="92": return _bisect.insort_right(L([1,2]),2)
+    if n=="93": return _heapq.heappush(L([1,2]),3)
+    if n=="94": return _heapq.heappop(L([1,2]))
+    if n=="95": return _heapq.heapify(L([2,1]))
+    if n=="96": return _random.Random().seed(I(2))
+    if n=="97": return math.ceil(F(1))
+    if n=="98": return math.ceil(I(1))
+    if n=="99": return math.dist([F(1)],[1])
+    if n=="100": return math.dist([I(1)],[1])
+    if n=="101": return math.factorial(F(1))
+    if n=="102": return math.factorial(I(1))
+    if n=="103": return math.floor(F(1))
+    if n=="104": return math.floor(I(1))
+    if n=="105": return math.prod([F(1)])
+    if n=="106": return math.prod([I(1)])
+    if n=="107": return math.sumprod([F(1)],[1])
+    if n=="108": return math.sumprod([I(1)],[1])
+    if n=="109": return math.trunc(F(1))
+    if n=="110": return math.trunc(I(1))
+    if n=="111": return os.fspath(P("/dev/null")) is not None
+    if n=="112": return os.fsencode(P("/dev/null"))
+    if n=="113": return spawn(L(["true"]),D(PATH="/bin"))
+    if n=="114": return spawn(T(("true",)),D(PATH="/bin"))
+    if n=="115": return spawn([S("true")],{S("PATH"):S("/bin")})
+    if n=="116": return os.getenv(S("PATH")) is not None
+    if n=="117": return os.pipe2(I(0)) is not None
+    if n=="118": return io.FileIO(S("/dev/null"),S("rb")).close()
+    if n=="119": return io.BufferedReader(io.BytesIO(b"xx")).read(I(1))
+    if n=="120": return io.BufferedReader(io.BytesIO(b"xx")).seek(I(1))
+    if n=="121": return io.TextIOWrapper(io.BytesIO(b"a")).read(I(1))
+    if n=="122": return io.TextIOWrapper(io.BytesIO(b"a")).seek(I(0))
+    if n=="123": return io.StringIO(S("a\r\nb"),S("\n")).getvalue()
+    if n=="124": return io.StringIO(newline=None).write(S("aa\r\nb"))
+    if n=="125": return io.TextIOWrapper(io.BytesIO(),newline="\r\n").write(S("a\nb"))
+    if n=="126": return io.BytesIO().writelines(L([B(b"a")]))
+    if n=="127": return io.StringIO().writelines(T((S("a"),)))
+    if n=="128": return json.dumps({"a":1,"b":2},separators=(S(","),S(":")),indent=S("."))
+    if n=="129": return json.dumps({I(3):1,F(1.5):2})
+    if n=="130": return json.dumps(D(a=1),sort_keys=True)
+    if n=="131": return json.loads(B(b"[1]"))
+    if n=="132": return json.loads(A(b"[1]"))
+    if n=="133": return registry()
+    if n=="134": return collections.defaultdict(int,D(a=1))["a"]
+    if n=="135": return _collections._tuplegetter(I(0),S("doc")).__get__(T(("x",)),tuple)
+    if n=="136": return collections.namedtuple(S("Point"),L([S("x")])).__name__
+    if n=="137": return functools.partial(dict,**D(a=1))()
+    if n=="138": return functools.cmp_to_key(lambda a,b: I(-1))(0)<functools.cmp_to_key(lambda a,b:I(-1))(1)
+    if n=="139": return list(itertools.accumulate(L([I(2),I(1)])))
+    if n=="140": return [(k,list(g)) for k,g in itertools.groupby(L([S("x"),S("x")]))]
+    if n=="141": return list(itertools.product(Set(["a"]),repeat=I(1)))
+    if n=="142": return list(itertools.product(Frozen(["a"]),repeat=I(1)))
+    if n=="143": return operator.attrgetter(S("a.b")).__reduce__()[1]
+    if n=="144": return operator.methodcaller(S("format"),"a")("{}")
+    if n=="145": return operator.itemgetter(S("key"))(D(key=1))
+    if n=="146": return struct.calcsize(S("2s"))
+    if n=="147": return assign("3p",B(b"a"))
+    if n=="148": return assign("c",B(b"a"))
+    if n=="149": return assign("?",I(1))
+    if n=="150": return csv.DictReader(["ab","xy"],fieldnames=L([S("x")])).__next__()
+    if n=="151": return csv.writer(io.StringIO(),delimiter=S(","),lineterminator=S("\r\n")).writerow([S("a")])
+    if n=="152": return _locale.strcoll(S("a\x00"),"x")
+    if n=="153": return time.asctime(T((2020,1,1,0,0,0,2,1,-1)))
+    if n=="154": return time.gmtime(F(0))[0]
+    if n=="155": return time.sleep(F(0))
+    if n=="156": return time.strftime(S("%Y"),T(tuple(I(x) for x in (2020,1,1,0,0,0,2,1,-1))))
+    if n=="157": return math.dist(L([I(1)]),T((F(1),)))
+    if n=="158": return math.sumprod(L([I(1)]),T((F(1),)))
+    if n=="159": return math.prod(T((I(2),I(3))))
+    if n=="160": return zlib.crc32(B(b"x"),I(0))
+    if n=="161": return zlib.adler32(A(b"x"),I(0))
+    if n=="162": return zlib.decompress(B(zlib.compress(b"x")),I(15),I(4))
+    if n=="163": return re.compile(S("xx"),I(2)).pattern
+    if n=="164": return re.sub(S("a"),S("\\g<0>"),S("a"),count=I(1))
+    if n=="165": return string.Template(S("$x")).substitute(D(x=S("ab")))
+    if n=="166": return string.Formatter().format(S("{x}"),x=S("ab"))
+    if n=="167": return list(_string.formatter_field_name_split(S("a.b"))[1])
+    if n=="168": return typing.TypeAliasType(S("Name"),int,type_params=T(() )).__name__
+    if n=="169": return signal.getsignal(signal.SIGTERM)
+    if n=="170": return gc.isenabled()
+    if n=="171": return gc.get_count() is not None
+    if n=="172": return gc.get_stats() is not None
+    if n=="173": return gc.set_threshold(I(700),I(10),I(10))
+    if n=="174": return _thread.allocate_lock().acquire(blocking=I(0))
+    if n=="175": return _random.Random().seed(S("ab"))
+    if n=="176": return _random.Random().seed(B(b"ab"))
+    if n=="177": return _heapq.heapreplace(L([1,2]),3)
+    if n=="178": return _heapq.heappushpop(L([1,2]),3)
+    if n=="179": return codecs.ascii_encode(S("abc"),S("strict"))
+    if n=="180": return codecs.latin_1_encode(S("abc"),S("strict"))
+    if n=="181": return codecs.utf_7_encode(S("abc"),S("strict"))
+    if n=="182": return codecs.utf_8_encode(S("abc"),S("strict"))
+    if n=="183": return codecs.utf_16_encode(S("abc"),S("strict"))
+    if n=="184": return codecs.utf_16_le_encode(S("abc"),S("strict"))
+    if n=="185": return codecs.utf_16_be_encode(S("abc"),S("strict"))
+    if n=="186": return codecs.utf_32_encode(S("abc"),S("strict"))
+    if n=="187": return codecs.unicode_escape_encode(S("abc"),S("strict"))
+    if n=="188": return codecs.raw_unicode_escape_encode(S("abc"),S("strict"))
+    if n=="189": return codecs.readbuffer_encode(S("abc"),S("strict"))
+    if n=="190": return codecs.ascii_decode(B(b"abcd"),S("strict"))
+    if n=="191": return codecs.latin_1_decode(B(b"abcd"),S("strict"))
+    if n=="192": return codecs.utf_7_decode(B(b"abcd"),S("strict"))
+    if n=="193": return codecs.utf_8_decode(B(b"abcd"),S("strict"))
+    if n=="194": return codecs.utf_16_le_decode(B(b"abcd"),S("strict"))
+    if n=="195": return codecs.utf_32_le_decode(B(b"abcd"),S("strict"))
+    if n=="196": return codecs.unicode_escape_decode(B(b"abcd"),S("strict"))
+    if n=="197": return codecs.raw_unicode_escape_decode(B(b"abcd"),S("strict"))
+    if n=="198": return hashlib.blake2b(B(b"x")).hexdigest()
+    if n=="199": return hashlib.blake2s(B(b"x")).hexdigest()
+    if n=="200": return hashlib.md5(B(b"x")).hexdigest()
+    if n=="201": return hashlib.sha1(B(b"x")).hexdigest()
+    if n=="202": return hashlib.sha224(B(b"x")).hexdigest()
+    if n=="203": return hashlib.sha384(B(b"x")).hexdigest()
+    if n=="204": return hashlib.sha3_224(B(b"x")).hexdigest()
+    if n=="205": return hashlib.sha3_256(B(b"x")).hexdigest()
+    if n=="206": return hashlib.sha3_384(B(b"x")).hexdigest()
+    if n=="207": return hashlib.sha3_512(B(b"x")).hexdigest()
+    if n=="208": return hashlib.sha512(B(b"x")).hexdigest()
+    if n=="209": return hashlib.shake_128(B(b"x")).hexdigest(2)
+    if n=="210": return hashlib.shake_256(B(b"x")).hexdigest(2)
+    if n=="211": return binascii.hexlify(B(b"abcd"))
+    if n=="212": return binascii.unhexlify(B(b"abcd"))
+    if n=="213": return binascii.b2a_base64(B(b"abcd"))
+    if n=="214": return binascii.a2b_base64(B(b"abcd"))
+    if n=="215": return binascii.b2a_qp(B(b"abcd"))
+    if n=="216": return binascii.a2b_qp(B(b"abcd"))
+    if n=="217": return binascii.b2a_uu(B(b"abcd"))
+    if n=="218": return binascii.a2b_uu(B(b"abcd"))
+    if n=="219": return binascii.crc32(B(b"abcd"))
+    if n=="220": return math.fmax(F(1))
+    if n=="221": return math.fmax(I(1))
+    if n=="222": return math.fmin(F(1))
+    if n=="223": return math.fmin(I(1))
+    if n=="224": return warnwith((S("ignore"),None,Warning,None,0))
+    if n=="225": return warnwith(("ignore",None,Warning,None,I(1)))
+    if n=="226": return warnwith(("ignore",None,Warning,None,0),True)
+    if n=="227": return warnwith(("ignore",S("message"),Warning,S("file"),0))
+    if n=="228": return msg(0)
+    if n=="229": return msg(1)
+    if n=="230": return os.execv("/a31-never-here",L([B(b"a")]))
+    if n=="231": return os.execve("/a31-never-here",T((S("a"),)),D(A="1"))
+    if n=="232": return os.putenv(B(b"A31"),B(b"1"))
+    if n=="233": return os.unsetenv(B(b"A31"))
+    if n=="234": return os.environb.get(B(b"A31_NEVER"))
+    if n=="235": return os.fsdecode(B(b"x"))
+    if n=="236": return os.getxattr(B(b"/dev/null"),B(b"user.a31"))
+    if n=="237": return os.path.normpath(S("/a//b"))
+    if n=="238": return os.path.normpath(B(b"/a//b"))
+    if n=="239": return os.path.splitroot(S("/a"))
+    if n=="240": return os.path.splitroot(B(b"/a"))
+    if n=="241": return os.pread(os.open("/dev/null",0),I(1),I(0))
+    if n=="242": return os.write(os.open("/dev/null",1),A(b"a"))
+    if n=="243": return os.eventfd(I(0),I(0))>=0
+    if n=="244": return io.open_code(S("/dev/null")).close()
+    if n=="245": return initmode()
+    if n=="246": return io.FileIO("/dev/null","rb").read(I(1))
+    if n=="247": return io.FileIO("/dev/null","wb").write(B(b"a"))
+    if n=="248": return io.BufferedWriter(io.BytesIO()).write(B(b"a"))
+    if n=="249": return io.BufferedWriter(io.BytesIO()).write(A(b"a"))
+    if n=="250": return io.BytesIO(B(b"abc")).getvalue()
+    if n=="251": return io.BytesIO().writelines([B(b"ab")])
+    if n=="252": return io.TextIOWrapper(io.BytesIO(),encoding=S("ascii"),errors=S("strict"),newline=S(chr(13))).write(S("a"+chr(10)))
+    if n=="253": return io.StringIO(S("xy"),S(chr(13))).write(S("a"+chr(10)))
+    if n=="254": return json.dumps(D(x=S("a")),indent=I(2))
+    if n=="255": return json.dumps({S("xyz"):2,S("a"):1},sort_keys=True)
+    if n=="256": return json.dumps(L([]))
+    if n=="257": return json.dumps(T(()))
+    if n=="258": return _json.encode_basestring(S("λ"))
+    if n=="259": return _json.encode_basestring_ascii(S("λ"))
+    if n=="260": return _json.scanstring(S('"foo"'),I(1))
+    if n=="261": return json.loads(S('{"a":"b"}'))
+    if n=="262": return codecs.lookup_error(S("strict")).__name__
+    if n=="263": return codecs.lookup(S("UTF-8")).name
+    if n=="264": return codecs.encode(S("æ"),S("ascii"),S("ignore"))
+    if n=="265": return codecs.decode(B(b"\xff"),S("ascii"),S("ignore"))
+    if n=="266": return collections.deque(L([1,2]),I(1)).pop()
+    if n=="267": return collections.deque([1,2]).index(2,I(0),I(3))
+    if n=="268": return collections.OrderedDict(D(x=1)).pop(S("x"))
+    if n=="269": return collections.defaultdict(list)[S("missing")]
+    if n=="270": return collections.Counter(L([S("a")]))[S("a")]
+    if n=="271": return _collections._tuplegetter(I(1),S("doc")).__get__(T((0,1)),tuple)
+    if n=="272": return partialkw()
+    if n=="273": return functools.reduce(operator.add,T((I(2),I(1))))
+    if n=="274": return functools.lru_cache(maxsize=I(2))(lambda x:1)(1)
+    if n=="275": return operator.length_hint(L([1]))
+    if n=="276": return formatnames()
+    if n=="277": return operator.methodcaller(S("startswith"),S("x"))("xy")
+    if n=="278": return list(itertools.islice(T((1,2)),I(0),I(2),I(1)))
+    if n=="279": return list(itertools.permutations(L([1]),I(1)))
+    if n=="280": return list(itertools.combinations_with_replacement(T((1,)),I(1)))
+    if n=="281": return list(itertools.repeat(I(1),I(2)))
+    if n=="282": return list(itertools.takewhile(bool,L([I(1)])))
+    if n=="283": return struct.unpack_from(S("b"),B(b"ab"),I(1))
+    if n=="284": return list(struct.iter_unpack(S("b"),B(b"ab")))
+    if n=="285": return struct.Struct(S("2s")).pack(A(b"ab"))
+    if n=="286": return struct.Struct(B(b"1s")).unpack(B(b"a"))
+    if n=="287": return struct.pack("d",I(2))
+    if n=="288": return struct.pack("f",F(2))
+    if n=="289": return struct.pack("B",I(2))
+    if n=="290": return struct.pack("p",A(b"xx"))
+    if n=="291": return csv.reader([S("x,y")],quotechar=S('"'),delimiter=S(",")).__next__()
+    if n=="292": return field_names(L([S("x"),S("y")]))
+    if n=="293": return csv.writer(io.StringIO(),quoting=I(0),escapechar=S("#")).writerow(T((I(1),F(2),S(".") )))
+    if n=="294": return time.strftime(S("%Y"),T((I(2020),1,1,0,0,0,2,1,-1)))
+    if n=="295": return time.mktime(T((I(2020),1,1,0,0,0,2,1,-1)))
+    if n=="296": return math.fmax(F(1),I(2))
+    if n=="297": return math.fmin(I(1),F(2))
+    if n=="298": return math.fmax(I(1),F(2))
+    if n=="299": return math.fmin(F(1),I(2))
+    if n=="300": return zdict(B(b"abc"))
+    if n=="301": return decomp(B(zlib.compress(b"ab")))
+    if n=="302": return zlib.compressobj(I(1),I(8),I(15),I(8),I(0)).flush()
+    if n=="303": return hashlib.blake2b(B(b"x"),digest_size=I(2),key=B(b"k"),salt=B(b"salt"),person=B(b"p")).hexdigest()
+    if n=="304": return digest(hashlib.sha256(),B(b"ab"))
+    if n=="305": return hashlib.new(S("sha256"),B(b"x")).hexdigest()
+    if n=="306": return binascii.hexlify(B(b"xy"),B(b":"),I(1))
+    if n=="307": return binascii.a2b_base64(S("YQ=="))
+    if n=="308": return binascii.unhexlify(S("ab"))
+    if n=="309": return re.fullmatch(S("a"),S("a"),I(0)).group()
+    if n=="310": return re.compile("a").findall(S("a"),I(0),I(1))
+    if n=="311": return re.compile("a").split(S("a"),I(1))
+    if n=="312": return re.match("(?P<a>.)","a").start(S("a"))
+    if n=="313": return re.match("(?P<a>.)","a").expand(S(r"\g<a>"))
+    if n=="314": return string.Template(S("$a")).safe_substitute(D(a=I(2)))
+    if n=="315": return list(_string.formatter_field_name_split(S("x[y]"))[1])
+    if n=="316": return typing.TypeAliasType("Name",int,type_params=T((typing.TypeVar("T"),))).__name__
+    if n=="317": return typing.ParamSpec(S("P")).__name__
+    if n=="318": return typing.TypeVarTuple(S("Ts")).__name__
+    if n=="319": return signal.strsignal(I(2))
+    if n=="320": return signal.valid_signals().__contains__(signal.SIGINT)
+    if n=="321": return signal.siginterrupt(I(2),I(0))
+    if n=="322": return gc.set_debug(I(0))
+    if n=="323": return _thread.allocate_lock().acquire(I(1),F(0))
+    if n=="324": return _bisect.bisect_right(L([1,2]),2,I(0),I(2))
+    if n=="325": return _bisect.insort_left(L([1,2]),2,I(0),I(2))
+    if n=="326": return _heapq.heappop_max(L([2,1]))
+    if n=="327": return _heapq.heappush_max(L([2,1]),3)
+    if n=="328": return _heapq.heapreplace_max(L([2,1]),0)
+    if n=="329": return _heapq.heappushpop_max(L([2,1]),0)
+    if n=="330": return _heapq.heapify_max(L([1,2]))
+    if n=="331": return reprseed(I(2))
+    if n=="332": return reprseed(F(2))
+    if n=="333": return reprseed(S("seed"))
+    if n=="334": return reprseed(B(b"seed"))
+    if n=="335": return reprseed(T((1,2)))
+    if n=="336": return reprseed(Frozen([1,2]))
+    if n=="337": return tuples(L([T(("aaa",1))]),False)
+    if n=="338": return tuples(T((T(("aaa",1)),)),True)
+    if n=="339": return tuples(L([("aaa",1)]),True)
+    if n=="340": return tuples(T((("aaa",1),)),False)
+    if n=="341": return cencoder(D(),None)
+    if n=="342": return cencoder(None,S(" "))
+    if n=="343": return encoder_result(S("ok"))
+    if n=="344": return json.dumps({I(1):F(2),S("b"):S("a")})
+    if n=="345": return json.dumps(S("abc"),ensure_ascii=False)
+    if n=="346": return json.loads(S("  [1]  "),parse_int=lambda s:I(2))
+    if n=="347": return registry_warn("default")
+    if n=="348": return state_of(T((B(b""),I(0))))
+    if n=="349": return customcodec(T((B(b"ab"),I(1))),"text")
+    if n=="350": return customcodec(T((B(b"ab"),I(1))),"generic")
+    if n=="351": return dialect(S("a31"))
+    if n=="352": return csv.reader(L([S("a,b")])).__next__()
+    if n=="353": return csv.reader([S("a,b")],delimiter=S(","),strict=I(1)).__next__()
+    if n=="354": return _csv.field_size_limit(I(12))>0
+    if n=="355": return spawn(T((B(b"true"),)),Bag(K="ok"))
+    if n=="356": return groupname(S("foo"))
+    if n=="357": return re.fullmatch(S("([a-z]+)"),S("ab"),I(0)).groups()
+    if n=="358": return typing.TypeVar("T",bound=S("Foo")).__name__
+    if n=="359": return typing.TypeAliasType("X",int,type_params=T((typing.TypeVarTuple("Ts"),))).__parameters__[0].__class__.__name__
+    if n=="360": return struct.Struct(S("<2s")).format
+    if n=="361": return struct.Struct(B(b"<2s")).format
+    if n=="362": return struct.pack_into("1s",A(b"a"),I(0),B(b"x"))
+    if n=="363": return functools.partial(dict).__setstate__(T((dict,T(()),D(a=1),D())))
+    if n=="364": return functools.partial(dict).__setstate__((dict,T(()),D(a=1),D()))
+    if n=="365": return collections.deque("abc",I(2)).index(S("b"))
+    if n=="366": return collections.deque(L([1,2]))==collections.deque([1,2])
+    if n=="367": return itertools.count(I(1),F(2)).__reduce__()[1]
+    if n=="368": return itertools.repeat(S("a"),I(2)).__length_hint__()
+    if n=="369": return itertools.islice(S("ab"),I(0),I(2)).__reduce__()[2]
+    if n=="370": return _bisect.insort_left(L([1,2]),1)
+    if n=="371": return struct.calcsize(S("bad!"))
+    if n=="372": return codecs.lookup_error(S("strict")) is codecs.strict_errors
+    if n=="373": return codecs.backslashreplace_errors(UnicodeEncodeError(S("ascii"),S("z"),I(0),I(1),"err"))
+    if n=="374": return codecs.backslashreplace_errors(UnicodeDecodeError(S("ascii"),B(b"x"),I(0),I(1),"err"))
+    if n=="375": return codecs.xmlcharrefreplace_errors(UnicodeEncodeError("ascii",S("z"),I(0),I(1),"err"))
+    if n=="376": return codecs.namereplace_errors(UnicodeEncodeError("ascii",S("z"),I(0),I(1),"err"))
+    if n=="377": return str.encode(S("ab"),S("ascii"),S("strict"))
+    if n=="378": return bytes.decode(B(b"ab"),S("ascii"),S("strict"))
+    if n=="379": return io.IncrementalNewlineDecoder(None,True).setstate(T((S("hi"),I(0))))
+    if n=="380": return io.StringIO("x").__setstate__(T((S("a"),None,I(1),D())))
+    if n=="381": return io.BytesIO().__setstate__(T((B(b"abc"),I(1),D())))
+    if n=="382": return _random.Random().setstate(T(_random.Random(1).getstate()))
+    if n=="383": return os.fspath(P("/dev/null"))=="/dev/null"
+    if n=="384": return struct.pack("D",F(1))
+    if n=="385": return struct.pack("F",I(2))
+    if n=="386": return mask(SS([signal.SIGUSR1]))
+    if n=="387": return mask(FF([signal.SIGUSR1]))
+    if n=="388": return list(itertools.chain(SS(["x"]),FF(["y"])))
+    if n=="389": return list(itertools.permutations(FF(["x"])))
+    if n=="390": return list(itertools.combinations(SS(["x"]),I(1)))
+    if n=="391": return list(itertools.product(FF(["x"]),repeat=I(1)))
+    if n=="392": return collections.Counter(SS(["a"]))["a"]
+    if n=="393": return applied(FF(["x"]))
+    if n=="394": return functools.reduce(operator.or_,[SS(["x"]),FF(["y"])])=={"x","y"}
+    if n=="395": return operator.contains(FF(["x"]),"x")
+    if n=="396": return operator.length_hint(SS(["x"]))
+    if n=="397": return operator.countOf(FF(["x"]),"x")
+    if n=="398": return operator.indexOf(SS(["x"]),"x")
+    if n=="399": return random_seed(FF(["x"]))
+    if n=="400": return random_seed(I(1))
+    if n=="401": return random_seed(F(1))
+    if n=="402": return random_seed(S("s"))
+    if n=="403": return random_seed(B(b"b"))
+    if n=="404": return _random.Random().getrandbits(I(2))<4
+    if n=="405": return applied(S("key"))
+    if n=="406": return applied(I(42))
+    if n=="407": return functools.partial(dict,**D(x=2)).keywords
+    if n=="408": return functools.cmp_to_key(lambda a,b:I(1))(S("a"))>functools.cmp_to_key(lambda a,b:I(1))(S("b"))
+    if n=="409": return hmac.compare_digest(S("ab"),S("ab"))
+    if n=="410": return hmac.compare_digest(B(b"ab"),B(b"ab"))
+    if n=="411": return hmac.compare_digest(A(b"a"),A(b"x"))
+    if n=="412": return hmac.new(B(b"key"),B(b"data"),"sha256").hexdigest()
+    if n=="413": return hmac.digest(B(b"key"),B(b"data"),"sha256")
+    if n=="414": return _blake2.blake2b(A(b"abc"),digest_size=I(2)).hexdigest()
+    if n=="415": return _sha2.sha256(A(b"x")).hexdigest()
+    if n=="416": return _sha3.sha3_224(A(b"x")).hexdigest()
+    if n=="417": return _md5.md5(A(b"x")).hexdigest()
+    if n=="418": return _sha1.sha1(A(b"x")).hexdigest()
+    if n=="419": return binascii.hexlify(A(b"ab"),S(":"))
+    if n=="420": return binascii.b2a_base64(A(b"a"),newline=I(0))
+    if n=="421": return zlib.compress(A(b"abc"),I(1))
+    if n=="422": return zlib.crc32(A(b"abc"),I(0))
+    if n=="423": return operator.attrgetter(S("real"),S("imag"))(1)
+    if n=="424": return repr(operator.attrgetter(S("a.b")))
+    if n=="425": return repr(operator.methodcaller(S("upper")))
+    if n=="426": return repr(operator.itemgetter(I(0)))
+    if n=="427": return operator.itemgetter(S("a"),S("b"))(D(a=1,b=2))
+    if n=="428": return str(_collections._tuplegetter(I(0),S("doc")).__doc__)
+    if n=="429": return string.Formatter().get_field(S("0[1]"),T((T(("a","b")),)),D())[0]
+    if n=="430": return string.Template(S("$x")).is_valid()
+    if n=="431": return string.Template(S("$x")).get_identifiers()
+    if n=="432": return json.dumps({"key":I(1)},indent=I(2))
+    if n=="433": return json.loads(S('"abc"'))
+    if n=="434": return json.loads(A(b"[0]"))
+    if n=="435": return json.loads(B(b"[0]"))
+    if n=="436": return csv.DictWriter(io.StringIO(),fieldnames=T((S("field"),))).writerow(D(field=S("val")))
+    if n=="437": return list(csv.reader(T((S("abc"),)),dialect=S("excel")))
+    if n=="438": return codecs.decode(A(b"abc"),S("utf8"),S("strict"))
+    if n=="439": return codecs.readbuffer_encode(A(b"abc"))
+    if n=="440": return time.strftime(S("%a"),T((2020,I(1),I(1),0,0,0,2,1,-1)))
+    if n=="441": return time.struct_time(L([2020,1,1,0,0,0,2,1,-1])).tm_year
+    if n=="442": return time.struct_time(T((2020,1,1,0,0,0,2,1,-1)),D(tm_zone=S("A"))).tm_zone
+    if n=="443": return _locale.strxfrm(S("abc"))
+    if n=="444": return _locale.strcoll(S("abc"),S("abc"))
+    if n=="445": return splitflags(I(2))
+    if n=="446": return re.match(S("x"),S("xx")).group(I(0))
+    if n=="447": return re.compile(S("x")).sub(S("y"),S("x"),I(1))
+    if n=="448": return re.compile(S("x")).finditer(S("x"),I(0),I(1)).__next__().span()
+    if n=="449": return grp.getgrgid(I(0)).gr_name
+    if n=="450": return pwd.getpwuid(I(0)).pw_name
+    if n=="451": return signal.getsignal(I(15))==signal.SIG_DFL
+    if n=="452": return signal.strsignal(signal.SIGINT)
+    if n=="453": return _thread.get_native_id()>0
+    if n=="454": return _thread.RLock().acquire(I(1),F(0))
+    if n=="455": return gc.is_tracked(T((1,2))) in (True,False)
+    if n=="456": return gc.is_finalized(L([1]))
+    if n=="457": return fillenv()
+    if n=="458": return bytes(A(b"x"))
+    if n=="459": return _sre.template(re.compile("(a)"),L(["",I(1),S("")])) is not None
+    if n=="460": return operator.not_(S("x"))
+    if n=="461": return _operator._compare_digest(S("ab"),S("ab"))
+try:
+    result=run(sys.argv[1])
+    seen=log[:]
+    if issubclass(type(result),str): result=str.__str__(result)
+    if issubclass(type(result),bytes): result=bytes.__getitem__(result,slice(None))
+    if issubclass(type(result),int) and type(result) is not bool: result=int.__index__(result)
+    print(repr(result),seen)
+except BaseException as e: print(type(e).__name__,log)

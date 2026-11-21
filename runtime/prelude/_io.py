@@ -25,6 +25,8 @@ try:
     _own_dict                                    # noqa: B018  # the C's self->dict, read or (with a second argument) replaced
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -42,6 +44,8 @@ except NameError:
     _own_dict: Callable[..., Any] = _missing
     _has_slot: Callable[..., bool] = _missing
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
+    _own_data: Callable[..., Any] = _missing
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 _ABSENT = object()
@@ -175,12 +179,14 @@ def _off(value: object) -> int:                  # Py_off_t: PyLong_AsLongLong
 
 
 def _c_string(value: object, what: str) -> str:  # str(accept={str, NoneType}): a C string, or None
+    """The argument as the C has it from here on: its characters. What is made of a C string later is a plain str, whatever
+    class the argument was of (RL-698)."""
     if not issubclass(type(value), str):
         raise TypeError(what + " must be str or None, not " + _tp_name(value))
     str.encode(value, "utf-8")
     if str.__contains__(value, "\0"):
         raise ValueError("embedded null character")
-    return value
+    return _own_data(value)  # type: ignore[no-any-return]
 
 
 def _full_name(value: object) -> str:            # %T
@@ -257,7 +263,7 @@ def _rw_buffer(value: object, method: str, argument: str = "argument") -> bytear
 def _buffer(value: object) -> bytes:             # PyObject_GetBuffer, read-only: the bytes
     if not _is_bytes_like(value):
         raise TypeError("a bytes-like object is required, not '" + _tp_name(value) + "'")
-    return bytes(value)  # type: ignore[arg-type]
+    return _buffer_bytes(value)
 
 
 # ---- _IOBase (iobase.c) ----
@@ -2635,7 +2641,7 @@ def _tw_read_chunk(self: TextIOWrapper, size_hint: int) -> bool:   # textiowrapp
     input_chunk = self._c_buffer.read1(chunk_size) if self._g_has_read1 else self._c_buffer.read(chunk_size)  # type: ignore[attr-defined]
     if not _is_bytes_like(input_chunk):
         raise TypeError("underlying " + ("read1" if self._g_has_read1 else "read") + "() should have returned a bytes-like object, not '" + _tp_name(input_chunk) + "'")
-    data = bytes(input_chunk)  # type: ignore[arg-type]
+    data = _buffer_bytes(input_chunk)
     nbytes = bytes.__len__(data)
     eof = nbytes == 0
     decoded_chars = _tw_decode(self._h_decoder, data, eof)
@@ -2857,19 +2863,19 @@ class TextIOWrapper(_TextIOBase):
         elif not issubclass(type(encoding), str):
             raise TypeError("TextIOWrapper() argument 'encoding' must be str or None, not " + _tp_name(encoding))
         else:
-            _c_string(encoding, "TextIOWrapper() argument 'encoding'")
+            encoding = _c_string(encoding, "TextIOWrapper() argument 'encoding'")
         if errors is _ABSENT or errors is None:
             errors = "strict"
         elif not issubclass(type(errors), str):
             raise TypeError("TextIOWrapper() argument 'errors' must be str or None, not " + _tp_name(errors)[:50])
         else:
-            _c_string(errors, "TextIOWrapper() argument 'errors'")
+            _c_string(errors, "TextIOWrapper() argument 'errors'")   # checked as a C string; the object is kept as it was given
         if newline is _ABSENT or newline is None:
             newline = None
         elif not issubclass(type(newline), str):
             raise TypeError("TextIOWrapper() argument 'newline' must be str or None, not " + _tp_name(newline))
         else:
-            _c_string(newline, "TextIOWrapper() argument 'newline'")
+            newline = _c_string(newline, "TextIOWrapper() argument 'newline'")
         line_buffering = line_buffering is not _ABSENT and (True if line_buffering else False)
         write_through = write_through is not _ABSENT and (True if write_through else False)
         self._a_ok = False
@@ -3134,7 +3140,7 @@ class TextIOWrapper(_TextIOBase):
         if cookie_obj < 0:  # type: ignore[operator]
             raise ValueError("negative seek position " + repr(cookie_obj))
         self.flush()  # type: ignore[attr-defined]
-        cookie = _number_index(cookie_obj)
+        cookie = int(cookie_obj)  # type: ignore[call-overload]  # textiowrapper_parse_cookie: PyNumber_Long, which calls the __int__ of an int's subclass (RL-669)
         start_pos, dec_flags, bytes_to_feed, need_eof, chars_to_skip = _tw_unpack_cookie(cookie)
         self._c_buffer.seek(start_pos)  # type: ignore[attr-defined]
         _tw_set_decoded_chars(self, None)
@@ -3599,20 +3605,20 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
     elif not issubclass(type(mode), str):
         raise TypeError("open() argument 'mode' must be str, not " + _tp_name(mode))
     else:
-        _c_string(mode, "open() argument 'mode'")
+        mode = _c_string(mode, "open() argument 'mode'")
     buffering = -1 if buffering is _ABSENT else _int(buffering)
     if encoding is _ABSENT or encoding is None:
         encoding = None
     else:
-        _c_string(encoding, "open() argument 'encoding'")
+        encoding = _c_string(encoding, "open() argument 'encoding'")
     if errors is _ABSENT or errors is None:
         errors = None
     else:
-        _c_string(errors, "open() argument 'errors'")
+        errors = _c_string(errors, "open() argument 'errors'")
     if newline is _ABSENT or newline is None:
         newline = None
     else:
-        _c_string(newline, "open() argument 'newline'")
+        newline = _c_string(newline, "open() argument 'newline'")
     closefd = True if closefd is _ABSENT else (True if closefd else False)
     if opener is _ABSENT:
         opener = None

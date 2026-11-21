@@ -28,6 +28,8 @@ try:
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -49,6 +51,8 @@ except NameError:
     _unpack_keywords: Callable[..., Any] = _missing
     _has_slot: Callable[..., bool] = _missing
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
+    _own_data: Callable[..., Any] = _missing
 
 AT_NO_AUTOMOUNT = 2048
 CLD_CONTINUED = 6
@@ -636,7 +640,7 @@ def _write_vector(shown: str, fd: int, buffers: object, offset: int | None, flag
     count = len(buffers)  # type: ignore[arg-type]
     if flags != 0:                               # the pinned build has no pwritev2
         raise NotImplementedError("pwritev2: flags unavailable on this platform")
-    parts = tuple([bytes(b) for b in _buffers(buffers, count, False)])  # type: ignore[call-overload]
+    parts = tuple([_buffer_bytes(b) for b in _buffers(buffers, count, False)])
     _sys("look_lean")
     result = _sys("writev", fd, parts) if offset is None else _sys("writev", fd, parts, offset)
     if result < 0:
@@ -691,6 +695,19 @@ def _tty(which: bytes, *values: object) -> object:   # a terminal call: its valu
     if type(result) is int and result < 0:
         _fail(-result)
     return result
+
+
+def _argc(argv: object, empty: str) -> int:
+    """PySequence_Size(argv) and the check after it: a size that could not be taken is below 1 too, and the ValueError is set
+    over its error, so it is raised outside the handler (RL-697)."""
+    count = -1
+    try:
+        count = len(argv)  # type: ignore[arg-type]
+    except BaseException:
+        count = -1
+    if count < 1:
+        raise ValueError(empty)
+    return count
 
 
 def _arglist(argv: object, count: int, first_empty: str) -> tuple[bytes, ...]:   # parse_arglist, and the check that follows it everywhere
@@ -822,9 +839,7 @@ def _posix_spawn(name: str, searched: bool, args: tuple[object, ...], kwds: dict
     session = setsid is not _ABSENT and bool(setsid)
     if not issubclass(type(argv), (list, tuple)):
         raise TypeError(name + ": argv must be a tuple or list")
-    count = len(argv)  # type: ignore[arg-type]
-    if count < 1:
-        raise ValueError(name + ": argv must not be empty")
+    count = _argc(argv, name + ": argv must not be empty")
     if env is not None and not _has_slot(env, "__getitem__"):   # PyMapping_Check
         raise TypeError(name + ": environment must be a mapping object or None")
     if scheduler is not _ABSENT and scheduler is not None and not issubclass(type(scheduler), tuple):
@@ -901,10 +916,11 @@ def _fspath(path: object) -> object:             # PyOS_FSPath
 
 def _fsconverter(value: object) -> bytes:        # PyUnicode_FSConverter
     path = _fspath(value)
-    data = str.encode(path, "utf-8", "surrogateescape") if issubclass(type(path), str) else path  # type: ignore[arg-type]
-    if 0 in data:  # type: ignore[operator]
+    # PyBytes_AS_STRING and PyBytes_GET_SIZE of what it gave: the bytes themselves, whatever a subclass has (RL-698)
+    data = str.encode(path, "utf-8", "surrogateescape") if issubclass(type(path), str) else _buffer_bytes(path)  # type: ignore[arg-type]
+    if 0 in data:
         raise ValueError("embedded null byte")
-    return data  # type: ignore[return-value]
+    return data
 
 
 def _path(function: str, argument: str, value: object, allow_fd: bool = False, nullable: bool = False) -> tuple[object, object]:
@@ -931,8 +947,8 @@ def _path(function: str, argument: str, value: object, allow_fd: bool = False, n
             raise TypeError("expected " + type(value).__name__ + ".__fspath__() to return str or bytes, not " + type(o).__name__)
     if is_index:
         return _fd_converter(o), o
-    data = str.encode(o, "utf-8", "surrogateescape") if issubclass(type(o), str) else o  # type: ignore[arg-type]
-    if 0 in data:  # type: ignore[operator]
+    data = str.encode(o, "utf-8", "surrogateescape") if issubclass(type(o), str) else _buffer_bytes(o)  # type: ignore[arg-type]
+    if 0 in data:
         raise ValueError(function + ": embedded null character in " + argument)
     return data, o
 
@@ -1356,11 +1372,13 @@ def _splitroot(path: object) -> tuple[object, object, object]:   # _Py_skiproot
 
 
 def _path_splitroot_ex(*args: object, **kwds: object) -> tuple[object, object, object]:
-    return _splitroot(_pure_path("_path_splitroot_ex", _one("_path_splitroot_ex", args, kwds)))
+    # the C works on the path's characters and makes its three results anew: plain strs or bytes, whatever class the path
+    # was of (RL-674, RL-681)
+    return _splitroot(_own_data(_pure_path("_path_splitroot_ex", _one("_path_splitroot_ex", args, kwds))))
 
 
 def _path_normpath(*args: object, **kwds: object) -> object:   # _Py_normpath_and_size
-    path = _pure_path("_path_normpath", _unpack("_path_normpath", args, kwds, ("path",), 1, 1)[0])
+    path = _own_data(_pure_path("_path_normpath", _unpack("_path_normpath", args, kwds, ("path",), 1, 1)[0]))
     if issubclass(type(path), bytes):
         sep, dot, dotdot = b"/", b".", b".."
     else:
@@ -1559,9 +1577,7 @@ def execv(*args: object, **kwds: object) -> None:   # os_execv_impl: the error n
     argv = args[1]
     if not issubclass(type(argv), (list, tuple)):
         raise TypeError("execv() arg 2 must be a tuple or list")
-    count = len(argv)  # type: ignore[arg-type]
-    if count < 1:
-        raise ValueError("execv() arg 2 must not be empty")
+    count = _argc(argv, "execv() arg 2 must not be empty")
     strings = _arglist(argv, count, "execv() arg 2 first element cannot be empty")
     _fail(-_sys("exec", data, strings, None))
 
@@ -1571,9 +1587,7 @@ def execve(*args: object, **kwds: object) -> None:   # os_execve_impl: by name o
     data, shown = _path("execve", "path", path, allow_fd=True)
     if not issubclass(type(argv), (list, tuple)):
         raise TypeError("execve: argv must be a tuple or list")
-    count = len(argv)  # type: ignore[arg-type]
-    if count < 1:
-        raise ValueError("execve: argv must not be empty")
+    count = _argc(argv, "execve: argv must not be empty")
     if not _has_slot(env, "__getitem__"):   # PyMapping_Check
         raise TypeError("execve: environment must be a mapping object")
     strings = _arglist(argv, count, "execve: argv first element cannot be empty")
@@ -2020,7 +2034,7 @@ def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
         if _has_slot(data, "__buffer__"):
             _refuse("os.pwrite() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
-    content = bytes(data)  # type: ignore[call-overload]
+    content = _buffer_bytes(data)
     offset = _off(args[2])
     _sys("look_lean")
     result = _sys("pwrite", fd, content, offset)
@@ -2307,7 +2321,7 @@ def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
         raise TypeError("a bytes-like object is required, not '" + type(value).__name__ + "'")
     bits = 0 if flags is _ABSENT else _int(flags)
     follows = _xattr_follow("setxattr", data, follow)
-    code = _sys("xattr", b"set", data, follows, name, bytes(value), bits)  # type: ignore[arg-type]
+    code = _sys("xattr", b"set", data, follows, name, _buffer_bytes(value), bits)
     if code < 0:
         _fail(-code, shown)
 

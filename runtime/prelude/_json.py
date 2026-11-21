@@ -604,9 +604,9 @@ def _encode_obj(s: Encoder, parts: list[str], obj: object, level: int, cache: li
         markers = s._markers
         if markers is not None:
             ident = id(obj)
-            if ident in markers:
+            if dict.__contains__(markers, ident):    # PyDict_Contains, PyDict_SetItem: the dict's own, whatever its class has (RL-684)
                 raise ValueError("Circular reference detected")
-            markers[ident] = obj
+            dict.__setitem__(markers, ident, obj)
         newobj = s._defaultfn(obj)  # type: ignore[operator]
         try:
             _encode_obj(s, parts, newobj, level, cache)
@@ -614,7 +614,7 @@ def _encode_obj(s: Encoder, parts: list[str], obj: object, level: int, cache: li
             _note(exc, "when serializing " + _tp_name(obj) + " object")
             raise
         if ident is not None:
-            del markers[ident]  # type: ignore[index]
+            dict.__delitem__(markers, ident)  # type: ignore[arg-type]
 
 
 def _encode_key_value(s: Encoder, parts: list[str], first: list[bool], dct: object, key: object, value: object, level: int,
@@ -654,9 +654,9 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
     markers = s._markers
     if markers is not None:
         ident = id(dct)
-        if ident in markers:
+        if dict.__contains__(markers, ident):    # PyDict_Contains, PyDict_SetItem: the dict's own, whatever its class has (RL-684)
             raise ValueError("Circular reference detected")
-        markers[ident] = dct
+        dict.__setitem__(markers, ident, dct)
     parts.append("{")
     separator = s._item_separator
     if s._indent is not None:
@@ -664,13 +664,18 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
         separator = _item_separator(s, level, cache)  # type: ignore[arg-type]
     first = [True]
     if s._sort_keys or type(dct) is not dict and type(dct) is not frozendict:
-        items = list(dct.items())  # type: ignore[attr-defined]
+        items = dct.items()  # type: ignore[attr-defined]
+        if type(items) is not list:              # PyMapping_Items: what items() gave if it is an exact list, else its iterator listed
+            items = list(iter(items))
         if s._sort_keys:
-            items.sort()
-        for item in items:
-            if not issubclass(type(item), tuple) or len(item) != 2:
+            list.sort(items)
+        at = 0
+        while at < list.__len__(items):          # PyList_GET_SIZE and PyList_GET_ITEM; a pair's two slots (PyTuple_GET_ITEM), RL-682
+            item = list.__getitem__(items, at)
+            if not issubclass(type(item), tuple) or tuple.__len__(item) != 2:
                 raise ValueError("items must return 2-tuples")
-            _encode_key_value(s, parts, first, dct, item[0], item[1], level, cache, separator)
+            _encode_key_value(s, parts, first, dct, tuple.__getitem__(item, 0), tuple.__getitem__(item, 1), level, cache, separator)
+            at += 1
     else:                                        # PyDict_Next: the entries as they are at each step, an inserted one included (A14 #2)
         pos = 0
         while True:
@@ -680,7 +685,7 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
             pos, key, value = step
             _encode_key_value(s, parts, first, dct, key, value, level, cache, separator)
     if ident is not None:
-        del markers[ident]  # type: ignore[index]
+        dict.__delitem__(markers, ident)  # type: ignore[arg-type]
     if s._indent is not None and not first[0]:
         level -= 1
         parts.append(cache[level * 2])  # type: ignore[index]
@@ -690,7 +695,7 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
 def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: list[str] | None) -> None:   # encoder_listencode_list
     # PySequence_Fast: an exact list or tuple is the object itself, its size read again at every step and an item what it holds
     # then; a subclass is iterated into a list first (A14 #3)
-    fast: object = seq if type(seq) is list or type(seq) is tuple else list(seq)  # type: ignore[call-overload]
+    fast: object = seq if type(seq) is list or type(seq) is tuple else list(iter(seq))  # type: ignore[call-overload]   # of its iterator: no length is asked (RL-661)
     size = list.__len__ if issubclass(type(fast), list) else tuple.__len__
     item = list.__getitem__ if issubclass(type(fast), list) else tuple.__getitem__
     if size(fast) == 0:  # type: ignore[arg-type]
@@ -700,9 +705,9 @@ def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: l
     markers = s._markers
     if markers is not None:
         ident = id(seq)
-        if ident in markers:
+        if dict.__contains__(markers, ident):    # PyDict_Contains, PyDict_SetItem: the dict's own, whatever its class has (RL-684)
             raise ValueError("Circular reference detected")
-        markers[ident] = seq
+        dict.__setitem__(markers, ident, seq)
     parts.append("[")
     separator = s._item_separator
     if s._indent is not None:
@@ -721,7 +726,7 @@ def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: l
             raise
         i += 1
     if ident is not None:
-        del markers[ident]  # type: ignore[index]
+        dict.__delitem__(markers, ident)  # type: ignore[arg-type]
     if s._indent is not None:
         level -= 1
         parts.append(cache[level * 2])  # type: ignore[index]

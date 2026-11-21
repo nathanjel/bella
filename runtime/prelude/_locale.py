@@ -14,6 +14,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _sys                                         # noqa: B018  # the system calls, by name
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial: the bound method in a tuple, or ()
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -25,6 +26,7 @@ except NameError:
     _tp_name: Callable[..., str] = _missing
     _sys: Callable[..., Any] = _missing
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
 
 ABDAY_1 = 131072
 ABDAY_2 = 131073
@@ -247,7 +249,7 @@ def bindtextdomain(*args: object, **kwds: object) -> object:
             dirname = fspath[0]()
             if not issubclass(type(dirname), (str, bytes)):
                 raise TypeError("expected " + type(args[1]).__name__ + ".__fspath__() to return str or bytes, not " + type(dirname).__name__)
-        dirname = str.encode(dirname, "utf-8", "surrogateescape") if issubclass(type(dirname), str) else bytes(dirname)
+        dirname = str.encode(dirname, "utf-8", "surrogateescape") if issubclass(type(dirname), str) else _buffer_bytes(dirname)
         if 0 in dirname:
             raise ValueError("embedded null byte")
     result = _sys("bindtextdomain", domain, dirname)

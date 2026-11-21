@@ -18,6 +18,8 @@ try:
     _sre_call                                    # noqa: B018  # the engine, by name
     _present                                     # noqa: B018  # a class the module has in C, with what it cannot do
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -32,6 +34,8 @@ except NameError:
     _sre_call: Callable[..., Any] = _missing
     _present: Callable[..., None] = _missing
     _has_slot: Callable[..., bool] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
+    _own_data: Callable[..., Any] = _missing
 
 CODESIZE = 4
 MAGIC = 20230612
@@ -263,7 +267,7 @@ def _compile_template(pattern: object, repl: object) -> object:   # compile_temp
         if issubclass(type(repl), str) and type(repl) is not str:
             repl = str.__str__(repl)  # type: ignore[arg-type]
         elif issubclass(type(repl), (bytes, bytearray)) and type(repl) is not bytes:
-            repl = bytes(repl)  # type: ignore[call-overload]
+            repl = _buffer_bytes(repl)           # PyBytes_FromObject: the buffer, not __bytes__ (RL-698)
         else:
             raise
         result = func(pattern, repl)  # type: ignore[operator]
@@ -518,7 +522,7 @@ def _getindex(self: object, index: object) -> int:   # match_getindex
         if groupindex is not None:
             found = dict.get(groupindex, index, _ABSENT)
             if found is not _ABSENT and issubclass(type(found), int):
-                i = found
+                i = _own_data(found)             # PyLong_AsSsize_t: the value, whatever the int's class has (RL-692)
     if i < 0 or i >= self._g_groups:  # type: ignore[attr-defined]
         raise IndexError("no such group")
     return i

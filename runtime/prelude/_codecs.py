@@ -23,6 +23,7 @@ try:
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _codecs_call                                 # noqa: B018  # the runtime's codecs and what it keeps of an exception, by name
     _number_index                                # noqa: B018  # PyNumber_Index, with its messages
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -34,6 +35,7 @@ except NameError:
     _keyword_suggestion: Callable[..., str | None] = _missing
     _codecs_call: Callable[..., Any] = _missing
     _number_index: Callable[..., int] = _missing
+    _own_data: Callable[..., Any] = _missing
 
 _ABSENT = object()
 _search_path: list[object] = []                  # interp->codecs.search_path
@@ -109,7 +111,7 @@ def _c_string(value: str) -> str:                # PyUnicode_AsUTF8AndSize, and 
     str.encode(value, "utf-8")
     if str.__contains__(value, "\0"):
         raise ValueError("embedded null character")
-    return value
+    return _own_data(value)  # type: ignore[no-any-return]   # the characters: a plain str from here on, whatever class the argument was of (RL-698)
 
 
 def _errors(function: str, position: int, args: tuple[object, ...]) -> str | None:   # str(accept={str, NoneType}) = None

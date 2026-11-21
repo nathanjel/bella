@@ -967,7 +967,9 @@ Ref repr_unchecked(Obj v) {
             return type_repr_of(v);
         }
         case Kind::Bytes:
-        case Kind::ByteArray: return bytes_repr(v);
+        case Kind::ByteArray:
+            if (overridden(v, "__repr__")) return call_special(v, "__repr__", {});   // a subclass's own, as for a str (RL-696)
+            return bytes_repr(v);
         case Kind::IntInstance:
             if (!overridden(v, "__repr__")) return str_new(big_text(v));
             break;

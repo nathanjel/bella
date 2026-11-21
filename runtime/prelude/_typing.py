@@ -20,6 +20,7 @@ try:
     _bella_bootstrap                             # noqa: B018  # _frozen_importlib's functions by name: the union's, GenericAlias
     _number_index                                # noqa: B018  # PyNumber_Index
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from operator import index as _number_index
@@ -55,6 +56,7 @@ except NameError:
         t = type(obj)
         return t.__name__ if t.__module__ in ("builtins", "__main__") else t.__module__ + "." + t.__name__
     _has_slot: Callable[..., bool] = _missing
+    _own_data: Callable[..., Any] = _missing
 
 Union = type(int | None)                         # _PyUnion_Type, the runtime's (typing.Union)
 _FORMAT_STRING = 4                               # _Py_ANNOTATE_FORMAT_STRING
@@ -839,8 +841,9 @@ def _unpack_typevartuple(tvt: object) -> object:   # unpack: typing.Unpack[tvt]
 
 
 def _unpack_typevartuples(params: tuple[object, ...]) -> tuple[object, ...]:   # unpack_typevartuples
-    if any(type(p) is TypeVarTuple for p in params):
-        return tuple(_unpack_typevartuple(p) if type(p) is TypeVarTuple else p for p in params)
+    own = _own_data(params)                      # PyTuple_GET_SIZE and PyTuple_GET_ITEM: the tuple's own entries (RL-670)
+    if any(type(p) is TypeVarTuple for p in own):
+        return tuple(_unpack_typevartuple(p) if type(p) is TypeVarTuple else p for p in own)
     return params
 
 
@@ -851,10 +854,11 @@ def _type_param_default(typeparam: object) -> object:   # get_type_param_default
 
 
 def _check_type_params(type_params: tuple[object, ...]) -> object:   # typealias_check_type_params: None for an empty tuple
-    if not type_params:
+    own = _own_data(type_params)                 # the tuple's own size and entries; the object itself is what is kept (RL-670)
+    if not own:
         return None
     default_seen = False
-    for type_param in type_params:
+    for type_param in own:
         dflt = _type_param_default(type_param)
         if dflt is NoDefault:
             if default_seen:

@@ -344,10 +344,10 @@ class _tee_dataobject:
         if not issubclass(type(values), list):
             raise _bad_argument("teedataobject", "argument 2", "list", values)
         self = _new_data(it)
-        n = len(values)  # type: ignore[arg-type]
+        n = list.__len__(values)  # type: ignore[arg-type]   # PyList_GET_SIZE and PyList_GET_ITEM: the list's own storage (RL-691)
         if n > _LINKCELLS:
             raise ValueError("Invalid arguments")
-        self._b_values = list(values)  # type: ignore[call-overload]
+        self._b_values = list.copy(values)  # type: ignore[arg-type]
         self._numread = n
         if n == _LINKCELLS:
             if nextlink is not None:

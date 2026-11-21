@@ -24,6 +24,7 @@ try:
     _find_source_encoding                        # noqa: B018  # (fd, filename, io): _PyTokenizer_FindEncodingFilename's answer or None, and whether it left an error set
     _fd_seek                                     # noqa: B018  # lseek(fd, offset, SEEK_SET) worked
     _bella_holds                                 # noqa: B018  # the program holds a module of this name
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     import operator
     from collections.abc import Callable
@@ -63,6 +64,7 @@ except NameError:
 
     def _bella_holds(name: str) -> bool:
         return True
+    _own_data: Callable[..., Any] = _missing
 
 import _io
 import sys
@@ -200,17 +202,20 @@ def _default_action() -> str:                    # get_default_action
 def _ssize(value: object) -> int:                # PyLong_AsSsize_t: an int only, no __index__
     if not issubclass(type(value), int):
         raise TypeError("an integer is required")
+    value = _own_data(value)                     # the int's value: nothing of a subclass's is asked (RL-698)
     if value > _MAXSIZE or value < -_MAXSIZE - 1:
         raise OverflowError("Python int too large to convert to C ssize_t")
-    return int(value)
+    return value  # type: ignore[no-any-return]
 
 
 def _filter_search(category: object, text: object, lineno: int, module: object, filename: object, list_name: str,
                    items: list[object]) -> tuple[object, object]:   # filter_search: (item, action), (None, None) for no match
-    for i, item in enumerate(items):
-        if not issubclass(type(item), tuple) or len(item) != 5:
+    i = 0
+    while i < list.__len__(items):               # PyList_GET_SIZE and PyList_GET_ITEM at each turn: the list's own storage, as it
+        item = list.__getitem__(items, i)        # is then; and the five slots of the tuple (PyTuple_GET_ITEM), RL-698
+        if not issubclass(type(item), tuple) or tuple.__len__(item) != 5:  # type: ignore[arg-type]
             raise ValueError("warnings." + list_name + " item " + str(i) + " isn't a 5-tuple")
-        action, msg, cat, mod, ln_obj = item
+        action, msg, cat, mod, ln_obj = _own_data(item)
         if not issubclass(type(action), str):
             raise TypeError("action must be a string, not '" + _tp_name(action) + "'")
         good_msg = _matched(msg, text, _ABSENT)
@@ -219,6 +224,7 @@ def _filter_search(category: object, text: object, lineno: int, module: object, 
         ln = _ssize(ln_obj)
         if good_msg and is_subclass and good_mod and (ln == 0 or lineno == ln):
             return item, action
+        i += 1
     return None, None
 
 
@@ -494,7 +500,8 @@ def _warn_explicit(category: object, message: object, filename: object, lineno: 
         assert issubclass(type(registry), dict)
         if _already_warned(registry, key, False):
             return
-    action, item = _get_filter(category, text, lineno, module, filename)
+    given, item = _get_filter(category, text, lineno, module, filename)
+    action = _own_data(given)                    # _PyUnicode_EqualToASCIIString: the action's characters (RL-698)
     if action == "error":
         raise message  # type: ignore[misc]
     if action == "ignore":
@@ -514,7 +521,7 @@ def _warn_explicit(category: object, message: object, filename: object, lineno: 
                 assert issubclass(type(registry), dict)
                 rc = _update_registry(registry, text, category, False)
         elif action != "default":
-            raise RuntimeError("Unrecognized action (" + repr(action) + ") in warnings.filters:\n " + repr(item))
+            raise RuntimeError("Unrecognized action (" + repr(given) + ") in warnings.filters:\n " + repr(item))
     if rc:                                       # already warned for this module
         return
     _call_show_warning(category, text, message, filename, lineno, sourceline, None if source is _ABSENT else source, module)
@@ -523,13 +530,13 @@ def _warn_explicit(category: object, message: object, filename: object, lineno: 
 # ---- the frame a warning is charged to (setup_context) ------------------------------------------------------------------------
 
 def _is_internal_filename(filename: object) -> bool:
-    return issubclass(type(filename), str) and "importlib" in filename and "_bootstrap" in filename
+    return issubclass(type(filename), str) and str.__contains__(filename, "importlib") and str.__contains__(filename, "_bootstrap")  # type: ignore[arg-type]
 
 
 def _is_filename_to_skip(filename: object, skip_file_prefixes: tuple[object, ...] | None) -> bool:
     if skip_file_prefixes and issubclass(type(filename), str):
         for prefix in skip_file_prefixes:
-            if filename.startswith(prefix):  # type: ignore[arg-type]
+            if str.startswith(filename, prefix):  # type: ignore[arg-type]   # PyUnicode_Tailmatch: the characters of both
                 return True
     return False
 
@@ -606,7 +613,7 @@ def warn(*args: object, **kwds: object) -> None:
     elif not issubclass(type(skip_file_prefixes), tuple):
         raise TypeError("warn() argument 'skip_file_prefixes' must be tuple, not " + _tp_name(skip_file_prefixes))
     else:
-        prefixes = skip_file_prefixes
+        prefixes = _own_data(skip_file_prefixes)   # PyTuple_GET_SIZE and PyTuple_GET_ITEM: the tuple's own entries (RL-698)
     category = _get_category(message, category)
     if prefixes is not None:
         if len(prefixes) > 0:

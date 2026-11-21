@@ -25,6 +25,7 @@ try:
     _pop_hashed                                  # noqa: B018  # _PyDict_Pop_KnownHash; a default when absent
     _is_callable                                 # noqa: B018  # PyCallable_Check
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -47,6 +48,7 @@ except NameError:
     _pop_hashed: Callable[..., Any] = _missing
     _is_callable: Callable[..., bool] = _missing
     _has_slot: Callable[..., bool] = _missing
+    _own_data: Callable[..., Any] = _missing
 
 _SSIZE_MAX = 2**63 - 1
 _set = _bella_state_set                          # a C function's store into its struct: no class's __setattr__ is asked
@@ -289,12 +291,12 @@ and keywords."""
     def __setstate__(*args: object, **kwds: object) -> None:    # partial_setstate
         state = _one(args, kwds, partial, "__setstate__", "partial")
         self = args[0]
-        if not issubclass(type(state), tuple) or len(state) != 4:  # type: ignore[arg-type]
+        if not issubclass(type(state), tuple) or tuple.__len__(state) != 4:  # type: ignore[arg-type]
             raise TypeError("invalid partial state")
-        fn, fnargs, kw, dict_ = state  # type: ignore[misc]
+        fn, fnargs, kw, dict_ = _own_data(state)   # PyArg_ParseTuple: the tuple's four slots, whatever its class has (RL-685)
         if not _is_callable(fn) or not issubclass(type(fnargs), tuple) or (kw is not None and not issubclass(type(kw), dict)) or (dict_ is not None and not issubclass(type(dict_), dict)):
             raise TypeError("invalid partial state")
-        nargs = len(fnargs)
+        nargs = tuple.__len__(fnargs)            # PyTuple_GET_SIZE
         if nargs and tuple.__getitem__(fnargs, nargs - 1) is Placeholder:
             raise TypeError("trailing Placeholders are not allowed")
         phcount = 0

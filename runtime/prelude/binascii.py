@@ -17,6 +17,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -35,6 +36,7 @@ except NameError:
         import operator
         return operator.index(o)
     _has_slot: Callable[..., bool] = _missing
+    _buffer_bytes: Callable[..., bytes] = _missing
 
 ASCII85_ALPHABET = b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'
 BASE32HEX_ALPHABET = b"0123456789ABCDEFGHIJKLMNOPQRSTUV"
@@ -73,7 +75,7 @@ def _is_bytes_like(value: object) -> bool:
 def _buffer(value: object) -> bytes:             # Py_buffer: PyObject_GetBuffer, read-only
     if not _is_bytes_like(value):
         raise TypeError("a bytes-like object is required, not '" + _tp_name(value) + "'")
-    return bytes(value)  # type: ignore[arg-type]
+    return _buffer_bytes(value)
 
 
 def _ascii_buffer(value: object) -> bytes:       # ascii_buffer_converter
@@ -83,7 +85,7 @@ def _ascii_buffer(value: object) -> bytes:       # ascii_buffer_converter
         return str.encode(value, "ascii")  # type: ignore[arg-type]
     if not _is_bytes_like(value):
         raise TypeError("argument should be bytes, buffer or ASCII string, not '" + _tp_name(value) + "'")
-    return bytes(value)  # type: ignore[arg-type]
+    return _buffer_bytes(value)
 
 
 def _bytes_arg(function: str, name: str, value: object) -> bytes:   # PyBytesObject: bytes or a subclass
@@ -565,7 +567,7 @@ def _strhex(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> byt
             if sep_char > 255:
                 raise ValueError("sep must be ASCII.")
         elif issubclass(type(sep), bytes):
-            sep_char = sep[0]  # type: ignore[index]
+            sep_char = _buffer_bytes(sep)[0]     # PyBytes_AS_STRING(sep)[0]: the byte itself (RL-680)
         else:
             raise TypeError("sep must be str or bytes.")
     arglen = len(bin_data)
