@@ -493,8 +493,13 @@ class RefClass:
         members: tuple[str, ...] = (),
         readonly: tuple[str, ...] = (),
         release: tuple[str, ...] | None = None,
+        slots_ordered: bool = False,
     ) -> None:
         self.name = name
+        # type_new sorts a class's slot names as objects (PyList_Sort), which for plain strs is their order by code point.
+        # A name that is an instance of a str subclass has its own __lt__ asked, and that decides: the slots are then
+        # given in the order that sort left them, and the members and the release follow it (RL-588)
+        self.slots_ordered = slots_ordered
         # tp_bases and tp_mro are objects, one each until they are replaced: `__bases__` is the tuple the class was made
         # with (type_new keeps the one it is given; a class with none gets a new (object,) of its own, which the model
         # leaves out with object itself), and `__mro__` the tuple mro_internal made
@@ -538,7 +543,7 @@ class RefClass:
         for s in own_slots:
             if s in self.attrs and (s not in self.hidden or s in self.members):
                 raise ValueError(f"{s!r} in __slots__ conflicts with class variable")
-        for s in sorted(own_slots):                # type_new_slots sorts them; tp_members' order is the dict's
+        for s in (own_slots if slots_ordered else sorted(own_slots)):   # type_new_slots sorts them; tp_members' order is the dict's
             if s not in self.hidden or s in self.members:
                 self.attrs[s] = SlotDescriptor(s, self, s in readonly)
         if not set(readonly) <= set(own_slots):
@@ -622,7 +627,7 @@ class RefClass:
         """Its own slots in the order an object lets go of them: a built-in type's fields as it declares them (its clear
         function's order), a class's __slots__ sorted by name (type_new sorts them)."""
         own = self._own_slot_names()
-        return own if self.hidden else tuple(sorted(own))
+        return own if self.hidden or self.slots_ordered else tuple(sorted(own))
 
     def note_key(self, name: str) -> bool:
         """Records `name` in the shared keys; False when they are full and it is not there."""

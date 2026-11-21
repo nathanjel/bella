@@ -3,8 +3,8 @@
 Codex's Astra at low effort read the step that gives a built-in type's dealloc its own order (RL-565, RL-577), the fixes of
 A24 and the streams' state methods; the review log has its 22 findings as RL-578 to RL-599. Each program here is the
 report's own reproduction, run under CPython and compiled: standard output, the exit status and standard error must
-agree. The findings left open (RL-583, RL-588, RL-591, RL-592, RL-599) have no program here; RL-584 was done later the
-same day and has one, and RL-585, RL-593, RL-594, RL-597 and RL-598 that night.
+agree. The findings left open (RL-583, RL-591, RL-592, RL-599) have no program here; RL-584 was done later the
+same day and has one, and RL-585, RL-588, RL-593, RL-594, RL-597 and RL-598 that night.
 The last program is RL-600's, found in the reviewer's probes after the round: the keys and results of a bounded
 `lru_cache`, which the prelude's ring of links held for good. Its row with a comparison that fails stops at the lookup of
 the third key (review A27, RL-619); the pop of the oldest link is reached by RL-619's program in
@@ -280,6 +280,54 @@ for k in (S, C, D, N, P, L, M, F, I, StaticRaises, Sub):
     o = k()
     del o
 print("done")
+'''),
+    ('RL-588', 'the names of __slots__ are sorted as objects: a str subclass decides the order of the members and of their release', r'''
+events = []
+class T(str):
+    def __lt__(self, other):
+        events.append("compare " + str(self) + " " + str(other))
+        return super().__gt__(other)
+class V:
+    def __init__(self, n): self.n = n
+    def __del__(self): events.append("gone " + self.n)
+class D:
+    __slots__ = (T("a"), T("b"), T("c"))
+print(events, [n for n in vars(D) if n in ("a", "b", "c")])
+events.clear()
+d = D()
+d.a, d.b, d.c = V("a"), V("b"), V("c")
+del d
+print("released:", events)
+events.clear()
+class M:
+    __slots__ = (T("z"), "m", T("__p"), "__dict__", "__weakref__", "a")
+print(len(events) > 0, [n for n in vars(M) if n in ("z", "m", "a", "_M__p")])
+events.clear()
+m = M()
+m.z, m.m, m.a, m._M__p, m.other = V("z"), V("m"), V("a"), V("p"), V("in the dict")
+del m
+print("released:", events)
+events.clear()
+class Bad(str):
+    def __lt__(self, other): raise LookupError("lt")
+try:
+    class E: __slots__ = (Bad("a"), Bad("b"))
+    print("made")
+except LookupError: print("a comparison that raises: no class")
+class One: __slots__ = (Bad("a"),)
+print("one name:", [n for n in vars(One) if n == "a"])
+class P: __slots__ = ("c", "a", "b")
+print("plain names:", [n for n in vars(P) if n in ("a", "b", "c")])
+p = P()
+p.a, p.b, p.c = V("a"), V("b"), V("c")
+del p
+print("released:", events)
+class Sub(D): __slots__ = (T("y"), T("x"))
+events.clear()
+s = Sub()
+s.a, s.b, s.c, s.x, s.y = V("a"), V("b"), V("c"), V("x"), V("y")
+del s
+print("a subclass, its own first:", [e for e in events if e.startswith("gone")])
 '''),
     ('RL-584', 'the item iterators of dict and OrderedDict keep their own pair and give it again', r'''
 from collections import OrderedDict

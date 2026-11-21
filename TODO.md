@@ -724,13 +724,13 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   refuse. Exact needs where each literal stands among the warnings, which the build can ask of the host by compiling under a
   recorder that lifts the limit at the n-th warning (the compile succeeds while the literal comes after it).
 * **Open from review A25** (2026-11-21), each confirmed on both sides: `Struct.iter_unpack` keeps an export of its buffer where the
-  prelude copies it (RL-583, with the memoryview step); `type_new` sorts slot names as objects, so a str subclass's `__lt__` is asked
-  and decides the members' order (RL-588: the order of a class's slots is the model's, sorted by name in three places of the
-  header); a slot named twice in one `__slots__` is two cells in CPython, seen by the default state's size test alone (RL-591);
+  prelude copies it (RL-583, with the memoryview step); a slot named twice in one `__slots__` is two cells in CPython, seen by
+  the default state's size test alone (RL-591);
   that test over a C type with fields needs the type's size (RL-592); a prelude type whose own struct adds only a dict or a
   weak list is a solid base to CPython, which decides `__base__` and the entries of `class X(Mixin, SimpleNamespace)` (RL-599).
   Done on 2026-11-21, night: RL-585 and RL-598 (no finaliser for an exact BufferedRWPair, BytesIO, StringIO), RL-593 (a struct
   sequence's order of release), RL-594 (a Context's iterator keeps the mapping), RL-597 (`__del__` bound as a special method).
+  Done on 2026-11-22: RL-588 (the names of `__slots__` sorted as objects; `slots_ordered` in the model and the header).
 * **Review A24** (2026-11-20) has nothing open: RL-574 (a tuple keeps its hash) was done on 2026-11-21 as C-6-24, RL-572 was the
   author's, decided and done the same day (C-8-19, D-29).
 * **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too, the

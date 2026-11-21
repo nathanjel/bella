@@ -783,6 +783,7 @@ struct ClassObject : Object {
     bool disallow_instantiation = false;         // Py_TPFLAGS_DISALLOW_INSTANTIATION, of a C type written in Python
     bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited
     bool struct_sequence = false;                // Objects/structseq.c's type: structseq_dealloc's order of release (RL-593)
+    bool slots_ordered = false;                  // its own slots stand in the order type_new's sort of the name objects left them (RL-588)
     bool final_type = false;                     // a built-in type a class cannot derive from (no Py_TPFLAGS_BASETYPE)
     // attrs as a dict, made when a program first asks for a view of __dict__ (class_dict) and kept
     // equal to attrs from then on; its counts are dropped first, so attrs decides when a value dies
@@ -896,6 +897,7 @@ struct ClassSpec {
     std::vector<std::string> members = {};                           // of the hidden, those the type shows (RefClass members)
     std::vector<std::string> readonly = {};                          // of its slots, the read-only members (RefClass readonly)
     std::optional<std::vector<std::string>> release = std::nullopt;  // a built-in type's dealloc order (RefClass release)
+    bool slots_ordered = false;                                      // the slots are in the order type_new's sort left them (RefClass slots_ordered)
 };
 
 // RefClass(release=...), also for a class that exists (the prelude's, presented as CPython's after its class statement):
@@ -1013,8 +1015,10 @@ inline ClassObject* make_class(const ClassSpec& spec) {
         for (const Str* s : own)
             if (c->attrs.contains(s) && (!c->hidden.contains(s) || listed(spec.members, s)))
                 throw ModelError("'" + s->text + "' in __slots__ conflicts with class variable");
-        // type_new_slots sorts them, and tp_members' order is the class dict's (code points: UTF-8's order)
-        std::sort(own.begin(), own.end(), [](const Str* x, const Str* y) { return x->text < y->text; });
+        // type_new_slots sorts them, and tp_members' order is the class dict's (code points: UTF-8's order); names that were
+        // sorted as objects, by a str subclass's own __lt__, come in that order (RL-588)
+        c->slots_ordered = spec.slots_ordered;
+        if (!spec.slots_ordered) std::sort(own.begin(), own.end(), [](const Str* x, const Str* y) { return x->text < y->text; });
         for (const Str* s : own) {
             if (c->hidden.contains(s) && !listed(spec.members, s)) continue;   // a field of the C struct: no member of the type
             auto* d = new SlotDescriptor(s);
@@ -2137,7 +2141,7 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
         // each class's slots sorted by name, as CPython sorts them when it makes the class; a built-in type's fields in the
         // order it declares them, which is its clear function's (RefClass._release_order)
         auto names = c->own_slot_names();
-        if (c->hidden.empty()) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
+        if (c->hidden.empty() && !c->slots_ordered) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
         for (const Str* s : names) decref(std::exchange(slot_cell(obj, c, s), Obj{}));
     }
     if (base != nullptr) {                       // the built-in type's own dealloc, in its order (RefObject._clear_contents)

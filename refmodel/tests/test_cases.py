@@ -1755,6 +1755,23 @@ def test_a_slot_declared_again_is_a_second_cell() -> None:
     assert [getattr(v, "tag", None) for v in h.traverse()] == ["High.m", "High.x", "Low.a", "Low.x", "Low.z"]
     O.decref(h)
     assert _deaths() == ["High.m", "High.x", "Low.a", "Low.x", "Low.z"]
+    # slots whose names were sorted as objects, by a str subclass's own __lt__, stand in the order that sort left them:
+    # the members in the class's dict and the release follow it, not the names (RL-588)
+    _fresh_heap()
+    rt = Runtime()
+    Sorted = RefClass("Sorted", slots=("c", "b", "a"), slots_ordered=True)
+    assert [n for n in Sorted.attrs if n in ("a", "b", "c")] == ["c", "b", "a"]
+    s = RefObject(Sorted)
+    O.incref(s)
+    for name in ("a", "b", "c"):
+        _store(rt, s, name, "Sorted." + name)
+    assert [getattr(v, "tag", None) for v in s.traverse()] == ["Sorted.c", "Sorted.b", "Sorted.a"]
+    O.decref(s)
+    assert _deaths() == ["Sorted.c", "Sorted.b", "Sorted.a"]
+    _fresh_heap()
+    rt = Runtime()
+    ByName = RefClass("ByName", slots=("c", "b", "a"))
+    assert [n for n in ByName.attrs if n in ("a", "b", "c")] == ["a", "b", "c"]
     # a store over a value lets go of that cell's alone
     h = RefObject(High)
     O.incref(h)

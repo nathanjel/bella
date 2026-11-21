@@ -791,6 +791,29 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             if (based && std::any_of(slots.begin(), slots.end(), [](const std::string& n) { return n != "__dict__" && n != "__weakref__"; }))
                 raise_new("TypeError", "arbitrary __slots__ not supported for subtype of '" + best->name + "'");   // ctx->base (RL-590)
         }
+        // type_new_slots: PyList_Sort of the names as objects. Plain strs sort by code point, which the class's making does
+        // itself; a name that is an instance of a str subclass has its own __lt__ asked, and what the sort leaves is the
+        // order of the members in the class's dict and of the slots' release (RL-588)
+        if (std::any_of(items.begin(), items.end(), [](const Ref& item) { return !is_exact_str(item.get()); })) {
+            Ref names = list_new({});
+            std::vector<std::string> seen;
+            for (Ref& item : items) {
+                const Str* s = as_str(item.get());
+                if (s->text == "__weakref__" || s->text == "__dict__") continue;
+                std::string m = mangle(name->text, s->text);
+                if (std::find(seen.begin(), seen.end(), m) != seen.end()) continue;
+                seen.push_back(m);
+                Ref as_object = m == s->text ? Ref::share(item.get()) : str_new(m);
+                list_append(names.get(), as_object.get());
+            }
+            Ref sorted = list_sort_m(names.get(), Args{});
+            std::vector<std::string> ordered;
+            for (Obj v : static_cast<List*>(names.get().object())->items) ordered.push_back(as_str(v)->text);
+            for (const std::string& s : slots)
+                if (s == "__dict__" || s == "__weakref__") ordered.push_back(s);
+            slots = ordered;
+            spec.slots_ordered = true;
+        }
         spec.slots = slots;
     }
     for (auto& [k, v] : entries) spec.attrs.emplace_back(k->text, v);
