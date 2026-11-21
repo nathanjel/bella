@@ -661,6 +661,9 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
+* **A bounded `lru_cache` wrapper that dies never lets go of its keys and results** (RL-600, found on 2026-11-21 in the probes of
+  review A25): the prelude's ring of links holds itself; the C's links hold borrowed pointers and its clear takes the list apart.
+  Worth doing before the other open findings of that review: values with a finaliser are never finalised.
 * **Open from review A25** (2026-11-21), each confirmed on both sides: `Struct.iter_unpack` keeps an export of its buffer where the
   prelude copies it (RL-583, with the memoryview step); the item iterators of dict and OrderedDict keep their last pair, as
   `enumerate` and `zip` do since RL-551 (RL-584); a BufferedRWPair's end, and an exact BytesIO's or StringIO's, runs no finaliser of

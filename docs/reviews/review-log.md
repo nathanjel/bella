@@ -987,6 +987,7 @@ The tests are `pipeline/tests/test_review_2026_11_19.py`.
 | RL-597 | A25-20 | A `__del__` that is a staticmethod, a classmethod or another descriptor is called as a plain function | Confirmed: CPython binds it (`static`, `class C`); compiled, an unraisable TypeError. Older than the range: the header's finaliser call takes the class's entry as it is | Open | The finaliser is looked up as a special method is (`lookup_maybe_method`) |
 | RL-598 | A25-21 | An exact BytesIO or StringIO with a `close` of the instance's own has it called at its end | Confirmed: `close, weak` compiled, `weak` under CPython, whose `bytesio_dealloc` and `stringio_dealloc` call no finaliser. Older than the range | Open | Those two types have no finaliser of IOBase's |
 | RL-599 | A25-22 | `class X(Mixin, SimpleNamespace)` has `__base__` Mixin and its own `__dict__` entry | Confirmed: `SimpleNamespace False True` under CPython, `W True False` compiled. A type written in the prelude whose C struct has more than object's (here a dict) is a solid base to CPython; `solid_base` sees one only by its named slots or a native layout. Wider than SimpleNamespace: every prelude type whose only own field is `__dict__` or `__weakref__` | Open | `solid_base` asks the names table for the type's size or dict offset |
+| RL-600 | The reviewer's probes of A25, their two outputs compared again on the fixed build (2026-11-21) | A bounded `lru_cache` wrapper that dies never lets go of its keys and results | Confirmed with a program of its own: after `f = functools.lru_cache(2)(func)`, two calls and `del f`, CPython finalises the two keys and the two results; compiled, none of the four is ever finalised (an unbounded cache agrees, and so does `cache_clear()`). The prelude's list of links is a ring whose links hold each other, where the C's links hold borrowed pointers and `lru_cache_tp_clear` takes the list apart (`lru_cache_unlink_list`, `lru_cache_clear_list`). A ring of the runtime's own making, so not the cycles of a program's that wait for the collector (RL-222). Older than the range. The other ten probes that differ are the open findings of A25 (RL-583, RL-584, RL-588, RL-591, RL-593, RL-594, RL-597, RL-599) and two stops that name themselves | Open | The wrapper's end takes the ring apart, or the links hold no reference to each other; a step with the lru cache's own tests |
 
 ## Open for discussion
 
@@ -1196,7 +1197,7 @@ exceptions the runtime raises and catches inside itself):
 ## How to add a review
 
 Put the file in this directory as `YYYY-MM-DD-<reviewer>-<nn>-<topic>.md`, then add a row to
-*Reviews received*. Number its findings on from the last ID (`RL-600` next), reproduce each one,
+*Reviews received*. Number its findings on from the last ID (`RL-601` next), reproduce each one,
 and record the verdict and evidence. Reference the IDs in commit messages. When two reviewers share a
 worktree each writes its report to a file of its own name (in R20 the second report took the first's), and before a
 review worktree is removed its probes are read through and those kept with the outputs of both sides are compared:
