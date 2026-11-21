@@ -673,6 +673,10 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
+* **For the author, with D-17's wording and decision 16 (RL-642, 2026-11-21):** under the default stack of 8 MiB a walk of
+  nested data that goes through a prelude reaches 1 000 to 2 000 levels before RecursionError (repr of a list 1 855, `json.dumps`
+  977), where CPython's C reaches 30 000 to 75 000: a level takes 4 to 8 KiB of native stack. Two ways nearer: a larger stack
+  for the main thread by default (decision 16 says 8 MiB), or leaner frames in the preludes' walks.
 * **For the author, with D-17's wording (RL-639, 2026-11-21):** CPython counts two entries of the recursion limit for a class
   called with a Python `__init__` (its specialised instruction pushes a frame of its own), and one on the calls made before
   the instruction specialises; a compiled program counts one, so it goes twice as deep through constructors. Counting two
