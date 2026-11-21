@@ -618,17 +618,9 @@ Module* native_module_made(const char* name) {  // a built-in module if it was e
 // ResourceWarning, so nothing is to be done. What warn raises (a warning the filters made an error) is the caller's.
 Ref i_resource_warning(Obj, Args a) {
     positional_only(a, "_resource_warning", 2, 2);
-    Ref warnings_module;
-    if (shutting_down()) {
-        Module* made = native_module_made("_warnings");
-        if (made == nullptr) return none_ref();
-        warnings_module = Ref::share(Obj::of(made));
-    } else {
-        invoke(warning_function(false), {a.pos(0), Obj::of(exception_class("ResourceWarning")), Obj::small(1), a.pos(1)});
-        return none_ref();
-    }
-    Ref warn = getattr(warnings_module.get(), N("warn"));
-    invoke(warn.get(), {a.pos(0), Obj::of(exception_class("ResourceWarning")), Obj::small(1), a.pos(1)});
+    if (shutting_down() && native_module_made("_warnings") == nullptr) return none_ref();
+    // the function the runtime kept, on the way out as anywhere: what the program put under the module's name is not asked (RL-625)
+    invoke(warning_function(false), {a.pos(0), Obj::of(exception_class("ResourceWarning")), Obj::small(1), a.pos(1)});
     return none_ref();
 }
 // ---- a built-in module written in Python (pipeline/build.py, NATIVE_IN_PYTHON) ----

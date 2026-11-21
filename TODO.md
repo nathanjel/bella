@@ -671,6 +671,22 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   differs from CPython's for every program, in members and in order (CPython's start has `_thread`, `_weakref`, `marshal`,
   `posix`, `time`, `zipimport` there, and `site`'s imports unless `-S`; a compiled program `_contextvars`), and no deviation
   says so. Three ways: a deviation that says it; the start's modules as `python -S` has them; as `python` has them.
+* **First, because it ends a program (RL-624, review A28):** the runtime's own recursion has no guard on the native stack.
+  Hashing a tuple nested 100 000 deep under a stack of 1 MiB (300 000 under 8 MiB) is a RecursionError under CPython
+  (`_Py_EnterRecursiveCall`, which looks at the stack pointer since 3.14) and SIGSEGV compiled. A step with a case (the case
+  starts itself again under a small stack, by `sh -c 'ulimit -s ...; exec ...'`): the stack's bounds read at the start, a
+  guard that raises RecursionError where the runtime recurses on a program's data (hashing a tuple or a frozenset, `repr` and
+  `str` of nested containers, comparisons, `copy.deepcopy`'s own depth is Python's), and a sweep of those places. D-17 says the
+  counter of Python calls; what it should say of the native stack is the author's wording.
+* **A starred tuple reaches a callable written in C as itself (RL-626, review A28):** `f(*t)` with an exact tuple hands `t` to
+  `PyObject_Call`, and the runtime makes a new tuple for a prelude's `*args`. It shows in four places: an `lru_cache` key (the
+  caller's tuple with the hash it keeps, so no `__hash__` call for a prehashed `t`), `MyError(*t).args is t` for a class over
+  an exception, `self.args is args` after `super().__init__(*args)`, `itemgetter(*t).__reduce__()[1] is t`. A step of its own:
+  the call hands a prelude function the caller's tuple where CPython's call does.
+* **For the author, a wording (RL-623, review A28):** D-03's row names small ints and interned strings and says `is` is true
+  more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
+  object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
+  identity differences; the row should name this one. To ask after Question 27.
 * **Next step (RL-621, found beside review A27's RL-616):** 39 tests on 37 lines in 23 preludes decide with
   `hasattr(type(x), "__index__")` (18; `__buffer__` 16, `__getitem__` 2, `__len__`, `__int__`, `__float__` one each) where CPython reads a slot of the type (`PyIndex_Check`, `PyObject_CheckBuffer`);
   `hasattr` on a class asks its metaclass. `_type_lookup` in each (as `_signal`, `posix` and now `_functools` have it), with a

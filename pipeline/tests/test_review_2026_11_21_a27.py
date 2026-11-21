@@ -68,6 +68,8 @@ h(First(1))
 armed=True
 try: h(First(2))
 except ValueError: print('caught', tuple(h.cache_info()))   # reaches: caught (0, 2, 3, 1)
+# (the comparison that raises here is the look after the call, not the store: review A28, RL-627, whose program is in
+# pipeline/tests/test_review_2026_11_21_a28.py)
 armed=False
 print('---- cleared')
 g.cache_clear()

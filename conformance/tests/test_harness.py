@@ -30,12 +30,15 @@ def test_user_supplied_messages_stay_observable() -> None:
 
 def test_a_warnings_line_names_its_file_by_the_base_name() -> None:
     """A recording must not depend on where the repository is: a warning that names a file of the cases' directory by its
-    whole path keeps the base name, the line and the words, and the source line under it. Every other name stays as it is
-    (review A26, RL-608): another directory, the same file by another spelling, a name that is no path."""
+    whole path has `<cases>` for the directory and keeps the name, the line and the words, and the source line under it.
+    Every other name stays as it is (review A26, RL-608): another directory, the same file by another spelling, a name
+    that is no path. And the line is not the one with the bare name (review A28, RL-622)."""
     here = str(harness.CASES) + "/"
     warned = (here + 'c.py:7: SyntaxWarning: "is" with \'int\' literal. Did you mean "=="?\n  if n is 1:\n'
               "sys:1: ResourceWarning: unclosed file\n<string>:2: DeprecationWarning: old\n")
-    assert harness.mask_stderr(warned) == warned.removeprefix(here)
+    assert harness.mask_stderr(warned) == "<cases>/" + warned.removeprefix(here)
+    assert harness.mask_stderr(warned) != harness.mask_stderr(warned.removeprefix(here))       # the bare name is another line
+    assert harness.mask_stderr(here + "demo.py:7: phase: done\n") == "<cases>/demo.py:7: phase: done\n" != harness.mask_stderr("demo.py:7: phase: done\n")
     assert harness.mask_stderr(warned) != harness.mask_stderr(warned.replace(":7:", ":8:"))
     assert harness.mask_stderr(warned) != harness.mask_stderr(warned.replace("if n is 1", "if n is 2"))
     for other in ("/elsewhere/", here + "../cases/", here + "sub/", here.rstrip("/") + "//"):
@@ -43,7 +46,7 @@ def test_a_warnings_line_names_its_file_by_the_base_name() -> None:
         assert harness.mask_stderr(elsewhere) == elsewhere != harness.mask_stderr(warned), other
     # review A27: any class's name is a category (RL-618); the directory with no name after it is no file of it (RL-620)
     for category in ("Warning", "Notice", "UserWarning", "pkg_Warning2"):
-        assert harness.mask_stderr(f"{here}c.py:1: {category}: msg\n") == f"c.py:1: {category}: msg\n", category
+        assert harness.mask_stderr(f"{here}c.py:1: {category}: msg\n") == f"<cases>/c.py:1: {category}: msg\n", category
     assert harness.mask_stderr(f"{here}:1: UserWarning: msg\n") == f"{here}:1: UserWarning: msg\n" != harness.mask_stderr(":1: UserWarning: msg\n")
 
 
