@@ -493,7 +493,8 @@ cache_info_type:    namedtuple class with the fields:
 """
 
     __module__ = "functools"
-    __slots__ = ("_l_func", "_l_maxsize", "_l_typed", "_l_cache", "_l_hits", "_l_misses", "_l_info", "_l_kind", "_l_root", "__dict__", "__weakref__")
+    # lru_cache_tp_clear's order: the cache, then the function (RL-587)
+    __slots__ = ("_l_cache", "_l_func", "_l_maxsize", "_l_typed", "_l_hits", "_l_misses", "_l_info", "_l_kind", "_l_root", "__dict__", "__weakref__")
 
     def __new__(*args: object, **kwds: object) -> _lru_cache_wrapper:   # lru_cache_new: "OOpO:lru_cache"
         _new_receiver(args, _lru_cache_wrapper, "functools._lru_cache_wrapper")

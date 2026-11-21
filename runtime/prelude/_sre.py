@@ -693,7 +693,8 @@ class _BufferHold:
 
 
 class SRE_Scanner:  # noqa: N801
-    __slots__ = ("_a_pattern", "_b_string", "_c_pos", "_d_endpos", "_e_start", "_f_must_advance", "_g_executing", "_h_hold")
+    # scanner_dealloc's order: the state with its subject (state_fini), then the pattern (RL-578)
+    __slots__ = ("_b_string", "_c_pos", "_d_endpos", "_e_start", "_f_must_advance", "_g_executing", "_h_hold", "_a_pattern")
 
     @property
     def pattern(self) -> object:

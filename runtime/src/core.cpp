@@ -235,16 +235,17 @@ bool register_deaths() {
         destroy<Module>(o);
     };
     destroyer(Kind::PyFunction) = [](Object* o) {
-        auto* f = static_cast<PyFunction*>(o);     // func_clear's order: its globals first
+        auto* f = static_cast<PyFunction*>(o);     // func_clear's order: its globals first, then __module__ (RL-579)
         decref(static_cast<Object*>(f->module));
-        f->closure_tuple = Ref{};
+        f->module_name = Ref{};
         f->defaults = Ref{};
         f->kwdefaults = Ref{};
         f->doc = Ref{};
         f->dict = Ref{};
-        for (Ref& c : f->closure) c = Ref{};
-        f->annotate = Ref{};
+        f->closure_tuple = Ref{};                  // func_closure is a tuple: its cells go last one first (RL-586)
+        for (auto c = f->closure.rbegin(); c != f->closure.rend(); ++c) *c = Ref{};
         f->annotations = Ref{};
+        f->annotate = Ref{};
         f->type_params = Ref{};
         f->name = Ref{};
         f->qualname = Ref{};

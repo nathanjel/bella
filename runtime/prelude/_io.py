@@ -2294,6 +2294,11 @@ class BytesIO(_BufferedIOBase):
         self: BytesIO = args[0]  # type: ignore[assignment]
         if not issubclass(type(state), tuple) or tuple.__len__(state) < 3:  # type: ignore[arg-type]
             raise TypeError(_tp_name(self) + ".__setstate__ argument should be 3-tuple, got " + _tp_name(state))
+        # bytesio_setstate writes the buffer in with the stream's own write: a closed stream is its error, and so is what
+        # is no buffer, None among it (RL-595, RL-596)
+        _bio_check_closed(self)
+        if tuple.__getitem__(state, 0) is None:  # type: ignore[arg-type]
+            raise TypeError("a bytes-like object is required, not 'NoneType'")
         BytesIO.__init__(self, tuple.__getitem__(state, 0))  # type: ignore[arg-type]
         position = tuple.__getitem__(state, 1)  # type: ignore[arg-type]
         if not isinstance(position, int):
@@ -3469,6 +3474,7 @@ class StringIO(_TextIOBase):
     def __setstate__(*args: object, **kwds: object) -> None:  # noqa: N805
         state = _one("StringIO.__setstate__", args, kwds)
         self: StringIO = args[0]  # type: ignore[assignment]
+        _sio_check(self)                         # stringio_setstate: CHECK_INITIALIZED, CHECK_CLOSED, before the state is looked at (RL-595)
         if not isinstance(state, tuple) or tuple.__len__(state) < 4:
             raise TypeError(_tp_name(self) + ".__setstate__ argument should be 4-tuple, got " + _tp_name(state))
         StringIO.__init__(self, tuple.__getitem__(state, 0), tuple.__getitem__(state, 1))

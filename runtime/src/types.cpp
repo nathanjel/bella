@@ -782,14 +782,14 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             if (s->text == "__weakref__" || s->text == "__dict__") continue;
             std::string m = mangle(name->text, s->text);
             for (auto& [k, v] : entries)
-                if (k->text == m) raise_new("ValueError", "'" + s->text + "' in __slots__ conflicts with class variable");
+                if (k->text == m) raise_new("ValueError", "'" + m + "' in __slots__ conflicts with class variable");   // the member's name, mangled (RL-589)
             if (std::find(slots.begin(), slots.end(), m) == slots.end()) slots.push_back(m);   // A9-18
         }
         // an int's or a bytes's subclass has instances of a variable size: only __dict__ and __weakref__ may be slots
         for (ClassObject* variable : {types().int_, types().bytes}) {
             bool based = std::any_of(bases.begin(), bases.end(), [&](ClassObject* b) { return is_subclass(b, variable); });
             if (based && std::any_of(slots.begin(), slots.end(), [](const std::string& n) { return n != "__dict__" && n != "__weakref__"; }))
-                raise_new("TypeError", "arbitrary __slots__ not supported for subtype of '" + variable->name + "'");
+                raise_new("TypeError", "arbitrary __slots__ not supported for subtype of '" + best->name + "'");   // ctx->base (RL-590)
         }
         spec.slots = slots;
     }
@@ -2207,7 +2207,7 @@ Ref oserror_reduce(Obj self, Args a) {           // OSError_reduce
     bool has_dict = false;
     with_attribute_storage(self, [&](auto* inst) { has_dict = inst->dict != nullptr || inst->exposed() || !inst->order.empty(); });
     if (has_dict) {
-        Ref d = getattr(self, N("__dict__"));
+        Ref d = instance_dict_of(self);          // the C reads its field: a deriving class's __dict__ is not asked (RL-580)
         return tuple_new({cls.get(), args.get(), d.get()});
     }
     return tuple_new({cls.get(), args.get()});
@@ -2223,7 +2223,7 @@ Ref exception_reduce(Obj self, Args a) {         // BaseException___reduce___imp
     Obj args = exception_field(self, "args");
     Ref shown = args.is_unset() ? none_ref() : Ref::share(args);
     if (!args.is_unset() && instance_dict_made(self)) {
-        Ref d = getattr(self, N("__dict__"));
+        Ref d = instance_dict_of(self);          // the C reads its field: a deriving class's __dict__ is not asked (RL-580)
         return tuple_new({cls.get(), shown.get(), d.get()});
     }
     return tuple_new({cls.get(), shown.get()});
@@ -2232,12 +2232,12 @@ Ref fields_state(Obj self, std::initializer_list<std::pair<const char*, const ch
     bool any = false;                            // (key, field): the dict's copy with the fields set, the dict, or None
     for (auto [key, field] : fields) any = any || !exception_field(self, field).is_unset();
     if (any) {
-        Ref state = instance_dict_made(self) ? dict_copy(static_cast<Dict*>(getattr(self, N("__dict__")).get().object())) : dict_new();
+        Ref state = instance_dict_made(self) ? dict_copy(static_cast<Dict*>(instance_dict_of(self).get().object())) : dict_new();
         for (auto [key, field] : fields)
             if (Obj v = exception_field(self, field); !v.is_unset()) dict_set(static_cast<Dict*>(state.get().object()), Obj::of(N(key)), v);
         return state;
     }
-    if (instance_dict_made(self)) return getattr(self, N("__dict__"));
+    if (instance_dict_made(self)) return instance_dict_of(self);
     return none_ref();
 }
 Ref import_error_reduce(Obj self, Args a) {      // ImportError_reduce: (type, args) or (type, args, state)

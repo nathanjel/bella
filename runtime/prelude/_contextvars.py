@@ -256,7 +256,7 @@ def copy_context(*args: object, **kwds: object) -> Context:   # PyContext_CopyCu
 
 
 class ContextVar:
-    __slots__ = ("_default", "_hash", "_name")
+    __slots__ = ("_name", "_default", "_hash")     # contextvar_tp_clear's order (RL-581)
 
     def __new__(cls, *args: object, **kwds: object) -> ContextVar:   # contextvar_tp_new: "O|$O:ContextVar"
         if len(args) + len(kwds) > 2:
@@ -376,7 +376,7 @@ def _reset(var: ContextVar, token: Token) -> None:   # PyContextVar_Reset
 
 
 class Token:
-    __slots__ = ("_ctx", "_old", "_used", "_var")
+    __slots__ = ("_ctx", "_var", "_old", "_used")  # token_tp_clear's order (RL-582)
 
     def __new__(cls, *args: object, **kwds: object) -> Token:   # token_tp_new
         raise RuntimeError("Tokens can only be created by ContextVars")

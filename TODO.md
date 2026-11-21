@@ -661,6 +661,15 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
+* **Open from review A25** (2026-11-21), each confirmed on both sides: `Struct.iter_unpack` keeps an export of its buffer where the
+  prelude copies it (RL-583, with the memoryview step); the item iterators of dict and OrderedDict keep their last pair, as
+  `enumerate` and `zip` do since RL-551 (RL-584); a BufferedRWPair's end, and an exact BytesIO's or StringIO's, runs no finaliser of
+  IOBase's in CPython (RL-585, RL-598); `type_new` sorts slot names as objects, so a str subclass's `__lt__` is asked (RL-588); a
+  slot named twice in one `__slots__` is two cells in CPython, seen by the default state's size test alone (RL-591); that test over a
+  C type with fields needs the type's size (RL-592); a struct sequence lets go of its fields first one first (RL-593); an exhausted
+  Context iterator keeps the mapping (RL-594); a `__del__` that is a staticmethod, a classmethod or another descriptor is bound as
+  a special method is (RL-597); a prelude type whose own struct adds only a dict or a weak list is a solid base to CPython, which
+  decides `__base__` and the entries of `class X(Mixin, SimpleNamespace)` (RL-599).
 * **Open from review A24** (2026-11-20): a tuple keeps its hash once it was asked for, as CPython's does since 3.14 (RL-574: a
   second `hash(t)`, or a second lookup of one key, calls the elements' `__hash__` again; `enumerate` and `zip` forget it when
   they use their result tuple again); a step with a case. RL-572 is the author's.
