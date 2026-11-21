@@ -91,7 +91,7 @@ def test_the_command_line_names_the_build() -> None:
         fake = Path(tmp, "binary")
         fake.write_bytes(b"")
 
-        def fake_build(program: Path, filename: str, *, notes: bool = True, fidelity: str = "exact") -> Path:
+        def fake_build(program: Path, filename: str, *, notes: bool = True, fidelity: str = "exact", syntax_warnings: bool = True) -> Path:
             asked.append(fidelity)
             return fake
 
@@ -273,6 +273,37 @@ def test_a_lean_run_does_not_write_the_baseline() -> None:
         os.environ.pop("BELLA_FIDELITY", None)
         if saved is not None:
             os.environ["BELLA_FIDELITY"] = saved
+    assert (tool.baseline_path("c").read_text(encoding="utf-8") if tool.baseline_path("c").exists() else None) == before
+
+
+def test_a_run_without_the_compilers_warnings_does_not_write_the_baseline() -> None:
+    """The same guard for the other choice a build has (D-29): with BELLA_SYNTAX_WARNINGS=off the compiled corpus is built
+    without the compiler's warnings at each start, and its results are not the baseline's to hold."""
+    spec = importlib.util.spec_from_file_location("eval1_corpus", ROOT / "tools" / "eval1_corpus.py")
+    assert spec is not None and spec.loader is not None
+    tool: Any = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    ran: list[object] = []
+
+    def fake_run(level: int | str = 1) -> dict[str, bool]:
+        ran.append(level)
+        return {}
+
+    tool.run = fake_run
+    before = tool.baseline_path("c").read_text(encoding="utf-8") if tool.baseline_path("c").exists() else None
+    saved = (os.environ.get("BELLA_SYNTAX_WARNINGS"), os.environ.pop("BELLA_FIDELITY", None))
+    try:
+        for value in ("off", "never"):
+            os.environ["BELLA_SYNTAX_WARNINGS"] = value
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                assert tool.main(["--level", "c", "--update"]) == 2
+            assert not ran and ("unchanged" in out.getvalue() or "nothing was run" in out.getvalue()), out.getvalue()
+        assert tool.syntax_warnings("c") == "never" and tool.syntax_warnings(1) == "on"      # the evaluators have no such choice
+    finally:
+        os.environ.pop("BELLA_SYNTAX_WARNINGS", None)
+        for variable, was in zip(("BELLA_SYNTAX_WARNINGS", "BELLA_FIDELITY"), saved, strict=True):
+            if was is not None:
+                os.environ[variable] = was
     assert (tool.baseline_path("c").read_text(encoding="utf-8") if tool.baseline_path("c").exists() else None) == before
 
 

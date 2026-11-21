@@ -28,6 +28,17 @@ def test_user_supplied_messages_stay_observable() -> None:
     assert 'File "c.py", line 3' in harness.mask_stderr(a)          # D-06 still applies
 
 
+def test_a_warnings_line_names_its_file_by_the_base_name() -> None:
+    """A recording must not depend on where the repository is: a warning that names a file by its whole path keeps the
+    base name, the line and the words, and the source line under it; a warning with another kind of name is untouched."""
+    warned = ('/x/cases/c.py:7: SyntaxWarning: "is" with \'int\' literal. Did you mean "=="?\n  if n is 1:\n'
+              "sys:1: ResourceWarning: unclosed file\n<string>:2: DeprecationWarning: old\n")
+    assert harness.mask_stderr(warned) == warned.removeprefix("/x/cases/")
+    assert harness.mask_stderr(warned) == harness.mask_stderr(warned.replace("/x/cases/", "/elsewhere/"))
+    assert harness.mask_stderr(warned) != harness.mask_stderr(warned.replace(":7:", ":8:"))
+    assert harness.mask_stderr(warned) != harness.mask_stderr(warned.replace("if n is 1", "if n is 2"))
+
+
 def test_check_fails_closed() -> None:
     nothing = argparse.Namespace(runner="false {case}", allow_unpinned=False, filter="no-such-case-anywhere")
     assert harness.cmd_check(nothing) == 2                           # no case selected is an error, not 0/0

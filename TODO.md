@@ -643,7 +643,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 * Honour `PYTHONWARNINGS` everywhere (the author, 2026-11-20: ignored for now, this to be looked at again; RL-483, D-18): the
   runtime fills `sys.warnoptions` from the variable and applies the options at start-up, with a port of the option parser
   (`warnings._setoption` and what it calls, about 60 lines) so that a program without `warnings` (D-27) has them too. Then a
-  case, D-18 narrowed, and `pipeline/tests/test_start_up_environment.py` turned round.
+  case, D-18 narrowed, and `pipeline/tests/test_start_up_environment.py` turned round. With it: filters that make one of the
+  compiler's warnings of the main program's text an error (C-8-19). CPython's compiler puts a `SyntaxError` in its place, with
+  other words for an escape sequence and the place of the token (`_PyErr_EmitSyntaxWarning`, `warn_invalid_escape_sequence`);
+  the start stops by name there today (`warn_as_the_compiler`, `runtime/src/call.cpp`).
+* A staged text that makes CPython's compiler warn stops by name (`_warned`, `pipeline/build.py`: "a warning is not replayed
+  yet"). The start now gives the main program's warnings from a table (C-8-19); the same table per staged compile, given each
+  time the program compiles the text, would end that stop.
 * The other variables of CPython's start-up that D-18's row names as ignored (the author, 2026-11-20; RL-527), each when a
   program needs it: `PYTHONDEVMODE` and `PYTHONWARNDEFAULTENCODING` go with `PYTHONWARNINGS` (they are warning filters and one
   warning more), `PYTHONOPTIMIZE` with D-09's build-profile switch. The record they would join is `StartUp`
@@ -675,7 +681,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   decides `__base__` and the entries of `class X(Mixin, SimpleNamespace)` (RL-599).
 * **Open from review A24** (2026-11-20): a tuple keeps its hash once it was asked for, as CPython's does since 3.14 (RL-574: a
   second `hash(t)`, or a second lookup of one key, calls the elements' `__hash__` again; `enumerate` and `zip` forget it when
-  they use their result tuple again); a step with a case. RL-572 is the author's.
+  they use their result tuple again); a step with a case. RL-572 was the author's: decided and done on 2026-11-21 (the
+  compiler's warnings of the main program's text at each start, C-8-19; the switch `--syntax-warnings=off`, D-29).
 * **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too, the
   sweep of the order in which a built-in type lets go of what it holds on 2026-11-21): `struct.Struct.__new__` with no format
   (RL-549, with the Struct step below).

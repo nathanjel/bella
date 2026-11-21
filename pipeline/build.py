@@ -4,6 +4,8 @@
     python3 pipeline/build.py PROGRAM.py [-o BINARY]           build; print the binary's path
     python3 pipeline/build.py --run PROGRAM.py [ARGS...]        build, then run it as the program
     --fidelity=exact|lean  ahead of PROGRAM.py (anywhere without --run): which build; exact when not given
+    --syntax-warnings=on|off  in the same places: whether the program gives the compiler's warnings of its own text at
+                              each start, as CPython does; on when not given
 
 The program is lowered (frontend, to-anf, lifetimes, wf2) and emitted by pipeline/backend/cpp.py;
 the runtime library is runtime/src/*.cpp and the prelude (runtime/prelude/*.py, compiled the
@@ -26,6 +28,13 @@ runtime library takes itself, its prelude's among them, are in both builds. All 
 deviation. On the command line --fidelity says which, else the environment's BELLA_FIDELITY (for the
 harnesses, whose runner is this command), else exact; build() takes it as an argument and reads no
 environment.
+
+CPython compiles a main program at each start, and its compiler warns each time of what it finds doubtful in the text
+(`"\\d"`, `x is 1`, an assertion of a tuple): SyntaxWarnings, on standard error, before the first statement. A compiled
+program gives the same ones at its start (compiler_warnings; docs/DECISIONS.md, 2026-11-21). --syntax-warnings=off, else the
+environment's BELLA_SYNTAX_WARNINGS, builds one that never gives them, which is a registered deviation (D-29); nothing else
+of the program changes. The build itself, when it only builds, says them once: the main program's, and those of the
+program's other modules, which CPython gives when it first compiles a module and a compiled program never.
 """
 from __future__ import annotations
 
@@ -129,6 +138,7 @@ LIBRARY_FLAGS = ["-O0", "-w", *FP_FLAGS]      # the standard library's units: a 
 # would be two definitions of one name, and the linker keeps either). The emitted text is the same in both, so the lowered
 # cache is shared, and the three names are escaped in a program's identifiers (pipeline/backend/cpp.py, _KEYWORDS).
 FIDELITIES = ("exact", "lean")
+SYNTAX_WARNINGS = ("on", "off")                  # --syntax-warnings: the compiler's warnings of the main program's text at each start, or never
 LEAN_DEFINE = "-DBELLA_LEAN"
 
 
@@ -618,11 +628,69 @@ def _program_text(lines: list[bytes], lineno: int, encoding: str) -> str:
     return chunk.decode(encoding, "replace")
 
 
-def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, str] = ("", ""), annotate: tuple[str, str] = ("", "")) -> str:
+CompilerWarning = tuple[str, str, int]           # the category's name, the message, the line
+
+
+def _compiled_once(source: bytes, filename: str) -> tuple[list[CompilerWarning], int | None]:
+    """What CPython's compiler warns of when it compiles a text as a main program, in the order it warns, and the line of
+    the SyntaxError it stopped at (None: it compiled the text). The host is the pinned interpreter, so the list is CPython's
+    own and no rule of the compiler's is written down here a second time."""
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        try:
+            compile(source, filename, "exec", dont_inherit=True, optimize=0)
+            stopped = None
+        except SyntaxError as exc:
+            stopped = exc.lineno or 0
+    return [(w.category.__name__, str(w.message), w.lineno) for w in seen], stopped
+
+
+def compiler_warnings(source: bytes, filename: str) -> list[CompilerWarning]:
+    """The warnings of CPython's compiler for a main program's text: an escape sequence that is none, a number that runs into
+    a keyword, `is` with a literal, an assertion of a tuple, a literal called or subscripted. CPython compiles a main program
+    at each start and gives them each time, before the program's first statement: the tokenizer's and the parser's in the
+    order of the text, then the code generator's (pyrun_file; warn_explicit with the module `__main__` and no registry, so
+    each is shown under the filters a program starts with). A compiled program gives the ones noted here at its start
+    (runtime/src/call.cpp, as_compiled_at_each_start; RL-572, the author's decision of 2026-11-21; case C-8-19). `return`,
+    `break` and `continue` out of a finally block are refused by the build (D-10) and never get here."""
+    found, stopped = _compiled_once(source, filename)
+    if stopped is not None:
+        raise SyntaxError(f"{filename}: CPython's compiler stops at line {stopped} of a text the build took")
+    return found
+
+
+def warned_before(source: bytes, filename: str, literals: list[tuple[int, int, str]]) -> list[int]:
+    """For each long literal of long_literals(): how many of the compiler's warnings CPython gives before its parser refuses
+    that literal, which is the first of them the start gives when the limit of digits is below the literal. Asked of the
+    host, by compiling the text under a limit that this literal is the first to pass. A literal no longer than one before
+    it is never the first past a limit and has 0."""
+    counts: list[int] = []
+    limit = sys.int_info.str_digits_check_threshold
+    was = sys.get_int_max_str_digits()
+    try:
+        for digits, line, _text in literals:
+            if digits <= limit:
+                counts.append(0)
+                continue
+            sys.set_int_max_str_digits(limit)
+            found, stopped = _compiled_once(source, filename)
+            if stopped != line:
+                raise RuntimeError(f"{filename}: under a limit of {limit} digits CPython's compiler was to stop at line {line} "
+                                   f"and {'compiled the text' if stopped is None else f'stopped at line {stopped}'}")
+            counts.append(len(found))
+            limit = digits
+    finally:
+        sys.set_int_max_str_digits(was)
+    return counts
+
+
+def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, str] = ("", ""), annotate: tuple[str, str] = ("", ""),
+              syntax_warnings: bool = True) -> str:
     """main(): the runtime's start with the prelude, the main module's body, its __file__ (the
     absolute path, a link not followed, as CPython keeps it), sys.path[0] (the directory of the
     file a link leads to), the registry of the modules compiled with it, and the tables of the staged texts and of the annotate
-    functions' entry points."""
+    functions' entry points. `syntax_warnings`: whether the program gives the compiler's warnings of its text at each start
+    (the build's switch; without them the table is left out, and that is all the switch does)."""
     preludes = "\n".join(f"namespace bella::prelude_{p.stem} {{ ::bella::Ref module_body(::bella::Module* m); }}" for p, _ in PRELUDE)
     bodies = ", ".join(f"{{{c_string(name)}, ::bella::prelude_{p.stem}::module_body}}" for p, name in PRELUDE)
     decls = "\n".join(["namespace bella::m_main { ::bella::Ref module_body(::bella::Module* m); }",
@@ -642,12 +710,20 @@ def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, 
     entries = ",\n".join(rows)
     table = f"static const ::bella::ModuleEntry MODULES[] = {{\n{entries}\n}};\n"
     count = len(rows)
-    literals = long_literals(main_file.read_bytes())
+    main_text = main_file.read_bytes()
+    literals = long_literals(main_text)
+    warned = compiler_warnings(main_text, str(main_file)) if syntax_warnings else []
+    before = warned_before(main_text, str(main_file), literals) if warned and literals else [0] * len(literals)
     literal_table = literal_call = ""
     if literals:
-        literal_rows = ",\n".join(f"    {{{digits}, {line}, {c_string(text)}}}" for digits, line, text in literals)
+        literal_rows = ",\n".join(f"    {{{digits}, {line}, {c_string(text)}, {given}}}"
+                                  for (digits, line, text), given in zip(literals, before, strict=True))
         literal_table = f"static const ::bella::LongLiteral LONG_LITERALS[] = {{\n{literal_rows}\n}};\n"
         literal_call = f"    ::bella::set_long_literals(std::span<const ::bella::LongLiteral>(LONG_LITERALS, {len(literals)}));\n"
+    if warned:
+        warned_rows = ",\n".join(f"    {{{c_string(category)}, {c_string(message)}, {line}}}" for category, message, line in warned)
+        literal_table += f"static const ::bella::CompilerWarning COMPILER_WARNINGS[] = {{\n{warned_rows}\n}};\n"
+        literal_call += f"    ::bella::set_compiler_warnings(std::span<const ::bella::CompilerWarning>(COMPILER_WARNINGS, {len(warned)}));\n"
     return ('// The main unit, compiled by Bella: the start, and the modules compiled with the program.\n'
             '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + literal_table + staged[0] + annotate[0] +
             "\nint main(int argc, char** argv) {\n" + staged[1] + annotate[1] + literal_call +
@@ -687,13 +763,42 @@ def _object(cpp: str, name: str, cxx: str, std: str, flags: list[str] = PROGRAM_
 
 
 def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Path | None = None, notes: bool = True, *,
-          fidelity: str = "exact") -> Path:
+          fidelity: str = "exact", syntax_warnings: bool = True) -> Path:
     """The program's binary; `keep`: also write the main module's C++ there (the committed examples). `fidelity`: "exact"
-    or "lean" (FIDELITIES); the environment is not asked here, so a caller gets the build it names."""
+    or "lean" (FIDELITIES); `syntax_warnings`: whether the program gives the compiler's warnings of its text at each start
+    (D-29 when not). The environment is not asked here, so a caller gets the build it names."""
     if fidelity not in FIDELITIES:
         raise ValueError(f"fidelity {fidelity!r}: a build is {' or '.join(FIDELITIES)}")
+    # The host's compiler warns each time the build parses or compiles a text of the program's, several times a text. What
+    # the program is to say of its own text is noted once (compiler_warnings), and what the build says of it is said once
+    # below; the rest is not the build's to print, least of all under --run, whose streams are the program's own
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        return _build(program, filename, cxx, std, keep, notes, fidelity, syntax_warnings)
+
+
+def _say_compiler_warnings(program: Path, modules: list[ProgramModule]) -> None:
+    """The build's own note, on its standard error: what CPython's compiler warns of in the main program and in each other
+    module of the program's own (not the standard library's), once each, in CPython's two lines."""
+    texts = [(os.path.abspath(program), program)]
+    texts += [(str(m.path), m.path) for m in modules
+              if m.path is not None and not (m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB))]
+    for shown, path in texts:
+        source = path.read_bytes()
+        lines = read_source(path).split("\n")
+        for category, message, line in _compiled_once(source, shown)[0]:
+            print(f"{shown}:{line}: {category}: {message}", file=sys.stderr)
+            if 0 < line <= len(lines) and lines[line - 1].strip():
+                print(f"  {lines[line - 1].strip()}", file=sys.stderr)
+
+
+def _build(program: Path, filename: str, cxx: str, std: str, keep: Path | None, notes: bool, fidelity: str, syntax_warnings: bool) -> Path:
     lib = runtime_library(cxx, std)              # the same library for both
-    modules = find_program_modules(program)
+    # A main program whose text CPython's compiler warns of has `warnings` imported for it at each start, before its first
+    # statement (call_show_warning): the program holds the module then, as if its text had asked (a text CPython's compiler
+    # stops at is refused further down, by the passes or by main_unit)
+    warns = syntax_warnings and bool(_compiled_once(program.read_bytes(), os.path.abspath(program))[0])
+    modules = find_program_modules(program, ("warnings",) if warns else ())
     main_source = read_source(program)
     main_cpp = to_cpp(main_source, filename, "bella::m_main")
     if keep is not None:
@@ -721,14 +826,16 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
     rows, refused, unstaged, compiles = staged_tables(program, modules, said)
     for line in said if notes else ():           # not under --run, whose streams are the program's own
         print(line, file=sys.stderr)
+    if notes:
+        _say_compiler_warnings(program, modules)
     for name in sorted({r.namespace for r in rows if r.namespace}):
         row = next(r for r in rows if r.namespace == name)
         units.append((lowered_unit(row.text, "<string>", name, row.kind, row.future), name.rpartition("::")[2], LIBRARY_FLAGS))
     for name in sorted({r.namespace for r in compiles if r.namespace}):
         made = next(r for r in compiles if r.namespace == name)
         units.append((lowered_unit(made.text, made.filename, name, made.mode, made.future), name.rpartition("::")[2], LIBRARY_FLAGS))
-    units.append((main_unit(program, modules, _staged_cpp(rows, refused, unstaged, compiles), _entries_cpp(entry_rows)), f"{program.stem}-main",
-                  PROGRAM_FLAGS))
+    units.append((main_unit(program, modules, _staged_cpp(rows, refused, unstaged, compiles), _entries_cpp(entry_rows), syntax_warnings),
+                  f"{program.stem}-main", PROGRAM_FLAGS))
     with ThreadPoolExecutor(max(1, int(os.environ.get("BELLA_JOBS") or os.cpu_count() or 1))) as pool:
         objs = list(pool.map(lambda u: _object(u[0], u[1], cxx, std, _unit_flags(u[2], fidelity)), units))
     # the runtime's debug information is most of a binary, and every program would carry a copy
@@ -744,7 +851,7 @@ def build(program: Path, filename: str, cxx: str = CXX, std: str = STD, keep: Pa
     if proc.returncode != 0:
         raise RuntimeError(f"{cxx} failed linking {program}:\n{proc.stderr[-4000:]}")
     os.replace(tmp, exe)
-    _forget_previous(program, out, fidelity)
+    _forget_previous(program, out, fidelity, syntax_warnings)
     return exe
 
 
@@ -755,16 +862,18 @@ def _link_key(objs: list[Path], lib: Path, strip: list[str], fidelity: str) -> s
     return _key(*(o.name.encode() for o in objs), lib.parent.name.encode(), " ".join(strip).encode(), fidelity.encode())
 
 
-def _pointer(program: Path, fidelity: str) -> Path:
-    """Where a program's current binary is noted, one note per fidelity: built both ways, a program keeps both binaries.
-    An exact build's note is where it was before there was a choice, so the binary a program had is still replaced."""
-    return BUILD / "last" / _key(str(program.resolve()).encode(), *([] if fidelity == "exact" else [fidelity.encode()]))
+def _pointer(program: Path, fidelity: str, syntax_warnings: bool = True) -> Path:
+    """Where a program's current binary is noted, one note per fidelity and per --syntax-warnings: built each way, a
+    program keeps each binary. The note of an exact build that warns is where it was before there was a choice, so the
+    binary a program had is still replaced."""
+    return BUILD / "last" / _key(str(program.resolve()).encode(), *([] if fidelity == "exact" else [fidelity.encode()]),
+                                 *([] if syntax_warnings else [b"syntax-warnings=off"]))
 
 
-def _forget_previous(program: Path, current: Path, fidelity: str = "exact") -> None:
-    """A program rebuilt replaces its previous binary of the same fidelity: each change to the runtime would otherwise
+def _forget_previous(program: Path, current: Path, fidelity: str = "exact", syntax_warnings: bool = True) -> None:
+    """A program rebuilt replaces its previous binary of the same kind: each change to the runtime would otherwise
     leave one more copy of every program under build/compiled."""
-    pointer = _pointer(program, fidelity)
+    pointer = _pointer(program, fidelity, syntax_warnings)
     pointer.parent.mkdir(parents=True, exist_ok=True)
     previous = pointer.read_text(encoding="utf-8") if pointer.exists() else ""
     if previous and previous != current.name:
@@ -772,18 +881,22 @@ def _forget_previous(program: Path, current: Path, fidelity: str = "exact") -> N
     pointer.write_text(current.name, encoding="utf-8")
 
 
-def _fidelity_option(argv: list[str], leading: bool) -> tuple[str | None, list[str]]:
-    """`--fidelity=WHICH` or `--fidelity WHICH` taken out of the arguments, and the arguments without it; the last one
-    given counts. `leading`: only ahead of the first other argument (under --run, what follows the program is the
-    program's own); otherwise anywhere, as -o is."""
-    chosen: str | None = None
+OPTIONS = ("--fidelity", "--syntax-warnings")
+
+
+def _options(argv: list[str], leading: bool) -> tuple[dict[str, str], list[str]]:
+    """`--fidelity=WHICH` or `--fidelity WHICH`, and `--syntax-warnings` likewise, taken out of the arguments, and the
+    arguments without them; the last one given of each counts. `leading`: only ahead of the first other argument (under
+    --run, what follows the program is the program's own); otherwise anywhere, as -o is."""
+    chosen: dict[str, str] = {}
     kept: list[str] = []
     i = 0
     while i < len(argv):
-        if argv[i].startswith("--fidelity="):
-            chosen, i = argv[i].partition("=")[2], i + 1
-        elif argv[i] == "--fidelity":
-            chosen, i = (argv[i + 1] if i + 1 < len(argv) else ""), i + 2
+        name, equals, value = argv[i].partition("=")
+        if name in OPTIONS and equals:
+            chosen[name], i = value, i + 1
+        elif argv[i] in OPTIONS:
+            chosen[argv[i]], i = (argv[i + 1] if i + 1 < len(argv) else ""), i + 2
         elif leading:
             break
         else:
@@ -793,12 +906,13 @@ def _fidelity_option(argv: list[str], leading: bool) -> tuple[str | None, list[s
 
 
 def main(argv: list[str]) -> int:
-    chosen, argv = _fidelity_option(argv, leading=True)          # ahead of --run
+    options, argv = _options(argv, leading=True)                 # ahead of --run
     run = argv[:1] == ["--run"]
     if run:
         argv = argv[1:]
-    late, argv = _fidelity_option(argv, leading=run)             # after --run; anywhere when the command only builds
-    chosen = late if late is not None else chosen
+    late, argv = _options(argv, leading=run)                     # after --run; anywhere when the command only builds
+    options |= late
+    chosen = options.get("--fidelity")
     out_path = None
     if not run and "-o" in argv:
         i = argv.index("-o")
@@ -814,9 +928,17 @@ def main(argv: list[str]) -> int:
         print(f"bella: {'--fidelity' if chosen is not None else 'BELLA_FIDELITY'} is {fidelity!r}: a build is {' or '.join(FIDELITIES)}",
               file=sys.stderr)
         return 2
+    # the same for the compiler's warnings at each start: on unless the option or the environment says off
+    said = options.get("--syntax-warnings")
+    warns = said if said is not None else os.environ.get("BELLA_SYNTAX_WARNINGS") or "on"
+    if warns not in SYNTAX_WARNINGS:
+        print(f"bella: {'--syntax-warnings' if said is not None else 'BELLA_SYNTAX_WARNINGS'} is {warns!r}: it is "
+              f"{' or '.join(SYNTAX_WARNINGS)}", file=sys.stderr)
+        return 2
     program = Path(argv[0])
     try:
-        exe = build(program, os.path.abspath(argv[0]), notes=not run, fidelity=fidelity)   # co_filename: the absolute path, as CPython 3.15 has it
+        exe = build(program, os.path.abspath(argv[0]), notes=not run, fidelity=fidelity,   # co_filename: the absolute path, as CPython 3.15 has it
+                    syntax_warnings=warns == "on")
     except (Unsupported, SyntaxError) as exc:
         print(f"bella: refused: {exc}", file=sys.stderr)
         return REFUSED

@@ -1297,8 +1297,18 @@ struct LongLiteral {
     int digits;                                  // without the underscores
     int line;
     const char* text;                            // the line it is on, as the SyntaxError's text has it
+    int warned;                                  // how many of the compiler's warnings CPython gives before it refuses this one
 };
 void set_long_literals(std::span<const LongLiteral> literals);
+// What CPython's compiler warns of in the main program's text (pipeline/build.py, compiler_warnings: asked of CPython at the
+// build), in the order it warns. CPython compiles a main program at each start and gives them each time, before the first
+// statement; the compiled program's start does (RL-572, C-8-19). A build with --syntax-warnings=off has no table (D-29)
+struct CompilerWarning {
+    const char* category;                        // the class's name among the builtins: SyntaxWarning
+    const char* message;
+    int line;
+};
+void set_compiler_warnings(std::span<const CompilerWarning> warnings);
 void set_lean(bool lean);                        // the fidelity the program's units were compiled with (pipeline/build.py main_unit: BELLA_IS_LEAN), before run_main
 void signals_init();                             // _PySignal_Init: _signal imported, which reads the dispositions and, in an exact build, takes SIGINT if it was the default's
 void signals_fini();                             // _PySignal_Fini: the table emptied, each slot before its object goes; a signal Python handled is the default's again

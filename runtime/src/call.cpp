@@ -3501,22 +3501,59 @@ std::span<const LongLiteral>& long_literals() {
     static std::span<const LongLiteral> literals;
     return literals;
 }
-void refuse_long_literal(const char* main_file) {
+const LongLiteral* refused_literal() {           // the first in the text that is longer than the limit the environment gave
     int limit = start_up().int_max_str_digits;
-    if (limit <= 0) return;
-    for (const LongLiteral& literal : long_literals()) {
-        if (literal.digits <= limit) continue;
-        Ref message = str_new("Exceeds the limit (" + std::to_string(limit) + " digits) for integer string conversion: value has " +
-                              std::to_string(literal.digits) + " digits; use sys.set_int_max_str_digits() to increase the limit" +
-                              " - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.");
-        Ref file = str_new(main_file), line = int_from_i64(literal.line), text = str_new(literal.text);
-        Ref where = build_tuple({file.get(), line.get(), Obj::small(0), text.get(), line.get(), Obj::small(0)});
-        Ref exc = invoke(Obj::of(exception_class("SyntaxError")), {message.get(), where.get()});
-        raise(exc.get());
+    if (limit <= 0) return nullptr;
+    for (const LongLiteral& literal : long_literals())
+        if (literal.digits > limit) return &literal;
+    return nullptr;
+}
+void refuse_long_literal(const char* main_file, const LongLiteral& literal) {
+    Ref message = str_new("Exceeds the limit (" + std::to_string(start_up().int_max_str_digits) +
+                          " digits) for integer string conversion: value has " + std::to_string(literal.digits) +
+                          " digits; use sys.set_int_max_str_digits() to increase the limit" +
+                          " - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.");
+    Ref file = str_new(main_file), line = int_from_i64(literal.line), text = str_new(literal.text);
+    Ref where = build_tuple({file.get(), line.get(), Obj::small(0), text.get(), line.get(), Obj::small(0)});
+    Ref exc = invoke(Obj::of(exception_class("SyntaxError")), {message.get(), where.get()});
+    raise(exc.get());
+}
+// The same compile warns of what it finds doubtful in the text, each time (pyrun_file; the tokenizer's and the parser's
+// PyErr_WarnExplicitObject, the code generator's _PyErr_EmitSyntaxWarning): warn_explicit(message, category, the file, the
+// line, module "__main__", no registry), so each is shown under the filters a program starts with, by `warnings` if the
+// program holds it (which is imported for it, and reads the line through linecache) and by the C's own two lines if not
+// (D-27). The build asked CPython's compiler which, and in what order (RL-572, C-8-19); a literal the parser refuses ends
+// the compile where it is, after the warnings given until then.
+std::span<const CompilerWarning>& compiler_warnings() {
+    static std::span<const CompilerWarning> warnings;
+    return warnings;
+}
+void warn_as_the_compiler(const char* main_file, const CompilerWarning& warning) {
+    Obj category = Obj::of(exception_class(warning.category));
+    try {
+        Ref warnings = Ref::share(dict_get(sys_modules(), Obj::of(intern("_warnings"))));
+        if (warnings.get().is_unset()) warnings = import_module_level(Obj::of(intern("_warnings")), None(), None(), None(), 0);
+        Ref warn = getattr(warnings.get(), intern("warn_explicit"));
+        Ref message = str_new(warning.message), file = str_new(main_file), line = int_from_i64(warning.line);
+        invoke(warn.get(), {message.get(), category, file.get(), line.get(), Obj::of(intern("__main__"))});
+    } catch (const PyError& e) {
+        // Filters that make the warning an error: CPython's compiler puts a SyntaxError in its place, with words and a
+        // place of its own. No program starts with such filters yet (PYTHONWARNINGS is not read, D-18)
+        if (exception_matches(e.exc.get(), category))
+            throw NotImplemented("a warning of the compiler's for the main program's text that the warning filters make an error");
+        throw;
     }
+}
+void as_compiled_at_each_start(const char* main_file) {
+    const LongLiteral* refused = refused_literal();
+    std::span<const CompilerWarning> warnings = compiler_warnings();
+    size_t given = refused != nullptr ? std::min(warnings.size(), static_cast<size_t>(refused->warned)) : warnings.size();
+    for (const CompilerWarning& warning : warnings.first(given)) warn_as_the_compiler(main_file, warning);
+    if (refused != nullptr) refuse_long_literal(main_file, *refused);
 }
 }  // namespace
 void set_long_literals(std::span<const LongLiteral> literals) { long_literals() = literals; }
+void set_compiler_warnings(std::span<const CompilerWarning> warnings) { compiler_warnings() = warnings; }
 
 int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
              std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
@@ -3864,7 +3901,7 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
             note_filled(builtins_module());        // from here on a name missing from them is one the program deleted
             note_filled(native_modules()["sys"]);
             note_filled(main);
-            refuse_long_literal(main_file);
+            as_compiled_at_each_start(main_file);
             main_body(main);
             flush_io();
         } catch (const PyError& e) {

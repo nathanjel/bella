@@ -238,9 +238,11 @@ def program_policy(directory: Path) -> dict[str, dict[str, list[str]]]:
     return {}
 
 
-def find_program_modules(program: Path) -> list[ProgramModule]:
+def find_program_modules(program: Path, also: tuple[str, ...] = ()) -> list[ProgramModule]:
     """Every module of the program's own an import can reach, in the order they were found, and the modules the program's policy
-    says its computed imports must find (`program_policy`), reached from the modules whose sites they are."""
+    says its computed imports must find (`program_policy`), reached from the modules whose sites they are. `also`: modules
+    CPython imports for the main program without its text asking (`warnings`, when its compiler warns of that text at each
+    start), found as if the main program imported them."""
     roots = search_roots(program)
     dynamic = program_policy(program.resolve().parent)
     found: dict[str, ProgramModule] = {}
@@ -312,6 +314,10 @@ def find_program_modules(program: Path) -> list[ProgramModule]:
                         find(f"{target}.{x}")
 
     scan(program, "__main__", False)
+    for target in also:
+        parts = target.split(".")
+        for i in range(1, len(parts) + 1):
+            find(".".join(parts[:i]))
     done = 0
     while done < len(queue):
         m = queue[done]

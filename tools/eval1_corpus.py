@@ -13,7 +13,8 @@ that passes and is not listed is reported, to be added with --update. --update w
 a complete run, one with a result for every case of the corpus: a harness that stopped early
 would otherwise become the baseline (review 2026-11-02, A7). The compiled level's baseline is the
 exact build's: with BELLA_FIDELITY=lean in the environment the cases are built lean (pipeline/build.py
-reads it), the summary says so, and --update is refused.
+reads it), the summary says so, and --update is refused. The same holds for BELLA_SYNTAX_WARNINGS=off,
+under which no case gives the compiler's warnings of its own text (C-8-19 fails there, by design).
 """
 from __future__ import annotations
 
@@ -35,6 +36,12 @@ def fidelity(level: int | str) -> str:
     """Which build the compiled level runs: pipeline/build.py reads BELLA_FIDELITY when the harness starts it (an empty
     value is none). The evaluators have no such choice."""
     return (os.environ.get("BELLA_FIDELITY") or "exact") if level == "c" else "exact"
+
+
+def syntax_warnings(level: int | str) -> str:
+    """Whether the compiled level's programs give the compiler's warnings of their text at each start: pipeline/build.py
+    reads BELLA_SYNTAX_WARNINGS as it reads the fidelity (an empty value is none)."""
+    return (os.environ.get("BELLA_SYNTAX_WARNINGS") or "on") if level == "c" else "on"
 
 
 def prebuild() -> None:
@@ -75,6 +82,14 @@ def main(argv: list[str]) -> int:
         print(f"eval{level}-corpus: BELLA_FIDELITY is {which}, and {BASELINE.name} is the exact build's; the baseline is unchanged "
               f"(unset the variable to write it)")
         return 2
+    warns = syntax_warnings(level)
+    if warns not in ("on", "off"):               # pipeline/build.py's SYNTAX_WARNINGS
+        print(f"eval{level}-corpus: BELLA_SYNTAX_WARNINGS is {warns!r}, and it is on or off; nothing was run")
+        return 2
+    if warns != "on" and "--update" in argv:
+        print(f"eval{level}-corpus: BELLA_SYNTAX_WARNINGS is {warns}, and {BASELINE.name} is that of builds that warn; the baseline "
+              f"is unchanged (unset the variable to write it)")
+        return 2
     results = run(level)
     passing = sorted(name for name, ok in results.items() if ok)
     if "--update" in argv:
@@ -94,6 +109,7 @@ def main(argv: list[str]) -> int:
     for name in new:
         print(f"NEW PASS  {name}  (python tools/eval1_corpus.py --update)")
     said = "" if which == "exact" else f" [{which} build, against the exact build's baseline]"
+    said += "" if warns == "on" else " [built with --syntax-warnings=off, against the baseline of builds that warn]"
     print(f"eval{level}-corpus{said}: {len(passing)} of {len(results)} cases pass under eval{level}; baseline {len(baseline)}")
     return 1 if regressed else 0
 

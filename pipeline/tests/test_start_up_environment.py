@@ -27,7 +27,9 @@ import tempfile
 from pathlib import Path
 
 from conformance.harness import mask_stderr
+from pipeline import build as build_module
 from pipeline.build import build
+from pipeline.closed_world import find_program_modules
 
 # a program that holds no `warnings` (the C's own printing, D-27; so it does not ask whether the module is there) and one that does
 PROGRAMS: dict[str, str] = {
@@ -430,16 +432,6 @@ def test_pythonwarnings_is_ignored_with_the_module() -> None:
     _ignored(PROGRAMS["holding warnings"])
 
 
-if __name__ == "__main__":
-    test_the_variables_that_are_read()
-    test_the_variables_that_are_not_read()
-    test_streams_in_use_with_and_without_their_buffers()
-    test_the_encoding_of_the_standard_streams()
-    test_sys_flags_when_the_limit_of_digits_is_set()
-    test_pythonwarnings_is_ignored_without_the_module()
-    test_pythonwarnings_is_ignored_with_the_module()
-
-
 def _long_literals() -> str:
     """One program with nine decimal literals, each longer than the one before and each in another place of the text."""
     def nines(n: int) -> str:
@@ -551,3 +543,294 @@ def test_an_imported_modules_literal_is_as_from_its_cached_code() -> None:
         cached = _run([sys.executable, "prog.py"], strict, tmp)
         assert cached[0] == "main runs\nimported: 2130\n", cached
         assert _run([exe], strict, tmp) == cached
+
+
+# Every kind of warning CPython 3.15's compiler has, but `return`, `break` and `continue` out of a finally block, which the
+# build refuses (D-10): the parser's (string_parser.c), the tokenizer's (lexer.c: a number that runs into a keyword, "\{" in an
+# f-string) and the code generator's (codegen.c: compare, assert, check_caller, check_subscripter, check_index), at module
+# level, in a function, a class, a coroutine, a lambda, a comprehension and a finally block (whose code is generated twice)
+WARNED = r'''import sys
+print("at the first statement:", "warnings" in sys.modules, "linecache" in sys.modules, "__warningregistry__" in globals())
+x: object = 0
+y = [1, 2, 3]
+a = "\d"
+b = b"\d"
+c = "\777"
+d = b"\777"
+e = f"\d{x}"
+g = f"\{x}"
+h = 1if x else 2
+i = 0x1for z in y
+i2 = 0b1or x
+i3 = 0o7and x
+i4 = 1.5if x else 2
+i5 = 1jif x else 2
+i6 = 1_0in y
+i7 = 1not in y
+i8 = 1is x
+if x is "":
+    pass
+if x is not 1:
+    pass
+if () is x:
+    pass
+if x is b"":
+    pass
+if x is 1.5:
+    pass
+if x is ...:
+    pass
+if x is None is 1:
+    pass
+assert (x, "message")
+assert (x,)
+
+
+def calls() -> None:
+    (1, 2)(3)
+    [1, 2](3)
+    "text"(1)
+    1(2)
+    1.5[0]
+    None[0]
+    {1, 2}[0]
+    "text"["k"]
+    [1, 2]["k"]
+    (1, 2)[1.5]
+    b"x"[None]
+    (lambda: 0)[0]
+    (i for i in y)[0]
+    f"{x}"(1)
+    {1: 2}(3)
+    [n for n in y](1)
+    True[0]
+    ...[0]
+
+
+def leave() -> int:
+    for k in y:
+        try:
+            pass
+        finally:
+            if x is "in finally":
+                pass
+            assert (k, "again")
+    return 1
+
+
+class K:
+    def m(self) -> None:
+        if self is 0:
+            pass
+
+
+async def co() -> None:
+    try:
+        pass
+    finally:
+        s = "\q"
+        if s is "":
+            pass
+
+j = """line one
+line two \w
+line three"""
+if x is \
+        "continued":
+    pass
+k = ["\e" "\g",
+     "\h"]
+t = t"\p{x}"
+u = rb"\d", r"\d", "\\d", "\N{BULLET}", "\x41"
+v = lambda: x is 2
+w = {n: n is 3 for n in y}
+print("ran", len(a), h, i, v(), w, x is 1, x is 1)
+'''
+
+
+def _nines(n: int) -> bytes:
+    return b"9" * n
+
+
+# What a line is to CPython and what it prints of it: a coding cookie, what is not ASCII in the line and in the escape, the mark
+# of the byte order, the three line ends, a tab and a form feed, a long line, no line end at the end, several on one line
+TEXTS: dict[str, bytes] = {
+    "kinds": WARNED.encode(),
+    "latin-1": "# -*- coding: latin-1 -*-\nname = 'caf\u00e9 \\d'  # \u00fcber\nif name is 'x': pass\nprint(len(name))\n".encode("latin-1"),
+    "utf-8": "name = 'za\u017c\u00f3\u0142\u0107 \\d'\nother = '\\\u00e9'\nthird = b'\\q' if name is '' else 1\nprint(len(name), len(other))\n".encode(),
+    "bom": b"\xef\xbb\xbfa = '\\d'\nif a is '': pass\nprint('ran')\n",
+    "crlf": b"a = '\\d'\r\nif a is '':\r\n    pass\r\nb = '''two\r\nlines \\w'''\r\nprint('ran', len(b))\r\n",
+    "cr": b"a = '\\d'\rif a is '':\r    pass\rprint('ran')\r",
+    "blank": b"x: object = 0\nif True:\n\tif x is 1:\n\t\tpass\n\x0c\nif x is 2: pass\n    \nprint('ran')\n",
+    "long line": b"x: object = 0\nvalues = [" + b"1, " * 700 + b"x is 3]\nprint(len(values))\n",
+    "no line end": b"x: object = 0\nprint('ran', x is 4)",
+    "one line": b"x: object = 0\nprint(x is 1, x is 2, '\\d', x is 1)\nprint(x is 1)\n",
+    "nothing": b"import sys\nprint('ran', 'warnings' in sys.modules)\n",
+}
+# The limit of digits among the warnings: a literal before a string of its line and after one, in a list over two lines, in an
+# f-string's field, as a default; and a text with the code generator's warnings alone, none of which a refused literal leaves
+LIMITED: dict[str, bytes] = {
+    "among": (b"import sys\nx: object = 0\na = '\\d'\nif x is 1: pass\nb = " + _nines(650) + b"\nc = '\\w'\n"
+              b"d = ('\\e', " + _nines(660) + b", '\\g')\ne = '\\h'; f = " + _nines(670) + b"; g = '\\i'\n"
+              b"h = [" + _nines(655) + b",\n     '\\j', " + _nines(680) + b"]\nk = f'\\l{" + _nines(690) + b"}\\m'\n"
+              b"def fn(v=" + _nines(700) + b", w='\\n'):\n    return v is 2\nprint('ran', sys.get_int_max_str_digits())\n"),
+    "the generator's alone": b"x: object = 0\nif x is 1: pass\nb = " + _nines(650) + b"\nif x is 2: pass\nprint('ran')\n",
+}
+Sides = tuple[int, bytes, bytes]
+
+
+def _sides(exe: str, env: dict[str, str], tmp: str) -> tuple[Sides, Sides]:
+    """CPython and the compiled program, each started in the program's directory: status, standard output, standard error."""
+    done = [subprocess.run(cmd, capture_output=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
+            for cmd in ([sys.executable, "prog.py"], [exe])]
+    reference, compiled = ((d.returncode, d.stdout, d.stderr) for d in done)
+    return reference, compiled
+
+
+def _plain_environment() -> dict[str, str]:
+    return {name: value for name, value in os.environ.items() if not name.startswith(("PYTHON", "BELLA_SYNTAX"))} | {"PYTHONHASHSEED": "0"}
+
+
+def test_the_compilers_warnings_at_each_start() -> None:
+    """RL-572 (the author's decision of 2026-11-21: A; case C-8-19): CPython compiles a main program at each start and its
+    compiler warns each time of what it finds doubtful in the text, through the warnings machinery, before the first
+    statement. A compiled program gives the warnings the build noted, the same lines in the same order, at every start, and
+    its first statement finds what CPython's finds: `warnings` and `linecache` imported for them, no registry. Compared byte
+    for byte, the file's whole path and the source lines included."""
+    if shutil.which("g++") is None:
+        return
+    env = _plain_environment()
+    for name, text in TEXTS.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_bytes(text)
+            exe = str(build(prog, "prog.py"))
+            for start in ("first", "second"):                                    # each start, with or without CPython's cached code
+                reference, compiled = _sides(exe, env, tmp)
+                assert compiled == reference, (name, start, compiled, reference)
+            count = reference[2].count(b"Warning: ")
+            assert reference[0] == 0 and (count > 0) == (name != "nothing"), (name, reference)
+            if name == "kinds":
+                assert count == 57 and reference[1].startswith(b"at the first statement: True True False\n"), reference
+                assert compiled[2].startswith(str(prog).encode() + b":5: SyntaxWarning: "), compiled[2][:200]
+            elif name == "nothing":
+                assert reference[1] == b"ran False\n" and reference[2] == b"", reference
+
+
+def test_the_compilers_warnings_before_a_literal_over_the_limit() -> None:
+    """The same compile is the one the limit of digits ends (RL-555, C-8-18): CPython gives the warnings its tokenizer and
+    parser met until the refused literal, then the SyntaxError, and none of the code generator's, which never ran. The
+    build asks CPython's compiler how many that is for each literal; here each limit reaches another literal."""
+    if shutil.which("g++") is None:
+        return
+    for name, text in LIMITED.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp, "prog.py")
+            prog.write_bytes(text)
+            exe = str(build(prog, "prog.py"))
+            given: list[int] = []
+            for limit in (None, "640", "650", "655", "660", "670", "680", "690", "700", "0"):
+                env = _plain_environment() | ({} if limit is None else {"PYTHONINTMAXSTRDIGITS": limit})
+                reference, compiled = _sides(exe, env, tmp)
+                assert compiled == reference, (name, limit, compiled, reference)
+                assert (reference[0] == 1) == (b"SyntaxError: Exceeds the limit" in reference[2]), (name, limit, reference)
+                given.append(reference[2].count(b"SyntaxWarning: "))
+            # how many warnings each start gave: all of them where the program ran, the parser's until the literal where not
+            # (a string before the literal on its line is one of them; an f-string's own escapes come after its fields)
+            assert given == {"among": [11, 1, 3, 3, 5, 7, 7, 9, 11, 11], "the generator's alone": [2, 0, 2, 2, 2, 2, 2, 2, 2, 2]}[name], (name, given)
+
+
+def test_an_imported_modules_warnings_are_as_from_its_cached_code() -> None:
+    """The other half of the decision: CPython warns of an imported module's text when it compiles the module, which is
+    once, and never when it runs it from its cached code. A compiled program gives the main program's warnings alone, as
+    CPython does from the second start on; a build that only builds says the module's, once."""
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = str(Path(tmp).resolve())
+        Path(tmp, "helper.py").write_text("def double(n: int) -> int:\n    if n is 0:\n        return 0\n    return 2 * n\n", encoding="utf-8")
+        prog = Path(tmp, "prog.py")
+        prog.write_text('import helper\nif helper is "":\n    pass\nprint(helper.double(4))\n', encoding="utf-8")
+        env = _plain_environment()
+        builder = [sys.executable, str(Path(build_module.__file__))]
+        built = subprocess.run([*builder, str(prog)], capture_output=True, text=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
+        assert built.returncode == 0, built
+        exe = built.stdout.strip()
+        main_lines = [f'{prog}:2: SyntaxWarning: "is" with \'str\' literal. Did you mean "=="?', '  if helper is "":']
+        helper_lines = [f'{Path(tmp, "helper.py")}:2: SyntaxWarning: "is" with \'int\' literal. Did you mean "=="?', "  if n is 0:"]
+        assert built.stderr.splitlines() == main_lines + helper_lines, built.stderr                   # the build's own note: each once
+        first = subprocess.run([sys.executable, "prog.py"], capture_output=True, text=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
+        assert first.stderr.splitlines() == main_lines + helper_lines, first.stderr                   # CPython compiles the module: once
+        reference, compiled = _sides(exe, env, tmp)                                                   # and has its code cached from then on
+        assert compiled == reference and reference == (0, b"8\n", ("\n".join(main_lines) + "\n").encode()), (compiled, reference)
+        # under --run the streams are the program's own: the build says nothing, whether it has the module's unit or not
+        Path(tmp, "helper.py").write_text("def double(n: int) -> int:\n    if n is 1:\n        return 2\n    return 2 * n\n", encoding="utf-8")
+        ran = subprocess.run([*builder, "--run", str(prog)], capture_output=True, text=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
+        assert (ran.returncode, ran.stdout, ran.stderr.splitlines()) == (0, "8\n", main_lines), ran
+
+
+def test_a_build_without_the_compilers_warnings() -> None:
+    """The author's switch (D-29): a program built with --syntax-warnings=off never gives them, and is otherwise the program
+    it was: its first statement finds no `warnings` imported for it, and a literal past the limit of digits is still
+    refused, with nothing before it. The option and the environment's BELLA_SYNTAX_WARNINGS say it on the command line, the
+    option first; a value that is neither on nor off builds nothing."""
+    if shutil.which("g++") is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "prog.py")
+        prog.write_bytes(b"import sys\nx: object = 0\na = '\\d'\nif x is 1: pass\nb = " + _nines(650) + b"\n"
+                         b"print('ran', 'warnings' in sys.modules, 'linecache' in sys.modules)\n")
+        loud, quiet = build(prog, "prog.py"), build(prog, "prog.py", syntax_warnings=False)
+        assert loud != quiet and loud.exists() and quiet.exists(), (loud, quiet)
+        env = _plain_environment()
+        reference, compiled = _sides(str(loud), env, tmp)
+        assert compiled == reference and reference[1] == b"ran True True\n" and reference[2].count(b"SyntaxWarning: ") == 2, (compiled, reference)
+        warned = reference[2].decode()
+        silent = subprocess.run([str(quiet)], capture_output=True, check=False, env=env, cwd=tmp, stdin=subprocess.DEVNULL)
+        assert (silent.returncode, silent.stdout, silent.stderr) == (0, b"ran False False\n", b""), silent
+        strict = env | {"PYTHONINTMAXSTRDIGITS": "640"}
+        reference, compiled = _sides(str(loud), strict, tmp)
+        assert compiled == reference and reference[0] == 1 and reference[2].count(b"SyntaxWarning: ") == 1, (compiled, reference)
+        refused = subprocess.run([str(quiet)], capture_output=True, check=False, env=strict, cwd=tmp, stdin=subprocess.DEVNULL)
+        assert refused.returncode == 1 and refused.stdout == b"" and refused.stderr == reference[2][reference[2].index(b"  File "):], refused
+        # a program with nothing to warn of is one binary either way, and holds no `warnings` it did not ask for
+        plain = Path(tmp, "plain.py")
+        plain.write_text("print('plain')\n", encoding="utf-8")
+        assert build(plain, "plain.py") == build(plain, "plain.py", syntax_warnings=False)
+        assert "warnings" not in {m.name for m in find_program_modules(plain)}
+        assert "warnings" in {m.name for m in find_program_modules(plain, ("warnings",))}
+
+        def command(*args: str, **more: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run([sys.executable, str(Path(build_module.__file__)), *args], capture_output=True, text=True, check=False,
+                                  env=env | more, cwd=tmp, stdin=subprocess.DEVNULL)
+        for args, more, expected in ((["--run", str(prog)], {}, warned), (["--syntax-warnings=off", "--run", str(prog)], {}, ""),
+                                     (["--run", "--syntax-warnings", "off", str(prog)], {}, ""),
+                                     (["--run", str(prog)], {"BELLA_SYNTAX_WARNINGS": "off"}, ""),
+                                     (["--syntax-warnings=on", "--run", str(prog)], {"BELLA_SYNTAX_WARNINGS": "off"}, warned),
+                                     (["--run", str(prog)], {"BELLA_SYNTAX_WARNINGS": ""}, warned),
+                                     (["--run", str(prog), "--syntax-warnings=off"], {}, warned)):     # after the program: the program's own argument
+            done = command(*args, **more)
+            assert (done.returncode, done.stderr) == (0, expected) and done.stdout.startswith("ran "), (args, more, done)
+        for args, more, named in ((["--syntax-warnings=never", str(prog)], {}, "--syntax-warnings is 'never': it is on or off"),
+                                  ([str(prog)], {"BELLA_SYNTAX_WARNINGS": "0"}, "BELLA_SYNTAX_WARNINGS is '0': it is on or off")):
+            done = command(*args, **more)
+            assert done.returncode == 2 and done.stdout == "" and named in done.stderr, (args, more, done)
+        assert build_module._pointer(prog, "exact") != build_module._pointer(prog, "exact", False)
+        assert build_module._pointer(prog, "exact", True).name == build_module._key(str(prog.resolve()).encode())      # where it was
+
+
+if __name__ == "__main__":
+    test_the_variables_that_are_read()
+    test_the_variables_that_are_not_read()
+    test_streams_in_use_with_and_without_their_buffers()
+    test_the_encoding_of_the_standard_streams()
+    test_sys_flags_when_the_limit_of_digits_is_set()
+    test_pythonwarnings_is_ignored_without_the_module()
+    test_pythonwarnings_is_ignored_with_the_module()
+    test_a_literal_longer_than_the_limit_of_digits()
+    test_the_line_echoed_for_a_literal_over_the_limit()
+    test_an_imported_modules_literal_is_as_from_its_cached_code()
+    test_the_compilers_warnings_at_each_start()
+    test_the_compilers_warnings_before_a_literal_over_the_limit()
+    test_an_imported_modules_warnings_are_as_from_its_cached_code()
+    test_a_build_without_the_compilers_warnings()

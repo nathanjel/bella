@@ -69,6 +69,7 @@ PROJECT = ROOT.parent
 
 _FRAME = re.compile(r'^((?:\s*\| )?\s*)File "(.+?)", line (\d+)(, in .+)?$')   # inside an exception group's box: after its margin
 _EXC_LINE = re.compile(r"^([A-Za-z_][\w.]*): (.*)$")
+_WARNED = re.compile(r"^(/.+?)(:\d+: [A-Za-z_]\w*Warning: )")   # a warning's first line, when it names a file by its whole path
 _BUILTIN_EXC = {
     n for n in dir(builtins)
     if isinstance(getattr(builtins, n), type) and issubclass(getattr(builtins, n), BaseException)
@@ -166,7 +167,10 @@ def expectation_path(case: Path, deviation: str | None = None) -> Path:
 def mask_stderr(text: str, masked: frozenset[str] = frozenset()) -> str:
     """D-06: traceback frames keep file (basename) and line; source echo lines are dropped.
     D-08: the message on a 'Type: message' line is masked only for the built-in exception types
-    the case declares (`masked`); everything else, user-supplied messages included, is compared."""
+    the case declares (`masked`); everything else, user-supplied messages included, is compared.
+    A warning's line names its file by the base name too, as a frame's does, so that a recording does
+    not depend on where the repository is; its line number, its words and the source line under it
+    are compared (C-8-19: what CPython's compiler warns of in the case's own text, at each start)."""
     out: list[str] = []
     skip_echo = False
     margin = ""                                  # an exception group's ("    | "): the echo lines of its frames come after it
@@ -181,6 +185,10 @@ def mask_stderr(text: str, masked: frozenset[str] = frozenset()) -> str:
         if skip_echo and rest is not None and (rest.startswith("    ") or rest.strip() == "" or set(rest.strip()) <= set("~^")):
             continue
         skip_echo = False
+        w = _WARNED.match(line)
+        if w:
+            out.append(Path(w.group(1)).name + line[w.end(1):])
+            continue
         e = _EXC_LINE.match(line)
         if e and e.group(1).rpartition(".")[2] in masked:
             out.append(f"{e.group(1)}: <wording masked by D-08>")
