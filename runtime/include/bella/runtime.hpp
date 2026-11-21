@@ -371,6 +371,8 @@ Ref i_type_lookup(Obj, Args a);
 Ref i_raise_as_is(Obj, Args a);                  // a pending error goes on as it is (every prelude)
 Ref i_own_data(Obj, Args a);                     // an argument's own data, as the C reads it (every prelude)
 Ref i_buffer_bytes(Obj, Args a);
+Ref i_dict_next_hashed(Obj, Args a);            // _PyDict_Next and _PyDict_SetItem_KnownHash (every prelude)
+Ref i_dict_set_hashed(Obj, Args a);
 Ref i_number_index(Obj, Args a);
 Ref i_warnings_frame(Obj, Args a);
 Ref frame_locals(const char* asked);              // runtime/src/call.cpp: the calling frame's locals, for locals(), vars() and dir()
@@ -636,6 +638,7 @@ void traceback_from_current_frame(Obj exc);       // _PyTraceBack_FromFrame(NULL
 void report_unraisable(const std::string& context, const PyError& e);
 void report_unraisable(const std::string& context, Obj exc);   // the same, for an exception a prelude caught
 void report_unraisable(Obj exc);                  // one whose message did not format (PyErr_FormatUnraisable clears that error): no first line
+void report_unraisable(const char* context, Obj shown, const PyError& e);   // context + repr(shown); no first line if the repr raises (RL-705)
 void write_stderr(const std::string& text);       // PyFile_WriteString to sys.stderr: nothing when it is None, errors ignored
 bool flush_std_stream(const char* name, bool report = false);   // flush_std_files' half for sys.stdout or sys.stderr: false when its flush raised, reported as ignored if asked
 // While an except clause runs, its exception is the one being handled: what a bare `raise`

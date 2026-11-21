@@ -156,6 +156,7 @@ def _normalized(encoding: str) -> str:           # normalizestring: ASCII letter
 
 
 def _lookup(encoding: str) -> object:            # _PyCodec_Lookup
+    encoding = _own_data(encoding)               # a C string: the characters, whatever class the name's object is of (RL-708)
     name = _normalized(encoding)
     result = dict.get(_search_cache, name)
     if result is not None:
@@ -197,6 +198,7 @@ def _lookup_text(encoding: str, alternate_command: str | None) -> object:   # _P
 
 def _call_codec(function: object, value: object, encoding: str, errors: str | None, doing: str, bad_result: str) -> object:
     """_PyCodec_EncodeInternal and _PyCodec_DecodeInternal: the codec's function, a note on what it raises, and its first result."""
+    encoding = _own_data(encoding)
     try:
         result = function(value) if errors is None else function(value, errors)  # type: ignore[operator]
     except BaseException as exc:                 # _PyErr_FormatNote: BaseException's own add_note, whatever the class overrides
@@ -287,11 +289,11 @@ def _coding_args(name: str, args: tuple[object, ...], kwds: dict[str, object]) -
     if encoding is not _ABSENT:
         if not issubclass(type(encoding), str):
             raise TypeError(name + "() argument 'encoding' must be str, not " + _tp_name(encoding))
-        _c_string(encoding)
+        encoding = _c_string(encoding)           # a C string from here on: its characters, as a plain str (RL-708)
     if errors is not _ABSENT:
         if not issubclass(type(errors), str):
             raise TypeError(name + "() argument 'errors' must be str, not " + _tp_name(errors))
-        _c_string(errors)
+        errors = _c_string(errors)
     return obj, ("utf-8" if encoding is _ABSENT else encoding), (None if errors is _ABSENT else errors)  # type: ignore[return-value]
 
 

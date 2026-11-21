@@ -2009,9 +2009,10 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
         if has_extra and dict.__len__(extra) > 0:   # the dict itself: PyDict_GET_SIZE, PyDict_GetItemStringRef
             found = 0
             for field in fields[size:]:
-                if dict.__contains__(extra, field):
+                value = dict.get(extra, field, _ABSENT_SLOT)   # PyDict_GetItemStringRef: one lookup (RL-703)
+                if value is not _ABSENT_SLOT:
                     found += 1
-                    past.append(dict.__getitem__(extra, field))
+                    past.append(value)
                 else:
                     past.append(None)
             if dict.__len__(extra) > found:

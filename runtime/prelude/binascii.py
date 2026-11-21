@@ -194,22 +194,30 @@ _BASE64_PAD = 61                                 # '='
 _reverse_tables: dict[bytes, bytes] = {}        # the state's reverse_table_cache
 
 
+def _build_reverse(data: bytes, size: int, padchar: int) -> bytes:
+    out = bytearray(b"\xff" * 256)
+    for i in range(size):
+        out[data[i]] = i
+    if padchar >= 0:
+        out[padchar] = size
+    return bytes(out)
+
+
 def _reverse_table(alphabet: bytes, size: int, padchar: int) -> bytes:   # get_reverse_table
-    if len(alphabet) != size:
+    """The cache is the state's dict of the alphabets a program gave, keyed by the object: its hash is asked at the lookup and
+    again at the insert, and the dict then holds it. The size and the bytes are the object's own (PyBytes_GET_SIZE,
+    PyBytes_AS_STRING), whatever a subclass has (RL-712, RL-713). The standard tables are not in it."""
+    data = _buffer_bytes(alphabet)
+    if bytes.__len__(data) != size:
         raise ValueError("alphabet must have length " + str(size))
     table = _reverse_tables.get(alphabet)
     if table is None:
-        out = bytearray(b"\xff" * 256)
-        for i in range(size):
-            out[alphabet[i]] = i
-        if padchar >= 0:
-            out[padchar] = size
-        table = bytes(out)
+        table = _build_reverse(data, size, padchar)
         _reverse_tables[alphabet] = table
     return table
 
 
-_TABLE_A2B_BASE64 = _reverse_table(BASE64_ALPHABET, 64, _BASE64_PAD)
+_TABLE_A2B_BASE64 = _build_reverse(BASE64_ALPHABET, 64, _BASE64_PAD)
 
 
 def a2b_base64(*args: object, **kwds: object) -> bytes:
@@ -361,7 +369,7 @@ def b2a_base64(*args: object, **kwds: object) -> bytes:
 # them, so the loop alone is written here. Unlike base64's, the count of pads is never set back.
 
 _BASE32_PAD = 61                                 # '='
-_TABLE_A2B_BASE32 = _reverse_table(BASE32_ALPHABET, 32, _BASE32_PAD)
+_TABLE_A2B_BASE32 = _build_reverse(BASE32_ALPHABET, 32, _BASE32_PAD)
 
 
 def a2b_base32(*args: object, **kwds: object) -> bytes:

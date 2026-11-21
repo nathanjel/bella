@@ -20,6 +20,8 @@ try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _dict_next_hashed                            # noqa: B018  # _PyDict_Next: (next position, key, value, hash) or None
+    _dict_set_hashed                             # noqa: B018  # _PyDict_SetItem_KnownHash: (dict, key, value, hash)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -36,6 +38,8 @@ except NameError:
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
     _own_data: Callable[..., Any] = _missing
+    _dict_next_hashed: Callable[..., Any] = _missing
+    _dict_set_hashed: Callable[..., None] = _missing
 
 CODESIZE = 4
 MAGIC = 20230612
@@ -261,6 +265,7 @@ def _compile_template(pattern: object, repl: object) -> object:   # compile_temp
         import re  # noqa: PLC0415
         _compile_template_func.append(re._compile_template)  # type: ignore[attr-defined]
     func = _compile_template_func[0]
+    again = False
     try:
         result = func(pattern, repl)  # type: ignore[operator]
     except TypeError:                            # the replacement string is unhashable: the basic type, and again
@@ -270,7 +275,9 @@ def _compile_template(pattern: object, repl: object) -> object:   # compile_temp
             repl = _buffer_bytes(repl)           # PyBytes_FromObject: the buffer, not __bytes__ (RL-698)
         else:
             raise
-        result = func(pattern, repl)  # type: ignore[operator]
+        again = True
+    if again:                                    # "PyErr_Clear()", then the second call: after the handler has ended, so that the
+        result = func(pattern, repl)  # type: ignore[operator]   # TypeError is no context of what it raises (RL-706)
     if type(result) is not SRE_Template:
         raise RuntimeError("the result of compiling a replacement string is " + _tp_name(result))
     return result
@@ -369,8 +376,10 @@ class Pattern:
 
     @property
     def groupindex(self) -> object:              # pattern_groupindex
+        if self._d_groupindex is None:           # "return PyDict_New();": a dict of the caller's own, new each time (RL-709)
+            return {}
         import types  # noqa: PLC0415
-        return types.MappingProxyType({} if self._d_groupindex is None else self._d_groupindex)
+        return types.MappingProxyType(self._d_groupindex)
 
     def prefixmatch(*args: object, **kwds: object) -> object:  # noqa: N805
         return _matched(args[0], "prefixmatch", 0, args[1:], kwds)
@@ -608,8 +617,13 @@ class Match:
         groupindex = self._c_pattern._d_groupindex  # type: ignore[attr-defined]
         if groupindex is None:
             return out
-        for key in dict.__iter__(groupindex):
-            out[key] = _getslice_by_index(self, _getindex(self, key), value)
+        pos = 0
+        while True:                              # _PyDict_Next: the entries as they are at each step, one added meanwhile included,
+            step = _dict_next_hashed(groupindex, pos)   # and _PyDict_SetItem_KnownHash: the key is not hashed again (RL-710, RL-711)
+            if step is None:
+                break
+            pos, key, _index, hashed = step
+            _dict_set_hashed(out, key, _getslice_by_index(self, _getindex(self, key), value), hashed)
         return out
 
     def start(*args: object, **kwds: object) -> int:  # noqa: N805

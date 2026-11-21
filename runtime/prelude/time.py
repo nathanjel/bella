@@ -445,7 +445,7 @@ def _gettmarg(value: object, message: str) -> list[object]:
         if zone is not None:
             if not issubclass(type(zone), str):
                 raise TypeError("bad argument type for built-in operation")
-            out[9] = str.encode(zone, "utf-8", "surrogateescape")   # PyUnicode_AsUTF8: the C reads it up to a NUL
+            out[9] = str.encode(zone, "utf-8")   # PyUnicode_AsUTF8, strict (RL-715): the C reads it up to a NUL
         gmtoff = value.tm_gmtoff  # type: ignore[attr-defined]
         if gmtoff is not None:
             n = _index(gmtoff)

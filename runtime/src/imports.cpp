@@ -777,6 +777,10 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(ns->dict, Obj::of(N("_own_data")), own_data.get());   // subclass is called (RL-698)
         Ref buffer_bytes = own(new Builtin("_buffer_bytes", i_buffer_bytes));
         dict_set(ns->dict, Obj::of(N("_buffer_bytes")), buffer_bytes.get());
+        Ref next_hashed = own(new Builtin("_dict_next_hashed", i_dict_next_hashed));   // a dict's entry with its stored hash, and an
+        dict_set(ns->dict, Obj::of(N("_dict_next_hashed")), next_hashed.get());       // insert by it (RL-710)
+        Ref set_hashed = own(new Builtin("_dict_set_hashed", i_dict_set_hashed));
+        dict_set(ns->dict, Obj::of(N("_dict_set_hashed")), set_hashed.get());
     }
     for (auto [primitive, fn] : primitives) {
         Ref b = own(new Builtin(primitive, fn));

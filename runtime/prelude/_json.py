@@ -12,6 +12,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name, and %T
     _dict_next                                   # noqa: B018  # PyDict_Next: the entries as they are at each step
+    _raise_as_is                                 # noqa: B018  # a pending error goes on as it is: no context taken (RL-650)
 except NameError:
     import operator
 
@@ -25,6 +26,9 @@ except NameError:
     def _tp_name(obj: object) -> str:
         t = type(obj)
         return t.__name__ if t.__module__ in ("builtins", "__main__") else t.__module__ + "." + t.__name__
+
+    def _raise_as_is(exc: BaseException) -> None:   # a stand-in for CPython's run: the runtime's takes no context
+        raise exc
 
 
 class _Absent:
@@ -537,6 +541,24 @@ def _note(exc: BaseException, text: str) -> None:   # _PyErr_FormatNote: BaseExc
     BaseException.add_note(exc, text)
 
 
+def _raise_noted(exc: BaseException, prefix: str, shown: object = _ABSENT) -> None:
+    """_PyErr_FormatNote and the return of the error: the C makes the note's text while the error is pending, so a repr of the
+    program's that runs for it sees whatever was being handled around the call, not this error; a note that cannot be made
+    is an error of its own with the first as its context (_PyErr_ChainExceptions1). The caller has left its handler (RL-707)."""
+    second: BaseException | None = None
+    text = prefix
+    if shown is not _ABSENT:
+        try:
+            text = prefix + repr(shown)
+        except BaseException as e:
+            second = e
+    if second is not None:
+        second.__context__ = exc
+        _raise_as_is(second)
+    BaseException.add_note(exc, text)
+    _raise_as_is(exc)
+
+
 def _encode_float(s: Encoder, obj: float) -> str:   # encoder_encode_float: PyFloat_AS_DOUBLE, no comparison of the subclass's (A14 #1)
     value = float.__float__(obj)
     if value != value or value == _INF or value == -_INF:
@@ -608,11 +630,13 @@ def _encode_obj(s: Encoder, parts: list[str], obj: object, level: int, cache: li
                 raise ValueError("Circular reference detected")
             dict.__setitem__(markers, ident, obj)
         newobj = s._defaultfn(obj)  # type: ignore[operator]
+        failed: BaseException | None = None
         try:
             _encode_obj(s, parts, newobj, level, cache)
         except BaseException as exc:
-            _note(exc, "when serializing " + _tp_name(obj) + " object")
-            raise
+            failed = exc
+        if failed is not None:
+            _raise_noted(failed, "when serializing " + _tp_name(obj) + " object")
         if ident is not None:
             dict.__delitem__(markers, ident)  # type: ignore[arg-type]
 
@@ -639,11 +663,13 @@ def _encode_key_value(s: Encoder, parts: list[str], first: list[bool], dct: obje
         parts.append(_written(separator))
     _write_string(s, parts, keystr)  # type: ignore[arg-type]
     parts.append(_written(s._key_separator))
+    failed: BaseException | None = None
     try:
         _encode_obj(s, parts, value, level, cache)
     except BaseException as exc:
-        _note(exc, "when serializing " + _tp_name(dct) + " item " + repr(key))
-        raise
+        failed = exc
+    if failed is not None:
+        _raise_noted(failed, "when serializing " + _tp_name(dct) + " item ", key)
 
 
 def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: list[str] | None) -> None:   # encoder_listencode_dict
@@ -719,11 +745,13 @@ def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: l
         obj = item(fast, i)  # type: ignore[arg-type]
         if i:
             parts.append(_written(separator))
+        failed: BaseException | None = None
         try:
             _encode_obj(s, parts, obj, level, cache)
         except BaseException as exc:
-            _note(exc, "when serializing " + _tp_name(seq) + " item " + str(i))
-            raise
+            failed = exc
+        if failed is not None:
+            _raise_noted(failed, "when serializing " + _tp_name(seq) + " item " + str(i))
         i += 1
     if ident is not None:
         dict.__delitem__(markers, ident)  # type: ignore[arg-type]

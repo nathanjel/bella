@@ -701,6 +701,17 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
   object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
   identity differences; the row should name this one. To ask next.
+* **For the author, with D-03's wording (RL-623; review A32, RL-699 to RL-701, RL-704, RL-719, RL-720): the identity of an
+  equal immutable object.** Which of two equal strs, bytes or tuples a library function gives back: `BytesIO(x).getvalue()
+  is x` (True under CPython, False compiled), `StringIO(x).getvalue() is x`, `os.path.normpath(x) is x`, `splitroot(x)[2] is
+  x`, `open(..., x).mode is x`, `struct.unpack('5s', x)[0] is x` (False under CPython, True compiled), `TextIOWrapper.newlines`
+  (a new tuple at each read under CPython). With RL-623 (a tuple of constants is one object in CPython) this is one wording:
+  D-03 names small ints and interned strings, and decision 1 accepted identity differences in general.
+* **Open from review A32, with the buffer step (RL-702):** a prelude copies a bytearray's bytes when it converts the argument;
+  the C holds a view from the argument's parsing on and reads it at its use, so a later argument's `__index__` that overwrites
+  a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s
+  key, `os.pwrite`: 18 rows). Exact: an export held from the conversion on (a resize is then refused, as the view makes it)
+  and the read where the C reads. With RL-583 and the memoryview model.
 * **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
   that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
   `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and

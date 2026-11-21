@@ -164,8 +164,7 @@ void close_iter(Obj yf) {
     try {
         meth = optional_getattr(yf, N("close"));
     } catch (const PyError& e) {                 // PyErr_FormatUnraisable, and no close is called (RL-481)
-        Ref shown = repr_of(yf);
-        report_unraisable("Exception ignored while closing generator " + as_str(shown.get())->text, e);
+        report_unraisable("Exception ignored while closing generator ", yf, e);
         return;
     }
     if (!meth.get().is_unset()) Ref ignored = invoke(meth.get(), {});
@@ -282,8 +281,7 @@ Ref del_m(Obj self, Args a) {                     // tp_finalize's wrapper
     try {
         gen_close(g);
     } catch (const PyError& e) {
-        Ref text = repr_of(self);
-        report_unraisable("Exception ignored while closing generator " + as_str(text.get())->text, e);
+        report_unraisable("Exception ignored while closing generator ", self, e);
     }
     return none_ref();
 }
@@ -491,8 +489,7 @@ void gen_die(Object* o) {                         // gen_dealloc: finalised once
             Ref ignored = gen_close(g);
         } catch (const PyError& e) {
             Ref self = Ref::share(Obj::of(o));
-            Ref text = repr_of(self.get());
-            report_unraisable("Exception ignored while closing generator " + as_str(text.get())->text, e);
+            report_unraisable("Exception ignored while closing generator ", self.get(), e);
         }
         detail::raising() = saved;
         detail::raising_owner() = owner;

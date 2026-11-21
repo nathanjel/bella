@@ -1922,13 +1922,16 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         return _bf_new(klass)
 
     members: dict[str, object] = {"__init__": init, "flush": flush, "tell": tell, "seek": seek, "truncate": truncate, "close": close, "detach": detach,
-                                  "seekable": seekable, "readable": readable, "writable": writable, "fileno": fileno, "isatty": isatty,
-                                  "_dealloc_warn": _dealloc_warn, "__getstate__": __getstate__, "__sizeof__": __sizeof__, "__next__": __next__,
+                                  "seekable": seekable, "fileno": fileno, "isatty": isatty,
+                                  "_dealloc_warn": _dealloc_warn, "__getstate__": __getstate__, "__sizeof__": __sizeof__,
                                   "__repr__": __repr__, "__new__": __new__}
+    # bufferedreader_methods, bufferedwriter_methods, bufferedrandom_methods and their slots: a reader has no writable of its
+    # own and a writer no readable (IOBase's answer False), and a writer has no tp_iternext (RL-722)
     if can_read:
-        members.update({"read": read, "read1": read1, "peek": peek, "readinto": readinto, "readinto1": readinto1, "readline": readline})
+        members.update({"read": read, "read1": read1, "peek": peek, "readinto": readinto, "readinto1": readinto1, "readline": readline,
+                        "readable": readable, "__next__": __next__})
     if can_write:
-        members["write"] = write
+        members.update({"write": write, "writable": writable})
     for name, member in members.items():
         member.__name__ = name  # type: ignore[attr-defined]
         member.__qualname__ = shown + "." + name  # type: ignore[attr-defined]
@@ -2423,13 +2426,22 @@ def _nl_decode(self: IncrementalNewlineDecoder, input: object, final: bool) -> s
         output = input
     if not issubclass(type(output), str):
         raise TypeError("decoder should return a string result, not '" + _tp_name(output) + "'")
-    text: str = str.__str__(output) if type(output) is not str else output
+    # The C reads the characters and gives back the object it was given wherever it changes nothing: an instance of a str
+    # subclass comes back as itself (RL-714). It makes a new string for a pending CR put in front, for a last CR held back,
+    # and, when it translates, whenever the text has a CR or a line end other than LF was seen before.
+    text: str = _own_data(output)
+    changed = False
     if self._c_pendingcr and (final or str.__len__(text) > 0):
         text = "\r" + text
         self._c_pendingcr = False
+        changed = True
     if not final and str.__len__(text) > 0 and text[-1] == "\r":
         text = text[:-1]
         self._c_pendingcr = True
+        changed = True
+    if str.__len__(text) == 0:
+        return text if changed else output  # type: ignore[return-value]
+    only_lf = self._d_seennl in (0, 1) and "\r" not in text
     crlf = text.count("\r\n")
     cr = text.count("\r") - crlf
     lf = text.count("\n") - crlf
@@ -2441,11 +2453,12 @@ def _nl_decode(self: IncrementalNewlineDecoder, input: object, final: bool) -> s
     if crlf:
         seen |= 4
     self._d_seennl |= seen
-    if self._e_translate:
-        if crlf:
-            text = text.replace("\r\n", "\n")
-        if cr:
-            text = text.replace("\r", "\n")
+    if only_lf or not self._e_translate:
+        return text if changed else output  # type: ignore[return-value]
+    if crlf:
+        text = text.replace("\r\n", "\n")
+    if cr:
+        text = text.replace("\r", "\n")
     return text
 
 
@@ -2601,12 +2614,16 @@ def _tw_get_decoded_chars(self: TextIOWrapper, n: int) -> str:   # textiowrapper
     avail = str.__len__(self._j_decoded_chars) - self._k_decoded_chars_used
     if n < 0 or n > avail:
         n = avail
-    chars = self._j_decoded_chars[self._k_decoded_chars_used:self._k_decoded_chars_used + n]
+    used = self._k_decoded_chars_used
+    if used > 0 or n < avail:                    # PyUnicode_Substring: the characters, whatever a subclass's __getitem__ gives (RL-721)
+        chars = str.__getitem__(self._j_decoded_chars, slice(used, used + n))
+    else:                                        # all of them: the decoder's result itself
+        chars = self._j_decoded_chars
     self._k_decoded_chars_used += n
     return chars
 
 
-def _tw_decode(decoder: object, data: bytes, eof: bool) -> str:   # _textiowrapper_decode
+def _tw_decode(decoder: object, data: object, eof: bool) -> str:   # _textiowrapper_decode
     if type(decoder) is IncrementalNewlineDecoder:
         decoded = _nl_decode(decoder, data, eof)
     else:
@@ -2641,10 +2658,10 @@ def _tw_read_chunk(self: TextIOWrapper, size_hint: int) -> bool:   # textiowrapp
     input_chunk = self._c_buffer.read1(chunk_size) if self._g_has_read1 else self._c_buffer.read(chunk_size)  # type: ignore[attr-defined]
     if not _is_bytes_like(input_chunk):
         raise TypeError("underlying " + ("read1" if self._g_has_read1 else "read") + "() should have returned a bytes-like object, not '" + _tp_name(input_chunk) + "'")
-    data = _buffer_bytes(input_chunk)
+    data = _buffer_bytes(input_chunk)            # PyObject_GetBuffer: its length, and the bytes of the snapshot below
     nbytes = bytes.__len__(data)
     eof = nbytes == 0
-    decoded_chars = _tw_decode(self._h_decoder, data, eof)
+    decoded_chars = _tw_decode(self._h_decoder, input_chunk, eof)   # the decoder is given the object itself (RL-716)
     _tw_set_decoded_chars(self, decoded_chars)
     nchars = str.__len__(decoded_chars)
     self._l_b2cratio = nbytes / nchars if nchars > 0 else 0.0
@@ -2710,12 +2727,13 @@ def _tw_readline(self: TextIOWrapper, limit: int) -> str:   # _textiowrapper_rea
             start = self._k_decoded_chars_used
             offset_to_buffer = 0
         else:
-            line = remaining + self._j_decoded_chars  # type: ignore[operator]
+            line = str.__add__(remaining, _own_data(self._j_decoded_chars))   # PyUnicode_Concat: the characters of both
             start = 0
             offset_to_buffer = str.__len__(remaining)
             remaining = None
-        line_len = str.__len__(line)  # type: ignore[arg-type]
-        found, consumed = _find_line_ending(self._p_readtranslate, self._q_readuniversal, self._r_readnl, line, start, line_len, "")  # type: ignore[arg-type]
+        text: str = _own_data(line)              # the line's characters (PyUnicode_READ, PyUnicode_Substring), RL-721
+        line_len = str.__len__(text)
+        found, consumed = _find_line_ending(self._p_readtranslate, self._q_readuniversal, self._r_readnl, text, start, line_len, "")
         if found >= 0:
             endpos = found + start
             if limit >= 0 and (endpos - start) + chunked >= limit:
@@ -2726,16 +2744,16 @@ def _tw_readline(self: TextIOWrapper, limit: int) -> str:   # _textiowrapper_rea
             endpos = start + limit - chunked
             break
         if endpos > start:
-            chunks.append(line[start:endpos])  # type: ignore[index]
+            chunks.append(text[start:endpos])
             chunked += endpos - start
         if endpos < line_len:
-            remaining = line[endpos:line_len]  # type: ignore[index]
+            remaining = text[endpos:line_len]
         line = None
         _tw_set_decoded_chars(self, None)
     if line is not None:
         self._k_decoded_chars_used = endpos - offset_to_buffer
         if start > 0 or endpos < str.__len__(line):
-            line = line[start:endpos]
+            line = _own_data(line)[start:endpos]
     if remaining is not None:
         chunks.append(remaining)
     if chunks:
@@ -3003,10 +3021,12 @@ class TextIOWrapper(_TextIOBase):
             data = self._c_buffer.read()  # type: ignore[attr-defined]
             if data is None:
                 raise BlockingIOError("Read returned None.")
-            if not issubclass(type(data), bytes):
-                raise TypeError("underlying read() should have returned a bytes object, not '" + _tp_name(data) + "'")
-            decoded = _tw_decode(self._h_decoder, data, True)
-            result = _tw_get_decoded_chars(self, -1) + decoded
+            decoded = _tw_decode(self._h_decoder, data, True)   # whatever read() gave: the decoder says what it takes (RL-717)
+            result = _tw_get_decoded_chars(self, -1)
+            if str.__len__(result) == 0:         # PyUnicode_AppendAndDel: an empty left is replaced by the right object itself,
+                result = decoded                 # an empty right leaves the left, and the rest is the characters of both (RL-718)
+            elif str.__len__(decoded) > 0:
+                result = str.__add__(_own_data(result), _own_data(decoded))
             if self._m_snapshot is not None:
                 _tw_set_decoded_chars(self, None)
                 self._m_snapshot = None
@@ -3015,19 +3035,22 @@ class TextIOWrapper(_TextIOBase):
         chunks: list[str] = []
         result = _tw_get_decoded_chars(self, size)
         remaining -= str.__len__(result)
-        res = True
-        while remaining > 0 and res:
+        joined = False                           # the C's `chunks != NULL`: a chunk was read, so the result is a join of the pieces,
+        while remaining > 0:                     # a plain str even where one piece is all of it (RL-718)
             try:
                 res = _tw_read_chunk(self, remaining)
             except OSError as e:                 # "if (_PyIO_trap_eintr()) continue;" (RL-656)
                 if not _trap_eintr(e):
                     raise
                 continue
+            if not res:                          # the end of the file
+                break
+            joined = True
             if str.__len__(result) > 0:
                 chunks.append(result)
             result = _tw_get_decoded_chars(self, remaining)
             remaining -= str.__len__(result)
-        if chunks:
+        if joined:
             chunks.append(result)
             return "".join(chunks)
         return result

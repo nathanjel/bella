@@ -2125,6 +2125,28 @@ Ref i_dict_next(Obj, Args a) {                   // PyDict_Next: (next position,
     return none_ref();
 }
 
+// _PyDict_Next and _PyDict_SetItem_KnownHash for a prelude: an entry with the hash the dict stores for its key, and an
+// insert by that hash, so that a key is not asked for its hash again (Match.groupdict, RL-710)
+Ref i_dict_next_hashed(Obj, Args a) {            // (dict, position): (next position, key, value, hash) or None
+    positional_only(a, "_dict_next_hashed", 2, 2);
+    if (!is_kind(a.pos(0), Kind::Dict)) raise_new("TypeError", "_dict_next_hashed() needs a dict");
+    auto* d = static_cast<Dict*>(a.pos(0).object());
+    for (std::int64_t i = index_value(a.pos(1)); i >= 0 && static_cast<std::size_t>(i) < d->entries.size(); ++i) {
+        auto& e = d->entries[static_cast<std::size_t>(i)];
+        if (!e.key.is_unset()) {
+            Ref hash = int_from_i64(e.hash);
+            return tuple_new({Obj::small(i + 1), e.key, e.value, hash.get()});
+        }
+    }
+    return none_ref();
+}
+Ref i_dict_set_hashed(Obj, Args a) {             // (dict, key, value, hash)
+    positional_only(a, "_dict_set_hashed", 4, 4);
+    if (!is_kind(a.pos(0), Kind::Dict)) raise_new("TypeError", "_dict_set_hashed() needs a dict");
+    dict_set_hashed(static_cast<Dict*>(a.pos(0).object()), a.pos(1), index_value(a.pos(3)), a.pos(2));
+    return none_ref();
+}
+
 // PyFloat_Pack2/4/8 and PyFloat_Unpack2/4/8 (Objects/floatobject.c) for a prelude: the IEEE 754 binary16, binary32 and binary64
 // forms of a double, on a platform whose doubles are little-endian IEEE (x86-64, aarch64). Pack2 is the C's software path, Pack4
 // its cast with the overflow test and the NaN payload fix, Pack8 a copy.
@@ -2702,6 +2724,19 @@ void format_unraisable(const std::string* context, Obj exc) {
 void report_unraisable(const std::string& context, const PyError& e) { format_unraisable(&context, e.exc.get()); }
 void report_unraisable(const std::string& context, Obj exc) { format_unraisable(&context, exc); }
 void report_unraisable(Obj exc) { format_unraisable(nullptr, exc); }
+// PyErr_FormatUnraisable with a %R in its format: making the message may itself raise (a __repr__ of the program's), and the C
+// clears that error and reports the exception with no message (err_msg None). Before, what the repr raised left the handler
+// and ended the program (RL-705)
+void report_unraisable(const char* context, Obj shown, const PyError& e) {
+    std::string text;
+    try {
+        Ref r = repr_of(shown);
+        text = as_str(r.get())->text;
+    } catch (const PyError&) {
+        return report_unraisable(e.exc.get());
+    }
+    report_unraisable(context + text, e);
+}
 
 namespace {
 // The report CPython prints for an exception (PyErr_Display): traceback.TracebackException, compact, with its defaults
@@ -3235,8 +3270,7 @@ void call_finalizer(Obj fn, Obj self) {
         try {
             Ref r = unbound ? invoke(fn, {self}) : invoke(del.get(), Args{});
         } catch (const PyError& e) {
-            Ref text = repr_of(del.get());
-            report_unraisable("Exception ignored while calling deallocator " + as_str(text.get())->text, e);
+            report_unraisable("Exception ignored while calling deallocator ", del.get(), e);
         }
     } catch (const NotImplemented& e) {          // a refusal in a finaliser still stops the program
         out_stream().flush();
@@ -3254,8 +3288,7 @@ void call_weakref_callback(Obj fn, Obj holder) {
     try {
         Ref r = invoke(fn, {holder});
     } catch (const PyError& e) {
-        Ref text = repr_of(fn);
-        report_unraisable("Exception ignored while calling weakref callback " + as_str(text.get())->text, e);
+        report_unraisable("Exception ignored while calling weakref callback ", fn, e);
     } catch (const NotImplemented& e) {          // a refusal in a callback still stops the program
         out_stream().flush();
         err_stream().write(std::string("bella: not implemented: ") + e.what() + "\n");
