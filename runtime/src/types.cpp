@@ -880,7 +880,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         } catch (const PyError& e) {
             Ref key = repr_of(Obj::of(k));
             add_note(e.exc.get(), "Error calling __set_name__ on '" + type_of(v)->name + "' instance " + as_str(key.get())->text + " in '" + c->name + "'");
-            throw;
+            rethrow(e);
         }
     }
     // __init_subclass__ of the class after this one in the MRO (super(type, type)), bound to the new class
@@ -2804,7 +2804,7 @@ Ref mapping_get(Obj mapping, Obj key) {
     try {
         return getitem(mapping, key);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("KeyError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("KeyError"))) rethrow(e);
         return Ref{};
     }
 }

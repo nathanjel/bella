@@ -33,6 +33,9 @@ try:
     _view_dict                                   # noqa: B018  # a view's dv_dict
     _held_once                                   # noqa: B018  # _PyObject_IsUniquelyReferenced of a field's value
     _tuple_set                                   # noqa: B018  # PyTuple_SET_ITEM, on a tuple nothing else holds
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _type_lookup                                 # noqa: B018  # _PyType_Lookup on the object's type: (value, name, absent)
+    _raise_as_is                                 # noqa: B018  # a pending error goes on as it is: no context taken (RL-650)
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -62,19 +65,13 @@ except NameError:
 
     def _bella_refuse(text: str) -> NoReturn:
         raise ImportError(text)
+    _has_slot: Callable[..., bool] = _missing
+    _type_lookup: Callable[..., object] = _missing
+    _raise_as_is: Callable[..., Any] = _missing
 
 _SSIZE_MAX = 2**63 - 1
 _SSIZE_MIN = -(2**63)
 _MUTATED = "deque mutated during iteration"
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 def _ssize(value: object, error: type = OverflowError) -> int:   # PyNumber_AsSsize_t(value, error)
@@ -1369,7 +1366,17 @@ class odict_iterator:
         kind = self._e_kind  # type: ignore[attr-defined]
         if not kind & _ITER_VALUES:
             return key
-        value = dict.get(self._a_odict, key, _NULL)  # type: ignore[attr-defined]
+        failed: BaseException | None = None
+        value: object = _NULL
+        try:
+            value = dict.get(self._a_odict, key, _NULL)  # type: ignore[attr-defined]
+        except BaseException as e:
+            failed = e
+        if failed is not None:                   # the lookup's own error: "Py_DECREF(key); goto error", the iterator at its end
+            del key                              # with that error pending, not handled (RL-650)
+            self._b_current = _NULL  # type: ignore[attr-defined]
+            self._a_odict = _NULL  # type: ignore[attr-defined]
+            _raise_as_is(failed)
         if value is _NULL:
             self._b_current = _NULL  # type: ignore[attr-defined]
             self._a_odict = _NULL  # type: ignore[attr-defined]
@@ -1430,7 +1437,15 @@ def _odictiter_nextkey(it: Any) -> object:     # odictiter_nextkey_lock_held: th
     if it._c_size != dict.__len__(od):
         it._c_size = -1                          # make this state sticky
         raise RuntimeError("OrderedDict changed size during iteration")
-    node = _od_find(od, fields, it._b_current)
+    failed: BaseException | None = None
+    node = None
+    try:
+        node = _od_find(od, fields, it._b_current)
+    except BaseException as e:
+        failed = e
+    if failed is not None:                       # the lookup's own error (a key's __hash__): "Py_CLEAR(di->di_current)" with that
+        it._b_current = _NULL                    # error pending, not handled, and it goes on as it is (RL-650)
+        _raise_as_is(failed)
     if node is None:                             # must have been deleted
         key = it._b_current
         it._b_current = _NULL
@@ -1529,11 +1544,8 @@ def _count_elements(*args: object, **kwds: object) -> None:   # _collections__co
     it = iter(iterable)  # type: ignore[call-overload]
     cls = type(mapping)
 
-    def of_type(name: str) -> object:            # _PyType_Lookup: the classes' own dicts, no metaclass asked (RL-638)
-        for klass in cls.__mro__:
-            if name in vars(klass):
-                return vars(klass)[name]
-        return None
+    def of_type(name: str) -> object:            # _PyType_Lookup: the classes' own dicts, no metaclass asked (RL-638, RL-644)
+        return _type_lookup(mapping, name, None)
     if issubclass(cls, dict) and of_type("get") is vars(dict)["get"] and of_type("__setitem__") is vars(dict)["__setitem__"]:
         for key in it:
             _count_element(mapping, key)

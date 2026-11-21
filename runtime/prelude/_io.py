@@ -23,6 +23,8 @@ try:
     _io_call                                     # noqa: B018  # the runtime's part, by name
     _has_dict                                    # noqa: B018  # the C's self->dict is not NULL
     _own_dict                                    # noqa: B018  # the C's self->dict, read or (with a second argument) replaced
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -38,6 +40,8 @@ except NameError:
     _io_call: Callable[..., Any] = _missing
     _has_dict: Callable[..., bool] = _missing
     _own_dict: Callable[..., Any] = _missing
+    _has_slot: Callable[..., bool] = _missing
+    _lookup_special: Callable[..., tuple[Any, ...]] = _missing
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 _ABSENT = object()
@@ -47,21 +51,13 @@ _SMALLCHUNK = 8 * 1024
 _LARGE_BUFFER_CUTOFF_SIZE = 65536
 
 _EINTR = 4
+_OSERROR_ERRNO = OSError.__dict__["errno"].__get__   # the struct's myerrno
 _EAGAIN = 11
 _EISDIR = 21
 _ESPIPE = 29
 _O_RDONLY, _O_WRONLY, _O_RDWR = 0, 1, 2
 _O_CREAT, _O_EXCL, _O_TRUNC, _O_APPEND = 0o100, 0o200, 0o1000, 0o2000
 _S_IFMT, _S_IFDIR, _S_IFCHR = 0o170000, 0o040000, 0o020000
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 class UnsupportedOperation(OSError, ValueError):
@@ -192,22 +188,15 @@ def _full_name(value: object) -> str:            # %T
     return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
 
 
-def _special(value: object, name: str) -> object:   # _PyObject_LookupSpecial: None when it has none
-    for klass in type(value).__mro__:
-        found = vars(klass)
-        if name in found:
-            descriptor = found[name]
-            get = _lookup_get(descriptor)
-            return descriptor if get is None else get(descriptor, value, type(value))
-    return None
-
-
-def _lookup_get(descriptor: object) -> object:
-    for klass in type(descriptor).__mro__:
-        found = vars(klass)
-        if "__get__" in found:
-            return found["__get__"]
-    return None
+def _special(value: object, name: str) -> object:
+    """The type's method, bound, as PyOS_FSPath and path_converter read it: None where the type has none, where it is None,
+    and where binding it raised ("(NULL == func) || (func == Py_None)": the C sets its TypeError over whatever the lookup
+    left, so the caller raises its own after this handler has ended, RL-648)."""
+    try:
+        found = _lookup_special(value, name)
+    except BaseException:
+        return None
+    return found[0] if found else None
 
 
 def _optional_attr(value: object, name: str) -> object:   # PyObject_GetOptionalAttr: _ABSENT when it has none
@@ -223,6 +212,18 @@ def _fail(code: int, filename: object = _ABSENT) -> None:   # PyErr_SetFromErrno
     if filename is _ABSENT:
         raise OSError(code, _sys("strerror", code))
     raise OSError(code, _sys("strerror", code), filename)
+
+
+def _trap_eintr(exc: OSError) -> bool:
+    """_PyIO_trap_eintr, for an OSError the caller caught: whether its errno, as PyLong_AsLongAndOverflow reads it, is EINTR.
+    The errno is the field of the C struct, whatever a subclass shows under the name."""
+    code = _OSERROR_ERRNO(exc)
+    if code is None:
+        return False
+    try:
+        return _number_index(code) == _EINTR
+    except BaseException:
+        return False
 
 
 def _fspath(path: object) -> object:             # PyOS_FSPath
@@ -489,7 +490,12 @@ class _RawIOBase(_IOBase):
         self = args[0]
         chunks: list[bytes] = []
         while True:
-            data = self.read(DEFAULT_BUFFER_SIZE)  # type: ignore[attr-defined]
+            try:
+                data = self.read(DEFAULT_BUFFER_SIZE)  # type: ignore[attr-defined]
+            except OSError as e:                 # "if (_PyIO_trap_eintr()) continue;": what was read so far is kept (RL-654)
+                if not _trap_eintr(e):
+                    raise
+                continue
             if data is None:
                 if not chunks:
                     return None
@@ -697,13 +703,17 @@ class FileIO(_RawIOBase):
                 _fileio_internal_close(self)
             else:
                 self._a_fd = -1
-        if isinstance(nameobj, bool):
+        if type(nameobj) is bool:                # PyBool_Check: the object's type, which its __class__ does not answer for (RL-651)
             _io_call("warn", "bool is used as a file descriptor", "RuntimeWarning")   # PyErr_WarnEx(PyExc_RuntimeWarning, ..., 1)
         fd = -1
-        if isinstance(nameobj, int) or _has_slot(nameobj, "__index__"):
-            fd = _int(nameobj)
-            if fd < 0:
-                raise ValueError("negative file descriptor")
+        is_fd = False
+        try:                                     # "fd = PyLong_AsInt(nameobj)", and "PyErr_Clear()" of whatever that raised: then
+            fd = _int(nameobj)                   # the name is a path, and what follows is raised with nothing pending
+            is_fd = True
+        except BaseException:
+            fd = -1
+        if is_fd and fd < 0:
+            raise ValueError("negative file descriptor")
         name: bytes = b""
         if fd < 0:
             path = _fspath(nameobj)
@@ -3551,7 +3561,8 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
     closefd = True if closefd is _ABSENT else (True if closefd else False)
     if opener is _ABSENT:
         opener = None
-    is_number = isinstance(file, int) or _has_slot(file, "__index__") or _has_slot(file, "__int__") or _has_slot(file, "__float__")
+    # PyNumber_Check: the type's slots, or a complex; the object's __class__ is not asked (RL-651)
+    is_number = _has_slot(file, "__index__") or _has_slot(file, "__int__") or _has_slot(file, "__float__") or issubclass(type(file), complex)
     path_or_fd = file if is_number else _fspath(file)
     if not is_number and not issubclass(type(path_or_fd), (str, bytes)):
         raise TypeError("invalid file: " + repr(file))

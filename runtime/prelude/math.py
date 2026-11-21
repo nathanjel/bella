@@ -22,6 +22,7 @@ try:
     _as_double                                   # noqa: B018  # PyFloat_AsDouble
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial: the bound method in a tuple, or ()
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -45,6 +46,7 @@ except NameError:
         return float(value)  # type: ignore[arg-type]
     _unpack_keywords: Callable[..., Any] = _missing
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 pi = 3.141592653589793
 e = 2.718281828459045
@@ -65,15 +67,6 @@ _DBL_MIN = 2.2250738585072014e-308
 # ---- the clinic's and the C API's conversions ------------------------------------------------------------------------------
 
 _index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 def _clinic_double(value: object) -> float:      # the clinic's `double`: PyFloat_AsDouble, a float itself read directly

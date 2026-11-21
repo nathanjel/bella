@@ -238,8 +238,11 @@ def bindtextdomain(*args: object, **kwds: object) -> object:
     dirname = args[1]
     if dirname is not None:                      # PyUnicode_FSConverter: a path, as the file system encodes it
         if not issubclass(type(dirname), (str, bytes)):
-            fspath = _lookup_special(dirname, "__fspath__")   # PyOS_FSPath: the type's method, bound (RL-635)
-            if not fspath:
+            try:                                 # PyOS_FSPath: the type's method, bound (RL-635); none where the binding
+                fspath = _lookup_special(dirname, "__fspath__")   # raised and where it is None (RL-648, RL-649)
+            except BaseException:
+                fspath = ()
+            if not fspath or fspath[0] is None:
                 raise TypeError("expected str, bytes or os.PathLike object, not " + _tp_name(dirname))
             dirname = fspath[0]()
             if not issubclass(type(dirname), (str, bytes)):

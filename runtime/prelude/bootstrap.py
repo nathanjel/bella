@@ -711,10 +711,7 @@ def _make_parameters(args):
 
 def _ga_has_iter(param):
     # bella: Py_TYPE(param)->tp_iter: a TypeVarTuple
-    for c in type(param).__mro__:
-        if '__iter__' in vars(c):
-            return True
-    return False
+    return _has_slot(param, '__iter__')
 
 
 def _subs_tvars(obj, params, argitems):

@@ -21,6 +21,7 @@ try:
     _zlib                                        # noqa: B018  # zlib.cpp: the library's calls by name
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -40,6 +41,7 @@ except NameError:
     def _number_index(o: object) -> int:
         import operator
         return operator.index(o)
+    _has_slot: Callable[..., bool] = _missing
 
 
 DEFLATED = 8
@@ -76,15 +78,6 @@ _ABSENT: object = object()
 _MAXSIZE = 2**63 - 1
 _UINT_MAX = 2**32 - 1
 _DEF_MAX_INITIAL_BUF_SIZE = 16 * 1024 * 1024
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 class error(Exception):  # noqa: N801

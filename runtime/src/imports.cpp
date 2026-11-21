@@ -450,7 +450,7 @@ Ref i_value_only_call(Obj self, Args a) {
     try {
         invoke(self, {a.pos(0)});
     } catch (const PyError& e) {
-        if (isinstance(e.exc.get(), exception_class("NotImplementedError")) || !isinstance(e.exc.get(), exception_class("Exception"))) throw;
+        if (isinstance(e.exc.get(), exception_class("NotImplementedError")) || !isinstance(e.exc.get(), exception_class("Exception"))) rethrow(e);
     }
     throw NotImplemented("[P2+] annotationlib: FORWARDREF of an annotate function the compiler did not generate, which supports "
                          "VALUE_WITH_FAKE_GLOBALS, re-runs its __code__ (decision S-1)");
@@ -767,6 +767,12 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(ns->dict, Obj::of(N("_keyword_suggestion")), suggest.get());
         Ref special = own(new Builtin("_lookup_special", i_lookup_special));   // _PyObject_LookupSpecial, in every such file: a special
         dict_set(ns->dict, Obj::of(N("_lookup_special")), special.get());       // method is the type's, bound, whatever a metaclass says (RL-629)
+        Ref slot = own(new Builtin("_has_slot", i_has_slot));   // a type's slot and what its MRO holds, read as the C reads them:
+        dict_set(ns->dict, Obj::of(N("_has_slot")), slot.get());   // no attribute of a class is asked, so no metaclass answers (RL-644)
+        Ref of_type = own(new Builtin("_type_lookup", i_type_lookup));
+        dict_set(ns->dict, Obj::of(N("_type_lookup")), of_type.get());
+        Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));   // a pending error goes on as it is, after work the C did meanwhile
+        dict_set(ns->dict, Obj::of(N("_raise_as_is")), as_is.get());
     }
     for (auto [primitive, fn] : primitives) {
         Ref b = own(new Builtin(primitive, fn));
@@ -1534,7 +1540,7 @@ void import_star(Obj v, Obj locals) {
                 raise_new("TypeError", "'" + type_of(seq)->name + "' object does not support indexing");
             name = getitem(seq, index.get());
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("IndexError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("IndexError"))) rethrow(e);
             break;
         }
         const Str* s = as_str(name.get());
@@ -1613,7 +1619,7 @@ Ref loaded_attr(Obj name, const Str* attr_name) {
         Obj v = dict_get(static_cast<Module*>(mod.get().object())->dict, Obj::of(attr_name));
         return v.is_unset() || is_lazy(v) ? Ref{} : Ref::share(v);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("Exception"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("Exception"))) rethrow(e);
         return Ref{};
     }
 }
@@ -1889,7 +1895,7 @@ void clear_lazy_submodule(const std::string& name, bool bind) {
         Ref loaded = get_module(full.get());
         if (still_initializing(loaded.get())) return;
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("Exception"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("Exception"))) rethrow(e);
         return;
     }
     Ref module = get_module(parent_name.get());
@@ -1951,7 +1957,7 @@ Ref try_load_lazy_submodule(Module* m, const Str* attr_name, bool suppress, bool
         Ref spec = optional_attr(mod.get(), N("__spec__"));
         initializing = spec_is_initializing(spec.get());
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("Exception"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("Exception"))) rethrow(e);
     }
     if (!initializing) {
         dict_set(m->dict, Obj::of(attr_name), mod.get());
@@ -2073,7 +2079,7 @@ Ref module_getattr(Obj obj, const Str* name, bool suppress) {
             else if (!found.is_unset()) attr = descr_get(found, obj, Obj::of(c));
         }
     } catch (const PyError& e) {
-        if (!is_attribute_error(e)) throw;
+        if (!is_attribute_error(e)) rethrow(e);
     }
     if (attr.get().is_unset()) {
         bool recheck_dict = false;
@@ -2097,7 +2103,7 @@ Ref module_getattr(Obj obj, const Str* name, bool suppress) {
         try {
             return invoke(hook.get(), {name_ref.get()});
         } catch (const PyError& e) {
-            if (!suppress || !is_attribute_error(e)) throw;
+            if (!suppress || !is_attribute_error(e)) rethrow(e);
             return Ref{};
         }
     }

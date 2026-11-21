@@ -9,6 +9,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _structseq                                   # noqa: B018  # bootstrap.py's: a type of named tuples
     _sys                                         # noqa: B018  # the system calls, by name
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -20,17 +21,9 @@ except NameError:
     _tp_name: Callable[..., str] = _missing
     _structseq: Callable[..., Any] = _missing
     _sys: Callable[..., Any] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 struct_group = _structseq("struct_group", "grp", ["gr_name", "gr_passwd", "gr_gid", "gr_mem"], 4)
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 def _entry(fields: tuple[object, ...]) -> object:   # mkgrent

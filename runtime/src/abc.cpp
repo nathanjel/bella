@@ -61,7 +61,7 @@ std::int64_t reference_hash(Obj obj) {
     try {
         return hash_of(obj);
     } catch (const PyError& e) {
-        if (type_of(e.exc.get()) != exception_class("TypeError")) throw;
+        if (type_of(e.exc.get()) != exception_class("TypeError")) rethrow(e);
         Ref text = str_of(e.exc.get());
         raise_new("TypeError", "cannot use 'weakref.ReferenceType' as a set element (" + as_str(text.get())->text + ")");
     }
@@ -96,7 +96,7 @@ Ref mapping_items(Obj ns) {                      // PyMapping_Items, method_outp
     try {
         it = iter(out.get());
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", type_of(ns)->name + ".items() must return an iterable, not " + type_of(out.get())->name);
     }
     Ref items = list_new({});

@@ -18,6 +18,7 @@ try:
     _hash_digest                                 # noqa: B018  # (state) -> bytes
     _number_index                                # noqa: B018  # PyNumber_Index
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -40,6 +41,7 @@ except NameError:
         import operator
         return operator.index(o)
     _unpack_keywords: Callable[..., Any] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 _GIL_MINSIZE = 2048
 BLAKE2B_SALT_SIZE = 16
@@ -53,15 +55,6 @@ BLAKE2S_MAX_DIGEST_SIZE = 32
 _ABSENT: object = object()
 _PARAMETERS = ("data", "digest_size", "key", "salt", "person", "fanout", "depth", "leaf_size", "node_offset", "node_depth", "inner_size",
                "last_node", "usedforsecurity", "string")
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 def _buffer(value: object) -> bytes:             # the data: GET_BUFFER_VIEW_OR_ERROUT

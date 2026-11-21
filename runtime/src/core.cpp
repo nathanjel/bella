@@ -776,7 +776,7 @@ std::int64_t container_hash(Obj key, const char* as) {
     try {
         return hash_of(key);
     } catch (const PyError& e) {
-        if (type_of(e.exc.get()) != exception_class("TypeError")) throw;
+        if (type_of(e.exc.get()) != exception_class("TypeError")) rethrow(e);
         Ref text = str_of(e.exc.get());
         raise_new("TypeError", "cannot use '" + fully_qualified_name(type_of(key)) + "' as a " + as + " (" +
                                    as_str(text.get())->text + ")");

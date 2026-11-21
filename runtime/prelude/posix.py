@@ -26,6 +26,8 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _as_double                                   # noqa: B018  # PyFloat_AsDouble, with its messages
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -45,6 +47,8 @@ except NameError:
     _warn: Callable[..., Any] = _missing
     _as_double: Callable[..., float] = _missing
     _unpack_keywords: Callable[..., Any] = _missing
+    _has_slot: Callable[..., bool] = _missing
+    _lookup_special: Callable[..., tuple[Any, ...]] = _missing
 
 AT_NO_AUTOMOUNT = 2048
 CLD_CONTINUED = 6
@@ -477,20 +481,15 @@ def _positional(name: str, args: tuple[object, ...], kwds: dict[str, object], co
         raise TypeError(name + " expected " + str(count) + " arguments, got " + str(len(args)))
 
 
-def _type_lookup(value: object, name: str) -> object:   # _PyType_Lookup on its type: _ABSENT when it has none
-    for klass in type(value).__mro__:
-        found = vars(klass)
-        if name in found:
-            return found[name]
-    return _ABSENT
-
-
-def _special(value: object, name: str) -> object:   # _PyObject_LookupSpecial: None when it has none
-    found = _type_lookup(value, name)
-    if found is _ABSENT:
+def _special(value: object, name: str) -> object:
+    """The type's method, bound, as PyOS_FSPath and path_converter read it: None where the type has none, where it is None,
+    and where binding it raised ("(NULL == func) || (func == Py_None)": the C sets its TypeError over whatever the lookup
+    left, so the caller raises its own after this handler has ended, RL-648)."""
+    try:
+        found = _lookup_special(value, name)
+    except BaseException:
         return None
-    get = _type_lookup(found, "__get__")
-    return found if get is _ABSENT else get(found, value, type(value))  # type: ignore[operator]
+    return found[0] if found else None
 
 
 def _int(value: object) -> int:                  # PyLong_AsInt
@@ -562,7 +561,7 @@ def _confname(value: object, table: object) -> int:   # conv_confname: a name of
         value = dict.get(table, value, _ABSENT)  # type: ignore[arg-type]
         if value is _ABSENT:
             raise ValueError("unrecognized configuration name")
-    if _type_lookup(value, "__index__") is _ABSENT:
+    if not _has_slot(value, "__index__"):
         raise TypeError("configuration names must be strings or integers")
     return _int(value)
 
@@ -600,7 +599,7 @@ def _buffers(buffers: object, count: int, writable: bool) -> list[object]:   # i
             out.append(item)
         elif issubclass(type(item), bytes):
             raise BufferError("Object is not writable.")
-        elif _type_lookup(item, "__buffer__") is not _ABSENT:
+        elif _has_slot(item, "__buffer__"):
             _refuse("os: a buffer that is not bytes or bytearray")
         else:
             raise TypeError("a bytes-like object is required, not '" + type(item).__name__ + "'")
@@ -747,7 +746,7 @@ def _format_i(value: object) -> int:             # PyArg_ParseTuple's "i"
 
 
 def _format_k(value: object, message: str) -> int:   # PyArg_ParseTuple's "k": 64 bits of an int, with a warning for one that has more
-    if _type_lookup(value, "__index__") is _ABSENT:
+    if not _has_slot(value, "__index__"):
         raise TypeError(message)                 # converterr, which the format's own message replaces
     out = _number_index(value)
     if not -(2**63) <= out < 2**64:
@@ -826,7 +825,7 @@ def _posix_spawn(name: str, searched: bool, args: tuple[object, ...], kwds: dict
     count = len(argv)  # type: ignore[arg-type]
     if count < 1:
         raise ValueError(name + ": argv must not be empty")
-    if env is not None and _type_lookup(env, "__getitem__") is _ABSENT:   # PyMapping_Check
+    if env is not None and not _has_slot(env, "__getitem__"):   # PyMapping_Check
         raise TypeError(name + ": environment must be a mapping object or None")
     if scheduler is not _ABSENT and scheduler is not None and not issubclass(type(scheduler), tuple):
         raise TypeError(name + ": scheduler must be a tuple or None")
@@ -871,8 +870,8 @@ def _fildes(value: object) -> int:               # PyObject_AsFileDescriptor
             _warn("bool is used as a file descriptor", "RuntimeWarning")
         fd = _int(value)
     else:
-        method = getattr(value, "fileno", None)
-        if method is None:
+        method = getattr(value, "fileno", _ABSENT)   # PyObject_GetOptionalAttr: what is there is called, None too (RL-652)
+        if method is _ABSENT:
             raise TypeError("argument must be an int, or have a fileno() method.")
         given = method()  # type: ignore[operator]
         if not issubclass(type(given), int):
@@ -913,7 +912,7 @@ def _path(function: str, argument: str, value: object, allow_fd: bool = False, n
     __fspath__, not the object that gave it)."""
     if value is None and nullable:
         return None, None
-    is_index = allow_fd and _type_lookup(value, "__index__") is not _ABSENT
+    is_index = allow_fd and _has_slot(value, "__index__")
     o = value
     if not is_index and not issubclass(type(value), (str, bytes)):
         func = _special(value, "__fspath__")
@@ -951,7 +950,7 @@ def _fail(code: int, filename: object = _ABSENT, filename2: object = _ABSENT) ->
 def _dir_fd(value: object) -> int | None:        # dir_fd_converter: None for the default (AT_FDCWD)
     if value is None or value is _ABSENT:
         return None
-    if _type_lookup(value, "__index__") is _ABSENT:
+    if not _has_slot(value, "__index__"):
         raise TypeError("argument should be integer or None, not " + type(value).__name__)
     return _fd_converter(value)
 
@@ -1170,7 +1169,7 @@ def write(*args: object, **kwds: object) -> int:
     fd = _int(args[0])
     data = args[1]
     if not issubclass(type(data), (bytes, bytearray)):
-        if _type_lookup(data, "__buffer__") is not _ABSENT:
+        if _has_slot(data, "__buffer__"):
             _refuse("os.write() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
     _sys("look_lean")
@@ -1575,7 +1574,7 @@ def execve(*args: object, **kwds: object) -> None:   # os_execve_impl: by name o
     count = len(argv)  # type: ignore[arg-type]
     if count < 1:
         raise ValueError("execve: argv must not be empty")
-    if _type_lookup(env, "__getitem__") is _ABSENT:   # PyMapping_Check
+    if not _has_slot(env, "__getitem__"):   # PyMapping_Check
         raise TypeError("execve: environment must be a mapping object")
     strings = _arglist(argv, count, "execve: argv first element cannot be empty")
     environment = _envlist(env)
@@ -2018,7 +2017,7 @@ def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
     fd = _int(args[0])
     data = args[1]
     if not issubclass(type(data), (bytes, bytearray)):   # the Py_buffer converter
-        if _type_lookup(data, "__buffer__") is not _ABSENT:
+        if _has_slot(data, "__buffer__"):
             _refuse("os.pwrite() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
     content = bytes(data)  # type: ignore[call-overload]
@@ -2043,7 +2042,7 @@ def readinto(*args: object, **kwds: object) -> int:   # os_readinto_impl
     fd = _int(args[0])
     buffer = args[1]
     if not issubclass(type(buffer), bytearray):  # Py_buffer(accept={rwbuffer})
-        if not issubclass(type(buffer), bytes) and _type_lookup(buffer, "__buffer__") is not _ABSENT:
+        if not issubclass(type(buffer), bytes) and _has_slot(buffer, "__buffer__"):
             _refuse("os.readinto() into a buffer that is not a bytearray")
         raise TypeError("readinto() argument 2 must be read-write bytes-like object, not " + _tp_name(buffer))
     _sys("look_lean")
@@ -2139,7 +2138,7 @@ def sched_setaffinity(*args: object, **kwds: object) -> None:   # os_sched_setaf
     pid = _int(args[0])
     cpus: list[int] = []
     for item in args[1]:  # type: ignore[attr-defined]
-        if _type_lookup(item, "__index__") is _ABSENT:
+        if not _has_slot(item, "__index__"):
             raise TypeError("expected an iterator of ints, but iterator yielded " + repr(type(item)))
         cpu = _number_index(item)
         if cpu >= 2**63:
@@ -2233,7 +2232,7 @@ def setgroups(*args: object, **kwds: object) -> None:   # os_setgroups: a sequen
     ids: list[int] = []
     for i in range(count):
         item = groups[i]  # type: ignore[index]
-        if _type_lookup(item, "__index__") is _ABSENT:
+        if not _has_slot(item, "__index__"):
             raise TypeError("groups must be integers")
         ids.append(_id("gid", item))
     _set(b"setgroups", tuple(ids))
@@ -2303,7 +2302,7 @@ def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
     data, shown = _path("setxattr", "path", path, allow_fd=True)
     name = _path("setxattr", "attribute", attribute)[0]
     if not issubclass(type(value), (bytes, bytearray)):   # the Py_buffer converter
-        if _type_lookup(value, "__buffer__") is not _ABSENT:
+        if _has_slot(value, "__buffer__"):
             _refuse("os.setxattr() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + type(value).__name__ + "'")
     bits = 0 if flags is _ABSENT else _int(flags)
@@ -2445,7 +2444,7 @@ def _time_t(value: object) -> int:               # _PyLong_AsTime_t
 
 
 def _timespec(value: object) -> tuple[int, int]:   # pytime_object_to_denominator(obj, &sec, &nsec, 1e9, _PyTime_ROUND_FLOOR)
-    if _type_lookup(value, "__index__") is not _ABSENT:   # PyIndex_Check: whole seconds
+    if _has_slot(value, "__index__"):   # PyIndex_Check: whole seconds
         return _time_t(value), 0
     d = _as_double(value)                        # PyFloat_AsDouble: a float, or what has __float__; "must be real number" otherwise
     if d != d:

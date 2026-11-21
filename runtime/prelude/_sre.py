@@ -17,6 +17,7 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc
     _sre_call                                    # noqa: B018  # the engine, by name
     _present                                     # noqa: B018  # a class the module has in C, with what it cannot do
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -30,6 +31,7 @@ except NameError:
     _bella_new_instance: Callable[..., Any] = _missing
     _sre_call: Callable[..., Any] = _missing
     _present: Callable[..., None] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 CODESIZE = 4
 MAGIC = 20230612
@@ -40,15 +42,6 @@ copyright = " SRE 2.2.2 Copyright (c) 1997-2002 by Secret Labs AB "  # noqa: A00
 _ABSENT = object()
 _SSIZE_MAX = 2**63 - 1
 _compile_template_func: list[object] = []
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 def _unpack(name: str, args: tuple[object, ...], kwds: dict[str, object], names: tuple[str, ...], minpos: int, maxpos: int) -> list[object]:

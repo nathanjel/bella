@@ -15,6 +15,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -30,6 +31,7 @@ except NameError:
 
     _unpack_keywords: Callable[..., Any] = _missing
     _keyword_suggestion: Callable[..., Any] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 QUOTE_MINIMAL = 0
 QUOTE_ALL = 1
@@ -457,15 +459,6 @@ reader = _reader_new  # type: ignore[assignment,misc]
 
 
 # ---- the writer -------------------------------------------------------------------------------------------------------------
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it: a class of its MRO has the name. `hasattr` on the type would ask the
-    metaclass (RL-621, RL-628)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
-
 
 def _number_check(o: object) -> bool:            # PyNumber_Check
     return _has_slot(o, "__index__") or _has_slot(o, "__int__") or _has_slot(o, "__float__") or issubclass(type(o), complex)

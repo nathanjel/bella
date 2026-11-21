@@ -16,6 +16,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _bella_new_instance                          # noqa: B018  # tp_alloc
     _bella_refuse                                # noqa: B018  # a stop by name
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -28,19 +29,11 @@ except NameError:
     _tp_name: Callable[..., str] = _missing
     _bella_new_instance: Callable[..., Any] = _missing
     _bella_refuse: Callable[..., Any] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 unidata_version = _ucd_call("unidata_version")   # UNIDATA_VERSION, as the copied database says it
 _NAME_MAXLEN = _ucd_call("name_maxlen")          # NAME_MAXLEN, as the copied names say it
 _SSIZE_MAX = 2**63 - 1                           # PY_SSIZE_T_MAX
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 # ---- the calling conventions and the clinic's converters ----

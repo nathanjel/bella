@@ -19,6 +19,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _as_double                                   # noqa: B018  # PyFloat_AsDouble: the runtime's, with its warning for a float's subclass
     _as_c_complex                                # noqa: B018  # PyComplex_AsCComplex: (real, imag)
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -46,15 +47,7 @@ except NameError:
     def _as_c_complex(value: object) -> tuple[float, float]:
         z = complex(value)  # type: ignore[call-overload]
         return z.real, z.imag
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
-
+    _has_slot: Callable[..., bool] = _missing
 
 class error(Exception):  # noqa: N801           # PyErr_NewException("struct.error", NULL, NULL)
     pass

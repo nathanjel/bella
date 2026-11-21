@@ -19,6 +19,7 @@ try:
     _bella_class_set                             # noqa: B018  # a store into a type's dict, which a class statement refuses for __qualname__
     _bella_bootstrap                             # noqa: B018  # _frozen_importlib's functions by name: the union's, GenericAlias
     _number_index                                # noqa: B018  # PyNumber_Index
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from operator import index as _number_index
@@ -53,18 +54,10 @@ except NameError:
     def _tp_name(obj: object) -> str:
         t = type(obj)
         return t.__name__ if t.__module__ in ("builtins", "__main__") else t.__module__ + "." + t.__name__
+    _has_slot: Callable[..., bool] = _missing
 
 Union = type(int | None)                         # _PyUnion_Type, the runtime's (typing.Union)
 _FORMAT_STRING = 4                               # _Py_ANNOTATE_FORMAT_STRING
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 class _Absent:

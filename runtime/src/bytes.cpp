@@ -364,7 +364,7 @@ Ref join_m(Obj self, Args a) {                    // stringlib_bytes_join
         try {
             it = iter(a.pos(0));
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
             raise_new("TypeError", "can only join an iterable");
         }
         seq = list_new({});
@@ -1150,7 +1150,7 @@ Ref bytes_new_exact(Args rest) {
         try {
             size = index_value(x);
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
             is_count = false;
         }
         if (is_count) {
@@ -1165,7 +1165,7 @@ Ref bytes_new_exact(Args rest) {
     try {
         it = iter(x);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", "cannot convert '" + type_of(x)->name + "' object to bytes");
     }
     length_hint(x);                              // _PyBytes_FromIterator: the iterator first, then the hint
@@ -1206,7 +1206,7 @@ Ref bytearray_init_m(Obj self, Args a) {          // bytearray___init___impl
         try {
             size = index_value(x);
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
             is_count = false;
         }
         if (is_count) {
@@ -1227,7 +1227,7 @@ Ref bytearray_init_m(Obj self, Args a) {          // bytearray___init___impl
     try {
         it = iter(x);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", "cannot convert '" + type_of(x)->name + "' object to bytearray");
     }
     std::string made = from_iterator(it.get(), "byte must be in range(0, 256)");
@@ -1247,7 +1247,7 @@ std::string assigned_values(Obj values) {         // bytearray_ass_subscript's v
     try {
         it = iter(values);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", "cannot convert '" + type_of(values)->name + "' object to bytearray");
     }
     return from_iterator(it.get(), "byte must be in range(0, 256)");
@@ -1329,14 +1329,14 @@ Ref extend_m(Obj self, Args a) {
     try {
         it = iter(x);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", "can't extend bytearray with " + type_of(x)->name);
     }
     std::string more;
     try {
         more = from_iterator(it.get(), "byte must be in range(0, 256)");
     } catch (const PyError& e) {
-        if (as_str(x) == nullptr || !isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (as_str(x) == nullptr || !isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", "expected iterable of integers; got: 'str'");
     }
     can_resize(self, bytes_data(self).size() + more.size());

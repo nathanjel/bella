@@ -375,7 +375,7 @@ Ref gen_close(Generator* g) {                     // gen_close
         value = resume(g, returned);
     } catch (const PyError& e) {
         if (isinstance(e.exc.get(), exception_class("GeneratorExit"))) return none_ref();
-        throw;
+        rethrow(e);
     }
     if (returned) return value;
     raise_new("RuntimeError", "generator ignored GeneratorExit");
@@ -436,7 +436,7 @@ Ref gen_delegate_step(Generator* g) {
     } catch (const PyError& e) {                  // _PyGen_FetchStopIterationValue
         if (!isinstance(e.exc.get(), exception_class("StopIteration"))) {
             g->delegate = Ref{};
-            throw;
+            rethrow(e);
         }
         g->sent = getattr(e.exc.get(), N("value"));
         g->delegate = Ref{};

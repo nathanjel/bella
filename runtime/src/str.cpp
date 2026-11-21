@@ -424,7 +424,7 @@ Translated translate_lookup(char32_t c, Obj mapping, Ref& item, char32_t& replac
     try {
         item = getitem(mapping, key.get());
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("LookupError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("LookupError"))) rethrow(e);
         item = Ref{};
         return Translated::AsItIs;
     }

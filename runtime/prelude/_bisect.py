@@ -12,6 +12,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _is_c_type                                   # noqa: B018  # the object's type is CPython's, not a class of the program's
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -31,21 +32,13 @@ except NameError:
     def _is_c_type(o: object) -> bool:
         return type(o).__module__ != "__main__"   # for probing this file under CPython
     _unpack_keywords: Callable[..., Any] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 _ABSENT: object = object()
 _MAXSIZE = 2**63 - 1
 # the C mapping types a phase-1 program can hold: mp_subscript and no sq_item, so no sequence for the slot's purposes
 _C_MAPPINGS = ("dict", "mappingproxy", "collections.OrderedDict", "collections.defaultdict", "re.Match", "types.GenericAlias", "typing.Union",
                "weakref.ProxyType", "weakref.CallableProxyType", "_contextvars.Context")
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 def _c_mapping(a: object) -> bool:               # one of CPython's mapping types (mp_subscript, no sq_item), never a class of the program's named like one

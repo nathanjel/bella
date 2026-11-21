@@ -605,7 +605,7 @@ Ref object_bytes(Obj v) {                         // PyObject_Bytes: what bytes(
         try {
             it = iter(v);
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         }
         if (!it.get().is_unset()) {
             Ref items = invoke(Obj::of(types().list), {it.get()});

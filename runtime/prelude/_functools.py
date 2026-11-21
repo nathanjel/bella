@@ -24,6 +24,7 @@ try:
     _set_hashed                                  # noqa: B018  # _PyDict_SetItem_KnownHash
     _pop_hashed                                  # noqa: B018  # _PyDict_Pop_KnownHash; a default when absent
     _is_callable                                 # noqa: B018  # PyCallable_Check
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -45,18 +46,11 @@ except NameError:
     _set_hashed: Callable[..., None] = _missing
     _pop_hashed: Callable[..., Any] = _missing
     _is_callable: Callable[..., bool] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 _SSIZE_MAX = 2**63 - 1
 _set = _bella_state_set                          # a C function's store into its struct: no class's __setattr__ is asked
 _ABSENT = object()
-
-
-def _type_lookup(value: object, name: str) -> object:   # _PyType_Lookup on its type: _ABSENT when it has none
-    for klass in type(value).__mro__:
-        found = vars(klass)
-        if name in found:
-            return found[name]
-    return _ABSENT
 
 
 def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   # tp_new_wrapper's checks
@@ -542,7 +536,7 @@ cache_info_type:    namedtuple class with the fields:
         if maxsize_o is None:
             kind = "infinite"
             maxsize = -1
-        elif _type_lookup(maxsize_o, "__index__") is not _ABSENT:   # PyIndex_Check: the type's slot, which no metaclass answers for (RL-616)
+        elif _has_slot(maxsize_o, "__index__"):   # PyIndex_Check: the type's slot, which no metaclass answers for (RL-616)
             maxsize = _number_index(maxsize_o)
             if maxsize > _SSIZE_MAX or maxsize < -_SSIZE_MAX - 1:
                 raise OverflowError("cannot fit '" + _tp_name(maxsize_o) + "' into an index-sized integer")

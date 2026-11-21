@@ -20,7 +20,7 @@ Obj supercheck(ClassObject* type, Obj obj) {
     try {
         class_attr = getattr(obj, intern("__class__"));
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("AttributeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("AttributeError"))) rethrow(e);
     }
     if (is_kind(class_attr.get(), Kind::Class) && class_attr.get() != Obj::of(type_of(obj)) &&
         is_subclass(static_cast<ClassObject*>(class_attr.get().object()), type))

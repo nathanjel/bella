@@ -16,6 +16,14 @@ __intrinsics__ = ["build_class"]                  # what the compiled runtime ta
 
 _type_mro = type.__dict__["__mro__"].__get__      # tp_mro, whatever a metaclass defines as __mro__
 
+try:
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+except NameError:                                # CPython runs this file (the evaluators and the tests): what stands for it
+    _type_dict = type.__dict__["__dict__"].__get__
+
+    def _has_slot(value: object, name: str) -> bool:
+        return any(name in _type_dict(klass) for klass in _type_mro(type(value)))
+
 
 def _is_type(obj: object) -> bool:
     """PyType_Check: the object's type derives from type (by tp_mro, not __instancecheck__)."""
@@ -81,11 +89,8 @@ def _calculate_metaclass(metatype: type, bases: tuple[object, ...]) -> type:
 
 def _is_mapping(obj: object) -> bool:
     """PyMapping_Check: the type has a __getitem__ (a mapping slot), as a list does too. The slot is filled by whatever a
-    class of the MRO has under the name, None included, and no metaclass is asked (RL-636)."""
-    for klass in type(obj).__mro__:
-        if "__getitem__" in vars(klass):
-            return True
-    return False
+    class of the MRO has under the name, None included, and no metaclass is asked (RL-636, RL-644)."""
+    return _has_slot(obj, "__getitem__")
 
 
 def build_class(body: object, name: str, /, *bases: object, **kwds: object) -> object:

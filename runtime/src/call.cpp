@@ -427,7 +427,7 @@ void delete_name(Obj ns, const Str* name) {
     try {
         delitem(ns, Obj::of(name));
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("KeyError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("KeyError"))) rethrow(e);
         raise_new("NameError", "name '" + name->text + "' is not defined");
     }
 }
@@ -613,7 +613,7 @@ void check_class(Obj v, const char* message) {
     try {
         bases = getattr(v, intern("__bases__"));
     } catch (const PyError& e) {
-        if (!is_attribute_error(e)) throw;
+        if (!is_attribute_error(e)) rethrow(e);
     }
     if (!is_kind(bases.get(), Kind::Tuple)) raise_new("TypeError", message);
     throw NotImplemented("isinstance and issubclass with an object that is not a class but has __bases__");
@@ -629,7 +629,7 @@ bool real_isinstance(Obj inst, Obj cls) {
     try {
         icls = getattr(inst, intern("__class__"));
     } catch (const PyError& e) {
-        if (!is_attribute_error(e)) throw;
+        if (!is_attribute_error(e)) rethrow(e);
     }
     return is_kind(icls.get(), Kind::Class) && icls.get() != Obj::of(type_of(inst)) &&
            is_subclass(static_cast<ClassObject*>(icls.get().object()), c);
@@ -756,7 +756,7 @@ Ref b_vars(Obj, Args a) {
     try {
         return getattr(a.pos(0), intern("__dict__"));
     } catch (const PyError& e) {
-        if (!is_attribute_error(e)) throw;
+        if (!is_attribute_error(e)) rethrow(e);
         raise_new("TypeError", "vars() argument must have __dict__ attribute");
     }
 }
@@ -1086,7 +1086,7 @@ void dict_update_arg(Obj self, Obj arg) {           // a mapping (keys()), else 
         try {
             pair = iter(item.get());
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
             Ref msg = str_new("object is not iterable");
             Ref exc = invoke(Obj::of(exception_class("TypeError")), {msg.get()});
             Ref note = str_new("Cannot convert dictionary update sequence element #" + std::to_string(i) + " to a sequence");
@@ -1193,7 +1193,7 @@ Ref b_next(Obj, Args a) {
         try {
             return call_special(a.pos(0), "__next__", {});
         } catch (const PyError& e) {
-            if (a.npos < 2 || !isinstance(e.exc.get(), exception_class("StopIteration"))) throw;
+            if (a.npos < 2 || !isinstance(e.exc.get(), exception_class("StopIteration"))) rethrow(e);
             return Ref::share(a.pos(1));
         }
     }
@@ -1323,7 +1323,7 @@ Ref sys_getsizeof(Obj, Args a) {                  // sys_getsizeof, _PySys_GetSi
         if (fits < 0) raise_new("ValueError", "__sizeof__() should return >= 0");
         return big_binary(BinOp::Add, size.get(), int_from_i64(16).get());
     } catch (const PyError& e) {                 // a TypeError, when a default was given, is the default
-        if (fallback.is_unset() || !isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (fallback.is_unset() || !isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
     }
     return Ref::share(fallback);
 }
@@ -2046,6 +2046,25 @@ Ref i_lookup_special(Obj, Args a) {              // _PyObject_LookupSpecial: the
     Ref bound = descr_get(found, a.pos(0), Obj::of(type_of(a.pos(0))));
     return tuple_new({bound.get()});
 }
+// A type's slot as the C reads it (PyIndex_Check, PyMapping_Check, a tp_as_ field, _PyType_Lookup): the type's own MRO and
+// each class's own dict. A prelude that walked `type(value).__mro__` and `vars(klass)` read two attributes of a class, which
+// a metaclass's property of that name answers first (RL-644); so the walk is the runtime's, in every prelude.
+Ref i_has_slot(Obj, Args a) {                    // (value, name): whether a class of its type's MRO has the name
+    positional_only(a, "_has_slot", 2, 2);
+    return Ref::steal(boolean(!type_lookup(type_of(a.pos(0)), intern(as_str(a.pos(1))->text)).is_unset()));
+}
+Ref i_type_lookup(Obj, Args a) {                 // (value, name, absent): what the type has under the name, unbound, or `absent`
+    positional_only(a, "_type_lookup", 3, 3);
+    Obj found = type_lookup(type_of(a.pos(0)), intern(as_str(a.pos(1))->text));
+    return Ref::share(found.is_unset() ? a.pos(2) : found);
+}
+// An error that was pending while the C did something else (cleared a field, let a reference go) and then returned NULL:
+// a prelude catches it, does that work after its handler has ended, and sends the same exception on as it is, with no
+// context taken from what is handled around the call and no entry for the prelude's frame (RL-650).
+Ref i_raise_as_is(Obj, Args a) {
+    positional_only(a, "_raise_as_is", 1, 1);
+    reraise_as_is(a.pos(0));
+}
 // _frame(n) for the _warnings prelude (setup_context): the n-th frame above the one that called into the prelude, as
 // (globals, filename, lineno), or None past the outermost; a prelude's own frames are not on the chain, as C functions' are not
 Ref i_warnings_frame(Obj, Args a) {
@@ -2525,7 +2544,7 @@ Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list
                 getitem(ns, key);
                 found = true;
             } catch (const PyError& e) {
-                if (!isinstance(e.exc.get(), exception_class("KeyError"))) throw;
+                if (!isinstance(e.exc.get(), exception_class("KeyError"))) rethrow(e);
                 found = false;
             }
         }
@@ -2702,7 +2721,7 @@ struct Records {
             Ref notes = optional_getattr(exc, intern("__notes__"));
             r->notes = notes.get().is_unset() ? none_ref() : std::move(notes);
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("Exception"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("Exception"))) rethrow(e);
             Ref text = str_new("Ignored error getting __notes__: " + safe_string(e.exc.get(), "__notes__", true));
             r->notes = list_new({text.get()});
         }
@@ -3545,7 +3564,7 @@ void warn_as_the_compiler(const char* main_file, const CompilerWarning& warning)
         // place of its own. No program starts with such filters yet (PYTHONWARNINGS is not read, D-18)
         if (exception_matches(e.exc.get(), category))
             throw NotImplemented("a warning of the compiler's for the main program's text that the warning filters make an error");
-        throw;
+        rethrow(e);
     }
 }
 void as_compiled_at_each_start(const char* main_file) {
@@ -3660,6 +3679,12 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_dict_next", walk.get());
                     Ref lookup = own(new Builtin("_lookup_special", i_lookup_special));
                     put(pm->dict, "_lookup_special", lookup.get());
+                    Ref slot = own(new Builtin("_has_slot", i_has_slot));          // a type's slot and what its MRO holds, read
+                    put(pm->dict, "_has_slot", slot.get());                        // as the C reads them (RL-644)
+                    Ref of_type = own(new Builtin("_type_lookup", i_type_lookup));
+                    put(pm->dict, "_type_lookup", of_type.get());
+                    Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));
+                    put(pm->dict, "_raise_as_is", as_is.get());
                     Ref index = own(new Builtin("_number_index", i_number_index));
                     put(pm->dict, "_number_index", index.get());
                     Ref sequence = own(new Builtin("_sequence_check", i_sequence_check));

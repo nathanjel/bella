@@ -575,7 +575,7 @@ bool contains(Obj container, Obj item) {
     try {
         it = iter(container);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", "argument of type '" + type_of(container)->name + "' is not a container or iterable");
     }
     for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
@@ -1315,7 +1315,7 @@ Ref optional_getattr(Obj obj, const Str* name) {
     try {
         return getattr(obj, name);
     } catch (const PyError& e) {
-        if (!is_attribute_error(e)) throw;
+        if (!is_attribute_error(e)) rethrow(e);
         return Ref{};
     }
 }
@@ -1656,7 +1656,7 @@ Ref sequence_fast(Obj v, const char* message) {
     try {
         it = iter(v);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", message);
     }
     Ref items = list_new({});
@@ -1853,7 +1853,7 @@ Ref for_next(Obj itv) {
             return gen_next(itv);
         } catch (const PyError& e) {
             if (isinstance(e.exc.get(), exception_class("StopIteration"))) return Ref{};
-            throw;
+            rethrow(e);
         }
     }
     if (!is_kind(itv, Kind::Iterator)) {
@@ -1864,7 +1864,7 @@ Ref for_next(Obj itv) {
             if (has) return v;
         } catch (const PyError& e) {
             if (isinstance(e.exc.get(), exception_class("StopIteration"))) return Ref{};
-            throw;
+            rethrow(e);
         }
         raise_new("TypeError", "'" + type_of(itv)->name + "' object is not an iterator");
     }
@@ -1949,7 +1949,7 @@ Ref for_next(Obj itv) {
                 if (isinstance(e.exc.get(), exception_class("IndexError")) ||
                     isinstance(e.exc.get(), exception_class("StopIteration")))
                     return finish();
-                throw;
+                rethrow(e);
             }
         }
         case Iterator::DictRevKeysIt:                // dictreviter_iter_lock_held
@@ -2089,6 +2089,14 @@ Ref iterator_reduce(Obj self, Args a) {
                 copy->pos = it->pos;
                 copy->size = it->size;
                 copy->len = it->len;
+                // "dictiterobject tmp = *di": the copy is the struct's, so it walks with this iterator's own pair. Its first
+                // step gives that pair, if nothing else held it, and this iterator has it afterwards as the list has (RL-643)
+                struct Lent {
+                    Iterator* from;
+                    Iterator* to;
+                    Lent(Iterator* f, Iterator* c) : from(f), to(c) { std::swap(from->result, to->result); }
+                    ~Lent() { std::swap(from->result, to->result); }
+                } lent(it, copy);
                 for (Ref v = for_next(held.get()); !is_end(v); v = for_next(held.get())) list_append(left.get(), v.get());
             }
             return over("iter", std::move(left));
@@ -2147,7 +2155,7 @@ void unpack(Obj value, std::span<Ref> targets, int star) {
             if (isinstance(e.exc.get(), exception_class("TypeError")) && type_lookup(type_of(value), intern("__iter__")).is_unset()
                 && !sequence_check(value))
                 raise_new("TypeError", "cannot unpack non-iterable " + type_of(value)->name + " object");
-            throw;
+            rethrow(e);
         }
         std::size_t limit = star < 0 ? targets.size() + 1 : SIZE_MAX;
         std::size_t rest = star < 0 ? SIZE_MAX : static_cast<std::size_t>(star);   // the starred target's list: PySequence_List(it),
@@ -2211,7 +2219,7 @@ void each_item(Obj mapping, F f) {
     try {                                            // method_output_as_list
         it = iter(keys.get());
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", fully_qualified_name(type_of(mapping)) + ".keys() must return an iterable, not " +
                                    fully_qualified_name(type_of(keys.get())));
     }
@@ -2340,7 +2348,7 @@ void length_hint(Obj v) {
             Ref r = call_special(v, "__len__", {});
             length_value(r.get());
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         }
         return;
     }
@@ -2351,7 +2359,7 @@ void length_hint(Obj v) {
             length_value(r.get());
             return;
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         }
     }
     bool has = false;
@@ -2359,7 +2367,7 @@ void length_hint(Obj v) {
     try {
         r = call_special(v, "__length_hint__", {}, &has);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         return;
     }
     if (!has || r.get() == Obj::of(NOTIMPLEMENTED)) return;
@@ -2377,9 +2385,9 @@ void list_extend_star(Obj list, Obj value) {
     try {
         list_extend(list, value);
     } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         if (is_kind(value, Kind::Iterator) || !type_lookup(type_of(value), intern("__iter__")).is_unset() || has_sq_item(value))
-            throw;
+            rethrow(e);
         raise_new("TypeError", "Value after * must be an iterable, not " + type_of(value)->name);
     }
 }

@@ -22,6 +22,7 @@ try:
     _weak_get                                    # noqa: B018  # _PyWeakref_GET_REF, None when dead
     _weak_list                                   # noqa: B018  # the object's list, in order
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -38,6 +39,7 @@ except NameError:
     _weak_link: Callable[..., None] = _missing
     _weak_get: Callable[..., Any] = _missing
     _weak_list: Callable[..., list[Any]] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 _BASIC_REF = 0
 _BASIC_PROXY = 1
@@ -298,7 +300,7 @@ def _proxy_iter(self: object) -> object:
 
 def _proxy_next(self: object) -> object:
     obj = _unwrap(self)
-    if not _lookup_special(obj, "__next__"):
+    if not _has_slot(obj, "__next__"):           # PyIter_Check: the slot, which binds nothing (RL-647)
         raise TypeError("Weakref proxy referenced a non-iterator '" + _tp_name(obj) + "' object")
     return next(obj)                             # type: ignore[call-overload]
 

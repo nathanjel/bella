@@ -60,6 +60,7 @@ try:
     _structseq                                   # noqa: B018  # bootstrap.py's: a type of named tuples
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _signals                                     # noqa: B018  # the runtime's signal core, by name (runtime/src/signals.cpp)
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -74,6 +75,7 @@ except NameError:
     _structseq: Callable[..., Any] = _missing
     _warn: Callable[..., Any] = _missing
     _signals: Callable[..., Any] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 NSIG = 65                                        # Py_NSIG: a signal's number is 1 to 64
 SIG_BLOCK = 0
@@ -168,14 +170,6 @@ def _between(name: str, args: tuple[object, ...], kwds: dict[str, object], low: 
         raise TypeError(name + " expected at most " + str(high) + " argument" + ("" if high == 1 else "s") + ", got " + str(len(args)))
 
 
-def _type_lookup(value: object, name: str) -> object:   # _PyType_Lookup on its type: _ABSENT when it has none
-    for klass in type(value).__mro__:
-        found = vars(klass)
-        if name in found:
-            return found[name]
-    return _ABSENT
-
-
 def _int(value: object) -> int:                  # PyLong_AsInt
     out = _number_index(value)
     if not -2147483648 <= out <= 2147483647:
@@ -203,7 +197,7 @@ def _fail_itimer(code: int) -> None:             # PyErr_SetFromErrno(modstate->
 
 
 def _seconds_to_ns(value: object) -> int:        # _PyTime_FromSecondsObject(&t, obj, _PyTime_ROUND_CEILING)
-    if _type_lookup(value, "__index__") is not _ABSENT:   # PyIndex_Check: PyLong_AsLongLong, then seconds to nanoseconds
+    if _has_slot(value, "__index__"):   # PyIndex_Check: PyLong_AsLongLong, then seconds to nanoseconds
         sec = _number_index(value)
         if not -(2**63) <= sec < 2**63 or not -(2**63) <= sec * 1000000000 < 2**63:
             raise OverflowError("timestamp out of range for C PyTime_t")
@@ -373,7 +367,7 @@ def pidfd_send_signal(*args: object, **kwds: object) -> None:   # signal_pidfd_s
 
 def pthread_kill(*args: object, **kwds: object) -> None:   # signal_pthread_kill_impl
     _positional("pthread_kill", args, kwds, 2)
-    if _type_lookup(args[0], "__index__") is _ABSENT:   # PyIndex_Check, _PyArg_BadArgument
+    if not _has_slot(args[0], "__index__"):   # PyIndex_Check, _PyArg_BadArgument
         raise TypeError("pthread_kill() argument 1 must be int, not " + ("None" if args[0] is None else _tp_name(args[0])[:50]))
     thread_id = _number_index(args[0])           # unsigned_long(bitwise=True): 64 bits, with a warning for an int that has more
     if not -(2**63) <= thread_id < 2**64:

@@ -25,6 +25,7 @@ try:
     _tuple_set                                   # noqa: B018  # PyTuple_SET_ITEM, on a tuple nothing else holds
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -37,6 +38,7 @@ except NameError:
     _held_once: Callable[..., bool] = _missing
     _tuple_set: Callable[..., None] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 _SSIZE_MAX = 2**63 - 1
 _SSIZE_MIN = -(2**63)
@@ -1080,11 +1082,7 @@ class count:
 
 
 def _is_number(v: object) -> bool:               # PyNumber_Check; the runtime has no complex object yet
-    for special in ("__index__", "__int__", "__float__"):
-        for c in type(v).__mro__:
-            if special in vars(c):
-                return True
-    return False
+    return _has_slot(v, "__index__") or _has_slot(v, "__int__") or _has_slot(v, "__float__")
 
 
 class repeat:

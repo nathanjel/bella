@@ -16,6 +16,7 @@ try:
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _number_index                                # noqa: B018  # PyNumber_Index
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -33,6 +34,7 @@ except NameError:
     def _number_index(o: object) -> int:
         import operator
         return operator.index(o)
+    _has_slot: Callable[..., bool] = _missing
 
 ASCII85_ALPHABET = b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'
 BASE32HEX_ALPHABET = b"0123456789ABCDEFGHIJKLMNOPQRSTUV"
@@ -44,15 +46,6 @@ CRYPT_ALPHABET = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 URLSAFE_BASE64_ALPHABET = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 UU_ALPHABET = b' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_'
 Z85_ALPHABET = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#"
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 class Error(ValueError):                         # PyErr_NewException("binascii.Error", PyExc_ValueError, NULL)

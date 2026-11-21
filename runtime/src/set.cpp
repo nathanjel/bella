@@ -137,7 +137,7 @@ auto with_set_key(Obj key, F f) {
     try {
         return f(key, set_key_hash(key));
     } catch (const PyError& e) {
-        if (!is_kind(key, Kind::Set) || !isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+        if (!is_kind(key, Kind::Set) || !isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
     }
     Ref tmp = own(new SetObject(true));
     set_update(tmp.get(), key);

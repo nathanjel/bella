@@ -1026,7 +1026,7 @@ struct Percent {
             try {
                 iobj = type == 'o' || type == 'x' || type == 'X' ? int_index_of(v) : int_from_number(v);
             } catch (const PyError& e) {
-                if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+                if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
                 wrong_type();
             }
         }
@@ -1052,7 +1052,7 @@ struct Percent {
         try {
             x = float_as_double(v);
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
             error(arg, "TypeError", std::string("%") + static_cast<char>(arg.ch) + " requires a real number, not " + fully_qualified_name(type_of(v)));
         }
         int prec = arg.prec < 0 ? 6 : arg.prec;
@@ -1067,7 +1067,7 @@ struct Percent {
         try {
             index = int_index_of(v);
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
             error(arg, "TypeError", "%c requires an integer or a unicode character, not " + fully_qualified_name(type_of(v)));
         }
         std::int64_t x = 0;
@@ -1251,7 +1251,7 @@ struct BytesPercent {
             try {
                 iobj = type == 'o' || type == 'x' || type == 'X' ? int_index_of(v) : int_from_number(v);
             } catch (const PyError& e) {
-                if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+                if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
             }
             if (!iobj.get().is_unset()) return long_text(iobj.get(), (flags & F_ALT) != 0, prec, type);
         }
@@ -1263,7 +1263,7 @@ struct BytesPercent {
         try {
             x = float_as_double(v);
         } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) throw;
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
             error("TypeError", std::string("%") + static_cast<char>(type) + " requires a real number, not " + fully_qualified_name(type_of(v)));
         }
         return double_to_string(x, static_cast<char>(type), prec < 0 ? 6 : prec, (flags & F_ALT) != 0 ? DTSF_ALT : 0);

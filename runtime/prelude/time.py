@@ -20,6 +20,7 @@ try:
     _bella_module_set                            # noqa: B018  # PyModule_Add on the module itself, once imported (tzset)
     _number_index                                # noqa: B018  # PyNumber_Index
     _as_double                                   # noqa: B018  # PyFloat_AsDouble
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -42,6 +43,7 @@ except NameError:
 
     def _as_double(value: object) -> float:   # PyFloat_AsDouble, for probing this file under CPython
         return float(value)  # type: ignore[arg-type]
+    _has_slot: Callable[..., bool] = _missing
 
 CLOCK_REALTIME = 0
 CLOCK_MONOTONIC = 1
@@ -68,15 +70,6 @@ struct_time.__doc__ = ("The time value as returned by gmtime(), localtime(), and
 # ---- conversions (Python/pytime.c) --------------------------------------------------------------------------------------------
 
 _index = _number_index                           # PyNumber_Index: the runtime's, with its messages (review G15 #6)
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 def _fail(code: int) -> None:                    # PyErr_SetFromErrno(OSError)

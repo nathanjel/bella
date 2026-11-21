@@ -18,6 +18,7 @@ try:
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial
     _sequence_concat                             # noqa: B018  # PySequence_Concat, PySequence_InPlaceConcat
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -29,6 +30,7 @@ except NameError:
     _number_index: Callable[..., int] = _missing
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
     _sequence_concat: Callable[..., object] = _missing
+    _has_slot: Callable[..., bool] = _missing
 
 _builtin_abs = abs
 _builtin_pow = pow
@@ -261,7 +263,7 @@ def length_hint(*args: object, **kwds: object) -> int:     # PyObject_LengthHint
         default = _number_index(args[1])
         if not _SSIZE_MIN <= default <= _SSIZE_MAX:
             raise OverflowError("Python int too large to convert to C ssize_t")
-    if _lookup_special(obj, "__len__"):          # _PyObject_HasLen
+    if _has_slot(obj, "__len__"):                # _PyObject_HasLen: the slot, which binds nothing; len() binds, in the handler (RL-646)
         failed = False
         try:
             return len(obj)  # type: ignore[arg-type]

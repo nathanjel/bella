@@ -19,6 +19,7 @@ try:
     _source_hash                                 # noqa: B018  # _Py_KeyedHash: siphash13 with the key and 0
     _bella_create_builtin                        # noqa: B018  # the runtime's built-in module for a spec
     _bella_set_lazy_attributes                   # noqa: B018  # _imp._set_lazy_attributes
+    _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -39,6 +40,7 @@ except NameError:
     def _number_index(o: object) -> int:
         import operator
         return operator.index(o)
+    _has_slot: Callable[..., bool] = _missing
 
 import sys
 
@@ -51,15 +53,6 @@ _EXTENSION_SUFFIXES: tuple[str, ...] = tuple(_cpython_table("imp:extension_suffi
 check_hash_based_pycs: str = _cpython_table("imp:check_hash_based_pycs")
 pyc_magic_number_token: int = int(_cpython_table("imp:pyc_magic_number_token"))
 _lock_depth = 0                                  # the interpreter's import lock, held by the one thread
-
-
-def _has_slot(value: object, name: str) -> bool:
-    """Whether the type has the slot, as the C reads it (PyIndex_Check, PyObject_CheckBuffer, a tp_as_ field): a class of
-    its MRO has the name. `hasattr(type(value), name)` would ask the metaclass, which the C never does (RL-621)."""
-    for klass in type(value).__mro__:
-        if name in vars(klass):
-            return True
-    return False
 
 
 def _noargs(fname: str, args: tuple[object, ...], kwds: dict[str, object]) -> None:   # METH_NOARGS
