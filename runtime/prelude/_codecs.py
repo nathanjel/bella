@@ -118,13 +118,13 @@ def _errors(function: str, position: int, args: tuple[object, ...]) -> str | Non
     value = args[position - 1]
     if value is None:
         return None
-    if not isinstance(value, str):
+    if not issubclass(type(value), str):
         raise TypeError(function + "() argument " + str(position) + " must be str or None, not " + _tp_name(value))
     return _c_string(value)
 
 
 def _text(function: str, value: object) -> str:  # unicode
-    if not isinstance(value, str):
+    if not issubclass(type(value), str):
         raise TypeError(function + "() argument 1 must be str, not " + _tp_name(value))
     return value
 
@@ -168,7 +168,7 @@ def _lookup(encoding: str) -> object:            # _PyCodec_Lookup
         if result is None:
             i += 1
             continue
-        if not isinstance(result, tuple) or tuple.__len__(result) != 4:
+        if not issubclass(type(result), tuple) or tuple.__len__(result) != 4:
             raise TypeError("codec search functions must return 4-tuples")
         if list.__len__(_library) > 0 and func is _library[0]:
             _library.append(result)
@@ -200,7 +200,7 @@ def _call_codec(function: object, value: object, encoding: str, errors: str | No
     except BaseException as exc:                 # _PyErr_FormatNote: BaseException's own add_note, whatever the class overrides
         BaseException.add_note(exc, doing + " with '" + encoding + "' codec failed")
         raise
-    if not isinstance(result, tuple) or tuple.__len__(result) != 2:
+    if not issubclass(type(result), tuple) or tuple.__len__(result) != 2:
         raise TypeError(bad_result)
     return tuple.__getitem__(result, 0)
 
@@ -217,9 +217,9 @@ def _text_encode(text: str, encoding: str, errors: str | None) -> object:
     """PyUnicode_AsEncodedString past its shortcuts: _PyCodec_EncodeText, and what it takes for bytes."""
     codec = _lookup_text(encoding, "codecs.encode()")
     v = _call_codec(tuple.__getitem__(codec, 0), text, encoding, errors, "encoding", "encoder must return a tuple (object, integer)")  # type: ignore[arg-type]
-    if isinstance(v, bytes):
+    if issubclass(type(v), bytes):
         return v
-    if isinstance(v, bytearray):
+    if issubclass(type(v), bytearray):
         _refuse("the RuntimeWarning for an encoder that returns a bytearray (warnings: step 3b)")
     raise TypeError("'" + _cut(encoding) + "' encoder returned '" + _cut(_tp_name(v)) + "' instead of 'bytes'; use codecs.encode() to encode to arbitrary types")
 
@@ -235,7 +235,7 @@ def _text_decode(data: bytes, encoding: str, errors: str | None) -> object:
     if not library:
         _refuse("decoding with a codec the program registered: it is given a memoryview (the buffer protocol: step 3b)")
     v = _call_codec(tuple.__getitem__(codec, 1), data, encoding, errors, "decoding", "decoder must return a tuple (object,integer)")  # type: ignore[arg-type]
-    if not isinstance(v, str):
+    if not issubclass(type(v), str):
         raise TypeError("'" + _cut(encoding) + "' decoder returned '" + _cut(_tp_name(v)) + "' instead of 'str'; use codecs.decode() to decode to arbitrary types")
     return v
 
@@ -275,7 +275,7 @@ def unregister(*args: object, **kwds: object) -> None:
 
 def lookup(*args: object, **kwds: object) -> object:
     encoding = _one("lookup", args, kwds)
-    if not isinstance(encoding, str):
+    if not issubclass(type(encoding), str):
         raise TypeError("lookup() argument must be str, not " + _tp_name(encoding))
     return _lookup(_c_string(encoding))
 
@@ -283,11 +283,11 @@ def lookup(*args: object, **kwds: object) -> object:
 def _coding_args(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> tuple[object, str, str | None]:
     obj, encoding, errors = _unpack(name, args, kwds, ("obj", "encoding", "errors"), 1, 3)
     if encoding is not _ABSENT:
-        if not isinstance(encoding, str):
+        if not issubclass(type(encoding), str):
             raise TypeError(name + "() argument 'encoding' must be str, not " + _tp_name(encoding))
         _c_string(encoding)
     if errors is not _ABSENT:
-        if not isinstance(errors, str):
+        if not issubclass(type(errors), str):
             raise TypeError(name + "() argument 'errors' must be str, not " + _tp_name(errors))
         _c_string(errors)
     return obj, ("utf-8" if encoding is _ABSENT else encoding), (None if errors is _ABSENT else errors)  # type: ignore[return-value]
@@ -307,7 +307,7 @@ def _normalize_encoding(*args: object, **kwds: object) -> str:
     """_Py_normalize_encoding without the lower case: runs of what is neither ASCII alphanumeric nor a dot become one underscore,
     none at either end, and a null ends the name as it ends a C string."""
     (encoding,) = _unpack("_normalize_encoding", args, kwds, ("encoding",), 1, 1)
-    if not isinstance(encoding, str):
+    if not issubclass(type(encoding), str):
         raise TypeError("_normalize_encoding() argument 'encoding' must be str, not " + _tp_name(encoding))
     str.encode(encoding, "utf-8")
     out: list[str] = []
@@ -330,7 +330,7 @@ def _normalize_encoding(*args: object, **kwds: object) -> str:
 def register_error(*args: object, **kwds: object) -> None:
     _positional("register_error", args, kwds, 2, 2)
     errors = args[0]
-    if not isinstance(errors, str):
+    if not issubclass(type(errors), str):
         raise TypeError("register_error() argument 1 must be str, not " + _tp_name(errors))
     name = _c_string(errors)
     handler = args[1]
@@ -343,7 +343,7 @@ def register_error(*args: object, **kwds: object) -> None:
 
 def _unregister_error(*args: object, **kwds: object) -> bool:
     errors = _one("_unregister_error", args, kwds)
-    if not isinstance(errors, str):
+    if not issubclass(type(errors), str):
         raise TypeError("_unregister_error() argument must be str, not " + _tp_name(errors))
     name = str.__str__(_c_string(errors))
     if name in _BUILTIN_HANDLERS:
@@ -356,7 +356,7 @@ def _unregister_error(*args: object, **kwds: object) -> bool:
 
 def lookup_error(*args: object, **kwds: object) -> object:
     name = _one("lookup_error", args, kwds)
-    if not isinstance(name, str):
+    if not issubclass(type(name), str):
         raise TypeError("lookup_error() argument must be str, not " + _tp_name(name))
     handler = dict.get(_error_registry, str.__str__(_c_string(name)))
     if handler is None:
@@ -378,11 +378,11 @@ def _params(exc: object, as_bytes: bool) -> tuple[object, int, int, int, int]:
     if obj is _ABSENT:
         raise TypeError("UnicodeError 'object' attribute is not set")
     if as_bytes:
-        if not isinstance(obj, bytes):
+        if not issubclass(type(obj), bytes):
             raise TypeError("UnicodeError 'object' attribute must be a bytes")
         n = bytes.__len__(obj)
     else:
-        if not isinstance(obj, str):
+        if not issubclass(type(obj), str):
             raise TypeError("UnicodeError 'object' attribute must be a string")
         n = str.__len__(obj)
     start: int = _codecs_call("field", exc, "start", 0)
@@ -414,7 +414,7 @@ def _standard_encoding(exc: object) -> tuple[int, int]:
     encoding = _codecs_call("field", exc, "encoding", _ABSENT)
     if encoding is _ABSENT:
         raise TypeError("UnicodeError 'encoding' attribute is not set")
-    if not isinstance(encoding, str):
+    if not issubclass(type(encoding), str):
         raise TypeError("UnicodeError 'encoding' attribute must be a string")
     str.encode(encoding, "utf-8")
     e = str.__str__(encoding)
@@ -451,7 +451,7 @@ def _handler_arg(name: str, args: tuple[object, ...], kwds: dict[str, object]) -
 
 def strict_errors(*args: object, **kwds: object) -> object:
     exc = _handler_arg("strict_errors", args, kwds)
-    if isinstance(exc, BaseException):
+    if issubclass(type(exc), BaseException):
         raise exc
     raise TypeError("codec must pass exception instance")
 
@@ -659,7 +659,7 @@ ascii_encode = _encoder("ascii_encode", "ascii")
 
 def readbuffer_encode(*args: object, **kwds: object) -> tuple[bytes, int]:
     _positional("readbuffer_encode", args, kwds, 1, 2)
-    data: bytes = str.encode(args[0], "utf-8") if isinstance(args[0], str) else _codecs_call("buffer", args[0])
+    data: bytes = str.encode(args[0], "utf-8") if issubclass(type(args[0]), str) else _codecs_call("buffer", args[0])
     _errors("readbuffer_encode", 2, args)
     return data, bytes.__len__(data)
 

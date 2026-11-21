@@ -128,7 +128,7 @@ def _noargs(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> Non
 
 
 def _c_string(value: object, what: str) -> bytes:   # str: the C string, UTF-8 with surrogateescape (PyUnicode_EncodeLocale in a UTF-8 locale), no null inside
-    if not isinstance(value, str):
+    if not issubclass(type(value), str):
         raise TypeError(what + " must be str, not " + _tp_name(value))
     encoded = str.encode(value, "utf-8", "surrogateescape")
     if 0 in encoded:
@@ -139,7 +139,7 @@ def _c_string(value: object, what: str) -> bytes:   # str: the C string, UTF-8 w
 def _c_string_or_none(value: object, what: str) -> bytes | None:   # str(accept={str, NoneType})
     if value is None:
         return None
-    if not isinstance(value, str):
+    if not issubclass(type(value), str):
         raise TypeError(what + " must be str or None, not " + _tp_name(value))
     return _c_string(value, what)
 
@@ -149,7 +149,7 @@ def _decode(value: bytes) -> str:                # locale_decode: PyUnicode_Deco
 
 
 def _int(value: object) -> int:                  # PyLong_AsInt, as the clinic's int converter
-    if isinstance(value, float):
+    if issubclass(type(value), float):
         raise TypeError("'float' object cannot be interpreted as an integer")
     out = _number_index(value)
     if out > 2**31 - 1 or out < -(2**31):
@@ -172,15 +172,15 @@ def localeconv(*args: object, **kwds: object) -> dict[str, object]:
     fields = _sys("localeconv")
     out: dict[str, object] = {}
     for name, value in fields:
-        out[name] = _decode(value) if isinstance(value, bytes) else value
+        out[name] = _decode(value) if issubclass(type(value), bytes) else value
     return out
 
 
 def strcoll(*args: object, **kwds: object) -> int:
     _positional("strcoll", args, kwds, 2, 2)
-    if not isinstance(args[0], str):
+    if not issubclass(type(args[0]), str):
         raise TypeError("strcoll() argument 1 must be str, not " + _tp_name(args[0]))
-    if not isinstance(args[1], str):
+    if not issubclass(type(args[1]), str):
         raise TypeError("strcoll() argument 2 must be str, not " + _tp_name(args[1]))
     for s in args:                               # PyUnicode_AsWideCharString: no NUL in a C wide string
         if "\0" in str.__str__(s):  # type: ignore[arg-type]
@@ -190,7 +190,7 @@ def strcoll(*args: object, **kwds: object) -> int:
 
 def strxfrm(*args: object, **kwds: object) -> str:
     string = _one("strxfrm", args, kwds)
-    if not isinstance(string, str):
+    if not issubclass(type(string), str):
         raise TypeError("strxfrm() argument must be str, not " + _tp_name(string))
     if str.__contains__(string, "\0"):
         raise ValueError("embedded null character")
@@ -247,7 +247,7 @@ def bindtextdomain(*args: object, **kwds: object) -> object:
             dirname = fspath[0]()
             if not issubclass(type(dirname), (str, bytes)):
                 raise TypeError("expected " + type(args[1]).__name__ + ".__fspath__() to return str or bytes, not " + type(dirname).__name__)
-        dirname = str.encode(dirname, "utf-8", "surrogateescape") if isinstance(dirname, str) else bytes(dirname)
+        dirname = str.encode(dirname, "utf-8", "surrogateescape") if issubclass(type(dirname), str) else bytes(dirname)
         if 0 in dirname:
             raise ValueError("embedded null byte")
     result = _sys("bindtextdomain", domain, dirname)

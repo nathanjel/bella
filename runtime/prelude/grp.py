@@ -43,9 +43,9 @@ def _argument(name: str, parameter: str, args: tuple[object, ...], kwds: dict[st
 
 
 def _gid(value: object) -> int:                  # _Py_Gid_Converter: -1 as gid_t has it; what an unsigned long cannot hold is greater than the maximum, what a gid_t cannot is less than the minimum
-    if isinstance(value, float):
+    if issubclass(type(value), float):
         raise TypeError("gid should be integer, not " + _tp_name(value))
-    if not isinstance(value, int) and not _has_slot(value, "__index__"):
+    if not issubclass(type(value), int) and not _has_slot(value, "__index__"):
         raise TypeError("gid should be integer, not " + _tp_name(value))
     gid = _number_index(value)
     if gid == -1:
@@ -72,7 +72,7 @@ def getgrgid(*args: object, **kwds: object) -> object:
 
 def getgrnam(*args: object, **kwds: object) -> object:
     name = _argument("getgrnam", "name", args, kwds)
-    if not isinstance(name, str):
+    if not issubclass(type(name), str):
         raise TypeError("getgrnam() argument 'name' must be str, not " + _tp_name(name))
     encoded = str.encode(name, "utf-8", "surrogateescape")
     if 0 in encoded:

@@ -41,9 +41,9 @@ def _one(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> object
 
 
 def _uid(value: object) -> int | None:           # _Py_Uid_Converter: an int, -1 as uid_t has it, out of range is None (an OverflowError the caller turns into KeyError)
-    if isinstance(value, float):
+    if issubclass(type(value), float):
         raise TypeError("uid should be integer, not " + _tp_name(value))
-    if not isinstance(value, int) and not _has_slot(value, "__index__"):
+    if not issubclass(type(value), int) and not _has_slot(value, "__index__"):
         raise TypeError("uid should be integer, not " + _tp_name(value))
     uid = _number_index(value)
     if uid == -1:
@@ -70,7 +70,7 @@ def getpwuid(*args: object, **kwds: object) -> object:
 
 def getpwnam(*args: object, **kwds: object) -> object:
     name = _one("getpwnam", args, kwds)
-    if not isinstance(name, str):
+    if not issubclass(type(name), str):
         raise TypeError("getpwnam() argument must be str, not " + _tp_name(name))
     encoded = str.encode(name, "utf-8", "surrogateescape")
     if 0 in encoded:

@@ -21,11 +21,11 @@ def print(*args: object, sep: object = " ", end: object = "\n", file: object = N
             return
     if sep is None:
         sep = " "
-    elif not isinstance(sep, str):
+    elif not issubclass(type(sep), str):
         raise TypeError("sep must be None or a string, not " + type(sep).__name__)
     if end is None:
         end = "\n"
-    elif not isinstance(end, str):
+    elif not issubclass(type(end), str):
         raise TypeError("end must be None or a string, not " + type(end).__name__)
     first = True
     for arg in args:
@@ -80,7 +80,7 @@ def _input_from_the_terminal(args: tuple[object, ...], fin: object, fout: object
         stdin_errors = fin.errors  # type: ignore[attr-defined]
     except BaseException:  # noqa: BLE001
         return _NO_TERMINAL
-    if not isinstance(stdin_encoding, str) or not isinstance(stdin_errors, str):
+    if not issubclass(type(stdin_encoding), str) or not issubclass(type(stdin_errors), str):
         return _NO_TERMINAL
     str.encode(stdin_encoding)                   # PyUnicode_AsUTF8: a lone surrogate is an error
     str.encode(stdin_errors)
@@ -92,7 +92,7 @@ def _input_from_the_terminal(args: tuple[object, ...], fin: object, fout: object
             stdout_errors = fout.errors  # type: ignore[attr-defined]
         except BaseException:  # noqa: BLE001
             return _NO_TERMINAL
-        if not isinstance(stdout_encoding, str) or not isinstance(stdout_errors, str):
+        if not issubclass(type(stdout_encoding), str) or not issubclass(type(stdout_errors), str):
             return _NO_TERMINAL
         str.encode(stdout_encoding)
         str.encode(stdout_errors)
@@ -132,11 +132,11 @@ def input(*args: object, **kwds: object) -> object:  # noqa: A001
         write(str(args[0]))
     _flush_quietly(fout)
     line = fin.readline()  # type: ignore[attr-defined]  # PyFile_GetLine(fin, -1)
-    if isinstance(line, bytes):
+    if issubclass(type(line), bytes):
         if not line:
             raise EOFError("EOF when reading a line")
         return line[:-1] if line[-1:] == b"\n" else line
-    if isinstance(line, str):
+    if issubclass(type(line), str):
         if not line:
             raise EOFError("EOF when reading a line")
         return line[:-1] if line[-1] == "\n" else line
@@ -639,7 +639,7 @@ def _leave(obj: object) -> None:
 def _receiver(self: object, cls: type, name: str) -> None:
     """A slot wrapper's check (wrapperdescr_call): list.__repr__(5) is a TypeError, as for the
     C++ types' methods (review 2026-11-03, A9-2)."""
-    if not isinstance(self, cls):
+    if not issubclass(type(self), cls):
         raise TypeError("descriptor '" + name + "' requires a '" + cls.__name__ + "' object but received a '" +
                         type(self).__name__ + "'")
 
@@ -728,7 +728,7 @@ def _frozenset_repr(self: frozenset[object]) -> str:
 def _set_like_repr(self: set[object] | frozenset[object]) -> str:
     """set_repr: set() when empty; the type's name around the braces for a subclass and frozenset."""
     name = type(self).__name__
-    if (set.__len__ if isinstance(self, set) else frozenset.__len__)(self) == 0:   # so->used: not what a subclass's __len__ says
+    if (set.__len__ if issubclass(type(self), set) else frozenset.__len__)(self) == 0:   # so->used: not what a subclass's __len__ says
         return name + "()"
     if not _enter(self):
         return name + "(...)"

@@ -92,7 +92,7 @@ def _unpack(name: str, args: tuple[object, ...], kwds: dict[str, object], names:
 
 
 def _str_argument(name: str, argument: str, value: object) -> str:
-    if not isinstance(value, str):
+    if not issubclass(type(value), str):
         raise TypeError(name + "() argument '" + argument + "' must be str, not " + _tp_name(value))
     return value
 
@@ -142,7 +142,7 @@ def _type_repr(p: object) -> str:               # _Py_typing_type_repr
     module = getattr(p, "__module__", None)
     if module is None:
         return repr(p)
-    if isinstance(module, str) and module == "builtins":
+    if issubclass(type(module), str) and module == "builtins":
         return str(qualname)
     return str(module) + "." + str(qualname)
 
@@ -188,11 +188,11 @@ Internal type for implementing evaluation functions."""
         if len(args) != 1:
             raise TypeError("constevaluator.__call__() takes exactly 1 argument (" + str(len(args)) + " given)")
         fmt = args[0]
-        if not isinstance(fmt, int):                 # the clinic's int converter: PyLong_AsInt, the type's __index__ (RL-638)
+        if not issubclass(type(fmt), int):                 # the clinic's int converter: PyLong_AsInt, the type's __index__ (RL-638)
             fmt = _number_index(fmt)
         value = self._value
         if fmt == _FORMAT_STRING:
-            if isinstance(value, tuple):
+            if issubclass(type(value), tuple):
                 return "(" + ", ".join(_type_repr(item) for item in value) + ")"
             return _type_repr(value)
         return value
@@ -898,12 +898,12 @@ See PEP 695 for more information.
         if type_params is _ABSENT:
             checked: object = None
         else:
-            if not isinstance(type_params, tuple):
+            if not issubclass(type(type_params), tuple):
                 raise TypeError("type_params must be a tuple")
             checked = _check_type_params(type_params)
         if qualname is _ABSENT or qualname is None:
             qualname = name
-        elif not isinstance(qualname, str):
+        elif not issubclass(type(qualname), str):
             raise TypeError("qualname must be a string")
         return _typealias_alloc(name, qualname, checked, None, value, _bella_caller_module())
 

@@ -697,11 +697,6 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
   object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
   identity differences; the row should name this one. To ask next.
-* **Open from review A30** (2026-11-21), a class found behind a finding, a step of its own: a prelude asks `isinstance`,
-  which an object's `__class__` answers, where the C tests the object's type (RL-655: 184 calls in 20 preludes, `_io` 42,
-  `_warnings` 33, `_json` 21, `_codecs` 19; some of the C's own tests are `PyObject_IsInstance` and stay), to be gone
-  through call by call and held by a sweep with an object whose `__class__` lies. (The other class, EINTR at the eight
-  other places of `_io`, is done: RL-656.)
 * **Open from review A27** (2026-11-21): the line under a refused literal's SyntaxError is the build's, where CPython reads it
   from the file when it makes the error and falls back on what its tokenizer read (RL-617; low: seen only where the file
   changes between the build and the refusal). Exact is the file first, by `err_programtext`'s rules, and the build's text

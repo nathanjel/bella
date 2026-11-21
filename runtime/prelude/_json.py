@@ -154,7 +154,7 @@ s after the end quote."""
     if len(args) > 3:
         raise TypeError("scanstring expected at most 3 arguments, got " + str(len(args)))
     pystr = args[0]
-    if not isinstance(pystr, str):
+    if not issubclass(type(pystr), str):
         raise TypeError("scanstring() argument 1 must be str, not " + _tp_name(pystr))
     end = _ssize(args[1])
     strict = True if len(args) < 3 else bool(args[2])
@@ -225,7 +225,7 @@ def encode_basestring_ascii(*args: object, **kwds: object) -> str:
     if len(args) != 1:
         raise TypeError("_json.encode_basestring_ascii() takes exactly one argument (" + str(len(args)) + " given)")
     pystr = args[0]
-    if not isinstance(pystr, str):
+    if not issubclass(type(pystr), str):
         raise TypeError("encode_basestring_ascii() argument must be str, not " + _tp_name(pystr))
     return _ascii_escape(str.__str__(pystr))
 
@@ -237,7 +237,7 @@ def encode_basestring(*args: object, **kwds: object) -> str:
     if len(args) != 1:
         raise TypeError("_json.encode_basestring() takes exactly one argument (" + str(len(args)) + " given)")
     pystr = args[0]
-    if not isinstance(pystr, str):
+    if not issubclass(type(pystr), str):
         raise TypeError("encode_basestring() argument must be str, not " + _tp_name(pystr))
     return _escape(str.__str__(pystr))
 
@@ -293,7 +293,7 @@ class Scanner:
 
     def __call__(self, *args: object, **kwds: object) -> tuple[object, int]:   # scanner_call
         pystr, idx = _parse_args("scan_once", args, kwds, ("string", "idx"), 2)
-        if not isinstance(pystr, str):
+        if not issubclass(type(pystr), str):
             raise TypeError("first argument must be a string, not " + _tp_name(pystr))
         index = _ssize(idx)
         memo: dict[str, str] = {}
@@ -468,11 +468,11 @@ class Encoder:
         markers, defaultfn, encoder, indent, key_separator, item_separator, sort_keys, skipkeys, allow_nan = _parse_args(
             "make_encoder", args, kwds,
             ("markers", "default", "encoder", "indent", "key_separator", "item_separator", "sort_keys", "skipkeys", "allow_nan"), 9)
-        if not isinstance(key_separator, str):
+        if not issubclass(type(key_separator), str):
             raise TypeError("make_encoder() argument 5 must be str, not " + _tp_name(key_separator))
-        if not isinstance(item_separator, str):
+        if not issubclass(type(item_separator), str):
             raise TypeError("make_encoder() argument 6 must be str, not " + _tp_name(item_separator))
-        if markers is not None and not isinstance(markers, dict):
+        if markers is not None and not issubclass(type(markers), dict):
             raise TypeError("make_encoder() argument 1 must be dict or None, not " + _tp_name(markers))
         self: Encoder = _bella_new_instance(cls)
         self._markers = markers
@@ -558,13 +558,13 @@ def _write_string(s: Encoder, parts: list[str], obj: str) -> None:   # encoder_w
         parts.append(s._fast_encode(str.__str__(obj)))
         return
     encoded = s._encoder(obj)  # type: ignore[operator]
-    if not isinstance(encoded, str):
+    if not issubclass(type(encoded), str):
         raise TypeError("encoder() must return a string, not " + _tp_name(encoded))
     parts.append(_written(encoded))
 
 
 def _concat(left: str, right: object) -> str:   # PyUnicode_Concat: the two texts, never a subclass's __add__ or __radd__ (review F17 #12)
-    if not isinstance(right, str):
+    if not issubclass(type(right), str):
         raise TypeError('can only concatenate str (not "' + _tp_name(right) + '") to str')
     return str.__add__(str.__str__(left), str.__str__(right))
 
@@ -589,15 +589,15 @@ def _encode_obj(s: Encoder, parts: list[str], obj: object, level: int, cache: li
         parts.append("true")
     elif obj is False:
         parts.append("false")
-    elif isinstance(obj, str):
+    elif issubclass(type(obj), str):
         _write_string(s, parts, obj)
-    elif isinstance(obj, int):
+    elif issubclass(type(obj), int):
         parts.append(int.__repr__(obj))
-    elif isinstance(obj, float):
+    elif issubclass(type(obj), float):
         parts.append(_encode_float(s, obj))
-    elif isinstance(obj, (list, tuple)):
+    elif issubclass(type(obj), (list, tuple)):
         _encode_list(s, parts, obj, level, cache)
-    elif isinstance(obj, (dict, frozendict)):
+    elif issubclass(type(obj), (dict, frozendict)):
         _encode_dict(s, parts, obj, level, cache)
     else:
         ident = None
@@ -619,13 +619,13 @@ def _encode_obj(s: Encoder, parts: list[str], obj: object, level: int, cache: li
 
 def _encode_key_value(s: Encoder, parts: list[str], first: list[bool], dct: object, key: object, value: object, level: int,
                       cache: list[str] | None, separator: str) -> None:   # encoder_encode_key_value
-    if isinstance(key, str):
+    if issubclass(type(key), str):
         keystr: object = key
-    elif isinstance(key, float):
+    elif issubclass(type(key), float):
         keystr = _encode_float(s, key)
     elif key is True or key is False or key is None:
         keystr = "true" if key is True else "false" if key is False else "null"
-    elif isinstance(key, int):
+    elif issubclass(type(key), int):
         keystr = int.__repr__(key)
     elif s._skipkeys:
         return
@@ -647,7 +647,7 @@ def _encode_key_value(s: Encoder, parts: list[str], first: list[bool], dct: obje
 
 
 def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: list[str] | None) -> None:   # encoder_listencode_dict
-    if (dict.__len__(dct) if isinstance(dct, dict) else len(dct)) == 0:  # type: ignore[arg-type]   # PyDict_GET_SIZE
+    if (dict.__len__(dct) if issubclass(type(dct), dict) else len(dct)) == 0:  # type: ignore[arg-type]   # PyDict_GET_SIZE
         parts.append("{}")
         return
     ident = None
@@ -668,7 +668,7 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
         if s._sort_keys:
             items.sort()
         for item in items:
-            if not isinstance(item, tuple) or len(item) != 2:
+            if not issubclass(type(item), tuple) or len(item) != 2:
                 raise ValueError("items must return 2-tuples")
             _encode_key_value(s, parts, first, dct, item[0], item[1], level, cache, separator)
     else:                                        # PyDict_Next: the entries as they are at each step, an inserted one included (A14 #2)
@@ -691,8 +691,8 @@ def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: l
     # PySequence_Fast: an exact list or tuple is the object itself, its size read again at every step and an item what it holds
     # then; a subclass is iterated into a list first (A14 #3)
     fast: object = seq if type(seq) is list or type(seq) is tuple else list(seq)  # type: ignore[call-overload]
-    size = list.__len__ if isinstance(fast, list) else tuple.__len__
-    item = list.__getitem__ if isinstance(fast, list) else tuple.__getitem__
+    size = list.__len__ if issubclass(type(fast), list) else tuple.__len__
+    item = list.__getitem__ if issubclass(type(fast), list) else tuple.__getitem__
     if size(fast) == 0:  # type: ignore[arg-type]
         parts.append("[]")
         return

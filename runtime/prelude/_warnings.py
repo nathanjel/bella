@@ -110,13 +110,13 @@ def _release_lock(*args: object, **kwds: object) -> None:
 
 def _depth() -> int:
     depth = _state["lock_depth"]
-    assert isinstance(depth, int)
+    assert issubclass(type(depth), int)
     return depth
 
 
 def _version() -> int:
     version = _state["filters_version"]
-    assert isinstance(version, int)
+    assert issubclass(type(version), int)
     return version
 
 
@@ -142,7 +142,7 @@ def _matched(obj: object, arg: object, arg2: object) -> bool:   # check_matched
     if type(obj) is str:                         # an internal plain text default filter must match exactly
         if arg is _ABSENT:
             return False
-        if not isinstance(arg, str):
+        if not issubclass(type(arg), str):
             raise TypeError("Can't compare " + _tp_name(obj) + " and " + _tp_name(arg))
         return str.__eq__(obj, arg) is True
     if arg is not _ABSENT:                       # otherwise a regex filter: its match() method
@@ -158,7 +158,7 @@ def _context_filters() -> object:                # get_warnings_context_filters:
     if ctx is None:
         return None
     context_filters = ctx._filters  # type: ignore[attr-defined]
-    if not isinstance(context_filters, list):
+    if not issubclass(type(context_filters), list):
         raise ValueError("_filters of warnings._warnings_context must be a list")
     return context_filters
 
@@ -168,7 +168,7 @@ def _global_filters() -> list[object]:           # get_warnings_filters
     if found is not _ABSENT:
         _state["filters"] = found
     current = _state["filters"]
-    if not isinstance(current, list):
+    if not issubclass(type(current), list):
         raise ValueError("_warnings.filters must be a list")
     return current
 
@@ -177,9 +177,9 @@ def _once_registry() -> dict[object, object]:    # get_once_registry
     found = _warnings_attr("onceregistry", False)
     if found is _ABSENT:
         registry = _state["once_registry"]
-        assert isinstance(registry, dict)
+        assert issubclass(type(registry), dict)
         return registry
-    if not isinstance(found, dict):
+    if not issubclass(type(found), dict):
         raise TypeError("_warnings.onceregistry must be a dict, not '" + _tp_name(found) + "'")
     _state["once_registry"] = found
     return found
@@ -189,16 +189,16 @@ def _default_action() -> str:                    # get_default_action
     found = _warnings_attr("defaultaction", False)
     if found is _ABSENT:
         action = _state["default_action"]
-        assert isinstance(action, str)
+        assert issubclass(type(action), str)
         return action
-    if not isinstance(found, str):
+    if not issubclass(type(found), str):
         raise TypeError("_warnings.defaultaction must be a string, not '" + _tp_name(found) + "'")
     _state["default_action"] = found
     return found
 
 
 def _ssize(value: object) -> int:                # PyLong_AsSsize_t: an int only, no __index__
-    if not isinstance(value, int):
+    if not issubclass(type(value), int):
         raise TypeError("an integer is required")
     if value > _MAXSIZE or value < -_MAXSIZE - 1:
         raise OverflowError("Python int too large to convert to C ssize_t")
@@ -208,10 +208,10 @@ def _ssize(value: object) -> int:                # PyLong_AsSsize_t: an int only
 def _filter_search(category: object, text: object, lineno: int, module: object, filename: object, list_name: str,
                    items: list[object]) -> tuple[object, object]:   # filter_search: (item, action), (None, None) for no match
     for i, item in enumerate(items):
-        if not isinstance(item, tuple) or len(item) != 5:
+        if not issubclass(type(item), tuple) or len(item) != 5:
             raise ValueError("warnings." + list_name + " item " + str(i) + " isn't a 5-tuple")
         action, msg, cat, mod, ln_obj = item
-        if not isinstance(action, str):
+        if not issubclass(type(action), str):
             raise TypeError("action must be a string, not '" + _tp_name(action) + "'")
         good_msg = _matched(msg, text, _ABSENT)
         good_mod = _matched(mod, module, filename)
@@ -225,15 +225,15 @@ def _filter_search(category: object, text: object, lineno: int, module: object, 
 def _get_filter(category: object, text: object, lineno: int, module: object, filename: object) -> tuple[str, object]:   # get_filter: (action, item)
     context_filters = _context_filters()
     if context_filters is not None:
-        assert isinstance(context_filters, list)
+        assert issubclass(type(context_filters), list)
         item, action = _filter_search(category, text, lineno, module, filename, "_warnings_context _filters", context_filters)
         if action is not None:
-            assert isinstance(action, str)
+            assert issubclass(type(action), str)
             return action, item
     else:
         item, action = _filter_search(category, text, lineno, module, filename, "filters", _global_filters())
         if action is not None:
-            assert isinstance(action, str)
+            assert issubclass(type(action), str)
             return action, item
     return _default_action(), None
 
@@ -291,7 +291,7 @@ def _show_warning(filename: object, lineno: int, text: object, category: object,
         except BaseException:  # noqa: BLE001, S110
             pass
         return
-    assert isinstance(filename, str)
+    assert issubclass(type(filename), str)
     if _bella_shutting_down():
         return
     try:
@@ -360,7 +360,7 @@ def _display_source_line(f: object, filename: str, lineno: int) -> None:   # _Py
         pass
     if not issubclass(type(line), str):
         return
-    assert isinstance(line, str)
+    assert issubclass(type(line), str)
     start = 0
     while start < str.__len__(line) and str.__getitem__(line, start) in " \t\f":
         start += 1
@@ -429,7 +429,7 @@ def _find_source_file(filename: str, io: object) -> object:   # _Py_FindSourceFi
     syspath = dict.get(sys.__dict__, "path", _ABSENT)
     if not issubclass(type(syspath), list):
         return None
-    assert isinstance(syspath, list)
+    assert issubclass(type(syspath), list)
     try:
         opener = io.open  # type: ignore[attr-defined]
     except BaseException:  # noqa: BLE001
@@ -479,9 +479,9 @@ def _warn_explicit(category: object, message: object, filename: object, lineno: 
                    sourceline: object, source: object) -> None:   # warn_explicit, under the lock
     if module is None:                           # a warning emitted late in shutdown: ignored
         return
-    if registry is not _ABSENT and registry is not None and not isinstance(registry, dict):
+    if registry is not _ABSENT and registry is not None and not issubclass(type(registry), dict):
         raise TypeError("'registry' must be a dict or None")
-    if isinstance(message, Warning):             # normalise the message
+    if issubclass(type(message), Warning):             # normalise the message
         text: object = str(message)
         category = type(message)
     else:
@@ -491,7 +491,7 @@ def _warn_explicit(category: object, message: object, filename: object, lineno: 
         source = _ABSENT
     key = (text, category, lineno)
     if registry is not _ABSENT and registry is not None:
-        assert isinstance(registry, dict)
+        assert issubclass(type(registry), dict)
         if _already_warned(registry, key, False):
             return
     action, item = _get_filter(category, text, lineno, module, filename)
@@ -502,16 +502,16 @@ def _warn_explicit(category: object, message: object, filename: object, lineno: 
     rc = False
     if action != "always" and action != "all":   # store in the registry that we've been here
         if registry is not _ABSENT and registry is not None:
-            assert isinstance(registry, dict)
+            assert issubclass(type(registry), dict)
             dict.__setitem__(registry, key, True)
         if action == "once":
             if registry is _ABSENT or registry is None:
                 registry = _once_registry()
-            assert isinstance(registry, dict)
+            assert issubclass(type(registry), dict)
             rc = _update_registry(registry, text, category, False)
         elif action == "module":
             if registry is not _ABSENT and registry is not None:
-                assert isinstance(registry, dict)
+                assert issubclass(type(registry), dict)
                 rc = _update_registry(registry, text, category, False)
         elif action != "default":
             raise RuntimeError("Unrecognized action (" + repr(action) + ") in warnings.filters:\n " + repr(item))
@@ -523,11 +523,11 @@ def _warn_explicit(category: object, message: object, filename: object, lineno: 
 # ---- the frame a warning is charged to (setup_context) ------------------------------------------------------------------------
 
 def _is_internal_filename(filename: object) -> bool:
-    return isinstance(filename, str) and "importlib" in filename and "_bootstrap" in filename
+    return issubclass(type(filename), str) and "importlib" in filename and "_bootstrap" in filename
 
 
 def _is_filename_to_skip(filename: object, skip_file_prefixes: tuple[object, ...] | None) -> bool:
-    if skip_file_prefixes and isinstance(filename, str):
+    if skip_file_prefixes and issubclass(type(filename), str):
         for prefix in skip_file_prefixes:
             if filename.startswith(prefix):  # type: ignore[arg-type]
                 return True
@@ -539,7 +539,7 @@ def _setup_context(stack_level: int, skip_file_prefixes: tuple[object, ...] | No
     the globals hold under __warningregistry__ (warn_explicit checks it), a new dict when they hold nothing."""
     if skip_file_prefixes:
         for prefix in skip_file_prefixes:
-            if not isinstance(prefix, str):
+            if not issubclass(type(prefix), str):
                 raise TypeError("Found non-str '" + _tp_name(prefix) + "' in skip_file_prefixes.")
     depth = 0
     f = _frame(0)
@@ -569,17 +569,17 @@ def _setup_context(stack_level: int, skip_file_prefixes: tuple[object, ...] | No
         registry = {}
         dict.__setitem__(globals_, "__warningregistry__", registry)
     module = dict.get(globals_, "__name__", _ABSENT)
-    if module is _ABSENT or not (module is None or isinstance(module, str)):
+    if module is _ABSENT or not (module is None or issubclass(type(module), str)):
         module = "<string>"
     return filename, lineno, module, registry
 
 
 def _get_category(message: object, category: object) -> object:
-    if isinstance(message, Warning):             # the category argument is ignored
+    if issubclass(type(message), Warning):             # the category argument is ignored
         return type(message)
     if category is None:
         return UserWarning
-    if not isinstance(category, type):
+    if not issubclass(type(category), type):
         raise TypeError("category must be a Warning subclass, not '" + _tp_name(category) + "'")
     if not issubclass(category, Warning):
         raise TypeError("category must be a Warning subclass, not class '" + category.__name__ + "'")
@@ -603,7 +603,7 @@ def warn(*args: object, **kwds: object) -> None:
     prefixes: tuple[object, ...] | None
     if skip_file_prefixes is _ABSENT:
         prefixes = None
-    elif not isinstance(skip_file_prefixes, tuple):
+    elif not issubclass(type(skip_file_prefixes), tuple):
         raise TypeError("warn() argument 'skip_file_prefixes' must be tuple, not " + _tp_name(skip_file_prefixes))
     else:
         prefixes = skip_file_prefixes
@@ -625,7 +625,7 @@ def warn(*args: object, **kwds: object) -> None:
 def warn_explicit(*args: object, **kwds: object) -> None:
     message, category, filename, lineno, module, registry, module_globals, source = _unpack_keywords(
         "warn_explicit", ("message", "category", "filename", "lineno", "module", "registry", "module_globals", "source"), 0, 4, 8, 0, args, kwds, _ABSENT)
-    if not isinstance(filename, str):
+    if not issubclass(type(filename), str):
         raise TypeError("warn_explicit() argument 'filename' must be str, not " + _tp_name(filename))
     line = _number_index(lineno)
     if line > 2**31 - 1 or line < -(2**31):
@@ -637,7 +637,7 @@ def warn_explicit(*args: object, **kwds: object) -> None:
     if source is _ABSENT:
         source = None
     if module_globals is not None:
-        if not isinstance(module_globals, dict):
+        if not issubclass(type(module_globals), dict):
             raise TypeError("module_globals must be a dict or a frozendict, not " + _tp_name(module_globals))
         _bella_refuse("warn_explicit() with module_globals (the module loader's source line, _PyImport_BlessMyLoader)")
     source_line = None

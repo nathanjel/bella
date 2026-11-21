@@ -1545,3 +1545,9 @@ time; the program's own stay at `-O1`).
 * **Found with it:** `IOBase.readline` reads the stream's `peek` attribute once, not for every chunk.
 * **Held by:** the program RL-656 in `pipeline/tests/test_review_2026_11_21_a30.py` (75 rows; 22 differed before).
 
+**2026-11-21 — a type test of the C's does not ask an object's `__class__` (RL-655, the class behind RL-651; no decision of the author's was needed).** `isinstance(x, str)` is true for an object whose `__class__` property says str, and reads that property; CPython's C asks `PyUnicode_Check(x)`, which reads the object's type. The preludes that stand for C asked `isinstance` in 169 places.
+* **What a program sees:** an object that only says it is a str, an int, a tuple or a dict is refused by the library's functions as CPython refuses it, and its `__class__` is not read. Before, 151 of 191 calls tried differed: such an object was written into `json.dumps`'s text and taken as `print`'s separator, `_imp.is_builtin` answered for it, and `codecs.utf_8_encode` ended the program with a segmentation fault.
+* **How:** `issubclass(type(x), T)` in 166 places. Three calls stay as they are, because CPython asks `PyObject_IsInstance` there too: `deque + other`, the class pattern of a match statement, and the stand-in CPython itself runs in `iterating.py`. The two files of importlib's own Python are CPython's text and keep theirs.
+* **Found with it:** a buffered writer whose raw `write` returns what is no number raises CPython's OSError (`raw write() returned invalid length -1`), set over the conversion's error.
+* **Held by:** the sweep `pipeline/tests/test_type_checks.py`, a process for each of 191 rows, compiled against CPython, and a test that reads the preludes for an `isinstance` call.
+

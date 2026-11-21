@@ -55,18 +55,18 @@ class Interpolation:
             raise TypeError("Interpolation() missing required argument 'value' (pos 1)")
         if expression is _ABSENT:
             expression = ""
-        elif not isinstance(expression, str):
+        elif not issubclass(type(expression), str):
             raise TypeError("Interpolation() argument 'expression' must be str, not " + _tp_name(expression))
         if conversion is _ABSENT:
             conversion = None
         elif conversion is not None:             # _conversion_converter
-            if not isinstance(conversion, str):
+            if not issubclass(type(conversion), str):
                 raise TypeError("Interpolation() argument 'conversion' must be str, not " + _tp_name(conversion))
             if len(conversion) != 1 or conversion not in ("a", "r", "s"):
                 raise ValueError("Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'")
         if format_spec is _ABSENT:
             format_spec = ""
-        elif not isinstance(format_spec, str):
+        elif not issubclass(type(format_spec), str):
             raise TypeError("Interpolation() argument 'format_spec' must be str, not " + _tp_name(format_spec))
         self: Interpolation = _bella_new_instance(args[0])
         self._value = value
@@ -124,13 +124,13 @@ class Template:
         if kwds:
             raise TypeError("Template.__new__ only accepts *args arguments")
         for item in args[1:]:
-            if not isinstance(item, str) and type(item) is not Interpolation:
+            if not issubclass(type(item), str) and type(item) is not Interpolation:
                 raise TypeError("Template.__new__ *args need to be of type 'str' or 'Interpolation', got " + _tp_name(item))
         strings: list[str] = []
         interpolations: list[Interpolation] = []
         last_was_str = False
         for item in args[1:]:
-            if isinstance(item, str):
+            if issubclass(type(item), str):
                 if last_was_str:
                     strings[-1] = str.__add__(strings[-1], item)   # PyUnicode_Concat
                 else:

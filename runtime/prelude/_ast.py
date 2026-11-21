@@ -61,13 +61,13 @@ def _repr_list(value: object, depth: int) -> str:   # ast_repr_list: the first a
     items: list[object] = list(value)  # type: ignore[call-overload]
     if not items:
         return repr(value)
-    is_list = isinstance(value, list)
+    is_list = issubclass(type(value), list)
     parts = [("[" if is_list else "(")]
     shown = items[:1] + (items[-1:] if len(items) > 1 else [])
     for i, item in enumerate(shown):
         if i > 0:
             parts.append(", ")
-        parts.append(_repr_depth(item, depth - 1) if isinstance(item, AST) else repr(item))
+        parts.append(_repr_depth(item, depth - 1) if issubclass(type(item), AST) else repr(item))
         if i == 0 and len(items) > 2:
             parts.append(", ...")
     parts.append("]" if is_list else ")")
@@ -88,9 +88,9 @@ def _repr_depth(self: object, depth: int) -> str:   # ast_repr_max_depth
         parts = [name, "("]
         for i, field in enumerate(fields):
             value = getattr(self, field)
-            if isinstance(value, (list, tuple)):
+            if issubclass(type(value), (list, tuple)):
                 shown = _repr_list(value, depth)
-            elif isinstance(value, AST):
+            elif issubclass(type(value), AST):
                 shown = _repr_depth(value, depth - 1)
             else:
                 shown = repr(value)
@@ -147,7 +147,7 @@ class AST:
                 if name not in field_types:
                     raise TypeError("Field " + repr(name) + " is missing from " + _full_name(self) + "._field_types")
                 kind = field_types[name]
-                if isinstance(kind, type) and kind is expr_context:
+                if issubclass(type(kind), type) and kind is expr_context:
                     setattr(self, name, _load_singleton)
                 elif type(kind) is _GENERIC_ALIAS:   # list[expr]: an empty list
                     setattr(self, name, [])

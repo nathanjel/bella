@@ -575,7 +575,7 @@ class deque:
     def __add__(*args: object, **kwds: object) -> object:   # deque_concat_lock_held
         _wrapper(args, kwds, deque, "__add__", 1)
         self, other = args
-        if not isinstance(other, deque):
+        if not isinstance(other, deque):         # deque_concat: PyObject_IsInstance, the one test here that asks the object's __class__ (RL-655)
             raise TypeError("can only concatenate deque (not \"" + _tp_name(other) + "\") to deque")
         new = _d_copy(self)
         _d_extend(new, other)
@@ -1021,7 +1021,7 @@ def _key_error(key: object) -> BaseException:
         return key  # type: ignore[return-value]
     if key is None:
         return KeyError()
-    if isinstance(key, tuple):
+    if issubclass(type(key), tuple):
         return KeyError(*tuple.__getitem__(key, slice(None)))
     return KeyError(key)
 
@@ -1068,10 +1068,10 @@ def _od_keys_equal(a: object, b: object) -> bool:   # _odict_keys_equal
 
 
 def _od_richcompare(v: object, w: object, eq: bool) -> object:   # odict_richcompare_lock_held, == and !=
-    if not isinstance(v, OrderedDict) or not isinstance(w, (dict, frozendict)):
+    if not issubclass(type(v), OrderedDict) or not issubclass(type(w), (dict, frozendict)):
         return NotImplemented
     cmp = dict.__eq__(v, w) if eq else dict.__ne__(v, w)  # type: ignore[arg-type]
-    if not isinstance(w, OrderedDict):
+    if not issubclass(type(w), OrderedDict):
         return cmp
     if eq and cmp is False:
         return cmp
@@ -1123,11 +1123,11 @@ def _od_update(self: object, args: tuple[object, ...], kwds: dict[str, object]) 
 
 
 def _od_or(left: object, right: object) -> object:   # odict_or
-    if isinstance(left, OrderedDict):
+    if issubclass(type(left), OrderedDict):
         cls, other = type(left), right
     else:
         cls, other = type(right), left
-    if not isinstance(other, (dict, frozendict)):
+    if not issubclass(type(other), (dict, frozendict)):
         return NotImplemented
     new = cls(left)
     _od_update_arg(new, right)

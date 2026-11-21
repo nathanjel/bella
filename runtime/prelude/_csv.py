@@ -142,7 +142,7 @@ The Dialect type records CSV parsing and generation options.
         if dialect is not _ABSENT:
             if issubclass(type(dialect), str):
                 dialect = _from_registry(dialect)
-            if isinstance(dialect, Dialect) and all(v is _ABSENT for v in given[1:]):   # the instance itself is reused
+            if issubclass(type(dialect), Dialect) and all(v is _ABSENT for v in given[1:]):   # the instance itself is reused
                 return dialect
             if delimiter is _ABSENT:
                 delimiter = getattr(dialect, "delimiter", _ABSENT)

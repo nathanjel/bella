@@ -53,7 +53,7 @@ class TokenizerIter:
         if encoding is _ABSENT:
             encoding = None
         else:
-            if not isinstance(encoding, str):
+            if not issubclass(type(encoding), str):
                 raise TypeError("tokenizeriter() argument 'encoding' must be str, not " + ("None" if encoding is None else _tp_name(encoding)))
             if "\0" in str.encode(encoding, "utf-8").decode("utf-8"):   # PyUnicode_AsUTF8AndSize, then the clinic's length check
                 raise ValueError("embedded null character")

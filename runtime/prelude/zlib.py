@@ -704,7 +704,7 @@ def __getattr__(*args: object, **kwds: object) -> object:
     if len(args) != 1:
         raise TypeError("__getattr__ expected 1 argument, got " + str(len(args)))
     name = args[0]
-    if isinstance(name, str) and str.__eq__(name, "__version__"):
+    if issubclass(type(name), str) and str.__eq__(name, "__version__"):
         _warn("'__version__' is deprecated and slated for removal in Python 3.20", "DeprecationWarning")
         return "1.0"
     raise AttributeError("module 'zlib' has no attribute " + repr(name))

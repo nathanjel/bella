@@ -143,7 +143,7 @@ def _positional(name: str, shown: str, args: tuple[object, ...], kwds: dict[str,
 def _ssize_or_none(value: object, absent: int = -1) -> int:   # Py_ssize_t(accept={int, NoneType}) = -1
     if value is _ABSENT or value is None:
         return absent
-    if not isinstance(value, int) and not _has_slot(value, "__index__"):
+    if not issubclass(type(value), int) and not _has_slot(value, "__index__"):
         raise TypeError("argument should be integer or None, not '" + _tp_name(value) + "'")
     return _ssize(value)
 
@@ -163,7 +163,7 @@ def _int(value: object) -> int:                  # PyLong_AsInt
 
 
 def _off(value: object) -> int:                  # Py_off_t: PyLong_AsLongLong
-    if not isinstance(value, int):
+    if not issubclass(type(value), int):
         if _has_slot(value, "__index__"):
             value = _number_index(value)
         else:
@@ -175,7 +175,7 @@ def _off(value: object) -> int:                  # Py_off_t: PyLong_AsLongLong
 
 
 def _c_string(value: object, what: str) -> str:  # str(accept={str, NoneType}): a C string, or None
-    if not isinstance(value, str):
+    if not issubclass(type(value), str):
         raise TypeError(what + " must be str or None, not " + _tp_name(value))
     str.encode(value, "utf-8")
     if str.__contains__(value, "\0"):
@@ -710,7 +710,7 @@ class FileIO(_RawIOBase):
         nameobj, mode, closefd, opener = _unpack("FileIO", args[1:], kwds, ("file", "mode", "closefd", "opener"), 1, 4)
         if mode is _ABSENT:
             mode = "r"
-        elif not isinstance(mode, str):
+        elif not issubclass(type(mode), str):
             raise TypeError("FileIO() argument 'mode' must be str, not " + _tp_name(mode))
         else:
             str.encode(mode, "utf-8")
@@ -805,7 +805,7 @@ class FileIO(_RawIOBase):
                     self._a_fd = opened
                 else:
                     fdobj = opener(nameobj, flags)  # type: ignore[operator]
-                    if not isinstance(fdobj, int):
+                    if not issubclass(type(fdobj), int):
                         raise TypeError("expected integer from opener")
                     self._a_fd = _int(fdobj)
                     if self._a_fd < 0:
@@ -813,7 +813,7 @@ class FileIO(_RawIOBase):
                 fd_is_own = True
             st = _sys("stat", self._a_fd, True)
             self._j_blksize = DEFAULT_BUFFER_SIZE
-            if isinstance(st, int):
+            if issubclass(type(st), int):
                 if -st == 9:                     # EBADF
                     _fail(-st)
                 self._k_stat_atopen = None
@@ -887,7 +887,7 @@ class FileIO(_RawIOBase):
         if not self._c_readable:
             raise UnsupportedOperation("File not open for reading")
         data = _sys("read", self._a_fd, bytearray.__len__(target))
-        if isinstance(data, int):
+        if issubclass(type(data), int):
             if -data == _EAGAIN:
                 return None
             _fail(-data)
@@ -921,7 +921,7 @@ class FileIO(_RawIOBase):
                 if bufsize > _SSIZE_MAX or bufsize <= 0:
                     raise OverflowError("unbounded read returned more bytes than a Python bytes object can hold")
             data = _sys("read", self._a_fd, bufsize - bytes_read)
-            if isinstance(data, int):
+            if issubclass(type(data), int):
                 if -data == _EAGAIN:
                     if bytes_read > 0:
                         break
@@ -946,7 +946,7 @@ class FileIO(_RawIOBase):
         if size > _READ_MAX:
             size = _READ_MAX
         data = _sys("read", self._a_fd, size)
-        if isinstance(data, int):
+        if issubclass(type(data), int):
             if -data == _EAGAIN:
                 return None
             _fail(-data)
@@ -1188,7 +1188,7 @@ def _bf_raw_tell(self: _Buffered) -> int:        # _buffered_raw_tell
 
 
 def _off_t(res: object) -> int:                  # PyNumber_AsOff_t(res, ValueError)
-    if not isinstance(res, int) and not _has_slot(res, "__index__"):
+    if not issubclass(type(res), int) and not _has_slot(res, "__index__"):
         raise TypeError("'" + _tp_name(res) + "' object cannot be interpreted as an integer")
     n = _number_index(res)
     if n > _SSIZE_MAX or n < -_SSIZE_MAX - 1:
@@ -1280,7 +1280,11 @@ def _bf_raw_write(self: _Buffered, data: bytes) -> int:   # _bufferedwriter_raw_
                 raise
     if res is None:
         return -2
-    n = _off_t(res)
+    n = -1                                       # "n = PyNumber_AsSsize_t(res, PyExc_ValueError); if (n < 0 || n > len)": a result that
+    try:                                         # is no number is -1 with its error, and the OSError is set over that error: raised
+        n = _off_t(res)                          # outside the handler, so that no __context__ of it shows (RL-655's sweep)
+    except BaseException:
+        n = -1
     if n < 0 or n > bytes.__len__(data):
         raise OSError("raw write() returned invalid length " + str(n) + " (should have been between 0 and " + str(bytes.__len__(data)) + ")")
     if n > 0 and self._m_abs_pos != -1:
@@ -2206,7 +2210,7 @@ class BytesIO(_BufferedIOBase):
         self: BytesIO = args[0]  # type: ignore[assignment]
         arg = args[1] if n else None
         _bio_check_closed(self)
-        if isinstance(arg, int):
+        if issubclass(type(arg), int):
             maxsize = _ssize(arg)
         elif arg is None:
             maxsize = -1
@@ -2353,7 +2357,7 @@ class BytesIO(_BufferedIOBase):
             raise TypeError("a bytes-like object is required, not 'NoneType'")
         BytesIO.__init__(self, tuple.__getitem__(state, 0))  # type: ignore[arg-type]
         position = tuple.__getitem__(state, 1)  # type: ignore[arg-type]
-        if not isinstance(position, int):
+        if not issubclass(type(position), int):
             raise TypeError("second item of state must be an integer, not " + _tp_name(position))
         pos = _ssize(position)
         if pos < 0:
@@ -2361,7 +2365,7 @@ class BytesIO(_BufferedIOBase):
         self._b_pos = pos
         d = tuple.__getitem__(state, 2)  # type: ignore[arg-type]
         if d is not None:
-            if not isinstance(d, dict):
+            if not issubclass(type(d), dict):
                 raise TypeError("third item of state should be a dict, got a " + _tp_name(d))
             if _has_dict(self):                  # bytesio_setstate: PyDict_Update into the dict it has (RL-547),
                 dict.update(_own_dict(self), d)
@@ -2409,7 +2413,7 @@ def _nl_decode(self: IncrementalNewlineDecoder, input: object, final: bool) -> s
         output = self._b_decoder.decode(input, True if final else False)  # type: ignore[attr-defined]
     else:
         output = input
-    if not isinstance(output, str):
+    if not issubclass(type(output), str):
         raise TypeError("decoder should return a string result, not '" + _tp_name(output) + "'")
     text: str = str.__str__(output) if type(output) is not str else output
     if self._c_pendingcr and (final or str.__len__(text) > 0):
@@ -2472,10 +2476,10 @@ class IncrementalNewlineDecoder:
             raise ValueError("IncrementalNewlineDecoder.__init__() not called")
         if self._b_decoder is not None:
             state = self._b_decoder.getstate()  # type: ignore[attr-defined]
-            if not isinstance(state, tuple) or tuple.__len__(state) != 2:
+            if not issubclass(type(state), tuple) or tuple.__len__(state) != 2:
                 raise TypeError("illegal decoder state")
             buffer, flag = tuple.__getitem__(state, 0), tuple.__getitem__(state, 1)
-            if not isinstance(flag, int):
+            if not issubclass(type(flag), int):
                 raise TypeError("illegal decoder state")
             flag = int.__index__(flag) & ((1 << 64) - 1)
         else:
@@ -2491,12 +2495,12 @@ class IncrementalNewlineDecoder:
         self: IncrementalNewlineDecoder = args[0]  # type: ignore[assignment]
         if not self._a_ok:
             raise ValueError("IncrementalNewlineDecoder.__init__() not called")
-        if not isinstance(state, tuple):
+        if not issubclass(type(state), tuple):
             raise TypeError("state argument must be a tuple")
         if tuple.__len__(state) != 2:
             raise TypeError("setstate(): illegal state argument")
         buffer, flag = tuple.__getitem__(state, 0), tuple.__getitem__(state, 1)
-        if not isinstance(flag, int):
+        if not issubclass(type(flag), int):
             raise TypeError("setstate(): illegal state argument")
         flag = int.__index__(flag) & ((1 << 64) - 1)
         self._c_pendingcr = (flag & 1) != 0
@@ -2599,19 +2603,19 @@ def _tw_decode(decoder: object, data: bytes, eof: bool) -> str:   # _textiowrapp
         decoded = _nl_decode(decoder, data, eof)
     else:
         decoded = decoder.decode(data, True if eof else False)  # type: ignore[attr-defined]
-    if not isinstance(decoded, str):
+    if not issubclass(type(decoded), str):
         raise TypeError("decoder should return a string result, not '" + _tp_name(decoded) + "'")
     return decoded
 
 
 def _tw_decoder_state(self: TextIOWrapper) -> tuple[bytes, object]:
     state = self._h_decoder.getstate()  # type: ignore[attr-defined]
-    if not isinstance(state, tuple):
+    if not issubclass(type(state), tuple):
         raise TypeError("illegal decoder state")
     if tuple.__len__(state) != 2:
         raise TypeError("illegal decoder state")
     dec_buffer, dec_flags = tuple.__getitem__(state, 0), tuple.__getitem__(state, 1)
-    if not isinstance(dec_buffer, bytes):
+    if not issubclass(type(dec_buffer), bytes):
         raise TypeError("illegal decoder state: the first item should be a bytes object, not '" + _tp_name(dec_buffer) + "'")
     return dec_buffer, dec_flags
 
@@ -2848,19 +2852,19 @@ class TextIOWrapper(_TextIOBase):
             "TextIOWrapper", args[1:], kwds, ("buffer", "encoding", "errors", "newline", "line_buffering", "write_through"), 1, 6)
         if encoding is _ABSENT or encoding is None:
             encoding = None
-        elif not isinstance(encoding, str):
+        elif not issubclass(type(encoding), str):
             raise TypeError("TextIOWrapper() argument 'encoding' must be str or None, not " + _tp_name(encoding))
         else:
             _c_string(encoding, "TextIOWrapper() argument 'encoding'")
         if errors is _ABSENT or errors is None:
             errors = "strict"
-        elif not isinstance(errors, str):
+        elif not issubclass(type(errors), str):
             raise TypeError("TextIOWrapper() argument 'errors' must be str or None, not " + _tp_name(errors)[:50])
         else:
             _c_string(errors, "TextIOWrapper() argument 'errors'")
         if newline is _ABSENT or newline is None:
             newline = None
-        elif not isinstance(newline, str):
+        elif not issubclass(type(newline), str):
             raise TypeError("TextIOWrapper() argument 'newline' must be str or None, not " + _tp_name(newline))
         else:
             _c_string(newline, "TextIOWrapper() argument 'newline'")
@@ -2930,7 +2934,7 @@ class TextIOWrapper(_TextIOBase):
     def write(*args: object, **kwds: object) -> int:  # noqa: N805
         text = _one("TextIOWrapper.write", args, kwds)
         self: TextIOWrapper = args[0]  # type: ignore[assignment]
-        if not isinstance(text, str):
+        if not issubclass(type(text), str):
             raise TypeError("write() argument must be str, not " + _tp_name(text))
         _tw_check_attached(self)
         _tw_check_closed(self)
@@ -2991,7 +2995,7 @@ class TextIOWrapper(_TextIOBase):
             data = self._c_buffer.read()  # type: ignore[attr-defined]
             if data is None:
                 raise BlockingIOError("Read returned None.")
-            if not isinstance(data, bytes):
+            if not issubclass(type(data), bytes):
                 raise TypeError("underlying read() should have returned a bytes object, not '" + _tp_name(data) + "'")
             decoded = _tw_decode(self._h_decoder, data, True)
             result = _tw_get_decoded_chars(self, -1) + decoded
@@ -3137,11 +3141,11 @@ class TextIOWrapper(_TextIOBase):
             _tw_decoder_setstate(self, start_pos, dec_flags)
         if chars_to_skip:
             input_chunk = self._c_buffer.read(bytes_to_feed)  # type: ignore[attr-defined]
-            if not isinstance(input_chunk, bytes):
+            if not issubclass(type(input_chunk), bytes):
                 raise TypeError("underlying read() should have returned a bytes object, not '" + _tp_name(input_chunk) + "'")
             self._m_snapshot = (dec_flags, input_chunk)
             decoded = self._h_decoder.decode(input_chunk, True if need_eof else False)  # type: ignore[attr-defined]
-            if not isinstance(decoded, str):
+            if not issubclass(type(decoded), str):
                 raise TypeError("decoder should return a string result, not '" + _tp_name(decoded) + "'")
             _tw_set_decoded_chars(self, decoded)
             if str.__len__(decoded) < chars_to_skip:
@@ -3235,7 +3239,7 @@ class TextIOWrapper(_TextIOBase):
             line = _tw_readline(self, -1)
         else:
             line = self.readline()  # type: ignore[attr-defined]
-            if not isinstance(line, str):
+            if not issubclass(type(line), str):
                 raise OSError("readline() should have returned a str object, not '" + _tp_name(line) + "'")
         if str.__len__(line) == 0:
             self._m_snapshot = None
@@ -3395,7 +3399,7 @@ class StringIO(_TextIOBase):
         if newline_obj is None:
             newline = None
         elif newline_obj is not _ABSENT:
-            if not isinstance(newline_obj, str):
+            if not issubclass(type(newline_obj), str):
                 raise TypeError("newline must be str or None, not " + _tp_name(newline_obj))
             str.encode(newline_obj, "utf-8")
             newline = str.__str__(newline_obj)   # PyUnicode_AsUTF8, then PyUnicode_FromString: the text, an exact str
@@ -3404,7 +3408,7 @@ class StringIO(_TextIOBase):
                 newline = newline[:cut]
         if newline is not None and newline != "" and newline != "\n" and newline != "\r" and newline != "\r\n":
             raise ValueError("illegal newline value: " + repr(newline_obj))
-        if value is not _ABSENT and value is not None and not isinstance(value, str):
+        if value is not _ABSENT and value is not None and not issubclass(type(value), str):
             raise TypeError("initial_value must be str or None, not " + _tp_name(value))
         self._a_ok = False
         self._i_readnl = newline
@@ -3459,7 +3463,7 @@ class StringIO(_TextIOBase):
             line = _sio_readline(self, -1)
         else:
             line = self.readline()  # type: ignore[attr-defined]
-            if not isinstance(line, str):
+            if not issubclass(type(line), str):
                 raise OSError("readline() should have returned a str object, not '" + _tp_name(line) + "'")
         if str.__len__(line) == 0:
             raise StopIteration
@@ -3504,7 +3508,7 @@ class StringIO(_TextIOBase):
         self: StringIO = args[0]  # type: ignore[assignment]
         if not self._a_ok:
             raise ValueError("I/O operation on uninitialized object")
-        if not isinstance(obj, str):
+        if not issubclass(type(obj), str):
             raise TypeError("string argument expected, got '" + _tp_name(obj) + "'")
         _sio_check(self)
         size = str.__len__(obj)
@@ -3543,13 +3547,13 @@ class StringIO(_TextIOBase):
         state = _one("StringIO.__setstate__", args, kwds)
         self: StringIO = args[0]  # type: ignore[assignment]
         _sio_check(self)                         # stringio_setstate: CHECK_INITIALIZED, CHECK_CLOSED, before the state is looked at (RL-595)
-        if not isinstance(state, tuple) or tuple.__len__(state) < 4:
+        if not issubclass(type(state), tuple) or tuple.__len__(state) < 4:
             raise TypeError(_tp_name(self) + ".__setstate__ argument should be 4-tuple, got " + _tp_name(state))
         StringIO.__init__(self, tuple.__getitem__(state, 0), tuple.__getitem__(state, 1))
         initial = tuple.__getitem__(state, 0)
-        self._d_text = str.__str__(initial) if isinstance(initial, str) else ""  # type: ignore[arg-type]
+        self._d_text = str.__str__(initial) if issubclass(type(initial), str) else ""  # type: ignore[arg-type]
         position_obj = tuple.__getitem__(state, 2)
-        if not isinstance(position_obj, int):
+        if not issubclass(type(position_obj), int):
             raise TypeError("third item of state must be an integer, got " + _tp_name(position_obj))
         pos = _ssize(position_obj)
         if pos < 0:
@@ -3557,7 +3561,7 @@ class StringIO(_TextIOBase):
         self._e_pos = pos
         d = tuple.__getitem__(state, 3)
         if d is not None:
-            if not isinstance(d, dict):
+            if not issubclass(type(d), dict):
                 raise TypeError("fourth item of state should be a dict, got a " + _tp_name(d))
             if _has_dict(self):                  # stringio_setstate: as bytesio_setstate
                 dict.update(_own_dict(self), d)
@@ -3590,7 +3594,7 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
         "open", args, kwds, ("file", "mode", "buffering", "encoding", "errors", "newline", "closefd", "opener"), 1, 8)
     if mode is _ABSENT:
         mode = "r"
-    elif not isinstance(mode, str):
+    elif not issubclass(type(mode), str):
         raise TypeError("open() argument 'mode' must be str, not " + _tp_name(mode))
     else:
         _c_string(mode, "open() argument 'mode'")
@@ -3699,7 +3703,7 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
 
 def open_code(*args: object, **kwds: object) -> object:
     (path,) = _unpack("open_code", args, kwds, ("path",), 1, 1)
-    if not isinstance(path, str):
+    if not issubclass(type(path), str):
         raise TypeError("open_code() argument 'path' must be str, not " + _tp_name(path))
     return open(path, "rb")
 

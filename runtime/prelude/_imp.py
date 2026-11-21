@@ -71,7 +71,7 @@ def _one(fname: str, args: tuple[object, ...], kwds: dict[str, object]) -> objec
 
 
 def _str_arg(fname: str, value: object) -> str:   # the clinic's `unicode` converter for a METH_O function
-    if not isinstance(value, str):
+    if not issubclass(type(value), str):
         raise TypeError(fname + "() argument must be str, not " + _tp_name(value))
     return value
 
@@ -116,7 +116,7 @@ def is_frozen_package(*args: object, **kwds: object) -> bool:
 
 def find_frozen(*args: object, **kwds: object) -> tuple[object, bool, str] | None:   # (data, is_package, origname) or None
     name, withdata = _unpack_keywords("find_frozen", ("name", "withdata"), 1, 1, 1, 0, args, kwds, _ABSENT)
-    if not isinstance(name, str):
+    if not issubclass(type(name), str):
         raise TypeError("find_frozen() argument 1 must be str, not " + _tp_name(name))
     if withdata is not _ABSENT and bool(withdata):
         _bella_refuse("_imp.find_frozen with withdata (the frozen module's marshalled code: a compiled program has none)")
@@ -131,7 +131,7 @@ def get_frozen_object(*args: object, **kwds: object) -> object:
     if not 1 <= len(args) <= 2:
         raise TypeError("get_frozen_object expected " + ("at least 1 argument" if not args else "at most 2 arguments") + ", got " + str(len(args)))
     name = args[0]
-    if not isinstance(name, str):
+    if not issubclass(type(name), str):
         raise TypeError("get_frozen_object() argument 1 must be str, not " + _tp_name(name))
     if name not in _FROZEN:
         raise ImportError("No such frozen object named " + repr(name), name=name)
@@ -155,7 +155,7 @@ def source_hash(*args: object, **kwds: object) -> bytes:
     k = _number_index(key)                       # the clinic's `long`
     if k > 2**63 - 1 or k < -(2**63):
         raise OverflowError("Python int too large to convert to C long")
-    if not isinstance(source, (bytes, bytearray)):
+    if not issubclass(type(source), (bytes, bytearray)):
         if _has_slot(source, "__buffer__"):
             _bella_refuse("[P2+] the buffer protocol (__buffer__)")
         raise TypeError("a bytes-like object is required, not '" + _tp_name(source) + "'")
@@ -204,6 +204,6 @@ def _set_lazy_attributes(*args: object, **kwds: object) -> None:
         raise TypeError("_imp._set_lazy_attributes() takes no keyword arguments")
     if len(args) != 2:
         raise TypeError("_set_lazy_attributes expected 2 arguments, got " + str(len(args)))
-    if not isinstance(args[1], str):
+    if not issubclass(type(args[1]), str):
         raise TypeError("_set_lazy_attributes() argument 2 must be str, not " + _tp_name(args[1]))
     _bella_set_lazy_attributes(args[0], args[1])
