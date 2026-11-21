@@ -9,7 +9,8 @@ every prelude); an exception the runtime caught, worked on and sent on keeps its
 (RL-646, RL-647); the path conversions take a failed binding and None for no method (RL-648, RL-649); an OrderedDict's
 iterator is at its end after a key's hash failed (RL-650); `open` and `io.FileIO` test their name's type and take a
 failed integer conversion for a path (RL-651); a `fileno` that is None is called (RL-652); `RawIOBase.readall` goes on
-after EINTR (RL-654). RL-653 is the wording of a message (D-08).
+after EINTR (RL-654), and so do the eight other places of `_io` where CPython's C does (RL-656, the class behind it: 22 of
+the program's 75 rows differed). RL-653 is the wording of a message (D-08).
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_21_a30
 """
@@ -455,6 +456,162 @@ for label, make in ROWS.items():
     s = stream(make)
     try: print(label, "->", s.readall(), s.calls)
     except Exception as e: print(label, "->", type(e).__name__, s.calls)
+'''),
+    ('RL-656', 'the other places where _io goes on after EINTR: readline, writelines, the buffered raw calls, TextIOWrapper', r'''
+import errno
+import io
+
+ERRORS = {"EINTR": lambda: InterruptedError(errno.EINTR, "interrupted"), "EINVAL": lambda: OSError(errno.EINVAL, "invalid"),
+          "ValueError": lambda: ValueError("no OSError")}
+
+
+class Fails:
+    """Raises on chosen calls of a method, counted over the stream's life."""
+
+    def __init__(self, make, at):
+        self.make, self.at, self.calls = make, at, 0
+
+    def step(self):
+        self.calls += 1
+        if self.calls in self.at:
+            raise self.make()
+
+
+def attempt(label, act, *counters):
+    try:
+        print(label, "->", repr(act()), [c.calls for c in counters])
+    except Exception as e:
+        print(label, "->", type(e).__name__, [c.calls for c in counters])
+
+
+for name, make in ERRORS.items():
+    print(name)
+
+    # 1 and 2: IOBase.readline, by peek and by read
+    def peeked():
+        peeks, reads = Fails(make, (2,)), Fails(make, ())
+        class S(io.RawIOBase):
+            data = b"ab\ncd\n"
+            def peek(self, n=0):
+                peeks.step()
+                return self.data
+            def read(self, n=-1):
+                reads.step()
+                out, self.data = self.data[:n], self.data[n:]
+                return out
+        s = S()
+        attempt("  readline, peek interrupted", lambda: [s.readline(), s.readline(), s.readline()], peeks, reads)
+
+    def read_interrupted():
+        reads = Fails(make, (2, 3))
+        class S(io.RawIOBase):
+            data = b"ab\ncd\n"
+            def read(self, n=-1):
+                reads.step()
+                out, self.data = self.data[:n], self.data[n:]
+                return out
+        s = S()
+        attempt("  readline, read interrupted", lambda: [s.readline(), s.readline(), s.readline()], reads)
+        attempt("  and readlines after it", s.readlines, reads)
+
+    # 3: IOBase.writelines
+    def lines_written():
+        writes = Fails(make, (2, 3))
+        got = []
+        class S(io.RawIOBase):
+            def write(self, b):
+                writes.step()
+                got.append(bytes(b))
+                return len(b)
+        s = S()
+        attempt("  writelines", lambda: (s.writelines([b"a", b"b", b"c"]), got)[1], writes)
+
+    # 4: the buffered reader's raw read
+    def buffered_read():
+        intos = Fails(make, (1, 3))
+        class Raw(io.RawIOBase):
+            data = b"abcdef"
+            def readable(self): return True
+            def readinto(self, b):
+                intos.step()
+                n = min(len(b), 2, len(self.data))
+                b[:n] = self.data[:n]
+                self.data = self.data[n:]
+                return n
+        r = io.BufferedReader(Raw(), 4)
+        attempt("  BufferedReader.read(1)", lambda: r.read(1), intos)
+        attempt("  BufferedReader.read()", r.read, intos)
+        r2 = io.BufferedReader(Raw(), 4)
+        intos.calls = 0
+        attempt("  BufferedReader.read1", lambda: r2.read1(3), intos)
+        attempt("  BufferedReader.peek", lambda: r2.peek(1)[:1], intos)
+        attempt("  BufferedReader.readinto", lambda: (b := bytearray(8), r2.readinto(b), bytes(b))[1:], intos)
+        attempt("  BufferedReader.readline", r2.readline, intos)
+
+    # 5: the buffered writer's raw write
+    def buffered_write():
+        writes = Fails(make, (1, 3))
+        got = []
+        class Raw(io.RawIOBase):
+            def writable(self): return True
+            def write(self, b):
+                writes.step()
+                got.append(bytes(b[:2]))
+                return min(len(b), 2)
+        w = io.BufferedWriter(Raw(), 4)
+        attempt("  BufferedWriter.write", lambda: w.write(b"abc"), writes)
+        attempt("  BufferedWriter.flush", lambda: (w.flush(), list(got))[1], writes)
+        attempt("  BufferedWriter.write past the buffer", lambda: (w.write(b"defghij"), list(got))[1], writes)
+        attempt("  BufferedWriter.close", lambda: (w.close(), list(got))[1], writes)
+
+    # 6: TextIOWrapper's write and flush
+    def text_write():
+        writes = Fails(make, (1, 3))
+        got = []
+        class Buffer(io.BufferedIOBase):
+            def writable(self): return True
+            def write(self, b):
+                writes.step()
+                got.append(bytes(b))
+                return len(b)
+        t = io.TextIOWrapper(Buffer(), encoding="ascii", write_through=True)
+        attempt("  TextIOWrapper.write, write through", lambda: (t.write("ab"), list(got)), writes)
+        t = io.TextIOWrapper(Buffer(), encoding="ascii", line_buffering=True)
+        attempt("  TextIOWrapper.write, a line", lambda: (t.write("cd\n"), list(got)), writes)
+        t = io.TextIOWrapper(Buffer(), encoding="ascii")
+        t.write("ef")
+        attempt("  TextIOWrapper.flush", lambda: (t.flush(), list(got))[1], writes)
+        t.detach()
+
+    # 7 and 8: TextIOWrapper's read and readline
+    def text_read():
+        reads = Fails(make, (1, 3))
+        class Buffer(io.BufferedIOBase):
+            data = b"ab\ncd\nef"
+            def readable(self): return True
+            def read1(self, n=-1):
+                reads.step()
+                out, self.data = self.data[:3], self.data[3:]
+                return out
+            def read(self, n=-1):
+                reads.step()
+                out, self.data = self.data, b""
+                return out
+        t = io.TextIOWrapper(Buffer(), encoding="ascii")
+        attempt("  TextIOWrapper.read(2)", lambda: t.read(2), reads)
+        attempt("  TextIOWrapper.readline", t.readline, reads)
+        attempt("  TextIOWrapper.readline again", t.readline, reads)
+        attempt("  TextIOWrapper.read()", t.read, reads)
+        t = io.TextIOWrapper(Buffer(), encoding="ascii")
+        reads.calls = 0
+        attempt("  TextIOWrapper.read() at once", t.read, reads)
+        t = io.TextIOWrapper(Buffer(), encoding="ascii")
+        reads.calls = 0
+        attempt("  a line of TextIOWrapper's iteration", lambda: next(t), reads)
+        attempt("  TextIOWrapper.readlines", t.readlines, reads)
+
+    for part in (peeked, read_interrupted, lines_written, buffered_read, buffered_write, text_write, text_read):
+        part()
 '''),
 ]
 

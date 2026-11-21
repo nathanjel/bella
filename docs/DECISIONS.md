@@ -1539,3 +1539,9 @@ time; the program's own stay at `-O1`).
 * **No change:** the words of the TypeError for a `read` that is None (RL-653, D-08).
 * **Left open, a step of its own each:** the other calls of `isinstance` in the preludes where the C tests the object's type (RL-655, 184 calls in 20 preludes), and the eight other places where `_io` goes on after EINTR (RL-656).
 * **Held by:** `pipeline/tests/test_review_2026_11_21_a30.py` (nine programs, two tests that read the sources).
+
+**2026-11-21 — `_io` goes on after an interrupted call wherever CPython's does (RL-656, the class behind RL-654; no decision of the author's was needed).** CPython's `_io` calls a stream's method again when it raised an OSError whose errno is EINTR, at nine places; the prelude did at one since RL-654.
+* **What a program sees:** a `read`, `peek`, `readinto` or `write` of a program's own stream class that raises `InterruptedError` is called again by `IOBase.readline` and `writelines`, by a buffered reader or writer over it, and by a `TextIOWrapper`'s write, `read(n)` and `readline`, and what was read or written so far is kept. Any other error goes through as before. `TextIOWrapper.read()` without a size does not retry, in CPython either.
+* **Found with it:** `IOBase.readline` reads the stream's `peek` attribute once, not for every chunk.
+* **Held by:** the program RL-656 in `pipeline/tests/test_review_2026_11_21_a30.py` (75 rows; 22 differed before).
+

@@ -283,12 +283,17 @@ def _unsupported(message: str) -> None:
     raise UnsupportedOperation(message)
 
 
-def _peek_or_read(self: object, limit: int, chunks: list[bytes]) -> bool:
-    """_io__IOBase_readline_impl's loop body: one chunk, by peek() when there is one; True when a line is complete."""
+def _peek_or_read(self: object, peek: object, limit: int) -> bytes | None:
+    """_io__IOBase_readline_impl's loop body: one chunk, by peek() when there is one. None when the call was interrupted:
+    "if (_PyIO_trap_eintr()) continue;", the loop's next turn (RL-656)."""
     nreadahead = 1
-    peek = _optional_attr(self, "peek")
     if peek is not _ABSENT:
-        readahead = peek(1)  # type: ignore[operator]
+        try:
+            readahead = peek(1)  # type: ignore[operator]
+        except OSError as e:
+            if not _trap_eintr(e):
+                raise
+            return None
         if not issubclass(type(readahead), bytes):
             raise OSError("peek() should have returned a bytes object, not '" + _tp_name(readahead) + "'")
         n = bytes.__len__(readahead)
@@ -300,13 +305,15 @@ def _peek_or_read(self: object, limit: int, chunks: list[bytes]) -> bool:
                 if c == 10:
                     break
             nreadahead = found
-    b = self.read(nreadahead)  # type: ignore[attr-defined]
+    try:
+        b = self.read(nreadahead)  # type: ignore[attr-defined]
+    except OSError as e:
+        if not _trap_eintr(e):
+            raise
+        return None
     if not issubclass(type(b), bytes):
         raise OSError("read() should have returned a bytes object, not '" + _tp_name(b) + "'")
-    if bytes.__len__(b) == 0:
-        return True
-    chunks.append(b)
-    return bytes.__getitem__(b, bytes.__len__(b) - 1) == 10  # type: ignore[arg-type]
+    return b  # type: ignore[no-any-return]
 
 
 class _IOBase:
@@ -420,12 +427,20 @@ class _IOBase:
         n = _positional("readline", "_IOBase.readline", args, kwds, 0, 1)
         self = args[0]
         limit = _ssize_or_none(args[1]) if n else -1
+        peek = _optional_attr(self, "peek")      # read once, before the loop
         chunks: list[bytes] = []
         total = 0
         while limit < 0 or total < limit:
-            if _peek_or_read(self, limit - total if limit >= 0 else -1, chunks):
+            b = _peek_or_read(self, peek, limit - total if limit >= 0 else -1)
+            if b is None:                        # interrupted: the loop's next turn
+                continue
+            size = bytes.__len__(b)
+            if size == 0:
                 break
-            total += bytes.__len__(chunks[-1])
+            chunks.append(b)
+            total += size
+            if bytes.__getitem__(b, size - 1) == 10:
+                break
         return b"".join(chunks)
 
     def __iter__(*args: object, **kwds: object) -> object:  # noqa: N805
@@ -461,7 +476,13 @@ class _IOBase:
         self = args[0]
         _check_closed(self)
         for line in iter(lines):  # type: ignore[call-overload]
-            self.write(line)  # type: ignore[attr-defined]
+            while True:                          # "do { res = write(line); } while (res == NULL && _PyIO_trap_eintr());" (RL-656)
+                try:
+                    self.write(line)  # type: ignore[attr-defined]
+                    break
+                except OSError as e:
+                    if not _trap_eintr(e):
+                        raise
 
 
 # ---- _RawIOBase ----
@@ -1215,7 +1236,13 @@ def _bf_raw_read(self: _Buffered, at: int, length: int, into: bytearray | None =
     """_bufferedreader_raw_read: raw.readinto() over `length` bytes at `at` of the buffer (or of `into`); -2 when it had nothing (None).
     CPython gives readinto() a memoryview of the buffer; this gives it a bytearray of the length, and takes what it wrote."""
     target = bytearray(length)
-    res = self._a_raw.readinto(target)  # type: ignore[attr-defined]
+    while True:                                  # "We then retry reading, ignoring the signal if no handler has raised" (RL-656)
+        try:
+            res = self._a_raw.readinto(target)  # type: ignore[attr-defined]
+            break
+        except OSError as e:
+            if not _trap_eintr(e):
+                raise
     if res is None:
         return -2
     try:
@@ -1244,7 +1271,13 @@ def _bf_fill_buffer(self: _Buffered) -> int:     # _bufferedreader_fill_buffer
 
 
 def _bf_raw_write(self: _Buffered, data: bytes) -> int:   # _bufferedwriter_raw_write; -2 when the raw would block (None)
-    res = self._a_raw.write(data)  # type: ignore[attr-defined]
+    while True:                                  # "We then retry writing, ignoring the signal if no handler has raised" (RL-656)
+        try:
+            res = self._a_raw.write(data)  # type: ignore[attr-defined]
+            break
+        except OSError as e:
+            if not _trap_eintr(e):
+                raise
     if res is None:
         return -2
     n = _off_t(res)
@@ -2626,7 +2659,13 @@ def _tw_writeflush(self: TextIOWrapper) -> None:   # _textiowrapper_writeflush
         else:
             parts.append(item)  # type: ignore[arg-type]
     data = b"".join(parts)
-    self._c_buffer.write(data)  # type: ignore[attr-defined]
+    while True:                                  # "do { ret = write(b); } while (ret == NULL && _PyIO_trap_eintr());" (RL-656)
+        try:
+            self._c_buffer.write(data)  # type: ignore[attr-defined]
+            break
+        except OSError as e:
+            if not _trap_eintr(e):
+                raise
 
 
 def _tw_readline(self: TextIOWrapper, limit: int) -> str:   # _textiowrapper_readline
@@ -2640,7 +2679,12 @@ def _tw_readline(self: TextIOWrapper, limit: int) -> str:   # _textiowrapper_rea
     while True:
         res = True
         while self._j_decoded_chars is None or str.__len__(self._j_decoded_chars) == 0:
-            res = _tw_read_chunk(self, 0)
+            try:
+                res = _tw_read_chunk(self, 0)
+            except OSError as e:                 # "if (_PyIO_trap_eintr()) continue;" (RL-656)
+                if not _trap_eintr(e):
+                    raise
+                continue
             if not res:
                 break
         if not res:
@@ -2961,7 +3005,12 @@ class TextIOWrapper(_TextIOBase):
         remaining -= str.__len__(result)
         res = True
         while remaining > 0 and res:
-            res = _tw_read_chunk(self, remaining)
+            try:
+                res = _tw_read_chunk(self, remaining)
+            except OSError as e:                 # "if (_PyIO_trap_eintr()) continue;" (RL-656)
+                if not _trap_eintr(e):
+                    raise
+                continue
             if str.__len__(result) > 0:
                 chunks.append(result)
             result = _tw_get_decoded_chars(self, remaining)
