@@ -4,6 +4,8 @@ Codex's Astra at low effort read the step that gives a built-in type's dealloc i
 A24 and the streams' state methods; the review log has its 22 findings as RL-578 to RL-599. Each program here is the
 report's own reproduction, run under CPython and compiled: standard output, the exit status and standard error must
 agree. The findings left open (RL-583 to RL-585, RL-588, RL-591 to RL-594, RL-597 to RL-599) have no program here.
+The last program is RL-600's, found in the reviewer's probes after the round: the keys and results of a bounded
+`lru_cache`, which the prelude's ring of links held for good.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_21
 """
@@ -152,6 +154,185 @@ o = B()
 try: o.__setstate__((None, 0, {"v": 2}))
 except Exception as e: print(type(e).__name__, str(e))
 print(o.closed, o.__dict__, o.__getstate__())
+'''),
+    ('RL-600', 'a bounded lru_cache lets go of its links, oldest first, at its end and when it is cleared', r'''
+import functools
+import weakref
+
+
+class Noted:
+    """A value that says when it goes; equal and hashed by its label."""
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __repr__(self) -> str:
+        return self.label
+
+    def __hash__(self) -> int:
+        return hash(self.label)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Noted) and other.label == self.label
+
+    def __del__(self) -> None:
+        print("  gone:", self.label)
+
+
+def make(maxsize: int | None, typed: bool = False) -> "functools._lru_cache_wrapper[Noted]":
+    def compute(key: Noted, tag: str = "") -> Noted:
+        return Noted("result of " + key.label + tag)
+    return functools.lru_cache(maxsize, typed)(compute)
+
+
+def fill(cached: "functools._lru_cache_wrapper[Noted]", labels: str) -> None:
+    for label in labels:
+        cached(Noted("key " + label))
+
+
+print("---- a bounded cache at its end: the keys and results, oldest first")
+f = make(3)
+fill(f, "abc")
+print(f.cache_info())
+del f
+print("---- after a hit the order is the order of use")
+f = make(3)
+fill(f, "abc")
+f(Noted("key a"))
+print("  (the probe key went; the cached one stays)")
+del f
+print("---- a miss in a full cache lets the oldest go, the key before the result")
+f = make(2)
+fill(f, "abc")
+print("  then:", f.cache_info())
+fill(f, "b")
+fill(f, "d")
+print("  then:", f.cache_info())
+del f
+print("---- cache_clear")
+f = make(3)
+fill(f, "abc")
+f.cache_clear()
+print("  cleared:", f.cache_info())
+fill(f, "xy")
+f.cache_clear()
+del f
+print("---- an unbounded cache at its end, and cleared")
+f = make(None)
+fill(f, "abc")
+del f
+f = make(None)
+fill(f, "ab")
+f.cache_clear()
+print("  cleared:", f.cache_info())
+del f
+print("---- no cache")
+f = make(0)
+fill(f, "ab")
+print(f.cache_info())
+del f
+print("---- the wrapper's own things: weak references, the function, its dict, then the links")
+
+
+class Function:
+    def __call__(self, key: Noted) -> Noted:
+        return Noted("result of " + key.label)
+
+    def __del__(self) -> None:
+        print("  gone: the function")
+
+
+g = functools.lru_cache(2)(Function())
+g.note = Noted("a value in the wrapper's dict")      # type: ignore[attr-defined]
+fill(g, "ab")
+watch = weakref.ref(g, lambda r: print("  the weak reference's callback"))
+del g
+print("---- and for an unbounded one")
+g = functools.lru_cache(None)(Function())
+g.note = Noted("a value in the wrapper's dict")      # type: ignore[attr-defined]
+fill(g, "ab")
+watch = weakref.ref(g, lambda r: print("  the weak reference's callback"))
+del g
+print("---- typed, and keywords")
+h = make(2, True)
+h(Noted("key a"), tag="!")
+h(Noted("key a"))
+h(key=Noted("key k"))
+print("  then:", h.cache_info())
+del h
+print("---- a result that is asked for while it is being computed")
+calls: list[str] = []
+
+
+@functools.lru_cache(2)
+def again(n: int) -> Noted:
+    calls.append("in " + str(n))
+    if n > 0:
+        again(n - 1)
+        again(n - 1)
+    return Noted("again " + str(n))
+
+
+again(3)
+print("  calls:", len(calls), again.cache_info())
+again.cache_clear()
+print("---- a key whose comparison fails while the oldest goes")
+
+
+class Touchy:
+    def __init__(self, label: str, fail: list[bool]) -> None:
+        self.label = label
+        self.fail = fail
+
+    def __hash__(self) -> int:
+        return 7
+
+    def __eq__(self, other: object) -> bool:
+        if self.fail[0]:
+            raise RuntimeError("no comparison now")
+        return isinstance(other, Touchy) and other.label == self.label
+
+    def __del__(self) -> None:
+        print("  gone: touchy", self.label)
+
+
+switch = [False]
+
+
+@functools.lru_cache(2)
+def touchy(key: Touchy) -> str:
+    return "value of " + key.label
+
+
+touchy(Touchy("a", switch))
+touchy(Touchy("b", switch))
+switch[0] = True
+try:
+    touchy(Touchy("c", switch))
+except RuntimeError as e:
+    print("  RuntimeError:", e.args, touchy.cache_info())
+switch[0] = False
+print("  still there:", touchy(Touchy("a", switch)), touchy(Touchy("b", switch)), touchy.cache_info())
+touchy(Touchy("d", switch))
+print("  then:", touchy.cache_info())
+touchy.cache_clear()
+print("---- a method's cache dies with the class's function, not the object")
+
+
+class Holder:
+    @functools.lru_cache(2)
+    def get(self, n: int) -> Noted:
+        return Noted("held " + str(n))
+
+
+holder = Holder()
+holder.get(1)
+holder.get(2)
+holder.get(3)
+del holder
+print("  the object is still a key")
+Holder.get.cache_clear()
+print("---- the end")
 '''),
 ]
 

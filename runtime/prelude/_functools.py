@@ -447,9 +447,21 @@ calculates ((((1 + 2) + 3) + 4) + 5)."""
 
 
 # ---- the lru cache
+#
+# The C keeps a bounded cache's links in a ring through a root that is part of the wrapper. A link's prev and next are borrowed
+# pointers: the cache dict owns one reference to each link, the ring the one the link was made with, and the wrapper's end and
+# cache_clear take the ring apart and let the links go oldest first (lru_cache_unlink_list, lru_cache_clear_list). Links that
+# held each other here would hold themselves for good, and their keys and results with them (RL-600). So a link has an id,
+# its prev and next are ids (None at an end), and the wrapper's last field, `_l_links`, is [nodes, first, last, next id].
+# `nodes` has each link of the ring under its id and in the ring's order, oldest first: a link that moves to the end is taken
+# out of the dict and put in again. That dict is the ring's reference to each link, and its end or its clear() lets them go
+# in the ring's order.
 
 class _Link:
-    __slots__ = ("prev", "next", "hash", "key", "result")
+    __slots__ = ("id", "prev", "next", "hash", "key", "result")     # lru_list_elem_dealloc: the key, then the result
+
+
+_NODES, _FIRST, _LAST, _NEXT_ID = 0, 1, 2, 3
 
 
 _kwd_mark = object()
@@ -493,8 +505,10 @@ cache_info_type:    namedtuple class with the fields:
 """
 
     __module__ = "functools"
-    # lru_cache_tp_clear's order: the cache, then the function (RL-587)
-    __slots__ = ("_l_cache", "_l_func", "_l_maxsize", "_l_typed", "_l_hits", "_l_misses", "_l_info", "_l_kind", "_l_root", "__dict__", "__weakref__")
+    # lru_cache_dealloc: the weak references; then lru_cache_tp_clear's order: the cache, the function (RL-587), the type of
+    # the info, the dict, and last the links (lru_cache_clear_list; RL-600)
+    __slots__ = ("_l_cache", "_l_func", "_l_maxsize", "_l_typed", "_l_hits", "_l_misses", "_l_info", "_l_kind", "_l_links", "__dict__", "__weakref__")
+    __release__ = ("__weakref__", "_l_cache", "_l_func", "_l_maxsize", "_l_typed", "_l_hits", "_l_misses", "_l_info", "_l_kind", "__dict__", "_l_links")
 
     def __new__(*args: object, **kwds: object) -> _lru_cache_wrapper:   # lru_cache_new: "OOpO:lru_cache"
         _new_receiver(args, _lru_cache_wrapper, "functools._lru_cache_wrapper")
@@ -530,10 +544,7 @@ cache_info_type:    namedtuple class with the fields:
         else:
             raise TypeError("maxsize should be integer or None")
         self = _bella_new_instance(cls)  # type: ignore[arg-type]
-        root = _Link()
-        root.prev = root
-        root.next = root
-        _set(self, "_l_root", root)
+        _set(self, "_l_links", [{}, None, None, 0])
         _set(self, "_l_kind", kind)
         _set(self, "_l_typed", typed)
         _set(self, "_l_cache", {})
@@ -568,8 +579,9 @@ cache_info_type:    namedtuple class with the fields:
             _set_hashed(cache, key, h, result)
             return result
         if found is not _ABSENT:                 # bounded_lru_cache_get
-            _extract(found)
-            _append(self, found)
+            links = self._l_links  # type: ignore[attr-defined]
+            _extract(links, found)
+            _append(links, found)
             _set(self, "_l_hits", self._l_hits + 1)  # type: ignore[attr-defined]
             return found.result
         _set(self, "_l_misses", self._l_misses + 1)  # type: ignore[attr-defined]
@@ -602,18 +614,15 @@ cache_info_type:    namedtuple class with the fields:
         """Clear the cache and cache statistics"""
         _noargs(args, kwds, _lru_cache_wrapper, "cache_clear", "_lru_cache_wrapper")
         self = args[0]
-        root = self._l_root  # type: ignore[attr-defined]
-        link = root.next
-        root.prev = root
-        root.next = root
+        links = self._l_links  # type: ignore[attr-defined]
+        nodes = links[_NODES]                    # lru_cache_unlink_list: the ring is empty before anything goes
+        links[_NODES] = {}
+        links[_FIRST] = None
+        links[_LAST] = None
         _set(self, "_l_hits", 0)
         _set(self, "_l_misses", 0)
         self._l_cache.clear()  # type: ignore[attr-defined]
-        while link is not root:                  # lru_cache_clear_list
-            following = link.next
-            link.prev = None
-            link.next = None
-            link = following
+        nodes.clear()                            # lru_cache_clear_list: the links, oldest first
 
     def __reduce__(*args: object, **kwds: object) -> object:
         _noargs(args, kwds, _lru_cache_wrapper, "__reduce__", "_lru_cache_wrapper")
@@ -632,41 +641,71 @@ cache_info_type:    namedtuple class with the fields:
         return args[0]
 
 
-def _extract(link: _Link) -> None:               # lru_cache_extract_link
-    link.prev.next = link.next
-    link.next.prev = link.prev
+def _extract(links: list[Any], link: _Link) -> None:   # lru_cache_extract_link; the caller has the ring's reference from here
+    nodes = links[_NODES]
+    before = link.prev  # type: ignore[attr-defined]
+    after = link.next  # type: ignore[attr-defined]
+    if before is None:
+        links[_FIRST] = after
+    else:
+        nodes[before].next = after
+    if after is None:
+        links[_LAST] = before
+    else:
+        nodes[after].prev = before
+    del nodes[link.id]  # type: ignore[attr-defined]
 
 
-def _append(self: object, link: _Link) -> None:  # lru_cache_append_link
-    root = self._l_root  # type: ignore[attr-defined]
-    last = root.prev
-    last.next = link
-    root.prev = link
-    link.prev = last
-    link.next = root
+def _append(links: list[Any], link: _Link) -> None:    # lru_cache_append_link: the newest, and the last of the entries
+    nodes = links[_NODES]
+    last = links[_LAST]
+    link.prev = last  # type: ignore[attr-defined]
+    link.next = None  # type: ignore[attr-defined]
+    if last is None:
+        links[_FIRST] = link.id  # type: ignore[attr-defined]
+    else:
+        nodes[last].next = link.id  # type: ignore[attr-defined]
+    links[_LAST] = link.id  # type: ignore[attr-defined]
+    nodes[link.id] = link  # type: ignore[attr-defined]
+
+
+def _prepend(links: list[Any], link: _Link) -> None:   # lru_cache_prepend_link: back as the oldest
+    nodes = links[_NODES]
+    first = links[_FIRST]
+    link.prev = None  # type: ignore[attr-defined]
+    link.next = first  # type: ignore[attr-defined]
+    if first is None:
+        links[_LAST] = link.id  # type: ignore[attr-defined]
+    else:
+        nodes[first].prev = link.id  # type: ignore[attr-defined]
+    links[_FIRST] = link.id  # type: ignore[attr-defined]
+    rest = list(nodes.items())                   # and the first of the entries, which a dict can only be told by filling it again
+    nodes.clear()
+    nodes[link.id] = link  # type: ignore[attr-defined]
+    for number, other in rest:
+        nodes[number] = other
 
 
 def _bounded_update(self: object, result: object, key: object, h: int, cache: dict[object, object]) -> object:   # bounded_lru_cache_update
     if _get_hashed(cache, key, h, _ABSENT) is not _ABSENT:   # the function added the key, reentrantly: the link is up to date
         return result
-    root = self._l_root  # type: ignore[attr-defined]
-    if len(cache) < self._l_maxsize or root.next is root:  # type: ignore[attr-defined]
+    links = self._l_links  # type: ignore[attr-defined]
+    if len(cache) < self._l_maxsize or links[_FIRST] is None:  # type: ignore[attr-defined]
         link = _Link()
+        link.id = links[_NEXT_ID]  # type: ignore[attr-defined]
+        links[_NEXT_ID] += 1
         link.hash = h
         link.key = key
         link.result = result
         _set_hashed(cache, key, h, link)
-        _append(self, link)
+        _append(links, link)
         return result
-    link = root.next                             # the oldest link goes, and is used again
-    _extract(link)
+    link = links[_NODES][links[_FIRST]]          # the oldest link goes, and is used again
+    _extract(links, link)
     try:
         popped = _pop_hashed(cache, link.key, link.hash, _ABSENT)
     except BaseException:
-        link.prev = root                         # lru_cache_prepend_link: back as the oldest
-        link.next = root.next
-        root.next.prev = link
-        root.next = link
+        _prepend(links, link)
         raise
     if popped is _ABSENT:                        # gone already: an orphan
         return result
@@ -676,6 +715,6 @@ def _bounded_update(self: object, result: object, key: object, h: int, cache: di
     link.key = key
     link.result = result
     _set_hashed(cache, key, h, link)
-    _append(self, link)
+    _append(links, link)
     del popped, oldkey, oldresult
     return result
