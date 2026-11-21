@@ -688,11 +688,15 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   the counter; its row and the Resources sentence should say this too. And the other places the runtime recurses on a
   program's data, to be swept with the same guard: `isinstance` and `issubclass` over nested tuples of classes, the
   runtime's report of a long chain of causes, `copy.deepcopy` and `json` are Python's own depth.
-* **A starred tuple reaches a callable written in C as itself (RL-626, review A28):** `f(*t)` with an exact tuple hands `t` to
-  `PyObject_Call`, and the runtime makes a new tuple for a prelude's `*args`. It shows in four places: an `lru_cache` key (the
-  caller's tuple with the hash it keeps, so no `__hash__` call for a prehashed `t`), `MyError(*t).args is t` for a class over
-  an exception, `self.args is args` after `super().__init__(*args)`, `itemgetter(*t).__reduce__()[1] is t`. A step of its own:
-  the call hands a prelude function the caller's tuple where CPython's call does.
+* **For the author (RL-626, review A28; measured 2026-11-21): a starred tuple reaches some callables written in C as itself.**
+  `f(*t)` with an exact tuple hands `t` to `PyObject_Call`. A class called through `type`'s own call keeps it:
+  `MyError(*t).args is t`, `StopIteration(*t).args is t`, `self.args is args` after `super().__init__(*args)`,
+  `itemgetter(*t).__reduce__()[1] is t`, and an untyped `lru_cache` without keywords uses it as the key (no `__hash__` call
+  for a tuple that has its hash; compiled makes four). A built-in exception class that inherits `__new__` and `__init__`
+  from BaseException has a vectorcall of its own and makes a new tuple: `Exception(*t).args is t` is False, `KeyError`'s
+  too, and `OSError`'s. Compiled answers False everywhere. Exact: the call carries the tuple to the callee (a side channel
+  beside the arguments, no cost for a call without a star) and a table of the classes that take a new one. Or a registered
+  deviation of identity beside D-03, which leaves the `__hash__` calls of a cache's key. To ask after Question 28.
 * **For the author, a wording (RL-623, review A28):** D-03's row names small ints and interned strings and says `is` is true
   more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
   object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
@@ -708,13 +712,13 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   refuse. Exact needs where each literal stands among the warnings, which the build can ask of the host by compiling under a
   recorder that lifts the limit at the n-th warning (the compile succeeds while the literal comes after it).
 * **Open from review A25** (2026-11-21), each confirmed on both sides: `Struct.iter_unpack` keeps an export of its buffer where the
-  prelude copies it (RL-583, with the memoryview step); a BufferedRWPair's end, and an exact BytesIO's or StringIO's, runs no finaliser of
-  IOBase's in CPython (RL-585, RL-598); `type_new` sorts slot names as objects, so a str subclass's `__lt__` is asked (RL-588); a
-  slot named twice in one `__slots__` is two cells in CPython, seen by the default state's size test alone (RL-591); that test over a
-  C type with fields needs the type's size (RL-592); a struct sequence lets go of its fields first one first (RL-593); an exhausted
-  Context iterator keeps the mapping (RL-594); a `__del__` that is a staticmethod, a classmethod or another descriptor is bound as
-  a special method is (RL-597); a prelude type whose own struct adds only a dict or a weak list is a solid base to CPython, which
-  decides `__base__` and the entries of `class X(Mixin, SimpleNamespace)` (RL-599).
+  prelude copies it (RL-583, with the memoryview step); `type_new` sorts slot names as objects, so a str subclass's `__lt__` is asked
+  and decides the members' order (RL-588: the order of a class's slots is the model's, sorted by name in three places of the
+  header); a slot named twice in one `__slots__` is two cells in CPython, seen by the default state's size test alone (RL-591);
+  that test over a C type with fields needs the type's size (RL-592); a prelude type whose own struct adds only a dict or a
+  weak list is a solid base to CPython, which decides `__base__` and the entries of `class X(Mixin, SimpleNamespace)` (RL-599).
+  Done on 2026-11-21, night: RL-585 and RL-598 (no finaliser for an exact BufferedRWPair, BytesIO, StringIO), RL-593 (a struct
+  sequence's order of release), RL-594 (a Context's iterator keeps the mapping), RL-597 (`__del__` bound as a special method).
 * **Review A24** (2026-11-20) has nothing open: RL-574 (a tuple keeps its hash) was done on 2026-11-21 as C-6-24, RL-572 was the
   author's, decided and done the same day (C-8-19, D-29).
 * **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too, the

@@ -3179,22 +3179,42 @@ void print_traceback(Obj exc) { print_traceback(exc, true); }
 
 // a finaliser's exception is reported and dropped; the exception being propagated, if any,
 // stays the one frame records attach to (A9-4)
+// slot_tp_finalize's lookup_maybe_method and call_unbound_noarg: a function, or a method of a built-in type, is called with
+// the object; anything else the class has under __del__ is bound by its own __get__, if it has one, and called with nothing
+// (a staticmethod, a classmethod, another descriptor, a builtin function, None: RL-597). A binding that raises leaves no
+// finaliser to call, and its error goes when the exception that was in flight is put back.
 void call_finalizer(Obj fn, Obj self) {
     Obj saved = detail::raising();
     const void* owner = detail::raising_owner();
+    auto restore = [&] {
+        detail::raising() = saved;
+        detail::raising_owner() = owner;
+    };
+    bool unbound = (is_kind(fn, Kind::PyFunction) && !presents_as_builtin(fn)) ||
+                   (is_kind(fn, Kind::Builtin) && static_cast<Builtin*>(fn.object())->self.is_unset() &&
+                    static_cast<Builtin*>(fn.object())->binding == Binding::Method);
+    Ref del = Ref::share(fn);
     try {
-        Ref r = invoke(fn, {self});
-    } catch (const PyError& e) {
-        Ref text = repr_of(fn);
-        report_unraisable("Exception ignored while calling deallocator " + as_str(text.get())->text, e);
+        if (!unbound) {
+            try {
+                del = descr_get(fn, self, Obj::of(type_of(self)));
+            } catch (const PyError&) {
+                return restore();
+            }
+        }
+        try {
+            Ref r = unbound ? invoke(fn, {self}) : invoke(del.get(), Args{});
+        } catch (const PyError& e) {
+            Ref text = repr_of(del.get());
+            report_unraisable("Exception ignored while calling deallocator " + as_str(text.get())->text, e);
+        }
     } catch (const NotImplemented& e) {          // a refusal in a finaliser still stops the program
         out_stream().flush();
         err_stream().write(std::string("bella: not implemented: ") + e.what() + "\n");
         err_stream().flush();
         std::_Exit(70);
     }
-    detail::raising() = saved;
-    detail::raising_owner() = owner;
+    restore();
 }
 const bool finalizer_hook_installed = (finalizer_hook() = call_finalizer, true);
 // handle_callback: what a weak reference's callback raises is reported, and goes no further

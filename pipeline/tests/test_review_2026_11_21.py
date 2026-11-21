@@ -3,8 +3,8 @@
 Codex's Astra at low effort read the step that gives a built-in type's dealloc its own order (RL-565, RL-577), the fixes of
 A24 and the streams' state methods; the review log has its 22 findings as RL-578 to RL-599. Each program here is the
 report's own reproduction, run under CPython and compiled: standard output, the exit status and standard error must
-agree. The findings left open (RL-583, RL-585, RL-588, RL-591 to RL-594, RL-597 to RL-599) have no program here;
-RL-584 was done later the same day and has one.
+agree. The findings left open (RL-583, RL-588, RL-591, RL-592, RL-599) have no program here; RL-584 was done later the
+same day and has one, and RL-585, RL-593, RL-594, RL-597 and RL-598 that night.
 The last program is RL-600's, found in the reviewer's probes after the round: the keys and results of a bounded
 `lru_cache`, which the prelude's ring of links held for good. Its row with a comparison that fails stops at the lookup of
 the third key (review A27, RL-619); the pop of the oldest link is reached by RL-619's program in
@@ -157,6 +157,129 @@ o = B()
 try: o.__setstate__((None, 0, {"v": 2}))
 except Exception as e: print(type(e).__name__, str(e))
 print(o.closed, o.__dict__, o.__getstate__())
+'''),
+    ('RL-585', "a BufferedRWPair, an exact BytesIO and an exact StringIO have no finaliser of IOBase's (RL-598)", r'''
+import io, weakref
+events = []
+class V:
+    def __init__(self, n): self.n = n
+    def __del__(self): events.append(self.n)
+class Raw(io.BytesIO):
+    def __init__(self, n):
+        super().__init__()
+        self.n = n
+    def close(self):
+        events.append("close " + self.n)
+        super().close()
+    def __del__(self): events.append("del " + self.n)
+def pair():
+    p = io.BufferedRWPair(Raw("r"), Raw("w"))
+    p.x = V("dict")
+    w = weakref.ref(p, lambda r: events.append("weak"))
+    del p
+pair()
+print("a pair:", events)
+class Pair(io.BufferedRWPair): pass
+def sub():
+    p = Pair(Raw("r"), Raw("w"))
+    w = weakref.ref(p, lambda r: events.append("weak"))
+    del p
+events.clear()
+sub()
+print("a subclass of the pair:", events)
+for kind in (io.BytesIO, io.StringIO):
+    events.clear()
+    o = kind()
+    o.close = lambda: events.append("close")
+    o.x = V("dict")
+    w = weakref.ref(o, lambda r: events.append("weak"))
+    del o
+    print("an exact", kind.__name__ + ":", events)
+    class Sub(kind): pass
+    events.clear()
+    o = Sub()
+    o.close = lambda: events.append("close")
+    o.x = V("dict")
+    w = weakref.ref(o, lambda r: events.append("weak"))
+    del o
+    print("   a subclass:", events)
+'''),
+    ('RL-593', 'a struct sequence lets go of its fields first one first, those past the visible ones after them', r'''
+import os, time
+events = []
+class V:
+    def __init__(self, n): self.n = n
+    def __del__(self): events.append(self.n)
+def gone(label, make):
+    events.clear()
+    made = make()
+    del made
+    print(label, events)
+gone("terminal_size:", lambda: os.terminal_size((V("columns"), V("lines"))))
+gone("struct_time:", lambda: time.struct_time([V(str(i)) for i in range(9)]))
+gone("struct_time with its two more:", lambda: time.struct_time([V(str(i)) for i in range(11)]))
+gone("stat_result:", lambda: os.stat_result([V(str(i)) for i in range(10)]))
+gone("stat_result with more:", lambda: os.stat_result([V(str(i)) for i in range(15)]))
+gone("times_result:", lambda: os.times_result([V(str(i)) for i in range(5)]))
+gone("a tuple, last one first:", lambda: tuple([V(str(i)) for i in range(3)]))
+kept = time.struct_time([V(str(i)) for i in range(11)])
+events.clear()
+state = kept.__reduce__()
+del kept
+print("a struct_time whose reduced state is held:", events)
+del state
+print("   and the state let go:", events)
+'''),
+    ('RL-594', 'an iterator of a Context holds the mapping until it dies, exhausted or not', r'''
+import contextvars
+events = []
+class V:
+    def __del__(self): events.append("v")
+for kind in ("keys", "values", "items", "__iter__"):
+    events.clear()
+    cx = contextvars.Context()
+    cx.run(contextvars.ContextVar("k").set, V())
+    it = getattr(cx, kind)()
+    del cx
+    list(it)
+    events.append("exhausted")
+    del it
+    print(kind, events)
+'''),
+    ('RL-597', 'a __del__ is bound as a special method is: a staticmethod, a classmethod, a descriptor, a builtin, None', r'''
+import sys
+def hook(e): print("   unraisable", e.exc_type.__name__, e.err_msg.split(" at 0x")[0])
+sys.unraisablehook = hook
+class S(list):
+    @staticmethod
+    def __del__(): print("static")
+class C(list):
+    @classmethod
+    def __del__(cls): print("class", cls.__name__)
+class Bound:
+    def __get__(self, obj, owner):
+        print("bound for", type(obj).__name__, owner.__name__)
+        return lambda: print("called")
+class D: __del__ = Bound()
+class N: __del__ = None
+class P: __del__ = print                         # a builtin function binds nothing: called with no argument
+class L: __del__ = lambda *a: print("a function, with", len(a))
+class M: __del__ = list.clear                    # a method of another type: called with the object, which it refuses
+class Raises:
+    def __get__(self, obj, owner): raise ValueError("binding")
+class F: __del__ = Raises()                      # no finaliser is called, and nothing is reported
+class Callable:
+    def __call__(self, *a): print("an instance called with", len(a))
+class I: __del__ = Callable()
+class StaticRaises(list):
+    @staticmethod
+    def __del__(): raise KeyError("static")
+class Sub(S): pass
+for k in (S, C, D, N, P, L, M, F, I, StaticRaises, Sub):
+    print(k.__name__)
+    o = k()
+    del o
+print("done")
 '''),
     ('RL-584', 'the item iterators of dict and OrderedDict keep their own pair and give it again', r'''
 from collections import OrderedDict

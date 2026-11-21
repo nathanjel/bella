@@ -2975,6 +2975,7 @@ Ref i_bella_structseq_finish(Obj, Args a) {      // (cls, module, fields, has_ne
     auto* c = as_class(a.pos(0));
     present_native_class(c, as_str(a.pos(1))->text);      // and _s_past is a field with no name from here (note_prelude_class)
     c->disallow_instantiation = !truth(a.pos(3));
+    c->struct_sequence = true;
     auto& fields = static_cast<List*>(a.pos(2).object())->items;
     for (std::size_t i = 0; i < fields.size(); ++i) {
         if (fields[i] == None()) continue;

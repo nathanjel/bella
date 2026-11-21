@@ -372,6 +372,8 @@ class _IOBase:
             setattr(self, "__IOBase_closed", True)  # noqa: B010
 
     def __del__(self) -> None:                   # iobase_finalize
+        if type(self) in _NO_FINALIZER:          # bytesio_dealloc, stringio_dealloc and bufferedrwpair_dealloc call no finaliser:
+            return                               # an exact one of the three has none, a subclass of the program's has (RL-585, RL-598)
         try:
             closed = _optional_attr(self, "closed")
             closed = -1 if closed is _ABSENT else (1 if closed else 0)
@@ -3740,3 +3742,6 @@ def _std_stream(fd: int, name: str, mode: str, encoding: str, errors: str, buffe
 
 
 _io_call("hooks", open, _std_stream)
+
+
+_NO_FINALIZER = (BytesIO, StringIO, BufferedRWPair)

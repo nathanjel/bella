@@ -1551,3 +1551,11 @@ time; the program's own stay at `-O1`).
 * **Found with it:** a buffered writer whose raw `write` returns what is no number raises CPython's OSError (`raw write() returned invalid length -1`), set over the conversion's error.
 * **Held by:** the sweep `pipeline/tests/test_type_checks.py`, a process for each of 191 rows, compiled against CPython, and a test that reads the preludes for an `isinstance` call.
 
+**2026-11-21, night — five of the open items of review A25 (RL-585, RL-593, RL-594, RL-597, RL-598; no decision of the author's was needed).**
+* **A `__del__` is bound as a special method is (RL-597).** CPython's `slot_tp_finalize` looks the finaliser up on the type and binds it: a function, or a method of a built-in type, is called with the object; a staticmethod, a classmethod or another descriptor is bound by its `__get__` and called with nothing, as is a builtin function or a callable instance, which bind nothing. The runtime called whatever the class had with the object, so a staticmethod `__del__` was an unraisable TypeError and never ran. A `__del__` that is None is an unraisable TypeError, as under CPython, and a binding that raises leaves nothing to call and nothing reported.
+* **An exact BufferedRWPair, BytesIO or StringIO has no finaliser (RL-585, RL-598).** Their C deallocs call none, so a `close` kept on the instance is not called at its end and a pair's weak references go before its reader and writer close. A subclass of the program's has IOBase's finaliser, as before.
+* **A struct sequence lets go of its fields first one first (RL-593)**, the fields past the visible ones after them, as `structseq_dealloc` does; an ordinary tuple goes last one first.
+* **A Context's iterator holds the mapping until it dies (RL-594)**, exhausted or not.
+* **Left open of that review:** RL-583 (with memoryview), RL-588 (slot names sorted as objects: the order of slots is the model's), RL-591, RL-592, RL-599.
+* **Held by:** the programs RL-585, RL-593, RL-594 and RL-597 in `pipeline/tests/test_review_2026_11_21.py`. Checked: `make object-test` (the header against the model), the release-order and state sweeps, the weak reference and io tests, the six compiled targets.
+

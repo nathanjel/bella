@@ -43,7 +43,7 @@ _missing_token: MISSING = _bella_new_instance(MISSING)
 
 
 class keys:  # noqa: N801                       # _PyHamtKeys_Type: an iterator over a context's variables
-    __slots__ = ("_it", "_n")
+    __slots__ = ("_it", "_n", "_of")
     __module__ = "builtins"
 
     def __iter__(self) -> keys:
@@ -57,7 +57,7 @@ class keys:  # noqa: N801                       # _PyHamtKeys_Type: an iterator 
 
 
 class values:  # noqa: N801                     # _PyHamtValues_Type
-    __slots__ = ("_it", "_n")
+    __slots__ = ("_it", "_n", "_of")
     __module__ = "builtins"
 
     def __iter__(self) -> values:
@@ -71,7 +71,7 @@ class values:  # noqa: N801                     # _PyHamtValues_Type
 
 
 class items:  # noqa: N801                      # _PyHamtItems_Type
-    __slots__ = ("_it", "_n")
+    __slots__ = ("_it", "_n", "_of")
     __module__ = "builtins"
 
     def __iter__(self) -> items:
@@ -88,6 +88,7 @@ def _iterator(cls: type, variables: dict[ContextVar, object], it: object) -> obj
     self = _bella_new_instance(cls)
     self._it = it  # noqa: SLF001
     self._n = len(variables)  # noqa: SLF001
+    self._of = variables  # noqa: SLF001             # hamt_baseiter_new: the iterator holds the mapping until it dies, exhausted or not (RL-594)
     return self
 
 

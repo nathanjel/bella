@@ -782,6 +782,7 @@ struct ClassObject : Object {
     bool mapping_getitem = false;                // a C type written in Python whose __getitem__ is mp_subscript alone: no sq_item
     bool disallow_instantiation = false;         // Py_TPFLAGS_DISALLOW_INSTANTIATION, of a C type written in Python
     bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited
+    bool struct_sequence = false;                // Objects/structseq.c's type: structseq_dealloc's order of release (RL-593)
     bool final_type = false;                     // a built-in type a class cannot derive from (no Py_TPFLAGS_BASETYPE)
     // attrs as a dict, made when a program first asks for a view of __dict__ (class_dict) and kept
     // equal to attrs from then on; its counts are dropped first, so attrs decides when a value dies
@@ -2204,6 +2205,18 @@ inline void dealloc(Object* o) {
         case Kind::Tuple:
             if (o->kind == Kind::Tuple && has_attributes(o)) {   // subtype_dealloc, then tuple_dealloc's items, last to first
                 auto* t = static_cast<TupleInstance*>(o);
+                if (t->cls->struct_sequence) {   // structseq_dealloc: every field, the first one first, those past the visible ones after them (RL-593)
+                    Obj past = std::exchange(t->fields[0], Obj{});
+                    if (!detail::release_attributes(t)) return;
+                    for (Obj& item : t->items) decref(std::exchange(item, Obj{}));
+                    if (past.is_object()) {
+                        if (past.object()->refs == 1 && past.object()->kind == Kind::Tuple)
+                            for (Obj& item : static_cast<Tuple*>(past.object())->items) decref(std::exchange(item, Obj{}));
+                        decref(past);
+                    }
+                    detail::bury(o);
+                    return;
+                }
                 if (!detail::release_attributes(t)) return;
                 if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
                 for (auto it = t->items.rbegin(); it != t->items.rend(); ++it) decref(std::exchange(*it, Obj{}));
