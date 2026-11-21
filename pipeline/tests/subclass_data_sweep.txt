@@ -1383,7 +1383,7 @@ def run(n):
     if n=="65": return csvrow(I(1))
     if n=="66": return csvrow(F(2))
     if n=="67": return csv.reader(["a,b"],delimiter=S(",")).__next__()
-    if n=="68": return _locale.strcoll(S("ab"),"ac")
+    if n=="68": return _locale.strcoll(S("ab"),"ac")<0   # the sign: wcscmp gives -1 or -3 by where the strings lie
     if n=="69": return _locale.strxfrm(S("ab"))
     if n=="70": return _locale.setlocale(I(0),S("C"))
     if n=="71": return time.gmtime(I(0))[0]
