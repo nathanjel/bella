@@ -41,6 +41,10 @@ def test_a_warnings_line_names_its_file_by_the_base_name() -> None:
     for other in ("/elsewhere/", here + "../cases/", here + "sub/", here.rstrip("/") + "//"):
         elsewhere = warned.replace(here, other)
         assert harness.mask_stderr(elsewhere) == elsewhere != harness.mask_stderr(warned), other
+    # review A27: any class's name is a category (RL-618); the directory with no name after it is no file of it (RL-620)
+    for category in ("Warning", "Notice", "UserWarning", "pkg_Warning2"):
+        assert harness.mask_stderr(f"{here}c.py:1: {category}: msg\n") == f"c.py:1: {category}: msg\n", category
+    assert harness.mask_stderr(f"{here}:1: UserWarning: msg\n") == f"{here}:1: UserWarning: msg\n" != harness.mask_stderr(":1: UserWarning: msg\n")
 
 
 def test_check_fails_closed() -> None:

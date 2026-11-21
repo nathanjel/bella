@@ -5,7 +5,9 @@ A24 and the streams' state methods; the review log has its 22 findings as RL-578
 report's own reproduction, run under CPython and compiled: standard output, the exit status and standard error must
 agree. The findings left open (RL-583 to RL-585, RL-588, RL-591 to RL-594, RL-597 to RL-599) have no program here.
 The last program is RL-600's, found in the reviewer's probes after the round: the keys and results of a bounded
-`lru_cache`, which the prelude's ring of links held for good.
+`lru_cache`, which the prelude's ring of links held for good. Its row with a comparison that fails stops at the lookup of
+the third key (review A27, RL-619); the pop of the oldest link is reached by RL-619's program in
+pipeline/tests/test_review_2026_11_21_a27.py.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_21
 """
@@ -276,7 +278,7 @@ def again(n: int) -> Noted:
 again(3)
 print("  calls:", len(calls), again.cache_info())
 again.cache_clear()
-print("---- a key whose comparison fails while the oldest goes")
+print("---- a key whose comparison fails when a third key is looked up")
 
 
 class Touchy:

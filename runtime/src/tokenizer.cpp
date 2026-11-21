@@ -296,11 +296,8 @@ char* _PyTokenizer_error_ret(struct tok_state* tok) /* XXX */ {
 // filters make it an error
 int warn_explicit_object(PyObject* category, const std::string& message, struct tok_state* tok) {
     try {
-        Ref warnings = Ref::share(dict_get(sys_modules(), Obj::of(intern("_warnings"))));
-        if (warnings.get().is_unset()) warnings = import_module_level(Obj::of(intern("_warnings")), None(), None(), None(), 0);
-        Ref warn = getattr(warnings.get(), intern("warn_explicit"));
         Ref msg = str_new(message), lineno = int_from_i64(tok->lineno);
-        invoke(warn.get(), {msg.get(), Obj::of(category), tok->filename ? Obj::of(tok->filename) : None(), lineno.get()});
+        invoke(warning_function(true), {msg.get(), Obj::of(category), tok->filename ? Obj::of(tok->filename) : None(), lineno.get()});
         return 0;
     } catch (const PyError& e) {
         set_pending(e);

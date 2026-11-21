@@ -671,6 +671,15 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   differs from CPython's for every program, in members and in order (CPython's start has `_thread`, `_weakref`, `marshal`,
   `posix`, `time`, `zipimport` there, and `site`'s imports unless `-S`; a compiled program `_contextvars`), and no deviation
   says so. Three ways: a deviation that says it; the start's modules as `python -S` has them; as `python` has them.
+* **Next step (RL-621, found beside review A27's RL-616):** 39 tests on 37 lines in 23 preludes decide with
+  `hasattr(type(x), "__index__")` (18; `__buffer__` 16, `__getitem__` 2, `__len__`, `__int__`, `__float__` one each) where CPython reads a slot of the type (`PyIndex_Check`, `PyObject_CheckBuffer`);
+  `hasattr` on a class asks its metaclass. `_type_lookup` in each (as `_signal`, `posix` and now `_functools` have it), with a
+  sweep kept as a test: every one of these calls with an argument whose metaclass answers for the name and one whose
+  metaclass raises, compiled against CPython.
+* **Open from review A27** (2026-11-21): the line under a refused literal's SyntaxError is the build's, where CPython reads it
+  from the file when it makes the error and falls back on what its tokenizer read (RL-617; low: seen only where the file
+  changes between the build and the refusal). Exact is the file first, by `err_programtext`'s rules, and the build's text
+  where the file cannot be read or decoded.
 * **Open from review A26** (2026-11-21): the words of a refusal for a text whose encoding CPython's file tokenizer refuses (a
   mark of the byte order with another cookie, a UTF-16 text) are the host's `decode_source` and `compile()`'s, not the file
   tokenizer's, which Python code cannot call (RL-607; low, a refused program either way). And RL-605 is a stop that names

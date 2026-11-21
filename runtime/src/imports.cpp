@@ -165,11 +165,8 @@ Ref call_bootstrap(const char* fn, std::initializer_list<Obj> args) {
 // here if the program has not, as the C machinery is always present in CPython; showing it imports the warnings module, as the
 // C does, and a program whose closure lacks it stops by name there. The default filters ignore an ImportWarning.
 void runtime_warning(const char* category, const std::string& message) {
-    Ref warnings_module = Ref::share(dict_get(interp_modules(), Obj::of(N("_warnings"))));
-    if (warnings_module.get().is_unset()) warnings_module = import_module_level(Obj::of(N("_warnings")), None(), None(), None(), 0);
-    Ref warn = getattr(warnings_module.get(), N("warn"));
     Ref msg = str_new(message);
-    invoke(warn.get(), {msg.get(), Obj::of(exception_class(category))});
+    invoke(warning_function(false), {msg.get(), Obj::of(exception_class(category))});
 }
 void import_warning(const std::string& message) { runtime_warning("ImportWarning", message); }
 // resolve_name: a relative import's absolute name from the importing module's globals
@@ -627,9 +624,8 @@ Ref i_resource_warning(Obj, Args a) {
         if (made == nullptr) return none_ref();
         warnings_module = Ref::share(Obj::of(made));
     } else {
-        warnings_module = Ref::share(dict_get(interp_modules(), Obj::of(N("_warnings"))));
-        if (warnings_module.get().is_unset() || !is_kind(warnings_module.get(), Kind::Module))
-            warnings_module = import_module_level(Obj::of(N("_warnings")), None(), None(), None(), 0);
+        invoke(warning_function(false), {a.pos(0), Obj::of(exception_class("ResourceWarning")), Obj::small(1), a.pos(1)});
+        return none_ref();
     }
     Ref warn = getattr(warnings_module.get(), N("warn"));
     invoke(warn.get(), {a.pos(0), Obj::of(exception_class("ResourceWarning")), Obj::small(1), a.pos(1)});
@@ -1233,11 +1229,25 @@ Ref i_fd_seek(Obj, Args a) {                     // lseek(fd, offset, SEEK_SET) 
     int_fits_i64(a.pos(1), offset);
     return Ref::steal(boolean(::lseek(static_cast<int>(fd), static_cast<off_t>(offset), SEEK_SET) != static_cast<off_t>(-1)));
 }
+namespace {
+struct WarningHooks { Ref warn, warn_explicit; };
+WarningHooks& warning_hooks() {
+    static WarningHooks hooks;
+    return hooks;
+}
+}  // namespace
+Obj warning_function(bool explicitly) {
+    Ref& kept = explicitly ? warning_hooks().warn_explicit : warning_hooks().warn;
+    if (kept.get().is_unset()) import_module_level(Obj::of(N("_warnings")), None(), None(), None(), 0);   // fill_warnings keeps them
+    return kept.get();
+}
 void fill_warnings(Module* m) {
     fill_in_python(m, "_warnings", "_warnings", prelude_warnings::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame},
                     {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_import_if_held", i_bella_import_if_held},
                     {"_find_source_encoding", i_find_source_encoding}, {"_fd_seek", i_fd_seek}, {"_bella_holds", i_bella_holds}});
+    warning_hooks().warn = Ref::share(dict_get(m->dict, Obj::of(N("warn"))));
+    warning_hooks().warn_explicit = Ref::share(dict_get(m->dict, Obj::of(N("warn_explicit"))));
 }
 void fill_suggestions(Module* m) { fill_in_python(m, "_suggestions", "_suggestions", prelude_suggestions::module_body, {{"_tp_name", i_tp_name}}); }
 void fill_tokenize(Module* m) {

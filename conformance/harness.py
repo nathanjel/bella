@@ -69,7 +69,7 @@ PROJECT = ROOT.parent
 
 _FRAME = re.compile(r'^((?:\s*\| )?\s*)File "(.+?)", line (\d+)(, in .+)?$')   # inside an exception group's box: after its margin
 _EXC_LINE = re.compile(r"^([A-Za-z_][\w.]*): (.*)$")
-_WARNED = re.compile(r"^(/.+?)(:\d+: [A-Za-z_]\w*Warning: )")   # a warning's first line, when it names a file by its whole path
+_WARNED = re.compile(r"^(/.+?)(:\d+: [A-Za-z_]\w*: )")   # a warning's first line, when it names a file by its whole path; the category is any class (RL-618)
 _BUILTIN_EXC = {
     n for n in dir(builtins)
     if isinstance(getattr(builtins, n), type) and issubclass(getattr(builtins, n), BaseException)
@@ -188,8 +188,9 @@ def mask_stderr(text: str, masked: frozenset[str] = frozenset()) -> str:
             continue
         skip_echo = False
         w = _WARNED.match(line)
-        if w and w.group(1) == os.path.join(str(CASES), os.path.basename(w.group(1))):
-            out.append(os.path.basename(w.group(1)) + line[w.end(1):])
+        named = os.path.basename(w.group(1)) if w else ""
+        if w and named and w.group(1) == os.path.join(str(CASES), named):   # a file of the cases' directory, not the directory (RL-620)
+            out.append(named + line[w.end(1):])
             continue
         e = _EXC_LINE.match(line)
         if e and e.group(1).rpartition(".")[2] in masked:

@@ -3531,11 +3531,8 @@ std::span<const CompilerWarning>& compiler_warnings() {
 void warn_as_the_compiler(const char* main_file, const CompilerWarning& warning) {
     Obj category = Obj::of(exception_class(warning.category));
     try {
-        Ref warnings = Ref::share(dict_get(sys_modules(), Obj::of(intern("_warnings"))));
-        if (warnings.get().is_unset()) warnings = import_module_level(Obj::of(intern("_warnings")), None(), None(), None(), 0);
-        Ref warn = getattr(warnings.get(), intern("warn_explicit"));
         Ref message = str_new(warning.message), file = str_new(main_file), line = int_from_i64(warning.line);
-        invoke(warn.get(), {message.get(), category, file.get(), line.get(), Obj::of(intern("__main__"))});
+        invoke(warning_function(true), {message.get(), category, file.get(), line.get(), Obj::of(intern("__main__"))});
     } catch (const PyError& e) {
         // Filters that make the warning an error: CPython's compiler puts a SyntaxError in its place, with words and a
         // place of its own. No program starts with such filters yet (PYTHONWARNINGS is not read, D-18)

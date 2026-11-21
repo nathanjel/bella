@@ -451,6 +451,10 @@ Ref bytes_repeat(Obj self, std::int64_t count, bool in_place);
 Ref str_from_bytes(Obj source, Obj encoding, Obj errors);
 struct CodecHooks { Ref text_encode, text_decode, unknown_handler, start, lookup_text; };   // what _codecs.py gives the runtime (Python/codecs.c's entry points)
 struct IoHooks { Ref open, std_stream; };        // what _io.py gives the runtime: builtins.open, and create_stdio
+// do_warn and warn_explicit (Python/_warnings.c), which CPython's C calls itself: the runtime's own warnings call the _warnings
+// prelude's two functions as they were when the module was made, whatever a program has put under the module's names since
+// (RL-615). `explicitly`: warn_explicit, else warn. The module is made first if it was not
+Obj warning_function(bool explicitly);
 IoHooks& io_hooks();
 Ref i_io_call(Obj, Args a);                       // _io.py's: the runtime's part, by name
 void fill_io(Module* m);                          // and runtime/prelude/_io.py

@@ -51,6 +51,14 @@ _set = _bella_state_set                          # a C function's store into its
 _ABSENT = object()
 
 
+def _type_lookup(value: object, name: str) -> object:   # _PyType_Lookup on its type: _ABSENT when it has none
+    for klass in type(value).__mro__:
+        found = vars(klass)
+        if name in found:
+            return found[name]
+    return _ABSENT
+
+
 def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   # tp_new_wrapper's checks
     if not args:
         raise TypeError(shown + ".__new__(): not enough arguments")
@@ -534,7 +542,7 @@ cache_info_type:    namedtuple class with the fields:
         if maxsize_o is None:
             kind = "infinite"
             maxsize = -1
-        elif hasattr(type(maxsize_o), "__index__"):
+        elif _type_lookup(maxsize_o, "__index__") is not _ABSENT:   # PyIndex_Check: the type's slot, which no metaclass answers for (RL-616)
             maxsize = _number_index(maxsize_o)
             if maxsize > _SSIZE_MAX or maxsize < -_SSIZE_MAX - 1:
                 raise OverflowError("cannot fit '" + _tp_name(maxsize_o) + "' into an index-sized integer")
@@ -585,8 +593,7 @@ cache_info_type:    namedtuple class with the fields:
             _set(self, "_l_hits", self._l_hits + 1)  # type: ignore[attr-defined]
             return found.result
         _set(self, "_l_misses", self._l_misses + 1)  # type: ignore[attr-defined]
-        result = self._l_func(*given, **kwds)  # type: ignore[attr-defined]
-        return _bounded_update(self, result, key, h, cache)
+        return _bounded_update(self, given, kwds, key, h, cache)
 
     def __get__(*args: object, **kwds: object) -> object:       # lru_cache_descr_get, by wrap_descr_get
         if not args:
@@ -686,7 +693,10 @@ def _prepend(links: list[Any], link: _Link) -> None:   # lru_cache_prepend_link:
         nodes[number] = other
 
 
-def _bounded_update(self: object, result: object, key: object, h: int, cache: dict[object, object]) -> object:   # bounded_lru_cache_update
+def _bounded_update(self: object, given: tuple[object, ...], kwds: dict[str, object], key: object, h: int, cache: dict[object, object]) -> object:
+    """The call and bounded_lru_cache_update. The result is this function's own from the call on, as it is the C function's:
+    where the C lets go of it, nothing else here holds it (RL-614)."""
+    result = self._l_func(*given, **kwds)  # type: ignore[attr-defined]
     if _get_hashed(cache, key, h, _ABSENT) is not _ABSENT:   # the function added the key, reentrantly: the link is up to date
         return result
     links = self._l_links  # type: ignore[attr-defined]
@@ -714,7 +724,15 @@ def _bounded_update(self: object, result: object, key: object, h: int, cache: di
     link.hash = h
     link.key = key
     link.result = result
-    _set_hashed(cache, key, h, link)
+    try:
+        _set_hashed(cache, key, h, link)
+    except BaseException:
+        # the C's order when the store fails: the link, which alone has the new result by now, then the old key, then the
+        # old result; the cache is left one link short
+        del result, popped, link
+        del oldkey
+        del oldresult
+        raise
     _append(links, link)
     del popped, oldkey, oldresult
     return result
