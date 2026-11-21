@@ -21,6 +21,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _as_double                                   # noqa: B018  # PyFloat_AsDouble
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
+    _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial: the bound method in a tuple, or ()
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -43,6 +44,7 @@ except NameError:
     def _as_double(value: object) -> float:   # PyFloat_AsDouble, for probing this file under CPython
         return float(value)  # type: ignore[arg-type]
     _unpack_keywords: Callable[..., Any] = _missing
+    _lookup_special: Callable[..., tuple[Any, ...]] = _missing
 
 pi = 3.141592653589793
 e = 2.718281828459045
@@ -503,11 +505,11 @@ y, the nearest even value of n is used. The result is always exact."""
 _ABSENT: object = object()
 
 
-def _special(value: object, name: str) -> object:   # _PyObject_MaybeCallSpecialNoArgs: the type's attribute called (None included), or _ABSENT
-    method = getattr(type(value), name, _ABSENT)
-    if method is _ABSENT:
+def _special(value: object, name: str) -> object:   # _PyObject_MaybeCallSpecialNoArgs: the type's method, bound and called (None included), or _ABSENT
+    found = _lookup_special(value, name)         # the type's own, by its descriptor: no metaclass is asked, and a staticmethod is not given the object (RL-629, RL-630)
+    if not found:
         return _ABSENT
-    return method(value)  # type: ignore[operator]
+    return found[0]()
 
 
 def _from_double(x: float) -> int:               # PyLong_FromDouble

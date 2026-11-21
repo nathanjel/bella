@@ -120,6 +120,19 @@ def test_the_translation_holds_nothing_it_released(kind: str, in_function: bool)
         gc.collect()
 
 
+def test_the_audit_lets_a_program_let_go_of_vars() -> None:
+    """The evaluator tells the host's locals, vars, dir, eval, exec and compile by identity, with a reserved local for each.
+    A program that calls one of them lets go of that same builtin, which the audit took for a holding of the
+    translation's (seen when the class-building prelude came to call `vars`, 2026-11-21)."""
+    m = l2("def has(obj: object, name: str) -> bool:\n    for klass in type(obj).__mro__:\n        if name in vars(klass):\n"
+           "            return True\n    return False\nprint(has(1, '__index__'), has(1, 'nothing'), sorted(dir(object()))[:1], len(locals()) > 0)\n")
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        interp = eval2.Interpreter(dict(vars(builtins)), audit=True)
+        interp.load_runtime()
+        interp.run_module(m)
+    assert out.getvalue() == "True False ['__class__'] True\n", out.getvalue()
+
+
 def test_the_audit_catches_a_holder_of_the_translations() -> None:
     rt = eval2._Runtime(eval2.Interpreter(), {})
 

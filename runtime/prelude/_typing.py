@@ -18,8 +18,10 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _bella_class_set                             # noqa: B018  # a store into a type's dict, which a class statement refuses for __qualname__
     _bella_bootstrap                             # noqa: B018  # _frozen_importlib's functions by name: the union's, GenericAlias
+    _number_index                                # noqa: B018  # PyNumber_Index
 except NameError:
     from collections.abc import Callable
+    from operator import index as _number_index
     from typing import Any
 
     _bella_new_instance = object.__new__
@@ -193,10 +195,8 @@ Internal type for implementing evaluation functions."""
         if len(args) != 1:
             raise TypeError("constevaluator.__call__() takes exactly 1 argument (" + str(len(args)) + " given)")
         fmt = args[0]
-        if not isinstance(fmt, int):                 # the clinic's int converter
-            if not _has_slot(fmt, "__index__"):
-                raise TypeError("'" + _tp_name(fmt) + "' object cannot be interpreted as an integer")
-            fmt = fmt.__index__()
+        if not isinstance(fmt, int):                 # the clinic's int converter: PyLong_AsInt, the type's __index__ (RL-638)
+            fmt = _number_index(fmt)
         value = self._value
         if fmt == _FORMAT_STRING:
             if isinstance(value, tuple):

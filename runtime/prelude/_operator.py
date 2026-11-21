@@ -269,8 +269,7 @@ def length_hint(*args: object, **kwds: object) -> int:     # PyObject_LengthHint
             failed = True
         del failed
     found = _lookup_special(obj, "__length_hint__")
-    if not found:
-        getattr(type(obj), "__length_hint__", None)   # refused here if CPython's type has it and this one does not yet
+    if not found:                                # (a type of the runtime's that lacks one CPython's has was refused by the lookup)
         return default
     try:
         result = found[0]()

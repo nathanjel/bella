@@ -2556,6 +2556,7 @@ void detail::enter_frame() {
     }
 }
 void detail::leave_frame() noexcept { --recursion_depth(); }
+void detail::enter_hidden_frame() { check_native_stack(" while calling a Python object"); }
 detail::FrameRecord*& detail::current_frame() {
     static FrameRecord* f = nullptr;
     return f;

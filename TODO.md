@@ -640,6 +640,12 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   GCC's own licence and libgccjit's (GPL; *to verify*) would need a licence register entry.
 * Settle the entries of the licence register, `docs/licences.md`, one by one when each becomes
   worth it (for example, when the component is about to be linked into an artefact).
+* The start's modules as CPython has them (the author, 2026-11-21, with D-30: deferred, to be looked at again; RL-604). Before
+  its first statement a compiled program's `sys.modules` has 15 modules and CPython's 32: the six its core imports that the
+  runtime does not (`_thread`, `_weakref`, `marshal`, `posix`, `time`, `zipimport`), and the twelve `site` imports (`os`, `abc`,
+  `stat`, `posixpath`, `genericpath`, `_collections_abc`, `errno` and their C modules, `_sitebuiltins`, `site`); `_contextvars`
+  is the runtime's alone. Having them means compiling `os` and the rest into every program and importing them at each start,
+  in CPython's order; `site` itself stays out (E-04).
 * Honour `PYTHONWARNINGS` everywhere (the author, 2026-11-20: ignored for now, this to be looked at again; RL-483, D-18): the
   runtime fills `sys.warnoptions` from the variable and applies the options at start-up, with a port of the option parser
   (`warnings._setoption` and what it calls, about 60 lines) so that a program without `warnings` (D-27) has them too. Then a
@@ -667,10 +673,11 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
-* **For the author, Question 27 (RL-604, review A26, 2026-11-21):** what `sys.modules` holds before a program's first statement
-  differs from CPython's for every program, in members and in order (CPython's start has `_thread`, `_weakref`, `marshal`,
-  `posix`, `time`, `zipimport` there, and `site`'s imports unless `-S`; a compiled program `_contextvars`), and no deviation
-  says so. Three ways: a deviation that says it; the start's modules as `python -S` has them; as `python` has them.
+* **For the author, with D-17's wording (RL-639, 2026-11-21):** CPython counts two entries of the recursion limit for a class
+  called with a Python `__init__` (its specialised instruction pushes a frame of its own), and one on the calls made before
+  the instruction specialises; a compiled program counts one, so it goes twice as deep through constructors. Counting two
+  would agree from the third call of a site on. And the frames of the import system: CPython's `importlib` is Python and
+  its frames count (several an `import`), the runtime's is a prelude and none does.
 * **For the author, a wording (RL-624's remainder, 2026-11-21):** a program that raises its recursion limit past what the native
   stack holds gets a RecursionError where the stack is nearly used (`Stack overflow ... while calling a Python object`); it
   ended on the stack's guard page before. CPython keeps a pure-Python recursion's frames on the heap and goes on. D-17 says
@@ -685,7 +692,7 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **For the author, a wording (RL-623, review A28):** D-03's row names small ints and interned strings and says `is` is true
   more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
   object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
-  identity differences; the row should name this one. To ask after Question 27.
+  identity differences; the row should name this one. To ask next.
 * **Open from review A27** (2026-11-21): the line under a refused literal's SyntaxError is the build's, where CPython reads it
   from the file when it makes the error and falls back on what its tokenizer read (RL-617; low: seen only where the file
   changes between the build and the refusal). Exact is the file first, by `err_programtext`'s rules, and the build's text

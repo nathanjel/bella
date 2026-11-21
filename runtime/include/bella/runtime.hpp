@@ -653,6 +653,7 @@ void arrive(const Code& code, Module* module, int line, std::uint64_t& id, std::
 void record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n, Obj ns, std::shared_ptr<FrameLink>& link) noexcept;
 void enter_frame();                              // RecursionError past the limit (spec D-17), and where the native stack is nearly used
 void leave_frame() noexcept;
+void enter_hidden_frame();                       // a frame CPython does not have: the look at the native stack, and no count (RL-632)
 // What a frame shows to the builtins that read their caller (globals(), a lazy import's declaration).
 // A frame CPython does not have (the prelude's, an inlined comprehension's) is not linked in.
 struct FrameRecord {
@@ -683,13 +684,21 @@ public:
         : detail::FrameRecord{&c, m, detail::current_frame(), c.first_line}, locals_{&locals...},
           uncaught_(std::uncaught_exceptions()) {
         slots = locals_.data();
-        detail::enter_frame();
-        if (c.shown) detail::current_frame() = this;
-        else if (c.inlined && caller != nullptr) ++caller->comprehensions;
+        // The recursion limit counts Python frames (sys.setrecursionlimit; CPython's py_recursion_remaining). A prelude's
+        // function stands for a C function and an inlined comprehension runs in the frame around it (PEP 709): neither is
+        // one, so neither is counted, and a walk a prelude makes of nested data is bounded by the native stack as CPython's
+        // C is (RL-632, RL-633, RL-637)
+        if (c.shown) {
+            detail::enter_frame();
+            detail::current_frame() = this;
+        } else {
+            detail::enter_hidden_frame();
+            if (c.inlined && caller != nullptr) ++caller->comprehensions;
+        }
     }
     void arrived(PyError& e) noexcept { detail::arrive(*code, module, line, id, link, e); }
     ~FrameGuard() {
-        detail::leave_frame();
+        if (code->shown) detail::leave_frame();
         detail::current_frame() = caller;
         if (!code->shown && code->inlined && caller != nullptr) --caller->comprehensions;
         if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, module, line, id, locals_.data(), N, ns, link);

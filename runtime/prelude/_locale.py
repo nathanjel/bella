@@ -13,6 +13,7 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _sys                                         # noqa: B018  # the system calls, by name
+    _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial: the bound method in a tuple, or ()
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -23,6 +24,7 @@ except NameError:
     _number_index: Callable[..., int] = _missing
     _tp_name: Callable[..., str] = _missing
     _sys: Callable[..., Any] = _missing
+    _lookup_special: Callable[..., tuple[Any, ...]] = _missing
 
 ABDAY_1 = 131072
 ABDAY_2 = 131073
@@ -236,10 +238,10 @@ def bindtextdomain(*args: object, **kwds: object) -> object:
     dirname = args[1]
     if dirname is not None:                      # PyUnicode_FSConverter: a path, as the file system encodes it
         if not issubclass(type(dirname), (str, bytes)):
-            fspath = getattr(type(dirname), "__fspath__", None)
-            if fspath is None:
+            fspath = _lookup_special(dirname, "__fspath__")   # PyOS_FSPath: the type's method, bound (RL-635)
+            if not fspath:
                 raise TypeError("expected str, bytes or os.PathLike object, not " + _tp_name(dirname))
-            dirname = fspath(dirname)
+            dirname = fspath[0]()
             if not issubclass(type(dirname), (str, bytes)):
                 raise TypeError("expected " + type(args[1]).__name__ + ".__fspath__() to return str or bytes, not " + type(dirname).__name__)
         dirname = str.encode(dirname, "utf-8", "surrogateescape") if isinstance(dirname, str) else bytes(dirname)

@@ -1528,7 +1528,13 @@ def _count_elements(*args: object, **kwds: object) -> None:   # _collections__co
     mapping, iterable = args
     it = iter(iterable)  # type: ignore[call-overload]
     cls = type(mapping)
-    if issubclass(cls, dict) and getattr(cls, "get", None) is dict.get and getattr(cls, "__setitem__", None) is dict.__setitem__:
+
+    def of_type(name: str) -> object:            # _PyType_Lookup: the classes' own dicts, no metaclass asked (RL-638)
+        for klass in cls.__mro__:
+            if name in vars(klass):
+                return vars(klass)[name]
+        return None
+    if issubclass(cls, dict) and of_type("get") is vars(dict)["get"] and of_type("__setitem__") is vars(dict)["__setitem__"]:
         for key in it:
             _count_element(mapping, key)
             del key

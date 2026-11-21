@@ -80,8 +80,12 @@ def _calculate_metaclass(metatype: type, bases: tuple[object, ...]) -> type:
 
 
 def _is_mapping(obj: object) -> bool:
-    """PyMapping_Check: the type has a __getitem__ (a mapping slot), as a list does too."""
-    return getattr(type(obj), "__getitem__", None) is not None
+    """PyMapping_Check: the type has a __getitem__ (a mapping slot), as a list does too. The slot is filled by whatever a
+    class of the MRO has under the name, None included, and no metaclass is asked (RL-636)."""
+    for klass in type(obj).__mro__:
+        if "__getitem__" in vars(klass):
+            return True
+    return False
 
 
 def build_class(body: object, name: str, /, *bases: object, **kwds: object) -> object:

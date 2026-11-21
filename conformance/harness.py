@@ -69,6 +69,7 @@ PROJECT = ROOT.parent
 
 _FRAME = re.compile(r'^((?:\s*\| )?\s*)File "(.+?)", line (\d+)(, in .+)?$')   # inside an exception group's box: after its margin
 _EXC_LINE = re.compile(r"^([A-Za-z_][\w.]*): (.*)$")
+MARKER = "<cases>/"                              # what the mask writes for the cases' directory in a warning-shaped line
 _WARNED = re.compile(r"^(/.+?)(:\d+: [A-Za-z_]\w*: )")   # a warning's first line, when it names a file by its whole path; the category is any class (RL-618)
 _BUILTIN_EXC = {
     n for n in dir(builtins)
@@ -192,7 +193,7 @@ def mask_stderr(text: str, masked: frozenset[str] = frozenset()) -> str:
         w = _WARNED.match(line)
         named = os.path.basename(w.group(1)) if w else ""
         if w and named and w.group(1) == os.path.join(str(CASES), named):   # a file of the cases' directory, not the directory (RL-620)
-            out.append("<cases>/" + named + line[w.end(1):])
+            out.append(MARKER + named + line[w.end(1):])
             continue
         e = _EXC_LINE.match(line)
         if e and e.group(1).rpartition(".")[2] in masked:
@@ -209,6 +210,8 @@ def run_case(cmd: list[str], case: Path, masked: frozenset[str] = frozenset(),
         proc = subprocess.run(cmd, cwd=CASES, capture_output=True, text=True, env=env, timeout=120, check=False)
     except subprocess.TimeoutExpired:            # this case fails; the run goes on to the others
         return {"stdout": "", "stderr": "timed out after 120 seconds\n", "exit_code": -1}
+    if MARKER in proc.stderr:                    # the mask's own name for the cases' directory: a program that writes it would be taken for one that named the directory (RL-634)
+        return {"stdout": proc.stdout, "stderr": f"the case writes {MARKER!r} itself, which is the harness's name for the cases' directory\n", "exit_code": -1}
     return {"stdout": proc.stdout, "stderr": mask_stderr(proc.stderr, masked), "exit_code": proc.returncode}
 
 

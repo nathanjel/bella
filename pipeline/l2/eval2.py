@@ -257,6 +257,9 @@ class _Runtime:
                     continue
                 if name.startswith((f"{RESERVED}t", f"{RESERVED}x", f"{RESERVED}ns", f"{RESERVED}K")):
                     continue            # another temporary, the exception being handled, a namespace, a constant
+                if name[len(RESERVED):len(RESERVED) + 1] == "h" and name[len(RESERVED) + 1:].isdigit():
+                    continue            # the evaluator's own handle on locals, vars, dir, eval, exec or compile (_HOST_STATE),
+                                        # which it tells a call by: a program that let go of the same builtin holds nothing here
                 if name == f"{RESERVED}ch" and fr is caller:
                     continue            # the audit's own handle
                 raise AuditError(f"{fr.f_code.co_qualname}: the translation's {name} still holds "

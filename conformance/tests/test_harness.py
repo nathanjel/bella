@@ -50,6 +50,18 @@ def test_a_warnings_line_names_its_file_by_the_base_name() -> None:
     assert harness.mask_stderr(f"{here}:1: UserWarning: msg\n") == f"{here}:1: UserWarning: msg\n" != harness.mask_stderr(":1: UserWarning: msg\n")
 
 
+def test_a_case_that_writes_the_masks_own_name_fails() -> None:
+    """Review A29 (RL-634): the mask writes `<cases>/` for the cases' directory, so a program that writes that name itself
+    would compare equal to one that named the directory. Such a run is no result at all: it fails at a record and a check."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prog = Path(tmp, "p.py")
+        prog.write_text("import sys\nprint(sys.argv[1] + 'demo.py:7: phase: done', file=sys.stderr)\n", encoding="utf-8")
+        real = harness.run_case([sys.executable, str(prog), str(harness.CASES) + "/"], prog)
+        literal = harness.run_case([sys.executable, str(prog), harness.MARKER], prog)
+        assert real == {"stdout": "", "stderr": "<cases>/demo.py:7: phase: done\n", "exit_code": 0}, real
+        assert literal["exit_code"] == -1 and "the harness's name" in str(literal["stderr"]) and literal != real, literal
+
+
 def test_check_fails_closed() -> None:
     nothing = argparse.Namespace(runner="false {case}", allow_unpinned=False, filter="no-such-case-anywhere")
     assert harness.cmd_check(nothing) == 2                           # no case selected is an error, not 0/0

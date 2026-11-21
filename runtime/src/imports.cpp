@@ -765,6 +765,8 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(ns->dict, Obj::of(N("_is_c_type")), c_type.get());
         Ref suggest = own(new Builtin("_keyword_suggestion", i_keyword_suggestion));   // _Py_CalculateSuggestions, in every such file
         dict_set(ns->dict, Obj::of(N("_keyword_suggestion")), suggest.get());
+        Ref special = own(new Builtin("_lookup_special", i_lookup_special));   // _PyObject_LookupSpecial, in every such file: a special
+        dict_set(ns->dict, Obj::of(N("_lookup_special")), special.get());       // method is the type's, bound, whatever a metaclass says (RL-629)
     }
     for (auto [primitive, fn] : primitives) {
         Ref b = own(new Builtin(primitive, fn));

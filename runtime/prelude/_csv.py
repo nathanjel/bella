@@ -458,9 +458,17 @@ reader = _reader_new  # type: ignore[assignment,misc]
 
 # ---- the writer -------------------------------------------------------------------------------------------------------------
 
+def _has_slot(value: object, name: str) -> bool:
+    """Whether the type has the slot, as the C reads it: a class of its MRO has the name. `hasattr` on the type would ask the
+    metaclass (RL-621, RL-628)."""
+    for klass in type(value).__mro__:
+        if name in vars(klass):
+            return True
+    return False
+
+
 def _number_check(o: object) -> bool:            # PyNumber_Check
-    t = type(o)
-    return hasattr(t, "__index__") or hasattr(t, "__int__") or hasattr(t, "__float__") or issubclass(t, complex)
+    return _has_slot(o, "__index__") or _has_slot(o, "__int__") or _has_slot(o, "__float__") or issubclass(type(o), complex)
 
 
 class writer:  # noqa: N801                     # _csv.writer: made by writer() alone
