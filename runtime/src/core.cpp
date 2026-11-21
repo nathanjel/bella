@@ -624,7 +624,9 @@ std::int64_t frozenset_hash(Obj v) {             // frozenset_hash_impl, whateve
 }
 
 std::int64_t tuple_hash(const Tuple* t) {
-    // tuplehash: xxHash's mixing, as Objects/tupleobject.c
+    // tuplehash: xxHash's mixing, as Objects/tupleobject.c, and kept in the tuple once it is known (ob_hash). An item whose
+    // __hash__ raises leaves nothing kept: the next call asks every item again
+    if (t->hash != -1) return t->hash;
     const auto& items = t->items;
     constexpr std::uint64_t P1 = 11400714785074694791ULL, P2 = 14029467366897019727ULL,
                             P5 = 2870177450012600261ULL;
@@ -636,8 +638,9 @@ std::int64_t tuple_hash(const Tuple* t) {
         acc *= P1;
     }
     acc += items.size() ^ (P5 ^ 3527539UL);
-    if (acc == static_cast<std::uint64_t>(-1)) return 1546275796;
-    return static_cast<std::int64_t>(acc);
+    if (acc == static_cast<std::uint64_t>(-1)) acc = 1546275796;
+    t->hash = static_cast<std::int64_t>(acc);
+    return t->hash;
 }
 std::int64_t str_hash(const Str* s) {             // unicode_hash, whatever a subclass says
     if (s->hash == -1) {

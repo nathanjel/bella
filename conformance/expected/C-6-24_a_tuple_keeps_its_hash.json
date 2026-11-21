@@ -1,0 +1,12 @@
+{
+ "case": "C-6-24_a_tuple_keeps_its_hash.py",
+ "clause": "C-6-24",
+ "spec": "section 6 (built-in types: tuple)",
+ "status": "P1",
+ "source": "Objects/tupleobject.c (tuple_hash, ob_hash, tuple_alloc, tuple_subtype_new), Include/internal/pycore_tuple.h",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "---- the elements are asked once\nthe first hash asks: a b\nthe second and third ask: nothing\nby the method: True True nothing\n---- as a key\nstored: nothing\nfound: kept True kept nothing\nstored again: nothing | in a set: True 1 nothing\nan equal tuple of other elements is asked for its own: again a b\nand once: again True nothing\n---- inside another tuple, and the same tuple under another name\nTrue asks: nothing\nt[:] is t: True | tuple(t) is t: True | t + () is t: True | t * 1 is t: True\nso none of them asks: True nothing\na slice is a new tuple: True a a\n---- a class over tuple\nPair: True c\nLoud, whose own method runs each time: True Loud e Loud\na named tuple: True x y | its plain tuple is another object: True x y\n---- a hash that could not be computed is not kept\nfirst raises ValueError after: before fragile\nsecond raises ValueError after: before fragile\nthen it can: True asks: before fragile after\nan unhashable element: TypeError, and what stands after it is not asked: nothing\n---- what is kept is the first answer\nasked when it was computed: m\nthe tuple's own is unchanged: True nothing | a new tuple of the element differs: True m\nthe empty tuple: True True\n---- an iterator's result tuple, used again, has the hash of what it holds\nzip: True\nenumerate: True\npairwise: True\nproduct: True\ncombinations: True\ncombinations_with_replacement: True\npermutations: True\nzip_longest: True\na dict's items: True\nand each element is asked once a tuple: 3 z1 z1 z2 z2 z3 z3\nresults that are held keep their own: True z1 z2 z3\n",
+ "stderr": "",
+ "exit_code": 0
+}

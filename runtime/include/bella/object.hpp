@@ -1117,6 +1117,10 @@ struct FloatInstance : Float {
 // yes of it; what only an exact tuple does asks is_exact_tuple, and what a subclass may override asks first.
 struct Tuple : Object {                          // owns one count of each item
     std::vector<Obj> items;
+    // ob_hash (CPython 3.14 and later): tuple_hash's answer once it has one, -1 until then, so the items are asked for their
+    // hashes once however often the tuple is hashed or looked up (RL-574, C-6-24). What uses a tuple again with other items
+    // forgets it (_PyTuple_Recycle: the prelude's _tuple_set)
+    mutable std::int64_t hash = -1;
     Tuple();
 };
 struct TupleInstance : Tuple {

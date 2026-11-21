@@ -686,10 +686,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   Context iterator keeps the mapping (RL-594); a `__del__` that is a staticmethod, a classmethod or another descriptor is bound as
   a special method is (RL-597); a prelude type whose own struct adds only a dict or a weak list is a solid base to CPython, which
   decides `__base__` and the entries of `class X(Mixin, SimpleNamespace)` (RL-599).
-* **Open from review A24** (2026-11-20): a tuple keeps its hash once it was asked for, as CPython's does since 3.14 (RL-574: a
-  second `hash(t)`, or a second lookup of one key, calls the elements' `__hash__` again; `enumerate` and `zip` forget it when
-  they use their result tuple again); a step with a case. RL-572 was the author's: decided and done on 2026-11-21 (the
-  compiler's warnings of the main program's text at each start, C-8-19; the switch `--syntax-warnings=off`, D-29).
+* **Review A24** (2026-11-20) has nothing open: RL-574 (a tuple keeps its hash) was done on 2026-11-21 as C-6-24, RL-572 was the
+  author's, decided and done the same day (C-8-19, D-29).
 * **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too, the
   sweep of the order in which a built-in type lets go of what it holds on 2026-11-21): `struct.Struct.__new__` with no format
   (RL-549, with the Struct step below).

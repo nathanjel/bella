@@ -644,7 +644,9 @@ Ref i_held_once(Obj, Args a) {
 }
 Ref i_tuple_set(Obj, Args a) {                   // PyTuple_SET_ITEM and the Py_DECREF of what was there
     positional_only(a, "_tuple_set", 3, 3);
-    auto& slot = static_cast<Tuple*>(a.pos(0).object())->items[static_cast<std::size_t>(a.pos(1).small_value())];
+    auto* tuple = static_cast<Tuple*>(a.pos(0).object());
+    tuple->hash = -1;                            // _PyTuple_Recycle: the hash was that of the items it had (RL-574)
+    auto& slot = tuple->items[static_cast<std::size_t>(a.pos(1).small_value())];
     incref(a.pos(2));
     decref(std::exchange(slot, a.pos(2)));
     return none_ref();
