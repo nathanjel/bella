@@ -3,8 +3,8 @@
 Codex's Astra at low effort read the step that gives a built-in type's dealloc its own order (RL-565, RL-577), the fixes of
 A24 and the streams' state methods; the review log has its 22 findings as RL-578 to RL-599. Each program here is the
 report's own reproduction, run under CPython and compiled: standard output, the exit status and standard error must
-agree. The findings left open (RL-583, RL-591, RL-592, RL-599) have no program here; RL-584 was done later the
-same day and has one, and RL-585, RL-588, RL-593, RL-594, RL-597 and RL-598 that night.
+agree. The findings left open (RL-583, RL-591, RL-592) have no program here; RL-584 was done later the
+same day and has one, and RL-585, RL-588, RL-593, RL-594, RL-597, RL-598 and RL-599 in the two days after.
 The last program is RL-600's, found in the reviewer's probes after the round: the keys and results of a bounded
 `lru_cache`, which the prelude's ring of links held for good. Its row with a comparison that fails stops at the lookup of
 the third key (review A27, RL-619); the pop of the oldest link is reached by RL-619's program in
@@ -328,6 +328,51 @@ s = Sub()
 s.a, s.b, s.c, s.x, s.y = V("a"), V("b"), V("c"), V("x"), V("y")
 del s
 print("a subclass, its own first:", [e for e in events if e.startswith("gone")])
+'''),
+    ('RL-599', 'a type CPython writes in C with a struct of its own is a solid base, whatever the runtime writes it in', r'''
+import collections
+import functools
+import io
+import types
+
+
+class W:
+    __slots__ = ("__weakref__",)
+
+
+class D:
+    __slots__ = ("__dict__",)
+
+
+class Plain:
+    pass
+
+
+class Slotted:
+    __slots__ = ("a",)
+
+
+def attempt(label: str, bases: tuple[type, ...], slots: object = ()) -> None:
+    try:
+        X = type("X", bases, {} if slots is None else {"__slots__": slots})
+        print(label, "->", X.__base__.__name__, "__dict__" in vars(X), "__weakref__" in vars(X), [b.__name__ for b in X.__mro__[1:]])
+    except TypeError:
+        print(label, "-> TypeError")
+
+
+for name, base in (("SimpleNamespace", types.SimpleNamespace), ("IOBase", io.IOBase), ("BytesIO", io.BytesIO), ("StringIO", io.StringIO),
+                   ("TextIOWrapper", io.TextIOWrapper), ("BufferedReader", io.BufferedReader), ("RawIOBase", io.RawIOBase),
+                   ("OrderedDict", collections.OrderedDict), ("defaultdict", collections.defaultdict), ("deque", collections.deque),
+                   ("Counter", collections.Counter), ("partial", functools.partial), ("Exception", Exception), ("OSError", OSError),
+                   ("dict", dict), ("list", list), ("int", int), ("object", object), ("property", property), ("staticmethod", staticmethod)):
+    for mixin in (W, D, Plain, Slotted):
+        attempt(mixin.__name__ + ", " + name, (mixin, base))
+        attempt(mixin.__name__ + ", " + name + ", with a dict", (mixin, base), None)
+attempt("two solid bases", (io.BytesIO, types.SimpleNamespace))
+attempt("IOBase and SimpleNamespace", (io.IOBase, types.SimpleNamespace))
+attempt("a subclass of each", (type("A", (io.IOBase,), {}), type("B", (types.SimpleNamespace,), {})))
+attempt("list and dict", (list, dict))
+attempt("Slotted and another slotted", (Slotted, type("Other", (), {"__slots__": ("b",)})))
 '''),
     ('RL-584', 'the item iterators of dict and OrderedDict keep their own pair and give it again', r'''
 from collections import OrderedDict

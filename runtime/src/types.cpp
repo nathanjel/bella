@@ -503,6 +503,10 @@ ClassObject* solid_base(ClassObject* c) {
     bool exception = is_subclass(c, exception_class("BaseException"));
     bool own_shape = exception ? (c == exception_class("BaseException") || (!c->heap_type && c->native != c->bases[0]->native))
                                : !c->heap_type;
+    // A type CPython writes in C has a struct of its own or shares its base's, whatever the runtime writes it in: a prelude's
+    // class whose own struct holds only a dict or a weak list (types.SimpleNamespace, _io._IOBase) is solid in CPython, and
+    // a class with several bases takes it for its __base__. The names table says which (`solid:` rows, RL-599)
+    if (!exception && c_type(c) && cpython_has("flags", c->name)) own_shape = cpython_has("solid", c->name);
     if (own_shape || own_slots) return c;
     return solid_base(c->bases.empty() ? types().object : tp_base(c));
 }

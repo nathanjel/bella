@@ -62,12 +62,19 @@ HEAPFLAGS = {}
 OFFSETS = {}                                     # tp_dictoffset and tp_weaklistoffset, as "dictoffset,weakrefoffset"
 ITEMSIZE = set()
 STATE = set()
+SOLID = set()                                    # a type with a C struct of its own: solid_base's shape_differs (typeobject.c), RL-599
 SHORTNAME = set()
 GENERIC_GETATTRO = set()                         # a type that names tp_getattro itself, as PyObject_GenericGetAttr: its own __getattribute__ is object's
 GENERIC_SETATTRO = set()                         # the same for tp_setattro and PyObject_GenericSetAttr: its own __setattr__ and __delattr__
 MEMBER_DOCS = {}                                 # a member's or a getset's own __doc__, as "<tp_name>.<name>", "" for none
 WRAPPER_DOCS = {}                                # a slot wrapper's __doc__ (the slot's own text) by name, then by the type that has it
 METHOD_DOCS = {}                                 # a type's own method's __doc__ (its ml_doc as CPython shows it), as "<tp_name>.<name>", "" for none
+
+def solid(t):
+    """solid_base: the nearest class whose struct differs in size from its base's solid base."""
+    base = solid(t.__base__) if t.__base__ is not None else object
+    return t if t.__basicsize__ != base.__basicsize__ or t.__itemsize__ != base.__itemsize__ else base
+
 
 def tp_name(t):
     """PyTypeObject.tp_name, what %T and "'%s' object has no attribute" print: a static type's or a spec's is "module.Name"; a type
@@ -127,6 +134,8 @@ def type_names():
                 STATE.add(key)
             if not t.__flags__ & (1 << 10):      # Py_TPFLAGS_BASETYPE
                 FINAL.add(key)
+            if solid(t) is t:
+                SOLID.add(key)
     class Probe:
         pass
     class Seq:
@@ -278,7 +287,7 @@ def docs():
 SITE = sorted(n for n in dir(builtins) if type(getattr(builtins, n)).__module__ == "_sitebuiltins")
 assert SITE == ["copyright", "credits", "exit", "help", "license", "quit"], SITE
 print(json.dumps({"docs": docs(), "builtins": sorted(set(dir(builtins)) - set(SITE)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "member_docs": MEMBER_DOCS, "wrapper_docs": WRAPPER_DOCS, "method_docs": METHOD_DOCS, "final": sorted(FINAL), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "generic_getattro": sorted(GENERIC_GETATTRO), "generic_setattro": sorted(GENERIC_SETATTRO), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "member_docs": MEMBER_DOCS, "wrapper_docs": WRAPPER_DOCS, "method_docs": METHOD_DOCS, "final": sorted(FINAL), "solid": sorted(SOLID), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "generic_getattro": sorted(GENERIC_GETATTRO), "generic_setattro": sorted(GENERIC_SETATTRO), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:]), "bootstrap_classes": bootstrap_classes()}))
 '''
 
@@ -297,7 +306,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
         native += ["_frozen_importlib", "_frozen_importlib_external"]
         out = subprocess.run([sys.executable, str(script), *native], capture_output=True, text=True, check=True, cwd=tmp)
     data = json.loads(out.stdout)
-    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "weakref", "itemsize", "state", "shortname", "generic_getattro", "generic_setattro", "builtin_module") for n in data[scope]}
+    names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "solid", "weakref", "itemsize", "state", "shortname", "generic_getattro", "generic_setattro", "builtin_module") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
     names |= {(f"{scope}:{t}", value) for scope in ("flags", "heapflags", "offsets") for t, value in data[scope].items()}
