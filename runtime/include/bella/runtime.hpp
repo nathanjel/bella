@@ -1291,15 +1291,6 @@ inline void look_if_noted() {                    // the look when a call is over
 }
 void look_if_lean();                             // look_if_noted() in a lean build alone: before a call that may wait, where CPython has no look,
                                                  // since its generated code looked at the last entry or turn (docs/deviations.toml D-24)
-// A decimal integer literal of the main program with more than 640 digits (pipeline/build.py, long_literals): CPython's
-// parser refuses one longer than the limit of digits at each start; the compiled program's start does (RL-555, C-8-18)
-struct LongLiteral {
-    int digits;                                  // without the underscores
-    int line;
-    const char* text;                            // the line it is on, as the SyntaxError's text has it
-    int warned;                                  // how many of the compiler's warnings CPython gives before it refuses this one
-};
-void set_long_literals(std::span<const LongLiteral> literals);
 // What CPython's compiler warns of in the main program's text (pipeline/build.py, compiler_warnings: asked of CPython at the
 // build), in the order it warns. CPython compiles a main program at each start and gives them each time, before the first
 // statement; the compiled program's start does (RL-572, C-8-19). A build with --syntax-warnings=off has no table (D-29)
@@ -1309,6 +1300,16 @@ struct CompilerWarning {
     int line;
 };
 void set_compiler_warnings(std::span<const CompilerWarning> warnings);
+// A decimal integer literal of the main program with more than 640 digits (pipeline/build.py, long_literals): CPython's
+// parser refuses one longer than the limit of digits at each start; the compiled program's start does (RL-555, C-8-18)
+struct LongLiteral {
+    int digits;                                  // without the underscores
+    int line;
+    const char* text;                            // the line it is on, as the SyntaxError's text has it
+    const CompilerWarning* warned;               // what CPython's compiler warns of when its parser refuses this one: the warnings until
+    int warned_count;                            // then and the tokenizer's of the rest of the text (RL-611); none for a literal no limit refuses first
+};
+void set_long_literals(std::span<const LongLiteral> literals);
 void set_lean(bool lean);                        // the fidelity the program's units were compiled with (pipeline/build.py main_unit: BELLA_IS_LEAN), before run_main
 void signals_init();                             // _PySignal_Init: _signal imported, which reads the dispositions and, in an exact build, takes SIGINT if it was the default's
 void signals_fini();                             // _PySignal_Fini: the table emptied, each slot before its object goes; a signal Python handled is the default's again

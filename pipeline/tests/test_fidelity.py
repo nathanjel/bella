@@ -91,7 +91,8 @@ def test_the_command_line_names_the_build() -> None:
         fake = Path(tmp, "binary")
         fake.write_bytes(b"")
 
-        def fake_build(program: Path, filename: str, *, notes: bool = True, fidelity: str = "exact", syntax_warnings: bool = True) -> Path:
+        def fake_build(program: Path, filename: str, *, notes: bool = True, fidelity: str = "exact", syntax_warnings: bool = True,
+                       main_file: str | None = None) -> Path:
             asked.append(fidelity)
             return fake
 

@@ -26,14 +26,15 @@ from __future__ import annotations
 
 import _imp
 import ast
+import io
 import json
 import os
 import sys
+import tokenize
 import tomllib
 from dataclasses import dataclass
 from functools import cache
 from importlib.machinery import PathFinder
-from importlib.util import decode_source
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,9 +44,15 @@ FIRST = frozenset(sys.builtin_module_names) | FROZEN   # found before sys.path
 
 
 def read_source(path: Path) -> str:
-    """A module's text as CPython reads it: its PEP 263 cookie or BOM, universal newlines."""
+    """A module's text as CPython reads it: its PEP 263 cookie or BOM, universal newlines. The cookie counts on the first two
+    lines as the tokenizer counts lines, a carriage return alone ending one too. importlib.util.decode_source is these steps
+    but for that: its tokenize.detect_encoding reads lines by the line feed alone, so a file whose lines end in carriage
+    returns is one long first line to it, and a cookie anywhere in a file that begins with a comment decided the encoding
+    (RL-610)."""
+    data = path.read_bytes()
     try:
-        return decode_source(path.read_bytes())
+        encoding = tokenize.detect_encoding(io.BytesIO(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).readline)[0]
+        return io.IncrementalNewlineDecoder(None, True).decode(data.decode(encoding))
     except (UnicodeDecodeError, LookupError) as exc:
         raise SyntaxError(f"{path}: {exc}") from exc
 

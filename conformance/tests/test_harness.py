@@ -29,14 +29,18 @@ def test_user_supplied_messages_stay_observable() -> None:
 
 
 def test_a_warnings_line_names_its_file_by_the_base_name() -> None:
-    """A recording must not depend on where the repository is: a warning that names a file by its whole path keeps the
-    base name, the line and the words, and the source line under it; a warning with another kind of name is untouched."""
-    warned = ('/x/cases/c.py:7: SyntaxWarning: "is" with \'int\' literal. Did you mean "=="?\n  if n is 1:\n'
+    """A recording must not depend on where the repository is: a warning that names a file of the cases' directory by its
+    whole path keeps the base name, the line and the words, and the source line under it. Every other name stays as it is
+    (review A26, RL-608): another directory, the same file by another spelling, a name that is no path."""
+    here = str(harness.CASES) + "/"
+    warned = (here + 'c.py:7: SyntaxWarning: "is" with \'int\' literal. Did you mean "=="?\n  if n is 1:\n'
               "sys:1: ResourceWarning: unclosed file\n<string>:2: DeprecationWarning: old\n")
-    assert harness.mask_stderr(warned) == warned.removeprefix("/x/cases/")
-    assert harness.mask_stderr(warned) == harness.mask_stderr(warned.replace("/x/cases/", "/elsewhere/"))
+    assert harness.mask_stderr(warned) == warned.removeprefix(here)
     assert harness.mask_stderr(warned) != harness.mask_stderr(warned.replace(":7:", ":8:"))
     assert harness.mask_stderr(warned) != harness.mask_stderr(warned.replace("if n is 1", "if n is 2"))
+    for other in ("/elsewhere/", here + "../cases/", here + "sub/", here.rstrip("/") + "//"):
+        elsewhere = warned.replace(here, other)
+        assert harness.mask_stderr(elsewhere) == elsewhere != harness.mask_stderr(warned), other
 
 
 def test_check_fails_closed() -> None:

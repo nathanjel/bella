@@ -667,6 +667,16 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
+* **For the author, Question 27 (RL-604, review A26, 2026-11-21):** what `sys.modules` holds before a program's first statement
+  differs from CPython's for every program, in members and in order (CPython's start has `_thread`, `_weakref`, `marshal`,
+  `posix`, `time`, `zipimport` there, and `site`'s imports unless `-S`; a compiled program `_contextvars`), and no deviation
+  says so. Three ways: a deviation that says it; the start's modules as `python -S` has them; as `python` has them.
+* **Open from review A26** (2026-11-21): the words of a refusal for a text whose encoding CPython's file tokenizer refuses (a
+  mark of the byte order with another cookie, a UTF-16 text) are the host's `decode_source` and `compile()`'s, not the file
+  tokenizer's, which Python code cannot call (RL-607; low, a refused program either way). And RL-605 is a stop that names
+  itself: the limit of digits changed while one of the compiler's warnings is shown, in a text with a literal a limit can
+  refuse. Exact needs where each literal stands among the warnings, which the build can ask of the host by compiling under a
+  recorder that lifts the limit at the n-th warning (the compile succeeds while the literal comes after it).
 * **Open from review A25** (2026-11-21), each confirmed on both sides: `Struct.iter_unpack` keeps an export of its buffer where the
   prelude copies it (RL-583, with the memoryview step); the item iterators of dict and OrderedDict keep their last pair, as
   `enumerate` and `zip` do since RL-551 (RL-584); a BufferedRWPair's end, and an exact BytesIO's or StringIO's, runs no finaliser of

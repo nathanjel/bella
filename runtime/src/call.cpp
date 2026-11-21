@@ -3502,14 +3502,14 @@ std::span<const LongLiteral>& long_literals() {
     return literals;
 }
 const LongLiteral* refused_literal() {           // the first in the text that is longer than the limit the environment gave
-    int limit = start_up().int_max_str_digits;
+    int limit = max_str_digits();
     if (limit <= 0) return nullptr;
     for (const LongLiteral& literal : long_literals())
         if (literal.digits > limit) return &literal;
     return nullptr;
 }
 void refuse_long_literal(const char* main_file, const LongLiteral& literal) {
-    Ref message = str_new("Exceeds the limit (" + std::to_string(start_up().int_max_str_digits) +
+    Ref message = str_new("Exceeds the limit (" + std::to_string(max_str_digits()) +
                           " digits) for integer string conversion: value has " + std::to_string(literal.digits) +
                           " digits; use sys.set_int_max_str_digits() to increase the limit" +
                           " - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.");
@@ -3545,10 +3545,22 @@ void warn_as_the_compiler(const char* main_file, const CompilerWarning& warning)
     }
 }
 void as_compiled_at_each_start(const char* main_file) {
+    // A refused literal has its own list: the warnings until the parser met it and then the tokenizer's of the rest of the
+    // text, which CPython reads on to look for a tokenizer's error (_PyPegen_tokenize_full_source_to_check_for_errors); not
+    // the first ones of the whole compile's (RL-611)
     const LongLiteral* refused = refused_literal();
-    std::span<const CompilerWarning> warnings = compiler_warnings();
-    size_t given = refused != nullptr ? std::min(warnings.size(), static_cast<size_t>(refused->warned)) : warnings.size();
-    for (const CompilerWarning& warning : warnings.first(given)) warn_as_the_compiler(main_file, warning);
+    std::span<const CompilerWarning> warnings = refused != nullptr
+        ? std::span<const CompilerWarning>(refused->warned, static_cast<size_t>(refused->warned_count)) : compiler_warnings();
+    // CPython reads the limit when its parser meets each literal, and what shows a warning before that may change it (a
+    // warnings.py of the program's own, imported for the first one). Where each literal stands among the warnings is not
+    // noted, so a start whose limit is another after a warning than before it stops by name (RL-605)
+    int limit = max_str_digits();
+    for (const CompilerWarning& warning : warnings) {
+        warn_as_the_compiler(main_file, warning);
+        if (!long_literals().empty() && max_str_digits() != limit)
+            throw NotImplemented("the limit of digits changed while the compiler's warnings of the main program's text were given, "
+                                 "and the text has a literal a limit can refuse");
+    }
     if (refused != nullptr) refuse_long_literal(main_file, *refused);
 }
 }  // namespace
