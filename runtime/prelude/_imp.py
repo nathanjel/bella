@@ -21,7 +21,16 @@ try:
     _bella_set_lazy_attributes                   # noqa: B018  # _imp._set_lazy_attributes
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
+    _buffer_bytes                                # noqa: B018  # a bytes-like object's octets as an exact bytes: the runtime's
 except NameError:
+
+    def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
+        return type(value) is memoryview
+
+    def _buffer_bytes(value: object) -> bytes:   # a stand-in for CPython's run of this file
+        return bytes(value)  # type: ignore[call-overload]
+
     from collections.abc import Callable
     from typing import Any
 
@@ -159,6 +168,8 @@ def source_hash(*args: object, **kwds: object) -> bytes:
     k = _number_index(key)                       # the clinic's `long`
     if k > 2**63 - 1 or k < -(2**63):
         raise OverflowError("Python int too large to convert to C long")
+    if _is_view(source):
+        source = _buffer_bytes(source)           # a memoryview: its simple buffer
     if not issubclass(type(source), (bytes, bytearray)):
         if _has_slot(source, "__buffer__"):
             _bella_refuse("[P2+] the buffer protocol (__buffer__)")

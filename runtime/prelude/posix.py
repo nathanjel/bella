@@ -33,7 +33,12 @@ try:
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
     _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
+    _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
+
+    def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
+        return type(value) is memoryview
+
     from collections.abc import Callable
     from typing import Any
 
@@ -616,6 +621,10 @@ def _buffers(buffers: object, count: int, writable: bool) -> list[object]:   # i
             out.append(item)
         elif issubclass(type(item), bytes):
             raise BufferError("Object is not writable.")
+        elif _is_view(item) and not writable:
+            out.append(_buffer_bytes(item))      # a memoryview to write from: its simple buffer
+        elif _is_view(item):
+            _refuse("os: a memoryview as a buffer to read into")
         elif _has_slot(item, "__buffer__"):
             _refuse("os: a buffer that is not bytes or bytearray")
         else:
@@ -1198,6 +1207,8 @@ def write(*args: object, **kwds: object) -> int:
     _positional("write", args, kwds, 2)
     fd = _int(args[0])
     data = args[1]
+    if _is_view(data):
+        data = _buffer_bytes(data)               # a memoryview: its simple buffer
     if not issubclass(type(data), (bytes, bytearray)):
         if _has_slot(data, "__buffer__"):
             _refuse("os.write() of a buffer that is not bytes or bytearray")
@@ -2044,6 +2055,8 @@ def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
     _positional("pwrite", args, kwds, 3)
     fd = _int(args[0])
     data = args[1]
+    if _is_view(data):
+        data = _buffer_bytes(data)               # a memoryview: its simple buffer
     if not issubclass(type(data), (bytes, bytearray)):   # the Py_buffer converter
         if _has_slot(data, "__buffer__"):
             _refuse("os.pwrite() of a buffer that is not bytes or bytearray")

@@ -1472,7 +1472,6 @@ Ref c_str(Obj, Args a) {                         // unicode_new_impl
     if (as_str(x) != nullptr) raise_new("TypeError", "decoding str is not supported");
     return str_from_bytes(x, encoding, errors);
 }
-Ref c_memoryview(Obj, Args) { throw NotImplemented("[P2+] memoryview and the buffer protocol (spec section 3)"); }
 Ref c_bool(Obj, Args a) {
     clinic(a, "bool", "bool", 0, 1);
     return Ref::steal(boolean(a.npos == 1 && truth(a.pos(0))));
@@ -1540,7 +1539,7 @@ Module* make_builtins() {
              {"str", t.str, c_str}, {"type", t.type, nullptr}, {"bool", t.bool_, c_bool}, {"range", t.range, c_range},
              {"tuple", t.tuple, c_tuple}, {"list", t.list, c_list}, {"int", t.int_, nullptr},
              {"object", t.object, nullptr}, {"dict", t.dict, nullptr}, {"frozendict", t.frozendict, c_frozendict}, {"float", t.float_, nullptr}, {"complex", t.complex_, nullptr},
-             {"bytes", t.bytes, nullptr}, {"bytearray", t.bytearray, nullptr}, {"memoryview", t.memoryview, c_memoryview}}) {
+             {"bytes", t.bytes, nullptr}, {"bytearray", t.bytearray, nullptr}}) {
         put(d, name, Obj::of(cls));
         if (ctor != nullptr) constructors()[cls] = ctor;
     }
@@ -2143,6 +2142,7 @@ Ref i_buffer_bytes(Obj, Args a) {
     positional_only(a, "_buffer_bytes", 1, 1);
     Obj v = a.pos(0);
     if (is_kind(v, Kind::Bytes) && !has_attributes(v.object())) return Ref::share(v);
+    if (is_memoryview(v)) return bytes_new(simple_view(v));   // PyObject_GetBuffer(PyBUF_SIMPLE): contiguous, or BufferError
     if (!is_kind(v, Kind::Bytes) && !is_kind(v, Kind::ByteArray))
         raise_new("TypeError", "a bytes-like object is required, not '" + type_of(v)->name + "'");
     return bytes_new(static_cast<BytesObject*>(v.object())->data);
@@ -3942,7 +3942,8 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                              {"_set_context", i_set_context}, {"_type_name", i_type_name}, {"_class_name", i_class_name},
                              {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname},
                              {"_is_c_type", i_is_c_type}, {"_own_dict", i_own_dict}, {"_tp_init_is", i_tp_init_is}, {"_tp_new_is", i_tp_new_is},
-                             {"_sequence_size", i_sequence_size}, {"_sequence_repeat", i_sequence_repeat}, {"_method_new", i_method_new}}) {
+                             {"_sequence_size", i_sequence_size}, {"_sequence_repeat", i_sequence_repeat}, {"_method_new", i_method_new},
+                             {"_bella_export", i_bella_export}, {"_is_view", i_is_view}}) {
                         Ref b = own(new Builtin(n, fn));   // a chained error's context, and a type's name as the C has it (RL-759, RL-767)
                         put(pm->dict, n, b.get());
                     }
@@ -4020,6 +4021,10 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                             note_prelude_class(static_cast<ClassObject*>(v.object()));
                             forget_python_origin(static_cast<ClassObject*>(v.object()));
                             static_cast<ClassObject*>(v.object())->has_weakref = cpython_has("weakref", static_cast<ClassObject*>(v.object())->name);
+                            if (static_cast<ClassObject*>(v.object())->name == "memoryview") {   // the type the runtime's buffers ask for
+                                types().memoryview = static_cast<ClassObject*>(v.object());
+                                types().memoryview->final_type = cpython_has("final", "memoryview");
+                            }
                         }
                         if (is_kind(v, Kind::PyFunction)) v.object()->cls = types().builtin;   // print is a builtin
                         dict_set(builtins_module()->dict, n, v);

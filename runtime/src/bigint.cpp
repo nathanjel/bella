@@ -619,7 +619,8 @@ Ref from_bytes_m(Obj cls, Args a) {              // int_from_bytes_impl: (bytes,
     if (given[0].is_unset()) raise_new("TypeError", "from_bytes() missing required argument 'bytes' (pos 1)");
     bool little = little_order(given[1], "from_bytes");
     bool is_signed = !given[2].is_unset() && truth(given[2]);
-    Ref data = object_bytes(given[0]);
+    // a memoryview: its simple buffer (BufferError for one whose items are not next to each other); the rest PyObject_Bytes
+    Ref data = is_memoryview(given[0]) ? bytes_new(simple_view(given[0])) : object_bytes(given[0]);
     std::string text = bytes_data(data.get());
     if (!little) std::reverse(text.begin(), text.end());
     bn::Nat words(text.size() / 8 + 1, 0);

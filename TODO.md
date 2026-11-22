@@ -734,23 +734,14 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **`ast.AST.__init__` after a failed store of a field whose name has a `__hash__` written in Python stops by name (RL-852).**
   CPython calls the hash with the store's error still set, and its body ends with a SystemError at the first C function it
   calls. Exact only with a way to run a function of the program's "with an exception set"; nothing else needs one so far.
-* **The minimal memoryview (the author's decision of 2026-11-14; next toward increment 1c, with the collector).** Of the nine
-  \[P1\] cases that are not in the compiled baseline (2026-11-22), six stop at `gc.collect` (C-3-12, C-7-06, C-7-11, C-9-01,
-  C-9-02, C-9-07: the collector in the header), two at memoryview (C-7-01, C-7-10), and C-9-11 differs (a traceback keeps
-  its frame's locals: RL-222, with the collector). The case is in: C-6-25 (construction and its refusals, length, items,
-  slices as views, what a view says, `tobytes`, the places that take bytes-like data, `release` and `with`, and the hold on a
-  bytearray's size); it passes under both evaluators, which have the host's memoryview, and stops compiled. The way planned:
-  (1) done 2026-11-22: the reference model (`refmodel/objects.py`, "Buffers"; the self-test and the Hypothesis machine run it
-  against CPython's memoryview over tagged bytearrays and bytes); the header has the count already (`BytesObject::exports`,
-  for `re`'s scanner) and `_canresize` reads it. (2) The hold as
-  an object of the runtime's whose end lets go of the exporter (CPython's `_PyManagedBuffer`): no prelude class can run
-  code at its end without a `__del__` CPython's type does not have. (3) `memoryview` itself as a class of the builtins
-  prelude over the hold and a start, a step and a length, reading the exporter's octets where they are (a bytearray changed
-  in place is seen). (4) A view wherever bytes-like data is taken: the runtime's `is_bytes_like`, `bytes_data` and
-  `_buffer_bytes`, and the `_buffer` helpers of the preludes, which stop today at `__buffer__`. (5) The specification's
-  two rows (Builtins; `bytes`, `bytearray`) under a version entry, the author's words. What the decision leaves \[P2+\]:
-  other formats, `cast`, and the buffer protocol on a program's own classes; the names table stops the rest by name. With
-  it: RL-702 (a prelude copies a bytearray's bytes where the C holds a view) and RL-583 (`Struct.iter_unpack`'s export).
+* **The minimal memoryview: done 2026-11-22 (C-6-25, spec v0.29; DECISIONS).** Left of CPython's type, each a stop by name:
+  `cast`, `hex`, `count`, `index`, `toreadonly`, `__buffer__` and `__release_buffer__`, slice assignment, a view as a buffer to
+  write into (`readinto`, `pack_into`, `os.readv`), `__sizeof__`; and a buffer of a view held by a consumer other than `re` (in
+  CPython any consumer holds one while it runs, so a release in a callback is a BufferError: RL-702's class). With RL-702 and
+  RL-583. Of the nine \[P1\] cases outside the compiled baseline six are left, all waiting for the collector.
+* **`vars()` of a built-in type lists only the names the runtime has (found 2026-11-22 with the memoryview).** `vars(dict)` has
+  no `__sizeof__` where `dir(dict)` and CPython's `vars(dict)` have it; the same for every type with a name in
+  `conformance/names-baseline.txt`. A listing should have them (as `dir()` does) or stop by name; the names table knows which.
 * **For the author, a question to put (2026-11-22): `__sizeof__` and `sys.getsizeof`.** 163 of the 182 stops the sweep of
   argument counts lists are a type's `__sizeof__`: no type answers it. CPython's numbers are the sizes of its own C structs
   (`tp_basicsize` and an item size, plus what a type allocates beside the object), which are not the sizes a compiled

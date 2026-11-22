@@ -463,6 +463,15 @@ void fill_abc(Module* m);                        // runtime/src/abc.cpp: the mod
 void init_bytes();
 bool is_bytes_like(Obj v);
 std::string& bytes_data(Obj v);
+// A memoryview (runtime/prelude/memoryview.py's class): its octets where they are, as PyObject_GetBuffer(PyBUF_SIMPLE) gives them
+// (ValueError when it is released, BufferError when its items are not next to each other), or copied as PyBuffer_ToContiguous
+// copies them (any step); view_simple_ok says whether the first would succeed, for the callers that word the failure themselves
+bool is_memoryview(Obj v);
+std::string_view simple_view(Obj v);
+std::string view_copy(Obj v);
+bool view_simple_ok(Obj v);
+Ref i_bella_export(Obj, Args a);                 // (obj, delta): a bytearray's count of exports, as a view's hold takes and gives it
+Ref i_is_view(Obj, Args a);                      // whether the object is a memoryview, whatever builtins.memoryview is now
 Ref bytes_new(std::string_view s);
 Ref bytes_format(Obj format, Obj args, bool bytearray);   // bytes % args, bytearray % args (_PyBytes_FormatEx)
 Obj bytes_constant(const char* data, std::size_t size);   // a module's constant: it keeps the count

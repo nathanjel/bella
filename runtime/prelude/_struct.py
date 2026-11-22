@@ -29,7 +29,12 @@ try:
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
+
+    def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
+        return type(value) is memoryview
+
     from collections.abc import Callable
     from typing import Any
 
@@ -98,6 +103,8 @@ _ABSENT: object = object()
 def _is_bytes_like(value: object) -> bool:
     if issubclass(type(value), (bytes, bytearray)):
         return True
+    if _is_view(value):                          # a memoryview, whose simple buffer _buffer_bytes takes
+        return True
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     return False
@@ -112,6 +119,8 @@ def _buffer(value: object) -> bytes:             # Py_buffer, read-only: the byt
 def _rw_buffer(value: object, function: str, position: int) -> bytearray:   # Py_buffer(accept={rwbuffer}): a bytearray, the one writable buffer
     if issubclass(type(value), bytearray):
         return value  # type: ignore[return-value]
+    if _is_view(value):
+        _bella_refuse("a memoryview as a writable buffer (" + function + "() argument " + str(position) + ")")
     if not issubclass(type(value), bytes) and _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError(function + "() argument " + str(position) + " must be read-write bytes-like object, not " + _tp_name(value))

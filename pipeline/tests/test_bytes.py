@@ -92,7 +92,7 @@ def _refused(src: str, reason: str) -> None:
 
 
 REFUSED = {
-    "memoryview": ("memoryview(b'')\n", "[P2+]"),
+    "memoryview_cast": ("memoryview(b'ab').cast('c')\n", "memoryview.cast"),   # outside the minimal memoryview of 2026-11-14
     "a_buffer": ("class B:\n    def __buffer__(self, flags):\n        return None\nbytes(B())\n", "[P2+]"),
     "a_buffer_as_an_argument": ("class B:\n    def __buffer__(self, flags):\n        return None\nb'a'.find(B())\n", "[P2+]"),
     "charmap": ("import codecs\ncodecs.charmap_decode(b'a')\n", "_codecs.charmap_decode (not a phase-1 codec"),

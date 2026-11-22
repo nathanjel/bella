@@ -91,7 +91,7 @@ Types& types() {
         x.bytearray = builtin_type("bytearray", {x.object});
         x.bytes_iterator = builtin_type("bytes_iterator", {x.object});
         x.bytearray_iterator = builtin_type("bytearray_iterator", {x.object});
-        x.memoryview = builtin_type("memoryview", {x.object});
+        x.memoryview = nullptr;                  // runtime/prelude/memoryview.py's class, once the prelude has run (call.cpp)
         x.iterator = builtin_type("iterator", {x.object});
         x.set = builtin_type("set", {x.object});
         x.frozenset = builtin_type("frozenset", {x.object});

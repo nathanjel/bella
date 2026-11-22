@@ -65,7 +65,7 @@ def test_callable_iterator_and_unicode_tables() -> None:
 
 def test_what_is_absent_stops_by_name() -> None:
     same("import re\nprint(re.compile('a').findall.__doc__, re.Pattern.search.__doc__, re.Match.group.__doc__, re.compile('a').match('a').span.__doc__)")   # the table's
-    for body, name in (("import re\nre.compile('a').search(memoryview(b'a'))", "memoryview"),):
+    for body, name in (("import re\nre.compile(b'a').search(memoryview(b'a')).group.__text_signature__", "__text_signature__"),):
         with tempfile.TemporaryDirectory() as tmp:
             prog = Path(tmp, "prog.py")
             prog.write_text(f"print('start')\n{body}\n", encoding="utf-8")

@@ -85,7 +85,8 @@ VENDORED_C = sorted((ROOT / "runtime" / "vendor" / "zlib-1.3.2").glob("*.c"))
 VENDORED_H = sorted((ROOT / "runtime" / "vendor" / "zlib-1.3.2").glob("*.h"))
 # the prelude's modules, in this order, each run as the module it names (runtime/src/call.cpp, run_main)
 PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT / "runtime" / "prelude" / "builtins.py", "builtins"),
-           (ROOT / "runtime" / "prelude" / "iterating.py", "builtins"), (ROOT / "runtime" / "prelude" / "templatelib.py", "builtins"),
+           (ROOT / "runtime" / "prelude" / "iterating.py", "builtins"), (ROOT / "runtime" / "prelude" / "memoryview.py", "builtins"),
+           (ROOT / "runtime" / "prelude" / "templatelib.py", "builtins"),
            (ROOT / "runtime" / "prelude" / "bootstrap.py", "_frozen_importlib"),
            (ROOT / "runtime" / "prelude" / "bootstrap_external.py", "_frozen_importlib_external")]
 # built-in modules CPython writes in C and this runtime in Python: compiled with the prelude, run at the

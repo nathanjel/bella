@@ -24,7 +24,12 @@ try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
+
+    def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
+        return type(value) is memoryview
+
     from collections.abc import Callable
     from typing import Any
 
@@ -104,6 +109,8 @@ def _zlib_error(err: int, zmsg: object, msg: str) -> error:   # zlib_error
 
 def _buffer(value: object) -> bytes:             # Py_buffer: bytes, bytearray; the rest stops by name or is no buffer
     if issubclass(type(value), (bytes, bytearray)):
+        return _buffer_bytes(value)
+    if _is_view(value):                          # a memoryview: its simple buffer (BufferError where its items are not next to each other)
         return _buffer_bytes(value)
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
@@ -491,7 +498,7 @@ def decompressobj(*args: object, **kwds: object) -> Decompress:
     wbits = MAX_WBITS if given[0] is _ABSENT else _int(given[0])
     zdict: object = None                         # kept as given: a zlib stream reads its buffer when it asks for a dictionary
     if given[1] is not _ABSENT:
-        if not issubclass(type(given[1]), (bytes, bytearray)) and not _has_slot(given[1], "__buffer__"):
+        if not issubclass(type(given[1]), (bytes, bytearray)) and not _is_view(given[1]) and not _has_slot(given[1], "__buffer__"):
             raise TypeError("zdict argument must support the buffer protocol")
         zdict = given[1]
     err, handle, zmsg = _zlib("inflate_init", wbits)

@@ -20,7 +20,12 @@ try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
+
+    def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
+        return type(value) is memoryview
+
     from collections.abc import Callable
     from typing import Any
 
@@ -64,6 +69,8 @@ def _buffer(value: object) -> bytes:             # GET_BUFFER_VIEW_OR_ERROUT
     if issubclass(type(value), str):
         raise TypeError("Strings must be encoded before hashing")
     if issubclass(type(value), (bytes, bytearray)):
+        return _buffer_bytes(value)
+    if _is_view(value):                          # a memoryview: its simple buffer (BufferError where its items are not next to each other)
         return _buffer_bytes(value)
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")

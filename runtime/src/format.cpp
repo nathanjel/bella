@@ -1286,6 +1286,7 @@ struct BytesPercent {
     }
     std::string format_obj(Obj v) {              // format_obj: the octets of a bytes-like object, or of what __bytes__ gives
         if (is_bytes_like(v)) return bytes_data(v);
+        if (is_memoryview(v)) return view_copy(v);   // %b: PyBUF_FULL_RO, then a contiguous copy, as bytes(v) makes it
         if (!type_lookup(type_of(v), intern("__bytes__")).is_unset()) {
             Ref r = call_special(v, "__bytes__", {});
             if (!is_kind(r.get(), Kind::Bytes))

@@ -18,7 +18,12 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
+
+    def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
+        return type(value) is memoryview
+
     from collections.abc import Callable
     from typing import Any
 
@@ -66,6 +71,8 @@ Incomplete.__module__ = "binascii"
 
 def _is_bytes_like(value: object) -> bool:
     if issubclass(type(value), (bytes, bytearray)):
+        return True
+    if _is_view(value):                          # a memoryview, whose simple buffer _buffer_bytes takes
         return True
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")

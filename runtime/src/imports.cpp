@@ -776,7 +776,7 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
                  {"_set_context", i_set_context}, {"_type_name", i_type_name}, {"_class_name", i_class_name},
                  {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname}, {"_own_dict", i_own_dict},
-                 {"_tp_init_is", i_tp_init_is}, {"_tp_new_is", i_tp_new_is}, {"_sequence_size", i_sequence_size},
+                 {"_tp_init_is", i_tp_init_is}, {"_tp_new_is", i_tp_new_is}, {"_is_view", i_is_view}, {"_sequence_size", i_sequence_size},
                  {"_sequence_repeat", i_sequence_repeat}}) {
             Ref b = own(new Builtin(n, fn));     // a chained error's context, and a type's name as the C has it (RL-759, RL-767)
             dict_set(ns->dict, Obj::of(intern(n)), b.get());

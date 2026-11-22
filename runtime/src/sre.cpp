@@ -912,8 +912,17 @@ bool get_string(Obj string, StringData& out) {   // getstring: a str's data, or 
         out.isbytes = 1;
         return true;
     }
+    if (is_memoryview(string)) {                 // PyObject_GetBuffer(PyBUF_SIMPLE): a failure is getstring's TypeError
+        if (!view_simple_ok(string)) return false;
+        std::string_view b = simple_view(string);
+        out.data = b.data();
+        out.length = static_cast<Py_ssize_t>(b.size());
+        out.charsize = 1;
+        out.isbytes = 1;
+        return true;
+    }
     if (!type_lookup(type_of(string), intern("__buffer__")).is_unset())
-        throw NotImplemented("a regular expression over an object with the buffer protocol that is not bytes or bytearray (CPython has it; the runtime does not yet)");
+        throw NotImplemented("a regular expression over an object with the buffer protocol that is not bytes, bytearray or memoryview (CPython has it; the runtime does not yet)");
     return false;
 }
 std::int64_t i64_of(Obj v) {
@@ -940,9 +949,9 @@ Ref i_slice(Obj, Args a) {                       // getslice: (string, start, en
         for (std::int64_t i = start; i < end; ++i) out += s->at(static_cast<std::size_t>(i));
         return str_from_codepoints(out);
     }
-    const std::string& b = bytes_data(string);
+    std::string_view b = is_memoryview(string) ? simple_view(string) : std::string_view(bytes_data(string));
     if (is_kind(string, Kind::Bytes) && !is_subclass_instance(string) && start == 0 && end == static_cast<std::int64_t>(b.size())) return Ref::share(string);
-    return bytes_new(std::string_view(b).substr(static_cast<std::size_t>(start), static_cast<std::size_t>(end - start)));
+    return bytes_new(b.substr(static_cast<std::size_t>(start), static_cast<std::size_t>(end - start)));
 }
 Ref i_has_backslash(Obj, Args a) {               // pattern_subx: is it a literal?  None when it is no string at all
     StringData s;
@@ -1038,8 +1047,13 @@ Ref i_validate(Obj, Args a) {                    // _validate: (code bytes, grou
     if (_validate_outer(program, program + size, i64_of(a.pos(1))) != 0) raise_new("RuntimeError", "invalid SRE code");
     return none_ref();
 }
-Ref i_export(Obj, Args a) {                      // (string, +1 or -1): PyObject_GetBuffer and PyBuffer_Release, which only a bytearray notices
-    if (is_kind(a.pos(0), Kind::ByteArray)) static_cast<BytesObject*>(a.pos(0).object())->exports += i64_of(a.pos(1));
+Ref i_export(Obj, Args a) {                      // (string, +1 or -1): PyObject_GetBuffer and PyBuffer_Release, which a bytearray
+    if (is_kind(a.pos(0), Kind::ByteArray)) static_cast<BytesObject*>(a.pos(0).object())->exports += i64_of(a.pos(1));   // and a
+    if (is_memoryview(a.pos(0))) {               // memoryview notice: a view with an export cannot be released (memory_getbuf)
+        Ref now = state_get(a.pos(0), intern("_exports"));
+        Ref next = int_from_i64(i64_of(now.get()) + i64_of(a.pos(1)));
+        state_set(a.pos(0), intern("_exports"), next.get());
+    }
     return none_ref();
 }
 Ref i_unicode_lower(Obj, Args a) { return int_from_i64(sre_lower_unicode(static_cast<unsigned int>(i64_of(a.pos(0))))); }

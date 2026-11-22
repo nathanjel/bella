@@ -23,6 +23,61 @@ BytesObject::BytesObject(Kind k, std::string d) : Object(k), data(std::move(d)) 
 bool is_bytes_like(Obj v) { return is_kind(v, Kind::Bytes) || is_kind(v, Kind::ByteArray); }
 std::string& bytes_data(Obj v) { return static_cast<BytesObject*>(v.object())->data; }
 
+// ---- a memoryview's octets (runtime/prelude/memoryview.py; refmodel/objects.py, "Buffers") ----
+// A view keeps its hold on the exporter in `_hold` (None once released), where the hold's `_obj` is the exporter, and the
+// items in `_start`, `_step` and `_length`. While the hold lasts a bytearray cannot change its size, so a contiguous view's
+// octets can be read where they are for as long as the caller holds the view.
+bool is_memoryview(Obj v) { return types().memoryview != nullptr && v.is_object() && type_of(v) == types().memoryview; }
+namespace {
+struct ViewParts {
+    Obj exporter;
+    std::int64_t start = 0, step = 1, length = 0;
+};
+std::int64_t field_int(Obj v, const char* name) {
+    Ref f = state_get(v, intern(name));
+    std::int64_t out = 0;
+    int_fits_i64(f.get(), out);
+    return out;
+}
+ViewParts view_parts(Obj v) {                     // CHECK_RELEASED, and where the items are
+    Ref hold = state_get(v, intern("_hold"));
+    if (hold.get() == None()) raise_new("ValueError", "operation forbidden on released memoryview object");
+    Ref exporter = state_get(hold.get(), intern("_obj"));
+    return {exporter.get(), field_int(v, "_start"), field_int(v, "_step"), field_int(v, "_length")};   // the view holds the exporter
+}
+}  // namespace
+bool view_simple_ok(Obj v) {
+    if (state_get(v, intern("_hold")).get() == None()) return false;
+    return field_int(v, "_length") == 1 || field_int(v, "_step") == 1;   // MV_C_CONTIGUOUS for one dimension
+}
+std::string_view simple_view(Obj v) {             // memory_getbuf without PyBUF_STRIDES
+    ViewParts p = view_parts(v);
+    if (p.length != 1 && p.step != 1) raise_new("BufferError", "memoryview: underlying buffer is not C-contiguous");
+    if (p.length == 0) return {};
+    return std::string_view(bytes_data(p.exporter)).substr(static_cast<std::size_t>(p.start), static_cast<std::size_t>(p.length));
+}
+std::string view_copy(Obj v) {                    // PyBuffer_ToContiguous over the view's items
+    ViewParts p = view_parts(v);
+    const std::string& all = bytes_data(p.exporter);
+    std::string out;
+    out.reserve(static_cast<std::size_t>(p.length));
+    for (std::int64_t i = 0; i < p.length; ++i) out += all[static_cast<std::size_t>(p.start + i * p.step)];
+    return out;
+}
+Ref i_bella_export(Obj, Args a) {
+    positional_only(a, "_bella_export", 2, 2);
+    if (is_kind(a.pos(0), Kind::ByteArray)) {
+        std::int64_t delta = 0;
+        int_fits_i64(a.pos(1), delta);
+        static_cast<BytesObject*>(a.pos(0).object())->exports += delta;
+    }
+    return none_ref();
+}
+Ref i_is_view(Obj, Args a) {
+    positional_only(a, "_is_view", 1, 1);
+    return Ref::steal(boolean(is_memoryview(a.pos(0))));
+}
+
 namespace {
 const Str* N(const char* s) { return intern(s); }
 bool is_bytearray(Obj v) { return is_kind(v, Kind::ByteArray); }
@@ -43,6 +98,7 @@ Ref piece_of(Obj self, std::string_view p) {
 
 std::string_view buffer_of(Obj arg) {             // PyObject_GetBuffer
     if (is_bytes_like(arg)) return bytes_data(arg);
+    if (is_memoryview(arg)) return simple_view(arg);
     if (!type_lookup(type_of(arg), N("__buffer__")).is_unset()) throw NotImplemented("[P2+] the buffer protocol (__buffer__)");
     raise_new("TypeError", "a bytes-like object is required, not '" + type_of(arg)->name + "'");
 }
@@ -74,6 +130,7 @@ Range2 adjusted(std::int64_t len, Args a, std::size_t first) {
 // parse_args_finds_byte: bytes-like, or an int that is one byte
 std::string sub_argument(Obj arg) {
     if (is_bytes_like(arg)) return bytes_data(arg);
+    if (is_memoryview(arg)) return std::string(simple_view(arg));
     if (!type_lookup(type_of(arg), N("__buffer__")).is_unset()) throw NotImplemented("[P2+] the buffer protocol (__buffer__)");
     if (!has_index(arg))
         raise_new("TypeError", "argument should be integer or bytes-like object, not '" + type_of(arg)->name + "'");
@@ -132,7 +189,7 @@ Ref tailmatch_m(Obj self, Args a) {               // _Py_bytes_tailmatch
             if (tail_one(s, sub, r, at_end)) return yes_no(true);
         return yes_no(false);
     }
-    if (!is_bytes_like(a.pos(0)) && type_lookup(type_of(a.pos(0)), N("__buffer__")).is_unset())
+    if (!is_bytes_like(a.pos(0)) && !is_memoryview(a.pos(0)) && type_lookup(type_of(a.pos(0)), N("__buffer__")).is_unset())
         raise_new("TypeError", std::string(name) + " first arg must be bytes or a tuple of bytes, not " + type_of(a.pos(0))->name);
     return yes_no(tail_one(s, a.pos(0), r, at_end));
 }
@@ -375,7 +432,8 @@ Ref join_m(Obj self, Args a) {                    // stringlib_bytes_join
     std::string out;
     const std::string sep = bytes_data(self);
     for (std::size_t i = 0; i < items.size(); ++i) {
-        if (!is_bytes_like(items[i]) && type_lookup(type_of(items[i]), N("__buffer__")).is_unset())
+        if ((!is_bytes_like(items[i]) && !is_memoryview(items[i]) && type_lookup(type_of(items[i]), N("__buffer__")).is_unset()) ||
+            (is_memoryview(items[i]) && !view_simple_ok(items[i])))
             raise_new("TypeError", "sequence item " + std::to_string(i) + ": expected a bytes-like object, " + type_of(items[i])->name + " found");
         if (i != 0) out += sep;
         out += buffer_of(items[i]);
@@ -1160,6 +1218,7 @@ Ref bytes_new_exact(Args rest) {
     }
     if (exact_bytes(x)) return Ref::share(x);   // PyBytes_FromObject: an exact bytes is itself; a subclass's octets are copied
     if (is_bytes_like(x)) return bytes_new(bytes_data(x));
+    if (is_memoryview(x)) return bytes_new(view_copy(x));   // _PyBytes_FromBuffer: PyBUF_FULL_RO, then a contiguous copy
     if (!type_lookup(type_of(x), N("__buffer__")).is_unset()) throw NotImplemented("[P2+] the buffer protocol (__buffer__)");
     Ref it;
     try {
@@ -1222,6 +1281,12 @@ Ref bytearray_init_m(Obj self, Args a) {          // bytearray___init___impl
         out = std::move(copy);
         return none_ref();
     }
+    if (is_memoryview(x)) {                      // bytearray___init___impl: PyObject_GetBuffer(PyBUF_FULL_RO) and PyBuffer_ToContiguous
+        std::string copy = view_copy(x);
+        can_resize(self, copy.size());
+        out = std::move(copy);
+        return none_ref();
+    }
     if (!type_lookup(type_of(x), N("__buffer__")).is_unset()) throw NotImplemented("[P2+] the buffer protocol (__buffer__)");
     Ref it;
     try {
@@ -1239,6 +1304,7 @@ Ref bytearray_init_m(Obj self, Args a) {          // bytearray___init___impl
 // ---- a bytearray changes ----
 std::string assigned_values(Obj values) {         // bytearray_ass_subscript's values
     if (is_bytes_like(values)) return bytes_data(values);
+    if (is_memoryview(values)) return view_copy(values);
     ClassObject* vt = type_of(values);
     if (has_index(values) || as_str(values) != nullptr || !type_lookup(vt, N("__int__")).is_unset() || !type_lookup(vt, N("__float__")).is_unset())   // PyNumber_Check
         raise_new("TypeError", "can assign only bytes, buffers, or iterables of ints in range(0, 256)");
@@ -1320,6 +1386,12 @@ Ref extend_m(Obj self, Args a) {
     Obj x = a.pos(0);
     if (is_bytes_like(x)) {
         std::string copy = bytes_data(x);
+        can_resize(self, bytes_data(self).size() + copy.size());
+        bytes_data(self) += copy;
+        return none_ref();
+    }
+    if (is_memoryview(x)) {                      // bytearray_extend: a buffer is a slice assignment at the end
+        std::string copy = view_copy(x);
         can_resize(self, bytes_data(self).size() + copy.size());
         bytes_data(self) += copy;
         return none_ref();
@@ -1687,7 +1759,7 @@ Ref bytes_compare(CmpOp op, Obj a, Obj b) {
     }
 }
 Ref bytes_concat(Obj a, Obj b) {                  // bytes_concat, bytearray_concat
-    if (!is_bytes_like(b) && type_lookup(type_of(b), N("__buffer__")).is_unset())
+    if ((!is_bytes_like(b) && !is_memoryview(b) && type_lookup(type_of(b), N("__buffer__")).is_unset()) || (is_memoryview(b) && !view_simple_ok(b)))
         raise_new("TypeError", "can't concat " + type_of(b)->name + " to " + (is_bytearray(a) ? "bytearray" : "bytes"));
     std::string_view right = buffer_of(b);
     if (!is_bytearray(a)) {                       // an empty side: the other, when it is an exact bytes (the left side asked first)
@@ -1699,7 +1771,7 @@ Ref bytes_concat(Obj a, Obj b) {                  // bytes_concat, bytearray_con
     return make_like(a, out);
 }
 void bytes_iadd(Obj a, Obj b) {
-    if (!is_bytes_like(b) && type_lookup(type_of(b), N("__buffer__")).is_unset())
+    if ((!is_bytes_like(b) && !is_memoryview(b) && type_lookup(type_of(b), N("__buffer__")).is_unset()) || (is_memoryview(b) && !view_simple_ok(b)))
         raise_new("TypeError", "can't concat " + type_of(b)->name + " to bytearray");
     std::string copy(buffer_of(b));
     can_resize(a, bytes_data(a).size() + copy.size());
@@ -1722,9 +1794,9 @@ Ref bytes_repeat(Obj self, std::int64_t count, bool in_place) {
     return make_like(self, out);
 }
 Ref str_from_bytes(Obj source, Obj encoding, Obj errors) {   // str(b, encoding, errors): PyUnicode_FromEncodedObject
-    if (!is_bytes_like(source))
+    if ((!is_bytes_like(source) && !is_memoryview(source)) || (is_memoryview(source) && !view_simple_ok(source)))
         raise_new("TypeError", "decoding to str: need a bytes-like object, " + type_of(source)->name + " found");
-    std::string copy = bytes_data(source);
+    std::string copy = is_memoryview(source) ? std::string(simple_view(source)) : bytes_data(source);
     std::optional<std::string> enc, err;
     if (!encoding.is_unset()) no_null(enc.emplace(as_str(encoding)->text));
     if (!errors.is_unset()) no_null(err.emplace(as_str(errors)->text));
