@@ -1,0 +1,23 @@
+import sys
+from collections import deque
+row=sys.argv[1]
+try:
+    if row in ('forward','reverse','zero'):
+        d=deque([1,2,3])
+        t=type(reversed(d) if row=="reverse" else iter(d))
+        class Index:
+            def __index__(self):
+                print("index")
+                d.append(4)
+                return 0 if row=="zero" else 1
+        print(list(t(d,Index())))
+    else:
+        class MM(type):
+            @property
+            def __flags__(cls): print("flags"); raise LookupError
+        class Bad(metaclass=MM): pass
+        class Meta(type):
+            @classmethod
+            def __prepare__(m,n,b): return Bad()
+        class X(metaclass=Meta): pass
+except BaseException as e: print(type(e).__name__)

@@ -35,16 +35,17 @@ _SEQUENCE = 1 << 5          # Py_TPFLAGS_SEQUENCE: list, tuple, range, ...; Sequ
 _MAPPING = 1 << 6           # Py_TPFLAGS_MAPPING: dict, mappingproxy, ...; Mapping.register sets it
 _MATCH_SELF = 1 << 22       # _Py_TPFLAGS_MATCH_SELF: bool, bytearray, bytes, dict, float, ...
 _type_mro = type.__dict__["__mro__"].__get__
+_type_flags = type.__dict__["__flags__"].__get__      # tp_flags, whatever a metaclass defines as __flags__ (RL-783)
 
 
 def match_is_sequence(subject: object) -> bool:
     """MATCH_SEQUENCE: by the type's flag (str, bytes and bytearray do not have it)."""
-    return bool(type(subject).__flags__ & _SEQUENCE)
+    return bool(_type_flags(type(subject)) & _SEQUENCE)
 
 
 def match_is_mapping(subject: object) -> bool:
     """MATCH_MAPPING: by the type's flag."""
-    return bool(type(subject).__flags__ & _MAPPING)
+    return bool(_type_flags(type(subject)) & _MAPPING)
 
 
 def match_keys(subject: object, keys: tuple[object, ...]) -> tuple[object, ...] | None:
@@ -95,7 +96,12 @@ def match_class(cls: object, subject: object, nargs: int, kwargs: tuple[str, ...
     """MATCH_CLASS: isinstance(subject, cls), then the positional attributes named by
     __match_args__ (or the subject itself, for a class that matches itself), then the keyword
     ones; an absent attribute ends the match (None)."""
-    if type not in _type_mro(type(cls)):
+    is_class = False                             # PyType_Check, by identity: `in` asks a metaclass's __eq__ (RL-784)
+    for klass in _type_mro(type(cls)):
+        if klass is type:
+            is_class = True
+            break
+    if not is_class:
         raise TypeError("class pattern must refer to a class")
     if not isinstance(subject, cls):  # type: ignore[arg-type]  # a class, checked above
         return None
@@ -113,7 +119,7 @@ def match_class(cls: object, subject: object, nargs: int, kwargs: tuple[str, ...
                 raise TypeError(f"{_bella_tp_name_of(cls)}.__match_args__ must be a tuple (got {_bella_tp_name_of(type(match_args))})")
         else:
             match_args = ()
-            match_self = bool(cls.__flags__ & _MATCH_SELF)
+            match_self = bool(_type_flags(cls) & _MATCH_SELF)  # type: ignore[arg-type]  # a class, checked above
         allowed = 1 if match_self else len(match_args)
         if allowed < nargs:
             plural = "" if allowed == 1 else "s"

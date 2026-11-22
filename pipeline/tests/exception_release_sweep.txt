@@ -1,0 +1,53 @@
+import builtins, io, zlib, csv, binascii, locale, struct, signal, json, re, os, sys, shutil, copy, warnings, codecs, _thread
+import _io, _csv, _locale, _struct, _signal, _json, _hmac
+MODULES=(builtins, io, _io, zlib, csv, _csv, binascii, locale, _locale, struct, _struct, signal, _signal, json, _json, _hmac, re, os, shutil,
+         copy, warnings, codecs, _thread)
+class Tag:
+    """What an exception holds: one in its arguments, one in its dict, and one in a local of the frame it was raised in,
+    which its traceback reaches. Each says when it goes."""
+    def __init__(self, log, name): self.log, self.name = log, name
+    def __del__(self): self.log.append(self.name)
+def make(cls, tag):
+    for arguments in ((tag,), (2, tag), ("utf-8", b"a", 0, 1, tag), ("utf-8", "a", 0, 1, tag), ("a", 0, 1, tag), ("m", [ValueError(tag)]),
+                      (tag, "doc", 0), (tag, "pattern", 0), (1, "command", tag), ("utf-8", b"a", 0, 1, "r"), ("utf-8", "a", 0, 1, "r"), ("a", 0, 1, "r")):
+        try: return cls(*arguments)
+        except Exception: pass
+    raise SystemExit("no instance of " + cls.__name__)
+def prepared(cls, log):
+    e = make(cls, Tag(log, "arguments"))
+    e.held = Tag(log, "dict")
+    return e
+def raising(cls, log):
+    local = Tag(log, "local")
+    raise prepared(cls, log)
+def through_a_closure(cls, log):
+    local = Tag(log, "local")
+    def inner(): return local, raising(cls, log)
+    inner()
+seen, classes = set(), []
+for module in MODULES:
+    for name in sorted(vars(module)):
+        value = vars(module)[name]
+        if isinstance(value, type) and issubclass(value, BaseException) and value not in seen:
+            seen.add(value)
+            classes.append((module.__name__ + "." + name, value))
+class Derived(io.UnsupportedOperation): pass
+class Slotted(zlib.error): __slots__ = ("extra",)
+classes += [("a class of the program's over io's", Derived), ("one with slots over zlib's", Slotted)]
+for label, cls in classes:
+    made = []
+    e = prepared(cls, made)
+    del e
+    raised = []
+    try: raising(cls, raised)
+    except BaseException as caught: right = type(caught) is cls
+    closed = []
+    try: through_a_closure(cls, closed)
+    except BaseException: pass
+    kept = []
+    try: raising(cls, kept)
+    except BaseException as caught: keep = caught
+    still = sorted(kept)
+    del keep
+    print(label, sorted(made), sorted(raised), right, sorted(closed), still, sorted(kept))
+print(len(classes))

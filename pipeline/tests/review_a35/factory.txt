@@ -1,0 +1,26 @@
+import sys,csv,io,itertools
+row=sys.argv[1]
+if row in ("reader","writer"):
+    t=type(csv.reader([]) if row=="reader" else csv.writer(io.StringIO()))
+    try:
+        class Sub(t): pass
+        print("created")
+    except BaseException as e: print(type(e).__name__)
+else:
+    active=False
+    class MM(type):
+        def __eq__(cls,other):
+            if active: print("meta eq"); raise ArithmeticError
+            return cls is other
+        __hash__=type.__hash__
+    class M(type,metaclass=MM): pass
+    class X(metaclass=M): pass
+    active=True
+    try:
+        if row=="match":
+            match X():
+                case X(): print("matched")
+        else:
+            class Y(X): pass
+            print("created")
+    except BaseException as e: print(type(e).__name__)

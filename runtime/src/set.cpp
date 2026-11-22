@@ -214,7 +214,7 @@ void set_update(Obj setv, Obj iterable) {
         return;
     }
     Ref it = iter(iterable);
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) set_add(setv, v.get());
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) set_add(setv, v.get());
 }
 
 // ---- set algebra and comparisons, as Objects/setobject.c computes them: the order keys go in
@@ -270,7 +270,7 @@ Ref intersection_any(Obj sov, Obj otherv) {
     Ref result = new_set_like(sov);
     SetObject* so = as_set(sov);
     Ref it = iter(otherv);
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) {
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) {
         std::int64_t hash = hash_of(v.get());    // PyObject_Hash, in its plain words
         if (contains_entry(so, v.get(), hash)) {
             set_add_hashed(result.get(), v.get(), hash);
@@ -292,7 +292,7 @@ void difference_update(Obj sov, Obj otherv) {    // set_difference_update_intern
         });
     } else {
         Ref it = iter(otherv);
-        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) discard_entry(so, v.get(), set_key_hash(v.get()));
+        for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) discard_entry(so, v.get(), set_key_hash(v.get()));
     }
     if (so->fill - so->used <= (so->table.size() - 1) / 4) return;    // more than a quarter are dummies: resized away
     resize(so, so->used > 50000 ? so->used * 2 : so->used * 4);
@@ -425,13 +425,13 @@ Ref dictview_intersect(Obj self, Obj other) {    // _PyDictView_Intersect
     if (set_like_view(other) && view_len(other) > len_self) std::swap(self, other);
     Ref result = own(new SetObject(false));
     Ref it = iter(other);
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
         if (contains(self, v.get())) set_add(result.get(), v.get());
     return result;
 }
 bool all_contained_in(Obj self, Obj other) {
     Ref it = iter(self);
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
         if (!contains(other, v.get())) return false;
     return true;
 }
@@ -503,7 +503,7 @@ Ref dictview_isdisjoint_m(Obj self, Args a) {    // dictviews_isdisjoint
         if (len_other > view_len(self)) std::swap(self, other);
     }
     Ref it = iter(other);
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
         if (contains(self, v.get())) return Ref::steal(boolean(false));
     return Ref::steal(boolean(true));
 }
@@ -640,7 +640,7 @@ Ref set_isdisjoint_m(Obj self, Args a) {        // set_isdisjoint_impl
         return Ref::steal(boolean(disjoint));
     }
     Ref it = iter(other);
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
         if (contains_key(so, v.get())) return Ref::steal(boolean(false));
     return Ref::steal(boolean(true));
 }
@@ -656,7 +656,7 @@ Ref set_issuperset_m(Obj self, Args a) {        // set_issuperset_impl
     onearg(a, named(self, "issuperset"));
     if (is_kind(a.pos(0), Kind::Set)) return Ref::steal(boolean(issubset(set_self(a.pos(0)), set_self(self))));
     Ref it = iter(a.pos(0));
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
         if (!contains_key(set_self(self), v.get())) return Ref::steal(boolean(false));
     return Ref::steal(boolean(true));
 }

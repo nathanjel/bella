@@ -138,6 +138,17 @@ def _repr_depth(self: object, depth: int) -> str:
 
 
 _in_repr: list[object] = []                      # Py_ReprEnter's stack, by identity
+_AST_ABSENT = object()                           # an attribute or an entry that is not there, told from None (RL-796)
+
+
+def _dict_item(d: object, key: object) -> object:
+    """PyDict_GetItemRef and PyDict_GetItemWithError: the dict's own lookup, whatever its class defines, and an internal
+    error for what is no dict (RL-795, RL-801)."""
+    if issubclass(type(d), dict):
+        return dict.get(d, key, _AST_ABSENT)  # type: ignore[arg-type]
+    if issubclass(type(d), frozendict):
+        return frozendict.get(d, key, _AST_ABSENT)  # type: ignore[arg-type]
+    raise SystemError("bad argument to internal function")
 
 
 class AST:
@@ -156,16 +167,20 @@ class AST:
         positional = args[1:]
         if numfields < len(positional):
             raise TypeError(_class_name(cls) + " constructor takes at most " + str(numfields) + " positional argument" + ("" if numfields == 1 else "s"))
-        for i, value in enumerate(positional):
-            setattr(self, fields[i], value)
-            remaining.discard(fields[i])
+        for i in range(len(positional)):
+            name = fields[i]                     # PySequence_GetItem, once: the name is kept for the store and the set (RL-800)
+            try:
+                setattr(self, name, positional[i])
+            finally:
+                remaining.discard(name)          # PySet_Discard runs whether the store failed or not
         if kwds:
             attributes = None
             for key, value in kwds.items():
                 if key in fields:
-                    if key not in remaining:
+                    size = len(remaining)
+                    remaining.discard(key)       # PySet_Discard says whether it was there: the key is hashed once
+                    if len(remaining) == size:
                         raise TypeError(_full_name(self) + " got multiple values for argument " + _repr_text(key))
-                    remaining.discard(key)
                 else:
                     if attributes is None:
                         attributes = cls._attributes
@@ -173,14 +188,14 @@ class AST:
                         raise TypeError(_full_name(self) + ".__init__ got an unexpected keyword argument " + _repr_text(key))
                 setattr(self, key, value)
         if remaining:
-            field_types = getattr(cls, "_field_types", None)
-            if field_types is None:
+            field_types = getattr(cls, "_field_types", _AST_ABSENT)   # PyObject_GetOptionalAttr: absent is not None
+            if field_types is _AST_ABSENT:
                 return
             missing: set[str] = set()
             for name in list(remaining):
-                if name not in field_types:
+                kind = _dict_item(field_types, name)     # PyDict_GetItemWithError: the dict's own lookup (RL-801)
+                if kind is _AST_ABSENT:
                     raise TypeError("Field " + _repr_text(name) + " is missing from " + _full_name(self) + "._field_types")
-                kind = field_types[name]
                 if issubclass(type(kind), type) and kind is expr_context:
                     setattr(self, name, _load_singleton)
                 elif type(kind) is _GENERIC_ALIAS:   # list[expr]: an empty list
@@ -198,15 +213,15 @@ class AST:
         if len(args) != 1:
             raise TypeError("AST.__reduce__() takes no arguments (" + str(len(args) - 1) + " given)")
         self = args[0]
-        d = getattr(self, "__dict__", None)
-        if d is None:
+        d = getattr(self, "__dict__", _AST_ABSENT)       # PyObject_GetOptionalAttr: an absent one is told from None (RL-796)
+        if d is _AST_ABSENT:
             return type(self), ()
-        fields = getattr(type(self), "_fields", None)
-        if fields is None:
+        fields = getattr(type(self), "_fields", _AST_ABSENT)
+        if fields is _AST_ABSENT:
             return type(self), (), d
         positional: list[object] = []
-        for name in fields:
-            if name not in d:
+        for i in range(len(fields)):                     # PySequence_Size, then PySequence_GetItem by index (RL-795)
+            if _dict_item(d, fields[i]) is _AST_ABSENT:
                 break
             positional.append(None)
         return type(self), tuple(positional), d
@@ -217,14 +232,18 @@ class AST:
         self = args[0]
         cls = type(self)
         payload: dict[str, object] = {}
-        d = getattr(self, "__dict__", None)
-        if d is not None:
-            for keys in (getattr(cls, "_fields", None), getattr(cls, "_attributes", None)):
-                if keys is None:
+        fields = getattr(cls, "_fields", _AST_ABSENT)            # the class's two first, then the object's dict (RL-797)
+        attributes = getattr(cls, "_attributes", _AST_ABSENT)
+        d = getattr(self, "__dict__", _AST_ABSENT)
+        if d is not _AST_ABSENT:
+            for keys in (fields, attributes):            # ast_type_replace_update_payload
+                if keys is _AST_ABSENT:
                     continue
-                for key in keys:
-                    if key in d:
-                        payload[key] = d[key]
+                for i in range(len(keys)):
+                    key = keys[i]
+                    value = _dict_item(d, key)
+                    if value is not _AST_ABSENT:
+                        payload[key] = value
         payload.update(kwds)
         return cls(**payload)
 

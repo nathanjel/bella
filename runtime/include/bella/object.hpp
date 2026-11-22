@@ -911,6 +911,8 @@ inline void set_release(ClassObject* c, std::vector<const Str*> order) {
     std::sort(named.begin(), named.end());
     std::sort(fields.begin(), fields.end());
     if (named != fields) throw ModelError("a built-in type's dealloc names each of its fields once: '" + c->name + "'");
+    // over a built-in base with fields the type's dealloc would end with the base's: refused, not half done (the model)
+    if (!c->native_fields.empty()) throw ModelError("a dealloc of its own over a built-in base with fields is not written: '" + c->name + "'");
     c->release_has_weak = std::find(order.begin(), order.end(), weak) != order.end();
     c->release_has_dict = std::find(order.begin(), order.end(), dict) != order.end();
     c->release = std::move(order);

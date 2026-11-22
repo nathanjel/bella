@@ -61,12 +61,14 @@ _END = object()
 def _next_only(it: object) -> object:
     """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
     operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
-    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765). The item is handed on and not kept: the C has
+    let go of it before it asks for the next one, and a loop of this file does the same with `del` (RL-782)."""
+    held: list[object] = []
     while True:
-        item = next(it, _END)  # type: ignore[call-overload]
-        if item is _END:
+        held.append(next(it, _END))  # type: ignore[call-overload]
+        if held[0] is _END:
             return
-        yield item
+        yield held.pop()
 
 
 def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
@@ -440,6 +442,7 @@ is true. If function is None, return the items that are true."""
             item = next(self._it)
             if (item if check_true else func(item)):
                 return item
+            del item                             # Py_DECREF(item) before the next tp_iternext (RL-782)
 
     def __reduce__(self, *args: object, **kwds: object) -> object:   # filter_reduce
         _no_arguments("filter.__reduce__", args, kwds)
@@ -457,20 +460,25 @@ def _min_max(name: str, args: tuple[object, ...], kwds: dict[str, object], small
     if positional and "default" in kwds:
         raise TypeError("Cannot specify a default for " + name + "() with multiple positional arguments")
     keyfunc = kwds.get("key")
-    it = _tp_iter(args if positional else args[0])
+    it = iter(args if positional else args[0])   # held here and asked with next(): it goes where the C lets go of it
     best_item: object = None
     best_value: object = None
     have = False
-    for item in it:
+    while True:
+        item = next(it, _END)
+        if item is _END:
+            break
         value = item if keyfunc is None else keyfunc(item)  # type: ignore[operator]
         if not have:
             best_item, best_value, have = item, value, True
         elif (value < best_value) if smaller else (value > best_value):  # type: ignore[operator]
-            best_item, best_value = item, value
+            best_value, best_item = value, item  # Py_DECREF(maxval); Py_DECREF(maxitem)
+        del item, value                          # the C holds neither across the next tp_iternext (RL-782)
     if not have:
         if "default" in kwds:
             return kwds["default"]
         raise ValueError(name + "() iterable argument is empty")
+    del best_value, it                           # Py_DECREF(maxval); Py_DECREF(it); return maxitem
     return best_item
 
 
@@ -544,8 +552,10 @@ may reject non-numeric types."""
             if (type(item) is int or type(item) is bool) and _LONG_MIN <= item and item <= _LONG_MAX and (
                     item <= _LONG_MAX - result if result >= 0 else item >= _LONG_MIN - result):
                 result = result + int(item)
+                del item                         # Py_DECREF(item) before the next tp_iternext, in every stage (RL-782)
                 continue
             result = result + item  # type: ignore[operator]
+            del item
             break
         else:
             return result
@@ -560,7 +570,9 @@ may reject non-numeric types."""
                 if lo and lo - lo == 0.0:        # finite: the sign of a negative zero and an infinity survive
                     hi = hi + lo
                 result = hi + item  # type: ignore[operator]
+                del item
                 break
+            del item
             t = hi + x                           # cs_add, Neumaier's improved Kahan-Babuska
             if abs(hi) >= abs(x):
                 lo += (hi - t) + x
@@ -582,11 +594,14 @@ may reject non-numeric types."""
                 re_hi, re_lo = _cs_add(re_hi, re_lo, float.__float__(item))  # type: ignore[arg-type]
             else:
                 result = complex(_cs_to_double(re_hi, re_lo), _cs_to_double(im_hi, im_lo)) + item  # type: ignore[operator]
+                del item
                 break
+            del item
         else:
             return complex(_cs_to_double(re_hi, re_lo), _cs_to_double(im_hi, im_lo))
     for item in it:
         result = result + item  # type: ignore[operator]
+        del item
     return result
 
 
@@ -602,8 +617,12 @@ def any(*args: object, **kwds: object) -> bool:
     """Return True if bool(x) is True for any x in the iterable.
 
 If the iterable is empty, return False."""
-    for item in _one_argument("any", args, kwds):  # type: ignore[attr-defined]
-        if item:
+    it = _tp_iter(_one_argument("any", args, kwds))
+    for item in it:
+        found = bool(item)                       # PyObject_IsTrue(item); Py_DECREF(item)
+        del item
+        if found:
+            del it                               # Py_DECREF(it); Py_RETURN_TRUE
             return True
     return False
 
@@ -612,7 +631,11 @@ def all(*args: object, **kwds: object) -> bool:
     """Return True if bool(x) is True for all values x in the iterable.
 
 If the iterable is empty, return True."""
-    for item in _one_argument("all", args, kwds):  # type: ignore[attr-defined]
-        if not item:
+    it = _tp_iter(_one_argument("all", args, kwds))
+    for item in it:
+        found = bool(item)
+        del item
+        if not found:
+            del it
             return False
     return True

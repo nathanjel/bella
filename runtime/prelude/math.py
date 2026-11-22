@@ -848,6 +848,7 @@ Assumes IEEE-754 floating-point arithmetic."""
     inf_sum = 0.0
     for item in seq:  # type: ignore[attr-defined]
         x = _assign_double(item)
+        del item                                 # Py_DECREF(item) once it is a double (RL-782)
         xsave = x
         i = 0
         for j in range(len(partials)):
@@ -1055,6 +1056,7 @@ and sums are computed with extended precision."""
     flt_in_use = False
     sentinel = object()
     while True:
+        p_i = q_i = None                         # Py_CLEAR(p_i); Py_CLEAR(q_i) on every way to the next round (RL-782)
         p_i = next(p_it, sentinel)
         q_i = next(q_it, sentinel)
         p_stopped = p_i is sentinel
@@ -1170,6 +1172,7 @@ non-numeric types."""
     result = start
     for item in args[0]:  # type: ignore[attr-defined]
         result = result * item  # type: ignore[operator]
+        del item                                 # Py_DECREF(item) before the next tp_iternext (RL-782)
     return result
 
 

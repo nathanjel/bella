@@ -126,7 +126,7 @@ void compute_abstract_methods(Obj self) {
         Ref base_abstracts = optional_getattr(sequence_items(bases)[pos], N("__abstractmethods__"));
         if (base_abstracts.get().is_unset()) continue;
         Ref it = iter(base_abstracts.get());
-        for (Ref key = for_next(it.get()); !is_end(key); key = for_next(it.get())) {
+        for (Ref key = for_next(it.get()); !is_end(key); key = next_after(key, it.get())) {
             const Str* name = as_str(key.get());
             if (name == nullptr) raise_new("TypeError", "attribute name must be string, not '" + type_of(key.get())->name + "'");
             Ref value = optional_getattr(self, intern(name->text));

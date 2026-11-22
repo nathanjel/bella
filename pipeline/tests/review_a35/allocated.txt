@@ -1,0 +1,29 @@
+import sys, collections, functools, itertools, operator, io, struct, zlib, re, _json, contextvars, weakref, _thread, hashlib, csv, types, ast
+name,mode=sys.argv[1].split('-')
+typeset = {k:getattr(itertools,k) for k in ('chain','accumulate','batched','combinations','combinations_with_replacement','compress','count','cycle','dropwhile','filterfalse','groupby','islice','pairwise','permutations','product','repeat','starmap','takewhile','zip_longest')}
+typeset.update(deque=collections.deque,od=collections.OrderedDict,dd=collections.defaultdict,ct=collections.Counter,partial=functools.partial,lru=type(functools.lru_cache()(lambda: 0)),item=operator.itemgetter,attr=operator.attrgetter,method=operator.methodcaller,bytesio=io.BytesIO,stringio=io.StringIO,fileio=io.FileIO,struct=struct.Struct,z=type(zlib.compressobj()),zd=type(zlib.decompressobj()),pattern=re.Pattern,match=re.Match,enc=_json.make_encoder,scan=_json.make_scanner,var=contextvars.ContextVar,ctx=contextvars.Context,token=contextvars.Token,ref=weakref.ref,lock=_thread.LockType,rlock=_thread.RLock,local=_thread._local,sha=type(hashlib.sha256()),reader=type(csv.reader([])),dialect=csv.Dialect,ns=types.SimpleNamespace,prop=property,sm=staticmethod,cm=classmethod,ga=types.GenericAlias,sl=slice,rng=range,exc=Exception,os=OSError,stop=StopIteration,attrerr=AttributeError,syn=SyntaxError,node=ast.Constant)
+T=typeset[name]
+def show(f):
+    try:
+        v=f()
+        if type(v) in (int,bool,str,tuple,dict) or v is None: print(v)
+        else: print(type(v).__name__)
+    except BaseException as e: print("err",type(e).__name__)
+try:
+    if mode=="obj": x=object.__new__(T)
+    elif mode=="new": x=T.__new__(T)
+    else:
+        class Sub(T):
+            def __init__(self): pass
+        x=Sub()
+    print("made")
+    show(lambda:len(x))
+    show(lambda:bool(x))
+    show(lambda:iter(x))
+    show(lambda:hash(x)==hash(x))
+    show(lambda:x==x)
+    show(lambda:type(repr(x)).__name__)
+    if name in ("stringio","bytesio","fileio"): show(lambda:x.closed); show(lambda:x.read(1))
+    if name in ("exc","os","stop","attrerr","syn"): show(lambda:x.args)
+    if name in ("cm","sm"): show(lambda:x.__func__)
+except BaseException as e: print("err",type(e).__name__)

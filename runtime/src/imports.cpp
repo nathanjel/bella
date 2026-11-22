@@ -775,7 +775,7 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(ns->dict, Obj::of(N("_raise_as_is")), as_is.get());
         for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
                  {"_set_context", i_set_context}, {"_type_name", i_type_name}, {"_class_name", i_class_name},
-                 {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname}}) {
+                 {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname}, {"_own_dict", i_own_dict}}) {
             Ref b = own(new Builtin(n, fn));     // a chained error's context, and a type's name as the C has it (RL-759, RL-767)
             dict_set(ns->dict, Obj::of(intern(n)), b.get());
         }
@@ -865,9 +865,47 @@ Ref i_weak_list(Obj, Args a) {
     return out;
 }
 }  // namespace
+Ref i_hash_of(Obj, Args a);                       // below
+// _PyDict_DelItemIf's two halves, for a prelude whose test of the value runs no code of the program's between them: the entry
+// of a key by a hash already taken, in one lookup, as (index, value) or None; and the entry at an index gone with nothing
+// compared, as delitem_common lets go of it (review A35, RL-787)
+Ref i_find_hashed(Obj, Args a) {                 // (dict, key, hash)
+    positional_only(a, "_find_hashed", 3, 3);
+    auto* d = static_cast<Dict*>(a.pos(0).object());
+    std::int64_t h = 0;
+    int_fits_i64(a.pos(2), h);
+    if (d->indices.empty()) return none_ref();
+    auto [slot, ix] = detail::probe(d, a.pos(1), h);
+    if (ix < 0) return none_ref();
+    Ref index = int_from_i64(ix);
+    return tuple_new({index.get(), d->entries[static_cast<std::size_t>(ix)].value});
+}
+Ref i_del_at(Obj, Args a) {                      // (dict, index)
+    positional_only(a, "_del_at", 2, 2);
+    auto* d = static_cast<Dict*>(a.pos(0).object());
+    std::int64_t ix = 0;
+    int_fits_i64(a.pos(1), ix);
+    auto& e = d->entries.at(static_cast<std::size_t>(ix));
+    std::size_t mask = d->indices.size() - 1;
+    auto perturb = static_cast<std::uint64_t>(e.hash);
+    std::size_t i = static_cast<std::size_t>(e.hash) & mask;
+    while (d->indices[i] != ix) {
+        perturb >>= 5;
+        i = (i * 5 + perturb + 1) & mask;
+    }
+    d->indices[i] = detail::DKIX_DUMMY;
+    Obj key = std::exchange(e.key, Obj{});
+    Obj value = std::exchange(e.value, Obj{});
+    --d->used;
+    ++d->version;
+    decref(key);
+    decref(value);
+    return none_ref();
+}
 void fill_weakref(Module* m) {                   // the types are named for `weakref`, as CPython's are
     fill_in_python(m, "_weakref", "weakref", prelude_weakref::module_body,
-                   {{"_number_index", i_number_index}, {"_lookup_special", i_lookup_special}, {"_tp_name", i_tp_name}, {"_weak_supported", i_weak_supported},
+                   {{"_hash_of", i_hash_of}, {"_find_hashed", i_find_hashed}, {"_del_at", i_del_at},
+                    {"_number_index", i_number_index}, {"_lookup_special", i_lookup_special}, {"_tp_name", i_tp_name}, {"_weak_supported", i_weak_supported},
                     {"_weak_basic", i_weak_basic}, {"_weak_link", i_weak_link}, {"_weak_get", i_weak_get}, {"_weak_list", i_weak_list}});
     for (const char* n : {"ProxyType", "CallableProxyType"}) {
         auto* c = static_cast<ClassObject*>(dict_get(m->dict, Obj::of(N(n))).object());
@@ -1117,6 +1155,10 @@ Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
     if (name == "unraisable") return i_unraisable(Obj{}, r);   // (message or None, exception)
     if (name == "resource_warning") return i_resource_warning(Obj{}, r);   // (message, source)
     if (name == "warn") return i_bella_import_warning(Obj{}, r);   // (message, the category's name): PyErr_WarnEx(category, message, 1)
+    if (name == "leak") {                        // what the C stores over without letting go of it: its count is never given
+        incref(r.pos(0));                        // back, so it is not finalised (bufferedrwpair's __init__ again, RL-791)
+        return none_ref();
+    }
     if (name == "errno") {                       // the C's errno, set (one argument) or read: _bufferedwriter_raw_write's "errno = 0"
         if (r.npos == 1) {                       // before the raw stream's write and its "errnum = errno" after it (RL-751)
             errno = static_cast<int>(r.pos(0).small_value());

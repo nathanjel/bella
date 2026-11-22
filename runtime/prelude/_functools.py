@@ -18,6 +18,7 @@ try:
     _bella_state_set                             # noqa: B018  # a C function's store into its struct's field (RL-507)
     _has_dict                                    # noqa: B018  # the C's self->dict is not NULL
     _drop_dict                                   # noqa: B018  # the C's Py_CLEAR(self->dict)
+    _own_dict                                    # noqa: B018  # the C's self->dict, read or replaced
     _method_new                                  # noqa: B018  # PyMethod_New
     _hash_of                                     # noqa: B018  # PyObject_Hash
     _get_hashed                                  # noqa: B018  # _PyDict_GetItemRef_KnownHash; a default when absent
@@ -46,6 +47,7 @@ except NameError:
     _bella_state_set = object.__setattr__
     _has_dict: Callable[..., bool] = _missing
     _drop_dict: Callable[..., None] = _missing
+    _own_dict: Callable[..., Any] = _missing
     _method_new: Callable[..., Any] = _missing
     _hash_of: Callable[..., int] = _missing
     _get_hashed: Callable[..., Any] = _missing
@@ -72,21 +74,6 @@ except NameError:
 
 _END = object()
 
-
-def _next_only(it: object) -> object:
-    """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
-    operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
-    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
-    while True:
-        item = next(it, _END)  # type: ignore[call-overload]
-        if item is _END:
-            return
-        yield item
-
-
-def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
-    it = iter(iterable)  # type: ignore[call-overload]
-    return it if _is_c_type(it) else _next_only(it)
 
 _SSIZE_MAX = 2**63 - 1
 _TYPE_MODULE = type.__dict__["__module__"].__get__     # type_module and type_qualname, as the C calls them
@@ -327,7 +314,8 @@ and keywords."""
     def __reduce__(*args: object, **kwds: object) -> tuple[object, ...]:
         _noargs(args, kwds, partial, "__reduce__", "partial")
         self = args[0]
-        return (type(self), (self.func,), (self.func, self.args, self.keywords, self.__dict__ if _has_dict(self) else None))  # type: ignore[attr-defined]
+        # "pto->dict ? pto->dict : Py_None": the struct's field, whatever a class has under __dict__ (RL-778)
+        return (type(self), (self.func,), (self.func, self.args, self.keywords, _own_dict(self) if _has_dict(self) else None))  # type: ignore[attr-defined]
 
     def __setstate__(*args: object, **kwds: object) -> None:    # partial_setstate
         state = _one(args, kwds, partial, "__setstate__", "partial")
@@ -358,7 +346,7 @@ and keywords."""
             if _has_dict(self):                  # the old one goes, as it is; whoever holds it keeps it
                 _drop_dict(self)
         else:
-            _set(self, "__dict__", dict_)
+            _own_dict(self, dict_)               # Py_XSETREF(pto->dict, dict): no setter of a class is asked (RL-778)
 
 
 # ---- cmp_to_key
@@ -476,16 +464,33 @@ calculates ((((1 + 2) + 3) + 4) + 5)."""
     result = args[2] if len(args) > 2 else kwds.get("initial", _ABSENT)
     it = None                                    # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
-        it = _tp_iter(seq)
+        it = iter(seq)  # type: ignore[call-overload]
     except TypeError:
         pass
     if it is None:
         raise TypeError("reduce() arg 2 must support iteration")
-    for op2 in it:
+    # The C calls the function with one tuple of two that it uses again: what the tuple holds, the result before and the
+    # item before, stays until the next call's are stored, the result first, and goes when the loop has ended, the item
+    # first (a tuple lets go of its items from the last). The iterator goes after that, so it is held here and asked with
+    # next(), where a `for` over a wrapper would have let go of it at its end (RL-782).
+    held_result: object = _ABSENT
+    held_item: object = _ABSENT
+    while True:
+        op2 = next(it, _END)  # type: ignore[call-overload]
+        if op2 is _END:
+            break
         if result is _ABSENT:
             result = op2
+            del op2
         else:
-            result = func(result, op2)  # type: ignore[operator]
+            before, held_result = held_result, result
+            del before
+            before, held_item = held_item, op2
+            del before, op2
+            result = func(held_result, held_item)  # type: ignore[operator]
+    del held_item
+    del held_result
+    del it
     if result is _ABSENT:
         raise TypeError("reduce() of empty iterable with no initial value")
     return result

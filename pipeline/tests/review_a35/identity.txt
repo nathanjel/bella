@@ -1,0 +1,40 @@
+import sys, io, _weakref, csv, zlib, operator, struct, functools
+row=sys.argv[1]
+class M(type):
+    def __eq__(cls, other):
+        print("compare class")
+        raise LookupError
+    __hash__=type.__hash__
+class X(metaclass=M): pass
+class R(io.BytesIO,metaclass=M):
+    def close(self): print("close")
+class K:
+    n=0
+    def __hash__(self):
+        if self.n: print("hash")
+        return 1
+def hook(e): print("unraisable",e.exc_type.__name__)
+try:
+    if row=="final":
+        sys.unraisablehook=hook
+        r=R(); del r
+    elif row in ("eq","ne","remove"):
+        x=X(); ref=_weakref.ref(x)
+        if row=="eq": print(ref.__eq__(x))
+        elif row=="ne": print(ref.__ne__(x))
+        else: _weakref._remove_dead_weakref({"k":x},"k")
+    elif row.startswith("hash"):
+        k=K()
+        x=X(); d={k:_weakref.ref(x)}
+        del x
+        if row=="hashmiss": d.clear()
+        k.n=1; _weakref._remove_dead_weakref(d,k)
+        print(len(d))
+    else:
+        t={"reader":type(csv.reader([])),"writer":type(csv.writer(io.StringIO())),"structiter":type(struct.iter_unpack("i",b"")),"key":type(functools.cmp_to_key(lambda a,b:0)),"z":type(zlib.compressobj())}[row]
+        class Sub(t):
+            def __init__(self): print("init")
+        print("subclass")
+        x=Sub()
+        print("made")
+except BaseException as e: print(type(e).__name__)

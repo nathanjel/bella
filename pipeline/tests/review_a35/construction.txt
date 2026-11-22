@@ -1,0 +1,41 @@
+import sys,ast,errno,functools
+row=sys.argv[1]
+try:
+    if row.startswith("errno"):
+        class Code(int):
+            def __hash__(self):
+                print("hash")
+                if row=="errnoerr": raise LookupError
+                return errno.ENOENT
+            def __eq__(self,other):
+                print("eq",other); return True
+        e=OSError(Code(errno.EACCES),"msg")
+        print(type(e).__name__)
+    elif row=="table":
+        class D(dict):
+            def __contains__(self,k): print("contains"); raise KeyError
+        class X(ast.AST):
+            _fields=('v',)
+            _field_types=D(v=list[int])
+        print(X().v)
+    elif row=="field":
+        class T(tuple):
+            def __getitem__(self,i): print("get",i); return super().__getitem__(i)
+        class X(ast.AST): _fields=T(('v',))
+        print(X(3).v)
+    elif row=="restore":
+        class P(functools.partial):
+            @property
+            def __dict__(self): print("dict getter"); return {}
+            @__dict__.setter
+            def __dict__(self,x): print("dict setter"); raise LookupError
+        p=P(int); p.__setstate__((int,(),{},{"v":2})); print(p.v)
+    elif row=="missing":
+        class E(BlockingIOError): pass
+        for v in (-1,-2,0,1):
+            e=BlockingIOError(1,"m",v)
+            try: print(e.characters_written)
+            except BaseException as ex: print(type(ex).__name__)
+    else:
+        for i in range(1,135): print(i,type(OSError(i,"e")).__name__)
+except BaseException as e: print(type(e).__name__)

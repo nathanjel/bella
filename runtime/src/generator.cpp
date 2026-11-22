@@ -384,6 +384,12 @@ Ref gen_close(Generator* g) {                     // gen_close
     if (returned) return value;
     raise_new("RuntimeError", "generator ignored GeneratorExit");
 }
+// _PyGen_FetchStopIterationValue: the value the exception's struct holds, not an attribute named `value`, which a class
+// deriving from StopIteration may define as it likes (review A35, RL-779)
+static Ref stop_iteration_value(Obj exc) {
+    Obj v = exception_field(exc, "value");
+    return v.is_unset() ? none_ref() : Ref::share(v);
+}
 void gen_raise_pending(Generator* g) {
     if (g->pending.get().is_unset()) return;
     Ref exc = std::move(g->pending);
@@ -391,7 +397,7 @@ void gen_raise_pending(Generator* g) {
     if (!g->delegate.get().is_unset()) {          // CLEANUP_THROW: its StopIteration is the delegation's end
         g->delegate = Ref{};
         if (isinstance(exc.get(), exception_class("StopIteration"))) {
-            g->sent = getattr(exc.get(), N("value"));
+            g->sent = stop_iteration_value(exc.get());
             g->delegate_ended = true;
             return;
         }
@@ -442,7 +448,7 @@ Ref gen_delegate_step(Generator* g) {
             g->delegate = Ref{};
             rethrow(e);
         }
-        g->sent = getattr(e.exc.get(), N("value"));
+        g->sent = stop_iteration_value(e.exc.get());
         g->delegate = Ref{};
         return Ref{};
     }

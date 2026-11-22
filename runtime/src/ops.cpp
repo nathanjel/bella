@@ -559,7 +559,7 @@ bool contains(Obj container, Obj item) {
     if (is_kind(container, Kind::Range)) {           // range_contains: arithmetic for an exact int or a bool, else the search
         if (item.is_small() || is_kind(item, Kind::Bool) || is_kind(item, Kind::BigInt)) return range_contains_int(container, item);
         Ref it = iter(container);
-        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+        for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
             if (equal(v.get())) return true;
         return false;
     }
@@ -578,7 +578,7 @@ bool contains(Obj container, Obj item) {
         if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
         raise_new("TypeError", "argument of type '" + type_of(container)->name + "' is not a container or iterable");
     }
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
         if (equal(v.get())) return true;
     return false;
 }
@@ -2101,7 +2101,7 @@ Ref iterator_reduce(Obj self, Args a) {
                     Lent(Iterator* f, Iterator* c) : from(f), to(c) { std::swap(from->result, to->result); }
                     ~Lent() { std::swap(from->result, to->result); }
                 } lent(it, copy);
-                for (Ref v = for_next(held.get()); !is_end(v); v = for_next(held.get())) list_append(left.get(), v.get());
+                for (Ref v = for_next(held.get()); !is_end(v); v = next_after(v, held.get())) list_append(left.get(), v.get());
             }
             return over("iter", std::move(left));
         }
@@ -2227,7 +2227,7 @@ void each_item(Obj mapping, F f) {
         raise_new("TypeError", fully_qualified_name(type_of(mapping)) + ".keys() must return an iterable, not " +
                                    fully_qualified_name(type_of(keys.get())));
     }
-    for (Ref k = for_next(it.get()); !is_end(k); k = for_next(it.get())) listed.push_back(std::move(k));
+    for (Ref k = for_next(it.get()); !is_end(k); k = next_after(k, it.get())) listed.push_back(std::move(k));
     for (Ref& k : listed) {
         Ref v = getitem(mapping, k.get());
         f(k.get(), v.get());
@@ -2410,7 +2410,7 @@ void list_extend(Obj list, Obj value) {
     }
     Ref it = iter(value);
     length_hint(value);                           // list_extend_iter: the iterator first, then the hint
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
         static_cast<List*>(list.object())->items.push_back(v.release());
 }
 Ref list_to_tuple(Obj list) {

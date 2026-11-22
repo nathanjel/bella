@@ -1,0 +1,31 @@
+import sys,types,typing
+from typing import TypeVar
+T=TypeVar("T")
+class Tup(tuple):
+    def __iter__(self): print("iter"); raise LookupError
+    def __getitem__(self,i): print("get",i); raise KeyError
+    def __len__(self): print("len"); raise ValueError
+class L(list):
+    def __iter__(self): print("list iter"); raise IndexError
+class Has:
+    __parameters__=Tup((T,))
+class Unpack:
+    __typing_unpacked_tuple_args__=Tup((int,))
+row=sys.argv[1]
+try:
+    if row=="pars": print(types.GenericAlias(list,Tup((T,))).__parameters__)
+    elif row=="nested": print(types.GenericAlias(list,(L([T]),)).__parameters__)
+    elif row=="subpars": print(list[Has()].__parameters__)
+    elif row=="sub": print(list[T][Tup((int,))])
+    elif row=="unpack": print(list[T][Unpack()])
+    elif row=="repr": print(repr(types.GenericAlias(list,Tup((int,)))))
+    elif row=="call": print(types.GenericAlias(list,Tup((int,)))([1]))
+    else:
+        which,fmt=row.split('-')
+        def fn[A: int = str,B: (int,str) = int](): pass
+        type Alias[A] = list[A]
+        a,b=fn.__type_params__
+        funcs={'bound':a.evaluate_bound,'constraints':b.evaluate_constraints,'default':a.evaluate_default,'alias':Alias.evaluate_value,'eager':TypeVar("S",bound=int).evaluate_bound}
+        value=funcs[which](int(fmt))
+        print(type(value).__name__,repr(value))
+except BaseException as e: print(type(e).__name__)

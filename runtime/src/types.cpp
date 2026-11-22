@@ -529,11 +529,28 @@ void refuse_getattribute_override(ClassObject* cls) {
         !is_kind(type_lookup(cls, N("__getattribute__")), Kind::Builtin))   // _thread._local's is no program's
         throw NotImplemented("[P2+] a class that overrides __getattribute__ (spec section 3)");
 }
+// A class of the program's inherits its base's tp_new where it defines no __new__ (type_ready_set_new), so one that derives
+// from a type that cannot be instantiated cannot be either: type_call finds tp_new NULL, and object.__new__ finds it on the
+// first class of the tp_base chain whose tp_new is no slot_tp_new, whether the classes before it define __new__ or not
+// (tp_new_wrapper). The chain is walked only when a class of the MRO has the flag (review A35, RL-788).
+bool base_has_no_tp_new(ClassObject* cls, bool own_new_counts) {
+    bool any = false;
+    for (const ClassObject* c : cls->mro) any = any || c->disallow_instantiation;
+    if (!any) return false;
+    for (ClassObject* c = cls; c != nullptr && c != types().object; c = c->bases.empty() ? nullptr : tp_base(c)) {
+        if (c->heap_type && !c_type(c)) {
+            if (own_new_counts && c->attrs.contains(N("__new__"))) return false;
+            continue;
+        }
+        return c->disallow_instantiation;
+    }
+    return false;
+}
 Ref object_new(Obj, Args a) {
     if (a.npos < 1) raise_new("TypeError", "object.__new__(): not enough arguments");
     ClassObject* cls = as_class(a.pos(0));
     if (cls == nullptr) raise_new("TypeError", "object.__new__(X): X is not a type object (" + type_of(a.pos(0))->name + ")");
-    if (cls->disallow_instantiation) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
+    if (cls->disallow_instantiation || base_has_no_tp_new(cls, false)) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
     if (!cls->heap_type && cls != types().object && new_slot(cls) == new_slot(types().object)) {  // the runtime has no __new__ of its own for it
         if (cpython_attribute_kind(cls, "__new__").empty()) refuse_construction(cls);
         raise_new("TypeError", "object.__new__(" + cls->name + ") is not safe, use " + cls->name + ".__new__()");
@@ -550,7 +567,7 @@ Ref object_new(Obj, Args a) {
         if (methods == nullptr) raise_attribute_error(Obj::of(cls), N("__abstractmethods__"), "__abstractmethods__");
         std::vector<std::string> names;
         Ref it = iter(*methods);
-        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) {
+        for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) {
             const Str* n = as_str(v.get());
             if (n == nullptr) throw NotImplemented("sorting abstract methods that are not all str");
             names.push_back(n->text);
@@ -598,7 +615,7 @@ Ref object_init(Obj self, Args a) {
 }  // namespace
 
 Ref type_call(ClassObject* cls, Args a) {
-    if (cls->disallow_instantiation) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
+    if (cls->disallow_instantiation || base_has_no_tp_new(cls, true)) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
     if (cls == types().type && a.npos == 1 && a.nkw == 0) return Ref::share(Obj::of(observed_type(a.pos(0))));
     if (cls == types().type && a.npos != 3) raise_new("TypeError", "type() takes 1 or 3 arguments");
     if (cls == types().super_) return super_call(a);                  // super's own vectorcall
@@ -677,7 +694,7 @@ void mro_invoke(ClassObject* c) {
     Ref it = iter(result.get());
     std::vector<ClassObject*> mro;
     std::vector<Ref> held;
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) {
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) {
         if (!is_kind(v.get(), Kind::Class))
             raise_new("TypeError", c->name + ".mro() returned a non-class ('" + type_of(v.get())->name + "')");
         ClassObject* b = static_cast<ClassObject*>(v.get().object());
@@ -776,7 +793,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (as_str(slots_value) != nullptr) items.push_back(Ref::share(slots_value));
         else {
             Ref it = iter(slots_value);
-            for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) items.push_back(std::move(v));
+            for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) items.push_back(std::move(v));
         }
         // type_new_visit_slots: every item a str and an identifier; __dict__ and __weakref__ once each, and only where the
         // best base has none (may_add_dict, may_add_weak: another base's is added afterwards, RL-566). Then
@@ -1266,7 +1283,7 @@ void merge_class_dict(Obj names, Obj aclass) {
     Ref bases = optional_getattr(aclass, N("__bases__"));
     if (bases.get().is_unset()) return;
     Ref it = iter(bases.get());
-    for (Ref base = for_next(it.get()); !is_end(base); base = for_next(it.get())) merge_class_dict(names, base.get());
+    for (Ref base = for_next(it.get()); !is_end(base); base = next_after(base, it.get())) merge_class_dict(names, base.get());
 }
 Ref dict_keys_list(Obj names) {
     Ref out = list_new({});
@@ -2251,6 +2268,26 @@ ClassObject* errno_class(std::int64_t code) {    // errnomap
         default: return nullptr;
     }
 }
+// state.errnomap, the dict the C looks the errno object up in, in the order _PyExc_InitState fills it. An exact int is found
+// by its value above; any other int is looked up as the C looks it up, which runs the __hash__ and the __eq__ of its class
+// (review A35, RL-798)
+Dict* errno_map() {
+    static const Ref map = [] {
+        Ref d = dict_new();
+        for (auto [code, name] : std::initializer_list<std::pair<int, const char*>>{
+                 {EAGAIN, "BlockingIOError"}, {EALREADY, "BlockingIOError"}, {EINPROGRESS, "BlockingIOError"}, {EWOULDBLOCK, "BlockingIOError"},
+                 {EPIPE, "BrokenPipeError"}, {ESHUTDOWN, "BrokenPipeError"}, {ECHILD, "ChildProcessError"},
+                 {ECONNABORTED, "ConnectionAbortedError"}, {ECONNREFUSED, "ConnectionRefusedError"}, {ECONNRESET, "ConnectionResetError"},
+                 {EEXIST, "FileExistsError"}, {ENOENT, "FileNotFoundError"}, {EISDIR, "IsADirectoryError"}, {ENOTDIR, "NotADirectoryError"},
+                 {EINTR, "InterruptedError"}, {EACCES, "PermissionError"}, {EPERM, "PermissionError"}, {ESRCH, "ProcessLookupError"},
+                 {ETIMEDOUT, "TimeoutError"}}) {
+            Ref key = int_from_i64(code);
+            dict_set(static_cast<Dict*>(d.get().object()), key.get(), Obj::of(exception_class(name)));
+        }
+        return d;
+    }();
+    return static_cast<Dict*>(map.get().object());
+}
 Ref oserror_new(Obj, Args a) {                   // OSError_new
     ClassObject* type = new_wrapper_class(a, os_error());
     std::span<const Obj> args(a.data + 1, a.npos - 1);
@@ -2260,8 +2297,14 @@ Ref oserror_new(Obj, Args a) {                   // OSError_new
         if (a.nkw != 0) raise_new("TypeError", type->name + "() takes no keyword arguments");
         given = oserror_parse_args(args);
         std::int64_t code = 0;
-        if (!given.myerrno.is_unset() && is_int(given.myerrno) && type == os_error() && int_fits_i64(given.myerrno, code))
-            if (ClassObject* found = errno_class(code)) type = found;
+        if (!given.myerrno.is_unset() && is_int(given.myerrno) && type == os_error()) {
+            if (type_of(given.myerrno) != types().int_) {        // PyDict_GetItemWithError(state.errnomap, myerrno)
+                Obj found = dict_get(errno_map(), given.myerrno);
+                if (!found.is_unset()) type = static_cast<ClassObject*>(found.object());
+            } else if (int_fits_i64(given.myerrno, code)) {
+                if (ClassObject* found = errno_class(code)) type = found;
+            }
+        }
     }
     Ref self = own(new_instance(type));
     if (!use_init) {
@@ -2395,14 +2438,18 @@ void traceback_next_set(Obj self, Obj value) {
         if (cursor.object() == self.object()) raise_new("ValueError", "traceback loop detected");
     static_cast<Traceback*>(self.object())->next = Ref::share(value);
 }
-Ref oserror_written_get(Obj self) {
+bool written_absent(Obj self) {                  // "self->written == -1": the C keeps the count in a Py_ssize_t, -1 for none (RL-799)
     Obj v = exception_field(self, "written");
-    if (v.is_unset()) raise_new("AttributeError", "characters_written");
-    return Ref::share(v);
+    std::int64_t n = 0;
+    return v.is_unset() || (int_fits_i64(v, n) && n == -1);
+}
+Ref oserror_written_get(Obj self) {
+    if (written_absent(self)) raise_new("AttributeError", "characters_written");
+    return Ref::share(exception_field(self, "written"));
 }
 void oserror_written_set(Obj self, Obj v) {
     if (v.is_unset()) {
-        if (exception_field(self, "written").is_unset()) raise_new("AttributeError", "characters_written");
+        if (written_absent(self)) raise_new("AttributeError", "characters_written");
         set_exception_field(self, "written", Obj{});
         return;
     }
@@ -2808,7 +2855,7 @@ void exception_args_set(Obj self, Obj v) {          // PySequence_Tuple
     } else {
         Ref it = iter(v);
         std::vector<Obj> items;
-        for (Ref x = for_next(it.get()); !is_end(x); x = for_next(it.get())) items.push_back(x.release());
+        for (Ref x = for_next(it.get()); !is_end(x); x = next_after(x, it.get())) items.push_back(x.release());
         t = tuple_steal(std::move(items));
     }
     set_exception_field(self, "args", t.get());

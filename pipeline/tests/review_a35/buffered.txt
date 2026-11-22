@@ -1,0 +1,30 @@
+import sys,io
+kind,mode,action=sys.argv[1].split("-")
+class Raw(io.BytesIO):
+    def close(self): print("close raw", self.tag); super().close()
+def raw(tag):
+    x=Raw(b'abcdef'); x.tag=tag; return x
+def run():
+    a,b=raw("a"),raw("b")
+    if kind=="text": x=io.TextIOWrapper(a)
+    elif kind=="pair": x=io.BufferedRWPair(a,a)
+    else: x={"reader":io.BufferedReader,"writer":io.BufferedWriter,"random":io.BufferedRandom}[kind](a,3)
+    if kind in ("text","reader","random","pair"): x.read(1)
+    if kind in ("writer","random","pair"): x.write(b"x")
+    if mode=="close": x.close()
+    elif mode=="detach": x.detach()
+    try:
+        if action=="again":
+            if kind=="pair": x.__init__(b,b)
+            else: x.__init__(b)
+        elif action=="bad":
+            if kind=="pair": x.__init__(b,b,0)
+            elif kind=="text": x.__init__(b,encoding=1)
+            else: x.__init__(b,0)
+    except BaseException as e: print("init",type(e).__name__)
+    for op in (lambda:x.closed,lambda:x.tell(),lambda:x.read(1),lambda:x.write("z" if kind=="text" else b"z"),lambda:x.flush(),lambda:x.close()):
+        try: print(op())
+        except BaseException as e: print(type(e).__name__)
+    print(a.closed,b.closed)
+try: run()
+except BaseException as e: print(type(e).__name__)

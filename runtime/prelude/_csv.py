@@ -43,12 +43,14 @@ _END = object()
 def _next_only(it: object) -> object:
     """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
     operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
-    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765). The item is handed on and not kept: the C has
+    let go of it before it asks for the next one, and a loop of this file does the same with `del` (RL-782)."""
+    held: list[object] = []
     while True:
-        item = next(it, _END)  # type: ignore[call-overload]
-        if item is _END:
+        held.append(next(it, _END))  # type: ignore[call-overload]
+        if held[0] is _END:
             return
-        yield item
+        yield held.pop()
 
 
 def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
@@ -515,6 +517,7 @@ Non-string elements will be converted to string."""
             raise TypeError("writer.writerows() takes exactly one argument (" + str(len(args)) + " given)")
         for row in args[0]:  # type: ignore[attr-defined]
             _csv_writerow(self, row)
+            del row                              # Py_DECREF(row_obj) before the next tp_iternext (RL-782)
 
     @property
     def dialect(self) -> Dialect:
@@ -599,6 +602,8 @@ def _csv_writerow(self: Writer, seq: object) -> object:  # csv_writerow
             _join_append(self, None, quoted)
         else:
             _join_append(self, str(field), quoted)
+        del field                                # Py_DECREF(field) before the next tp_iternext (RL-782)
+    del it                                       # Py_DECREF(iter), before the record is written
     if self._num_fields > 0 and len(self._rec) == 0:
         if d._quoting == QUOTE_NONE or (null_field and d._quoting in (QUOTE_STRINGS, QUOTE_NOTNULL)):
             raise Error("single empty field record must be quoted")

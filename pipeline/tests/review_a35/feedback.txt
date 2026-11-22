@@ -1,0 +1,33 @@
+import sys,collections
+from _collections import _count_elements
+row=sys.argv[1]
+alive=0
+class Item(int):
+    def __new__(cls,n):
+        global alive
+        alive+=1
+        return super().__new__(cls,n)
+    def __del__(self):
+        global alive
+        alive-=1
+class I:
+    def __init__(self): self.n=0
+    def __iter__(self): return self
+    def __next__(self):
+        self.n+=1
+        if self.n>2: raise StopIteration
+        return Item(1+alive)
+class Mapping:
+    def get(self,k,default): print("key",int(k)); return default
+    def __setitem__(self,k,value): pass
+class Acc:
+    def __add__(self,x): print("arg",int(x)); return self
+if row=="count": _count_elements(Mapping(),I())
+elif row=="sum": print(sum(I()))
+elif row=="generic": sum(I(),Acc())
+elif row=="float": print(sum(I(),0.))
+elif row=="complex": print(sum(I(),0j))
+else:
+    class L(list):
+        def __iter__(self): return I()
+    print(sum(L()))

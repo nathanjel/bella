@@ -1,0 +1,30 @@
+import sys
+row=sys.argv[1]
+class M(type):
+    @property
+    def __flags__(cls):
+        print("flags lookup")
+        raise LookupError
+class L(list,metaclass=M): pass
+class D(dict,metaclass=M): pass
+try:
+    if row=="seq":
+        match L([1]):
+            case [x]: print(x)
+    elif row=="map":
+        match D(k=2):
+            case {"k":x}: print(x)
+    elif row=="self":
+        match L([1]):
+            case L(x): print(x)
+    else:
+        class MM(type):
+            def __eq__(cls,other):
+                print("meta eq")
+                raise ArithmeticError
+            __hash__=type.__hash__
+        class NM(type,metaclass=MM): pass
+        class X(metaclass=NM): pass
+        match X():
+            case X(): print("matched")
+except BaseException as e: print(type(e).__name__)

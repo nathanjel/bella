@@ -520,9 +520,9 @@ def _preludes() -> list[Path]:
 def test_no_prelude_reads_a_types_name_as_an_attribute() -> None:
     """RL-767: `type(x).__name__` (and `cls.__name__`, `__qualname__`, `__module__`) is an attribute of a class, which its
     metaclass answers; the C reads tp_name. The runtime gives the names: _tp_name, _type_name, _class_name, _type_fullname,
-    _class_fullname. What is left reads an attribute because the C does (PyObject_GetAttr), or is build_class.py, which
-    CPython runs for the evaluators."""
-    allowed = {"build_class.py": 4, "_warnings.py": 1, "_functools.py": 1, "_typing.py": 1, "bootstrap.py": 1}
+    _class_fullname. What is left reads an attribute because the C does (PyObject_GetAttr). build_class.py, which CPython
+    runs for the evaluators, reads the names with type's own getters since review A35 (RL-794)."""
+    allowed = {"_warnings.py": 1, "_functools.py": 1, "_typing.py": 1, "bootstrap.py": 1}
     found: dict[str, int] = {}
     for path in _preludes():
         for _number, code in _c_lines(path):

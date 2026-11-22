@@ -296,6 +296,24 @@ int main() {
             }
         }
     }
+    {
+        auto* BE = make_class({.name = "BaseException", .native = Names{"__dict__", "args", "cause"}});
+        for (const char* n : {"args", "cause"}) BE->set_attr(N(n), Obj::of(new SlotDescriptor(N(n))));
+        try {
+            make_class({.name = "OwnDealloc", .bases = {BE}, .release = Names{"__weakref__"}});
+            std::cout << "  a dealloc of its own over a base with fields: made\n";
+        } catch (const ModelError&) {
+            std::cout << "  a dealloc of its own over a base with fields: refused\n";
+        }
+        Instance* made = new_instance(make_class({.name = "UnsupportedOperation", .bases = {BE}}));
+        incref(made);
+        setattr(made, N("args"), tagged(40).get());
+        setattr(made, N("cause"), tagged(41).get());
+        setattr(made, N("x"), tagged(42).get());
+        deaths.clear();
+        decref(made);
+        show_deaths("a class made by calling type over it");
+    }
     std::cout << "9. a chain longer than the native stack: what is put off, and when it goes (RL-624)\n";
     {
         auto chain = [&](const char* next, const char* value, int length, std::vector<Instance*>* nodes) {

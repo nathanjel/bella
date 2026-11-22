@@ -1,0 +1,41 @@
+import sys,os,types,copy,typing
+row=sys.argv[1]
+class M(type):
+    @property
+    def __name__(cls): print("name lookup"); raise LookupError
+class X(metaclass=M): pass
+class S(str):
+    def __str__(self): print("str"); return "other"
+class I:
+    n=0
+    def __iter__(self): print("iter"); return self
+    def __next__(self):
+        if self.n==10: raise StopIteration
+        self.n+=1
+        return self.n
+class D(dict):
+    def __len__(self): print("len"); return 0
+    def __iter__(self): print("dictiter"); return iter(())
+    def __contains__(self,k): print("contains"); return False
+    def __setitem__(self,k,v): print("set"); return super().__setitem__(k,v)
+    def __getitem__(self,k): print("get"); return super().__getitem__(k)
+try:
+    if row=="structname": os.stat_result.__new__(X,())
+    if row=="structiter": print(os.stat_result(I()).st_size)
+    if row=="sentinel":
+        se=sentinel(S("name"),repr=S("rep"))
+        print(type(repr(se)).__name__, repr(se),type(se.__reduce__()).__name__,copy.copy(se) is se)
+    if row=="union": print(typing.Union[int,str]==typing.Union[str,int])
+    if row.startswith("wrap"):
+        def f(): pass
+        x=staticmethod(f)
+        d=D(); x.__dict__=d
+        if row=="wrapwrite": x.__annotations__={"a":1}
+        if row=="wrapdel":
+            dict.__setitem__(d,"__annotations__",1)
+            del x.__annotations__
+        else: print(x.__annotations__)
+        print(dict.copy(d))
+    if row=="ns":
+        x=types.SimpleNamespace(D(k=1)); print(x.__replace__(q=2))
+except BaseException as e: print(type(e).__name__)

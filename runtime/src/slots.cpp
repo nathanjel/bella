@@ -242,7 +242,7 @@ Ref range_count(Obj self, Args a) {
     if (exact_or_bool(a.pos(0))) return Ref::steal(Obj::small(range_contains_int(self, a.pos(0)) ? 1 : 0));
     std::int64_t n = 0;                          // _PySequence_IterSearch: a subclass's __eq__ may say anything
     Ref it = iter(self);
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()))
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()))
         if (truth(compare(CmpOp::Eq, v.get(), a.pos(0)).get())) ++n;
     return int_from_i64(n);
 }
@@ -256,7 +256,7 @@ Ref range_index(Obj self, Args a) {
     }
     std::int64_t n = 0;
     Ref it = iter(self);
-    for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get()), ++n)
+    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get()), ++n)
         if (truth(compare(CmpOp::Eq, v.get(), x).get())) return int_from_i64(n);
     raise_new("ValueError", "sequence.index(x): x not in sequence");
 }

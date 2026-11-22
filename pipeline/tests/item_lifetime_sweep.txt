@@ -1,0 +1,104 @@
+import collections, csv, functools, io, itertools, math, operator, sys
+from _collections import _count_elements
+class N(int):
+    def __del__(self): print("drop", int(self))
+class F(float):
+    def __del__(self): print("drop", float(self))
+class S(str):
+    def __del__(self): print("drop", str.__str__(self))
+class B(bytes):
+    def __del__(self): print("drop", bytes(self))
+class P(tuple):
+    def __del__(self): print("drop pair", tuple.__getitem__(self, 0))
+class L(list):
+    def __del__(self): print("drop list", list.__getitem__(self, 0))
+class O:
+    def __init__(self, n): self.n = n
+    def __del__(self): print("drop", self.n)
+    def __hash__(self): return self.n
+    def __eq__(self, other): return self is other
+    def __lt__(self, other): return self.n < other.n
+    def __add__(self, other): return 0
+    def __radd__(self, other): return 0
+    def __bool__(self): return True
+MAKE = {"int": N, "float": lambda i: F(i), "str": lambda i: S("s%d" % i), "bytes": lambda i: B(b"b%d" % i), "pair": lambda i: P((i, i)),
+        "list": lambda i: L([i]), "object": O}
+class I:
+    """An iterator that says when its __next__ is called; each item says when it goes. What a consumer written in C lets go
+    of before it asks for the next item is gone before the next "next"."""
+    def __init__(self, kind, count): self.kind, self.count, self.i = kind, count, 0
+    def __iter__(self): return self
+    def __next__(self):
+        self.i += 1
+        print("next", self.i)
+        if self.i > self.count: raise StopIteration
+        return MAKE[self.kind](self.i)
+    def __del__(self): print("drop iterator")
+class Source:
+    def __init__(self, kind, count=2): self.kind, self.count = kind, count
+    def __iter__(self): return I(self.kind, self.count)
+class Mapping:
+    def get(self, k, default): return default
+    def __setitem__(self, k, value): pass
+class Acc:
+    def __add__(self, x): return self
+def none(*a): return None
+def two():
+    a, b = Source("int")
+    return a + b
+def starred():
+    first, *rest = Source("int")
+    return len(rest)
+ROWS = [
+("int", lambda s: len(list(s))), ("int", lambda s: len(tuple(s))), ("object", lambda s: len(set(s))), ("object", lambda s: len(frozenset(s))),
+("object", lambda s: len(dict.fromkeys(s))), ("pair", lambda s: len(dict(s))), ("pair", lambda s: {}.update(s)), ("int", lambda s: [].extend(s)),
+("int", lambda s: [].__iadd__(s) and None), ("int", lambda s: len(bytes(s))), ("int", lambda s: len(bytearray(s))), ("object", lambda s: set().update(s)),
+("object", lambda s: len(set().union(s))), ("object", lambda s: len({O(9)}.intersection(s))), ("object", lambda s: len({O(9)}.difference(s))),
+("object", lambda s: len({O(9)}.symmetric_difference(s))), ("object", lambda s: {O(9)}.issubset(s)), ("object", lambda s: {O(9)}.issuperset(s)),
+("object", lambda s: {O(9)}.isdisjoint(s)), ("object", lambda s: {O(9)}.intersection_update(s)), ("object", lambda s: {O(9)}.difference_update(s)),
+("int", lambda s: sum(s)), ("float", lambda s: sum(s)), ("int", lambda s: sum(s, 0.0)), ("float", lambda s: sum(s, 0.0)), ("int", lambda s: sum(s, 0j)),
+("object", lambda s: sum(s)), ("int", lambda s: sum(s, Acc()) and None), ("int", lambda s: min(s)), ("int", lambda s: max(s)),
+("int", lambda s: min(s, key=lambda v: 0)), ("int", lambda s: max(s, key=lambda v: 0)), ("int", lambda s: max(s, default=0)),
+("int", lambda s: any(s)), ("int", lambda s: all(s)), ("object", lambda s: any(s)), ("int", lambda s: len(sorted(s))),
+("str", lambda s: len("".join(s))), ("bytes", lambda s: len(b"".join(s))), ("bytes", lambda s: len(bytearray().join(s))),
+("int", lambda s: len(list(enumerate(s)))), ("int", lambda s: len(list(zip(s)))), ("int", lambda s: len(list(zip(s, strict=True)))),
+("int", lambda s: len(list(map(none, s)))), ("int", lambda s: len(list(filter(none, s)))), ("int", lambda s: len(list(filter(None, s)))),
+("int", lambda s: two()), ("int", lambda s: starred()), ("int", lambda s: len([*s])), ("int", lambda s: len((*s,))), ("int", lambda s: none(*s)),
+("object", lambda s: len({*s})), ("int", lambda s: 99 in s), ("int", lambda s: 99 not in s), ("int", lambda s: len([v for v in s])),
+("int", lambda s: len(collections.deque(s))), ("int", lambda s: len(collections.deque(s, maxlen=0))), ("int", lambda s: collections.deque().extend(s)),
+("int", lambda s: collections.deque().extendleft(s)), ("int", lambda s: collections.deque(maxlen=0).extendleft(s)),
+("int", lambda s: collections.deque(maxlen=1).extend(s)), ("int", lambda s: _count_elements(Mapping(), s)), ("object", lambda s: _count_elements({}, s)),
+("object", lambda s: len(collections.Counter(s))), ("object", lambda s: len(collections.OrderedDict.fromkeys(s))),
+("pair", lambda s: len(collections.OrderedDict(s))), ("pair", lambda s: len(collections.defaultdict(None, s))),
+("int", lambda s: functools.reduce(lambda a, b: 0, s, 0)), ("int", lambda s: functools.reduce(lambda a, b: 0, s)),
+("int", lambda s: len(list(itertools.chain(s)))), ("int", lambda s: sum(1 for v in itertools.chain(s))),
+("int", lambda s: sum(1 for v in itertools.chain.from_iterable([s]))), ("int", lambda s: sum(1 for v in itertools.islice(s, 5))),
+("int", lambda s: sum(1 for v in itertools.accumulate(s, lambda a, b: 0))), ("int", lambda s: sum(1 for v in itertools.takewhile(none, s))),
+("int", lambda s: sum(1 for v in itertools.dropwhile(none, s))), ("int", lambda s: sum(1 for v in itertools.filterfalse(none, s))),
+("int", lambda s: sum(1 for v in itertools.compress(s, [0, 0, 0]))), ("int", lambda s: sum(1 for v in itertools.compress([1, 1, 1], s))),
+("int", lambda s: sum(1 for v in itertools.pairwise(s))), ("int", lambda s: sum(1 for v in itertools.batched(s, 1))),
+("int", lambda s: sum(1 for v in itertools.zip_longest(s))), ("pair", lambda s: sum(1 for v in itertools.starmap(none, s))),
+("int", lambda s: sum(1 for v in itertools.groupby(s))), ("int", lambda s: sum(1 for v in itertools.groupby(s, none))),
+("int", lambda s: sum(1 for v in itertools.tee(s)[0])), ("int", lambda s: sum(1 for v in itertools.product(s))),
+("int", lambda s: sum(1 for v in itertools.permutations(s))), ("int", lambda s: sum(1 for v in itertools.combinations(s, 1))),
+("int", lambda s: sum(1 for v in itertools.starmap(none, zip(s)))), ("int", lambda s: sum(1 for v in map(none, s, s))),
+("int", lambda s: sum(1 for v in enumerate(s))), ("int", lambda s: sum(1 for v in zip(s, s))), ("int", lambda s: sum(1 for v in filter(none, s))),
+("int", lambda s: sum(1 for v in map(none, s))),
+("int", lambda s: csv.writer(io.StringIO()).writerow(s) and None), ("list", lambda s: csv.writer(io.StringIO()).writerows(s)),
+("str", lambda s: len(list(csv.reader(s)))), ("bytes", lambda s: io.BytesIO().writelines(s)), ("bytes", lambda s: io.IOBase.writelines(io.BytesIO(), s)),
+("str", lambda s: io.StringIO().writelines(s)), ("str", lambda s: io.TextIOWrapper(io.BytesIO()).writelines(s)),
+("bytes", lambda s: io.BufferedWriter(io.BytesIO()).writelines(s)),
+("int", lambda s: operator.countOf(s, 99)), ("int", lambda s: operator.indexOf(s, 99)), ("int", lambda s: operator.contains(s, 99)),
+("float", lambda s: math.fsum(s)), ("int", lambda s: math.prod(s)), ("float", lambda s: math.prod(s)), ("int", lambda s: math.sumprod(s, [1, 1])),
+("int", lambda s: print(*s)), ("str", lambda s: str.join(S("sep"), s) and None), ("int", lambda s: len(dict(zip(s, s)))),
+("int", lambda s: len(list(reversed(list(s))))), ("int", lambda s: len(collections.deque(s, maxlen=1))),
+("int", lambda s: len(list(itertools.islice(s, 1)))), ("int", lambda s: next(iter(s))), ("int", lambda s: len(list(itertools.repeat(0, 1))) + sum(s)),
+]
+if sys.argv[1] == "count":
+    print(len(ROWS))
+    raise SystemExit
+kind, consume = ROWS[int(sys.argv[1])]
+s = Source(kind)
+try: consume(s)
+except BaseException as e: print(type(e).__name__)
+print("after")

@@ -29,22 +29,36 @@ except NameError:                                # CPython runs this file (the e
         return str.__str__(repr(value))
 
 
+_type_flags = type.__dict__["__flags__"].__get__      # tp_flags and the names, whatever a metaclass defines under theirs (RL-794)
+_type_name = type.__dict__["__name__"].__get__
+_type_module = type.__dict__["__module__"].__get__
+_type_qualname = type.__dict__["__qualname__"].__get__
+
+
+def _in_mro(mro: tuple[type, ...], cls: type) -> bool:
+    """The class is one of the MRO's, by identity, as the C compares pointers: `in` asks a metaclass's __eq__ (RL-784)."""
+    for klass in mro:
+        if klass is cls:
+            return True
+    return False
+
+
 def _is_type(obj: object) -> bool:
     """PyType_Check: the object's type derives from type (by tp_mro, not __instancecheck__)."""
-    return type in _type_mro(type(obj))
+    return _in_mro(_type_mro(type(obj)), type)
 
 
 def _is_subtype(a: type, b: type) -> bool:
     """PyType_IsSubtype: b in a's MRO (not __subclasscheck__)."""
-    return b in _type_mro(a)
+    return _in_mro(_type_mro(a), b)
 
 
 def _tp_name(t: type) -> str:
     """tp_name: the qualified name of a heap type is its __name__; a static type's carries its
-    module unless it is a builtin."""
-    if t.__flags__ & (1 << 9) or t.__module__ == "builtins":
-        return t.__name__
-    return t.__module__ + "." + t.__qualname__
+    module unless it is a builtin. Read as the C reads the struct: no property of a metaclass is asked."""
+    if _type_flags(t) & (1 << 9) or _type_module(t) == "builtins":
+        return str.__str__(_type_name(t))
+    return str.__str__(_type_module(t)) + "." + str.__str__(_type_qualname(t))
 
 
 _ABSENT = object()     # an absent attribute, told apart from one that is None (review 2026-11-02, A7-6)
@@ -66,7 +80,7 @@ def _update_bases(bases: tuple[object, ...]) -> tuple[object, ...]:
                 new_bases.append(base)
             continue
         new_base = meth(bases)
-        if tuple not in _type_mro(type(new_base)):        # PyTuple_Check
+        if not _in_mro(_type_mro(type(new_base)), tuple):   # PyTuple_Check
             raise TypeError("__mro_entries__ must return a tuple")
         if new_bases is None:
             new_bases = list(bases[:i])

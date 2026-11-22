@@ -1,0 +1,41 @@
+import sys, copyreg
+row=sys.argv[1]
+class M(type):
+    @property
+    def __reduce__(self): print("meta reduce"); raise KeyError
+    @property
+    def __getstate__(self): print("meta state"); raise LookupError
+class MS(type):
+    @property
+    def __getstate__(self): print("meta state"); raise LookupError
+class X(metaclass=M): pass
+class Y(metaclass=MS): pass
+class Stop(StopIteration):
+    @property
+    def value(self): print("value lookup"); return 99
+class I:
+    def __iter__(self): return self
+    def __next__(self):
+        if row=="throw": return 0
+        raise Stop(7)
+    def throw(self,*args): raise Stop(7)
+def gen(): print("returned", (yield from I()))
+class Line(int): pass
+class Msg:
+    def __str__(self):
+        err.filename="new"
+        err.lineno=9
+        return "msg"
+try:
+    if row in ("reduce","state"):
+        x=(X if row=="reduce" else Y)()
+        x.a=3
+        print(x.__reduce_ex__(4)[2])
+    elif row in ("next","throw"):
+        g=gen()
+        if row=="throw": next(g); g.throw(KeyError())
+        else: next(g)
+    elif row in ("bool","sub","nul","mutate"):
+        err=SyntaxError(Msg() if row=="mutate" else "msg",("a\x00b/file" if row=="nul" else "old", True if row=="bool" else Line(3),1,""))
+        print(str(err))
+except BaseException as e: print(type(e).__name__)

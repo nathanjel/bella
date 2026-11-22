@@ -1112,7 +1112,7 @@ std::string encoded_source(const SourceArgs& s) {
 }
 std::string from_iterator(Obj it, const char* range_message) {
     std::string out;
-    for (Ref v = for_next(it); !is_end(v); v = for_next(it)) out += static_cast<char>(byte_value(v.get(), range_message));
+    for (Ref v = for_next(it); !is_end(v); v = next_after(v, it)) out += static_cast<char>(byte_value(v.get(), range_message));
     return out;
 }
 Ref bytes_new_exact(Args rest);

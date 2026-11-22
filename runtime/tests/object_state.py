@@ -242,6 +242,20 @@ def main() -> None:
             else:
                 decref(o)
                 print(f"  {kind}, shape {shape}, no weak reference:", [f"t{t}" for t in heap.deaths])
+    base_exception = RefClass("BaseException", native=("__dict__", "args", "cause"), heap=heap)
+    try:
+        RefClass("OwnDealloc", (base_exception,), release=("__weakref__",), heap=heap)
+        print("  a dealloc of its own over a base with fields: made")
+    except ValueError:
+        print("  a dealloc of its own over a base with fields: refused")
+    made = RefObject(RefClass("UnsupportedOperation", (base_exception,), heap=heap))
+    incref(made)
+    rt.setattr(made, "args", tagged(40))
+    rt.setattr(made, "cause", tagged(41))
+    rt.setattr(made, "x", tagged(42))
+    heap.deaths.clear()
+    decref(made)
+    print("  a class made by calling type over it:", [f"t{t}" for t in heap.deaths])
     print("9. a chain longer than the native stack: what is put off, and when it goes (RL-624)")
 
     def chain(names: tuple[str, str], length: int) -> tuple[RefObject, list[RefObject]]:

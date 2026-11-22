@@ -606,6 +606,13 @@ class RefClass:
         self.release: tuple[str, ...] | None = tuple(release) if release is not None else None
         if self.release is not None and sorted(n for n in self.release if n not in ("__dict__", "__weakref__")) != sorted(self.hidden_fields):
             raise ValueError("a built-in type's dealloc names each of its fields once")
+        # A dealloc of its own over a built-in base that has fields (an exception type whose struct adds to its base's)
+        # would end with the base's dealloc. No type of the runtime's is one, so it is refused, not half done: the type's
+        # dealloc alone would leave the base's fields held. A class the C makes by calling type (io.UnsupportedOperation,
+        # those of PyErr_NewException) is another matter: it has no dealloc of its own, and its objects die as any class's
+        # over that base do (subtype_dealloc, then the base's clear function).
+        if self.release is not None and self.native_fields:
+            raise ValueError("a dealloc of its own over a built-in base with fields is not written")
         self.dealloc_base: RefClass | None = next((c for c in self.mro if c.release is not None), None)
         # A slot under the name of a field of the built-in base (class E(Exception): __slots__ = ("args",)) is the name's
         # cell. The base's field is a declaration behind it, as a base class's slot of the name is, with no class to name:

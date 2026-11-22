@@ -1,0 +1,28 @@
+import sys,io
+row=sys.argv[1]
+if row.startswith("pair"):
+    a=io.BytesIO(b"old"); b=io.BytesIO(b"new")
+    p=io.BufferedRWPair(a,a)
+    if row=="pairclosed": p.close()
+    try: p.__init__(b,b,4 if row=="pairgood" else 0)
+    except ValueError: print("init failed")
+    print(a.closed)
+    try: print(p.read(1))
+    except ValueError: print("read failed")
+else:
+    class Flag:
+        def __bool__(self): print("bool"); raise KeyError
+    class V:
+        def __init__(self,k): self.k=k
+        def __del__(self): print("drop",self.k)
+    if row=="translate":
+        d=io.IncrementalNewlineDecoder(None,True)
+        print(repr(d.decode("before\r")))
+        try: d.__init__(None,Flag())
+        except KeyError: pass
+        try: print(d.getstate())
+        except ValueError: print("no state")
+    else:
+        d=io.IncrementalNewlineDecoder(V("decoder"),False,V("errors"))
+        d.__init__(None,True)
+        print("done")

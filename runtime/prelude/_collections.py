@@ -95,12 +95,14 @@ _END = object()
 def _next_only(it: object) -> object:
     """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
     operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
-    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765). The item is handed on and not kept: the C has
+    let go of it before it asks for the next one, and a loop of this file does the same with `del` (RL-782)."""
+    held: list[object] = []
     while True:
-        item = next(it, _END)  # type: ignore[call-overload]
-        if item is _END:
+        held.append(next(it, _END))  # type: ignore[call-overload]
+        if held[0] is _END:
             return
-        yield item
+        yield held.pop()
 
 
 def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
@@ -743,8 +745,8 @@ def _iterator_new(cls: type, args: tuple[object, ...]) -> object:   # "O!|n"
         raise TypeError("function takes at most 2 arguments (" + str(len(args)) + " given)")
     if not issubclass(type(args[0]), deque):
         raise TypeError("argument 1 must be collections.deque, not " + ("None" if args[0] is None else _tp_name(args[0])))
+    index = _ssize(args[1]) if len(args) == 2 else 0   # "O!|n": the index is converted before the deque is looked at (RL-793)
     it = _make_iterator(cls, args[0])
-    index = _ssize(args[1]) if len(args) == 2 else 0
     for _ in range(index):                       # consume items from the queue
         if it._c_counter == 0 and it._d_state == args[0]._d_state:  # type: ignore[attr-defined]
             break
@@ -1130,6 +1132,7 @@ def _od_add_pairs(self: object, pairs: object) -> None:   # mutablemapping_add_p
         if next(pair_iterator, _NULL) is not _NULL:
             raise ValueError("too many values to unpack (expected 2)")
         self[key] = value  # type: ignore[index]
+        del pair, pair_iterator, key, value      # the C's order, before the next tp_iternext (RL-782)
 
 
 def _od_update_arg(self: object, arg: object) -> None:   # mutablemapping_update_arg
@@ -1143,6 +1146,7 @@ def _od_update_arg(self: object, arg: object) -> None:   # mutablemapping_update
     if keys is not _NULL:
         for key in keys():  # type: ignore[operator]
             self[key] = arg[key]  # type: ignore[index]
+            del key
         return
     items = getattr(arg, "items", _NULL)
     if items is not _NULL:
@@ -1592,3 +1596,4 @@ def _count_elements(*args: object, **kwds: object) -> None:   # _collections__co
     bound_get = mapping.get  # type: ignore[attr-defined]
     for key in it:
         mapping[key] = bound_get(key, 0) + 1  # type: ignore[index]
+        del key                                  # Py_DECREF(key) before the next tp_iternext (RL-782)

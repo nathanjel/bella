@@ -1,0 +1,31 @@
+import sys, csv,io,collections,functools
+name=sys.argv[1]
+class N(int):
+    def __del__(self): print("drop",int(self))
+class B(bytes):
+    def __del__(self): print("drop",bytes(self))
+class I:
+    def __init__(self):self.i=0
+    def __iter__(self): return self
+    def __next__(self):
+        self.i+=1
+        print("next",self.i)
+        if self.i>2: raise StopIteration
+        if name in ("buf","lines"): return B(b'x')
+        return N(self.i)
+    def __del__(self): print("drop iterator")
+class S:
+    def __iter__(self): return I()
+s=S()
+if name=="deque": collections.deque(s,maxlen=0)
+elif name=="left": collections.deque(maxlen=0).extendleft(s)
+elif name=="reduce": functools.reduce(lambda a,b:0,s,0)
+elif name=="sum": sum(s)
+elif name=="float": sum(s,0.)
+elif name=="complex": sum(s,0j)
+elif name=="min": min(s)
+elif name=="max": max(s)
+elif name=="csv": csv.writer(io.StringIO()).writerow(s)
+elif name=="buf": io.BytesIO().writelines(s)
+elif name=="lines": io.IOBase.writelines(io.BytesIO(),s)
+print("after")

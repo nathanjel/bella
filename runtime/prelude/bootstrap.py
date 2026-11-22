@@ -695,7 +695,9 @@ def _make_parameters(args):
         if _ga_index(parameters, item) < 0:
             parameters.append(item)
 
-    for t in tuple(args):
+    # a tuple is read with PyTuple_GET_SIZE and PyTuple_GET_ITEM: its own items, whatever its class defines (RL-781); a
+    # list goes through PySequence_Tuple, which iterates it
+    for t in (_own_data(args) if _ga_check(args, tuple) else tuple(args)):
         if _ga_check(t, type):                         # not __parameters__ of a bare Python class
             continue
         if hasattr(t, '__typing_subst__'):
@@ -705,7 +707,7 @@ def _make_parameters(args):
         if subparams is _ga_absent and (_ga_check(t, tuple) or _ga_check(t, list)):
             subparams = _make_parameters(t)            # lists and tuples, recursively
         if subparams is not _ga_absent and _ga_check(subparams, tuple):
-            for t2 in subparams:
+            for t2 in _own_data(subparams):
                 add(t2)
     return tuple(parameters)
 
@@ -718,7 +720,10 @@ def _ga_has_iter(param):
 def _subs_tvars(obj, params, argitems):
     """subs_tvars: list[T] with params (T, S) and argitems (str, int) is list[str]."""
     subparams = getattr(obj, '__parameters__', _ga_absent)
-    if subparams is _ga_absent or not _ga_check(subparams, tuple) or not subparams:
+    if subparams is _ga_absent or not _ga_check(subparams, tuple):
+        return obj
+    subparams = _own_data(subparams)                   # PyTuple_GET_SIZE and PyTuple_GET_ITEM (RL-781)
+    if not subparams:
         return obj
     subargs = []
     for arg in subparams:
@@ -727,7 +732,7 @@ def _subs_tvars(obj, params, argitems):
             param = params[iparam]
             arg = argitems[iparam]
             if _ga_has_iter(param) and _ga_check(arg, tuple):
-                subargs.extend(arg)
+                subargs.extend(_own_data(arg))         # tuple_extend, from the tuple's own items
                 continue
         subargs.append(arg)
     return obj[tuple(subargs)]
@@ -748,12 +753,14 @@ def _unpacked_tuple_args(arg):
 
 def _unpack_args(item):
     newargs = []
-    for one in (item if _ga_check(item, tuple) else (item,)):
+    for one in (_own_data(item) if _ga_check(item, tuple) else (item,)):
         if not _ga_check(one, type):
             subargs = _unpacked_tuple_args(one)
-            if subargs is not None and _ga_check(subargs, tuple) and not (subargs and subargs[-1] is ...):
-                newargs.extend(subargs)
-                continue
+            if subargs is not None and _ga_check(subargs, tuple):
+                own = _own_data(subargs)               # the size and the last item are the tuple's own (RL-781)
+                if not (own and own[-1] is ...):
+                    newargs[len(newargs):] = subargs   # PyList_SetSlice, which iterates a tuple of a class of the program's
+                    continue
         newargs.append(one)
     return tuple(newargs)
 
@@ -768,13 +775,13 @@ def _subs_parameters(self, args, parameters, item):
         prepare = getattr(param, '__typing_prepare_subst__', None)
         if prepare is not None:
             item = prepare(self, item if _ga_check(item, tuple) else (item,))
-    argitems = item if _ga_check(item, tuple) else (item,)
+    argitems = _own_data(item) if _ga_check(item, tuple) else (item,)
     nitems = len(argitems)
     if nitems != nparams:
         raise TypeError(f"Too {'many' if nitems > nparams else 'few'} arguments for {_repr_text(self)}; "
                         f'actual {nitems}, expected {nparams}')
     newargs = []
-    for arg in tuple(args):
+    for arg in (_own_data(args) if _ga_check(args, tuple) else tuple(args)):
         if _ga_check(arg, type):
             newargs.append(arg)
             continue
@@ -795,7 +802,7 @@ def _subs_parameters(self, args, parameters, item):
             if not _ga_check(new, tuple):
                 raise TypeError(f'expected __typing_subst__ of {_ga_type_name(arg)} objects to return a tuple, '
                                 f'not {_ga_type_name(new)}')
-            newargs.extend(new)
+            newargs.extend(_own_data(new))             # tuple_extend, from the tuple's own items
         else:
             newargs.append(new)
     return tuple(newargs)
@@ -863,7 +870,7 @@ is (int,)."""
 
     def __repr__(self):
         parts = []
-        for p in self.__args__:
+        for p in _own_data(self.__args__):             # PyTuple_GET_ITEM: a tuple of a class of the program's is its items
             if type(p) is list:                        # a ParamSpec's list of type arguments
                 parts.append('[' + ', '.join([_typing_type_repr(x) for x in p]) + ']')
             else:
@@ -2158,7 +2165,9 @@ def _getstate_default(obj, required):            # object_getstate_default
 
 def _getstate(obj, required):                    # object_getstate
     getstate = obj.__getstate__
-    if type(getstate) is type(len) and getstate.__self__ is obj and type(obj).__getstate__ is object.__dict__["__getstate__"]:
+    # "PyCFunction_GET_SELF(getstate) == obj && PyCFunction_GET_FUNCTION(getstate) == object___getstate__": what the type's
+    # own lookup finds, no attribute of the class (which a metaclass's descriptor of the name would answer, RL-780)
+    if type(getstate) is type(len) and getstate.__self__ is obj and _type_lookup(obj, "__getstate__", None) is object.__dict__["__getstate__"]:
         return _getstate_default(obj, required)  # not overridden: pass the required argument
     return getstate()
 

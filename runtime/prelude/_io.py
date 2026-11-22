@@ -78,12 +78,14 @@ _END = object()
 def _next_only(it: object) -> object:
     """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
     operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
-    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765). The item is handed on and not kept: the C has
+    let go of it before it asks for the next one, and a loop of this file does the same with `del` (RL-782)."""
+    held: list[object] = []
     while True:
-        item = next(it, _END)  # type: ignore[call-overload]
-        if item is _END:
+        held.append(next(it, _END))  # type: ignore[call-overload]
+        if held[0] is _END:
             return
-        yield item
+        yield held.pop()
 
 
 def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
@@ -438,8 +440,9 @@ class _IOBase:
             setattr(self, "__IOBase_closed", True)  # noqa: B010
 
     def __del__(self) -> None:                   # iobase_finalize
-        if type(self) in _NO_FINALIZER:          # bytesio_dealloc, stringio_dealloc and bufferedrwpair_dealloc call no finaliser:
-            return                               # an exact one of the three has none, a subclass of the program's has (RL-585, RL-598)
+        cls = type(self)                         # bytesio_dealloc, stringio_dealloc and bufferedrwpair_dealloc call no finaliser:
+        if cls is BytesIO or cls is StringIO or cls is BufferedRWPair:   # an exact one of the three has none, a subclass of the
+            return                               # program's has (RL-585, RL-598); `in` would ask a metaclass's __eq__ (RL-785)
         try:
             closed = _optional_attr(self, "closed")
             closed = -1 if closed is _ABSENT else (1 if closed else 0)
@@ -554,6 +557,7 @@ class _IOBase:
                 except OSError as e:
                     if not _trap_eintr(e):
                         raise
+            del line                             # Py_DECREF(line) before the next tp_iternext (RL-782)
 
 
 # ---- _RawIOBase ----
@@ -2108,8 +2112,25 @@ class BufferedRWPair(_BufferedIOBase):
         buffer_size = _ssize(args[3]) if n > 2 else DEFAULT_BUFFER_SIZE
         _check_ability(reader, "readable", "File or stream is not readable.")
         _check_ability(writer, "writable", "File or stream is not writable.")
-        self._a_reader = BufferedReader(reader, buffer_size)
-        self._b_writer = BufferedWriter(writer, buffer_size)
+        # "self->reader = ...": the C stores into its two fields without letting go of what they held, so a reader and a
+        # writer of an earlier call are never released (their raw streams are not closed by it), and a call that fails
+        # leaves NULL where its result was to be, with the reader cleared when the writer's fails (RL-791)
+        made: object = None
+        if self._a_reader is not None:
+            _io_call("leak", self._a_reader)
+        try:
+            made = BufferedReader(reader, buffer_size)
+        finally:
+            self._a_reader = made
+        made = None
+        if self._b_writer is not None:
+            _io_call("leak", self._b_writer)
+        try:
+            made = BufferedWriter(writer, buffer_size)
+        finally:
+            self._b_writer = made
+            if made is None:
+                self._a_reader = None            # Py_CLEAR(self->reader)
 
     def read(*args: object, **kwds: object) -> object:  # noqa: N805
         if kwds:
@@ -2239,14 +2260,20 @@ class BytesIO(_BufferedIOBase):
         (initial_bytes,) = _unpack("BytesIO", args[1:], kwds, ("initial_bytes",), 0, 1)
         if self._d_exports > 0:
             raise BufferError("Existing exports of data: object cannot be re-sized")
+        self._c_string_size = 0                  # "In case, __init__ is called multiple times."
         self._b_pos = 0
-        self._c_string_size = 0
-        if initial_bytes is not _ABSENT and initial_bytes is not None:
+        if initial_bytes is _ABSENT or initial_bytes is None:
+            if self._a_buf is not None:          # nothing more: a closed stream stays closed (RL-789)
+                self._a_buf = bytearray()
+        elif type(initial_bytes) is bytes:       # Py_XSETREF(self->buf, initvalue): the buffer of a closed stream too, open again
+            self._a_buf = bytearray(initial_bytes)
+            self._c_string_size = bytes.__len__(initial_bytes)
+        else:                                    # _io_BytesIO_write_impl: the argument's buffer first, then a closed stream's refusal
             data = _buffer(initial_bytes)
-            self._a_buf = bytearray(data)
-            self._c_string_size = bytes.__len__(data)
-        else:
+            _bio_check_closed(self)
             self._a_buf = bytearray()
+            _bio_write_bytes(self, data)
+            self._b_pos = 0
 
     def getvalue(*args: object, **kwds: object) -> bytes:  # noqa: N805
         _noargs("BytesIO.getvalue", args, kwds)
@@ -2379,10 +2406,11 @@ class BytesIO(_BufferedIOBase):
     def write(*args: object, **kwds: object) -> int:  # noqa: N805
         b = _one("BytesIO.write", args, kwds)
         self: BytesIO = args[0]  # type: ignore[assignment]
+        data = _buffer(b)                        # write_bytes: the argument's buffer first, then closed and exports (RL-789's kin)
         _bio_check_closed(self)
         if self._d_exports > 0:
             raise BufferError("Existing exports of data: object cannot be re-sized")
-        return _bio_write_bytes(self, _buffer(b))
+        return _bio_write_bytes(self, data)
 
     def writelines(*args: object, **kwds: object) -> None:  # noqa: N805
         lines = _one("BytesIO.writelines", args, kwds)
@@ -2390,6 +2418,7 @@ class BytesIO(_BufferedIOBase):
         _bio_check_closed(self)
         for item in _tp_iter(lines):
             _bio_write_bytes(self, _buffer(item))
+            del item                             # Py_DECREF(item) before the next tp_iternext (RL-782)
 
     def close(*args: object, **kwds: object) -> None:  # noqa: N805
         _noargs("BytesIO.close", args, kwds)
@@ -2550,10 +2579,11 @@ class IncrementalNewlineDecoder:
     def __init__(*args: object, **kwds: object) -> None:  # noqa: N805
         self: IncrementalNewlineDecoder = args[0]  # type: ignore[assignment]
         decoder, translate, errors = _unpack("IncrementalNewlineDecoder", args[1:], kwds, ("decoder", "translate", "errors"), 2, 3)
+        translate = True if translate else False   # the clinic's conversion, before anything of the object changes (RL-792)
         self._a_ok = False
+        self._f_errors = "strict" if errors is _ABSENT else errors   # Py_XSETREF(self->errors, ...), then the decoder
         self._b_decoder = decoder
-        self._e_translate = True if translate else False
-        self._f_errors = "strict" if errors is _ABSENT else errors
+        self._e_translate = translate
         self._d_seennl = 0
         self._c_pendingcr = False
         self._a_ok = True
@@ -3901,4 +3931,3 @@ def _std_stream(fd: int, name: str, mode: str, encoding: str, errors: str, buffe
 _io_call("hooks", open, _std_stream)
 
 
-_NO_FINALIZER = (BytesIO, StringIO, BufferedRWPair)

@@ -958,6 +958,12 @@ void setitem(Obj obj, Obj key, Obj value);
 void delitem(Obj obj, Obj key);
 Ref iter(Obj obj);                                           // GET_ITER
 Ref for_next(Obj it);                                        // FOR_ITER: Unset at the end
+// PyIter_Next in a loop of the C's: the item before is let go of before the next is asked for, where a `v = for_next(it)` in
+// a loop's step would keep it across the call (review A35, RL-782's class)
+inline Ref next_after(Ref& before, Obj it) {
+    before = Ref{};
+    return for_next(it);
+}
 inline bool is_end(const Ref& v) { return v.get().is_unset(); }
 void unpack(Obj value, std::span<Ref> targets, int star);    // UNPACK_SEQUENCE / UNPACK_EX
 Ref invoke(Obj f, Args a);                                   // any callable (CALL)

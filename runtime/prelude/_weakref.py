@@ -27,6 +27,9 @@ try:
     _class_name                                  # noqa: B018  # _PyType_Name of a class itself
     _class_fullname                              # noqa: B018  # %N: the fully qualified name of a class
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
+    _hash_of                                     # noqa: B018  # PyObject_Hash, once; then the dict's own lookup with it (RL-787)
+    _find_hashed                                 # noqa: B018  # (dict, key, hash): (index, value) or None, one lookup
+    _del_at                                      # noqa: B018  # (dict, index): the entry gone, nothing compared (delitem_common)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -44,6 +47,9 @@ except NameError:
     _weak_get: Callable[..., Any] = _missing
     _weak_list: Callable[..., list[Any]] = _missing
     _has_slot: Callable[..., bool] = _missing
+    _hash_of: Callable[..., int] = _missing
+    _find_hashed: Callable[..., Any] = _missing
+    _del_at: Callable[..., None] = _missing
 
     def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
         return type(value).__name__
@@ -146,7 +152,7 @@ class ReferenceType:
 
     def __eq__(self, other: object) -> object:   # weakref_richcompare
         _receiver(self, "__eq__")
-        if not issubclass(type(other), ReferenceType) and type(other) not in (ProxyType, CallableProxyType):
+        if not _is_weakref(other):
             return NotImplemented
         obj = _weak_get(self)
         other_obj = _weak_get(other)
@@ -156,7 +162,7 @@ class ReferenceType:
 
     def __ne__(self, other: object) -> object:
         _receiver(self, "__ne__")
-        if not issubclass(type(other), ReferenceType) and type(other) not in (ProxyType, CallableProxyType):
+        if not _is_weakref(other):
             return NotImplemented
         obj = _weak_get(self)
         other_obj = _weak_get(other)
@@ -393,6 +399,13 @@ def getweakrefs(*args: object, **kwds: object) -> list[object]:
     return _weak_list(args[0])
 
 
+def _is_weakref(value: object) -> bool:
+    """PyWeakref_Check: a reference or one of the two proxy types, by the types themselves (`in` over the two would ask a
+    metaclass's __eq__, RL-786)."""
+    cls = type(value)
+    return issubclass(cls, ReferenceType) or cls is ProxyType or cls is CallableProxyType
+
+
 def _remove_dead_weakref(*args: object, **kwds: object) -> None:   # _PyDict_DelItemIf(dct, key, is_dead_weakref)
     if kwds:
         raise TypeError("_weakref._remove_dead_weakref() takes no keyword arguments")
@@ -400,12 +413,10 @@ def _remove_dead_weakref(*args: object, **kwds: object) -> None:   # _PyDict_Del
     dct, key = args
     if not issubclass(type(dct), dict):
         raise TypeError("_remove_dead_weakref() argument 1 must be dict, not " + ("None" if dct is None else _type_name(dct)))
-    hash(key)                                    # its own message, and not a dict's about a key
-    absent = object()
-    value = dict.get(dct, key, absent)  # type: ignore[call-overload]
-    if value is absent:
+    found = _find_hashed(dct, key, _hash_of(key))   # one hash and one lookup, as _PyDict_DelItemIf has them (RL-787)
+    if found is None:
         return
-    if not issubclass(type(value), ReferenceType) and type(value) not in (ProxyType, CallableProxyType):
+    if not _is_weakref(found[1]):
         raise TypeError("not a weakref")
-    if _weak_get(value) is None:
-        dict.__delitem__(dct, key)  # type: ignore[arg-type]
+    if _weak_get(found[1]) is None:
+        _del_at(dct, found[0])

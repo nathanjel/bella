@@ -1,0 +1,33 @@
+import ast,sys
+op,mode=sys.argv[1].split('-')
+class Fields(tuple):
+    def __len__(self): print("size"); return super().__len__()
+    def __getitem__(self,k): print("item",k); return super().__getitem__(k)
+    def __iter__(self): print("iter"); raise LookupError
+class D(dict):
+    def __contains__(self,k): print("contains"); raise KeyError
+class M(type):
+    @property
+    def _fields(cls):
+        if mode=="order": print("fields")
+        if mode=="names": return Fields(("x",))
+        if mode=="nonefields": return None
+        return ("x",)
+    @property
+    def _attributes(cls):
+        if mode=="order": print("attrs")
+        return ()
+class A(ast.AST,metaclass=M):
+    def __init__(self,**kw): self.x=kw.get('x',9)
+    @property
+    def __dict__(self):
+        if mode=="order": print("dict")
+        if mode=="nonedict": return None
+        return D(x=3) if mode=="dict" else {"x":3}
+x=A()
+try:
+    if op=="red":
+        r=x.__reduce__()
+        print(len(r),r[1])
+    else: print(x.__replace__().x)
+except BaseException as e: print(type(e).__name__)

@@ -1135,7 +1135,7 @@ Ref fromkeys_impl(Obj cls, Args a) {
     auto done = [&]() -> Ref { return need_copy ? invoke(cls, {out.get()}) : std::move(out); };
     if (!is_exact_dict(out.get()) && !is_exact_frozendict(out.get())) {   // a subclass's: PyObject_SetItem
         Ref it = iter(src);
-        for (Ref k = for_next(it.get()); !is_end(k); k = for_next(it.get())) setitem(out.get(), k.get(), value);
+        for (Ref k = for_next(it.get()); !is_end(k); k = next_after(k, it.get())) setitem(out.get(), k.get(), value);
         return out;
     }
     auto* d = static_cast<Dict*>(out.get().object());
@@ -1468,7 +1468,7 @@ Ref c_tuple(Obj, Args a) {
     std::vector<Obj> items;
     Ref it = iter(a.pos(0));
     try {
-        for (Ref v = for_next(it.get()); !is_end(v); v = for_next(it.get())) items.push_back(v.release());
+        for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) items.push_back(v.release());
     } catch (...) {
         for (Obj v : items) decref(v);
         throw;
@@ -1901,15 +1901,22 @@ void note_prelude_class(const ClassObject* c) {
         cls->del_attr(said_release);
         said = true;
     }
+    // A class over a built-in base with fields that adds none of its own (io.UnsupportedOperation, zlib.error: what the C
+    // makes by calling type, PyErr_NewException) has no dealloc: its objects die as any class's over that base do, the
+    // base's fields with them. One that adds fields would end with the base's dealloc, which set_release refuses.
     if (cpython_attribute_kind(cls, "__firstlineno__").empty()) {
+        bool fields = said;
         if (!said) {
             if (cls->has_weakref) order.push_back(intern("__weakref__"));
             for (ClassObject* k : cls->mro)
                 for (const Str* s : k->own_slot_names())
-                    if (k->hidden.contains(s)) order.push_back(s);
+                    if (k->hidden.contains(s)) {
+                        order.push_back(s);
+                        fields = true;
+                    }
             if (cls->has_dict) order.push_back(intern("__dict__"));
         }
-        set_release(cls, std::move(order));
+        if (fields || cls->native_fields.empty()) set_release(cls, std::move(order));
     }
     // A static type has no __module__ in its dict: its module is its tp_name's, which type_module answers (RL-554). The names
     // table has the entry for the types that do have one (those C makes from a spec); the class statement's goes where the
@@ -3114,7 +3121,7 @@ void emit_exception_only(ErrSink& err, const PrintContext& ctx, const Record& r)
     Obj notes = r.notes.get();
     if (notes != None() && notes_sequence(notes)) {
         Ref it = iter(notes);                    // `for note in self.__notes__`: each is printed before the next is asked for
-        for (Ref note = for_next(it.get()); !is_end(note); note = for_next(it.get())) note_lines(safe_string(note.get(), "note", false));
+        for (Ref note = for_next(it.get()); !is_end(note); note = next_after(note, it.get())) note_lines(safe_string(note.get(), "note", false));
     } else if (notes != None()) {
         note_lines(safe_string(notes, "__notes__", true));
     }

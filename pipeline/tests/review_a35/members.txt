@@ -1,0 +1,31 @@
+import sys
+import ast
+import functools
+from collections import deque, defaultdict, OrderedDict
+
+def f(x=1): return x
+def trap(self):
+    print("dict lookup")
+    raise LookupError
+class S(staticmethod): __dict__ = property(trap)
+class C(classmethod): __dict__ = property(trap)
+class P(functools.partial): __dict__ = property(trap)
+class A(ast.Constant): __dict__ = property(trap)
+class Q(functools.partial):
+    @property
+    def args(self): print("args lookup"); return (9,)
+row = sys.argv[1]
+try:
+    if row[0] in "sc":
+        x = (S if row[0] == "s" else C)(f)
+        if row[1:] == "read": print(x.__annotations__)
+        else: x.__annotations__ = {"v":1}; print(x.__annotations__)
+    elif row == "partial":
+        p = P(f); p.extra = 3; print(p.__reduce__()[2][3])
+    elif row == "args": print(Q(f, 2)())
+    elif row == "ast": print(A(1).__reduce__()[2])
+    elif row == "replace": print(A(1).__replace__().value)
+    elif row == "deque": print(len(deque.__new__(deque)))
+    elif row == "dd": print(defaultdict.__new__(defaultdict).default_factory)
+    elif row == "od": print(list(OrderedDict.__new__(OrderedDict)))
+except BaseException as e: print(type(e).__name__)

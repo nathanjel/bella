@@ -1867,6 +1867,23 @@ def test_a_built_in_types_dealloc_has_its_own_order() -> None:
         raise AssertionError("a dealloc that names one field of two")
     except ValueError:
         pass
+    # a dealloc of its own over a base with fields would leave the base's held: refused. The class the C makes by calling
+    # type has none, and its objects let go of the base's fields as any class's do (io.UnsupportedOperation leaked its
+    # traceback while the runtime gave it one, review A35's saved outputs)
+    base = RefClass("BaseException", native=BASE_EXCEPTION_FIELDS)
+    try:
+        RefClass("OwnDealloc", (base,), release=("__weakref__",))
+        raise AssertionError("a dealloc of its own over a base with fields")
+    except ValueError:
+        pass
+    _fresh_heap()
+    rt = Runtime()
+    made = RefObject(RefClass("UnsupportedOperation", (RefClass("OSError", (base,)), RefClass("ValueError", (base,)))))
+    O.incref(made)
+    for name in ("args", "__traceback__"):
+        _store(rt, made, name, name)
+    O.decref(made)
+    assert _deaths() == ["args", "__traceback__"]
 
 
 def test_a_chain_longer_than_the_native_stack() -> None:

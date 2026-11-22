@@ -1,0 +1,62 @@
+import sys, weakref, io, collections, errno
+row=sys.argv[1]
+def show(f):
+    try: print(f())
+    except BaseException as e: print(type(e).__name__)
+class I(int):
+    def __index__(self): print("index"); return 4
+class Str(str):
+    def __str__(self): print("str"); return "other"
+class O(OSError): pass
+if row.startswith("os"):
+    kind=(OSError,BlockingIOError,O)[int(row[2])]
+    e=kind(errno.EAGAIN, "old", 7)
+    args=((),(errno.ENOENT,"new","f"),(errno.EAGAIN,Str("msg"),I(3)),(errno.EAGAIN,"m","x",None,"y"))[int(row[3])]
+    show(lambda:e.__init__(*args))
+    for key in ('args','errno','filename','filename2','strerror','characters_written'):
+        show(lambda:getattr(e,key))
+elif row.startswith("syn"):
+    e=SyntaxError("old",("f",2,3,"line",4,5))
+    args=((),("msg",),("msg",("f2",8,9,"text")),("msg",("f2",8,9,"text",10)),("msg",(1,)),("msg",(None,)*8))[int(row[3])]
+    show(lambda:e.__init__(*args))
+    for key in ('args','msg','filename','lineno','offset','text','end_lineno','end_offset'):
+        show(lambda:getattr(e,key))
+elif row.startswith("io"):
+    kind=io.BytesIO if row[2]=="b" else io.StringIO
+    a=kind(b"old" if row[2]=="b" else "old")
+    a.seek(2); a.extra=1
+    if row[3]=="c": a.close()
+    args=((),(12,),(b"new" if row[2]=="b" else "new",))[int(row[4])]
+    show(lambda:a.__init__(*args))
+    for op in (lambda:a.closed,lambda:a.tell(),lambda:a.getvalue(),lambda:a.extra): show(op)
+elif row.startswith("weak"):
+    class W:
+        def __call__(self): return 1
+    class R(weakref.ref):
+        def __call__(self): print("called ref"); return None
+    w=W(); r=R(w); p=weakref.proxy(w)
+    if row=="weakdead": del w
+    show(lambda:weakref.ref.__call__(r) is None)
+    show(lambda:p()); show(lambda:bool(r)); show(lambda:r==r)
+else:
+    class F:
+        def __del__(self): raise ValueError(1)
+    holder=[]
+    old=sys.unraisablehook
+    sys.unraisablehook=holder.append
+    F()
+    sys.unraisablehook=old
+    class Sink:
+        n=0
+        def write(self,s):
+            self.n+=1
+            print(self.n,repr(s))
+            if self.n==int(row): raise KeyError
+        def flush(self): print("flush")
+    exc=ValueError("msg")
+    args=type(holder[0])((ValueError,exc,None,"message","shown"))
+    old=sys.stderr
+    try:
+        sys.stderr=Sink()
+        show(lambda:sys.__unraisablehook__(args))
+    finally: sys.stderr=old

@@ -173,6 +173,7 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
     _class_name                                  # noqa: B018  # _PyType_Name of a class itself
+    _own_dict                                    # noqa: B018  # PyObject_GenericGetDict: the object's dict, whatever a class has under __dict__
 except NameError:                                # CPython runs this file (runtime/tests/test_prelude.py): what stands for them
     import operator
     import os
@@ -193,6 +194,9 @@ except NameError:                                # CPython runs this file (runti
 
     def _bella_refuse(what: str) -> None:
         raise NotImplementedError(what)
+
+    def _own_dict(obj: object) -> dict[str, object]:   # a stand-in for CPython's run of this file
+        return object.__getattribute__(obj, "__dict__")  # type: ignore[no-any-return]
 
     def _warn(message: str, category: str) -> None:
         warnings.warn(message, {"RuntimeWarning": RuntimeWarning}[category], stacklevel=3)
@@ -481,22 +485,24 @@ def _wraps(wrapper: object, wrapped: object) -> None:   # functools_wraps: throu
 
 
 def _wrapped_attribute(wrapped: object, obj: object, name: str) -> object:   # descriptor_get_wrapped_attribute
-    d: dict[str, object] = obj.__dict__
-    if name in d:
-        return d[name]
+    # PyObject_GenericGetDict and the dict's own lookup and store: no __dict__ of a class of the program's is asked, and no
+    # method of the class of a dict it was given (RL-777, RL-790)
+    d: dict[str, object] = _own_dict(obj)
+    value = dict.get(d, name, _NULL)
+    if value is not _NULL:
+        return value
     value = getattr(wrapped, name)
-    d[name] = value
+    dict.__setitem__(d, name, value)
     return value
 
 
 def _set_wrapped_attribute(obj: object, name: str, value: object, type_name: str) -> None:   # descriptor_set_wrapped_attribute
-    d: dict[str, object] = obj.__dict__
+    d: dict[str, object] = _own_dict(obj)
     if value is _NULL:
-        if name not in d:
+        if dict.pop(d, name, _NULL) is _NULL:    # PyDict_DelItem, its KeyError replaced
             raise AttributeError("'" + type_name + "' object has no attribute '" + name + "'")
-        del d[name]
         return
-    d[name] = value
+    dict.__setitem__(d, name, value)
 
 
 class staticmethod:

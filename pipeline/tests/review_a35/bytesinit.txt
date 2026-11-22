@@ -1,0 +1,7 @@
+import sys,io
+class B(bytes): pass
+s=io.BytesIO(b"old"); s.close()
+value={"none":None,"sub":B(b"ab"),"array":bytearray(b"ab"),"bytes":b"ab","bad":1}[sys.argv[1]]
+try: s.__init__(value); print("ok")
+except BaseException as e: print(type(e).__name__)
+print(s.closed)
