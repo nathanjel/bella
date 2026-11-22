@@ -2688,7 +2688,9 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
     check_finally(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]
     tree.bella_future = future_features(tree) | inherit_future  # type: ignore[attr-defined]
-    _TAKEN.clear()
+    global _counter
+    _counter = itertools.count()                 # a unit's generated names are its own: not numbered on from whatever this process
+    _TAKEN.clear()                               # lowered before it (a cold cache gave `_format8601` where a warm one gave `_format3`)
     _TAKEN.update(_identifiers(tree))
     _SYNTHETIC.clear()
     _WALRUS_GLOBALS.clear()

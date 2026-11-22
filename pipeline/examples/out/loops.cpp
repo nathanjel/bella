@@ -277,15 +277,15 @@ rt::Ref module_body(rt::Module* m) {
 // function gcd.__annotate__  (loops.py:4)
 static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
-    Ref _format6;
-    Ref _ann7;
-    rt::bind(fn, args, {&_format6});
-    rt::FrameGuard frame(code_gcd_annotate, M, _format6, _ann7);
-    rt::StackValues stack_values(_ann7, _format6);
+    Ref _format0;
+    Ref _ann1;
+    rt::bind(fn, args, {&_format0});
+    rt::FrameGuard frame(code_gcd_annotate, M, _format0, _ann1);
+    rt::StackValues stack_values(_ann1, _format0);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
     frame.line = 4;
-    t1 = rt::load_fast(_format6, "_format6");
+    t1 = rt::load_fast(_format0, "_format0");
     t2 = rt::compare(rt::CmpOp::Gt, t1.get(), Obj::small(2));
     t1 = Ref{};
     t3 = rt::truth_ref(t2.get());
@@ -295,23 +295,23 @@ static Ref f_gcd_annotate(rt::PyFunction* fn, rt::Args args) {
         rt::raise_type(t4.get(), Obj{}, false);
     }
     t5 = rt::build_map({}, {});
-    _ann7 = std::move(t5);
+    _ann1 = std::move(t5);
     t6 = rt::load_global(M, S_int);
-    t7 = rt::load_fast(_ann7, "_ann7");
+    t7 = rt::load_fast(_ann1, "_ann1");
     rt::setitem(t7.get(), K_8, t6.get());
     t7 = Ref{};
     t6 = Ref{};
     t8 = rt::load_global(M, S_int);
-    t9 = rt::load_fast(_ann7, "_ann7");
+    t9 = rt::load_fast(_ann1, "_ann1");
     rt::setitem(t9.get(), K_9, t8.get());
     t9 = Ref{};
     t8 = Ref{};
     t10 = rt::load_global(M, S_int);
-    t11 = rt::load_fast(_ann7, "_ann7");
+    t11 = rt::load_fast(_ann1, "_ann1");
     rt::setitem(t11.get(), K_10, t10.get());
     t11 = Ref{};
     t10 = Ref{};
-    t12 = rt::load_fast(_ann7, "_ann7");
+    t12 = rt::load_fast(_ann1, "_ann1");
     return std::move(t12);
 }
 
@@ -359,15 +359,15 @@ static Ref f_gcd(rt::PyFunction* fn, rt::Args args) {
 // function signs.__annotate__  (loops.py:12)
 static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
-    Ref _format9;
-    Ref _ann10;
-    rt::bind(fn, args, {&_format9});
-    rt::FrameGuard frame(code_signs_annotate, M, _format9, _ann10);
-    rt::StackValues stack_values(_ann10, _format9);
+    Ref _format3;
+    Ref _ann4;
+    rt::bind(fn, args, {&_format3});
+    rt::FrameGuard frame(code_signs_annotate, M, _format3, _ann4);
+    rt::StackValues stack_values(_ann4, _format3);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12;
     frame.line = 12;
-    t1 = rt::load_fast(_format9, "_format9");
+    t1 = rt::load_fast(_format3, "_format3");
     t2 = rt::compare(rt::CmpOp::Gt, t1.get(), Obj::small(2));
     t1 = Ref{};
     t3 = rt::truth_ref(t2.get());
@@ -377,23 +377,23 @@ static Ref f_signs_annotate(rt::PyFunction* fn, rt::Args args) {
         rt::raise_type(t4.get(), Obj{}, false);
     }
     t5 = rt::build_map({}, {});
-    _ann10 = std::move(t5);
+    _ann4 = std::move(t5);
     t6 = rt::load_global(M, S_int);
-    t7 = rt::load_fast(_ann10, "_ann10");
+    t7 = rt::load_fast(_ann4, "_ann4");
     rt::setitem(t7.get(), K_8, t6.get());
     t7 = Ref{};
     t6 = Ref{};
     t8 = rt::load_global(M, S_int);
-    t9 = rt::load_fast(_ann10, "_ann10");
+    t9 = rt::load_fast(_ann4, "_ann4");
     rt::setitem(t9.get(), K_9, t8.get());
     t9 = Ref{};
     t8 = Ref{};
     t10 = rt::load_global(M, S_int);
-    t11 = rt::load_fast(_ann10, "_ann10");
+    t11 = rt::load_fast(_ann4, "_ann4");
     rt::setitem(t11.get(), K_10, t10.get());
     t11 = Ref{};
     t10 = Ref{};
-    t12 = rt::load_fast(_ann10, "_ann10");
+    t12 = rt::load_fast(_ann4, "_ann4");
     return std::move(t12);
 }
 

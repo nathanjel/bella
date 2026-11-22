@@ -720,21 +720,23 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s
   key, `os.pwrite`: 18 rows). Exact: an export held from the conversion on (a resize is then refused, as the view makes it)
   and the read where the C reads. With RL-583 and the memoryview model.
-* **The frontend's generated names depend on what the process lowered before (found 2026-11-22; low).** `_tmp` numbers its
-  names from a counter that is never reset (`pipeline/l1/frontend.py`, `_counter`), while `_TAKEN` and `_SYNTHETIC` are cleared for
-  each unit. So a unit's generated text is `_format3` in a process that lowered nothing else and `_format8601` after the
-  standard library's units were lowered in the same process (a cold cache): `make slice` rewrote the committed
-  `pipeline/examples/out/fact_big.cpp` with other numbers and nothing else. Reset the counter where the other two are cleared, with
-  a test that lowers one unit alone and after another and compares the text; batch it with the next change of the pipeline (it
-  re-keys every lowered unit).
 * **The order in which a `match` statement's captures are stored (measured with RL-825, 2026-11-22; low).** CPython stores the
   names of a successful pattern in an order its code generator and `apply_static_swaps` decide, and what the names held is let go
   of in that order. Thirteen shapes were run on both sides with objects that say when they go. Eleven agree (a flat sequence of
   two, three and four names, a star, a mapping, a class pattern by position and by keyword, an as-pattern, an or-pattern, a guard,
   one capture). Two differ: `[a, [b, c]]` stores `b, c, a` under CPython and `a, b, c` compiled, and `{"x": a, **b}` stores
-  `b, a` under CPython and `a, b` compiled. A step of its own, with a case: find the rule in `codegen_pattern_*` and
-  `apply_static_swaps` (the rest of a mapping and a sub-pattern's names come before the names stored earlier in the outer
-  pattern) and measure deeper nestings before writing it.
+  `b, a` under CPython and `a, b` compiled. A step of its own, with a case. The mechanism (Python/codegen.c): each capture is
+  rotated under what is on the stack (`pattern_helper_store_name`: SWAPs counted from `pc->on_top` and the names so far), and the
+  stores are emitted at the end in the order of capture, all on the pattern's line; `swaptimize` and `apply_static_swaps` then
+  remove the SWAPs that stand right before those stores (and before the POP_TOPs a mapping or class pattern ends with) by
+  exchanging the stores. Forty-three shapes read with `dis` (2026-11-22) fit one statement of it: where every name is a fast
+  local, the stores are made in the order the captured values lie on the stack, top first, after the last instruction that is
+  neither a SWAP, a POP_TOP nor a STORE_FAST, which is the last sub-pattern's UNPACK_SEQUENCE, MATCH_KEYS or MATCH_CLASS (so
+  `[a, [b, c], d]` stores `b, c, d, a`, `[a, b, [c]]` stores `c, a, b`, `{"x": a, "y": b, **c}` stores `c, a, b`, and a flat
+  sequence, whose rotations cancel, stores as written); an or-pattern stores in its first alternative's order; with a cell or a
+  global among the names `apply_static_swaps` gives up part of the way. To do: port the stack bookkeeping of the pattern kinds
+  (`pc->on_top`, the rotation counts) with `swaptimize` and `apply_static_swaps` into the lowering of a `match`, checked against
+  `dis` over generated patterns, and a case.
 * **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
   that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
   `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and

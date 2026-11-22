@@ -129,15 +129,15 @@ rt::Ref module_body(rt::Module* m) {
 // function steps.__annotate__  (collatz.py:4)
 static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args) {
     [[maybe_unused]] rt::Module* M = fn->module;
-    Ref _format3;
-    Ref _ann4;
-    rt::bind(fn, args, {&_format3});
-    rt::FrameGuard frame(code_steps_annotate, M, _format3, _ann4);
-    rt::StackValues stack_values(_ann4, _format3);
+    Ref _format0;
+    Ref _ann1;
+    rt::bind(fn, args, {&_format0});
+    rt::FrameGuard frame(code_steps_annotate, M, _format0, _ann1);
+    rt::StackValues stack_values(_ann1, _format0);
     BELLA_LOOK();
     Ref t1, t2, t3, t4, t5, t6, t7, t8, t9, t10;
     frame.line = 4;
-    t1 = rt::load_fast(_format3, "_format3");
+    t1 = rt::load_fast(_format0, "_format0");
     t2 = rt::compare(rt::CmpOp::Gt, t1.get(), Obj::small(2));
     t1 = Ref{};
     t3 = rt::truth_ref(t2.get());
@@ -147,18 +147,18 @@ static Ref f_steps_annotate(rt::PyFunction* fn, rt::Args args) {
         rt::raise_type(t4.get(), Obj{}, false);
     }
     t5 = rt::build_map({}, {});
-    _ann4 = std::move(t5);
+    _ann1 = std::move(t5);
     t6 = rt::load_global(M, S_int);
-    t7 = rt::load_fast(_ann4, "_ann4");
+    t7 = rt::load_fast(_ann1, "_ann1");
     rt::setitem(t7.get(), K_3, t6.get());
     t7 = Ref{};
     t6 = Ref{};
     t8 = rt::load_global(M, S_int);
-    t9 = rt::load_fast(_ann4, "_ann4");
+    t9 = rt::load_fast(_ann1, "_ann1");
     rt::setitem(t9.get(), K_4, t8.get());
     t9 = Ref{};
     t8 = Ref{};
-    t10 = rt::load_fast(_ann4, "_ann4");
+    t10 = rt::load_fast(_ann1, "_ann1");
     return std::move(t10);
 }
 
