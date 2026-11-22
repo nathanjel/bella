@@ -1,0 +1,12 @@
+{
+ "case": "C-6-25_a_view_of_bytes.py",
+ "clause": "C-6-25",
+ "spec": "section 6 (built-in types: memoryview)",
+ "status": "P1",
+ "source": "Objects/memoryobject.c (memoryview_impl, memory_item, memory_subscript, memoryview_tobytes_impl, memoryview_release_impl,",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "made of bytes: 6 B 1 1 True | of a bytearray: 3 B 1 1 False | of a class over bytes: 2 B 1 1 True | of a view: 4 B 1 1 True | of nothing: 0 B 1 1 True\nrefused: TypeError TypeError TypeError TypeError TypeError TypeError | by keyword: 2 B 1 1 True\nitems: 97 102 102 97 | out of range: IndexError IndexError | no index: TypeError TypeError | type: int\nslices: b'bc' b'ab' b'ef' b'ace' b'fedcba' b'fd' b'' b'' | a slice is a view: memoryview 2 B 1 1 True\nslices of slices: b'cd' b'ce' b'fdb' 101 | a step of nothing: ValueError\ntobytes: b'abcdef' bytes b'xy' | of a class over bytes: bytes\ntaken as bytes: b'\\x01\\x02\\x03\\x04' bytearray(b'\\x01\\x02\\x03\\x04') b'\\x01\\x02\\x03\\x04-\\x01' b'ab\\x01' b'\\x01\\x02\\x03\\x04' 16909060 (513, 1027) b'01020304' 3057449933 9f64a747 text b'\\x01\\x03' b'\\x04\\x03\\x02\\x01'\na view of a bytearray: 3 B 1 1 False 97 | the bytearray changed in place is seen: 120 b'xbc' b'x'\nits size is held: BufferError BufferError BufferError BufferError BufferError BufferError BufferError | what keeps the size goes on: None bytearray(b'cbx')\na slice holds it too: BufferError | until it is released: bytearray(b'cbx!')\na view that is gone holds nothing: bytearray(b'cbx!\"')\na view of a view holds it: BufferError | then: bytearray(b'cbx!\"#')\nreleased: ValueError ValueError ValueError ValueError ValueError ValueError ValueError ValueError\nin a with statement: b'xyz' 3 B 1 1 False | after it: ValueError\nreleased inside the with: ValueError\n",
+ "stderr": "",
+ "exit_code": 0
+}
