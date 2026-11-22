@@ -23,6 +23,7 @@ try:
     _dict_next_hashed                            # noqa: B018  # _PyDict_Next: (next position, key, value, hash) or None
     _dict_set_hashed                             # noqa: B018  # _PyDict_SetItem_KnownHash: (dict, key, value, hash)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -44,6 +45,9 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
 
 CODESIZE = 4
 MAGIC = 20230612
@@ -149,12 +153,12 @@ def compile(*args: object, **kwds: object) -> object:  # noqa: A001  # _sre_comp
     pattern, flags, code, groups, groupindex, indexgroup = _unpack("compile", args, kwds, ("pattern", "flags", "code", "groups", "groupindex", "indexgroup"), 6, 6)
     flag_bits = _int(flags)
     if not issubclass(type(code), list):
-        raise TypeError("compile() argument 'code' must be list, not " + type(code).__name__)
+        raise TypeError("compile() argument 'code' must be list, not " + _type_name(code))
     group_count = _ssize(groups)
     if not issubclass(type(groupindex), dict):
-        raise TypeError("compile() argument 'groupindex' must be dict, not " + type(groupindex).__name__)
+        raise TypeError("compile() argument 'groupindex' must be dict, not " + _type_name(groupindex))
     if not issubclass(type(indexgroup), tuple):
-        raise TypeError("compile() argument 'indexgroup' must be tuple, not " + type(indexgroup).__name__)
+        raise TypeError("compile() argument 'indexgroup' must be tuple, not " + _type_name(indexgroup))
     words = _sre_call("code", code)
     isbytes = -1
     if pattern is not None:
@@ -178,7 +182,7 @@ def template(*args: object, **kwds: object) -> object:  # _sre_template_impl
         raise TypeError("template expected 2 arguments, got " + str(len(args)))
     chunks = args[1]
     if not issubclass(type(chunks), list):
-        raise TypeError("template() argument 2 must be list, not " + type(chunks).__name__)
+        raise TypeError("template() argument 2 must be list, not " + _type_name(chunks))
     n = list.__len__(chunks)  # type: ignore[arg-type]
     if n & 1 == 0 or n < 1:
         raise TypeError("invalid template")

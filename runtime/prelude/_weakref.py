@@ -23,6 +23,10 @@ try:
     _weak_list                                   # noqa: B018  # the object's list, in order
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
+    _class_fullname                              # noqa: B018  # %N: the fully qualified name of a class
+    _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -41,6 +45,18 @@ except NameError:
     _weak_list: Callable[..., list[Any]] = _missing
     _has_slot: Callable[..., bool] = _missing
 
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
+
+    def _class_fullname(cls: type) -> str:       # a stand-in for CPython's run of this file
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+
+    def _own_data(value: str) -> str:            # a stand-in for CPython's run of this file
+        return str.__str__(value)
+
 _BASIC_REF = 0
 _BASIC_PROXY = 1
 _OTHER = 2
@@ -53,9 +69,8 @@ def _positional(name: str, nargs: int, lo: int, hi: int) -> None:   # _PyArg_Che
         raise TypeError(name + " expected " + ("" if lo == hi else "at most ") + str(hi) + (" argument" if hi == 1 else " arguments") + ", got " + str(nargs))
 
 
-def _qualified(t: type) -> str:                  # %T
-    module = t.__module__
-    return t.__qualname__ if module in ("builtins", "__main__") else module + "." + t.__qualname__
+def _qualified(t: type) -> str:                  # %T: the runtime's, which asks no attribute of the class (RL-754)
+    return _class_fullname(t)  # type: ignore[no-any-return]
 
 
 def _get_or_create(cls: type, ob: object, callback: object) -> object:   # get_or_create_weakref
@@ -87,9 +102,9 @@ class ReferenceType:
 
     def __new__(cls, *args: object, **kwds: object) -> object:   # weakref___new__: keywords are __init__'s to refuse
         if not issubclass(type(cls), type):      # tp_new_wrapper
-            raise TypeError("weakref.ReferenceType.__new__(X): X is not a type object (" + type(cls).__name__ + ")")
+            raise TypeError("weakref.ReferenceType.__new__(X): X is not a type object (" + _type_name(cls) + ")")
         if not issubclass(cls, ReferenceType):
-            raise TypeError("weakref.ReferenceType.__new__(" + cls.__name__ + "): " + cls.__name__ + " is not a subtype of weakref.ReferenceType")
+            raise TypeError("weakref.ReferenceType.__new__(" + _class_name(cls) + "): " + _class_name(cls) + " is not a subtype of weakref.ReferenceType")
         _positional("__new__", len(args), 1, 2)
         return _get_or_create(cls, args[0], args[1] if len(args) > 1 else None)
 
@@ -126,7 +141,7 @@ class ReferenceType:
         found = _lookup_special(obj, "__name__")
         text = "<weakref at " + hex(id(self)) + "; to '" + _qualified(type(obj)) + "' at " + hex(id(obj))
         if found and issubclass(type(found[0]), str):
-            return text + " (" + found[0] + ")>"
+            return text + " (" + _own_data(found[0]) + ")>"   # "%U": the name's characters (RL-762)
         return text + ">"
 
     def __eq__(self, other: object) -> object:   # weakref_richcompare
@@ -384,7 +399,7 @@ def _remove_dead_weakref(*args: object, **kwds: object) -> None:   # _PyDict_Del
     _positional("_remove_dead_weakref", len(args), 2, 2)
     dct, key = args
     if not issubclass(type(dct), dict):
-        raise TypeError("_remove_dead_weakref() argument 1 must be dict, not " + ("None" if dct is None else type(dct).__name__))
+        raise TypeError("_remove_dead_weakref() argument 1 must be dict, not " + ("None" if dct is None else _type_name(dct)))
     hash(key)                                    # its own message, and not a dict's about a key
     absent = object()
     value = dict.get(dct, key, absent)  # type: ignore[call-overload]

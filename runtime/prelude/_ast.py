@@ -14,6 +14,8 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _str_text                                    # noqa: B018  # %S: the characters of an object's str, an exact str
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
+    _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -31,6 +33,13 @@ except NameError:
     def _str_text(value: object) -> str:         # a stand-in for CPython's run of this file
         return str.__str__(str(value))
 
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
+
+    def _type_fullname(value: object) -> str:    # a stand-in for CPython's run of this file
+        cls = type(value)
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+
 PyCF_ONLY_AST = 1024
 PyCF_TYPE_COMMENTS = 4096
 PyCF_ALLOW_TOP_LEVEL_AWAIT = 8192
@@ -42,9 +51,8 @@ _ABSTRACT_TYPES: set[type] = set()               # state->abstract_types: filled
 _NO_REPR_DEPTH = 3
 
 
-def _full_name(value: object) -> str:            # %T
-    cls = type(value)
-    return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+def _full_name(value: object) -> str:            # %T: the runtime's, which asks no attribute of the class (RL-754)
+    return _type_fullname(value)  # type: ignore[no-any-return]
 
 
 def _format_missing(missing: set[str], fields: tuple[str, ...]) -> str:   # format_missing: in the fields' order, with and and commas
@@ -65,36 +73,49 @@ def _format_missing(missing: set[str], fields: tuple[str, ...]) -> str:   # form
     return "".join(out)
 
 
-def _repr_list(value: object, depth: int) -> str:   # ast_repr_list: the first and the last item, an ellipsis between
-    items: list[object] = list(value)  # type: ignore[call-overload]
-    if not items:
-        return repr(value)                # PyObject_Repr itself: the caller writes it
+def _repr_list(value: object, depth: int) -> object:
+    """ast_repr_list: the first and the last item, an ellipsis between. The sequence is asked its length and those two
+    items (PySequence_Size, PySequence_GetItem), never iterated (RL-766)."""
+    length = len(value)  # type: ignore[arg-type]
+    if length == 0:
+        return repr(value)                       # PyObject_Repr itself: the caller writes it
+    first = value[0]  # type: ignore[index]
+    last = value[length - 1] if length > 1 else None  # type: ignore[index]
     is_list = issubclass(type(value), list)
     parts = [("[" if is_list else "(")]
-    shown = items[:1] + (items[-1:] if len(items) > 1 else [])
-    for i, item in enumerate(shown):
+    i = 0
+    while i < min(length, 2):
         if i > 0:
             parts.append(", ")
+        item = first if i == 0 else last
         parts.append(_repr_depth(item, depth - 1) if issubclass(type(item), AST) else _repr_text(item))
-        if i == 0 and len(items) > 2:
+        if i == 0 and length > 2:
             parts.append(", ...")
+        i += 1
     parts.append("]" if is_list else ")")
     return "".join(parts)
 
 
-def _repr_depth(self: object, depth: int) -> str:   # ast_repr_max_depth
-    name = type(self).__name__
+def _repr_depth(self: object, depth: int) -> str:
+    """ast_repr_max_depth. The order is the C's: the guard against recursion is entered before `_fields` is read (RL-775);
+    `_fields` is asked its length once and then each name by index (RL-766); a field's value is let go as soon as its
+    repr is made, before the name and the repr are written (RL-774), and both are written by PyUnicodeWriter_WriteStr,
+    which is str() of each: a __repr__ that returns an instance of a str subclass has that instance's __str__ asked."""
+    name = _tp_name(self)                        # Py_TYPE(self)->tp_name, no attribute of the class (RL-767)
     if depth <= 0:
         return name + "(...)"
     if any(entry is self for entry in _in_repr):   # Py_ReprEnter: by identity, never by __eq__ (A13 #7, G13 #3)
         return name + "(...)"
-    fields = type(self)._fields  # type: ignore[attr-defined]
-    if len(fields) == 0:
-        return name + "()"
     _in_repr.append(self)
     try:
+        fields = type(self)._fields  # type: ignore[attr-defined]
+        numfields = len(fields)
+        if numfields == 0:
+            return name + "()"
         parts = [name, "("]
-        for i, field in enumerate(fields):
+        i = 0
+        while i < numfields:
+            field = fields[i]
             value = getattr(self, field)
             if issubclass(type(value), (list, tuple)):
                 shown = _repr_list(value, depth)
@@ -102,11 +123,14 @@ def _repr_depth(self: object, depth: int) -> str:   # ast_repr_max_depth
                 shown = _repr_depth(value, depth - 1)
             else:
                 shown = repr(value)
+            del value
             if i > 0:
                 parts.append(", ")
-            # the name and the value's repr are written by PyUnicodeWriter_WriteStr, which is str() of each: a __repr__ that
-            # returns an instance of a str subclass has that instance's __str__ asked (RL-748's class)
-            parts.append(_str_text(field) + "=" + _str_text(shown))
+            parts.append(_str_text(field))
+            parts.append("=")
+            parts.append(_str_text(shown))
+            del shown
+            i += 1
         parts.append(")")
         return "".join(parts)
     finally:
@@ -131,7 +155,7 @@ class AST:
         remaining = set(fields)
         positional = args[1:]
         if numfields < len(positional):
-            raise TypeError(cls.__name__ + " constructor takes at most " + str(numfields) + " positional argument" + ("" if numfields == 1 else "s"))
+            raise TypeError(_class_name(cls) + " constructor takes at most " + str(numfields) + " positional argument" + ("" if numfields == 1 else "s"))
         for i, value in enumerate(positional):
             setattr(self, fields[i], value)
             remaining.discard(fields[i])

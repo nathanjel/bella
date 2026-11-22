@@ -428,7 +428,9 @@ def _bootstrap(find: Any) -> Any:
                            _bella_create_builtin=None, _bella_import_warning=None, _bella_set_lazy_attributes=None,
                            _bella_shutting_down=lambda: False, _bella_ga_get=object.__getattribute__, _bella_state_set=object.__setattr__,
                            _own_data=lambda value: value, _repr_text=lambda value: str.__str__(repr(value)),   # the text a C format takes
-                           _str_text=lambda value: str.__str__(str(value)))
+                           _str_text=lambda value: str.__str__(str(value)),
+                           _own_dict=lambda value: value.__dict__, _tp_name=lambda value: type(value).__name__,   # the struct's dict, tp_name
+                           _type_fullname=lambda value: type(value).__qualname__, _class_fullname=lambda cls: cls.__qualname__)
     exec(compile(source, "bootstrap.py", "exec"), module.__dict__)  # noqa: S102  # the module under test
     return module
 

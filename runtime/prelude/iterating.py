@@ -18,6 +18,8 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
     _held_once                                   # noqa: B018  # _PyObject_IsUniquelyReferenced of a field's value
     _tuple_set                                   # noqa: B018  # PyTuple_SET_ITEM, on a tuple nothing else holds
+    _is_c_type                                   # noqa: B018  # the object's type is CPython's, not a class of the program's
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
 except NameError:
     import operator
 
@@ -46,6 +48,30 @@ except NameError:
                 get = getattr(type(found), "__get__", None)
                 return (found if get is None else get(found, obj, type(obj)),)
         return ()
+
+    def _is_c_type(value: object) -> bool:       # a stand-in for CPython's run of this file
+        return type(value).__module__ != "__main__"
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+_END = object()
+
+
+def _next_only(it: object) -> object:
+    """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
+    operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    while True:
+        item = next(it, _END)  # type: ignore[call-overload]
+        if item is _END:
+            return
+        yield item
+
+
+def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
+    it = iter(iterable)  # type: ignore[call-overload]
+    return it if _is_c_type(it) else _next_only(it)
 
 
 class callable_iterator:                         # iter(callable, sentinel): Objects/iterobject.c, calliterobject
@@ -118,7 +144,7 @@ class reversed:
         found = _lookup_special(seq, "__reversed__")
         if found:
             if found[0] is None:
-                raise TypeError("'" + type(seq).__name__ + "' object is not reversible")
+                raise TypeError("'" + _type_name(seq) + "' object is not reversible")
             return found[0]()  # type: ignore[operator]
         if not _sequence_check(seq):
             raise TypeError("'" + _tp_name(seq) + "' object is not reversible")
@@ -431,7 +457,7 @@ def _min_max(name: str, args: tuple[object, ...], kwds: dict[str, object], small
     if positional and "default" in kwds:
         raise TypeError("Cannot specify a default for " + name + "() with multiple positional arguments")
     keyfunc = kwds.get("key")
-    it = iter(args if positional else args[0])  # type: ignore[call-overload]
+    it = _tp_iter(args if positional else args[0])
     best_item: object = None
     best_value: object = None
     have = False
@@ -503,7 +529,7 @@ may reject non-numeric types."""
     if len(args) > 1 and kwds:
         raise TypeError("argument for sum() given by name ('start') and position (2)")
     result = args[1] if len(args) > 1 else kwds.get("start", 0)
-    it = iter(args[0])  # type: ignore[call-overload]
+    it = _tp_iter(args[0])
     if issubclass(type(result), str):
         raise TypeError("sum() can't sum strings [use ''.join(seq) instead]")
     if issubclass(type(result), bytes):

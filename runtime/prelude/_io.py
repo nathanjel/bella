@@ -30,6 +30,10 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _set_context                                 # noqa: B018  # PyException_SetContext: the field, no __setattr__ of the class (RL-759)
+    _is_c_type                                   # noqa: B018  # the object's type is CPython's, not a class of the program's
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -54,6 +58,37 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _set_context(error: BaseException, context: BaseException) -> None:   # a stand-in for CPython's run of this file
+        BaseException.__dict__["__context__"].__set__(error, context)
+
+    def _is_c_type(value: object) -> bool:       # a stand-in for CPython's run of this file
+        return type(value).__module__ != "__main__"
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+    def _type_fullname(value: object) -> str:    # a stand-in for CPython's run of this file
+        cls = type(value)
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+
+_END = object()
+
+
+def _next_only(it: object) -> object:
+    """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
+    operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    while True:
+        item = next(it, _END)  # type: ignore[call-overload]
+        if item is _END:
+            return
+        yield item
+
+
+def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
+    it = iter(iterable)  # type: ignore[call-overload]
+    return it if _is_c_type(it) else _next_only(it)
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 _ABSENT = object()
@@ -208,9 +243,15 @@ def _c_string(value: object, what: str) -> str:  # str(accept={str, NoneType}): 
     return _own_data(value)  # type: ignore[no-any-return]
 
 
-def _full_name(value: object) -> str:            # %T
-    cls = type(value)
-    return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+def _cut_name(name: str, limit: int) -> str:
+    """PyUnicode_FromFormat's "%.{limit}s" of a C string: the first `limit` bytes of its UTF-8, and of those the characters
+    that are whole (RL-763)."""
+    data = str.encode(name, "utf-8")
+    return name if bytes.__len__(data) <= limit else bytes.decode(data[:limit], "utf-8", "ignore")
+
+
+def _full_name(value: object) -> str:            # %T: the runtime's, which asks no attribute of the class (RL-754)
+    return _type_fullname(value)  # type: ignore[no-any-return]
 
 
 def _special(value: object, name: str) -> object:
@@ -259,7 +300,7 @@ def _fspath(path: object) -> object:             # PyOS_FSPath
         raise TypeError("expected str, bytes or os.PathLike object, not " + _tp_name(path))
     result = func()  # type: ignore[operator]
     if not issubclass(type(result), (str, bytes)):
-        raise TypeError("expected " + type(path).__name__ + ".__fspath__() to return str or bytes, not " + type(result).__name__)
+        raise TypeError("expected " + _type_name(path) + ".__fspath__() to return str or bytes, not " + _type_name(result))
     return result
 
 
@@ -505,7 +546,7 @@ class _IOBase:
         lines = _one("_IOBase.writelines", args, kwds)
         self = args[0]
         _check_closed(self)
-        for line in iter(lines):  # type: ignore[call-overload]
+        for line in _tp_iter(lines):
             while True:                          # "do { res = write(line); } while (res == NULL && _PyIO_trap_eintr());" (RL-656)
                 try:
                     self.write(line)  # type: ignore[attr-defined]
@@ -880,7 +921,7 @@ class FileIO(_RawIOBase):
 
     def __getstate__(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("FileIO.__getstate__", args, kwds)
-        raise TypeError("cannot pickle '" + type(args[0]).__name__ + "' instances")
+        raise TypeError("cannot pickle '" + _type_name(args[0]) + "' instances")
 
     def _dealloc_warn(*args: object, **kwds: object) -> None:  # noqa: N805
         source = _one("FileIO._dealloc_warn", args, kwds)
@@ -1075,7 +1116,7 @@ class FileIO(_RawIOBase):
         return self.isatty()
 
     def __repr__(self) -> str:
-        type_name = _tp_name(self)[:100]
+        type_name = _cut_name(_tp_name(self), 100)
         if self._a_fd < 0:
             return "<" + type_name + " [closed]>"
         nameobj = _optional_attr(self, "name")
@@ -1878,7 +1919,7 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
             res = self._a_raw.close()  # type: ignore[attr-defined]
         except BaseException as e:
             if exc is not None:
-                e.__context__ = exc              # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472)
+                _set_context(e, exc)             # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472, RL-759)
             raise
         finally:
             self._f_buffer = bytearray()
@@ -1936,7 +1977,7 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
 
     def __getstate__(*args: object, **kwds: object) -> object:
         _noargs(shown + ".__getstate__", args, kwds)
-        raise TypeError("cannot pickle '" + type(args[0]).__name__ + "' instances")
+        raise TypeError("cannot pickle '" + _type_name(args[0]) + "' instances")
 
     def __sizeof__(*args: object, **kwds: object) -> int:
         _noargs(shown + ".__sizeof__", args, kwds)
@@ -2124,7 +2165,7 @@ class BufferedRWPair(_BufferedIOBase):
             ret = _rw_forward(self._a_reader, "close", ())
         except BaseException as e:
             if exc is not None:
-                e.__context__ = exc              # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472)
+                _set_context(e, exc)             # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472, RL-759)
             raise
         if exc is not None:
             raise exc
@@ -2347,7 +2388,7 @@ class BytesIO(_BufferedIOBase):
         lines = _one("BytesIO.writelines", args, kwds)
         self: BytesIO = args[0]  # type: ignore[assignment]
         _bio_check_closed(self)
-        for item in iter(lines):  # type: ignore[call-overload]
+        for item in _tp_iter(lines):
             _bio_write_bytes(self, _buffer(item))
 
     def close(*args: object, **kwds: object) -> None:  # noqa: N805
@@ -3207,7 +3248,7 @@ class TextIOWrapper(_TextIOBase):
             res = self._c_buffer.close()  # type: ignore[attr-defined]
         except BaseException as e:
             if exc is not None:
-                e.__context__ = exc              # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472)
+                _set_context(e, exc)             # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472, RL-759)
             raise
         if exc is not None:
             raise exc
@@ -3341,7 +3382,7 @@ class TextIOWrapper(_TextIOBase):
             except BaseException as e:  # noqa: BLE001
                 second = e
             if second is not None:
-                second.__context__ = failed
+                _set_context(second, failed)
                 _raise_as_is(second)
             _raise_as_is(failed)
         decoder.setstate(saved_state)  # type: ignore[attr-defined]
@@ -3366,10 +3407,10 @@ class TextIOWrapper(_TextIOBase):
 
     def __getstate__(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("TextIOWrapper.__getstate__", args, kwds)
-        raise TypeError("cannot pickle '" + type(args[0]).__name__ + "' instances")
+        raise TypeError("cannot pickle '" + _type_name(args[0]) + "' instances")
 
     def __repr__(self) -> str:
-        type_name = _tp_name(self)[:100]
+        type_name = _cut_name(_tp_name(self), 100)
         if not self._a_ok:
             raise ValueError("I/O operation on uninitialized object")
         if self._z_in_repr:
@@ -3663,7 +3704,8 @@ class StringIO(_TextIOBase):
     def __setstate__(*args: object, **kwds: object) -> None:  # noqa: N805
         state = _one("StringIO.__setstate__", args, kwds)
         self: StringIO = args[0]  # type: ignore[assignment]
-        _sio_check(self)                         # stringio_setstate: CHECK_INITIALIZED, CHECK_CLOSED, before the state is looked at (RL-595)
+        if self._b_closed:                       # stringio_setstate: CHECK_CLOSED alone, before the state is looked at (RL-595); the
+            raise ValueError("I/O operation on closed file")   # state initialises a stream copy.copy has only allocated (RL-764)
         if not issubclass(type(state), tuple) or tuple.__len__(state) < 4:
             raise TypeError(_tp_name(self) + ".__setstate__ argument should be 4-tuple, got " + _tp_name(state))
         StringIO.__init__(self, tuple.__getitem__(state, 0), tuple.__getitem__(state, 1))
@@ -3813,7 +3855,7 @@ def open(*args: object, **kwds: object) -> object:  # noqa: A001
         try:
             result.close()  # type: ignore[attr-defined]
         except BaseException as e:  # noqa: BLE001
-            e.__context__ = exc                  # _PyErr_ChainExceptions1 (RL-472)
+            _set_context(e, exc)                 # _PyErr_ChainExceptions1 (RL-472, RL-759)
             raise
         raise
 

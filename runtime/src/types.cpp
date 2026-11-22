@@ -1430,7 +1430,29 @@ GetSet* instance_dict_getset() {
 
 // type's getsets
 ClassObject* self_class(Obj self) { return as_class(self); }
-Ref type_name(Obj self) { return str_new(self_class(self)->name.substr(self_class(self)->name_prefix)); }
+// A class's __name__ and __qualname__ as objects. The runtime keeps the two as text (tp_name is text in CPython too), and
+// CPython keeps beside it the object a program assigned (ht_name, ht_qualname), which the getter gives back: an instance of
+// a str subclass comes back as itself. Kept here only for such an object; an exact str is made from the text (RL-755)
+namespace {
+std::unordered_map<const ClassObject*, Ref>& given_names() {
+    static std::unordered_map<const ClassObject*, Ref> table;
+    return table;
+}
+std::unordered_map<const ClassObject*, Ref>& given_qualnames() {
+    static std::unordered_map<const ClassObject*, Ref> table;
+    return table;
+}
+void keep_given(std::unordered_map<const ClassObject*, Ref>& table, const ClassObject* c, Obj v) {
+    if (is_exact_str(v)) table.erase(c);
+    else table[c] = Ref::share(v);
+}
+}  // namespace
+Ref type_name(Obj self) {
+    ClassObject* c = self_class(self);
+    if (!given_names().empty())
+        if (auto given = given_names().find(c); given != given_names().end()) return Ref::share(given->second.get());
+    return str_new(c->name.substr(c->name_prefix));
+}
 // check_set_special_type_attr: a delete is refused first, then a store to an immutable type
 void check_special(ClassObject* c, Obj v, const char* name) {
     if (immutable_type(c)) raise_new("TypeError", std::string("cannot set '") + name + "' attribute of immutable type '" + c->name + "'");
@@ -1441,17 +1463,24 @@ void set_type_name(Obj self, Obj v) {
     check_special(c, v, "__name__");
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "can only assign string to " + c->name + ".__name__, not '" + type_of(v)->name + "'");
+    if (s->text.find('\0') != std::string::npos) raise_new("ValueError", "type name must not contain null characters");
     c->name = s->text;
+    keep_given(given_names(), c, v);
     c->name_prefix = 0;
 }
-Ref type_qualname(Obj self) { return str_new(self_class(self)->qualname); }
+Ref type_qualname(Obj self) {
+    ClassObject* c = self_class(self);
+    if (!given_qualnames().empty())
+        if (auto given = given_qualnames().find(c); given != given_qualnames().end()) return Ref::share(given->second.get());
+    return str_new(c->qualname);
+}
 void set_type_qualname(Obj self, Obj v) {
     ClassObject* c = self_class(self);
     check_special(c, v, "__qualname__");
     const Str* s = as_str(v);
     if (s == nullptr) raise_new("TypeError", "can only assign string to " + c->name + ".__qualname__, not '" + type_of(v)->name + "'");
-    if (!is_exact_str(v)) throw NotImplemented("a subclass of str as a class's __qualname__ (CPython keeps the object; the runtime keeps text)");
     c->qualname = s->text;
+    keep_given(given_qualnames(), c, v);
 }
 Ref type_module(Obj self) {
     ClassObject* c = self_class(self);
@@ -2661,8 +2690,9 @@ Ref syntax_error_str(Obj self, Args a) {         // SyntaxError_str
         base = slash == std::string::npos ? whole : whole.substr(slash + 1);
     }
     bool have_lineno = !lineno.is_unset() && (lineno.is_small() || is_kind(lineno, Kind::BigInt));
-    std::string shown = shown_str(or_none(msg).get());
-    if (!has_file && !have_lineno) return str_new(shown);
+    Ref text = str_of(or_none(msg).get());
+    if (!has_file && !have_lineno) return text;  // PyObject_Str's result itself: an instance of a str subclass stays one (RL-761)
+    std::string shown = as_str(text.get())->text;
     std::int64_t line = -1;
     if (have_lineno && !int_fits_i64(lineno, line)) line = -1;   // PyLong_AsLongAndOverflow: -1 on overflow
     if (has_file && have_lineno) return str_new(shown + " (" + base + ", line " + std::to_string(line) + ")");

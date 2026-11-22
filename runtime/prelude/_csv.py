@@ -16,6 +16,7 @@ try:
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _is_c_type                                   # noqa: B018  # the object's type is CPython's, not a class of the program's
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -32,6 +33,27 @@ except NameError:
     _unpack_keywords: Callable[..., Any] = _missing
     _keyword_suggestion: Callable[..., Any] = _missing
     _has_slot: Callable[..., bool] = _missing
+
+    def _is_c_type(value: object) -> bool:       # a stand-in for CPython's run of this file
+        return type(value).__module__ != "__main__"
+
+_END = object()
+
+
+def _next_only(it: object) -> object:
+    """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
+    operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    while True:
+        item = next(it, _END)  # type: ignore[call-overload]
+        if item is _END:
+            return
+        yield item
+
+
+def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
+    it = iter(iterable)  # type: ignore[call-overload]
+    return it if _is_c_type(it) else _next_only(it)
 
 QUOTE_MINIMAL = 0
 QUOTE_ALL = 1
@@ -551,7 +573,7 @@ def _csv_writerow(self: Writer, seq: object) -> object:  # csv_writerow
     d: Dialect = self._dialect
     it = None                                # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
-        it = iter(seq)  # type: ignore[call-overload]
+        it = _tp_iter(seq)
     except TypeError:
         pass
     if it is None:

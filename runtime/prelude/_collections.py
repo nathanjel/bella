@@ -37,6 +37,10 @@ try:
     _type_lookup                                 # noqa: B018  # _PyType_Lookup on the object's type: (value, name, absent)
     _raise_as_is                                 # noqa: B018  # a pending error goes on as it is: no context taken (RL-650)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _is_c_type                                   # noqa: B018  # the object's type is CPython's, not a class of the program's
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
+    _class_fullname                              # noqa: B018  # %N: the fully qualified name of a class
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -72,6 +76,36 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _is_c_type(value: object) -> bool:       # a stand-in for CPython's run of this file
+        return type(value).__module__ != "__main__"
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
+
+    def _class_fullname(cls: type) -> str:       # a stand-in for CPython's run of this file
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+
+_END = object()
+
+
+def _next_only(it: object) -> object:
+    """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
+    operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    while True:
+        item = next(it, _END)  # type: ignore[call-overload]
+        if item is _END:
+            return
+        yield item
+
+
+def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
+    it = iter(iterable)  # type: ignore[call-overload]
+    return it if _is_c_type(it) else _next_only(it)
 
 _SSIZE_MAX = 2**63 - 1
 _SSIZE_MIN = -(2**63)
@@ -110,11 +144,11 @@ def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   
     if not issubclass(type(cls), type):
         raise TypeError(shown + ".__new__(X): X is not a type object (" + _tp_name(cls) + ")")
     if not issubclass(cls, owner):  # type: ignore[arg-type]
-        raise TypeError(shown + ".__new__(" + cls.__name__ + "): " + cls.__name__ + " is not a subtype of " + shown)  # type: ignore[attr-defined]
+        raise TypeError(shown + ".__new__(" + _class_name(cls) + "): " + _class_name(cls) + " is not a subtype of " + shown)  # type: ignore[attr-defined]
 
 
 def _type_shown(cls: type) -> str:              # tp_name: a type of the builtins is shown without its module
-    return cls.__name__ if cls.__module__ == "builtins" else cls.__module__ + "." + cls.__name__
+    return _class_fullname(cls)  # type: ignore[no-any-return]
 
 
 def _receiver(args: tuple[object, ...], cls: type, name: str, shown: str) -> None:   # a method descriptor's
@@ -213,7 +247,7 @@ def _d_appendleft(self: object, item: object) -> None:   # deque_appendleft_lock
 def _d_extend(self: object, iterable: object) -> None:   # deque_extend_impl
     if iterable is self:
         iterable = list(iterable)  # type: ignore[call-overload]
-    it = iter(iterable)  # type: ignore[call-overload]
+    it = _tp_iter(iterable)
     if self._c_maxlen == 0:  # type: ignore[attr-defined]
         for item in it:                          # consume_iterator
             del item
@@ -226,7 +260,7 @@ def _d_extend(self: object, iterable: object) -> None:   # deque_extend_impl
 def _d_extendleft(self: object, iterable: object) -> None:   # deque_extendleft_impl
     if iterable is self:
         iterable = list(iterable)  # type: ignore[call-overload]
-    it = iter(iterable)  # type: ignore[call-overload]
+    it = _tp_iter(iterable)
     if self._c_maxlen == 0:  # type: ignore[attr-defined]
         for item in it:
             del item
@@ -611,8 +645,8 @@ class deque:
             aslist = list(self)  # type: ignore[call-overload]
             maxlen = self._c_maxlen  # type: ignore[attr-defined]
             if maxlen >= 0:
-                return type(self).__name__ + "(" + _repr_text(aslist) + ", maxlen=" + str(maxlen) + ")"
-            return type(self).__name__ + "(" + _repr_text(aslist) + ")"
+                return _type_name(self) + "(" + _repr_text(aslist) + ", maxlen=" + str(maxlen) + ")"
+            return _type_name(self) + "(" + _repr_text(aslist) + ")"
         finally:
             _repr_leave(self)
 
@@ -843,7 +877,7 @@ class defaultdict(dict):  # type: ignore[type-arg]
                 shown = _repr_text(factory)
             finally:
                 _repr_leave(factory)
-        return type(self).__name__ + "(" + shown + ", " + base + ")"
+        return _type_name(self) + "(" + shown + ", " + base + ")"
 
     def copy(*args: object, **kwds: object) -> object:   # defdict_copy, new_defdict
         _noargs(args, kwds, defaultdict, "copy", "defaultdict")
@@ -1177,11 +1211,11 @@ class OrderedDict(dict):  # type: ignore[type-arg]
         _wrapper(args, kwds, OrderedDict, "__repr__", 0)
         self = args[0]
         if dict.__len__(self) == 0:  # type: ignore[arg-type]
-            return type(self).__name__ + "()"
+            return _type_name(self) + "()"
         if not _repr_enter(self):
             return "..."
         try:
-            return type(self).__name__ + "(" + _repr_text(_od_dict_copy(self)) + ")"
+            return _type_name(self) + "(" + _repr_text(_od_dict_copy(self)) + ")"
         finally:
             _repr_leave(self)
 
@@ -1536,7 +1570,7 @@ class _tuplegetter:
     def __repr__(*args: object, **kwds: object) -> str:   # tuplegetter_repr
         _wrapper(args, kwds, _tuplegetter, "__repr__", 0)
         self = args[0]
-        return type(self).__name__ + "(" + str(self._a_index) + ", " + _repr_text(self._b_doc) + ")"  # type: ignore[attr-defined]
+        return _type_name(self) + "(" + str(self._a_index) + ", " + _repr_text(self._b_doc) + ")"  # type: ignore[attr-defined]
 
 
 def _count_elements(*args: object, **kwds: object) -> None:   # _collections__count_elements_impl(mapping, iterable, /)
@@ -1545,7 +1579,7 @@ def _count_elements(*args: object, **kwds: object) -> None:   # _collections__co
     if len(args) != 2:
         raise TypeError("_count_elements expected 2 arguments, got " + str(len(args)))
     mapping, iterable = args
-    it = iter(iterable)  # type: ignore[call-overload]
+    it = _tp_iter(iterable)
     cls = type(mapping)
 
     def of_type(name: str) -> object:            # _PyType_Lookup: the classes' own dicts, no metaclass asked (RL-638, RL-644)

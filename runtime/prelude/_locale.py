@@ -15,6 +15,7 @@ try:
     _sys                                         # noqa: B018  # the system calls, by name
     _lookup_special                              # noqa: B018  # _PyObject_LookupSpecial: the bound method in a tuple, or ()
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -27,6 +28,9 @@ except NameError:
     _sys: Callable[..., Any] = _missing
     _lookup_special: Callable[..., tuple[Any, ...]] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
 
 ABDAY_1 = 131072
 ABDAY_2 = 131073
@@ -248,7 +252,7 @@ def bindtextdomain(*args: object, **kwds: object) -> object:
                 raise TypeError("expected str, bytes or os.PathLike object, not " + _tp_name(dirname))
             dirname = fspath[0]()
             if not issubclass(type(dirname), (str, bytes)):
-                raise TypeError("expected " + type(args[1]).__name__ + ".__fspath__() to return str or bytes, not " + type(dirname).__name__)
+                raise TypeError("expected " + _type_name(args[1]) + ".__fspath__() to return str or bytes, not " + _type_name(dirname))
         dirname = str.encode(dirname, "utf-8", "surrogateescape") if issubclass(type(dirname), str) else _buffer_bytes(dirname)
         if 0 in dirname:
             raise ValueError("embedded null byte")

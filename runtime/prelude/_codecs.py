@@ -25,6 +25,8 @@ try:
     _number_index                                # noqa: B018  # PyNumber_Index, with its messages
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
+    _set_context                                 # noqa: B018  # PyException_SetContext: the field, no __setattr__ of the class (RL-759)
+    _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -38,6 +40,13 @@ except NameError:
     _number_index: Callable[..., int] = _missing
     _own_data: Callable[..., Any] = _missing
     _raise_as_is: Callable[..., Any] = _missing
+
+    def _set_context(error: BaseException, context: BaseException) -> None:   # a stand-in for CPython's run of this file
+        BaseException.__dict__["__context__"].__set__(error, context)
+
+    def _type_fullname(value: object) -> str:    # a stand-in for CPython's run of this file
+        cls = type(value)
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
 
 _ABSENT = object()
 _search_path: list[object] = []                  # interp->codecs.search_path
@@ -139,9 +148,8 @@ def _cut(text: str) -> str:                      # %.400s
     return bytes.decode(str.encode(text, "utf-8", "surrogatepass")[:400], "utf-8", "replace")
 
 
-def _full_name(value: object) -> str:            # %T
-    cls = type(value)
-    return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+def _full_name(value: object) -> str:            # %T: the runtime's, which asks no attribute of the class (RL-754)
+    return _type_fullname(value)  # type: ignore[no-any-return]
 
 
 # ---- the registry (Python/codecs.c) ----
@@ -216,7 +224,7 @@ def _call_codec(function: object, value: object, encoding: str, errors: str | No
         except BaseException as e:  # noqa: BLE001
             second = e
         if second is not None:
-            second.__context__ = failed
+            _set_context(second, failed)
             _raise_as_is(second)
         _raise_as_is(failed)
     if not issubclass(type(result), tuple) or tuple.__len__(result) != 2:

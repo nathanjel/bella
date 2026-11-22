@@ -27,6 +27,7 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -43,6 +44,9 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
 
 _SSIZE_MAX = 2**63 - 1
 _SSIZE_MIN = -(2**63)
@@ -111,7 +115,7 @@ def _unpack(name: str, args: tuple[object, ...], kwds: dict[str, object], names:
 
 
 def _bad_argument(function: str, which: str, expected: str, arg: object) -> TypeError:  # _PyArg_BadArgument
-    return TypeError(function + "() " + which + " must be " + expected + ", not " + ("None" if arg is None else type(arg).__name__))
+    return TypeError(function + "() " + which + " must be " + expected + ", not " + ("None" if arg is None else _type_name(arg)))
 
 
 def _room_for(n: int) -> None:
@@ -131,7 +135,7 @@ def _ssize(v: object) -> int:                    # a clinic's Py_ssize_t: _PyNum
 def _as_ssize(v: object) -> int:                 # PyNumber_AsSsize_t(v, PyExc_OverflowError)
     i = _number_index(v)
     if not _SSIZE_MIN <= i <= _SSIZE_MAX:
-        raise OverflowError("cannot fit '" + type(v).__name__ + "' into an index-sized integer")
+        raise OverflowError("cannot fit '" + _type_name(v) + "' into an index-sized integer")
     return i
 
 
@@ -1076,7 +1080,7 @@ class count:
         return result
 
     def __repr__(self) -> str:
-        name = type(self).__name__
+        name = _type_name(self)
         if self._long_cnt is None:
             return name + "(" + str(self._cnt) + ")"
         step = self._long_step
@@ -1116,7 +1120,7 @@ class repeat:
         return self._element
 
     def __repr__(self) -> str:
-        name = type(self).__name__
+        name = _type_name(self)
         if self._cnt == -1:
             return name + "(" + _repr_text(self._element) + ")"
         return name + "(" + _repr_text(self._element) + ", " + str(self._cnt) + ")"

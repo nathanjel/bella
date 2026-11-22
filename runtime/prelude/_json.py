@@ -15,6 +15,7 @@ try:
     _raise_as_is                                 # noqa: B018  # a pending error goes on as it is: no context taken (RL-650)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _set_context                                 # noqa: B018  # PyException_SetContext: the field, no __setattr__ of the class (RL-759)
 except NameError:
     import operator
 
@@ -37,6 +38,9 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _set_context(error: BaseException, context: BaseException) -> None:   # a stand-in for CPython's run of this file
+        BaseException.__dict__["__context__"].__set__(error, context)
 
 
 class _Absent:
@@ -560,7 +564,7 @@ def _raise_noted(exc: BaseException, prefix: str, shown: object = _ABSENT) -> No
     except BaseException as e:
         second = e
     if second is not None:
-        second.__context__ = exc
+        _set_context(second, exc)
         _raise_as_is(second)
     _raise_as_is(exc)
 

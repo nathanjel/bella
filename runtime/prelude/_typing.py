@@ -23,6 +23,7 @@ try:
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _str_text                                    # noqa: B018  # %S: the characters of an object's str, an exact str
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
 except NameError:
     from collections.abc import Callable
     from operator import index as _number_index
@@ -65,6 +66,9 @@ except NameError:
 
     def _str_text(value: object) -> str:         # a stand-in for CPython's run of this file
         return str.__str__(str(value))
+
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
 
 Union = type(int | None)                         # _PyUnion_Type, the runtime's (typing.Union)
 _FORMAT_STRING = 4                               # _Py_ANNOTATE_FORMAT_STRING
@@ -120,7 +124,7 @@ def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   
     if not issubclass(type(cls), type):
         raise TypeError(shown + ".__new__(X): X is not a type object (" + _tp_name(cls) + ")")
     if not issubclass(cls, owner):  # type: ignore[arg-type]
-        raise TypeError(shown + ".__new__(" + cls.__name__ + "): " + cls.__name__ + " is not a subtype of " + shown)  # type: ignore[attr-defined]
+        raise TypeError(shown + ".__new__(" + _class_name(cls) + "): " + _class_name(cls) + " is not a subtype of " + shown)  # type: ignore[attr-defined]
 
 
 def _typing_call(name: str, *args: object, **kwds: object) -> object:   # call_typing_func_object
@@ -147,8 +151,8 @@ def _type_repr(p: object) -> str:               # _Py_typing_type_repr
     # what the C has in hand it writes with PyUnicodeWriter_WriteStr, which is str() of it: of the repr's result too
     if hasattr(p, "__origin__") and hasattr(p, "__args__"):
         return _str_text(repr(p))
-    qualname = getattr(p, "__qualname__", None)
-    if qualname is None:
+    qualname = getattr(p, "__qualname__", _ABSENT)   # absent, not None: a __qualname__ of None is a value (RL-773)
+    if qualname is _ABSENT:
         return _str_text(repr(p))
     module = getattr(p, "__module__", None)
     if module is None:
@@ -198,13 +202,13 @@ Internal type for implementing evaluation functions."""
             raise TypeError("constevaluator.__call__() takes no keyword arguments")
         if len(args) != 1:
             raise TypeError("constevaluator.__call__() takes exactly 1 argument (" + str(len(args)) + " given)")
-        fmt = args[0]
-        if not issubclass(type(fmt), int):                 # the clinic's int converter: PyLong_AsInt, the type's __index__ (RL-638)
-            fmt = _number_index(fmt)
+        fmt = _number_index(args[0])             # "i": a C int of the argument (an int's value or its __index__), and the int
+        if not -2147483648 <= fmt <= 2147483647:  # is what is compared (RL-638, RL-771)
+            raise OverflowError("Python int too large to convert to C int")
         value = self._value
         if fmt == _FORMAT_STRING:
-            if issubclass(type(value), tuple):
-                return "(" + ", ".join(_type_repr(item) for item in value) + ")"
+            if issubclass(type(value), tuple):   # PyTuple_GET_ITEM: the tuple's own items, whatever its class iterates (RL-772)
+                return "(" + ", ".join([_type_repr(tuple.__getitem__(value, i)) for i in range(tuple.__len__(value))]) + ")"
             return _type_repr(value)
         return value
 
@@ -378,7 +382,7 @@ details.
     def __repr__(self) -> str:                   # typevar_repr
         if self._infer_variance:
             return self._name
-        return ("+" if self._covariant else "-" if self._contravariant else "~") + self._name
+        return ("+" if self._covariant else "-" if self._contravariant else "~") + _own_data(self._name)   # "%c%U" (RL-758)
 
     def __or__(self, other: object) -> object:
         return _make_union(self, other)
@@ -457,7 +461,7 @@ to static type checkers.
 
     def __repr__(self) -> str:                   # paramspecargs_repr
         if type(self._origin) is ParamSpec:
-            return self._origin._name + ".args"
+            return _own_data(self._origin._name) + ".args"   # "%U.args"
         return _repr_text(self._origin) + ".args"
 
     def __eq__(self, other: object) -> object:   # paramspecattr_richcompare
@@ -516,7 +520,7 @@ to static type checkers.
 
     def __repr__(self) -> str:                   # paramspeckwargs_repr
         if type(self._origin) is ParamSpec:
-            return self._origin._name + ".kwargs"
+            return _own_data(self._origin._name) + ".kwargs"
         return _repr_text(self._origin) + ".kwargs"
 
     def __eq__(self, other: object) -> object:
@@ -672,7 +676,7 @@ scope can be pickled.
     def __repr__(self) -> str:
         if self._infer_variance:
             return self._name
-        return ("+" if self._covariant else "-" if self._contravariant else "~") + self._name
+        return ("+" if self._covariant else "-" if self._contravariant else "~") + _own_data(self._name)   # "%c%U" (RL-758)
 
     def __or__(self, other: object) -> object:
         return _make_union(self, other)
@@ -810,7 +814,7 @@ pickled.
     def __repr__(self) -> str:
         if self._infer_variance:
             return self._name
-        return ("+" if self._covariant else "-" if self._contravariant else "~") + self._name
+        return ("+" if self._covariant else "-" if self._contravariant else "~") + _own_data(self._name)   # "%c%U" (RL-758)
 
     def __typing_subst__(self, arg: object, /) -> object:
         raise TypeError("Substitution of bare TypeVarTuple is not supported")

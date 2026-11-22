@@ -371,6 +371,13 @@ Ref i_type_lookup(Obj, Args a);
 Ref i_raise_as_is(Obj, Args a);                  // a pending error goes on as it is (every prelude)
 Ref i_own_data(Obj, Args a);                     // an argument's own data, as the C reads it (every prelude)
 Ref i_repr_text(Obj, Args a);                    // %R: the characters of an object's repr (every prelude)
+Ref i_set_context(Obj, Args a);                  // PyException_SetContext: the field, not an attribute assignment
+Ref i_is_c_type(Obj, Args a);                    // an object's type is CPython's, not a class of the program's
+Ref i_own_dict(Obj, Args a);                     // the C's self->dict, read or replaced
+Ref i_type_name(Obj, Args a);                    // _PyType_Name(Py_TYPE(x)); _class_name of a class itself; %N and %T below
+Ref i_class_name(Obj, Args a);
+Ref i_class_fullname(Obj, Args a);
+Ref i_type_fullname(Obj, Args a);
 Ref i_str_text(Obj, Args a);                     // %S: the characters of an object's str
 Ref i_buffer_bytes(Obj, Args a);
 Ref i_dict_next_hashed(Obj, Args a);            // _PyDict_Next and _PyDict_SetItem_KnownHash (every prelude)

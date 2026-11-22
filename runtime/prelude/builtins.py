@@ -22,11 +22,11 @@ def print(*args: object, sep: object = " ", end: object = "\n", file: object = N
     if sep is None:
         sep = " "
     elif not issubclass(type(sep), str):
-        raise TypeError("sep must be None or a string, not " + type(sep).__name__)
+        raise TypeError("sep must be None or a string, not " + _type_name(sep))
     if end is None:
         end = "\n"
     elif not issubclass(type(end), str):
-        raise TypeError("end must be None or a string, not " + type(end).__name__)
+        raise TypeError("end must be None or a string, not " + _type_name(end))
     first = True
     for arg in args:
         if not first:
@@ -171,6 +171,8 @@ try:
     _bella_getenv                                # noqa: B018  # Py_GETENV
     _bella_refuse                                # noqa: B018  # a stop by name
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
 except NameError:                                # CPython runs this file (runtime/tests/test_prelude.py): what stands for them
     import operator
     import os
@@ -212,6 +214,12 @@ except NameError:                                # CPython runs this file (runti
             out[names.index(keyword)] = value
         return out
 
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
+
 
 # ---- property, staticmethod and classmethod (Objects/descrobject.c, Objects/funcobject.c) ----
 #
@@ -240,7 +248,7 @@ class _GetSet:
 
     def __set_name__(self, owner: type, name: str) -> None:
         if not self.member:
-            self.refusal = "attribute '" + name + "' of '" + owner.__name__ + "' objects is not writable"
+            self.refusal = "attribute '" + name + "' of '" + _class_name(owner) + "' objects is not writable"
 
     def __get__(self, obj: object, owner: object = None) -> object:
         if obj is None:
@@ -267,32 +275,32 @@ def _field(cls: type, name: str) -> tuple[Callable[[object], object], Callable[[
 
 def _new_receiver(args: tuple[object, ...], owner: type) -> type:   # tp_new_wrapper's checks
     if not args:
-        raise TypeError(owner.__name__ + ".__new__(): not enough arguments")
+        raise TypeError(_class_name(owner) + ".__new__(): not enough arguments")
     cls = args[0]
     if not issubclass(type(cls), type):
-        raise TypeError(owner.__name__ + ".__new__(X): X is not a type object (" + _tp_name(cls) + ")")
+        raise TypeError(_class_name(owner) + ".__new__(X): X is not a type object (" + _tp_name(cls) + ")")
     if not issubclass(cls, owner):  # type: ignore[arg-type]
-        raise TypeError(owner.__name__ + ".__new__(" + cls.__name__ + "): " + cls.__name__ + " is not a subtype of " + owner.__name__)  # type: ignore[attr-defined]
+        raise TypeError(_class_name(owner) + ".__new__(" + _class_name(cls) + "): " + _class_name(cls) + " is not a subtype of " + _class_name(owner))  # type: ignore[attr-defined]
     return cls  # type: ignore[return-value]
 
 
 def _slot_receiver(args: tuple[object, ...], owner: type, name: str) -> object:   # wrapperdescr_call's checks
     if not args:
-        raise TypeError("descriptor '" + name + "' of '" + owner.__name__ + "' object needs an argument")
+        raise TypeError("descriptor '" + name + "' of '" + _class_name(owner) + "' object needs an argument")
     if not issubclass(type(args[0]), owner):
-        raise TypeError("descriptor '" + name + "' requires a '" + owner.__name__ + "' object but received a '" + _tp_name(args[0]) + "'")
+        raise TypeError("descriptor '" + name + "' requires a '" + _class_name(owner) + "' object but received a '" + _tp_name(args[0]) + "'")
     return args[0]
 
 
 def _method_one(args: tuple[object, ...], kwds: dict[str, object], owner: type, name: str) -> object:   # a METH_O method's argument
     if not args:
-        raise TypeError("unbound method " + owner.__name__ + "." + name + "() needs an argument")
+        raise TypeError("unbound method " + _class_name(owner) + "." + name + "() needs an argument")
     if not issubclass(type(args[0]), owner):
-        raise TypeError("descriptor '" + name + "' for '" + owner.__name__ + "' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
+        raise TypeError("descriptor '" + name + "' for '" + _class_name(owner) + "' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
     if kwds:
-        raise TypeError(owner.__name__ + "." + name + "() takes no keyword arguments")
+        raise TypeError(_class_name(owner) + "." + name + "() takes no keyword arguments")
     if len(args) != 2:
-        raise TypeError(owner.__name__ + "." + name + "() takes exactly one argument (" + str(len(args) - 1) + " given)")
+        raise TypeError(_class_name(owner) + "." + name + "() takes exactly one argument (" + str(len(args) - 1) + " given)")
     return args[1]
 
 
@@ -640,8 +648,8 @@ def _receiver(self: object, cls: type, name: str) -> None:
     """A slot wrapper's check (wrapperdescr_call): list.__repr__(5) is a TypeError, as for the
     C++ types' methods (review 2026-11-03, A9-2)."""
     if not issubclass(type(self), cls):
-        raise TypeError("descriptor '" + name + "' requires a '" + cls.__name__ + "' object but received a '" +
-                        type(self).__name__ + "'")
+        raise TypeError("descriptor '" + name + "' requires a '" + _class_name(cls) + "' object but received a '" +
+                        _type_name(self) + "'")
 
 
 def _list_repr(self: list[object]) -> str:
@@ -696,8 +704,8 @@ def _frozendict_repr(self: frozendict[object, object]) -> str:
     """frozendict_repr: the type's name around what a dict shows, or nothing when it is empty."""
     _receiver(self, frozendict, "__repr__")
     if _dict_next(self, 0) is None:
-        return type(self).__name__ + "()"
-    return type(self).__name__ + "(" + _anydict_repr(self) + ")"
+        return _type_name(self) + "()"
+    return _type_name(self) + "(" + _anydict_repr(self) + ")"
 
 
 def _anydict_repr(self: dict[object, object] | frozendict[object, object]) -> str:
@@ -731,7 +739,7 @@ def _frozenset_repr(self: frozenset[object]) -> str:
 
 def _set_like_repr(self: set[object] | frozenset[object]) -> str:
     """set_repr: set() when empty; the type's name around the braces for a subclass and frozenset."""
-    name = type(self).__name__
+    name = _type_name(self)
     if (set.__len__ if issubclass(type(self), set) else frozenset.__len__)(self) == 0:   # so->used: not what a subclass's __len__ says
         return name + "()"
     if not _enter(self):
@@ -768,7 +776,7 @@ def _view_repr(self: object) -> str:
     if not _enter(self):
         return "..."
     try:
-        return type(self).__name__ + "(" + _repr_text(list(self)) + ")"  # type: ignore[call-overload]  # a view is iterable
+        return _type_name(self) + "(" + _repr_text(list(self)) + ")"  # type: ignore[call-overload]  # a view is iterable
     finally:
         _leave(self)
 

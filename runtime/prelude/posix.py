@@ -31,6 +31,8 @@ try:
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -57,6 +59,13 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+    def _type_fullname(value: object) -> str:    # a stand-in for CPython's run of this file
+        cls = type(value)
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
 
 AT_NO_AUTOMOUNT = 2048
 CLD_CONTINUED = 6
@@ -548,7 +557,7 @@ def _id(kind: str, value: object) -> int:        # _Py_Uid_Converter, _Py_Gid_Co
     except BaseException:  # noqa: BLE001  # whatever __index__ raised is replaced, not chained
         failed = True
     if failed:
-        raise TypeError(kind + " should be integer, not " + type(value).__name__)
+        raise TypeError(kind + " should be integer, not " + _type_name(value))
     if -9223372036854775808 <= n <= 9223372036854775807:
         if n == -1:
             return -1
@@ -610,7 +619,7 @@ def _buffers(buffers: object, count: int, writable: bool) -> list[object]:   # i
         elif _has_slot(item, "__buffer__"):
             _refuse("os: a buffer that is not bytes or bytearray")
         else:
-            raise TypeError("a bytes-like object is required, not '" + type(item).__name__ + "'")
+            raise TypeError("a bytes-like object is required, not '" + _type_name(item) + "'")
     return out
 
 
@@ -901,9 +910,8 @@ def _fildes(value: object) -> int:               # PyObject_AsFileDescriptor
     return fd
 
 
-def _full_name(value: object) -> str:            # %T
-    cls = type(value)
-    return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+def _full_name(value: object) -> str:            # %T: the runtime's, which asks no attribute of the class (RL-754)
+    return _type_fullname(value)  # type: ignore[no-any-return]
 
 
 def _fspath(path: object) -> object:             # PyOS_FSPath
@@ -914,7 +922,7 @@ def _fspath(path: object) -> object:             # PyOS_FSPath
         raise TypeError("expected str, bytes or os.PathLike object, not " + _tp_name(path))
     result = func()  # type: ignore[operator]
     if not issubclass(type(result), (str, bytes)):
-        raise TypeError("expected " + type(path).__name__ + ".__fspath__() to return str or bytes, not " + type(result).__name__)
+        raise TypeError("expected " + _type_name(path) + ".__fspath__() to return str or bytes, not " + _type_name(result))
     return result
 
 
@@ -945,10 +953,10 @@ def _path(function: str, argument: str, value: object, allow_fd: bool = False, n
                 expected = "string, bytes, os.PathLike or None"
             else:
                 expected = "string, bytes or os.PathLike"
-            raise TypeError(function + ": " + argument + " should be " + expected + ", not " + type(value).__name__)
+            raise TypeError(function + ": " + argument + " should be " + expected + ", not " + _type_name(value))
         o = func()  # type: ignore[operator]
         if not issubclass(type(o), (str, bytes)):
-            raise TypeError("expected " + type(value).__name__ + ".__fspath__() to return str or bytes, not " + type(o).__name__)
+            raise TypeError("expected " + _type_name(value) + ".__fspath__() to return str or bytes, not " + _type_name(o))
     if is_index:
         return _fd_converter(o), o
     data = str.encode(o, "utf-8", "surrogateescape") if issubclass(type(o), str) else _buffer_bytes(o)  # type: ignore[arg-type]
@@ -971,7 +979,7 @@ def _dir_fd(value: object) -> int | None:        # dir_fd_converter: None for th
     if value is None or value is _ABSENT:
         return None
     if not _has_slot(value, "__index__"):
-        raise TypeError("argument should be integer or None, not " + type(value).__name__)
+        raise TypeError("argument should be integer or None, not " + _type_name(value))
     return _fd_converter(value)
 
 
@@ -1191,7 +1199,7 @@ def write(*args: object, **kwds: object) -> int:
     if not issubclass(type(data), (bytes, bytearray)):
         if _has_slot(data, "__buffer__"):
             _refuse("os.write() of a buffer that is not bytes or bytearray")
-        raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
+        raise TypeError("a bytes-like object is required, not '" + _type_name(data) + "'")
     _sys("look_lean")
     result = _sys("write", fd, data)
     if result < 0:
@@ -1358,10 +1366,10 @@ def _pure_path(function: str, value: object) -> object:   # path_t(make_wide=Tru
         return value
     func = _special(value, "__fspath__")
     if func is None:
-        raise TypeError(function + ": path should be string, bytes or os.PathLike, not " + type(value).__name__)
+        raise TypeError(function + ": path should be string, bytes or os.PathLike, not " + _type_name(value))
     o = func()  # type: ignore[operator]
     if not issubclass(type(o), (str, bytes)):
-        raise TypeError("expected " + type(value).__name__ + ".__fspath__() to return str or bytes, not " + type(o).__name__)
+        raise TypeError("expected " + _type_name(value) + ".__fspath__() to return str or bytes, not " + _type_name(o))
     return o
 
 
@@ -2037,7 +2045,7 @@ def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
     if not issubclass(type(data), (bytes, bytearray)):   # the Py_buffer converter
         if _has_slot(data, "__buffer__"):
             _refuse("os.pwrite() of a buffer that is not bytes or bytearray")
-        raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
+        raise TypeError("a bytes-like object is required, not '" + _type_name(data) + "'")
     content = _buffer_bytes(data)
     offset = _off(args[2])
     _sys("look_lean")
@@ -2322,7 +2330,7 @@ def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
     if not issubclass(type(value), (bytes, bytearray)):   # the Py_buffer converter
         if _has_slot(value, "__buffer__"):
             _refuse("os.setxattr() of a buffer that is not bytes or bytearray")
-        raise TypeError("a bytes-like object is required, not '" + type(value).__name__ + "'")
+        raise TypeError("a bytes-like object is required, not '" + _type_name(value) + "'")
     bits = 0 if flags is _ABSENT else _int(flags)
     follows = _xattr_follow("setxattr", data, follow)
     code = _sys("xattr", b"set", data, follows, name, _buffer_bytes(value), bits)
@@ -2488,7 +2496,7 @@ def _timespec(value: object) -> tuple[int, int]:   # pytime_object_to_denominato
 def _split_ns(value: object) -> tuple[int, int]:   # split_py_long_to_s_and_ns: the object's own divmod by a billion
     pair = divmod(value, 1000000000)  # type: ignore[operator]
     if not issubclass(type(pair), tuple) or tuple.__len__(pair) != 2:
-        raise TypeError(type(value).__name__ + ".__divmod__() must return a 2-tuple, not " + type(pair).__name__)
+        raise TypeError(_type_name(value) + ".__divmod__() must return a 2-tuple, not " + _type_name(pair))
     seconds = _time_t(tuple.__getitem__(pair, 0))
     nanoseconds = _number_index(tuple.__getitem__(pair, 1))
     if not -(2**63) <= nanoseconds < 2**63:

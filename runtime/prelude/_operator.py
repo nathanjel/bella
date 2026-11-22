@@ -22,6 +22,8 @@ try:
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _class_fullname                              # noqa: B018  # %N: the fully qualified name of a class
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -39,6 +41,12 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+    def _class_fullname(cls: type) -> str:       # a stand-in for CPython's run of this file
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
 
 _builtin_abs = abs
 _builtin_pow = pow
@@ -225,7 +233,7 @@ def _search_iter(seq: object) -> object:
         return iter(seq)  # type: ignore[call-overload]
     except TypeError:
         pass
-    raise TypeError("argument of type '" + type(seq).__name__ + "' is not iterable")
+    raise TypeError("argument of type '" + _type_name(seq) + "' is not iterable")
 
 
 def _index_of(a: object, b: object) -> int:      # PySequence_Index
@@ -298,9 +306,8 @@ def length_hint(*args: object, **kwds: object) -> int:     # PyObject_LengthHint
     return res
 
 
-def _qualified(t: type) -> str:                  # %T
-    module = t.__module__
-    return t.__qualname__ if module in ("builtins", "__main__") else module + "." + t.__qualname__
+def _qualified(t: type) -> str:                  # %T: the runtime's, which asks no attribute of the class (RL-754)
+    return _class_fullname(t)  # type: ignore[no-any-return]
 
 
 def _compare_digest(*args: object, **kwds: object) -> bool:
@@ -316,11 +323,11 @@ def _compare_digest(*args: object, **kwds: object) -> bool:
         right = b.encode("ascii")                # type: ignore[attr-defined]
     else:
         if not _has_buffer(a) and not _has_buffer(b):
-            raise TypeError("unsupported operand types(s) or combination of types: '" + type(a).__name__ + "' and '" + type(b).__name__ + "'")
+            raise TypeError("unsupported operand types(s) or combination of types: '" + _type_name(a) + "' and '" + _type_name(b) + "'")
         if not _has_buffer(a):
-            raise TypeError("a bytes-like object is required, not '" + type(a).__name__ + "'")
+            raise TypeError("a bytes-like object is required, not '" + _type_name(a) + "'")
         if not _has_buffer(b):
-            raise TypeError("a bytes-like object is required, not '" + type(b).__name__ + "'")
+            raise TypeError("a bytes-like object is required, not '" + _type_name(b) + "'")
         left = _buffer_bytes(a)
         right = _buffer_bytes(b)
     # _tscmp: the loop's length is b's, and every byte of it is looked at

@@ -28,6 +28,9 @@ try:
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _str_text                                    # noqa: B018  # %S: the characters of an object's str, an exact str
+    _is_c_type                                   # noqa: B018  # the object's type is CPython's, not a class of the program's
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
+    _class_fullname                              # noqa: B018  # %N: the fully qualified name of a class
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -58,7 +61,36 @@ except NameError:
     def _str_text(value: object) -> str:         # a stand-in for CPython's run of this file
         return str.__str__(str(value))
 
+    def _is_c_type(value: object) -> bool:       # a stand-in for CPython's run of this file
+        return type(value).__module__ != "__main__"
+
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
+
+    def _class_fullname(cls: type) -> str:       # a stand-in for CPython's run of this file
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
+
+_END = object()
+
+
+def _next_only(it: object) -> object:
+    """An iterator the C holds, for a `for` of this file: its __next__ alone is called from here on. A `for` asks its
+    operand for an iterator again, which is a second __iter__ call on an iterator of a class of the program's; the C took
+    the iterator once (PyObject_GetIter) and calls tp_iternext (RL-765)."""
+    while True:
+        item = next(it, _END)  # type: ignore[call-overload]
+        if item is _END:
+            return
+        yield item
+
+
+def _tp_iter(iterable: object) -> object:        # PyObject_GetIter, once
+    it = iter(iterable)  # type: ignore[call-overload]
+    return it if _is_c_type(it) else _next_only(it)
+
 _SSIZE_MAX = 2**63 - 1
+_TYPE_MODULE = type.__dict__["__module__"].__get__     # type_module and type_qualname, as the C calls them
+_TYPE_QUALNAME = type.__dict__["__qualname__"].__get__
 _set = _bella_state_set                          # a C function's store into its struct: no class's __setattr__ is asked
 _ABSENT = object()
 
@@ -70,14 +102,14 @@ def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   
     if not issubclass(type(cls), type):
         raise TypeError(shown + ".__new__(X): X is not a type object (" + _tp_name(cls) + ")")
     if not issubclass(cls, owner):  # type: ignore[arg-type]
-        raise TypeError(shown + ".__new__(" + cls.__name__ + "): " + cls.__name__ + " is not a subtype of " + shown)  # type: ignore[attr-defined]
+        raise TypeError(shown + ".__new__(" + _class_name(cls) + "): " + _class_name(cls) + " is not a subtype of " + shown)  # type: ignore[attr-defined]
 
 
 def _receiver(args: tuple[object, ...], cls: type, name: str, shown: str) -> None:   # a method descriptor's
     if not args:
         raise TypeError("unbound method " + shown + "." + name + "() needs an argument")
     if not issubclass(type(args[0]), cls):
-        raise TypeError("descriptor '" + name + "' for '" + cls.__module__ + "." + cls.__name__ + "' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
+        raise TypeError("descriptor '" + name + "' for '" + _class_fullname(cls) + "' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
 
 
 def _noargs(args: tuple[object, ...], kwds: dict[str, object], cls: type, name: str, shown: str) -> None:   # METH_NOARGS
@@ -99,9 +131,9 @@ def _one(args: tuple[object, ...], kwds: dict[str, object], cls: type, name: str
 
 def _wrapper(args: tuple[object, ...], kwds: dict[str, object], cls: type, name: str, count: int) -> None:   # wrapper_call
     if not args:
-        raise TypeError("descriptor '" + name + "' of '" + cls.__module__ + "." + cls.__name__ + "' object needs an argument")
+        raise TypeError("descriptor '" + name + "' of '" + _class_fullname(cls) + "' object needs an argument")
     if not issubclass(type(args[0]), cls):
-        raise TypeError("descriptor '" + name + "' requires a '" + cls.__module__ + "." + cls.__name__ + "' object but received a '" + _tp_name(args[0]) + "'")
+        raise TypeError("descriptor '" + name + "' requires a '" + _class_fullname(cls) + "' object but received a '" + _tp_name(args[0]) + "'")
     if kwds:
         raise TypeError("wrapper " + name + "() takes no keyword arguments")
     if len(args) != count + 1:
@@ -287,7 +319,8 @@ and keywords."""
             for key, value in self.keywords.items():  # type: ignore[attr-defined]
                 arglist = arglist + ", " + _str_text(key) + "=" + _repr_text(value)
             cls = type(self)
-            return _str_text(cls.__module__) + "." + _str_text(cls.__qualname__) + "(" + _repr_text(fn) + arglist + ")"   # "%S.%S(%R%U)"
+            # "%S.%S(%R%U)" of PyType_GetModuleName and PyType_GetQualName: type's own getters, no attribute of the class
+            return _str_text(_TYPE_MODULE(cls)) + "." + _str_text(_TYPE_QUALNAME(cls)) + "(" + _repr_text(fn) + arglist + ")"
         finally:
             _repr_leave(self)
 
@@ -443,7 +476,7 @@ calculates ((((1 + 2) + 3) + 4) + 5)."""
     result = args[2] if len(args) > 2 else kwds.get("initial", _ABSENT)
     it = None                                    # the C sets its error over the pending one: raised outside the handler, so that no __context__ of that one shows
     try:
-        it = iter(seq)  # type: ignore[call-overload]
+        it = _tp_iter(seq)
     except TypeError:
         pass
     if it is None:

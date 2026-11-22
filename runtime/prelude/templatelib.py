@@ -10,6 +10,8 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(obj)->tp_name
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
 except NameError:
     _bella_new_instance = object.__new__
 
@@ -20,6 +22,12 @@ except NameError:
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
 
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
+
 
 def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   # tp_new_wrapper's checks
     if not args:
@@ -28,7 +36,7 @@ def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   
     if not issubclass(type(cls), type):
         raise TypeError(shown + ".__new__(X): X is not a type object (" + _tp_name(cls) + ")")
     if not issubclass(cls, owner):  # type: ignore[arg-type]
-        raise TypeError(shown + ".__new__(" + cls.__name__ + "): " + cls.__name__ + " is not a subtype of " + shown)  # type: ignore[attr-defined]
+        raise TypeError(shown + ".__new__(" + _class_name(cls) + "): " + _class_name(cls) + " is not a subtype of " + shown)  # type: ignore[attr-defined]
 
 
 class Interpolation:
@@ -96,7 +104,7 @@ class Interpolation:
         return self._format_spec
 
     def __repr__(self) -> str:                   # interpolation_repr: %s(%R, %R, %R, %R) with _PyType_Name
-        return type(self).__name__ + "(" + _repr_text(self._value) + ", " + _repr_text(self._expression) + ", " + _repr_text(self._conversion) + ", " + _repr_text(self._format_spec) + ")"
+        return _type_name(self) + "(" + _repr_text(self._value) + ", " + _repr_text(self._expression) + ", " + _repr_text(self._conversion) + ", " + _repr_text(self._format_spec) + ")"
 
     def __reduce__(self) -> object:
         """__reduce__() -> (cls, state)"""
@@ -162,7 +170,7 @@ class Template:
         return tuple(i._value for i in self._interpolations)
 
     def __repr__(self) -> str:                   # template_repr
-        return type(self).__name__ + "(strings=" + _repr_text(self._strings) + ", interpolations=" + _repr_text(self._interpolations) + ")"
+        return _type_name(self) + "(strings=" + _repr_text(self._strings) + ", interpolations=" + _repr_text(self._interpolations) + ")"
 
     def __iter__(self) -> TemplateIter:        # template_iter
         it: TemplateIter = _bella_new_instance(TemplateIter)

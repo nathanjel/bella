@@ -26,6 +26,8 @@ try:
     _bella_holds                                 # noqa: B018  # the program holds a module of this name
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
+    _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
 except NameError:
     import operator
     from collections.abc import Callable
@@ -69,6 +71,13 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
+
+    def _type_fullname(value: object) -> str:    # a stand-in for CPython's run of this file
+        cls = type(value)
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
 
 import _io
 import sys
@@ -395,11 +404,7 @@ def _get_line(f: object) -> object:              # PyFile_GetLine(f, -1): a line
         if size == 0:
             raise EOFError("EOF when reading a line")
         return str.__getitem__(line, slice(0, size - 1)) if str.__getitem__(line, size - 1) == "\n" else line
-    cls = type(f)
-    owner = cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
-    got = type(line)
-    given = got.__qualname__ if got.__module__ in ("builtins", "__main__") else got.__module__ + "." + got.__qualname__
-    raise TypeError(owner + ".readline() must return a str, not " + given)
+    raise TypeError(_type_fullname(f) + ".readline() must return a str, not " + _type_fullname(line))   # "%T ... %T"
 
 
 def _as_file_descriptor(value: object) -> int:   # PyObject_AsFileDescriptor
@@ -593,7 +598,7 @@ def _get_category(message: object, category: object) -> object:
     if not issubclass(type(category), type):
         raise TypeError("category must be a Warning subclass, not '" + _tp_name(category) + "'")
     if not issubclass(category, Warning):
-        raise TypeError("category must be a Warning subclass, not class '" + category.__name__ + "'")
+        raise TypeError("category must be a Warning subclass, not class '" + _class_name(category) + "'")   # tp_name
     return category
 
 

@@ -653,9 +653,8 @@ def _ga_check(value, kind):
 
 
 def _ga_type_name(value):
-    # bella: %T, PyType_GetFullyQualifiedName
-    t = type(value)
-    return t.__qualname__ if t.__module__ in ('builtins', '__main__') else t.__module__ + '.' + t.__qualname__
+    # bella: %T, PyType_GetFullyQualifiedName: the runtime's, which asks no attribute of the class (RL-754)
+    return _type_fullname(value)
 
 
 def _ga_index(params, item):
@@ -969,7 +968,7 @@ Create a unique sentinel object with the given name."""
         if not _ga_check(cls, type):
             raise TypeError(f'sentinel.__new__(X): X is not a type object ({_ga_type_name(cls)})')
         if not issubclass(cls, sentinel):
-            raise TypeError(f'sentinel.__new__({cls.__name__}): {cls.__name__} is not a subtype of sentinel')
+            raise TypeError(f'sentinel.__new__({_class_name(cls)}): {_class_name(cls)} is not a subtype of sentinel')
         for key in kwds:
             if key != 'repr':
                 raise TypeError(f"sentinel() got an unexpected keyword argument '{key}'")
@@ -1270,8 +1269,8 @@ E.g. for int | str"""
 
 def _namespace_self(name, self):
     # bella: what a C method's descriptor checks before it runs
-    if not isinstance(self, SimpleNamespace):
-        raise TypeError(f"descriptor '{name}' requires a 'types.SimpleNamespace' object but received a '{type(self).__name__}'")
+    if not issubclass(type(self), SimpleNamespace):
+        raise TypeError(f"descriptor '{name}' requires a 'types.SimpleNamespace' object but received a '{_tp_name(self)}'")
 
 
 class SimpleNamespace:
@@ -1290,35 +1289,39 @@ class SimpleNamespace:
             mapping_or_iterable = args[0]
             d = mapping_or_iterable if type(mapping_or_iterable) is dict else dict(mapping_or_iterable)
             for key in d:  # PyArg_ValidateKeywordArguments
-                if not isinstance(key, str):
+                if not issubclass(type(key), str):
                     raise TypeError('keywords must be strings')
-            self.__dict__.update(d)
-        self.__dict__.update(kwargs)
+            dict.update(_own_dict(self), d)
+        dict.update(_own_dict(self), kwargs)     # ns_dict: the struct's field, whatever a class has under __dict__ (RL-769)
 
-    def __repr__(self):
+    def __repr__(self):                          # namespace_repr
         _namespace_self('__repr__', self)
-        name = 'namespace' if type(self) is SimpleNamespace else type(self).__name__
-        if self in _repr_running:  # Py_ReprEnter, by identity: __eq__ here compares contents
-            return f'{name}(...)'
+        name = 'namespace' if type(self) is SimpleNamespace else _tp_name(self)   # Py_TYPE(ns)->tp_name (RL-767)
+        for entered in _repr_running:            # Py_ReprEnter: by identity, no __eq__ of a subclass (RL-770)
+            if entered is self:
+                return name + '(...)'
         _repr_running.append(self)
         try:
             pairs = []
-            d = self.__dict__
-            for key in list(d):
-                if isinstance(key, str) and len(key) > 0:
-                    pairs.append(_own_data(key) + '=' + _repr_text(d[key]))   # "%U=%R"
-            return f'{name}({", ".join(pairs)})'
+            d = _own_dict(self)
+            for key in list(dict.keys(d)):       # PyDict_Keys, then each key as it is in the dict now
+                if issubclass(type(key), str) and str.__len__(key) > 0:   # PyUnicode_Check, PyUnicode_GET_LENGTH
+                    value = dict.get(d, key, _ga_absent)   # PyDict_GetItemRef: a key an earlier repr removed is skipped (RL-768)
+                    if value is not _ga_absent:
+                        pairs.append(_own_data(key) + '=' + _repr_text(value))   # "%U=%R"
+                    del value
+            return name + '(' + ', '.join(pairs) + ')'
         finally:
             _repr_running.pop()
 
     def __eq__(self, other):
-        if isinstance(self, SimpleNamespace) and isinstance(other, SimpleNamespace):
-            return self.__dict__ == other.__dict__
+        if issubclass(type(self), SimpleNamespace) and issubclass(type(other), SimpleNamespace):
+            return _own_dict(self) == _own_dict(other)
         return NotImplemented
 
     def __ne__(self, other):                     # namespace_richcompare: == and != are the two dicts', the orderings decline
-        if isinstance(self, SimpleNamespace) and isinstance(other, SimpleNamespace):
-            return self.__dict__ != other.__dict__
+        if issubclass(type(self), SimpleNamespace) and issubclass(type(other), SimpleNamespace):
+            return _own_dict(self) != _own_dict(other)
         return NotImplemented
 
     def __lt__(self, other):   # a type with a comparison of its own has all six names
@@ -1336,18 +1339,18 @@ class SimpleNamespace:
     __hash__ = None
 
     def __reduce__(self):
-        return (type(self), (), self.__dict__)
+        return (type(self), (), _own_dict(self))
 
     def __replace__(self, /, *args, **kwargs):
         _namespace_self('__replace__', self)
         if args:
             raise TypeError('__replace__() takes no positional arguments')
         result = type(self)()
-        if not isinstance(result, SimpleNamespace):
-            raise TypeError(f'expect types.SimpleNamespace type, but {type(self).__name__}() returned '
-                            f"'{type(result).__name__}' object")
-        result.__dict__.update(self.__dict__)
-        result.__dict__.update(kwargs)
+        if not issubclass(type(result), SimpleNamespace):
+            raise TypeError(f'expect types.SimpleNamespace type, but {_tp_name(self)}() returned '
+                            f"'{_tp_name(result)}' object")
+        dict.update(_own_dict(result), _own_dict(self))
+        dict.update(_own_dict(result), kwargs)
         return result
 
 
@@ -1952,14 +1955,14 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
         if not args:
             raise TypeError("unbound method " + name + "." + method + "() needs an argument")
         if not issubclass(type(args[0]), cls):
-            raise TypeError("descriptor '" + method + "' for '" + shown + "' objects doesn't apply to a '" + type(args[0]).__name__ + "' object")
+            raise TypeError("descriptor '" + method + "' for '" + shown + "' objects doesn't apply to a '" + _type_name(args[0]) + "' object")
 
     def __new__(*args, **kwds):                  # tp_new_wrapper, then structseq_new_impl
         if not args:
             raise TypeError(shown + ".__new__(): not enough arguments")
         wanted = args[0]
         if not issubclass(type(wanted), type):
-            raise TypeError(shown + ".__new__(X): X is not a type object (" + type(wanted).__name__ + ")")
+            raise TypeError(shown + ".__new__(X): X is not a type object (" + _type_name(wanted) + ")")
         if not issubclass(wanted, cls):
             raise TypeError(shown + ".__new__(" + wanted.__name__ + "): " + wanted.__name__ + " is not a subtype of " + shown)
         rest = args[1:]
@@ -2025,7 +2028,7 @@ def _bella_structseq(name, module, fields, visible, settle=None, has_new=True, s
         if not args:
             raise TypeError("descriptor '__repr__' of '" + shown + "' object needs an argument")
         if not issubclass(type(args[0]), cls):
-            raise TypeError("descriptor '__repr__' requires a '" + shown + "' object but received a '" + type(args[0]).__name__ + "'")
+            raise TypeError("descriptor '__repr__' requires a '" + shown + "' object but received a '" + _type_name(args[0]) + "'")
         if kwds:
             raise TypeError("wrapper __repr__() takes no keyword arguments")
         if len(args) != 1:

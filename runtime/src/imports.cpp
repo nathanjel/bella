@@ -773,6 +773,12 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(ns->dict, Obj::of(N("_type_lookup")), of_type.get());
         Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));   // a pending error goes on as it is, after work the C did meanwhile
         dict_set(ns->dict, Obj::of(N("_raise_as_is")), as_is.get());
+        for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
+                 {"_set_context", i_set_context}, {"_type_name", i_type_name}, {"_class_name", i_class_name},
+                 {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname}}) {
+            Ref b = own(new Builtin(n, fn));     // a chained error's context, and a type's name as the C has it (RL-759, RL-767)
+            dict_set(ns->dict, Obj::of(intern(n)), b.get());
+        }
         Ref repr_text = own(new Builtin("_repr_text", i_repr_text));   // %R and %S: the characters of what a __repr__ or a __str__
         dict_set(ns->dict, Obj::of(N("_repr_text")), repr_text.get());   // returned, an exact str (RL-748's class)
         Ref str_text = own(new Builtin("_str_text", i_str_text));

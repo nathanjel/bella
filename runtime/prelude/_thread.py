@@ -25,6 +25,9 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
+    _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _class_name                                  # noqa: B018  # _PyType_Name of a class itself
+    _class_fullname                              # noqa: B018  # %N: the fully qualified name of a class
 except NameError:
     from collections.abc import Callable
     from typing import Any, NoReturn
@@ -44,6 +47,15 @@ except NameError:
         raise ImportError(text)
     _unpack_keywords: Callable[..., Any] = _missing
     _has_slot: Callable[..., bool] = _missing
+
+    def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
+        return type(value).__name__
+
+    def _class_name(cls: type) -> str:           # a stand-in for CPython's run of this file
+        return cls.__name__
+
+    def _class_fullname(cls: type) -> str:       # a stand-in for CPython's run of this file
+        return cls.__qualname__ if cls.__module__ in ("builtins", "__main__") else cls.__module__ + "." + cls.__qualname__
 
 TIMEOUT_MAX = 9223372036.0
 _NAME_MAXLEN = 15
@@ -69,7 +81,7 @@ def _method(args: tuple[object, ...], kwds: dict[str, object], cls: type, name: 
     if not args:
         raise TypeError("unbound method " + shown + "." + name + "() needs an argument")
     if not issubclass(type(args[0]), cls):
-        raise TypeError("descriptor '" + name + "' for '" + cls.__module__ + "." + cls.__name__ + "' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
+        raise TypeError("descriptor '" + name + "' for '" + _class_fullname(cls) + "' objects doesn't apply to a '" + _tp_name(args[0]) + "' object")
     return args[1:]
 
 
@@ -80,7 +92,7 @@ def _new_receiver(args: tuple[object, ...], owner: type, shown: str) -> None:   
     if not issubclass(type(cls), type):
         raise TypeError(shown + ".__new__(X): X is not a type object (" + _tp_name(cls) + ")")
     if not issubclass(cls, owner):  # type: ignore[arg-type]
-        raise TypeError(shown + ".__new__(" + cls.__name__ + "): " + cls.__name__ + " is not a subtype of " + shown)  # type: ignore[attr-defined]
+        raise TypeError(shown + ".__new__(" + _class_name(cls) + "): " + _class_name(cls) + " is not a subtype of " + shown)  # type: ignore[attr-defined]
 
 
 def _from_seconds(obj: object) -> int:           # _PyTime_FromSecondsObject, _PyTime_ROUND_TIMEOUT
@@ -327,7 +339,7 @@ class RLock:
             raise OverflowError("Python int too large to convert to C ssize_t")
         owner = state[1]  # type: ignore[index]
         if not issubclass(type(owner), int):
-            raise TypeError("_acquire_restore() argument 2 must be int, not " + type(owner).__name__)
+            raise TypeError("_acquire_restore() argument 2 must be int, not " + _type_name(owner))
         self = args[0]
         if self._b_count and not _rlock_owned(self):  # type: ignore[attr-defined]
             _bella_refuse(_DEADLOCK)
@@ -573,7 +585,7 @@ def set_name(*args: object, **kwds: object) -> None:
             raise TypeError("set_name() got an unexpected keyword argument '" + key + "'")
     name = args[0] if args else kwds["name"]
     if not issubclass(type(name), str):
-        raise TypeError("set_name() argument 'name' must be str, not " + type(name).__name__)
+        raise TypeError("set_name() argument 'name' must be str, not " + _type_name(name))
     _bella_refuse("_thread.set_name: the name of a thread (the threads milestone, [P2+])")
 
 

@@ -2128,6 +2128,40 @@ Ref i_raise_as_is(Obj, Args a) {
     positional_only(a, "_raise_as_is", 1, 1);
     reraise_as_is(a.pos(0));
 }
+// PyException_SetContext, as _PyErr_ChainExceptions1 uses it: the field is stored. `error.__context__ = first` in a prelude
+// is an attribute assignment, which a __setattr__ of the exception's class takes, and may refuse (RL-759)
+Ref i_set_context(Obj, Args a) {
+    positional_only(a, "_set_context", 2, 2);
+    set_exception_field(a.pos(0), "__context__", a.pos(1));
+    return none_ref();
+}
+// The name of a type as the C has it. `type(x).__name__` in a prelude is an attribute of a class, which its metaclass answers
+// first (a property there runs); the C reads tp_name. _type_name(x) is _PyType_Name(Py_TYPE(x)), the part of tp_name after
+// its last dot, which a repr shows; _class_name(cls) the same of a class itself (RL-767)
+namespace {
+std::string short_type_name(const ClassObject* c) {
+    std::size_t dot = c->name.rfind('.');
+    return dot == std::string::npos ? c->name : c->name.substr(dot + 1);
+}
+}  // namespace
+Ref i_type_name(Obj, Args a) {
+    positional_only(a, "_type_name", 1, 1);
+    return str_new(short_type_name(type_of(a.pos(0))));
+}
+Ref i_class_name(Obj, Args a) {
+    positional_only(a, "_class_name", 1, 1);
+    if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "_class_name: a class is wanted");
+    return str_new(short_type_name(static_cast<ClassObject*>(a.pos(0).object())));
+}
+Ref i_type_fullname(Obj, Args a) {               // %T: PyType_GetFullyQualifiedName of the object's type
+    positional_only(a, "_type_fullname", 1, 1);
+    return str_new(fully_qualified_name(type_of(a.pos(0))));
+}
+Ref i_class_fullname(Obj, Args a) {              // %N: PyType_GetFullyQualifiedName of a class itself
+    positional_only(a, "_class_fullname", 1, 1);
+    if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "_class_fullname: a class is wanted");
+    return str_new(fully_qualified_name(static_cast<ClassObject*>(a.pos(0).object())));
+}
 // _frame(n) for the _warnings prelude (setup_context): the n-th frame above the one that called into the prelude, as
 // (globals, filename, lineno), or None past the outermost; a prelude's own frames are not on the chain, as C functions' are not
 Ref i_warnings_frame(Obj, Args a) {
@@ -2688,6 +2722,10 @@ struct ErrSink {
         Ref text = str_new(piece);
         Ref done = invoke(write.get(), {text.get()});
     }
+    void object(Obj text) {                      // PyFile_WriteObject: what repr() or str() returned is what `write` is given,
+        Ref write = getattr(file, intern("write"));   // an instance of a str subclass as itself (RL-757)
+        Ref done = invoke(write.get(), {text});
+    }
 };
 // write_unraisable_exc_file, the default hook's work on sys.stderr (nothing when sys has none, or None): a first line from
 // the message and the object, then the report of the exception. CPython hands the value to the traceback module
@@ -2702,7 +2740,7 @@ void write_unraisable(Obj type, Obj value, Obj tb, Obj message, Obj object) {
     if (!object.is_unset() && object != None()) {
         if (said) {
             Ref text = str_of(message);
-            err.raw(as_str(text.get())->text);
+            err.object(text.get());
             err.raw(": ");
         } else {
             err.raw("Exception ignored in: ");
@@ -2710,7 +2748,7 @@ void write_unraisable(Obj type, Obj value, Obj tb, Obj message, Obj object) {
         bool shown = false;
         try {                                    // PyFile_WriteObject(obj, file, 0): what the repr or its write raises is cleared
             Ref text = repr_of(object);
-            err.raw(as_str(text.get())->text);
+            err.object(text.get());
             shown = true;
         } catch (const PyError&) {
         }
@@ -2718,7 +2756,7 @@ void write_unraisable(Obj type, Obj value, Obj tb, Obj message, Obj object) {
         err.raw("\n");
     } else if (said) {
         Ref text = str_of(message);
-        err.raw(as_str(text.get())->text);
+        err.object(text.get());
         err.raw(":\n");
     }
     if (is_exception_instance(value)) {          // _print_exception_bltin(value, file); when it fails, the one exception by the C
@@ -3209,6 +3247,30 @@ void print_plain_one(ErrSink& err, Obj value, bool past_traceback = false) {  //
         module = getattr(Obj::of(type), intern("__module__"));
         mod = as_str(module.get());
     } catch (const PyError&) {
+    }
+    if (past_traceback) {
+        // write_unraisable_exc_file's own lines, which differ from print_exception_message in three places: "<unknown>" has
+        // no dot, the colon is written whatever the value's text is, and the text (or the words for a str() that failed)
+        // is a write of its own after it (RL-760)
+        if (mod == nullptr) {
+            err.raw("<unknown>");
+        } else if (mod->text != "builtins" && mod->text != "__main__") {
+            Ref shown = str_of(module.get());
+            err.object(shown.get());
+            err.raw(".");
+        }
+        err.raw(type->qualname);
+        err.raw(": ");
+        bool written = false;
+        try {
+            Ref s = str_of(value);
+            err.object(s.get());
+            written = true;
+        } catch (const PyError&) {
+        }
+        if (!written) err.raw("<exception str() failed>");
+        err.raw("\n");
+        return;
     }
     if (mod == nullptr) {
         err.raw("<unknown>.");
@@ -3820,6 +3882,13 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_type_lookup", of_type.get());
                     Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));
                     put(pm->dict, "_raise_as_is", as_is.get());
+                    for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
+                             {"_set_context", i_set_context}, {"_type_name", i_type_name}, {"_class_name", i_class_name},
+                             {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname},
+                             {"_is_c_type", i_is_c_type}, {"_own_dict", i_own_dict}}) {
+                        Ref b = own(new Builtin(n, fn));   // a chained error's context, and a type's name as the C has it (RL-759, RL-767)
+                        put(pm->dict, n, b.get());
+                    }
                     Ref repr_text = own(new Builtin("_repr_text", i_repr_text));   // %R and %S: the characters of a repr or a str
                     put(pm->dict, "_repr_text", repr_text.get());                   // (RL-748's class)
                     Ref str_text = own(new Builtin("_str_text", i_str_text));
