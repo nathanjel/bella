@@ -1,0 +1,28 @@
+import os,sys,_json
+op,mode=sys.argv[1].split('-')
+class Product:
+    def __init__(self,n): self.n=n
+    def __del__(self): print('drop',self.n)
+    def __iter__(self):
+        if mode=='bad': return 3
+        return Items(self.n)
+class Items:
+    def __init__(self,n): self.n=n
+    def __iter__(self): print('iter',self.n); return self
+    def __next__(self):
+        print('next',self.n)
+        if mode=='err': raise LookupError()
+        raise StopIteration()
+class Env:
+    def __getitem__(self,k): raise KeyError(k)
+    def __len__(self): return 0
+    def keys(self): return Product('keys') if op=='keys' else []
+    def values(self): return Product('values') if op=='values' else []
+class D(dict):
+    def items(self): return Product('items')
+try:
+    if op=='items':
+        enc=_json.make_encoder(None,None,_json.encode_basestring,None,':',',',False,False,False)
+        print(enc(D(a=1),0))
+    else: os.posix_spawn('/r37-nonexistent-a37',['a'],Env())
+except BaseException as e: print(type(e).__name__,type(e.__context__).__name__)

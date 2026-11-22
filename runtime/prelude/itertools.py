@@ -28,6 +28,7 @@ try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _raise_as_is                                 # noqa: B018  # a pending error sent on as it is, after work done with no handler open
+    _tp_init_is                                  # noqa: B018  # type->tp_init == base->tp_init
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
 except NameError:
     from collections.abc import Callable
@@ -43,6 +44,7 @@ except NameError:
     _keyword_suggestion: Callable[..., str | None] = _missing
     _has_slot: Callable[..., bool] = _missing
     _raise_as_is: Callable[..., None] = _missing
+    _tp_init_is: Callable[..., bool] = _missing
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
@@ -65,7 +67,7 @@ def _no_keywords(name: str, kwds: dict[str, object]) -> None:    # _PyArg_NoKeyw
 def _new_no_keywords(cls: type, own: type, name: str, kwds: dict[str, object]) -> None:
     """The check of a __new__ with positional arguments: a subclass with an __init__ of its own may be
     given keywords (they reach that __init__, and this ignores them)."""
-    if (cls is own or cls.__init__ is own.__init__):             # type: ignore[misc]
+    if cls is own or _tp_init_is(cls, own):      # type->tp_init == base_tp->tp_init: the slot, no attribute of the class (RL-849)
         _no_keywords(name, kwds)
 
 
@@ -176,25 +178,29 @@ class batched:
         it = self._it
         i = 0
         ended = False
+        failed: BaseException | None = None
         try:
             while i < n:
                 items.append(next(it))
                 i += 1
         except StopIteration:
             ended = True
-        except BaseException:
-            self._batch_size = -1
-            self._it = None
-            raise
-        if not ended:
+        except BaseException as e:
+            failed = e
+        if not ended and failed is None:
             return tuple(items)
-        if i == 0:
+        if failed is not None or i == 0 or self._strict:
+            # the input is let go of, then the partial tuple from its last item, with whatever error there is pending: no
+            # handler is open (the class of RL-812; review A37 named the place)
             self._batch_size = -1
             self._it = None
-            raise StopIteration
-        if self._strict:
-            self._batch_size = -1
-            self._it = None
+            del it
+            while items:
+                items.pop()
+            if failed is not None:
+                _raise_as_is(failed)
+            if i == 0:
+                raise StopIteration
             raise ValueError("batched(): incomplete batch")
         return tuple(items)
 
@@ -699,7 +705,8 @@ class islice:
         return self
 
     def __next__(self) -> object:
-        if self._it is None:
+        it = self._it                            # taken once, as the C takes it: a finaliser of a skipped item may end this
+        if it is None:                           # islice meanwhile, and the call goes on with the iterator it had (RL-844)
             raise StopIteration
         stop = self._stop
         failed: BaseException | None = None
@@ -707,16 +714,17 @@ class islice:
         item: object = None
         try:
             while self._cnt < self._next:
-                next(self._it)
+                next(it)
                 self._cnt += 1
             if stop != -1 and self._cnt >= stop:
                 ended = True
             else:
-                item = next(self._it)
+                item = next(it)
         except BaseException as e:
             failed = e
         if failed is not None or ended:
             self._it = None                      # empty: the iterator goes, whatever ended it, and with no handler open (RL-812)
+            del it
             if failed is not None:
                 _raise_as_is(failed)
             raise StopIteration

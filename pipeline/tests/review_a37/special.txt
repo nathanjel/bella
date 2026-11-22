@@ -1,0 +1,26 @@
+import sys,io,itertools,collections
+form,op=sys.argv[1].split('-')
+class Base: pass
+class Child(Base): pass
+c=Child()
+def check():
+    if op=='init': return object.__init__(c,1)
+    if op=='alloc': return object.__new__(Child,1)
+    if op=='construct': return Child()
+    if op=='deleted':
+        del Base.__new__
+        return object.__init__(c,1)
+class M:
+    __new__=staticmethod(lambda cls,*a:32)
+class O: pass
+if form=='mixin':
+    class C(O,M): pass
+    class Child(C): pass
+    c=object.__new__(Child)
+elif form=='len': setattr(Base,'__new__',len)
+elif form=='bound': setattr(Base,'__new__',[].append)
+elif form=='other': type.__setattr__(Base,'__new__',int.__new__)
+elif form=='static': setattr(Base,'__new__',staticmethod(int.__new__))
+else: setattr(Base,'__new__',object.__new__)
+try: print(type(check()).__name__)
+except BaseException as e: print(type(e).__name__)

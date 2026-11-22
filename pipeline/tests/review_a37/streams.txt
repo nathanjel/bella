@@ -1,0 +1,55 @@
+import io,sys,codecs
+base,state,method=sys.argv[1].split('-')
+T=getattr(io,base)
+class Dec(codecs.IncrementalDecoder):
+    def __init__(self,*a):
+        if state=='decoder': raise LookupError()
+        super().__init__(*a)
+    def decode(self,b,final=False): return ''
+    def __del__(self): print('drop decoder')
+class Enc(codecs.IncrementalEncoder):
+    def __init__(self,*a):
+        if state=='encoder': raise LookupError()
+        super().__init__(*a)
+    def encode(self,b,final=False): return b''
+    def __del__(self): print('drop encoder')
+def search(n):
+    if n=='r37': return codecs.CodecInfo(name='r37',encode=None,decode=None,incrementalencoder=Enc,incrementaldecoder=Dec,_is_text_encoding=state!='nontext')
+class Raw(io.BytesIO):
+    def flush(self): print('flush'); return super().flush()
+    def close(self): print('close'); return super().close()
+def run():
+    b=Raw(b'x')
+    if state=='clinic':
+        class C(T):
+            def __new__(cls,*a,**kw): return object.__new__(cls)
+        print(type(C(b,b,k=1)).__name__)
+        return
+    s=T.__new__(T)
+    try:
+        if T is io.TextIOWrapper: s.__init__(b,'r37')
+        elif T is io.FileIO: s.__init__('/dev/null','rb')
+        elif T is io.StringIO: s.__init__('hi')
+        elif T is io.BytesIO: s.__init__(b'hi')
+        elif T is io.BufferedRWPair: s.__init__(b,b)
+        else: s.__init__(b)
+        if state=='close': s.close()
+        if state=='under': b.close()
+        if state=='detach': s.detach()
+    except BaseException as e: print('setup',type(e).__name__)
+    try:
+        if method=='properties':
+            for k in ('closed','mode','buffer','name','raw','encoding','errors','newlines','line_buffering','write_through'):
+                try:
+                    x=getattr(s,k)
+                    print(k,type(x).__name__ if k in ('raw','buffer') else x)
+                except BaseException as e: print(k,type(e).__name__)
+        elif method=='ops':
+            for k in ('tell','seekable','readable','writable','fileno','isatty','flush','read'):
+                try: print(k,getattr(s,k)())
+                except BaseException as e: print(k,type(e).__name__)
+        else: print('release')
+    finally: del s
+codecs.register(search)
+try: run()
+except BaseException as e: print(type(e).__name__)

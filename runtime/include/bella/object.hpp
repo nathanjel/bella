@@ -783,6 +783,8 @@ struct ClassObject : Object {
     bool disallow_instantiation = false;         // Py_TPFLAGS_DISALLOW_INSTANTIATION, of a C type written in Python
     bool slot_tp_new = false;                    // tp_new is slot_tp_new: a class of the program's for which a __new__ that is no
                                                  // built-in's wrapper was ever found (update_one_slot keeps it; runtime/src/types.cpp)
+    bool stored_new_wrapper = false;             // the name __new__ finds a built-in's wrapper stored in a class of the program's,
+                                                 // which CPython's slot ignores: the allocator is the built-in base's (RL-841)
     bool forwards_attributes = false;            // types.GenericAlias's tp_getattro (getattr_impl), inherited
     bool struct_sequence = false;                // Objects/structseq.c's type: structseq_dealloc's order of release (RL-593)
     bool slots_ordered = false;                  // its own slots stand in the order type_new's sort of the name objects left them (RL-588)

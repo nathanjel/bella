@@ -1,0 +1,29 @@
+import io,sys
+kind,setup,op=sys.argv[1].split('-')
+T=getattr(io,kind)
+def make():
+    if T is io.FileIO: return T('/dev/null','rb')
+    if T is io.BytesIO: return T(b'old')
+    if T is io.StringIO: return T('old')
+    if T is io.BufferedRWPair: return T(io.BytesIO(),io.BytesIO())
+    return T(io.BytesIO(b'old'))
+s=T.__new__(T) if setup=='fresh' else make()
+try:
+    if T is io.FileIO: s.__init__('/dev/null','qq')
+    elif T is io.BytesIO or T is io.StringIO: s.__init__(object())
+    elif T is io.BufferedRWPair: s.__init__(io.BytesIO(),object())
+    else: s.__init__(io.BytesIO(),0)
+except BaseException as e: print('setup',type(e).__name__)
+try:
+    if op=='props':
+        for k in ('closed','name','mode','raw','encoding','errors','newlines'):
+            try:
+                v=getattr(s,k)
+                print(k,type(v).__name__ if k=='raw' else v)
+            except Exception as e: print(k,type(e).__name__)
+    elif op=='seek': print(s.seek(0))
+    elif op=='write': print(s.write('x' if T is io.StringIO else b'x'))
+    elif op=='reduce': print(type(s.__reduce_ex__(2)).__name__)
+    elif op=='iter': print(next(s))
+    else: print(getattr(s,op)())
+except BaseException as e: print(type(e).__name__)

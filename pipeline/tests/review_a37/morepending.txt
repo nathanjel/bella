@@ -1,0 +1,32 @@
+import io,sys,ast,warnings
+def note(s): print(s,type(sys.exception()).__name__)
+class Field:
+    def __hash__(self):
+        note('hash')
+        return 1
+class Node(ast.AST): _fields=(Field(),)
+class Raw(io.BytesIO):
+    def close(self):
+        note('close')
+        super().close()
+class Writer(io.BytesIO):
+    count=0
+    def writable(self):
+        self.count+=1
+        if self.count==2: raise ValueError()
+        return True
+class F(io.FileIO):
+    def flush(self): raise ValueError()
+    def __repr__(self): note('repr');return 'F'
+def run():
+    r=sys.argv[1]
+    if r=='ast': Node(1)
+    if r=='pair': io.BufferedRWPair(Raw(),Writer())
+    if r=='file':
+        x=F('/dev/null','r')
+        x._finalizing=True
+        x.close()
+try: raise LookupError()
+except LookupError:
+    try: run()
+    except BaseException as e: print(type(e).__name__)

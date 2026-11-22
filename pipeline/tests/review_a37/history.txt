@@ -1,0 +1,44 @@
+import sys, collections, itertools
+r=sys.argv[1]
+class M(type):
+    def __setattr__(cls,k,v):
+        print('set',k)
+        super().__setattr__(k,v)
+class A(metaclass=M): pass
+class B(metaclass=M):
+    def __new__(cls,*a,**kw): return super().__new__(cls)
+class C(A): pass
+class D(B): pass
+c=C()
+def show(f):
+    try: print(type(f()).__name__)
+    except BaseException as e: print(type(e).__name__)
+if r=='bases':
+    C.__bases__=(B,)
+    show(lambda:C(1))
+    show(lambda:object.__init__(c,1))
+    C.__bases__=(A,)
+    show(lambda:C(1))
+elif r=='instance':
+    c.__class__=D
+    show(lambda:object.__init__(c,1))
+elif r=='meta':
+    A.__new__=int.__new__
+    show(C)
+    del A.__new__
+    show(C)
+elif r=='super':
+    class E(A):
+        def __new__(cls,*a): return super().__new__(cls,1)
+    show(E)
+else:
+    T={'deque':collections.deque,'tuple':tuple,'float':float,'pairwise':itertools.pairwise,'chain':itertools.chain,'reverse':reversed,'enumerate':enumerate}[r]
+    class X(T): pass
+    class Y(X): pass
+    args=() if r not in ('pairwise','reverse','enumerate') else ([1],)
+    X.__init__=T.__init__
+    show(lambda:Y(*args,k=1))
+    del X.__init__
+    show(lambda:Y(*args,k=1))
+    X.__init__=lambda self,*a,**kw:None
+    show(lambda:Y(*args,k=1))

@@ -1,0 +1,18 @@
+import sys,itertools,types
+name,history=sys.argv[1].split('-')
+T=getattr(itertools,name,None) or getattr(__import__('builtins'),name,None) or types.MethodType
+args={'pairwise':([],),'filterfalse':(None,[]),'starmap':(int,[]),'takewhile':(bool,[]),'dropwhile':(bool,[]),'compress':([],[]),'islice':([],1),'cycle':([],),'combinations':([],1),'combinations_with_replacement':([],1),'_tee':([],),'repeat':(1,), 'filter':(None,[]),'map':(int,[]),'reversed':([],),'method':(int,1),'enumerate':([],),'zip':(),'tuple':(),'float':(),'frozenset':()}.get(name,())
+class Meta(type):
+    @property
+    def __init__(cls):
+        print('lookup')
+        return object.__init__
+try:
+    if history=='meta':
+        class C(T,metaclass=Meta): pass
+    else:
+        class C(T): pass
+    if history=='own': C.__init__=lambda self,*a,**kw:None
+    if history=='same': C.__init__=T.__init__
+    print(type(C(*args,k=1)).__name__)
+except BaseException as e: print(type(e).__name__)

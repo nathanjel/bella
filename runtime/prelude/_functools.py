@@ -776,15 +776,18 @@ def _bounded_update(self: object, given: tuple[object, ...], kwds: dict[str, obj
     link.hash = h
     link.key = key
     link.result = result
+    failed: BaseException | None = None
     try:
         _set_hashed(cache, key, h, link)
-    except BaseException:
+    except BaseException as e:
+        failed = e
+    if failed is not None:
         # the C's order when the store fails: the link, which alone has the new result by now, then the old key, then the
-        # old result; the cache is left one link short
+        # old result; the cache is left one link short. All with the error pending: no handler is open (RL-851)
         del result, popped, link
         del oldkey
         del oldresult
-        raise
+        _raise_as_is(failed)
     _append(links, link)
     del popped, oldkey, oldresult
     return result

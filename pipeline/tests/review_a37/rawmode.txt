@@ -1,0 +1,10 @@
+import io,sys,os
+first,second=sys.argv[1].split('-')
+s=io.FileIO('/dev/null',first)
+try: s.__init__('/dev/null',second)
+except BaseException as e: print('init',type(e).__name__)
+print('mode',s.mode)
+for k in ('readable','writable','read','write'):
+    try: print(k,s.write(b'x') if k=='write' else getattr(s,k)())
+    except BaseException as e: print(k,type(e).__name__)
+s.close()

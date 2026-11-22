@@ -221,7 +221,8 @@ Ref float_new_impl(Obj x) {                      // float_new_impl for float its
 Ref float_new_m(Obj, Args a) {                   // float.__new__(cls, x=0, /)
     ClassObject* cls = new_wrapper_class(a, types().float_);
     std::size_t npos = a.npos - 1;
-    if (a.nkw != 0) raise_new("TypeError", "float() takes no keyword arguments");
+    // the clinic's rule: keywords are refused for float itself and for a class that has float's __init__ (RL-842)
+    if (a.nkw != 0 && (cls == types().float_ || tp_init_is(cls, types().float_))) raise_new("TypeError", "float() takes no keyword arguments");
     if (npos > 1) raise_new("TypeError", "float expected at most 1 argument, got " + std::to_string(npos));
     Obj x = npos == 1 ? a.pos(1) : Obj{};
     Ref value = float_new_impl(x);

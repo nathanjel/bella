@@ -1,0 +1,33 @@
+import sys, io, collections, functools, copy
+base,history,op=sys.argv[1].split('-')
+T=getattr(collections,base,None) or getattr(io,base,None) or getattr(__import__('builtins'),base)
+class B(T): pass
+class C(B): pass
+def make(cls,*args,**kw): return T.__new__(cls)
+def change():
+    if history=='plain': return
+    if history=='init':
+        C.__init__=lambda self, *a, **kw: None
+        return
+    if history=='base': setattr(B,'__new__',staticmethod(make))
+    elif history=='class': type.__setattr__(C,'__new__',classmethod(make))
+    elif history=='partial': C.__new__=functools.partial(make)
+    elif history=='builtin': C.__new__=list.__new__
+    elif history=='function': C.__new__=make
+    else:
+        C.__new__=staticmethod(make)
+        del C.__new__
+        if history=='again': C.__new__=T.__new__
+try:
+    change()
+    if op=='empty': v=C()
+    elif op=='arg': v=C(1)
+    elif op=='kw': v=C(k=1)
+    elif op=='obj': v=object.__new__(C)
+    elif op=='objarg': v=object.__new__(C,1)
+    elif op=='direct': v=C.__new__(C)
+    elif op=='init': v=object.__init__(C(),1)
+    elif op=='copy': v=copy.copy(C())
+    elif op=='reduce': v=C().__reduce_ex__(2)
+    print(type(v).__name__)
+except BaseException as e: print(type(e).__name__)

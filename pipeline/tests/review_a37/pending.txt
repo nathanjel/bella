@@ -1,0 +1,24 @@
+import sys,itertools
+r=sys.argv[1]
+def drop(name): print(name,type(sys.exception()).__name__)
+class Seq:
+    def __len__(self): return 1
+    if r=='index': __getitem__=staticmethod([].__getitem__)
+    else: __getitem__=dict.__getitem__
+    def __del__(self): drop('seq')
+class Tag:
+    def __del__(self): drop('tag')
+def source():
+    yield Tag()
+    if r=='batcherr': raise ValueError()
+class Wrap:
+    def __init__(self): self.it=source()
+    def __iter__(self): return self
+    def __next__(self): return next(self.it)
+    def __del__(self): drop('iterator')
+try: raise LookupError()
+except LookupError:
+    w=reversed(Seq()) if r in ('index','type') else itertools.batched(Wrap(),2,strict=True)
+    try: next(w)
+    except BaseException as e: print('caught',type(e).__name__)
+    del w

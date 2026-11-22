@@ -30,6 +30,7 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _tp_new_is                                   # noqa: B018  # type->tp_new == base->tp_new: the slot, with its history (RL-810)
     _set_context                                 # noqa: B018  # PyException_SetContext: the field, no __setattr__ of the class (RL-759)
     _is_c_type                                   # noqa: B018  # the object's type is CPython's, not a class of the program's
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
@@ -58,6 +59,9 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _tp_new_is(cls: type, base: type) -> bool:   # a stand-in for CPython's run of this file
+        return cls.__new__ is base.__new__
 
     def _set_context(error: BaseException, context: BaseException) -> None:   # a stand-in for CPython's run of this file
         BaseException.__dict__["__context__"].__set__(error, context)
@@ -434,10 +438,24 @@ class _IOBase:
         self = args[0]
         if _is_closed(self):
             return
+        # the flush's error is taken off the thread, the flag is stored, and the two errors are chained after
+        # (_PyErr_ChainExceptions1): a setter of the program's runs with no handler open (RL-850)
+        failed: BaseException | None = None
         try:
             self.flush()  # type: ignore[attr-defined]
-        finally:
+        except BaseException as e:
+            failed = e
+        second: BaseException | None = None
+        try:
             setattr(self, "__IOBase_closed", True)  # noqa: B010
+        except BaseException as e:
+            second = e
+        if second is not None:
+            if failed is not None:
+                _set_context(second, failed)
+            _raise_as_is(second)
+        if failed is not None:
+            _raise_as_is(failed)
 
     def __del__(self) -> None:                   # iobase_finalize
         cls = type(self)                         # bytesio_dealloc, stringio_dealloc and bufferedrwpair_dealloc call no finaliser:
@@ -838,7 +856,8 @@ class FileIO(_RawIOBase):
         rwa = False
         plus = False
         flags = 0
-        self._b_created = self._c_readable = self._d_writable = self._e_appending = self._f_truncate = False
+        # the access flags are zeroed where the object is made (fileio_new) and only set here, letter by letter: a second
+        # __init__ adds to what the first left, and one whose mode is refused leaves it (review A37, RL-858)
         for c in str.__str__(mode):
             if c == "x":
                 if rwa:
@@ -1096,22 +1115,31 @@ class FileIO(_RawIOBase):
     def close(*args: object, **kwds: object) -> None:  # noqa: N805
         _noargs("FileIO.close", args, kwds)
         self: FileIO = args[0]  # type: ignore[assignment]
+        # _io_FileIO_close_impl: the base's error is taken off the thread (PyErr_GetRaisedException) before the warning is
+        # formatted and the descriptor closed, and chained after: the source's __repr__ runs with no handler open (RL-854)
+        failed: BaseException | None = None
         try:
             _RawIOBase.close(self)
-        except BaseException:
-            if not self._h_closefd:
-                self._a_fd = -1
-                raise
-            if self._i_finalizing:
-                _fileio_dealloc_warn(self, self)
-            _fileio_internal_close(self)         # its own error carries the first as its context: _PyErr_ChainExceptions1
-            raise
+        except BaseException as e:
+            failed = e
         if not self._h_closefd:
             self._a_fd = -1
+            if failed is not None:
+                _raise_as_is(failed)
             return
         if self._i_finalizing:                   # the C function itself, not what a subclass calls _dealloc_warn
             _fileio_dealloc_warn(self, self)
-        _fileio_internal_close(self)
+        second: BaseException | None = None
+        try:
+            _fileio_internal_close(self)
+        except BaseException as e:
+            second = e
+        if second is not None:
+            if failed is not None:               # its own error carries the first as its context: _PyErr_ChainExceptions1
+                _set_context(second, failed)
+            _raise_as_is(second)
+        if failed is not None:
+            _raise_as_is(failed)
 
     def isatty(*args: object, **kwds: object) -> bool:  # noqa: N805
         _noargs("FileIO.isatty", args, kwds)
@@ -2109,7 +2137,8 @@ class BufferedRWPair(_BufferedIOBase):
 
     def __init__(*args: object, **kwds: object) -> None:  # noqa: N805
         self: BufferedRWPair = args[0]  # type: ignore[assignment]
-        if kwds:
+        # the clinic refuses keywords for the exact type and for a class whose tp_new is the type's (RL-846)
+        if kwds and (type(self) is BufferedRWPair or _tp_new_is(type(self), BufferedRWPair)):
             raise TypeError("BufferedRWPair() takes no keyword arguments")
         n = len(args) - 1
         if n < 2:
@@ -2124,21 +2153,27 @@ class BufferedRWPair(_BufferedIOBase):
         # writer of an earlier call are never released (their raw streams are not closed by it), and a call that fails
         # leaves NULL where its result was to be, with the reader cleared when the writer's fails (RL-791)
         made: object = None
+        failed: BaseException | None = None      # pending while the fields are stored and the reader cleared: no handler (RL-853)
         if self._a_reader is not None:
             _io_call("leak", self._a_reader)
         try:
             made = BufferedReader(reader, buffer_size)
-        finally:
-            self._a_reader = made
+        except BaseException as e:
+            failed = e
+        self._a_reader = made
+        if failed is not None:
+            _raise_as_is(failed)
         made = None
         if self._b_writer is not None:
             _io_call("leak", self._b_writer)
         try:
             made = BufferedWriter(writer, buffer_size)
-        finally:
-            self._b_writer = made
-            if made is None:
-                self._a_reader = None            # Py_CLEAR(self->reader)
+        except BaseException as e:
+            failed = e
+        self._b_writer = made
+        if failed is not None:
+            self._a_reader = None                # Py_CLEAR(self->reader)
+            _raise_as_is(failed)
 
     def read(*args: object, **kwds: object) -> object:  # noqa: N805
         if kwds:

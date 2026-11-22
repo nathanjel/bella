@@ -1,0 +1,149 @@
+import sys
+if sys.argv[1]=='01':
+    class B: pass
+    class C(B): pass
+    C.__new__ = list.__new__
+    try: print(type(C()).__name__)
+    except TypeError: print("TypeError")
+if sys.argv[1]=='02':
+    class C(tuple): pass
+    C.__init__ = lambda self, **kw: None
+    try: print(type(C(k=1)).__name__)
+    except TypeError: print("TypeError")
+if sys.argv[1]=='03':
+    import ast
+    class D(dict): pass
+    class A(ast.AST): _fields = D(x=1)
+    try: print(repr(A()))
+    except Exception as e: print(type(e).__name__)
+if sys.argv[1]=='04':
+    from itertools import islice
+    class V:
+        def __del__(self):
+            try: next(w)
+            except GeneratorExit: pass
+    def source():
+        yield V()
+        raise GeneratorExit
+    it = source()
+    w = islice(it, 1, 2)
+    try: next(w)
+    except BaseException as e: print(type(e).__name__)
+if sys.argv[1]=='05':
+    class C(reversed): pass
+    try: print(type(C([], k=1)).__name__)
+    except TypeError: print("TypeError")
+if sys.argv[1]=='06':
+    import io
+    class C(io.BufferedRWPair):
+        def __new__(cls,*a,**kw): return object.__new__(cls)
+    b = io.BytesIO()
+    try: print(type(C(b,b,k=1)).__name__)
+    except TypeError: print("TypeError")
+if sys.argv[1]=='07':
+    import sys
+    class Seq:
+        def __len__(self): return 1
+        __getitem__ = staticmethod([].__getitem__)
+        def __del__(self): print('seq',type(sys.exception()).__name__)
+    try: raise LookupError()
+    except LookupError:
+        w = reversed(Seq())
+        try: next(w)
+        except BaseException as e: print('caught',type(e).__name__)
+if sys.argv[1]=='08':
+    class Base: pass
+    class Child(Base): pass
+    c = Child()
+    Base.__new__ = len
+    try: print(type(object.__init__(c,1)).__name__)
+    except TypeError: print("TypeError")
+if sys.argv[1]=='09':
+    from itertools import pairwise
+    class Meta(type):
+        @property
+        def __init__(cls):
+            print('lookup')
+            return object.__init__
+    class C(pairwise,metaclass=Meta): pass
+    try: C([], k=1)
+    except TypeError: print("TypeError")
+if sys.argv[1]=='10':
+    import io, sys
+    class F(io.IOBase):
+        def flush(self): raise ValueError()
+        def __setattr__(self,k,v):
+            print('setter',type(sys.exception()).__name__)
+            object.__setattr__(self,k,v)
+    try: raise LookupError()
+    except LookupError:
+        try: F().close()
+        except Exception as e: print(type(e).__name__,type(e.__context__).__name__)
+if sys.argv[1]=='11':
+    import sys, functools
+    def note(k): print(k,type(sys.exception()).__name__)
+    class K:
+        def __init__(self,n): self.n=n
+        def __hash__(self): return 0
+        def __eq__(self,o):
+            if self.n==1 and o.n==2:
+                count.append(1)
+                if len(count)==3: raise ValueError()
+            return self.n==o.n
+        def __del__(self): note('key'+str(self.n))
+    class R:
+        def __init__(self,n): self.n=n
+        def __del__(self): note('result'+str(self.n))
+    @functools.lru_cache(2)
+    def f(k): return R(k.n)
+    count=[]
+    try: raise LookupError()
+    except LookupError:
+        try:
+            for i in range(3): f(K(i))
+        except BaseException as e: print(type(e).__name__,type(e.__context__).__name__)
+    f.cache_clear()
+if sys.argv[1]=='12':
+    import sys, io, ast
+    def note(s): print(s,type(sys.exception()).__name__)
+    class Field:
+        def __hash__(self):
+            note('hash')
+            return 1
+    class Node(ast.AST): _fields=(Field(),)
+    try: raise LookupError()
+    except LookupError:
+        try:
+            Node(1)
+        except BaseException as e: print(type(e).__name__)
+if sys.argv[1]=='13':
+    import sys, io, ast
+    def note(s): print(s,type(sys.exception()).__name__)
+    class Raw(io.BytesIO):
+        def close(self):
+            note('close')
+            super().close()
+    class Writer(io.BytesIO):
+        count=0
+        def writable(self):
+            self.count+=1
+            if self.count==2: raise ValueError()
+            return True
+    try: raise LookupError()
+    except LookupError:
+        try:
+            io.BufferedRWPair(Raw(),Writer())
+        except BaseException as e: print(type(e).__name__)
+if sys.argv[1]=='14':
+    import sys, io, ast
+    def note(s): print(s,type(sys.exception()).__name__)
+    class F(io.FileIO):
+        def flush(self): raise ValueError()
+        def __repr__(self): note('repr');return 'F'
+    try: raise LookupError()
+    except LookupError:
+        try:
+            x=F('/dev/null','r')
+            x._finalizing=True
+            x.close()
+        except BaseException as e: print(type(e).__name__)

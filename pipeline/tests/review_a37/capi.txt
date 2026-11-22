@@ -1,0 +1,36 @@
+import sys, os, _json, bisect, operator, types
+r=sys.argv[1]
+class Mul:
+    def __mul__(self,n): print('mul'); return ' '
+class S(str):
+    def __mul__(self,n): print('str mul'); return '.'
+class R(Mul):
+    def __getitem__(self,i): raise IndexError()
+class Produced:
+    def __init__(self,name): self.name=name
+    def __iter__(self): return It(self.name)
+    def __del__(self): print('drop',self.name)
+class It:
+    def __init__(self,name): self.name=name
+    def __iter__(self): print('iter',self.name);return self
+    def __next__(self): print('next',self.name);raise StopIteration()
+class Env:
+    def keys(self): return Produced('keys')
+    def values(self): return Produced('values')
+    def __len__(self): return 0
+class D(dict):
+    def items(self): return Produced('items')
+try:
+    if r=='env': os.posix_spawn('/no/such/r37-file',['a'],Env())
+    elif r=='items':
+        enc=_json.make_encoder(None,None,_json.encode_basestring,None,':',',',False,False,False)
+        print(enc(D(a=1),0))
+    elif r.startswith('indent'):
+        x={'indentmul':Mul(),'indext':0,'indentstr':S('x'),'indentseq':R(),'indentint':4}[r]
+        enc=_json.make_encoder(None,None,_json.encode_basestring,x,':',',',False,False,False)
+        print(enc(1,2))
+    else:
+        class Map(dict): pass
+        a={'sub':Map({0:1}),'proxy':types.MappingProxyType({0:1}),'frozen':frozendict({0:1})}[r]
+        print(bisect.bisect(a,1))
+except BaseException as e: print(type(e).__name__)

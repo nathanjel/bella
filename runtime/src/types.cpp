@@ -25,15 +25,28 @@ bool is_none(Obj v) { return v == None(); }
 ClassObject* as_class(Obj v);
 ClassObject* tp_base(ClassObject* c);
 
+bool statement_class(const ClassObject* c);
+// The __new__ that is a class's tp_new where a built-in's wrapper is stored in a class of the program's: CPython's slot keeps
+// the allocator it had (update_one_slot), which is the first __new__ of the MRO that no class statement's class holds
+Obj allocator_attr(const ClassObject* c) {
+    for (const ClassObject* k : c->mro)
+        if (!statement_class(k))
+            if (const Obj* v = k->attrs.find(N("__new__")); v != nullptr) return *v;
+    return Obj{};
+}
 const void* new_slot(ClassObject* c) {           // tp_new, as far as the runtime can tell it apart
-    Obj f = type_lookup(c, N("__new__"));
+    if (c->slot_tp_new) return nullptr;          // slot_tp_new, whatever the name finds now (RL-810)
+    Obj f = c->stored_new_wrapper ? allocator_attr(c) : type_lookup(c, N("__new__"));
     if (!is_kind(f, Kind::Builtin)) return nullptr;
     auto* b = static_cast<Builtin*>(f.object());
     return b->written.get().is_object() ? static_cast<const void*>(b->written.get().object()) : reinterpret_cast<const void*>(b->fn);
 }
-ClassObject* static_base(ClassObject* c) {
-    while (!is_kind(type_lookup(c, N("__new__")), Kind::Builtin) && !c->bases.empty()) c = tp_base(c);
-    return c;
+ClassObject* static_base(ClassObject* c) {       // past the classes whose tp_new is slot_tp_new
+    for (;;) {
+        bool python_new = c->slot_tp_new || (!c->stored_new_wrapper && !is_kind(type_lookup(c, N("__new__")), Kind::Builtin));
+        if (!python_new || c->bases.empty()) return c;
+        c = tp_base(c);
+    }
 }
 // Which dict a class's instances have (object.hpp's DictKind; C-3-59), as CPython's own flags and offsets say of the nearest
 // type written in C along tp_base (the names table's rows). That type has a dict slot of its own (tp_dictoffset): an ordinary
@@ -398,21 +411,57 @@ bool meta_descriptor_store(ClassObject* cls, const Str* name, Obj value) {
 }
 }  // namespace
 
+// type->tp_init == base->tp_init, and type->tp_new == base->tp_new: what the clinic's generated code asks before it refuses
+// keywords (a class with its own __init__, or its own allocator, takes them). tp_init has no history: it is what the name
+// finds. tp_new has one (below)
+bool tp_init_is(ClassObject* cls, ClassObject* base) { return type_lookup(cls, intern("__init__")) == type_lookup(base, intern("__init__")); }
+Ref i_tp_init_is(Obj, Args a) {                  // (cls, base)
+    positional_only(a, "_tp_init_is", 2, 2);
+    return Ref::steal(boolean(tp_init_is(static_cast<ClassObject*>(a.pos(0).object()), static_cast<ClassObject*>(a.pos(1).object()))));
+}
+bool tp_new_is(ClassObject* cls, ClassObject* base);
+Ref i_tp_new_is(Obj, Args a) {                   // (cls, base)
+    positional_only(a, "_tp_new_is", 2, 2);
+    return Ref::steal(boolean(tp_new_is(static_cast<ClassObject*>(a.pos(0).object()), static_cast<ClassObject*>(a.pos(1).object()))));
+}
+
 // tp_new of a class of the program's has a history (update_one_slot). It is slot_tp_new once a __new__ that is no built-in's
 // wrapper is found for it, when the class is made or when the name is stored later in it or in a base, and it stays so when the
 // name is deleted again: finding a built-in's wrapper keeps the slot as it is. A class made over such a class inherits the slot
 // (type_ready_set_new), and a store of a built-in's wrapper (`C.__new__ = object.__new__`) changes nothing. So the name's lookup
 // at the time of a call cannot answer what the allocator is (review A36, RL-810, RL-833)
+// A built-in's wrapper of a tp_new (tp_new_wrapper): a type's own __new__. Any other built-in stored under the name (`len`, a
+// bound `[].append`) is a callable like a function, and makes the slot slot_tp_new (review A37, RL-848)
+bool is_new_wrapper(Obj v) { return is_kind(v, Kind::Builtin) && static_cast<Builtin*>(v.object())->name == "__new__"; }
+bool program_class(const ClassObject* c) {       // a class statement's class, whose dict the program fills (the runtime's own
+    if (!c->heap_type || c_type(c)) return false;   // _abc._abc_data has a __new__ that is its tp_new)
+    const Obj* own = c->attrs.find(intern("__new__"));
+    return own == nullptr || !is_kind(*own, Kind::Builtin) || static_cast<Builtin*>(own->object())->owner != c;
+}
 bool new_is_a_wrapper(const ClassObject* cls) {
     static const Str* const name = intern("__new__");
     for (const ClassObject* c : cls->mro)
-        if (const Obj* v = c->attrs.find(name); v != nullptr) return !c->heap_type || c_type(c) || is_kind(*v, Kind::Builtin);
+        if (const Obj* v = c->attrs.find(name); v != nullptr) return !c->heap_type || c_type(c) || is_new_wrapper(*v);
     return true;
+}
+// What a class's dict and its bases' say of tp_new now: slot_tp_new once a __new__ that is no wrapper is found (and kept), and
+// whether the name finds a wrapper that a class of the program's holds, which the slot ignores (RL-841)
+void note_new_state(ClassObject* cls) {
+    static const Str* const name = intern("__new__");
+    if (!program_class(cls)) return;
+    if (!new_is_a_wrapper(cls)) cls->slot_tp_new = true;
+    cls->stored_new_wrapper = false;
+    if (cls->slot_tp_new) return;
+    for (const ClassObject* c : cls->mro)
+        if (c->attrs.contains(name)) {
+            cls->stored_new_wrapper = program_class(c);
+            return;
+        }
 }
 void update_new_slot(ClassObject* cls, bool top = true) {
     static const Str* const name = intern("__new__");
     if (!top && cls->attrs.contains(name)) return;   // recurse_down_subclasses: a class with the name of its own is not affected
-    if (cls->heap_type && !c_type(cls) && !new_is_a_wrapper(cls)) cls->slot_tp_new = true;
+    note_new_state(cls);
     for (ClassObject* sub : cls->subclasses) update_new_slot(sub, false);
 }
 
@@ -610,13 +659,15 @@ Ref object_new(Obj, Args a) {
 // at all (Py_TPFLAGS_DISALLOW_INSTANTIATION: tp_new is NULL, as a generator's or an iterator's), or inherits its base's. The
 // runtime's own types have no __new__ in their dict for the last two, so the lookup of the name alone said "object's" for a
 // range or a generator, and `range.__init__(r, 1)`, which CPython lets pass, was a TypeError (the argument-count sweep)
-// A class a class statement or a call of type made: what tp_new's history is about. The one heap type the runtime makes by
-// itself, _abc._abc_data, has a __new__ of its own that is its tp_new
-bool statement_class(const ClassObject* c) {
-    if (!c->heap_type || c_type(c)) return false;
-    const Obj* own = c->attrs.find(N("__new__"));
-    return own == nullptr || !is_kind(*own, Kind::Builtin) || static_cast<Builtin*>(own->object())->owner != c;
+// A class a class statement or a call of type made: what tp_new's history is about (program_class, above)
+bool statement_class(const ClassObject* c) { return program_class(c); }
+}  // namespace
+bool tp_new_is(ClassObject* cls, ClassObject* base) {   // the two allocators are one: neither is slot_tp_new, and the names agree
+    if (cls->slot_tp_new || base->slot_tp_new) return false;
+    Obj mine = cls->stored_new_wrapper ? allocator_attr(cls) : type_lookup(cls, N("__new__"));
+    return mine == type_lookup(base, N("__new__"));
 }
+namespace {
 bool allocator_is_objects(const ClassObject* cls) {
     if (cls->slot_tp_new) return false;          // a class of the program's: slot_tp_new, or else its base's allocator (RL-810)
     for (const ClassObject* c : cls->mro) {
@@ -646,7 +697,8 @@ Ref type_call(ClassObject* cls, Args a) {
     if (cls == types().type && a.npos != 3) raise_new("TypeError", "type() takes 1 or 3 arguments");
     if (cls == types().super_) return super_call(a);                  // super's own vectorcall
     if (cls->heap_type) refuse_getattribute_override(cls);
-    Obj new_attr = type_lookup(cls, N("__new__"));
+    // tp_new: the name's lookup, except where that finds a wrapper a class of the program's holds, which the slot ignores
+    Obj new_attr = cls->stored_new_wrapper ? allocator_attr(cls) : type_lookup(cls, N("__new__"));
     if (new_attr.is_unset()) raise_new("TypeError", "cannot create '" + cls->name + "' instances");
     if (new_attr == object_new_fn() && (!cls->heap_type || cls->disallow_instantiation) && cls != types().object) refuse_construction(cls);
     Ref new_fn = descr_get(new_attr, None(), Obj::of(cls));
@@ -947,7 +999,8 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     // A metaclass's mro() is the first code that can see the class, and may keep a view of its dict:
     // from here each insertion goes through set_attr.
     if (meta != types().type) mro_invoke(c);
-    c->slot_tp_new = best->slot_tp_new || !new_is_a_wrapper(c);   // type_ready_set_new, then update_one_slot (RL-810)
+    c->slot_tp_new = best->slot_tp_new;          // type_ready_set_new, then update_one_slot (RL-810)
+    note_new_state(c);
     for (auto& [k, v] : members)
         if (!c->attrs.contains(k)) c->set_attr(k, v.get());
     if (!c->attrs.contains(N("__doc__"))) c->set_attr(N("__doc__"), None());   // type_dict_set_doc: after the getsets
@@ -1068,7 +1121,10 @@ Ref builtin_new_m(Obj self, Args a) {
 }
 Ref tuple_new_m(Obj, Args a) {                   // tuple_new_impl, and tuple_subtype_new for a subclass
     ClassObject* cls = new_wrapper_class(a, types().tuple);
-    Args rest{a.data + 1, a.npos - 1, a.kwnames, a.nkw};
+    // "(type == &PyTuple_Type || type->tp_init == PyTuple_Type.tp_init) && !_PyArg_NoKeywords": a class with an __init__ of its
+    // own takes the keywords there, and this ignores them (review A37, RL-842)
+    bool own_init = cls != types().tuple && !tp_init_is(cls, types().tuple);
+    Args rest{a.data + 1, a.npos - 1, a.kwnames, own_init ? 0 : a.nkw};
     Ref made = invoke(Obj::of(types().tuple), rest);
     if (cls == types().tuple) return made;
     auto* instance = new TupleInstance(cls);

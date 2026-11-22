@@ -1886,6 +1886,10 @@ void allocated_state(const ClassObject* cls, Obj made) {
 void note_prelude_class(const ClassObject* c) {
     prelude_classes().insert(c);
     auto* cls = const_cast<ClassObject*>(c);
+    // a type of CPython's has its own tp_new or its base's, never slot_tp_new: what its class statement noted of the __new__ it
+    // was written with (as of a class of the program's, which it looked like until now) does not hold for it (RL-810, RL-841)
+    cls->slot_tp_new = false;
+    cls->stored_new_wrapper = false;
     static const Str* const said_alloc = intern("__alloc__");
     if (const Obj* alloc = cls->attrs.find(said_alloc); alloc != nullptr) {
         allocated_states()[cls] = Ref::share(*alloc);
@@ -3905,7 +3909,8 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
                              {"_set_context", i_set_context}, {"_type_name", i_type_name}, {"_class_name", i_class_name},
                              {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname},
-                             {"_is_c_type", i_is_c_type}, {"_own_dict", i_own_dict}}) {
+                             {"_is_c_type", i_is_c_type}, {"_own_dict", i_own_dict}, {"_tp_init_is", i_tp_init_is}, {"_tp_new_is", i_tp_new_is},
+                             {"_sequence_size", i_sequence_size}, {"_sequence_repeat", i_sequence_repeat}}) {
                         Ref b = own(new Builtin(n, fn));   // a chained error's context, and a type's name as the C has it (RL-759, RL-767)
                         put(pm->dict, n, b.get());
                     }

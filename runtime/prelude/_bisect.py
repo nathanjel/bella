@@ -37,7 +37,7 @@ except NameError:
 _ABSENT: object = object()
 _MAXSIZE = 2**63 - 1
 # the C mapping types a phase-1 program can hold: mp_subscript and no sq_item, so no sequence for the slot's purposes
-_C_MAPPINGS = ("dict", "mappingproxy", "collections.OrderedDict", "collections.defaultdict", "re.Match", "types.GenericAlias", "typing.Union",
+_C_MAPPINGS = ("dict", "frozendict", "mappingproxy", "collections.OrderedDict", "collections.defaultdict", "re.Match", "types.GenericAlias", "typing.Union",
                "weakref.ProxyType", "weakref.CallableProxyType", "_contextvars.Context")
 
 

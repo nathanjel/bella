@@ -1,0 +1,37 @@
+import itertools, sys, functools, io, collections
+op,action=sys.argv[1].split('-')
+def note(s): print(s,type(sys.exception()).__name__)
+class V:
+    def __del__(self):
+        note('item')
+        if action=='bad': raise ArithmeticError()
+        if action=='again':
+            try: next(w)
+            except BaseException as e: print('again',type(e).__name__)
+class Input:
+    def __iter__(self):
+        yield V()
+        if action=='stop': return 23
+        raise GeneratorExit()
+    def __del__(self): note('input')
+def hook(arg): print('unraisable',arg.exc_type.__name__)
+sys.unraisablehook=hook
+def fn(*args): raise KeyboardInterrupt()
+def run():
+    global w
+    if op=='batch': w=itertools.batched(Input(),3,strict=True)
+    elif op=='pair': w=itertools.pairwise(Input())
+    elif op=='map': w=map(fn,Input())
+    elif op=='slice': w=itertools.islice(Input(),1,2)
+    elif op=='chain': w=itertools.chain.from_iterable(Input())
+    elif op=='reduce': return functools.reduce(fn,Input(),1)
+    elif op=='bin': return io.BytesIO().writelines(Input())
+    elif op=='text': return io.StringIO().writelines(Input())
+    elif op=='od': return collections.OrderedDict(Input())
+    next(w)
+try: raise LookupError()
+except LookupError:
+    try: run()
+    except BaseException as e: print('caught',type(e).__name__)
+if 'w' in globals(): del w
+print('end')

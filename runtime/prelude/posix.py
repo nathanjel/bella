@@ -745,6 +745,7 @@ def _mapping_list(mapping: object, name: str) -> list[object]:   # PyMapping_Key
         pass
     if it is None:
         raise TypeError(_tp_name(mapping) + "." + name + "() returned a non-iterable (type " + _tp_name(produced) + ")")
+    del produced                                 # method_output_as_list: let go of once its iterator is had (RL-857)
     return list(it)
 
 

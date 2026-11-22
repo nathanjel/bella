@@ -362,14 +362,30 @@ Ref i_sequence_size(Obj, Args a) {
     Obj v = a.pos(0);
     ClassObject* t = type_of(v);
     static const Str* const name = intern("__len__");
+    // a class statement's class has sq_length wherever its MRO has a __len__, a dict's too: update_one_slot fills the slot from
+    // the wrapper it finds. Only CPython's own types can have a mapping's length alone (review A37, RL-843)
+    bool statement = t->heap_type && !c_type(t);
     for (ClassObject* c : t->mro) {
         if (!c->attrs.contains(name)) continue;
         bool of_cpython = !c->heap_type || c_type(c);
-        if (of_cpython && (c == types().dict || c == types().frozendict || c == types().mappingproxy || c->name == "_contextvars.Context"))
+        if (!statement && of_cpython && (c == types().dict || c == types().frozendict || c == types().mappingproxy || c->name == "_contextvars.Context"))
             raise_new("TypeError", t->name + " is not a sequence");
         return invoke(builtin("len").get(), {v});
     }
     raise_new("TypeError", "object of type '" + t->name + "' has no len()");
+}
+Ref binary_op1(BinOp op, Obj a, Obj b);
+// PySequence_Repeat(o, count): the type's sq_repeat; else, for what appears to be a sequence, its number slot for *; else
+// "can't be repeated". An object with __mul__ and no sequence slots is not asked (review A37, RL-856)
+Ref i_sequence_repeat(Obj, Args a) {
+    positional_only(a, "_sequence_repeat", 2, 2);
+    Obj o = a.pos(0), count = a.pos(1);
+    if (keeps_repeat(o)) return repeat(o, count, false);
+    if (sequence_check(o)) {
+        Ref r = binary_op1(BinOp::Mul, o, count);
+        if (!not_implemented(r)) return r;
+    }
+    raise_new("TypeError", "'" + type_of(o)->name + "' object can't be repeated");
 }
 // PySequence_Concat(s, o) and PySequence_InPlaceConcat: a sequence type's own, else nb_add or
 // nb_inplace_add if s is a sequence (a class with only __add__), never the reflected sequence path

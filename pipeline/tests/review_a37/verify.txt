@@ -1,0 +1,72 @@
+import sys
+if sys.argv[1]=='15':
+    import bisect
+    try: print(bisect.bisect(frozendict({0:1}),1))
+    except Exception as e: print(type(e).__name__)
+if sys.argv[1]=='16':
+    import _json
+    class Mul:
+        def __mul__(self,n): print('mul'); return ' '
+    enc=_json.make_encoder(None,None,_json.encode_basestring,Mul(),':',',',False,False,False)
+    try: print(enc(1,2))
+    except Exception as e: print(type(e).__name__)
+if sys.argv[1]=='17':
+    import _json
+    class Items:
+        def __iter__(self): print('iter items'); return self
+        def __next__(self): print('next items'); raise StopIteration()
+    class Product:
+        def __iter__(self): return Items()
+        def __del__(self): print('drop items')
+    class D(dict):
+        def items(self): return Product()
+    enc=_json.make_encoder(None,None,_json.encode_basestring,None,':',',',False,False,False)
+    print(enc(D(a=1),0))
+if sys.argv[1]=='18':
+    import io
+    s=io.FileIO('/dev/null','rb')
+    try: s.__init__('/dev/null','qq')
+    except ValueError: pass
+    print(s.closed,s.mode)
+if sys.argv[1]=='release':
+    import itertools
+    class X:
+        def __del__(self): print('drop')
+    def source():
+        yield 1
+        yield X()
+        raise KeyboardInterrupt()
+    it=source()
+    w=itertools.pairwise(it)
+    try:
+        for x in w: del x
+    except KeyboardInterrupt: print('caught')
+    print('release')
+    del w,it
+    print('end')
+if sys.argv[1]=='meta':
+    import itertools
+    class M(type):
+        @property
+        def __init__(cls):
+            if armed: raise OSError()
+            return object.__init__
+    armed=False
+    class C(itertools.pairwise,metaclass=M): pass
+    armed=True
+    try: C([1],k=1)
+    except BaseException as e: print(type(e).__name__)
+if sys.argv[1]=='exitclose':
+    import io,warnings
+    class Raw(io.BytesIO):
+        def flush(self): print('flush',self.getvalue())
+        def close(self):
+            print('close',self.getvalue())
+            super().close()
+    b=Raw()
+    t=io.TextIOWrapper(b,encoding='utf8')
+    t.write('snow')
+    with warnings.catch_warnings(record=True) as ws:
+        warnings.simplefilter('always')
+        del t
+        print([type(i.message).__name__ for i in ws])

@@ -17,6 +17,8 @@ try:
     _class_name                                  # noqa: B018  # _PyType_Name of a class itself
     _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
     _sequence_size                               # noqa: B018  # PySequence_Size: a sequence's length, which a dict has not (RL-820)
+    _raise_as_is                                 # noqa: B018  # a pending error sent on as it is, after work done with no handler open
+    _type_lookup                                 # noqa: B018  # _PyType_Lookup: what the type has under a name, unbound
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -28,6 +30,8 @@ except NameError:
     _tp_name: Callable[..., str] = _missing
     _warn: Callable[..., Any] = _missing
     _sequence_size: Callable[..., int] = _missing
+    _raise_as_is: Callable[..., None] = _missing
+    _type_lookup: Callable[..., Any] = _missing
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
@@ -141,6 +145,7 @@ def _repr_depth(self: object, depth: int) -> str:
 
 _in_repr: list[object] = []                      # Py_ReprEnter's stack, by identity
 _AST_ABSENT = object()                           # an attribute or an entry that is not there, told from None (RL-796)
+_FUNCTION = type(lambda: None)                   # a function written in Python
 
 
 def _dict_item(d: object, key: object) -> object:
@@ -171,10 +176,21 @@ class AST:
             raise TypeError(_class_name(cls) + " constructor takes at most " + str(numfields) + " positional argument" + ("" if numfields == 1 else "s"))
         for i in range(len(positional)):
             name = fields[i]                     # PySequence_GetItem, once: the name is kept for the store and the set (RL-800)
+            failed: BaseException | None = None
             try:
                 setattr(self, name, positional[i])
-            finally:
-                remaining.discard(name)          # PySet_Discard runs whether the store failed or not
+            except BaseException as e:
+                failed = e
+            # PySet_Discard runs whether the store failed or not, and after a failure with the error pending, not handled
+            # (review A37, RL-852). A __hash__ written in Python is then called with an exception set: its body runs until
+            # the first C function it calls returns, which CPython turns into a SystemError there. No prelude can stop a
+            # function of the program's at that point, so that one case is a stop by name, not a guess
+            if failed is not None and type(_type_lookup(name, "__hash__", None)) is _FUNCTION:
+                _bella_refuse("ast.AST.__init__ after a failed store of a field whose name has a __hash__ written in Python "
+                              "(CPython calls it with the store's error still set)")
+            remaining.discard(name)
+            if failed is not None:
+                _raise_as_is(failed)
         if kwds:
             attributes = None
             for key, value in kwds.items():

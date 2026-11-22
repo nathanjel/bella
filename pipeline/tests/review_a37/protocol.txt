@@ -1,0 +1,35 @@
+import sys, operator, types, ast
+op,form=sys.argv[1].split('-')
+class D(dict): pass
+class Len:
+    def __len__(self): print('len');return 1
+class Get:
+    def __getitem__(self,k):
+        if k==0: return 'x'
+        raise IndexError
+class Add:
+    def __add__(self,o): return 9
+class L(list):
+    def __iter__(self): print('iter');return iter(['y'])
+    def __getitem__(self,k): print('get',k);return list.__getitem__(self,k)
+    def __len__(self): print('len');return list.__len__(self)
+class T(tuple):
+    def __iter__(self): print('iter');return iter(['y'])
+class I(int): pass
+class Index:
+    def __index__(self):
+        if form=='indexerr': raise LookupError()
+        return I(1)
+a={'dict':{'x':1},'dictsub':D(x=1),'len':Len(),'get':Get(),'add':Add(),'L':L(['x']),'T':T(['x']),'proxy':types.MappingProxyType({'x':1}),'frozen':frozendict(x=1),'range':range(1)}.get(form,Index())
+try:
+    if op=='ast':
+        class A(ast.AST): _fields=a
+        print(repr(A()))
+    if op=='concat': print(operator.concat(a,a))
+    if op=='index': print(operator.indexOf(a,'x'))
+    if op=='count': print(operator.countOf(a,'x'))
+    if op=='contains': print(operator.contains(a,'x'))
+    if op=='repeat': print(['x']*a)
+    if op=='get': print(operator.getitem(a,0))
+    if op=='hint': print(operator.length_hint(a))
+except BaseException as e: print(type(e).__name__)

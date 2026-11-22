@@ -446,6 +446,11 @@ void fill_weakref(Module* m);                     // and runtime/prelude/_weakre
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);
 Ref i_sequence_size(Obj, Args a);                 // PySequence_Size: a sequence's length, not a mapping's
+Ref i_sequence_repeat(Obj, Args a);               // PySequence_Repeat
+bool tp_init_is(ClassObject* cls, ClassObject* base);   // type->tp_init == base->tp_init (runtime/src/types.cpp)
+bool tp_new_is(ClassObject* cls, ClassObject* base);    // type->tp_new == base->tp_new: the slot, with its history
+Ref i_tp_init_is(Obj, Args a);
+Ref i_tp_new_is(Obj, Args a);
 Ref i_tp_name(Obj, Args a);
 void forget_python_origin(ClassObject* c);
 void present_builtin_class(ClassObject* c);       // a class of builtins.py as CPython's static type: its __module__, __doc__, __dict__, __class_getitem__

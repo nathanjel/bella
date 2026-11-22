@@ -57,10 +57,14 @@ except NameError:
 
 try:
     _raise_as_is                                 # noqa: B018  # a pending error sent on as it is, after work done with no handler open
+    _tp_init_is                                  # noqa: B018  # type->tp_init == base->tp_init
 except NameError:                                # CPython's run of this file
 
     def _raise_as_is(exc: BaseException) -> None:
         raise exc
+
+    def _tp_init_is(cls: type, base: type) -> bool:
+        return cls.__init__ is base.__init__     # type: ignore[misc]
 
 _END = object()
 
@@ -145,7 +149,7 @@ class reversed:
     __slots__ = ("_index", "_seq")
 
     def __new__(cls, *args: object, **kwds: object) -> object:   # reversed_new_impl
-        if cls is reversed and kwds:
+        if kwds and (cls is reversed or _tp_init_is(cls, reversed)):   # the exact type, or a class that has its tp_init (RL-845)
             raise TypeError("reversed() takes no keyword arguments")
         if len(args) != 1:
             raise TypeError("reversed expected 1 argument, got " + str(len(args)))
@@ -168,16 +172,20 @@ class reversed:
     def __next__(self) -> object:                # reversed_next
         index = self._index
         if index >= 0:
-            ended = False
+            failed: BaseException | None = None
             try:
                 item = self._seq[index]  # type: ignore[index]
             except BaseException as e:
+                failed = e
+            if failed is not None:
+                # an IndexError or a StopIteration is cleared, anything else stays pending; then the sequence is let go of,
+                # with no handler open either way (RL-847). PyErr_ExceptionMatches asks the type (RL-464)
+                if issubclass(type(failed), (IndexError, StopIteration)):
+                    failed = None
                 self._index = -1
                 self._seq = None
-                if not issubclass(type(e), (IndexError, StopIteration)):   # PyErr_ExceptionMatches asks the type (RL-464)
-                    raise
-                ended = True                     # PyErr_Clear: the iterator ends, and what next() raises then has no context of it
-            if ended:
+                if failed is not None:
+                    _raise_as_is(failed)
                 raise StopIteration
             self._index = index - 1
             return item
@@ -451,7 +459,7 @@ is true. If function is None, return the items that are true."""
     __slots__ = ("_func", "_it")
 
     def __new__(cls, *args: object, **kwds: object) -> object:   # filter_new
-        if cls is filter and kwds:
+        if kwds and (cls is filter or _tp_init_is(cls, filter)):
             raise TypeError("filter() takes no keyword arguments")
         if len(args) != 2:
             raise TypeError("filter expected 2 arguments, got " + str(len(args)))

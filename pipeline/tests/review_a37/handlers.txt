@@ -1,0 +1,33 @@
+import io,sys,functools
+def note(k): print(k,type(sys.exception()).__name__)
+class F(io.IOBase):
+    def flush(self): raise ValueError()
+    def __setattr__(self,k,v):
+        if k=='__IOBase_closed':
+            note('setter')
+            object.__setattr__(self,k,v)
+            if sys.argv[1]=='setter': raise TypeError()
+        else: object.__setattr__(self,k,v)
+class K:
+    def __init__(self,n): self.n=n
+    def __hash__(self): return 0
+    def __eq__(self,o):
+        if self.n==1 and o.n==2:
+            count.append(1)
+            if len(count)==3: raise ValueError()
+        return self.n==o.n
+    def __del__(self): note('key'+str(self.n))
+class R:
+    def __init__(self,n): self.n=n
+    def __del__(self): note('result'+str(self.n))
+@functools.lru_cache(2)
+def f(k): return R(k.n)
+count=[]
+try: raise LookupError()
+except LookupError:
+    try:
+        if sys.argv[1]=='lru':
+            for i in range(3): f(K(i))
+        else: F().close()
+    except BaseException as e: print(type(e).__name__,type(e.__context__).__name__)
+f.cache_clear()

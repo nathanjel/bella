@@ -15,6 +15,7 @@ try:
     _raise_as_is                                 # noqa: B018  # a pending error goes on as it is: no context taken (RL-650)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _sequence_repeat                             # noqa: B018  # PySequence_Repeat
     _set_context                                 # noqa: B018  # PyException_SetContext: the field, no __setattr__ of the class (RL-759)
 except NameError:
     import operator
@@ -38,6 +39,9 @@ except NameError:
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
+
+    def _sequence_repeat(value: object, count: int) -> object:   # a stand-in for CPython's run of this file
+        return value * count  # type: ignore[operator]
 
     def _set_context(error: BaseException, context: BaseException) -> None:   # a stand-in for CPython's run of this file
         BaseException.__dict__["__context__"].__set__(error, context)
@@ -542,7 +546,7 @@ class Encoder:
         if self._indent is not None:             # create_indent_cache: the newline at the level given, then levels from 0
             newline_indent = "\n"
             if indent_level:
-                newline_indent = _concat(newline_indent, self._indent * indent_level)  # type: ignore[operator]   # PyUnicode_AppendAndDel of PySequence_Repeat
+                newline_indent = _concat(newline_indent, _sequence_repeat(self._indent, indent_level))   # PyUnicode_AppendAndDel of PySequence_Repeat (RL-856)
             cache = [newline_indent]
         parts: list[str] = []
         _encode_obj(self, parts, obj, 0, cache)
@@ -701,8 +705,11 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
     first = [True]
     if s._sort_keys or type(dct) is not dict and type(dct) is not frozendict:
         items = dct.items()  # type: ignore[attr-defined]
-        if type(items) is not list:              # PyMapping_Items: what items() gave if it is an exact list, else its iterator listed
-            items = list(iter(items))
+        if type(items) is not list:              # PyMapping_Items: what items() gave if it is an exact list, else its iterator listed;
+            it = iter(items)                     # what the method returned is let go of once its iterator is had (RL-857)
+            del items
+            items = list(it)
+            del it
         if s._sort_keys:
             list.sort(items)
         at = 0
