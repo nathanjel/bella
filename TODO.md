@@ -527,6 +527,21 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          the observable and a lint rule), the candidate buffer's size triggers a collection (growing with the heap:
          taken, for the author to overrule), and a lean build collects only when asked, at the runtime's looks and
          at exit (D-24 gets it); then `make object-test` with `World(cycles=True)`.
+       * 3c, the header from the model (planned 2026-11-23), in five parts, each with its checks:
+         (H1) `object.hpp` over the object model's own kinds (an instance and the attribute storage of every built-in
+         base, dicts, weak references): a BUFFERED flag and the candidate buffer, an object that dies while buffered
+         freed when the buffer is next walked (no room in the header for its place; a compaction when half of it is
+         dead); a traverse and a clear per kind (`traverser(Kind)`, `clearer(Kind)`, as `destroyer`), each naming
+         exactly the counted references the kind's release lets go of (a reference too many would free what lives; one
+         too few only keeps a group); trial deletion and gc.c's sequence in the model's order; `object_binding.cpp`
+         given `collect` and `ring`, and `make object-test` run with `World(cycles=True)`. (H2) the runtime's kinds
+         (`runtime.hpp`): tuple, list, set, cell, function (closure, defaults, its dict), method, builtin, super, the
+         iterators, views, slice, proxy, traceback and frame, lazy import, the abc data, the prelude's natives, and a
+         generator's frame, whose traverse the backend emits; and whether a class is a counted object (C-3-12).
+         (H3) `gc`: collect, get_count, get_stats, is_tracked, is_finalized, the threshold and the looks (exact: CPython's
+         points; lean: gc.collect, the runtime's looks, exit). (H4) the exit: finalize_modules' sequence and the last
+         collection in place of the exit walk (RL-514), a caught exception keeping its frame's locals (RL-222), `_abc`'s
+         real weak references. (H5) the seven cases into the compiled baseline, and a codex review of the collector.
        * 3c, what is left: the cycle collector in the header, `gc`: C-3-12, C-9-01, C-9-02, C-9-07; it
          replaces the exit walk, which today finalises a list's items first to last and in breadth-first
          order, where CPython's teardown releases what it can by reference count. `_abc` takes real weak references then, which only the collector can tell
