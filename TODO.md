@@ -788,15 +788,7 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   the rest); `dir()`'s two messages (RL-491); a type's name cut where the C's format cuts it (`%.200s` and the like, RL-524).
 * **An observation not reduced:** a warning from a `__del__` that CPython runs at exit (RL-525), with the collector.
 * **Warnings:** a registry version too large for a C long (RL-484); a stack level of -2**63 (RL-485).
-* **Names and frames:** a generator expression is passed its iterator, where 3.15 passes the iterable and the expression's code
-  calls `GET_ITER` itself: `.0` in `locals()` is the iterable for every type, and the iterator, which has no name, goes at the
-  loop's end, before the frame's locals (RL-488, measured again with review A35: `sum(1 for v in s)` lets go of the last item
-  before the iterator compiled, after it under CPython; a change of the frontend's lowering. A way that needs no new
-  node: the helper `<genexpr>` becomes a plain function, shown, that takes the iterable, calls `iter()` on it (so a failure
-  has the expression's frame in its traceback, as under 3.15) and returns the generator of an inner function of the same name
-  with the iterable as `.0` and the iterator in a one-item list under a reserved name, which the loop takes with `pop()`:
-  the loop's own reference is then the only one, and it goes at the loop's end. Both evaluators check a code object's names
-  against L2's by `co_name`, so the pair has to be told apart there); `__classdictcell__` holds a mappingproxy (RL-489); the frame a handler is given is a new object at each arrival
+* **Names and frames:** `__classdictcell__` holds a mappingproxy (RL-489); the frame a handler is given is a new object at each arrival
   (RL-497); `NameError.name` after `del` of what is not bound (RL-498); NameError against UnboundLocalError for a deleted local read
   in a comprehension and a nonlocal deleted twice (RL-499); `print()` after `del sys.stdout` (RL-500); a Unicode error's `start`
   and `end` past 2**62 and as given to the constructor (RL-504, RL-505); `object.__lt__` and its three siblings called by name

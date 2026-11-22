@@ -28,7 +28,7 @@ from pipeline.l1.frontend import lower
 from pipeline.l1.staged import flags_of
 from pipeline.l1.wf import _bound_in, _walrus, check
 from pipeline.l1.captures import store_order
-from pipeline.l2.resolve import co_cellvars, co_varnames, resolve   # the names' kinds are level 2's (L.Assign.swapped)
+from pipeline.l2.resolve import co_cellvars, co_varnames, moved_on_use, resolve   # the names' kinds are level 2's (L.Assign.swapped)
 from pipeline.staging import annotate_rt
 
 _BIN: dict[str, Callable[[Any, Any], Any]] = {
@@ -756,6 +756,8 @@ class Interpreter:
             it = self.expr(s.iterable, scope)
             if not s.iterator:
                 it = iter(it)
+            else:
+                _take_iterator(s.iterable, scope)
             broke = False
             while True:
                 try:
@@ -932,6 +934,8 @@ class Interpreter:
                 it = yield from self.gexpr(s.iterable, scope)
                 if not s.iterator:
                     it = iter(it)
+                else:
+                    _take_iterator(s.iterable, scope)
                 broke = False
                 while True:
                     v = next(it, _MISSING)
@@ -1452,6 +1456,8 @@ class Interpreter:
                 return special_lookup
             if e.name == "map_add":
                 return _map_add
+            if e.name == "genexpr":
+                return _genexpr
             if e.name == "set_add":
                 return set.add
             if e.name in _STAR:
@@ -1778,6 +1784,19 @@ def _nearest_class(scope: Scope) -> Scope | None:
             return s
         s = s.parent
     return None
+
+
+def _genexpr(helper: Any, iterable: Any) -> Any:
+    """A generator expression's object: the helper, a generator function, is given the iterable (its `.0`) and the iterator
+    that GET_ITER makes of it before the generator exists (CPython 3.15's genexpr code; RL-488)."""
+    return helper(iterable, iter(iterable))
+
+
+def _take_iterator(iterable: L.Expr, scope: Scope) -> None:
+    """A loop over an iterator made elsewhere owns it where the level below moves it out of its variable
+    (resolve.moved_on_use: a generator expression's): the variable is no more."""
+    if isinstance(iterable, L.Name) and iterable.id in scope.temps and moved_on_use(iterable.id, frozenset((iterable.id,))):
+        del scope.temps[iterable.id]
 
 
 def _map_add(target: dict[Any, Any], key: Any, value: Any) -> None:

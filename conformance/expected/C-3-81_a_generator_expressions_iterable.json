@@ -1,0 +1,12 @@
+{
+ "case": "C-3-81_a_generator_expressions_iterable.py",
+ "clause": "C-3-81",
+ "spec": "section 3 (expressions: generator expressions)",
+ "status": "P1",
+ "source": "Python/codegen.c (codegen_comprehension: a generator expression's code takes the iterable and calls GET_ITER itself), Python/ceval.c (_PyFrame_ClearLocals)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "made_and_run [['iter'], ['next 1'], [], ['next 2', 'drop 1', 'next 3', 'drop 2', 'stop', 'drop iterator', 'drop iterable'], ['drop 3']]\nmade_and_dropped ['iter', 'drop iterator', 'drop iterable']\nclosed_after_one [['iter', 'next 1', 'drop iterator', 'drop 1', 'drop iterable'], []]\ndropped_after_one ['iter', 'next 1', 'drop iterator', 'drop 1', 'drop iterable']\nsummed ['iter', 'next 1', 'next 2', 'drop 1', 'next 3', 'drop 2', 'stop', 'drop iterator', 'drop 3', 'drop iterable', 'total 3']\nlisted ['iter', 'next 1', 'next 2', 'drop 1', 'stop', 'drop iterator', 'drop 2', 'drop iterable', 'numbers [1, 2]']\ntwo_loops [['iter'], ['next 1', 'iter', 'drop iterable', 'next 1', 'stop', 'drop iterator', 'next 2', 'drop 1', 'iter', 'drop iterable', 'next 1', 'drop 1', 'stop', 'drop iterator', 'stop', 'drop iterator', 'drop 1', 'drop 2', 'drop iterable', 'pairs [(1, 1), (2, 1)]']]\nwith_a_condition ['iter', 'next 1', 'next 2', 'drop 1', 'next 3', 'drop 2', 'next 4', 'drop 3', 'stop', 'drop iterator', 'drop 4', 'drop iterable', 'numbers [2, 4]']\nthe_other_comprehensions [['iter', 'drop iterable', 'next 1', 'next 2', 'stop', 'drop iterator'], ['iter', 'drop iterable', 'next 1', 'next 2', 'stop', 'drop iterator'], ['iter', 'drop iterable', 'next 1', 'next 2', 'stop', 'drop iterator'], ['2', '2', '[1, 2]']]\nan_iterator_given [[], ['next 1', 'next 2', 'drop 1', 'stop', 'drop 2', 'drop iterator', 'numbers [1, 2]']]\nkept_alive [True, True, True]\nwhat_locals_shows ['.0=list v=int', '.0=tuple v=int', '.0=range v=int', '.0=str v=str', '.0=dict v=int', '.0=set v=int', '.0=frozenset v=int', '.0=bytes v=int', '.0=list_iterator v=int']\na_failing_iter ['a_failing_iter', '__iter__']\nnot_iterable TypeError when the expression is evaluated\nin_a_lambda ['iter', 'next 1', 'next 2', 'drop 1', 'stop', 'drop iterator', 'drop 2', 'drop iterable', 'numbers [1, 2]']\nclass [1, 2] ['iter', 'next 1', 'next 2', 'drop 1', 'stop', 'drop iterator', 'drop 2', 'drop iterable']\nmodule [1, 2] ['iter', 'next 1', 'next 2', 'drop 1', 'stop', 'drop iterator', 'drop 2', 'drop iterable']\n",
+ "stderr": "",
+ "exit_code": 0
+}

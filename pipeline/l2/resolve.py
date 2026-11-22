@@ -297,8 +297,11 @@ def expression_temporary(name: str, synthetic: frozenset[str]) -> bool:
 def moved_on_use(name: str, synthetic: frozenset[str]) -> bool:
     """A decorator's value (`_dec*`), evaluated before the definition and loaded exactly once,
     where it is applied: the load moves it into a temporary, so it dies after its call as the
-    stack value does in CPython (review 2026-11-02, G7 2.3)."""
-    return name in synthetic and name.startswith("_dec")
+    stack value does in CPython (review 2026-11-02, G7 2.3). And the iterator of a generator
+    expression's outermost loop (`_loopit*`), which comes in as a parameter of the helper and is
+    loaded once, by that loop: in CPython it is a value of the frame's stack, so it goes when the
+    loop ends, before the frame's variables, and first of all when the frame is given up (RL-488)."""
+    return name in synthetic and name.startswith(("_dec", "_loopit"))
 
 
 def _param_order(params: tuple[L.Param, ...]) -> list[str]:

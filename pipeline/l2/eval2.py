@@ -994,6 +994,8 @@ class Interpreter:
             return E1.special_lookup
         if name == "map_add":
             return E1._map_add
+        if name == "genexpr":
+            return E1._genexpr
         if name == "set_add":
             return set.add
         if name in E1._STAR:

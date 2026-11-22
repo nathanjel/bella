@@ -13,8 +13,8 @@ each turn with `del`; a loop of the runtime's steps with `next_after`; and where
 item and letting go of the iterator (`reduce`'s tuple, `min`'s value), the prelude holds the iterator and asks it with
 `next()`.
 
-The row that is not here: a generator expression of the program's lets go of its iterator when its frame ends, where
-CPython 3.15 lets go of it at the loop's end (the expression's `.0` is the iterable there; RL-488, open).
+A generator expression of the program's is conformance case C-3-81: its iterator goes at the loop's end and its `.0` is the
+iterable, as under CPython 3.15 (RL-488).
 
 Run under pytest or directly: python3 -m pipeline.tests.test_item_lifetime
 """

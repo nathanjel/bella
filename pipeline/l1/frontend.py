@@ -1785,7 +1785,12 @@ class _Comprehensions(ast.NodeTransformer):
     * list, set, dict: the helper builds the container (dict items with the key evaluated
       before the value, as MAP_ADD) and returns it;
     * generator expression: the helper is a generator function named <genexpr>, with CPython's
-      qualname, called with the iterator, as CPython calls its genexpr code;
+      qualname. CPython 3.15 calls its genexpr code with the iterable, which stays the code's
+      local `.0` for the generator's life, and the code calls GET_ITER itself before the
+      generator is made: the iterator is on the frame's stack, never a variable. So the helper
+      takes the iterable and, as a second parameter of the compiler's own, the iterator, which
+      the loop takes out of its variable when it starts (resolve.moved_on_use); the intrinsic
+      `genexpr` calls iter() and the helper (RL-488);
     * a walrus target binds in the containing scope (PEP 572): the helper declares it nonlocal
       (global at module level) and the containing function binds it; in a class body it is a
       SyntaxError, as in CPython.
@@ -1848,7 +1853,13 @@ class _Comprehensions(ast.NodeTransformer):
             raise L.Unsupported("unpacking in a comprehension (PEP 798, new in 3.15) is [P2+]")
         if any(g.is_async for g in node.generators):
             raise L.Unsupported("async comprehension")
+        # The outermost loop's iterator comes in as a parameter. A generator expression has a parameter before it, the
+        # iterable (its `.0`), and its loop takes the iterator out of its variable when it starts (resolve.moved_on_use):
+        # in CPython the iterator is a value of the frame's stack, so it goes when the loop ends, before the variables.
+        # (The other comprehensions would need the same and more: the caller of the helper holds the iterator for the
+        # call, which is the question of a call's arguments, RL-695.)
         fname, res, arg = _tmp("gen" if kind == "genexp" else "comp"), _tmp("res"), _tmp("it")
+        held = _tmp("loopit") if kind == "genexp" else arg
         outer_iter = self.visit(node.generators[0].iter)      # evaluated in this scope
         res_load = ast.Name(id=res, ctx=ast.Load())
         action: ast.stmt
@@ -1866,7 +1877,7 @@ class _Comprehensions(ast.NodeTransformer):
             for cond in reversed(gen.ifs):
                 inner = [ast.If(test=cond, body=inner, orelse=[])]
             is_outer = i == len(node.generators) - 1
-            iterable = ast.Name(id=arg, ctx=ast.Load()) if is_outer else gen.iter
+            iterable = ast.Name(id=held, ctx=ast.Load()) if is_outer else gen.iter
             inner = [ast.For(target=gen.target, iter=iterable, body=inner, orelse=[])]
             if is_outer:
                 inner[0].bella_iterator = True  # type: ignore[attr-defined]  # the iterator GET_ITER made outside (A7-4)
@@ -1901,7 +1912,8 @@ class _Comprehensions(ast.NodeTransformer):
             ast.fix_missing_locations(st)
         fn = ast.FunctionDef(
             name="<genexpr>" if kind == "genexp" else fname,
-            args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=arg)], kwonlyargs=[], kw_defaults=[], defaults=[]),
+            args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=arg), *([ast.arg(arg=held)] if kind == "genexp" else [])],
+                               kwonlyargs=[], kw_defaults=[], defaults=[]),
             body=_hoist(body, "function", frozenset(declared_global), module_frame=frame),   # comprehensions in the element, conditions or inner loops
             decorator_list=[], returns=None, type_params=[])
         fn.bella_store = fname  # type: ignore[attr-defined]
@@ -1915,6 +1927,9 @@ class _Comprehensions(ast.NodeTransformer):
             if self.through == "annotation":     # bound in the function around the annotation scope, free in the scope between
                 fn.bella_binds_through = True  # type: ignore[attr-defined]
         self.hoisted.append(ast.fix_missing_locations(_copy_loc(fn, node)))
+        if kind == "genexp":                     # genexpr(helper, iterable): helper(iterable, iter(iterable))
+            return ast.fix_missing_locations(_copy_loc(ast.Call(
+                func=_intrinsic("genexpr"), args=[ast.Name(id=fname, ctx=ast.Load()), outer_iter], keywords=[]), node))
         return ast.fix_missing_locations(_copy_loc(ast.Call(
             func=ast.Name(id=fname, ctx=ast.Load()),
             args=[ast.Call(func=_intrinsic("iter"), args=[outer_iter], keywords=[])],
@@ -1961,7 +1976,7 @@ def _hoist(stmts: list[ast.stmt], scope: str = "module", globals_: frozenset[str
     produces=frozenset({Fact.NO_COMPREHENSIONS}),
     obligations=(
         Obligation("wf", "output contains no ListComp, SetComp, DictComp or GeneratorExp node"),
-        Obligation("semantics", "the outermost iterable is evaluated (and iter() called) in the enclosing scope before the loop; the helper is defined in the comprehension's own scope so it sees that scope's names; loop variables do not leak (PEP 709 observable behaviour); elements added in order, a dict's key before its value; a generator expression is a generator named <genexpr>; walrus targets bind in the containing scope (PEP 572)"),
+        Obligation("semantics", "the outermost iterable is evaluated (and iter() called) in the enclosing scope before the loop; the helper is defined in the comprehension's own scope so it sees that scope's names; loop variables do not leak (PEP 709 observable behaviour); elements added in order, a dict's key before its value; a generator expression is a generator named <genexpr> that holds its iterable as `.0` and whose iterator is the loop's alone (3.15); walrus targets bind in the containing scope (PEP 572)"),
         Obligation("terminates", "one helper per comprehension"),
     ),
     discharge=Discharge.TESTED, status="tested",

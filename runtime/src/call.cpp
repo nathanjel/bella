@@ -2361,6 +2361,14 @@ Ref i_map_add(Obj, Args a) {
     setitem(a.pos(0), a.pos(1), a.pos(2));
     return none_ref();
 }
+// genexpr(helper, iterable): a generator expression's object. CPython 3.15's code for one takes the iterable, which stays its
+// local `.0`, and calls GET_ITER before the generator is made, so the iterator is the frame's alone. The helper takes both:
+// the iterable, and the iterator in a variable its outermost loop empties when it starts (RL-488)
+Ref i_genexpr(Obj, Args a) {
+    positional_only(a, "genexpr", 2, 2);
+    Ref it = iter(a.pos(1));
+    return invoke(a.pos(0), {a.pos(1), it.get()});
+}
 Ref i_unpack(Obj, Args a) {                     // unpack_iterable(value, before, after): a list
     positional_only(a, "unpack", 3, 3);
     std::int64_t before = a.pos(1).small_value(), after = a.pos(2).small_value();
@@ -2617,7 +2625,7 @@ void register_intrinsics() {
     if (done) return;
     done = true;
     for (auto [name, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{
-             {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"unpack", i_unpack},
+             {"special", i_special}, {"set_add", i_set_add}, {"map_add", i_map_add}, {"genexpr", i_genexpr}, {"unpack", i_unpack},
              {"call_args_tuple", i_call_args_tuple}, {"super", i_super}, {"exception", i_exception}, {"eg_match", i_eg_match},
              {"raise_handled", i_raise_handled}, {"prep_reraise_star", i_prep_reraise_star}, {"reraise_star", i_reraise_star},
              {"call_sites", i_call_sites}, {"traceback_frame", i_traceback_frame}, {"frame_code", i_frame_code}, {"stack", i_stack},
