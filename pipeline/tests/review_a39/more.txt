@@ -1,0 +1,17 @@
+import sys
+r=sys.argv[1]
+class T:
+    def __init__(self,n): self.n=n
+    def __del__(self): print(self.n)
+def cell():
+    g=(T('result') for x in [T('source')])
+    if r=='never': return lambda:g
+    for v in g: break
+class C:
+    def __iter__(self): return iter([1])
+    def f(self):
+        return next(super().__self__ is self for x in self)
+try:
+    if r=='cell': cell()
+    else: print(C().f())
+except BaseException as e: print(type(e).__name__)

@@ -1,0 +1,25 @@
+import sys
+row=sys.argv[1]
+class S:
+    def __iter__(self):
+        if row=='iter': raise LookupError
+        return self
+    def __next__(self):
+        if row=='next': raise LookupError
+        return 1
+def check(x,k):
+    if row==k: raise LookupError
+    return (1,)
+def f():
+    g=(
+        check(x,'elem')
+        for x in S()
+        if check(x,'if')
+        for y in check(x,'later')
+    )
+    if row=='throw': g.throw(ValueError)
+    if row=='resumed':
+        next(g)
+        g.throw(ValueError)
+    next(g)
+f()

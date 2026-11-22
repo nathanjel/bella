@@ -1,0 +1,22 @@
+import sys,functools
+r=sys.argv[1]
+def log(*args): print(tuple(type(v).__name__ for v in args))
+class Hook:
+    def __call__(self,*args): log(*args)
+def err(x): print('unraisable',x.exc_type.__name__)
+sys.unraisablehook=err
+class C:
+    def __repr__(self): return 'instance'
+def run():
+    if r=='yield':
+        for source in ('( (yield x) for x in [1])','[ (yield x) for x in [1]]'):
+            try: compile(source,'expr','eval')
+            except BaseException as e: print(type(e).__name__)
+        return
+    kind,form=r.split('-')
+    hook=dict(bound=[].append,func=len,print=print,wrap=list.__len__,desc=list.append,fromkeys=dict.fromkeys,meth=[].__len__,fun=Hook(),cls=int,none=None,partial=functools.partial(log),prop=property(lambda self:log))[kind]
+    C.__del__=hook if form=='plain' else staticmethod(hook) if form=='static' else classmethod(hook)
+    x=C()
+    del x
+    print('after')
+run()

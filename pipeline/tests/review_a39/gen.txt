@@ -1,0 +1,54 @@
+import sys, itertools
+row = sys.argv[1]
+class Tag:
+    def __init__(self, name): self.name = name
+    def __del__(self): print('drop', self.name)
+class Source(Tag):
+    def __iter__(self): return Steps('iterator')
+class Steps(Tag):
+    i = 0
+    def __iter__(self): return self
+    def __next__(self):
+        i = self.i
+        if row == 'next'+str(i): raise KeyError(i)
+        if i == 3: raise StopIteration
+        self.i += 1
+        return Tag(i)
+def check(x, kind):
+    if row == kind+str(x.name): raise ValueError(x.name)
+    return True
+def elem(x):
+    check(x, 'elem')
+    return Tag('value'+str(x.name))
+def later(x):
+    check(x, 'later')
+    return (0,)
+def run():
+    if row == 'inspect':
+        g = ((sorted(locals()), sorted(vars()), dir(), sys.exception() is None, globals() is globals()) for t in [1])
+        print(g.__name__, g.__qualname__, g.gi_running, g.gi_suspended, g.gi_yieldfrom)
+        print(next(g),g.gi_suspended)
+        return
+    if row == 'reenter':
+        g = (next(g) for x in [1])
+        next(g)
+        return
+    g = (elem(x) for x in Source('source') if check(x,'condition') for y in later(x))
+    if row.startswith('throw'):
+        if 'started' in row: next(g)
+        g.throw({'V': ValueError, 'S': StopIteration, 'G': GeneratorExit, 'K': KeyboardInterrupt}[row[-1]])
+    elif row == 'any': print(any(g))
+    elif row == 'all': print(all(g))
+    elif row == 'in': print(None in g)
+    elif row == 'zip': print(len(list(zip(g, [1]))))
+    elif row == 'slice': print(len(list(itertools.islice(g,1))))
+    elif row == 'break':
+        for v in g: break
+    elif row == 'next': next(g)
+    elif row == 'close': next(g); g.close()
+    elif row == 'nested': print(sum(1 for a in g))
+    else:
+        for v in g: print('got', v.name)
+    print('after')
+try: run()
+except BaseException as e: print(type(e).__name__, type(e.__cause__).__name__)

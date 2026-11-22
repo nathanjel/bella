@@ -40,6 +40,7 @@ from pathlib import Path
 
 from pipeline.l1.grammar import Unsupported
 from pipeline.l2 import grammar as G
+from pipeline.l2.resolve import moved_on_use
 
 # The last three are macros in a unit. BELLA_LEAN is the command line's, and only a lean build's units have it
 # (pipeline/build.py, LEAN_DEFINE): header_macros() asks the compiler with no define and never lists it, so without its
@@ -451,7 +452,11 @@ class Emitter:
             self.add(4, "gen1->pc = rt::GEN_RETURNED;")
             self.add(4, "return rt::none_ref();")
         body = self.out
-        stack = sorted(_synthetic_stored(c.body, self.hidden) & self.hidden, key=_creation, reverse=True)
+        # a generator expression's iterator comes in as a parameter and is a value of CPython's stack: an exception that
+        # leaves the frame before the loop has taken it (one thrown into a generator not yet started) drops it with the
+        # other stack values, before the frame's variables are kept for the traceback (review A39, RL-875)
+        moved = {p.name for p in c.params if moved_on_use(p.name, self.hidden)}
+        stack = sorted((_synthetic_stored(c.body, self.hidden) | moved) & self.hidden, key=_creation, reverse=True)
         temps = sorted((n for n in self.slots if _TEMP.match(n)), key=lambda n: int(n[1:]), reverse=True)
         guard = ", ".join(["", *(self.vars[n] for n in frame_locals)])
         out = [f"// generator {c.qualname}  ({self.filename}:{c.first_line}): one resume",

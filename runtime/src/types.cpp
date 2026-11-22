@@ -257,6 +257,9 @@ Ref descr_get(Obj found, Obj obj, Obj type) {
     if (found.is_small()) return Ref::share(found);
     Obj get = type_lookup(type_of(found), N("__get__"));
     if (get.is_unset()) return Ref::share(found);
+    // slot_tp_descr_get: what the type has under __get__ is called as it is, with the descriptor first. It is not looked
+    // up as a method (`__get__ = print` prints the three, `__get__ = staticmethod(f)` calls f with the three); __set__
+    // and __delete__ are (slot_tp_descr_set: review A39, RL-878)
     return invoke(get, {found, obj, type});
 }
 
@@ -405,8 +408,8 @@ bool meta_descriptor_store(ClassObject* cls, const Str* name, Obj value) {
     Ref desc = Ref::share(meta_attr);
     Obj f = type_lookup(type_of(meta_attr), N(value.is_unset() ? "__delete__" : "__set__"));
     if (f.is_unset()) raise_new("AttributeError", value.is_unset() ? "__delete__" : "__set__");
-    if (value.is_unset()) invoke(f, {desc.get(), Obj::of(cls)});
-    else invoke(f, {desc.get(), Obj::of(cls), value});
+    const Obj rest[] = {Obj::of(cls), value};    // slot_tp_descr_set: looked up and called as a method of the descriptor
+    call_as_method(f, desc.get(), std::span<const Obj>(rest, value.is_unset() ? 1 : 2));
     return true;
 }
 }  // namespace
@@ -534,18 +537,28 @@ Ref generic_getattr(Obj obj, const Str* name) {
 }
 
 // ---- special methods ----
+// What a type has under a special name, called as a method of `self`: lookup_method and its unbound call. A function, or a
+// method of a built-in type that is not bound, is called with `self` first (and such a method checks that `self` is of its
+// type); anything else is bound by its own __get__, if it has one, and called with the rest alone: a bound built-in, a
+// built-in function, a staticmethod, a classmethod, an object with __call__ (reviews A38 and A39: RL-859, RL-877, RL-878)
+Ref call_as_method(Obj f, Obj self, std::span<const Obj> rest) {
+    Ref hold = Ref::share(f);                    // the method may be replaced while it runs
+    bool unbound = (is_kind(f, Kind::PyFunction) && !presents_as_builtin(f)) || is_kind(f, Kind::Function) ||
+                   (is_kind(f, Kind::Builtin) && static_cast<Builtin*>(f.object())->self.is_unset() &&
+                    static_cast<Builtin*>(f.object())->binding == Binding::Method);
+    if (unbound) {
+        std::vector<Obj> data{self};
+        data.insert(data.end(), rest.begin(), rest.end());
+        return invoke(f, Args{data.data(), data.size(), nullptr, 0});
+    }
+    Ref bound = descr_get(f, self, Obj::of(type_of(self)));
+    return invoke(bound.get(), Args{rest.data(), rest.size(), nullptr, 0});
+}
 Ref call_special(Obj v, const char* name, std::initializer_list<Obj> args, bool* found) {
     Obj f = type_lookup(type_of(v), N(name));
     if (found != nullptr) *found = !f.is_unset();
     if (f.is_unset()) return Ref{};
-    std::vector<Obj> data{v};
-    data.insert(data.end(), args.begin(), args.end());
-    Ref hold = Ref::share(f);                    // the method may be replaced while it runs
-    if ((is_kind(f, Kind::PyFunction) && !presents_as_builtin(f)) || (is_kind(f, Kind::Builtin) && static_cast<Builtin*>(f.object())->self.is_unset() &&
-                                         static_cast<Builtin*>(f.object())->binding == Binding::Method))
-        return invoke(f, Args{data.data(), data.size(), nullptr, 0});
-    Ref bound = descr_get(f, v, Obj::of(type_of(v)));
-    return invoke(bound.get(), Args{data.data() + 1, data.size() - 1, nullptr, 0});
+    return call_as_method(f, v, std::span<const Obj>(args.begin(), args.size()));
 }
 
 // ---- calling a class (type_call), object.__new__ and object.__init__ ----

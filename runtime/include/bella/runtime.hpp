@@ -447,6 +447,7 @@ Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);
 Ref i_sequence_size(Obj, Args a);                 // PySequence_Size: a sequence's length, not a mapping's
 Ref i_sequence_repeat(Obj, Args a);               // PySequence_Repeat
+Ref i_method_new(Obj, Args a);                    // PyMethod_New: a callable bound to an object, with no check of either
 bool tp_init_is(ClassObject* cls, ClassObject* base);   // type->tp_init == base->tp_init (runtime/src/types.cpp)
 bool tp_new_is(ClassObject* cls, ClassObject* base);    // type->tp_new == base->tp_new: the slot, with its history
 Ref i_tp_init_is(Obj, Args a);
@@ -1028,6 +1029,7 @@ bool is_subclass(ClassObject* c, ClassObject* base);
 bool isinstance(Obj v, ClassObject* c);
 // A special method of v's type called with v first; Unset Ref (and *found false) when the type has none.
 Ref call_special(Obj v, const char* name, std::initializer_list<Obj> args, bool* found = nullptr);
+Ref call_as_method(Obj f, Obj self, std::span<const Obj> rest);   // what a type has under a name, called as a method of self
 Ref descr_get(Obj found, Obj obj, Obj type);                 // type(found).__get__(found, obj, type)
 // A name CPython has and the runtime lacks yet is refused (bella::NotImplemented), never answered
 // with AttributeError or NameError (runtime/src/cpython_names.inc, tools/cpython_names.py): an

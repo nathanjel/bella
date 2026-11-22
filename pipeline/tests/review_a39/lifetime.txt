@@ -1,0 +1,44 @@
+import sys
+r=sys.argv[1]
+kind,turn=r.split('-');turn=int(turn)
+class Item:
+    def __init__(self,n):self.n=n
+    def __del__(self):print('drop item',self.n)
+class Value:
+    def __init__(self,n):self.n=n
+    def __bool__(self):return self.n != turn
+    def __eq__(self,o):return self.n == turn
+    def __del__(self):print('drop value',self.n)
+class Iter:
+    i=0
+    def __next__(self):
+        i=self.i
+        if i==4:raise StopIteration
+        self.i+=1
+        return Item(i)
+    def __del__(self):print('drop iter')
+class Source:
+    def __iter__(self):return Iter()
+    def __del__(self):print('drop source')
+class Later:
+    def __init__(self,n):self.n=n
+    def __iter__(self):
+        if self.n==turn:raise ValueError
+        return iter((1,))
+def run():
+    if kind=='later':g=(Value(x.n) for x in Source() for y in Later(x.n))
+    else:g=(Value(x.n) for x in Source())
+    try:
+        if kind=='all': print('all',all(g))
+        elif kind=='in': print('in',object() in g)
+        elif kind=='later': print(list(v.n for v in g))
+        else:
+            for i in range(turn): next(g)
+            if kind=='close': print('closed',g.close())
+            elif kind=='throw':
+                try: g.throw(KeyError('x'))
+                except KeyError: print('caught')
+            else: del g
+    except ValueError: print('caught')
+    print('after')
+run()

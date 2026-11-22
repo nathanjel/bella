@@ -246,6 +246,7 @@ def program_policy(directory: Path) -> dict[str, dict[str, list[str]]]:
 
 
 MAIN_STACK_MIB = 256     # decision 16 as Question 28 changed it (2026-11-22): where a program's policy says nothing
+MAIN_STACK_MIB_MOST = 1 << 20   # 1 TiB: more is no stack a process could have, and a number the runtime need not hold (RL-885)
 
 
 @cache
@@ -256,8 +257,9 @@ def program_main_stack(directory: Path) -> int:
         policy = d / "bella.toml"
         if policy.is_file():
             value = tomllib.loads(policy.read_text(encoding="utf-8")).get("platform", {}).get("main_stack_mib", MAIN_STACK_MIB)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(f"{policy}: [platform] main_stack_mib must be a whole number of MiB, 1 or more, not {value!r}")
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAIN_STACK_MIB_MOST:
+                raise ValueError(f"{policy}: [platform] main_stack_mib must be a whole number of MiB from 1 to {MAIN_STACK_MIB_MOST}, "
+                                 f"not {value!r}")
             return value
     return MAIN_STACK_MIB
 

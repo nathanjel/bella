@@ -1405,6 +1405,27 @@ inline Obj call(Obj fn, std::initializer_list<Obj> args) {
     throw TypeError("object is not callable");
 }
 
+// What a class has under a special name, called as a method of `self` (CPython's lookup_method and its unbound call, which
+// slot_tp_descr_set uses for __set__ and __delete__): a function, or a method of a built-in type, is given `self` first;
+// anything else is bound by its own __get__, if it has one, and called with the rest alone (`__set__ = staticmethod(f)`
+// calls f(obj, value): review A39, RL-878). __get__ itself is not called this way: slot_tp_descr_get calls what the type
+// has under the name as it is. The kinds are the runtime's to tell, which installs the hook; in this header's own tests
+// every callable is a function. Returns a new reference.
+using CallMethodHook = Obj (*)(Obj fn, Obj self, std::span<const Obj> rest);
+inline CallMethodHook& call_method_hook() {
+    static CallMethodHook hook = nullptr;
+    return hook;
+}
+inline Obj call_method(Obj fn, Obj self, std::initializer_list<Obj> rest) {
+    if (call_method_hook() != nullptr && !(fn.is_object() && fn.object()->kind == Kind::Function))
+        return call_method_hook()(fn, self, std::span<const Obj>(rest.begin(), rest.size()));
+    std::vector<Obj> a{self};
+    a.insert(a.end(), rest.begin(), rest.end());
+    if (fn.is_object() && fn.object()->kind == Kind::Function) return static_cast<Function*>(fn.object())->fn(a);
+    if (call_hook() != nullptr) return call_hook()(fn, std::span<const Obj>(a.data(), a.size()));
+    throw TypeError("object is not callable");
+}
+
 // ---- inline caches (refmodel CacheEntry, Site) ----
 enum class Plan : std::uint8_t {
     DataDescriptor, Slot, Field, InstanceDict, ClassAttr, NonDataDescriptor, GetAttrHook, UncachedValue, Raise,
@@ -1648,6 +1669,8 @@ inline Ref execute(const LookupPlan& plan, T* obj, const Str* name) {
             case Plan::NonDataDescriptor: {
                 Ref desc = Ref::share(plan.found);
                 Ref get = Ref::share(plan.found.object()->cls->lookup(intern("__get__"))->first);
+                // slot_tp_descr_get calls what the type has under __get__ as it is, the descriptor first: no method lookup
+                // (`__get__ = print` prints the three; unlike __set__ and __delete__ below)
                 return Ref::steal(call(get.get(), {desc.get(), Obj::of(obj), Obj::of(obj->cls)}));
             }
             case Plan::Slot:
@@ -1743,7 +1766,7 @@ inline void setattr(T* obj, const Str* name, Obj value) {
             if (!setter) throw AttributeError("__set__");            // a data descriptor with only __delete__
             Ref desc = Ref::share(found);                            // owned while __set__ runs
             Ref fn = Ref::share(setter->first);
-            decref(call(fn.get(), {desc.get(), Obj::of(obj), value}));
+            decref(call_method(fn.get(), desc.get(), {Obj::of(obj), value}));
             return;
         }
     }
@@ -1809,7 +1832,7 @@ inline void delattr(T* obj, const Str* name) {
             if (!deleter) throw AttributeError("__delete__");
             Ref desc = Ref::share(found);                            // owned while __delete__ runs
             Ref fn = Ref::share(deleter->first);
-            decref(call(fn.get(), {desc.get(), Obj::of(obj)}));
+            decref(call_method(fn.get(), desc.get(), {Obj::of(obj)}));
             return;
         }
     }

@@ -181,7 +181,7 @@ Ref invoke(Obj f, Args a) {
     // of that name (review 2026-11-03, A9-10)
     if (Obj call = type_lookup(type_of(f), intern("__call__")); !call.is_unset()) {
         Ref hold = Ref::share(call);
-        if (is_kind(call, Kind::PyFunction)) {
+        if (is_kind(call, Kind::PyFunction) && !presents_as_builtin(call)) {   // a prelude's built-in function has no __get__ (RL-877)
             std::vector<Obj> data{f};
             data.insert(data.end(), a.data, a.data + a.npos + a.nkw);
             return invoke(call, Args{data.data(), a.npos + 1, a.kwnames, a.nkw});
@@ -226,6 +226,8 @@ Ref call_ex(Obj f, Obj args, Obj kwargs) {
 namespace {
 Obj hook_call(Obj fn, std::span<const Obj> args) { return invoke(fn, Args{args.data(), args.size(), nullptr, 0}).release(); }
 const bool call_hook_installed = (call_hook() = hook_call, true);
+Obj hook_call_method(Obj fn, Obj self, std::span<const Obj> rest) { return call_as_method(fn, self, rest).release(); }
+const bool call_method_hook_installed = (call_method_hook() = hook_call_method, true);
 }  // namespace
 
 // ---- functions and argument binding (CPython's initialize_locals) ----
@@ -2072,10 +2074,10 @@ Ref i_special(Obj, Args a) {                    // _PyObject_LookupSpecial, as t
     Obj found = type_lookup(type_of(obj), intern(name->text));
     if (found.is_unset())
         raise_new("TypeError", "'" + type_of(obj)->name + "' object does not support the context manager protocol");
-    Obj get = type_lookup(type_of(found), intern("__get__"));
-    if (get.is_unset() && !is_kind(found, Kind::PyFunction)) return Ref::share(found);
-    if (is_kind(found, Kind::PyFunction)) return own(new Method(found, obj));
-    return invoke(get, {found, obj, Obj::of(type_of(obj))});
+    // bound as any attribute of the type is: a function is a method of the object, a prelude's built-in function has no
+    // __get__ and stays as it is, and a descriptor's __get__ is called as a method of it (review A39, RL-877)
+    if (is_kind(found, Kind::PyFunction) && !presents_as_builtin(found)) return own(new Method(found, obj));
+    return descr_get(found, obj, Obj::of(type_of(obj)));
 }
 }  // namespace
 Ref i_lookup_special(Obj, Args a) {              // _PyObject_LookupSpecial: the bound method in a tuple, or ()
@@ -3940,7 +3942,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                              {"_set_context", i_set_context}, {"_type_name", i_type_name}, {"_class_name", i_class_name},
                              {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname},
                              {"_is_c_type", i_is_c_type}, {"_own_dict", i_own_dict}, {"_tp_init_is", i_tp_init_is}, {"_tp_new_is", i_tp_new_is},
-                             {"_sequence_size", i_sequence_size}, {"_sequence_repeat", i_sequence_repeat}}) {
+                             {"_sequence_size", i_sequence_size}, {"_sequence_repeat", i_sequence_repeat}, {"_method_new", i_method_new}}) {
                         Ref b = own(new Builtin(n, fn));   // a chained error's context, and a type's name as the C has it (RL-759, RL-767)
                         put(pm->dict, n, b.get());
                     }

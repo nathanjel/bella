@@ -1,0 +1,32 @@
+import sys, os, operator, functools
+op = sys.argv[1]
+sink=[]
+class Fun:
+    def __call__(self,*a):
+        sink.append(tuple(type(v).__name__ for v in a))
+        return 1
+def enter(x):
+    with x: pass
+def sub(x): return type('Child',(type(x),),{})
+def setname(x): return type('Owner',(),{'v':x})
+def descriptor(x):
+    class Holder: v=x
+    h=Holder()
+    if op=='set': h.v=42
+    else: return h.v
+def missing(x): return x[42]
+def plus(x): x+=42; return x
+def destructor(x): pass
+ops=dict(call=lambda x:x(42),iter=iter,next=next,len=len,bool=bool,repr=repr,str=str,hash=hash,eq=lambda x:x==42,lt=lambda x:x<42,contains=lambda x:42 in x,getitem=lambda x:x[42],setitem=lambda x:operator.setitem(x,42,43),enter=enter,exit=enter,index=operator.index,int=int,float=float,format=lambda x:format(x,'s'),get=descriptor,set=descriptor,set_name=setname,init_subclass=sub,class_getitem=lambda x:type(x)[42],missing=missing,reversed=reversed,length_hint=operator.length_hint,fspath=os.fspath,bytes=bytes,round=round,neg=operator.neg,add=lambda x:x+42,radd=lambda x:42+x,iadd=plus)
+for name, f in [('bound',sink.append),('len',len),('print',print),('wrapper',list.__len__),('descriptor',list.append),('fromkeys',dict.fromkeys),('methodwrapper',[].__len__),('fun',Fun()),('type',int),('none',None),('partial',functools.partial(Fun())),('property',property(lambda x:Fun()))]:
+    for form in ('plain','static','class'):
+        class C(dict if op=='missing' else object): pass
+        if op=='enter': C.__exit__=lambda *args:None
+        if op=='exit': C.__enter__=lambda self:1
+        if op=='set': C.__get__=lambda *args:0
+        setattr(C,'__'+op+'__',f if form=='plain' else staticmethod(f) if form=='static' else classmethod(f))
+        sink.clear()
+        # Print receives a class or the original arguments, including an instance on __exit__ only via class binding.
+        try: result=ops[op](C()); t=type(result).__name__
+        except BaseException as e: t=type(e).__name__
+        print(name,form,t,[(v if isinstance(v,(int,tuple)) else type(v).__name__) for v in sink])

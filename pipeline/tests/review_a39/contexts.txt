@@ -1,0 +1,45 @@
+import sys
+r=sys.argv[1]
+class Base: pass
+class C(Base):
+    def method(self):
+        if r=='super': return next(super() for i in (1,))
+        return next(self is self for i in (1,))
+def use(g): return list(g)
+def deco(g):
+    def wrap(f): print(list(g)); return f
+    return wrap
+def run():
+    if r=='default':
+        def f(g=(i+2 for i in (1,2))): return list(g)
+        return f()
+    if r=='decorator':
+        @deco(i for i in 'xy')
+        def f(): pass
+        return 1
+    if r=='class':
+        class A: vals=(2,3); result=tuple(i+1 for i in vals)
+        return A.result
+    if r=='lambda': return (lambda p: list(i for i in p))('ab')
+    if r in ('self','super'): return C().method()
+    if r=='nested': return list((a,b) for a in (i for i in range(3)) for b in (a,))
+    if r=='walrus':
+        g=((saved:=i) for i in range(3))
+        return list(g), saved
+    if r=='comp': return [{j for j in (i for i in range(n))} for n in range(4)]
+    if r=='classes':
+        class A:
+            n=range(3)
+            a=[i+1 for i in n]; b={i+1 for i in n}; c={i:i+1 for i in n}
+        return A.a,sorted(A.b),A.c
+    if r=='state':
+        g=((g.gi_running,g.gi_suspended,g.gi_yieldfrom,x,sys.exception() is e) for x in (1,))
+        try: raise ValueError()
+        except ValueError as e: print(next(g))
+        return g.__name__,g.__qualname__,g.gi_running,g.gi_suspended,g.gi_yieldfrom
+    if r=='file':
+        with open(__file__) as f: return next(i.strip() for i in f)
+    v={'str':'xy','bytes':b'xy','range':range(3),'dict':{'x':1},'set':{1,2},'generator':(i for i in range(3))}[r]
+    return list(i for i in v)
+try: print(run())
+except BaseException as e: print(type(e).__name__)

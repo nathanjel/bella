@@ -686,6 +686,15 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   the instruction specialises; a compiled program counts one, so it goes twice as deep through constructors. Counting two
   would agree from the third call of a site on. And the frames of the import system: CPython's `importlib` is Python and
   its frames count (several an `import`), the runtime's is a prelude and none does.
+* **For the author, a wording (RL-883, review A39):** D-17's row and the Resources paragraph (v0.28) say CPython reaches the
+  stack's bound "later or not at all". It also reaches it earlier: a recursion through `functools.lru_cache` or `partial`
+  20 000 deep is a RecursionError under CPython on a shell's 8 MiB (each level goes through C) and succeeds compiled on
+  256 MiB. Proposed: "which CPython reaches at another depth, or not at all".
+* **A comprehension's helper is a variable of the enclosing frame until the frame ends (left of RL-882; low).** CPython's
+  function object for a comprehension is a temporary: made, called, let go of (a generator keeps its own). The helper the
+  frontend defines stays bound under its generated name, with the cells it closes over, so what a frame lets go of at
+  its end can come in another order. A helper in a `while` test is called at each turn, so it cannot simply be moved on
+  use; making the helper where the expression is evaluated needs a function expression in L1.
 * **Left of RL-624 (2026-11-21; its wording was decided with Question 28 on 2026-11-22, spec v0.28):** the other places the
   runtime recurses on a program's data, to be swept with the same guard: `isinstance` and `issubclass` over nested tuples of
   classes, the runtime's report of a long chain of causes; `copy.deepcopy` and `json` are Python's own depth. And a speed

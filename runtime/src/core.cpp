@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <random>
 #include <string>
 
@@ -708,7 +709,10 @@ void enter_main_stack(unsigned low, unsigned high) {
     pthread_sigmask(SIG_SETMASK, nullptr, &entry->back.uc_sigmask);
 }
 }  // namespace
-void set_main_stack_mib(std::size_t mib) { wanted_main_stack() = mib << 20; }
+void set_main_stack_mib(std::size_t mib) {       // the build keeps the policy's number to 1 TiB; no number may wrap here (RL-885)
+    constexpr std::size_t most = std::numeric_limits<std::size_t>::max() >> 20;
+    wanted_main_stack() = std::min(mib, most) << 20;
+}
 int on_main_stack(int (*body)(void*), void* arg) {
 #if defined(__SANITIZE_ADDRESS__)
     return body(arg);                            // a sanitizer keeps its own account of the stack it started on
@@ -1190,6 +1194,16 @@ void detail::record_frame(const Code& code, Module* module, int line, std::uint6
                     entry = static_cast<Traceback*>(t.object());
                     break;
                 }
+            // The frame's entry may be in the traceback of the error this one was made of, not in its own: PEP 479's
+            // RuntimeError is raised with no entry of the generator's frame, and the StopIteration that is its cause has
+            // one. That entry keeps the frame, so the frame's variables live while the cause does (review A39, RL-876)
+            if (entry == nullptr && id != 0)
+                if (Obj cause = exception_field(exc, "__cause__"); is_kind(cause, Kind::Instance))
+                    for (Obj t = traceback_of(cause); is_kind(t, Kind::Traceback); t = static_cast<Traceback*>(t.object())->next.get())
+                        if (static_cast<Traceback*>(t.object())->frame == id) {
+                            entry = static_cast<Traceback*>(t.object());
+                            break;
+                        }
         } else {
             if (id == 0) id = ++frame_ids;
             entry = add_entry(exc, code, module, line, id, link);

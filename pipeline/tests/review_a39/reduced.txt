@@ -1,0 +1,48 @@
+import sys,operator
+row=sys.argv[1]
+if row in ('call','enter','exit'):
+    class C:
+        def __repr__(self): return 'instance'
+        __call__=print
+        __enter__=print
+        __exit__=print
+    if row=='call': C()(42)
+    else:
+        with C(): pass
+elif row=='set':
+    class D:
+        __set__=staticmethod(lambda owner,value:print(value))
+    class H: d=D()
+    try: H().d=42
+    except TypeError: print('TypeError')
+elif row.startswith('hint'):
+    class C: __length_hint__=classmethod(None)
+    try:
+        if row=='hint': print(operator.length_hint(C(),19))
+        else: print(type(C().__length_hint__).__name__)
+    except TypeError: print('TypeError')
+else:
+    class T:
+        def __init__(self,n): self.n=n
+        def __del__(self): print(self.n)
+    def f():
+        if row=='break':
+            g=(T('result') for item in [T('source-item')])
+            for v in g: break
+        elif row=='stop':
+            g=(1 for item in [T('source-item')])
+            next(g)
+            try: g.throw(StopIteration)
+            except RuntimeError as e:
+                print('handler',type(e.__cause__).__name__)
+        elif row=='unstarted':
+            class It:
+                def __next__(self): raise StopIteration
+                def __del__(self): print('iterator')
+            class Src:
+                def __iter__(self): return It()
+            g=(1 for item in Src())
+            try: g.throw(ValueError)
+            except ValueError: print('handler')
+        print('return')
+    f()

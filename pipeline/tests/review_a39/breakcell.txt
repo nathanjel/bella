@@ -1,0 +1,13 @@
+import sys
+r=sys.argv[1]
+class T:
+    def __init__(self,n): self.n=n
+    def __del__(self): print(self.n)
+def f():
+    if r=='never':
+        g=(next(g) for x in [1])
+        return
+    g=(T('result') for x in [T('source')])
+    for v in g: break
+    print('return')
+f()

@@ -907,7 +907,11 @@ class _ClassBodies:
             n.generators[0].iter = self.node(n.generators[0].iter)  # type: ignore[assignment]  # evaluated in the enclosing scope
             n.bella_qualname = self.qualname("<genexpr>")  # type: ignore[attr-defined]
             in_class = self.stack[-1][4] or self.stack[-1][0] == "class"
-            self.stack.append(("function", n.bella_qualname, frozenset(), None, in_class))  # type: ignore[attr-defined]
+            # the code of a generator expression has a first argument, its `.0` (the iterable since 3.15), and that is
+            # what a zero-argument super() inside it takes, as in any function (review A39, RL-881). The name is the one
+            # the helper's first parameter will have (_Comprehensions)
+            n.bella_first = _tmp("it")  # type: ignore[attr-defined]
+            self.stack.append(("function", n.bella_qualname, frozenset(), n.bella_first, in_class))  # type: ignore[attr-defined]
             n.elt = self.node(n.elt)  # type: ignore[assignment]
             for i, g in enumerate(n.generators):
                 g.target = self.node(g.target)  # type: ignore[assignment]
@@ -1808,6 +1812,29 @@ class _Comprehensions(ast.NodeTransformer):
         # around it ("annotation"), or they are a type parameter's or alias's (its words), where such a walrus is a SyntaxError
         self.through = through
 
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        """A compound statement's own expressions and not the statements inside it, which _hoist lifts where they stand:
+        a helper made before an `if` for a comprehension in its body would be made whether the branch runs or not, and
+        would hold the cells it closes over from there on (review A39, RL-882)."""
+        if not isinstance(node, ast.stmt):
+            return super().generic_visit(node)
+        for fld, value in ast.iter_fields(node):
+            if fld in ("body", "orelse", "finalbody"):
+                continue
+            if fld == "handlers":                # an except clause's class is the statement's; its body is _hoist's
+                for h in value:
+                    if h.type is not None:
+                        h.type = self.visit(h.type)
+            elif fld == "cases":                 # a case's guard is the statement's; its body is _hoist's
+                for case in value:
+                    if case.guard is not None:
+                        case.guard = self.visit(case.guard)
+            elif isinstance(value, list):
+                setattr(node, fld, [self.visit(v) if isinstance(v, ast.AST) else v for v in value])
+            elif isinstance(value, ast.AST):
+                setattr(node, fld, self.visit(value))
+        return node
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         # decorators and defaults run in the enclosing scope; the body is lowered by _hoist
         node.decorator_list = [self.visit(d) for d in node.decorator_list]
@@ -1831,8 +1858,8 @@ class _Comprehensions(ast.NodeTransformer):
         node.args.kw_defaults = [self.visit(d) if d is not None else None for d in node.args.kw_defaults]
         inner = _Comprehensions("function")
         node.body = inner.visit(node.body)
-        # helpers, made at each call; _hoist visits a statement in a loop's body twice, and the
-        # second visit finds no comprehension left
+        # helpers, made at each call; what an earlier visit of this node lifted is kept (a second
+        # visit finds no comprehension left)
         node.bella_prelude = [*getattr(node, "bella_prelude", []), *inner.hoisted]  # type: ignore[attr-defined]
         return node
 
@@ -1858,7 +1885,8 @@ class _Comprehensions(ast.NodeTransformer):
         # in CPython the iterator is a value of the frame's stack, so it goes when the loop ends, before the variables.
         # (The other comprehensions would need the same and more: the caller of the helper holds the iterator for the
         # call, which is the question of a call's arguments, RL-695.)
-        fname, res, arg = _tmp("gen" if kind == "genexp" else "comp"), _tmp("res"), _tmp("it")
+        fname, res = _tmp("gen" if kind == "genexp" else "comp"), _tmp("res")
+        arg = getattr(node, "bella_first", None) or _tmp("it")   # a generator expression's was named for its super() calls
         held = _tmp("loopit") if kind == "genexp" else arg
         outer_iter = self.visit(node.generators[0].iter)      # evaluated in this scope
         res_load = ast.Name(id=res, ctx=ast.Load())
@@ -1868,17 +1896,20 @@ class _Comprehensions(ast.NodeTransformer):
             action = ast.Expr(ast.Call(func=_intrinsic("map_add"), args=[res_load, node.key, node.value],  # type: ignore[list-item]
                                        keywords=[]))
         elif kind == "genexp":
-            action = ast.Expr(ast.Yield(value=node.elt))
+            # at the element's own position, which is where the frame is while it is suspended (a throw into it; RL-880)
+            action = _copy_loc(ast.Expr(_copy_loc(ast.Yield(value=node.elt), node.elt)), node.elt)
         else:
             action = ast.Expr(ast.Call(func=ast.Attribute(value=res_load, attr="append" if kind == "list" else "add",
                                                           ctx=ast.Load()), args=[node.elt], keywords=[]))
         inner: list[ast.stmt] = [action]
         for i, gen in enumerate(reversed(node.generators)):
             for cond in reversed(gen.ifs):
-                inner = [ast.If(test=cond, body=inner, orelse=[])]
+                inner = [_copy_loc(ast.If(test=cond, body=inner, orelse=[]), cond)]
             is_outer = i == len(node.generators) - 1
-            iterable = ast.Name(id=held, ctx=ast.Load()) if is_outer else gen.iter
-            inner = [ast.For(target=gen.target, iter=iterable, body=inner, orelse=[])]
+            iterable = _copy_loc(ast.Name(id=held, ctx=ast.Load()), gen.iter) if is_outer else gen.iter
+            # FOR_ITER has the position of the clause's iterable: a __next__ that raises is reported at that line of an
+            # expression written over several (review A39, RL-880)
+            inner = [_copy_loc(ast.For(target=gen.target, iter=iterable, body=inner, orelse=[]), gen.iter)]
             if is_outer:
                 inner[0].bella_iterator = True  # type: ignore[attr-defined]  # the iterator GET_ITER made outside (A7-4)
         bound_outside = _walrus_targets(inner)   # the loop's order is the order the code binds them (co_varnames, G14 #2)
@@ -1908,7 +1939,8 @@ class _Comprehensions(ast.NodeTransformer):
         if kind != "genexp":
             body.append(ast.Return(ast.Name(id=res, ctx=ast.Load())))
         for st in body:
-            ast.copy_location(st, node)
+            if not hasattr(st, "lineno"):        # the loop and what is in it have their own positions (RL-880)
+                ast.copy_location(st, node)
             ast.fix_missing_locations(st)
         fn = ast.FunctionDef(
             name="<genexpr>" if kind == "genexp" else fname,

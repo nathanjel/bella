@@ -174,6 +174,7 @@ try:
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
     _class_name                                  # noqa: B018  # _PyType_Name of a class itself
     _own_dict                                    # noqa: B018  # PyObject_GenericGetDict: the object's dict, whatever a class has under __dict__
+    _method_new                                  # noqa: B018  # PyMethod_New: anything bound to an object, with no check of either
 except NameError:                                # CPython runs this file (runtime/tests/test_prelude.py): what stands for them
     import operator
     import os
@@ -197,6 +198,9 @@ except NameError:                                # CPython runs this file (runti
 
     def _own_dict(obj: object) -> dict[str, object]:   # a stand-in for CPython's run of this file
         return object.__getattribute__(obj, "__dict__")  # type: ignore[no-any-return]
+
+    def _method_new(function: object, obj: object) -> object:   # a stand-in for CPython's run of this file (it checks)
+        return type(_bella_refuse.__get__(0))(function, obj)  # type: ignore[call-arg]
 
     def _warn(message: str, category: str) -> None:
         warnings.warn(message, {"RuntimeWarning": RuntimeWarning}[category], stacklevel=3)
@@ -596,7 +600,8 @@ class classmethod:
             if obj is _NULL:
                 raise TypeError("__get__ expected at least 1 argument, got 0")
             owner = type(obj)
-        return _MethodType(_cm_callable_of(self), owner)
+        # PyMethod_New, which checks nothing: what is not callable is bound too, and the call is what fails (RL-879)
+        return _method_new(_cm_callable_of(self), owner)
 
     def __repr__(*args: object, **kwds: object) -> str:   # cm_repr
         self = _slot_receiver(args, classmethod, "__repr__")

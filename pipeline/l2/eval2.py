@@ -39,6 +39,7 @@ from pipeline.l1 import eval1 as E1
 from pipeline.l1.grammar import Refused, Unsupported
 from pipeline.l1.staged import flags_of
 from pipeline.l2 import grammar as G
+from pipeline.l2.resolve import moved_on_use
 
 RESERVED = "_l2_"
 END = E1._ABSENT                    # the end marker ForNext returns: any private sentinel
@@ -519,10 +520,11 @@ class _Translator:
         self.out.add(body_indent, f"except {RESERVED}BE as {RESERVED}u:", first)
         self.out.add(body_indent + 1, f"{RESERVED}R.strip({RESERVED}u)", first)
         self.unwind(temps, body_indent + 1, first)
-        # a generator expression's iterator is a real frame's argument in CPython too; the other
-        # helpers' (PEP 709 inlines list, set and dict comprehensions) are stack values
-        arguments: set[str] = set() if code.kind == "generator" else {p.name for p in code.params}
+        # a generator expression's iterable is a real frame's argument in CPython too, and its iterator, which comes in
+        # as a second parameter, a stack value (RL-488, RL-875); the other helpers' iterators (PEP 709 inlines list, set
+        # and dict comprehensions) are stack values
         hidden = _hidden(code)
+        arguments: set[str] = {p.name for p in code.params if code.kind != "generator" or moved_on_use(p.name, hidden)}
         self.unwind_synthetic((_synthetic_stored(code.body, hidden) | arguments) & hidden, body_indent + 1, first)
         self.out.add(body_indent + 1, "raise", first)
         return name

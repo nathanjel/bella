@@ -1,0 +1,54 @@
+import functools
+sink = []
+other = []
+class Call:
+    def __call__(self, *a, **k): sink.append(("called", [type(x).__name__ for x in a])); return 7
+def plain(*a, **k): sink.append(("plain", [type(x).__name__ for x in a])); return 8
+KINDS = {
+    "function": lambda: plain,
+    "lambda2": lambda: (lambda a, b: sink.append(("two", type(a).__name__, type(b).__name__))),
+    "lambda3": lambda: (lambda a, b, c: sink.append(("three", type(a).__name__, type(b).__name__, type(c).__name__))),
+    "static": lambda: staticmethod(plain),
+    "classm": lambda: classmethod(plain),
+    "bound": lambda: sink.append,
+    "builtin": lambda: len,
+    "print": lambda: print,
+    "instance": lambda: Call(),
+    "class": lambda: tuple,
+    "none": lambda: None,
+    "partial": lambda: functools.partial(plain),
+    "property": lambda: property(lambda self: plain),
+    "method": lambda: list.append,
+    "wrapper": lambda: object.__repr__,
+    "methodwrapper": lambda: other.__len__,
+    "classnone": lambda: classmethod(None),
+}
+def outcome(f):
+    try:
+        r = f()
+        return type(r).__name__
+    except BaseException as e:
+        return type(e).__name__
+for name, make in KINDS.items():
+    for hook in ("__get__", "__set__", "__delete__"):
+        for where in ("instance", "class", "meta"):
+            del sink[:], other[:]
+            class D:
+                def __repr__(self): return 'a D'
+            setattr(D, hook, make())
+            if hook != "__get__": D.__get__ = lambda self, obj, cls: 3          # a data descriptor needs one of the two; reads go here
+            if where == "meta":
+                class M(type):
+                    d = D()
+                    def __repr__(cls): return 'the class H'
+                class H(metaclass=M): pass
+                target = H
+            else:
+                class H:
+                    d = D()
+                    def __repr__(self): return 'an H'
+                target = H() if where == "instance" else H
+            if hook == "__get__": r = outcome(lambda: target.d)
+            elif hook == "__set__": r = outcome(lambda: setattr(target, "d", 5))
+            else: r = outcome(lambda: delattr(target, "d"))
+            print(name, hook, where, r, [x if isinstance(x, tuple) else type(x).__name__ for x in sink[:2]], len(other))
