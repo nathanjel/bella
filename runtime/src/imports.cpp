@@ -770,8 +770,6 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         Ref slot = own(new Builtin("_has_slot", i_has_slot));   // a type's slot and what its MRO holds, read as the C reads them:
         dict_set(ns->dict, Obj::of(N("_has_slot")), slot.get());   // no attribute of a class is asked, so no metaclass answers (RL-644)
         Ref of_type = own(new Builtin("_type_lookup", i_type_lookup));
-        Ref of_class = own(new Builtin("_class_lookup", i_class_lookup));
-        dict_set(ns->dict, Obj::of(N("_class_lookup")), of_class.get());
         dict_set(ns->dict, Obj::of(N("_type_lookup")), of_type.get());
         Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));   // a pending error goes on as it is, after work the C did meanwhile
         dict_set(ns->dict, Obj::of(N("_raise_as_is")), as_is.get());

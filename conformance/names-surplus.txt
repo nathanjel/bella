@@ -1,7 +1,1 @@
-_io.BufferedRWPair:__new__
-_io.BufferedRandom:__new__
-_io.BufferedReader:__new__
-_io.BufferedWriter:__new__
-_io.IncrementalNewlineDecoder:__new__
-_io.TextIOWrapper:__new__
 itertools._tee_dataobject:__del__

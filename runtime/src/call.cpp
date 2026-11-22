@@ -1856,9 +1856,28 @@ bool cpython_has(std::string_view scope, std::string_view name) { return cpython
 // may have under the name. One that CPython's type shows as a member (partial.func, a stream's _finalizing; the names table
 // says which) keeps its descriptor, which reads that cell; the class says in __readonly__ which of those have Py_READONLY
 // and in __boolean__ which are a Py_T_BOOL.
+// What tp_alloc leaves: a C type's object starts as a zeroed struct, and a type whose tp_new is object's has no __new__ of
+// its own to set anything (six of the io types). The prelude's class says what the zeroed struct is in `__alloc__(self)`;
+// the function is kept here, beside the class and under no name of it, and object's allocator calls it for an instance
+// of the type or of a class that derives from it, base first.
+namespace {
+std::unordered_map<const ClassObject*, Ref>& allocated_states() {
+    static std::unordered_map<const ClassObject*, Ref> table;
+    return table;
+}
+}  // namespace
+void allocated_state(const ClassObject* cls, Obj made) {
+    for (auto k = cls->mro.rbegin(); k != cls->mro.rend(); ++k)
+        if (auto found = allocated_states().find(*k); found != allocated_states().end()) invoke(found->second.get(), {made});
+}
 void note_prelude_class(const ClassObject* c) {
     prelude_classes().insert(c);
     auto* cls = const_cast<ClassObject*>(c);
+    static const Str* const said_alloc = intern("__alloc__");
+    if (const Obj* alloc = cls->attrs.find(said_alloc); alloc != nullptr) {
+        allocated_states()[cls] = Ref::share(*alloc);
+        cls->del_attr(said_alloc);
+    }
     std::vector<const Str*> names, members, readonly, boolean;
     for (auto [said, into] : {std::pair{intern("__readonly__"), &readonly}, std::pair{intern("__boolean__"), &boolean}})
         if (const Obj* listed = cls->attrs.find(said); listed != nullptr && is_kind(*listed, Kind::Tuple)) {
@@ -2056,12 +2075,6 @@ Ref i_has_slot(Obj, Args a) {                    // (value, name): whether a cla
 Ref i_type_lookup(Obj, Args a) {                 // (value, name, absent): what the type has under the name, unbound, or `absent`
     positional_only(a, "_type_lookup", 3, 3);
     Obj found = type_lookup(type_of(a.pos(0)), intern(as_str(a.pos(1))->text));
-    return Ref::share(found.is_unset() ? a.pos(2) : found);
-}
-Ref i_class_lookup(Obj, Args a) {                // (class, name, absent): what the class itself has under the name along its MRO,
-    positional_only(a, "_class_lookup", 3, 3);   // as the C compares a type's slot (tp_new, tp_init) with a known function (RL-726)
-    if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "_class_lookup: a class is wanted");
-    Obj found = type_lookup(static_cast<ClassObject*>(a.pos(0).object()), intern(as_str(a.pos(1))->text));
     return Ref::share(found.is_unset() ? a.pos(2) : found);
 }
 // The text the C formats into a message or a repr (PyUnicode_FromFormat's %R and %S, PyUnicodeWriter_WriteRepr): PyObject_Repr
@@ -3805,8 +3818,6 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
                     put(pm->dict, "_has_slot", slot.get());                        // as the C reads them (RL-644)
                     Ref of_type = own(new Builtin("_type_lookup", i_type_lookup));
                     put(pm->dict, "_type_lookup", of_type.get());
-                    Ref of_class = own(new Builtin("_class_lookup", i_class_lookup));
-                    put(pm->dict, "_class_lookup", of_class.get());
                     Ref as_is = own(new Builtin("_raise_as_is", i_raise_as_is));
                     put(pm->dict, "_raise_as_is", as_is.get());
                     Ref repr_text = own(new Builtin("_repr_text", i_repr_text));   // %R and %S: the characters of a repr or a str

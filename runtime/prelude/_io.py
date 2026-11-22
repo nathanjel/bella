@@ -28,7 +28,6 @@ try:
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
-    _class_lookup                                # noqa: B018  # what a class has under a name along its MRO: a slot compared with a known function (RL-726)
     _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
 except NameError:
@@ -51,7 +50,6 @@ except NameError:
     _buffer_bytes: Callable[..., bytes] = _missing
     _own_data: Callable[..., Any] = _missing
     _warn: Callable[..., Any] = _missing
-    _class_lookup: Callable[..., Any] = _missing
     _raise_as_is: Callable[..., Any] = _missing
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
@@ -304,24 +302,6 @@ def _check_ability(self: object, method: str, message: str) -> bool:   # _PyIOBa
     if result is not True:                       # "res != Py_True": True itself, no other true value (RL-727)
         raise UnsupportedOperation(message)
     return True
-
-
-def _object_new_args(cls: type, own: type, args: tuple[object, ...], kwds: dict[str, object]) -> None:
-    """object_new's test of its arguments, for a type whose allocator is object's in CPython (the type has no tp_new of its
-    own): any are refused where the class has a __new__ of its own, so that tp_new is no longer object_new, or where its
-    __init__ is object's. `own` is the type of this file whose __new__ stands for the allocation (RL-726)."""
-    if args or kwds:
-        if _class_lookup(cls, "__new__", None) is not _class_lookup(own, "__new__", None):
-            raise TypeError("object.__new__() takes exactly one argument (the type to instantiate)")
-        if _class_lookup(cls, "__init__", None) is _OBJECT_INIT:
-            raise TypeError(_tp_name_of_class(cls) + "() takes no arguments")
-
-
-_OBJECT_INIT = object.__dict__["__init__"]
-
-
-def _tp_name_of_class(cls: type) -> str:         # tp_name of a class of the program's: its __name__
-    return type.__dict__["__name__"].__get__(cls)  # type: ignore[no-any-return]
 
 
 def _unsupported(message: str) -> None:
@@ -1167,8 +1147,9 @@ class _Buffered:                                 # the shape of the three classe
     _finalizing: bool
 
 
-def _bf_new(cls: type) -> _Buffered:             # the struct's zero state: `ok` false until __init__ has run
-    self: _Buffered = _bella_new_instance(cls)
+def _bf_alloc(self: _Buffered) -> None:
+    """The struct as tp_alloc leaves it: `ok` false until __init__ has run. The three types take object's allocator and
+    have no __new__ of their own; the runtime calls this for each object it allocates (`__alloc__`, allocated_state)."""
     self._a_raw = None
     self._b_ok = False
     self._c_detached = False
@@ -1183,7 +1164,6 @@ def _bf_new(cls: type) -> _Buffered:             # the struct's zero state: `ok`
     self._o_in_repr = False
     self._p_owner = False
     self._finalizing = False
-    return self
 
 
 def _bf_enter(self: _Buffered) -> None:          # ENTER_BUFFERED; LEAVE_BUFFERED is `self._p_owner = False` in a finally
@@ -1980,14 +1960,10 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
     def __repr__(self: _Buffered) -> str:
         return _bf_repr(self)
 
-    def __new__(klass: type, *args: object, **kwds: object) -> _Buffered:
-        _object_new_args(klass, cls, args, kwds)
-        return _bf_new(klass)
-
     members: dict[str, object] = {"__init__": init, "flush": flush, "tell": tell, "seek": seek, "truncate": truncate, "close": close, "detach": detach,
                                   "seekable": seekable, "fileno": fileno, "isatty": isatty,
                                   "_dealloc_warn": _dealloc_warn, "__getstate__": __getstate__, "__sizeof__": __sizeof__,
-                                  "__repr__": __repr__, "__new__": __new__}
+                                  "__repr__": __repr__}
     # bufferedreader_methods, bufferedwriter_methods, bufferedrandom_methods and their slots: a reader has no writable of its
     # own and a writer no readable (IOBase's answer False), and a writer has no tp_iternext (RL-722)
     if can_read:
@@ -1998,12 +1974,12 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
     for name, member in members.items():
         member.__name__ = name  # type: ignore[attr-defined]
         member.__qualname__ = shown + "." + name  # type: ignore[attr-defined]
-        setattr(cls, name, staticmethod(member) if name == "__new__" else member)   # as a class statement makes it (RL-726)
+        setattr(cls, name, member)
+    cls.__alloc__ = _bf_alloc  # type: ignore[attr-defined]
 
 
-def _bf_raw_property(self: _Buffered) -> object:
-    _bf_check_initialized(self)
-    return self._a_raw
+def _bf_raw_property(self: _Buffered) -> object:   # a member of the struct (Py_READONLY): what is there, and None for a stream
+    return self._a_raw                             # that was never initialised or is detached
 
 
 def _bf_closed_property(self: _Buffered) -> object:
@@ -2074,12 +2050,9 @@ def _rw_forward(target: object, name: str, args: tuple[object, ...]) -> object: 
 class BufferedRWPair(_BufferedIOBase):
     __slots__ = ("_a_reader", "_b_writer")
 
-    def __new__(cls, *args: object, **kwds: object) -> BufferedRWPair:
-        _object_new_args(cls, BufferedRWPair, args, kwds)
-        self: BufferedRWPair = _bella_new_instance(cls)
+    def __alloc__(self) -> None:                 # the struct as tp_alloc leaves it: the type has no __new__ of its own
         self._a_reader = None
         self._b_writer = None
-        return self
 
     def __init__(*args: object, **kwds: object) -> None:  # noqa: N805
         self: BufferedRWPair = args[0]  # type: ignore[assignment]
@@ -2525,16 +2498,13 @@ def _nl_decode(self: IncrementalNewlineDecoder, input: object, final: bool) -> s
 class IncrementalNewlineDecoder:
     __slots__ = ("_a_ok", "_b_decoder", "_c_pendingcr", "_d_seennl", "_e_translate", "_f_errors")
 
-    def __new__(cls, *args: object, **kwds: object) -> IncrementalNewlineDecoder:
-        _object_new_args(cls, IncrementalNewlineDecoder, args, kwds)
-        self: IncrementalNewlineDecoder = _bella_new_instance(cls)
+    def __alloc__(self) -> None:                 # the struct as tp_alloc leaves it: the type has no __new__ of its own
         self._a_ok = False
         self._b_decoder = None
         self._c_pendingcr = False
         self._d_seennl = 0
         self._e_translate = False
         self._f_errors = "strict"
-        return self
 
     def __init__(*args: object, **kwds: object) -> None:  # noqa: N805
         self: IncrementalNewlineDecoder = args[0]  # type: ignore[assignment]
@@ -2986,9 +2956,7 @@ class TextIOWrapper(_TextIOBase):
                  "_x_writetranslate", "_y_writenl", "_z_in_repr", "_zz_encodefunc", "_finalizing")
     __boolean__ = ("_finalizing",)               # a Py_T_BOOL member
 
-    def __new__(cls, *args: object, **kwds: object) -> TextIOWrapper:
-        _object_new_args(cls, TextIOWrapper, args, kwds)
-        self: TextIOWrapper = _bella_new_instance(cls)
+    def __alloc__(self) -> None:                 # the struct as tp_alloc leaves it: the type has no __new__ of its own
         self._a_ok = False
         self._b_detached = False
         self._c_buffer = None
@@ -3017,7 +2985,6 @@ class TextIOWrapper(_TextIOBase):
         self._z_in_repr = False
         self._zz_encodefunc = None
         self._finalizing = False
-        return self
 
     def __init__(*args: object, **kwds: object) -> None:  # noqa: N805
         self: TextIOWrapper = args[0]  # type: ignore[assignment]
@@ -3425,23 +3392,21 @@ class TextIOWrapper(_TextIOBase):
             self._z_in_repr = False
 
     @property
-    def encoding(self) -> object:
-        _tw_check_attached(self)
-        return self._d_encoding
+    def encoding(self) -> object:                # a member of the struct: what is there, for a stream that was never initialised
+        return self._d_encoding                  # (None) or is detached too; line_buffering and write_through the same
 
     @property
-    def errors(self) -> object:
-        _tw_check_attached(self)
+    def errors(self) -> object:                  # CHECK_INITIALIZED alone: a detached stream still says
+        if not self._a_ok:
+            raise ValueError("I/O operation on uninitialized object")
         return self._t_errors
 
     @property
     def line_buffering(self) -> bool:
-        _tw_check_attached(self)
         return self._v_line_buffering
 
     @property
     def write_through(self) -> bool:
-        _tw_check_attached(self)
         return self._w_write_through
 
     @property
@@ -3451,6 +3416,8 @@ class TextIOWrapper(_TextIOBase):
 
     @property
     def closed(self) -> object:
+        if not self._a_ok:                       # "If partially constructed or deconstructed, return that the underlying
+            return True                          # buffer is closed."
         _tw_check_attached(self)
         return getattr(self._c_buffer, "closed")  # noqa: B009
 

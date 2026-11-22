@@ -562,7 +562,9 @@ Ref object_new(Obj, Args a) {
                                    (names.size() > 1 ? "s" : "") + " '" + joined + "'");
     }
     refuse_getattribute_override(cls);
-    return own(new_instance(cls));
+    Ref made = own(new_instance(cls));
+    if (!cls->state_index.empty()) allocated_state(cls, made.get());   // a C type's fields under the class: its zeroed struct
+    return made;
 }
 
 Ref object_init(Obj self, Args a) {

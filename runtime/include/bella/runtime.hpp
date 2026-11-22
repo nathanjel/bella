@@ -368,7 +368,6 @@ Ref b_sorted(Obj, Args a);
 Ref i_lookup_special(Obj, Args a);               // builtins.py's primitives
 Ref i_has_slot(Obj, Args a);                     // a type's slot, by its own MRO and dicts (every prelude)
 Ref i_type_lookup(Obj, Args a);
-Ref i_class_lookup(Obj, Args a);
 Ref i_raise_as_is(Obj, Args a);                  // a pending error goes on as it is (every prelude)
 Ref i_own_data(Obj, Args a);                     // an argument's own data, as the C reads it (every prelude)
 Ref i_repr_text(Obj, Args a);                    // %R: the characters of an object's repr (every prelude)
@@ -1032,6 +1031,7 @@ bool immutable_type(const ClassObject* c);
 std::string module_text(const ClassObject* c);               // a class's module as text: its dict's entry, or a static type's tp_name's
 bool c_type(const ClassObject* c);                           // a type of CPython's: static, or one the prelude presents
 void note_prelude_class(const ClassObject* c);    // a class the prelude writes in Python for one CPython has in C
+void allocated_state(const ClassObject* cls, Obj made);   // what tp_alloc leaves in a C type's struct: the classes' __alloc__, base first
 // type(v) and v.__class__: the runtime refuses an object it cannot present as CPython's yet (a
 // slot wrapper, which it holds as a method descriptor).
 ClassObject* observed_type(Obj v);
