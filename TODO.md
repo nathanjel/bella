@@ -720,10 +720,6 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s
   key, `os.pwrite`: 18 rows). Exact: an export held from the conversion on (a resize is then refused, as the view makes it)
   and the read where the C reads. With RL-583 and the memoryview model.
-* **The names beyond CPython's (`conformance/names-surplus.txt`; low): one left.** `itertools._tee_dataobject.__del__` (RL-731):
-  CPython's type has a deallocator, which clears a chain of links without recursion, and no finaliser a program can see or
-  call. A holder object cannot do that for it; it needs a deallocator a prelude can name that is no `__del__` (the model
-  first: the finaliser's lookup is `object.hpp`'s). The six `__new__` of the io types went on 2026-11-22 (`__alloc__`).
 * **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
   that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
   `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and
@@ -781,7 +777,12 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **Names and frames:** a generator expression is passed its iterator, where 3.15 passes the iterable and the expression's code
   calls `GET_ITER` itself: `.0` in `locals()` is the iterable for every type, and the iterator, which has no name, goes at the
   loop's end, before the frame's locals (RL-488, measured again with review A35: `sum(1 for v in s)` lets go of the last item
-  before the iterator compiled, after it under CPython; a change of the frontend's lowering); `__classdictcell__` holds a mappingproxy (RL-489); the frame a handler is given is a new object at each arrival
+  before the iterator compiled, after it under CPython; a change of the frontend's lowering. A way that needs no new
+  node: the helper `<genexpr>` becomes a plain function, shown, that takes the iterable, calls `iter()` on it (so a failure
+  has the expression's frame in its traceback, as under 3.15) and returns the generator of an inner function of the same name
+  with the iterable as `.0` and the iterator in a one-item list under a reserved name, which the loop takes with `pop()`:
+  the loop's own reference is then the only one, and it goes at the loop's end. Both evaluators check a code object's names
+  against L2's by `co_name`, so the pair has to be told apart there); `__classdictcell__` holds a mappingproxy (RL-489); the frame a handler is given is a new object at each arrival
   (RL-497); `NameError.name` after `del` of what is not bound (RL-498); NameError against UnboundLocalError for a deleted local read
   in a comprehension and a nonlocal deleted twice (RL-499); `print()` after `del sys.stdout` (RL-500); a Unicode error's `start`
   and `end` past 2**62 and as given to the constructor (RL-504, RL-505); `object.__lt__` and its three siblings called by name

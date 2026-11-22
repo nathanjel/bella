@@ -4,8 +4,8 @@ Codex's Astra at low effort read the fixes of review A32, the names of __slots__
 type has beyond CPython's. The review log has its 27 findings as RL-723 to RL-749. Most are of three kinds: what the C does
 with an error that is pending, not handled (a report or a note made after the handler has ended: RL-725, RL-728, RL-742,
 RL-747); a C integer where a prelude kept the object or a Python int (RL-723, RL-736, RL-737, RL-741); and what a type has
-or lacks beside CPython's (RL-726, RL-731, RL-732, RL-734, RL-735, RL-743 to RL-745). itertools._tee_dataobject keeps its
-__del__ (the other half of RL-731): it waits for a deallocator a prelude can name without one. RL-750 to RL-752 are what the
+or lacks beside CPython's (RL-726, RL-731, RL-732, RL-734, RL-735, RL-743 to RL-745). itertools._tee_dataobject kept its
+__del__ (the other half of RL-731) until the fields' own order did its work (test_tee_dealloc.py). RL-750 to RL-752 are what the
 reviewer's saved outputs showed and its report did not name (the rows compared pairwise); RL-753, the class behind RL-748,
 has its own module (test_repr_text.py).
 

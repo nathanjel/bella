@@ -355,7 +355,8 @@ class _tee_dataobject:
         n = list.__len__(values)  # type: ignore[arg-type]   # PyList_GET_SIZE and PyList_GET_ITEM: the list's own storage (RL-691)
         if n > _LINKCELLS:
             raise ValueError("Invalid arguments")
-        self._b_values = list.copy(values)  # type: ignore[arg-type]
+        for i in range(n):
+            self._b_values[i] = list.__getitem__(values, i)  # type: ignore[arg-type, index]
         self._numread = n
         if n == _LINKCELLS:
             if nextlink is not None:
@@ -366,20 +367,10 @@ class _tee_dataobject:
             raise ValueError("Invalid arguments")
         return self
 
-    def __del__(self) -> None:
-        # teedataobject_clear: the iterator, the values in order, and the links, a long chain walked and
-        # not recursed (teedataobject_safe_decref)
-        self._a_it = None
-        values = self._b_values
-        i = 0
-        while i < len(values):
-            values[i] = None
-            i += 1
-        current = self
-        while current._c_nextlink is not None and _held_once(current, "_c_nextlink"):
-            link = current._c_nextlink
-            current._c_nextlink = None
-            current = link
+    # teedataobject_dealloc has no finaliser a program can see or call, so there is no __del__ here (RL-731). What it does is
+    # the order the fields go in: the iterator, the values from the first (the C clears an array by index; a dict lets go of
+    # its values in that order, where a list would start at its end), then the next link, which the runtime lets go of
+    # without the native stack however long the chain is (teedataobject_safe_decref; RL-624).
 
 
 def _data_getitem(data: object, i: int) -> object:    # teedataobject_getitem_lock_held
@@ -397,8 +388,8 @@ def _data_getitem(data: object, i: int) -> object:    # teedataobject_getitem_lo
         data._running = False  # type: ignore[attr-defined]
     if ended:
         raise StopIteration
+    data._b_values[data._numread] = value  # type: ignore[attr-defined]
     data._numread += 1  # type: ignore[attr-defined]
-    data._b_values.append(value)  # type: ignore[attr-defined]
     return value
 
 
@@ -408,7 +399,7 @@ def _new_data(it: object) -> object:             # teedataobject_newinternal
     self._numread = 0
     self._c_nextlink = None
     self._a_it = it
-    self._b_values = []
+    self._b_values = {}                          # by index: see the note at the class
     return self
 
 
