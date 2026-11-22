@@ -725,6 +725,13 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **`ast.AST.__init__` after a failed store of a field whose name has a `__hash__` written in Python stops by name (RL-852).**
   CPython calls the hash with the store's error still set, and its body ends with a SystemError at the first C function it
   calls. Exact only with a way to run a function of the program's "with an exception set"; nothing else needs one so far.
+* **Two modules of the manifest that cannot be imported (the sweep of 2026-11-22; toward increment 1c).** `marshal` (a core
+  module: `dumps`, `loads`, `dump`, `load`, `version`; a port of `Python/marshal.c` for the types that are not code objects,
+  and a stop by name for those) and `zipimport` (CPython's `Lib/zipimport.py`, frozen: compile it with the program as the
+  import system's two modules are, or a stop where a zip archive is on `sys.path`). The sweep itself is one program a module
+  (every public name with its type, its module and whether it is callable): 104 of 118 agree; the others are decided
+  (D-20's five, the import system's four listings, `unittest`'s asyncio test case, `builtins`' `aiter` and `anext`) or
+  names of `sys` not provided yet (50, most of them CPython's internals: each wants a decision or an implementation).
 * **Where a `match` statement's temporaries are let go of (measured 2026-11-22 with C-3-80; low).** The order of the stores is
   CPython's now (`pipeline/l1/captures.py`). What a pattern holds beside the captures is still let go of after the stores, newest
   first (RL-185), and CPython does it elsewhere in 8 of 14 shapes run on both sides (`pipeline/tests/match_temporaries_probe.txt`,

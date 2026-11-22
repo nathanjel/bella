@@ -603,7 +603,7 @@ struct NativeModule {
     Module* made = nullptr;
 };
 std::unordered_map<std::string, NativeModule>& native_registry() {
-    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"math.integer", {fill_math_integer}}, {"math", {fill_math}}, {"cmath", {fill_cmath}}, {"unicodedata", {fill_unicodedata}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
+    static std::unordered_map<std::string, NativeModule> table{{"_types", {fill_types}}, {"_abc", {fill_abc}}, {"itertools", {fill_itertools}}, {"_operator", {fill_operator}}, {"_thread", {fill_thread}}, {"_collections", {fill_collections}}, {"_string", {fill_string}}, {"_stat", {fill_stat}}, {"_functools", {fill_functools}}, {"errno", {fill_errno}}, {"posix", {fill_posix}}, {"_sre", {fill_sre}}, {"_weakref", {fill_weakref}}, {"_codecs", {fill_codecs}}, {"_io", {fill_io}}, {"pwd", {fill_pwd}}, {"grp", {fill_grp}}, {"_locale", {fill_locale}}, {"zlib", {fill_zlib}}, {"_ast", {fill_ast}}, {"_typing", {fill_typing}}, {"_json", {fill_json}}, {"binascii", {fill_binascii}}, {"_struct", {fill_struct}}, {"time", {fill_time}}, {"_math_integer", {fill_math_integer}}, {"math", {fill_math}}, {"cmath", {fill_cmath}}, {"unicodedata", {fill_unicodedata}}, {"_md5", {fill_md5}}, {"_sha1", {fill_sha1}}, {"_sha2", {fill_sha2}},
         {"_sha3", {fill_sha3}}, {"_blake2", {fill_blake2}}, {"_hmac", {fill_hmac}}, {"_csv", {fill_csv}}, {"_contextvars", {fill_contextvars}}, {"_bisect", {fill_bisect}}, {"_random", {fill_random}}, {"_statistics", {fill_statistics}}, {"_heapq", {fill_heapq}}, {"_opcode", {fill_opcode}}, {"_warnings", {fill_warnings}}, {"_tokenize", {fill_tokenize}}, {"_suggestions", {fill_suggestions}}, {"_imp", {fill_imp}}, {"atexit", {fill_atexit}}, {"_signal", {fill_signal}}, {"gc", {fill_gc}}};
     return table;
 }
@@ -1237,24 +1237,25 @@ void fill_time(Module* m) {
                     {"_sys", i_posix_sys}});
 }
 void fill_math_integer(Module* m) {
+    // The built-in module `_math_integer`, whose own name is `math.integer` (its PyModuleDef's): the import system makes it
+    // by the first and the module says the second
+    Ref own_name = str_new("math.integer");
+    m->name = Ref::share(own_name.get());
+    dict_set(m->dict, Obj::of(N("__name__")), own_name.get());
     fill_in_python(m, "math.integer", "math.integer", prelude_math_integer::module_body, {{"_tp_name", i_tp_name}});
 }
 void fill_math(Module* m) {                      // math_exec: the module, then math.integer's six functions and the submodule itself
     fill_in_python(m, "math", "math", prelude_math::module_body,
                    {{"_tp_name", i_tp_name}, {"_libm", i_libm}, {"_float_pack", i_float_pack}, {"_float_unpack", i_float_unpack},
                     {"_keyword_suggestion", i_keyword_suggestion}});
-    NativeModule& n = native_registry().at("math.integer");
-    if (n.made == nullptr) {
-        n.made = new_module("math.integer");
-        note_native_module("math.integer", n.made);
-        n.fill(n.made);
-        adopt_functions(n.made);
-        note_filled(n.made);
-    }
+    // math_exec: PyImport_ImportModule("_math_integer"), the built-in module's own name, so sys.modules has it under that
+    // name too; its six functions; and the module as math.integer, in sys.modules and in math
+    Ref imported = import_module_level(Obj::of(N("_math_integer")), Obj{}, Obj{}, Obj{}, 0);
+    Obj integer = imported.get();
     Ref key = str_new("math.integer");
-    dict_set(sys_modules(), key.get(), Obj::of(n.made));   // _PyImport_SetModuleString("math.integer", intmath)
-    for (const char* name : {"comb", "factorial", "gcd", "isqrt", "lcm", "perm"}) dict_set(m->dict, Obj::of(N(name)), dict_get(n.made->dict, Obj::of(N(name))));
-    dict_set(m->dict, Obj::of(N("integer")), Obj::of(n.made));
+    dict_set(sys_modules(), key.get(), integer);   // _PyImport_SetModuleString("math.integer", intmath)
+    for (const char* name : {"comb", "factorial", "gcd", "isqrt", "lcm", "perm"}) dict_set(m->dict, Obj::of(N(name)), getattr(integer, N(name)).get());
+    dict_set(m->dict, Obj::of(N("integer")), integer);
 }
 void fill_cmath(Module* m) {
     fill_in_python(m, "cmath", "cmath", prelude_cmath::module_body,
@@ -1419,7 +1420,9 @@ Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one mod
     NativeModule& n = native_registry().at(name);
     if (n.made == nullptr) {
         n.made = new_module(name.c_str());
-        note_native_module(name.c_str(), n.made);
+        // the names table has a module's names under the name the module gives itself, which for one built-in module is
+        // not the name it is imported by (_math_integer is math.integer)
+        note_native_module(name == "_math_integer" ? "math.integer" : name.c_str(), n.made);
         n.fill(n.made);
         adopt_functions(n.made);
         note_filled(n.made);
