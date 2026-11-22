@@ -788,8 +788,8 @@ Ref list_clear_m(Obj self, Args a) {
 Ref list_init_m(Obj self, Args a) {
     // "Py_TYPE(self)->tp_new == PyList_Type.tp_new": the slot, which a __new__ once stored in the class has changed for good
     // (review A36, RL-810: `Sub(k=1)` passes after `Sub.__new__ = ...; del Sub.__new__`)
-    if (a.nkw != 0 && !type_of(self)->slot_tp_new && type_lookup(type_of(self), intern("__new__")) == type_lookup(types().list, intern("__new__")))
-        raise_new("TypeError", "list() takes no keyword arguments");
+    // and a wrapper a class of the program's stores under the name leaves the slot as it was (RL-841, RL-861)
+    if (a.nkw != 0 && tp_new_is(type_of(self), types().list)) raise_new("TypeError", "list() takes no keyword arguments");
     if (a.npos > 1) raise_new("TypeError", "list expected at most 1 argument, got " + std::to_string(a.npos));
     std::vector<Obj> old = std::move(list_self(self)->items);   // list_clear: emptied first, then released
     list_self(self)->items.clear();

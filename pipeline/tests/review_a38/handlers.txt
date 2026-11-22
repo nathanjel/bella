@@ -1,0 +1,81 @@
+import sys,io,_warnings,warnings,itertools,functools
+r=sys.argv[1]
+def note(s): print(s,type(sys.exception()).__name__)
+def summary(e):
+    tb=e.__traceback__
+    n=0
+    while tb:
+        n+=1
+        tb=tb.tb_next
+    print(type(e).__name__,type(e.__context__).__name__,type(e.__cause__).__name__,n)
+class Bin:
+    def fileno(self): return raw.fileno()
+    def close(self): note('binary close'); raise KeyError()
+class Text:
+    def readline(self,*a): raise ArithmeticError()
+    def close(self): note('text close'); raise KeyError()
+def wrapper(*a):
+    if r=='warning-new': raise ValueError()
+    return Text()
+class S:
+    def __len__(self): return 1
+    def __getitem__(self,i): raise first()
+    def __del__(self):
+        note('final')
+        try: next(w)
+        except BaseException as e: print('again',type(e).__name__)
+class X:
+    def __del__(self):
+        note('item')
+        try: next(w)
+        except BaseException as e: print('again',type(e).__name__)
+def items():
+    yield X()
+    raise first()
+class F(io.IOBase):
+    depth=0
+    def flush(self):
+        note('flush')
+        self.depth+=1
+        if self.depth==1: raise first()
+    def __setattr__(self,k,v):
+        if k=='__IOBase_closed':
+            note('setter')
+            io.IOBase.__setattr__(self,k,v)
+            self.close()
+            if self.depth==1: raise ArithmeticError()
+        else: io.IOBase.__setattr__(self,k,v)
+def run():
+    global raw,w,first
+    first=KeyboardInterrupt if r.endswith('ki') else GeneratorExit
+    if r=='import':
+        try: import half
+        finally: print('present','half' in sys.modules)
+    elif r.startswith('warning'):
+        raw=io.FileIO(__file__)
+        oldopen,oldwrap=io.open,io.TextIOWrapper
+        oldshow=warnings._showwarnmsg
+        del warnings._showwarnmsg
+        try:
+            io.open=lambda *a: Bin()
+            io.TextIOWrapper=wrapper
+            _warnings.warn_explicit('a38',UserWarning,'x.py',1)
+        finally:
+            warnings._showwarnmsg=oldshow
+            io.open,io.TextIOWrapper=oldopen,oldwrap
+            raw.close()
+    elif r.startswith('rev'):
+        w=reversed(S())
+        next(w)
+    elif r.startswith('batch'):
+        w=itertools.batched(items(),3,strict=True)
+        next(w)
+    elif r.startswith('slice'):
+        w=itertools.islice(items(),1,None)
+        next(w)
+    else: F().close()
+try: raise LookupError()
+except LookupError:
+    try: run()
+    except BaseException as e: summary(e)
+print('end')

@@ -1506,14 +1506,13 @@ Ref unicode_error_init(Obj self, Args a, const char* name, bool decode) {
     set_unicode_args(self, a);
     if (a.npos != 5) raise_new("TypeError", "function takes exactly 5 arguments (" + std::to_string(a.npos) + " given)");
     if (as_str(a.pos(0)) == nullptr) raise_new("TypeError", "argument 1 must be str, not " + type_of(a.pos(0))->name);
-    if (decode) {
-        if (!is_bytes_like(a.pos(1))) raise_new("TypeError", "a bytes-like object is required, not '" + type_of(a.pos(1))->name + "'");
-    } else if (as_str(a.pos(1)) == nullptr) {
-        raise_new("TypeError", "argument 2 must be str, not " + type_of(a.pos(1))->name);
-    }
+    // "UUnnU" for the encode error; "UOnnU" for the decode error, whose second argument is any object to the parser: the two
+    // indices are converted and the reason checked before the object is asked for its bytes (review A38, RL-867)
+    if (!decode && as_str(a.pos(1)) == nullptr) raise_new("TypeError", "argument 2 must be str, not " + type_of(a.pos(1))->name);
     Ref start = int_from_i64(size_argument(a.pos(2)));   // "n": the two are C integers in the struct, so what the exception has
     Ref end = int_from_i64(size_argument(a.pos(3)));     // is their value as a plain int, whatever class the argument was of (RL-698)
     if (as_str(a.pos(4)) == nullptr) raise_new("TypeError", "argument 5 must be str, not " + type_of(a.pos(4))->name);
+    if (decode && !is_bytes_like(a.pos(1))) raise_new("TypeError", "a bytes-like object is required, not '" + type_of(a.pos(1))->name + "'");
     set_exception_field(self, "encoding", a.pos(0));
     if (decode && !is_kind(a.pos(1), Kind::Bytes)) {
         Ref copy = bytes_new(bytes_data(a.pos(1)));

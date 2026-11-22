@@ -1,0 +1,57 @@
+import functools,sys,io,_warnings,warnings
+r=sys.argv[1]
+def note(s): print(s,type(sys.exception()).__name__)
+def fail(): raise (KeyboardInterrupt if r.endswith('ki') else GeneratorExit)()
+seen=[]
+class Key:
+    def __init__(self,v): self.v=v
+    def __hash__(self): return 0
+    def __eq__(self,o):
+        if self.v==1 and o.v==2:
+            seen.append(1)
+            if len(seen)==3: fail()
+        return self.v==o.v
+    def __del__(self): note('key'+str(self.v))
+class Result:
+    def __init__(self,v): self.v=v
+    def __del__(self):
+        note('result'+str(self.v))
+        if self.v==0:
+            note('reenter')
+            f.cache_clear()
+            f(Key(4))
+            raise RuntimeError()
+@functools.lru_cache(2)
+def f(k): return Result(k.v)
+def run():
+    if r.startswith('lru'):
+        sys.unraisablehook=lambda arg:print('unraisable',arg.exc_type.__name__,type(arg.exc_value.__context__).__name__)
+        for i in range(3): f(Key(i))
+    else:
+        oldpath=sys.path[:]
+        oldshow=warnings._showwarnmsg
+        oldopen=io.open
+        del warnings._showwarnmsg
+        sys.path[:]=['/one','/two']
+        def opener(path,*a):
+            note('open '+path)
+            raise ValueError()
+        try:
+            io.open=opener
+            _warnings.warn_explicit('a38',UserWarning,'x.py',1)
+        finally:
+            warnings._showwarnmsg=oldshow
+            sys.path[:]=oldpath
+            io.open=oldopen
+try: raise LookupError()
+except LookupError:
+    try: run()
+    except BaseException as e:
+        n=0
+        tb=e.__traceback__
+        while tb:
+            n+=1
+            tb=tb.tb_next
+        print(type(e).__name__,type(e.__context__).__name__,type(e.__cause__).__name__,n)
+f.cache_clear()
+print('end')

@@ -707,12 +707,22 @@ Ref type_call(ClassObject* cls, Args a) {
     ClassObject* t = type_of(obj.get());
     Obj init = type_lookup(t, N("__init__"));
     if (!init.is_unset()) {
+        // slot_tp_init's lookup_method: a function, or a method of a built-in type (a method or wrapper descriptor), is
+        // called with the object first; anything else is bound by its own __get__, if it has one, and called with the
+        // arguments alone (a bound built-in or a built-in function has none: `C.__init__ = sink.append`; review A38, RL-859)
         Ref result;
-        if ((is_kind(init, Kind::PyFunction) && !presents_as_builtin(init)) || is_kind(init, Kind::Builtin)) {
+        Builtin* method = is_kind(init, Kind::Builtin) ? static_cast<Builtin*>(init.object()) : nullptr;
+        if (method != nullptr && (!method->self.is_unset() || method->binding != Binding::Method)) method = nullptr;
+        if (method != nullptr) {
             Ref hold = Ref::share(init);
-            result = is_kind(init, Kind::Builtin) && static_cast<Builtin*>(init.object())->binding == Binding::Method
-                         ? call_builtin(static_cast<Builtin*>(init.object()), obj.get(), a)
+            // the object is of the method's type wherever the method was found in its own MRO; where a class stores
+            // another type's (`C.__init__ = list.__init__`), invoke refuses it as wrapperdescr_call does (RL-860)
+            result = method->owner == nullptr || method->owner == t || isinstance(obj.get(), method->owner)
+                         ? call_builtin(method, obj.get(), a)
                          : call_with_first(init, obj.get(), a);
+        } else if (is_kind(init, Kind::PyFunction) && !presents_as_builtin(init)) {
+            Ref hold = Ref::share(init);
+            result = call_with_first(init, obj.get(), a);
         } else {
             Ref bound = descr_get(init, obj.get(), Obj::of(t));
             result = invoke(bound.get(), a);
@@ -2294,8 +2304,9 @@ ClassObject* os_error() { return exception_class("OSError"); }
 // oserror_use_init: a subclass with an __init__ of its own and OSError's __new__ gets its arguments there
 bool oserror_use_init(const ClassObject* type) {
     auto* c = const_cast<ClassObject*>(type);
-    return type_lookup(c, N("__init__")) != type_lookup(os_error(), N("__init__")) && !c->slot_tp_new &&
-           type_lookup(c, N("__new__")) == type_lookup(os_error(), N("__new__"));   // tp_new == OSError_new: the slot (RL-810)
+    // tp_init != OSError_init && tp_new == OSError_new: the allocator is the slot, with its history (RL-810) and whatever
+    // wrapper a class of the program's stores under the name (RL-841, RL-861)
+    return type_lookup(c, N("__init__")) != type_lookup(os_error(), N("__init__")) && tp_new_is(c, os_error());
 }
 struct OsArgs {
     Obj myerrno, strerror, filename, filename2;

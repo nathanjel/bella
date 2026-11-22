@@ -720,11 +720,6 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s
   key, `os.pwrite`: 18 rows). Exact: an export held from the conversion on (a resize is then refused, as the view makes it)
   and the read where the C reads. With RL-583 and the memoryview model.
-* **The clinic's keyword rules, the rest of the inventory (review A37; low).** The generated argument checks refuse keywords only
-  where the class has the type's `tp_new` (in an `__init__`: `list`, `_random.Random`, `BufferedRWPair`) or the type's `tp_init` (in a
-  `__new__`: `tuple`, `float`, `reversed`, `filter`, `frozenset`, the itertools types, `method`, `code`, `_tuplegetter`). The ones
-  a program can subclass and that review A37's rows reached are done (RL-842, RL-845, RL-846, RL-849, `_tp_init_is`,
-  `_tp_new_is`); `_random.Random.__init__` and `frozenset.__new__` were named by its inventory and not run: run them.
 * **`ast.AST.__init__` after a failed store of a field whose name has a `__hash__` written in Python stops by name (RL-852).**
   CPython calls the hash with the store's error still set, and its body ends with a SystemError at the first C function it
   calls. Exact only with a way to run a function of the program's "with an exception set"; nothing else needs one so far.

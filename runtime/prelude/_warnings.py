@@ -335,9 +335,16 @@ def _display_source_line(f: object, filename: str, lineno: int) -> None:   # _Py
         if _bella_holds("io") or dict.get(sys.modules, "io", _ABSENT) is not _ABSENT:
             raise
         io = _io                                 # a program that holds no io module: io.open and io.TextIOWrapper are _io's own
+    # "PyErr_Clear()" and then the search, and further down the close: what the C does after it dropped an error is done
+    # after the handler, where an io.open or a close of the program's sees no error of this function's (review A38, RL-866)
+    opened = False
+    binary: object = None
     try:
         binary = io.open(filename, "rb")  # type: ignore[attr-defined]
-    except BaseException:  # noqa: BLE001
+        opened = True
+    except BaseException:  # noqa: BLE001, S110
+        pass
+    if not opened:
         binary = _find_source_file(filename, io)
         if binary is None:
             return
@@ -357,11 +364,16 @@ def _display_source_line(f: object, filename: str, lineno: int) -> None:   # _Py
         except BaseException:  # noqa: BLE001, S110
             pass
         return
+    wrapped = False
+    fob: object = None
     try:
         fob = io.TextIOWrapper(binary, "utf-8" if found is None else found)  # type: ignore[attr-defined]
-    except BaseException:  # noqa: BLE001
+        wrapped = True
+    except BaseException:  # noqa: BLE001, S110
+        pass
+    if not wrapped:
         try:
-            binary.close()
+            binary.close()  # type: ignore[attr-defined]
         except BaseException:  # noqa: BLE001, S110
             pass
         return

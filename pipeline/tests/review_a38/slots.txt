@@ -1,0 +1,42 @@
+import sys, collections, io, itertools, functools, types, weakref, random
+base, action, form = sys.argv[1].split('-')
+T = dict(object=object,int=int,float=float,complex=complex,str=str,bytes=bytes,bytearray=bytearray,tuple=tuple,list=list,dict=dict,set=set,frozenset=frozenset,property=property,staticmethod=staticmethod,classmethod=classmethod,super=super,type=type,enumerate=enumerate,zip=zip,map=map,filter=filter,reversed=reversed,Exception=Exception,OSError=OSError,FileNotFoundError=FileNotFoundError,deque=collections.deque,OrderedDict=collections.OrderedDict,defaultdict=collections.defaultdict,partial=functools.partial,Random=random.Random,SimpleNamespace=types.SimpleNamespace,ref=weakref.ref)
+for mod in (io,itertools):
+    for n in dir(mod):
+        v=getattr(mod,n)
+        if isinstance(v,type):
+            T[n]=v
+T=T[base]
+def init(self,*a,**kw): pass
+def new(cls,*a,**kw): return 71
+sink=[]
+class M: pass
+try:
+    if action=='mixin':
+        M.__new__=object.__new__
+        class C(M,T): pass
+    else:
+        class C(T): pass
+    if action in ('init','both'): C.__init__=init
+    if action in ('new','both'): C.__new__=new
+    if action=='sin': C.__init__=staticmethod(init)
+    if action=='cin': C.__init__=classmethod(init)
+    if action=='snew': C.__new__=staticmethod(new)
+    if action=='cnew': C.__new__=classmethod(new)
+    if action=='otherin': C.__init__=list.__init__
+    if action=='samein': C.__init__=T.__init__
+    if action=='same': C.__new__=T.__new__
+    if action=='other': C.__new__=tuple.__new__
+    if action=='builtin': C.__new__=abs
+    if action=='bound': C.__init__=sink.append
+    if action=='deleted':
+        C.__new__=abs
+        del C.__new__
+    if action=='dinit':
+        C.__init__=init
+        del C.__init__
+    a=(1,) if form in ('p','pk') else ()
+    kw={'k':1} if form in ('k','pk') else {}
+    print(type(C(*a,**kw)).__name__)
+except BaseException as e:
+    print(type(e).__name__)

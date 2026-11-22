@@ -13,6 +13,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _number_index                                # noqa: B018  # PyNumber_Index
     _sys                                         # noqa: B018  # posix.cpp: the system calls by name (urandom)
+    _tp_new_is                                   # noqa: B018  # type->tp_new == base->tp_new: the slot, with its history (RL-810)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -33,6 +34,9 @@ except NameError:
     def _sys(name: str, *args: object) -> Any:
         import os
         return getattr(os, name)(*args)
+
+    def _tp_new_is(cls: type, base: type) -> bool:   # a stand-in for CPython's run of this file
+        return cls.__new__ is base.__new__
 
 
 _N = 624
@@ -139,7 +143,9 @@ class Random:
         return self
 
     def __init__(self, *args: object, **kwds: object) -> None:   # random_init: ($self, [seed])
-        if kwds:
+        # "Py_IS_TYPE(self, Random) || Py_TYPE(self)->tp_new == Random's": a class with an allocator of its own, or one that
+        # had one, may be given keywords, and they are not looked at (review A38, RL-863)
+        if kwds and (type(self) is Random or _tp_new_is(type(self), Random)):
             raise TypeError("Random() takes no keyword arguments")
         if len(args) > 1:
             raise TypeError("Random expected at most 1 argument, got " + str(len(args)))

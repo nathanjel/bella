@@ -1,0 +1,68 @@
+import sys,collections,io,types,_random
+base,mode=sys.argv[1].split('-')
+class X:
+    def __init__(self,n): self.n=n
+    def __repr__(self): return self.n
+    def __del__(self): print('drop',self.n)
+    def __call__(self): return self.n
+class Fail:
+    def __iter__(self):
+        yield (1,2)
+        raise KeyError()
+def run():
+    if base in ('staticmethod','classmethod'):
+        meta=staticmethod if base=='staticmethod' else classmethod
+        class Wrapped:
+            __name__='first'
+            def __del__(self):
+                if mode=='reenter': subject.__init__(last)
+        def second(): pass
+        def last(): pass
+        global subject
+        subject=meta(Wrapped())
+        subject.__init__(second)
+        print(subject.__func__.__name__,subject.__name__)
+        try: subject.__init__()
+        except BaseException as e: print(type(e).__name__)
+        subject.__init__(last)
+        print(subject.__name__)
+        del subject
+        return
+    if base=='property':
+        p=property(X('get'),X('set'),X('del'),X('doc'))
+        p.__name__=X('name')
+        p.__init__(X('two'))
+        p.__init__(doc=X('three'))
+        print(p.fget,p.fset,p.fdel,p.__doc__)
+        return
+    if base=='Random':
+        o=_random.Random(17)
+        for x in (12,None):
+            try: o.__init__(x if x is not None else [])
+            except BaseException as e: print(type(e).__name__)
+            print(o.getrandbits(16))
+        return
+    T={'deque':collections.deque,'defaultdict':collections.defaultdict,'OrderedDict':collections.OrderedDict,'BytesIO':io.BytesIO,'StringIO':io.StringIO,'SimpleNamespace':types.SimpleNamespace,'OSError':OSError,'SyntaxError':SyntaxError,'ImportError':ImportError,'UnicodeDecodeError':UnicodeDecodeError}[base]
+    if T is collections.deque: seq=[([X('a')],3),(Fail(),1),('hi',2)]
+    elif T is collections.defaultdict: seq=[(X('a'),{1:X('val')}),(X('b'),Fail()),(X('c'),)]
+    elif T is collections.OrderedDict: seq=[({1:X('a')},),(Fail(),),({3:4},)]
+    elif T is io.BytesIO: seq=[(b'a',),(X('bad'),),(b'c',)]
+    elif T is io.StringIO: seq=[('a','\r'),('b','bad'),('c','')]
+    elif T is types.SimpleNamespace: seq=[({'a':X('a')},),(Fail(),),({'b':X('b')},)]
+    elif T is UnicodeDecodeError: seq=[('hi',b'a',0,1,'bad'),('foo',None,0,1,'w'),('ok',b'b',2,3,'z')]
+    elif T is SyntaxError: seq=[('s',('f',2,3,'bad')),('w',(1,)),('z',)]
+    else: seq=[(1,'first',X('file')),(X('arg'),),(2,'last','path')]
+    o=T(*seq[0])
+    for args in seq[1:]:
+        try: o.__init__(*args)
+        except BaseException as e: print(type(e).__name__)
+        if base in ('StringIO','BytesIO'):
+            for fn in (o.getvalue,o.tell):
+                try: print(fn())
+                except BaseException as e: print(type(e).__name__)
+        else:
+            print(repr(o))
+            for k in ('errno','filename','strerror','msg','lineno','args','encoding','object','reason','maxlen','default_factory'):
+                try: print(k,getattr(o,k))
+                except AttributeError: pass
+run()

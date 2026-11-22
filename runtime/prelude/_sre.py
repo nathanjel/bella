@@ -24,6 +24,7 @@ try:
     _dict_set_hashed                             # noqa: B018  # _PyDict_SetItem_KnownHash: (dict, key, value, hash)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
+    _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -42,6 +43,7 @@ except NameError:
     _own_data: Callable[..., Any] = _missing
     _dict_next_hashed: Callable[..., Any] = _missing
     _dict_set_hashed: Callable[..., None] = _missing
+    _raise_as_is: Callable[..., Any] = _missing
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
@@ -332,6 +334,7 @@ def _subx(self: object, name: str, repl: object, string: object, count: int, sub
     start = 0
     must_advance = False
     _sre_call("export", string, 1)               # state_init holds the buffer until state_fini: a callback cannot resize what is being scanned
+    failed: BaseException | None = None
     try:
         while not count or n < count:
             marks = _run(self, string, 0, endpos, start, must_advance, 2)
@@ -343,19 +346,30 @@ def _subx(self: object, name: str, repl: object, string: object, count: int, sub
                 out.append(_sre_call("slice", string, i, b))
             if kind != 0:
                 match = _new_match(self, string, 0, endpos, marks)  # type: ignore[arg-type]
-                item = _expand(filter_object, match) if kind == 1 else filter_object(match)  # type: ignore[operator]
+                try:
+                    item = _expand(filter_object, match) if kind == 1 else filter_object(match)  # type: ignore[operator]
+                finally:
+                    del match                    # "Py_DECREF(match)" follows the call, whatever it gave
             else:
                 item = filter_object
             if item is not None:
                 out.append(item)
+            del item                             # the list has it, or it was None: nothing of a turn is kept for the next
             i = e
             n += 1
             must_advance = e == b
             start = e
         if i < endpos:
             out.append(_sre_call("slice", string, i, endpos))
-    finally:
+    except BaseException as error:  # noqa: BLE001
+        failed = error
+    if failed is not None:
+        # pattern_subx's way out on an error, with the error pending: the pieces made so far, and then the buffer. A piece
+        # whose finaliser would resize the subject still finds it held (review A38, RL-870)
+        del out
         _sre_call("export", string, -1)
+        _raise_as_is(failed)
+    _sre_call("export", string, -1)
     joiner = _sre_call("slice", string, 0, 0)
     if not out:
         item = joiner

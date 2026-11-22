@@ -69,14 +69,18 @@ ROWS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _run(command: list[str], folder: Path) -> tuple[int, str]:
+def _run(command: list[str], folder: Path, warnings_shown: bool = False) -> tuple[int, str]:
     env = {**os.environ, "PYTHONHASHSEED": "0", "PYTHONWARNINGS": "ignore"}
+    if warnings_shown:
+        del env["PYTHONWARNINGS"]
     done = subprocess.run(command, capture_output=True, text=True, env=env, cwd=folder, timeout=120, stdin=subprocess.DEVNULL)
     return done.returncode, done.stdout + ("" if done.returncode == 0 else done.stderr[-300:])
 
 
-def probe_rows_agree(source: Path, rows: tuple[str, ...]) -> None:
-    """One of a reviewer's probes, a program that takes its row as its argument: each row under CPython and compiled."""
+def probe_rows_agree(source: Path, rows: tuple[str, ...], warnings_shown: bool = False) -> None:
+    """One of a reviewer's probes, a program that takes its row as its argument: each row under CPython and compiled.
+    CPython is told to ignore warnings unless `warnings_shown`: a probe whose rows are about a warning being shown needs
+    them, and the compiled program does not read the variable (D-18)."""
     if shutil.which("g++") is None:
         return
     probe = source.stem
@@ -87,8 +91,8 @@ def probe_rows_agree(source: Path, rows: tuple[str, ...]) -> None:
         binary = str(build(program, "prog.py", notes=False))
         wrong: list[str] = []
         for row in rows:
-            want = _run([sys.executable, str(program), row], folder)
-            got = _run([binary, row], folder)
+            want = _run([sys.executable, str(program), row], folder, warnings_shown)
+            got = _run([binary, row], folder, warnings_shown)
             assert want[0] == 0, (probe, row, want)
             if got != want:
                 wrong.append(f"{probe}/{row}: compiled {got[1].split(chr(10))!r} (status {got[0]}), CPython {want[1].split(chr(10))!r}")

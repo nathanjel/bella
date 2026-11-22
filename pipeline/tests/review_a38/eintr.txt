@@ -1,0 +1,38 @@
+import sys,io,errno
+method,mode=sys.argv[1].split('-')
+class E:
+    def __index__(self):
+        print('index',type(sys.exception()).__name__)
+        if mode=='bad': raise KeyError()
+        return errno.EINTR
+class Raw(io.RawIOBase):
+    count=0
+    def gate(self):
+        self.count+=1
+        if self.count==1: raise OSError(E(),'io')
+    def readable(self): return True
+    def writable(self): return True
+    def read(self,n=-1): self.gate(); return b''
+    def read1(self,n=-1): return self.read(n)
+    def readinto(self,b): self.gate(); return 0
+    def write(self,b): self.gate(); return len(b)
+class Peek(Raw):
+    def peek(self,n): self.gate(); return b''
+def run():
+    s=Peek() if method=='peek' else Raw()
+    if method in ('peek','line'): s.readline()
+    elif method=='lines': s.writelines([b'a'])
+    elif method=='all': s.readall()
+    elif method=='bread': io.BufferedReader(s).read(1)
+    elif method=='bwrite': io.BufferedWriter(s,1).write(b'abc')
+    elif method=='twrite':
+        t=io.TextIOWrapper(s,write_through=True)
+        t.write('abc')
+    elif method=='tread': io.TextIOWrapper(s).read(1)
+    else: io.TextIOWrapper(s).readline()
+    print('ok')
+try: raise LookupError()
+except LookupError:
+    try: run()
+    except BaseException as e:
+        print(type(e).__name__,type(e.__context__).__name__,type(e.__cause__).__name__)

@@ -1,0 +1,34 @@
+import sys,typing,ast,collections,types
+base,action,shape=sys.argv[1].split('-')
+var=typing.TypeVar('T',default=int)
+class A: __parameters__=(var,)
+T={'d':dict,'od':collections.OrderedDict,'dd':collections.defaultdict,'fd':frozendict,'proxy':types.MappingProxyType}[base]
+def run():
+    if shape=='exact': C=T
+    else:
+        class C(T): pass
+        if shape=='all':
+            C.__len__=lambda s:0
+            C.__getitem__=lambda s,i:'key'
+            C.__add__=lambda s,o:('custom',)
+            C.__iter__=lambda s: iter(['key'])
+            C.__contains__=lambda s,k:True
+    x=C({}) if C is not collections.defaultdict and T is not collections.defaultdict else C()
+    if action=='typevar': print(var.__typing_prepare_subst__(A(),x))
+    elif action=='parameters':
+        class D: __parameters__=x
+        print(var.__typing_prepare_subst__(D(),()))
+    elif action=='attributes':
+        class Node(ast.AST):
+            _attributes=x
+            _fields=()
+        n=Node()
+        print(repr(n))
+        print(n.__reduce__()[2])
+    else:
+        class Node(ast.AST): _fields=x
+        n=Node()
+        print(repr(n))
+        print(n.__replace__())
+try: run()
+except BaseException as e: print(type(e).__name__)

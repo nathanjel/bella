@@ -1,0 +1,30 @@
+import sys,itertools,weakref,functools,io,_random,collections,types
+name,mode,key=sys.argv[1].split('-')
+class Target: pass
+target=Target()
+def fn(*a): return True
+catalog=dict(ref=(weakref.ref,(target,)),enumerate=(enumerate,('x',)),zip=(zip,('x',)),map=(map,(fn,'x')),filter=(filter,(fn,'x')),reversed=(reversed,('x',)),tuple=(tuple,('x',)),float=(float,('1',)),frozenset=(frozenset,('x',)),super=(super,(Target,target)),meta=(type,('D',(),{})),partial=(functools.partial,(fn,)),pair=(io.BufferedRWPair,(io.BytesIO(),io.BytesIO())),reader=(io.BufferedReader,(io.BytesIO(),)),writer=(io.BufferedWriter,(io.BytesIO(),)),rawrandom=(_random.Random,(1,)),os=(OSError,(2,'x')),file=(io.FileIO,('/dev/null',)),text=(io.TextIOWrapper,(io.BytesIO(),)),ns=(types.SimpleNamespace,({},)),property=(property,(fn,)),classmethod=(classmethod,(fn,)),staticmethod=(staticmethod,(fn,)))
+for n,args in [('accumulate',('ab',)),('islice',('abc',2)),('batched',('abc',2)),('chain',('abc',)),('combinations',('abc',2)),('combinations_with_replacement',('abc',2)),('compress',('abc',[1])),('count',(2,)),('cycle',('abc',)),('dropwhile',(fn,'x')),('filterfalse',(fn,'x')),('groupby',('abc',)),('pairwise',('abc',)),('permutations',('abc',)),('product',('abc',)),('repeat',('abc',)),('starmap',(fn,[(1,)])),('takewhile',(fn,'x')),('zip_longest',('abc',))]:
+    catalog[n]=(getattr(itertools,n),args)
+T,a=catalog[name]
+class C(T): pass
+def init(*a,**k): print('init',len(a),sorted(k))
+def new(cls,*a,**k): return T.__new__(cls,*a,**k)
+def run():
+    if mode in ('sinit','both'): C.__init__=staticmethod(init)
+    if mode=='cinit': C.__init__=classmethod(init)
+    if mode in ('new','both'): C.__new__=staticmethod(new)
+    if mode=='snw': C.__new__=staticmethod(T.__new__)
+    if mode=='cnw': C.__new__=classmethod(T.__new__)
+    if mode=='wrapped': C.__init__=staticmethod(T.__init__)
+    if mode=='cinherited': C.__init__=classmethod(T.__init__)
+    if mode=='foreign': C.__new__=list.__new__
+    if mode=='delnew':
+        C.__new__=staticmethod(T.__new__)
+        del C.__new__
+    k={'tag':1} if key=='kw' else {}
+    v=C(*a,**k)
+    print(type(v).__name__)
+    if isinstance(v,io.IOBase): v.close()
+try: run()
+except BaseException as e: print(type(e).__name__)

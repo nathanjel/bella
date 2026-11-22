@@ -1,0 +1,44 @@
+import builtins,sys,types,io,itertools,functools,collections,weakref,_random,contextvars
+mod,key,shape,stage=sys.argv[1].split('-')
+T=getattr(dict(b=builtins,t=types,io=io,it=itertools,fun=functools,col=collections,w=weakref,r=_random,ctx=contextvars)[mod],key)
+def init(self,*a,**k): pass
+def new(cls,*a,**k): return 1
+def show(fn):
+    try: print(type(fn()).__name__)
+    except BaseException as e:
+        s=str(e)
+        who=''
+        if type(e) is TypeError:
+            if 'takes exactly one argument (the instance to initialize)' in s or 'takes exactly one argument (the type to instantiate)' in s or s=='C() takes no arguments':
+                who=s.split()[0]
+        print(type(e).__name__,who)
+def run():
+    space={}
+    if shape in ('new','both'): space['__new__']=new
+    if shape in ('init','both'): space['__init__']=init
+    if shape=='wrapper': space['__new__']=T.__new__
+    if shape=='other': space['__new__']=object.__new__
+    C=type('C',(T,),space)
+    if stage=='del':
+        for k in space:
+            if k in ('__new__','__init__'): delattr(C,k)
+    if stage=='same':
+        C.__init__=T.__init__
+        C.__new__=T.__new__
+    if stage=='plain':
+        C.__new__=new
+        C.__init__=init
+    if stage=='restore':
+        C.__new__=abs
+        del C.__new__
+        C.__init__=init
+        del C.__init__
+    for a,k in [((),{}),((1,),{}),((),{'tag':1}),((1,),{'tag':1})]:
+        if T is io.FileIO and a: a=('/dev/null',)
+        show(lambda:C(*a,**k))
+        show(lambda:object.__new__(C,*a,**k))
+    try: o=T.__new__(C)
+    except BaseException: return
+    show(lambda:object.__init__(o,1))
+try: run()
+except BaseException as e: print(type(e).__name__)

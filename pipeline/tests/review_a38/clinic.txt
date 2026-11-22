@@ -1,0 +1,42 @@
+import _random,sys,collections
+r=sys.argv[1]
+def run():
+    if r.startswith('random'):
+        class C(_random.Random):
+            def __new__(cls,*a,**k): return _random.Random.__new__(cls)
+        if r=='random-del': del C.__new__
+        print(type(C(tag=1)).__name__)
+    elif r.startswith('bases'):
+        class A: pass
+        class B:
+            def __new__(cls,*a): return object.__new__(cls)
+        class C(A): pass
+        c=C()
+        C.__bases__=(B,)
+        if r=='bases-back': C.__bases__=(A,)
+        print(object.__init__(c,1))
+    elif r=='metacall':
+        class M(type):
+            def __instancecheck__(self,x): print('checked'); return True
+        class C(metaclass=M):
+            def __new__(cls): return 123
+        print(C())
+    elif r=='pretend':
+        class X:
+            @property
+            def __class__(self): print('asked'); return C
+            def __init__(self): print('init')
+        x=X()
+        class C:
+            def __new__(cls): return x
+        print(C() is x)
+    elif r=='missing':
+        class D(collections.defaultdict):
+            def __missing__(self,k): return super().__missing__(k)
+        def factory():
+            d['x']=1
+            return 2
+        d=D(factory)
+        print(d['x'],d['x'])
+try: run()
+except BaseException as e: print(type(e).__name__)

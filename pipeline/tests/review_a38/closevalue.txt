@@ -1,0 +1,25 @@
+import io,sys
+r=sys.argv[1]
+class Result:
+    def __del__(self):
+        print('drop',type(sys.exception()).__name__)
+        try: print('nested',s.close())
+        except BaseException as e: print('nested',type(e).__name__)
+class Raw(io.BytesIO):
+    def close(self):
+        super().close()
+        return Result()
+class W(io.BufferedWriter):
+    def flush(self): raise KeyboardInterrupt()
+class B(io.BufferedReader):
+    def flush(self): raise KeyboardInterrupt()
+class R(io.BufferedRandom):
+    def flush(self): raise KeyboardInterrupt()
+class T(io.TextIOWrapper):
+    def flush(self): raise KeyboardInterrupt()
+s={'writer':W,'reader':B,'random':R,'text':T}[r](Raw())
+try: raise LookupError()
+except LookupError:
+    try: s.close()
+    except BaseException as e: print(type(e).__name__,type(e.__context__).__name__)
+print('end')

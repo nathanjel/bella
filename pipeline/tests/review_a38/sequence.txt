@@ -1,0 +1,32 @@
+import sys,os,operator,collections,ast,bisect,json,struct,_json
+base,shape,op=sys.argv[1].split('-')
+T={'dict':dict,'od':collections.OrderedDict,'dd':collections.defaultdict,'fd':frozendict}[base]
+def run():
+    class C(T): pass
+    if shape in ('len','all'): C.__len__=lambda s:2
+    if shape in ('get','all'): C.__getitem__=lambda s,k:'a'
+    if shape in ('mul','all'): C.__mul__=lambda s,n:'x'
+    if shape in ('rmul','all'): C.__rmul__=lambda s,n:'y'
+    if shape in ('add','all'): C.__add__=lambda s,o:'z'
+    if shape in ('iter','all'): C.__iter__=lambda s:iter('aa')
+    if shape in ('contains','all'): C.__contains__=lambda s,k:False
+    x=C(None,{0:'a',1:'a'}) if T is collections.defaultdict else C({0:'a',1:'a'})
+    if op=='bisect': print(bisect.bisect(x,'a'))
+    elif op=='ast':
+        class A(ast.AST): _fields=x
+        print(vars(A(1)))
+    elif op=='concat': print(operator.concat(x,x))
+    elif op=='count': print(operator.countOf(x,'a'))
+    elif op=='index': print(operator.indexOf(x,'a'))
+    elif op=='hint': print(operator.length_hint(x))
+    elif op=='join': print(''.join(x))
+    elif op=='separators': print(json.dumps([1,2],separators=x))
+    elif op=='indent':
+        enc=_json.make_encoder(None,None,_json.encode_basestring,x,':',',',False,False,False)
+        print(enc(1,2))
+    elif op=='struct': print(struct.pack('BB',*x))
+    elif op=='exec': os.execv('/no/such/a38',x)
+    elif op=='spawn': os.posix_spawn('/no/such/a38',x,{})
+    elif op=='affinity': os.sched_setaffinity(-99999,x)
+try: run()
+except BaseException as e: print(type(e).__name__)

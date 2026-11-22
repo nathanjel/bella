@@ -1,0 +1,49 @@
+import sys,re,zlib,collections
+r=sys.argv[1]
+def note(n): print(n,type(sys.exception()).__name__)
+def attempt(fn):
+    try: return fn()
+    except BaseException as e:
+        n=0
+        tb=e.__traceback__
+        while tb:
+            n+=1
+            tb=tb.tb_next
+        print(type(e).__name__,type(e.__context__).__name__,type(e.__cause__).__name__,n)
+class Part(bytes):
+    def __del__(self):
+        note('part')
+        try: data.extend(b'z'); print('released')
+        except BufferError: print('held')
+class Dictionary(bytes):
+    def __del__(self): note('dict')
+def use():
+    global data
+    if r.startswith('sre'):
+        data=bytearray(b'ab')
+        def cb(m):
+            if m.start():
+                if r=='sre-fail': raise ArithmeticError()
+                return 7
+            return Part(b'x')
+        attempt(lambda:re.sub(b'.',cb,data))
+        data.extend(b'!')
+        print('after',data)
+    elif r.startswith('zlib'):
+        o=zlib.decompressobj(zdict=Dictionary(b'aaa'))
+        attempt(lambda:o.decompress(b'bad'))
+        del o
+    else:
+        T=BlockingIOError if r.startswith('block') else OSError
+        class C(T):
+            def __init__(self,*a,**k):
+                print('init',self.args,self.errno)
+                if r.endswith('again'): super().__init__(3,'changed')
+        C.__new__=tuple.__new__
+        attempt(lambda:C(2,'old',tag=1))
+        x=C(1,'initial')
+        print(x.args,x.errno)
+        x.__init__()
+        print(x.args,x.errno)
+try: raise LookupError()
+except LookupError: use()

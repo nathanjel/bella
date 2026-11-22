@@ -1,0 +1,47 @@
+import collections, functools, io
+sink = []
+other = []
+class Call:
+    def __call__(self, *a, **k): sink.append(("called", len(a)))
+class Returns:
+    def __call__(self, *a, **k): return 5
+BASES = dict(object=object, list=list, dict=dict, int=int, str=str, tuple=tuple, set=set, Exception=Exception, OSError=OSError,
+             deque=collections.deque, OrderedDict=collections.OrderedDict, BytesIO=io.BytesIO, bytearray=bytearray, float=float)
+KINDS = {
+    "bound": lambda T: sink.append,
+    "function": lambda T: len,
+    "print": lambda T: print,
+    "method": lambda T: list.append,
+    "methodclear": lambda T: list.clear,
+    "dictmethod": lambda T: dict.clear,
+    "classdescr": lambda T: dict.fromkeys,
+    "wrapper": lambda T: list.__init__,
+    "objwrapper": lambda T: object.__init__,
+    "ownwrapper": lambda T: T.__init__,
+    "methodwrapper": lambda T: other.__init__,
+    "lenwrapper": lambda T: list.__len__,
+    "reprwrapper": lambda T: object.__repr__,
+    "static": lambda T: staticmethod(len),
+    "staticnone": lambda T: staticmethod(lambda *a, **k: None),
+    "classm": lambda T: classmethod(lambda cls, *a, **k: sink.append(cls.__name__)),
+    "instance": lambda T: Call(),
+    "returns": lambda T: Returns(),
+    "class": lambda T: int,
+    "none": lambda T: None,
+    "partial": lambda T: functools.partial(lambda *a, **k: sink.append(len(a))),
+    "property": lambda T: property(lambda self: (lambda *a, **k: sink.append(("got", len(a))))),
+    "lambda": lambda T: (lambda self, *a, **k: sink.append(("self", len(a)))),
+}
+for base, T in BASES.items():
+    for kind, make in KINDS.items():
+        for form in ("n", "p", "k"):
+            del sink[:], other[:]
+            try:
+                class C(T): pass
+                C.__init__ = make(T)
+                a = (1,) if form == "p" else ()
+                kw = {"k": 1} if form == "k" else {}
+                r = C(*a, **kw)
+                print(base, kind, form, type(r).__name__, len(sink), sink[:1] if sink and not isinstance(sink[0], C) else "obj" if sink else "", len(other))
+            except BaseException as e:
+                print(base, kind, form, type(e).__name__, len(sink), len(other))

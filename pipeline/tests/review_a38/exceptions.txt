@@ -1,0 +1,32 @@
+import sys
+base,mode=sys.argv[1].split('-')
+class Index:
+    def __index__(self): print('index'); raise LookupError()
+def run():
+    if base in ('decode','encode','translate'):
+        T={'decode':UnicodeDecodeError,'encode':UnicodeEncodeError,'translate':UnicodeTranslateError}[base]
+        args=['e',b'a' if base=='decode' else 'a',1,2,'reason']
+        if base=='translate': args.pop(0)
+        o=T(*args)
+        for invalid in (True,False):
+            a=args[:]
+            if invalid:
+                if mode in ('obj','both','reason'): a[-4]=None
+                if mode in ('index','both'): a[-3]=Index()
+                if mode=='reason': a[-1]=None
+            try: o.__init__(*a)
+            except BaseException as e: print(type(e).__name__)
+            print(o.start,o.end,o.reason,repr(o.object))
+    else:
+        T={'os':OSError,'syntax':SyntaxError,'import':ImportError,'attr':AttributeError,'stop':StopIteration,'system':SystemExit,'group':ExceptionGroup}[base]
+        class C(T):
+            def __init__(self,*a,**k): super().__init__(*a,**k)
+        if base=='group': o=C('s',[TypeError('x')])
+        else: o=C()
+        for a in ((2,'e','p',None,'q'),('msg',('f',1,2,'src',3,4)),('z',)):
+            try: o.__init__(*a)
+            except BaseException as e: print(type(e).__name__)
+            print(repr(o),o.args)
+            for key in ('errno','strerror','filename','filename2','msg','lineno','end_lineno','offset','end_offset','text','name','obj','value','code','message','exceptions'):
+                if hasattr(o,key): print(key,repr(getattr(o,key)))
+run()

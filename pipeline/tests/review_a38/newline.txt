@@ -1,0 +1,23 @@
+import io,sys
+field,op=sys.argv[1].split('-')
+active=False
+class V:
+    def __del__(self):
+        if not active: return
+        try:
+            if op=='newlines': print(repr(d.newlines))
+            elif op=='decode': print(repr(d.decode('x\n',True)))
+            elif op=='reset': print(d.reset())
+            elif op=='setstate': print(d.setstate((b'',2)))
+            else: print(d.getstate())
+        except BaseException as e: print(type(e).__name__)
+    def decode(self,v,final): return v
+    def reset(self): return None
+    def getstate(self): return (b'',5)
+    def setstate(self,s): pass
+d=io.IncrementalNewlineDecoder(V() if field=='decoder' else None,True,V() if field=='errors' else 'strict')
+d.decode('a\r\n',True)
+active=True
+d.__init__(None,False)
+active=False
+print(repr(d.newlines))

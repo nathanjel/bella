@@ -341,7 +341,14 @@ Ref sequence_inplace_repeat(Obj self, Obj count) { return repeat(self, int_from_
 
 // PySequence_Check: a class's __getitem__ gives it sq_item; a mapping's mp_subscript does not
 static bool sequence_check(Obj v) {
-    if (is_kind(v, Kind::Dict) || is_kind(v, Kind::Proxy)) return false;
+    if (is_kind(v, Kind::Dict)) {
+        // PyDict_Check refuses a dict and every class over it. A frozendict is no dict: the type itself has no sq_item, and a
+        // class statement's class over it has one (its __getitem__ is a method descriptor, for which update_one_slot puts
+        // the generic slot there), so its __add__ and __mul__ are asked (review A38, RL-864)
+        ClassObject* t = type_of(v);
+        return is_frozendict(v) && t->heap_type && !c_type(t);
+    }
+    if (is_kind(v, Kind::Proxy)) return false;
     if (v.is_object() && v.object()->cls->weak_proxy) return false;
     return has_sq_item(v);
 }

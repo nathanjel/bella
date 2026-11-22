@@ -110,6 +110,7 @@ _EISDIR = 21
 _ESPIPE = 29
 _O_RDONLY, _O_WRONLY, _O_RDWR = 0, 1, 2
 _O_CREAT, _O_EXCL, _O_TRUNC, _O_APPEND = 0o100, 0o200, 0o1000, 0o2000
+_O_CLOEXEC = 0o2000000                           # Linux, x86-64 and aarch64
 _S_IFMT, _S_IFDIR, _S_IFCHR = 0o170000, 0o040000, 0o020000
 
 
@@ -286,6 +287,15 @@ def _fail(code: int, filename: object = _ABSENT) -> None:   # PyErr_SetFromErrno
     raise OSError(code, _sys("strerror", code), filename)
 
 
+def _mode_text(mode: str) -> str:
+    """PyErr_Format's "%.200s" of a mode: the characters themselves (no __getitem__ of a class of the program's, RL-868), as
+    many whole ones as fit in 200 bytes of UTF-8 (unicode_fromformat_write_utf8 leaves out a character the limit cuts)."""
+    data = str.encode(mode, "utf-8")
+    if bytes.__len__(data) <= 200:
+        return str.__str__(mode)
+    return bytes.decode(data[:200], "utf-8", "ignore")
+
+
 def _trap_eintr(exc: OSError) -> bool:
     """_PyIO_trap_eintr, for an OSError the caller caught: whether its errno, as PyLong_AsLongAndOverflow reads it, is EINTR.
     The errno is the field of the C struct, whatever a subclass shows under the name."""
@@ -355,16 +365,27 @@ def _unsupported(message: str) -> None:
     raise UnsupportedOperation(message)
 
 
+def _interrupted(failed: OSError) -> None:
+    """What follows "if (_PyIO_trap_eintr())", where the C has taken the error off before it reads the errno: returns for
+    EINTR (the caller goes round again) and raises the error on as it was for anything else. Called after the handler has
+    ended, so that an errno with an __index__ of its own sees no error of the stream's as the handled one (review A38,
+    RL-871). The sites keep their success path as it was: the way out of a failure is the code after the handler."""
+    if not _trap_eintr(failed):
+        _raise_as_is(failed)
+
+
 def _peek_or_read(self: object, peek: object, limit: int) -> bytes | None:
     """_io__IOBase_readline_impl's loop body: one chunk, by peek() when there is one. None when the call was interrupted:
     "if (_PyIO_trap_eintr()) continue;", the loop's next turn (RL-656)."""
     nreadahead = 1
     if peek is not _ABSENT:
-        try:
-            readahead = peek(1)  # type: ignore[operator]
-        except OSError as e:
-            if not _trap_eintr(e):
-                raise
+        while True:                              # one turn: what follows a failure is after its handler (RL-871)
+            try:
+                readahead = peek(1)  # type: ignore[operator]
+                break
+            except OSError as e:
+                failed = e
+            _interrupted(failed)
             return None
         if not issubclass(type(readahead), bytes):
             raise OSError("peek() should have returned a bytes object, not '" + _tp_name(readahead) + "'")
@@ -377,11 +398,13 @@ def _peek_or_read(self: object, peek: object, limit: int) -> bytes | None:
                 if c == 10:
                     break
             nreadahead = found
-    try:
-        b = self.read(nreadahead)  # type: ignore[attr-defined]
-    except OSError as e:
-        if not _trap_eintr(e):
-            raise
+    while True:                                  # one turn, as above
+        try:
+            b = self.read(nreadahead)  # type: ignore[attr-defined]
+            break
+        except OSError as e:
+            failed = e
+        _interrupted(failed)
         return None
     if not issubclass(type(b), bytes):
         raise OSError("read() should have returned a bytes object, not '" + _tp_name(b) + "'")
@@ -575,8 +598,9 @@ class _IOBase:
                         self.write(line)  # type: ignore[attr-defined]
                         break
                     except OSError as e:
-                        if not _trap_eintr(e):
-                            raise
+                        interrupted = e
+                    _interrupted(interrupted)    # after the handler (RL-871)
+                    del interrupted
             except BaseException as e:
                 failed = e
             del line                             # Py_DECREF(line) before the next tp_iternext (RL-782)
@@ -612,12 +636,14 @@ class _RawIOBase(_IOBase):
         self = args[0]
         chunks: list[bytes] = []
         while True:
-            try:
-                data = self.read(DEFAULT_BUFFER_SIZE)  # type: ignore[attr-defined]
-            except OSError as e:                 # "if (_PyIO_trap_eintr()) continue;": what was read so far is kept (RL-654)
-                if not _trap_eintr(e):
-                    raise
-                continue
+            while True:
+                try:
+                    data = self.read(DEFAULT_BUFFER_SIZE)  # type: ignore[attr-defined]
+                    break
+                except OSError as e:
+                    failed = e
+                _interrupted(failed)             # "if (_PyIO_trap_eintr()) continue;": what was read so far is kept (RL-654),
+                del failed                       # and the test is made after the handler (RL-871)
             if data is None:
                 if not chunks:
                     return None
@@ -851,7 +877,7 @@ class FileIO(_RawIOBase):
         if fd < 0:
             path = _fspath(nameobj)
             name = str.encode(path, "utf-8", "surrogateescape") if issubclass(type(path), str) else path  # type: ignore[arg-type,assignment]
-            if 0 in name:
+            if bytes.__contains__(name, 0):      # PyUnicode_FSConverter reads the bytes: no __contains__ of a class of the program's (RL-868)
                 raise ValueError("embedded null byte")
         rwa = False
         plus = False
@@ -893,7 +919,7 @@ class FileIO(_RawIOBase):
                 self._c_readable = self._d_writable = True
                 plus = True
             else:
-                raise ValueError("invalid mode: " + mode[:200])
+                raise ValueError("invalid mode: " + _mode_text(mode))
         if not rwa:
             raise ValueError("Must have exactly one of create/read/write/append mode and at most one plus")
         if self._c_readable and self._d_writable:
@@ -902,6 +928,7 @@ class FileIO(_RawIOBase):
             flags |= _O_RDONLY
         else:
             flags |= _O_WRONLY
+        flags |= _O_CLOEXEC                      # what an opener is given has it too (review A38, RL-862)
         fd_is_own = False
         try:
             if fd >= 0:
@@ -916,14 +943,24 @@ class FileIO(_RawIOBase):
                     if opened < 0:
                         _fail(-opened, nameobj)
                     self._a_fd = opened
+                    fd_is_own = True
                 else:
                     fdobj = opener(nameobj, flags)  # type: ignore[operator]
                     if not issubclass(type(fdobj), int):
+                        del fdobj                # "Py_DECREF(fdobj)" comes before the error is set
                         raise TypeError("expected integer from opener")
-                    self._a_fd = _int(fdobj)
-                    if self._a_fd < 0:
+                    try:
+                        self._a_fd = _int(fdobj)
+                    finally:
+                        del fdobj                # and right after the number is read: before the stat, the name's store and
+                    if self._a_fd < 0:           # the close of a failure (review A38, RL-869)
                         raise ValueError("opener returned " + str(self._a_fd))
-                fd_is_own = True
+                    fd_is_own = True
+                    # "_Py_set_inheritable(self->fd, 0, NULL)": whatever the opener did to the descriptor, a child does not
+                    # get it. (A descriptor the runtime opened has O_CLOEXEC from the start, as CPython's has: RL-862)
+                    code = _sys("inheritable", self._a_fd, False)
+                    if code < 0:
+                        _fail(-code)
             st = _sys("stat", self._a_fd, True)
             self._j_blksize = DEFAULT_BUFFER_SIZE
             if issubclass(type(st), int):
@@ -1363,8 +1400,9 @@ def _bf_raw_read(self: _Buffered, at: int, length: int, into: bytearray | None =
             res = self._a_raw.readinto(target)  # type: ignore[attr-defined]
             break
         except OSError as e:
-            if not _trap_eintr(e):
-                raise
+            failed = e
+        _interrupted(failed)                     # after the handler (RL-871)
+        del failed
     if res is None:
         return -2
     try:
@@ -1404,8 +1442,9 @@ def _bf_raw_write(self: _Buffered, data: bytes) -> int:   # _bufferedwriter_raw_
             errnum = _io_call("errno")
             break
         except OSError as e:
-            if not _trap_eintr(e):
-                raise
+            failed = e
+        _interrupted(failed)                     # after the handler (RL-871)
+        del failed
     if res is None:
         _blocked_errno = errnum                  # "errno = errnum;"
         return -2
@@ -1955,17 +1994,25 @@ def _bf_make_methods(cls: type, shown: str, can_read: bool, can_write: bool) -> 
         except BaseException as e:  # noqa: BLE001
             exc = e
         _bf_enter(self)
+        second: BaseException | None = None
+        res: object = None
         try:
             res = self._a_raw.close()  # type: ignore[attr-defined]
-        except BaseException as e:
-            if exc is not None:
-                _set_context(e, exc)             # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472, RL-759)
-            raise
-        finally:
-            self._f_buffer = bytearray()
-            self._j_read_end = 0
-            self._h_pos = 0
-            self._p_owner = False
+        except BaseException as e:  # noqa: BLE001
+            second = e
+        # what follows the raw's close in the C, in its order and outside any handler: the buffer freed; where flush had
+        # failed, the two errors chained and what close returned let go of, the lock still held (a finaliser of that
+        # result that closes the stream again is a reentrant call: review A38, RL-873); the positions; the lock
+        self._f_buffer = bytearray()
+        if exc is not None:
+            if second is not None:
+                _set_context(second, exc)        # _PyErr_ChainExceptions1: the first failure is the second's context, no cause (RL-472, RL-759)
+            del res
+        self._j_read_end = 0
+        self._h_pos = 0
+        self._p_owner = False
+        if second is not None:
+            _raise_as_is(second)
         if exc is not None:
             raise exc
         return res
@@ -2631,13 +2678,15 @@ class IncrementalNewlineDecoder:
         self: IncrementalNewlineDecoder = args[0]  # type: ignore[assignment]
         decoder, translate, errors = _unpack("IncrementalNewlineDecoder", args[1:], kwds, ("decoder", "translate", "errors"), 2, 3)
         translate = True if translate else False   # the clinic's conversion, before anything of the object changes (RL-792)
-        self._a_ok = False
+        # The C's test for an initialised decoder is "self->errors != NULL", true from the first store on. So an object that
+        # is initialised again is never seen uninitialised: a finaliser of the errors or the decoder it lets go of finds
+        # the new ones stored and the old history still there (review A38, RL-874)
+        self._a_ok = True
         self._f_errors = "strict" if errors is _ABSENT else errors   # Py_XSETREF(self->errors, ...), then the decoder
         self._b_decoder = decoder
         self._e_translate = translate
         self._d_seennl = 0
         self._c_pendingcr = False
-        self._a_ok = True
 
     def decode(*args: object, **kwds: object) -> str:  # noqa: N805
         input, final = _unpack("decode", args[1:], kwds, ("input", "final"), 1, 2)  # noqa: A001
@@ -2938,8 +2987,9 @@ def _tw_writeflush(self: TextIOWrapper) -> None:   # _textiowrapper_writeflush
             self._c_buffer.write(data)  # type: ignore[attr-defined]
             break
         except OSError as e:
-            if not _trap_eintr(e):
-                raise
+            failed = e
+        _interrupted(failed)                     # after the handler (RL-871)
+        del failed
 
 
 def _tw_readline(self: TextIOWrapper, limit: int) -> str:   # _textiowrapper_readline
@@ -2955,12 +3005,14 @@ def _tw_readline(self: TextIOWrapper, limit: int) -> str:   # _textiowrapper_rea
         while self._j_decoded_chars is None or str.__len__(self._j_decoded_chars) == 0:
             try:
                 res = _tw_read_chunk(self, 0)
-            except OSError as e:                 # "if (_PyIO_trap_eintr()) continue;" (RL-656)
-                if not _trap_eintr(e):
-                    raise
+            except OSError as e:
+                failed = e
+            else:
+                if not res:
+                    break
                 continue
-            if not res:
-                break
+            _interrupted(failed)                 # "if (_PyIO_trap_eintr()) continue;" (RL-656), after the handler (RL-871)
+            del failed
         if not res:
             _tw_set_decoded_chars(self, None)
             self._m_snapshot = None
@@ -3304,17 +3356,19 @@ class TextIOWrapper(_TextIOBase):
         while remaining > 0:                     # a plain str even where one piece is all of it (RL-718)
             try:
                 res = _tw_read_chunk(self, remaining)
-            except OSError as e:                 # "if (_PyIO_trap_eintr()) continue;" (RL-656)
-                if not _trap_eintr(e):
-                    raise
+            except OSError as e:
+                failed = e
+            else:
+                if not res:                      # the end of the file
+                    break
+                joined = True
+                if str.__len__(result) > 0:
+                    chunks.append(result)
+                result = _tw_get_decoded_chars(self, remaining)
+                remaining -= str.__len__(result)
                 continue
-            if not res:                          # the end of the file
-                break
-            joined = True
-            if str.__len__(result) > 0:
-                chunks.append(result)
-            result = _tw_get_decoded_chars(self, remaining)
-            remaining -= str.__len__(result)
+            _interrupted(failed)                 # "if (_PyIO_trap_eintr()) continue;" (RL-656), after the handler (RL-871)
+            del failed
         if joined:
             chunks.append(result)
             return "".join(chunks)

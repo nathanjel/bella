@@ -1,0 +1,28 @@
+import sys
+base,when=sys.argv[1].split('-')
+class V:
+    def __del__(self): print('drop',type(sys.exception()).__name__)
+class Wrapped:
+    @property
+    def __module__(self):
+        print('module')
+        return V()
+    @property
+    def __name__(self):
+        print('name')
+        if when=='fail': raise ValueError()
+        return 'x'
+class W(staticmethod if base=='static' else classmethod):
+    def __setattr__(self,n,v):
+        if n=='__module__': return
+        super().__setattr__(n,v)
+def run():
+    if when=='new': W(Wrapped())
+    else:
+        w=W(1)
+        w.__init__(Wrapped())
+        w.__init__(2)
+try: raise LookupError()
+except LookupError:
+    try: run()
+    except BaseException as e: print(type(e).__name__,type(e.__context__).__name__)

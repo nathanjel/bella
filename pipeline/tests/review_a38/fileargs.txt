@@ -1,0 +1,26 @@
+import io,os,sys
+r=sys.argv[1]
+class Path(bytes):
+    def __contains__(self,x): print('contains'); raise ArithmeticError()
+class Name:
+    def __fspath__(self): print('path'); return Path(b'/dev/null')
+class Mode(str):
+    def __getitem__(self,k): print('getitem'); raise LookupError()
+    def __radd__(self,k): print('radd'); raise KeyError()
+class FD(int):
+    def __del__(self): print('release',f.closed)
+def opener(p,flags):
+    if r=='oversize': return FD(2**70)
+    if r=='negative': return FD(-3)
+    if r=='valid': return FD(os.open('/dev/null',os.O_RDONLY))
+    return os.open('/dev/null',os.O_RDONLY)
+f=io.FileIO('/dev/null')
+try:
+    if r=='bytes': f.__init__(Path(b'/dev/null'))
+    elif r=='path': f.__init__(Name())
+    elif r=='invalid': f.__init__('/dev/null',Mode('z'))
+    else: f.__init__('/dev/null','r',opener=opener)
+    print('ok')
+except BaseException as e: print(type(e).__name__)
+print('closed',f.closed)
+f.close()

@@ -1,0 +1,20 @@
+import sys,io,os
+r=sys.argv[1]
+class F(io.FileIO):
+    def __setattr__(self,k,v):
+        if k=='name' and active:
+            print('store',self.name)
+            if r=='failed-store': raise ValueError()
+        super().__setattr__(k,v)
+active=False
+f=F('/dev/null','r')
+active=True
+class FD(int):
+    def __del__(self): print('drop',f.closed,f.name,type(sys.exception()).__name__)
+def opener(p,flags): return FD(os.open('/dev/null',os.O_RDWR))
+try: raise LookupError()
+except LookupError:
+    try: f.__init__('/dev/zero','r',opener=opener)
+    except BaseException as e: print('error',type(e).__name__)
+print('done',f.closed,f.name)
+f.close()

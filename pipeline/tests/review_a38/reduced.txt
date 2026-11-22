@@ -1,0 +1,138 @@
+import sys
+row=sys.argv[1]
+if row=='01':
+    sink = []
+    class C: pass
+    C.__init__ = sink.append
+    try:
+        print(type(C(1)).__name__)
+    except TypeError:
+        print("TypeError")
+if row=='03':
+    class C(list): pass
+    C.__new__ = tuple.__new__
+    try:
+        print(type(C(k=1)).__name__)
+    except TypeError:
+        print("TypeError")
+if row=='04':
+    import io, os
+    def opener(path, flags):
+        print(bool(flags & os.O_CLOEXEC))
+        fd = os.open(path, os.O_RDWR)
+        os.set_inheritable(fd, True)
+        return fd
+    with io.FileIO('/dev/null') as f:
+        f.__init__('/dev/null', 'r', opener=opener)
+        print(os.get_inheritable(f.fileno()))
+if row=='05':
+    import _random
+    class C(_random.Random):
+        def __new__(cls, *args, **kw):
+            return _random.Random.__new__(cls)
+    try:
+        print(type(C(tag=1)).__name__)
+    except TypeError:
+        print("TypeError")
+if row=='06':
+    import operator
+    class C(frozendict):
+        def __add__(self, other): return 'z'
+    x = C()
+    try: print(operator.concat(x, x))
+    except TypeError: print('TypeError')
+if row=='07':
+    def second(): pass
+    def last(): pass
+    class First:
+        def __del__(self): s.__init__(last)
+    s = staticmethod(First())
+    s.__init__(second)
+    print(s.__func__.__name__, s.__name__)
+if row=='08':
+    import _warnings, io, sys, warnings
+    raw = io.FileIO(__file__)
+    class Bin:
+        def fileno(self): return raw.fileno()
+        def close(self):
+            print('binary close', type(sys.exception()).__name__)
+            raise KeyError()
+    def fail(*args): raise ValueError()
+    del warnings._showwarnmsg
+    io.open = lambda *args: Bin()
+    io.TextIOWrapper = fail
+    try: raise LookupError()
+    except LookupError:
+        _warnings.warn_explicit('a38', UserWarning, 'x.py', 1)
+    print('end')
+if row=='09':
+    class Index:
+        def __index__(self):
+            print('index')
+            raise LookupError()
+    e = UnicodeDecodeError('e', b'a', 1, 2, 'reason')
+    try: e.__init__('e', None, Index(), 2, 'reason')
+    except BaseException as exc: print(type(exc).__name__)
+if row=='10':
+    import io
+    class Path(bytes):
+        def __contains__(self, x):
+            print('contains')
+            raise ArithmeticError()
+    f = io.FileIO('/dev/null')
+    try:
+        f.__init__(Path(b'/dev/null'))
+        print('ok')
+    except BaseException as e: print(type(e).__name__)
+    print('closed', f.closed)
+    f.close()
+if row=='11':
+    import io, os
+    f = io.FileIO('/dev/null')
+    class FD(int):
+        def __del__(self): print(f.name)
+    def opener(path, flags): return FD(os.open('/dev/null', os.O_RDONLY))
+    f.__init__('/dev/zero', 'r', opener=opener)
+    f.close()
+if row=='12':
+    import re
+    data = bytearray(b'ab')
+    class Part(bytes):
+        def __del__(self):
+            try: data.extend(b'z')
+            except BufferError: pass
+    def replace(m):
+        if m.start(): raise ArithmeticError()
+        return Part(b'x')
+    try: re.sub(b'.', replace, data)
+    except ArithmeticError: pass
+    print(data)
+if row=='02':
+    sink = []
+    class C: pass
+    C.__init__ = list.__init__
+    try:
+        print(type(C()).__name__)
+    except TypeError:
+        print("TypeError")
+if row=='03-os':
+    class C(OSError):
+        def __init__(self, *a, **k): print(self.args, self.errno)
+    C.__new__ = tuple.__new__
+    try: C(2, 'old', tag=1)
+    except TypeError: print('TypeError')
+if row=='13':
+    import io, sys
+    class E:
+        def __index__(self):
+            print(type(sys.exception()).__name__)
+            return 4
+    class R(io.RawIOBase):
+        once=True
+        def read(self, n=-1):
+            if self.once:
+                self.once=False
+                raise OSError(E(),'io')
+            return b''
+    try: raise LookupError()
+    except LookupError: R().readline()

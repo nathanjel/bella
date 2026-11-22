@@ -481,7 +481,10 @@ def _wraps(wrapper: object, wrapped: object) -> None:   # functools_wraps: throu
             value = getattr(wrapped, attr)
         except AttributeError:
             continue
-        setattr(wrapper, attr, value)
+        try:
+            setattr(wrapper, attr, value)
+        finally:
+            del value                            # functools_copy_attr lets go of it before the next name is asked for (RL-872)
 
 
 def _wrapped_attribute(wrapped: object, obj: object, name: str) -> object:   # descriptor_get_wrapped_attribute
@@ -549,7 +552,7 @@ def _sm_set(self: object, func: object) -> None:   # sm_set_callable: __init__ a
     if _sm_callable_of(self) is func:
         return
     _put_sm_callable(self, func)
-    _wraps(self, func)
+    _wraps(self, _sm_callable_of(self))            # the field, read again: letting go of the old callable may have stored another (RL-865)
 
 
 def _sm_new(*args: object, **kwds: object) -> object:   # sm_new
@@ -611,7 +614,7 @@ def _cm_set(self: object, func: object) -> None:   # cm_set_callable
     if _cm_callable_of(self) is func:
         return
     _put_cm_callable(self, func)
-    _wraps(self, func)
+    _wraps(self, _cm_callable_of(self))            # the field, read again: letting go of the old callable may have stored another (RL-865)
 
 
 def _cm_new(*args: object, **kwds: object) -> object:   # cm_new

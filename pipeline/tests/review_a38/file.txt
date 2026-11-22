@@ -1,0 +1,29 @@
+import os,io,sys
+r=sys.argv[1]
+f=io.FileIO('/dev/null','r')
+def opener(path,flags):
+    print('cloexec',bool(flags & os.O_CLOEXEC))
+    fd=os.open('/dev/null',os.O_RDWR)
+    os.set_inheritable(fd,True)
+    return fd
+class Path:
+    def __fspath__(self): return '/dev/null'
+def show(fn):
+    try: print(fn())
+    except BaseException as e: print(type(e).__name__)
+for mode in r.split('-'):
+    try:
+        if mode=='fd': f.__init__(0,'r',False)
+        elif mode=='path': f.__init__(Path(),'r',False)
+        else: f.__init__('/dev/null',mode,opener=opener)
+    except BaseException as e: print('init',type(e).__name__)
+    show(lambda:f.mode)
+    show(f.readable)
+    show(f.writable)
+    show(f.seekable)
+    show(lambda:f.closefd)
+    show(lambda:f.name)
+    show(f.tell)
+    show(lambda:repr(f))
+    if not f.closed and f.closefd: show(lambda:os.get_inheritable(f.fileno()))
+f.close()
