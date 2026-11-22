@@ -786,7 +786,9 @@ Ref list_clear_m(Obj self, Args a) {
 // list___init__: keywords refused when the type's __new__ is list's own (a subclass with a __new__ of its own may take
 // them, and they are then ignored), at most one argument; the list emptied, then extended by it
 Ref list_init_m(Obj self, Args a) {
-    if (a.nkw != 0 && type_lookup(type_of(self), intern("__new__")) == type_lookup(types().list, intern("__new__")))
+    // "Py_TYPE(self)->tp_new == PyList_Type.tp_new": the slot, which a __new__ once stored in the class has changed for good
+    // (review A36, RL-810: `Sub(k=1)` passes after `Sub.__new__ = ...; del Sub.__new__`)
+    if (a.nkw != 0 && !type_of(self)->slot_tp_new && type_lookup(type_of(self), intern("__new__")) == type_lookup(types().list, intern("__new__")))
         raise_new("TypeError", "list() takes no keyword arguments");
     if (a.npos > 1) raise_new("TypeError", "list expected at most 1 argument, got " + std::to_string(a.npos));
     std::vector<Obj> old = std::move(list_self(self)->items);   // list_clear: emptied first, then released
@@ -1078,32 +1080,53 @@ void dict_update_arg(Obj self, Obj arg) {           // a mapping (keys()), else 
         return;
     }
     Ref it = iter(arg);
+    // merge_from_seq2: what one turn holds, and the order its Fail label lets go of it in (the key, the value, the item, then
+    // the sequence made of it); a turn that ends well lets go of the sequence before the item (review A36, RL-817)
+    struct Turn {
+        Ref item, fast, key, value;
+        ~Turn() {
+            key = Ref{};
+            value = Ref{};
+            item = Ref{};
+        }
+    };
     for (std::int64_t i = 0;; ++i) {
-        Ref item = for_next(it.get());
-        if (is_end(item)) break;
-        // PySequence_Fast(item, "object is not iterable"), and the note _PyErr_FormatNote adds
-        Ref pair;
-        try {
-            pair = iter(item.get());
-        } catch (const PyError& e) {
-            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
-            Ref msg = str_new("object is not iterable");
-            Ref exc = invoke(Obj::of(exception_class("TypeError")), {msg.get()});
-            Ref note = str_new("Cannot convert dictionary update sequence element #" + std::to_string(i) + " to a sequence");
-            Ref notes = list_new({note.get()});
-            setattr(exc.get(), intern("__notes__"), notes.get());
-            raise(exc.get());
+        Turn turn;
+        turn.item = for_next(it.get());
+        if (is_end(turn.item)) break;
+        Obj item = turn.item.get();
+        // PySequence_Fast(item, "object is not iterable"): an exact list or tuple as it is; of anything else an iterator,
+        // and PySequence_List of that iterator, which asks it for an iterator again and for its hint, and whose list goes
+        // (from the last) before the iterator when a __next__ raises. The note is _PyErr_FormatNote's
+        const std::vector<Obj>* fast = is_exact_tuple(item) ? &static_cast<Tuple*>(item.object())->items
+                                       : is_exact_list(item) ? &static_cast<List*>(item.object())->items : nullptr;
+        if (fast == nullptr) {
+            Ref pair;
+            try {
+                pair = iter(item);
+            } catch (const PyError& e) {
+                if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
+                Ref msg = str_new("object is not iterable");
+                Ref exc = invoke(Obj::of(exception_class("TypeError")), {msg.get()});
+                Ref note = str_new("Cannot convert dictionary update sequence element #" + std::to_string(i) + " to a sequence");
+                Ref notes = list_new({note.get()});
+                setattr(exc.get(), intern("__notes__"), notes.get());
+                raise(exc.get());
+            }
+            Ref made = list_new({});
+            list_extend(made.get(), pair.get());
+            turn.fast = std::move(made);
+            fast = &static_cast<List*>(turn.fast.get().object())->items;
         }
-        std::vector<Ref> kv;
-        for (;;) {
-            Ref x = for_next(pair.get());
-            if (is_end(x)) break;
-            kv.push_back(std::move(x));
-        }
-        if (kv.size() != 2)
+        if (fast->size() != 2)
             raise_new("ValueError", "dictionary update sequence element #" + std::to_string(i) + " has length " +
-                                        std::to_string(kv.size()) + "; 2 is required");
-        dict_set(d, kv[0].get(), kv[1].get());
+                                        std::to_string(fast->size()) + "; 2 is required");
+        turn.key = Ref::share((*fast)[0]);
+        turn.value = Ref::share((*fast)[1]);
+        dict_set(d, turn.key.get(), turn.value.get());
+        turn.key = Ref{};
+        turn.value = Ref{};
+        turn.fast = Ref{};
     }
 }
 
@@ -1463,17 +1486,7 @@ Ref c_range(Obj, Args a) {
 Ref c_tuple(Obj, Args a) {
     clinic(a, "tuple", "tuple", 0, 1);
     if (a.npos == 0) return tuple_new({});
-    if (is_exact_tuple(a.pos(0))) return Ref::share(a.pos(0));
-    // PySequence_Tuple: the iterator's items, with no length hint (3.15)
-    std::vector<Obj> items;
-    Ref it = iter(a.pos(0));
-    try {
-        for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) items.push_back(v.release());
-    } catch (...) {
-        for (Obj v : items) decref(v);
-        throw;
-    }
-    return tuple_steal(std::move(items));
+    return sequence_tuple(a.pos(0));
 }
 Ref c_list(Obj, Args a) {
     clinic(a, "list", "list", 0, 1);

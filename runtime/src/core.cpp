@@ -858,7 +858,7 @@ struct ExceptionClasses {
             if (std::string_view(n) == "NameError") own = exception_fields({"name"});
             if (std::string_view(n) == "ImportError") own = exception_fields({"msg", "name", "path", "name_from"});
             if (std::string_view(n) == "OSError") own = exception_fields({"errno", "strerror", "filename", "filename2", "written"});
-            if (std::string_view(n) == "SyntaxError") own = exception_fields({"msg", "filename", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line", "_metadata"});
+            if (std::string_view(n) == "SyntaxError") own = exception_fields({"msg", "filename", "lineno", "offset", "end_lineno", "end_offset", "text", "print_file_and_line", "_metadata"});   // SyntaxError_clear's order (RL-827)
             if (std::string_view(n).starts_with("Unicode") && std::string_view(n) != "UnicodeError")
                 own = exception_fields({"encoding", "object", "start", "end", "reason"});
             make(n, b, own);

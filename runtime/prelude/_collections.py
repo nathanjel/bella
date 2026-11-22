@@ -349,28 +349,41 @@ def _d_compare(v: object, w: object, op: int) -> object:   # deque_richcompare: 
         if x is absent or y is absent:
             break
         if not _same(x, y):
+            # PyObject_RichCompareBool(x, y, op) with the operation asked for, == and != too: the pair is compared a second
+            # time, and a __ne__ of its own is asked (RL-838). Then x, y and the two iterators go, in that order (RL-837)
             if op == 0:
-                return bool(x < y)
-            if op == 1:
-                return bool(x <= y)
-            if op == 2:
-                return False
-            if op == 3:
-                return True
-            if op == 4:
-                return bool(x > y)
-            return bool(x >= y)
+                answer = bool(x < y)
+            elif op == 1:
+                answer = bool(x <= y)
+            elif op == 2:
+                answer = bool(x == y)
+            elif op == 3:
+                answer = bool(x != y)
+            elif op == 4:
+                answer = bool(x > y)
+            else:
+                answer = bool(x >= y)
+            del x, y
+            del it1
+            del it2
+            return answer
+        del x, y                                 # before the two iterators are asked again
     if op == 0:
-        return y is not absent
-    if op == 1:
-        return x is absent
-    if op == 2:
-        return x is absent and y is absent
-    if op == 3:
-        return not (x is absent and y is absent)
-    if op == 4:
-        return x is not absent
-    return y is absent
+        answer = y is not absent
+    elif op == 1:
+        answer = x is absent
+    elif op == 2:
+        answer = x is absent and y is absent
+    elif op == 3:
+        answer = not (x is absent and y is absent)
+    elif op == 4:
+        answer = x is not absent
+    else:
+        answer = y is absent
+    del x, y
+    del it1
+    del it2
+    return answer
 
 
 class deque:
@@ -1122,17 +1135,28 @@ def _od_richcompare(v: object, w: object, eq: bool) -> object:   # odict_richcom
 
 def _od_add_pairs(self: object, pairs: object) -> None:   # mutablemapping_add_pairs
     for pair in pairs:  # type: ignore[attr-defined]
-        pair_iterator = iter(pair)
-        key = next(pair_iterator, _NULL)
-        if key is _NULL:
-            raise ValueError("need more than 0 values to unpack")
-        value = next(pair_iterator, _NULL)
-        if value is _NULL:
-            raise ValueError("need more than 1 value to unpack")
-        if next(pair_iterator, _NULL) is not _NULL:
-            raise ValueError("too many values to unpack (expected 2)")
-        self[key] = value  # type: ignore[index]
-        del pair, pair_iterator, key, value      # the C's order, before the next tp_iternext (RL-782)
+        pair_iterator: object = _NULL
+        key: object = _NULL
+        value: object = _NULL
+        failed: BaseException | None = None
+        try:
+            pair_iterator = iter(pair)
+            key = next(pair_iterator, _NULL)  # type: ignore[call-overload]
+            if key is _NULL:
+                raise ValueError("need more than 0 values to unpack")
+            value = next(pair_iterator, _NULL)  # type: ignore[call-overload]
+            if value is _NULL:
+                raise ValueError("need more than 1 value to unpack")
+            if next(pair_iterator, _NULL) is not _NULL:  # type: ignore[call-overload]
+                raise ValueError("too many values to unpack (expected 2)")
+            self[key] = value  # type: ignore[index]
+        except BaseException as e:
+            failed = e
+        # "Done:": one way out for a turn that ends well and for one that fails, in the C's order, before the next
+        # tp_iternext and with the error pending, not handled (RL-782, RL-818)
+        del pair, pair_iterator, key, value
+        if failed is not None:
+            _raise_as_is(failed)
 
 
 def _od_update_arg(self: object, arg: object) -> None:   # mutablemapping_update_arg
@@ -1271,6 +1295,7 @@ class OrderedDict(dict):  # type: ignore[type-arg]
             value = None
         for key in seq:  # type: ignore[attr-defined]
             d[key] = value
+            del key                              # _PyDict_FromKeys lets go of the key before the next (RL-807)
         return d
 
     def __sizeof__(*args: object, **kwds: object) -> int:

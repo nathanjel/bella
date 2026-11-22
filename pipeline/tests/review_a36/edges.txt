@@ -1,0 +1,49 @@
+import itertools as it,sys,typing,contextvars,collections
+r=sys.argv[1]
+class T:
+    def __init__(self,name):self.name=name
+    def __del__(self):print("drop",self.name,type(sys.exception()).__name__)
+class I:
+    def __init__(self,n,name):self.n=n;self.name=name
+    def __iter__(self):print("iter",self.name);return self
+    def __next__(self):
+        if not self.n:raise StopIteration
+        self.n-=1
+        return T(self.name)
+    def __length_hint__(self):print("hint");return self.n
+    def __del__(self): print("iterator",self.name,type(sys.exception()).__name__)
+class S:
+    def __init__(self,n,name):self.n=n;self.name=name
+    def __iter__(self):return I(self.n,self.name)
+class Map:
+    def __init__(self):self.ks=["a","b"]
+    def keys(self):return self.ks if r=="livekeys" else I(2,"k")
+    def __getitem__(self,k):
+        print("get")
+        if self.ks:self.ks.clear()
+        return 1
+def run():
+    if r in ("livekeys","hint"):
+        print(len(dict(Map())))
+    elif r=="islice": next(it.islice(S(0,"a"),1))
+    elif r=="pair": next(it.pairwise(S(1,"a")))
+    elif r=="batch": next(it.batched(S(1,"a"),3,strict=True))
+    elif r=="chain": next(it.chain.from_iterable(S(1,"a")))
+    elif r=="mapshort": next(map(print,S(1,"a"),S(1,"b"),S(0,"c")))
+    elif r=="zipshort": next(zip(S(1,"a"),S(1,"b"),S(0,"c")))
+    elif r=="star":a,*b,c=S(1,"a")
+    elif r=="params":
+        class A: __parameters__=(t,)
+        print(t.__typing_prepare_subst__(A(),{1:2}))
+    elif r=="ctxitems":
+        c=contextvars.Context()
+        v=contextvars.ContextVar("v")
+        c.run(v.set,T("old"))
+        k=c.items();c.run(v.set,0)
+        del c;print("release");del k
+t=typing.TypeVar("T")
+try:raise KeyError
+except KeyError:
+    try:run()
+    except Exception as e:print(type(e).__name__)
+print("end")

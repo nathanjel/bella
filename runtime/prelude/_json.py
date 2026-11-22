@@ -711,6 +711,7 @@ def _encode_dict(s: Encoder, parts: list[str], dct: object, level: int, cache: l
             if not issubclass(type(item), tuple) or tuple.__len__(item) != 2:
                 raise ValueError("items must return 2-tuples")
             _encode_key_value(s, parts, first, dct, tuple.__getitem__(item, 0), tuple.__getitem__(item, 1), level, cache, separator)
+            del item                             # the C lets go of it before it reads the size again (RL-835)
             at += 1
     else:                                        # PyDict_Next: the entries as they are at each step, an inserted one included (A14 #2)
         pos = 0
@@ -762,6 +763,7 @@ def _encode_list(s: Encoder, parts: list[str], seq: object, level: int, cache: l
             failed = exc
         if failed is not None:
             _raise_noted(failed, "when serializing " + _tp_name(seq) + " item " + str(i))
+        del obj                                  # the C lets go of it before it reads the size again (RL-835)
         i += 1
     if ident is not None:
         dict.__delitem__(markers, ident)  # type: ignore[arg-type]

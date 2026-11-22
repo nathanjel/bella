@@ -1,0 +1,46 @@
+import sys,csv,signal,os,io
+r=sys.argv[1]
+class S(str):
+    def __del__(self):print("drop",repr(str.__str__(self)),type(sys.exception()).__name__)
+class N(int):
+    def __del__(self):print("drop",int(self),type(sys.exception()).__name__)
+class I:
+    def __init__(self):self.i=0
+    def __iter__(self):return self
+    def __next__(self):
+        self.i+=1;print("next",self.i)
+        if self.i>2: raise LookupError
+        if r.startswith("csv"):return S('"a\n' if self.i==1 else 'b"\n')
+        return N(self.i)
+    def __del__(self):print("iterator",type(sys.exception()).__name__)
+class Source:
+    def __iter__(self):return I()
+class Path:
+    def __fspath__(self):return os.devnull
+    def __del__(self):print("drop path")
+def run():
+    s=Source()
+    if r=="csv":print(next(csv.reader(s)))
+    elif r.startswith("sig"):
+        f={"sigwait":signal.sigwait,"sigwaitinfo":signal.sigwaitinfo,"sigtimedwait":lambda s:signal.sigtimedwait(s,0),"sigmask":lambda s:signal.pthread_sigmask(signal.SIG_BLOCK,s)}[r]
+        f(s)
+    elif r.startswith("spawn"):
+        if r=="spawn-mask":os.posix_spawn("/does/not/exist",["invalid"],{},setsigmask=s)
+        else:os.posix_spawn("/does/not/exist",["invalid"],{},setsigdef=s)
+    elif r.startswith("write"):
+        f={"write-string":lambda:io.StringIO(),"write-text":lambda:io.TextIOWrapper(io.BytesIO()),"write-buffer":lambda:io.BufferedWriter(io.BytesIO())}[r]()
+        f.writelines(s)
+    elif r.startswith("raw"):
+        f=io.FileIO(Path())
+        b=io.BufferedReader(f)
+        t=io.TextIOWrapper(b)
+        del f
+        if r=="raw-text":t.detach();del b
+        else:b.detach();del b
+        print("before release")
+        del t
+try:raise KeyError
+except KeyError:
+    try:run()
+    except Exception as e:print(type(e).__name__)
+print("end")

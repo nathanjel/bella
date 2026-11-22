@@ -445,6 +445,7 @@ Ref i_unpack_keywords(Obj, Args a);               // _PyArg_UnpackKeywords, for 
 void fill_weakref(Module* m);                     // and runtime/prelude/_weakref.py
 Ref i_sequence_concat(Obj, Args a);               // runtime/src/ops.cpp
 Ref i_sequence_check(Obj, Args a);
+Ref i_sequence_size(Obj, Args a);                 // PySequence_Size: a sequence's length, not a mapping's
 Ref i_tp_name(Obj, Args a);
 void forget_python_origin(ClassObject* c);
 void present_builtin_class(ClassObject* c);       // a class of builtins.py as CPython's static type: its __module__, __doc__, __dict__, __class_getitem__
@@ -958,6 +959,7 @@ void setitem(Obj obj, Obj key, Obj value);
 void delitem(Obj obj, Obj key);
 Ref iter(Obj obj);                                           // GET_ITER
 Ref for_next(Obj it);                                        // FOR_ITER: Unset at the end
+Ref sequence_tuple(Obj v);                                   // PySequence_Tuple, with its order of letting go when the iterator fails
 // PyIter_Next in a loop of the C's: the item before is let go of before the next is asked for, where a `v = for_next(it)` in
 // a loop's step would keep it across the call (review A35, RL-782's class)
 inline Ref next_after(Ref& before, Obj it) {

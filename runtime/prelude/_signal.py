@@ -225,6 +225,7 @@ def _sigset(signals: object) -> tuple[int, ...]:   # _Py_Sigset_Converter: the n
     out: list[int] = []
     for item in signals:  # type: ignore[attr-defined]
         number = _number_index(item)
+        del item                                 # Py_DECREF(item) once it is a C long (RL-831)
         if not -(2**63) <= number < 2**63:       # PyLong_AsLongAndOverflow: -1 and the overflow said
             number = -1
         if number <= 0 or number >= NSIG:

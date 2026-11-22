@@ -1,0 +1,61 @@
+import sys,typing,types,weakref,io,os,functools,operator
+r=sys.argv[1]
+class LenAdd:
+    def __len__(self):print("len");return 0
+    def __add__(self,r):print("add");return 7
+class Sequence(LenAdd):
+    def __getitem__(self,i):raise IndexError
+class E(StopIteration):
+    @property
+    def value(self):print("value hook");return -1
+class I:
+    def __init__(self):self.count=0
+    def __iter__(self):return self
+    def __next__(self):
+        self.count+=1
+        if self.count==1:return 1
+        raise E(14)
+    def send(self,v):raise E(15)
+    def throw(self,*a):raise E(16)
+def gen(out):
+    out.append((yield from I()))
+    yield "after"
+def run():
+    if r.startswith("subst"):
+        t=typing.TypeVar("T",default=int)
+        class A:__parameters__=(t,)
+        print(t.__typing_prepare_subst__(A(),LenAdd() if r=="subst-len" else Sequence()))
+    elif r.startswith("gen"):
+        out=[];g=gen(out);next(g)
+        if r=="gen-next":print(next(g))
+        elif r=="gen-send":print(g.send("a"))
+        else:print(g.throw(ValueError))
+        print(out);g.close()
+    elif r.startswith("raw"):
+        raw=io.FileIO(os.devnull,"rb")
+        b=io.BufferedReader(raw);t=io.TextIOWrapper(b)
+        try:
+            b.__init__(io.BytesIO(b"new"))
+            if r=="raw-closed":raw.close()
+            try: print(t.read())
+            except Exception as e:print(type(e).__name__)
+        finally:t.close();raw.close()
+    else:
+        class T:
+            def __hash__(self):print("hash");return 1
+            def __eq__(self,o):print("eq");return []
+            def __del__(self):print("drop")
+        a,b=T(),T();cb=lambda ref:print("cb")
+        p,q=weakref.ref(a,cb),weakref.ref(b,cb)
+        if r=="weak-hash":print(hash(p),hash(p));del a;print(hash(p))
+        elif r=="weak-proxy":
+            x,y=weakref.proxy(a),weakref.proxy(b)
+            print(x==y);del a
+            try:print(x==y)
+            except Exception as e:print(type(e).__name__)
+        elif r=="weak-dict":
+            w=weakref.WeakValueDictionary();w[1]=a;del a;print(len(w))
+        else:print(p==q);del b;print(p==q)
+try: run()
+except BaseException as e: print(type(e).__name__)
+print("end")

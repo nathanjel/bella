@@ -1,0 +1,22 @@
+import sys
+class T:
+    def __init__(self,n): self.n=n
+    def __del__(self):
+        if current: print("drop",self.n,"empty",current[0].value is None)
+        else: print("drop",self.n)
+current=[]
+def assign():
+    a,b=T("a"),T("b")
+    a,b=(),{}
+def run(r):
+    if r=="assign": assign()
+    elif r=="stop":
+        x=StopIteration(T("old"));current.append(x)
+        x.__init__(T("new"))
+        current.clear();del x
+    else:
+        e=SyntaxError("msg",tuple(T(k) for k in ("filename","lineno","offset","text","end_lineno","end_offset")))
+        e.args=()
+        del e
+run(sys.argv[1])
+print("end")

@@ -1,0 +1,73 @@
+import itertools as it, collections as co, functools as ft, operator as op, types, typing, sys, io, csv, weakref, contextvars, _thread
+class T:
+    def __init__(self,n): self.n=n
+    def __del__(self): print(self.n)
+    def __call__(self,*args,**kw): return T("result")
+    def __iter__(self): return self
+    def __next__(self): return T("item "+self.n)
+    def __lt__(self,b): return False
+    def write(self,s): pass
+def make(r):
+    a,b,c=T("a"),T("b"),T("c")
+    if r=="deque": return co.deque([a,b,c])
+    if r=="dqiter": return iter(co.deque([a,b,c]))
+    if r=="od": return co.OrderedDict([(a,b),(c,1)])
+    if r=="odview": return co.OrderedDict([(a,b),(c,1)]).items()
+    if r=="oditer": return iter(co.OrderedDict([(a,b),(c,1)]).items())
+    if r=="dd": return co.defaultdict(a, {b:c})
+    if r=="partial": return ft.partial(a,b,k=c)
+    if r=="cmp": return ft.cmp_to_key(a)(b)
+    if r=="method": return op.methodcaller("f",a,k=b)
+    if r=="item": return op.itemgetter(a,b,c)
+    if r=="tee": return it.tee(a)[0]
+    if r=="group": return it.groupby(a,b)
+    if r=="grouper": return next(it.groupby(a,b))[1]
+    if r=="chain": return it.chain(a,b,c)
+    if r=="cycle": return it.cycle(a)
+    if r=="acc": return it.accumulate(a,b,initial=c)
+    if r=="product": return it.product([a,b],[c])
+    if r=="batched": return it.batched(a,2)
+    if r=="pair": return it.pairwise(a)
+    if r=="long": return it.zip_longest(a,b,fillvalue=c)
+    if r=="slice": return it.islice(a,2)
+    if r=="compress": return it.compress(a,b)
+    if r=="star": return it.starmap(a,[(b,c)])
+    if r=="csvwrite": return csv.writer(a)
+    if r=="csvread": return csv.reader(a)
+    if r=="decoder": return io.IncrementalNewlineDecoder(a,True)
+    if r=="context": return contextvars.ContextVar("v",default=a)
+    if r=="weak": return weakref.ref(a,b)
+    if r=="proxy": return weakref.proxy(a,b)
+    if r=="local":
+        x=_thread._local()
+        x.a=a
+        x.b=b
+        return x
+    if r=="ns": return types.SimpleNamespace(a=a,b=b,c=c)
+    if r=="alias": return types.GenericAlias(a,(b,c))
+    if r=="var": return typing.TypeVar("T",bound=a,default=b)
+    if r=="params": return typing.ParamSpec("P",bound=a,default=b)
+    if r=="vartuple": return typing.TypeVarTuple("Ts",default=a)
+    if r=="property": return property(a,b,c)
+    if r=="static": return staticmethod(a)
+    if r=="class": return classmethod(a)
+    if r=="map": return map(a,b,c)
+    if r=="filter": return filter(a,b)
+    if r=="zip": return zip(a,b,c)
+    if r=="enum": return enumerate(a)
+    if r=="reverse": return reversed([a,b,c])
+    if r.startswith("cache"):
+        f=ft.lru_cache(maxsize=2)(a)
+        f(b)
+        f(c)
+        if r=="cacheclear": f.cache_clear()
+        return f
+def run():
+    r=sys.argv[1]
+    x=make(r)
+    if r in ("tee","group","chain","cycle","acc","product","batched","pair","long","slice","compress","star","map","filter","zip","enum","reverse","dqiter","oditer"): next(x)
+    print("release")
+    del x
+try: run()
+except BaseException as e: print(type(e).__name__)
+print("end")

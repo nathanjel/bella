@@ -102,13 +102,27 @@ def _check_key(key: object) -> ContextVar:       # context_check_key_type
     return key
 
 
+class _Vars(dict):  # type: ignore[type-arg]
+    """A context's mapping. CPython's is a HAMT, whose node lets go of an entry's value before its key
+    (hamt_node_bitmap_dealloc walks its array from the end); a dict lets go of the key first, so this one empties itself
+    when it goes (review A36, RL-811). It is the prelude's own object: no program has it in hand."""
+
+    __slots__ = ()
+
+    def __del__(self) -> None:
+        while dict.__len__(self):
+            key, value = dict.popitem(self)
+            del value
+            del key
+
+
 class Context:
     __slots__ = ("_entered", "_prev", "_vars", "__weakref__")
 
     def __new__(cls, *args: object, **kwds: object) -> Context:   # context_tp_new
         if args or kwds:
             raise TypeError("Context() does not accept any arguments")
-        return _context_from_vars({})
+        return _context_from_vars(_Vars())
 
     def __getitem__(self, key: object) -> object:
         var = _check_key(key)
@@ -231,7 +245,7 @@ _current: Context | None = None                  # the thread state's context, m
 def _get() -> Context:                           # context_get
     global _current
     if _current is None:
-        _current = _context_from_vars({})
+        _current = _context_from_vars(_Vars())
     return _current
 
 
@@ -356,7 +370,7 @@ The variable is reset to the value it had before the
 
 def _assoc(var: ContextVar, value: object) -> None:   # contextvar_set: a new mapping with the pair
     ctx = _get()
-    new_vars = dict(ctx._vars)
+    new_vars = _Vars(ctx._vars)
     new_vars[var] = value
     ctx._vars = new_vars
 
@@ -373,7 +387,7 @@ def _reset(var: ContextVar, token: Token) -> None:   # PyContextVar_Reset
     if token._old is _ABSENT:                    # contextvar_del
         if var not in ctx._vars:
             raise LookupError(var)
-        new_vars = dict(ctx._vars)
+        new_vars = _Vars(ctx._vars)
         del new_vars[var]
         ctx._vars = new_vars
     else:

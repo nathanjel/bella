@@ -1,0 +1,436 @@
+import sys
+
+def example01():
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    class I:
+        def __init__(self): self.n = 0
+        def __iter__(self): return self
+        def __next__(self):
+            self.n += 1
+            print("next", self.n)
+            if self.n > 2: raise StopIteration
+            return T(self.n)
+        def __del__(self): print("iterator")
+    class S:
+        def __iter__(self): return I()
+    try: a, b, c = S()
+    except ValueError: pass
+    print("end")
+
+def example02():
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    def source():
+        yield T(1)
+        yield T(2)
+        raise LookupError
+    try: tuple(source())
+    except LookupError: pass
+    print("end")
+
+def example03():
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    def one(n): yield T(n)
+    next(map(lambda a, b: None, one("a"), one("b")))
+    print("end")
+
+def example04():
+    import io
+    w = io.TextIOWrapper(io.BytesIO())
+    try: w.__init__(io.BytesIO(), newline="bad")
+    except ValueError: pass
+    try: print(w.readable())
+    except Exception as e: print(type(e).__name__)
+    del w
+    print("end")
+
+def example05():
+    import collections
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    class I:
+        def __init__(self): self.n = 0
+        def __iter__(self): return self
+        def __next__(self):
+            self.n += 1
+            print("next", self.n)
+            if self.n > 2: raise StopIteration
+            return T(self.n)
+        def __del__(self): print("iterator")
+    class S:
+        def __iter__(self): return I()
+    class D(collections.OrderedDict):
+        def __setitem__(self, k, v): pass
+    D.fromkeys(S())
+    print("end")
+
+def example06():
+    keys = ["a", "b"]
+    class M:
+        def keys(self): return keys
+        def __getitem__(self, k): keys.clear(); return 1
+    print(dict(M()))
+    print("end")
+
+def example07():
+    import typing
+    t = typing.TypeVar("T")
+    class P(tuple):
+        def index(self, x): raise RuntimeError
+    class A: __parameters__ = P((t,))
+    try: print(t.__typing_prepare_subst__(A(), (1,)))
+    except Exception as e: print(type(e).__name__)
+    print("end")
+
+def example08():
+    class C: pass
+    C.__new__ = staticmethod(lambda cls: object.__new__(cls))
+    del C.__new__
+    try: print(object.__init__(C(), 1))
+    except Exception as e: print(type(e).__name__)
+    print("end")
+
+def example09():
+    import contextvars
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    c = contextvars.Context()
+    c.run(contextvars.ContextVar("v", default=T("default")).set, T("value"))
+    del c
+    print("end")
+
+def example10():
+    import itertools, sys
+    class I:
+        def __iter__(self): return self
+        def __next__(self): return 1
+        def __del__(self): print(type(sys.exception()).__name__)
+    try: raise KeyError
+    except KeyError: next(itertools.islice(I(), 0), None)
+    print("end")
+
+def example11():
+    import itertools, sys
+    class I:
+        def __iter__(self): return self
+        def __next__(self): return X()
+        def __del__(self): print("iterator", type(sys.exception()).__name__)
+    class X:
+        def __del__(self): print("item")
+    class S:
+        def __iter__(self): return I()
+    try: next(itertools.chain.from_iterable(S()))
+    except TypeError: pass
+    print("end")
+
+def example12():
+    import typing
+    t = typing.TypeVar("T")
+    class A: __parameters__ = (t,)
+    try: print(t.__typing_prepare_subst__(A(), {1:2}))
+    except Exception as e: print(type(e).__name__)
+    print("end")
+
+def example13():
+    class I:
+        def __iter__(self): print("iter"); return self
+        def __next__(self): raise StopIteration
+    class S:
+        def __iter__(self): return I()
+    a, *b = [0]
+    try: a, *b = S()
+    except ValueError: pass
+    *b, = S()
+    print("end")
+
+def example14():
+    import os
+    class N(int):
+        def __del__(self): print("drop", int(self))
+    def source():
+        yield N(1)
+        print("next")
+        raise LookupError
+    try: os.sched_setaffinity(0, source())
+    except LookupError: pass
+    print("end")
+
+def example15():
+    class I:
+        def __init__(self): self.i=0
+        def __iter__(self): print("iter"); return self
+        def __next__(self):
+            self.i += 1
+            if self.i > 2: raise StopIteration
+            return self.i
+    class Pair:
+        def __iter__(self): return I()
+    print(dict([Pair()]))
+    print("end")
+
+def example16():
+    import collections
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    def source():
+        yield T(1)
+        yield T(2)
+        raise LookupError
+    class P:
+        def __iter__(self): return source()
+        def __del__(self): print("pair")
+    def rows(): yield P()
+    try: collections.OrderedDict(rows())
+    except LookupError: pass
+    print("end")
+
+def example17():
+    import codecs, io
+    class Dec(codecs.IncrementalDecoder):
+        def __del__(self): print("decoder")
+    class Enc(codecs.IncrementalEncoder):
+        def __del__(self): print("encoder")
+    def search(name):
+        return codecs.CodecInfo(name="a36", encode=None, decode=None,
+                                incrementalencoder=Enc, incrementaldecoder=Dec)
+    codecs.register(search)
+    w = io.TextIOWrapper(io.BytesIO(), encoding="a36")
+    del w
+    codecs.unregister(search)
+    print("end")
+
+def example18():
+    import ast
+    class A(ast.AST): _fields = {}
+    try: A(); print("ok")
+    except Exception as e: print(type(e).__name__)
+    print("end")
+
+def example19():
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    def source():
+        yield T(1)
+        yield T(2)
+        raise LookupError
+    e = ValueError()
+    try: e.args = source()
+    except LookupError: pass
+    del e
+    print("end")
+
+def example20():
+    class M(type):
+        def mro(cls):
+            yield 1
+            raise LookupError
+    try:
+        class C(metaclass=M): pass
+    except Exception as e: print(type(e).__name__)
+    print("end")
+
+def example21():
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    def source():
+        yield T(1)
+        yield T(2)
+        raise LookupError
+    try:
+        class C: __slots__ = source()
+    except LookupError: pass
+    print("end")
+
+def example22():
+    import io
+    w = io.TextIOWrapper(io.BytesIO())
+    try: w.__init__(io.BytesIO(), errors=0)
+    except TypeError: print(w.closed)
+    del w
+    print("end")
+
+def example23():
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    a, b = T("a"), T("b")
+    a, b = (), {}
+    print("end")
+
+def example24():
+    owner = []
+    class T:
+        def __del__(self): print(owner[0].value is None)
+    e = StopIteration(T())
+    owner.append(e)
+    e.__init__(1)
+    owner.clear()
+    del e
+    print("end")
+
+def example25():
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    e = SyntaxError("msg", (0, 0, 0, T("text"), T("end line"), T("end offset")))
+    e.args = ()
+    del e
+    print("end")
+
+def example26():
+    import functools, operator
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    class I:
+        def __init__(self): self.n = 0
+        def __iter__(self): return self
+        def __next__(self):
+            self.n += 1
+            print("next", self.n)
+            if self.n > 2: raise StopIteration
+            return T(self.n)
+        def __del__(self): print("iterator")
+    class S:
+        def __iter__(self): return I()
+    try: functools.reduce(operator.add, S())
+    except TypeError: pass
+    print("end")
+
+def example27():
+    import io
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    class I:
+        def __init__(self): self.n = 0
+        def __iter__(self): return self
+        def __next__(self):
+            self.n += 1
+            print("next", self.n)
+            if self.n > 2: raise StopIteration
+            return T(self.n)
+        def __del__(self): print("iterator")
+    class S:
+        def __iter__(self): return I()
+    try: io.BytesIO().writelines(S())
+    except TypeError: pass
+    print("end")
+
+def example28():
+    import csv
+    class S(str):
+        def __del__(self): print("drop")
+    def lines():
+        yield S('"x')
+        print("next")
+        yield 'y"'
+    print(next(csv.reader(lines())))
+    print("end")
+
+def example29():
+    import signal
+    class N(int):
+        def __del__(self): print("drop", int(self))
+    def source():
+        yield N(1)
+        print("next")
+        raise LookupError
+    try: signal.pthread_sigmask(signal.SIG_BLOCK, source())
+    except LookupError: pass
+    print("end")
+
+def example30():
+    import io, os
+    class Path:
+        def __fspath__(self): return os.devnull
+        def __del__(self): print("drop path")
+    w = io.TextIOWrapper(io.BufferedReader(io.FileIO(Path())))
+    w.detach()
+    print("release")
+    del w
+    print("end")
+
+def example31():
+    import csv
+    class M:
+        def __new__(cls): return 17
+    class C(type(csv.reader([])), M): pass
+    try: print(C())
+    except Exception as e: print(type(e).__name__)
+    print("end")
+
+def example32():
+    class E(OSError):
+        def __init__(self, *a): super().__init__(*a)
+    e = E(5, "old")
+    e.__init__()
+    print(e.errno, e.strerror)
+    print("end")
+
+def example33():
+    import json
+    state = []
+    class T:
+        def __del__(self): state.extend([8, 9])
+    def default(obj): state.clear(); return 1
+    state.append(T())
+    print(json.dumps(state, default=default))
+    print("end")
+
+def example34():
+    class Name(str):
+        def __lt__(self, other): raise ArithmeticError
+    class C: pass
+    C.__abstractmethods__ = [Name("b"), Name("a")]
+    try: C()
+    except Exception as e: print(type(e).__name__)
+    del C.__abstractmethods__
+    print("end")
+
+def example35():
+    import collections
+    class T:
+        def __init__(self, n): self.n = n
+        def __del__(self): print("drop", self.n)
+    class D(collections.deque):
+        def __iter__(self):
+            yield T(self.tag)
+            print("next", self.tag)
+    T.__eq__ = lambda self, other: True
+    a, b = D(), D()
+    a.tag, b.tag = "a", "b"
+    print(a == b)
+    print("end")
+
+def example36():
+    import collections
+    class T:
+        def __eq__(self, other): return False
+        def __ne__(self, other): print("ne"); return False
+    print(collections.deque([T()]) != collections.deque([T()]))
+    print("end")
+
+def example37():
+    import typing
+    t = typing.TypeVar("T", default=int)
+    class A: __parameters__ = (t,)
+    class Args:
+        def __len__(self): return 0
+        def __add__(self, x): return 7
+    try: print(t.__typing_prepare_subst__(A(), Args()))
+    except Exception as e: print(type(e).__name__)
+    print("end")
+
+examples = (example01, example02, example03, example04, example05, example06, example07, example08, example09, example10, example11, example12, example13, example14, example15, example16, example17, example18, example19, example20, example21, example22, example23, example24, example25, example26, example27, example28, example29, example30, example31, example32, example33, example34, example35, example36, example37,)
+examples[int(sys.argv[1])-1]()

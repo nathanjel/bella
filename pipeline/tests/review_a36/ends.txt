@@ -1,0 +1,43 @@
+import sys,itertools as it,functools as ft
+r=sys.argv[1]
+class T:
+    def __init__(self,n):self.n=n
+    def __del__(self):print("drop",self.n,type(sys.exc_info()[1]).__name__)
+class I:
+    def __init__(self,n,label):self.n=n;self.label=label
+    def __iter__(self):return self
+    def __next__(self):
+        print("next",self.label,self.n)
+        if not self.n:raise StopIteration
+        self.n-=1
+        return T(self.label+str(self.n))
+    def __del__(self):print("iterator",self.label,type(sys.exc_info()[1]).__name__)
+class S:
+    def __init__(self,n,label):self.n=n;self.label=label
+    def __iter__(self):return I(self.n,self.label)
+def run():
+    if r.startswith("slice"):
+        f=it.islice(S(3,"i"),0 if r=="slice-zero" else 1)
+        print(next(f,None) is None)
+        print(next(f,None) is None)
+    elif r.startswith("zip") or r.startswith("map"):
+        args=(S(2,"a"),S(2,"b"),S(1,"c"))
+        f=zip(*args,strict=True) if r.startswith("zip") else map(lambda *x:x,*args,strict=True)
+        if r.endswith("held"):held=next(f)
+        else:next(f)
+        try:next(f)
+        except ValueError:print("short")
+    elif r.startswith("cache"):
+        cache=ft.lru_cache(maxsize=3 if r!="cache-inf" else None)(lambda n:T(str(n)))
+        for n in (1,2,3,1,4,2):cache(n)
+        if r!="cache-del":cache.cache_clear()
+        print("release")
+        del cache
+    elif r=="next":
+        x=next(iter(S(1,"i")));print("obtained");del x
+    elif r=="calliter":
+        def f():return T("x")
+        call=iter(f,None);next(call);del call
+try:raise ArithmeticError
+except ArithmeticError:run()
+print("end")

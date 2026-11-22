@@ -1,0 +1,20 @@
+import json,sys
+r=sys.argv[1]
+class T:
+    def __del__(self):
+        print("drop")
+        if r=="list":state.extend([8,9])
+        elif r=="dict":state["added"]=9
+        else:state.extend([("skip",8),("added",9)])
+def default(obj):
+    state.clear()
+    print("default")
+    return 1
+class D(dict):
+    def items(self):return state
+if r=="dict":state={"orig":T()}; container=state
+elif r=="list":state=[T()];container=state
+else:state=[("orig",T())];container=D(seed=1)
+print(json.dumps(container,default=default))
+del container,state
+print("end")

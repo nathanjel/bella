@@ -1,0 +1,61 @@
+import sys,collections,itertools as it,functools,operator,math,csv,io
+r=sys.argv[1]
+class T:
+    def __init__(self,n):self.n=n
+    def __del__(self):print("drop",self.n,type(sys.exception()).__name__)
+    def __hash__(self):
+        if self.n==3:raise LookupError
+        return self.n
+    def __index__(self): return self.n if self.n!=3 else 300
+    def __lt__(self,o):return self.n<o.n
+    def __eq__(self,o):return self.n==2
+    def __bool__(self):return self.n==2
+    def __str__(self):
+        if self.n==3:raise LookupError
+        return "a"
+    def __float__(self):return 1.0
+class I:
+    def __iter__(self):return self
+    def __init__(self):self.n=0
+    def __next__(self):
+        self.n+=1;print("next",self.n)
+        if self.n>3:raise StopIteration
+        return T(self.n)
+    def __del__(self):print("iterator",type(sys.exception()).__name__)
+class S:
+    def __iter__(self):return I()
+def key(t):
+    if t.n==3:raise LookupError
+    return T(10+t.n)
+def run():
+    s=S()
+    if r=="min":min(s,key=key)
+    elif r=="max":max(s,key=key)
+    elif r=="sorted":sorted(s,key=key)
+    elif r=="set":set(s)
+    elif r=="dict":dict.fromkeys(s)
+    elif r=="od":collections.OrderedDict.fromkeys(s)
+    elif r=="bytes": bytes(s)
+    elif r=="bytearray":bytearray(s)
+    elif r=="frozen":frozenset(s)
+    elif r=="reduce":functools.reduce(operator.add,s)
+    elif r=="sum":sum(s)
+    elif r=="any":any(s)
+    elif r=="all":all(s)
+    elif r=="found":1 in s
+    elif r=="index":operator.indexOf(s,1)
+    elif r=="take":next(it.takewhile(bool,s))
+    elif r=="writelines":io.BytesIO().writelines(s)
+    elif r=="writerow":csv.writer(io.StringIO()).writerow(s)
+    elif r=="compress":next(it.compress(s,[]))
+    elif r=="isdisjoint":{2}.isdisjoint(s)
+    elif r=="intersection":{2}.intersection(s)
+    elif r=="subset":{2}.issubset(s)
+    elif r=="superset":{1}.issuperset(s)
+    elif r=="union":{0}.union(s)
+    elif r=="diff":{0}.difference(s)
+try:raise ArithmeticError
+except ArithmeticError:
+    try:run()
+    except Exception as e:print(type(e).__name__)
+print("end")

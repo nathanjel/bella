@@ -27,6 +27,7 @@ try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: a type's __new__ makes its instance
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
+    _raise_as_is                                 # noqa: B018  # a pending error sent on as it is, after work done with no handler open
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
 except NameError:
     from collections.abc import Callable
@@ -41,6 +42,7 @@ except NameError:
     _tuple_set: Callable[..., None] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
     _has_slot: Callable[..., bool] = _missing
+    _raise_as_is: Callable[..., None] = _missing
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
@@ -219,14 +221,17 @@ class pairwise:
         if it is None:
             raise StopIteration
         old = self._old
+        failed: BaseException | None = None      # the C clears its fields with the error pending: no handler is open (RL-812)
         if old is _ABSENT:
             try:
                 old = next(it)
-            except BaseException:
+            except BaseException as e:
+                failed = e
+            if failed is not None:
                 self._old = _ABSENT
                 self._it = None
                 del it
-                raise
+                _raise_as_is(failed)
             self._old = old
             it = self._it
             if it is None:                       # the iterator re-entered this one, and it ended
@@ -234,11 +239,13 @@ class pairwise:
                 raise StopIteration
         try:
             new = next(it)
-        except BaseException:
+        except BaseException as e:
+            failed = e
+        if failed is not None:
             self._it = None
             self._old = _ABSENT
             del it, old
-            raise
+            _raise_as_is(failed)
         if _held_once(self, "_result"):
             result = self._result
             _tuple_set(result, 0, old)
@@ -695,16 +702,24 @@ class islice:
         if self._it is None:
             raise StopIteration
         stop = self._stop
+        failed: BaseException | None = None
+        ended = False
+        item: object = None
         try:
             while self._cnt < self._next:
                 next(self._it)
                 self._cnt += 1
             if stop != -1 and self._cnt >= stop:
-                raise StopIteration
-            item = next(self._it)
-        except BaseException:
-            self._it = None                      # empty: the iterator goes, whatever ended it
-            raise
+                ended = True
+            else:
+                item = next(self._it)
+        except BaseException as e:
+            failed = e
+        if failed is not None or ended:
+            self._it = None                      # empty: the iterator goes, whatever ended it, and with no handler open (RL-812)
+            if failed is not None:
+                _raise_as_is(failed)
+            raise StopIteration
         self._cnt += 1
         following = self._next + self._step      # on overflow the C's next is smaller than the old one
         self._next = stop if following > _SSIZE_MAX or (stop != -1 and following > stop) else following
@@ -733,22 +748,27 @@ class chain:
     def __next__(self) -> object:
         while self._source is not None:
             if self._active is None:
+                failed: BaseException | None = None
+                iterable: object = _ABSENT
                 try:
                     iterable = next(self._source)
                 except StopIteration:
-                    iterable = _ABSENT
-                except BaseException:
-                    self._source = None
-                    raise
-                if iterable is _ABSENT:
-                    self._source = None          # no more input sources
+                    pass
+                except BaseException as e:
+                    failed = e
+                if failed is not None or iterable is _ABSENT:
+                    self._source = None          # no more input sources, or the source raised: cleared with no handler open
+                    if failed is not None:
+                        _raise_as_is(failed)
                     break
                 try:
                     self._active = iter(iterable)  # type: ignore[call-overload]
-                except BaseException:
+                except BaseException as e:
+                    failed = e
+                del iterable                     # Py_DECREF(iterable) first, then the source with the error pending (RL-813)
+                if failed is not None:
                     self._source = None          # input not iterable
-                    raise
-                del iterable
+                    _raise_as_is(failed)
             try:
                 return next(self._active)
             except StopIteration:

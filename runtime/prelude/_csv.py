@@ -312,6 +312,7 @@ in CSV format.
             self._line_num += 1
             for c in str.__str__(line):  # type: ignore[arg-type]  # the text itself: a subclass's __iter__ is not consulted
                 _parse_process_char(self, c)
+            del line                             # Py_DECREF(lineobj) before the next line is asked for (RL-830)
             _parse_process_char(self, _EOL)
             if self._state == _START_RECORD:
                 break

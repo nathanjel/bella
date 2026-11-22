@@ -1,0 +1,14 @@
+import sys,io
+r=sys.argv[1]
+base={"object":object,"objectalias":object,"list":list,"reader":io.BufferedReader,"writer":io.BufferedWriter,"random":io.BufferedRandom,"text":io.TextIOWrapper}[r]
+class Sub(base): pass
+if r=="objectalias": Sub.__new__=object.__new__
+else:
+    Sub.__new__=staticmethod(lambda cls,*a,**kw: base.__new__(cls,*a,**kw))
+    del Sub.__new__
+try:
+    if base is object: print(object.__init__(Sub(),1))
+    elif base is list: print(type(Sub(k=1)).__name__)
+    else: Sub(1)
+except BaseException as e: print(type(e).__name__)
+print("end")

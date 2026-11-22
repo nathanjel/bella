@@ -1,0 +1,28 @@
+import codecs,io,sys
+class Dec(codecs.IncrementalDecoder):
+    def decode(self,input,final=False): return ""
+    def __del__(self):print("drop decoder")
+class Enc(codecs.IncrementalEncoder):
+    def encode(self,input,final=False):return b""
+    def __del__(self):print("drop encoder")
+def search(name):
+    if name=="a36":return codecs.CodecInfo(name="a36",encode=None,decode=None,incrementaldecoder=Dec,incrementalencoder=Enc)
+class R(io.BytesIO):
+    def __del__(self):print("drop",self.name)
+def raw(n):
+    x=R();x.name=n;return x
+def run(r):
+    codecs.register(search)
+    x=io.TextIOWrapper(raw("old"),encoding="a36")
+    if r=="again":x.__init__(raw("new"),encoding="utf-8")
+    elif r=="fail":
+        try:x.__init__(object(),encoding="utf-8")
+        except Exception as e:print(type(e).__name__)
+    elif r=="detach": x.detach()
+    elif r=="close":x.close()
+    print("release")
+    del x
+    codecs.unregister(search)
+try:run(sys.argv[1])
+except Exception as e:print(type(e).__name__)
+print("end")

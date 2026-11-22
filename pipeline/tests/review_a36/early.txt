@@ -1,0 +1,49 @@
+import sys, itertools, functools, collections, operator
+row=sys.argv[1]
+class X:
+    def __init__(self,n): self.n=n
+    def __del__(self): print("drop", self.n, type(sys.exception()).__name__)
+    def __bool__(self): raise LookupError
+    def __hash__(self): raise LookupError
+    def __eq__(self,o): raise LookupError
+class I:
+    def __init__(self): self.i=0
+    def __iter__(self): return self
+    def __next__(self):
+        self.i+=1
+        print("next",self.i)
+        if self.i>3:
+            if row.endswith("err"): raise LookupError
+            raise StopIteration
+        return X(self.i)
+    def __del__(self): print("iterator",type(sys.exception()).__name__)
+class S:
+    def __iter__(self): return I()
+def bad(*a): raise LookupError
+def run():
+    s=S()
+    if row=="many": a,b=s
+    elif row.startswith("few"): a,b,c,d=s
+    elif row=="any": any(s)
+    elif row=="in": 1 in s
+    elif row=="index": operator.indexOf(s,1)
+    elif row=="min": min(s,key=bad)
+    elif row=="reduce": functools.reduce(bad,s)
+    elif row=="set": set(s)
+    elif row=="dict": dict.fromkeys(s)
+    elif row=="zip": next(zip(s,[]))
+    elif row=="map": next(map(bad,s,[]))
+    elif row=="take": next(itertools.takewhile(bad,s))
+    elif row=="compress": next(itertools.compress(s,[]))
+    elif row=="filter": next(filter(bad,s))
+    elif row=="list-err": list(s)
+    elif row=="tuple-err": tuple(s)
+    elif row=="batch-err": next(itertools.batched(s,4))
+    elif row=="product-err": itertools.product(s)
+    elif row=="deque-err": collections.deque(s)
+try:
+    raise ArithmeticError
+except ArithmeticError:
+    try: run()
+    except BaseException as e: print(type(e).__name__)
+print("end")

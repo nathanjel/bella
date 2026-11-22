@@ -1,0 +1,54 @@
+import typing,sys,collections,functools,types,operator,ast
+class X:
+    def __init__(self,n): self.n=n
+    def __del__(self): print("drop",self.n)
+    def __hash__(self): print("hash",self.n); return 1
+    def __eq__(self,o): print("eq",self.n); return True
+class I:
+    def __init__(self): self.i=0
+    def __iter__(self): return self
+    def __next__(self):
+        self.i+=1
+        print("next",self.i)
+        if self.i>2: raise StopIteration
+        return X(self.i)
+    def __del__(self):print("iterator")
+class S:
+    def __iter__(self): return I()
+class D(collections.OrderedDict):
+    def __setitem__(self,k,v): print("set")
+class P(tuple):
+    def index(self,x): print("index"); raise RuntimeError
+    def __iter__(self): print("iter"); return tuple.__iter__(self)
+    def __len__(self): print("len"); return tuple.__len__(self)
+class A: pass
+class M(type):
+    def __eq__(self,o): print("meta-eq"); return False
+    def __hash__(self): print("meta-hash"); return 4
+class E(Exception,metaclass=M): pass
+def run(r):
+    if r=="od": D.fromkeys(S())
+    elif r.startswith("typevar"):
+        t=typing.TypeVar("T",default=int)
+        a=A()
+        a.__parameters__=P((t,)) if r=="typevar-index" else (t,)
+        args={} if r=="typevar-dict" else (1,)
+        print(t.__typing_prepare_subst__(a,args))
+    elif r=="except":
+        try: raise E
+        except P((E,)): print("caught")
+    elif r=="split": print(ExceptionGroup("m",[E()]).split(P((E,)))[0] is None)
+    elif r=="alias": print(types.GenericAlias(list,P((E,)))==list[E])
+    elif r=="union": print((E|int)==(int|E))
+    elif r.startswith("cache"):
+        @functools.lru_cache(maxsize=int(r.split("-")[1]),typed=r.endswith("typed"))
+        def f(x=None): return 1
+        f(x=X(1)); f(x=X(2)); f.cache_clear()
+    elif r=="keys":
+        class Mapping:
+            def keys(self): return S()
+            def __getitem__(self,k): print("get"); return 1
+        {}.update(Mapping())
+try: run(sys.argv[1])
+except BaseException as e: print(type(e).__name__)
+print("end")

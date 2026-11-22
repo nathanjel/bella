@@ -549,15 +549,23 @@ class _IOBase:
         lines = _one("_IOBase.writelines", args, kwds)
         self = args[0]
         _check_closed(self)
+        failed: BaseException | None = None      # a write that fails: the line goes, then the iterator, the error pending (RL-829)
         for line in _tp_iter(lines):
-            while True:                          # "do { res = write(line); } while (res == NULL && _PyIO_trap_eintr());" (RL-656)
-                try:
-                    self.write(line)  # type: ignore[attr-defined]
-                    break
-                except OSError as e:
-                    if not _trap_eintr(e):
-                        raise
+            try:
+                while True:                      # "do { res = write(line); } while (res == NULL && _PyIO_trap_eintr());" (RL-656)
+                    try:
+                        self.write(line)  # type: ignore[attr-defined]
+                        break
+                    except OSError as e:
+                        if not _trap_eintr(e):
+                            raise
+            except BaseException as e:
+                failed = e
             del line                             # Py_DECREF(line) before the next tp_iternext (RL-782)
+            if failed is not None:
+                break
+        if failed is not None:
+            _raise_as_is(failed)
 
 
 # ---- _RawIOBase ----
@@ -2416,9 +2424,17 @@ class BytesIO(_BufferedIOBase):
         lines = _one("BytesIO.writelines", args, kwds)
         self: BytesIO = args[0]  # type: ignore[assignment]
         _bio_check_closed(self)
+        failed: BaseException | None = None      # a line that is refused: the item goes, then the iterator (RL-829)
         for item in _tp_iter(lines):
-            _bio_write_bytes(self, _buffer(item))
+            try:
+                _bio_write_bytes(self, _buffer(item))
+            except BaseException as e:
+                failed = e
             del item                             # Py_DECREF(item) before the next tp_iternext (RL-782)
+            if failed is not None:
+                break
+        if failed is not None:
+            _raise_as_is(failed)
 
     def close(*args: object, **kwds: object) -> None:  # noqa: N805
         _noargs("BytesIO.close", args, kwds)
@@ -2692,10 +2708,26 @@ def _tw_check_attached(self: TextIOWrapper) -> None:   # CHECK_ATTACHED
 
 def _tw_check_closed(self: TextIOWrapper) -> None:   # CHECK_CLOSED
     if type(self) is TextIOWrapper:
-        if getattr(self._c_buffer, "closed"):  # noqa: B009
+        if self._ta_raw is not None:             # _PyFileIO_closed(self->raw): the cached FileIO's descriptor (RL-832)
+            closed = self._ta_raw._a_fd < 0
+        else:
+            closed = self.closed
+        if closed:
             raise ValueError("I/O operation on closed file.")
     else:
         _check_closed(self)
+
+
+def _tw_buffer(self: TextIOWrapper) -> object:   # buffer_access_safe
+    """The buffer wherever there is one, whatever `ok` says: the C hands it out "during construction and finalization
+    where self->ok == 0", so an object whose __init__ failed after the buffer was stored, or before the old one was
+    cleared, still delegates (review A36, RL-806)."""
+    buffer = self._c_buffer
+    if buffer is _ABSENT:                        # NULL; a buffer that is None is a buffer (`t.__init__(None)` stores it and fails)
+        if not self._a_ok:
+            raise ValueError("I/O operation on uninitialized object")
+        raise ValueError("underlying buffer has been detached")
+    return buffer
 
 
 def _tw_validate_newline(newline: object) -> None:
@@ -3021,16 +3053,19 @@ def _tw_encoder_reset(self: TextIOWrapper, start_of_stream: bool) -> None:   # _
 
 
 class TextIOWrapper(_TextIOBase):
-    __slots__ = ("_a_ok", "_b_detached", "_c_buffer", "_d_encoding", "_e_chunk_size", "_f_telling", "_g_has_read1", "_h_decoder", "_i_encoder",
-                 "_j_decoded_chars", "_k_decoded_chars_used", "_l_b2cratio", "_m_snapshot", "_n_pending", "_o_pending_count", "_p_readtranslate",
-                 "_q_readuniversal", "_r_readnl", "_s_encoding_start_of_stream", "_t_errors", "_u_seekable", "_v_line_buffering", "_w_write_through",
-                 "_x_writetranslate", "_y_writenl", "_z_in_repr", "_zz_encodefunc", "_finalizing")
+    # in textiowrapper_clear's order, which is the order an object lets go of them: the buffer, the encoding, the encoder, the
+    # decoder, readnl, the decoded characters, the pending bytes, the snapshot, errors, the cached raw stream (RL-819)
+    __slots__ = ("_a_ok", "_b_detached", "_c_buffer", "_d_encoding", "_e_chunk_size", "_f_telling", "_g_has_read1", "_i_encoder", "_h_decoder",
+                 "_r_readnl", "_j_decoded_chars", "_k_decoded_chars_used", "_l_b2cratio", "_n_pending", "_o_pending_count", "_m_snapshot",
+                 "_p_readtranslate", "_q_readuniversal", "_s_encoding_start_of_stream", "_t_errors", "_ta_raw", "_u_seekable", "_v_line_buffering",
+                 "_w_write_through", "_x_writetranslate", "_y_writenl", "_z_in_repr", "_zz_encodefunc", "_finalizing")
     __boolean__ = ("_finalizing",)               # a Py_T_BOOL member
 
     def __alloc__(self) -> None:                 # the struct as tp_alloc leaves it: the type has no __new__ of its own
         self._a_ok = False
         self._b_detached = False
-        self._c_buffer = None
+        self._c_buffer = _ABSENT
+        self._ta_raw = None
         self._d_encoding = None
         self._e_chunk_size = 8192
         self._f_telling = False
@@ -3067,12 +3102,6 @@ class TextIOWrapper(_TextIOBase):
             raise TypeError("TextIOWrapper() argument 'encoding' must be str or None, not " + _tp_name(encoding))
         else:
             encoding = _c_string(encoding, "TextIOWrapper() argument 'encoding'")
-        if errors is _ABSENT or errors is None:
-            errors = "strict"
-        elif not issubclass(type(errors), str):
-            raise TypeError("TextIOWrapper() argument 'errors' must be str or None, not " + _tp_name(errors)[:50])
-        else:
-            _c_string(errors, "TextIOWrapper() argument 'errors'")   # checked as a C string; the object is kept as it was given
         if newline is _ABSENT or newline is None:
             newline = None
         elif not issubclass(type(newline), str):
@@ -3083,21 +3112,30 @@ class TextIOWrapper(_TextIOBase):
         write_through = write_through is not _ABSENT and (True if write_through else False)
         self._a_ok = False
         self._b_detached = False
+        # `errors` is checked by the function itself, after it has said the object is not initialised: the clinic converts
+        # the other arguments before (RL-824)
+        if errors is _ABSENT or errors is None:
+            errors = "strict"
+        elif not issubclass(type(errors), str):
+            raise TypeError("TextIOWrapper() argument 'errors' must be str or None, not " + _tp_name(errors)[:50])
+        else:
+            _c_string(errors, "TextIOWrapper() argument 'errors'")   # checked as a C string; the object is kept as it was given
         _tw_validate_newline(newline)
-        # the C clears what an earlier __init__ left: buffer, encoding, encoder, decoder, readnl, decoded chars, pending bytes, snapshot,
-        # errors, the counts and the ratio (A13 #3)
-        self._c_buffer = None
+        # the C clears what an earlier __init__ left, in this order: buffer, encoding, encoder, decoder, readnl, decoded chars,
+        # pending bytes, snapshot, errors, the cached raw stream; then the counts and the ratio (A13 #3, RL-819)
+        self._c_buffer = _ABSENT
         self._d_encoding = None
-        self._h_decoder = None
         self._i_encoder = None
-        self._zz_encodefunc = None
+        self._h_decoder = None
         self._r_readnl = None
         self._j_decoded_chars = None
-        self._k_decoded_chars_used = 0
         self._n_pending = None
-        self._o_pending_count = 0
         self._m_snapshot = None
         self._t_errors = None
+        self._ta_raw = None
+        self._k_decoded_chars_used = 0
+        self._o_pending_count = 0
+        self._zz_encodefunc = None
         self._l_b2cratio = 0.0
         if encoding is None:
             encoding = "utf-8"                   # _Py_GetLocaleEncoding in UTF-8 mode (D-15)
@@ -3118,6 +3156,14 @@ class TextIOWrapper(_TextIOBase):
         if buffer.writable():  # type: ignore[attr-defined]
             self._i_encoder = codec_info.incrementalencoder(errors)
             self._zz_encodefunc = _tw_encodefunc(codec_info)
+        # "Cache the raw FileIO object to speed up 'closed' checks": an exact buffered stream over an exact FileIO. The
+        # wrapper holds it from here on, past detach(), and asks it, not the buffer, whether the file is closed (RL-832)
+        kind = type(buffer)
+        if kind is BufferedReader or kind is BufferedWriter or kind is BufferedRandom:
+            raw = _optional_attr(buffer, "raw")
+            if raw is not _ABSENT and type(raw) is FileIO:
+                self._ta_raw = raw
+            del raw
         self._u_seekable = self._f_telling = True if buffer.seekable() else False  # type: ignore[attr-defined]
         self._g_has_read1 = hasattr(buffer, "read1")
         self._s_encoding_start_of_stream = False
@@ -3133,9 +3179,8 @@ class TextIOWrapper(_TextIOBase):
         _noargs("TextIOWrapper.detach", args, kwds)
         self: TextIOWrapper = args[0]  # type: ignore[assignment]
         self.flush()  # type: ignore[attr-defined]
-        _tw_check_attached(self)
-        buffer = self._c_buffer
-        self._c_buffer = None
+        buffer = _tw_buffer(self)                # "_PyFile_Flush could detach before returning"
+        self._c_buffer = _ABSENT
         self._b_detached = True
         return buffer
 
@@ -3286,28 +3331,23 @@ class TextIOWrapper(_TextIOBase):
 
     def fileno(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("TextIOWrapper.fileno", args, kwds)
-        _tw_check_attached(args[0])  # type: ignore[arg-type]
-        return args[0]._c_buffer.fileno()  # type: ignore[attr-defined]
+        return _tw_buffer(args[0]).fileno()  # type: ignore[arg-type, attr-defined]  # buffer_callmethod_noargs
 
     def seekable(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("TextIOWrapper.seekable", args, kwds)
-        _tw_check_attached(args[0])  # type: ignore[arg-type]
-        return args[0]._c_buffer.seekable()  # type: ignore[attr-defined]
+        return _tw_buffer(args[0]).seekable()  # type: ignore[arg-type, attr-defined]  # buffer_callmethod_noargs
 
     def readable(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("TextIOWrapper.readable", args, kwds)
-        _tw_check_attached(args[0])  # type: ignore[arg-type]
-        return args[0]._c_buffer.readable()  # type: ignore[attr-defined]
+        return _tw_buffer(args[0]).readable()  # type: ignore[arg-type, attr-defined]  # buffer_callmethod_noargs
 
     def writable(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("TextIOWrapper.writable", args, kwds)
-        _tw_check_attached(args[0])  # type: ignore[arg-type]
-        return args[0]._c_buffer.writable()  # type: ignore[attr-defined]
+        return _tw_buffer(args[0]).writable()  # type: ignore[arg-type, attr-defined]  # buffer_callmethod_noargs
 
     def isatty(*args: object, **kwds: object) -> object:  # noqa: N805
         _noargs("TextIOWrapper.isatty", args, kwds)
-        _tw_check_attached(args[0])  # type: ignore[arg-type]
-        return args[0]._c_buffer.isatty()  # type: ignore[attr-defined]
+        return _tw_buffer(args[0]).isatty()  # type: ignore[arg-type, attr-defined]  # buffer_callmethod_noargs
 
     def truncate(*args: object, **kwds: object) -> object:  # noqa: N805
         n = _positional("truncate", "TextIOWrapper.truncate", args, kwds, 0, 1)
@@ -3482,20 +3522,17 @@ class TextIOWrapper(_TextIOBase):
 
     @property
     def buffer(self) -> object:
-        _tw_check_attached(self)
-        return self._c_buffer
+        return _tw_buffer(self)
 
     @property
     def closed(self) -> object:
         if not self._a_ok:                       # "If partially constructed or deconstructed, return that the underlying
             return True                          # buffer is closed."
-        _tw_check_attached(self)
-        return getattr(self._c_buffer, "closed")  # noqa: B009
+        return getattr(_tw_buffer(self), "closed")  # noqa: B009  # buffer_getattr
 
     @property
     def name(self) -> object:
-        _tw_check_attached(self)
-        return getattr(self._c_buffer, "name")  # noqa: B009
+        return getattr(_tw_buffer(self), "name")  # noqa: B009  # buffer_getattr
 
     @property
     def newlines(self) -> object:

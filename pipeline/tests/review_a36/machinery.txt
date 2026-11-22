@@ -1,0 +1,47 @@
+import sys,csv,io,copy
+r=sys.argv[1]
+class E(OSError):
+    def __init__(self,*a,**kw): super().__init__(*a,**kw)
+def run():
+    if r.startswith("os-"):
+        e=E(5,"old","f",None,"f2")
+        args={"os-zero":(),"os-one":("single",),"os-six":(1,2,3,4,5,6),"os-two":(2,"new")}[r]
+        e.__init__(*args)
+        print(e.errno,e.strerror,e.filename,e.filename2,e.args)
+    elif r.startswith("csv"):
+        which,action=r.split("-")
+        base=type(csv.reader([])) if which=="csvr" else type(csv.writer(io.StringIO()))
+        class Other:
+            def __new__(cls,*a,**kw):return 17
+        if action=="first":
+            class C(Other,base):pass
+        elif action=="second":
+            class C(base,Other):pass
+        else:
+            class C(base):pass
+            C.__new__=staticmethod(lambda cls,*a,**kw: 42)
+        for a in ((),(1,)):
+            try:print(C(*a))
+            except Exception as e:print(type(e).__name__)
+        if action=="dynamic":
+            del C.__new__
+            try:print(C())
+            except Exception as e:print(type(e).__name__)
+    else:
+        class M(type):
+            def __hash__(self):print("hash");return 0
+            def __eq__(self,o):print("equal");return True
+            def __subclasscheck__(self,o):print("subclass");return True
+            def __instancecheck__(self,o):print("instance");return True
+        class X(Exception,metaclass=M): pass
+        class Y(Exception): pass
+        g=ExceptionGroup("g",[X(),Y()])
+        if r=="except":
+            try:raise Y
+            except (X,):print("match")
+        elif r=="group":print([len(q.exceptions) for q in g.split(X)])
+        elif r=="subgroup":print(len(g.subgroup(X).exceptions))
+        else:print(len(g.subgroup(lambda e: type(e) is X).exceptions))
+try:run()
+except Exception as e:print(type(e).__name__)
+print("end")

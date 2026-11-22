@@ -1,0 +1,48 @@
+import io,sys,os
+which,step=sys.argv[1].split("-")
+class Raw(io.BytesIO):
+    def __init__(self,n):
+        super().__init__(b"abcdef")
+        self.name=n
+    def check(self,op):
+        if self.name=="new" and op==step:
+            print("failed",op)
+            raise LookupError
+    def readable(self): self.check("readable");return super().readable()
+    def writable(self): self.check("writable");return super().writable()
+    def seekable(self): self.check("seekable");return super().seekable()
+    def tell(self): self.check("tell");return super().tell()
+    def close(self): print("close",self.name);super().close()
+    def __del__(self): print("drop",self.name)
+class Index:
+    def __index__(self):print("index");raise OverflowError
+def normal(x):
+    if isinstance(x,Raw):return "raw-"+x.name
+    if isinstance(x,list):return (len(x),x[0] if x else None)
+    return x
+def run():
+    cls=getattr(io,which)
+    x=cls(Raw("old"))
+    if which in ("BufferedWriter","BufferedRandom"): x.write(b"old")
+    if which=="TextIOWrapper": x.write("old")
+    raw=Raw("new")
+    try:
+        if step=="index": x.__init__(raw,Index())
+        elif step=="zero": x.__init__(raw,0)
+        elif step=="invalidnl": x.__init__(raw,newline="bad")
+        elif step=="errors": x.__init__(raw,errors=0)
+        elif step=="encoding": x.__init__(raw,encoding=0)
+        elif step=="invalidbuf": x.__init__(None)
+        else:x.__init__(raw)
+    except Exception as e:print("init",type(e).__name__)
+    del raw
+    for attr in ("buffer","raw","closed","name","mode","encoding","errors","newlines","line_buffering","write_through"):
+        try:v=normal(getattr(x,attr));print(attr,v)
+        except Exception as e:print(attr,type(e).__name__)
+    for attr,args in (("fileno",()),("isatty",()),("seekable",()),("writable",()),("readable",()),("tell",()),("flush",()),("seek",(0,)),("read",(1,)),("read1",(1,)),("readinto",(bytearray(1),)),("readinto1",(bytearray(1),)),("peek",(1,)),("readline",()),("readlines",()),("write",("x" if which=="TextIOWrapper" else b"x",)),("writelines",([],)),("truncate",(1,)),("detach",()),("close",())):
+        try: print(attr,normal(getattr(x,attr)(*args)))
+        except Exception as e: print(attr,type(e).__name__)
+    print("release")
+    del x
+run()
+print("end")

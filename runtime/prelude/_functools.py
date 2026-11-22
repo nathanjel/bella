@@ -19,6 +19,7 @@ try:
     _has_dict                                    # noqa: B018  # the C's self->dict is not NULL
     _drop_dict                                   # noqa: B018  # the C's Py_CLEAR(self->dict)
     _own_dict                                    # noqa: B018  # the C's self->dict, read or replaced
+    _raise_as_is                                 # noqa: B018  # a pending error sent on as it is, after work done with no handler open
     _method_new                                  # noqa: B018  # PyMethod_New
     _hash_of                                     # noqa: B018  # PyObject_Hash
     _get_hashed                                  # noqa: B018  # _PyDict_GetItemRef_KnownHash; a default when absent
@@ -48,6 +49,7 @@ except NameError:
     _has_dict: Callable[..., bool] = _missing
     _drop_dict: Callable[..., None] = _missing
     _own_dict: Callable[..., Any] = _missing
+    _raise_as_is: Callable[..., None] = _missing
     _method_new: Callable[..., Any] = _missing
     _hash_of: Callable[..., int] = _missing
     _get_hashed: Callable[..., Any] = _missing
@@ -475,22 +477,30 @@ calculates ((((1 + 2) + 3) + 4) + 5)."""
     # next(), where a `for` over a wrapper would have let go of it at its end (RL-782).
     held_result: object = _ABSENT
     held_item: object = _ABSENT
-    while True:
-        op2 = next(it, _END)  # type: ignore[call-overload]
-        if op2 is _END:
-            break
-        if result is _ABSENT:
-            result = op2
-            del op2
-        else:
-            before, held_result = held_result, result
-            del before
-            before, held_item = held_item, op2
-            del before, op2
-            result = func(held_result, held_item)  # type: ignore[operator]
+    failed: BaseException | None = None          # "Fail:" lets go of the same things, with the error pending (RL-828)
+    try:
+        while True:
+            op2 = next(it, _END)  # type: ignore[call-overload]
+            if op2 is _END:
+                break
+            if result is _ABSENT:
+                result = op2
+                del op2
+            else:
+                before, held_result = held_result, result
+                del before
+                before, held_item = held_item, op2
+                del before, op2
+                result = func(held_result, held_item)  # type: ignore[operator]
+    except BaseException as e:
+        failed = e
     del held_item
     del held_result
+    if failed is not None:
+        result = None                            # Py_XDECREF(result): the tuple had it when the function failed
     del it
+    if failed is not None:
+        _raise_as_is(failed)
     if result is _ABSENT:
         raise TypeError("reduce() of empty iterable with no initial value")
     return result

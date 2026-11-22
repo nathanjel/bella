@@ -1199,7 +1199,8 @@ void fill_zlib(Module* m) {
                     {"_warn", i_bella_import_warning}});
 }
 void fill_ast(Module* m) {
-    fill_in_python(m, "_ast", "ast", prelude_ast::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_warn", i_bella_import_warning}});
+    fill_in_python(m, "_ast", "ast", prelude_ast::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_warn", i_bella_import_warning},
+                                                                {"_sequence_size", i_sequence_size}});
 }
 Ref i_bella_bootstrap(Obj, Args a) {             // a call of _frozen_importlib's function by name: what the prelude shares with bootstrap.py
     if (a.npos < 1 || a.nkw != 0) raise_new("TypeError", "_bella_bootstrap() takes a name and positional arguments");
@@ -1339,7 +1340,8 @@ void fill_contextvars(Module* m) { fill_in_python(m, "_contextvars", "_contextva
 void fill_typing(Module* m) {
     fill_in_python(m, "_typing", "typing", prelude_typing::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_bella_caller_module", i_bella_caller_module},
-                    {"_bella_class_set", i_bella_class_set}, {"_bella_bootstrap", i_bella_bootstrap}});
+                    {"_bella_class_set", i_bella_class_set}, {"_bella_bootstrap", i_bella_bootstrap},
+                    {"_sequence_size", i_sequence_size}, {"_sequence_concat", i_sequence_concat}});
 }
 void fill_posix(Module* m) {
     fill_in_python(m, "posix", "posix", prelude_posix::module_body,

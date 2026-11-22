@@ -24,10 +24,19 @@ try:
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _str_text                                    # noqa: B018  # %S: the characters of an object's str, an exact str
     _class_name                                  # noqa: B018  # _PyType_Name of a class itself
+    _sequence_size                               # noqa: B018  # PySequence_Size: a sequence's length, which a dict has not (RL-814)
+    _sequence_concat                             # noqa: B018  # PySequence_Concat
 except NameError:
     from collections.abc import Callable
+    from operator import concat as _concat
     from operator import index as _number_index
     from typing import Any
+
+    def _sequence_size(value: object) -> int:    # a stand-in for CPython's run of this file
+        return len(value)  # type: ignore[arg-type]
+
+    def _sequence_concat(a: object, b: object, in_place: bool) -> object:   # a stand-in for CPython's run of this file
+        return _concat(a, b)
 
     _bella_new_instance = object.__new__
     _bella_state_set = object.__setattr__
@@ -230,6 +239,19 @@ def _default_of(default_value: object, evaluate_default: object, store: object, 
     return computed
 
 
+def _sequence_index(sequence: object, value: object) -> int:
+    """PySequence_Index (_PySequence_IterSearch): the items of its iterator, each compared as PyObject_RichCompareBool
+    compares (the same object, or ==) and let go of before the next."""
+    i = 0
+    for item in sequence:  # type: ignore[attr-defined]
+        found = item is value or bool(item == value)
+        del item
+        if found:
+            return i
+        i += 1
+    raise ValueError("sequence.index(x): x not in sequence")
+
+
 class TypeVar:
     """Type variable.
 
@@ -394,15 +416,17 @@ details.
         return _typing_call("_typevar_subst", self, arg)
 
     def __typing_prepare_subst__(self, alias: object, args: object, /) -> object:   # typevar_typing_prepare_subst_impl
+        # the sequence protocol, as the C has it: PySequence_Index iterates and compares, PySequence_Length is a
+        # sequence's length (a dict has none), PySequence_Concat is a sequence's + (review A36, RL-809, RL-814, RL-839)
         params = alias.__parameters__  # type: ignore[attr-defined]
-        i = params.index(self)
-        args_len = len(args)  # type: ignore[arg-type]
+        i = _sequence_index(params, self)
+        args_len = _sequence_size(args)
         if i < args_len:
             return args
         if i == args_len:
             dflt = self.__default__
             if dflt is not NoDefault:
-                return args + (dflt,)  # type: ignore[operator]
+                return _sequence_concat(args, (dflt,), False)
         raise TypeError("Too few arguments for " + str(alias) + "; actual " + str(args_len) + ", expected at least " + str(i + 1))
 
     def __reduce__(self) -> object:

@@ -398,6 +398,24 @@ bool meta_descriptor_store(ClassObject* cls, const Str* name, Obj value) {
 }
 }  // namespace
 
+// tp_new of a class of the program's has a history (update_one_slot). It is slot_tp_new once a __new__ that is no built-in's
+// wrapper is found for it, when the class is made or when the name is stored later in it or in a base, and it stays so when the
+// name is deleted again: finding a built-in's wrapper keeps the slot as it is. A class made over such a class inherits the slot
+// (type_ready_set_new), and a store of a built-in's wrapper (`C.__new__ = object.__new__`) changes nothing. So the name's lookup
+// at the time of a call cannot answer what the allocator is (review A36, RL-810, RL-833)
+bool new_is_a_wrapper(const ClassObject* cls) {
+    static const Str* const name = intern("__new__");
+    for (const ClassObject* c : cls->mro)
+        if (const Obj* v = c->attrs.find(name); v != nullptr) return !c->heap_type || c_type(c) || is_kind(*v, Kind::Builtin);
+    return true;
+}
+void update_new_slot(ClassObject* cls, bool top = true) {
+    static const Str* const name = intern("__new__");
+    if (!top && cls->attrs.contains(name)) return;   // recurse_down_subclasses: a class with the name of its own is not affected
+    if (cls->heap_type && !c_type(cls) && !new_is_a_wrapper(cls)) cls->slot_tp_new = true;
+    for (ClassObject* sub : cls->subclasses) update_new_slot(sub, false);
+}
+
 // type.__setattr__ (type_setattro): a metaclass's data descriptor, else the class's own dict
 void type_setattr_generic(ClassObject* cls, const Str* name, Obj value) {
     if (meta_descriptor_store(cls, name, value)) return;
@@ -405,6 +423,7 @@ void type_setattr_generic(ClassObject* cls, const Str* name, Obj value) {
     if (immutable_type(cls))
         raise_new("TypeError", "cannot set '" + name->text + "' attribute of immutable type '" + cls->name + "'");
     cls->set_attr(name, value);                  // the new version before the old value dies (type_setattro)
+    if (name == intern("__new__")) update_new_slot(cls);
 }
 void type_setattr(ClassObject* cls, const Str* name, Obj value) {
     ClassObject* meta = type_of(Obj::of(cls));
@@ -423,6 +442,7 @@ void type_delattr_generic(ClassObject* cls, const Str* name) {
     if (!cls->attrs.contains(name))
         raise_attribute_error(Obj::of(cls), name, "type object '" + cls->name + "' has no attribute '" + name->text + "'");
     cls->del_attr(name);
+    if (name == intern("__new__")) update_new_slot(cls);
 }
 void type_delattr(ClassObject* cls, const Str* name) {
     if (meta_overrides(type_of(Obj::of(cls)), "__delattr__")) {
@@ -533,15 +553,14 @@ void refuse_getattribute_override(ClassObject* cls) {
 // from a type that cannot be instantiated cannot be either: type_call finds tp_new NULL, and object.__new__ finds it on the
 // first class of the tp_base chain whose tp_new is no slot_tp_new, whether the classes before it define __new__ or not
 // (tp_new_wrapper). The chain is walked only when a class of the MRO has the flag (review A35, RL-788).
+bool allocator_is_objects(const ClassObject* cls);   // below
 bool base_has_no_tp_new(ClassObject* cls, bool own_new_counts) {
+    if (own_new_counts && cls->slot_tp_new) return false;   // slot_tp_new: a __new__ anywhere in the MRO, now or once (RL-833)
     bool any = false;
     for (const ClassObject* c : cls->mro) any = any || c->disallow_instantiation;
     if (!any) return false;
     for (ClassObject* c = cls; c != nullptr && c != types().object; c = c->bases.empty() ? nullptr : tp_base(c)) {
-        if (c->heap_type && !c_type(c)) {
-            if (own_new_counts && c->attrs.contains(N("__new__"))) return false;
-            continue;
-        }
+        if (c->heap_type && !c_type(c)) continue;
         return c->disallow_instantiation;
     }
     return false;
@@ -558,25 +577,27 @@ Ref object_new(Obj, Args a) {
     new_wrapper_class(a, types().object);        // tp_new_wrapper's check, before the arguments'
     bool excess = a.npos > 1 || a.nkw > 0;
     if (excess) {
-        if (type_lookup(cls, N("__new__")) != object_new_fn())
+        if (!allocator_is_objects(cls))          // "type->tp_new != object_new": the slot, not the name's lookup now (RL-810)
             raise_new("TypeError", "object.__new__() takes exactly one argument (the type to instantiate)");
         if (type_lookup(cls, N("__init__")) == object_init_fn()) raise_new("TypeError", cls->name + "() takes no arguments");
     }
     if (cls->abstract) {                          // "', '".join(sorted(cls.__abstractmethods__))
         const Obj* methods = cls->attrs.find(N("__abstractmethods__"));
         if (methods == nullptr) raise_attribute_error(Obj::of(cls), N("__abstractmethods__"), "__abstractmethods__");
-        std::vector<std::string> names;
-        Ref it = iter(*methods);
-        for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) {
-            const Str* n = as_str(v.get());
-            if (n == nullptr) throw NotImplemented("sorting abstract methods that are not all str");
-            names.push_back(n->text);
-        }
-        std::sort(names.begin(), names.end());       // code point order: the UTF-8 bytes' order
-        std::string joined;
-        for (const auto& n : names) joined += (joined.empty() ? "" : "', '") + n;
+        // PySequence_List, PyList_Sort and PyUnicode_Join of the names as the objects they are: a name of a str subclass has
+        // its own comparison asked, and one that is no str is the join's TypeError. The list holds the names until the
+        // message is made, so this is no loop that lets go of an item before the next (RL-836)
+        Ref held = Ref::share(*methods);
+        Ref listed = list_new({});
+        list_extend(listed.get(), held.get());
+        held = Ref{};
+        list_sort_m(listed.get(), Args{});
+        Ref separator = str_new("', '");
+        Ref joined = call_special(separator.get(), "join", {listed.get()});
+        std::size_t count = static_cast<List*>(listed.get().object())->items.size();
+        listed = Ref{};
         raise_new("TypeError", "Can't instantiate abstract class " + cls->name + " without an implementation for abstract method" +
-                                   (names.size() > 1 ? "s" : "") + " '" + joined + "'");
+                                   (count > 1 ? "s" : "") + " '" + as_str(joined.get())->text + "'");
     }
     refuse_getattribute_override(cls);
     Ref made = own(new_instance(cls));
@@ -589,13 +610,18 @@ Ref object_new(Obj, Args a) {
 // at all (Py_TPFLAGS_DISALLOW_INSTANTIATION: tp_new is NULL, as a generator's or an iterator's), or inherits its base's. The
 // runtime's own types have no __new__ in their dict for the last two, so the lookup of the name alone said "object's" for a
 // range or a generator, and `range.__init__(r, 1)`, which CPython lets pass, was a TypeError (the argument-count sweep)
+// A class a class statement or a call of type made: what tp_new's history is about. The one heap type the runtime makes by
+// itself, _abc._abc_data, has a __new__ of its own that is its tp_new
+bool statement_class(const ClassObject* c) {
+    if (!c->heap_type || c_type(c)) return false;
+    const Obj* own = c->attrs.find(N("__new__"));
+    return own == nullptr || !is_kind(*own, Kind::Builtin) || static_cast<Builtin*>(own->object())->owner != c;
+}
 bool allocator_is_objects(const ClassObject* cls) {
+    if (cls->slot_tp_new) return false;          // a class of the program's: slot_tp_new, or else its base's allocator (RL-810)
     for (const ClassObject* c : cls->mro) {
         if (c == types().object) return true;
-        if (c->heap_type && !c_type(c)) {
-            if (c->attrs.contains(N("__new__"))) return false;
-            continue;
-        }
+        if (statement_class(c)) continue;
         auto flags = cpython_type_number("flags", c);
         if (flags && (*flags & (1 << 7))) return false;
         if (!cpython_attribute_kind(c, "__new__").empty() || c->attrs.contains(N("__new__"))) return false;
@@ -691,19 +717,19 @@ std::string mro_conflict(const std::vector<ClassObject*>& bases) {
 // the class's MRO (RefClass.set_mro)
 void mro_invoke(ClassObject* c) {
     Ref result = call_special(Obj::of(c), "mro", {});
-    Ref it = iter(result.get());
+    Ref held = sequence_tuple(result.get());     // the whole result first, then mro_check: the iterator is read to its end (RL-822)
+    result = Ref{};
     std::vector<ClassObject*> mro;
-    std::vector<Ref> held;
-    for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) {
-        if (!is_kind(v.get(), Kind::Class))
-            raise_new("TypeError", c->name + ".mro() returned a non-class ('" + type_of(v.get())->name + "')");
-        ClassObject* b = static_cast<ClassObject*>(v.get().object());
+    const auto& items = static_cast<Tuple*>(held.get().object())->items;
+    if (items.empty()) raise_new("TypeError", "type MRO must not be empty");
+    for (Obj v : items) {
+        if (!is_kind(v, Kind::Class))
+            raise_new("TypeError", c->name + ".mro() returned a non-class ('" + type_of(v)->name + "')");
+        ClassObject* b = static_cast<ClassObject*>(v.object());
         if (!is_subclass(solid_base(c), solid_base(b)))
             raise_new("TypeError", c->name + ".mro() returned base with unsuitable layout ('" + b->name + "')");
         mro.push_back(b);
-        held.push_back(std::move(v));
     }
-    if (mro.empty()) raise_new("TypeError", "type MRO must not be empty");
     c->set_mro(std::move(mro));
 }
 }  // namespace
@@ -789,20 +815,18 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     Obj slots_value = dict_get(ns, Obj::of(N("__slots__")));
     if (!slots_value.is_unset()) {
         std::vector<std::string> slots;
-        std::vector<Ref> items;
-        if (as_str(slots_value) != nullptr) items.push_back(Ref::share(slots_value));
-        else {
-            Ref it = iter(slots_value);
-            for (Ref v = for_next(it.get()); !is_end(v); v = next_after(v, it.get())) items.push_back(std::move(v));
-        }
+        // a str is a tuple of one, anything else goes through PySequence_Tuple; the tuple is what holds the names while they
+        // are looked at, and it lets go of them from the last (RL-823)
+        Ref slots_tuple = as_str(slots_value) != nullptr ? tuple_new({slots_value}) : sequence_tuple(slots_value);
+        const std::vector<Obj>& items = static_cast<Tuple*>(slots_tuple.get().object())->items;
         // type_new_visit_slots: every item a str and an identifier; __dict__ and __weakref__ once each, and only where the
         // best base has none (may_add_dict, may_add_weak: another base's is added afterwards, RL-566). Then
         // type_new_copy_slots: a name a class variable has is refused, after every item was looked at (RL-569);
         // a repeated ordinary name is accepted (CPython makes it twice, the last one wins)
         bool base_dict = best->has_dict && !best->dict_without_getset;
-        for (Ref& item : items) {
-            const Str* s = as_str(item.get());
-            if (s == nullptr) raise_new("TypeError", "__slots__ items must be strings, not '" + type_of(item.get())->name + "'");
+        for (Obj item : items) {
+            const Str* s = as_str(item);
+            if (s == nullptr) raise_new("TypeError", "__slots__ items must be strings, not '" + type_of(item)->name + "'");
             if (!is_identifier(s)) raise_new("TypeError", "__slots__ must be identifiers");   // valid_identifier
             if (s->text == "__weakref__") {          // may_add_weak: the best base has no room
                 bool base_weak = best->has_weakref;
@@ -818,15 +842,15 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
                 continue;
             }
         }
-        for (Ref& item : items) {
-            const Str* s = as_str(item.get());
+        for (Obj item : items) {
+            const Str* s = as_str(item);
             if (s->text == "__weakref__" || s->text == "__dict__") continue;
             std::string m = mangle(name->text, s->text);
             // PyDict_Contains(dict, slot) of the member's name, mangled (RL-589), which is the item itself where nothing was
             // mangled: a name that is an instance of a str subclass has its own __hash__ and __eq__ asked (RL-733)
             bool held = false;
-            if (m == s->text && !is_exact_str(item.get())) {
-                held = !dict_get(ns, item.get()).is_unset() && m != "__qualname__" && m != "__classcell__" && m != "__classdictcell__";
+            if (m == s->text && !is_exact_str(item)) {
+                held = !dict_get(ns, item).is_unset() && m != "__qualname__" && m != "__classcell__" && m != "__classdictcell__";
             } else {
                 for (auto& [k, v] : entries) held |= k->text == m;
             }
@@ -842,13 +866,13 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         // type_new_slots: PyList_Sort of the names as objects. Plain strs sort by code point, which the class's making does
         // itself; a name that is an instance of a str subclass has its own __lt__ asked, and what the sort leaves is the
         // order of the members in the class's dict and of the slots' release (RL-588)
-        if (std::any_of(items.begin(), items.end(), [](const Ref& item) { return !is_exact_str(item.get()); })) {
+        if (std::any_of(items.begin(), items.end(), [](Obj item) { return !is_exact_str(item); })) {
             Ref names = list_new({});            // every name, a repeated one too: the sort compares the two (RL-729)
-            for (Ref& item : items) {
-                const Str* s = as_str(item.get());
+            for (Obj item : items) {
+                const Str* s = as_str(item);
                 if (s->text == "__weakref__" || s->text == "__dict__") continue;
                 std::string m = mangle(name->text, s->text);
-                Ref as_object = m == s->text ? Ref::share(item.get()) : str_new(m);
+                Ref as_object = m == s->text ? Ref::share(item) : str_new(m);
                 list_append(names.get(), as_object.get());
             }
             Ref sorted = list_sort_m(names.get(), Args{});
@@ -923,6 +947,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     // A metaclass's mro() is the first code that can see the class, and may keep a view of its dict:
     // from here each insertion goes through set_attr.
     if (meta != types().type) mro_invoke(c);
+    c->slot_tp_new = best->slot_tp_new || !new_is_a_wrapper(c);   // type_ready_set_new, then update_one_slot (RL-810)
     for (auto& [k, v] : members)
         if (!c->attrs.contains(k)) c->set_attr(k, v.get());
     if (!c->attrs.contains(N("__doc__"))) c->set_attr(N("__doc__"), None());   // type_dict_set_doc: after the getsets
@@ -2213,7 +2238,8 @@ ClassObject* os_error() { return exception_class("OSError"); }
 // oserror_use_init: a subclass with an __init__ of its own and OSError's __new__ gets its arguments there
 bool oserror_use_init(const ClassObject* type) {
     auto* c = const_cast<ClassObject*>(type);
-    return type_lookup(c, N("__init__")) != type_lookup(os_error(), N("__init__")) && type_lookup(c, N("__new__")) == type_lookup(os_error(), N("__new__"));
+    return type_lookup(c, N("__init__")) != type_lookup(os_error(), N("__init__")) && !c->slot_tp_new &&
+           type_lookup(c, N("__new__")) == type_lookup(os_error(), N("__new__"));   // tp_new == OSError_new: the slot (RL-810)
 }
 struct OsArgs {
     Obj myerrno, strerror, filename, filename2;
@@ -2234,19 +2260,27 @@ bool number_check(Obj v) {                       // PyNumber_Check
 }
 void oserror_init(Obj self, std::span<const Obj> args, const OsArgs& given) {
     Ref kept = tuple_copy(args);
+    // "self->myerrno = Py_XNewRef(myerrno)": the C stores into its fields whatever they held, a NULL too, and lets go of
+    // nothing. So when it runs again (a class with an __init__ of its own and OSError's __new__) errno and strerror are what
+    // this call parsed, None for another count of arguments than two to five, and what they held before is never released
+    // (review A36, RL-834)
+    auto store = [&](const char* field, Obj value) {
+        incref(exception_field(self, field));
+        set_exception_field(self, field, value);
+    };
     if (!given.filename.is_unset() && given.filename != None()) {
         if (type_of(self) == exception_class("BlockingIOError") && number_check(given.filename)) {   // its third argument: the characters written
             std::int64_t written = index_value(given.filename, "ValueError");
             Ref value = int_from_i64(written);
             set_exception_field(self, "written", value.get());
         } else {
-            set_exception_field(self, "filename", given.filename);
-            if (!given.filename2.is_unset() && given.filename2 != None()) set_exception_field(self, "filename2", given.filename2);
+            store("filename", given.filename);
+            if (!given.filename2.is_unset() && given.filename2 != None()) store("filename2", given.filename2);
             if (args.size() >= 2 && args.size() <= 5) kept = tuple_copy(args.subspan(0, 2));   // only the first two, for compatibility
         }
     }
-    if (!given.myerrno.is_unset()) set_exception_field(self, "errno", given.myerrno);
-    if (!given.strerror.is_unset()) set_exception_field(self, "strerror", given.strerror);
+    store("errno", given.myerrno);
+    store("strerror", given.strerror);
     set_exception_field(self, "args", kept.get());
 }
 ClassObject* errno_class(std::int64_t code) {    // errnomap
@@ -2779,6 +2813,7 @@ Ref singleton_new(Obj, Args a) {
 Ref stop_iteration_init(Obj self, Args a) {
     if (a.nkw != 0) raise_new("TypeError", type_of(self)->name + "() takes no keyword arguments");
     set_args(self, a);
+    set_exception_field(self, "value", Obj{});   // Py_CLEAR(self->value): the old value goes while the field is empty (RL-826)
     set_exception_field(self, "value", a.npos > 0 ? a.pos(0) : None());
     return none_ref();
 }
@@ -2849,16 +2884,8 @@ Ref field_or_none(Obj self, const char* name) {
 Ref exception_args_get(Obj self) { return exception_args(self); }
 void exception_args_set(Obj self, Obj v) {          // PySequence_Tuple
     if (v.is_unset()) raise_new("TypeError", "args may not be deleted");
-    Ref t;
-    if (is_exact_tuple(v)) {                         // a subclass is iterated, as anything else is (review F17 #12)
-        t = Ref::share(v);
-    } else {
-        Ref it = iter(v);
-        std::vector<Obj> items;
-        for (Ref x = for_next(it.get()); !is_end(x); x = next_after(x, it.get())) items.push_back(x.release());
-        t = tuple_steal(std::move(items));
-    }
-    set_exception_field(self, "args", t.get());
+    Ref t = sequence_tuple(v);                       // a subclass is iterated, as anything else is (review F17 #12); what was
+    set_exception_field(self, "args", t.get());      // taken goes when the iterator fails (it leaked, RL-821)
 }
 Ref exception_traceback_get(Obj self) { return field_or_none(self, "__traceback__"); }
 Ref exception_context_get(Obj self) { return field_or_none(self, "__context__"); }

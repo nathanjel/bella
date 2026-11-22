@@ -1,0 +1,29 @@
+import sys,collections,math
+r=sys.argv[1]
+class T:
+    def __init__(self,n):self.n=n;self.calls=0
+    def __eq__(self,o):
+        self.calls+=1
+        print("eq",self.n,self.calls)
+        return r=="life" or self.calls>1
+    def __ne__(self,o):print("ne");return False
+    def __lt__(self,o): print("lt");return True
+    def __del__(self):print("drop",self.n)
+class I:
+    def __init__(self,s):self.i=0;self.s=s
+    def __iter__(self):return self
+    def __next__(self):
+        self.i+=1;print("next",self.s,self.i)
+        if self.i>2:raise StopIteration
+        return T(self.s+str(self.i))
+    def __del__(self):print("iterator",self.s)
+class D(collections.deque):
+    def __iter__(self):return I(self.tag)
+def run():
+    a,b=D(),D()
+    a.tag="a";b.tag="b"
+    if r=="ne":print(a!=b)
+    elif r=="lt":print(a<b)
+    else:print(a==b)
+run()
+print("end")

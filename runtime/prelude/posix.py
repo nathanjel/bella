@@ -833,6 +833,7 @@ def _sigset(signals: object) -> tuple[int, ...]:   # _Py_Sigset_Converter: the n
     out: list[int] = []
     for item in signals:  # type: ignore[attr-defined]
         number = _number_index(item)
+        del item                                 # Py_DECREF(item) once it is a C long (RL-831)
         if not -(2**63) <= number < 2**63:       # PyLong_AsLongAndOverflow: -1 and the overflow said
             number = -1
         if number <= 0 or number >= 65:
@@ -2167,6 +2168,7 @@ def sched_setaffinity(*args: object, **kwds: object) -> None:   # os_sched_setaf
         if not _has_slot(item, "__index__"):
             raise TypeError("expected an iterator of ints, but iterator yielded " + _repr_text(type(item)))
         cpu = _number_index(item)
+        del item                                 # Py_DECREF(item) once it is a C long (RL-816)
         if cpu >= 2**63:
             raise OverflowError("Python int too large to convert to C long")
         if cpu < -(2**63):

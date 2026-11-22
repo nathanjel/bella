@@ -1,0 +1,34 @@
+import sys
+r=sys.argv[1]
+class X:
+    def __init__(self,n):self.n=n
+    def __del__(self): print("drop",self.n,type(sys.exception()).__name__)
+class I:
+    def __init__(self):self.i=0
+    def __iter__(self):return self
+    def __next__(self):
+        self.i+=1
+        print("next",self.i)
+        if self.i==3:
+            if r.endswith("fail"):raise LookupError
+            raise StopIteration
+        return X(self.i)
+    def __del__(self): print("iterator",type(sys.exception()).__name__)
+class S:
+    def __iter__(self):return I()
+class Meta(type):
+    def mro(cls):return S()
+def run():
+    if r.startswith("args"):
+        e=ValueError("old")
+        try:e.args=S()
+        finally:print("old",e.args==("old",))
+    elif r.startswith("mro"):
+        class C(metaclass=Meta): pass
+    elif r.startswith("slots"):
+        class C:__slots__=S()
+try:raise KeyError
+except KeyError:
+    try:run()
+    except BaseException as e:print(type(e).__name__)
+print("end")

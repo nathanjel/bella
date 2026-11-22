@@ -1,0 +1,59 @@
+import sys,ast,struct,csv,weakref,types,typing,operator
+r=sys.argv[1]
+class A(ast.AST):
+    _fields=()
+class Map(dict):
+    def __len__(self):print("length");return 0
+    def __getitem__(self,k):print("get",k);return "x"
+class Text(str):
+    def __hash__(self):print("hash");return 7
+    def __eq__(self,o):print("eq");return str.__eq__(self,o)
+    def __len__(self):print("len");return 0
+    def __iter__(self):print("iter");return iter(())
+    def __contains__(self,k):print("contains");return True
+class Tup(tuple):
+    def __iter__(self): print("iter tuple");return tuple.__iter__(self)
+    def __len__(self): print("len tuple");return tuple.__len__(self)
+    def __getitem__(self,k): print("get tuple");return tuple.__getitem__(self,k)
+    def __hash__(self):print("hash tuple");return tuple.__hash__(self)
+    def __eq__(self,o):print("eq tuple");return tuple.__eq__(self,o)
+class E(StopIteration):
+    @property
+    def value(self):print("lookup value");raise RuntimeError
+class Iterator:
+    def __iter__(self):return self
+    def __next__(self):return 1
+    def send(self,x):raise E("result")
+def gen():return (yield from Iterator())
+def run():
+    if r.startswith("ast"):
+        a=A()
+        if r.endswith("sub"): A._fields=Map()
+        else: A._fields={}
+        op=r.split("-")[1]
+        if op=="init": a.__init__();print("ok")
+        elif op=="repr":print(repr(a))
+        elif op=="reduce":print(len(a.__reduce__()))
+        elif op=="replace":print(type(a.__replace__()).__name__)
+    elif r=="cache":
+        struct._clearcache()
+        print(struct.calcsize(Text("i")),struct.calcsize(Text("i")))
+        struct._clearcache()
+    elif r=="csv":print(csv.reader([],delimiter=Text(","),lineterminator=Text("\r\n")).dialect.delimiter)
+    elif r=="send":
+        g=gen();next(g)
+        try:g.send(2)
+        except StopIteration as e:print(e.value)
+    elif r.startswith("alias"):
+        t=types.GenericAlias(list,Tup((int,)))
+        if r=="alias-hash": print(hash(t)==hash(list[int]))
+        elif r=="alias-eq":print(t==list[int])
+        elif r=="alias-mro":print(t.__mro_entries__(Tup(()))[0] is list)
+    elif r=="weak":
+        class Obj:
+            def __eq__(self,other):print("eq");return 7
+        a=Obj();b=Obj();x=weakref.ref(a);y=weakref.ref(b)
+        print(x==y);del a;print(x==y)
+try:run()
+except BaseException as e:print(type(e).__name__)
+print("end")

@@ -1,0 +1,42 @@
+import sys
+clsname,mode=sys.argv[1].split("-")
+class T:
+    def __init__(self,n): self.n=n
+    def __del__(self): print("drop",self.n, snap())
+def names(v):
+    if isinstance(v,T):return v.n
+    if isinstance(v,(tuple,list)):return tuple(names(a) for a in v)
+    if isinstance(v,BaseException):return type(v).__name__
+    return v
+def snap():
+    if not holder:return "released"
+    x=holder[0]
+    return tuple(names(getattr(x,k,"absent")) for k in fields)
+fields=("args","value","name","obj","path","name_from","msg","filename","filename2","errno","end_lineno","end_offset")
+holder=[]
+def arguments(s):
+    if clsname=="SyntaxError":return (T(s+"msg"),tuple(T(s+str(i)) for i in range(6))),{}
+    if clsname=="AttributeError":return (T(s+"arg"),),dict(name=T(s+"name"),obj=T(s+"obj"))
+    if clsname=="NameError":return (T(s+"arg"),),dict(name=T(s+"name"))
+    if clsname in ("ImportError","ModuleNotFoundError"):return (T(s+"arg"),),dict(name=T(s+"name"),path=T(s+"path"),name_from=T(s+"from"))
+    if clsname in ("OSError","BlockingIOError"):return (1,T(s+"strerror"),T(s+"filename"),None,T(s+"filename2")),{}
+    if clsname=="ExceptionGroup":return (s,[ValueError(T(s+"leaf"))]),{}
+    return (T(s+"arg"),T(s+"extra")),{}
+def run():
+    t=getattr(__import__("builtins"),clsname)
+    a,k=arguments("old")
+    x=t(*a,**k);del a,k
+    holder.append(x)
+    a,k=arguments("new")
+    if mode=="omit":a,k=(),{}
+    if mode=="invalid":k["invalid"]=T("bad")
+    if mode=="partial" and clsname=="SyntaxError": a=(T("msg"),(T("entry"),))
+    try:x.__init__(*a,**k)
+    except Exception as e:print("init",type(e).__name__)
+    del a,k
+    print("state",snap())
+    print("release")
+    holder.clear();del x
+try:run()
+except Exception as e:print(type(e).__name__)
+print("end")

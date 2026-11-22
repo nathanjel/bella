@@ -1,0 +1,49 @@
+import os,sys,itertools,collections,types,typing
+r=sys.argv[1]
+class N(int):
+    def __del__(self):print("drop",int(self),type(sys.exception()).__name__)
+class I:
+    def __init__(self):self.i=0
+    def __iter__(self):print("iter");return self
+    def __next__(self):
+        self.i+=1
+        print("next",self.i)
+        if self.i==3:raise ValueError
+        return N(self.i)
+    def __del__(self): print("iterator",type(sys.exception()).__name__)
+class S:
+    def __iter__(self): return I()
+class Param:
+    __typing_prepare_subst__=None
+    def __typing_subst__(self,x): print("subst"); return x
+class NoneAttr:
+    __parameters__=()
+    __typing_prepare_subst__=None
+class O(collections.OrderedDict):
+    def __setitem__(self,k,v): raise LookupError
+class Pair:
+    def __init__(self,n):self.n=n
+    def __iter__(self): return I()
+    def __del__(self):print("pair",self.n,type(sys.exception()).__name__)
+class Rows:
+    def __iter__(self): return self
+    def __next__(self): return Pair("p")
+    def __del__(self): print("rows",type(sys.exception()).__name__)
+def run():
+    if r=="affinity":os.sched_setaffinity(0,S())
+    elif r=="param": print(types.GenericAlias(list,(Param(),))[str])
+    elif r=="odpair": O(Rows())
+    elif r=="dictpair": dict(Rows())
+    elif r=="reduce":
+        import functools
+        functools.reduce(lambda a,b:0,S())
+    elif r=="batch": next(itertools.batched(S(),3))
+    elif r=="zip": list(zip(S(),S(),strict=True))
+    elif r=="strictmap":list(map(lambda *x:0,S(),S(),strict=True))
+    elif r=="sorted":sorted(S())
+    elif r=="sum":sum(S())
+try:raise RuntimeError
+except RuntimeError:
+    try:run()
+    except BaseException as e:print(type(e).__name__)
+print("end")

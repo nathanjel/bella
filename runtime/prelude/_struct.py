@@ -524,7 +524,9 @@ Struct.__module__ = "_struct"
 
 
 class unpack_iterator:  # noqa: N801           # _struct.unpack_iterator (Py_TPFLAGS_DISALLOW_INSTANTIATION: made by iter_unpack alone)
-    __slots__ = ("_data", "_index", "_struct")
+    # the C holds the Struct and a Py_buffer, which keeps the object the bytes came from alive until the iterator is
+    # exhausted or goes; it lets go of the Struct first (review A36's saved outputs, RL-840)
+    __slots__ = ("_data", "_index", "_struct", "_source")
 
     def __iter__(self) -> unpack_iterator:
         return self
@@ -536,6 +538,7 @@ class unpack_iterator:  # noqa: N801           # _struct.unpack_iterator (Py_TPF
         if self._index >= len(self._data):
             self._struct = None
             self._data = b""
+            self._source = None                  # PyBuffer_Release
             raise StopIteration
         result = _unpack_from(s._codes, s._length, s._little, self._data, self._index)
         self._index += s.size
@@ -608,6 +611,7 @@ def _iter_unpack(s: Struct, buffer: object) -> unpack_iterator:   # Struct_iter_
     it: unpack_iterator = _bella_new_instance(unpack_iterator)
     it._struct = s
     it._data = data
+    it._source = buffer
     it._index = 0
     return it
 

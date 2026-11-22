@@ -1,0 +1,65 @@
+import sys,io,os,collections as co
+class Tag:
+    def __init__(self,n): self.n=n
+    def __del__(self): print("drop",self.n)
+    def __call__(self,*a): return None
+class Raw(io.BytesIO):
+    def __init__(self,n): super().__init__(b"data"); self.n=n
+    def close(self): print("close",self.n); super().close()
+    def __del__(self): print("drop",self.n)
+def show(f):
+    try: print(repr(f()))
+    except BaseException as e: print(type(e).__name__)
+def run():
+    name,mode=sys.argv[1].split("-")
+    if name in ("Reader","Writer","Random","Text"):
+        cls={"Reader":io.BufferedReader,"Writer":io.BufferedWriter,"Random":io.BufferedRandom,"Text":io.TextIOWrapper}[name]
+        x=cls(Raw("old"))
+        if mode=="detach": x.detach()
+        if mode=="close": x.close()
+        new=Raw("new")
+        if mode=="closedraw": new.close()
+        if mode=="badsize": show(lambda:x.__init__(new,0))
+        elif mode=="badenc": show(lambda:x.__init__(new,"abc-unknown"))
+        elif mode=="badnewline": show(lambda:x.__init__(new,newline="x"))
+        elif mode=="badraw": show(lambda:x.__init__(Tag("badraw")))
+        else: show(lambda:x.__init__(new))
+        del new
+        for attr in ("closed","name","mode","encoding"): show(lambda:getattr(x,attr))
+        for attr in ("readable","writable","seekable","tell","flush","close"): show(lambda:getattr(x,attr)())
+    elif name=="String":
+        x=io.StringIO("old")
+        x.seek(2)
+        show(lambda:x.__init__("new","invalid") if mode=="newline" else x.__init__(123,""))
+        show(lambda:x.getvalue())
+        show(lambda:x.tell())
+    elif name=="File":
+        x=io.FileIO(os.devnull)
+        fd=x.fileno()
+        show(lambda:x.__init__(os.devnull,"bad") if mode=="mode" else x.__init__(-1))
+        show(lambda:x.closed)
+        show(lambda:os.fstat(fd).st_size)
+        x.close()
+    elif name=="deque":
+        x=co.deque([Tag("old")],2)
+        show(lambda:x.__init__(42,3) if mode=="iter" else x.__init__([], -1))
+        print(len(x),x.maxlen)
+    elif name=="default":
+        x=co.defaultdict(Tag("factory"),a=Tag("old"))
+        show(lambda:x.__init__(Tag("next"),[1]) if mode=="iter" else x.__init__(42))
+        print(sorted(x))
+    elif name=="prop":
+        x=property(Tag("get"),Tag("set"),Tag("del"),Tag("doc"))
+        show(lambda:x.__init__(Tag("next"),doc=Tag("nextdoc")))
+    elif name in ("static","class"):
+        x=(staticmethod if name=="static" else classmethod)(Tag("old"))
+        show(lambda:x.__init__(Tag("new")))
+    elif name in ("Attr","Name","Import","Stop","Syntax"):
+        cls={"Attr":AttributeError,"Name":NameError,"Import":ImportError,"Stop":StopIteration,"Syntax":SyntaxError}[name]
+        x=cls(Tag("old"))
+        if mode=="bad": show(lambda:x.__init__(Tag("new"),unknown=Tag("kw")))
+        else: show(lambda:x.__init__(Tag("new")))
+    print("release")
+    del x
+run()
+print("end")

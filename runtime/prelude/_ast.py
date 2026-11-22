@@ -16,6 +16,7 @@ try:
     _str_text                                    # noqa: B018  # %S: the characters of an object's str, an exact str
     _class_name                                  # noqa: B018  # _PyType_Name of a class itself
     _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
+    _sequence_size                               # noqa: B018  # PySequence_Size: a sequence's length, which a dict has not (RL-820)
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -26,6 +27,7 @@ except NameError:
     _bella_refuse: Callable[..., Any] = _missing
     _tp_name: Callable[..., str] = _missing
     _warn: Callable[..., Any] = _missing
+    _sequence_size: Callable[..., int] = _missing
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
@@ -109,7 +111,7 @@ def _repr_depth(self: object, depth: int) -> str:
     _in_repr.append(self)
     try:
         fields = type(self)._fields  # type: ignore[attr-defined]
-        numfields = len(fields)
+        numfields = _sequence_size(fields)
         if numfields == 0:
             return name + "()"
         parts = [name, "("]
@@ -162,7 +164,7 @@ class AST:
         if cls in _ABSTRACT_TYPES:               # the class itself: one derived from it is not abstract, whatever it is called
             _warn("Instantiating abstract AST node class " + _full_name(self) + " is deprecated. This will become an error in Python 3.20", "DeprecationWarning")
         fields = cls._fields
-        numfields = len(fields)
+        numfields = _sequence_size(fields)
         remaining = set(fields)
         positional = args[1:]
         if numfields < len(positional):
@@ -220,7 +222,7 @@ class AST:
         if fields is _AST_ABSENT:
             return type(self), (), d
         positional: list[object] = []
-        for i in range(len(fields)):                     # PySequence_Size, then PySequence_GetItem by index (RL-795)
+        for i in range(_sequence_size(fields)):          # PySequence_Size, then PySequence_GetItem by index (RL-795, RL-820)
             if _dict_item(d, fields[i]) is _AST_ABSENT:
                 break
             positional.append(None)
@@ -239,7 +241,7 @@ class AST:
             for keys in (fields, attributes):            # ast_type_replace_update_payload
                 if keys is _AST_ABSENT:
                     continue
-                for i in range(len(keys)):
+                for i in range(_sequence_size(keys)):
                     key = keys[i]
                     value = _dict_item(d, key)
                     if value is not _AST_ABSENT:

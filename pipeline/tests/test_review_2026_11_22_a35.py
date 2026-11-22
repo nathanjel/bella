@@ -75,16 +75,18 @@ def _run(command: list[str], folder: Path) -> tuple[int, str]:
     return done.returncode, done.stdout + ("" if done.returncode == 0 else done.stderr[-300:])
 
 
-def rows_agree(probe: str) -> None:
+def probe_rows_agree(source: Path, rows: tuple[str, ...]) -> None:
+    """One of a reviewer's probes, a program that takes its row as its argument: each row under CPython and compiled."""
     if shutil.which("g++") is None:
         return
-    folder = Path(tempfile.mkdtemp(prefix="bella-a35-"))
+    probe = source.stem
+    folder = Path(tempfile.mkdtemp(prefix="bella-probe-"))
     try:
         program = folder / "prog.py"
-        program.write_text((HERE / "review_a35" / f"{probe}.txt").read_text(encoding="utf-8"), encoding="utf-8")
+        program.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
         binary = str(build(program, "prog.py", notes=False))
         wrong: list[str] = []
-        for row in ROWS[probe]:
+        for row in rows:
             want = _run([sys.executable, str(program), row], folder)
             got = _run([binary, row], folder)
             assert want[0] == 0, (probe, row, want)
@@ -114,6 +116,10 @@ def test_a_closed_stream_refuses_after_the_arguments_buffer() -> None:
     rerun of the reviewer's agreeing rows showed (`bytesinit/bad`, `reinit/iobc1`)."""
     from pipeline.tests.test_review_2026_11_19 import same
     same(WRITE_ON_A_CLOSED_STREAM)
+
+
+def rows_agree(probe: str) -> None:
+    probe_rows_agree(HERE / "review_a35" / f"{probe}.txt", ROWS[probe])
 
 
 def pytest_generate_tests(metafunc: Any) -> None:

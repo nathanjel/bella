@@ -354,6 +354,23 @@ Ref i_sequence_check(Obj, Args a) {
     positional_only(a, "_sequence_check", 1, 1);
     return Ref::steal(boolean(sequence_check(a.pos(0))));
 }
+// PySequence_Size: the type's sq_length, which a mapping's length is not. A class of the program's that has a __len__ has the
+// slot; of CPython's own types a dict, a frozendict, a mappingproxy and a Context have a mapping's length alone, and so has a
+// class that takes its __len__ from one of them (review A36, RL-814, RL-820)
+Ref i_sequence_size(Obj, Args a) {
+    positional_only(a, "_sequence_size", 1, 1);
+    Obj v = a.pos(0);
+    ClassObject* t = type_of(v);
+    static const Str* const name = intern("__len__");
+    for (ClassObject* c : t->mro) {
+        if (!c->attrs.contains(name)) continue;
+        bool of_cpython = !c->heap_type || c_type(c);
+        if (of_cpython && (c == types().dict || c == types().frozendict || c == types().mappingproxy || c->name == "_contextvars.Context"))
+            raise_new("TypeError", t->name + " is not a sequence");
+        return invoke(builtin("len").get(), {v});
+    }
+    raise_new("TypeError", "object of type '" + t->name + "' has no len()");
+}
 // PySequence_Concat(s, o) and PySequence_InPlaceConcat: a sequence type's own, else nb_add or
 // nb_inplace_add if s is a sequence (a class with only __add__), never the reflected sequence path
 Ref binary_op1(BinOp op, Obj a, Obj b);
@@ -2143,8 +2160,20 @@ Ref iterator_setstate(Obj self, Args a) {
     return Ref::share(None());
 }
 
+namespace {
+// What an unpacking has taken so far, on CPython's stack: an error lets go of it from the last, and of the iterator after
+// (unpack_iterable's Error label; review A36, RL-803)
+struct Taken {
+    std::vector<Ref> refs;
+    ~Taken() {
+        while (!refs.empty()) refs.pop_back();
+    }
+};
+}  // namespace
 void unpack(Obj value, std::span<Ref> targets, int star) {
-    std::vector<Ref> items;
+    Ref it;                                      // declared first: it goes after what was taken
+    Taken taken;
+    std::vector<Ref>& items = taken.refs;
     if (is_exact_tuple(value) || is_exact_list(value)) {   // UNPACK_SEQUENCE's exact list and tuple; anything else iterates
         auto& src = is_kind(value, Kind::Tuple) ? static_cast<Tuple*>(value.object())->items
                                                 : static_cast<List*>(value.object())->items;
@@ -2152,7 +2181,6 @@ void unpack(Obj value, std::span<Ref> targets, int star) {
     } else {
         // unpack_iterable: without a star, as many items as targets and one more to tell "too many"; a value with no
         // __iter__ that is no sequence either says so instead of iter()'s message
-        Ref it;
         try {
             it = iter(value);
         } catch (const PyError& e) {
@@ -2161,13 +2189,22 @@ void unpack(Obj value, std::span<Ref> targets, int star) {
                 raise_new("TypeError", "cannot unpack non-iterable " + type_of(value)->name + " object");
             rethrow(e);
         }
-        std::size_t limit = star < 0 ? targets.size() + 1 : SIZE_MAX;
-        std::size_t rest = star < 0 ? SIZE_MAX : static_cast<std::size_t>(star);   // the starred target's list: PySequence_List(it),
-        while (items.size() < limit) {                                             // which asks the iterator's hint first
-            if (items.size() == rest) length_hint(it.get());
+        std::size_t limit = star < 0 ? targets.size() + 1 : static_cast<std::size_t>(star);
+        while (items.size() < limit) {
             Ref v = for_next(it.get());
             if (is_end(v)) break;
             items.push_back(std::move(v));
+        }
+        if (star >= 0 && items.size() == limit) {
+            // the starred target's list is PySequence_List(it): the iterator is asked for an iterator again, then for its
+            // hint, and the items come from what it gave (RL-815); that one goes first when a __next__ raises
+            Ref second = iter(it.get());
+            length_hint(it.get());
+            for (;;) {
+                Ref v = for_next(second.get());
+                if (is_end(v)) break;
+                items.push_back(std::move(v));
+            }
         }
     }
     std::size_t n = targets.size();
@@ -2182,18 +2219,22 @@ void unpack(Obj value, std::span<Ref> targets, int star) {
             if (have > n) raise_new("ValueError", "too many values to unpack (expected " + std::to_string(n) + ", got " + std::to_string(have) + ")");
             raise_new("ValueError", "too many values to unpack (expected " + std::to_string(n) + ")");
         }
+        it = Ref{};                              // Py_DECREF(it) before the values are stored
         for (std::size_t i = 0; i < n; ++i) targets[i] = std::move(items[i]);
+        items.clear();
         return;
     }
     std::size_t before = static_cast<std::size_t>(star), after = n - before - 1;
     if (items.size() < before + after)
         raise_new("ValueError", "not enough values to unpack (expected at least " + std::to_string(before + after) +
                                     ", got " + std::to_string(items.size()) + ")");
+    it = Ref{};
     for (std::size_t i = 0; i < before; ++i) targets[i] = std::move(items[i]);
     auto* middle = new List;
     targets[before] = own(middle);
     for (std::size_t i = before; i < items.size() - after; ++i) middle->items.push_back(items[i].release());
     for (std::size_t i = 0; i < after; ++i) targets[before + 1 + i] = std::move(items[items.size() - after + i]);
+    items.clear();                               // all handed on: nothing is left to let go of
 }
 
 // ---- displays ----
@@ -2216,21 +2257,46 @@ void each_item(Obj mapping, F f) {
         for (auto& [k, v] : items) f(k.get(), v.get());
         return;
     }
-    // PyMapping_Keys: keys() made a list first, then each key's __getitem__
-    Ref keys = invoke(getattr(mapping, intern("keys")).get(), {});
-    std::vector<Ref> listed;
-    Ref it;
-    try {                                            // method_output_as_list
-        it = iter(keys.get());
-    } catch (const PyError& e) {
-        if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
-        raise_new("TypeError", fully_qualified_name(type_of(mapping)) + ".keys() must return an iterable, not " +
-                                   fully_qualified_name(type_of(keys.get())));
+    // PyMapping_Keys (method_output_as_list), then dict_merge's loop. What keys() returned is used as it is when it is an
+    // exact list, and read live, by index, so a list that changes under the loop is seen; of anything else an iterator is
+    // taken and PySequence_List of that iterator made (which asks it for an iterator again, and for its hint), and the
+    // iterator is let go of before the first lookup. Each turn lets go of the key and then of the value; a lookup that
+    // fails lets go of the list before the key (review A36, RL-808)
+    struct Merge {
+        Ref keys, key, value;
+        bool storing = false;
+        ~Merge() {
+            if (!storing) keys = Ref{};
+            key = Ref{};
+            value = Ref{};
+        }
+    };
+    Merge merge;
+    merge.keys = invoke(getattr(mapping, intern("keys")).get(), {});
+    if (!is_exact_list(merge.keys.get())) {
+        Ref it;
+        try {                                            // method_output_as_list
+            it = iter(merge.keys.get());
+        } catch (const PyError& e) {
+            if (!isinstance(e.exc.get(), exception_class("TypeError"))) rethrow(e);
+            raise_new("TypeError", fully_qualified_name(type_of(mapping)) + ".keys() must return an iterable, not " +
+                                       fully_qualified_name(type_of(merge.keys.get())));
+        }
+        merge.keys = Ref{};
+        Ref made = list_new({});
+        list_extend(made.get(), it.get());
+        it = Ref{};
+        merge.keys = std::move(made);
     }
-    for (Ref k = for_next(it.get()); !is_end(k); k = next_after(k, it.get())) listed.push_back(std::move(k));
-    for (Ref& k : listed) {
-        Ref v = getitem(mapping, k.get());
-        f(k.get(), v.get());
+    auto* listed = static_cast<List*>(merge.keys.get().object());
+    for (std::size_t i = 0; i < listed->items.size(); ++i) {
+        merge.key = Ref::share(listed->items[i]);
+        merge.value = getitem(mapping, merge.key.get());
+        merge.storing = true;
+        f(merge.key.get(), merge.value.get());
+        merge.storing = false;
+        merge.key = Ref{};
+        merge.value = Ref{};
     }
 }
 std::string callable_name(Obj func) {            // _PyObject_FunctionStr
@@ -2396,6 +2462,35 @@ void list_extend_star(Obj list, Obj value) {
     }
 }
 
+namespace {
+// What PySequence_Tuple holds while it reads: the iterator and the items so far. When the iterator fails, the first eight
+// items are in a buffer, which the C lets go of after the iterator and from the last; with more it has a list, which goes
+// (from the last) before the iterator (review A36, RL-804, RL-821)
+struct PartialTuple {
+    Ref it;
+    std::vector<Ref> items;
+    ~PartialTuple() {
+        if (items.size() < 8) it = Ref{};
+        while (!items.empty()) items.pop_back();
+    }
+};
+}  // namespace
+Ref sequence_tuple(Obj v) {                      // PySequence_Tuple: the iterator's items, with no length hint (3.15)
+    if (is_exact_tuple(v)) return Ref::share(v);
+    PartialTuple partial;
+    partial.it = iter(v);
+    for (;;) {
+        Ref item = for_next(partial.it.get());
+        if (is_end(item)) break;
+        partial.items.push_back(std::move(item));
+    }
+    partial.it = Ref{};
+    std::vector<Obj> items;
+    items.reserve(partial.items.size());
+    for (Ref& item : partial.items) items.push_back(item.release());
+    partial.items.clear();
+    return tuple_steal(std::move(items));
+}
 void list_extend(Obj list, Obj value) {
     if (list == value) {                          // _list_extend: a.extend(a) and a += a repeat the list (G9 2.2)
         auto& items = static_cast<List*>(list.object())->items;

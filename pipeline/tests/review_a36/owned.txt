@@ -1,0 +1,83 @@
+import sys,typing,types,collections,functools,itertools,io,re,os,struct,csv,_json,zlib,contextvars,weakref
+class T:
+    def __init__(self,n): self.n=n
+    def __del__(self): print("drop",self.n)
+    def __call__(self,*a): return 1
+    def __fspath__(self): return os.devnull
+class S(str):
+    def __del__(self): print("drop str",str.__str__(self))
+class B(bytes):
+    def __del__(self): print("drop bytes")
+class Raw(io.BytesIO):
+    def __del__(self): print("drop raw")
+class E(Exception):
+    __slots__=("slot",)
+def throw():
+    a=T("local")
+    def inner():
+        b=T("inner")
+        if a:
+            e=E(T("arg"))
+            e.slot=T("slot")
+            e.field=T("dict")
+            raise e
+    inner()
+def gen():
+    a=T("first")
+    b=T("second")
+    try: yield
+    finally: print("finally")
+def make(r):
+    if r.startswith("sub"):
+        base={"sub-deque":collections.deque,"sub-od":collections.OrderedDict,"sub-partial":functools.partial,"sub-iter":itertools.chain,"sub-static":staticmethod,"sub-prop":property,"sub-ns":types.SimpleNamespace,"sub-bytes":io.BytesIO}[r]
+        class D(base): __slots__=("slot",)
+        if r=="sub-deque": x=D([T("item")])
+        elif r=="sub-od": x=D([(T("key"),T("value"))])
+        elif r=="sub-iter": x=D([T("item")])
+        elif r=="sub-ns": x=D(field=T("dict"))
+        elif r=="sub-bytes": x=D(b"old")
+        else: x=D(T("func"))
+        x.slot=T("slot")
+        if hasattr(x,"__dict__"): x.extra=T("extra")
+        return x
+    if r=="file": return io.FileIO(T("path"))
+    if r=="text": return io.TextIOWrapper(Raw(),errors=S("strict"))
+    if r=="bytes": return io.BytesIO(B(b"1"))
+    if r=="str": return io.StringIO(S("text"))
+    if r=="zlib": return zlib.decompressobj(zdict=B(b"abc"))
+    if r=="struct": return struct.Struct(S("!i"))
+    if r in ("match","pattern"):
+        p=re.compile(S("x")); re.purge()
+        return p.match(S("xyz")) if r=="match" else p
+    if r=="ctx":
+        c=contextvars.Context()
+        c.run(contextvars.ContextVar("x",default=T("default")).set,T("value"))
+        return c
+    if r=="token":
+        v=contextvars.ContextVar("x")
+        c=contextvars.Context()
+        c.run(v.set,T("old"))
+        return c.run(v.set,T("new"))
+    if r=="group": return ExceptionGroup(S("group"),[E(T("a")),E(T("b"))])
+    if r=="alias": return typing.TypeAliasType("A",T("value"),type_params=(typing.TypeVar("T",bound=T("bound")),))
+    if r=="constraints": return typing.TypeVar("T",T("a"),T("b"),default=T("d"))
+    if r=="dialect": return csv.reader([],delimiter=S(",")).dialect
+    if r=="encoder": return _json.make_encoder({},T("default"),T("encoder"),None,S(":"),S(","),False,False,True)
+    if r=="scan":
+        class C: pass
+        c=C()
+        c.strict=True
+        for n in ("object_hook","object_pairs_hook","parse_int","parse_constant","parse_float"): setattr(c,n,T(n))
+        return _json.make_scanner(c)
+    if r in ("closegen","gen"):
+        g=gen();next(g)
+        if r=="closegen":g.close()
+        return g
+    if r in ("exc","tb"):
+        try: throw()
+        except E as e: return e if r=="exc" else e.__traceback__
+def run():
+    x=make(sys.argv[1]);print("release");del x
+try:run()
+except Exception as e:print(type(e).__name__)
+print("end")

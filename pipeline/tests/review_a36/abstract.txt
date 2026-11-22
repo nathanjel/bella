@@ -1,0 +1,26 @@
+import sys
+r=sys.argv[1]
+class Name(str):
+    def __del__(self):print("drop",str.__str__(self))
+    def __lt__(self,o):
+        print("compare",str.__str__(self),str.__str__(o))
+        if r=="sort-error":raise ArithmeticError
+        return str.__lt__(self,o)
+class I:
+    def __init__(self):self.n=0
+    def __iter__(self):return self
+    def __next__(self):
+        self.n+=1;print("next",self.n)
+        if self.n>2:
+            if r=="iter-error":raise RuntimeError
+            raise StopIteration
+        return Name("b" if self.n==1 else "a")
+    def __del__(self):print("iterator")
+class S:
+    def __iter__(self):return I()
+class C: pass
+C.__abstractmethods__=S()
+try:C()
+except BaseException as e:print(type(e).__name__)
+del C.__abstractmethods__
+print("end")

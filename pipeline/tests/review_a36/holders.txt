@@ -1,0 +1,77 @@
+import sys,ast,collections,types,typing,unicodedata as ud,_string,_sre,re,_tokenize,_thread,_collections,functools,weakref,struct,zlib,hashlib,random,os,contextvars
+from string.templatelib import Template,Interpolation
+class T:
+    def __init__(self,n):self.n=n
+    def __call__(self,*a):return "x\n"
+    def __del__(self):print("drop",self.n)
+class S(str):
+    def __del__(self):print("drop",str.__str__(self))
+class B(bytes):
+    def __del__(self):print("drop bytes")
+class A:pass
+def make(r):
+    if r.startswith("ast-"):
+        cls=getattr(ast,r[4:])
+        a=cls.__new__(cls)
+        for k in cls._fields:setattr(a,k,T(k))
+        a.extra=T("extra")
+        return a
+    if r=="tokenize":return _tokenize.TokenizerIter(T("readline"),extra_tokens=True)
+    if r=="fmt":return _string.formatter_parser(S("a{x}"))
+    if r=="field":return _string.formatter_field_name_split(S("a.x"))[1]
+    if r=="graph":return ud.iter_graphemes(S("ab"))
+    if r=="segment":return next(ud.iter_graphemes(S("ab")))
+    if r=="scanner":
+        p=re.compile(S("a"));re.purge();return p.scanner(S("aa"))
+    if r=="template-sre":return _sre.template(re.compile("x"),[S("literal")])
+    if r.startswith("interp") or r=="template":
+        x=Interpolation(T("value"),S("expression"),None,S("format"))
+        if r=="interp":return x
+        t=Template(S("first"),x,S("last"))
+        if r=="interp-it":return iter(t)
+        return t
+    if r=="tuplegetter":return _collections._tuplegetter(0,S("doc"))
+    if r=="params-args":return typing.ParamSpec("P",default=T("default")).args
+    if r=="params-kw":return typing.ParamSpec("P",bound=T("bound")).kwargs
+    if r=="consteval":return typing.TypeVar("T",bound=T("bound")).evaluate_bound
+    if r=="ga-it":return iter(types.GenericAlias(T("origin"),(T("param"),)))
+    if r=="union":
+        class M(type):pass
+        class A(metaclass=M):pass
+        return A|types.GenericAlias(T("origin"),T("param"))
+    if r=="lock":return _thread.allocate_lock()
+    if r=="rlock":return _thread.RLock()
+    if r=="struct-it":return struct.iter_unpack("b",B(b"abc"))
+    if r=="zcopy":return zlib.decompressobj(zdict=B(b"abc")).copy()
+    if r=="weak-proxy":
+        a=A();p=weakref.proxy(a,T("callback"));del p;return a
+    if r=="weak-ref":
+        a=A();p=weakref.ref(a,T("callback"));del p;return a
+    if r=="reverse-deque":return reversed(collections.deque([T("a"),T("b")]))
+    if r=="od-values":return reversed(collections.OrderedDict([(T("key"),T("value"))]).values())
+    if r=="scandir":return os.scandir(S("."))
+    if r=="entry":
+        with os.scandir(S(".")) as i:return next(i)
+    if r=="partialmethod":return functools.partialmethod(T("fn"),T("arg"),k=T("kw"))
+    if r=="attr":return __import__("operator").attrgetter(S("a.b"),S("c"))
+    if r=="partial-sub":
+        class P(functools.partial): __slots__=("s",)
+        p=P(T("fn"),T("arg"),k=T("kw"));p.s=T("slot");p.a=T("dict");return p
+    if r in ("random","hash"):
+        if r=="random":return random.Random(B(b"abc"))
+        return hashlib.sha256(B(b"abc"))
+def run(r):
+    x=make(r)
+    if r in ("tokenize","graph","fmt","field","struct-it","ga-it","interp-it","reverse-deque","od-values"):next(x)
+    elif r=="scanner":x.search()
+    elif r in ("lock","rlock"):x.acquire();x.release()
+    elif r=="scandir":x.close()
+    if r.startswith("ast-"):
+        y=x.__reduce__();del y
+    print("release")
+    del x
+if sys.argv[1]=="keys":print(" ".join("ast-"+k for k,v in vars(ast).items() if isinstance(v,type) and issubclass(v,ast.AST)))
+else:
+    try:run(sys.argv[1])
+    except Exception as e:print(type(e).__name__)
+    print("end")

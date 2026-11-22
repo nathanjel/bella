@@ -55,6 +55,13 @@ except NameError:
     def _type_name(value: object) -> str:        # a stand-in for CPython's run of this file
         return type(value).__name__
 
+try:
+    _raise_as_is                                 # noqa: B018  # a pending error sent on as it is, after work done with no handler open
+except NameError:                                # CPython's run of this file
+
+    def _raise_as_is(exc: BaseException) -> None:
+        raise exc
+
 _END = object()
 
 
@@ -388,22 +395,44 @@ raise a ValueError."""
         return self
 
     def __next__(self) -> object:                # map_next
+        # The arguments are on a stack of the C's, which it lets go of by rising index once the call is over or an iterator
+        # has ended, with whatever error there is pending: no handler is open then, so a finaliser sees what was handled
+        # around the call (review A36, RL-805)
         its = self._its
-        items = []
+        items: list[object] = []
         i = 0
+        failed: BaseException | None = None
+        ended = False
+        result: object = None
         for it in its:
-            ended = False
             try:
                 items.append(next(it))
-            except StopIteration:
-                if not self._strict:
-                    raise                        # the iterator's own StopIteration, as its tp_iternext left it
-                ended = True                     # check: cleared, as in zip (RL-473)
-            if ended:
-                _check_strict("map", its, i)
-                raise StopIteration
+            except BaseException as e:           # the iterator's own error, StopIteration too, as its tp_iternext left it
+                failed = e
+            if failed is not None:
+                break
             i += 1
-        return self._func(*items)
+        if failed is None:
+            try:
+                result = self._func(*items)
+            except BaseException as e:
+                failed = e
+        elif self._strict and issubclass(type(failed), StopIteration):   # check: cleared, as in zip (RL-473)
+            failed = None
+            try:
+                _check_strict("map", its, i)
+            except BaseException as e:
+                failed = e
+            ended = failed is None
+        k = 0
+        while k < list.__len__(items):
+            items[k] = None
+            k += 1
+        if failed is not None:
+            _raise_as_is(failed)
+        if ended:
+            raise StopIteration
+        return result
 
     def __reduce__(self, *args: object, **kwds: object) -> object:   # map_reduce: the function and the iterators it holds
         _no_arguments("map.__reduce__", args, kwds)
