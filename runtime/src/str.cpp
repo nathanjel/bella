@@ -217,8 +217,7 @@ void split_args(Args a, const char* name, Obj& sep, std::int64_t& maxsplit) {
     for (std::size_t i = 0; i < a.npos; ++i) given[i] = a.pos(i);
     for (std::size_t k = 0; k < a.nkw; ++k) {
         std::size_t j = a.kwnames[k]->text == params[0] ? 0 : a.kwnames[k]->text == params[1] ? 1 : 2;
-        if (j == 2)                  // CPython's message may suggest a keyword (_Py_CalculateSuggestions)
-            throw NotImplemented(std::string("str.") + name + "() with an unexpected keyword argument (the suggestion in its message)");
+        if (j == 2) unexpected_keyword(std::string(name) + "()", a.kwnames[k], {"sep", "maxsplit"});
         if (!given[j].is_unset())
             raise_new("TypeError", std::string("argument for ") + name + "() given by name ('" + params[j] + "') and position (" +
                                        std::to_string(j + 1) + ")");
@@ -806,8 +805,7 @@ Ref str_replace_m(Obj self, Args a) {
     unpack_check(a, "replace", 2, 3, 3);
     for (std::size_t i = 0; i < a.npos; ++i) given[i] = a.pos(i);
     for (std::size_t k = 0; k < a.nkw; ++k) {
-        if (a.kwnames[k]->text != "count")
-            throw NotImplemented("str.replace() with an unexpected keyword argument (the suggestion in its message)");
+        if (a.kwnames[k]->text != "count") unexpected_keyword("replace()", a.kwnames[k], {"count"});
         if (!given[2].is_unset()) raise_new("TypeError", "argument for replace() given by name ('count') and position (3)");
         given[2] = a.kw(k);
     }

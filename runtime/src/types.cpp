@@ -567,12 +567,30 @@ Ref object_new(Obj, Args a) {
     return made;
 }
 
+// type->tp_new == object_new, for object_init's test of excess arguments: the class takes object's allocator. A class of the
+// program's does unless it or a base has a __new__; a type of CPython's has its own (the names table has the name), has none
+// at all (Py_TPFLAGS_DISALLOW_INSTANTIATION: tp_new is NULL, as a generator's or an iterator's), or inherits its base's. The
+// runtime's own types have no __new__ in their dict for the last two, so the lookup of the name alone said "object's" for a
+// range or a generator, and `range.__init__(r, 1)`, which CPython lets pass, was a TypeError (the argument-count sweep)
+bool allocator_is_objects(const ClassObject* cls) {
+    for (const ClassObject* c : cls->mro) {
+        if (c == types().object) return true;
+        if (c->heap_type && !c_type(c)) {
+            if (c->attrs.contains(N("__new__"))) return false;
+            continue;
+        }
+        auto flags = cpython_type_number("flags", c);
+        if (flags && (*flags & (1 << 7))) return false;
+        if (!cpython_attribute_kind(c, "__new__").empty() || c->attrs.contains(N("__new__"))) return false;
+    }
+    return true;
+}
 Ref object_init(Obj self, Args a) {
     if (a.npos > 0 || a.nkw > 0) {
         ClassObject* cls = type_of(self);
         if (type_lookup(cls, N("__init__")) != object_init_fn())
             raise_new("TypeError", "object.__init__() takes exactly one argument (the instance to initialize)");
-        if (type_lookup(cls, N("__new__")) == object_new_fn())
+        if (allocator_is_objects(cls))
             raise_new("TypeError", cls->name + ".__init__() takes exactly one argument (the instance to initialize)");
     }
     return none_ref();
@@ -2040,15 +2058,18 @@ Ref proxy_len(Obj self, Args a) {
     return Ref::steal(Obj::small(static_cast<std::int64_t>(proxied(self)->attrs.size())));
 }
 // What a program reaches through the proxy's dict: the class's dict, live (ClassObject::dict_view)
-Obj class_dict(Obj self) {
-    ClassObject* c = proxied(self);
-    if (c == nullptr) return proxy_mapping(self);
+Obj class_dict_of(ClassObject* c) {              // the class's names as a dict, made at the first asking and kept in step
     if (c->dict_view == nullptr) {
         Ref d = dict_new();
         for (auto& [k, v] : c->attrs.items()) dict_set(static_cast<Dict*>(d.get().object()), Obj::of(k), v);
         c->dict_view = static_cast<Dict*>(d.release().object());
     }
     return Obj::of(c->dict_view);
+}
+Obj class_dict(Obj self) {
+    ClassObject* c = proxied(self);
+    if (c == nullptr) return proxy_mapping(self);
+    return class_dict_of(c);
 }
 Ref proxy_mapping_call(Obj self, const char* name) {   // mappingproxy_keys and the others: the mapping's own method
     Ref f = getattr(class_dict(self), N(name));
@@ -2733,6 +2754,7 @@ Ref exception_str(Obj self, Args a) {
     return repr_of(args.get());
 }
 Ref key_error_str(Obj self, Args a) {             // KeyError_str: one argument shows as its repr
+    no_wrapper_args(a, "__str__");
     Ref args = exception_args(self);
     if (is_kind(args.get(), Kind::Tuple) && static_cast<Tuple*>(args.get().object())->items.size() == 1)
         return repr_of(static_cast<Tuple*>(args.get().object())->items[0]);
@@ -2835,6 +2857,7 @@ Ref import_error_init(Obj self, Args a) {
     return none_ref();
 }
 Ref import_error_str(Obj self, Args a) {          // ImportError_str: msg when it is exactly a str
+    no_wrapper_args(a, "__str__");
     Obj msg = exception_field(self, "msg");
     if (!msg.is_unset() && is_kind(msg, Kind::Str) && type_of(msg) == types().str) return Ref::share(msg);
     return exception_str(self, a);
@@ -3130,6 +3153,14 @@ Ref i_bella_tp_name_of(Obj, Args a) {
 Ref i_bella_instance_dict(Obj, Args a) {         // the dict, or None when it is empty or there is none (_PyObject_IsInstanceDictEmpty)
     positional_only(a, "_bella_instance_dict", 1, 1);
     Obj self = a.pos(0);
+    if (is_kind(self, Kind::Class)) {            // PyObject_GenericGetDict of a type: its own dict, which is never empty
+        Ref d = Ref::share(class_dict_of(static_cast<ClassObject*>(self.object())));
+        return truth(d.get()) ? d : none_ref();
+    }
+    if (is_kind(self, Kind::Module)) {
+        Ref d = Ref::share(Obj::of(static_cast<Module*>(self.object())->dict));
+        return truth(d.get()) ? d : none_ref();
+    }
     bool empty = true;
     if (!with_attribute_storage(self, [&](auto* inst) { empty = inst->order.empty() && inst->dict == nullptr; })) return none_ref();
     if (empty) return none_ref();

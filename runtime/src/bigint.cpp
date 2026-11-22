@@ -468,8 +468,7 @@ void unpack(Args a, const std::string& name, std::initializer_list<const char*> 
             if (a.kwnames[k]->text == p) break;
             ++j;
         }
-        if (j == params.size())      // CPython's message may suggest a keyword (_Py_CalculateSuggestions)
-            throw NotImplemented(name + "() with an unexpected keyword argument (the suggestion in its message)");
+        if (j == params.size()) unexpected_keyword(name + "()", a.kwnames[k], params);
         if (!given[j].is_unset())
             raise_new("TypeError", "argument for " + name + "() given by name ('" + a.kwnames[k]->text + "') and position (" + std::to_string(j + 1) + ")");
         given[j] = a.kw(k);

@@ -713,10 +713,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   assert forbids the state. The prelude caps the estimate at the snapshot (RL-347), so a decoder written in Python sees
   other calls; the position agrees. A deviation, the one NUL, or open: Question 31 (drafted), after Question 30.
 * **Open from review A34:** `struct.Struct.__init__(s)` called again with no format is a TypeError under CPython and returns
-  None (RL-776); with the Struct step (RL-549). And the argument counts of every wrapper and method of every type: the
-  reviewer's sweep runs one process a type and stops at the type's first named stop (`int.to_bytes` with a keyword,
-  `range.__bool__`, `bytes.__buffer__`), so half of `int`'s and `str`'s rows and most of `bytes`'s were never compared.
-  A sweep of the session's own, one process for each type and name, kept as a test (RL-752 is its first part).
+  None (RL-776); with the Struct step (RL-549). The argument counts of every method of every type were swept on 2026-11-22
+  (`pipeline/tests/test_argument_counts.py`); what it leaves is `__sizeof__` (163 of its 183 stops: no type answers it yet).
 * **Open from review A32, with the buffer step (RL-702):** a prelude copies a bytearray's bytes when it converts the argument;
   the C holds a view from the argument's parsing on and reads it at its use, so a later argument's `__index__` that overwrites
   a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s

@@ -1,0 +1,74 @@
+import ast, builtins, collections, contextvars, copyreg, csv, functools, hashlib, io, itertools, json, operator, os, re, struct, sys, types, typing, weakref, zlib
+import _thread
+def gen():
+    yield 1
+class P:
+    def m(self): pass
+MAKE={
+"object":lambda:object(),"int":lambda:5,"bool":lambda:True,"float":lambda:1.5,"complex":lambda:1j,"str":lambda:"ab","bytes":lambda:b"ab",
+"bytearray":lambda:bytearray(b"ab"),"list":lambda:[1,2],"tuple":lambda:(1,2),"dict":lambda:{1:2},"set":lambda:{1},"frozenset":lambda:frozenset([1]),
+"range":lambda:range(3),"slice":lambda:slice(1),"type":lambda:P,"NoneType":lambda:None,"NotImplementedType":lambda:NotImplemented,"ellipsis":lambda:...,
+"function":lambda:gen,"method":lambda:P().m,"builtin":lambda:len,"property":lambda:property(),"staticmethod":lambda:staticmethod(len),
+"classmethod":lambda:classmethod(len),"super":lambda:super(P,P()),"generator":lambda:gen(),"list_iterator":lambda:iter([1]),
+"tuple_iterator":lambda:iter((1,)),"str_iterator":lambda:iter("a"),"range_iterator":lambda:iter(range(2)),"dict_keys":lambda:{1:2}.keys(),
+"dict_values":lambda:{1:2}.values(),"dict_items":lambda:{1:2}.items(),"dict_keyiterator":lambda:iter({1:2}),"set_iterator":lambda:iter({1}),
+"enumerate":lambda:enumerate([1]),"zip":lambda:zip([1]),"map":lambda:map(len,[]),"filter":lambda:filter(None,[]),"reversed":lambda:reversed([1]),
+"mappingproxy":lambda:types.MappingProxyType({1:2}),"GenericAlias":lambda:list[int],"UnionType":lambda:int|str,
+"SimpleNamespace":lambda:types.SimpleNamespace(a=1),"module":lambda:types,
+"BaseException":lambda:BaseException(1),"ValueError":lambda:ValueError(1),"OSError":lambda:OSError(2,"x"),"KeyError":lambda:KeyError(1),
+"StopIteration":lambda:StopIteration(1),"UnicodeDecodeError":lambda:UnicodeDecodeError("utf-8",b"a",0,1,"r"),"SyntaxError":lambda:SyntaxError("m"),
+"ImportError":lambda:ImportError("m"),"AttributeError":lambda:AttributeError("m"),"SystemExit":lambda:SystemExit(1),
+"ExceptionGroup":lambda:ExceptionGroup("m",[ValueError(1)]),
+"deque":lambda:collections.deque([1]),"OrderedDict":lambda:collections.OrderedDict({1:2}),"defaultdict":lambda:collections.defaultdict(int),
+"partial":lambda:functools.partial(len),"itemgetter":lambda:operator.itemgetter(0),"attrgetter":lambda:operator.attrgetter("a"),
+"methodcaller":lambda:operator.methodcaller("m"),"count":lambda:itertools.count(),"chain":lambda:itertools.chain([1]),
+"repeat":lambda:itertools.repeat(1,2),"islice":lambda:itertools.islice([1],1),"cycle":lambda:itertools.cycle([1]),
+"accumulate":lambda:itertools.accumulate([1]),"product":lambda:itertools.product([1]),"permutations":lambda:itertools.permutations([1]),
+"combinations":lambda:itertools.combinations([1],1),"groupby":lambda:itertools.groupby([1]),"tee":lambda:itertools.tee([1])[0],
+"zip_longest":lambda:itertools.zip_longest([1]),"starmap":lambda:itertools.starmap(len,[]),"takewhile":lambda:itertools.takewhile(len,[]),
+"dropwhile":lambda:itertools.dropwhile(len,[]),"compress":lambda:itertools.compress([1],[1]),"batched":lambda:itertools.batched([1],1),
+"pairwise":lambda:itertools.pairwise([1]),"filterfalse":lambda:itertools.filterfalse(None,[]),
+"BytesIO":lambda:io.BytesIO(b"ab"),"StringIO":lambda:io.StringIO("ab"),"FileIO":lambda:io.FileIO(os.devnull),
+"BufferedReader":lambda:io.BufferedReader(io.BytesIO(b"ab")),"BufferedWriter":lambda:io.BufferedWriter(io.BytesIO()),
+"BufferedRandom":lambda:io.BufferedRandom(io.BytesIO(b"ab")),"BufferedRWPair":lambda:io.BufferedRWPair(io.BytesIO(b"ab"),io.BytesIO()),
+"TextIOWrapper":lambda:io.TextIOWrapper(io.BytesIO(b"ab")),"IncrementalNewlineDecoder":lambda:io.IncrementalNewlineDecoder(None,True),
+"Struct":lambda:struct.Struct("b"),"Compress":lambda:zlib.compressobj(),"Decompress":lambda:zlib.decompressobj(),"Pattern":lambda:re.compile("a"),
+"Match":lambda:re.match("a","a"),"ContextVar":lambda:contextvars.ContextVar("v"),"Context":lambda:contextvars.copy_context(),
+"ref":lambda:weakref.ref(P),"lock":lambda:_thread.allocate_lock(),"RLock":lambda:_thread.RLock(),"blake2b":lambda:hashlib.blake2b(),
+"csv_reader":lambda:csv.reader([]),"csv_writer":lambda:csv.writer(io.StringIO()),"AST":lambda:ast.Name("x"),"TypeVar":lambda:typing.TypeVar("T"),
+"ParamSpec":lambda:typing.ParamSpec("Q"),"TypeVarTuple":lambda:typing.TypeVarTuple("Ts"),
+}
+def an_exception(cls):
+    for arguments in ((),("m",),("utf-8",b"a",0,1,"r"),("utf-8","a",0,1,"r"),("a",0,1,"r"),("m",[ValueError(1)])):
+        try: return cls(*arguments)
+        except Exception: pass
+    raise SystemExit("no instance of "+cls.__name__)
+for _name in sorted(vars(builtins)):             # every exception class of the builtins, under its own name
+    _cls=vars(builtins)[_name]
+    if isinstance(_cls,type) and issubclass(_cls,BaseException) and _cls.__name__==_name and _name not in MAKE:
+        MAKE[_name]=lambda cls=_cls:an_exception(cls)
+CASES=(("none",lambda f,x:f()),("self",lambda f,x:f(x)),("one",lambda f,x:f(x,0)),("two",lambda f,x:f(x,0,0)),("three",lambda f,x:f(x,0,0,0)),
+       ("keyword",lambda f,x:f(x,**{"a35":0})))
+KINDS=("wrapper_descriptor","method_descriptor","classmethod_descriptor","builtin_function_or_method")
+key=sys.argv[1]
+T=type(MAKE[key]())
+if sys.argv[2]=="names":
+    print(",".join(n for n in sorted(dir(T)) if type(getattr(T,n,None)).__name__ in KINDS))
+    raise SystemExit
+if sys.argv[2]=="keys":
+    print(",".join(MAKE))
+    raise SystemExit
+names=sys.argv[3].split(",")
+for i in range(int(sys.argv[2]),len(names)):
+    out=[]
+    for label,call in CASES:
+        try: f=getattr(T,names[i])
+        except AttributeError:
+            out.append("absent")
+            continue
+        try:
+            r=call(f,MAKE[key]())
+            out.append("NotImplemented" if r is NotImplemented else type(r).__name__)
+        except BaseException as e: out.append(type(e).__name__)
+        del f
+    print(i,names[i]," ".join(out),flush=True)

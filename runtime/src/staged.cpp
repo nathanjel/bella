@@ -145,7 +145,7 @@ void arguments(Args a, const char* name, std::initializer_list<const char*> keyw
             if (a.kwnames[k]->text == p) break;
             ++j;
         }
-        if (j == max) throw NotImplemented(std::string(name) + "() with an unexpected keyword argument (the suggestion in its message)");
+        if (j == max) unexpected_keyword(std::string(name) + "()", a.kwnames[k], keywords);
         if (j < a.npos) raise_new("TypeError", "argument for " + std::string(name) + "() given by name ('" + a.kwnames[k]->text + "') and position (" + std::to_string(j + 1) + ")");
         given[j] = a.kw(k);
     }

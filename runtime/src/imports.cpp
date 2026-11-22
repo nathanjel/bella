@@ -2052,7 +2052,7 @@ Ref b_lazy_import(Obj, Args a) {
     for (std::size_t k = 0; k < a.nkw; ++k) {
         std::size_t j = 0;
         while (j < 5 && a.kwnames[k]->text != params[j]) ++j;
-        if (j == 5) throw NotImplemented("__lazy_import__() with an unexpected keyword argument (the suggestion in its message)");
+        if (j == 5) unexpected_keyword("__lazy_import__()", a.kwnames[k], {"name", "globals", "locals", "fromlist", "level"});
         if (!given[j].is_unset())
             raise_new("TypeError", std::string("argument for __lazy_import__() given by name ('") + params[j] + "') and position (" + std::to_string(j + 1) + ")");
         given[j] = a.kw(k);
