@@ -204,7 +204,7 @@ class World:
         for m, _ in self.objects:
             incref(m)                                  # the program's variables hold them
         self.real_classes: weakref.WeakSet[type] = weakref.WeakSet(rc for _, rc in self.classes)
-        if cycles:                                     # every object in the oldest generation on both sides
+        if cycles:                                     # nothing left over from the set-up on either side
             collector.collect(self.heap, 2)
             gc.collect()
         # one inline cache per literal-name call site, plus one computed-name site
@@ -800,10 +800,11 @@ class World:
             decref(got[0])
 
     def op_collect(self, generation: int) -> tuple[Outcome, Outcome]:
-        """gc.collect(generation) on both sides; what dies is compared as a multiset (apply). The number found is not
-        compared: CPython's includes the oracle's own garbage (the classes op_revive makes)."""
+        """gc.collect(generation): the model's is a full collection whatever the generation (the author's decision of
+        2026-11-14), so CPython's side is a full one too; what dies is compared as a multiset (apply). The number found
+        is not compared: CPython's includes the oracle's own garbage (the classes op_revive makes)."""
         collector.collect(self.heap, generation)
-        gc.collect(generation)
+        gc.collect()
         return ("value", None), ("value", None)
 
     def op_demote_descriptor(self, desc_i: int) -> tuple[Outcome, Outcome]:

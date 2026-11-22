@@ -521,7 +521,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          the header, and the object-graph functions stay stops (E-05).
        * 3c, the collector in the model done 2026-11-12 (`refmodel/collector.py`, CPython's gc.c; DECISIONS): the
          author chose how the header finds its objects on 2026-11-14 (DECISIONS): trial deletion over candidate
-         roots, so the model's collector is rewritten that way first (it is gc.c's lists today), then the header;
+         roots, so the model's collector is rewritten that way first (done 2026-11-23: `refmodel/collector.py`,
+         DECISIONS), then the header;
          decided the same day: gc's numbers are the runtime's own and every collection is a full one (D-04 gets
          the observable and a lint rule), the candidate buffer's size triggers a collection (growing with the heap:
          taken, for the author to overrule), and a lean build collects only when asked, at the runtime's looks and

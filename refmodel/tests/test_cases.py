@@ -1161,74 +1161,113 @@ def test_the_cyclic_sequence_is_cpythons_c_9_07() -> None:
         assert _model_cycle(resurrect) == _cpython_cycle(resurrect), resurrect
 
 
-def test_generations_are_cpythons() -> None:
-    """Which generation a survivor is in after collections of each generation, and that a young collection leaves
-    alone what an older object holds: the model against CPython's gc.get_objects(generation)."""
+def test_every_collection_is_a_full_one() -> None:
+    """The author's decision of 2026-11-14: no generations. `gc.collect(0)` finds a group that has been through
+    collections before it was let go, where CPython's young collection leaves it to an older one; what something
+    outside holds lives, what it holds lives too; a group cut off finds its way into the buffer by the release that cut
+    it off, and an object the buffer had and that died is not taken."""
     from refmodel import collector
     from refmodel import objects as O
 
-    class R:
-        pass
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        rt = Runtime()
+        K = RefClass("R", heap=heap)
+        old, young = RefObject(K, tag="old"), RefObject(K, tag="young")
+        held = RefObject(K, tag="held")
+        for o in (old, young, held):
+            incref(o)
+        rt.setattr(old, "peer", old)             # a cycle that lives through collections
+        rt.setattr(held, "peer", held)
+        holder = RefObject(K)
+        incref(holder)
+        rt.setattr(holder, "held", held)          # a cycle something outside holds
+        decref(held)
+        for generation in (0, 1, 2):
+            assert collector.collect(heap, generation) == 0
+        assert heap.gc.count() == (0, 0, 0)
+        rt.setattr(young, "peer", young)
+        decref(old)
+        decref(young)
+        assert heap.gc.count() == (2, 0, 0) and heap.deaths == []
+        assert collector.collect(heap, 0) == 2 and sorted(heap.deaths) == ["old", "young"]
+        assert rt.getattr(holder, "held", O.Site()) is held and held.alive
+        heap.deaths.clear()
+        gone = RefObject(K, tag="gone")
+        incref(gone)
+        incref(gone)
+        decref(gone)                              # a candidate
+        decref(gone)                              # and dead: it leaves the buffer
+        assert heap.deaths == ["gone"] and heap.gc.count() == (0, 0, 0)
+        assert (heap.gc.collections, heap.gc.collected) == (4, 2)
+    finally:
+        O.HEAP = saved
 
-    def cpython() -> list[list[int]]:
-        gc.disable()
-        try:
-            gc.collect()
-            old = R()
-            gc.collect()                       # old in the oldest generation
-            objs = [R() for _ in range(4)]
-            objs[0].peer = objs[1]  # type: ignore[attr-defined]
-            objs[1].peer = objs[0]  # type: ignore[attr-defined]  # a young cycle
-            old.held = objs[2]  # type: ignore[attr-defined]
-            objs[2].peer = objs[2]  # type: ignore[attr-defined]  # a young cycle an old object holds
-            objs[3].peer = objs[3]  # type: ignore[attr-defined]
-            keep = [objs[3]]
-            del objs
-            out: list[list[int]] = []
-            for generation in (0, 1, 0, 2):
-                found = gc.collect(generation)
-                members = [old, old.held, keep[0]]  # type: ignore[attr-defined]
-                out.append([found] + [next(g for g in range(3) if any(x is m for x in gc.get_objects(g))) for m in members])
-            return out
-        finally:
+
+def _cpython_revived_into_a_cycle() -> list[object]:
+    events: list[object] = []
+
+    class Node:
+        def __del__(self) -> None:
+            events.append("del")
+            self.me = self                        # a cycle of its own, which nothing outside holds
+
+    was = gc.isenabled()
+    gc.disable()
+    try:
+        gc.collect()
+        n = Node()
+        ref = weakref.ref(n)
+        del n
+        events.append(("alive", ref() is not None))
+        events.append(("found", gc.collect()))
+        events.append(("alive", ref() is not None))
+    finally:
+        if was:
             gc.enable()
-
-    def model() -> list[list[int]]:
-        saved = O.HEAP
-        heap = O.HEAP = O.Heap()
-        try:
-            rt = Runtime()
-            K = RefClass("R", heap=heap)
-            collector.collect(heap)
-            old = RefObject(K)
-            incref(old)
-            collector.collect(heap)
-            objs = [RefObject(K) for _ in range(4)]
-            for o in objs:
-                incref(o)
-            rt.setattr(objs[0], "peer", objs[1])
-            rt.setattr(objs[1], "peer", objs[0])
-            rt.setattr(old, "held", objs[2])
-            rt.setattr(objs[2], "peer", objs[2])
-            rt.setattr(objs[3], "peer", objs[3])
-            keep = objs[3]
-            for o in objs[:3]:
-                decref(o)
-            out: list[list[int]] = []
-            for generation in (0, 1, 0, 2):
-                found = collector.collect(heap, generation)
-                members = [old, rt.getattr(old, "held"), keep]
-                out.append([found] + [int(heap.gc.where[id(m)].name.split()[-1]) for m in members])
-            return out
-        finally:
-            O.HEAP = saved
-
-    assert model() == cpython()
+    return events
 
 
-def test_a_collection_is_scheduled_by_the_threshold_and_runs_at_a_look() -> None:
-    """_PyObject_GC_Link: the 2001st new object schedules a collection, which runs at the next look (_Py_RunGC) and
-    takes the first generation; a disabled collector runs none, a threshold of 0 schedules none."""
+def _model_revived_into_a_cycle() -> list[object]:
+    from refmodel import collector
+    from refmodel import objects as O
+    from refmodel.objects import weak_ref
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        events: list[object] = []
+        rt = Runtime()
+
+        def fin(obj: RefObject) -> None:
+            events.append("del")
+            rt.setattr(obj, "me", obj)
+
+        node = RefClass("Node", attrs={"__del__": fin}, heap=heap)
+        n = RefObject(node)
+        incref(n)
+        ref = weak_ref(n)
+        decref(n)
+        events.append(("alive", ref() is not None))
+        events.append(("found", collector.collect(heap)))
+        events.append(("alive", ref() is not None))
+        return events
+    finally:
+        O.HEAP = saved
+
+
+def test_an_object_revived_into_a_cycle_of_its_own_is_a_candidate() -> None:
+    """A finaliser that runs at a release to nought and stores the object in itself: the object lives on in a cycle
+    nothing outside holds, and the release of the finaliser's own count is what makes it a candidate, so the next
+    collection finds it (its finaliser is spent). The selftest's worlds do not make this one; CPython 3.15.2 gives it."""
+    assert _model_revived_into_a_cycle() == _cpython_revived_into_a_cycle()
+
+
+def test_a_collection_is_scheduled_by_the_buffer_and_runs_at_a_look() -> None:
+    """The author's decisions of 2026-11-14: a collection is scheduled when the candidates are more than the first
+    threshold and more than a quarter of what was tracked after the last collection, and runs at the next look; making
+    objects schedules nothing; a disabled collector and a threshold of 0 schedule none."""
     from refmodel import collector
     from refmodel import objects as O
 
@@ -1236,27 +1275,42 @@ def test_a_collection_is_scheduled_by_the_threshold_and_runs_at_a_look() -> None
     heap = O.HEAP = O.Heap()
     try:
         K = RefClass("K", heap=heap)
-        made = []
 
         def scheduled() -> bool:
             return heap.gc.scheduled
 
-        for _ in range(2000):
-            made.append(RefObject(K))
-            incref(made[-1])
-        assert not scheduled() and heap.gc.counts[0] == 2000
-        made.append(RefObject(K))
-        incref(made[-1])
-        assert scheduled()
-        assert collector.look(heap) == 0 and not scheduled()
-        assert heap.gc.counts == [0, 1, 0] and len(heap.gc.generations[1]) == 2001
+        def held_twice() -> RefObject:
+            o = RefObject(K)
+            incref(o)
+            incref(o)
+            return o
+
+        made = [held_twice() for _ in range(2001)]
+        assert not scheduled()                      # 2001 new objects: nothing
+        for o in made[:2000]:
+            decref(o)
+        assert not scheduled() and heap.gc.count() == (2000, 0, 0)
+        decref(made[2000])
+        assert scheduled()                          # the 2001st candidate, with nothing tracked after a collection before
+        assert collector.look(heap) == 0 and not scheduled() and heap.gc.count() == (0, 0, 0)
+        assert heap.gc.alive_after == 2001
+        more = [held_twice() for _ in range(8000)]
+        collector.collect(heap)
+        assert heap.gc.alive_after == 10001
+        for o in more[:2001]:
+            decref(o)
+        assert not scheduled()                      # more than the threshold, but not a quarter of the 10001 tracked
+        for o in more[2001:2501]:
+            decref(o)
+        assert scheduled()                          # 2501: a quarter passed
+        collector.look(heap)
         heap.gc.enabled = False
-        heap.gc.counts[0] = 2000
-        RefObject(K).refs = 1
-        assert not scheduled()                    # disabled: nothing scheduled
+        for o in more[2501:5503]:
+            decref(o)
+        assert not scheduled()                      # disabled: nothing scheduled
         heap.gc.enabled, heap.gc.thresholds[0] = True, 0
-        RefObject(K).refs = 1
-        assert not scheduled()                    # threshold 0: automatic collection off
+        decref(more[5503])
+        assert not scheduled()                      # threshold 0: automatic collection off
     finally:
         O.HEAP = saved
 

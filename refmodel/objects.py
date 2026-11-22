@@ -79,9 +79,11 @@ What is modelled (design document, section 3, as revised by review rounds two an
   object lives on with its weak references, its finaliser spent; otherwise the list is cleared and
   the callbacks run, each with its reference held, before any slot or the dict is released.
 
-* The cycle collector (step 3c): ``GcState`` keeps CPython's three generations of tracked objects
-  (every counted object from its creation, as in CPython); each object has its type's ``traverse``
-  and ``gc_clear``; ``refmodel/collector.py`` is Python/gc.c over them.
+* The cycle collector (step 3c): ``GcState`` keeps the tracked objects (every counted object from its
+  creation, as in CPython) and the candidate roots, the objects a release left with a count above
+  nought (the author's decision of 2026-11-14: trial deletion over candidate roots, no generations);
+  each object has its type's ``traverse`` and ``gc_clear``; ``refmodel/collector.py`` is the
+  collector over them.
 
 What is not modelled yet: ``__setattr__``/``__delattr__``/``__getattribute__`` overrides,
 ``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, and classes as
@@ -184,55 +186,73 @@ class GcList:
 
 
 class GcState:
-    """The collector's state (GCState, Python/gc.c, CPython 3.15.2: the three generations, not 3.14's incremental
-    collector): which objects are tracked and in which generation, in the order they were tracked, and the counts that
-    schedule a collection. The algorithm is refmodel/collector.py's; this is what the objects need while they live.
-    Every model object that is a counted object of its own is tracked from its creation to its death, as an instance of
-    a class, a dict and a weak reference are in CPython; a dict that stands for the values an object keeps in itself
-    is not an object, and is not tracked."""
+    """The collector's state for trial deletion over candidate roots (the author's decision of 2026-11-14): which objects
+    are tracked, which are candidates, and what schedules a collection; the algorithm is refmodel/collector.py's. Every
+    model object that is a counted object of its own is tracked from its creation to its death, as an instance of a class,
+    a dict and a weak reference are in CPython (a dict that stands for the values an object keeps in itself is not an
+    object, and is not tracked). A collection's own lists (the unreachable objects, the callbacks to call, the survivors)
+    are ``GcList``s, and ``where`` says which one holds an object while a collection runs.
 
-    NUM_GENERATIONS = 3
+    A candidate is a tracked object that a release left with a count above nought: only such an object can have become
+    the way into a group that nothing outside holds. The buffer keeps each once, in the order buffered, until a collection
+    takes them all as its roots; an object that dies leaves it. A collection is scheduled, for the next look, when the
+    candidates are more than the first threshold and more than a quarter of the objects that were tracked after the
+    last collection (the decision's rule: a structure whose count drops often is a candidate at every collection, and a
+    fixed size would walk a growing heap again and again)."""
 
     def __init__(self) -> None:
-        self.generations = [GcList(f"generation {i}") for i in range(self.NUM_GENERATIONS)]
-        self.thresholds = [2000, 10, 10]          # _PyGC_InitState
-        self.counts = [0, 0, 0]
+        self.tracked: dict[int, Any] = {}
+        self.candidates: dict[int, Any] = {}
+        self.thresholds = [2000, 10, 10]          # gc.get_threshold(): the first is the buffer's size; the others are kept
         self.enabled = True
         self.collecting = False
-        self.scheduled = False                    # _PY_GC_SCHEDULED_BIT: run at the next look
-        self.long_lived_total = 0
-        self.long_lived_pending = 0
+        self.scheduled = False                    # a collection at the next look
+        self.alive_after = 0                      # tracked objects after the last collection: the quarter rule
+        self.collections = 0                      # gc.get_stats()'s numbers, the runtime's own (decided 2026-11-14)
+        self.collected = 0
         self.where: dict[int, GcList] = {}
 
     def link(self, obj: Any) -> None:
-        """A new object (_PyObject_GC_Link, then _PyObject_GC_TRACK): it is counted toward the first generation's
-        threshold, which, once passed, schedules a collection for the next look (_Py_ScheduleGC), and it is tracked."""
-        self.counts[0] += 1
-        if self.counts[0] > self.thresholds[0] and self.enabled and self.thresholds[0] and not self.collecting:
-            self.scheduled = True
+        """A new object (_PyObject_GC_Link, then _PyObject_GC_TRACK): it is tracked. Making objects schedules nothing."""
         self.track(obj)
 
     def is_tracked(self, obj: Any) -> bool:
-        return id(obj) in self.where
+        return id(obj) in self.tracked
 
     def track(self, obj: Any) -> None:
-        """_PyObject_GC_TRACK: at the end of the first generation."""
         if self.is_tracked(obj):
             raise ModelError(f"{obj!r} tracked twice")
-        self.append(obj, self.generations[0])
+        self.tracked[id(obj)] = obj
 
     def untrack(self, obj: Any) -> None:
-        """PyObject_GC_UnTrack: out of whatever list holds it, a collection's own lists included; nothing if it is not
-        tracked."""
+        """PyObject_GC_UnTrack: no longer tracked, and out of a collection's list if one holds it; nothing if it is not
+        tracked. A candidate that is untracked stays buffered: a root that is not tracked when the collection comes is
+        not taken."""
+        self.tracked.pop(id(obj), None)
+        self.unlist(obj)
+
+    def possible_root(self, obj: Any) -> None:
+        """A release that left the object a count above nought: a candidate, once, at the end of the buffer."""
+        if not self.is_tracked(obj) or id(obj) in self.candidates:
+            return
+        self.candidates[id(obj)] = obj
+        if (self.enabled and self.thresholds[0] and not self.collecting and len(self.candidates) > self.thresholds[0]
+                and 4 * len(self.candidates) > self.alive_after):
+            self.scheduled = True
+
+    def free(self, obj: Any) -> None:
+        """PyObject_GC_Del: the object's memory goes, and with it its place in the buffer."""
+        self.untrack(obj)
+        self.candidates.pop(id(obj), None)
+
+    def count(self) -> tuple[int, int, int]:
+        """gc.get_count(), the runtime's own numbers in CPython's shape: the candidates, and two noughts."""
+        return (len(self.candidates), 0, 0)
+
+    def unlist(self, obj: Any) -> None:
         lst = self.where.pop(id(obj), None)
         if lst is not None:
             del lst.items[id(obj)]
-
-    def free(self, obj: Any) -> None:
-        """PyObject_GC_Del: the object's memory goes, and it no longer counts toward the threshold."""
-        self.untrack(obj)
-        if self.counts[0] > 0:
-            self.counts[0] -= 1
 
     def append(self, obj: Any, lst: GcList) -> None:
         lst.items[id(obj)] = obj
@@ -240,7 +260,7 @@ class GcState:
 
     def move(self, obj: Any, lst: GcList) -> None:
         """gc_list_move: out of its list, to the end of `lst`."""
-        self.untrack(obj)
+        self.unlist(obj)
         self.append(obj, lst)
 
     def merge(self, src: GcList, dst: GcList) -> None:
@@ -304,6 +324,8 @@ def decref(v: Any) -> None:
         v.refs -= 1
         if v.refs == 0:
             _dealloc(v)
+        else:
+            v.heap.gc.possible_root(v)    # left above nought: a candidate root of the cycle collector
 
 
 def _dealloc(v: Any) -> None:
@@ -886,7 +908,8 @@ class RefObject:
                 self.refs = 1
                 self.finalize()
                 self.refs -= 1
-                if self.refs > 0:               # resurrected: it lives on, with its weak references
+                if self.refs > 0:               # resurrected: it lives on, with its weak references, and the release
+                    gc.possible_root(self)      # of the finaliser's count left it above nought: a candidate
                     return
             gc.untrack(self)
         self.alive = False
