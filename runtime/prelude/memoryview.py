@@ -47,6 +47,10 @@ _RELEASED = "operation forbidden on released memoryview object"
 _SSIZE_MAX = (1 << 63) - 1
 
 
+def _ssize_product(a: int, b: int) -> int:     # init_slice's `strides[dim] * step`: a Py_ssize_t, which wraps (RL-890)
+    return ((a * b + (1 << 63)) % (1 << 64)) - (1 << 63)
+
+
 class _ManagedBuffer:
     """_PyManagedBufferObject: the master buffer of an exporter, which the views share. Only views that are not released
     hold it, so its end is mbuf_release: the exporter's count of exports goes down (bytearray_releasebuffer), then the
@@ -62,6 +66,8 @@ def _exporter_octets(exporter: object, start: int, step: int, length: int) -> by
     """The view's octets as an exact bytes: read from the exporter itself, so a bytearray changed in place is seen."""
     if length == 0:
         return b""
+    if length == 1:
+        return bytes((_octet(exporter, start),))
     stop: int | None = start + (length - 1) * step + (1 if step > 0 else -1)
     if stop is not None and stop < 0:
         stop = None
@@ -132,6 +138,21 @@ def _release(view: memoryview) -> None:         # _memory_release: not while som
     view._hold = None                            # the hold ends with the last view that keeps it
 
 
+def _pack_single(view: memoryview, at: int, value: object) -> None:   # pack_single for format 'B'
+    octet = 0
+    wrong: type[Exception] | None = None
+    try:
+        octet = _number_index(value)             # pylong_as_lu: PyNumber_Index
+    except (TypeError, OverflowError, ValueError) as error:
+        wrong = TypeError if isinstance(error, TypeError) else ValueError
+    if wrong is not None:                        # fix_error_int: the error replaced, outside the handler (RL-448, RL-902)
+        raise wrong("memoryview: invalid " + ("type" if wrong is TypeError else "value") + " for format 'B'")
+    exporter = _exporter(view)                   # CHECK_RELEASED_INT_AGAIN: the conversion may have released the view (RL-891)
+    if not 0 <= octet <= 255:
+        raise ValueError("memoryview: invalid value for format 'B'")
+    bytearray.__setitem__(exporter, at, octet)  # type: ignore[arg-type]
+
+
 def _contiguous(view: memoryview) -> bool:       # MV_CONTIGUOUS_NDIM1: one item, or items next to each other
     return view._length == 1 or view._step == 1
 
@@ -164,7 +185,9 @@ def _octets_of(other: object) -> bytes | None:   # memory_richcompare's other si
 class memoryview:  # noqa: N801
     """Create a new memoryview object which references the given object."""
 
-    __slots__ = ("_exports", "_hold", "_length", "_readonly", "_start", "_step")
+    __slots__ = ("_exports", "_hash", "_hold", "_length", "_readonly", "_start", "_step")
+    # memory_dealloc: the view is released (with the last view, the exporter let go of) before its weak references are cleared
+    __release__ = ("_hold", "_exports", "_hash", "_length", "_readonly", "_start", "_step", "__weakref__")
 
     def __new__(*args: object, **kwds: object) -> memoryview:  # noqa: N805  # memoryview_impl
         if not args:
@@ -187,7 +210,8 @@ class memoryview:  # noqa: N801
         else:
             raise TypeError("memoryview() missing required argument 'object' (pos 1)")
         self: memoryview = _bella_new_instance(cls)
-        self._exports = 0                        # what holds a buffer of this view itself (the regular expression engine)
+        self._exports = 0                        # what holds a buffer of this view itself (the regular expression engine, a hash)
+        self._hash = -1                          # memory_hash keeps what it computed: -1 for none yet
         if type(source) is memoryview:           # PyMemoryView_Check: mbuf_add_view, one more view of the same hold
             hold = source._hold  # type: ignore[attr-defined]
             if hold is None:
@@ -290,44 +314,60 @@ class memoryview:  # noqa: N801
         return self._length
 
     def __getitem__(self, key: object) -> object:   # memory_subscript
-        exporter = _exporter(self)
+        _exporter(self)                          # CHECK_RELEASED
         if _has_slot(key, "__index__"):
-            return _octet(exporter, self._start + _item(self, key) * self._step)
+            at = _item(self, key)                # PyNumber_AsSsize_t, which may run the program's code; memory_item checks again
+            return _octet(_exporter(self), self._start + at * self._step)
         if type(key) is slice:
-            start, step, count = _adjusted(key, self._length)
-            view: memoryview = _bella_new_instance(memoryview)
-            view._exports = 0
+            view: memoryview = _bella_new_instance(memoryview)   # mbuf_add_view: the slice holds the buffer before its bounds
+            view._exports = 0                    # are converted, so a bound that releases this view leaves the slice whole
+            view._hash = -1
             view._hold = self._hold
-            view._start = self._start + start * self._step
-            view._step = self._step * step
-            view._length = count
             view._readonly = self._readonly
+            view._start = self._start
+            view._step = self._step
+            view._length = self._length
+            start, step, count = _adjusted(key, self._length)   # init_slice
+            view._start = self._start + start * self._step
+            view._step = _ssize_product(self._step, step)
+            view._length = count
             return view
-        if issubclass(type(key), tuple):
-            if not key:
-                raise NotImplementedError("sub-views are not implemented")
-            if all(type(k) is slice for k in key):  # type: ignore[attr-defined]
+        if issubclass(type(key), tuple):         # PyTuple_GET_SIZE and PyTuple_GET_ITEM: the tuple's own cells
+            size = tuple.__len__(key)  # type: ignore[arg-type]
+            items = [tuple.__getitem__(key, i) for i in range(size)]  # type: ignore[arg-type]
+            if all(_has_slot(k, "__index__") for k in items):   # is_multiindex (an empty tuple is one): memory_item_multi
+                if size < 1:
+                    raise NotImplementedError("sub-views are not implemented")
+                if size > 1:
+                    raise TypeError("cannot index 1-dimension view with " + str(size) + "-element tuple")
+                at = _item(self, items[0])       # ptr_from_tuple; unpack_single checks for a release again
+                return _octet(_exporter(self), self._start + at * self._step)
+            if size > 0 and all(type(k) is slice for k in items):   # is_multislice
                 raise NotImplementedError("multi-dimensional slicing is not implemented")
-            if all(_has_slot(k, "__index__") for k in key):  # type: ignore[attr-defined]
-                if tuple.__len__(key) != 1:  # type: ignore[arg-type]
-                    raise TypeError("cannot index 1-dimension view with " + str(tuple.__len__(key)) + "-element tuple")  # type: ignore[arg-type]
-                return _octet(exporter, self._start + _item(self, tuple.__getitem__(key, 0)) * self._step)  # type: ignore[arg-type]
         raise TypeError("memoryview: invalid slice key")
 
     def __setitem__(self, key: object, value: object) -> None:   # memory_ass_sub, for format 'B'
-        exporter = _exporter(self)
+        _exporter(self)                          # CHECK_RELEASED_INT
         if self._readonly:
             raise TypeError("cannot modify read-only memory")
         if _has_slot(key, "__index__"):
-            at = self._start + _item(self, key) * self._step
-            if not _has_slot(value, "__index__"):
-                raise TypeError("memoryview: invalid type for format 'B'")
-            octet = _number_index(value)
-            if not 0 <= octet <= 255:
-                raise ValueError("memoryview: invalid value for format 'B'")
-            bytearray.__setitem__(exporter, at, octet)  # type: ignore[arg-type]
+            _pack_single(self, self._start + _item(self, key) * self._step, value)
             return
-        _bella_refuse("memoryview slice assignment (and assignment by a tuple of indices)")
+        if type(key) is slice:
+            _bella_refuse("memoryview slice assignment")
+        if issubclass(type(key), tuple):         # PyTuple_GET_SIZE and PyTuple_GET_ITEM: the tuple's own cells
+            size = tuple.__len__(key)  # type: ignore[arg-type]
+            items = [tuple.__getitem__(key, i) for i in range(size)]  # type: ignore[arg-type]
+            if all(_has_slot(k, "__index__") for k in items):   # is_multiindex
+                if size < 1:
+                    raise NotImplementedError("sub-views are not implemented")
+                if size > 1:
+                    raise TypeError("cannot index 1-dimension view with " + str(size) + "-element tuple")
+                _pack_single(self, self._start + _item(self, items[0]) * self._step, value)
+                return
+            if size > 0 and all(type(k) is slice for k in items):   # is_multislice
+                raise NotImplementedError("memoryview slice assignments are currently restricted to ndim = 1")
+        raise TypeError("memoryview: invalid slice key")
 
     def __delitem__(self, key: object) -> None:
         _exporter(self)
@@ -356,10 +396,15 @@ to C first. order=None is the same as order='C'."""
             if name != "order":
                 raise TypeError("tobytes() got an unexpected keyword argument '" + name + "'")
         order = args[0] if args else kwds.get("order")
-        if order is not None and not issubclass(type(order), str):
-            raise TypeError("tobytes() argument 'order' must be str or None, not " + _tp_name(order))
+        chars = b"C"
+        if order is not None:                    # the clinic: PyUnicode_AsUTF8AndSize, and no NUL inside
+            if not issubclass(type(order), str):
+                raise TypeError("tobytes() argument 'order' must be str or None, not " + _tp_name(order))
+            chars = str.encode(order, "utf-8")  # type: ignore[arg-type]
+            if bytes.__contains__(chars, 0):
+                raise ValueError("embedded null character")
         exporter = _exporter(self)
-        if order is not None and order not in ("C", "F", "A"):
+        if not (bytes.__eq__(chars, b"C") or bytes.__eq__(chars, b"F") or bytes.__eq__(chars, b"A")):
             raise ValueError("order must be 'C', 'F' or 'A'")
         return _exporter_octets(exporter, self._start, self._step, self._length)
 
@@ -398,11 +443,17 @@ to C first. order=None is the same as order='C'."""
         return "<memory at " + hex(id(self)) + ">"
 
     def __hash__(self) -> int:                   # memory_hash: read-only views alone, after the exporter's own hash
-        exporter = _exporter(self)
-        if not self._readonly:
-            raise ValueError("cannot hash writable memoryview object")
-        hash(exporter)
-        return hash(_exporter_octets(exporter, self._start, self._step, self._length))
+        if self._hash == -1:                     # computed once, and then answered, released or not
+            exporter = _exporter(self)
+            if not self._readonly:
+                raise ValueError("cannot hash writable memoryview object")
+            self._exports += 1                   # the view cannot be released while the exporter's hash runs (gh-142664)
+            try:
+                hash(exporter)
+            finally:
+                self._exports -= 1
+            self._hash = hash(_exporter_octets(exporter, self._start, self._step, self._length))
+        return self._hash
 
     def __eq__(self, other: object) -> object:
         if self is other:                        # the same object is equal to itself, released or not

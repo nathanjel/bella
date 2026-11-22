@@ -1,0 +1,71 @@
+import sys, weakref, struct, zlib, binascii
+row = sys.argv[1]
+class B(bytes):
+    def __hash__(self):
+        print("hash")
+        return 1
+    def __del__(self):
+        print("exporter gone")
+class T(tuple):
+    def __iter__(self):
+        print("iter")
+        return iter(())
+    def __bool__(self):
+        print("bool")
+        return False
+class S(str):
+    def __eq__(self, other):
+        print("eq", other)
+        return False
+def run():
+    a = bytearray(b"abc")
+    v = memoryview(a)
+    if row == "cache":
+        m = memoryview(B(b"a"))
+        print(hash(m) == hash(b"a"))
+        print(hash(m) == hash(b"a"))
+        m.release()
+        print(hash(m) == hash(b"a"))
+    elif row == "weak":
+        m = memoryview(B(b"a"))
+        ref = weakref.ref(m, lambda r: print("view gone"))
+        del m
+        print(ref())
+    elif row == "tuple":
+        print(v[T((0,))])
+    elif row == "order":
+        print(v.tobytes(S("C")))
+    elif row == "stride":
+        print(v[::1<<62][::4].strides)
+    elif row == "iterhold":
+        it = struct.iter_unpack("B", v)
+        v.release()
+        print(next(it))
+    elif row == "iterlive":
+        it = struct.iter_unpack("B", v)
+        a[0] = 120
+        print(next(it))
+    elif row == "orderzero":
+        print(v.tobytes("C\x00"))
+    else:
+        class I:
+            def __index__(self):
+                v.release()
+                print("released")
+                return 0
+        if row == "sub":
+            print(v[I()])
+        elif row == "slice":
+            w = v[I():]
+            print(w.tolist())
+        elif row == "set":
+            v[0] = I()
+            print(a)
+        elif row == "struct":
+            print(struct.unpack_from("B", v, I()))
+        elif row == "crc":
+            print(zlib.crc32(v, I()))
+        elif row == "binascii":
+            print(binascii.crc32(v, I()))
+try: run()
+except Exception as e: print(type(e).__name__)

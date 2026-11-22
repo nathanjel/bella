@@ -3943,7 +3943,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                              {"_class_fullname", i_class_fullname}, {"_type_fullname", i_type_fullname},
                              {"_is_c_type", i_is_c_type}, {"_own_dict", i_own_dict}, {"_tp_init_is", i_tp_init_is}, {"_tp_new_is", i_tp_new_is},
                              {"_sequence_size", i_sequence_size}, {"_sequence_repeat", i_sequence_repeat}, {"_method_new", i_method_new},
-                             {"_bella_export", i_bella_export}, {"_is_view", i_is_view}}) {
+                             {"_bella_export", i_bella_export}, {"_is_view", i_is_view}, {"_view_ok", i_view_ok}}) {
                         Ref b = own(new Builtin(n, fn));   // a chained error's context, and a type's name as the C has it (RL-759, RL-767)
                         put(pm->dict, n, b.get());
                     }

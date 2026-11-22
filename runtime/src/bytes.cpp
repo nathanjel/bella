@@ -77,6 +77,10 @@ Ref i_is_view(Obj, Args a) {
     positional_only(a, "_is_view", 1, 1);
     return Ref::steal(boolean(is_memoryview(a.pos(0))));
 }
+Ref i_view_ok(Obj, Args a) {
+    positional_only(a, "_view_ok", 1, 1);
+    return Ref::steal(boolean(is_memoryview(a.pos(0)) && view_simple_ok(a.pos(0))));
+}
 
 namespace {
 const Str* N(const char* s) { return intern(s); }
@@ -396,7 +400,8 @@ Ref splitlines_m(Obj self, Args a) {
 template <bool reverse>
 Ref partition_m(Obj self, Args a) {
     onearg(a, who(self, reverse ? "rpartition" : "partition"));
-    std::string d(buffer_of(a.pos(0)));
+    // bytearray's copy the separator from a full buffer (_PyByteArray_FromBufferObject), bytes' take a simple one (RL-901)
+    std::string d = is_bytearray(self) && is_memoryview(a.pos(0)) ? view_copy(a.pos(0)) : std::string(buffer_of(a.pos(0)));
     if (d.empty()) raise_new("ValueError", "empty separator");
     std::string_view s = bytes_data(self);
     std::size_t at = reverse ? s.rfind(d) : s.find(d);
@@ -647,6 +652,8 @@ Ref fromhex_m(Obj cls, Args a) {                  // _PyBytes_FromHex
         for (std::size_t i = 0; i < t->length; ++i) text += t->at(i);
     } else if (is_bytes_like(a.pos(0))) {
         for (char c : bytes_data(a.pos(0))) text += static_cast<char32_t>(u(c));
+    } else if (is_memoryview(a.pos(0))) {         // PyObject_CheckBuffer, then the simple buffer, whose failure goes on (RL-895)
+        for (char c : simple_view(a.pos(0))) text += static_cast<char32_t>(u(c));
     } else {
         raise_new("TypeError", "fromhex() argument must be str or bytes-like, not " + type_of(a.pos(0))->name);
     }
@@ -1390,8 +1397,9 @@ Ref extend_m(Obj self, Args a) {
         bytes_data(self) += copy;
         return none_ref();
     }
-    if (is_memoryview(x)) {                      // bytearray_extend: a buffer is a slice assignment at the end
-        std::string copy = view_copy(x);
+    if (is_memoryview(x)) {                      // bytearray_extend: a buffer is bytearray_setslice at the end (RL-894)
+        if (!view_simple_ok(x)) raise_new("TypeError", "can't set bytearray slice from memoryview");
+        std::string copy(simple_view(x));
         can_resize(self, bytes_data(self).size() + copy.size());
         bytes_data(self) += copy;
         return none_ref();

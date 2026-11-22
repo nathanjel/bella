@@ -468,14 +468,38 @@ void update_new_slot(ClassObject* cls, bool top = true) {
     for (ClassObject* sub : cls->subclasses) update_new_slot(sub, false);
 }
 
+// [P2+] (spec section 6: the buffer protocol on a program's own classes): a class over bytes or bytearray with a __buffer__ or a
+// __release_buffer__ of a class of the program's. CPython's PyObject_GetBuffer then calls the method wherever the object's octets
+// are taken (slot_bf_getbuffer), and the runtime reads the base's storage, so the class stops where it is made and where one of
+// the two names is stored in it or in a class it derives from (review A40, RL-899).
+bool program_buffer_hook(const ClassObject* cls) {
+    bool octets = false;
+    for (const ClassObject* c : cls->mro) octets = octets || c == types().bytes || c == types().bytearray;
+    if (!octets) return false;
+    for (const ClassObject* c : cls->mro)
+        if (c->heap_type && !c_type(c) && (c->attrs.contains(N("__buffer__")) || c->attrs.contains(N("__release_buffer__")))) return true;
+    return false;
+}
+void refuse_buffer_hook(const ClassObject* cls) {
+    if (program_buffer_hook(cls))
+        throw NotImplemented("[P2+] the buffer protocol of a class over bytes or bytearray (its own __buffer__ or __release_buffer__; spec section 6)");
+}
+void refuse_buffer_hook_below(ClassObject* cls) {   // the class and every class that derives from it, now that one of the two names is stored
+    refuse_buffer_hook(cls);
+    for (ClassObject* sub : cls->subclasses) refuse_buffer_hook_below(sub);
+}
 // type.__setattr__ (type_setattro): a metaclass's data descriptor, else the class's own dict
 void type_setattr_generic(ClassObject* cls, const Str* name, Obj value) {
     if (meta_descriptor_store(cls, name, value)) return;
     if (type_lookup(type_of(Obj::of(cls)), name).is_unset()) refuse_absent_data_descriptor(Obj::of(cls), name);
     if (immutable_type(cls))
         raise_new("TypeError", "cannot set '" + name->text + "' attribute of immutable type '" + cls->name + "'");
+    // [P2+]: an override of __getattribute__ stored after the class was made stops as the class statement's does (review A40, RL-903)
+    if (name == intern("__getattribute__") && program_class(cls) && value != type_lookup(types().object, name))
+        throw NotImplemented("[P2+] a class that overrides __getattribute__ (spec section 3)");
     cls->set_attr(name, value);                  // the new version before the old value dies (type_setattro)
     if (name == intern("__new__")) update_new_slot(cls);
+    if (name == intern("__buffer__") || name == intern("__release_buffer__")) refuse_buffer_hook_below(cls);
 }
 void type_setattr(ClassObject* cls, const Str* name, Obj value) {
     ClassObject* meta = type_of(Obj::of(cls));
@@ -1023,6 +1047,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     // A metaclass's mro() is the first code that can see the class, and may keep a view of its dict:
     // from here each insertion goes through set_attr.
     if (meta != types().type) mro_invoke(c);
+    refuse_buffer_hook(c);
     c->slot_tp_new = best->slot_tp_new;          // type_ready_set_new, then update_one_slot (RL-810)
     note_new_state(c);
     for (auto& [k, v] : members)

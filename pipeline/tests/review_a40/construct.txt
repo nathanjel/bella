@@ -1,0 +1,26 @@
+import sys
+op=sys.argv[1]
+v=memoryview(b"ab")
+i=iter(v)
+T=type(i)
+def test():
+    if op=="iterator": return type(T()).__name__
+    if op=="iteratorarg": return type(T(v)).__name__
+    if op=="iternew": return type(T.__new__(T)).__name__
+    if op=="itersub": return type("S",(T,),{}).__name__
+    if op=="iterobj": return type(object.__new__(T)).__name__
+    if op=="obj": return type(object.__new__(memoryview)).__name__
+    if op=="init": return memoryview.__init__(v,"x",z=1)
+    if op=="call": return type(v.__new__(memoryview,b"abc")).__name__
+    if op=="read": return memoryview.tobytes(i)
+    if op=="hash": return memoryview.__hash__(i)
+    if op=="ctx": return memoryview.__enter__(i)
+    if op=="property": return memoryview.obj.__get__(i)
+    if op=="next": return T.__next__(v)
+    if op=="newbad": return memoryview.__new__(42)
+    if op=="kwonly": return memoryview.__new__(memoryview,object=v)[0]
+    if op=="doc": return T.__doc__,memoryview.__doc__
+    if op=="class": return memoryview.__class_getitem__((int,str))
+    if op=="iterhint": return list(i),next(i,None),next(i,None)
+try: print(test())
+except Exception as e: print(type(e).__name__)

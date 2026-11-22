@@ -957,7 +957,9 @@ Ref i_has_backslash(Obj, Args a) {               // pattern_subx: is it a litera
     StringData s;
     if (!get_string(a.pos(0), s)) return none_ref();
     if (const Str* t = as_str(a.pos(0))) return Ref::steal(boolean(t->text.find('\\') != std::string::npos));
-    return Ref::steal(boolean(bytes_data(a.pos(0)).find('\\') != std::string::npos));
+    // the octets getstring found: a view's are its own, not a bytes object's (review A40, RL-897)
+    std::string_view octets(static_cast<const char*>(s.data), static_cast<std::size_t>(s.length));
+    return Ref::steal(boolean(octets.find('\\') != std::string_view::npos));
 }
 // (code bytes, groups, string, pos, endpos, start, must_advance, mode): the marks, or None. pos and endpos are state_init's; start is where a scan has got to
 Ref i_run(Obj, Args a) {

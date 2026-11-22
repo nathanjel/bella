@@ -1,0 +1,39 @@
+import sys, builtins, warnings, struct, copyreg, copy
+row=sys.argv[1]
+class A:
+    __slots__=("__x","_A__x","__y","__y")
+def probe():
+    if row.startswith("partition"):
+        v=memoryview(b"axe")[::2]
+        method=getattr(bytearray(b"baec"),row.split("-")[1])
+        return method(v)
+    if row.startswith("repeat"):
+        a=A()
+        a._A__x=1
+        a._A__y=2
+        if row=="repeat-short": A.__slotnames__=["_A__x","_A__y","_A__y"]
+        if row=="repeat-long": A.__slotnames__=["_A__x","_A__y","_A__y","_A__x"]
+        return a.__reduce_ex__(4)[2]
+    if row=="warn":
+        class S(struct.Struct):
+            def __init__(self): pass
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            s=S()
+            return [(m.category.__name__,m.lineno,m.filename.endswith("prog.py")) for m in w],s.size
+    if row.startswith("rebind"):
+        mv=memoryview
+        v=mv(b"xyz")
+        builtins.memoryview=int
+        try:
+            if row=="rebind-copy": return mv(v).tolist()
+            if row=="rebind-slice": return v[::-1].tolist()
+            if row=="rebind-bytes": return bytes(v)
+            if row=="rebind-eq": return v==mv(b"xyz")
+        finally: builtins.memoryview=mv
+    if row=="ctor":
+        for args,kw in [((1,),{"object":b""}),((),{"unknown":b""}),((),{"x":1,"y":2}),((object(),),{})]:
+            try: print(memoryview(*args,**kw))
+            except Exception as e: print(type(e).__name__)
+try: print(probe())
+except Exception as e: print(type(e).__name__)

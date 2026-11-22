@@ -1,0 +1,96 @@
+import sys, weakref, re, io, binascii
+def f01():
+    class B(bytes):
+        def __hash__(self):
+            print("hash")
+            return 1
+    v = memoryview(B(b"a"))
+    print(hash(v) == hash(b"a"))
+    v.release()
+    print(hash(v) == hash(b"a"))
+
+def f02():
+    class B(bytes):
+        def __del__(self): print("exporter")
+    v = memoryview(B(b"a"))
+    r = weakref.ref(v, lambda r: print("view"))
+    del v
+    print(r())
+
+def f03():
+    class T(tuple):
+        def __bool__(self): return False
+    print(memoryview(b"a")[T((0,))])
+
+def f04():
+    class S(str):
+        def __eq__(self, other): return False
+    print(memoryview(b"a").tobytes(S("C")))
+
+def f05():
+    print(memoryview(b"a")[::1 << 62][::4].strides)
+
+def f06():
+    v = memoryview(bytearray(b"a"))
+    class I:
+        def __index__(self):
+            v.release()
+            return 0
+    print(v[I()])
+
+def f07():
+    v = memoryview(b"a")
+    class I:
+        def __index__(self):
+            v.release()
+            return 0
+    print(v[I():].tobytes())
+
+def f08():
+    class Raw(io.BytesIO):
+        def read1(self, n): return memoryview(b"abc")[::2]
+    print(io.TextIOWrapper(Raw()).read(1))
+
+def f09():
+    a = bytearray()
+    a.extend(memoryview(b"abc")[::2])
+    print(a)
+
+def f10():
+    print(bytes.fromhex(memoryview(b"61")))
+
+def f11():
+    print(binascii.unhexlify(memoryview(b"abc")[::2]))
+
+def f12():
+    print(re.sub(b"x", memoryview(bytearray(b"y")), b"x"))
+
+def f13():
+    class B(bytes):
+        def __hash__(self):
+            v.release()
+            return 1
+    v = memoryview(B(b"a"))
+    print(hash(v) == hash(b"a"))
+
+def f14():
+    class B(bytes):
+        def __buffer__(self, flags): raise LookupError
+    print(memoryview(B(b"a")).tolist())
+
+def f15():
+    T = type(iter(memoryview(b"a")))
+    print(type("S", (T,), {}).__name__)
+
+def f16():
+    print(bytearray(b"baec").partition(memoryview(b"axe")[::2]))
+
+def f17():
+    class I:
+        def __index__(self): raise OverflowError("index")
+    memoryview(bytearray(b"a"))[0] = I()
+
+try:
+    (f01,f02,f03,f04,f05,f06,f07,f08,f09,f10,f11,f12,f13,f14,f15,f16,f17)[int(sys.argv[1])-1]()
+except Exception as e:
+    print(type(e).__name__)

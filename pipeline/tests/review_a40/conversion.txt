@@ -1,0 +1,20 @@
+import sys
+op=sys.argv[1]
+v=memoryview(bytearray(b"a"))
+class MyType(TypeError): pass
+class MyValue(ValueError): pass
+class MyOverflow(OverflowError): pass
+class I:
+    def __index__(self):
+        cls=dict(overflow=OverflowError,myoverflow=MyOverflow,mytype=MyType,myvalue=MyValue,key=KeyError)[op]
+        raise cls("from callback")
+def test():
+    T=type(iter(v))
+    if op=="iterwrong": return T.__iter__(v) is v
+    if op=="metadata": return type(T.__next__).__name__,type(T.__iter__).__name__
+    if op=="locked":
+        T.a=3
+        return T.a
+    v[0]=I()
+try: print(test())
+except Exception as e: print(type(e).__name__,str(e))

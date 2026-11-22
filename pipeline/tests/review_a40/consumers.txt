@@ -1,0 +1,43 @@
+import sys, binascii, io, hashlib, hmac, codecs, re, struct, zlib, base64, os, pathlib, shutil
+name, mode=sys.argv[1].split("-")
+a=bytearray(b"6162")
+v=memoryview(a)[::2 if mode=="stride" else 1]
+if mode=="released": v.release()
+def writer(v):
+    with io.FileIO(os.devnull,"wb") as f: return f.write(v)
+def buffered(v):
+    with io.BufferedWriter(io.FileIO(os.devnull,"wb")) as f: return f.write(v)
+def path(v):
+    return pathlib.Path(os.devnull).write_bytes(v)
+def copyfile(v):
+    class Source:
+        def read(self, size):
+            if self.done: return b""
+            self.done=True
+            return v
+    s=Source()
+    s.done=False
+    b=io.BytesIO()
+    shutil.copyfileobj(s,b)
+    return b.getvalue()
+def add(v):
+    a=bytearray()
+    a.extend(v)
+    return a
+def text(v):
+    class Raw(io.BytesIO):
+        def read1(self,n):
+            return v
+    return io.TextIOWrapper(Raw()).read(1)
+ops=dict(file=writer,buffered=buffered,path=path,copy=copyfile,text=text,extend=add,
+ fromhex=bytes.fromhex,afromhex=bytearray.fromhex,ord=ord,ascii=ascii,
+ hexlify=binascii.unhexlify,decode=lambda x:codecs.decode(x,"ascii"),
+ translate=lambda x:b"123".translate(None,x),strip=lambda x:b"615".strip(x),
+ replace=lambda x:b"6162".replace(x,b"X"),partition=lambda x:b"6162".partition(x),
+ percent=lambda x:b"%c"%x,compare=lambda x:hmac.compare_digest(x,b"6162"),
+ hmac=lambda x:hmac.new(b"key",x,"sha256").hexdigest(),base=base64.b64decode,
+ integer=int.from_bytes,regex=lambda x:re.search(b"6",x).span(),crc=zlib.adler32,
+ sha=lambda x:hashlib.sha1(x).hexdigest(),string=lambda x:str(x,"ascii"),
+ sub=lambda x:re.sub(b"b",x,b"abc"),join=lambda x:b"".join([x]),plus=lambda x:b"a"+x)
+try: print(ops[name](v))
+except Exception as e: print(type(e).__name__,str(e))

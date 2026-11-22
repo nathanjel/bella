@@ -1,0 +1,29 @@
+import sys,base64,binascii,zlib,hashlib,hmac,struct,io,codecs,re
+op,mode=sys.argv[1].split("-")
+a=bytearray(b"x4142z")
+v=memoryview(a)[1:5:2 if mode=="stride" else 1]
+if mode=="released": v.release()
+def test():
+    b=b"4142"
+    ab=bytearray(b)
+    ops=dict(count=lambda:b.count(v),rfind=lambda:b.rfind(v),rindex=lambda:b.rindex(v),ends=lambda:b.endswith((v,)),
+         remove=lambda:b.removeprefix(v),rsuffix=lambda:ab.removesuffix(v),rpartition=lambda:ab.rpartition(v),
+         split=lambda:ab.rsplit(v),center=lambda:ab.center(8,v),hex=lambda:b.hex(v),
+         maketrans=lambda:bytes.maketrans(v,v)[48:56], trans=lambda:ab.translate(v),
+         fmt=lambda:b"%s"%v, afmt=lambda:ab.__mod__((v,)), eqbytes=lambda:b==v,eqarray=lambda:ab==v,
+         b16=lambda:base64.b16decode(v),b32=lambda:base64.b32encode(v),b64=lambda:binascii.b2a_base64(v),
+         hkey=lambda:hmac.new(v,b"x","sha256").digest(),hmsg=lambda:hmac.digest(b"q",v,"sha256"),
+         decode=lambda:codecs.utf_8_decode(v),decoder=lambda:codecs.getincrementaldecoder("utf8")().decode(v),
+         into=lambda:io.BytesIO(v).read(2),hashup=lambda:hashlib.sha3_256(v).hexdigest(),
+         deflate=lambda:zlib.compressobj().compress(v), inflate=lambda:zlib.decompressobj().decompress(v),
+         iterun=lambda:list(struct.Struct("B").iter_unpack(v)), char=lambda:struct.pack("c",v),
+         regex=lambda:re.sub(b".",lambda m:v,b"x"),find=lambda:re.findall(b"(.)",v),
+         intle=lambda:int.from_bytes(v,"little",signed=True),strutf=lambda:str(v,"utf8","ignore"),
+         init=lambda:bytearray(v),bhex=lambda:binascii.hexlify(b,v),
+         rcmp=lambda:hmac.compare_digest(b,v),baadd=lambda:ab+v)
+    r=ops[op]()
+    if isinstance(r,tuple):
+        print(tuple(("view",item is v) if type(item) is memoryview else item for item in r))
+    else: print(r)
+try: test()
+except Exception as e: print(type(e).__name__,str(e))

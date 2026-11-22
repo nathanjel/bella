@@ -8,7 +8,8 @@ Four programs, each run once under CPython and once compiled:
 * EDGES: contiguity (a strided view of one item is contiguous, one of none is not), iteration after a release, slices with
   `__index__` and None, comparison with views, bytes, bytearrays and bytes subclasses, the exporter's own hash asked first,
   what a released view refuses, `obj` of a slice, the Sequence ABC.
-* CONSUMERS: 42 places that take bytes-like data, each with a contiguous view and a strided one: most take a simple buffer
+* CONSUMERS: 51 places that take bytes-like data, each with a contiguous view, a strided one and a released one (review A40's
+  class: RL-893 to RL-897, RL-901): most take a simple buffer
   (BufferError for the strided), some copy (bytes(), bytearray(), slice assignment, %b, equality, hash), and some word the
   failure as a TypeError of their own (join, concatenation, str() with an encoding, re).
 * REGULAR_EXPRESSIONS: re over a view of bytes and of a bytearray; the engine holds a buffer of the view itself, so a
@@ -196,9 +197,21 @@ rows = {
  "float.fromhex": lambda v: None, "complex": lambda v: None,
  "ascii(v)": lambda v: ascii(v)[:8], "print to BytesIO": lambda v: None,
 }
+r = memoryview(b"\x01\x02\x03\x04")
+r.release()
+rows["TextIOWrapper chunk"] = lambda v: __import__("io").TextIOWrapper(type("Raw", (__import__("io").BytesIO,), {"read1": lambda self, n: v})()).read(1)
+rows["bytearray.extend"] = lambda v: (lambda b: (b.extend(v), b)[1])(bytearray())
+rows["bytes.fromhex"] = lambda v: bytes.fromhex(memoryview(b"0102")[::1] if v is c else memoryview(b"0x1x2x")[::2] if v is s else v)
+rows["bytearray.fromhex"] = lambda v: bytearray.fromhex(memoryview(b"0102") if v is c else memoryview(b"0x1x2x")[::2] if v is s else v)
+rows["binascii.unhexlify"] = lambda v: binascii.unhexlify(memoryview(b"0102") if v is c else memoryview(b"0x1x2x")[::2] if v is s else v)
+rows["bytearray.partition"] = lambda v: bytearray(b"\x00\x01\x03\x05\x06").partition(v)
+rows["bytearray.rpartition"] = lambda v: bytearray(b"\x00\x01\x03\x05\x06").rpartition(v)
+rows["bytes.partition"] = lambda v: b"\x00\x01\x03\x05\x06".partition(v)
+rows["re.sub replacement"] = lambda v: re.sub(b"\x00", v, b"\x00a")
 for name, f in rows.items():
     t(name + " contiguous", lambda: f(c))
     t(name + " strided", lambda: f(s))
+    t(name + " released", lambda: f(r))
 
 '''
 

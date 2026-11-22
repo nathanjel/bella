@@ -19,10 +19,20 @@ try:
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
     _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
+    _view_ok                                     # noqa: B018  # a memoryview whose simple buffer can be had
 except NameError:
 
     def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
         return type(value) is memoryview
+
+    def _view_ok(value: object) -> bool:         # a stand-in for CPython's run of this file
+        if type(value) is not memoryview:
+            return False
+        try:
+            memoryview.__len__(value)  # type: ignore[arg-type]
+        except ValueError:
+            return False
+        return value.c_contiguous  # type: ignore[attr-defined, no-any-return]
 
     from collections.abc import Callable
     from typing import Any
@@ -90,7 +100,7 @@ def _ascii_buffer(value: object) -> bytes:       # ascii_buffer_converter
         if not str.isascii(value):  # type: ignore[arg-type]
             raise ValueError("string argument should contain only ASCII characters")
         return str.encode(value, "ascii")  # type: ignore[arg-type]
-    if not _is_bytes_like(value):
+    if not _is_bytes_like(value) or (_is_view(value) and not _view_ok(value)):   # a failed buffer is the converter's TypeError (RL-896)
         raise TypeError("argument should be bytes, buffer or ASCII string, not '" + _tp_name(value) + "'")
     return _buffer_bytes(value)
 

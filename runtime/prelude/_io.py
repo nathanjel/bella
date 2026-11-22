@@ -36,10 +36,20 @@ try:
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
     _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
     _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
+    _view_ok                                     # noqa: B018  # a memoryview whose simple buffer can be had
 except NameError:
 
     def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
         return type(value) is memoryview
+
+    def _view_ok(value: object) -> bool:         # a stand-in for CPython's run of this file
+        if type(value) is not memoryview:
+            return False
+        try:
+            memoryview.__len__(value)  # type: ignore[arg-type]
+        except ValueError:
+            return False
+        return value.c_contiguous  # type: ignore[attr-defined, no-any-return]
 
     from collections.abc import Callable
     from typing import Any
@@ -2959,7 +2969,7 @@ def _tw_read_chunk(self: TextIOWrapper, size_hint: int) -> bool:   # textiowrapp
         size_hint = int(max(self._l_b2cratio, 1.0) * size_hint)
     chunk_size = max(self._e_chunk_size, size_hint)
     input_chunk = self._c_buffer.read1(chunk_size) if self._g_has_read1 else self._c_buffer.read(chunk_size)  # type: ignore[attr-defined]
-    if not _is_bytes_like(input_chunk):
+    if not _is_bytes_like(input_chunk) or (_is_view(input_chunk) and not _view_ok(input_chunk)):   # PyObject_GetBuffer's failure (RL-893)
         raise TypeError("underlying " + ("read1" if self._g_has_read1 else "read") + "() should have returned a bytes-like object, not '" + _tp_name(input_chunk) + "'")
     data = _buffer_bytes(input_chunk)            # PyObject_GetBuffer: its length, and the bytes of the snapshot below
     nbytes = bytes.__len__(data)

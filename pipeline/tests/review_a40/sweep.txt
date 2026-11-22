@@ -1,0 +1,156 @@
+"""Review A40's classes, swept (RL-891, RL-892, RL-898, RL-902): a memoryview's operations whose arguments run the program's
+code, with code that releases the view, another view of the same exporter, or both, or lets the exporter go; and every kind
+of value an item assignment can be given. One row per line: the operation, what the callback does, what came of it."""
+
+
+class Exporter(bytearray):
+    def __del__(self) -> None:
+        print("  exporter gone")
+
+
+class Frozen(bytes):
+    def __del__(self) -> None:
+        print("  exporter gone")
+
+
+def outcome(run):
+    try:
+        got = run()
+        return "-> " + (repr(got) if not isinstance(got, memoryview) else "view " + repr(got.tolist()))
+    except BaseException as error:  # noqa: BLE001
+        return "-> " + type(error).__name__ + ": " + str(error)
+
+
+def callback_rows():
+    for what in ("nothing", "release", "release other", "release both", "drop exporter"):
+        for op in ("item", "item tuple", "slice start", "slice stop", "slice step", "assign key", "assign value", "hash"):
+            box = {}
+            source = (Frozen if op == "hash" else Exporter)(b"abc")
+            box["v"] = memoryview(source)
+            box["w"] = memoryview(box["v"])
+            del source
+
+            def act():
+                if what in ("release", "release both"):
+                    box["v"].release()
+                if what in ("release other", "release both"):
+                    box["w"].release()
+                if what == "drop exporter":
+                    box.pop("w").release()
+
+            class I:
+                def __index__(self):
+                    act()
+                    return 1
+
+            v = box["v"]
+            if op == "item":
+                run = lambda: v[I()]
+            elif op == "item tuple":
+                run = lambda: v[I(),]
+            elif op == "slice start":
+                run = lambda: v[I():]
+            elif op == "slice stop":
+                run = lambda: v[:I()]
+            elif op == "slice step":
+                run = lambda: v[::I()]
+            elif op == "assign key":
+                run = lambda: v.__setitem__(I(), 120)
+            elif op == "assign value":
+                run = lambda: v.__setitem__(0, I())
+            else:
+                source_type = type(v.obj)
+
+                def hashed(self):
+                    act()
+                    return 7
+                source_type.__hash__ = hashed
+                run = lambda: hash(v) == hash(b"abc")
+            print(op, "|", what, outcome(run))
+            try:
+                print("  after:", v.obj, v.tolist())
+            except BaseException as error:  # noqa: BLE001
+                print("  after:", type(error).__name__)
+            del v, box, run
+            print("  end")
+
+
+class Raises:
+    def __init__(self, error):
+        self.error = error
+
+    def __index__(self):
+        raise self.error
+
+
+class MyOverflow(OverflowError):
+    pass
+
+
+class MyValue(ValueError):
+    pass
+
+
+class MyType(TypeError):
+    pass
+
+
+class Returns:
+    def __init__(self, value):
+        self.value = value
+
+    def __index__(self):
+        return self.value
+
+
+class Small(int):
+    pass
+
+
+def value_rows():
+    values = [0, 255, 256, -1, 2**64, -2**64, True, Small(7), 1.5, "a", b"a", None, [1], Raises(OverflowError("o")),
+              Raises(MyOverflow("o")), Raises(ValueError("v")), Raises(MyValue("v")), Raises(TypeError("t")), Raises(MyType("t")),
+              Raises(ZeroDivisionError("z")), Raises(LookupError("l")), Returns(3), Returns(300), Returns(-3), Returns("x"), Returns(2**70)]
+    for i, value in enumerate(values):
+        v = memoryview(bytearray(b"abc"))
+        print("value", i, outcome(lambda: v.__setitem__(1, value)), v.tolist())
+    for key in (0, -1, 3, -4, 2**70, True, Returns(2), Raises(OverflowError("o")), Raises(MyType("t")), "a", 1.5, None):
+        v = memoryview(bytearray(b"abc"))
+        print("key", type(key).__name__, outcome(lambda: v.__setitem__(key, 1)), v.tolist())
+        print("read key", type(key).__name__, outcome(lambda: v[key]))
+    for key in ((), (0,), (0, 0), (slice(1),), (slice(1), 0), (0, slice(1)), ("a",), (Returns(1),), (Raises(MyType("t")),)):
+        print("tuple key", len(key), outcome(lambda: memoryview(b"abc")[key]))
+
+
+def weak_rows():
+    """RL-887's class: a view's end lets its hold go (with the last view, the exporter) before its weak references are told."""
+    import weakref
+
+    for kind in (Frozen, Exporter):
+        for shape in ("view", "slice", "reversed slice", "view of a view", "released first", "two views"):
+            source = kind(b"abc")
+            v = memoryview(source)
+            other = None
+            if shape == "slice":
+                v = v[1:]
+            elif shape == "reversed slice":
+                v = v[::-1]
+            elif shape == "view of a view":
+                v = memoryview(v)
+            elif shape == "released first":
+                v.release()
+            elif shape == "two views":
+                other = memoryview(source)
+            del source
+            r = weakref.ref(v, lambda r: print("  weak reference told"))
+            print(kind.__name__, shape)
+            del v
+            print("  view gone:", r() is None)
+            if other is not None:
+                del other
+                print("  the other view gone")
+
+
+callback_rows()
+value_rows()
+weak_rows()

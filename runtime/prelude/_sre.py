@@ -25,6 +25,7 @@ try:
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
     _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
+    _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
     from collections.abc import Callable
     from typing import Any
@@ -40,6 +41,7 @@ except NameError:
     _present: Callable[..., None] = _missing
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+    _is_view: Callable[..., bool] = _missing
     _own_data: Callable[..., Any] = _missing
     _dict_next_hashed: Callable[..., Any] = _missing
     _dict_set_hashed: Callable[..., None] = _missing
@@ -275,19 +277,24 @@ def _compile_template(pattern: object, repl: object) -> object:   # compile_temp
         import re  # noqa: PLC0415
         _compile_template_func.append(re._compile_template)  # type: ignore[attr-defined]
     func = _compile_template_func[0]
-    again = False
+    again = ""
     try:
         result = func(pattern, repl)  # type: ignore[operator]
-    except TypeError:                            # the replacement string is unhashable: the basic type, and again
-        if issubclass(type(repl), str) and type(repl) is not str:
-            repl = str.__str__(repl)  # type: ignore[arg-type]
-        elif issubclass(type(repl), (bytes, bytearray)) and type(repl) is not bytes:
-            repl = _buffer_bytes(repl)           # PyBytes_FromObject: the buffer, not __bytes__ (RL-698)
+    except TypeError:                            # the replacement string is unhashable, or not one the parser reads: the
+        if issubclass(type(repl), str) and type(repl) is not str:   # basic type, and again
+            again = "str"
+        elif (issubclass(type(repl), (bytes, bytearray)) or _is_view(repl)) and type(repl) is not bytes:   # PyObject_CheckBuffer
+            again = "bytes"
         else:
             raise
-        again = True
-    if again:                                    # "PyErr_Clear()", then the second call: after the handler has ended, so that the
-        result = func(pattern, repl)  # type: ignore[operator]   # TypeError is no context of what it raises (RL-706)
+    if again:                                    # "PyErr_Clear()", then the conversion and the second call: after the handler has
+        if again == "str":                       # ended, so that the TypeError is no context of what they raise (RL-706)
+            repl = str.__str__(repl)  # type: ignore[arg-type]
+        elif _is_view(repl):
+            repl = bytes(repl)  # type: ignore[call-overload]   # PyBytes_FromObject: a view's items, whatever its step (RL-897's class)
+        else:
+            repl = _buffer_bytes(repl)           # PyBytes_FromObject: the buffer, not __bytes__ (RL-698)
+        result = func(pattern, repl)  # type: ignore[operator]
     if type(result) is not SRE_Template:
         raise RuntimeError("the result of compiling a replacement string is " + _tp_name(result))
     return result

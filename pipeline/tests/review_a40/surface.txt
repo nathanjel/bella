@@ -1,0 +1,58 @@
+import sys,re
+op, mode=sys.argv[1].split("-")
+class B(bytes):
+    def __hash__(self):
+        print("hash callback")
+        v.release()
+        return 10
+    def __eq__(self,x):
+        print("eq callback")
+        return True
+class I:
+    def __index__(self):
+        raise LookupError("key")
+class Y:
+    def __eq__(self,other):
+        print("compare",other)
+        a[1]=120
+        return other==120
+a=bytearray(b"abcde")
+v=memoryview(a)
+if mode=="reverse": v=v[::-1]
+if mode=="slice": v=v[1:][::2]
+if mode=="empty": v=v[:0:-2][0:0]
+if mode=="gone": v.release()
+def test():
+    global v
+    if op=="attrs":
+        for name in ("obj","format","itemsize","ndim","shape","strides","suboffsets","readonly","c_contiguous","f_contiguous","contiguous","nbytes"):
+            try: print(name,getattr(v,name))
+            except Exception as e: print(name,type(e).__name__)
+    elif op=="seq": print(bytes(v),v.tolist(),list(v),len(v))
+    elif op=="eq": print(v==B(b"a"),B(b"a")==v,v!=B(b"a"),B(b"a")!=v)
+    elif op=="member": print(Y() in v)
+    elif op=="forhash":
+        v=memoryview(B(b"xy"))
+        print(hash(v)==hash(b"xy"))
+    elif op=="keyindex": print(v[I()])
+    elif op=="setindex": v[0]=I()
+    elif op=="surrogate": print(v.tobytes("\ud800"))
+    elif op=="exhaust":
+        it=iter(v)
+        for i in range(len(v)): next(it)
+        v.release()
+        print(next(it,"end"))
+    elif op=="match":
+        m=re.search(b".",v)
+        v.release()
+        print(m.group(0))
+    elif op=="tuple":
+        for key in ((slice(None), 0),(0,slice(None)),(I(),),(slice(None),slice(None)),(I(),2,3),("s",)):
+            try: print(v[key])
+            except Exception as e: print(type(e).__name__)
+    elif op=="bounds":
+        for key in (slice(I(),0,-1),slice(0,I(),-1),slice(4,0,I()),slice(1<<90,-1<<90,-1),slice(-1<<90,None,2)):
+            try: print(v[key].tolist())
+            except Exception as e: print(type(e).__name__)
+try: test()
+except Exception as e: print(type(e).__name__)
