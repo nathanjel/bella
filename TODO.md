@@ -720,6 +720,13 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s
   key, `os.pwrite`: 18 rows). Exact: an export held from the conversion on (a resize is then refused, as the view makes it)
   and the read where the C reads. With RL-583 and the memoryview model.
+* **The frontend's generated names depend on what the process lowered before (found 2026-11-22; low).** `_tmp` numbers its
+  names from a counter that is never reset (`pipeline/l1/frontend.py`, `_counter`), while `_TAKEN` and `_SYNTHETIC` are cleared for
+  each unit. So a unit's generated text is `_format3` in a process that lowered nothing else and `_format8601` after the
+  standard library's units were lowered in the same process (a cold cache): `make slice` rewrote the committed
+  `pipeline/examples/out/fact_big.cpp` with other numbers and nothing else. Reset the counter where the other two are cleared, with
+  a test that lowers one unit alone and after another and compares the text; batch it with the next change of the pipeline (it
+  re-keys every lowered unit).
 * **The order in which a `match` statement's captures are stored (measured with RL-825, 2026-11-22; low).** CPython stores the
   names of a successful pattern in an order its code generator and `apply_static_swaps` decide: `[a, [b, c]]` stores `b, c, a`,
   `{"x": a, **b}` stores `b, a`, an or-pattern stores in the order of its first alternative's names; a flat sequence, a class
