@@ -70,7 +70,6 @@ SimpleNamespace __sizeof__
 StopAsyncIteration __sizeof__
 StopIteration __sizeof__
 StringIO __sizeof__
-Struct __init__
 SyntaxError __sizeof__
 SyntaxWarning __sizeof__
 SystemError __sizeof__

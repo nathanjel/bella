@@ -1229,7 +1229,8 @@ void fill_binascii(Module* m) {
 void fill_struct(Module* m) {
     fill_in_python(m, "_struct", "_struct", prelude_struct::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion},
-                    {"_float_pack", i_float_pack}, {"_float_unpack", i_float_unpack}, {"_as_c_complex", i_as_c_complex}});
+                    {"_float_pack", i_float_pack}, {"_float_unpack", i_float_unpack}, {"_as_c_complex", i_as_c_complex},
+                    {"_warn", i_bella_import_warning}});
 }
 void fill_time(Module* m) {
     fill_in_python(m, "time", "time", prelude_time::module_body,

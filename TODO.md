@@ -723,9 +723,9 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   build, hands the decoder the snapshot's bytes and the NUL that ends every bytes object (`decode(b'a\r\x00')`); its own
   assert forbids the state. The prelude caps the estimate at the snapshot (RL-347), so a decoder written in Python sees
   other calls; the position agrees. A deviation, the one NUL, or open: Question 31 (drafted), after Question 30.
-* **Open from review A34:** `struct.Struct.__init__(s)` called again with no format is a TypeError under CPython and returns
-  None (RL-776); with the Struct step (RL-549). The argument counts of every method of every type were swept on 2026-11-22
-  (`pipeline/tests/test_argument_counts.py`); what it leaves is `__sizeof__` (163 of its 183 stops: no type answers it yet).
+* **Open from review A34:** the argument counts of every method of every type were swept on 2026-11-22
+  (`pipeline/tests/test_argument_counts.py`); what it leaves is `__sizeof__` (163 of its 182 stops: no type answers it yet).
+  (RL-776, `Struct.__init__` with no format, was done on 2026-11-22 with the Struct step, C-7-92.)
 * **Open from review A32, with the buffer step (RL-702):** a prelude copies a bytearray's bytes when it converts the argument;
   the C holds a view from the argument's parsing on and reads it at its use, so a later argument's `__index__` that overwrites
   a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s
@@ -791,8 +791,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **Review A24** (2026-11-20) has nothing open: RL-574 (a tuple keeps its hash) was done on 2026-11-21 as C-6-24, RL-572 was the
   author's, decided and done the same day (C-8-19, D-29).
 * **Open from review A23** (2026-11-20; RL-541 done the same day as C-3-78, the `__dict__` property under RL-548 too, the
-  sweep of the order in which a built-in type lets go of what it holds on 2026-11-21): `struct.Struct.__new__` with no format
-  (RL-549, with the Struct step below).
+  sweep of the order in which a built-in type lets go of what it holds on 2026-11-21, and RL-549, `struct.Struct.__new__`
+  with no format, on 2026-11-22 as C-7-92): nothing open.
 * **A step of its own:** the line of a traceback entry inside a statement of several lines (RL-494): CPython gives an attribute or a
   method call the line of the attribute's name, a decorator's call the decorator's line, a failed `assert` the line of its test,
   `raise (` ... `)` the line of the `raise`; the frontend gives each expression its first line. 17 of the reviewer's 140 constructs.

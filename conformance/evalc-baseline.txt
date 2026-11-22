@@ -190,6 +190,7 @@ C-7-88_tracebacks_suggestions_from_the_frame.py
 C-7-89_the_runtimes_reports_without_tracebacks_additions.py
 C-7-90_an_unsigned_argument_out_of_range.py
 C-7-91_an_abstract_ast_node_class_instantiated.py
+C-7-92_a_struct_made_and_initialised.py
 C-8-01_partially_initialised_module.py
 C-8-02_builtins_fallthrough.py
 C-8-03_locals_detached.py

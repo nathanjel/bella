@@ -11,6 +11,11 @@ __name__ = "_struct"
 try:
     _bella_new_instance                          # noqa: B018  # tp_alloc: this type's __new__ makes its instance
     _bella_state_set                             # noqa: B018  # a C function's store into its struct's field (RL-507)
+    _bella_state_get                             # noqa: B018  # and its read: the field, whatever a class over the type has under the name
+    _tp_new_is                                   # noqa: B018  # type->tp_new == base->tp_new: the slot, with its history (RL-810)
+    _tp_init_is                                  # noqa: B018  # type->tp_init == base->tp_init
+    _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
+    _raise_as_is                                 # noqa: B018  # a pending error raised on after the C's work on it, no context taken
     _bella_refuse                                # noqa: B018  # a facility phase 1 lacks, where it would run
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _keyword_suggestion                          # noqa: B018  # _Py_CalculateSuggestions
@@ -33,6 +38,21 @@ except NameError:
 
     _bella_new_instance = object.__new__
     _bella_state_set = object.__setattr__
+    _bella_state_get = getattr
+
+    def _tp_new_is(cls: type, base: type) -> bool:   # a stand-in for CPython's run of this file
+        return cls.__new__ is base.__new__
+
+    def _tp_init_is(cls: type, base: type) -> bool:   # a stand-in for CPython's run of this file
+        return cls.__init__ is base.__init__  # type: ignore[misc]
+
+    def _raise_as_is(failed: BaseException) -> None:   # a stand-in for CPython's run of this file
+        raise failed
+
+    def _warn(message: str, category: str) -> None:   # a stand-in for CPython's run of this file
+        import builtins
+        import warnings
+        warnings.warn(message, getattr(builtins, category), stacklevel=3)
     _bella_refuse: Callable[..., Any] = _missing
     _keyword_suggestion: Callable[..., str | None] = _missing
     _float_pack: Callable[..., bytes] = _missing
@@ -415,39 +435,101 @@ def _format_text(format: object) -> str:         # set_format: a str, or bytes d
     raise TypeError("Struct() argument 1 must be a str or bytes object, not " + _tp_name(format))
 
 
+_NO_FORMAT: object = object()                    # s_new's "format == NULL"
+
+
+def _struct_alloc(cls: type) -> Struct:          # tp_alloc and the fields as s_new and Struct_impl leave them
+    self: Struct = _bella_new_instance(cls)
+    _bella_state_set(self, "_codes", None)       # s_codes == NULL: no format yet (ENSURE_STRUCT_IS_READY); `format` itself is unset
+    _bella_state_set(self, "size", -1)
+    _bella_state_set(self, "_length", -1)
+    _bella_state_set(self, "_little", True)
+    _bella_state_set(self, "_init_called", False)
+    return self
+
+
+def _set_format(self: Struct, format: object) -> None:   # set_format and prepare_s: all of it, or nothing of the object changes
+    text = _format_text(format)
+    codes, size, length, little = _prepare(text)
+    _bella_state_set(self, "_codes", codes)
+    _bella_state_set(self, "size", size)
+    _bella_state_set(self, "_length", length)
+    _bella_state_set(self, "_little", little)
+    _bella_state_set(self, "format", text)
+
+
+def _same_format(self: Struct, format: object) -> bool:   # same_format: an ASCII str or a bytes with the format's own characters
+    format = _own_data(format)                   # the format's characters: its class's __eq__ is not asked (RL-679)
+    mine = _bella_state_get(self, "format")
+    if issubclass(type(format), str):
+        return str.isascii(format) and format == mine  # type: ignore[arg-type]
+    if issubclass(type(format), bytes):
+        return str.isascii(mine) and bytes.__eq__(format, str.encode(mine, "ascii"))  # type: ignore[arg-type]
+    return False
+
+
+def _ready(s: Struct) -> tuple[list[_Code], int, int, bool]:
+    """ENSURE_STRUCT_IS_READY, and the fields a method works with: the codes, the size, the item count, little-endian. They
+    are the struct's own fields, whatever a class over Struct has under those names."""
+    codes = _bella_state_get(s, "_codes")
+    if codes is None:
+        raise RuntimeError("Struct object is not initialized")
+    return codes, _bella_state_get(s, "size"), _bella_state_get(s, "_length"), _bella_state_get(s, "_little")
+
+
 class Struct:
     """Struct(format) --> compiled struct object"""
 
-    __slots__ = ("__weakref__", "_codes", "_length", "_little", "format", "size")
+    __slots__ = ("__weakref__", "_codes", "_init_called", "_length", "_little", "format", "size")
     __readonly__ = ("format", "size")            # s_members' Py_READONLY
 
-    def __new__(cls, *args: object, **kwds: object) -> Struct:
-        if cls is not Struct:
-            _bella_refuse("subclassing _struct.Struct (its __new__ and __init__ warn about each other)")
+    def __new__(cls, *args: object, **kwds: object) -> Struct:   # s_new
+        if not _tp_new_is(cls, Struct):          # "Struct.__new__() was called explicitly in a subclass' __new__()": Struct_impl
+            format = _unpack_args("Struct", args, kwds, ("format",), 1, 1)[0]
+            self: Struct = _struct_alloc(cls)
+            _set_format(self, format)
+            return self
+        format = _NO_FORMAT
         if len(args) == 1 and not kwds:
             format = args[0]
-        elif not args and len(kwds) == 1 and "format" in kwds:
-            format = kwds["format"]
-        else:
-            format = _unpack_args("Struct", args, kwds, ("format",), 1, 1)[0]
-        self: Struct = _bella_new_instance(cls)
-        text = _format_text(format)
-        codes, size, length, little = _prepare(text)
-        _bella_state_set(self, "format", text)
-        _bella_state_set(self, "_codes", codes)
-        _bella_state_set(self, "size", size)
-        _bella_state_set(self, "_length", length)
-        _bella_state_set(self, "_little", little)
+        elif not args and len(kwds) == 1:
+            format = dict.get(kwds, "format", _NO_FORMAT)
+        own_init = not _tp_init_is(cls, Struct)  # a class with an __init__ of its own may give the format there
+        if format is _NO_FORMAT and own_init:
+            given = len(args) + len(kwds)
+            if given > 1:
+                _warn("Struct() takes at most 1 argument (" + str(given) + " given)", "DeprecationWarning")
+            else:
+                _warn("Struct() missing required argument 'format' (pos 1)", "DeprecationWarning")
+        self = _struct_alloc(cls)
+        if format is not _NO_FORMAT:
+            failed: BaseException | None = None
+            try:
+                _set_format(self, format)
+            except BaseException as error:  # noqa: BLE001
+                failed = error
+            if failed is not None:
+                if not own_init:                 # "No custom __init__() method, so __new__() should do all the work."
+                    _raise_as_is(failed)
+                # the error is taken off and the warning given with nothing pending; a filter that makes it an error ends here
+                _warn("Invalid 'format' argument for Struct.__new__(): " + str(failed), "DeprecationWarning")
         return self
 
-    def __init__(self, *args: object, **kwds: object) -> None:   # s_init: __new__ did the work; a second format would warn
-        if args or kwds:
-            format = args[0] if len(args) == 1 and not kwds else _unpack_args("Struct", args, kwds, ("format",), 1, 1)[0]
-            format = _own_data(format)           # the format's characters: its class's __eq__ is not asked (RL-679)
-            same = (issubclass(type(format), str) and str.isascii(format) and format == self.format) or (
-                issubclass(type(format), bytes) and bytes.decode(format, "ascii", "surrogateescape") == self.format)
-            if not same:
-                _bella_refuse("Struct.__init__() with another format than __new__()'s (a FutureWarning in 3.15)")
+    def __init__(self, *args: object, **kwds: object) -> None:   # s_init
+        ready = _bella_state_get(self, "_codes") is not None
+        if not _bella_state_get(self, "_init_called") and _tp_init_is(type(self), Struct) and ready:
+            _bella_state_set(self, "_init_called", True)   # "Struct.__init__() was called implicitly. __new__() already did all the work."
+            return
+        format = _unpack_args("Struct", args, kwds, ("format",), 1, 1)[0]   # Struct___init__, called explicitly
+        if not ready:
+            _set_format(self, format)
+        elif not _same_format(self, format):
+            if _bella_state_get(self, "_init_called"):
+                _warn("Re-initialization of Struct by calling the __init__() method will not work in future Python versions", "FutureWarning")
+            else:
+                _warn("Different format arguments for __new__() and __init__() methods of Struct", "FutureWarning")
+            _set_format(self, format)
+        _bella_state_set(self, "_init_called", True)
 
     def __setattr__(self, name: str, value: object) -> None:     # tp_setattro is PyObject_GenericSetAttr: the two members
         object.__setattr__(self, name, value)                     # say themselves that they are read-only
@@ -456,10 +538,11 @@ class Struct:
         object.__delattr__(self, name)
 
     def __repr__(self) -> str:
-        return _type_name(self) + "(" + _repr_text(self.format) + ")"
+        _ready(self)
+        return _type_name(self) + "(" + _repr_text(_bella_state_get(self, "format")) + ")"
 
     def __sizeof__(self) -> int:
-        return 64 + 32 * (len(self._codes) + 1)
+        return 64 + 32 * (len(_ready(self)[0]) + 1)
 
     def pack(self, *values: object, **kwds: object) -> bytes:
         """Pack values and return the packed bytes.
@@ -540,8 +623,9 @@ class unpack_iterator:  # noqa: N801           # _struct.unpack_iterator (Py_TPF
             self._data = b""
             self._source = None                  # PyBuffer_Release
             raise StopIteration
-        result = _unpack_from(s._codes, s._length, s._little, self._data, self._index)
-        self._index += s.size
+        codes, size, length, little = _ready(s)
+        result = _unpack_from(codes, length, little, self._data, self._index)
+        self._index += size
         return result
 
     def __length_hint__(self) -> int:
@@ -554,10 +638,11 @@ unpack_iterator.__module__ = "_struct"
 
 
 def _pack_values(s: Struct, name: str, values: tuple[object, ...]) -> bytes:   # Struct_pack_impl
-    if len(values) != s._length:
-        raise error(name + " expected " + str(s._length) + " items for packing (got " + str(len(values)) + ")")
-    out = bytearray(s.size)
-    _pack_into(s._codes, s.size, s._length, s._little, values, out, 0)
+    codes, size, length, little = _ready(s)
+    if len(values) != length:
+        raise error(name + " expected " + str(length) + " items for packing (got " + str(len(values)) + ")")
+    out = bytearray(size)
+    _pack_into(codes, size, length, little, values, out, 0)
     return bytes(out)
 
 
@@ -565,49 +650,53 @@ def _pack_into_buffer(s: Struct, name: str, position: int, buffer: object, offse
     """Struct_pack_into_impl; position is the buffer's place among the arguments (1 for the method, 2 for the function)."""
     target = _rw_buffer(buffer, name, position)
     offset = _ssize(offset_arg)
-    if len(values) != s._length:
-        raise error(name + " expected " + str(s._length) + " items for packing (got " + str(len(values)) + ")")
+    codes, size, length, little = _ready(s)      # the arguments are converted first, as the clinic's code does
+    if len(values) != length:
+        raise error(name + " expected " + str(length) + " items for packing (got " + str(len(values)) + ")")
     buflen = bytearray.__len__(target)           # the buffer's length, whatever a subclass's __len__ says
     if offset < 0:
-        if offset + s.size > 0:
-            raise error("no space to pack " + str(s.size) + " bytes at offset " + str(offset))
+        if offset + size > 0:
+            raise error("no space to pack " + str(size) + " bytes at offset " + str(offset))
         if offset + buflen < 0:
             raise error("offset " + str(offset) + " out of range for " + str(buflen) + "-byte buffer")
         offset += buflen
-    if buflen - offset < s.size:
-        raise error(name + " requires a buffer of at least " + str(s.size + offset) + " bytes for packing " + str(s.size)
+    if buflen - offset < size:
+        raise error(name + " requires a buffer of at least " + str(size + offset) + " bytes for packing " + str(size)
                     + " bytes at offset " + str(offset) + " (actual buffer size is " + str(buflen) + ")")
-    _pack_into(s._codes, s.size, s._length, s._little, values, target, offset)
+    _pack_into(codes, size, length, little, values, target, offset)
 
 
 def _unpack_buffer(s: Struct, buffer: object) -> tuple[object, ...]:   # Struct_unpack_impl
     data = _buffer(buffer)
-    if len(data) != s.size:
-        raise error("unpack requires a buffer of " + str(s.size) + " bytes")
-    return _unpack_from(s._codes, s._length, s._little, data, 0)
+    codes, size, length, little = _ready(s)
+    if len(data) != size:
+        raise error("unpack requires a buffer of " + str(size) + " bytes")
+    return _unpack_from(codes, length, little, data, 0)
 
 
 def _unpack_from_buffer(s: Struct, buffer: object, offset_arg: object) -> tuple[object, ...]:   # Struct_unpack_from_impl
     data = _buffer(buffer)
     offset = _ssize(offset_arg)
+    codes, size, length, little = _ready(s)
     if offset < 0:
-        if offset + s.size > 0:
-            raise error("not enough data to unpack " + str(s.size) + " bytes at offset " + str(offset))
+        if offset + size > 0:
+            raise error("not enough data to unpack " + str(size) + " bytes at offset " + str(offset))
         if offset + len(data) < 0:
             raise error("offset " + str(offset) + " out of range for " + str(len(data)) + "-byte buffer")
         offset += len(data)
-    if len(data) - offset < s.size:
-        raise error("unpack_from requires a buffer of at least " + str(s.size + offset) + " bytes for unpacking " + str(s.size)
+    if len(data) - offset < size:
+        raise error("unpack_from requires a buffer of at least " + str(size + offset) + " bytes for unpacking " + str(size)
                     + " bytes at offset " + str(offset) + " (actual buffer size is " + str(len(data)) + ")")
-    return _unpack_from(s._codes, s._length, s._little, data, offset)
+    return _unpack_from(codes, length, little, data, offset)
 
 
 def _iter_unpack(s: Struct, buffer: object) -> unpack_iterator:   # Struct_iter_unpack_impl
-    if s.size == 0:
+    size = _ready(s)[1]
+    if size == 0:
         raise error("cannot iteratively unpack with a struct of length 0")
     data = _buffer(buffer)
-    if len(data) % s.size != 0:
-        raise error("iterative unpacking requires a buffer of a multiple of " + str(s.size) + " bytes")
+    if len(data) % size != 0:
+        raise error("iterative unpacking requires a buffer of a multiple of " + str(size) + " bytes")
     it: unpack_iterator = _bella_new_instance(unpack_iterator)
     it._struct = s
     it._data = data

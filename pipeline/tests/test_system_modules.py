@@ -1239,7 +1239,6 @@ def test_what_is_absent_stops_by_name() -> None:
     cases = (("import ast\nast.parse('1')", "compile()"),
              ("import typing\nif __name__ == '__main__':\n    typing.TypeVar('T', bound='Fwd')", "a ForwardRef built at runtime"),
              ("import binascii\nbinascii.b2a_uu(b'a')", "binascii.b2a_uu"), ("import base64\nbase64.b85encode(b'a')", "binascii.b2a_base85"),
-             ("import struct\nclass S(struct.Struct):\n    pass\nS('b')", "subclassing _struct.Struct"), ("import struct\ns = struct.Struct('b')\ns.__init__('h')", "another format"),
              ("import _md5\n_md5.md5(string=b'x')", "'string' keyword"), ("import _blake2\n_blake2.blake2s(string=b'x')", "'string' keyword"),
              ("import _opcode\n_opcode.stack_effect(1)", "_opcode.stack_effect"), ("import warnings\nwarnings.warn_explicit('m', UserWarning, 'f', 1, module_globals={'__name__': 'x'})", "module_globals"),
              ("import importlib, json\nimportlib.reload(json)", "importlib.reload"), ("import importlib.machinery\nimportlib.machinery.PathFinder.find_spec('x')", "PathFinder.find_spec"),
