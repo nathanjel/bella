@@ -109,7 +109,7 @@ lint = "yes"
 note = "cache_tag and __spec__.cached added by the author 2026-11-05: a compiled program has no .pyc, and the implementation says so"
 
 [deviations.D-17]
-summary = "recursion limit: a per-call depth counter raises RecursionError at sys.getrecursionlimit(), default 1000"
+summary = "recursion limit: a per-call depth counter raises RecursionError at sys.getrecursionlimit(), default 1000; a compiled call uses the program's stack (256 MiB for the main thread by default, the policy's main_stack_mib), so a limit raised past what it holds, or a walk of data nested deeper, raises RecursionError where the stack is nearly used, and CPython goes on"
 status = "decided"
 decision = 2
 lint = "yes"

@@ -629,6 +629,14 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
 
 ## Later
 
+* The stack a compiled program needs (the author, 2026-11-22, with Question 28's answer B): "such stack growth might flag
+  a deeper design issue and needs analysis and approach revision at a later stage". The 256 MiB default covers the
+  realistic cases and hides the cause: a compiled Python call is a native call of about 690 bytes of stack, and a walk of
+  nested data through a prelude takes 4 to 8 KiB a level, where CPython keeps the frames of Python calls on the heap and
+  its C walks take 100 to 200 bytes a level. To analyse: where the bytes of a frame go (the guards, the argument arrays,
+  what the lowering keeps alive across a call), whether deep recursion should have frames off the native stack, and
+  whether the preludes' walks should be loops or leaner native code; then revise the approach.
+
 * The author's direction (P-3, 2026-11-02): a whole-program pass that glues the modules' globals
   into one application-wide object with fixed slots, once the closed world and the staging
   snapshot are known. It belongs with the C++ leg's L2; the model comes first, as promoted
@@ -673,21 +681,15 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
-* **For the author, with D-17's wording and decision 16 (RL-642, 2026-11-21):** under the default stack of 8 MiB a walk of
-  nested data that goes through a prelude reaches 1 000 to 2 000 levels before RecursionError (repr of a list 1 855, `json.dumps`
-  977), where CPython's C reaches 30 000 to 75 000: a level takes 4 to 8 KiB of native stack. Two ways nearer: a larger stack
-  for the main thread by default (decision 16 says 8 MiB), or leaner frames in the preludes' walks.
 * **For the author, with D-17's wording (RL-639, 2026-11-21):** CPython counts two entries of the recursion limit for a class
   called with a Python `__init__` (its specialised instruction pushes a frame of its own), and one on the calls made before
   the instruction specialises; a compiled program counts one, so it goes twice as deep through constructors. Counting two
   would agree from the third call of a site on. And the frames of the import system: CPython's `importlib` is Python and
   its frames count (several an `import`), the runtime's is a prelude and none does.
-* **For the author, a wording (RL-624's remainder, 2026-11-21):** a program that raises its recursion limit past what the native
-  stack holds gets a RecursionError where the stack is nearly used (`Stack overflow ... while calling a Python object`); it
-  ended on the stack's guard page before. CPython keeps a pure-Python recursion's frames on the heap and goes on. D-17 says
-  the counter; its row and the Resources sentence should say this too. And the other places the runtime recurses on a
-  program's data, to be swept with the same guard: `isinstance` and `issubclass` over nested tuples of classes, the
-  runtime's report of a long chain of causes, `copy.deepcopy` and `json` are Python's own depth.
+* **Left of RL-624 (2026-11-21; its wording was decided with Question 28 on 2026-11-22, spec v0.28):** the other places the
+  runtime recurses on a program's data, to be swept with the same guard: `isinstance` and `issubclass` over nested tuples of
+  classes, the runtime's report of a long chain of causes; `copy.deepcopy` and `json` are Python's own depth. And a speed
+  seen with C-8-21: `repr` of a list nested 50 000 deep takes 73 s compiled, 1 s under CPython.
 * **For the author (RL-626, review A28; measured 2026-11-21): a starred tuple reaches some callables written in C as itself.**
   `f(*t)` with an exact tuple hands `t` to `PyObject_Call`. A class called through `type`'s own call keeps it:
   `MyError(*t).args is t`, `StopIteration(*t).args is t`, `self.args is args` after `super().__init__(*args)`,

@@ -3819,8 +3819,30 @@ void as_compiled_at_each_start(const char* main_file) {
 void set_long_literals(std::span<const LongLiteral> literals) { long_literals() = literals; }
 void set_compiler_warnings(std::span<const CompilerWarning> warnings) { compiler_warnings() = warnings; }
 
+namespace {
+int run_program(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
+                std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules);
+}  // namespace
+// The program, on the stack the policy gives it (core.cpp on_main_stack; Question 28, 2026-11-22)
 int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
              std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
+    struct Start {
+        int argc;
+        char** argv;
+        ModuleBody main_body;
+        const char* main_file;
+        const char* program_dir;
+        std::initializer_list<PreludeModule> prelude;
+        std::span<const ModuleEntry> modules;
+    } start{argc, argv, main_body, main_file, program_dir, prelude, modules};
+    return on_main_stack([](void* given) {
+        auto* s = static_cast<Start*>(given);
+        return run_program(s->argc, s->argv, s->main_body, s->main_file, s->program_dir, s->prelude, s->modules);
+    }, &start);
+}
+namespace {
+int run_program(int argc, char** argv, ModuleBody main_body, const char* main_file, const char* program_dir,
+                std::initializer_list<PreludeModule> prelude, std::span<const ModuleEntry> modules) {
     int status = 0;
     measure_native_stack();                      // the main thread's bounds, before anything recurses (RL-624)
     // What the environment said, before anything else: a value CPython refuses ends the program here (core.cpp). Without
@@ -4259,5 +4281,6 @@ int run_main(int argc, char** argv, ModuleBody main_body, const char* main_file,
     // (120 too), the process ends by SIGINT's default action, so that what started it knows of the ^C; 130 if it is still here
     return interrupted ? exit_by_sigint() : status;
 }
+}  // namespace
 
 }  // namespace bella

@@ -245,6 +245,23 @@ def program_policy(directory: Path) -> dict[str, dict[str, list[str]]]:
     return {}
 
 
+MAIN_STACK_MIB = 256     # decision 16 as Question 28 changed it (2026-11-22): where a program's policy says nothing
+
+
+@cache
+def program_main_stack(directory: Path) -> int:
+    """The size of the stack the program runs on, in MiB: `[platform] main_stack_mib` of the nearest `bella.toml` above the
+    program, 256 where there is no policy or it does not say (the runtime keeps to the process's hard limit: core.cpp)."""
+    for d in (directory, *directory.parents):
+        policy = d / "bella.toml"
+        if policy.is_file():
+            value = tomllib.loads(policy.read_text(encoding="utf-8")).get("platform", {}).get("main_stack_mib", MAIN_STACK_MIB)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{policy}: [platform] main_stack_mib must be a whole number of MiB, 1 or more, not {value!r}")
+            return value
+    return MAIN_STACK_MIB
+
+
 def find_program_modules(program: Path, also: tuple[str, ...] = ()) -> list[ProgramModule]:
     """Every module of the program's own an import can reach, in the order they were found, and the modules the program's policy
     says its computed imports must find (`program_policy`), reached from the modules whose sites they are. `also`: modules

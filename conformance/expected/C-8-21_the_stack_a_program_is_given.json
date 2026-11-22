@@ -1,0 +1,12 @@
+{
+ "case": "C-8-21_the_stack_a_program_is_given.py",
+ "clause": "C-8-21",
+ "spec": "section 8 (Resources)",
+ "status": "P1",
+ "source": "Python/ceval.c (_Py_CheckRecursiveCall: the frames of Python calls are on the heap, a raised limit is reached),",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "the limit a program starts with: 1000 | reached: 998\nraised to 50 000 | reached: 49998\nand back at 1000 | reached: 998\njson.dumps: 10002 35002\nrepr: 10002 15002 35002 | str: 10002\n==: True True True | hash: True\non the process's first thread: True True\n",
+ "stderr": "",
+ "exit_code": 0
+}

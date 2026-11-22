@@ -16,7 +16,7 @@ checker = "mypy"         # or "pyrefly" / "ty"; pinned exactly in uv.lock
 
 [platform]
 targets = ["linux-x86_64", "linux-aarch64"]   # decision 14
-main_stack_mib = 8                            # decision 16
+main_stack_mib = 256                          # decision 16, as Question 28 changed it (2026-11-22): reserved, used as needed
 thread_stack_mib = 2
 
 [runtime]

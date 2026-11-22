@@ -814,6 +814,10 @@ std::int64_t tuple_hash(const Tuple* t);         // tuple_hash: the items, whate
 // str of nested containers, comparisons): below the soft limit it raises RecursionError, `Stack overflow (used N kB)` and
 // `where`, where the program would otherwise end on the stack's guard page
 void measure_native_stack();
+// The stack the program runs on (core.cpp): run_main puts the program on a stack of the policy's size, which the main unit
+// says before it (pipeline/build.py main_unit: bella.toml's main_stack_mib, 256 where the policy says nothing)
+void set_main_stack_mib(std::size_t mib);
+int on_main_stack(int (*body)(void*), void* arg);
 [[noreturn]] void native_stack_overflow(const char* where);
 inline void check_native_stack(const char* where) {
     if (static_cast<const char*>(__builtin_frame_address(0)) < detail::stack_watch.soft_limit) [[unlikely]] native_stack_overflow(where);

@@ -8,9 +8,14 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <random>
 #include <string>
 
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <ucontext.h>
 #include <unistd.h>
 
 namespace bella {
@@ -636,13 +641,31 @@ const char*& native_stack_top() {
     static const char* top = nullptr;
     return top;
 }
-}  // namespace
-void measure_native_stack() {
-    pthread_attr_t attr;
-    if (pthread_getattr_np(pthread_self(), &attr) != 0) return;   // unknown: nothing is ever short, as before there was a watch
+struct StackRegion {
     void* low = nullptr;
     std::size_t size = 0;
-    if (pthread_attr_getstack(&attr, &low, &size) == 0 && low != nullptr && size != 0) {
+};
+StackRegion& program_stack() {                   // the stack on_main_stack made for the program, while the program is on it
+    static StackRegion region;
+    return region;
+}
+std::size_t& wanted_main_stack() {               // the policy's main_stack_mib, in bytes (pipeline/build.py main_unit hands it over)
+    static std::size_t bytes = std::size_t{256} << 20;
+    return bytes;
+}
+bool process_stack(void*& low, std::size_t& size) {   // the stack the process gave its first thread
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) != 0) return false;
+    bool known = pthread_attr_getstack(&attr, &low, &size) == 0 && low != nullptr && size != 0;
+    pthread_attr_destroy(&attr);
+    return known;
+}
+}  // namespace
+void measure_native_stack() {
+    void* low = program_stack().low;
+    std::size_t size = program_stack().size;
+    if (low == nullptr && !process_stack(low, size)) return;   // unknown: nothing is ever short, as before there was a watch
+    {
         // CPython's soft limit is two of its margins (16 KiB each) above the stack's end. An exception raised from compiled
         // code, and what its handler then does, take more native stack than a bytecode loop's, so the part kept back here
         // is larger; the two marks of dealloc are CPython's, 2 and 4 margins above the soft limit
@@ -655,7 +678,72 @@ void measure_native_stack() {
         w.destroy_from = w.soft_limit + 4 * margin;
         native_stack_top() = base + size;
     }
-    pthread_attr_destroy(&attr);
+}
+
+// ---- the stack the program runs on (decision 16 as the author changed it with Question 28, 2026-11-22) ----
+// A compiled call is a native call, so how deep a program recurses is how much native stack it has; CPython keeps the
+// frames of Python calls on the heap. The program therefore runs on a stack of the policy's size (`main_stack_mib` in
+// bella.toml, 256 MiB where it says nothing) and not on the 8 MiB a shell gives: address space reserved at the start and
+// memory only as the program uses it, with the thread it runs on still the process's first (its id is the process's).
+// The process's hard limit on its stack is kept: the size is no more than `ulimit -Hs` says (a plain `ulimit -s` in a
+// shell sets it), and where that leaves no more than the stack the process already has, the program stays on it.
+namespace {
+struct MainStackEntry {
+    int (*body)(void*);
+    void* arg;
+    int result = 0;
+    std::exception_ptr error;
+    ucontext_t back;
+};
+void enter_main_stack(unsigned low, unsigned high) {
+    auto* entry = reinterpret_cast<MainStackEntry*>((static_cast<std::uintptr_t>(high) << 32) | low);
+    try {
+        entry->result = entry->body(entry->arg);
+    } catch (...) {
+        entry->error = std::current_exception();   // nothing unwinds past the first frame of a made stack
+    }
+    // Going back restores the signal mask the first stack was left with. The mask is the program's to set: what it blocked
+    // stays blocked on the process's way out (a SIGINT it left pending must not arrive there), so the mask to go back to
+    // is the one it has now
+    pthread_sigmask(SIG_SETMASK, nullptr, &entry->back.uc_sigmask);
+}
+}  // namespace
+void set_main_stack_mib(std::size_t mib) { wanted_main_stack() = mib << 20; }
+int on_main_stack(int (*body)(void*), void* arg) {
+#if defined(__SANITIZE_ADDRESS__)
+    return body(arg);                            // a sanitizer keeps its own account of the stack it started on
+#else
+    std::size_t want = wanted_main_stack();
+    rlimit limit{};
+    if (getrlimit(RLIMIT_STACK, &limit) == 0 && limit.rlim_max != RLIM_INFINITY) want = std::min<std::size_t>(want, limit.rlim_max);
+    void* have_low = nullptr;
+    std::size_t have = 0;
+    if (!process_stack(have_low, have) || want <= have) return body(arg);
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    want = (want + page - 1) / page * page;
+    const std::size_t guard = std::size_t{1} << 20;   // below the stack, never readable: what runs past the watch ends there
+    void* region = mmap(nullptr, guard + want, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
+    if (region == MAP_FAILED) return body(arg);  // no address space for it: the stack the process has
+    void* low = static_cast<char*>(region) + guard;
+    MainStackEntry entry{body, arg, 0, nullptr, {}};
+    ucontext_t there;
+    if (mprotect(low, want, PROT_READ | PROT_WRITE) != 0 || getcontext(&there) != 0) {
+        munmap(region, guard + want);
+        return body(arg);
+    }
+    there.uc_stack.ss_sp = low;
+    there.uc_stack.ss_size = want;
+    there.uc_link = &entry.back;
+    auto at = reinterpret_cast<std::uintptr_t>(&entry);
+    makecontext(&there, reinterpret_cast<void (*)()>(enter_main_stack), 2, static_cast<unsigned>(at), static_cast<unsigned>(at >> 32));
+    program_stack() = {low, want};
+    swapcontext(&entry.back, &there);            // returns when the program has returned
+    program_stack() = {};
+    measure_native_stack();                      // what runs after the program (the process's way out) is on the first stack again
+    munmap(region, guard + want);
+    if (entry.error) std::rethrow_exception(entry.error);
+    return entry.result;
+#endif
 }
 void native_stack_overflow(const char* where) {   // _Py_CheckRecursiveCall's words
     const char* here = static_cast<const char*>(__builtin_frame_address(0));

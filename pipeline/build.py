@@ -64,7 +64,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from pipeline.backend.cpp import c_bytes, c_string, emit_module, header_macros  # noqa: E402
-from pipeline.closed_world import FROZEN, STDLIB, ProgramModule, find_program_modules, namespace_of, omitted_modules, read_source  # noqa: E402
+from pipeline.closed_world import FROZEN, STDLIB, ProgramModule, find_program_modules, namespace_of, omitted_modules, program_main_stack, read_source  # noqa: E402
 from pipeline.l1 import grammar as L  # noqa: E402
 from pipeline.l1.frontend import lower  # noqa: E402
 from pipeline.l1.grammar import Unsupported  # noqa: E402
@@ -747,6 +747,7 @@ def main_unit(main_file: Path, modules: list[ProgramModule], staged: tuple[str, 
             '#include "bella/runtime.hpp"\n\n' + decls + "\n" + preludes + "\n\n" + table + literal_table + staged[0] + annotate[0] +
             "\nint main(int argc, char** argv) {\n" + staged[1] + annotate[1] + literal_call +
             f"    ::bella::set_stdlib_dir({c_string(getattr(sys, '_stdlib_dir', None) or str(STDLIB))});\n" +
+            f"    ::bella::set_main_stack_mib({program_main_stack(main_file.resolve().parent)});\n" +   # the policy's (Question 28)
             "    ::bella::set_lean(BELLA_IS_LEAN);\n" +      # the header's, 1 under -DBELLA_LEAN and 0 without: one text for both builds
             f"    return ::bella::run_main(argc, argv, ::bella::m_main::module_body, {c_string(named)},\n"
             f"                             {c_string(str(main_file.resolve().parent))}, {{{bodies}}},\n"
