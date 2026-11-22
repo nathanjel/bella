@@ -734,6 +734,12 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **`ast.AST.__init__` after a failed store of a field whose name has a `__hash__` written in Python stops by name (RL-852).**
   CPython calls the hash with the store's error still set, and its body ends with a SystemError at the first C function it
   calls. Exact only with a way to run a function of the program's "with an exception set"; nothing else needs one so far.
+* **For the author, a question to put (2026-11-22): `__sizeof__` and `sys.getsizeof`.** 163 of the 182 stops the sweep of
+  argument counts lists are a type's `__sizeof__`: no type answers it. CPython's numbers are the sizes of its own C structs
+  (`tp_basicsize` and an item size, plus what a type allocates beside the object), which are not the sizes a compiled
+  program's objects have. The ways: CPython's figures, computed from a table of its sizes (exact for programs that print
+  or compare them, and a number that is true of nothing in the compiled program); the runtime's own sizes as a registered
+  deviation; or the stop as it is. RL-592 (the default pickling state over a C type with fields) needs the same table.
 * **For the author, two questions to put after Question 29 (found 2026-11-22 with the sweep): `marshal` and `zipimport`.**
   Neither can be exact as CPython has it. `marshal.dumps` at the default version sets a reference flag on an object by its
   reference count at that moment (`w_ref`: no flag where the count is 1), so its bytes depend on CPython's counts, which a
