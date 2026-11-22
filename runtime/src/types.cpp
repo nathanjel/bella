@@ -931,6 +931,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             }
             if (held) raise_new("ValueError", "'" + m + "' in __slots__ conflicts with class variable");
             if (std::find(slots.begin(), slots.end(), m) == slots.end()) slots.push_back(m);   // A9-18
+            else ++spec.repeated_slots;          // a second cell in CPython, which only the size of the object shows (RL-591)
         }
         // an int's or a bytes's subclass has instances of a variable size: only __dict__ and __weakref__ may be slots
         for (ClassObject* variable : {types().int_, types().bytes}) {
@@ -951,7 +952,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
                 list_append(names.get(), as_object.get());
             }
             Ref sorted = list_sort_m(names.get(), Args{});
-            std::vector<std::string> ordered;    // one cell a name (RL-591 is open)
+            std::vector<std::string> ordered;    // one cell a name; a name's other cells are counted (repeated_slots, RL-591)
             for (Obj v : static_cast<List*>(names.get().object())->items)
                 if (std::find(ordered.begin(), ordered.end(), as_str(v)->text) == ordered.end()) ordered.push_back(as_str(v)->text);
             for (const std::string& s : slots)
@@ -3282,6 +3283,7 @@ Ref i_bella_slot_cells(Obj, Args a) {            // how many slots tp_basicsize 
     ClassObject* c = as_class(a.pos(0));
     std::size_t cells = c->slot_fields.size();
     for (const auto& behind : c->shadowed) cells += behind.owner != nullptr;
+    for (const ClassObject* k : c->mro) cells += k->repeated_slots;   // a name one __slots__ has twice is two cells (RL-591)
     return int_from_i64(static_cast<std::int64_t>(cells));
 }
 Ref i_bella_no_tp_new(Obj, Args a) {             // tp_new is NULL: a static type with object for its base and no __new__ of its own

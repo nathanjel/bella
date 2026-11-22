@@ -734,6 +734,13 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **`ast.AST.__init__` after a failed store of a field whose name has a `__hash__` written in Python stops by name (RL-852).**
   CPython calls the hash with the store's error still set, and its body ends with a SystemError at the first C function it
   calls. Exact only with a way to run a function of the program's "with an exception set"; nothing else needs one so far.
+* **For the author, two questions to put after Question 29 (found 2026-11-22 with the sweep): `marshal` and `zipimport`.**
+  Neither can be exact as CPython has it. `marshal.dumps` at the default version sets a reference flag on an object by its
+  reference count at that moment (`w_ref`: no flag where the count is 1), so its bytes depend on CPython's counts, which a
+  compiled program does not share (`marshal.dumps((1, 'a'))` is `a902e901000000da0161`: flags on the tuple, the int and the
+  str); `loads` is exact either way, and so is `dumps` at version 2 and below. Code objects cannot be written or read at
+  all. `zipimport` can list and read an archive, but loading a module from one means compiling or unmarshalling code at
+  run time (E-01). Each wants a decision: what is provided, what is a registered deviation, what stops by name.
 * **Two modules of the manifest that cannot be imported (the sweep of 2026-11-22; toward increment 1c).** `marshal` (a core
   module: `dumps`, `loads`, `dump`, `load`, `version`; a port of `Python/marshal.c` for the types that are not code objects,
   and a stop by name for those) and `zipimport` (CPython's `Lib/zipimport.py`, frozen: compile it with the program as the
@@ -775,9 +782,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   refuse. Exact needs where each literal stands among the warnings, which the build can ask of the host by compiling under a
   recorder that lifts the limit at the n-th warning (the compile succeeds while the literal comes after it).
 * **Open from review A25** (2026-11-21), each confirmed on both sides: `Struct.iter_unpack` keeps an export of its buffer where the
-  prelude copies it (RL-583, with the memoryview step); a slot named twice in one `__slots__` is two cells in CPython, seen by
-  the default state's size test alone (RL-591);
-  that test over a C type with fields needs the type's size (RL-592).
+  prelude copies it (RL-583, with the memoryview step); the default state's size test over a C type with fields needs the
+  type's size (RL-592; RL-591, a slot named twice, was done on 2026-11-22).
   Done on 2026-11-21, night: RL-585 and RL-598 (no finaliser for an exact BufferedRWPair, BytesIO, StringIO), RL-593 (a struct
   sequence's order of release), RL-594 (a Context's iterator keeps the mapping), RL-597 (`__del__` bound as a special method).
   Done on 2026-11-22: RL-588 (the names of `__slots__` sorted as objects; `slots_ordered` in the model and the header) and
