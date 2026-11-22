@@ -11,7 +11,7 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import assume, settings, strategies as st  # noqa: E402
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule  # noqa: E402
 
-from refmodel.oracle import NAMES, RUNTIME_CLASS, RUNTIME_OBJECTS, RUNTIME_VARIANTS, World  # noqa: E402
+from refmodel.oracle import BUFFER_SLOTS, NAMES, RUNTIME_CLASS, RUNTIME_OBJECTS, RUNTIME_VARIANTS, VIEW_SLOTS, World  # noqa: E402
 
 objects = st.integers(0, 11)
 classes = st.integers(0, 8)
@@ -24,7 +24,7 @@ ring_classes = st.lists(st.integers(0, 7).filter(lambda c: c != RUNTIME_CLASS), 
 class AttributeModel(RuleBasedStateMachine):
     def __init__(self) -> None:
         super().__init__()
-        self.world = World(cycles=True)
+        self.world = World(cycles=True, buffers=True)
         assert len(self.world.objects) == 12 and len(self.world.classes) == 9
 
     def teardown(self) -> None:
@@ -51,6 +51,35 @@ class AttributeModel(RuleBasedStateMachine):
     def ring(self, classes: list[int], name: str, extra: str, weaks: list[bool | None], reviver: str | None, hold: int | None) -> None:
         tags = tuple(self.world.new_tag() for _ in classes)
         self.world.apply(("ring", tuple(classes), name, extra, tags, tuple(weaks[:len(classes)]), reviver, hold))
+
+    # ---- buffers: exporters and the views that hold them (refmodel/objects.py, "Buffers") ----
+    @rule(slot=st.integers(0, BUFFER_SLOTS - 1), kind=st.sampled_from(("bytearray", "bytes")))
+    def buffer_new(self, slot: int, kind: str) -> None:
+        self.world.apply(("buffer_new", slot, kind, self.world.new_tag()))
+
+    @rule(slot=st.integers(0, BUFFER_SLOTS - 1))
+    def buffer_drop(self, slot: int) -> None:
+        self.world.apply(("buffer_drop", slot))
+
+    @rule(view=st.integers(0, VIEW_SLOTS - 1), slot=st.integers(0, BUFFER_SLOTS - 1))
+    def view_new(self, view: int, slot: int) -> None:
+        self.world.apply(("view_new", view, slot))
+
+    @rule(view=st.integers(0, VIEW_SLOTS - 1), of=st.integers(0, VIEW_SLOTS - 1), sliced=st.booleans())
+    def view_of(self, view: int, of: int, sliced: bool) -> None:
+        self.world.apply(("view_of", view, of, sliced))
+
+    @rule(view=st.integers(0, VIEW_SLOTS - 1))
+    def view_release(self, view: int) -> None:
+        self.world.apply(("view_release", view))
+
+    @rule(view=st.integers(0, VIEW_SLOTS - 1))
+    def view_drop(self, view: int) -> None:
+        self.world.apply(("view_drop", view))
+
+    @rule(slot=st.integers(0, BUFFER_SLOTS - 1))
+    def resize(self, slot: int) -> None:
+        self.world.apply(("resize", slot))
 
     @rule(generation=st.integers(0, 2))
     def collect(self, generation: int) -> None:

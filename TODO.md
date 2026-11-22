@@ -740,9 +740,9 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   its frame's locals: RL-222, with the collector). The case is in: C-6-25 (construction and its refusals, length, items,
   slices as views, what a view says, `tobytes`, the places that take bytes-like data, `release` and `with`, and the hold on a
   bytearray's size); it passes under both evaluators, which have the host's memoryview, and stops compiled. The way planned:
-  (1) the reference model first, as the decision asks: an exporter's count of holds, a hold that a view and every view made
-  of it share, the count let go of when the last of them is released or dies, and a resize refused while it is not nought;
-  the header has the count already (`BytesObject::exports`, for `re`'s scanner) and `_canresize` reads it. (2) The hold as
+  (1) done 2026-11-22: the reference model (`refmodel/objects.py`, "Buffers"; the self-test and the Hypothesis machine run it
+  against CPython's memoryview over tagged bytearrays and bytes); the header has the count already (`BytesObject::exports`,
+  for `re`'s scanner) and `_canresize` reads it. (2) The hold as
   an object of the runtime's whose end lets go of the exporter (CPython's `_PyManagedBuffer`): no prelude class can run
   code at its end without a `__del__` CPython's type does not have. (3) `memoryview` itself as a class of the builtins
   prelude over the hold and a start, a step and a length, reading the exporter's octets where they are (a bytearray changed

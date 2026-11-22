@@ -801,6 +801,7 @@ class RefObject:
         self.cls = cls
         self.inline: dict[str, Any] = {n: UNSET for n in cls.slot_fields + cls.native_fields + cls.promoted_fields}
         self.state: dict[str, Any] = {n: UNSET for n in cls.hidden_fields}     # a built-in type's fields that have no name
+        self.exports = 0                    # a bytearray's ob_exports: the holds on its octets (buffers, below)
         # the cells of the slots a nearer class declares again: each its declaring class's and the name
         self.shadowed: dict[tuple[RefClass | None, str], Any] = {k: UNSET for k in cls.shadowed_fields}
         self.order: list[str] = []          # first-assignment order of __dict__-backed names
@@ -1063,6 +1064,72 @@ def weak_ref(target: RefObject, callback: Any = None) -> RefWeak:
     else:
         target.weakrefs.insert(1, w)
     return w
+
+
+# ---------------------------------------------------------------------------------------------
+# Buffers: an exporter's holds, and the views that share them (Objects/memoryobject.c)
+# ---------------------------------------------------------------------------------------------
+#
+# A memoryview of an object does not hold the object itself: it holds a managed buffer, the one hold on the object's
+# octets (`_PyManagedBufferObject`, whose master Py_buffer holds the object and counts as one of its exports), and every
+# view made of that view, a slice too, shares the same managed buffer (mbuf_add_view: one more view registered). The
+# hold ends when the last view registered on it is released or dies (`_memory_release`: `--mbuf->exports == 0` is
+# `mbuf_release`): the exporter's count goes down by one (a bytearray may change its size again once it is nought) and
+# the exporter is let go of, so it can die there, before the view's own end goes on. A released view answers nothing.
+#
+# The model has the managed buffer as an object that only unreleased views hold: the master's release is its death.
+# CPython's managed buffer lives on until the last view referring to it, released or not, is gone, which nothing a
+# program sees can tell from this: what it does after the master's release is free memory.
+
+class RefManagedBuffer(RefObject):
+    """A managed buffer: `obj` is the exporter, while the master is held. Its end is mbuf_release: PyBuffer_Release of
+    the master, the exporter's count of exports first (bytearray_releasebuffer), then the exporter let go of."""
+
+    def _clear_contents(self, late_weakrefs: bool = False, dying: bool = False) -> None:
+        exporter = self.state["obj"]
+        if isinstance(exporter, RefObject):
+            exporter.exports -= 1
+        super()._clear_contents(late_weakrefs, dying)
+
+
+def buffer_classes(heap: Heap) -> tuple[RefClass, RefClass]:
+    """The two classes of a world's buffers: the managed buffer and the memoryview, each with its one field."""
+    mbuf = RefClass("managedbuffer", slots=("obj",), hidden=("obj",), release=("obj",), heap=heap)
+    view = RefClass("memoryview", slots=("mbuf",), hidden=("mbuf",), release=("mbuf",), heap=heap)
+    return mbuf, view
+
+
+def view_new(classes: tuple[RefClass, RefClass], source: RefObject, is_view: bool) -> RefObject:
+    """memoryview(source), a new reference's worth of object (the caller holds it): for an exporter a new managed buffer
+    (PyObject_GetBuffer: one more export), for a view one more view of its managed buffer (mbuf_add_view; a slice is
+    made the same way). A released view refuses (CHECK_RELEASED)."""
+    mbuf_cls, view_cls = classes
+    if is_view:
+        mbuf = source.state["mbuf"]
+        if mbuf is UNSET:
+            raise ValueError("operation forbidden on released memoryview object")
+    else:
+        mbuf = RefManagedBuffer(mbuf_cls)
+        incref(source)
+        mbuf.state["obj"] = source
+        source.exports += 1
+    view = RefObject(view_cls)
+    incref(mbuf)
+    view.state["mbuf"] = mbuf
+    return view
+
+
+def view_release(view: RefObject) -> None:
+    """memoryview.release(): nothing for a view released already; else the view's hold on its managed buffer goes,
+    which is the master's release where it was the last view (_memory_release)."""
+    mbuf, view.state["mbuf"] = view.state["mbuf"], UNSET
+    decref(mbuf)
+
+
+def resize_check(exporter: RefObject) -> None:
+    """bytearray's _canresize: a bytearray with an export cannot change its size."""
+    if exporter.exports > 0:
+        raise BufferError("Existing exports of data: object cannot be re-sized")
 
 
 # ---------------------------------------------------------------------------------------------

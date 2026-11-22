@@ -38,6 +38,8 @@ from refmodel.objects import ModelError, RefClass, RefObject, RefWeak, Runtime, 
 NAMES: tuple[str, ...] = ("x", "y", "z", "s", "t", "w", "cv", "g1", "attr", "k")
 RUNTIME_CLASS = 8                     # index in World.classes of the class recreate_class replaces
 RUNTIME_OBJECTS = (10, 11)            # indices in World.objects of its instances
+BUFFER_SLOTS = 3                      # the exporters a world with buffers keeps, and its views
+VIEW_SLOTS = 4
 RUNTIME_VARIANTS = 5
 
 Outcome = tuple[str, Any]   # ("value", v) | ("error", "AttributeError") | ("dict", [(k, v), ...])
@@ -45,6 +47,28 @@ Outcome = tuple[str, Any]   # ("value", v) | ("error", "AttributeError") | ("dic
 
 class Mismatch(AssertionError):
     pass
+
+
+class TaggedOctets(bytearray):
+    """A bytearray whose death is logged: an exporter of the buffer operations."""
+
+    def __init__(self, tag: str, log: list[Any]) -> None:
+        super().__init__(b"ab")
+        self.tag = tag
+        self._log = log
+
+    def __del__(self) -> None:
+        self._log.append(self.tag)
+
+
+class TaggedBytes(bytes):
+    """A bytes object whose death is logged: an exporter that has no count of exports."""
+
+    tag: str
+    _log: list[Any]
+
+    def __del__(self) -> None:
+        self._log.append(self.tag)
 
 
 class Tagged:
@@ -99,10 +123,11 @@ class DescriptorPair:
 class World:
     """A model world and a CPython world built from the same class definitions."""
 
-    def __init__(self, cycles: bool = False) -> None:
+    def __init__(self, cycles: bool = False, buffers: bool = False) -> None:
         global CURRENT
         CURRENT = self
         self.cycles = cycles
+        self.buffers = buffers                    # memoryviews and their exporters too (the header has no buffers yet)
         if cycles:
             gc.disable()                          # collections on CPython's side only when an operation asks
         O.HEAP = self.heap = O.Heap()
@@ -187,6 +212,14 @@ class World:
         self.sites["<computed>"] = Site()
         self.descriptors: list[DescriptorPair] = []
         self.log: list[tuple[Any, ...]] = []
+        # ---- buffers: a few exporters and views, in slots the program's variables stand for -------------------------
+        self.buffer_classes = O.buffer_classes(self.heap)
+        self.exporter_m = RefClass("Exporter")
+        self.exporters: list[tuple[RefObject, Any, str] | None] = [None] * BUFFER_SLOTS
+        self.views: list[tuple[RefObject, Any] | None] = [None] * VIEW_SLOTS
+        if buffers:                                # a world starts with its exporters, so that its few operations meet them
+            for b, kind in enumerate(("bytearray", "bytearray", "bytes")[:BUFFER_SLOTS]):
+                self.op_buffer_new(b, kind, ("T", f"x{b}"))
 
     # ---- runtime-created classes (review log D-1) ------------------------------------------
     def which(self, v: Any) -> Any:
@@ -781,6 +814,118 @@ class World:
                 _outcome(lambda: delattr(pair.real_cls, "__set__")))
 
     # ---- comparison ------------------------------------------------------------------------
+    # ---- buffers (refmodel/objects.py, "Buffers") ---------------------------------------------------------------------
+    def _set_exporter(self, b: int, new: tuple[RefObject, Any, str] | None) -> None:
+        """The slot's assignment: the new value stored, then the old one let go of, as CPython's store does."""
+        old = self.exporters[b]
+        self.exporters[b] = new
+        if old is not None:
+            m, r, _ = old
+            del old
+            decref(m)
+            del m, r
+
+    def _set_view(self, v: int, new: tuple[RefObject, Any] | None) -> None:
+        old = self.views[v]
+        self.views[v] = new
+        if old is not None:
+            m, r = old
+            del old
+            decref(m)
+            del m, r
+
+    def op_buffer_new(self, b: int, kind: str, tag: tuple[str, str]) -> tuple[Outcome, Outcome]:
+        m = RefObject(self.exporter_m, tag=tag[1])
+        incref(m)
+        if kind == "bytearray":
+            r: Any = TaggedOctets(tag[1], self.real_deaths)
+        else:
+            r = TaggedBytes(b"ab")
+            r.tag, r._log = tag[1], self.real_deaths
+        self._set_exporter(b, (m, r, kind))
+        del m, r
+        return ("value", None), ("value", None)
+
+    def op_buffer_drop(self, b: int) -> tuple[Outcome, Outcome]:
+        self._set_exporter(b, None)
+        return ("value", None), ("value", None)
+
+    def op_view_new(self, v: int, b: int) -> tuple[Outcome, Outcome]:
+        """memoryview(exporter), kept in a view slot."""
+        source = self.exporters[b]
+        if source is None:
+            return ("value", "empty"), ("value", "empty")
+        m = O.view_new(self.buffer_classes, source[0], is_view=False)
+        incref(m)
+        r = memoryview(source[1])
+        del source
+        self._set_view(v, (m, r))
+        del m, r
+        return ("value", None), ("value", None)
+
+    def op_view_of(self, v: int, w: int, sliced: bool) -> tuple[Outcome, Outcome]:
+        """memoryview(view) or a slice of it: one more view of the same managed buffer, or ValueError if it is released."""
+        source = self.views[w]
+        if source is None:
+            return ("value", "empty"), ("value", "empty")
+        made: list[Any] = []
+
+        def model() -> None:
+            made.append(O.view_new(self.buffer_classes, source[0], is_view=True))
+
+        def real() -> None:
+            made.append(source[1][0:1] if sliced else memoryview(source[1]))
+
+        out = _outcome(model), _outcome(real)
+        if len(made) == 2:
+            incref(made[0])
+            self._set_view(v, (made[0], made[1]))
+        made.clear()
+        return out
+
+    def op_view_release(self, v: int) -> tuple[Outcome, Outcome]:
+        held = self.views[v]
+        if held is None:
+            return ("value", "empty"), ("value", "empty")
+        m, r = held
+        return _outcome(lambda: O.view_release(m)), _outcome(lambda: r.release())   # the locals end with the operation
+
+    def op_view_drop(self, v: int) -> tuple[Outcome, Outcome]:
+        self._set_view(v, None)
+        return ("value", None), ("value", None)
+
+    def op_resize(self, b: int) -> tuple[Outcome, Outcome]:
+        """A bytearray grown by one and shrunk again: BufferError while anything holds an export of it."""
+        held = self.exporters[b]
+        if held is None or held[2] != "bytearray":
+            return ("value", "no bytearray"), ("value", "no bytearray")
+        m, r, _ = held
+
+        def model() -> None:
+            O.resize_check(m)
+
+        def real() -> None:
+            r.append(1)
+            r.pop()
+
+        return _outcome(model), _outcome(real)
+
+    def random_buffer_op(self, rng: random.Random) -> tuple[Any, ...]:
+        roll = rng.random()
+        if roll < 0.15:
+            return ("buffer_new", rng.randrange(BUFFER_SLOTS), rng.choice(("bytearray", "bytearray", "bytes")), self.new_tag())
+        if roll < 0.22:
+            return ("buffer_drop", rng.randrange(BUFFER_SLOTS))
+        if roll < 0.42:
+            return ("view_new", rng.randrange(VIEW_SLOTS), rng.randrange(BUFFER_SLOTS))
+        if roll < 0.58:
+            return ("view_of", rng.randrange(VIEW_SLOTS), rng.randrange(VIEW_SLOTS), rng.random() < 0.5)
+        if roll < 0.72:
+            return ("view_release", rng.randrange(VIEW_SLOTS))
+        if roll < 0.84:
+            return ("view_drop", rng.randrange(VIEW_SLOTS))
+        return ("resize", rng.randrange(BUFFER_SLOTS))
+
     def apply(self, op: tuple[Any, ...]) -> None:
         self.log.append(op)
         kind, *args = op
@@ -817,6 +962,8 @@ class World:
     # ---- random operation source --------------------------------------------------------
     def random_op(self, rng: random.Random) -> tuple[Any, ...]:
         n_obj = len(self.objects)
+        if self.buffers and rng.random() < 0.3:
+            return self.random_buffer_op(rng)
         if self.cycles:
             roll = rng.random()
             if roll < 0.06:
