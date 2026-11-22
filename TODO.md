@@ -728,23 +728,17 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **`ast.AST.__init__` after a failed store of a field whose name has a `__hash__` written in Python stops by name (RL-852).**
   CPython calls the hash with the store's error still set, and its body ends with a SystemError at the first C function it
   calls. Exact only with a way to run a function of the program's "with an exception set"; nothing else needs one so far.
-* **The order in which a `match` statement's captures are stored (measured with RL-825, 2026-11-22; low).** CPython stores the
-  names of a successful pattern in an order its code generator and `apply_static_swaps` decide, and what the names held is let go
-  of in that order. Thirteen shapes were run on both sides with objects that say when they go. Eleven agree (a flat sequence of
-  two, three and four names, a star, a mapping, a class pattern by position and by keyword, an as-pattern, an or-pattern, a guard,
-  one capture). Two differ: `[a, [b, c]]` stores `b, c, a` under CPython and `a, b, c` compiled, and `{"x": a, **b}` stores
-  `b, a` under CPython and `a, b` compiled. A step of its own, with a case. The mechanism (Python/codegen.c): each capture is
-  rotated under what is on the stack (`pattern_helper_store_name`: SWAPs counted from `pc->on_top` and the names so far), and the
-  stores are emitted at the end in the order of capture, all on the pattern's line; `swaptimize` and `apply_static_swaps` then
-  remove the SWAPs that stand right before those stores (and before the POP_TOPs a mapping or class pattern ends with) by
-  exchanging the stores. Forty-three shapes read with `dis` (2026-11-22) fit one statement of it: where every name is a fast
-  local, the stores are made in the order the captured values lie on the stack, top first, after the last instruction that is
-  neither a SWAP, a POP_TOP nor a STORE_FAST, which is the last sub-pattern's UNPACK_SEQUENCE, MATCH_KEYS or MATCH_CLASS (so
-  `[a, [b, c], d]` stores `b, c, d, a`, `[a, b, [c]]` stores `c, a, b`, `{"x": a, "y": b, **c}` stores `c, a, b`, and a flat
-  sequence, whose rotations cancel, stores as written); an or-pattern stores in its first alternative's order; with a cell or a
-  global among the names `apply_static_swaps` gives up part of the way. To do: port the stack bookkeeping of the pattern kinds
-  (`pc->on_top`, the rotation counts) with `swaptimize` and `apply_static_swaps` into the lowering of a `match`, checked against
-  `dis` over generated patterns, and a case.
+* **Where a `match` statement's temporaries are let go of (measured 2026-11-22 with C-3-80; low).** The order of the stores is
+  CPython's now (`pipeline/l1/captures.py`). What a pattern holds beside the captures is still let go of after the stores, newest
+  first (RL-185), and CPython does it elsewhere in 8 of 14 shapes run on both sides (`pipeline/tests/match_temporaries_probe.txt`,
+  one row a process: `rows` lists them; to become a test with the step). Two mechanisms. (1) The POP_TOPs a mapping or class pattern ends with are exchanged with
+  the stores like the stores themselves, so the tuple of a mapping's keys dies between them: `[a, {k.x: b}]` gives `b`, the
+  keys, `a` (compiled: `b`, `a`, the keys), and `{k.x: a, **b}` the keys first. (2) The last case matches the subject itself,
+  not a copy: a subject that only the stack holds (`match Seq([1, 2]):`) dies where the pattern consumes it, at
+  UNPACK_SEQUENCE, MATCH_CLASS's result or the mapping's last POP_TOP, which is before the stores (`subject a b`; compiled
+  `a b subject`); with a case after it, or a guard, both sides agree. To do: `capture_plan` already has every POP_TOP with its
+  place; name what each one pops (the keys, a copy of the subject, an item) and let the lowering clear that temporary where
+  `store_order` puts the POP_TOP, and delete the subject where the last case's pattern consumes it.
 * **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
   that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
   `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and

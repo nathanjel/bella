@@ -1,0 +1,107 @@
+import sys
+class Tag:
+    def __init__(self, name, log): self.name = name; self.log = log
+    def __del__(self): self.log.append(self.name)
+class Key:
+    def __init__(self, log): self.log = log
+    def __hash__(self): return 1
+    def __eq__(self, other): return isinstance(other, Key)
+    def __del__(self): self.log.append("key")
+class Keys:
+    def __init__(self, log): self.log = log
+    @property
+    def k(self): return Key(self.log)
+class Seq(list):
+    def __del__(self): LOG.append("subject")
+class Map(dict):
+    def __del__(self): LOG.append("subject")
+class Point:
+    __match_args__ = ("x", "y")
+    def __init__(self, x, y): self.x = x; self.y = y
+    def __del__(self): LOG.append("subject")
+LOG = []
+def keys_one():
+    log = LOG; a = Tag("a", log); b = Tag("b", log); ks = Keys(log)
+    s = [1, {Key(log): 2}]
+    log.append("made")
+    match s:
+        case [a, {ks.k: b}]: log.append("body")
+    log.append("after")
+def keys_rest():
+    log = LOG; a = Tag("a", log); b = Tag("b", log); ks = Keys(log)
+    s = {Key(log): 2, "z": 3}
+    log.append("made")
+    match s:
+        case {ks.k: a, **b}: log.append("body")
+    log.append("after")
+def keys_top():
+    log = LOG; a = Tag("a", log); b = Tag("b", log); ks = Keys(log)
+    s = {Key(log): 2, "z": 3}
+    log.append("made")
+    match s:
+        case {ks.k: a, "z": b}: log.append("body")
+    log.append("after")
+def subject_seq_last():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Seq([1, 2]):
+        case [a, b]: log.append("body")
+    log.append("after")
+def subject_seq_first():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Seq([1, 2]):
+        case [a, b]: log.append("body")
+        case 0: pass
+    log.append("after")
+def subject_seq_guard():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Seq([1, 2]):
+        case [a, b] if log.append("guard") is None: log.append("body")
+        case 0: pass
+    log.append("after")
+def subject_map_last():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Map(x=1, y=2):
+        case {"x": a, "y": b}: log.append("body")
+    log.append("after")
+def subject_map_first():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Map(x=1, y=2):
+        case {"x": a, "y": b}: log.append("body")
+        case 0: pass
+    log.append("after")
+def subject_map_rest_last():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Map(x=1, y=2):
+        case {"x": a, **b}: log.append("body")
+    log.append("after")
+def subject_class_last():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Point(1, 2):
+        case Point(a, b): log.append("body")
+    log.append("after")
+def subject_as_last():
+    log = LOG; a = Tag("a", log); b = Tag("b", log); c = Tag("c", log)
+    match Seq([1, 2]):
+        case [a, b] as c: log.append("body")
+    log.append("after")
+def subject_star_wild_last():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Seq([1, 0, 2]):
+        case [a, *_, b]: log.append("body")
+    log.append("after")
+def subject_nested_last():
+    log = LOG; a = Tag("a", log); b = Tag("b", log); c = Tag("c", log)
+    match Seq([1, Seq([2, 3])]):
+        case [a, [b, c]]: log.append("body")
+    log.append("after")
+def subject_fails_then_matches():
+    log = LOG; a = Tag("a", log); b = Tag("b", log)
+    match Seq([1, 2]):
+        case [a, b, _]: log.append("first")
+        case [a, b]: log.append("body")
+    log.append("after")
+ROWS = {f.__name__: f for f in (keys_one, keys_rest, keys_top, subject_seq_last, subject_seq_first, subject_seq_guard, subject_map_last, subject_map_first,
+        subject_map_rest_last, subject_class_last, subject_as_last, subject_star_wild_last, subject_nested_last, subject_fails_then_matches)}
+if sys.argv[1] == "rows": print(" ".join(ROWS)); raise SystemExit
+ROWS[sys.argv[1]]()
+print(" ".join(LOG))

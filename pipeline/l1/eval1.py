@@ -27,6 +27,7 @@ from pipeline.l1 import grammar as L
 from pipeline.l1.frontend import lower
 from pipeline.l1.staged import flags_of
 from pipeline.l1.wf import _bound_in, _walrus, check
+from pipeline.l1.captures import store_order
 from pipeline.l2.resolve import co_cellvars, co_varnames, resolve   # the names' kinds are level 2's (L.Assign.swapped)
 from pipeline.staging import annotate_rt
 
@@ -422,21 +423,33 @@ def special_lookup(obj: Any, name: str) -> Any:
 _RESOLVED: dict[int, tuple[L.Module, Any]] = {}   # a module's scopes as level 2 resolves them, kept with the module
 
 
-def _fast_locals(t: L.Target, scope: Scope) -> bool:
-    """L.Assign.swapped: whether every name of the target is a STORE_FAST in CPython, a variable of the function's code
-    that is no cell there. The scopes are level 2's to resolve (pipeline/l2/resolve.py), and this level asks it, so that
-    the two evaluators and the compiled program store in one order. (The resolver is imported with this module: an import
-    made here would run under the evaluator's own importer, in the middle of what it evaluates.)"""
-    if not isinstance(t, L.TupleTarget) or scope.node is None or scope.module is None or scope.module.l1 is None:
-        return False
+def _fast_names(scope: Scope) -> frozenset[str]:
+    """The names CPython stores with STORE_FAST in this scope: the variables of a function's code that are no cells
+    there. The scopes are level 2's to resolve (pipeline/l2/resolve.py), and this level asks it, so that the two
+    evaluators and the compiled program store in one order. (The resolver is imported with this module: an import made
+    here would run under the evaluator's own importer, in the middle of what it evaluates.)"""
+    if scope.node is None or scope.module is None or scope.module.l1 is None:
+        return frozenset()
     module = scope.module.l1
     if id(module) not in _RESOLVED:
         _RESOLVED[id(module)] = (module, resolve(module))
     resolved = _RESOLVED[id(module)][1].of(scope.node)
     if not resolved.function_like:
-        return False
-    fast = set(co_varnames(resolved)) - set(co_cellvars(resolved))
-    return all(isinstance(x, L.NameTarget) and x.id in fast for x in t.elts)
+        return frozenset()
+    return frozenset(co_varnames(resolved)) - frozenset(co_cellvars(resolved))
+
+
+def _store_order(s: L.Assign, scope: Scope) -> tuple[int, ...] | None:
+    """The order of a tuple target's stores where it is not the written one: L.Assign.swapped (last name first where
+    every name is a fast local) and L.Assign.captures (a pattern's captures, pipeline/l1/captures.py)."""
+    t = s.target
+    if not isinstance(t, L.TupleTarget) or (s.captures is None and not s.swapped):
+        return None
+    fast = _fast_names(scope)
+    are_fast = [isinstance(x, L.NameTarget) and x.id in fast for x in t.elts]
+    if s.captures is not None:
+        return store_order(s.captures, are_fast)
+    return tuple(reversed(range(len(are_fast)))) if all(are_fast) else None
 
 
 def _local_names(f: L.FunctionDef | L.Lambda) -> frozenset[str]:
@@ -687,7 +700,7 @@ class Interpreter:
         for s in stmts:
             self.stmt(s, scope)
 
-    def assign(self, t: L.Target, value: Any, scope: Scope, last_first: bool = False) -> None:
+    def assign(self, t: L.Target, value: Any, scope: Scope, order: tuple[int, ...] | None = None) -> None:
         if isinstance(t, L.NameTarget):
             self.store(t.id, value, scope)
         elif isinstance(t, L.AttrTarget):
@@ -699,8 +712,8 @@ class Interpreter:
             before = len(t.elts) if star is None else star
             after = -1 if star is None else len(t.elts) - star - 1
             pairs = list(zip(t.elts, unpack_iterable(value, before, after), strict=True))
-            if last_first:                     # L.Assign.swapped, for fast locals: CPython's order of the stores (RL-825)
-                pairs.reverse()
+            if order is not None:              # CPython's order of the stores (_store_order; RL-825, a pattern's captures)
+                pairs = [pairs[i] for i in order]
             for sub, v in pairs:
                 self.assign(sub.target if isinstance(sub, L.StarTarget) else sub, v, scope)
         else:
@@ -710,7 +723,7 @@ class Interpreter:
         if isinstance(s, L.ExprStmt):
             self.expr(s.value, scope)
         elif isinstance(s, L.Assign):
-            self.assign(s.target, self.expr(s.value, scope), scope, s.swapped and _fast_locals(s.target, scope))
+            self.assign(s.target, self.expr(s.value, scope), scope, _store_order(s, scope))
         elif isinstance(s, L.AugAssign):
             if isinstance(s.target, L.NameTarget):
                 cur = self.load(s.target.id, scope, s.line)
@@ -889,7 +902,7 @@ class Interpreter:
             elif isinstance(s, L.Assign):
                 if _has_yield_target(s.target):
                     raise L.Refused(f"a yield inside an assignment target is not lowered (line {s.line})")
-                self.assign(s.target, (yield from self.gexpr(s.value, scope)), scope, s.swapped and _fast_locals(s.target, scope))
+                self.assign(s.target, (yield from self.gexpr(s.value, scope)), scope, _store_order(s, scope))
             elif isinstance(s, L.AugAssign):
                 if not isinstance(s.target, L.NameTarget):
                     raise L.Refused(f"a yield in an augmented assignment to {type(s.target).__name__} is not lowered "

@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pipeline.l1 import grammar as L
+from pipeline.l1.captures import store_order
 from pipeline.l2 import grammar as G
 from pipeline.l2.resolve import Scope, Scopes, co_cellvars, co_varnames, expression_temporary, moved_on_use, resolve
 from pipeline.passes.spec import Discharge, Fact, Level, Obligation, PassSpec, register
@@ -199,6 +200,8 @@ class _Code:
                 last = self.out[-1] if self.out else None
                 if isinstance(a, G.Temp) and isinstance(last, G.Let) and last.t == a:
                     self.out[-1] = G.Do(last.op)              # POP_TOP at once
+            case L.Assign(target=target, value=value, captures=L.Captures() as captures):
+                self.capture_stores(target, value, captures)
             case L.Assign(target=target, value=value, swapped=swapped):
                 self.assign(target, self.expr(value), swapped and self.fast_locals(target))
             case L.AugAssign(target=target, op=op, value=value):
@@ -293,6 +296,18 @@ class _Code:
             return False
         fast = set(co_varnames(self.scope)) - set(co_cellvars(self.scope))
         return all(isinstance(x, L.NameTarget) and x.id in fast for x in t.elts)
+
+    def capture_stores(self, t: L.Target, value: L.Expr, captures: L.Captures) -> None:
+        """L.Assign.captures: the names a `match` case captured, each stored from the temporary that holds its value, in
+        the order CPython stores them (pipeline/l1/captures.py). No tuple is made of them: CPython has the values on its
+        stack."""
+        assert isinstance(t, L.TupleTarget) and isinstance(value, L.TupleLit) and len(t.elts) == len(value.items)
+        names = [x.id for x in t.elts if isinstance(x, L.NameTarget)]
+        assert len(names) == len(t.elts)
+        fast = set(co_varnames(self.scope)) - set(co_cellvars(self.scope)) if self.scope.function_like else set()
+        values = [self.expr(item) for item in value.items]
+        for i in store_order(captures, [name in fast for name in names]):
+            self.emit(G.Store(self.ref(names[i], "store"), values[i]))
 
     def assign(self, t: L.Target, v: G.Atom, last_first: bool = False) -> None:
         match t:

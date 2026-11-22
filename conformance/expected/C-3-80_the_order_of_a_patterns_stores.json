@@ -1,0 +1,12 @@
+{
+ "case": "C-3-80_the_order_of_a_patterns_stores.py",
+ "clause": "C-3-80",
+ "spec": "section 3 (statements: match)",
+ "status": "P1",
+ "source": "Python/codegen.c (codegen_match_inner, codegen_pattern_helper_store_name), Python/flowgraph.c (swaptimize, apply_static_swaps)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "flat_two ['a', 'b']\nflat_four ['a', 'b', 'c', 'd']\nstarred ['a', 'b', 'c']\nnested_last ['b', 'c', 'a']\nnested_in_the_middle ['b', 'c', 'd', 'a']\nnested_of_one ['c', 'a', 'b']\nnested_twice ['c', 'd', 'a', 'b']\nnested_first ['a', 'b', 'c']\nwith_a_wildcard_star ['b', 'c', 'a']\nmapping ['a', 'b']\nmapping_with_the_rest ['b', 'a']\nmapping_of_two_with_the_rest ['c', 'a', 'b']\nmapping_in_a_sequence ['b', 'c', 'a']\nclass_by_position ['a', 'b']\nclass_by_keyword ['a', 'b']\nclass_with_a_sequence ['b', 'c', 'a']\nclass_with_a_wildcard ['b', 'a']\nas_the_whole ['a', 'b', 'c']\nas_a_part ['a', 'b', 'c', 'd']\nas_a_mapping ['a', 'b', 'c']\nalternatives_in_a_sequence ['b', 'c', 'a']\nnot_the_last_case ['b', 'c', 'a']\nthe_second_case ['b', 'c', 'a']\non_two_lines ['b', 'c', 'a']\non_three_lines ['b', 'c', 'd', 'a']\nmapping_on_two_lines ['c', 'a', 'b']\ntwo_mappings ['b', 'a']\nmapping_on_the_second_line ['a', 'b', 'c']\nclass_then_a_name ['b', 'c', 'a']\nclass_on_the_second_line ['c', 'a', 'b']\na_global ['a', 'global', 'c']\na_global_first ['global', 'b', 'c']\na_cell ['a', 'b', 'c', 1, 2, 3]\na_cell_last ['a', 'b', 'c', 1, 2, 3]\nin_a_loop ['b', 'c', 'a', 'a sequence', 'a mapping']\nalternatives ['a', 'b'] ['a', 'b']\nguarded ['b', 'c', 'a', 'taken'] ['b', 'c', 'a', 'not taken']\nin_a_generator ['b', 'c', 'a']\nwhat_was_captured [1, 2, 3, 4, {'y': 5}]\nmodule ['a', 'b', 'c']\nclass ['a', 'b', 'c']\n",
+ "stderr": "",
+ "exit_code": 0
+}

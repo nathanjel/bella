@@ -21,6 +21,7 @@ from typing import Any
 
 
 from pipeline.l1 import grammar as L
+from pipeline.l1.captures import capture_plan
 from pipeline.passes import manager
 from pipeline.passes.spec import Discharge, Fact, Level, Obligation, PassSpec, register
 
@@ -1366,7 +1367,7 @@ class _Match(ast.NodeTransformer):
             self.captures = {n: self.tmp("cap") for n in names}
             success: list[ast.stmt] = [_assign(done, ast.Constant(True)),
                                        ast.Delete(targets=[ast.Name(id=subj, ctx=ast.Del())]), *case.body]
-            then: list[ast.stmt] = [_assign(n, ast.Name(id=self.captures[n], ctx=ast.Load())) for n in names]
+            then: list[ast.stmt] = self._stores(case.pattern, names)
             then.append(ast.Expr(ast.Constant(self._CLEAR)))
             then += [ast.If(test=case.guard, body=success, orelse=[])] if case.guard is not None else success
             tested = self.pattern(case.pattern, ast.Name(id=subj, ctx=ast.Load()), then)
@@ -1378,6 +1379,20 @@ class _Match(ast.NodeTransformer):
                           body=[ast.Delete(targets=[ast.Name(id=subj, ctx=ast.Del())])], orelse=[]))
         out.append(ast.Delete(targets=[ast.Name(id=done, ctx=ast.Del())]))
         return [ast.fix_missing_locations(_copy_loc(o, node)) for o in out]
+
+    def _stores(self, pattern: ast.pattern, names: list[str]) -> list[ast.stmt]:
+        """The stores of a case's captures. One name is an assignment. Two or more are one statement, a tuple of the
+        names from a display of the temporaries, with what CPython's code has before the stores (L.Assign.captures): the
+        order of the stores is the optimizer's, and depends on which names are fast locals, which the next level knows
+        (pipeline/l1/captures.py)."""
+        if len(names) < 2:
+            return [_assign(n, ast.Name(id=self.captures[n], ctx=ast.Load())) for n in names]
+        captured, plan = capture_plan(pattern)
+        assert captured == names, (captured, names)
+        stores = ast.Assign(targets=[ast.Tuple(elts=[ast.Name(id=n, ctx=ast.Store()) for n in names], ctx=ast.Store())],
+                            value=ast.Tuple(elts=[ast.Name(id=self.captures[n], ctx=ast.Load()) for n in names], ctx=ast.Load()))
+        stores.bella_captures = plan  # type: ignore[attr-defined]
+        return [stores]
 
     def _place(self, stmts: list[ast.stmt], clear: list[ast.stmt]) -> list[ast.stmt]:
         """The marker in the success path becomes the clearing statements."""
@@ -1503,7 +1518,7 @@ def _is_not_none(name: str) -> ast.expr:
     produces=frozenset({Fact.NO_MATCH}),
     obligations=(
         Obligation("wf", "no Match node remains; codegen's compile-time pattern errors are raised"),
-        Obligation("semantics", "the subject once, cases in order, captures stored in codegen's order after a whole pattern matches and before the guard, or-patterns committed to their first matching alternative, and the MATCH_* instructions' order of effects (runtime/prelude/match.py)"),
+        Obligation("semantics", "the subject once, cases in order, captures stored after a whole pattern matches and before the guard, in the order of CPython's stores (codegen's, as its optimizer exchanges them: pipeline/l1/captures.py), or-patterns committed to their first matching alternative, and the MATCH_* instructions' order of effects (runtime/prelude/match.py)"),
         Obligation("terminates", "one rewrite per match statement and per pattern node"),
     ),
     discharge=Discharge.TESTED, status="tested",
@@ -2229,7 +2244,9 @@ class _ToL1:
         if isinstance(s, ast.Assign):
             if len(s.targets) != 1:
                 raise L.Unsupported("several assignment targets must be desugared first")
-            return L.Assign(ln, self.target(s.targets[0]), self.expr(s.value), swapped=_stores_exchanged(s))
+            captures: L.Captures | None = getattr(s, "bella_captures", None)     # desugar-match's
+            return L.Assign(ln, self.target(s.targets[0]), self.expr(s.value),
+                            swapped=captures is None and _stores_exchanged(s), captures=captures)
         if isinstance(s, ast.AnnAssign):
             raise L.Unsupported(f"annotations must be desugared first (line {ln})")
 

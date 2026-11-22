@@ -246,16 +246,31 @@ class Stmt(Node):
 
 
 @dataclass(frozen=True)
+class Captures:
+    """What stands between a `match` case's pattern and the stores of the names it captured, in CPython's code: SWAPs
+    (``before`` has their depth) and POP_TOPs (depth 0), each with its line, and ``line``, the line of the stores. It is
+    what CPython's optimizer works on when it exchanges the stores (pipeline/l1/captures.py, which makes it and reads
+    it)."""
+    before: tuple[tuple[int, int], ...]
+    line: int
+
+
+@dataclass(frozen=True)
 class Assign(Stmt):
     """``swapped``: the statement has the shape whose stores CPython's optimizer exchanges (`a, b = x, y`: one target of
     two or three different names on one line, a tuple display of as many items). Where every one of the names is a fast
     local of its function, the values are stored last name first, which is the order the values the names held are let
     go of (flowgraph.c: BUILD_TUPLE n, UNPACK_SEQUENCE n becomes SWAP n, and apply_static_swaps removes the SWAP by
     exchanging the STORE_FASTs; review A36, RL-825). Whether a name is a fast local is a matter of scopes, which the
-    next level resolves (pipeline/l2/resolve.py: co_varnames without co_cellvars)."""
+    next level resolves (pipeline/l2/resolve.py: co_varnames without co_cellvars).
+
+    ``captures``: the statement stores the names a `match` case captured, two or more: the target is a tuple of names in
+    the order of capture and the value a display of the temporaries that hold what was captured. The order of the stores
+    is CPython's, which depends on the pattern and on which of the names are fast locals (captures.store_order)."""
     target: Target
     value: Expr
     swapped: bool = False
+    captures: Captures | None = None
 
 
 @dataclass(frozen=True)
