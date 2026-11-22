@@ -199,8 +199,8 @@ class _Code:
                 last = self.out[-1] if self.out else None
                 if isinstance(a, G.Temp) and isinstance(last, G.Let) and last.t == a:
                     self.out[-1] = G.Do(last.op)              # POP_TOP at once
-            case L.Assign(target=target, value=value):
-                self.assign(target, self.expr(value))
+            case L.Assign(target=target, value=value, swapped=swapped):
+                self.assign(target, self.expr(value), swapped and self.fast_locals(target))
             case L.AugAssign(target=target, op=op, value=value):
                 self.aug_assign(target, op, value)
             case L.Return(value=value):
@@ -286,7 +286,15 @@ class _Code:
         a = self.expr(e)
         return a if isinstance(a, G.Temp) else self.let(G.Truth(a))
 
-    def assign(self, t: L.Target, v: G.Atom) -> None:
+    def fast_locals(self, t: L.Target) -> bool:
+        """Whether every name of a target is a STORE_FAST in CPython: a variable of this function's code (co_varnames) that
+        is no cell there (co_cellvars), so neither a global nor a name of an enclosing function either."""
+        if not isinstance(t, L.TupleTarget) or not self.scope.function_like:
+            return False
+        fast = set(co_varnames(self.scope)) - set(co_cellvars(self.scope))
+        return all(isinstance(x, L.NameTarget) and x.id in fast for x in t.elts)
+
+    def assign(self, t: L.Target, v: G.Atom, last_first: bool = False) -> None:
         match t:
             case L.NameTarget(id=name):
                 self.emit(G.Store(self.ref(name, "store"), v))
@@ -299,7 +307,10 @@ class _Code:
                 star = next((i for i, x in enumerate(elts) if isinstance(x, L.StarTarget)), -1)
                 temps = tuple(self.temp() for _ in elts)
                 self.emit(G.Unpack(temps, v, star))
-                for sub_t, value in zip(elts, temps, strict=True):
+                pairs = list(zip(elts, temps, strict=True))
+                if last_first:                   # L.Assign.swapped, for fast locals: CPython's order of the stores (RL-825)
+                    pairs.reverse()
+                for sub_t, value in pairs:
                     self.assign(sub_t.target if isinstance(sub_t, L.StarTarget) else sub_t, value)
             case _:
                 raise TypeError(f"to-anf: illegal target {t}")

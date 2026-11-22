@@ -145,7 +145,7 @@ class _Printer:
 
     def stmt(self, s: L.Stmt, depth: int) -> None:
         if isinstance(s, L.Assign):
-            self.emit(depth, f"{target(s.target)} = {expr(s.value)}")
+            self.emit(depth, f"{target(s.target)} = {expr(s.value)}" + ("  # stored last name first where the names are fast locals" if s.swapped else ""))
             self.classbody_in(s.value, depth)
         elif isinstance(s, L.AugAssign):
             self.emit(depth, f"{target(s.target)} {s.op}= {expr(s.value)}")

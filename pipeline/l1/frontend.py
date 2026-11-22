@@ -40,6 +40,23 @@ def _tmp(prefix: str) -> str:
             return name
 
 
+def _stores_exchanged(s: ast.Assign) -> bool:
+    """The shape of `a, b = x, y` whose stores CPython's optimizer exchanges (L.Assign.swapped): the compiler emits
+    BUILD_TUPLE n and UNPACK_SEQUENCE n for a tuple display assigned to n targets, the optimizer makes SWAP n of the pair for
+    n of 2 or 3, and apply_static_swaps then removes the SWAP by exchanging the first store with the last where the n
+    instructions after it are stores of different names on one line. Measured on 3.15.2 for each shape
+    (conformance/cases/C-3-79)."""
+    target, value = s.targets[0], s.value
+    if not isinstance(target, (ast.Tuple, ast.List)) or not isinstance(value, ast.Tuple):
+        return False
+    count = len(target.elts)
+    if count not in (2, 3) or len(value.elts) != count or any(isinstance(e, ast.Starred) for e in value.elts):
+        return False
+    names = [e for e in target.elts if isinstance(e, ast.Name)]
+    return (len(names) == count and len({e.id for e in names}) == count and len({e.lineno for e in names}) == 1
+            and not any(e.id in _SYNTHETIC for e in names))
+
+
 def _identifiers(tree: ast.AST) -> set[str]:
     out: set[str] = set()
     for node in ast.walk(tree):
@@ -2212,7 +2229,7 @@ class _ToL1:
         if isinstance(s, ast.Assign):
             if len(s.targets) != 1:
                 raise L.Unsupported("several assignment targets must be desugared first")
-            return L.Assign(ln, self.target(s.targets[0]), self.expr(s.value))
+            return L.Assign(ln, self.target(s.targets[0]), self.expr(s.value), swapped=_stores_exchanged(s))
         if isinstance(s, ast.AnnAssign):
             raise L.Unsupported(f"annotations must be desugared first (line {ln})")
 

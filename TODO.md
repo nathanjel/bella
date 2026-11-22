@@ -720,15 +720,11 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   a byte changes what CPython compresses, hashes, unpacks or writes (`zlib`, `binascii`, `struct.unpack_from`, `blake2b`'s
   key, `os.pwrite`: 18 rows). Exact: an export held from the conversion on (a resize is then refused, as the view makes it)
   and the read where the C reads. With RL-583 and the memoryview model.
-* **Open from review A36: the order of two stores (RL-825; high, the compiler).** `a, b = X(), Y()` stores `b` first under CPython, so the
-  old `b` goes before the old `a`. The rule, measured with `dis` on 3.15.2: one target (a tuple or a list) of two or three names
-  takes a tuple display of as many items without a star; the names are fast locals (no cell, no global, no `nonlocal`, a function's
-  scope), all different, on one line; then the stores are made last to first (`apply_static_swaps` removes the `SWAP` the optimizer
-  made of `BUILD_TUPLE n, UNPACK_SEQUENCE n`). Everything else stores in source order: four names, a list display on the right,
-  a chained assignment, a nested or starred target, an attribute or a global among the targets, targets on two lines, module and
-  class level. The way: the frontend marks the statement (`L.Assign.swapped`, from the `ast` node), the lowering reverses the
-  stores where every name's kind is local (`pipeline/l2/lower.py`, `Scopes.ref`), and eval1 asks the same of `pipeline/l2/resolve.py`.
-  A case first. The same optimizer pass touches the stores of a `match` statement's captures: measure those with it.
+* **The order in which a `match` statement's captures are stored (measured with RL-825, 2026-11-22; low).** CPython stores the
+  names of a successful pattern in an order its code generator and `apply_static_swaps` decide: `[a, [b, c]]` stores `b, c, a`,
+  `{"x": a, **b}` stores `b, a`, an or-pattern stores in the order of its first alternative's names; a flat sequence, a class
+  pattern and a mapping without a rest store in the pattern's order. What the names held is let go of in that order. Compare the
+  compiled order for each of these shapes and follow CPython's where it differs.
 * **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
   that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
   `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and

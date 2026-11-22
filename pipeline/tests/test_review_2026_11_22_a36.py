@@ -2,10 +2,10 @@
 
 37 findings, RL-803 to RL-839, and one more from the reviewer's saved outputs (RL-840); `docs/reviews/review-log.md` has
 each with its verdict. As for A35, the programs are the reviewer's own probes (`review_a36/<probe>.txt`, one row a
-process): the 135 rows that differed between CPython and the compiled program and agree now. `reduced` has one row a
-finding. What is not here: RL-825 (the order of two stores in `a, b = X(), Y()`, the compiler's, open: `reduced/23`,
-`reentrant/assign` and four rows of `exceptionstate`), and two rows whose objects are in a cycle that CPython's collector
-finalises at exit (`owned/exc`, `owned/tb`: D-04, D-07).
+process): the 141 rows that differed between CPython and the compiled program and agree now. `reduced` has one row a
+finding. RL-825, the order of two stores in `a, b = X(), Y()`, was the compiler's and came a step later (case C-3-79;
+`reduced/23`, `reentrant/assign` and four rows of `exceptionstate`). What is not here: two rows whose objects are in a
+cycle that CPython's collector finalises at exit (`owned/exc`, `owned/tb`: D-04, D-07).
 
 What the rows hold:
 
@@ -47,7 +47,8 @@ ROWS: dict[str, tuple[str, ...]] = {
     "early": ('few', 'few-err', 'many', 'product-err', 'tuple-err'),
     "edges": ('chain', 'hint', 'livekeys', 'mapshort', 'pair', 'params', 'star'),
     "ends": ('map-free', 'map-held', 'slice-one', 'slice-zero'),
-    "exceptionstate": ('StopIteration-again', 'SyntaxError-omit', 'SyntaxError-partial'),
+    "exceptionstate": ('StopIteration-again', 'SyntaxError-omit', 'SyntaxError-partial', 'AttributeError-omit', 'ImportError-omit',
+                       'ModuleNotFoundError-omit', 'NameError-omit'),   # the last four are RL-825's
     "failure": ('reduce', 'writelines'),
     "fields": ('map',),
     "holders": ('struct-it',),
@@ -58,8 +59,8 @@ ROWS: dict[str, tuple[str, ...]] = {
     "owned": ('ctx',),
     "protocol": ('keys', 'od', 'typevar-index'),
     "protocol2": ('raw-closed', 'subst-len'),
-    "reduced": ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37'),
-    "reentrant": ('stop', 'syntax'),
+    "reduced": ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37'),
+    "reentrant": ('stop', 'syntax', 'assign'),
     "reinit": ('Text-badnewline', 'Text-badraw', 'Text-closedraw'),
     "slots": ('list', 'object', 'objectalias', 'random', 'reader', 'text', 'writer'),
     "streams": ('again', 'close', 'detach', 'fail', 'fresh'),

@@ -247,8 +247,15 @@ class Stmt(Node):
 
 @dataclass(frozen=True)
 class Assign(Stmt):
+    """``swapped``: the statement has the shape whose stores CPython's optimizer exchanges (`a, b = x, y`: one target of
+    two or three different names on one line, a tuple display of as many items). Where every one of the names is a fast
+    local of its function, the values are stored last name first, which is the order the values the names held are let
+    go of (flowgraph.c: BUILD_TUPLE n, UNPACK_SEQUENCE n becomes SWAP n, and apply_static_swaps removes the SWAP by
+    exchanging the STORE_FASTs; review A36, RL-825). Whether a name is a fast local is a matter of scopes, which the
+    next level resolves (pipeline/l2/resolve.py: co_varnames without co_cellvars)."""
     target: Target
     value: Expr
+    swapped: bool = False
 
 
 @dataclass(frozen=True)

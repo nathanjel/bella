@@ -1,0 +1,12 @@
+{
+ "case": "C-3-79_the_order_of_a_displays_stores.py",
+ "clause": "C-3-79",
+ "spec": "section 3 (statements: assignment)",
+ "status": "P1",
+ "source": "Python/flowgraph.c (optimize_basic_block: BUILD_TUPLE n, UNPACK_SEQUENCE n; apply_static_swaps), Python/codegen.c",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "two ['b', 'a']\nthree ['c', 'b', 'a']\nfour ['a', 'b', 'c', 'd']\nlist_of_targets ['b', 'a']\nlist_display ['a', 'b']\nconstants ['b', 'a', '1', '2']\nexchanged ['b', 'a']\none_name_twice ['a3', 'a', 'a2']\nthree_with_one_twice ['a3', 'a', 'b', 'a2']\non_two_lines ['a', 'b']\ndisplay_on_two_lines ['b', 'a']\na_global ['a', 'global']\na_cell ['a2', 'b2', 'a', 'b']\nnonlocals ['a', 'b']\nan_attribute ['a', 'attribute']\nchained ['a', 'b']\nstarred ['a', 'b']\nnested ['a', 'b', 'c']\nin_a_generator ['b', 'a']\nin_a_loop ['a', 'b', 'in the loop: a2 b2']\nparameters ['b2', 'a2']\nmodule ['a', 'b']\nclass ['a', 'b']\n",
+ "stderr": "",
+ "exit_code": 0
+}

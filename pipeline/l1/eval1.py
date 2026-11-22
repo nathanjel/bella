@@ -27,6 +27,7 @@ from pipeline.l1 import grammar as L
 from pipeline.l1.frontend import lower
 from pipeline.l1.staged import flags_of
 from pipeline.l1.wf import _bound_in, _walrus, check
+from pipeline.l2.resolve import co_cellvars, co_varnames, resolve   # the names' kinds are level 2's (L.Assign.swapped)
 from pipeline.staging import annotate_rt
 
 _BIN: dict[str, Callable[[Any, Any], Any]] = {
@@ -82,6 +83,8 @@ class Scope:
     classdict: Any = None                  # a class body's __classdict__ cell, when it has one
     caller: Any = None                     # on a module scope: caller_for's function
     classdict_scope: Scope | None = None   # an annotate function's class: its namespace is read first
+    l1: Any = None                         # on a module scope: the L1 module it runs (for the names' kinds, L.Assign.swapped)
+    node: Any = None                       # on a function's scope: its L1 node
 
     def is_module(self) -> bool:
         return self.module is None
@@ -416,6 +419,26 @@ def special_lookup(obj: Any, name: str) -> Any:
     raise TypeError(f"'{t.__name__}' object does not support the context manager protocol")
 
 
+_RESOLVED: dict[int, tuple[L.Module, Any]] = {}   # a module's scopes as level 2 resolves them, kept with the module
+
+
+def _fast_locals(t: L.Target, scope: Scope) -> bool:
+    """L.Assign.swapped: whether every name of the target is a STORE_FAST in CPython, a variable of the function's code
+    that is no cell there. The scopes are level 2's to resolve (pipeline/l2/resolve.py), and this level asks it, so that
+    the two evaluators and the compiled program store in one order. (The resolver is imported with this module: an import
+    made here would run under the evaluator's own importer, in the middle of what it evaluates.)"""
+    if not isinstance(t, L.TupleTarget) or scope.node is None or scope.module is None or scope.module.l1 is None:
+        return False
+    module = scope.module.l1
+    if id(module) not in _RESOLVED:
+        _RESOLVED[id(module)] = (module, resolve(module))
+    resolved = _RESOLVED[id(module)][1].of(scope.node)
+    if not resolved.function_like:
+        return False
+    fast = set(co_varnames(resolved)) - set(co_cellvars(resolved))
+    return all(isinstance(x, L.NameTarget) and x.id in fast for x in t.elts)
+
+
 def _local_names(f: L.FunctionDef | L.Lambda) -> frozenset[str]:
     out: set[str] = {p.name for p in f.params}
     if isinstance(f, L.Lambda):
@@ -451,7 +474,7 @@ class Interpreter:
         """A module body with `namespace` as its globals (a module's own __dict__, when the
         module system runs it)."""
         namespace.setdefault("__builtins__", vars(builtins))   # what exec() adds to a module's globals
-        module = Scope(vars=namespace, synthetic=m.synthetic)
+        module = Scope(vars=namespace, synthetic=m.synthetic, l1=m)
         self.future[id(namespace)] = m.future
         self.frames.append((module, "<module>"))
         try:
@@ -476,7 +499,7 @@ class Interpreter:
         if not isinstance(g, dict):
             raise TypeError(f"globals must be a dict, not {_tp_name(type(g))}")
         g.setdefault("__builtins__", vars(builtins))
-        module = Scope(vars=g, synthetic=m.synthetic)
+        module = Scope(vars=g, synthetic=m.synthetic, l1=m)
         self.future.setdefault(id(g), m.future)
         if loc is None or loc is g:
             scope = module
@@ -664,7 +687,7 @@ class Interpreter:
         for s in stmts:
             self.stmt(s, scope)
 
-    def assign(self, t: L.Target, value: Any, scope: Scope) -> None:
+    def assign(self, t: L.Target, value: Any, scope: Scope, last_first: bool = False) -> None:
         if isinstance(t, L.NameTarget):
             self.store(t.id, value, scope)
         elif isinstance(t, L.AttrTarget):
@@ -675,7 +698,10 @@ class Interpreter:
             star = next((i for i, x in enumerate(t.elts) if isinstance(x, L.StarTarget)), None)
             before = len(t.elts) if star is None else star
             after = -1 if star is None else len(t.elts) - star - 1
-            for sub, v in zip(t.elts, unpack_iterable(value, before, after), strict=True):
+            pairs = list(zip(t.elts, unpack_iterable(value, before, after), strict=True))
+            if last_first:                     # L.Assign.swapped, for fast locals: CPython's order of the stores (RL-825)
+                pairs.reverse()
+            for sub, v in pairs:
                 self.assign(sub.target if isinstance(sub, L.StarTarget) else sub, v, scope)
         else:
             raise TypeError(f"unknown target {t}")
@@ -684,7 +710,7 @@ class Interpreter:
         if isinstance(s, L.ExprStmt):
             self.expr(s.value, scope)
         elif isinstance(s, L.Assign):
-            self.assign(s.target, self.expr(s.value, scope), scope)
+            self.assign(s.target, self.expr(s.value, scope), scope, s.swapped and _fast_locals(s.target, scope))
         elif isinstance(s, L.AugAssign):
             if isinstance(s.target, L.NameTarget):
                 cur = self.load(s.target.id, scope, s.line)
@@ -863,7 +889,7 @@ class Interpreter:
             elif isinstance(s, L.Assign):
                 if _has_yield_target(s.target):
                     raise L.Refused(f"a yield inside an assignment target is not lowered (line {s.line})")
-                self.assign(s.target, (yield from self.gexpr(s.value, scope)), scope)
+                self.assign(s.target, (yield from self.gexpr(s.value, scope)), scope, s.swapped and _fast_locals(s.target, scope))
             elif isinstance(s, L.AugAssign):
                 if not isinstance(s.target, L.NameTarget):
                     raise L.Refused(f"a yield in an augmented assignment to {type(s.target).__name__} is not lowered "
@@ -1089,7 +1115,7 @@ class Interpreter:
                       globals_=node.globals if isinstance(node, L.FunctionDef) else frozenset(),
                       nonlocals_=node.nonlocals if isinstance(node, L.FunctionDef) else frozenset(), module=module,
                       module_frame=isinstance(node, L.FunctionDef) and node.module_frame,
-                      classdict_scope=_nearest_class(closure) if isinstance(node, L.FunctionDef) and node.classdict else None)
+                      classdict_scope=_nearest_class(closure) if isinstance(node, L.FunctionDef) and node.classdict else None, node=node)
         if self.staged is not None:
             self._check_entry(module, node.qualname)
         synthetic = self._syn(closure)
