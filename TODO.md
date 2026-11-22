@@ -728,10 +728,13 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   a test that lowers one unit alone and after another and compares the text; batch it with the next change of the pipeline (it
   re-keys every lowered unit).
 * **The order in which a `match` statement's captures are stored (measured with RL-825, 2026-11-22; low).** CPython stores the
-  names of a successful pattern in an order its code generator and `apply_static_swaps` decide: `[a, [b, c]]` stores `b, c, a`,
-  `{"x": a, **b}` stores `b, a`, an or-pattern stores in the order of its first alternative's names; a flat sequence, a class
-  pattern and a mapping without a rest store in the pattern's order. What the names held is let go of in that order. Compare the
-  compiled order for each of these shapes and follow CPython's where it differs.
+  names of a successful pattern in an order its code generator and `apply_static_swaps` decide, and what the names held is let go
+  of in that order. Thirteen shapes were run on both sides with objects that say when they go. Eleven agree (a flat sequence of
+  two, three and four names, a star, a mapping, a class pattern by position and by keyword, an as-pattern, an or-pattern, a guard,
+  one capture). Two differ: `[a, [b, c]]` stores `b, c, a` under CPython and `a, b, c` compiled, and `{"x": a, **b}` stores
+  `b, a` under CPython and `a, b` compiled. A step of its own, with a case: find the rule in `codegen_pattern_*` and
+  `apply_static_swaps` (the rest of a mapping and a sub-pattern's names come before the names stored earlier in the outer
+  pattern) and measure deeper nestings before writing it.
 * **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
   that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
   `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and
