@@ -147,7 +147,7 @@ def catches():
         traceback.clear_frames(tb)
         return tb
 tb = catches()
-print(seen[1]() is not None, traceback.clear_frames(None))   # not seen[0]: a frame that caught and returned keeps its locals (RL-222)
+print(seen[0]() is not None, seen[1]() is not None, traceback.clear_frames(None))   # a frame that caught and returned keeps its locals (RL-222)
 class Fake:
     tb_next = None
     class tb_frame:

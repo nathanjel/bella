@@ -1,0 +1,160 @@
+import gc
+import traceback
+class T:
+    def __init__(s, n): s.n = n
+    def __del__(s): print("  released", s.n)
+def inner():
+    i = T("inner local")
+    try: raise ValueError("x")
+    except ValueError as e: return e
+def outer():
+    t = T("outer local")
+    return inner()
+print("a caller of a frame that kept its exception:")
+kept = outer()
+print("  outer returned")
+del kept
+print("  gone")
+def raises():
+    r = T("raiser local")
+    raise KeyError("k")
+def middle():
+    m = T("middle local")
+    raises()
+def top():
+    t = T("top local")
+    try: middle()
+    except KeyError as e: return e
+print("an exception that passed two frames, caught by a third:")
+kept = top()
+print("  top returned")
+del kept
+print("  gone")
+def gen(out):
+    g = T("generator local")
+    try: raise ValueError("y")
+    except ValueError as e: out.append(e)
+    yield 1
+    print("  after the yield:", g.n)
+    yield 2
+out = []
+it = gen(out)
+print("a generator that kept its exception from its first resume:")
+print(" ", next(it)); print(" ", next(it)); print(" ", next(it, "end"))
+del it
+print("  the generator is gone")
+out.clear()
+print("  the list is empty")
+it = gen(out)
+next(it)
+print("closed while suspended:")
+del it
+print("  the generator is gone")
+out.clear()
+print("  the list is empty")
+def g2():
+    try:
+        raise ValueError
+    except ValueError:
+        yield 1
+        raise
+it = g2(); next(it)
+try: next(it)
+except ValueError as e:
+    tb = e.__traceback__; n = 0
+    while tb: n += 1; tb = tb.tb_next
+    print("entries after a bare raise past a yield:", n)
+def keeps_its_own():
+    k = T("a local beside its own exception")
+    try: raise ValueError("own")
+    except ValueError as e: mine = e
+    return 1
+print("an exception kept in its own frame's local:")
+keeps_its_own()
+print("  returned")
+gc.collect()
+print("  collected")
+def two(out):
+    t = T("a local of a frame with two kept exceptions")
+    try: raise ValueError("a")
+    except ValueError as e: out.append(e)
+    try: raise KeyError("b")
+    except KeyError as e: out.append(e)
+for first in (0, 1):
+    out = []
+    two(out)
+    print("two kept, the", "older" if first == 0 else "newer", "let go of first:")
+    del out[first]
+    print("  one is gone")
+    out.clear()
+    print("  both are gone")
+def with_cell(out):
+    c = T("a cell variable")
+    def inner(): return c
+    try: raise ValueError("c")
+    except ValueError as e: out.append(e)
+    return inner
+out = []
+f = with_cell(out)
+del f
+print("a cell, its closure gone:")
+out.clear()
+print("  the exception is gone")
+out = []
+class Body:
+    held = T("a class body's name")
+    try: raise ValueError("body")
+    except ValueError as e: out.append(e)
+print("a class body:")
+del Body.held
+print("  the class attribute is gone")
+out.clear()
+print("  the exception is gone")
+def returns_tb():
+    t = T("a local of a frame cleared after its return")
+    try: raise ValueError("t")
+    except ValueError as e: return e.__traceback__
+tb = returns_tb()
+print("cleared after its return:")
+traceback.clear_frames(tb)
+print("  cleared")
+del tb
+def catches():
+    rate = 1
+    try:
+        return rte
+    except NameError as exc:
+        return exc
+print("suggestions:", traceback.format_exception(catches())[-1].strip())
+class Named:
+    first_one = 1
+    try:
+        first_on
+    except NameError as exc:
+        kept = exc
+print("  ", traceback.format_exception(Named.kept)[-1].strip())
+def first_of_two():
+    held = 1
+    try:
+        hled
+    except NameError as first:
+        out.append(first)
+        raise KeyError("second")
+out = []
+try:
+    first_of_two()
+except KeyError:
+    pass
+print("  ", traceback.format_exception(out[0])[-1].strip())
+def kept_by_itself():
+    g = T("a generator's local beside its own exception")
+    try: raise ValueError("g")
+    except ValueError as e: mine = e
+    yield 1
+it = kept_by_itself()
+print("a generator that kept its own:", next(it), next(it, "end"))
+del it
+print("  the generator is gone")
+gc.collect()
+print("  collected")
+print("done")

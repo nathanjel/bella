@@ -93,9 +93,12 @@ static Ref f_fib(rt::PyFunction* fn, rt::Args args) {
   emitter writes starts with `frame.arrived(e)`, which prepends `(code, frame.line)` to the
   exception's `__traceback__` unless this frame has already recorded that throw (the `PyError`
   carries the recording frame's id) or re-raises it bare; the guard records an exception that no
-  catch of the frame saw. When an exception leaves the function, the guard moves the locals into
-  the frame's newest entry, so they die with the traceback, and clears the mark so that the
-  caller records the call. A caught exception does not keep the locals yet (RL-222, step 3c).
+  catch of the frame saw, and clears the mark so that the caller records the call. Each entry
+  holds the frame's frame object, made with its first entry; when the frame is over, by an
+  exception or a return, the guard lets that object die if nothing else holds it, or has it take
+  the locals and its caller's frame object as `f_back` (RL-222, 2026-11-23). A generator's resume
+  calls `frame.resume(gen1->resumed, gen1->pc)` after the guard: the frame's id and frame object
+  go on from the last resume, and are handed on at a yield.
   Code CPython runs without a frame, the prelude and an inlined comprehension, has
   `Code::shown` false and is never recorded (RL-223, RL-224). The guard also counts the recursion
   depth (spec D-17: `RecursionError` past 1000).
@@ -419,7 +422,7 @@ nine strings and nine substrings with eight pairs of bounds, and each argument e
   handled exceptions leave the stack at each yield and return at each resume (`gi_exc_state`), and what a suspended frame
   holds dies when `gen_die` closes it, as `gen_dealloc` does.
 * 3c: the cycle collector and weak references, model first: C-3-12, which closes task 3; with it,
-  a caught exception keeps its frame's locals (RL-222, D-12).
+  a caught exception keeps its frame's locals (RL-222, D-12; done 2026-11-23).
 * Lines: a frame's line is its statement's first line; CPython gives the failing instruction's,
   which differs inside a statement that spans lines (RL-225). The frontend and L2 would carry
   the expression positions; an inlined comprehension's line then goes to its caller's entry.

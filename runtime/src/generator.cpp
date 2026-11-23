@@ -16,6 +16,22 @@ void wrapper_args(Args a, const char* name, std::size_t n) {     // wrapper_call
 
 void clear_frame(Generator* g) {                 // gen_clear_frame: the frame's values last to first, then its function
     g->state = GenState::Finished;
+    // _PyFrame_ClearExceptCode: a frame object held by something else takes the frame's values, its stack values with them
+    // (take_ownership copies the whole frame); no f_back, the frame's previous being gone (gen_clear_frame). One held by
+    // nothing else dies first. A frame that ended in a resume has handed its frame object on already (detail::frame_ends)
+    if (!g->resumed.frame_obj.get().is_unset()) {
+        Ref held = std::move(g->resumed.frame_obj);
+        if (held.get().object()->refs > 1) {
+            std::vector<Ref*> values;
+            try {
+                values.reserve(g->slots.size());
+                for (Ref& r : g->slots) values.push_back(&r);
+            } catch (...) {
+                values.clear();
+            }
+            detail::take_ownership(static_cast<FrameObject*>(held.get().object()), values.data(), values.size(), Obj{}, nullptr);
+        }
+    }
     for (auto it = g->slots.rbegin(); it != g->slots.rend(); ++it) *it = Ref{};
     g->sent = Ref{};
     g->pending = Ref{};

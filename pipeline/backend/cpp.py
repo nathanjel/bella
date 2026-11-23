@@ -467,6 +467,7 @@ class Emitter:
         out += ["    [[maybe_unused]] int& cur1 = gen1->handler;",
                 f"    rt::FrameGuard frame({fn.cname}, M{guard});",
                 "    frame.line = gen1->line;",
+                "    frame.resume(gen1->resumed, gen1->pc);",   # the one frame of the generator, across its resumes (RL-222)
                 "    for (;;) {",
                 "        try {",
                 "            rt::gen_raise_pending(gen1);",

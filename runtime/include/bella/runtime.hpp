@@ -219,25 +219,13 @@ struct Module : Object {
 void forget_module(const Module* m);             // the runtime's own: cleared by nothing at exit
 std::vector<Module*>& all_modules();             // every module made, oldest first (immortal: D-19)
 
-struct Traceback;
-namespace detail {
-// The entries of one frame know of each other through this: which of them took over the frame's variables when an exception
-// left it, for as long as that entry lives. CPython's entries hold one frame object between them; here the variables stay
-// with the one entry (who holds them how long is D-12's, RL-222: with the collector), and the others may read them there.
-struct FrameLink {
-    Traceback* holder = nullptr;
-};
-}
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
     const Code* code;
     int line;
     Ref module;                                  // the frame's module, whose dict is its f_globals, held as CPython's frame holds its globals (a staged
                                                  // text's lives as its functions do); Unset: _PyTraceback_Add's entry, whose frame has an empty dict
     std::uint64_t frame = 0;                     // the frame (a FrameGuard's id) it records
-    std::vector<Ref> locals;                     // the frame's locals, taken over during unwinding
-    bool left = false;                           // an exception left the frame, and `locals` are what it had then (record_frame)
-    Ref ns;                                      // a class body's namespace, kept as its frame is left (its f_locals)
-    std::shared_ptr<detail::FrameLink> link;     // shared with the frame's other entries: which of them has its locals
+    Ref frame_obj;                               // tb_frame: the frame object the frame's entries share; unset for an entry no frame made
     Ref next;
     Traceback(const Code* c, int l, Ref nx);
 };
@@ -245,11 +233,20 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 // A frame as the standard library's adaptations hold one (docs/dialect-spec.md E-02; runtime/replaced/traceback.py): an object
 // of the type types.FrameType is, made by the runtime for a traceback's entry or a frame of the running stack, with nothing a
 // program can read (what CPython's has is the names table's `frame:` rows, so reading f_code stops by name). The adaptations
-// read its code through the runtime
+// read its code through the runtime.
+// A frame of the program's has one frame object at most, made at the first asking (_PyFrame_GetFrameObject: its first traceback
+// entry); the frame's entries share it as tb_frame. When the frame is over while something else holds it, it takes the frame's
+// values, and the frame object of the frame's caller as f_back (_PyFrame_ClearExceptCode, take_ownership), so the caller's
+// values outlive its end the same way; they go when it dies (frame_dealloc) or is cleared (frame.clear(), the collector's
+// frame_tp_clear). RL-222, D-12 part 2
 namespace detail { struct FrameRecord; }
 struct FrameObject : Object {
     const Code* code;
     Ref module;                                  // as a traceback entry's: a staged text's code lives as its namespace does
+    bool owned = false;                          // the frame is over, and the values it had then are here
+    std::vector<Ref> values;                     // its variables in the frame's order (Code::frame_slots), and a generator's stack values after them
+    Ref ns;                                      // a class body's namespace (its f_locals)
+    Ref back;                                    // f_back, from when it took the values over
     // The frame a signal handler is given stands for the frame the signal interrupted, for as long as the handlers of that
     // arrival run (`*live`): traceback lists the stack from it and repr() says where it is. Afterwards its frames have gone
     // on, and the record is not to be read. Any other frame object has none.
@@ -681,14 +678,27 @@ public:
 // The frame record and guard (docs/l2.md decision 5). Declared after the frame's locals, so it is
 // destroyed first when an exception unwinds the function. An exception is recorded where it
 // arrives in the frame (`arrived`, the first statement of each of the frame's catches, or the
-// guard if none caught it); when it leaves, the guard moves the locals into the frame's entry,
-// where they die with the traceback (RL-221; a caught exception keeping them is RL-222, step 3c).
+// guard if none caught it); each entry holds the frame's frame object, which takes the frame's values when the frame is over
+// while something else holds it, an exception that left it or one it caught and kept (RL-221, RL-222).
 namespace detail {
-void arrive(const Code& code, Module* module, int line, std::uint64_t& id, std::shared_ptr<FrameLink>& link, PyError& e) noexcept;
-void record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n, Obj ns, std::shared_ptr<FrameLink>& link) noexcept;
+struct FrameRecord;
+void arrive(FrameRecord& f, PyError& e) noexcept;
+void record_frame(FrameRecord& f) noexcept;      // an exception leaves the frame: its entry, unless the frame recorded it
+// The frame is over, or a generator's resume ends: the frame object, if the frame has one, takes the frame's values when
+// something else holds it (_PyFrame_ClearExceptCode), and a generator's goes on with it at a yield
+void frame_ends(FrameRecord& f, Ref* const* locals, std::size_t n, bool unwinding) noexcept;
+Obj frame_object(FrameRecord& f);                // _PyFrame_GetFrameObject: made at the first asking
+// take_ownership: the values (moved out of where the frame had them), a class body's namespace, and f_back if the frame has a caller
+void take_ownership(FrameObject* f, Ref* const* values, std::size_t n, Obj ns, FrameRecord* back) noexcept;
 void enter_frame();                              // RecursionError past the limit (spec D-17), and where the native stack is nearly used
 void leave_frame() noexcept;
 void enter_hidden_frame();                       // a frame CPython does not have: the look at the native stack, and no count (RL-632)
+// A generator's frame lives across its resumes, where each resume has a record of its own: what the records hand on, as
+// CPython's generator keeps its one frame (its id, which its traceback entries name, and its frame object)
+struct ResumedFrame {
+    std::uint64_t id = 0;
+    Ref frame_obj;
+};
 // What a frame shows to the builtins that read their caller (globals(), a lazy import's declaration).
 // A frame CPython does not have (the prelude's, an inlined comprehension's) is not linked in.
 struct FrameRecord {
@@ -700,7 +710,9 @@ struct FrameRecord {
     std::uint64_t id = 0;                        // given when the frame first records an exception (its traceback entries carry it)
     Ref* const* slots = nullptr;                 // the frame's variables, as its guard was given them (Code::frame_slots says which is which)
     Obj ns{};                                    // a class body's namespace: what locals() is there (a module's is its module's)
-    std::shared_ptr<FrameLink> link;             // made with the frame's first traceback entry: what its entries share
+    Ref frame_obj;                               // frame->frame_obj: made with the frame's first traceback entry, else unset
+    ResumedFrame* resumed = nullptr;             // a generator's resume: where its frame goes on between resumes (Generator::resumed)
+    const int* resumed_pc = nullptr;             // and its pc: the frame is over once the body has returned (GEN_RETURNED)
 };
 FrameRecord*& current_frame();
 // an inlined comprehension's line is its enclosing frame's (PEP 709): the nearest shown caller takes it
@@ -731,12 +743,21 @@ public:
             if (c.inlined && caller != nullptr) ++caller->comprehensions;
         }
     }
-    void arrived(PyError& e) noexcept { detail::arrive(*code, module, line, id, link, e); }
+    void arrived(PyError& e) noexcept { detail::arrive(*this, e); }
+    // a generator's resume: the frame goes on where the last resume left it
+    void resume(detail::ResumedFrame& r, const int& pc) noexcept {
+        resumed = &r;
+        resumed_pc = &pc;
+        id = r.id;
+        frame_obj = std::move(r.frame_obj);
+    }
     ~FrameGuard() {
         if (code->shown) detail::leave_frame();
         detail::current_frame() = caller;
         if (!code->shown && code->inlined && caller != nullptr) --caller->comprehensions;
-        if (std::uncaught_exceptions() > uncaught_) detail::record_frame(*code, module, line, id, locals_.data(), N, ns, link);
+        const bool unwinding = std::uncaught_exceptions() > uncaught_;
+        if (unwinding) detail::record_frame(*this);
+        if (!frame_obj.get().is_unset() || resumed != nullptr) [[unlikely]] detail::frame_ends(*this, locals_.data(), N, unwinding);
     }
     FrameGuard(const FrameGuard&) = delete;
     FrameGuard& operator=(const FrameGuard&) = delete;
@@ -1168,6 +1189,7 @@ struct Generator : Object {
     GenState state_before_resume = GenState::Created;
     std::size_t handling = 0;                    // how many of handled() are this frame's, while it runs
     std::vector<Obj> handled;                    // and those it keeps while suspended (gi_exc_state; owned)
+    detail::ResumedFrame resumed;                // its frame's id and frame object between resumes (FrameGuard::resume)
     Ref function;                                // f_funcobj
     Ref name, qualname;
     Ref sent;                                    // what send() passes back

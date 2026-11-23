@@ -211,7 +211,10 @@ std::vector<Module*>& all_modules() {
 }
 LazyImport::LazyImport() : Object(Kind::LazyImport) { cls = types().lazy_import; }
 CodeObject::CodeObject(const Code* c) : Object(Kind::CodeKind), code(c) { cls = types().code; }
-FrameObject::FrameObject(const Code* c, Ref m) : Object(Kind::Frame), code(c), module(std::move(m)) { cls = no_instances_yet("frame"); }
+FrameObject::FrameObject(const Code* c, Ref m) : Object(Kind::Frame), code(c), module(std::move(m)) {
+    static ClassObject* const frame_class = no_instances_yet("frame");
+    cls = frame_class;
+}
 Traceback::Traceback(const Code* c, int l, Ref nx) : Object(Kind::Traceback), code(c), line(l), next(std::move(nx)) {
     cls = types().traceback;
 }
@@ -287,12 +290,17 @@ bool register_deaths() {
     };
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::CodeKind) = [](Object* o) { destroy<CodeObject>(o); };
-    destroyer(Kind::Frame) = [](Object* o) { destroy<FrameObject>(o); };
+    destroyer(Kind::Frame) = [](Object* o) {     // frame_dealloc: the values it owns (a class body's namespace, then the rest, last
+        auto* f = static_cast<FrameObject*>(o);  // first), then f_back
+        f->ns = Ref{};
+        for (auto it = f->values.rbegin(); it != f->values.rend(); ++it) *it = Ref{};
+        f->back = Ref{};
+        destroy<FrameObject>(o);
+    };
     destroyer(Kind::Traceback) = [](Object* o) {
-        auto* t = static_cast<Traceback*>(o);      // tb_dealloc: the deeper entries, then this frame
+        auto* t = static_cast<Traceback*>(o);      // tb_dealloc: the deeper entries, then the frame
         t->next = Ref{};
-        if (t->link && t->link->holder == t) t->link->holder = nullptr;   // the frame's other entries have nowhere to read them now
-        for (auto it = t->locals.rbegin(); it != t->locals.rend(); ++it) *it = Ref{};
+        t->frame_obj = Ref{};
         destroy<Traceback>(o);
     };
     destroyer(Kind::Native) = [](Object* o) { destroy<Native>(o); };
@@ -391,19 +399,28 @@ bool register_traversals() {
     detail::traverser(Kind::Traceback) = [](Object* o, std::vector<Object*>& out) {   // tb_traverse: the next entry, then the frame
         auto* t = static_cast<Traceback*>(o);
         visit_ref(t->next, out);
+        visit_ref(t->frame_obj, out);
         visit_ref(t->module, out);
-        for (const Ref& r : t->locals) visit_ref(r, out);
-        visit_ref(t->ns, out);
     };
     detail::clearer(Kind::Traceback) = [](Object* o) {   // tb_clear: the next entry, then the frame (its locals, last first)
         auto* t = static_cast<Traceback*>(o);
         t->next = Ref{};
-        if (t->link && t->link->holder == t) t->link->holder = nullptr;
-        for (auto it = t->locals.rbegin(); it != t->locals.rend(); ++it) *it = Ref{};
-        t->locals.clear();
-        t->ns = Ref{};
+        t->frame_obj = Ref{};
     };
-    detail::traverser(Kind::Frame) = [](Object* o, std::vector<Object*>& out) { visit_ref(static_cast<FrameObject*>(o)->module, out); };
+    detail::traverser(Kind::Frame) = [](Object* o, std::vector<Object*>& out) {   // frame_traverse: f_back, then the frame it owns
+        auto* f = static_cast<FrameObject*>(o);  // (_PyFrame_Traverse: f_locals, the function's globals, the values in order)
+        visit_ref(f->back, out);
+        visit_ref(f->ns, out);
+        visit_ref(f->module, out);
+        for (const Ref& r : f->values) visit_ref(r, out);
+    };
+    detail::clearer(Kind::Frame) = [](Object* o) {   // frame_tp_clear: the values, last first, then f_locals; f_back stays
+        auto* f = static_cast<FrameObject*>(o);
+        std::vector<Ref> values = std::move(f->values);
+        f->values.clear();
+        for (auto it = values.rbegin(); it != values.rend(); ++it) *it = Ref{};
+        f->ns = Ref{};
+    };
     detail::traverser(Kind::Slice) = [](Object* o, std::vector<Object*>& out) {
         auto* s = static_cast<SliceObject*>(o);
         visit(s->start, out);
@@ -416,6 +433,7 @@ bool register_traversals() {
         visit_ref(g->name, out);
         visit_ref(g->qualname, out);
         if (g->state != GenState::Finished) {
+            visit_ref(g->resumed.frame_obj, out);
             visit_ref(g->function, out);
             for (const Ref& r : g->slots) visit_ref(r, out);
             visit_ref(g->sent, out);
@@ -1256,89 +1274,102 @@ Obj traceback_of(Obj exc) { return is_exception_instance(exc) ? exception_field(
 namespace {
 std::uint64_t frame_ids = 0;                     // a frame's id, given on its first record: never reused
 
-// prepends (code, line) for frame `id` to exc's traceback, as PyTraceBack_Here does; the frame's entries share its link
-Traceback* add_entry(Obj exc, const Code& code, Module* module, int line, std::uint64_t id, std::shared_ptr<detail::FrameLink>& link) {
+// an entry for frame `f` at its line now, `next` deeper: it holds the frame's frame object (PyTraceBack_Here, tb_create_raw)
+Ref make_entry(detail::FrameRecord& f, Ref next) {
+    if (f.id == 0) f.id = ++frame_ids;
+    Ref held = own(new Traceback(f.code, f.line, std::move(next)));
+    auto* tb = static_cast<Traceback*>(held.get().object());
+    tb->frame = f.id;
+    tb->frame_obj = Ref::share(detail::frame_object(f));
+    if (f.module != nullptr) tb->module = Ref::share(Obj::of(f.module));
+    return held;
+}
+// prepends the frame's entry to exc's traceback, as PyTraceBack_Here does
+void add_entry(Obj exc, detail::FrameRecord& f) {
     Obj prev = traceback_of(exc);
-    auto* tb = new Traceback(&code, line, Ref::share(prev.is_unset() ? None() : prev));
-    tb->frame = id;
-    if (!link) link = std::make_shared<detail::FrameLink>();
-    tb->link = link;
-    if (module != nullptr) tb->module = Ref::share(Obj::of(module));
-    Ref held = own(tb);
+    Ref held = make_entry(f, Ref::share(prev.is_unset() ? None() : prev));
     set_exception_field(exc, "__traceback__", held.get());
-    return tb;
 }
 }  // namespace
+
+Obj detail::frame_object(FrameRecord& f) {
+    if (f.frame_obj.get().is_unset()) f.frame_obj = own(new FrameObject(f.code, f.module != nullptr ? Ref::share(Obj::of(f.module)) : Ref{}));
+    return f.frame_obj.get();
+}
 
 void traceback_from_current_frame(Obj exc) {     // _PyTraceBack_FromFrame(NULL, f) as exc's traceback: one entry, the frame's line now
     detail::FrameRecord* f = detail::current_frame();
     if (f == nullptr) return;
-    if (f->id == 0) f->id = ++frame_ids;
-    auto* tb = new Traceback(f->code, f->line, none_ref());
-    tb->frame = f->id;
-    if (!f->link) f->link = std::make_shared<detail::FrameLink>();
-    tb->link = f->link;
-    if (f->module != nullptr) tb->module = Ref::share(Obj::of(f->module));
-    Ref held = own(tb);
+    Ref held = make_entry(*f, none_ref());
     set_exception_field(exc, "__traceback__", held.get());
 }
 
-void detail::arrive(const Code& code, Module* module, int line, std::uint64_t& id, std::shared_ptr<FrameLink>& link, PyError& e) noexcept {
+void detail::arrive(FrameRecord& f, PyError& e) noexcept {
     try {
-        if (!code.shown) {                       // no frame in CPython: the caller records the call
+        if (!f.code->shown) {                    // no frame in CPython: the caller records the call
             e.recorded = 0;
             return;
         }
-        if (id == 0) id = ++frame_ids;
-        if (e.recorded == id) return;            // re-raised by this frame
-        if (e.recorded != BARE_RAISE && is_kind(e.exc.get(), Kind::Instance)) add_entry(e.exc.get(), code, module, line, id, link);
-        e.recorded = id;
+        if (f.id == 0) f.id = ++frame_ids;
+        if (e.recorded == f.id) return;          // re-raised by this frame
+        if (e.recorded != BARE_RAISE && is_kind(e.exc.get(), Kind::Instance)) add_entry(e.exc.get(), f);
+        e.recorded = f.id;
     } catch (...) {
         // a frame record that cannot be made loses the entry, never the exception
     }
 }
 
-void detail::record_frame(const Code& code, Module* module, int line, std::uint64_t& id, Ref* const* locals, std::size_t n, Obj ns,
-                          std::shared_ptr<FrameLink>& link) noexcept {
+void detail::record_frame(FrameRecord& f) noexcept {
     try {
         Obj exc = raising();
         auto* err = static_cast<PyError*>(const_cast<void*>(raising_owner()));
         if (!is_kind(exc, Kind::Instance) || err == nullptr) return;
         std::uint64_t rec = err->recorded;
         err->recorded = 0;                       // the caller records the call
-        if (!code.shown) return;
-        Traceback* entry = nullptr;
-        if (rec == BARE_RAISE || (id != 0 && rec == id)) {
-            // recorded at one of this frame's catches (or re-raised bare): its newest entry for
-            // this frame, if the traceback still has one, takes the locals
-            for (Obj t = traceback_of(exc); id != 0 && is_kind(t, Kind::Traceback); t = static_cast<Traceback*>(t.object())->next.get())
-                if (static_cast<Traceback*>(t.object())->frame == id) {
-                    entry = static_cast<Traceback*>(t.object());
-                    break;
-                }
-            // The frame's entry may be in the traceback of the error this one was made of, not in its own: PEP 479's
-            // RuntimeError is raised with no entry of the generator's frame, and the StopIteration that is its cause has
-            // one. That entry keeps the frame, so the frame's variables live while the cause does (review A39, RL-876)
-            if (entry == nullptr && id != 0)
-                if (Obj cause = exception_field(exc, "__cause__"); is_kind(cause, Kind::Instance))
-                    for (Obj t = traceback_of(cause); is_kind(t, Kind::Traceback); t = static_cast<Traceback*>(t.object())->next.get())
-                        if (static_cast<Traceback*>(t.object())->frame == id) {
-                            entry = static_cast<Traceback*>(t.object());
-                            break;
-                        }
-        } else {
-            if (id == 0) id = ++frame_ids;
-            entry = add_entry(exc, code, module, line, id, link);
-        }
-        if (entry != nullptr) {
-            for (std::size_t i = 0; i < n; ++i) entry->locals.push_back(std::move(*locals[i]));
-            entry->left = true;
-            if (!ns.is_unset()) entry->ns = Ref::share(ns);
-            if (entry->link) entry->link->holder = entry;   // the frame's other entries read them here, while this one lives
-        }
+        if (!f.code->shown) return;
+        // recorded at one of this frame's catches, or re-raised bare: its entry is in the traceback already (or in the one of
+        // the error this one was made of: PEP 479's RuntimeError, whose StopIteration has the generator's; RL-876)
+        if (rec == BARE_RAISE || (f.id != 0 && rec == f.id)) return;
+        add_entry(exc, f);
     } catch (...) {
         // a frame record that cannot be made loses the entry, never the exception
     }
+}
+
+void detail::take_ownership(FrameObject* f, Ref* const* values, std::size_t n, Obj ns, FrameRecord* back) noexcept {
+    try {
+        f->values.reserve(f->values.size() + n);
+    } catch (...) {
+        return;                                  // no room: the values die where they are, as they would with no frame object
+    }
+    for (std::size_t i = 0; i < n; ++i) f->values.push_back(std::move(*values[i]));
+    if (!ns.is_unset()) f->ns = Ref::share(ns);
+    f->owned = true;
+    if (back != nullptr) {
+        try {
+            f->back = Ref::share(frame_object(*back));
+        } catch (...) {
+            // "Memory error here. Nothing we can do about it"
+        }
+    }
+}
+
+// _PyFrame_ClearExceptCode for a frame that has a frame object: one held by nothing else dies first, and the frame's values
+// then die where they are (_PyFrame_ClearLocals, the variables' destructors); one held by something else (a traceback's entry,
+// a frame object of a frame this one called, as f_back) takes them, and f_back is the caller's. A generator's resume that ends
+// at a yield hands the frame on (clear_gen_frame comes only at its end); the generator's slots after its variables die with
+// clear_frame (an exception that leaves has popped them, and a return has none)
+void detail::frame_ends(FrameRecord& f, Ref* const* locals, std::size_t n, bool unwinding) noexcept {
+    if (f.resumed != nullptr) {
+        f.resumed->id = f.id;
+        if (!unwinding && *f.resumed_pc != GEN_RETURNED) {
+            f.resumed->frame_obj = std::move(f.frame_obj);
+            return;
+        }
+    }
+    if (f.frame_obj.get().is_unset()) return;
+    Ref held = std::move(f.frame_obj);
+    if (held.get().object()->refs > 1) take_ownership(static_cast<FrameObject*>(held.get().object()), locals, n, f.ns, f.caller);
 }
 
 }  // namespace bella

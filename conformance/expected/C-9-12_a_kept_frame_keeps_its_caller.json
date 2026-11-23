@@ -1,0 +1,12 @@
+{
+ "case": "C-9-12_a_kept_frame_keeps_its_caller.py",
+ "clause": "C-9-12",
+ "spec": "section 9 (lifetimes), section 7 (traceback)",
+ "status": "P1",
+ "source": "Python/frame.c (_PyFrame_ClearExceptCode: a frame object something else holds takes the frame over; take_ownership:",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "a caller of a frame that kept its exception:\n  the calls are over\n  released: a local of the frame that caught\n  released: a local of its caller\n  the exception is gone\nan exception that passed a frame and was caught two frames up:\n  the call is over\n  released: a local of the frame that raised\n  released: a local of the frame it passed\n  released: a local of the frame that caught it\n  the exception is gone\na generator that kept an exception in its first resume:\n  the second resume sees it: a local of the generator\n  1 2 ended\n  the generator is gone\n  released: a local of the generator\n  the exception is gone\na generator closed while suspended in a loop:\n  the generator is gone\n  released: an item only the loop's iterator holds\n  released: the item it yielded\n  the exception is gone\na bare raise after a yield:\n  entries: 2\n",
+ "stderr": "",
+ "exit_code": 0
+}

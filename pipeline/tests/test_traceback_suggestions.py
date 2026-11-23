@@ -5,10 +5,9 @@ adaptation takes those names from the runtime's traceback entry (runtime/replace
 Until 2026-11-15 the read stopped by name, so formatting an AttributeError or a NameError with its traceback ended the
 program: `traceback.print_exc()`, `logging.exception`, a unittest failure. Here are the ways a program gets there, and the
 frames whose names are asked for: one the exception left, one still running, a module's body, a class's, with chained
-exceptions and groups, and the first of two exceptions of one frame. And the stops that stay: a frame that is over and
-whose locals went with it (it caught the exception and returned, a generator's that waits, the entry that had them is
-gone), where CPython's traceback keeps them (RL-222, which waits for the collector: C-9-11), and a frame with a
-comprehension running.
+exceptions and groups, and the first of two exceptions of one frame. And the stops that stay: the frame of a generator
+that waits, whose variables are the generator's while it is suspended, and a frame with a comprehension running. A frame
+that is over has its values in its frame object while that is held (RL-222): those rows are `test_kept_frames`.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_traceback_suggestions
 """
@@ -187,14 +186,8 @@ for work in (lambda: Cafe().café, lambda: Cafe().cafè):
 # An entry has the locals of a frame an exception left, for as long as that exception's entry lives; a frame that caught the
 # exception and went on kept its own, and they went with it
 STOPS = (
-    ("import traceback\ndef catches():\n    rate = 1\n    try:\n        return rte\n    except NameError as exc:\n        return exc\n"
-     "print('start')\ntraceback.format_exception(catches())\n", "a frame that is over"),
     ("import traceback\ndef waits():\n    counted = 1\n    try:\n        countd\n    except NameError as exc:\n        yield exc\n    yield None\n"
-     "print('start')\ngen = waits()\ntraceback.format_exception(next(gen))\n", "a frame that is over"),
-    ("import traceback\nprint('start')\nclass Body:\n    first_one = 1\n    try:\n        first_on\n    except NameError as exc:\n        kept = exc\n"
-     "traceback.format_exception(Body.kept)\n", "a frame that is over"),
-    ("import traceback\ndef two():\n    held = 1\n    try:\n        hled\n    except NameError as first:\n        kept.append(first)\n        raise KeyError('second')\n"
-     "kept = []\nprint('start')\ntry:\n    two()\nexcept KeyError:\n    pass\ntraceback.format_exception(kept[0])\n", "a frame that is over"),
+     "print('start')\ngen = waits()\ntraceback.format_exception(next(gen))\n", "a generator that waits"),
     ("import traceback\ndef f():\n    near = 1\n    try:\n        naer\n    except NameError:\n        return [traceback.format_exc() for _ in range(1)]\n"
      "print('start')\nf()\n", "comprehension running in it"),
 )
@@ -214,7 +207,7 @@ def test_every_way_to_the_formatted_text() -> None:
     same({"main.py": WAYS})
 
 
-def test_frames_whose_locals_went_with_them_stop() -> None:
+def test_frames_whose_locals_cannot_be_read_stop() -> None:
     for source, words in STOPS:
         _stops(source, words)
 

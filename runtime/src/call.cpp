@@ -2489,12 +2489,13 @@ Ref i_bella_getenv(Obj, Args a) {                // Py_GETENV: the process's env
     return value == nullptr ? none_ref() : str_new(value);
 }
 // The frame a traceback's entry stands for, where an adaptation walks a traceback's frames (traceback's
-// _walk_tb_with_full_positions; runtime/replaced): a frame object of the runtime's, new at each asking, or None for what is no
-// traceback, CPython's walk then being the adaptation's
+// _walk_tb_with_full_positions; runtime/replaced): the frame object the frame's entries share (tb_frame), a new one for an entry
+// no frame made (_PyTraceback_Add's), or None for what is no traceback, CPython's walk then being the adaptation's
 Ref i_traceback_frame(Obj, Args a) {
     positional_only(a, "traceback_frame", 1, 1);
     if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
     auto* tb = static_cast<Traceback*>(a.pos(0).object());
+    if (is_kind(tb->frame_obj.get(), Kind::Frame)) return tb->frame_obj;
     return own(new FrameObject(tb->code, tb->module));
 }
 // The code of such a frame, where an adaptation reads a frame's code (traceback's StackSummary): the code object its function's
@@ -2567,7 +2568,8 @@ Ref i_traceback_names(Obj, Args a) {
         }
     if (running != nullptr && running->comprehensions > 0)
         throw NotImplemented("traceback's suggestion from a frame with a list, set or dict comprehension running in it (its variables are the frame's, PEP 709)");
-    const Traceback* left = tb->left ? tb : tb->link && tb->link->holder != nullptr ? tb->link->holder : nullptr;
+    const FrameObject* kept = is_kind(tb->frame_obj.get(), Kind::Frame) ? static_cast<const FrameObject*>(tb->frame_obj.get().object()) : nullptr;
+    if (kept != nullptr && !kept->owned) kept = nullptr;   // its frame runs, or is a generator's that waits
     const bool is_module = std::string_view(code.name) == "<module>";
     Ref locals;
     if (module == nullptr) {
@@ -2577,34 +2579,37 @@ Ref i_traceback_names(Obj, Args a) {
     } else if (running != nullptr) {
         if ((code.flags & 0x1) == 0) locals = Ref::share(running->ns);   // a class body's namespace
         else locals = function_locals(code, [running](int slot) { return running->slots == nullptr ? Obj{} : running->slots[slot]->get(); });
-    } else if (left != nullptr) {
+    } else if (kept != nullptr) {                // the frame is over, and its frame object has what it had then
         if ((code.flags & 0x1) == 0) {
-            locals = left->ns;
+            locals = kept->ns;
         } else {
-            const std::vector<Ref>& kept = left->locals;
-            locals = function_locals(code, [&kept](int slot) { return static_cast<std::size_t>(slot) < kept.size() ? kept[static_cast<std::size_t>(slot)].get() : Obj{}; });
+            const std::vector<Ref>& values = kept->values;
+            locals = function_locals(code, [&values](int slot) { return static_cast<std::size_t>(slot) < values.size() ? values[static_cast<std::size_t>(slot)].get() : Obj{}; });
         }
     } else {
-        throw NotImplemented("traceback's suggestion from a frame that is over, whose locals went with it (in CPython its traceback keeps them: RL-222, with the collector)");
+        throw NotImplemented("traceback's suggestion from the frame of a generator that waits (its variables are the generator's while it is suspended)");
     }
     if (locals.get().is_unset()) throw NotImplemented("traceback's suggestion from a class body's frame without its namespace (E-02)");
     return tuple_new({locals.get(), globals.get(), builtins.get()});
 }
-// frame.clear() of the frame a traceback's entry stands for (traceback.clear_frames; runtime/replaced). A frame the exception left has
-// given the entry its locals (record_frame), and they go now, last first, as frame_tp_clear releases them. A frame still running has
-// given none: CPython's refuses with a RuntimeError, which clear_frames ignores. True for a traceback's entry, False for what is
-// none, which the adaptation then clears as CPython does
+// frame.clear() of the frame a traceback's entry stands for (traceback.clear_frames; runtime/replaced). A frame that is over has
+// given its frame object its values (take_ownership), and they go now, last first, then a class body's namespace, as
+// frame_tp_clear releases them. A frame still running, or a generator's that waits, has given none: CPython's refuses with a
+// RuntimeError, which clear_frames ignores. True for a traceback's entry, False for what is none, which the adaptation then
+// clears as CPython does
 Ref i_traceback_clear(Obj, Args a) {
     positional_only(a, "traceback_clear", 1, 1);
     if (!is_kind(a.pos(0), Kind::Traceback)) return Ref::steal(boolean(false));
-    // The frame's entries share one frame in CPython, so clearing through any of them releases its locals: here the entry
-    // of the exception that left the frame has them, and the frame's other entries reach it by their link (RL-459)
     auto* entry = static_cast<Traceback*>(a.pos(0).object());
-    if (entry->locals.empty() && entry->link && entry->link->holder != nullptr) entry = entry->link->holder;
-    Ref held = Ref::share(Obj::of(entry));
-    std::vector<Ref> locals = std::move(entry->locals);   // out of the entry first: a finaliser may reach the traceback
-    entry->locals.clear();
-    for (auto it = locals.rbegin(); it != locals.rend(); ++it) *it = Ref{};
+    if (!is_kind(entry->frame_obj.get(), Kind::Frame)) return Ref::steal(boolean(true));
+    Ref held = entry->frame_obj;                 // the frame object lives while its values go: a finaliser may reach the traceback
+    auto* frame = static_cast<FrameObject*>(held.get().object());
+    if (!frame->owned) return Ref::steal(boolean(true));
+    std::vector<Ref> values = std::move(frame->values);
+    frame->values.clear();
+    for (auto it = values.rbegin(); it != values.rend(); ++it) *it = Ref{};
+    Ref ns = std::move(frame->ns);
+    ns = Ref{};
     return Ref::steal(boolean(true));
 }
 Ref i_exception(Obj, Args a) {
@@ -2830,11 +2835,9 @@ void format_unraisable(const std::string* context, Obj exc) {
     Ref tb = Ref::share(traceback_of(exc));
     if (!is_kind(tb.get(), Kind::Traceback)) {
         tb = none_ref();
-        if (detail::FrameRecord* frame = detail::current_frame(); frame != nullptr && is_exception_instance(exc)) {
-            auto* entry = new Traceback(frame->code, frame->line, Ref{});   // _PyTraceBack_FromFrame(NULL, frame), then PyException_SetTraceback
-            if (frame->module != nullptr) entry->module = Ref::share(Obj::of(frame->module));
-            tb = own(entry);
-            set_exception_field(exc, "__traceback__", tb.get());
+        if (detail::current_frame() != nullptr && is_exception_instance(exc)) {
+            traceback_from_current_frame(exc);   // _PyTraceBack_FromFrame(NULL, frame), then PyException_SetTraceback
+            tb = Ref::share(traceback_of(exc));
         }
     }
     Ref message = context != nullptr ? str_new(*context) : none_ref();

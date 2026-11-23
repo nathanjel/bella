@@ -548,7 +548,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          modules being immortal (D-19), the exit traces from sys and builtins to tell which namespaces the first collection
          would find dead, and the runtime's own builtins must stay usable to the runtime after the program's view of them is
          cleared) the exit: finalize_modules' sequence and the last
-         collection in place of the exit walk (RL-514), a caught exception keeping its frame's locals (RL-222), `_abc`'s
+         collection in place of the exit walk (RL-514), `_abc`'s
          real weak references. (H5) the seven cases into the compiled baseline, and a codex review of the collector.
        * 3c, what is left: the cycle collector in the header, `gc`: C-3-12, C-9-01, C-9-02, C-9-07; it
          replaces the exit walk, which today finalises a list's items first to last and in breadth-first
@@ -762,6 +762,12 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   `cast`, `hex`, `count`, `index`, `toreadonly`, `__buffer__` and `__release_buffer__`, slice assignment, a view as a buffer to
   write into (`readinto`, `pack_into`, `os.readv`), `__sizeof__`. A consumer holds a buffer of a view while it runs: RL-702
   and RL-583, done 2026-11-23 for the preludes' functions with a later converted argument. Of the nine \[P1\] cases outside the compiled baseline six are left, all waiting for the collector.
+* **What a frame object does not have yet (left by RL-222, 2026-11-23).** A frame object is shared by a frame's traceback entries
+  and takes the frame's values when it is over, but: (a) `traceback.walk_stack` (and the signal handler's frame) make a new
+  frame object at each asking, not the frame's own, so holding one keeps nothing (CPython's would keep the values past the
+  frame's end, and `f is f` across two walks holds there); (b) the frame object holds no function (`f_funcobj`): a function
+  deleted while a frame of it is kept dies earlier than in CPython (seen only by a weak reference to the function); (c)
+  `tb_frame` and `f_back` as attributes stop by name (E-02), the adaptations reaching the frame through the runtime.
 * **`vars()` of a built-in type lists only the names the runtime has (found 2026-11-22 with the memoryview; tried 2026-11-23).**
   `vars(dict)` has no `__sizeof__` where `dir(dict)` and CPython's `vars(dict)` have it; the same for every type with a name in
   `conformance/names-baseline.txt`. Tried and reverted: a stop for the dict as a whole and for a read or membership test of a
