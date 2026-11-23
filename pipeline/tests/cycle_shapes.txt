@@ -1,0 +1,123 @@
+"""Cycles through every kind the runtime has, each let go of, then one collection: what died (as a multiset), and what
+a weak reference sees. The collection's own number is the runtime's (D-04) and is not printed."""
+import functools
+import gc
+import sys
+import weakref
+
+gc.disable()
+log = []
+
+
+class Tag:
+    def __init__(self, name):
+        self.name = name
+
+    def __del__(self):
+        log.append(self.name)
+
+
+def collect(label):
+    gc.collect()
+    print(label, sorted(log))
+    log.clear()
+
+
+def shapes():
+    # an instance holding itself
+    a = Tag("self"); a.me = a; del a
+    collect("instance")
+    # two instances, a list and a dict between them
+    a, b = Tag("a"), Tag("b"); a.peer = [b]; b.peer = {"a": a}; del a, b
+    collect("list and dict")
+    # a closure: a function whose cell holds the function, and a tag
+    def make():
+        t = Tag("closure")
+        def f():
+            return f, t
+        return f
+    f = make(); del f
+    collect("closure")
+    # a bound method an instance keeps
+    a = Tag("method"); a.m = a.__init__; del a
+    collect("bound method")
+    # a generator that holds itself through a list it was given
+    def gen(box):
+        t = Tag("generator")
+        yield box, t
+    box = []
+    g = gen(box); next(g); box.append(g); del g, box
+    collect("generator")
+    # an exception kept in a local of the frame its traceback holds
+    def raiser():
+        t = Tag("traceback")
+        try:
+            raise ValueError
+        except ValueError as e:
+            keep = e
+        return keep
+    e = raiser(); e.me = e; del e
+    collect("traceback")
+    # super, a slice, a dict view and an iterator in cycles
+    class S(Tag):
+        def get(self):
+            return super()
+    s = S("super"); s.sup = s.get(); del s
+    collect("super")
+    lst = [Tag("slice")]; lst.append(slice(lst, None)); del lst
+    collect("slice")
+    d = {"t": Tag("view")}; d["v"] = d.keys(); del d
+    collect("dict view")
+    lst = [Tag("iterator")]; lst.append(iter(lst)); del lst
+    collect("iterator")
+    # a set and a tuple in a cycle through an instance
+    a = Tag("set"); a.s = {(a,)}; del a
+    collect("set and tuple")
+    # a partial, a property and a staticmethod that hold their object
+    a = Tag("partial"); a.p = functools.partial(print, a); del a
+    collect("partial")
+    class P:
+        pass
+    q = P(); q.t = Tag("property"); q.prop = property(lambda self: q); del q
+    collect("property")
+    # weak references with a callback to members of a group, and one without
+    a, b = Tag("wa"), Tag("wb"); a.b = b; b.a = a
+    r1 = weakref.ref(a, lambda r: log.append("callback a")); r2 = weakref.ref(b)
+    del a, b
+    collect("weak references")
+    print("  dead:", r1() is None, r2() is None)
+    # a finaliser that revives its group
+    kept = []
+    class Revive(Tag):
+        def __del__(self):
+            log.append(self.name)
+            kept.append(self)
+    a = Revive("revived"); b = Tag("with it"); a.b = b; b.a = a; del a, b
+    collect("revived")
+    print("  kept:", len(kept), kept[0].b.name)
+    kept.clear()
+    collect("revived, let go")
+    # a cycle something outside holds lives
+    outside = Tag("held"); outside.me = outside
+    holder = [outside]; del outside
+    collect("held")
+    holder.clear()
+    collect("held, let go")
+    # a dict subclass, a list subclass and a set subclass in cycles
+    class D(dict):
+        pass
+    class L(list):
+        pass
+    d = D(); d["t"] = Tag("dict subclass"); d["me"] = d; del d
+    l = L([Tag("list subclass")]); l.append(l); del l
+    collect("subclasses")
+    # gc.callbacks see each collection
+    seen = []
+    gc.callbacks.append(lambda phase, info: seen.append((phase, sorted(info))))
+    gc.collect()
+    gc.callbacks.clear()
+    print("callbacks:", seen)
+    print("enabled:", gc.isenabled(), gc.get_threshold())
+
+
+shapes()

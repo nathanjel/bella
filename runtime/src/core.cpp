@@ -307,6 +307,128 @@ bool register_deaths() {
     return true;
 }
 const bool deaths_registered = register_deaths();
+
+// ---- what each kind holds, for the cycle collector (object.hpp's traverser and clearer; CPython's tp_traverse and tp_clear) ----
+// A traverse names the counted references the kind's release lets go of; a kind CPython gives no tp_clear has none here: a
+// cycle through it is broken by clearing another of its members.
+void visit_ref(const Ref& r, std::vector<Object*>& out) { detail::visit(r.get(), out); }
+bool register_traversals() {
+    using detail::visit;
+    detail::traverser(Kind::Cell) = [](Object* o, std::vector<Object*>& out) { visit(static_cast<Cell*>(o)->value, out); };
+    detail::clearer(Kind::Cell) = [](Object* o) { decref(std::exchange(static_cast<Cell*>(o)->value, Obj{})); };
+    detail::traverser(Kind::PyFunction) = [](Object* o, std::vector<Object*>& out) {   // func_traverse's order
+        auto* f = static_cast<PyFunction*>(o);
+        if (f->module != nullptr) visit(Obj::of(f->module), out);   // its globals
+        visit_ref(f->module_name, out);
+        visit_ref(f->defaults, out);
+        visit_ref(f->kwdefaults, out);
+        visit_ref(f->doc, out);
+        visit_ref(f->name, out);
+        visit_ref(f->dict, out);
+        visit_ref(f->closure_tuple, out);
+        for (const Ref& c : f->closure) visit_ref(c, out);
+        visit_ref(f->annotations, out);
+        visit_ref(f->annotate, out);
+        visit_ref(f->type_params, out);
+        visit_ref(f->qualname, out);
+    };
+    detail::clearer(Kind::PyFunction) = [](Object* o) {   // func_clear's order; its globals stay, which the program's modules are
+        auto* f = static_cast<PyFunction*>(o);
+        f->module_name = Ref{};
+        f->defaults = Ref{};
+        f->kwdefaults = Ref{};
+        f->doc = Ref{};
+        f->dict = Ref{};
+        f->closure_tuple = Ref{};
+        for (auto c = f->closure.rbegin(); c != f->closure.rend(); ++c) *c = Ref{};
+        f->annotations = Ref{};
+        f->annotate = Ref{};
+        f->type_params = Ref{};
+        f->name = str_new("");                   // func_name and func_qualname: the empty string
+        f->qualname = str_new("");
+    };
+    detail::traverser(Kind::Builtin) = [](Object* o, std::vector<Object*>& out) {   // meth_traverse: m_self, m_module
+        auto* b = static_cast<Builtin*>(o);
+        visit(b->self, out);
+        visit_ref(b->module_name, out);
+        visit_ref(b->written, out);
+    };
+    detail::traverser(Kind::Method) = [](Object* o, std::vector<Object*>& out) {
+        auto* m = static_cast<Method*>(o);
+        visit(m->func, out);
+        visit(m->self, out);
+    };
+    detail::traverser(Kind::Module) = [](Object* o, std::vector<Object*>& out) {    // a staged text's: module_traverse, md_dict
+        auto* m = static_cast<Module*>(o);
+        if (m->dict != nullptr) visit(Obj::of(m->dict), out);
+        if (m->builtins != nullptr) visit(Obj::of(m->builtins), out);
+        if (m->locals != nullptr && m->locals != m->dict) visit(Obj::of(m->locals), out);
+    };
+    detail::traverser(Kind::Iterator) = [](Object* o, std::vector<Object*>& out) {  // dictiter_traverse, listiter_traverse
+        auto* it = static_cast<Iterator*>(o);
+        visit(it->seq, out);
+        visit(it->result, out);
+    };
+    detail::traverser(Kind::DictView) = [](Object* o, std::vector<Object*>& out) { visit(static_cast<DictView*>(o)->dict, out); };
+    detail::traverser(Kind::LazyImport) = [](Object* o, std::vector<Object*>& out) {
+        auto* l = static_cast<LazyImport*>(o);
+        visit_ref(l->builtins, out);
+        visit_ref(l->from, out);
+        visit_ref(l->attr, out);
+    };
+    detail::clearer(Kind::LazyImport) = [](Object* o) {
+        auto* l = static_cast<LazyImport*>(o);
+        l->builtins = Ref{};
+        l->from = Ref{};
+        l->attr = Ref{};
+    };
+    detail::traverser(Kind::Super) = [](Object* o, std::vector<Object*>& out) {
+        auto* su = static_cast<SuperObject*>(o);
+        visit(su->obj, out);
+        visit(su->type, out);
+        visit(su->obj_type, out);
+    };
+    detail::traverser(Kind::Traceback) = [](Object* o, std::vector<Object*>& out) {   // tb_traverse: the next entry, then the frame
+        auto* t = static_cast<Traceback*>(o);
+        visit_ref(t->next, out);
+        visit_ref(t->module, out);
+        for (const Ref& r : t->locals) visit_ref(r, out);
+        visit_ref(t->ns, out);
+    };
+    detail::clearer(Kind::Traceback) = [](Object* o) {   // tb_clear: the next entry, then the frame (its locals, last first)
+        auto* t = static_cast<Traceback*>(o);
+        t->next = Ref{};
+        if (t->link && t->link->holder == t) t->link->holder = nullptr;
+        for (auto it = t->locals.rbegin(); it != t->locals.rend(); ++it) *it = Ref{};
+        t->locals.clear();
+        t->ns = Ref{};
+    };
+    detail::traverser(Kind::Frame) = [](Object* o, std::vector<Object*>& out) { visit_ref(static_cast<FrameObject*>(o)->module, out); };
+    detail::traverser(Kind::Slice) = [](Object* o, std::vector<Object*>& out) {
+        auto* s = static_cast<SliceObject*>(o);
+        visit(s->start, out);
+        visit(s->stop, out);
+        visit(s->step, out);
+    };
+    detail::traverser(Kind::Proxy) = [](Object* o, std::vector<Object*>& out) { visit_ref(static_cast<Proxy*>(o)->mapping, out); };
+    detail::traverser(Kind::Generator) = [](Object* o, std::vector<Object*>& out) {   // gen_traverse: its names, its frame, its exc_state
+        auto* g = static_cast<Generator*>(o);
+        visit_ref(g->name, out);
+        visit_ref(g->qualname, out);
+        if (g->state != GenState::Finished) {
+            visit_ref(g->function, out);
+            for (const Ref& r : g->slots) visit_ref(r, out);
+            visit_ref(g->sent, out);
+            visit_ref(g->pending, out);
+            visit_ref(g->delegate, out);
+            visit_ref(g->delegate_shown, out);
+            for (const auto& e : g->errors) if (e) visit_ref(e->exc, out);
+        }
+        for (Obj e : g->handled) visit(e, out);
+    };
+    return true;
+}
+const bool traversals_registered = register_traversals();
 }  // namespace
 
 // ---- strings ----

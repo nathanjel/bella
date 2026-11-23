@@ -35,10 +35,10 @@ HERE = Path(__file__).resolve().parent
 STOPS = {
     54: "an attribute name of a subclass of str", 55: "an attribute name of a subclass of str", 144: "an attribute name of a subclass of str",
     277: "an attribute name of a subclass of str", 423: "an attribute name of a subclass of str",
-    136: "E-01: eval at collections:namedtuple", 171: "gc.get_count", 172: "gc.get_stats", 181: "_codecs.utf_7_encode",
+    136: "E-01: eval at collections:namedtuple", 181: "_codecs.utf_7_encode",
     187: "_codecs.unicode_escape_encode", 188: "_codecs.raw_unicode_escape_encode", 192: "_codecs.utf_7_decode",
     196: "_codecs.unicode_escape_decode", 197: "_codecs.raw_unicode_escape_decode", 215: "binascii.b2a_qp", 216: "binascii.a2b_qp",
-    217: "binascii.b2a_uu", 218: "binascii.a2b_uu", 358: "[P2+] annotationlib", 455: "gc.is_tracked", 456: "gc.is_finalized",
+    217: "binascii.b2a_uu", 218: "binascii.a2b_uu", 358: "[P2+] annotationlib", 455: "gc.is_tracked",
 }
 # a registered deviation that shows in the sweep: without OpenSSL's _hashlib (D-20) hashlib.new looks its constructor up by
 # the name in a dict of hashlib.py's own, which hashes a str subclass; CPython's _hashlib.new reads the name's characters

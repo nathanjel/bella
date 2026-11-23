@@ -27,7 +27,7 @@ note = "CPython itself warns on code that depends on this"
 summary = "reference cycles are collected at a different moment and their members are finalised in a different order among themselves"
 status = "accepted"
 lint = "partial"
-note = "PEP 442's cyclic sequence (weakrefs cleared, finalisers, resurrection check, clear) is kept; only timing and order among members differ"
+note = "PEP 442's cyclic sequence (weakrefs cleared, finalisers, resurrection check, clear) is kept; only timing and order among members differ. With the collector by trial deletion (the author's decisions of 2026-11-14; runtime/include/bella/object.hpp, 2026-11-23): there are no generations and every collection is a full one, gc.collect(generation) checking its argument and otherwise ignoring it; what gc.collect() returns, gc.get_count(), gc.get_stats() and the numbers gc.callbacks are given are the runtime's own, in CPython's shapes; an automatic collection runs when the candidates pass the first threshold and a quarter of the objects tracked after the last one (a lint rule for a gc.collect() result, get_count() or get_stats() that reaches output is to come with bella-lint)"
 
 [deviations.D-05]
 summary = "set and frozenset iteration order"

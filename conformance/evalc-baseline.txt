@@ -109,10 +109,12 @@ C-7-01_hash_and_hmac_surface.py
 C-7-02_traceback_formats_module_not_found.py
 C-7-03_phase1_omissions_observable.py
 C-7-05_core_data_collections_itertools_functools.py
+C-7-06_core_data_enum_contextlib_weakref.py
 C-7-07_text_modules.py
 C-7-08_number_modules.py
 C-7-09_date_modules.py
 C-7-10_files_and_os.py
+C-7-11_process_signals_gc.py
 C-7-12_zlib.py
 C-7-13_locale_and_gettext.py
 C-7-14_development_modules.py
@@ -215,10 +217,13 @@ C-8-18_a_literal_longer_than_the_limit_of_digits.py
 C-8-19_the_compilers_warnings_at_each_start.py
 C-8-20_data_deeper_than_the_native_stack.py
 C-8-21_the_stack_a_program_is_given.py
+C-9-01_cyclic_disposal_order.py
+C-9-02_cyclic_resurrection.py
 C-9-03_refcount_disposal_order.py
 C-9-04_refcount_resurrection_keeps_weakref.py
 C-9-05_default_argument_lifetime.py
 C-9-06_generator_closed_on_last_reference.py
+C-9-07_weakref_callback_cleared_before_finaliser.py
 C-9-08_attribute_value_lifetimes.py
 C-9-09_finalisers_at_exit.py
 C-9-10_weakref_objects.py

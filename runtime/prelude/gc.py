@@ -118,8 +118,7 @@ def get_debug(*args: object, **kwds: object) -> int:   # gc_get_debug_impl
 
 def get_count(*args: object, **kwds: object) -> tuple[int, int, int]:   # gc_get_count_impl: the generations' counts
     _noargs("get_count", args, kwds)
-    _collector("gc.get_count")
-    raise AssertionError("unreachable")
+    return _gc("get_count")  # type: ignore[no-any-return]   # the runtime's own numbers (D-04)
 
 
 def set_threshold(*args: object, **kwds: object) -> None:   # gc_set_threshold: METH_VARARGS, one to three, all parsed first
@@ -142,8 +141,7 @@ def collect(*args: object, **kwds: object) -> int:   # gc_collect_impl: collect(
     generation = _NUM_GENERATIONS - 1 if given is _ABSENT else _as_int(given)
     if generation < 0 or generation >= _NUM_GENERATIONS:
         raise ValueError("invalid generation")
-    _collector("gc.collect")
-    raise AssertionError("unreachable")
+    return _gc("collect")  # type: ignore[no-any-return]   # every collection is a full one; the number is the runtime's (D-04)
 
 
 def get_objects(*args: object, **kwds: object) -> list[object]:   # gc_get_objects_impl: get_objects(generation=None)
@@ -165,8 +163,7 @@ def get_objects(*args: object, **kwds: object) -> list[object]:   # gc_get_objec
 
 def get_stats(*args: object, **kwds: object) -> list[dict[str, int]]:   # gc_get_stats_impl: each generation's counters
     _noargs("get_stats", args, kwds)
-    _collector("gc.get_stats")
-    raise AssertionError("unreachable")
+    return _gc("get_stats")  # type: ignore[no-any-return]   # the runtime's own counters (D-04)
 
 
 def is_tracked(*args: object, **kwds: object) -> bool:   # gc_is_tracked_impl: PyObject_GC_IsTracked
@@ -176,9 +173,7 @@ def is_tracked(*args: object, **kwds: object) -> bool:   # gc_is_tracked_impl: P
 
 
 def is_finalized(*args: object, **kwds: object) -> bool:   # gc_is_finalized_impl: PyObject_GC_IsFinalized
-    _one("is_finalized", args, kwds)
-    _collector("gc.is_finalized")
-    raise AssertionError("unreachable")
+    return _gc("is_finalized", _one("is_finalized", args, kwds))  # type: ignore[no-any-return]
 
 
 def get_referrers(*args: object, **kwds: object) -> list[object]:   # gc_get_referrers_impl: *objs, METH_FASTCALL

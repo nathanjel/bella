@@ -249,7 +249,11 @@ struct Collector {
     bool enabled = true, collecting = false, scheduled = false;   // scheduled: a collection at the next look
     std::size_t alive_after = 0;                 // tracked objects after the last collection: the quarter rule
     std::int64_t collections = 0, collected = 0; // gc.get_stats()'s numbers, the runtime's own
+    std::int64_t candidates_total = 0;           // and its candidates and the time taken, summed (gc.cpp's run_collection)
+    double duration_total = 0.0;
     std::unordered_map<const Object*, std::pair<GcList*, std::size_t>> where;   // a LISTED object's list and place
+    volatile int* breaker = nullptr;             // the runtime's eval breaker word: set with `scheduled` (_Py_ScheduleGC)
+    std::size_t roots = 0;                       // the last collection's roots: gc.callbacks' "candidates"
 };
 inline Collector& collector() {
     static Collector c;
@@ -275,8 +279,10 @@ inline void compact_buffer() {                   // the tombstones go, the candi
     Collector& c = collector();
     c.candidates.push_back(o);
     std::size_t live = c.candidates.size() - c.tombstones;
-    if (c.enabled && c.thresholds[0] > 0 && !c.collecting && live > static_cast<std::size_t>(c.thresholds[0]) && 4 * live > c.alive_after)
+    if (c.enabled && c.thresholds[0] > 0 && !c.collecting && live > static_cast<std::size_t>(c.thresholds[0]) && 4 * live > c.alive_after) {
         c.scheduled = true;
+        if (c.breaker != nullptr) *c.breaker = 1;
+    }
 }
 inline void released_above_nought(Object* o) {   // a count lowered by hand (a finaliser's own, after it revived the object)
     if (!(o->flags & BUFFERED) && holds_others(o->kind, o->flags)) possible_root(o);
@@ -2845,6 +2851,7 @@ inline std::int64_t collect_cycles() {
     }
     c.candidates.clear();
     c.tombstones = 0;
+    c.roots = roots.size();
     detail::GcList survivors, unreachable, final;
     detail::trial_deletion(roots, unreachable);
     roots.clear();

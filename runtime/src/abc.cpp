@@ -306,6 +306,18 @@ Ref a_get_cache_token(Obj, Args a) {
 
 void fill_abc(Module* m) {
     destroyer(Kind::AbcData) = [](Object* o) { detail::free_object(static_cast<AbcData*>(o)); };
+    detail::traverser(Kind::AbcData) = [](Object* o, std::vector<Object*>& out) {   // abc_data_traverse (its type is immortal)
+        auto* d = static_cast<AbcData*>(o);
+        detail::visit(d->registry.get(), out);
+        detail::visit(d->cache.get(), out);
+        detail::visit(d->negative_cache.get(), out);
+    };
+    detail::clearer(Kind::AbcData) = [](Object* o) {   // abc_data_clear
+        auto* d = static_cast<AbcData*>(o);
+        d->registry = Ref{};
+        d->cache = Ref{};
+        d->negative_cache = Ref{};
+    };
     ClassObject* c = builtin_type("_abc._abc_data", {types().object});
     c->heap_type = true;                         // PyType_FromModuleAndSpec: a program can set its attributes
     c->name_prefix = 5;

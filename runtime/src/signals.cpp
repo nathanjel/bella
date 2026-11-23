@@ -244,6 +244,7 @@ void look_for_signals() {                        // _Py_HandlePending: the break
     bool calls = wakeup_error_count.load() != 0; // if (breaker & _PY_CALLS_TO_DO_BIT): a report queued by a signal during the handlers
     handle_signals();                            // set the breaker, and the next look prints it
     if (calls) report_wakeup_errors();
+    run_scheduled_collection();                  // the GC bit, after the signals and the pending calls (_Py_HandlePending)
 }
 void look_for_signals_now() {                    // _PyEval_MakePendingCalls: handle_signals and make_pending_calls, whatever the breaker says
     handle_signals();
@@ -259,7 +260,8 @@ void set_lean(bool lean) { lean_build = lean; }
 void look_if_lean() {
     if (lean_build) look_if_noted();
 }
-void signals_init() {                            // _PySignal_Init's signal_install_handlers: "Import _signal to install the Python SIGINT handler"
+void signals_init() {
+    detail::collector().breaker = &detail::signal_breaker;   // a scheduled collection is a bit of the breaker (_Py_ScheduleGC)                            // _PySignal_Init's signal_install_handlers: "Import _signal to install the Python SIGINT handler"
     Ref name = str_new("_signal");               // (SIGPIPE and SIGXFSZ are ignored at run_main's first line, C-7-73)
     import_module_level(name.get(), Obj{}, Obj{}, Obj{}, 0);
 }
