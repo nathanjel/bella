@@ -1,0 +1,26 @@
+import gc, io, sys
+gc.disable()
+gc.collect()
+row = sys.argv[1]
+class Node:
+    def __del__(self):
+        if row == 'fromdel': gc.set_debug(gc.DEBUG_SAVEALL)
+def change(phase, info):
+    if phase == 'stop': gc.set_debug(0)
+    elif row == 'stats': gc.set_debug(gc.DEBUG_STATS)
+    elif row == 'collectable': gc.set_debug(gc.DEBUG_COLLECTABLE)
+n = Node()
+n.link = n
+del n
+gc.callbacks.append(change)
+old = sys.stderr
+capture = io.StringIO()
+sys.stderr = capture
+try: gc.collect()
+finally:
+    sys.stderr = old
+    gc.callbacks.clear()
+if row == 'fromdel': print(any(type(x) is Node for x in gc.garbage))
+else:
+    prefix = 'gc: ' + ('collecting' if row == 'stats' else 'collectable')
+    print(any(line.startswith(prefix) for line in capture.getvalue().splitlines()))

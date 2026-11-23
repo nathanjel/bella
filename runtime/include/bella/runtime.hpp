@@ -1355,6 +1355,7 @@ struct HoldLooks {
     HoldLooks& operator=(const HoldLooks&) = delete;
 };
 std::int64_t run_collection();                   // gc_collect_main for gc.collect(): gc.callbacks around it (runtime/src/gc.cpp)
+Ref i_gc(Obj, Args a);                           // _gc(name, ...): the prelude's primitives, "finalizing" among them
 void run_scheduled_collection();                 // _Py_RunGC: the collection the buffer scheduled, at a look
 void look_for_signals();                         // the evaluation loop's look, the breaker already tested (BELLA_LOOK): the signals bit cleared, check_signals(), set again if a handler raised; then the reports of failed wakeup writes queued when it began
 void look_for_signals_now();                     // Py_MakePendingCalls: the same, whatever the breaker says (before and after the program, a lock's wait)

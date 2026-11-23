@@ -1,0 +1,35 @@
+import gc, os, sys, weakref
+gc.disable()
+row = sys.argv[1]
+deaths = []
+saved = []
+class Path(str):
+    def __del__(self):
+        deaths.append('path')
+        if row.endswith('revive'): saved.append(self)
+class Owner:
+    def __del__(self): saved.append(self)
+def run():
+    if row == 'owned':
+        n = Owner()
+        n.self = n
+        n.it = os.scandir('.')
+        del n
+        gc.collect()
+        it = saved.pop().it
+        print(next(it, None) is not None, gc.is_finalized(it))
+        it.close()
+        return
+    p = Path('.')
+    p.it = os.scandir(p)
+    w = weakref.ref(p)
+    held = [p] if row.endswith('hold') else []
+    del p
+    gc.collect()
+    print(deaths, w() is None)
+    if held: print(w() is held[0], next(held[0].it, None) is not None)
+    held.clear()
+    gc.collect()
+    print(deaths, w() is None, len(saved))
+    if saved: print(next(saved[0].it, None) is not None)
+run()

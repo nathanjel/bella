@@ -83,17 +83,25 @@ void invoke_callbacks(const char* phase, std::int64_t collected, double duration
 }
 }  // namespace
 
-// gc_collect_main: none while one runs; the callbacks before and after; the debugging flags stop by name (their output is
-// CPython's list of its objects)
+// gc_collect_main: none while one runs (the guard held from before the start callbacks to after the stop ones, RL-904); the
+// debugging flags read where gc.c reads them (RL-910): DEBUG_STATS after the start callbacks and at the end, whose lines carry
+// CPython's counts and times, stops by name; DEBUG_COLLECTABLE in the collection (object.hpp); DEBUG_SAVEALL in delete_garbage
 std::int64_t run_collection() {
-    if (detail::collector().collecting) return 0;
-    if (state().debug != 0) throw NotImplemented("gc's debugging flags (gc.set_debug) at a collection");
+    constexpr int DEBUG_STATS = 1;
+    detail::Collector& c = detail::collector();
+    if (c.collecting) return 0;
+    c.collecting = true;
+    struct Done {
+        ~Done() { detail::collector().collecting = false; }
+    } done;
     invoke_callbacks("start", 0, 0.0);
+    if (state().debug & DEBUG_STATS) throw NotImplemented("gc.DEBUG_STATS (its lines are CPython's counts of its generations)");
     auto began = std::chrono::steady_clock::now();
-    std::int64_t n = collect_cycles();
+    std::int64_t n = collect_cycles_held();
     double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
-    detail::collector().candidates_total += static_cast<std::int64_t>(detail::collector().roots);
-    detail::collector().duration_total += took;
+    c.candidates_total += static_cast<std::int64_t>(c.roots);
+    c.duration_total += took;
+    if (state().debug & DEBUG_STATS) throw NotImplemented("gc.DEBUG_STATS (its lines are CPython's counts of its generations)");
     invoke_callbacks("stop", n, took);
     return n;
 }
@@ -127,6 +135,7 @@ Ref g_get_stats(Args) {                          // each generation's counters, 
     }
     return out;
 }
+Ref g_finalizing(Args) { return Ref::steal(boolean(detail::collector().finalizing > 0)); }
 Ref g_is_finalized(Args a) {                     // PyObject_GC_IsFinalized: a tracked object whose finaliser has run
     Obj v = a.pos(0);
     bool yes = v.is_object() && detail::holds_others(v.object()->kind, v.object()->flags) && (v.object()->flags & FINALIZED) != 0;
@@ -138,12 +147,22 @@ const std::map<std::string_view, Primitive>& primitives() {
         {"garbage", g_garbage}, {"callbacks", g_callbacks}, {"isenabled", g_isenabled}, {"enable", g_enable}, {"disable", g_disable},
         {"get_threshold", g_get_threshold}, {"set_threshold", g_set_threshold}, {"get_debug", g_get_debug}, {"set_debug", g_set_debug},
         {"collect", g_collect}, {"get_count", g_get_count}, {"get_stats", g_get_stats}, {"is_finalized", g_is_finalized},
+        {"finalizing", g_finalizing},
     };
     return table;
 }
 }  // namespace
 
 bool gc_is_enabled() { return detail::collector().enabled; }
+namespace {
+void save_to_garbage(Object* o) {                 // DEBUG_SAVEALL: PyList_Append(gcstate->garbage, op)
+    Ref list = g_list(state().garbage);
+    list_append(list.get(), Obj::of(o));
+}
+void refuse_debugging(const char* what) { throw NotImplemented(what); }
+const bool debugging_hooked = (detail::collector().debug = &state().debug, detail::collector().save_garbage = save_to_garbage,
+                               detail::collector().debug_refuse = refuse_debugging, true);
+}  // namespace
 
 Ref i_gc(Obj, Args a) {                          // _gc(name, ...)
     return primitives().at(as_str(a.pos(0))->text)(Args{a.data + 1, a.npos - 1, nullptr, 0});

@@ -35,6 +35,7 @@ _ABSENT = object()
 
 
 class _State:                                    # the C's tok_state, by its handle: freed with the iterator that holds it
+    __bella_dealloc__ = True                     # its __del__ is C dealloc code: the collection's finaliser pass leaves it (RL-908)
     __slots__ = ("_handle",)
 
     def __init__(self, handle: int) -> None:

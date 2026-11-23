@@ -255,6 +255,11 @@ struct Collector {
     double duration_total = 0.0;
     std::unordered_map<const Object*, std::pair<GcList*, std::size_t>> where;   // a LISTED object's list and place
     volatile int* breaker = nullptr;             // the runtime's eval breaker word: set with `scheduled` (_Py_ScheduleGC)
+    int finalizing = 0;                          // a finaliser of the collection's pass is running (a prelude's iobase_finalize asks)
+    // gc's debugging flags, read where gc.c reads them (RL-910): the module's word, and what saves an object to gc.garbage
+    const int* debug = nullptr;
+    void (*save_garbage)(Object*) = nullptr;
+    void (*debug_refuse)(const char*) = nullptr;
     std::size_t roots = 0;                       // the last collection's roots: gc.callbacks' "candidates"
 };
 inline Collector& collector() {
@@ -895,6 +900,10 @@ struct ClassObject : Object {
     std::uint32_t repeated_slots = 0;            // names its own __slots__ has more than once: CPython makes a cell for each, which
                                                  // nothing can reach and only the size test of the default pickling state sees (RL-591)
     bool final_type = false;                     // a built-in type a class cannot derive from (no Py_TPFLAGS_BASETYPE)
+    // The collector's view of a C type written in Python: not tracked (no Py_TPFLAGS_HAVE_GC: the collection never walks its
+    // objects, and their counts of others are held from outside), and the fields its tp_traverse does not visit (RL-909, RL-911)
+    bool gc_untracked = false;
+    std::vector<const Str*> untraversed;
     // attrs as a dict, made when a program first asks for a view of __dict__ (class_dict) and kept
     // equal to attrs from then on; its counts are dropped first, so attrs decides when a value dies
     DictObject* dict_view = nullptr;
@@ -2271,13 +2280,13 @@ inline void finalize_once(T* obj) {
 template <class T>
 inline bool release_attributes(T* obj, bool base_weak = false) {
     auto fin = (obj->flags & FINALIZED) ? std::nullopt : obj->cls->lookup(intern("__del__"));
-    obj->flags |= FINALIZED;
     if (fin) {
         obj->refs = 1;                          // held by the finaliser's call, so it cannot die again
         Ref fn = Ref::share(fin->first);
         if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));
         else decref(call(fn.get(), {Obj::of(obj)}));
         fn = Ref{};
+        obj->flags |= FINALIZED;                 // PyObject_CallFinalizer: after tp_finalize returns (the collection's pass: before, RL-906)
         if (--obj->refs != 0) {                  // revived: it lives on, and the release left it above nought (a candidate)
             released_above_nought(obj);
             return false;
@@ -2445,10 +2454,15 @@ inline Clearer& clearer(Kind k) {
     static Clearer table[static_cast<std::size_t>(Kind::KindCount)] = {};
     return table[static_cast<std::size_t>(k)];
 }
+using Finalizer = void (*)(Object*);             // a kind's tp_finalize, which the collection's pass calls (it sets FINALIZED first)
+inline Finalizer& finalizer(Kind k) {
+    static Finalizer table[static_cast<std::size_t>(Kind::KindCount)] = {};
+    return table[static_cast<std::size_t>(k)];
+}
 // Tracked and alive: what a collection walks. Its count is not asked: trial deletion lowers the counts in place, and an object
 // that is not dead has one above nought (one whose count reached nought is DEAD before any code runs, or put off)
 inline bool walked(const Object* o) {
-    return holds_others(o->kind, o->flags) && !(o->flags & (IMMORTAL | DEAD | PUT_OFF | TOMBSTONE));
+    return holds_others(o->kind, o->flags) && !(o->flags & (IMMORTAL | DEAD | PUT_OFF | TOMBSTONE)) && !(o->cls != nullptr && o->cls->gc_untracked);
 }
 inline void visit(Obj v, std::vector<Object*>& out) {
     if (v.is_object() && walked(v.object())) out.push_back(const_cast<Object*>(v.object()));
@@ -2467,7 +2481,9 @@ template <class T>
 inline void visit_attributes(T* obj, std::vector<Object*>& out) {
     static const Str* const dict = intern("__dict__");
     for (ClassObject* c : obj->cls->mro)
-        for (const Str* s : c->release_order_of_slots()) visit(slot_cell(obj, c, s), out);
+        for (const Str* s : c->release_order_of_slots())
+            if (c->untraversed.empty() || std::find(c->untraversed.begin(), c->untraversed.end(), s) == c->untraversed.end())
+                visit(slot_cell(obj, c, s), out);
     auto dict_values = [&] {
         if (obj->exposed()) {
             if (obj->dict != nullptr) visit(Obj::of(obj->dict), out);
@@ -2803,10 +2819,24 @@ inline std::int64_t handle_weakref_callbacks(GcList& unreachable, GcList& old) {
 inline void finalize_garbage(GcList& collectable) {
     GcList seen;
     static const Str* const del = intern("__del__");
+    static const Str* const at_dealloc = intern("__bella_dealloc__");
+    Collector& c = collector();
     while (Object* op = list_first(collectable)) {
         list_move(op, seen);
-        if ((op->flags & FINALIZED) || !holds_others(op->kind, op->flags) || op->cls == nullptr || !op->cls->lookup(del)) continue;
+        if (op->flags & FINALIZED) continue;
+        if (Finalizer own = finalizer(op->kind); own != nullptr && !has_attributes(op)) {   // a kind's tp_finalize (a generator's)
+            incref(op);
+            ++c.finalizing;
+            own(op);
+            --c.finalizing;
+            decref(op);
+            continue;
+        }
+        if (!holds_others(op->kind, op->flags) || op->cls == nullptr) continue;
+        auto found = op->cls->lookup(del);
+        if (!found || found->second->attrs.contains(at_dealloc)) continue;   // no tp_finalize, or C dealloc code in a prelude
         incref(op);
+        ++c.finalizing;
         switch (op->kind) {
             case Kind::Instance: finalize_once(static_cast<Instance*>(op)); break;
             case Kind::IntInstance: finalize_once(static_cast<IntInstance*>(op)); break;
@@ -2826,6 +2856,7 @@ inline void finalize_garbage(GcList& collectable) {
                 }
                 break;
         }
+        --c.finalizing;
         decref(op);
     }
     list_merge(seen, collectable);
@@ -2843,10 +2874,18 @@ inline void clear_unreachable_weakrefs(GcList& unreachable) {
         }
     }
 }
-// Each object's clear, the object held; one that is still first afterwards lives on and joins `old`
+// Each object's clear, the object held; one that is still first afterwards lives on and joins `old`. With DEBUG_SAVEALL the
+// object joins gc.garbage instead and is not cleared (delete_garbage reads the flag at each object)
 inline void delete_garbage(GcList& collectable, GcList& old) {
+    constexpr int DEBUG_SAVEALL = 1 << 5;
+    Collector& c = collector();
     while (Object* op = list_first(collectable)) {
         if (op->refs == 0) throw ModelError("an object of a collection's garbage with no count");
+        if (c.debug != nullptr && (*c.debug & DEBUG_SAVEALL) && c.save_garbage != nullptr) {
+            c.save_garbage(op);
+            list_move(op, old);
+            continue;
+        }
         incref(op);
         clear_object(op);
         bool kept = list_first(collectable) == op;
@@ -2856,14 +2895,11 @@ inline void delete_garbage(GcList& collectable, GcList& old) {
 }
 }  // namespace detail
 
-// A collection (collector.collect): full whatever generation is asked; the number found. One asked for while one runs finds 0.
-inline std::int64_t collect_cycles() {
+// A collection's work (collector._collect), the guard already held: trial deletion over the buffer's roots, then gc.c's
+// sequence. DEBUG_COLLECTABLE, read after the reckoning, prints each unreachable object as CPython names it: a stop by name.
+inline std::int64_t collect_cycles_held() {
+    constexpr int DEBUG_COLLECTABLE = 1 << 1;
     detail::Collector& c = detail::collector();
-    if (c.collecting) return 0;
-    c.collecting = true;
-    struct Done {
-        ~Done() { detail::collector().collecting = false; }
-    } done;
     c.scheduled = false;                          // the buffer the schedule counted is taken now
     std::vector<Object*> roots;
     for (Object* o : c.candidates) {
@@ -2877,6 +2913,8 @@ inline std::int64_t collect_cycles() {
     detail::GcList survivors, unreachable, final;
     detail::trial_deletion(roots, unreachable);
     roots.clear();
+    if (c.debug != nullptr && (*c.debug & DEBUG_COLLECTABLE) && unreachable.size != 0 && c.debug_refuse != nullptr)
+        c.debug_refuse("gc.DEBUG_COLLECTABLE (it prints each unreachable object by its address)");
     std::int64_t collected = detail::handle_weakref_callbacks(unreachable, survivors);
     detail::finalize_garbage(unreachable);
     detail::deduce_unreachable(unreachable, final);   // handle_resurrected_objects: what is reachable again stays in `unreachable`
@@ -2889,6 +2927,16 @@ inline std::int64_t collect_cycles() {
     ++c.collections;
     c.collected += collected;
     return collected;
+}
+// A collection (collector.collect): full whatever generation is asked; the number found. One asked for while one runs finds 0.
+inline std::int64_t collect_cycles() {
+    detail::Collector& c = detail::collector();
+    if (c.collecting) return 0;
+    c.collecting = true;
+    struct Done {
+        ~Done() { detail::collector().collecting = false; }
+    } done;
+    return collect_cycles_held();
 }
 // The runtime's look: the collection the buffer scheduled, if the collector is enabled (collector.look)
 inline std::int64_t collector_look() {

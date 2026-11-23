@@ -1,0 +1,22 @@
+import gc,sys,contextvars,re,weakref
+gc.disable()
+saved=[]
+class B(bytearray):
+    def __del__(self): saved.append(self)
+class R:
+    def __del__(self): saved.append(self)
+row=sys.argv[1]
+if row=='context':
+    key=contextvars.ContextVar('key')
+    def make():
+        ctx=contextvars.Context()
+        r=R(); ctx.run(key.set,r); r.ctx=ctx
+    make(); gc.collect()
+    print(len(saved),len(saved[0].ctx),saved[0].ctx.get(key) is saved[0])
+elif row=='scanner':
+    b=B(b'a'); b.scan=re.compile(b'.').scanner(b); w=weakref.ref(b); del b
+    gc.collect(); print(len(saved),w() is None)
+    if saved:
+        try: saved[0].append(98)
+        except BufferError: print('export held')
+        else: print('resize allowed')

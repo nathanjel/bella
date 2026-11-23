@@ -1,0 +1,21 @@
+import gc, sys, weakref
+gc.disable()
+gc.collect()
+row = sys.argv[1]
+seen = []
+class Node:
+    def __del__(self):
+        seen.append('dead')
+def phase(p, info):
+    if p == 'start':
+        gc.set_debug(gc.DEBUG_SAVEALL)
+    else:
+        gc.set_debug(0)
+n = Node()
+n.link = n
+w = weakref.ref(n)
+del n
+gc.callbacks.append(phase)
+gc.collect()
+gc.callbacks.clear()
+print(seen, any(type(x) is Node for x in gc.garbage), w() is None)

@@ -1,0 +1,58 @@
+import gc,sys,weakref,dataclasses,io,types
+gc.disable()
+row=sys.argv[1]
+seen=[]
+class T:
+    def __del__(self): seen.append('dead')
+if row=='dataclass':
+    @dataclasses.dataclass(init=False, repr=False, eq=False)
+    class D:
+        t: object
+    t=T(); d=D(); d.t=t; t.d=d; w=weakref.ref(t);del d,t;gc.collect();print(seen,w() is None)
+elif row=='genflag':
+    def f():
+        try: yield
+        finally: print('in close',gc.is_finalized(w()))
+    g=f(); w=weakref.ref(g); next(g); del g
+elif row=='refcount':
+    class R:
+        def __del__(self): print(gc.is_finalized(self))
+    r=R();del r
+elif row=='context':
+    try: raise IndexError('outer')
+    except IndexError as outer:
+        class R:
+            def __del__(self): seen.append(sys.exception() is outer)
+        t=R();t.me=t;del t
+        gc.callbacks.append(lambda p,i:seen.append(sys.exception() is outer))
+        gc.collect();gc.callbacks.clear();print(seen)
+elif row=='exclocal':
+    def f():
+        t=T()
+        try: raise ValueError(t)
+        except ValueError as err:
+            t.err=err; w=weakref.ref(t); gc.collect(); print(w() is t)
+        return w
+    w=f();gc.collect();print(seen,w() is None)
+elif row=='inweak':
+    class R:
+        def __del__(self): seen.append(self.ref() is None)
+    r=R();r.me=r;r.ref=weakref.ref(r,lambda w:seen.append('unexpected'))
+    del r;gc.collect();print(seen)
+elif row=='passive':
+    class R:
+        def __del__(self): seen.append(gc.is_finalized(self.peer)); saved.append(self.peer)
+    class A: pass
+    saved=[]; r=R();a=A();r.peer=a;a.peer=r;del a,r;gc.collect()
+    print(seen,gc.is_finalized(saved[0]))
+elif row=='ioflag':
+    class R:
+        def __del__(self): saved.append(self)
+    saved=[]; r=R();f=io.BytesIO(b'x');r.f=f;f.r=r; del f,r;gc.collect()
+    print(saved[0].f.closed,gc.is_finalized(saved[0].f))
+elif row=='weakplain':
+    def f():
+        g=(x for x in ())
+        def cb(w): seen.append(w() is None)
+        return g,weakref.ref(g,cb)
+    g,w=f();del g;print(seen,w() is None)

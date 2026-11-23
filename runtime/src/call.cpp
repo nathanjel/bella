@@ -1908,6 +1908,14 @@ void note_prelude_class(const ClassObject* c) {
         if (!cpython_attribute_kind(cls, s->text).empty()) members.push_back(s);
     }
     if (!names.empty()) hide_slots(cls, names, members, readonly, boolean);
+    // The collector's view (RL-909, RL-911): a C type without Py_TPFLAGS_HAVE_GC is not tracked, and the fields its tp_traverse
+    // does not visit the class names in __untraversed__
+    if (auto flags = cpython_type_number("flags", cls); flags && !(*flags & (1 << 14))) cls->gc_untracked = true;
+    static const Str* const said_untraversed = intern("__untraversed__");
+    if (const Obj* listed = cls->attrs.find(said_untraversed); listed != nullptr && is_kind(*listed, Kind::Tuple)) {
+        for (Obj n : static_cast<Tuple*>(listed->object())->items) cls->untraversed.push_back(intern(as_str(n)->text));
+        cls->del_attr(said_untraversed);
+    }
     // The type's dealloc (RL-565), for a type CPython writes in C (one it writes in Python has __firstlineno__ in the names
     // table, and its objects die as any class's do). The class says the order in __release__ where it is not the common
     // one: the weak references first, the fields as the classes declare them, the dict last.

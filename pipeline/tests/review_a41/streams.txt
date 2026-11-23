@@ -1,0 +1,12 @@
+import gc,io,sys
+gc.disable()
+saved=[]
+class R:
+    def __del__(self): saved.append(self)
+r=R()
+if sys.argv[1]=='string': r.f=io.StringIO('x')
+else: r.f=io.BufferedRWPair(io.BytesIO(),io.BytesIO())
+r.me=r
+del r
+gc.collect()
+print(saved[0].f.closed,gc.is_finalized(saved[0].f))

@@ -1,0 +1,13 @@
+import gc
+gc.disable()
+saved=[]
+class B(bytearray):
+    def __del__(self): saved.append(self)
+b=B(b'a'); b.v=memoryview(b); del b
+gc.collect()
+b=saved.pop()
+print(b.v.tobytes())
+try: b.append(98)
+except BufferError: print('export held')
+else: print('resize allowed')
+b.v.release()

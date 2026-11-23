@@ -56,6 +56,7 @@ class _ManagedBuffer:
     hold it, so its end is mbuf_release: the exporter's count of exports goes down (bytearray_releasebuffer), then the
     exporter is let go of, as the slot is cleared after this."""
 
+    __bella_dealloc__ = True                     # its __del__ is C dealloc code: the collection's finaliser pass leaves it (RL-908)
     __slots__ = ("_obj",)
 
     def __del__(self) -> None:

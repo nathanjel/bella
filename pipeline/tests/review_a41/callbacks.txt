@@ -1,0 +1,11 @@
+import gc, sys
+gc.disable()
+seen = []
+def callback(phase, info):
+    seen.append(phase)
+    if phase == sys.argv[1] and seen.count(phase) == 1:
+        gc.collect()
+gc.callbacks.append(callback)
+gc.collect()
+gc.callbacks.clear()
+print(seen)

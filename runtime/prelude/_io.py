@@ -37,7 +37,11 @@ try:
     _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
     _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
     _view_ok                                     # noqa: B018  # a memoryview whose simple buffer can be had
+    _gc                                          # noqa: B018  # gc's primitives: "finalizing", the collection's finaliser pass running
 except NameError:
+    def _gc(what: str) -> bool:                  # a stand-in for CPython's run of this file
+        return False
+
 
     def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
         return type(value) is memoryview
@@ -501,8 +505,9 @@ class _IOBase:
 
     def __del__(self) -> None:                   # iobase_finalize
         cls = type(self)                         # bytesio_dealloc, stringio_dealloc and bufferedrwpair_dealloc call no finaliser:
-        if cls is BytesIO or cls is StringIO or cls is BufferedRWPair:   # an exact one of the three has none, a subclass of the
-            return                               # program's has (RL-585, RL-598); `in` would ask a metaclass's __eq__ (RL-785)
+        if (cls is BytesIO or cls is StringIO or cls is BufferedRWPair) and not _gc("finalizing"):   # an exact one of the three has
+            return                               # none, a subclass of the program's has (RL-585, RL-598); `in` would ask a metaclass's
+                                                 # __eq__ (RL-785). The collection's pass calls the inherited one (RL-907)
         try:
             closed = _optional_attr(self, "closed")
             closed = -1 if closed is _ABSENT else (1 if closed else 0)

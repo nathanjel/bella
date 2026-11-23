@@ -483,6 +483,24 @@ void gen_handling_pop(Generator* g, int k) {      // POP_EXCEPT
     std::unique_ptr<PyError> taken = std::move(g->errors[static_cast<std::size_t>(k)]);
     throw PyError(taken->exc, taken->recorded);
 }
+// _PyGen_Finalize for the collection's pass (finalize_garbage): the flag first, then the close of one that has not ended,
+// what it raises reported; the collection holds the generator meanwhile
+void gen_finalize(Object* o) {
+    auto* g = static_cast<Generator*>(o);
+    o->flags |= FINALIZED;
+    if (g->state == GenState::Finished) return;
+    Obj saved = detail::raising();
+    const void* owner = detail::raising_owner();
+    try {
+        Ref ignored = gen_close(g);
+    } catch (const PyError& e) {
+        Ref self = Ref::share(Obj::of(o));
+        report_unraisable("Exception ignored while closing generator ", self.get(), e);
+    }
+    detail::raising() = saved;
+    detail::raising_owner() = owner;
+}
+const bool gen_finalizer_registered = (detail::finalizer(Kind::Generator) = gen_finalize, true);
 void gen_die(Object* o) {                         // gen_dealloc: finalised once; a close may resurrect it
     auto* g = static_cast<Generator*>(o);
     if (g->state != GenState::Finished && (o->flags & FINALIZED) == 0) {

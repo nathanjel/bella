@@ -1182,7 +1182,7 @@ Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
 void fill_io(Module* m) {
     fill_in_python(m, "_io", "_io", prelude_io::module_body,
                    {{"_number_index", i_number_index}, {"_tp_name", i_tp_name}, {"_keyword_suggestion", i_keyword_suggestion}, {"_sys", i_posix_sys}, {"_io_call", i_io_call}, {"_has_dict", i_has_dict}, {"_own_dict", i_own_dict},
-                    {"_warn", i_bella_import_warning}});
+                    {"_warn", i_bella_import_warning}, {"_gc", i_gc}});
     dict_set(m->dict, Obj::of(N("BlockingIOError")), Obj::of(exception_class("BlockingIOError")));
 }
 void fill_pwd(Module* m) {

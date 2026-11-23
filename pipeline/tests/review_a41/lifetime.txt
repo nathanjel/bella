@@ -1,0 +1,64 @@
+import gc,sys,weakref,abc,enum,io,collections,contextlib,types
+gc.disable()
+row=sys.argv[1]
+seen=[]; saved=[]
+class T: pass
+class R:
+    def __del__(self):
+        seen.append(gc.is_finalized(self))
+        saved.append(self)
+if row in ('refcount','cyclic'):
+    r=R()
+    if row=='cyclic': r.me=r
+    w=weakref.ref(r); del r
+    gc.collect()
+    print(seen,gc.is_finalized(saved[0]))
+    saved[0].me=saved[0]; saved.clear(); gc.collect(); print(w() is None,seen)
+elif row=='weakrev':
+    t=T(); t.me=t; plain=weakref.ref(t)
+    def cb(w): saved.append(plain())
+    w=weakref.ref(t,cb); del t; gc.collect()
+    print(w() is None, plain() is saved[0],saved[0].me is saved[0]); saved.clear(); gc.collect();print(plain() is None)
+elif row=='finalize':
+    t=T(); t.me=t; w=weakref.ref(t)
+    final=weakref.finalize(t,seen.append,'gone'); del t; gc.collect(); print(w() is None,seen,final.alive)
+elif row=='finished':
+    def g(t): yield t
+    t=T(); t.me=t; it=g(t); next(it); next(it,None); t.it=it; w=weakref.ref(t)
+    del t; gc.collect(); print(w() is None, next(it,None))
+elif row=='enum':
+    class E(enum.Enum): A=1
+    t=T(); t.me=t; t.e=E.A; E.A.t=t; w=weakref.ref(t); del t; gc.collect();print(w() is E.A.t)
+    del E.A.t; gc.collect();print(w() is None)
+elif row=='abc':
+    class A(metaclass=abc.ABCMeta): pass
+    class Impl: pass
+    A.register(Impl)
+    t=Impl(); t.me=t; t.reg=A._abc_impl; w=weakref.ref(t);del t; gc.collect();print(w() is None,issubclass(Impl,A))
+elif row=='io':
+    a=io.BytesIO(); b=io.StringIO(); a.b=b; b.a=a; w=weakref.ref(a); del a,b;gc.collect();print(w() is None)
+elif row=='dictshare':
+    a=T(); b=T(); a.p=b; b.p=a; d=vars(a); w=weakref.ref(a); del a,b; gc.collect();print(d['p'].p is w())
+    del d; gc.collect();print(w() is None)
+elif row=='slotshadow':
+    class S: __slots__=('x','__weakref__')
+    class D(S): __slots__=('x','__dict__')
+    t=D(); t.x=t; S.x.__set__(t,t); t.y=t; w=weakref.ref(t); del t; gc.collect();print(w() is None)
+elif row=='nesteddeath':
+    class N:
+        def __del__(self):
+            seen.append(1)
+            if self.depth:
+                n=N(); n.depth=self.depth-1
+    t=N(); t.depth=75; t.me=t; del t; gc.collect(); print(len(seen))
+elif row=='auto':
+    class N:
+        def __del__(self): seen.append(1)
+    gc.enable(); gc.set_threshold(17)
+    for i in range(3000):
+        t=N(); t.t=t
+    del t; gc.collect(); gc.disable(); print(len(seen))
+elif row=='delerror':
+    class N:
+        def __del__(self): raise ValueError('tag')
+    t=N(); t.t=t; del t; gc.collect();print('continued')

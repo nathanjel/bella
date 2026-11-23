@@ -735,6 +735,7 @@ def _scan(self: object, mode: int) -> object:    # _sre_SRE_Scanner_search_impl
 class _BufferHold:
     """What a scanner keeps of its bytes-like string, as its SRE_STATE keeps the buffer: released when the scanner goes (state_fini)."""
 
+    __bella_dealloc__ = True                     # its __del__ is C dealloc code: the collection's finaliser pass leaves it (RL-908)
     __slots__ = ("_string",)
 
     def __del__(self) -> None:
@@ -744,6 +745,7 @@ class _BufferHold:
 class SRE_Scanner:  # noqa: N801
     # scanner_dealloc's order: the state with its subject (state_fini), then the pattern (RL-578)
     __slots__ = ("_b_string", "_c_pos", "_d_endpos", "_e_start", "_f_must_advance", "_g_executing", "_h_hold", "_a_pattern")
+    __untraversed__ = ("_b_string", "_h_hold")   # scanner_traverse visits the pattern alone: the state's subject is held from outside (RL-909)
 
     @property
     def pattern(self) -> object:

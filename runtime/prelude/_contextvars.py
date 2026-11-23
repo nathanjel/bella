@@ -107,6 +107,7 @@ class _Vars(dict):  # type: ignore[type-arg]
     (hamt_node_bitmap_dealloc walks its array from the end); a dict lets go of the key first, so this one empties itself
     when it goes (review A36, RL-811). It is the prelude's own object: no program has it in hand."""
 
+    __bella_dealloc__ = True                     # its __del__ is C dealloc code: the collection's finaliser pass leaves it (RL-908)
     __slots__ = ()
 
     def __del__(self) -> None:

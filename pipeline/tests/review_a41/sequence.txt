@@ -1,0 +1,100 @@
+import gc, sys, weakref
+gc.disable()
+row=sys.argv[1]
+seen=[]
+saved=[]
+class T: pass
+def gen(box):
+    try:
+        yield
+    finally:
+        saved.append(box)
+        seen.append(len(box))
+def gen_case():
+    box=[]
+    g=gen(box)
+    box.append(g)
+    next(g)
+    return weakref.ref(g)
+if row=='gen':
+    w=gen_case()
+    gc.collect()
+    print(seen, [len(b) for b in saved], w() is None)
+elif row=='genflag':
+    def f():
+        try: yield
+        finally: seen.append(gc.is_finalized(w()))
+    g=f(); w=weakref.ref(g); next(g); box=[g]; g.gi_code
+    del g
+    box.clear()
+    print(seen)
+elif row=='genlive':
+    class R:
+        def __del__(self): saved.append(self)
+    def f():
+        try: yield
+        finally: seen.append('closed')
+    def make():
+        obj=R()
+        def through(x):
+            yield from f()
+            print(x)
+        obj.g=through(obj); next(obj.g)
+    make(); gc.collect()
+    print(seen, saved[0].g.gi_suspended)
+elif row=='callbackhold':
+    class C:
+        def __call__(self,r): seen.append(r.__callback__ is self)
+    t=T(); t.me=t
+    cb=C(); c=weakref.ref(cb); w=weakref.ref(t,cb); del t,cb
+    gc.collect()
+    print(seen,c() is None,w.__callback__ is None)
+elif row=='freshweak':
+    class R:
+        def __del__(self):
+            saved.append(weakref.ref(self,lambda r: seen.append('callback')))
+    t=R(); t.me=t; del t
+    gc.collect()
+    print(saved[0]() is None,seen)
+elif row=='latecycle':
+    class R:
+        def __del__(self):
+            t=T(); t.me=t; saved.append(weakref.ref(t))
+    t=R(); t.me=t; del t
+    gc.collect()
+    print(saved[0]() is None)
+    gc.collect()
+    print(saved[0]() is None)
+elif row=='chain':
+    head=[]; tail=head
+    for i in range(100000):
+        n=[]; tail.append(n); tail=n
+    t=T(); w=weakref.ref(t); tail.extend((head,t))
+    del t,head,tail,n
+    gc.collect(); print(w() is None)
+elif row=='tombs':
+    t=T(); t.me=t; w=weakref.ref(t)
+    for i in range(50000):
+        n=T(); twin=n; del twin,n
+    gc.collect(); print(w() is t); del t; gc.collect(); print(w() is None)
+elif row=='phaseinfo':
+    def cb(phase,info): seen.append((phase,[(k,type(v).__name__) for k,v in info.items()]))
+    gc.callbacks.append(cb); gc.collect(); gc.callbacks.clear(); print(seen)
+elif row=='callbackmut':
+    def last(p,i): seen.append((p,'last'))
+    def mid(p,i): seen.append((p,'mid'))
+    def first(p,i):
+        seen.append((p,'first'))
+        gc.callbacks.remove(first); gc.callbacks.append(last); gc.enable(); gc.set_threshold(0); gc.disable()
+    gc.callbacks.extend([first,mid]); gc.collect(); gc.callbacks.clear(); print(seen)
+elif row=='nestedfinal':
+    class R:
+        def __del__(self): gc.collect(); seen.append('del')
+    def call(r): gc.collect(); seen.append('weak')
+    t=R(); t.me=t; w=weakref.ref(t,call); del t; gc.collect();print(seen)
+elif row=='hook':
+    sys.unraisablehook=lambda u: seen.append((u.exc_type.__name__,u.err_msg,u.object is None))
+    class R:
+        def __del__(self): raise ValueError()
+    def cb(p,i): raise KeyError()
+    t=R(); t.me=t; del t; gc.callbacks.append(cb); gc.collect(); gc.callbacks.clear(); print(seen)
