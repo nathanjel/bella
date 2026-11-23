@@ -33,8 +33,12 @@ try:
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
     _type_fullname                               # noqa: B018  # %T: the fully qualified name of an object's type
+    _buffer_export                               # noqa: B018  # a Py_buffer taken or let go: a bytearray's export, a view's own
     _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
+    def _buffer_export(value: object, delta: int) -> None:   # a stand-in for CPython's run of this file
+        pass
+
 
     def _is_view(value: object) -> bool:         # a stand-in for CPython's run of this file
         return type(value) is memoryview
@@ -2056,19 +2060,23 @@ def pwrite(*args: object, **kwds: object) -> int:   # os_pwrite_impl
     fd = _int(args[0])
     data = args[1]
     if _is_view(data):
-        data = _buffer_bytes(data)               # a memoryview: its simple buffer
-    if not issubclass(type(data), (bytes, bytearray)):   # the Py_buffer converter
+        _buffer_bytes(data)                      # a memoryview: its simple buffer, or the error of taking it
+    elif not issubclass(type(data), (bytes, bytearray)):   # the Py_buffer converter
         if _has_slot(data, "__buffer__"):
             _refuse("os.pwrite() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + _type_name(data) + "'")
-    content = _buffer_bytes(data)
-    offset = _off(args[2])
-    _sys("look_lean")
-    result = _sys("pwrite", fd, content, offset)
-    if result < 0:
-        _fail(-result)
-    _sys("look")
-    return result  # type: ignore[no-any-return]
+    _buffer_export(data, 1)                      # the Py_buffer held from the parsing to the call's end (RL-702)
+    try:
+        offset = _off(args[2])
+        content = _buffer_bytes(data)            # read where the C reads it
+        _sys("look_lean")
+        result = _sys("pwrite", fd, content, offset)
+        if result < 0:
+            _fail(-result)
+        _sys("look")
+        return result  # type: ignore[no-any-return]
+    finally:
+        _buffer_export(data, -1)
 
 
 def pwritev(*args: object, **kwds: object) -> int:   # os_pwritev_impl

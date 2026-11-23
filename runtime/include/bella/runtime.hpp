@@ -472,7 +472,8 @@ std::string view_copy(Obj v);
 bool view_simple_ok(Obj v);
 Ref i_bella_export(Obj, Args a);                 // (obj, delta): a bytearray's count of exports, as a view's hold takes and gives it
 Ref i_is_view(Obj, Args a);                      // whether the object is a memoryview, whatever builtins.memoryview is now
-Ref i_view_ok(Obj, Args a);                      // a memoryview whose simple buffer can be had: not released, its items next to each other
+Ref i_view_ok(Obj, Args a);
+Ref i_buffer_export(Obj, Args a);                // (obj, delta): a Py_buffer taken or let go (a bytearray's exports, a view's own)                      // a memoryview whose simple buffer can be had: not released, its items next to each other
 Ref bytes_new(std::string_view s);
 Ref bytes_format(Obj format, Obj args, bool bytearray);   // bytes % args, bytearray % args (_PyBytes_FormatEx)
 Obj bytes_constant(const char* data, std::size_t size);   // a module's constant: it keeps the count

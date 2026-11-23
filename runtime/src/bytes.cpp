@@ -77,6 +77,22 @@ Ref i_is_view(Obj, Args a) {
     positional_only(a, "_is_view", 1, 1);
     return Ref::steal(boolean(is_memoryview(a.pos(0))));
 }
+// (obj, +1 or -1): a Py_buffer of obj taken or let go, as the C's argument parsing takes one and its cleanup lets it go (RL-702):
+// a bytearray's count of exports (a resize is refused while it is held), a memoryview's own (a release is refused)
+Ref i_buffer_export(Obj, Args a) {
+    positional_only(a, "_buffer_export", 2, 2);
+    std::int64_t delta = 0;
+    int_fits_i64(a.pos(1), delta);
+    if (is_kind(a.pos(0), Kind::ByteArray)) static_cast<BytesObject*>(a.pos(0).object())->exports += delta;
+    else if (is_memoryview(a.pos(0))) {
+        Ref now = state_get(a.pos(0), intern("_exports"));
+        std::int64_t n = 0;
+        int_fits_i64(now.get(), n);
+        Ref next = int_from_i64(n + delta);
+        state_set(a.pos(0), intern("_exports"), next.get());
+    }
+    return none_ref();
+}
 Ref i_view_ok(Obj, Args a) {
     positional_only(a, "_view_ok", 1, 1);
     return Ref::steal(boolean(is_memoryview(a.pos(0)) && view_simple_ok(a.pos(0))));

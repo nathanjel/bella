@@ -23,6 +23,7 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _buffer_export                               # noqa: B018  # a Py_buffer taken or let go: a bytearray's export, a view's own
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
@@ -50,6 +51,7 @@ except NameError:
         return operator.index(o)
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+    _buffer_export: Callable[..., None] = _missing
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
         return str.__str__(repr(value))
@@ -105,6 +107,12 @@ def _zlib_error(err: int, zmsg: object, msg: str) -> error:   # zlib_error
     if text is None:
         return error("Error " + str(err) + " " + msg)
     return error("Error " + str(err) + " " + msg + ": " + str(text))
+
+
+def _held(value: object) -> object:              # a Py_buffer taken at the argument's parsing and held to the call's end (RL-702):
+    _buffer(value)                               # _buffer's checks and errors, then the export that refuses a resize or a release
+    _buffer_export(value, 1)
+    return value
 
 
 def _buffer(value: object) -> bytes:             # Py_buffer: bytes, bytearray; the rest stops by name or is no buffer
@@ -163,26 +171,30 @@ def compress(*args: object, **kwds: object) -> bytes:
   wbits
     The window buffer size and container format."""
     given = _arguments("compress", ("", "level", "wbits"), 3, 1, args, kwds)
-    data = _buffer(given[0])
-    level = Z_DEFAULT_COMPRESSION if given[1] is _ABSENT else _int(given[1])
-    wbits = MAX_WBITS if given[2] is _ABSENT else _int(given[2])
-    err, handle, zmsg = _zlib("deflate_init", level, DEFLATED, wbits, DEF_MEM_LEVEL, Z_DEFAULT_STRATEGY)
-    if err == _Z_MEM_ERROR:
-        raise MemoryError("Out of memory while compressing data")
-    if err == _Z_STREAM_ERROR:
-        raise error("Bad compression level")
-    if err != _Z_OK:
-        raise _zlib_error(err, zmsg, "while compressing data")
+    held = _held(given[0])
     try:
-        err, out, zmsg = _zlib("deflate", handle, data, Z_FINISH)
+        level = Z_DEFAULT_COMPRESSION if given[1] is _ABSENT else _int(given[1])
+        wbits = MAX_WBITS if given[2] is _ABSENT else _int(given[2])
+        data = _buffer_bytes(held)              # read where the C reads it, the buffer held from the parsing (RL-702)
+        err, handle, zmsg = _zlib("deflate_init", level, DEFLATED, wbits, DEF_MEM_LEVEL, Z_DEFAULT_STRATEGY)
+        if err == _Z_MEM_ERROR:
+            raise MemoryError("Out of memory while compressing data")
         if err == _Z_STREAM_ERROR:
-            raise _zlib_error(err, zmsg, "while compressing data")
-        err = _zlib("end", handle)
+            raise error("Bad compression level")
         if err != _Z_OK:
-            raise _zlib_error(err, None, "while finishing compression")
-        return out  # type: ignore[no-any-return]
+            raise _zlib_error(err, zmsg, "while compressing data")
+        try:
+            err, out, zmsg = _zlib("deflate", handle, data, Z_FINISH)
+            if err == _Z_STREAM_ERROR:
+                raise _zlib_error(err, zmsg, "while compressing data")
+            err = _zlib("end", handle)
+            if err != _Z_OK:
+                raise _zlib_error(err, None, "while finishing compression")
+            return out  # type: ignore[no-any-return]
+        finally:
+            _zlib("free", handle)
     finally:
-        _zlib("free", handle)
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 def decompress(*args: object, **kwds: object) -> bytes:
@@ -195,28 +207,32 @@ def decompress(*args: object, **kwds: object) -> bytes:
   bufsize
     The initial output buffer size."""
     given = _arguments("decompress", ("", "wbits", "bufsize"), 3, 1, args, kwds)
-    data = _buffer(given[0])
-    wbits = MAX_WBITS if given[1] is _ABSENT else _int(given[1])
-    bufsize = DEF_BUF_SIZE if given[2] is _ABSENT else _ssize(given[2], "bufsize", False)
-    if bufsize == 0:
-        bufsize = 1
-    err, handle, zmsg = _zlib("inflate_init", wbits)
-    if err == _Z_MEM_ERROR:
-        raise MemoryError("Out of memory while decompressing data")
-    if err != _Z_OK:
-        raise _zlib_error(err, zmsg, "while preparing to decompress data")
+    held = _held(given[0])
     try:
-        err, out, _consumed, zmsg, _context = _zlib("inflate", handle, data, -1, bufsize, Z_FINISH, None)
+        wbits = MAX_WBITS if given[1] is _ABSENT else _int(given[1])
+        bufsize = DEF_BUF_SIZE if given[2] is _ABSENT else _ssize(given[2], "bufsize", False)
+        if bufsize == 0:
+            bufsize = 1
+        data = _buffer_bytes(held)              # read where the C reads it, the buffer held from the parsing (RL-702)
+        err, handle, zmsg = _zlib("inflate_init", wbits)
         if err == _Z_MEM_ERROR:
             raise MemoryError("Out of memory while decompressing data")
-        if err != _Z_STREAM_END:
-            raise _zlib_error(err, zmsg, "while decompressing data")
-        err = _zlib("end", handle)
         if err != _Z_OK:
-            raise _zlib_error(err, None, "while finishing decompression")
-        return out  # type: ignore[no-any-return]
+            raise _zlib_error(err, zmsg, "while preparing to decompress data")
+        try:
+            err, out, _consumed, zmsg, _context = _zlib("inflate", handle, data, -1, bufsize, Z_FINISH, None)
+            if err == _Z_MEM_ERROR:
+                raise MemoryError("Out of memory while decompressing data")
+            if err != _Z_STREAM_END:
+                raise _zlib_error(err, zmsg, "while decompressing data")
+            err = _zlib("end", handle)
+            if err != _Z_OK:
+                raise _zlib_error(err, None, "while finishing decompression")
+            return out  # type: ignore[no-any-return]
+        finally:
+            _zlib("free", handle)
     finally:
-        _zlib("free", handle)
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 # ---- Compress and Decompress -----------------------------------------------------------------------------------------------------
@@ -404,21 +420,25 @@ After calling this function, some of the input data may still be stored in
 internal buffers for later processing.
 Call the flush() method to clear these buffers."""
         given = _arguments("decompress", ("", "max_length"), 2, 1, args, kwds)
-        data = _buffer(given[0])
-        max_length = 0 if given[1] is _ABSENT else _ssize(given[1], "max_length", False)
-        if max_length == 0:
-            max_length = -1
-        err, out, consumed, zmsg, context = _zlib("inflate", self._handle, data, max_length, -1, Z_SYNC_FLUSH, self._zdict)
-        if context == "zdict_overflow":          # the dictionary's buffer is read when the stream asks for it (set_inflate_zdict)
-            raise OverflowError("zdict length does not fit in an unsigned int")
-        if context == "setdict":
-            raise _zlib_error(err, zmsg, "while setting zdict")
-        _save_unconsumed_input(self, data, consumed, err)
-        if err == _Z_STREAM_END:
-            self._eof = True                     # inflateEnd waits for flush(), as the C keeps it
-        elif err != _Z_OK and err != _Z_BUF_ERROR:
-            raise _zlib_error(err, zmsg, "while decompressing data")
-        return out  # type: ignore[no-any-return]
+        held = _held(given[0])
+        try:
+            max_length = 0 if given[1] is _ABSENT else _ssize(given[1], "max_length", False)
+            if max_length == 0:
+                max_length = -1
+            data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+            err, out, consumed, zmsg, context = _zlib("inflate", self._handle, data, max_length, -1, Z_SYNC_FLUSH, self._zdict)
+            if context == "zdict_overflow":          # the dictionary's buffer is read when the stream asks for it (set_inflate_zdict)
+                raise OverflowError("zdict length does not fit in an unsigned int")
+            if context == "setdict":
+                raise _zlib_error(err, zmsg, "while setting zdict")
+            _save_unconsumed_input(self, data, consumed, err)
+            if err == _Z_STREAM_END:
+                self._eof = True                     # inflateEnd waits for flush(), as the C keeps it
+            elif err != _Z_OK and err != _Z_BUF_ERROR:
+                raise _zlib_error(err, zmsg, "while decompressing data")
+            return out  # type: ignore[no-any-return]
+        finally:
+            _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
     def flush(self, *args: object, **kwds: object) -> bytes:
         given = _arguments("flush", ("",), 1, 0, args, kwds)
@@ -573,7 +593,7 @@ class _ZlibDecompressor:
     def unused_data(self) -> bytes:
         return self._unused_data
 
-    def decompress(self, *args: object, **kwds: object) -> bytes:
+    def decompress(self,   *args: object, **kwds: object) -> bytes:
         """Decompress *data*, returning uncompressed data as bytes.
 
 If *max_length* is nonnegative, returns at most *max_length* bytes
@@ -590,39 +610,43 @@ Attempting to decompress data after the end of stream is reached
 raises an EOFError.  Any data found after the end of the stream
 is ignored and saved in the unused_data attribute."""
         given = _arguments("decompress", ("data", "max_length"), 2, 1, args, kwds)
-        data = _buffer(given[0])
-        max_length = -1 if given[1] is _ABSENT else _ssize(given[1], "max_length", True)
-        if self._eof:
-            raise EOFError("End of stream already reached")
-        pending = self._input + data                 # decompress(): the buffered input, then the new
-        first = DEF_BUF_SIZE if max_length < 0 else min(max_length, _DEF_MAX_INITIAL_BUF_SIZE)   # decompress_buf's first buffer
-        err, out, consumed, zmsg, context = _zlib("inflate", self._handle, pending, max_length, first, Z_SYNC_FLUSH, None)
-        rest = pending[consumed:]
-        if err == _Z_NEED_DICT:                      # decompress_buf's `goto error` sets no exception: CPython 3.15.2 raises this SystemError
-            self._input = b""
-            raise SystemError("<method 'decompress' of 'zlib._ZlibDecompressor' objects> returned NULL without setting an exception")
-        if err == _Z_STREAM_END:
-            self._eof = True
-            self._initialised = False
-            err = _zlib("end", self._handle)
-            if err != _Z_OK:
+        held = _held(given[0])
+        try:
+            max_length = -1 if given[1] is _ABSENT else _ssize(given[1], "max_length", True)
+            data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+            if self._eof:
+                raise EOFError("End of stream already reached")
+            pending = self._input + data                 # decompress(): the buffered input, then the new
+            first = DEF_BUF_SIZE if max_length < 0 else min(max_length, _DEF_MAX_INITIAL_BUF_SIZE)   # decompress_buf's first buffer
+            err, out, consumed, zmsg, context = _zlib("inflate", self._handle, pending, max_length, first, Z_SYNC_FLUSH, None)
+            rest = pending[consumed:]
+            if err == _Z_NEED_DICT:                      # decompress_buf's `goto error` sets no exception: CPython 3.15.2 raises this SystemError
                 self._input = b""
-                raise _zlib_error(err, None, "while finishing decompression")
-        elif err != _Z_OK and err != _Z_BUF_ERROR:
-            self._input = b""
-            raise _zlib_error(err, zmsg, "while decompressing data")
-        if self._eof:
-            self._needs_input = False
-            if rest:
-                self._unused_data = rest
-            self._input = b""
-        elif not rest:
-            self._input = b""
-            self._needs_input = True
-        else:
-            self._needs_input = False
-            self._input = rest
-        return out  # type: ignore[no-any-return]
+                raise SystemError("<method 'decompress' of 'zlib._ZlibDecompressor' objects> returned NULL without setting an exception")
+            if err == _Z_STREAM_END:
+                self._eof = True
+                self._initialised = False
+                err = _zlib("end", self._handle)
+                if err != _Z_OK:
+                    self._input = b""
+                    raise _zlib_error(err, None, "while finishing decompression")
+            elif err != _Z_OK and err != _Z_BUF_ERROR:
+                self._input = b""
+                raise _zlib_error(err, zmsg, "while decompressing data")
+            if self._eof:
+                self._needs_input = False
+                if rest:
+                    self._unused_data = rest
+                self._input = b""
+            elif not rest:
+                self._input = b""
+                self._needs_input = True
+            else:
+                self._needs_input = False
+                self._input = rest
+            return out  # type: ignore[no-any-return]
+        finally:
+            _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 _ZlibDecompressor.__module__ = "zlib"
@@ -643,9 +667,13 @@ The returned checksum is an integer."""
         raise TypeError("adler32 expected at least 1 argument, got 0")
     if len(args) > 2:
         raise TypeError("adler32 expected at most 2 arguments, got " + str(len(args)))
-    data = _buffer(args[0])
-    value = 1 if len(args) == 1 else _unsigned(args[1], "adler32")
-    return _zlib("adler32", data, value)  # type: ignore[no-any-return]
+    held = _held(args[0])
+    try:
+        value = 1 if len(args) == 1 else _unsigned(args[1], "adler32")
+        data = _buffer_bytes(held)              # read where the C reads it, the buffer held from the parsing (RL-702)
+        return _zlib("adler32", data, value)  # type: ignore[no-any-return]
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 def crc32(*args: object, **kwds: object) -> int:
@@ -661,9 +689,13 @@ The returned checksum is an integer."""
         raise TypeError("crc32 expected at least 1 argument, got 0")
     if len(args) > 2:
         raise TypeError("crc32 expected at most 2 arguments, got " + str(len(args)))
-    data = _buffer(args[0])
-    value = 0 if len(args) == 1 else _unsigned(args[1], "crc32")
-    return _zlib("crc32", data, value)  # type: ignore[no-any-return]
+    held = _held(args[0])
+    try:
+        value = 0 if len(args) == 1 else _unsigned(args[1], "crc32")
+        data = _buffer_bytes(held)              # read where the C reads it, the buffer held from the parsing (RL-702)
+        return _zlib("crc32", data, value)  # type: ignore[no-any-return]
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 def _combine(fname: str, args: tuple[object, ...], kwds: dict[str, object]) -> int:

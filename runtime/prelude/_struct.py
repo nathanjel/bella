@@ -26,6 +26,7 @@ try:
     _as_c_complex                                # noqa: B018  # PyComplex_AsCComplex: (real, imag)
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _buffer_export                               # noqa: B018  # a Py_buffer taken or let go: a bytearray's export, a view's own
     _own_data                                    # noqa: B018  # an argument's own data as the exact base object: the runtime's (RL-698)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
     _type_name                                   # noqa: B018  # _PyType_Name(Py_TYPE(x)): tp_name after its last dot, no attribute of the class (RL-767)
@@ -78,6 +79,7 @@ except NameError:
         return z.real, z.imag
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+    _buffer_export: Callable[..., None] = _missing
     _own_data: Callable[..., Any] = _missing
 
     def _repr_text(value: object) -> str:        # a stand-in for CPython's run of this file
@@ -108,6 +110,28 @@ def _is_bytes_like(value: object) -> bool:
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     return False
+
+
+def _held(value: object) -> object:              # a Py_buffer taken at the argument's parsing and held to the call's end (RL-702):
+    _buffer(value)                               # _buffer's checks and errors, then the export that refuses a resize or a release
+    _buffer_export(value, 1)
+    return value
+
+
+class _BufferHold:                               # a Py_buffer kept beyond a call (unpackiterobject.buf): its export and its object
+    __bella_dealloc__ = True                     # its __del__ is C dealloc code: the collection's finaliser pass leaves it (RL-908)
+    __slots__ = ("_source",)
+
+    def __del__(self) -> None:                   # PyBuffer_Release
+        _buffer_export(self._source, -1)
+
+
+def _octets(source: object, start: int, size: int) -> bytes:   # the buffer's octets where the C reads them, as they are now
+    if issubclass(type(source), bytes):
+        return bytes.__getitem__(source, slice(start, start + size))  # type: ignore[arg-type]
+    if issubclass(type(source), bytearray):
+        return bytes(bytearray.__getitem__(source, slice(start, start + size)))  # type: ignore[arg-type]
+    return _buffer_bytes(source)[start:start + size]
 
 
 def _buffer(value: object) -> bytes:             # Py_buffer, read-only: the bytes
@@ -617,8 +641,9 @@ Struct.__module__ = "_struct"
 
 class unpack_iterator:  # noqa: N801           # _struct.unpack_iterator (Py_TPFLAGS_DISALLOW_INSTANTIATION: made by iter_unpack alone)
     # the C holds the Struct and a Py_buffer, which keeps the object the bytes came from alive until the iterator is
-    # exhausted or goes; it lets go of the Struct first (review A36's saved outputs, RL-840)
-    __slots__ = ("_data", "_index", "_struct", "_source")
+    # exhausted or goes, and refuses a resize meanwhile; it lets go of the Struct first (review A36's saved outputs, RL-840), and
+    # reads the octets at each step (RL-583)
+    __slots__ = ("_data", "_index", "_struct", "_source", "_hold")
 
     def __iter__(self) -> unpack_iterator:
         return self
@@ -630,10 +655,11 @@ class unpack_iterator:  # noqa: N801           # _struct.unpack_iterator (Py_TPF
         if self._index >= len(self._data):
             self._struct = None
             self._data = b""
-            self._source = None                  # PyBuffer_Release
+            self._source = None
+            self._hold = None                    # PyBuffer_Release
             raise StopIteration
         codes, size, length, little = _ready(s)
-        result = _unpack_from(codes, length, little, self._data, self._index)
+        result = _unpack_from(codes, length, little, _octets(self._source, self._index, size), 0)
         self._index += size
         return result
 
@@ -684,19 +710,23 @@ def _unpack_buffer(s: Struct, buffer: object) -> tuple[object, ...]:   # Struct_
 
 
 def _unpack_from_buffer(s: Struct, buffer: object, offset_arg: object) -> tuple[object, ...]:   # Struct_unpack_from_impl
-    data = _buffer(buffer)
-    offset = _ssize(offset_arg)
-    codes, size, length, little = _ready(s)
-    if offset < 0:
-        if offset + size > 0:
-            raise error("not enough data to unpack " + str(size) + " bytes at offset " + str(offset))
-        if offset + len(data) < 0:
-            raise error("offset " + str(offset) + " out of range for " + str(len(data)) + "-byte buffer")
-        offset += len(data)
-    if len(data) - offset < size:
-        raise error("unpack_from requires a buffer of at least " + str(size + offset) + " bytes for unpacking " + str(size)
-                    + " bytes at offset " + str(offset) + " (actual buffer size is " + str(len(data)) + ")")
-    return _unpack_from(codes, length, little, data, offset)
+    held = _held(buffer)
+    try:
+        offset = _ssize(offset_arg)
+        data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+        codes, size, length, little = _ready(s)
+        if offset < 0:
+            if offset + size > 0:
+                raise error("not enough data to unpack " + str(size) + " bytes at offset " + str(offset))
+            if offset + len(data) < 0:
+                raise error("offset " + str(offset) + " out of range for " + str(len(data)) + "-byte buffer")
+            offset += len(data)
+        if len(data) - offset < size:
+            raise error("unpack_from requires a buffer of at least " + str(size + offset) + " bytes for unpacking " + str(size)
+                        + " bytes at offset " + str(offset) + " (actual buffer size is " + str(len(data)) + ")")
+        return _unpack_from(codes, length, little, data, offset)
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 def _iter_unpack(s: Struct, buffer: object) -> unpack_iterator:   # Struct_iter_unpack_impl
@@ -704,12 +734,16 @@ def _iter_unpack(s: Struct, buffer: object) -> unpack_iterator:   # Struct_iter_
     if size == 0:
         raise error("cannot iteratively unpack with a struct of length 0")
     data = _buffer(buffer)
+    hold: _BufferHold = _bella_new_instance(_BufferHold)   # the Py_buffer the iterator keeps (RL-583)
+    hold._source = buffer
+    _buffer_export(buffer, 1)
     if len(data) % size != 0:
         raise error("iterative unpacking requires a buffer of a multiple of " + str(size) + " bytes")
     it: unpack_iterator = _bella_new_instance(unpack_iterator)
     it._struct = s
     it._data = data
     it._source = buffer
+    it._hold = hold
     it._index = 0
     return it
 

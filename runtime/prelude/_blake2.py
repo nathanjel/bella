@@ -20,6 +20,7 @@ try:
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _buffer_export                               # noqa: B018  # a Py_buffer taken or let go: a bytearray's export, a view's own
     _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
 except NameError:
 
@@ -49,6 +50,7 @@ except NameError:
     _unpack_keywords: Callable[..., Any] = _missing
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+    _buffer_export: Callable[..., None] = _missing
 
 _GIL_MINSIZE = 2048
 BLAKE2B_SALT_SIZE = 16
@@ -74,6 +76,12 @@ def _buffer(value: object) -> bytes:             # the data: GET_BUFFER_VIEW_OR_
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     raise TypeError("object supporting the buffer API required")
+
+
+def _py_held(value: object) -> object:           # the clinic's Py_buffer, held to the call's end (RL-702)
+    _py_buffer(value)
+    _buffer_export(value, 1)
+    return value
 
 
 def _py_buffer(value: object) -> bytes:          # key, salt, person: the clinic's Py_buffer
@@ -113,52 +121,57 @@ def _new(name: str, cls: type, args: tuple[object, ...], kwds: dict[str, object]
     values = _unpack_keywords(name, _PARAMETERS, 0, 0, 1, 0, args, kwds, _ABSENT)
     given: dict[str, object] = {parameter: value for parameter, value in zip(_PARAMETERS, values, strict=True) if value is not _ABSENT}
     digest_size = _c_int(given["digest_size"]) if "digest_size" in given else max_digest
-    key = _py_buffer(given["key"]) if "key" in given else b""
-    salt = _py_buffer(given["salt"]) if "salt" in given else b""
-    person = _py_buffer(given["person"]) if "person" in given else b""
-    fanout = _c_int(given["fanout"]) if "fanout" in given else 1
-    depth = _c_int(given["depth"]) if "depth" in given else 1
-    leaf_size = _unsigned(given["leaf_size"], "leaf_size") if "leaf_size" in given else 0
-    node_offset = _unsigned(given["node_offset"], "node_offset") if "node_offset" in given else 0
-    node_depth = _c_int(given["node_depth"]) if "node_depth" in given else 0
-    inner_size = _c_int(given["inner_size"]) if "inner_size" in given else 0
-    last_node = bool(given["last_node"]) if "last_node" in given else False
-    if "usedforsecurity" in given:
-        bool(given["usedforsecurity"])
-    string = given.get("string", _ABSENT)
-    data = given.get("data", _ABSENT)
-    if string is not _ABSENT:                    # an explicit None counts as given: the C warns, then hashes it
+    key_h = _py_held(given["key"]) if "key" in given else b""   # the clinic's Py_buffers, held from the parsing (RL-702)
+    salt_h = _py_held(given["salt"]) if "salt" in given else b""
+    person_h = _py_held(given["person"]) if "person" in given else b""
+    try:
+        fanout = _c_int(given["fanout"]) if "fanout" in given else 1
+        depth = _c_int(given["depth"]) if "depth" in given else 1
+        leaf_size = _unsigned(given["leaf_size"], "leaf_size") if "leaf_size" in given else 0
+        node_offset = _unsigned(given["node_offset"], "node_offset") if "node_offset" in given else 0
+        node_depth = _c_int(given["node_depth"]) if "node_depth" in given else 0
+        inner_size = _c_int(given["inner_size"]) if "inner_size" in given else 0
+        last_node = bool(given["last_node"]) if "last_node" in given else False
+        if "usedforsecurity" in given:
+            bool(given["usedforsecurity"])
+        string = given.get("string", _ABSENT)
+        data = given.get("data", _ABSENT)
+        if string is not _ABSENT:                    # an explicit None counts as given: the C warns, then hashes it
+            if data is not _ABSENT:
+                raise TypeError("'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for "
+                                "removal in a future version.")
+            _bella_refuse("the 'string' keyword parameter of " + name + "() (3.15 warns of its removal)")
+        key, salt, person = _buffer_bytes(key_h), _buffer_bytes(salt_h), _buffer_bytes(person_h)   # read in the impl
+        if digest_size <= 0 or digest_size > max_digest:
+            raise ValueError("digest_size for " + name + " must be between 1 and " + str(max_digest) + " bytes, got " + str(digest_size))
+        if len(key) > max_key:
+            raise ValueError("maximum key length is " + str(max_key) + " bytes, got " + str(len(key)))
+        if len(salt) > salt_size:
+            raise ValueError("maximum salt length is " + str(salt_size) + " bytes, got " + str(len(salt)))
+        if len(person) > salt_size:
+            raise ValueError("maximum person length is " + str(salt_size) + " bytes, got " + str(len(person)))
+        if fanout < 0 or fanout > 255:
+            raise ValueError("'fanout' must be between 0 and 255")
+        if depth < 1 or depth > 255:
+            raise ValueError("'depth' must be between 1 and 255")
+        if node_depth < 0 or node_depth > 255:
+            raise ValueError("'node_depth' must be between 0 and 255")
+        if inner_size < 0 or inner_size > max_digest:
+            raise ValueError("'inner_size' must be between 0 and " + str(max_digest))
+        if leaf_size > 2**32 - 1:
+            raise OverflowError("'leaf_size' is too large")
+        if node_offset > max_offset:
+            raise OverflowError("'node_offset' is too large")
+        self = _bella_new_instance(cls)
+        params = (digest_size, key, salt, person, fanout, depth, leaf_size, int.to_bytes(node_offset, 8, "little"), node_depth, inner_size, last_node)
+        _bella_state_set(self, "_state", _hash_new(name, params))
+        _bella_state_set(self, "_size", digest_size)
         if data is not _ABSENT:
-            raise TypeError("'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for "
-                            "removal in a future version.")
-        _bella_refuse("the 'string' keyword parameter of " + name + "() (3.15 warns of its removal)")
-    if digest_size <= 0 or digest_size > max_digest:
-        raise ValueError("digest_size for " + name + " must be between 1 and " + str(max_digest) + " bytes, got " + str(digest_size))
-    if len(key) > max_key:
-        raise ValueError("maximum key length is " + str(max_key) + " bytes, got " + str(len(key)))
-    if len(salt) > salt_size:
-        raise ValueError("maximum salt length is " + str(salt_size) + " bytes, got " + str(len(salt)))
-    if len(person) > salt_size:
-        raise ValueError("maximum person length is " + str(salt_size) + " bytes, got " + str(len(person)))
-    if fanout < 0 or fanout > 255:
-        raise ValueError("'fanout' must be between 0 and 255")
-    if depth < 1 or depth > 255:
-        raise ValueError("'depth' must be between 1 and 255")
-    if node_depth < 0 or node_depth > 255:
-        raise ValueError("'node_depth' must be between 0 and 255")
-    if inner_size < 0 or inner_size > max_digest:
-        raise ValueError("'inner_size' must be between 0 and " + str(max_digest))
-    if leaf_size > 2**32 - 1:
-        raise OverflowError("'leaf_size' is too large")
-    if node_offset > max_offset:
-        raise OverflowError("'node_offset' is too large")
-    self = _bella_new_instance(cls)
-    params = (digest_size, key, salt, person, fanout, depth, leaf_size, int.to_bytes(node_offset, 8, "little"), node_depth, inner_size, last_node)
-    _bella_state_set(self, "_state", _hash_new(name, params))
-    _bella_state_set(self, "_size", digest_size)
-    if data is not _ABSENT:
-        _bella_state_set(self, "_state", _hash_update(self._state, _buffer(data)))  # type: ignore[attr-defined]
-    return self
+            _bella_state_set(self, "_state", _hash_update(self._state, _buffer(data)))  # type: ignore[attr-defined]
+        return self
+    finally:
+        for h in (key_h, salt_h, person_h):
+            _buffer_export(h, -1)            # PyBuffer_Release, in the clinic's order
 
 
 def _no_args(qualname: str, args: tuple[object, ...], kwds: dict[str, object]) -> None:

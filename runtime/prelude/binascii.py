@@ -18,6 +18,7 @@ try:
     _warn                                        # noqa: B018  # PyErr_WarnEx(category, message, 1): a message and the category's name
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _buffer_bytes                                # noqa: B018  # a bytes's or bytearray's octets as an exact bytes: the runtime's (RL-698)
+    _buffer_export                               # noqa: B018  # a Py_buffer taken or let go: a bytearray's export, a view's own
     _is_view                                     # noqa: B018  # the object is a memoryview, whatever builtins.memoryview is now
     _view_ok                                     # noqa: B018  # a memoryview whose simple buffer can be had
 except NameError:
@@ -52,6 +53,7 @@ except NameError:
         return operator.index(o)
     _has_slot: Callable[..., bool] = _missing
     _buffer_bytes: Callable[..., bytes] = _missing
+    _buffer_export: Callable[..., None] = _missing
 
 ASCII85_ALPHABET = b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'
 BASE32HEX_ALPHABET = b"0123456789ABCDEFGHIJKLMNOPQRSTUV"
@@ -87,6 +89,20 @@ def _is_bytes_like(value: object) -> bool:
     if _has_slot(value, "__buffer__"):
         _bella_refuse("[P2+] the buffer protocol (__buffer__)")
     return False
+
+
+def _held(value: object) -> object:              # a Py_buffer taken at the argument's parsing and held to the call's end (RL-702):
+    _buffer(value)                               # _buffer's checks and errors, then the export that refuses a resize or a release
+    _buffer_export(value, 1)
+    return value
+
+
+def _held_ascii(value: object) -> object:        # ascii_buffer_converter's Py_buffer, held the same way; a str is its octets
+    if issubclass(type(value), str):
+        return _ascii_buffer(value)
+    _ascii_buffer(value)
+    _buffer_export(value, 1)
+    return value
 
 
 def _buffer(value: object) -> bytes:             # Py_buffer: PyObject_GetBuffer, read-only
@@ -252,68 +268,72 @@ def a2b_base64(*args: object, **kwds: object) -> bytes:
   canonical
     When set to true, reject non-zero padding bits per RFC 4648 section 3.5."""
     data, strict_mode, padded, alphabet, ignorechars, canonical = _unpack("a2b_base64", args, kwds, 1, ("strict_mode", "padded", "alphabet", "ignorechars", "canonical"))
-    ascii_data = _ascii_buffer(data)
-    strict = bool(strict_mode) if strict_mode is not _ABSENT else -1
-    is_padded = True if padded is _ABSENT else bool(padded)
-    is_canonical = False if canonical is _ABSENT else bool(canonical)
-    ignore: bytes | None = None if ignorechars is _ABSENT else _buffer(ignorechars)
-    if strict == -1:
-        strict = ignore is not None
-    if not strict or ignore is None or len(ignore) == 0:
-        ignore = None
-    table = _TABLE_A2B_BASE64 if alphabet is _ABSENT else _reverse_table(_bytes_arg("a2b_base64", "alphabet", alphabet), 64, _BASE64_PAD)
+    held = _held_ascii(data)
+    try:
+        strict = bool(strict_mode) if strict_mode is not _ABSENT else -1
+        is_padded = True if padded is _ABSENT else bool(padded)
+        is_canonical = False if canonical is _ABSENT else bool(canonical)
+        ignore: bytes | None = None if ignorechars is _ABSENT else _buffer(ignorechars)
+        ascii_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+        if strict == -1:
+            strict = ignore is not None
+        if not strict or ignore is None or len(ignore) == 0:
+            ignore = None
+        table = _TABLE_A2B_BASE64 if alphabet is _ABSENT else _reverse_table(_bytes_arg("a2b_base64", "alphabet", alphabet), 64, _BASE64_PAD)
 
-    def ignored(c: int) -> bool:                 # ignorechar
-        return ignore is not None and c in ignore
+        def ignored(c: int) -> bool:                 # ignorechar
+            return ignore is not None and c in ignore
 
-    out = bytearray()
-    quad_pos = 0
-    leftchar = 0
-    pads = 0
-    for this_ch in ascii_data:
-        if is_padded and this_ch == _BASE64_PAD:
-            pads += 1
-            if quad_pos >= 2 and quad_pos + pads <= 4:
-                continue
-            # RFC 4648, section 3.3: a pad before the end may be ignored, and so may excess pads
-            if not strict or ignored(_BASE64_PAD):
-                continue
-            if quad_pos == 1:
-                break                            # the error below
-            raise Error("Leading padding not allowed" if quad_pos == 0 and len(out) == 0 else "Excess padding not allowed")
-        v = table[this_ch]
-        if v >= 64:
-            if strict and not ignored(this_ch):
-                raise Error("Padding not allowed" if this_ch == _BASE64_PAD else "Only base64 data is allowed")
-            continue
-        # data in the middle of the padding (RFC 4648, section 3.3)
-        if pads and strict and not ignored(_BASE64_PAD):
-            raise Error("Excess data after padding" if quad_pos + pads == 4 else "Discontinuous padding not allowed")
+        out = bytearray()
+        quad_pos = 0
+        leftchar = 0
         pads = 0
-        if quad_pos == 0:
-            quad_pos = 1
-            leftchar = v
-        elif quad_pos == 1:
-            quad_pos = 2
-            out.append(((leftchar << 2) | (v >> 4)) & 0xFF)
-            leftchar = v & 0x0F
-        elif quad_pos == 2:
-            quad_pos = 3
-            out.append(((leftchar << 4) | (v >> 2)) & 0xFF)
-            leftchar = v & 0x03
-        else:
-            quad_pos = 0
-            out.append(((leftchar << 6) | v) & 0xFF)
-            leftchar = 0
-    if quad_pos == 1:
-        # one valid, non-padding character over: no input encodes to that length
-        raise Error("Invalid base64-encoded string: number of data characters (" + str(len(out) // 3 * 4 + 1)
-                    + ") cannot be 1 more than a multiple of 4")
-    if is_padded and quad_pos != 0 and quad_pos + pads < 4:
-        raise Error("Incorrect padding")
-    if is_canonical and leftchar != 0:           # RFC 4648, section 3.5
-        raise Error("Non-zero padding bits")
-    return bytes(out)
+        for this_ch in ascii_data:
+            if is_padded and this_ch == _BASE64_PAD:
+                pads += 1
+                if quad_pos >= 2 and quad_pos + pads <= 4:
+                    continue
+                # RFC 4648, section 3.3: a pad before the end may be ignored, and so may excess pads
+                if not strict or ignored(_BASE64_PAD):
+                    continue
+                if quad_pos == 1:
+                    break                            # the error below
+                raise Error("Leading padding not allowed" if quad_pos == 0 and len(out) == 0 else "Excess padding not allowed")
+            v = table[this_ch]
+            if v >= 64:
+                if strict and not ignored(this_ch):
+                    raise Error("Padding not allowed" if this_ch == _BASE64_PAD else "Only base64 data is allowed")
+                continue
+            # data in the middle of the padding (RFC 4648, section 3.3)
+            if pads and strict and not ignored(_BASE64_PAD):
+                raise Error("Excess data after padding" if quad_pos + pads == 4 else "Discontinuous padding not allowed")
+            pads = 0
+            if quad_pos == 0:
+                quad_pos = 1
+                leftchar = v
+            elif quad_pos == 1:
+                quad_pos = 2
+                out.append(((leftchar << 2) | (v >> 4)) & 0xFF)
+                leftchar = v & 0x0F
+            elif quad_pos == 2:
+                quad_pos = 3
+                out.append(((leftchar << 4) | (v >> 2)) & 0xFF)
+                leftchar = v & 0x03
+            else:
+                quad_pos = 0
+                out.append(((leftchar << 6) | v) & 0xFF)
+                leftchar = 0
+        if quad_pos == 1:
+            # one valid, non-padding character over: no input encodes to that length
+            raise Error("Invalid base64-encoded string: number of data characters (" + str(len(out) // 3 * 4 + 1)
+                        + ") cannot be 1 more than a multiple of 4")
+        if is_padded and quad_pos != 0 and quad_pos + pads < 4:
+            raise Error("Incorrect padding")
+        if is_canonical and leftchar != 0:           # RFC 4648, section 3.5
+            raise Error("Non-zero padding bits")
+        return bytes(out)
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 def _wraplines(data: bytearray, width: int) -> bytearray:   # wraplines: '\n' every width characters
@@ -333,52 +353,56 @@ def b2a_base64(*args: object, **kwds: object) -> bytes:
   padded
     When set to false, omit padding in the output."""
     data, padded, wrapcol, newline, alphabet = _unpack("b2a_base64", args, kwds, 1, ("padded", "wrapcol", "newline", "alphabet"))
-    bin_data = _buffer(data)
-    is_padded = True if padded is _ABSENT else bool(padded)
-    width = 0 if wrapcol is _ABSENT else _size_t(wrapcol)
-    add_newline = True if newline is _ABSENT else bool(newline)
-    table = BASE64_ALPHABET if alphabet is _ABSENT else _buffer(alphabet)
-    if len(table) != 64:
-        raise ValueError("alphabet must have length 64")
-    bin_len = len(bin_data)
-    out_len = (bin_len + 2) // 3 * 4
-    pads = (3 - (bin_len % 3)) % 3 * 4 // 3
-    if not is_padded:
-        out_len -= pads
-        pads = 0
-    if width and out_len:
-        width = 4 if width < 4 else width // 4 * 4   # each line a whole number of bytes
-        out_len += (out_len - 1) // width
-    if add_newline:
-        out_len += 1
-    if out_len > 2**63 - 1:
-        raise Error("Too much data for base64")
-    out = bytearray()
-    i = 0
-    while i + 3 <= bin_len:
-        combined = (bin_data[i] << 16) | (bin_data[i + 1] << 8) | bin_data[i + 2]
-        out.append(table[(combined >> 18) & 0x3F])
-        out.append(table[(combined >> 12) & 0x3F])
-        out.append(table[(combined >> 6) & 0x3F])
-        out.append(table[combined & 0x3F])
-        i += 3
-    rest = bin_len - i
-    if rest == 1:
-        val = bin_data[i]
-        out.append(table[(val >> 2) & 0x3F])
-        out.append(table[(val << 4) & 0x3F])
-    elif rest == 2:
-        val = (bin_data[i] << 8) | bin_data[i + 1]
-        out.append(table[(val >> 10) & 0x3F])
-        out.append(table[(val >> 4) & 0x3F])
-        out.append(table[(val << 2) & 0x3F])
-    for _ in range(pads):
-        out.append(_BASE64_PAD)
-    if width:
-        out = _wraplines(out, width)
-    if add_newline:
-        out.append(10)                           # a courtesy newline
-    return bytes(out)
+    held = _held(data)
+    try:
+        is_padded = True if padded is _ABSENT else bool(padded)
+        width = 0 if wrapcol is _ABSENT else _size_t(wrapcol)
+        add_newline = True if newline is _ABSENT else bool(newline)
+        table = BASE64_ALPHABET if alphabet is _ABSENT else _buffer(alphabet)
+        bin_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+        if len(table) != 64:
+            raise ValueError("alphabet must have length 64")
+        bin_len = len(bin_data)
+        out_len = (bin_len + 2) // 3 * 4
+        pads = (3 - (bin_len % 3)) % 3 * 4 // 3
+        if not is_padded:
+            out_len -= pads
+            pads = 0
+        if width and out_len:
+            width = 4 if width < 4 else width // 4 * 4   # each line a whole number of bytes
+            out_len += (out_len - 1) // width
+        if add_newline:
+            out_len += 1
+        if out_len > 2**63 - 1:
+            raise Error("Too much data for base64")
+        out = bytearray()
+        i = 0
+        while i + 3 <= bin_len:
+            combined = (bin_data[i] << 16) | (bin_data[i + 1] << 8) | bin_data[i + 2]
+            out.append(table[(combined >> 18) & 0x3F])
+            out.append(table[(combined >> 12) & 0x3F])
+            out.append(table[(combined >> 6) & 0x3F])
+            out.append(table[combined & 0x3F])
+            i += 3
+        rest = bin_len - i
+        if rest == 1:
+            val = bin_data[i]
+            out.append(table[(val >> 2) & 0x3F])
+            out.append(table[(val << 4) & 0x3F])
+        elif rest == 2:
+            val = (bin_data[i] << 8) | bin_data[i + 1]
+            out.append(table[(val >> 10) & 0x3F])
+            out.append(table[(val >> 4) & 0x3F])
+            out.append(table[(val << 2) & 0x3F])
+        for _ in range(pads):
+            out.append(_BASE64_PAD)
+        if width:
+            out = _wraplines(out, width)
+        if add_newline:
+            out.append(10)                           # a courtesy newline
+        return bytes(out)
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 # ---- base32 (binascii_a2b_base32_impl, binascii_b2a_base32_impl) -----------------------------------------------------------
@@ -399,76 +423,80 @@ def a2b_base32(*args: object, **kwds: object) -> bytes:
   canonical
     When set to true, reject non-zero padding bits per RFC 4648 section 3.5."""
     data, padded, alphabet, ignorechars, canonical = _unpack("a2b_base32", args, kwds, 1, ("padded", "alphabet", "ignorechars", "canonical"))
-    ascii_data = _ascii_buffer(data)
-    is_padded = True if padded is _ABSENT else bool(padded)
-    table = _TABLE_A2B_BASE32 if alphabet is _ABSENT else _reverse_table(_bytes_arg("a2b_base32", "alphabet", alphabet), 32, _BASE32_PAD)
-    ignore: bytes | None = None if ignorechars is _ABSENT else _buffer(ignorechars)
-    is_canonical = False if canonical is _ABSENT else bool(canonical)
-    if ignore is not None and len(ignore) == 0:
-        ignore = None
+    held = _held_ascii(data)
+    try:
+        is_padded = True if padded is _ABSENT else bool(padded)
+        table = _TABLE_A2B_BASE32 if alphabet is _ABSENT else _reverse_table(_bytes_arg("a2b_base32", "alphabet", alphabet), 32, _BASE32_PAD)
+        ignore: bytes | None = None if ignorechars is _ABSENT else _buffer(ignorechars)
+        is_canonical = False if canonical is _ABSENT else bool(canonical)
+        ascii_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+        if ignore is not None and len(ignore) == 0:
+            ignore = None
 
-    def ignored(c: int) -> bool:                 # ignorechar
-        return ignore is not None and c in ignore
+        def ignored(c: int) -> bool:                 # ignorechar
+            return ignore is not None and c in ignore
 
-    out = bytearray()
-    leftchar = 0
-    octa_pos = 0
-    pads = 0
-    for this_ch in ascii_data:
-        if is_padded and this_ch == _BASE32_PAD:   # a pad sequence, at the positions it may take
-            pads += 1
-            if octa_pos in (2, 4, 5, 7) and octa_pos + pads <= 8:
+        out = bytearray()
+        leftchar = 0
+        octa_pos = 0
+        pads = 0
+        for this_ch in ascii_data:
+            if is_padded and this_ch == _BASE32_PAD:   # a pad sequence, at the positions it may take
+                pads += 1
+                if octa_pos in (2, 4, 5, 7) and octa_pos + pads <= 8:
+                    continue
+                # RFC 4648, section 3.3: a pad before the end may be ignored, and so may excess pads
+                if ignored(_BASE32_PAD):
+                    continue
+                if octa_pos in (1, 3, 6):
+                    break                            # the error below
+                raise Error("Leading padding not allowed" if octa_pos == 0 and len(out) == 0 else "Excess padding not allowed")
+            v = table[this_ch]
+            if v >= 32:                              # RFC 4648, section 3.3
+                if not ignored(this_ch):
+                    raise Error("Padding not allowed" if this_ch == _BASE32_PAD else "Only base32 data is allowed")
                 continue
-            # RFC 4648, section 3.3: a pad before the end may be ignored, and so may excess pads
-            if ignored(_BASE32_PAD):
-                continue
-            if octa_pos in (1, 3, 6):
-                break                            # the error below
-            raise Error("Leading padding not allowed" if octa_pos == 0 and len(out) == 0 else "Excess padding not allowed")
-        v = table[this_ch]
-        if v >= 32:                              # RFC 4648, section 3.3
-            if not ignored(this_ch):
-                raise Error("Padding not allowed" if this_ch == _BASE32_PAD else "Only base32 data is allowed")
-            continue
-        if pads and not ignored(_BASE32_PAD):    # data in the middle of the padding (RFC 4648, section 3.3)
-            raise Error("Excess data after padding" if octa_pos + pads == 8 else "Discontinuous padding not allowed")
-        if octa_pos == 0:
-            octa_pos = 1
-            leftchar = v
-        elif octa_pos == 1:
-            octa_pos = 2
-            out.append(((leftchar << 3) | (v >> 2)) & 0xFF)
-            leftchar = v & 0x03
-        elif octa_pos == 2:
-            octa_pos = 3
-            leftchar = (leftchar << 5) | v
-        elif octa_pos == 3:
-            octa_pos = 4
-            out.append(((leftchar << 1) | (v >> 4)) & 0xFF)
-            leftchar = v & 0x0F
-        elif octa_pos == 4:
-            octa_pos = 5
-            out.append(((leftchar << 4) | (v >> 1)) & 0xFF)
-            leftchar = v & 0x01
-        elif octa_pos == 5:
-            octa_pos = 6
-            leftchar = (leftchar << 5) | v
-        elif octa_pos == 6:
-            octa_pos = 7
-            out.append(((leftchar << 2) | (v >> 3)) & 0xFF)
-            leftchar = v & 0x07
-        else:
-            octa_pos = 0
-            out.append(((leftchar << 5) | v) & 0xFF)
-            leftchar = 0
-    if octa_pos in (1, 3, 6):
-        raise Error("Invalid base32-encoded string: number of data characters (" + str(len(out) // 5 * 8 + octa_pos)
-                    + ") cannot be 1, 3, or 6 more than a multiple of 8")
-    if is_padded and octa_pos != 0 and octa_pos + pads < 8:
-        raise Error("Incorrect padding")
-    if is_canonical and leftchar != 0:           # RFC 4648, section 3.5
-        raise Error("Non-zero padding bits")
-    return bytes(out)
+            if pads and not ignored(_BASE32_PAD):    # data in the middle of the padding (RFC 4648, section 3.3)
+                raise Error("Excess data after padding" if octa_pos + pads == 8 else "Discontinuous padding not allowed")
+            if octa_pos == 0:
+                octa_pos = 1
+                leftchar = v
+            elif octa_pos == 1:
+                octa_pos = 2
+                out.append(((leftchar << 3) | (v >> 2)) & 0xFF)
+                leftchar = v & 0x03
+            elif octa_pos == 2:
+                octa_pos = 3
+                leftchar = (leftchar << 5) | v
+            elif octa_pos == 3:
+                octa_pos = 4
+                out.append(((leftchar << 1) | (v >> 4)) & 0xFF)
+                leftchar = v & 0x0F
+            elif octa_pos == 4:
+                octa_pos = 5
+                out.append(((leftchar << 4) | (v >> 1)) & 0xFF)
+                leftchar = v & 0x01
+            elif octa_pos == 5:
+                octa_pos = 6
+                leftchar = (leftchar << 5) | v
+            elif octa_pos == 6:
+                octa_pos = 7
+                out.append(((leftchar << 2) | (v >> 3)) & 0xFF)
+                leftchar = v & 0x07
+            else:
+                octa_pos = 0
+                out.append(((leftchar << 5) | v) & 0xFF)
+                leftchar = 0
+        if octa_pos in (1, 3, 6):
+            raise Error("Invalid base32-encoded string: number of data characters (" + str(len(out) // 5 * 8 + octa_pos)
+                        + ") cannot be 1, 3, or 6 more than a multiple of 8")
+        if is_padded and octa_pos != 0 and octa_pos + pads < 8:
+            raise Error("Incorrect padding")
+        if is_canonical and leftchar != 0:           # RFC 4648, section 3.5
+            raise Error("Non-zero padding bits")
+        return bytes(out)
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 def b2a_base32(*args: object, **kwds: object) -> bytes:
@@ -477,48 +505,52 @@ def b2a_base32(*args: object, **kwds: object) -> bytes:
   padded
     When set to false, omit padding in the output."""
     data, padded, wrapcol, alphabet = _unpack("b2a_base32", args, kwds, 1, ("padded", "wrapcol", "alphabet"))
-    bin_data = _buffer(data)
-    is_padded = True if padded is _ABSENT else bool(padded)
-    width = 0 if wrapcol is _ABSENT else _size_t(wrapcol)
-    table = BASE32_ALPHABET if alphabet is _ABSENT else _buffer(alphabet)
-    if len(table) != 32:
-        raise ValueError("alphabet must have length 32")
-    bin_len = len(bin_data)
-    out_len = (bin_len + 4) // 5 * 8
-    pads = (5 - (bin_len % 5)) % 5 * 8 // 5
-    if not is_padded:
-        out_len -= pads
-        pads = 0
-    if width and out_len:
-        width = 8 if width < 8 else width // 8 * 8   # each line a whole number of bytes
-        out_len += (out_len - 1) // width
-    if out_len > 2**63 - 1:
-        raise Error("Too much data for base32")
-    out = bytearray()
-    i = 0
-    while i + 5 <= bin_len:
-        val = (bin_data[i] << 32) | (bin_data[i + 1] << 24) | (bin_data[i + 2] << 16) | (bin_data[i + 3] << 8) | bin_data[i + 4]
-        for shift in (35, 30, 25, 20, 15, 10, 5, 0):
-            out.append(table[(val >> shift) & 0x1F])
-        i += 5
-    rest = bin_len - i
-    if rest == 1:
-        val = bin_data[i]
-        out += bytes((table[(val >> 3) & 0x1F], table[(val << 2) & 0x1F]))
-    elif rest == 2:
-        val = (bin_data[i] << 8) | bin_data[i + 1]
-        out += bytes(table[(val >> k) & 0x1F] for k in (11, 6, 1)) + bytes((table[(val << 4) & 0x1F],))
-    elif rest == 3:
-        val = (bin_data[i] << 16) | (bin_data[i + 1] << 8) | bin_data[i + 2]
-        out += bytes(table[(val >> k) & 0x1F] for k in (19, 14, 9, 4)) + bytes((table[(val << 1) & 0x1F],))
-    elif rest == 4:
-        val = (bin_data[i] << 24) | (bin_data[i + 1] << 16) | (bin_data[i + 2] << 8) | bin_data[i + 3]
-        out += bytes(table[(val >> k) & 0x1F] for k in (27, 22, 17, 12, 7, 2)) + bytes((table[(val << 3) & 0x1F],))
-    for _ in range(pads):
-        out.append(_BASE32_PAD)
-    if width and out_len:
-        out = _wraplines(out, width)
-    return bytes(out)
+    held = _held(data)
+    try:
+        is_padded = True if padded is _ABSENT else bool(padded)
+        width = 0 if wrapcol is _ABSENT else _size_t(wrapcol)
+        table = BASE32_ALPHABET if alphabet is _ABSENT else _buffer(alphabet)
+        bin_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+        if len(table) != 32:
+            raise ValueError("alphabet must have length 32")
+        bin_len = len(bin_data)
+        out_len = (bin_len + 4) // 5 * 8
+        pads = (5 - (bin_len % 5)) % 5 * 8 // 5
+        if not is_padded:
+            out_len -= pads
+            pads = 0
+        if width and out_len:
+            width = 8 if width < 8 else width // 8 * 8   # each line a whole number of bytes
+            out_len += (out_len - 1) // width
+        if out_len > 2**63 - 1:
+            raise Error("Too much data for base32")
+        out = bytearray()
+        i = 0
+        while i + 5 <= bin_len:
+            val = (bin_data[i] << 32) | (bin_data[i + 1] << 24) | (bin_data[i + 2] << 16) | (bin_data[i + 3] << 8) | bin_data[i + 4]
+            for shift in (35, 30, 25, 20, 15, 10, 5, 0):
+                out.append(table[(val >> shift) & 0x1F])
+            i += 5
+        rest = bin_len - i
+        if rest == 1:
+            val = bin_data[i]
+            out += bytes((table[(val >> 3) & 0x1F], table[(val << 2) & 0x1F]))
+        elif rest == 2:
+            val = (bin_data[i] << 8) | bin_data[i + 1]
+            out += bytes(table[(val >> k) & 0x1F] for k in (11, 6, 1)) + bytes((table[(val << 4) & 0x1F],))
+        elif rest == 3:
+            val = (bin_data[i] << 16) | (bin_data[i + 1] << 8) | bin_data[i + 2]
+            out += bytes(table[(val >> k) & 0x1F] for k in (19, 14, 9, 4)) + bytes((table[(val << 1) & 0x1F],))
+        elif rest == 4:
+            val = (bin_data[i] << 24) | (bin_data[i + 1] << 16) | (bin_data[i + 2] << 8) | bin_data[i + 3]
+            out += bytes(table[(val >> k) & 0x1F] for k in (27, 22, 17, 12, 7, 2)) + bytes((table[(val << 3) & 0x1F],))
+        for _ in range(pads):
+            out.append(_BASE32_PAD)
+        if width and out_len:
+            out = _wraplines(out, width)
+        return bytes(out)
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 # ---- crc32 (internal_crc32, or zlib's: the same answer) --------------------------------------------------------------------
@@ -539,11 +571,15 @@ _CRC32_TAB = _crc32_table()
 def crc32(*args: object, **kwds: object) -> int:
     """Compute CRC-32 incrementally."""
     _positional("crc32", args, kwds, 1, 2)
-    bin_data = _buffer(args[0])
-    value = (_unsigned_int_mask(args[1]) if len(args) > 1 else 0) ^ 0xFFFFFFFF
-    for b in bin_data:
-        value = _CRC32_TAB[(value ^ b) & 0xFF] ^ (value >> 8)
-    return value ^ 0xFFFFFFFF
+    held = _held(args[0])
+    try:
+        value = (_unsigned_int_mask(args[1]) if len(args) > 1 else 0) ^ 0xFFFFFFFF
+        bin_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+        for b in bin_data:
+            value = _CRC32_TAB[(value ^ b) & 0xFF] ^ (value >> 8)
+        return value ^ 0xFFFFFFFF
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 # ---- hex (binascii_b2a_hex_impl: _Py_strhex_bytes_with_sep, the method's; binascii_a2b_hex_impl) -----------------------------
@@ -579,63 +615,67 @@ def _strhex(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> byt
     """_Py_strhex_bytes_with_sep (Python/pystrhex.c): bytes.hex's rules, but a one-character str separator may be any Latin-1
     character when the answer is bytes."""
     data, sep, bytes_per_sep = _unpack_positional_or_keyword(name, args, kwds, ("data", "sep", "bytes_per_sep"), 1)
-    bin_data = _buffer(data)
-    group = 1 if bytes_per_sep is _ABSENT else _ssize(bytes_per_sep)
-    sep_char = 0
-    if sep is _ABSENT:
-        group = 0
-    else:
-        if len(sep) != 1:  # type: ignore[arg-type]   # PyObject_Length, then the test
-            raise ValueError("sep must be length 1.")
-        if issubclass(type(sep), str):
-            sep_char = ord(sep)  # type: ignore[arg-type]
-            if sep_char > 255:
-                raise ValueError("sep must be ASCII.")
-        elif issubclass(type(sep), bytes):
-            sep_char = _buffer_bytes(sep)[0]     # PyBytes_AS_STRING(sep)[0]: the byte itself (RL-680)
+    held = _held(data)
+    try:
+        group = 1 if bytes_per_sep is _ABSENT else _ssize(bytes_per_sep)
+        sep_char = 0
+        if sep is _ABSENT:
+            group = 0
         else:
-            raise TypeError("sep must be str or bytes.")
-    arglen = len(bin_data)
-    if abs(group) >= arglen:
-        group = 0
-    out = bytearray()
-    if group == 0:
-        for c in bin_data:
+            if len(sep) != 1:  # type: ignore[arg-type]   # PyObject_Length, then the test
+                raise ValueError("sep must be length 1.")
+            if issubclass(type(sep), str):
+                sep_char = ord(sep)  # type: ignore[arg-type]
+                if sep_char > 255:
+                    raise ValueError("sep must be ASCII.")
+            elif issubclass(type(sep), bytes):
+                sep_char = _buffer_bytes(sep)[0]     # PyBytes_AS_STRING(sep)[0]: the byte itself (RL-680)
+            else:
+                raise TypeError("sep must be str or bytes.")
+        bin_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+        arglen = len(bin_data)
+        if abs(group) >= arglen:
+            group = 0
+        out = bytearray()
+        if group == 0:
+            for c in bin_data:
+                out.append(_HEXDIGITS[c >> 4])
+                out.append(_HEXDIGITS[c & 0x0F])
+            return bytes(out)
+        width = abs(group)
+        chunks = (arglen - 1) // width
+        if group < 0:                                # counted from the left
+            i = 0
+            for _ in range(chunks):
+                for _ in range(width):
+                    c = bin_data[i]
+                    i += 1
+                    out.append(_HEXDIGITS[c >> 4])
+                    out.append(_HEXDIGITS[c & 0x0F])
+                out.append(sep_char)
+            while i < arglen:
+                c = bin_data[i]
+                i += 1
+                out.append(_HEXDIGITS[c >> 4])
+                out.append(_HEXDIGITS[c & 0x0F])
+            return bytes(out)
+        head = arglen - chunks * width                # counted from the right: the short group first
+        i = 0
+        while i < head:
+            c = bin_data[i]
+            i += 1
             out.append(_HEXDIGITS[c >> 4])
             out.append(_HEXDIGITS[c & 0x0F])
-        return bytes(out)
-    width = abs(group)
-    chunks = (arglen - 1) // width
-    if group < 0:                                # counted from the left
-        i = 0
         for _ in range(chunks):
+            out.append(sep_char)
             for _ in range(width):
                 c = bin_data[i]
                 i += 1
                 out.append(_HEXDIGITS[c >> 4])
                 out.append(_HEXDIGITS[c & 0x0F])
-            out.append(sep_char)
-        while i < arglen:
-            c = bin_data[i]
-            i += 1
-            out.append(_HEXDIGITS[c >> 4])
-            out.append(_HEXDIGITS[c & 0x0F])
         return bytes(out)
-    head = arglen - chunks * width                # counted from the right: the short group first
-    i = 0
-    while i < head:
-        c = bin_data[i]
-        i += 1
-        out.append(_HEXDIGITS[c >> 4])
-        out.append(_HEXDIGITS[c & 0x0F])
-    for _ in range(chunks):
-        out.append(sep_char)
-        for _ in range(width):
-            c = bin_data[i]
-            i += 1
-            out.append(_HEXDIGITS[c >> 4])
-            out.append(_HEXDIGITS[c & 0x0F])
-    return bytes(out)
+    finally:
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
 
 
 _HEX_DIGITS = {c: v for v, c in enumerate(b"0123456789abcdef")} | {c: v for v, c in enumerate(b"0123456789ABCDEF")}   # _PyLong_DigitValue < 16

@@ -760,9 +760,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   calls. Exact only with a way to run a function of the program's "with an exception set"; nothing else needs one so far.
 * **The minimal memoryview: done 2026-11-22 (C-6-25, spec v0.29; DECISIONS).** Left of CPython's type, each a stop by name:
   `cast`, `hex`, `count`, `index`, `toreadonly`, `__buffer__` and `__release_buffer__`, slice assignment, a view as a buffer to
-  write into (`readinto`, `pack_into`, `os.readv`), `__sizeof__`; and a buffer of a view held by a consumer other than `re` (in
-  CPython any consumer holds one while it runs, so a release in a callback is a BufferError: RL-702's class). With RL-702 and
-  RL-583. Of the nine \[P1\] cases outside the compiled baseline six are left, all waiting for the collector.
+  write into (`readinto`, `pack_into`, `os.readv`), `__sizeof__`. A consumer holds a buffer of a view while it runs: RL-702
+  and RL-583, done 2026-11-23 for the preludes' functions with a later converted argument. Of the nine \[P1\] cases outside the compiled baseline six are left, all waiting for the collector.
 * **`vars()` of a built-in type lists only the names the runtime has (found 2026-11-22 with the memoryview).** `vars(dict)` has
   no `__sizeof__` where `dir(dict)` and CPython's `vars(dict)` have it; the same for every type with a name in
   `conformance/names-baseline.txt`. A listing should have them (as `dir()` does) or stop by name; the names table knows which.

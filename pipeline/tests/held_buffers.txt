@@ -1,0 +1,98 @@
+"""RL-702's class: a buffer argument held from the parsing, read where the C reads it. For each function, a later argument's
+conversion writes into the bytearray, tries to resize it, or tries to release the view the buffer came from."""
+import binascii
+import hashlib
+import os
+import struct
+import tempfile
+import zlib
+
+events = []
+
+
+def later(buf, view, value):
+    class Conv:
+        def __index__(self):
+            buf[0] = 0x41
+            try:
+                buf.append(1)
+                events.append("resized")
+                buf.pop()
+            except BufferError:
+                events.append("resize refused")
+            if view is not None:
+                try:
+                    view.release()
+                    events.append("released")
+                except BufferError:
+                    events.append("release refused")
+            return value
+
+        def __bool__(self):
+            self.__index__()
+            return bool(value)
+    return Conv()
+
+
+def run(label, make):
+    for kind in ("bytearray", "view"):
+        events.clear()
+        buf = bytearray(make[0])
+        view = memoryview(buf) if kind == "view" else None
+        arg = view if view is not None else buf
+        try:
+            out = make[1](arg, lambda v: later(buf, view, v))
+            if isinstance(out, (bytes, bytearray)) and len(out) > 24:
+                out = (len(out), zlib.crc32(out))
+        except Exception as error:  # noqa: BLE001
+            out = type(error).__name__
+        print(label, kind, out, events, bytes(buf))
+
+
+comp = zlib.compress(b"abcdefgh")
+run("zlib.compress", (b"abcdef", lambda a, c: zlib.compress(a, c(6))))
+run("zlib.decompress", (comp, lambda a, c: zlib.decompress(a, c(15))))
+run("zlib.crc32", (b"abcdef", lambda a, c: zlib.crc32(a, c(1))))
+run("zlib.adler32", (b"abcdef", lambda a, c: zlib.adler32(a, c(1))))
+run("decompressobj", (comp, lambda a, c: zlib.decompressobj().decompress(a, c(0))))
+run("ZlibDecompressor", (comp, lambda a, c: zlib._ZlibDecompressor().decompress(a, c(-1))))
+run("binascii.crc32", (b"abcdef", lambda a, c: binascii.crc32(a, c(1))))
+run("binascii.hexlify", (b"abcdef", lambda a, c: binascii.hexlify(a, b":", c(2))))
+run("b2a_base64", (b"abcdef", lambda a, c: binascii.b2a_base64(a, newline=c(True))))
+run("b2a_base32", (b"abcdef", lambda a, c: binascii.b2a_base32(a, wrapcol=c(0))))
+run("a2b_base64", (b"YWJjZGVm", lambda a, c: binascii.a2b_base64(a, strict_mode=c(False))))
+run("a2b_base32", (b"MFRGGZDFMY======", lambda a, c: binascii.a2b_base32(a, padded=c(True))))
+run("struct.unpack_from", (b"abcdef", lambda a, c: struct.unpack_from("2s", a, c(0))))
+run("Struct.unpack_from", (b"abcdef", lambda a, c: struct.Struct("2s").unpack_from(a, c(0))))
+run("blake2b key", (b"key", lambda a, c: hashlib.blake2b(b"data", key=a, fanout=c(1)).hexdigest()[:16]))
+run("blake2b salt", (b"salt", lambda a, c: hashlib.blake2b(b"data", salt=a, depth=c(1)).hexdigest()[:16]))
+run("blake2s person", (b"me", lambda a, c: hashlib.blake2s(b"data", person=a, leaf_size=c(0)).hexdigest()[:16]))
+with tempfile.TemporaryFile() as f:
+    run("os.pwrite", (b"abcdef", lambda a, c: (os.pwrite(f.fileno(), a, c(0)), os.pread(f.fileno(), 6, 0))))
+
+# iter_unpack (RL-583): the buffer held until the iterator ends, read at each step
+for kind in ("bytearray", "view"):
+    buf = bytearray(b"abcd")
+    view = memoryview(buf) if kind == "view" else None
+    it = struct.iter_unpack("B", view if view is not None else buf)
+    first = next(it)
+    buf[1] = 0x5A
+    try:
+        buf.append(1)
+        state = "resized"
+    except BufferError:
+        state = "resize refused"
+    rest = list(it)
+    try:
+        buf.append(2)
+        after = "resized after the end"
+    except BufferError:
+        after = "still refused"
+    if view is not None:
+        view.release()
+    print("iter_unpack", kind, first, rest, state, after, bytes(buf))
+held = bytearray(b"xy")
+it = struct.iter_unpack("B", held)
+del it
+held.append(3)
+print("iter_unpack dropped unfinished:", bytes(held))
