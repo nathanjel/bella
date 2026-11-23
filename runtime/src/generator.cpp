@@ -499,13 +499,16 @@ void gen_die(Object* o) {                         // gen_dealloc: finalised once
         }
         detail::raising() = saved;
         detail::raising_owner() = owner;
-        if (--o->refs != 0) return;
+        if (--o->refs != 0) {                    // revived by its close: the release left it above nought (a candidate)
+            detail::released_above_nought(o);
+            return;
+        }
         o->flags |= DEAD;
     }
     if (g->state != GenState::Finished) clear_frame(g);
     g->name = Ref{};
     g->qualname = Ref{};
-    delete g;
+    detail::free_object(g);
 }
 void init_generator() {
     ClassObject* c = types().generator;

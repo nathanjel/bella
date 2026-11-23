@@ -528,7 +528,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          taken, for the author to overrule), and a lean build collects only when asked, at the runtime's looks and
          at exit (D-24 gets it); then `make object-test` with `World(cycles=True)`.
        * 3c, the header from the model (planned 2026-11-23), in five parts, each with its checks:
-         (H1) `object.hpp` over the object model's own kinds (an instance and the attribute storage of every built-in
+         (H1, done 2026-11-23: DECISIONS) `object.hpp` over the object model's own kinds (an instance and the attribute storage of every built-in
          base, dicts, weak references): a BUFFERED flag and the candidate buffer, an object that dies while buffered
          freed when the buffer is next walked (no room in the header for its place; a compaction when half of it is
          dead); a traverse and a clear per kind (`traverser(Kind)`, `clearer(Kind)`, as `destroyer`), each naming

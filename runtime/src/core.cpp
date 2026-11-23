@@ -220,7 +220,7 @@ Traceback::Traceback(const Code* c, int l, Ref nx) : Object(Kind::Traceback), co
 // to first, a dict its entries in order, each key before its value) ----
 namespace {
 template <class T>
-void destroy(Object* o) { delete static_cast<T*>(o); }
+void destroy(Object* o) { detail::free_object(static_cast<T*>(o)); }   // a tombstone while the collector's buffer names it
 
 void release_backwards(std::vector<Obj>& items) {
     for (auto it = items.rbegin(); it != items.rend(); ++it) decref(std::exchange(*it, Obj{}));

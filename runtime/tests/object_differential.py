@@ -56,10 +56,18 @@ def build(cxx: str, std: str, out: Path, sanitize: bool = False) -> ctypes.CDLL:
 
 def encode(op: tuple[Any, ...]) -> str:
     def value(v: Any) -> str:
+        if isinstance(v, tuple) and v[0] == "O":
+            return f"o:{v[1]}"                # ("O", 3): one of the program's objects
         if isinstance(v, tuple):
             return f"t:{v[1][1:]}"            # ("T", "t5")
         return f"i:{v}"
     kind, *args = op
+    if kind == "ring":                        # classes, name, extra, tags, weaks, reviver, hold
+        classes, name, extra, tags, weaks, reviver, hold = args
+        listed = ",".join(str(c) for c in classes)
+        tagged = ",".join(t[1][1:] for t in tags) or "-"
+        weak = ",".join("N" if w is None else ("T" if w else "F") for w in weaks) or "-"
+        return f"ring {listed} {name} {extra} {tagged} {weak} {reviver or '-'} {'-' if hold is None else hold}"
     if kind == "get":
         return f"get {args[0]} {args[1]} {int(args[2])}"
     if kind in ("set", "set_class_attr"):
@@ -86,12 +94,13 @@ def answer(raw: bytes) -> Any:
     return ast.literal_eval(text)
 
 
-def run(lib: ctypes.CDLL, iterations: int, seed: int, ops_per_world: int = 60) -> tuple[int, int, int, int]:
-    """Returns (worlds, operations, deaths compared, cache hits in the header)."""
+def run(lib: ctypes.CDLL, iterations: int, seed: int, ops_per_world: int = 60, cycles: bool = False) -> tuple[int, int, int, int]:
+    """Returns (worlds, operations, deaths compared, cache hits in the header). With `cycles`, the worlds make cycles and
+    collect them (refmodel World(cycles=True)): a collection's deaths are compared as a multiset (D-04)."""
     rng = random.Random(seed)
     worlds = ops = deaths = hits = 0
     while ops < iterations:
-        world = World()
+        world = World(cycles=cycles)
         cpp = lib.bw_new(1)
         worlds += 1
         try:
@@ -104,6 +113,8 @@ def run(lib: ctypes.CDLL, iterations: int, seed: int, ops_per_world: int = 60) -
                 if got != real:
                     raise Mismatch(f"{op}: object.hpp {got!r} != cpython {real!r}\nlog:\n" + "\n".join(map(repr, world.log)))
                 died = answer(lib.bw_deaths(cpp))
+                if op[0] == "collect":
+                    died.sort(key=repr)
                 if died != world.last_deaths:
                     raise Mismatch(f"{op}: deaths in object.hpp {died} != in cpython {world.last_deaths}\nlog:\n"
                                    + "\n".join(map(repr, world.log)))
@@ -119,6 +130,7 @@ def run(lib: ctypes.CDLL, iterations: int, seed: int, ops_per_world: int = 60) -
             hits += lib.bw_hits(cpp)
         finally:
             lib.bw_free(cpp)
+            world.close()
     return worlds, ops, deaths, hits
 
 
@@ -129,6 +141,7 @@ def main() -> int:
     ap.add_argument("--iterations", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=20261102)
     ap.add_argument("--sanitize", action="store_true", help="the header under AddressSanitizer and UBSan")
+    ap.add_argument("--cycles", action="store_true", help="worlds that make cycles and collect them (the cycle collector)")
     args = ap.parse_args()
     with tempfile.TemporaryDirectory() as tmp:
         if args.sanitize and not os.environ.get("BELLA_ASAN_CHILD"):
@@ -146,11 +159,11 @@ def main() -> int:
             return subprocess.run([sys.executable, *sys.argv], env=env, check=False).returncode
         lib = build(args.cxx, args.std, Path(tmp) / "libbella_object_binding.so", args.sanitize)
         try:
-            worlds, ops, deaths, hits = run(lib, args.iterations, args.seed)
+            worlds, ops, deaths, hits = run(lib, args.iterations, args.seed, cycles=args.cycles)
         except Mismatch as exc:
             print(f"MISMATCH (seed {args.seed}):\n{exc}", file=sys.stderr)
             return 1
-    print(f"object.hpp: {ops} operations over {worlds} worlds, seed {args.seed}: header == model == CPython; "
+    print(f"object.hpp{' with cycles' if args.cycles else ''}: {ops} operations over {worlds} worlds, seed {args.seed}: header == model == CPython; "
           f"{deaths} deaths in CPython's order; {hits} inline cache hits")
     return 0
 

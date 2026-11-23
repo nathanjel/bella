@@ -54,7 +54,7 @@ struct World {
     int weak_numbers = 0, revivals = 0;
 
     World() {
-        tracked = cls({.name = "Tracked"});
+        tracked = cls({.name = "Tracked", .attrs = {{"__del__", Obj::of(tag_logger())}}});
         ClassObject* A = cls({.name = "A", .promoted = {"x", "y"}, .attrs = {{"cv", Obj::small(10)}}});
         ClassObject* B = cls({.name = "B", .bases = {A}, .promoted = {"z"}});
         ClassObject* S = cls({.name = "S", .bases = {A}, .slots = std::vector<std::string>{"s"}});
@@ -89,6 +89,17 @@ struct World {
         for (auto it = made.rbegin(); it != made.rend(); ++it) (*it)->dispose();
     }
 
+    // The oracle's tagged objects log their tag in a finaliser (Tagged.__del__, DescR.__del__; the model's has_finalizer): so
+    // a collection that finalises a group a reviver keeps logs it, as CPython does
+    Function* tag_logger() {
+        return native([this](std::span<const Obj> a) -> Obj {
+            auto* i = static_cast<Instance*>(a[0].object());
+            if (i->tag >= 0) deaths.push_back("'t" + std::to_string(i->tag) + "'");
+            else if (i->tag <= -2) deaths.push_back("'d" + std::to_string(-i->tag - 2) + "'");
+            return Obj::small(0);
+        });
+    }
+
     ClassObject* cls(const ClassSpec& spec) {
         ClassObject* c = make_class(spec);
         made.push_back(c);
@@ -118,8 +129,14 @@ struct World {
     }
 
     // ---- values ----
-    // "i:42" an integer; "t:5" a fresh tagged object, held by the caller until the operation returns
+    // "i:42" an integer; "t:5" a fresh tagged object, held by the caller until the operation returns; "o:3" one of the program's
+    // objects, a count of it held by the caller the same way
     Obj value(const std::string& v) {
+        if (v.starts_with("o:")) {
+            Instance* o = objects[static_cast<std::size_t>(std::stoll(v.substr(2)))];
+            incref(o);
+            return Obj::of(o);
+        }
         if (v.starts_with("t:")) {
             Instance* t = new_instance(tracked);
             t->tag = std::stoll(v.substr(2));
@@ -139,6 +156,9 @@ struct World {
             std::int64_t tag = static_cast<Instance*>(o)->tag;
             if (tag >= 0) return "('T', 't" + std::to_string(tag) + "')";
             if (tag <= -2) return "('T', 'd" + std::to_string(-tag - 2) + "')";
+            for (std::size_t k = 0; k < objects.size(); ++k)   // refmodel _norm: one of the program's objects by its place
+                if (objects[k] == o) return "('O', " + std::to_string(k) + ")";
+            return "('O', 'elsewhere')";
         }
         return "<object>";
     }
@@ -158,6 +178,7 @@ struct World {
         });
         std::vector<std::pair<std::string, Obj>> attrs = {{"__get__", Obj::of(get)}};
         if (data) attrs.emplace_back("__set__", Obj::of(setter(dp)));
+        attrs.emplace_back("__del__", Obj::of(tag_logger()));
         d->cls = cls({.name = "Desc" + std::to_string(d->idx), .attrs = attrs});
         descriptors.push_back(std::move(d));
         return *dp;
@@ -208,6 +229,97 @@ struct World {
             return "('error', 'TypeError')";
         }
         return "('value', None)";
+    }
+
+    // refmodel World.op_ring: a cycle the program lets go of, with tags, weak references, a reviver and a holder as it says
+    std::vector<std::string> split(const std::string& s) {
+        std::vector<std::string> out;
+        if (s == "-") return out;
+        std::string part;
+        std::istringstream in(s);
+        while (std::getline(in, part, ',')) out.push_back(part);
+        return out;
+    }
+    bool stored_through(Instance* m, const std::string& attr, std::vector<std::string>& outs) {
+        auto found = m->cls->lookup(intern(attr));
+        if (found && found->first.is_object() && found->first.object()->kind == Kind::Instance) {
+            ClassObject* dc = found->first.object()->cls;
+            if (dc->lookup(intern("__set__"))) {
+                outs.push_back("('skipped', " + quote(attr) + ")");
+                return false;
+            }
+        }
+        return true;
+    }
+    std::string ring(std::istringstream& in) {
+        std::string classes_s, name, extra, tags_s, weaks_s, reviver, hold_s;
+        in >> classes_s >> name >> extra >> tags_s >> weaks_s >> reviver >> hold_s;
+        std::vector<Instance*> ms;
+        for (const auto& c : split(classes_s)) ms.push_back(held(new_instance(classes[static_cast<std::size_t>(std::stoll(c))])));
+        std::size_t n = ms.size();
+        std::vector<std::string> outs;
+        for (std::size_t k = 0; k < n; ++k)
+            if (stored_through(ms[k], name, outs)) outs.push_back(outcome([&] { setattr(ms[k], intern(name), Obj::of(ms[(k + 1) % n])); }));
+        auto tags = split(tags_s);
+        for (std::size_t k = 0; k < tags.size(); ++k) {
+            if (!stored_through(ms[k], extra, outs)) continue;
+            Ref v = Ref::steal(value("t:" + tags[k]));
+            outs.push_back(outcome([&] { setattr(ms[k], intern(extra), v.get()); }));
+        }
+        auto kinds = split(weaks_s);
+        for (std::size_t k = 0; k < kinds.size(); ++k) {
+            if (kinds[k] == "N") continue;
+            int number = weak_numbers++;             // the oracle numbers it before it is made, or refused
+            outs.push_back(outcome([&] {
+                if (!ms[k]->cls->has_weakref) throw TypeError("cannot create weak reference");
+                if (kinds[k] == "F") {
+                    if (Object* shared = weak_basic(ms[k], WeakKind::BasicRef)) {
+                        incref(shared);
+                        this->weaks.push_back(shared);
+                        return;
+                    }
+                    Object* holder = marker("weak").object();
+                    weak_link(holder, ms[k], Obj{}, WeakKind::BasicRef);
+                    this->weaks.push_back(holder);
+                    return;
+                }
+                auto* callback = native([this, number](std::span<const Obj> a) -> Obj {
+                    bool dead = weak_record(a[0].object())->target == nullptr;
+                    deaths.push_back("('cb', " + std::to_string(number) + ", " + (dead ? "True" : "False") + ")");
+                    return Obj::small(0);
+                });
+                Object* holder = marker("weak").object();
+                weak_link(holder, ms[k], Obj::of(callback), WeakKind::Other);
+                this->weaks.push_back(holder);
+            }));
+        }
+        if (reviver != "-") {
+            int number = revivals++;
+            auto* fin = native([this, number](std::span<const Obj> a) -> Obj {
+                deaths.push_back("('fin', " + std::to_string(number) + ")");
+                auto* o = static_cast<Instance*>(a[0].object());
+                incref(o);
+                kept.push_back(o);
+                return Obj::small(0);
+            });
+            ClassObject* c = cls({.name = "Reviver", .slots = std::vector<std::string>{"value", "__weakref__"}, .attrs = {{"__del__", Obj::of(fin)}}});
+            Instance* vm = new_instance(c);
+            reviver_number[vm] = number;
+            Ref hold = Ref::share(Obj::of(vm));
+            setattr(vm, intern("value"), Obj::of(ms[1 % n]));
+            Object* holder = marker("weak").object();
+            weak_link(holder, vm, Obj{}, WeakKind::BasicRef);
+            reviver_weaks.push_back(holder);
+            if (stored_through(ms[0], reviver, outs)) outs.push_back(outcome([&] { setattr(ms[0], intern(reviver), hold.get()); }));
+        }
+        if (hold_s != "-") {
+            Instance* h = objects[static_cast<std::size_t>(std::stoll(hold_s))];
+            outs.push_back(outcome([&] { setattr(h, intern(name), Obj::of(ms[0])); }));
+        }
+        for (auto it = ms.rbegin(); it != ms.rend(); ++it) decref(*it);   // CPython lets go of its list last to first
+        std::string out = "('value', [";
+        for (std::size_t i = 0; i < outs.size(); ++i) out += (i ? ", " : "") + outs[i];
+        return out + "])";
     }
 
     std::string get(std::size_t i, const std::string& name, bool computed) {
@@ -422,6 +534,13 @@ struct World {
                 setattr(objects[i], intern(name), hold.get());
                 return "('value', None)";
             }
+            if (op == "collect") {                   // refmodel World.op_collect: a full collection whatever the generation
+                int generation;
+                in >> generation;
+                collect_cycles();
+                return "('value', None)";
+            }
+            if (op == "ring") return ring(in);
             if (op == "release_kept") {
                 std::vector<Instance*> going = std::move(kept);
                 kept.clear();
@@ -496,12 +615,7 @@ void* bw_new(int checking) {
     heap().quarantine = checking != 0;
     auto* w = new World();
     current = w;
-    heap().on_death = [](Object* o) {
-        auto* i = static_cast<Instance*>(o);
-        if (current == nullptr) return;
-        if (i->tag >= 0) current->deaths.push_back("'t" + std::to_string(i->tag) + "'");
-        else if (i->tag <= -2) current->deaths.push_back("'d" + std::to_string(-i->tag - 2) + "'");
-    };
+    heap().on_death = nullptr;                   // the tags are logged by their classes' finalisers (World::tag_logger)
     return w;
 }
 

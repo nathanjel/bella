@@ -109,9 +109,11 @@ object-test: object-test-lockstep object-test-sanitized object-test-reentrancy o
 
 object-test-lockstep:
 	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 3000
+	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 3000 --cycles
 
 object-test-sanitized:
 	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 1000 --sanitize
+	$(PY) runtime/tests/object_differential.py --cxx $(CXX) --std $(CXXSTD) --iterations 1000 --sanitize --cycles
 
 object-test-reentrancy:
 	@mkdir -p build/object-test

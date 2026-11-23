@@ -35,6 +35,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <new>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -86,14 +87,37 @@ enum class Kind : std::uint8_t {
 // HAS_ATTRIBUTES: an object of a built-in kind whose class is a subclass of the program's, with that
 // class's attribute storage beside the built-in's data (DictInstance)
 enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1u << 2, HAS_ATTRIBUTES = 1u << 3, FINALIZED = 1u << 4, FROZEN_DICT = 1u << 5, HAS_WEAKREFS = 1u << 6, WEAK_REFERENCE = 1u << 7, DICT_DROPPED = 1u << 8,
-                            PUT_OFF = 1u << 9 };   // its count is 0 and its dealloc waits for room on the native stack (detail::dealloc_or_later)
+                            PUT_OFF = 1u << 9,     // its count is 0 and its dealloc waits for room on the native stack (detail::dealloc_or_later)
+                            BUFFERED = 1u << 10,   // a candidate root of the cycle collector: in its buffer, once (detail::possible_root)
+                            TOMBSTONE = 1u << 11,  // what is left of an object that died while buffered: its header, freed when the buffer is walked
+                            LISTED = 1u << 12 };   // in one of a running collection's lists, which it leaves when it dies
+
+// The kinds the cycle collector tracks: an object that can hold others (Py_TPFLAGS_HAVE_GC). A plain number, text or code object
+// holds nothing that dies with it; an object of a built-in kind with a class's attribute storage beside its data (HAS_ATTRIBUTES)
+// is tracked too (detail::holds_others).
+constexpr bool container_kind(Kind kind) {
+    switch (kind) {
+        case Kind::Str: case Kind::Singleton: case Kind::Bool: case Kind::BigInt: case Kind::Float: case Kind::Range:
+        case Kind::Complex: case Kind::Bytes: case Kind::ByteArray: case Kind::CodeKind: case Kind::Marker:
+            return false;
+        default:
+            return true;
+    }
+}
+// How many objects of the tracked kinds live: the quarter rule of the collector's schedule reads it after a collection.
+inline constinit std::size_t containers_alive = 0;
 
 struct Object {
     ClassObject* cls = nullptr;
     std::uint32_t refs = 0;          // single-threaded count; biased counting comes with threads
     std::uint16_t flags = 0;
     Kind kind;
-    explicit Object(Kind k) : kind(k) {}
+    explicit Object(Kind k) : kind(k) {
+        if (container_kind(k)) ++containers_alive;
+    }
+    ~Object() {
+        if (container_kind(kind)) --containers_alive;
+    }
     Object(const Object&) = delete;
     Object& operator=(const Object&) = delete;
     bool alive() const { return (flags & DEAD) == 0; }
@@ -165,14 +189,7 @@ inline std::vector<Object*>& put_off() {         // the last put there is the fi
     return list;
 }
 inline bool holds_others(Kind kind, std::uint16_t flags) {   // Py_TPFLAGS_HAVE_GC: a plain number, text or code object holds nothing that dies with it
-    if (flags & HAS_ATTRIBUTES) return true;
-    switch (kind) {
-        case Kind::Str: case Kind::Singleton: case Kind::Bool: case Kind::BigInt: case Kind::Float: case Kind::Range:
-        case Kind::Complex: case Kind::Bytes: case Kind::ByteArray: case Kind::CodeKind: case Kind::Marker:
-            return false;
-        default:
-            return true;
-    }
+    return (flags & HAS_ATTRIBUTES) != 0 || container_kind(kind);
 }
 inline void deposit(Object* o) {                 // _PyTrash_thread_deposit_object
     o->flags |= PUT_OFF;
@@ -213,10 +230,89 @@ inline void dealloc_or_later(Object* o) {        // _Py_Dealloc
 }
 }  // namespace detail
 
+// ---- the cycle collector's buffer (refmodel/objects.py GcState; trial deletion over candidate roots, the author's decision of
+// 2026-11-14). A release that leaves a tracked object's count above nought makes it a candidate root, once, at the end of the
+// buffer: only such an object can have become the way into a group that nothing outside holds. A collection takes them all
+// (detail::collect, below). The header has no room for an object's place in the buffer, so one that dies while buffered is
+// destroyed then and there, as any other is, and what is left of it, its header as a TOMBSTONE, is freed when the buffer is
+// walked next, or compacted once half of it is tombstones. A collection's own lists name objects too (LISTED), which leave
+// them as they die. ----
+namespace detail {
+struct GcList {                                  // one of a collection's lists (a ring of PyGC_Head in gc.c): its objects in order
+    std::vector<Object*> items;                  // nullptr: one that left
+    std::size_t first_at = 0, size = 0;
+};
+struct Collector {
+    std::vector<Object*> candidates;             // in the order buffered
+    std::size_t tombstones = 0;                  // among the candidates
+    std::int64_t thresholds[3] = {2000, 10, 10}; // gc.get_threshold(): the first is the buffer's size; the others are kept
+    bool enabled = true, collecting = false, scheduled = false;   // scheduled: a collection at the next look
+    std::size_t alive_after = 0;                 // tracked objects after the last collection: the quarter rule
+    std::int64_t collections = 0, collected = 0; // gc.get_stats()'s numbers, the runtime's own
+    std::unordered_map<const Object*, std::pair<GcList*, std::size_t>> where;   // a LISTED object's list and place
+};
+inline Collector& collector() {
+    static Collector c;
+    return c;
+}
+inline void free_tombstone(Object* o) {
+    o->~Object();
+    ::operator delete(static_cast<void*>(o));
+}
+inline void compact_buffer() {                   // the tombstones go, the candidates keep their order
+    Collector& c = collector();
+    std::size_t kept = 0;
+    for (Object* o : c.candidates) {
+        if (o->flags & TOMBSTONE) free_tombstone(o);
+        else c.candidates[kept++] = o;
+    }
+    c.candidates.resize(kept);
+    c.tombstones = 0;
+}
+[[gnu::noinline]] inline void possible_root(Object* o) {
+    if (o->flags & (DEAD | PUT_OFF)) return;     // dying: not a root
+    o->flags |= BUFFERED;
+    Collector& c = collector();
+    c.candidates.push_back(o);
+    std::size_t live = c.candidates.size() - c.tombstones;
+    if (c.enabled && c.thresholds[0] > 0 && !c.collecting && live > static_cast<std::size_t>(c.thresholds[0]) && 4 * live > c.alive_after)
+        c.scheduled = true;
+}
+inline void released_above_nought(Object* o) {   // a count lowered by hand (a finaliser's own, after it revived the object)
+    if (!(o->flags & BUFFERED) && holds_others(o->kind, o->flags)) possible_root(o);
+}
+inline void unlist(Object* o) {                  // out of the collection's list that holds it
+    Collector& c = collector();
+    auto it = c.where.find(o);
+    if (it == c.where.end()) return;
+    auto [list, at] = it->second;
+    c.where.erase(it);
+    list->items[at] = nullptr;
+    --list->size;
+    o->flags &= static_cast<std::uint16_t>(~LISTED);
+}
+// The end of an object's memory: what the buffer names is left as a tombstone, its destructor run now as any other's.
+template <class T>
+inline void free_object(T* o) {
+    if (o->flags & LISTED) [[unlikely]] unlist(o);
+    if (o->flags & BUFFERED) [[unlikely]] {
+        o->~T();
+        Object* tomb = new (static_cast<void*>(o)) Object(Kind::Marker);
+        tomb->flags = DEAD | BUFFERED | TOMBSTONE;
+        Collector& c = collector();
+        ++c.tombstones;
+        if (c.tombstones > 4096 && 2 * c.tombstones > c.candidates.size()) compact_buffer();
+        return;
+    }
+    delete o;
+}
+}  // namespace detail
+
 inline void decref(Object* o) {
     if (o->flags & IMMORTAL) return;
     if (o->refs == 0) throw ModelError("an object released more often than it was held");
     if (--o->refs == 0) detail::dealloc_or_later(o);
+    else if (!(o->flags & BUFFERED) && detail::holds_others(o->kind, o->flags)) [[unlikely]] detail::possible_root(o);
 }
 inline void incref(Obj v) {
     if (v.is_object()) incref(v.object());
@@ -1960,26 +2056,27 @@ inline void check_not_named(Object* o) {
         }
 }
 inline void bury(Object* o) {
+    if (o->flags & LISTED) unlist(o);            // a dead object leaves a collection's list, kept in the quarantine or not
     if (heap().quarantine) heap().graveyard.push_back(o);
     else {
         switch (o->kind) {
-            case Kind::Instance: delete static_cast<Instance*>(o); break;
+            case Kind::Instance: free_object(static_cast<Instance*>(o)); break;
             case Kind::Dict:
-                if (has_attributes(o)) delete static_cast<DictInstance*>(o);
-                else delete static_cast<DictObject*>(o);
+                if (has_attributes(o)) free_object(static_cast<DictInstance*>(o));
+                else free_object(static_cast<DictObject*>(o));
                 break;
-            case Kind::IntInstance: delete static_cast<IntInstance*>(o); break;
-            case Kind::FloatInstance: delete static_cast<FloatInstance*>(o); break;
-            case Kind::ComplexInstance: delete static_cast<ComplexInstance*>(o); break;
-            case Kind::Str: delete static_cast<StrInstance*>(o); break;   // an exact str's death is its destroyer's
-            case Kind::Tuple: delete static_cast<TupleInstance*>(o); break;   // an exact tuple's death is its destroyer's
-            case Kind::List: delete static_cast<ListInstance*>(o); break;     // an exact list's death is its destroyer's
-            case Kind::Set: delete static_cast<SetInstance*>(o); break;       // an exact set's death is its destroyer's
+            case Kind::IntInstance: free_object(static_cast<IntInstance*>(o)); break;
+            case Kind::FloatInstance: free_object(static_cast<FloatInstance*>(o)); break;
+            case Kind::ComplexInstance: free_object(static_cast<ComplexInstance*>(o)); break;
+            case Kind::Str: free_object(static_cast<StrInstance*>(o)); break;   // an exact str's death is its destroyer's
+            case Kind::Tuple: free_object(static_cast<TupleInstance*>(o)); break;   // an exact tuple's death is its destroyer's
+            case Kind::List: free_object(static_cast<ListInstance*>(o)); break;     // an exact list's death is its destroyer's
+            case Kind::Set: free_object(static_cast<SetInstance*>(o)); break;       // an exact set's death is its destroyer's
             case Kind::Bytes:
-            case Kind::ByteArray: delete static_cast<BytesInstance*>(o); break;   // an exact one's death is its destroyer's
-            case Kind::Function: delete static_cast<Function*>(o); break;
-            case Kind::SlotDescriptor: delete static_cast<SlotDescriptor*>(o); break;
-            case Kind::Marker: delete static_cast<Marker*>(o); break;
+            case Kind::ByteArray: free_object(static_cast<BytesInstance*>(o)); break;   // an exact one's death is its destroyer's
+            case Kind::Function: free_object(static_cast<Function*>(o)); break;
+            case Kind::SlotDescriptor: free_object(static_cast<SlotDescriptor*>(o)); break;
+            case Kind::Marker: free_object(static_cast<Marker*>(o)); break;
             default: break;          // strings and classes are not freed here
         }
     }
@@ -2005,6 +2102,7 @@ template <class T>
 inline void release_instance_dict(T* obj) {
     if (obj->exposed()) {
         DictObject* d = std::exchange(obj->dict, nullptr);
+        obj->flags &= static_cast<std::uint16_t>(~DICT_EXPOSED);   // no dict and no values: what a dealloc after the collector's clear finds
         if (d->embedded == obj) d->embedded = nullptr;   // its values are detached from the dead object
         decref(d);
     } else {
@@ -2161,7 +2259,10 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
         if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));
         else decref(call(fn.get(), {Obj::of(obj)}));
         fn = Ref{};
-        if (--obj->refs != 0) return false;
+        if (--obj->refs != 0) {                  // revived: it lives on, and the release left it above nought (a candidate)
+            released_above_nought(obj);
+            return false;
+        }
     }
     obj->flags |= DEAD;
     if (heap().on_death) heap().on_death(obj);
@@ -2308,6 +2409,465 @@ inline void dealloc(Object* o) {
             detail::bury(o);
             return;
     }
+}
+
+// ---- the cycle collector (refmodel/collector.py, rule for rule): trial deletion over the buffer's candidates, then gc.c's
+// sequence for what it found. What a kind holds is its traverse (`traverser`, for the runtime's kinds; the object model's own
+// below); a traverse names exactly the counted references the kind's release lets go of, the tracked ones among them: one
+// too many would free what lives, one too few only keeps a group. What breaks a kind's cycles is its clear (`clearer`). ----
+namespace detail {
+using Traverser = void (*)(Object*, std::vector<Object*>&);
+inline Traverser& traverser(Kind k) {
+    static Traverser table[static_cast<std::size_t>(Kind::KindCount)] = {};
+    return table[static_cast<std::size_t>(k)];
+}
+using Clearer = void (*)(Object*);
+inline Clearer& clearer(Kind k) {
+    static Clearer table[static_cast<std::size_t>(Kind::KindCount)] = {};
+    return table[static_cast<std::size_t>(k)];
+}
+inline bool walked(const Object* o) {            // tracked, alive and counted: what a collection walks
+    return holds_others(o->kind, o->flags) && !(o->flags & (IMMORTAL | DEAD | PUT_OFF | TOMBSTONE)) && o->refs > 0;
+}
+inline void visit(Obj v, std::vector<Object*>& out) {
+    if (v.is_object() && walked(v.object())) out.push_back(const_cast<Object*>(v.object()));
+}
+inline void visit_dict_entries(const DictObject* d, std::vector<Object*>& out) {   // dict_traverse: each value, then its key
+    for (const auto& e : d->entries)
+        if (!e.key.is_unset()) {
+            visit(e.value, out);
+            visit(e.key, out);
+        }
+}
+// subtype_traverse (RefObject.traverse): each class's slots in the MRO, in the order its release lets them go; then the
+// built-in base's fields: the dict (the dict object once exposed, else the values the object keeps, in its class's keys'
+// order and then in insertion order) and its own named fields
+template <class T>
+inline void visit_attributes(T* obj, std::vector<Object*>& out) {
+    static const Str* const dict = intern("__dict__");
+    for (ClassObject* c : obj->cls->mro) {
+        auto names = c->own_slot_names();
+        if (c->hidden.empty() && !c->slots_ordered) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
+        for (const Str* s : names) visit(slot_cell(obj, c, s), out);
+    }
+    auto dict_values = [&] {
+        if (obj->exposed()) {
+            if (obj->dict != nullptr) visit(Obj::of(obj->dict), out);
+            return;
+        }
+        std::vector<std::pair<const Str*, Obj>> held;
+        for (const Str* p : obj->cls->promoted_fields)
+            if (!obj->field(p).is_unset()) held.emplace_back(p, obj->field(p));
+        if (obj->dict != nullptr)
+            for (const auto& e : obj->dict->entries)
+                if (!e.key.is_unset()) held.emplace_back(static_cast<const Str*>(e.key.object()), e.value);
+        if (obj->cls->keys)
+            for (const Str* k : obj->cls->keys->names)
+                for (auto& [n, v] : held) if (n == k && !v.is_unset()) { visit(v, out); v = Obj{}; }
+        for (const Str* n : obj->order)
+            for (auto& [m, v] : held) if (m == n && !v.is_unset()) { visit(v, out); v = Obj{}; }
+    };
+    if (obj->cls->native.empty()) dict_values();
+    for (const Str* n : obj->cls->native) {
+        if (n == dict) dict_values();
+        else visit(slot_cell(obj, nullptr, n), out);
+    }
+}
+inline void visit_callback(Object* holder, std::vector<Object*>& out) {   // a weak reference's gc_traverse: its callback
+    auto it = heap().weak_records.find(holder);
+    if (it != heap().weak_records.end() && it->second->callback != 0) visit(Obj::of(reinterpret_cast<const Object*>(it->second->callback)), out);
+}
+inline void children_of(Object* o, std::vector<Object*>& out) {
+    out.clear();
+    switch (o->kind) {
+        case Kind::Instance: visit_attributes(static_cast<Instance*>(o), out); break;
+        case Kind::IntInstance: visit_attributes(static_cast<IntInstance*>(o), out); break;
+        case Kind::FloatInstance: visit_attributes(static_cast<FloatInstance*>(o), out); break;
+        case Kind::ComplexInstance: visit_attributes(static_cast<ComplexInstance*>(o), out); break;
+        case Kind::Dict:
+            if (has_attributes(o)) visit_attributes(static_cast<DictInstance*>(o), out);
+            visit_dict_entries(static_cast<DictObject*>(o), out);
+            break;
+        case Kind::Str:
+            if (has_attributes(o)) visit_attributes(static_cast<StrInstance*>(o), out);
+            break;
+        case Kind::Tuple:
+            if (has_attributes(o)) visit_attributes(static_cast<TupleInstance*>(o), out);
+            for (Obj v : static_cast<Tuple*>(o)->items) visit(v, out);
+            break;
+        case Kind::List:
+            if (has_attributes(o)) visit_attributes(static_cast<ListInstance*>(o), out);
+            for (Obj v : static_cast<List*>(o)->items) visit(v, out);
+            break;
+        case Kind::Set:
+            if (has_attributes(o)) visit_attributes(static_cast<SetInstance*>(o), out);
+            for (const auto& e : static_cast<SetObject*>(o)->table) visit(e.key, out);
+            break;
+        case Kind::Bytes:
+        case Kind::ByteArray:
+            if (has_attributes(o)) visit_attributes(static_cast<BytesInstance*>(o), out);
+            break;
+        default:
+            if (Traverser tr = traverser(o->kind)) tr(o, out);
+            break;
+    }
+    if (o->flags & WEAK_REFERENCE) visit_callback(o, out);
+}
+
+// subtype_clear (RefObject.gc_clear): the slots up to the built-in base, then the base's own fields and the dict at their
+// places; no finaliser and no weak reference, which the collector has seen to
+template <class T>
+inline void clear_attributes(T* obj) {
+    static const Str* const weak = intern("__weakref__");
+    static const Str* const dict = intern("__dict__");
+    ClassObject* base = obj->cls->dealloc_base;
+    for (ClassObject* c : obj->cls->mro) {
+        if (c == base) break;
+        auto names = c->own_slot_names();
+        if (c->hidden.empty() && !c->slots_ordered) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
+        for (const Str* s : names) decref(std::exchange(slot_cell(obj, c, s), Obj{}));
+    }
+    if (base != nullptr) {
+        if (!base->release_has_dict) release_instance_dict(obj);
+        for (const Str* n : *base->release) {
+            if (n == weak) continue;
+            if (n == dict) release_instance_dict(obj);
+            else decref(std::exchange(obj->state(n), Obj{}));
+        }
+        return;
+    }
+    if (obj->cls->native.empty()) release_instance_dict(obj);
+    for (const Str* n : obj->cls->native) {
+        if (n == dict) release_instance_dict(obj);
+        else decref(std::exchange(slot_cell(obj, nullptr, n), Obj{}));
+    }
+}
+inline void clear_object(Object* o) {            // tp_clear
+    switch (o->kind) {
+        case Kind::Instance: clear_attributes(static_cast<Instance*>(o)); break;
+        case Kind::IntInstance: clear_attributes(static_cast<IntInstance*>(o)); break;
+        case Kind::FloatInstance: clear_attributes(static_cast<FloatInstance*>(o)); break;
+        case Kind::ComplexInstance: clear_attributes(static_cast<ComplexInstance*>(o)); break;
+        case Kind::Dict:                         // subtype_clear, then dict_tp_clear: PyDict_Clear
+            if (has_attributes(o)) clear_attributes(static_cast<DictInstance*>(o));
+            dict_clear(static_cast<DictObject*>(o));
+            break;
+        case Kind::Str:
+            if (has_attributes(o)) clear_attributes(static_cast<StrInstance*>(o));
+            break;
+        case Kind::Tuple:                        // a tuple has no clear of its own
+            if (has_attributes(o)) clear_attributes(static_cast<TupleInstance*>(o));
+            break;
+        case Kind::List: {                       // subtype_clear, then list_clear: the items, last to first
+            if (has_attributes(o)) clear_attributes(static_cast<ListInstance*>(o));
+            std::vector<Obj> items = std::move(static_cast<List*>(o)->items);
+            static_cast<List*>(o)->items.clear();
+            for (auto it = items.rbegin(); it != items.rend(); ++it) decref(*it);
+            break;
+        }
+        case Kind::Set: {                        // subtype_clear, then set_clear_internal: the table in order
+            if (has_attributes(o)) clear_attributes(static_cast<SetInstance*>(o));
+            auto* s = static_cast<SetObject*>(o);
+            auto table = std::move(s->table);
+            s->table.assign(8, SetObject::Entry{});
+            s->fill = s->used = s->finger = 0;
+            for (auto& e : table)
+                if (!e.key.is_unset()) decref(e.key);
+            break;
+        }
+        case Kind::Bytes:
+        case Kind::ByteArray:
+            if (has_attributes(o)) clear_attributes(static_cast<BytesInstance*>(o));
+            break;
+        default:
+            if (Clearer cl = clearer(o->kind)) cl(o);
+            break;
+    }
+    if (o->flags & WEAK_REFERENCE) {             // a weak reference's gc_clear: out of its target's list, the callback released
+        auto it = heap().weak_records.find(o);
+        if (it != heap().weak_records.end()) {
+            weak_unlink(it->second);
+            std::uintptr_t callback = std::exchange(it->second->callback, 0);
+            if (callback != 0) decref(Obj::of(reinterpret_cast<const Object*>(callback)));
+        }
+    }
+}
+
+// A collection's lists (GcList, refmodel/objects.py GcState.move/merge): an object is in one at most, LISTED while it is.
+inline void list_append(Object* o, GcList& to) {
+    Collector& c = collector();
+    o->flags |= LISTED;
+    c.where[o] = {&to, to.items.size()};
+    to.items.push_back(o);
+    ++to.size;
+}
+inline void list_move(Object* o, GcList& to) {
+    unlist(o);
+    list_append(o, to);
+}
+inline Object* list_first(GcList& l) {
+    while (l.first_at < l.items.size() && l.items[l.first_at] == nullptr) ++l.first_at;
+    return l.first_at < l.items.size() ? l.items[l.first_at] : nullptr;
+}
+inline std::vector<Object*> list_items(const GcList& l) {
+    std::vector<Object*> out;
+    for (Object* o : l.items) if (o != nullptr) out.push_back(o);
+    return out;
+}
+inline bool in_list(const Object* o, const GcList& l) {
+    auto it = collector().where.find(o);
+    return it != collector().where.end() && it->second.first == &l;
+}
+inline void list_merge(GcList& from, GcList& to) {
+    for (Object* o : list_items(from)) list_move(o, to);
+}
+inline void list_release(GcList& l) {
+    for (Object* o : list_items(l)) unlist(o);
+}
+
+// mark_gray, scan and collect_white from the roots (collector.trial_deletion): what nothing outside holds, in the order taken
+inline void trial_deletion(const std::vector<Object*>& roots, GcList& unreachable) {
+    enum class Color : std::uint8_t { Gray, Black, White, Taken };
+    struct Mark { std::int64_t count; Color color; };
+    std::unordered_map<Object*, Mark> marks;
+    std::vector<Object*> kids, stack;
+    for (Object* root : roots) {                 // mark_gray: each reference among the reached lessens a count once
+        if (marks.contains(root)) continue;
+        marks[root] = {static_cast<std::int64_t>(root->refs), Color::Gray};
+        stack.assign(1, root);
+        while (!stack.empty()) {
+            Object* o = stack.back();
+            stack.pop_back();
+            children_of(o, kids);
+            for (Object* k : kids) {
+                auto [it, fresh] = marks.try_emplace(k, Mark{static_cast<std::int64_t>(k->refs), Color::Gray});
+                --it->second.count;
+                if (fresh) stack.push_back(k);
+            }
+        }
+    }
+    auto scan_black = [&](Object* from) {        // held from outside: it and all it reaches get their counts back
+        marks[from].color = Color::Black;
+        std::vector<Object*> todo{from}, sub;
+        while (!todo.empty()) {
+            Object* o = todo.back();
+            todo.pop_back();
+            children_of(o, sub);
+            for (Object* k : sub) {
+                Mark& m = marks[k];
+                ++m.count;
+                if (m.color != Color::Black) {
+                    m.color = Color::Black;
+                    todo.push_back(k);
+                }
+            }
+        }
+    };
+    for (Object* root : roots) {                 // scan
+        stack.assign(1, root);
+        while (!stack.empty()) {
+            Object* o = stack.back();
+            stack.pop_back();
+            Mark& m = marks[o];
+            if (m.color != Color::Gray) continue;
+            if (m.count > 0) {
+                scan_black(o);
+            } else {
+                m.color = Color::White;
+                children_of(o, kids);
+                stack.insert(stack.end(), kids.rbegin(), kids.rend());
+            }
+        }
+    }
+    for (Object* root : roots) {                 // collect_white: from each root, in the order a walk first meets them
+        stack.assign(1, root);
+        while (!stack.empty()) {
+            Object* o = stack.back();
+            stack.pop_back();
+            Mark& m = marks[o];
+            if (m.color != Color::White) continue;
+            m.color = Color::Taken;
+            list_move(o, unreachable);
+            children_of(o, kids);
+            stack.insert(stack.end(), kids.rbegin(), kids.rend());
+        }
+    }
+}
+
+// gc.c's update_refs, subtract_refs and move_unreachable over a collection's own list (collector.deduce_unreachable): `base`
+// keeps what is reachable from outside it, in the order the scan keeps it; the rest moves to `unreachable`, in order
+inline void deduce_unreachable(GcList& base, GcList& unreachable) {
+    std::unordered_map<Object*, std::int64_t> refs;
+    std::vector<Object*> order = list_items(base), kids;
+    for (Object* o : order) {
+        if (o->refs == 0) throw ModelError("an object is in a collection's list with no count");
+        refs[o] = o->refs;
+    }
+    for (Object* o : order) {
+        children_of(o, kids);
+        for (Object* k : kids)
+            if (auto it = refs.find(k); it != refs.end()) --it->second;
+    }
+    std::vector<Object*> kept;
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        Object* o = order[i];
+        if (in_list(o, unreachable)) continue;
+        if (refs[o] > 0) {
+            children_of(o, kids);
+            for (Object* k : kids) {
+                auto it = refs.find(k);
+                if (it == refs.end()) continue;
+                if (in_list(k, unreachable)) {   // visit_reachable: back to the end, scanned again
+                    unlist(k);
+                    order.push_back(k);
+                    it->second = 1;
+                } else if (it->second == 0) {
+                    it->second = 1;
+                }
+            }
+            refs.erase(o);
+            kept.push_back(o);
+        } else {
+            list_move(o, unreachable);
+        }
+    }
+    for (Object* o : kept) list_move(o, base);
+}
+
+inline void call_weak_callback(Obj fn, Object* holder) {
+    if (weakref_callback_hook() != nullptr) weakref_callback_hook()(fn, Obj::of(holder));
+    else decref(call(fn, {Obj::of(holder)}));
+}
+// Every weak reference with a callback to an unreachable object is cleared, the callback kept; each that is not itself
+// unreachable is held and has its callback called, in order, then is released; one that lives on joins `old`. The number
+// of those that died meanwhile.
+inline std::int64_t handle_weakref_callbacks(GcList& unreachable, GcList& old) {
+    GcList to_call;
+    for (Object* op : list_items(unreachable)) {
+        if (!(op->flags & HAS_WEAKREFS)) continue;
+        auto lit = heap().weak_lists.find(op);
+        if (lit == heap().weak_lists.end()) continue;
+        std::vector<WeakRecord*> records = lit->second;
+        for (WeakRecord* r : records) {
+            if (r->callback == 0) continue;
+            weak_unlink(r);                      // _PyWeakref_ClearRef: the target forgotten, the callback kept
+            if (in_list(r->holder, unreachable)) continue;
+            incref(r->holder);
+            list_move(r->holder, to_call);
+        }
+    }
+    std::int64_t freed = 0;
+    while (Object* holder = list_first(to_call)) {
+        auto it = heap().weak_records.find(holder);
+        std::uintptr_t callback = it != heap().weak_records.end() ? it->second->callback : 0;
+        if (callback != 0) {
+            Ref fn = Ref::share(Obj::of(reinterpret_cast<const Object*>(callback)));
+            call_weak_callback(fn.get(), holder);
+        }
+        decref(holder);                          // `holder` is only a key from here: it may have died
+        if (in_list(holder, to_call)) list_move(holder, old);
+        else ++freed;
+    }
+    list_release(to_call);
+    return freed;
+}
+// Each object's finaliser, in order, once in its life, the object held (collector.finalize_garbage)
+inline void finalize_garbage(GcList& collectable) {
+    GcList seen;
+    static const Str* const del = intern("__del__");
+    while (Object* op = list_first(collectable)) {
+        list_move(op, seen);
+        if ((op->flags & FINALIZED) || !holds_others(op->kind, op->flags) || op->cls == nullptr || !op->cls->lookup(del)) continue;
+        incref(op);
+        switch (op->kind) {
+            case Kind::Instance: finalize_once(static_cast<Instance*>(op)); break;
+            case Kind::IntInstance: finalize_once(static_cast<IntInstance*>(op)); break;
+            case Kind::FloatInstance: finalize_once(static_cast<FloatInstance*>(op)); break;
+            case Kind::ComplexInstance: finalize_once(static_cast<ComplexInstance*>(op)); break;
+            default:
+                if (has_attributes(op)) {
+                    switch (op->kind) {
+                        case Kind::Dict: finalize_once(static_cast<DictInstance*>(op)); break;
+                        case Kind::Str: finalize_once(static_cast<StrInstance*>(op)); break;
+                        case Kind::Tuple: finalize_once(static_cast<TupleInstance*>(op)); break;
+                        case Kind::List: finalize_once(static_cast<ListInstance*>(op)); break;
+                        case Kind::Set: finalize_once(static_cast<SetInstance*>(op)); break;
+                        case Kind::Bytes: case Kind::ByteArray: finalize_once(static_cast<BytesInstance*>(op)); break;
+                        default: break;
+                    }
+                }
+                break;
+        }
+        decref(op);
+    }
+    list_merge(seen, collectable);
+}
+// No unreachable object is weakly referenced any more, and no callback runs; an unreachable weak reference is cleared too
+inline void clear_unreachable_weakrefs(GcList& unreachable) {
+    for (Object* op : list_items(unreachable)) {
+        if (op->flags & WEAK_REFERENCE)
+            if (auto it = heap().weak_records.find(op); it != heap().weak_records.end()) weak_unlink(it->second);
+        if (op->flags & HAS_WEAKREFS) {
+            auto lit = heap().weak_lists.find(op);
+            if (lit == heap().weak_lists.end()) continue;
+            std::vector<WeakRecord*> records = lit->second;
+            for (WeakRecord* r : records) weak_unlink(r);
+        }
+    }
+}
+// Each object's clear, the object held; one that is still first afterwards lives on and joins `old`
+inline void delete_garbage(GcList& collectable, GcList& old) {
+    while (Object* op = list_first(collectable)) {
+        if (op->refs == 0) throw ModelError("an object of a collection's garbage with no count");
+        incref(op);
+        clear_object(op);
+        bool kept = list_first(collectable) == op;
+        if (kept) list_move(op, old);
+        decref(op);
+    }
+}
+}  // namespace detail
+
+// A collection (collector.collect): full whatever generation is asked; the number found. One asked for while one runs finds 0.
+inline std::int64_t collect_cycles() {
+    detail::Collector& c = detail::collector();
+    if (c.collecting) return 0;
+    c.collecting = true;
+    struct Done {
+        ~Done() { detail::collector().collecting = false; }
+    } done;
+    c.scheduled = false;                          // the buffer the schedule counted is taken now
+    std::vector<Object*> roots;
+    for (Object* o : c.candidates) {
+        o->flags &= static_cast<std::uint16_t>(~BUFFERED);
+        if (o->flags & TOMBSTONE) detail::free_tombstone(o);
+        else if (detail::walked(o)) roots.push_back(o);
+    }
+    c.candidates.clear();
+    c.tombstones = 0;
+    detail::GcList survivors, unreachable, final;
+    detail::trial_deletion(roots, unreachable);
+    roots.clear();
+    std::int64_t collected = detail::handle_weakref_callbacks(unreachable, survivors);
+    detail::finalize_garbage(unreachable);
+    detail::deduce_unreachable(unreachable, final);   // handle_resurrected_objects: what is reachable again stays in `unreachable`
+    detail::list_merge(unreachable, survivors);
+    detail::clear_unreachable_weakrefs(final);
+    collected += static_cast<std::int64_t>(final.size);
+    detail::delete_garbage(final, survivors);
+    for (detail::GcList* l : {&survivors, &unreachable, &final}) detail::list_release(*l);
+    c.alive_after = containers_alive;
+    ++c.collections;
+    c.collected += collected;
+    return collected;
+}
+// The runtime's look: the collection the buffer scheduled, if the collector is enabled (collector.look)
+inline std::int64_t collector_look() {
+    detail::Collector& c = detail::collector();
+    if (!c.scheduled) return 0;
+    c.scheduled = false;
+    if (!c.enabled) return 0;
+    return collect_cycles();
 }
 
 }  // namespace bella

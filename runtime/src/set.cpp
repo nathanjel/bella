@@ -754,7 +754,7 @@ void init_sets() {
         auto* s = static_cast<SetObject*>(o);       // set_dealloc: the table in order
         for (auto& e : s->table)
             if (!e.key.is_unset()) decref(std::exchange(e.key, Obj{}));
-        delete s;
+        detail::free_object(s);
     };
 }
 

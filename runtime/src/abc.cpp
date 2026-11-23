@@ -305,7 +305,7 @@ Ref a_get_cache_token(Obj, Args a) {
 }  // namespace
 
 void fill_abc(Module* m) {
-    destroyer(Kind::AbcData) = [](Object* o) { delete static_cast<AbcData*>(o); };
+    destroyer(Kind::AbcData) = [](Object* o) { detail::free_object(static_cast<AbcData*>(o)); };
     ClassObject* c = builtin_type("_abc._abc_data", {types().object});
     c->heap_type = true;                         // PyType_FromModuleAndSpec: a program can set its attributes
     c->name_prefix = 5;
