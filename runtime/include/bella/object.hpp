@@ -90,7 +90,9 @@ enum Flag : std::uint16_t { IMMORTAL = 1u << 0, DEAD = 1u << 1, DICT_EXPOSED = 1
                             PUT_OFF = 1u << 9,     // its count is 0 and its dealloc waits for room on the native stack (detail::dealloc_or_later)
                             BUFFERED = 1u << 10,   // a candidate root of the cycle collector: in its buffer, once (detail::possible_root)
                             TOMBSTONE = 1u << 11,  // what is left of an object that died while buffered: its header, freed when the buffer is walked
-                            LISTED = 1u << 12 };   // in one of a running collection's lists, which it leaves when it dies
+                            LISTED = 1u << 12,     // in one of a running collection's lists, which it leaves when it dies
+                            GC_GRAY = 1u << 13,    // the colours of trial deletion, while a collection marks: gray, black, both for white
+                            GC_BLACK = 1u << 14 };
 
 // The kinds the cycle collector tracks: an object that can hold others (Py_TPFLAGS_HAVE_GC). A plain number, text or code object
 // holds nothing that dies with it; an object of a built-in kind with a class's attribute storage beside its data (HAS_ATTRIBUTES)
@@ -903,6 +905,17 @@ struct ClassObject : Object {
         std::vector<const Str*> out;
         if (slots) for (const Str* s : *slots) if (s != intern("__dict__") && s != intern("__weakref__")) out.push_back(s);
         return out;
+    }
+    // own_slot_names in the order a release lets them go (each class's sorted by name, as type_new stores them; a built-in
+    // type's fields in the order it declares them), made once: the collector's walk reads it at every object
+    mutable std::optional<std::vector<const Str*>> slot_release_order;
+    const std::vector<const Str*>& release_order_of_slots() const {
+        if (!slot_release_order) {
+            auto names = own_slot_names();
+            if (hidden.empty() && !slots_ordered) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
+            slot_release_order = std::move(names);
+        }
+        return *slot_release_order;
     }
     // lookup along the MRO: (found, owner) or nullopt
     std::optional<std::pair<Obj, ClassObject*>> lookup(const Str* n) const {
@@ -2432,8 +2445,10 @@ inline Clearer& clearer(Kind k) {
     static Clearer table[static_cast<std::size_t>(Kind::KindCount)] = {};
     return table[static_cast<std::size_t>(k)];
 }
-inline bool walked(const Object* o) {            // tracked, alive and counted: what a collection walks
-    return holds_others(o->kind, o->flags) && !(o->flags & (IMMORTAL | DEAD | PUT_OFF | TOMBSTONE)) && o->refs > 0;
+// Tracked and alive: what a collection walks. Its count is not asked: trial deletion lowers the counts in place, and an object
+// that is not dead has one above nought (one whose count reached nought is DEAD before any code runs, or put off)
+inline bool walked(const Object* o) {
+    return holds_others(o->kind, o->flags) && !(o->flags & (IMMORTAL | DEAD | PUT_OFF | TOMBSTONE));
 }
 inline void visit(Obj v, std::vector<Object*>& out) {
     if (v.is_object() && walked(v.object())) out.push_back(const_cast<Object*>(v.object()));
@@ -2451,11 +2466,8 @@ inline void visit_dict_entries(const DictObject* d, std::vector<Object*>& out) {
 template <class T>
 inline void visit_attributes(T* obj, std::vector<Object*>& out) {
     static const Str* const dict = intern("__dict__");
-    for (ClassObject* c : obj->cls->mro) {
-        auto names = c->own_slot_names();
-        if (c->hidden.empty() && !c->slots_ordered) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
-        for (const Str* s : names) visit(slot_cell(obj, c, s), out);
-    }
+    for (ClassObject* c : obj->cls->mro)
+        for (const Str* s : c->release_order_of_slots()) visit(slot_cell(obj, c, s), out);
     auto dict_values = [&] {
         if (obj->exposed()) {
             if (obj->dict != nullptr) visit(Obj::of(obj->dict), out);
@@ -2631,39 +2643,46 @@ inline void list_release(GcList& l) {
     for (Object* o : list_items(l)) unlist(o);
 }
 
-// mark_gray, scan and collect_white from the roots (collector.trial_deletion): what nothing outside holds, in the order taken
+// mark_gray, scan and collect_white from the roots (collector.trial_deletion): what nothing outside holds, in the order taken.
+// The trial counts are the objects' own counts, lessened in place and given back, every one, before anything runs (gc.c's
+// way, update_refs and subtract_refs on its own copy); the colours are two of the header's bits (GC_GRAY, GC_BLACK, both for
+// white), cleared at the end. No code runs between the first lessening and the last giving back.
 inline void trial_deletion(const std::vector<Object*>& roots, GcList& unreachable) {
-    enum class Color : std::uint8_t { Gray, Black, White, Taken };
-    struct Mark { std::int64_t count; Color color; };
-    std::unordered_map<Object*, Mark> marks;
-    std::vector<Object*> kids, stack;
+    constexpr std::uint16_t GRAY = GC_GRAY, BLACK = GC_BLACK, WHITE = GC_GRAY | GC_BLACK, COLOR = GC_GRAY | GC_BLACK;
+    auto color = [](const Object* o) { return static_cast<std::uint16_t>(o->flags & COLOR); };
+    auto paint = [](Object* o, std::uint16_t c) { o->flags = static_cast<std::uint16_t>((o->flags & ~(GC_GRAY | GC_BLACK)) | c); };
+    std::vector<Object*> marked, kids, stack, todo;
     for (Object* root : roots) {                 // mark_gray: each reference among the reached lessens a count once
-        if (marks.contains(root)) continue;
-        marks[root] = {static_cast<std::int64_t>(root->refs), Color::Gray};
+        if (color(root) != 0) continue;
+        paint(root, GRAY);
+        marked.push_back(root);
         stack.assign(1, root);
         while (!stack.empty()) {
             Object* o = stack.back();
             stack.pop_back();
             children_of(o, kids);
             for (Object* k : kids) {
-                auto [it, fresh] = marks.try_emplace(k, Mark{static_cast<std::int64_t>(k->refs), Color::Gray});
-                --it->second.count;
-                if (fresh) stack.push_back(k);
+                --k->refs;
+                if (color(k) == 0) {
+                    paint(k, GRAY);
+                    marked.push_back(k);
+                    stack.push_back(k);
+                }
             }
         }
     }
     auto scan_black = [&](Object* from) {        // held from outside: it and all it reaches get their counts back
-        marks[from].color = Color::Black;
-        std::vector<Object*> todo{from}, sub;
+        paint(from, BLACK);
+        todo.assign(1, from);
+        std::vector<Object*> sub;
         while (!todo.empty()) {
             Object* o = todo.back();
             todo.pop_back();
             children_of(o, sub);
             for (Object* k : sub) {
-                Mark& m = marks[k];
-                ++m.count;
-                if (m.color != Color::Black) {
-                    m.color = Color::Black;
+                ++k->refs;
+                if (color(k) != BLACK) {
+                    paint(k, BLACK);
                     todo.push_back(k);
                 }
             }
@@ -2674,30 +2693,33 @@ inline void trial_deletion(const std::vector<Object*>& roots, GcList& unreachabl
         while (!stack.empty()) {
             Object* o = stack.back();
             stack.pop_back();
-            Mark& m = marks[o];
-            if (m.color != Color::Gray) continue;
-            if (m.count > 0) {
+            if (color(o) != GRAY) continue;
+            if (o->refs > 0) {
                 scan_black(o);
             } else {
-                m.color = Color::White;
+                paint(o, WHITE);
                 children_of(o, kids);
                 stack.insert(stack.end(), kids.rbegin(), kids.rend());
             }
         }
     }
+    for (Object* o : marked)                     // the white objects' references given back: every count is the true one again
+        if (color(o) == WHITE) {
+            children_of(o, kids);
+            for (Object* k : kids) ++k->refs;
+        }
     for (Object* root : roots) {                 // collect_white: from each root, in the order a walk first meets them
         stack.assign(1, root);
         while (!stack.empty()) {
             Object* o = stack.back();
             stack.pop_back();
-            Mark& m = marks[o];
-            if (m.color != Color::White) continue;
-            m.color = Color::Taken;
+            if (color(o) != WHITE || (o->flags & LISTED)) continue;
             list_move(o, unreachable);
             children_of(o, kids);
             stack.insert(stack.end(), kids.rbegin(), kids.rend());
         }
     }
+    for (Object* o : marked) paint(o, 0);
 }
 
 // gc.c's update_refs, subtract_refs and move_unreachable over a collection's own list (collector.deduce_unreachable): `base`
@@ -2847,7 +2869,7 @@ inline std::int64_t collect_cycles() {
     for (Object* o : c.candidates) {
         o->flags &= static_cast<std::uint16_t>(~BUFFERED);
         if (o->flags & TOMBSTONE) detail::free_tombstone(o);
-        else if (detail::walked(o)) roots.push_back(o);
+        else if (detail::walked(o) && o->refs > 0) roots.push_back(o);
     }
     c.candidates.clear();
     c.tombstones = 0;
