@@ -1744,3 +1744,69 @@ time; the program's own stay at `-O1`).
 
 
 **2026-11-23 — review A42 processed (RL-912 to RL-922): a generator's frame object has no `f_back`, a frame object's clear goes slot by slot, and the held buffers where the clinic takes them.** All ten confirmed and fixed, and one more from the session's sweep of a finding's class. Two are of RL-222's step: when a generator's frame ends while its frame object is held, the object takes the values without `f_back` (`clear_gen_frame` sets the frame's previous to NULL first; the runtime linked the last resumer, whose variables then lived as long as the kept exception: RL-912), and a frame object's clear (`traceback.clear_frames`, the collection's) releases its slots in place from the top, so a finaliser one of them runs finds those below and a clear it starts releases them (RL-917). Eight are of the held buffers: blake2's holds inside the clean-up's `try` (RL-913); `a2b_base64` and `a2b_base32` in the clinic's order, `ignorechars` held, the alphabet's table built after the conversions and the octets read after its lookup (RL-914, RL-915, RL-919, RL-920); an exhausted `iter_unpack` iterator lets go of its Struct before its buffer (RL-918); `hexlify`'s separator read from what the object stores (RL-921), and the runtime's `bytes.hex` and `bytearray.hex` the same way, a wide kind refused and a NUL separator written (RL-922). One is a class in the collector: a prelude helper whose `__del__` is C dealloc code (`__bella_dealloc__`) has no tp_clear, so the collection does not clear it either; it stays first, joins `old` as `delete_garbage` moves such an object, and dies at its holder's clear with what it holds (RL-916: the struct iterator's buffer and a view of a view stayed exported, with an unraisable AttributeError). The model has no prelude helpers, so the header's change has no counterpart there. Not taken: `ownership/cyclegen`, which agrees now on what the row was about and runs two finalisers of one collection in another order (D-04). `pipeline/tests/test_review_2026_11_23_a42.py` holds the reviewer's rows that agree now (25, with the one control `separator/a`), the session's collection rows (7) and the separator sweep.
+
+**2026-11-23 — the exit is `finalize_modules`' sequence (H4, RL-514, C-9-13).** The author decided RL-514 on 2026-11-20: exact, with the collector. The exit walk is gone. In its place, `finalize_at_exit` (`runtime/src/call.cpp`) takes the program apart in CPython's steps, each read from the 3.15.2 source (`Python/pylifecycle.c`, `Python/pystate.c`, `Objects/moduleobject.c`, `Python/gc.c`), and a finaliser sees the step it runs in:
+
+1. `PyGC_Collect`, a collection with everything whole, unless the collector is disabled. Bella had no collection at exit, so a cycle left at exit was never finalised.
+2. `_PyImport_FiniExternal` sets `sys.path_importer_cache` and `sys.path_hooks` to None.
+3. `finalize_modules`, in order:
+   * the special names go and the standard streams are put back;
+   * each module of `sys.modules` is replaced by None in its order, and a module nothing else holds goes, its namespace with it if nothing else holds that;
+   * `sys.modules` is emptied;
+   * the builtins get back the copy taken before the program (no `open`; `__spec__`, `__loader__` and `__package__` None);
+   * a collection;
+   * the modules still alive, last imported first, have their names set to None, those with one underscore first (`_PyModule_ClearDict`'s two passes);
+   * sys's and the builtins' names;
+   * a last collection.
+4. `finalize_interp_clear` releases the context and the codec registry, then runs the interpreter's own last collection. After it, `gc`'s lists and the warning filters are released; no collection meets their cycles any more.
+
+**Why a trace.** The program's modules and classes are immortal here (D-19, C-3-12), so the cycle collector cannot see through a module's namespace or a class's methods. What a step finds dead is therefore found by a trace in CPython's view:
+* a module object holds its namespace;
+* a function, a frame, a generator and a traceback entry hold their module's namespace, not the module;
+* a class holds its attributes, bases and type;
+* every object holds its class.
+
+The trace uses the collector's own traverses, in a mode that also names immortal objects (`detail::tracing_everything`, read in `walked()`). No collection runs and no count is touched while it is on.
+
+**The roots** are what the interpreter holds:
+* sys and the builtins, and the builtins' copy;
+* the runtime's own modules, together with the hidden namespaces their preludes run in (`hidden_modules()`, which `forget_module` now keeps). Their state is where the codec registry, the warning filters and the context live, as interpreter state is in CPython;
+* the intrinsics.
+
+**An exit collection** (`collect_at_exit`, `_PyGC_CollectNoFail`) runs gc.c's sequence over two sets together: the cyclic garbage in the collector's buffer, found by trial deletion as always, and what the module objects reach and the roots do not. It runs whatever `gc.enable` said, and calls no `gc.callbacks`. An object a finaliser makes reachable from the roots again, with what it reaches, is the resurrection check's.
+
+**Module objects die by count.** CPython frees one when its count drops, and the trace stands in for that count. References to each module object are counted over all that lives, and the holders of each namespace with them. A module whose count is nought goes. Its namespace goes too if only the module held it, released entry by entry as `dict_dealloc` releases it. A module value whose count reaches nought on the way dies there and then, before the next entry. `pipeline/tests/test_compiled_imports.py`'s order test caught that: `mb`'s binding of `ma` lets go of `ma` before `mb`'s own globals. A namespace whose last holder dies later goes then. The count is taken again after each namespace that goes.
+
+**sys's names in CPython's places.** `_PySys_SetPreliminaryStderr` places `stderr` and `__stderr__` right after `modules`, and `init_sys_streams` puts the other four at the end, each dunder name first. Wiping sys in that order makes the standard error None before the standard output is let go of, so what the output's close says goes nowhere. `test_signals.py`'s reader-that-has-gone caught it: compiled reported the broken pipe a second time.
+
+**The runtime's own modules.**
+* A built-in module's prelude runs in a namespace of its own (`fill_in_python`), so the module the program sees is wiped exactly as CPython wipes a C module's dict, and the prelude's code keeps working.
+* The import system's two modules, whose code is also the runtime's, keep their namespace. The program sees a copy with its names None (`Module::program_view`, read by the module's attribute paths and `__dict__`).
+* Before sys and the builtins are wiped, every module of the runtime's own gets a copy of the builtins for its code.
+* `builtin(name)`, how the runtime's code calls a builtin by name, reads the start-up copy and not the live builtins. The C calls the C function, and after the wipe the builtins are None. `bytes.hex`'s `len` goes through it too, instead of the live dict.
+
+**What is not exact, known and listed:**
+* The order within one collection (D-04).
+* What only a dead class holds is finalised but not freed, since classes are immortal (C-3-12).
+* The state of a C module that CPython frees with its module stays alive here as a root, for example `_csv`'s dialects. No case reaches it.
+* While modules are wiped, a module reference released inside a container that dies in the cascade is not counted until the next trace.
+
+The `_abc` caches still hold strong references, the rest of H4 (TODO).
+
+**The case.** C-9-13 has seventeen rows, each a restart of the program with one thing set up:
+* a replaced stream;
+* a cycle, with the collector on and off;
+* a module with no function;
+* a global, a class attribute, a resurrected object;
+* the restored builtins;
+* a module kept from sys;
+* weak references with a callback, of the program's and not;
+* sys.excepthook (RL-514's row);
+* a C module's attribute read at the end;
+* the codec registry, a context variable, a warning filter, `gc.callbacks`.
+
+All seventeen agree compiled. eval1 and eval2 do not model the exit; the case is in neither baseline. Three rows I first wrote assigned to the builtins, which E-06 excludes, and were taken out before recording.
+
+**Notes.**
+* RL-514's verdict was corrected: the finaliser runs after sys's and the builtins' names are cleared, but with its module's names whole (`__main__` died when sys.modules let go of it, so its namespace was never wiped).
+* A question for the author: C-9-13's `alive` row checks an order inside one module's wiping (one underscore first), which D-07 leaves unspecified. D-07 could be narrowed to "within one collection" (D-04), since the exit is now exact.

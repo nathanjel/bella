@@ -2459,9 +2459,14 @@ inline Finalizer& finalizer(Kind k) {
     static Finalizer table[static_cast<std::size_t>(Kind::KindCount)] = {};
     return table[static_cast<std::size_t>(k)];
 }
+// The exit's trace (runtime/src/call.cpp, finalize): CPython's view of the heap, in which a module and a class are objects like
+// any other (D-19 and C-3-12 make them immortal here). While it runs the traverses name the immortal and the untracked too;
+// no collection runs then, and no count is touched
+inline bool tracing_everything = false;
 // Tracked and alive: what a collection walks. Its count is not asked: trial deletion lowers the counts in place, and an object
 // that is not dead has one above nought (one whose count reached nought is DEAD before any code runs, or put off)
 inline bool walked(const Object* o) {
+    if (tracing_everything) [[unlikely]] return holds_others(o->kind, o->flags) && !(o->flags & (DEAD | PUT_OFF | TOMBSTONE));
     return holds_others(o->kind, o->flags) && !(o->flags & (IMMORTAL | DEAD | PUT_OFF | TOMBSTONE)) && !(o->cls != nullptr && o->cls->gc_untracked);
 }
 inline void visit(Obj v, std::vector<Object*>& out) {

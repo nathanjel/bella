@@ -154,6 +154,9 @@ const std::map<std::string_view, Primitive>& primitives() {
 }  // namespace
 
 bool gc_is_enabled() { return detail::collector().enabled; }
+void release_gc_lists() {                        // _PyGC_Fini: Py_CLEAR(gcstate->garbage), Py_CLEAR(gcstate->callbacks)
+    for (Obj* slot : {&state().garbage, &state().callbacks}) decref(std::exchange(*slot, Obj{}));
+}
 namespace {
 void save_to_garbage(Object* o) {                 // DEBUG_SAVEALL: PyList_Append(gcstate->garbage, op)
     Ref list = g_list(state().garbage);

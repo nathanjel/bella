@@ -229,3 +229,4 @@ C-9-09_finalisers_at_exit.py
 C-9-10_weakref_objects.py
 C-9-11_a_traceback_keeps_its_frames_locals.py
 C-9-12_a_kept_frame_keeps_its_caller.py
+C-9-13_the_steps_of_the_exit.py

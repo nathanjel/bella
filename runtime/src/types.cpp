@@ -540,7 +540,7 @@ Ref generic_getattr(Obj obj, const Str* name) {
     if (obj == None() && is_kind(found, Kind::GetSet)) return static_cast<GetSet*>(found.object())->get(obj);
     if (!found.is_unset() && is_data_descriptor(found)) return descr_get(found, obj, Obj::of(c));
     if (is_kind(obj, Kind::Module)) {
-        Obj v = dict_get(static_cast<Module*>(obj.object())->dict, Obj::of(name));
+        Obj v = dict_get(program_dict(static_cast<Module*>(obj.object())), Obj::of(name));
         if (!v.is_unset()) return Ref::share(v);
     }
     if (is_kind(obj, Kind::PyFunction) && !presents_as_builtin(obj)) {

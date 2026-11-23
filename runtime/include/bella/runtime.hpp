@@ -213,11 +213,18 @@ struct Module : Object {
     Dict* dict;                                  // owned
     Dict* builtins = nullptr;                    // a staged text's, when not the builtins module's own (owned)
     Dict* locals = nullptr;                      // a staged text's namespace when exec gives one of its own (PyEval_EvalCode's locals), else dict (owned)
+    // A module CPython writes in C that the exit has cleared (finalize_modules_clear_weaklist): what the program sees of it, its
+    // names None, while the runtime's own code goes on with `dict` (C-9-13). Null otherwise (owned)
+    Dict* program_view = nullptr;
     explicit Module(const char* n);
     Module(Dict* globals, Dict* given_builtins); // a text's frame, which lives as its functions do: not a module of the program's
 };
+inline Dict* program_dict(const Module* m) { return m->program_view != nullptr ? m->program_view : m->dict; }   // its namespace, as the program sees it
 void forget_module(const Module* m);             // the runtime's own: cleared by nothing at exit
 std::vector<Module*>& all_modules();             // every module made, oldest first (immortal: D-19)
+std::vector<Module*>& hidden_modules();          // the runtime's own namespaces no program sees (a built-in module's prelude's, match's)
+std::vector<Module*> made_native_modules();      // the built-in modules made so far, CPython's C ones (imports.cpp's registry)
+Dict* builtins_copy();                           // interp->builtins_copy: the builtins as they were before the program, or null before then
 
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
     const Code* code;
@@ -1415,6 +1422,7 @@ int exit_by_sigint();                            // exit_sigint (Modules/main.c)
 Ref i_signals(Obj, Args a);                      // _signal.py's, and _thread.interrupt_main's: the signal core, by name
 Ref i_gc(Obj, Args a);                           // gc.py's: the collector's state, by name (runtime/src/gc.cpp)
 bool gc_is_enabled();                            // PyGC_IsEnabled
+void release_gc_lists();                         // _PyGC_Fini, at exit (runtime/src/gc.cpp)
 
 // A module of the prelude, run before the program as the module it names (builtins, or
 // _frozen_importlib for runtime/prelude/bootstrap.py).

@@ -204,7 +204,14 @@ Module::Module(Dict* globals, Dict* given_builtins) : Object(Kind::Module), name
         incref(builtins);
     }
 }
-void forget_module(const Module* m) { std::erase(all_modules(), m); }
+void forget_module(const Module* m) {
+    std::erase(all_modules(), m);
+    hidden_modules().push_back(const_cast<Module*>(m));
+}
+std::vector<Module*>& hidden_modules() {
+    static std::vector<Module*> made;
+    return made;
+}
 std::vector<Module*>& all_modules() {
     static std::vector<Module*> made;
     return made;
@@ -320,13 +327,22 @@ const bool deaths_registered = register_deaths();
 // A traverse names the counted references the kind's release lets go of; a kind CPython gives no tp_clear has none here: a
 // cycle through it is broken by clearing another of its members.
 void visit_ref(const Ref& r, std::vector<Object*>& out) { detail::visit(r.get(), out); }
+// What a function, a frame, a generator or a traceback entry holds of its module: the module, which a program's is immortal
+// and the collector does not walk (a staged text's is counted). In CPython's view, the exit's trace, it is the namespace
+// (func_globals, f_globals): what holds a function keeps its module's names, not its module (C-9-13)
+void visit_globals(Obj m, std::vector<Object*>& out) {
+    if (detail::tracing_everything && is_kind(m, Kind::Module) && (m.object()->flags & IMMORTAL))
+        detail::visit(Obj::of(static_cast<Module*>(m.object())->dict), out);
+    else
+        detail::visit(m, out);
+}
 bool register_traversals() {
     using detail::visit;
     detail::traverser(Kind::Cell) = [](Object* o, std::vector<Object*>& out) { visit(static_cast<Cell*>(o)->value, out); };
     detail::clearer(Kind::Cell) = [](Object* o) { decref(std::exchange(static_cast<Cell*>(o)->value, Obj{})); };
     detail::traverser(Kind::PyFunction) = [](Object* o, std::vector<Object*>& out) {   // func_traverse's order
         auto* f = static_cast<PyFunction*>(o);
-        if (f->module != nullptr) visit(Obj::of(f->module), out);   // its globals
+        if (f->module != nullptr) visit_globals(Obj::of(f->module), out);   // its globals
         visit_ref(f->module_name, out);
         visit_ref(f->defaults, out);
         visit_ref(f->kwdefaults, out);
@@ -400,7 +416,7 @@ bool register_traversals() {
         auto* t = static_cast<Traceback*>(o);
         visit_ref(t->next, out);
         visit_ref(t->frame_obj, out);
-        visit_ref(t->module, out);
+        visit_globals(t->module.get(), out);
     };
     detail::clearer(Kind::Traceback) = [](Object* o) {   // tb_clear: the next entry, then the frame (its locals, last first)
         auto* t = static_cast<Traceback*>(o);
@@ -411,7 +427,7 @@ bool register_traversals() {
         auto* f = static_cast<FrameObject*>(o);  // (_PyFrame_Traverse: f_locals, the function's globals, the values in order)
         visit_ref(f->back, out);
         visit_ref(f->ns, out);
-        visit_ref(f->module, out);
+        visit_globals(f->module.get(), out);
         for (const Ref& r : f->values) visit_ref(r, out);
     };
     detail::clearer(Kind::Frame) = [](Object* o) {   // frame_tp_clear: the values, last first, then f_locals; f_back stays
@@ -431,6 +447,7 @@ bool register_traversals() {
         if (g->state != GenState::Finished) {
             visit_ref(g->resumed.frame_obj, out);
             visit_ref(g->function, out);
+            if (detail::tracing_everything && g->module != nullptr) visit_globals(Obj::of(g->module), out);   // its frame's f_globals
             for (const Ref& r : g->slots) visit_ref(r, out);
             visit_ref(g->sent, out);
             visit_ref(g->pending, out);

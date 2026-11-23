@@ -612,6 +612,12 @@ Module* native_module_made(const char* name) {  // a built-in module if it was e
     auto it = native_registry().find(name);
     return it == native_registry().end() ? nullptr : it->second.made;
 }
+std::vector<Module*> made_native_modules() {
+    std::vector<Module*> out;
+    for (const auto& [name, entry] : native_registry())
+        if (entry.made != nullptr) out.push_back(entry.made);
+    return out;
+}
 // PyErr_ResourceWarning(source, 1, message): _warnings.warn(message, ResourceWarning, 1, source), for a prelude that finalizes
 // something left open. The C machinery needs no import, so on the way out, when an import statement fails as CPython's does,
 // the module is asked as it stands; one that was never made has CPython's own filters (init_filters), which ignore a
@@ -2148,7 +2154,7 @@ Ref module_getattr(Obj obj, const Str* name, bool suppress) {
         if (data) {
             attr = descr_get(found, obj, Obj::of(c));
         } else {
-            Obj v = dict_get(m->dict, Obj::of(name));
+            Obj v = dict_get(program_dict(m), Obj::of(name));
             if (!v.is_unset() && bootstrap_hides(m, name)) v = Obj{};   // the runtime's own, in a module of the import system: no attribute of it
             if (!v.is_unset()) attr = Ref::share(v);
             else if (!found.is_unset()) attr = descr_get(found, obj, Obj::of(c));
@@ -2162,17 +2168,17 @@ Ref module_getattr(Obj obj, const Str* name, bool suppress) {
         if (!attr.get().is_unset()) return attr;
         // a load may have bound the child and removed its pending entry after the first lookup
         if (recheck_dict && (found.is_unset() || !has_descr_get(found))) {
-            Obj v = dict_get(m->dict, Obj::of(name));
+            Obj v = dict_get(program_dict(m), Obj::of(name));
             if (!v.is_unset()) attr = Ref::share(v);
         }
     }
     if (!attr.get().is_unset()) {
         if (!is_lazy(attr.get())) return attr;
         if (suppress && is_resolving(attr.get())) return Ref{};   // only direct reentry means unavailable
-        return lazy_reify(attr.get(), name, Obj::of(m->dict));
+        return lazy_reify(attr.get(), name, Obj::of(program_dict(m)));
     }
     refuse_absent_attribute(obj, name);          // before the module's own __getattr__: a name CPython's module has never reaches it
-    Ref hook = resolved_dict_item(m->dict, N("__getattr__"));
+    Ref hook = resolved_dict_item(program_dict(m), N("__getattr__"));
     if (!hook.get().is_unset()) {
         Ref name_ref = Ref::share(Obj::of(name));
         try {
@@ -2295,7 +2301,7 @@ Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the
 Ref module_dict_get(Obj self) {
     Module* m = as_module(self, "__dict__");
     if (is_bootstrap_prelude(m)) refuse_bootstrap_namespace(m);
-    return Ref::share(Obj::of(m->dict));
+    return Ref::share(Obj::of(program_dict(m)));
 }
 Ref module_new_m(Obj, Args a) {                  // ModuleType(name, doc=None): __new__ makes it empty
     if (a.npos < 1 || !is_kind(a.pos(0), Kind::Class) || static_cast<ClassObject*>(a.pos(0).object()) != types().module)

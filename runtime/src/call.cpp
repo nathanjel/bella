@@ -2669,9 +2669,19 @@ bool load_match(std::string_view name) {
 }
 }  // namespace
 
+namespace {
+Dict*& builtins_copy_slot() {
+    static Dict* d = nullptr;                    // owned from the program's start to the end
+    return d;
+}
+}  // namespace
+Dict* builtins_copy() { return builtins_copy_slot(); }
+// What the runtime's own code calls by name: an intrinsic, else the builtin as the program began with it (the C calls the C
+// function, whatever the builtins hold by then: they are None after the exit clears them)
 Ref builtin(const char* name) {
     register_intrinsics();
     Obj v = dict_get(intrinsics(), Obj::of(intern(name)));
+    if (v.is_unset() && builtins_copy() != nullptr) v = dict_get(builtins_copy(), Obj::of(intern(name)));
     if (v.is_unset()) v = dict_get(builtins_module()->dict, Obj::of(intern(name)));
     if (v.is_unset()) {                          // PEP 695's intrinsics are _typing's (Objects/typevarobject.c), imported at first use
         for (const char* pep695 : {"type_params", "generic_class", "typealias", "set_type_params"})
@@ -3455,196 +3465,308 @@ void call_weakref_callback(Obj fn, Obj holder) {
 }
 const bool weakref_hook_installed = (weakref_callback_hook() = call_weakref_callback, true);
 
-// finalize_modules at exit. sys's special names go; sys.modules is emptied; then the collector
-// (_PyGC_CollectNoFail) finds the modules' namespaces in cycles (a dict holds a function holding the
-// dict) and runs every finaliser with the namespaces whole, so a __del__ reads its globals (RL-281).
-// Until the cycle collector exists (step 3c) a walk from the namespaces stands for it: what it reaches
-// is finalised, in the order found (D-07: unspecified), and only then are the namespaces cleared.
-// Modules are immortal here (D-19), so their namespaces are cleared in place, sys.modules' first.
+// ---- Py_FinalizeEx from _PySignal_Fini on (C-9-13; RL-514, the author's decision of 2026-11-20: exact, with the collector) ----
+// CPython takes the program apart in steps, and a finaliser sees the step it runs in:
+//   PyGC_Collect, if the collector is enabled, with everything whole; _PyImport_FiniExternal: sys.path_importer_cache and
+//   sys.path_hooks are None. finalize_modules: builtins._ and sys's special names go and the standard streams are put back
+//   (finalize_modules_delete_special); each module of sys.modules, in order, is replaced by None, and one nothing else holds
+//   goes, with its namespace if nothing else holds that (finalize_remove_modules); sys.modules is emptied; the builtins get back
+//   what they had before the program (finalize_restore_builtins); a collection; each module still alive, last imported first,
+//   has its names set to None (finalize_modules_clear_weaklist), then sys's and the builtins' (finalize_clear_sys_builtins_dict);
+//   a last collection. finalize_interp_clear: the thread's state (the context), the codec registry; the interpreter's last
+//   collection; then gc's lists and the warning filters, whose cycles no collection meets any more.
+// The program's modules and classes are immortal here (D-19, C-3-12), and the cycle collector cannot see through them, so what
+// a step finds dead is found by a trace in CPython's view (object.hpp's tracing_everything): a module object holds its
+// namespace, a function, a frame and a generator their module's namespace, a class its attributes, bases and type, and every
+// object its class. Its roots are what the interpreter holds: sys, the builtins and their copy, and the runtime's own modules
+// (CPython's C ones and the prelude's), whose state is where the codec registry, the warning filters and the context are; and
+// the runtime's own code keeps working with their namespaces after the program's view of them is cleared.
 namespace {
-template <class T>
-void attribute_values(T* inst, std::vector<Obj>& todo) {
-    for (Obj v : inst->fields) todo.push_back(v);
-    if (inst->dict != nullptr) todo.push_back(Obj::of(inst->dict));
+struct ExitView {
+    std::unordered_set<Module*> own;             // sys, builtins, the prelude's, CPython's C modules: never freed
+    std::unordered_set<Module*> gone;            // the module objects CPython has freed by now
+    std::unordered_set<Module*> removed;         // those sys.modules has let go of
+    std::unordered_set<Module*> released;        // those whose namespace has gone
+    std::unordered_map<Module*, std::int64_t> referrers;   // the references to each module object, as last counted
+    std::unordered_map<Module*, std::int64_t> globals_held;   // what holds each one's namespace as its globals, as last counted
+};
+// A function's, a frame's, a generator's or a traceback entry's module, whose namespace it holds as its globals
+Module* globals_of(const Object* o) {
+    Obj m;
+    switch (o->kind) {
+        case Kind::PyFunction: m = Obj::of(static_cast<const PyFunction*>(o)->module); break;
+        case Kind::Frame: m = static_cast<const FrameObject*>(o)->module.get(); break;
+        case Kind::Generator: m = Obj::of(static_cast<const Generator*>(o)->module); break;
+        case Kind::Traceback: m = static_cast<const Traceback*>(o)->module.get(); break;
+        default: return nullptr;
+    }
+    return m.is_object() && is_kind(m, Kind::Module) ? static_cast<Module*>(m.object()) : nullptr;
 }
-void finalizable_from(const std::vector<Module*>& roots, std::vector<Ref>& found, std::unordered_set<Object*>& seen) {
-    std::vector<Obj> todo;
-    for (Module* m : roots) todo.push_back(Obj::of(m->dict));
-    for (std::size_t next = 0; next < todo.size(); ++next) {
-        Obj v = todo[next];
-        if (!v.is_object() || !seen.insert(v.object()).second) continue;
-        Object* o = v.object();
-        if (o->kind == Kind::Class || o->cls != nullptr) todo.push_back(Obj::of(o->cls));
-        switch (o->kind) {
-            case Kind::Instance:
-                attribute_values(static_cast<Instance*>(o), todo);
-                found.push_back(Ref::share(v));
-                break;
-            case Kind::IntInstance:
-                attribute_values(static_cast<IntInstance*>(o), todo);
-                found.push_back(Ref::share(v));
-                break;
-            case Kind::FloatInstance:
-                attribute_values(static_cast<FloatInstance*>(o), todo);
-                found.push_back(Ref::share(v));
-                break;
-            case Kind::ComplexInstance:
-                attribute_values(static_cast<ComplexInstance*>(o), todo);
-                found.push_back(Ref::share(v));
-                break;
-            case Kind::Dict:
-                if (has_attributes(o)) {
-                    attribute_values(static_cast<DictInstance*>(o), todo);
-                    found.push_back(Ref::share(v));
-                }
-                for (auto& e : static_cast<Dict*>(o)->entries) {
-                    todo.push_back(e.key);
-                    todo.push_back(e.value);
-                }
-                break;
-            case Kind::Class:
-                for (auto& [k, value] : static_cast<ClassObject*>(o)->attrs.items()) todo.push_back(value);
-                break;
-            case Kind::Str:
-                if (has_attributes(o)) {
-                    attribute_values(static_cast<StrInstance*>(o), todo);
-                    found.push_back(Ref::share(v));
-                }
-                break;
-            case Kind::Tuple:
-                if (has_attributes(o)) {
-                    attribute_values(static_cast<TupleInstance*>(o), todo);
-                    found.push_back(Ref::share(v));
-                }
-                for (Obj x : static_cast<Tuple*>(o)->items) todo.push_back(x);
-                break;
-            case Kind::List:
-                if (has_attributes(o)) {
-                    attribute_values(static_cast<ListInstance*>(o), todo);
-                    found.push_back(Ref::share(v));
-                }
-                for (Obj x : static_cast<List*>(o)->items) todo.push_back(x);
-                break;
-            case Kind::Bytes:
-            case Kind::ByteArray:
-                if (has_attributes(o)) {
-                    attribute_values(static_cast<BytesInstance*>(o), todo);
-                    found.push_back(Ref::share(v));
-                }
-                break;
-            case Kind::Set:
-                if (has_attributes(o)) {
-                    attribute_values(static_cast<SetInstance*>(o), todo);
-                    found.push_back(Ref::share(v));
-                }
-                for (auto& e : static_cast<SetObject*>(o)->table) todo.push_back(e.key);
-                break;
-            case Kind::Cell:
-                todo.push_back(static_cast<Cell*>(o)->value);
-                break;
-            case Kind::PyFunction: {
-                auto* f = static_cast<PyFunction*>(o);
-                for (const Ref* r : {&f->defaults, &f->kwdefaults, &f->annotate, &f->dict}) todo.push_back(r->get());
-                for (const Ref& r : f->closure) todo.push_back(r.get());
-                break;
+// Every object reached from `roots` that `seen` does not hold yet, in the order first met (breadth first). With `view`, each
+// reference to a module object is counted (not those of `uncounted`, sys.modules while it lets go of them), and each holder of
+// a module's namespace
+std::vector<Object*> reach(const std::vector<Object*>& roots, std::unordered_set<Object*>& seen, ExitView* view = nullptr,
+                           const Object* uncounted = nullptr) {
+    struct Mode {
+        Mode() { detail::tracing_everything = true; }
+        ~Mode() { detail::tracing_everything = false; }
+    } mode;
+    std::vector<Object*> order, kids;
+    for (Object* r : roots)
+        if (r != nullptr && seen.insert(r).second) order.push_back(r);
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        Object* o = order[i];
+        detail::children_of(o, kids);
+        if (o->cls != nullptr) kids.push_back(o->cls);
+        if (o->kind == Kind::Class) {
+            auto* c = static_cast<ClassObject*>(o);
+            for (auto& [name, value] : c->attrs.items())
+                if (value.is_object() && detail::walked(value.object())) kids.push_back(const_cast<Object*>(value.object()));
+            for (ClassObject* b : c->bases) kids.push_back(b);
+            for (ClassObject* m : c->mro) kids.push_back(m);
+        }
+        if (view != nullptr) {
+            if (o != uncounted)
+                for (Object* k : kids)
+                    if (k->kind == Kind::Module) ++view->referrers[static_cast<Module*>(k)];
+            if (Module* g = globals_of(o); g != nullptr && (g->flags & IMMORTAL)) ++view->globals_held[g];
+        }
+        for (Object* k : kids)
+            if (seen.insert(k).second) order.push_back(k);
+    }
+    return order;
+}
+std::vector<Object*> interpreter_roots(const ExitView& v) {
+    std::vector<Object*> roots;
+    for (Module* m : v.own) {
+        roots.push_back(m);
+        roots.push_back(m->dict);
+    }
+    if (Dict* copy = builtins_copy(); copy != nullptr) roots.push_back(copy);
+    roots.push_back(intrinsics());
+    return roots;
+}
+std::vector<Object*> module_objects() {
+    std::vector<Object*> out;
+    for (Module* m : all_modules()) out.push_back(m);
+    return out;
+}
+// The references to each module object and the holders of each namespace, from all that lives
+void recount(ExitView& v) {
+    v.referrers.clear();
+    v.globals_held.clear();
+    std::unordered_set<Object*> seen;
+    reach(interpreter_roots(v), seen, &v, sys_modules());
+    reach(module_objects(), seen, &v, sys_modules());
+}
+void module_goes(ExitView& v, Module* m, bool top = true);
+// dict_dealloc of a module's namespace: each entry in order, its key, then its value; a module object whose last reference that
+// was goes there and then, before the next entry
+void release_namespace(ExitView& v, Module* m) {
+    v.released.insert(m);
+    for (auto& [key, value] : dict_take_all(m->dict)) {
+        decref(key);
+        if (is_kind(value, Kind::Module) && (value.object()->flags & IMMORTAL)) {
+            auto* held = static_cast<Module*>(value.object());
+            if (--v.referrers[held] == 0 && v.removed.contains(held) && !v.gone.contains(held) && !v.own.contains(held))
+                module_goes(v, held, false);
+        }
+        decref(value);
+    }
+}
+bool namespace_goes(const ExitView& v, Module* m) {    // only the module holds its namespace (as its md_dict)
+    auto held = v.globals_held.find(m);
+    return !v.released.contains(m) && m->dict->refs == 1 && (held == v.globals_held.end() || held->second == 0);
+}
+void settle(ExitView& v);
+// module_dealloc: a module nothing holds goes, and its namespace with it if nothing else holds that. What that let go of is
+// counted again afterwards: another module, or a namespace whose last holder that was, goes then
+void module_goes(ExitView& v, Module* m, bool top) {
+    v.gone.insert(m);
+    if (!namespace_goes(v, m)) return;           // its functions hold it: nothing is let go of, nothing to count again
+    release_namespace(v, m);
+    if (!top) return;
+    recount(v);
+    settle(v);
+}
+// The modules sys.modules has let go of that nothing holds now go, and the namespaces of those gone that nothing holds now
+void settle(ExitView& v) {
+    for (std::size_t i = 0; i < all_modules().size(); ++i) {   // a finaliser that runs may make a module
+        Module* m = all_modules()[i];
+        if (!v.removed.contains(m) || v.own.contains(m)) continue;
+        if (!v.gone.contains(m) && v.referrers[m] == 0) v.gone.insert(m);
+        else if (!v.gone.contains(m)) continue;
+        if (!namespace_goes(v, m)) continue;
+        release_namespace(v, m);
+        recount(v);
+        i = static_cast<std::size_t>(-1);        // from the start again, counted anew
+    }
+}
+// _PyModule_ClearDict: the names with one underscore first, then every other but __builtins__, each set to None in the dict's
+// order as it stands (what a value let go of runs may change the dict); a module whose last reference goes goes then
+void clear_module_dict(Dict* d, ExitView& v) {
+    for (int pass = 0; pass < 2; ++pass)
+        for (std::size_t i = 0; i < d->entries.size(); ++i) {
+            Dict::Entry& e = d->entries[i];
+            if (e.key.is_unset() || e.value == None()) continue;
+            const Str* k = as_str(e.key);
+            if (k == nullptr) continue;
+            bool one_underscore = !k->text.empty() && k->text[0] == '_' && (k->text.size() < 2 || k->text[1] != '_');
+            if (pass == 0 ? !one_underscore : k->text == "__builtins__") continue;
+            Ref key = Ref::share(e.key);
+            Obj old = std::exchange(e.value, None());
+            if (is_kind(old, Kind::Module) && (old.object()->flags & IMMORTAL)) {
+                auto* m = static_cast<Module*>(old.object());
+                if (--v.referrers[m] == 0 && v.removed.contains(m) && !v.gone.contains(m) && !v.own.contains(m)) module_goes(v, m, false);
             }
-            case Kind::Method:
-                todo.push_back(static_cast<Method*>(o)->func);
-                todo.push_back(static_cast<Method*>(o)->self);
-                break;
-            case Kind::Builtin:
-                todo.push_back(static_cast<Builtin*>(o)->self);
-                break;
-            case Kind::Slice: {
-                auto* sl = static_cast<SliceObject*>(o);
-                for (Obj x : {sl->start, sl->stop, sl->step}) todo.push_back(x);
-                break;
-            }
-            case Kind::DictView:
-                todo.push_back(static_cast<DictView*>(o)->dict);
-                break;
-            case Kind::Iterator:
-                todo.push_back(static_cast<Iterator*>(o)->seq);
-                break;
-            case Kind::Super: {
-                auto* su = static_cast<SuperObject*>(o);
-                for (Obj x : {su->type, su->obj, su->obj_type}) todo.push_back(x);
-                break;
-            }
-            case Kind::Proxy:
-                if (static_cast<Proxy*>(o)->of != nullptr) todo.push_back(Obj::of(static_cast<Proxy*>(o)->of));
-                else todo.push_back(static_cast<Proxy*>(o)->mapping.get());
-                break;
-            case Kind::Module:                   // every module of the program's is a root already; the runtime's own (sys with its
-                break;                           // standard streams, builtins) stay alive until the end, as CPython's do
-            default:
-                break;
+            decref(old);
+        }
+}
+// _PyGC_CollectNoFail: gc.c's sequence, whatever gc.enable said and with no gc.callbacks, over the cyclic garbage of the
+// collector's buffer and what the trace finds dead (all that the module objects reach and the interpreter's roots do not); what
+// a finaliser makes reachable from the roots again lives on, with what it reaches. A module object found dead goes
+// (module_clear), its namespace cleared with the rest if it is among them
+std::int64_t collect_at_exit(ExitView& v) {
+    detail::Collector& c = detail::collector();
+    if (c.collecting) return 0;
+    c.collecting = true;
+    struct Done {
+        ~Done() { detail::collector().collecting = false; }
+    } done;
+    c.scheduled = false;
+    std::vector<Object*> roots;
+    for (Object* o : c.candidates) {
+        o->flags &= static_cast<std::uint16_t>(~BUFFERED);
+        if (o->flags & TOMBSTONE) detail::free_tombstone(o);
+        else if (detail::walked(o) && o->refs > 0) roots.push_back(o);
+    }
+    c.candidates.clear();
+    c.tombstones = 0;
+    c.roots = roots.size();
+    detail::GcList survivors, unreachable, final;
+    detail::trial_deletion(roots, unreachable);
+    std::vector<Module*> lost_modules;
+    {
+        std::unordered_set<Object*> seen;
+        reach(interpreter_roots(v), seen);
+        for (Object* o : reach(module_objects(), seen)) {
+            if (o->kind == Kind::Module && (o->flags & IMMORTAL)) lost_modules.push_back(static_cast<Module*>(o));
+            else if (detail::walked(o) && !(o->flags & LISTED)) detail::list_append(o, unreachable);
         }
     }
-}
-void clear_module(Module* m) {
-    for (std::size_t i = 0; i < m->dict->entries.size(); ++i) {
-        Dict::Entry& e = m->dict->entries[i];
-        if (e.key.is_unset() || e.value == None()) continue;
-        if (const Str* k = as_str(e.key); k != nullptr && k->text == "__builtins__") continue;
-        Obj old = std::exchange(e.value, None());
-        decref(old);
+    std::int64_t collected = detail::handle_weakref_callbacks(unreachable, survivors);
+    detail::finalize_garbage(unreachable);
+    {                                            // handle_resurrected_objects, by the trace
+        std::unordered_set<Object*> again;
+        reach(interpreter_roots(v), again);
+        for (Object* o : detail::list_items(unreachable))
+            if (!again.contains(o)) detail::list_move(o, final);
+        for (Module* m : lost_modules)
+            if (!again.contains(m)) v.gone.insert(m);
     }
+    detail::list_merge(unreachable, survivors);
+    detail::clear_unreachable_weakrefs(final);
+    collected += static_cast<std::int64_t>(final.size);
+    detail::delete_garbage(final, survivors);
+    for (detail::GcList* l : {&survivors, &unreachable, &final}) detail::list_release(*l);
+    ++c.collections;
+    c.collected += collected;
+    return collected;
+}
+// What a built-in module's prelude holds under a name of its interpreter's state, let go of. The prelude runs in a namespace of
+// its own (imports.cpp's fill_in_python), the module the program sees having what it exports
+void release_state(const char* module, std::initializer_list<const char*> names) {
+    Module* m = nullptr;
+    for (Module* h : hidden_modules())
+        if (as_str(h->name.get())->text == module) m = h;
+    if (m == nullptr) return;
+    for (const char* n : names)
+        if (!dict_get(m->dict, Obj::of(intern(n))).is_unset()) put(m->dict, n, None());
 }
 }  // namespace
-void clear_modules(const std::unordered_set<Module*>& runtime_own) {
-    // The finalisers run in sys.modules' order, __main__'s first (finalize_remove_modules, measured on 3.15.2); the namespaces are
-    // then cleared the other way round (finalize_modules_clear_weaklist), the last module imported first, so that what the
-    // program's modules use while they go (the standard streams, their codec) is still whole; one no longer in sys.modules goes first
-    std::vector<Module*> order;
-    std::unordered_set<Module*> seen(runtime_own);
-    Dict* modules = sys_modules();
-    for (std::size_t i = 0; i < modules->entries.size(); ++i) {
-        Obj v = modules->entries[i].value;
-        if (modules->entries[i].key.is_unset() || !is_kind(v, Kind::Module)) continue;
-        auto* m = static_cast<Module*>(v.object());
-        if (seen.insert(m).second) order.push_back(m);
-    }
-    std::vector<Module*> clearing;
-    for (Module* m : all_modules())
-        if (seen.insert(m).second) {
-            order.push_back(m);
-            clearing.push_back(m);
-        }
-    for (auto it = order.rbegin(); it != order.rend(); ++it)
-        if (std::find(clearing.begin(), clearing.end(), *it) == clearing.end()) clearing.push_back(*it);
-    // finalize_modules_delete_special: what a finaliser sees of sys from here on
+void finalize_at_exit(const std::unordered_set<Module*>& runtime_own) {
+    ExitView v;
+    v.own = runtime_own;
+    for (Module* m : made_native_modules()) v.own.insert(m);
+    for (Module* m : hidden_modules()) v.own.insert(m);
     Module* sys = native_modules()["sys"];
+    Module* builtins = builtins_module();
+    if (gc_is_enabled()) run_collection();       // PyGC_Collect
+    put(sys->dict, "path_importer_cache", None());   // _PyImport_FiniExternal
+    put(sys->dict, "path_hooks", None());
+    // finalize_modules_delete_special: what a finaliser sees of sys from here on
+    put(builtins->dict, "_", None());
     for (const char* n : {"path", "argv", "ps1", "ps2", "last_exc", "last_type", "last_value", "last_traceback",
                           "__interactivehook__", "meta_path"})
         put(sys->dict, n, None());
-    for (auto [name, original] : std::initializer_list<std::pair<const char*, const char*>>{{"stdin", "__stdin__"}, {"stdout", "__stdout__"}, {"stderr", "__stderr__"}})
-        put(sys->dict, name, dict_get(sys->dict, Obj::of(intern(original))));
+    for (auto [name, original] : std::initializer_list<std::pair<const char*, const char*>>{{"stdin", "__stdin__"}, {"stdout", "__stdout__"}, {"stderr", "__stderr__"}}) {
+        Obj value = dict_get(sys->dict, Obj::of(intern(original)));
+        put(sys->dict, name, value.is_unset() ? None() : value);
+    }
     shutting_down() = true;
+    // finalize_remove_modules: each module of sys.modules, in its order, replaced by None (the weaklist keeps them, in that order)
+    Dict* modules = sys_modules();
+    std::vector<Module*> imported;
+    for (std::size_t i = 0; i < modules->entries.size(); ++i) {
+        Obj value = modules->entries[i].value;
+        if (!modules->entries[i].key.is_unset() && is_kind(value, Kind::Module)) imported.push_back(static_cast<Module*>(value.object()));
+    }
+    recount(v);
+    for (std::size_t i = 0; i < modules->entries.size(); ++i) {
+        Dict::Entry& e = modules->entries[i];
+        if (e.key.is_unset() || !is_kind(e.value, Kind::Module)) continue;
+        auto* m = static_cast<Module*>(e.value.object());
+        Ref key = Ref::share(e.key);
+        dict_set(modules, key.get(), None());
+        v.removed.insert(m);
+        if (!v.own.contains(m) && !v.gone.contains(m) && v.referrers[m] == 0) module_goes(v, m);
+    }
+    // the modules that left sys.modules before the end (an import that failed) are as removed: nothing holds them but what does
+    for (Module* m : all_modules())
+        if (!v.own.contains(m)) v.removed.insert(m);
+    settle(v);
     dict_clear(modules);                         // finalize_clear_modules_dict; the modules live on (D-19)
-    std::vector<Ref> found;
-    std::unordered_set<Object*> reached;
-    finalizable_from(order, found, reached);
-    // handle_weakrefs: a reference with a callback to what the collector found is cleared first; one it
-    // found too never has its callback called, and one without a callback lasts until the object is freed
-    std::vector<std::pair<Ref, Ref>> callbacks;
-    for (Object* target : reached) {
-        auto* list = weak_list(target);
-        if (list == nullptr) continue;
-        std::vector<WeakRecord*> records = *list;
-        for (WeakRecord* r : records) {
-            if (r->callback == 0) continue;
-            Ref fn = Ref::steal(Obj::of(reinterpret_cast<const Object*>(std::exchange(r->callback, 0))));
-            weak_unlink(r);
-            if (!reached.contains(r->holder) && r->holder->refs > 0) callbacks.emplace_back(Ref::share(Obj::of(r->holder)), std::move(fn));
+    if (Dict* copy = builtins_copy(); copy != nullptr) {   // finalize_restore_builtins
+        Ref was = dict_copy(builtins->dict);
+        dict_clear(builtins->dict);
+        for (std::size_t i = 0; i < copy->entries.size(); ++i)
+            if (!copy->entries[i].key.is_unset()) dict_set(builtins->dict, copy->entries[i].key, copy->entries[i].value);
+    }
+    collect_at_exit(v);
+    // finalize_modules_clear_weaklist: the modules still alive, last imported first, but builtins and sys. A built-in module's
+    // prelude runs in a namespace of its own, so the one the program sees is cleared as CPython's; the import system's two,
+    // whose code is the runtime's too, keep their namespace for it and show the program a copy with its names None
+    recount(v);
+    for (auto it = imported.rbegin(); it != imported.rend(); ++it) {
+        Module* m = *it;
+        if (v.gone.contains(m) || m == sys || m == builtins || m->dict == sys->dict || m->dict == builtins->dict) continue;
+        if (runtime_own.contains(m)) {
+            if (m->program_view != nullptr) continue;
+            m->program_view = static_cast<Dict*>(dict_copy(m->dict).release().object());
+            clear_module_dict(m->program_view, v);
+        } else {
+            clear_module_dict(m->dict, v);
         }
     }
-    for (auto& [holder, fn] : callbacks) call_weakref_callback(fn.get(), holder.get());
-    callbacks.clear();
-    for (Ref& r : found)
-        with_attribute_storage(r.get(), [](auto* inst) { detail::finalize_once(inst); });
-    found.clear();
-    for (Module* m : clearing) clear_module(m);
+    // finalize_clear_sys_builtins_dict. The runtime's own code keeps the builtins it had: its modules get a copy of their own
+    {
+        Ref kept = dict_copy(builtins->dict);
+        for (Module* m : v.own)
+            if (m->builtins == nullptr && m != builtins && m != sys) {
+                m->builtins = static_cast<Dict*>(kept.get().object());
+                incref(kept.get());
+            }
+    }
+    clear_module_dict(sys->dict, v);
+    clear_module_dict(builtins->dict, v);
+    collect_at_exit(v);                          // "Collect garbage once more"
+    // finalize_interp_clear (_PyInterpreterState_Clear): the thread's state, the codec registry (_PyCodec_Fini), then the
+    // interpreter's last collection, then gc's lists (_PyGC_Fini) and the warnings' state (_PyWarnings_Fini)
+    release_state("_contextvars", {"_current"});
+    release_state("_codecs", {"_search_path", "_search_cache", "_error_registry", "_library"});
+    collect_at_exit(v);
+    release_gc_lists();
+    release_state("_warnings", {"filters", "_onceregistry", "_defaultaction", "_state"});
 }
 
 // _Py_HandleSystemExitAndKeyboardInterrupt: the exit status a SystemExit asks for: its `code`
@@ -4196,16 +4318,43 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                 }
                 try {                            // init_sys_streams: a stream that cannot be made ends the program (errors that are no text, say)
                     Ref in = make(0, "<stdin>", "rb", errors);
-                    put(sys_dict, "stdin", in.get());
                     put(sys_dict, "__stdin__", in.get());
+                    put(sys_dict, "stdin", in.get());
                     Ref out = make(1, "<stdout>", "wb", errors);
-                    put(sys_dict, "stdout", out.get());
                     put(sys_dict, "__stdout__", out.get());
+                    put(sys_dict, "stdout", out.get());
                     Ref err = make(2, "<stderr>", "wb", "backslashreplace");
                     put(sys_dict, "stderr", err.get());
                     put(sys_dict, "__stderr__", err.get());
                 } catch (const PyError& e) {
                     fatal_while_starting("init_sys_streams", "can't initialize sys standard streams", e.exc.get());
+                }
+                // _PySys_SetPreliminaryStderr gave `stderr` and `__stderr__` their places in sys right after `modules`, long before
+                // the other four: the exit clears sys in its order (C-9-13), so the standard error is None before the standard
+                // output is let go of, and what the output's close says goes nowhere
+                {
+                    std::vector<std::pair<Obj, Obj>> items = dict_take_all(sys_dict);
+                    auto value_of = [&](const char* n) {
+                        for (auto& [k, v] : items)
+                            if (as_str(k) != nullptr && as_str(k)->text == n) return v;
+                        return Obj{};
+                    };
+                    bool placed = false;
+                    auto place = [&] {
+                        for (const char* e : {"stderr", "__stderr__"}) dict_set(sys_dict, Obj::of(intern(e)), value_of(e));
+                        placed = true;
+                    };
+                    for (auto& [k, v] : items) {
+                        const std::string& n = as_str(k)->text;
+                        if (n == "stderr" || n == "__stderr__") continue;
+                        dict_set(sys_dict, k, v);
+                        if (n == "modules") place();
+                    }
+                    if (!placed) place();
+                    for (auto& [k, v] : items) {
+                        decref(k);
+                        decref(v);
+                    }
                 }
             }
             hide_bootstrap_names();              // start-up is over: what the two import-system modules hold beyond CPython's names
@@ -4221,6 +4370,14 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
             // runtime started. If its handler raises, that is reported below and the program is not run
             look_for_signals_now();
             ran = true;
+            {   // pycore_init_builtins' interp->builtins_copy, which finalize_restore_builtins puts back at exit: the builtins as they
+                // were before init_set_builtins_open (no `open`) and before the import system named their module (C-9-13)
+                Ref copy = dict_copy(builtins_module()->dict);
+                auto* d = static_cast<Dict*>(copy.get().object());
+                dict_del(d, Obj::of(intern("open")));
+                for (const char* n : {"__package__", "__loader__", "__spec__"}) put(d, n, None());
+                builtins_copy_slot() = static_cast<Dict*>(copy.release().object());
+            }
             note_filled(builtins_module());        // from here on a name missing from them is one the program deleted
             note_filled(native_modules()["sys"]);
             note_filled(main);
@@ -4267,7 +4424,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
             // here, and getsignal says None inside it), a signal Python handled is the default's again and ends the process
             // if it comes during the teardown, an ignored one stays ignored
             signals_fini();
-            clear_modules(runtime_own);
+            finalize_at_exit(runtime_own);
             // What the finalisers printed goes out now. In CPython sys.stdout is None by this time (finalize_modules cleared
             // sys), so its second flush_std_files does nothing, and the text leaves when the stream itself is finalised
             // (iobase_finalize), where a failure is dropped: no report, and the status is not its (RL-532). So only a

@@ -631,7 +631,7 @@ Ref hex_m(Obj self, Args a) {                     // _Py_strhex_with_sep
     char sep_char = 0;
     bool has_sep = false;                        // no separator: no groups (a NUL one is written, RL-922)
     if (!sep.is_unset()) {
-        Ref length = invoke(dict_get(builtins_module()->dict, Obj::of(N("len"))), {sep});   // PyObject_Length, whatever sep is
+        Ref length = invoke(builtin("len").get(), {sep});   // PyObject_Length, whatever sep is
         if (length.get() != Obj::small(1)) raise_new("ValueError", "sep must be length 1.");
         has_sep = true;
         if (const Str* t = as_str(sep)) {        // what is stored, whatever __len__ said: its kind, one byte a character, and

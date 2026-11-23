@@ -1463,7 +1463,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
             return;
         }
         if (auto* m = static_cast<Module*>(obj.object()); bootstrap_hides(m, name)) refuse_bootstrap_assignment(m, name);
-        dict_set(static_cast<Module*>(obj.object())->dict, Obj::of(name), value);
+        dict_set(program_dict(static_cast<Module*>(obj.object())), Obj::of(name), value);
         return;
     }
     Obj found = type_lookup(type_of(obj), name);
@@ -1518,7 +1518,7 @@ void delattr(Obj obj, const Str* name) {
             return;
         }
         if (bootstrap_hides(static_cast<Module*>(obj.object()), name) ||     // not an attribute of the module, as in CPython
-            !dict_del(static_cast<Module*>(obj.object())->dict, Obj::of(name)))
+            !dict_del(program_dict(static_cast<Module*>(obj.object())), Obj::of(name)))
             raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
         return;
     }

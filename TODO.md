@@ -541,25 +541,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          iterators, views, slice, proxy, traceback and frame, lazy import, the abc data, the prelude's natives, and a
          generator's frame, whose traverse the backend emits; and whether a class is a counted object (C-3-12).
          (H3) `gc`: collect, get_count, get_stats, is_tracked, is_finalized, the threshold and the looks (exact: CPython's
-         points; lean: gc.collect, the runtime's looks, exit). (H4, measured 2026-11-23: a module's dict stays whole until the
-         collection's clear, after the finalisers, so what decides RL-514 is the builtins and sys: CPython's last collection runs
-         after finalize_clear_sys_builtins_dict, and a finaliser there that asks a builtin (`globals`, `repr`, `print`) fails with
-         nothing to report it, while one that holds what it needs prints its globals whole, as the exit walk does today; the
-         modules being immortal (D-19), the exit traces from sys and builtins to tell which namespaces the first collection
-         would find dead, and the runtime's own builtins must stay usable to the runtime after the program's view of them is
-         cleared) the exit: finalize_modules' sequence and the last
-         collection in place of the exit walk (RL-514), `_abc`'s
-         real weak references. (H5) the seven cases into the compiled baseline, and a codex review of the collector.
-       * 3c, what is left: the cycle collector in the header, `gc`: C-3-12, C-9-01, C-9-02, C-9-07; it
-         replaces the exit walk, which today finalises a list's items first to last and in breadth-first
-         order, where CPython's teardown releases what it can by reference count. `_abc` takes real weak references then, which only the collector can tell
-         from today's strong ones (a class is in a cycle with its own mro). With it, a caught exception
-         keeps its frame's locals (RL-222, decided with D-12). With it too (RL-514, the author's decision of 2026-11-20:
-         exact, with the collector): the exit is `finalize_modules`' sequence, so what `sys` and `builtins` still reach
-         when the modules leave `sys.modules` (a module's globals through a function stored in `sys`) is finalised at the
-         last collection, after every module's globals are None, and not while the modules are whole as the exit walk
-         does today; a case first (a finaliser that asks a module's global prints nothing then, one that holds what it
-         needs prints).
+         points; lean: gc.collect, the runtime's looks, exit). (H4, the exit, done 2026-11-23: DECISIONS, C-9-13; the exit is
+         finalize_modules' sequence with its collections, over a trace in CPython's view since modules and classes are
+         immortal here; left of H4: `_abc`'s real weak references, and the known gaps the DECISIONS entry lists). (H5) the
+         seven cases into the compiled baseline, and a codex review of the collector.
+       * 3c, what is left: `_abc` takes real weak references, which only the collector can tell from today's strong ones (a
+         class is in a cycle with its own mro); classes as counted objects (C-3-12), which would let the exit's collections
+         free what only a dead class holds (today they finalise it and leave it alive).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
     design's level table says every L2 expression carries the oracle's type. Closes in phase 2,
     when a pass produces `Fact.TYPES` (none does today, so none can require it). Until then no
