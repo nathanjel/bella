@@ -541,7 +541,13 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          iterators, views, slice, proxy, traceback and frame, lazy import, the abc data, the prelude's natives, and a
          generator's frame, whose traverse the backend emits; and whether a class is a counted object (C-3-12).
          (H3) `gc`: collect, get_count, get_stats, is_tracked, is_finalized, the threshold and the looks (exact: CPython's
-         points; lean: gc.collect, the runtime's looks, exit). (H4) the exit: finalize_modules' sequence and the last
+         points; lean: gc.collect, the runtime's looks, exit). (H4, measured 2026-11-23: a module's dict stays whole until the
+         collection's clear, after the finalisers, so what decides RL-514 is the builtins and sys: CPython's last collection runs
+         after finalize_clear_sys_builtins_dict, and a finaliser there that asks a builtin (`globals`, `repr`, `print`) fails with
+         nothing to report it, while one that holds what it needs prints its globals whole, as the exit walk does today; the
+         modules being immortal (D-19), the exit traces from sys and builtins to tell which namespaces the first collection
+         would find dead, and the runtime's own builtins must stay usable to the runtime after the program's view of them is
+         cleared) the exit: finalize_modules' sequence and the last
          collection in place of the exit walk (RL-514), a caught exception keeping its frame's locals (RL-222), `_abc`'s
          real weak references. (H5) the seven cases into the compiled baseline, and a codex review of the collector.
        * 3c, what is left: the cycle collector in the header, `gc`: C-3-12, C-9-01, C-9-02, C-9-07; it
