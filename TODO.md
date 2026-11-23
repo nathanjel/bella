@@ -762,9 +762,16 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   `cast`, `hex`, `count`, `index`, `toreadonly`, `__buffer__` and `__release_buffer__`, slice assignment, a view as a buffer to
   write into (`readinto`, `pack_into`, `os.readv`), `__sizeof__`. A consumer holds a buffer of a view while it runs: RL-702
   and RL-583, done 2026-11-23 for the preludes' functions with a later converted argument. Of the nine \[P1\] cases outside the compiled baseline six are left, all waiting for the collector.
-* **`vars()` of a built-in type lists only the names the runtime has (found 2026-11-22 with the memoryview).** `vars(dict)` has
-  no `__sizeof__` where `dir(dict)` and CPython's `vars(dict)` have it; the same for every type with a name in
-  `conformance/names-baseline.txt`. A listing should have them (as `dir()` does) or stop by name; the names table knows which.
+* **`vars()` of a built-in type lists only the names the runtime has (found 2026-11-22 with the memoryview; tried 2026-11-23).**
+  `vars(dict)` has no `__sizeof__` where `dir(dict)` and CPython's `vars(dict)` have it; the same for every type with a name in
+  `conformance/names-baseline.txt`. Tried and reverted: a stop for the dict as a whole and for a read or membership test of a
+  lacking name. A membership test cannot stop: `collections.abc._check_methods` asks `name in B.__dict__` along each MRO, and
+  the targets reach it at import for `coroutine.__await__` (all six stopped); nor can it answer True without a value for the
+  name, which `_check_methods` reads next (`is None`). The way that fits: each lacking name present in the type's dict as a
+  stub that stops by name when it is used (called, its attributes read), presented as the names table's kind, so membership,
+  identity and `is None` answer as CPython's do; but a stub changes what the runtime's own lookups find (`__buffer__` on
+  bytes, `__length_hint__`, `__reduce_ex__`), so every `type_lookup` of a name the table may lack needs checking first, and
+  `tools/missing_names.py` must tell a stub from a name. A listing alone (len, iteration) could stop today without that.
 * **For the author, a question to put (2026-11-22): `__sizeof__` and `sys.getsizeof`.** 163 of the 182 stops the sweep of
   argument counts lists are a type's `__sizeof__`: no type answers it. CPython's numbers are the sizes of its own C structs
   (`tp_basicsize` and an item size, plus what a type allocates beside the object), which are not the sizes a compiled
