@@ -2815,11 +2815,20 @@ inline std::int64_t handle_weakref_callbacks(GcList& unreachable, GcList& old) {
     list_release(to_call);
     return freed;
 }
+// A prelude helper whose `__del__` is C dealloc code (`__bella_dealloc__`: a Py_buffer or a handle a C object lets go of in its
+// dealloc alone): it has no tp_clear, so the collection neither finalises it nor clears it, and it dies when what holds it is
+// cleared, its dealloc then finding what it holds (RL-908, RL-916)
+inline bool stands_for_dealloc_code(const Object* op) {
+    static const Str* const del = intern("__del__");
+    static const Str* const at_dealloc = intern("__bella_dealloc__");
+    if (!holds_others(op->kind, op->flags) || op->cls == nullptr) return false;
+    auto found = op->cls->lookup(del);
+    return found && found->second->attrs.contains(at_dealloc);
+}
 // Each object's finaliser, in order, once in its life, the object held (collector.finalize_garbage)
 inline void finalize_garbage(GcList& collectable) {
     GcList seen;
     static const Str* const del = intern("__del__");
-    static const Str* const at_dealloc = intern("__bella_dealloc__");
     Collector& c = collector();
     while (Object* op = list_first(collectable)) {
         list_move(op, seen);
@@ -2833,8 +2842,7 @@ inline void finalize_garbage(GcList& collectable) {
             continue;
         }
         if (!holds_others(op->kind, op->flags) || op->cls == nullptr) continue;
-        auto found = op->cls->lookup(del);
-        if (!found || found->second->attrs.contains(at_dealloc)) continue;   // no tp_finalize, or C dealloc code in a prelude
+        if (!op->cls->lookup(del) || stands_for_dealloc_code(op)) continue;   // no tp_finalize, or C dealloc code in a prelude
         incref(op);
         ++c.finalizing;
         switch (op->kind) {
@@ -2874,8 +2882,9 @@ inline void clear_unreachable_weakrefs(GcList& unreachable) {
         }
     }
 }
-// Each object's clear, the object held; one that is still first afterwards lives on and joins `old`. With DEBUG_SAVEALL the
-// object joins gc.garbage instead and is not cleared (delete_garbage reads the flag at each object)
+// Each object's clear, the object held; one that is still first afterwards lives on and joins `old` (one with no tp_clear
+// among them, as delete_garbage moves it). With DEBUG_SAVEALL the object joins gc.garbage instead and is not cleared
+// (delete_garbage reads the flag at each object)
 inline void delete_garbage(GcList& collectable, GcList& old) {
     constexpr int DEBUG_SAVEALL = 1 << 5;
     Collector& c = collector();
@@ -2887,7 +2896,7 @@ inline void delete_garbage(GcList& collectable, GcList& old) {
             continue;
         }
         incref(op);
-        clear_object(op);
+        if (!stands_for_dealloc_code(op)) clear_object(op);
         bool kept = list_first(collectable) == op;
         if (kept) list_move(op, old);
         decref(op);

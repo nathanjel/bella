@@ -121,10 +121,13 @@ def _new(name: str, cls: type, args: tuple[object, ...], kwds: dict[str, object]
     values = _unpack_keywords(name, _PARAMETERS, 0, 0, 1, 0, args, kwds, _ABSENT)
     given: dict[str, object] = {parameter: value for parameter, value in zip(_PARAMETERS, values, strict=True) if value is not _ABSENT}
     digest_size = _c_int(given["digest_size"]) if "digest_size" in given else max_digest
-    key_h = _py_held(given["key"]) if "key" in given else b""   # the clinic's Py_buffers, held from the parsing (RL-702)
-    salt_h = _py_held(given["salt"]) if "salt" in given else b""
-    person_h = _py_held(given["person"]) if "person" in given else b""
+    key_h: object = b""                          # the clinic's Py_buffers, held from the parsing (RL-702); its exit lets go of
+    salt_h: object = b""                         # each one taken, a later one's failure included (RL-913)
+    person_h: object = b""
     try:
+        key_h = _py_held(given["key"]) if "key" in given else b""
+        salt_h = _py_held(given["salt"]) if "salt" in given else b""
+        person_h = _py_held(given["person"]) if "person" in given else b""
         fanout = _c_int(given["fanout"]) if "fanout" in given else 1
         depth = _c_int(given["depth"]) if "depth" in given else 1
         leaf_size = _unsigned(given["leaf_size"], "leaf_size") if "leaf_size" in given else 0

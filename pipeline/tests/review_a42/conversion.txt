@@ -1,0 +1,45 @@
+import binascii, zlib, sys, os, tempfile, weakref
+row=sys.argv[1]
+data=bytearray(b"YQ==")
+ignored=bytearray(b"?")
+class Alphabet(bytes):
+    def __hash__(self):
+        if row=="hashdata": data[0]=90
+        elif row=="hashignore": ignored[0]=33
+        elif row=="hashresize":
+            try: ignored.append(1); print("free")
+            except BufferError: print("held")
+        return bytes.__hash__(self)
+if row.startswith("hash"):
+    alphabet=Alphabet(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+    if row=="hashignore": data.append(33)
+    try: print(binascii.a2b_base64(data,alphabet=alphabet,ignorechars=ignored))
+    except Exception as e: print(type(e).__name__)
+elif row=="closed":
+    with tempfile.TemporaryFile() as f:
+        fd=f.fileno()
+        class Closer:
+            def __index__(self): f.close(); return 0
+        try: os.pwrite(fd,data,Closer())
+        except OSError as e: print(e.errno)
+    data.append(1)
+    print(len(data))
+elif row=="drop":
+    class B(bytearray):
+        def __del__(self): print("drop")
+    box=[B(b"data")]
+    class Pop:
+        def __index__(self): box.clear(); print("empty"); return 0
+    print(zlib.crc32(box[0],Pop()))
+elif row=="viewerror":
+    v=memoryview(data)
+    class Len:
+        def __len__(self):
+            try: v.release()
+            except BufferError: print("held")
+            raise LookupError()
+    try: binascii.b2a_base64(v,newline=Len())
+    except LookupError: print("error")
+    v.release()
+    data.append(1)
+    print(len(data))

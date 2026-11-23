@@ -629,11 +629,13 @@ Ref hex_m(Obj self, Args a) {                     // _Py_strhex_with_sep
         else unexpected_keyword("hex()", a.kwnames[k], {"sep", "bytes_per_sep"});
     }
     char sep_char = 0;
+    bool has_sep = false;                        // no separator: no groups (a NUL one is written, RL-922)
     if (!sep.is_unset()) {
         Ref length = invoke(dict_get(builtins_module()->dict, Obj::of(N("len"))), {sep});   // PyObject_Length, whatever sep is
         if (length.get() != Obj::small(1)) raise_new("ValueError", "sep must be length 1.");
-        if (const Str* t = as_str(sep)) {
-            if (t->at(0) > 127) raise_new("ValueError", "sep must be ASCII.");
+        has_sep = true;
+        if (const Str* t = as_str(sep)) {        // what is stored, whatever __len__ said: its kind, one byte a character, and
+            if (t->width != 1 || t->at(0) > 127) raise_new("ValueError", "sep must be ASCII.");   // character 0 (its NUL if none)
             sep_char = static_cast<char>(t->at(0));
         } else if (is_kind(sep, Kind::Bytes)) {
             if (u(bytes_data(sep)[0]) > 127) raise_new("ValueError", "sep must be ASCII.");
@@ -649,7 +651,7 @@ Ref hex_m(Obj self, Args a) {                     // _Py_strhex_with_sep
     auto n = static_cast<std::int64_t>(s.size());
     for (std::int64_t i = 0; i < n; ++i) {
         // positive: the groups counted from the right; negative: from the left
-        if (i != 0 && sep_char != 0 && group != 0 && (per > 0 ? (n - i) % group == 0 : i % group == 0)) out += sep_char;
+        if (i != 0 && has_sep && group != 0 && (per > 0 ? (n - i) % group == 0 : i % group == 0)) out += sep_char;
         out += digits[u(s[static_cast<std::size_t>(i)]) >> 4];
         out += digits[u(s[static_cast<std::size_t>(i)]) & 15];
     }

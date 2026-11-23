@@ -1,0 +1,73 @@
+import sys, gc, traceback, weakref
+row = sys.argv[1]
+held = []
+class T:
+    def __init__(self, tag): self.tag = tag
+    def __del__(self): print("drop", self.tag)
+def gen():
+    x = T("gen")
+    try: raise ValueError()
+    except ValueError as e: held.append(e)
+    yield 1
+    if row == "escape": raise LookupError()
+    yield 2
+def resume(it):
+    y = T("resumer")
+    if row == "close": it.close()
+    elif row == "throw":
+        try: it.throw(KeyError())
+        except KeyError: pass
+    else:
+        try: list(it)
+        except LookupError: pass
+def helper():
+    try: raise OSError()
+    except OSError as e: held.append(e)
+def comp():
+    x = T("outer")
+    [helper() for item in [T("item")]]
+def cell(a, /, *args, **kw):
+    x = T("cell")
+    y = T("plain")
+    def f(): return a, x
+    helper()
+def nested(n):
+    x = T(n)
+    if n: nested(n-1)
+    else: helper()
+def lines(e):
+    print([(f.name, f.lineno) for f in traceback.extract_tb(e.__traceback__)])
+def loop():
+    e = ValueError()
+    for i in range(3):
+        try: raise e
+        except ValueError: lines(e)
+def revived():
+    class R:
+        def __del__(self): held.append(self)
+    x = R()
+    r = weakref.ref(x, lambda r: print("weak"))
+    try: raise KeyError()
+    except KeyError as e: x.e = e
+    return r
+if row in ('finish','escape','close','throw','suspended'):
+    it = gen()
+    next(it)
+    if row == 'suspended':
+        traceback.clear_frames(held[0].__traceback__)
+        print(next(it))
+    resume(it)
+    print("returned")
+    del it
+    held.clear()
+    print("done")
+elif row == 'comp': comp(); print("returned"); held.clear()
+elif row == 'cell': cell(T("arg"), T("star"), k=T("kw")); print("returned"); held.clear()
+elif row == 'recursion': nested(3); print("returned"); held.clear()
+elif row == 'loop': loop()
+elif row == 'revived':
+    r = revived()
+    gc.collect()
+    print(r() is None, len(held), gc.is_finalized(held[0]))
+    held.clear()
+    gc.collect()

@@ -1,0 +1,18 @@
+import binascii
+class Sep(str):
+    def __len__(self):
+        return 1
+class BSep(bytes):
+    def __len__(self):
+        return 1
+VALUES = {"two": Sep("ab"), "none": Sep(""), "latin": Sep("\xe9b"), "wide": Sep("aĀ"), "wide-first": Sep("Ā"),
+          "octets": BSep(b"ab"), "no-octets": BSep(b""), "high-octet": BSep(b"\xe9b")}
+CALLS = {"hexlify": lambda sep: binascii.hexlify(b"xyz", sep), "b2a_hex": lambda sep: binascii.b2a_hex(b"xyz", sep, 2),
+         "bytes.hex": lambda sep: b"xyz".hex(sep), "bytearray.hex": lambda sep: bytearray(b"xyz").hex(sep, -2)}
+for call, f in CALLS.items():
+    for name, sep in VALUES.items():
+        try:
+            got = repr(f(sep))
+        except (TypeError, ValueError) as e:
+            got = type(e).__name__ + ": " + str(e)
+        print(call, name, got)

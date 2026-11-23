@@ -653,6 +653,7 @@ class unpack_iterator:  # noqa: N801           # _struct.unpack_iterator (Py_TPF
         if s is None:
             raise StopIteration
         if self._index >= len(self._data):
+            del s                                # Py_CLEAR(self->so) first: the Struct goes before the buffer (RL-918)
             self._struct = None
             self._data = b""
             self._source = None

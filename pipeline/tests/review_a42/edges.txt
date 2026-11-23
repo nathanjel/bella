@@ -1,0 +1,48 @@
+import sys, traceback, weakref, struct, binascii, zlib, gc
+row=sys.argv[1]
+b=bytearray(b"xx")
+if row=="clearing":
+    class Observer:
+        def __del__(self):
+            print(traceback.format_exception(held)[-1].strip())
+    def make():
+        quantity=123
+        o=Observer()
+        try: quantty
+        except NameError as e: return e
+    held=make()
+    traceback.clear_frames(held.__traceback__)
+    print(traceback.format_exception(held)[-1].strip())
+elif row=="struct":
+    def gone(r):
+        try: b.append(42); print("free")
+        except BufferError: print("held")
+    s=struct.Struct("B")
+    r=weakref.ref(s,gone)
+    it=s.iter_unpack(b)
+    del s
+    print(list(it))
+elif row in ("b32len","b32invalid"):
+    class Flag:
+        def __bool__(self): print("flag"); return False
+    try: binascii.a2b_base32(b"",alphabet=b"x",ignorechars=1 if row=="b32invalid" else b"",canonical=Flag())
+    except Exception as e: print(type(e).__name__)
+elif row in ("zview","zarray"):
+    c=zlib.compressobj()
+    source=bytearray(b"abcdefgh"*10)
+    make=memoryview if row=="zview" else bytearray
+    packet=bytearray(c.compress(make(source))+c.flush()+b"trailer")
+    d=zlib.decompressobj()
+    print(d.decompress(make(packet),5),d.eof,d.unconsumed_tail,d.unused_data)
+    print(d.decompress(make(d.unconsumed_tail),4),d.eof,d.unconsumed_tail,d.unused_data)
+    print(d.flush(),d.eof,d.unconsumed_tail,d.unused_data)
+elif row=="identity":
+    def gen():
+        for i in range(3):
+            try: raise KeyError(i)
+            except KeyError as e: yield e
+    it=gen()
+    fs=[]
+    for e in it:
+        fs.append(next(traceback._walk_tb_with_full_positions(e.__traceback__))[0])
+    print(fs[0] is fs[1] is fs[2])

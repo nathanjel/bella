@@ -415,11 +415,7 @@ bool register_traversals() {
         for (const Ref& r : f->values) visit_ref(r, out);
     };
     detail::clearer(Kind::Frame) = [](Object* o) {   // frame_tp_clear: the values, last first, then f_locals; f_back stays
-        auto* f = static_cast<FrameObject*>(o);
-        std::vector<Ref> values = std::move(f->values);
-        f->values.clear();
-        for (auto it = values.rbegin(); it != values.rend(); ++it) *it = Ref{};
-        f->ns = Ref{};
+        detail::clear_frame_values(static_cast<FrameObject*>(o));
     };
     detail::traverser(Kind::Slice) = [](Object* o, std::vector<Object*>& out) {
         auto* s = static_cast<SliceObject*>(o);
@@ -1336,6 +1332,18 @@ void detail::record_frame(FrameRecord& f) noexcept {
     }
 }
 
+// frame_tp_clear's loop: each slot from the top cleared in place, its value released before the next is cleared, so a
+// finaliser one of them runs still finds the slots below it (a suggestion reads them) and a clear it starts releases them;
+// the stack pointer goes down after the loop, then f_locals (RL-917)
+void detail::clear_frame_values(FrameObject* f) noexcept {
+    for (std::size_t i = f->values.size(); i-- > 0;) {
+        if (i >= f->values.size()) continue;     // a clear the finaliser started has taken the rest already
+        Ref value = std::move(f->values[i]);
+    }
+    f->values.clear();
+    Ref ns = std::move(f->ns);
+}
+
 void detail::take_ownership(FrameObject* f, Ref* const* values, std::size_t n, Obj ns, FrameRecord* back) noexcept {
     try {
         f->values.reserve(f->values.size() + n);
@@ -1358,7 +1366,8 @@ void detail::take_ownership(FrameObject* f, Ref* const* values, std::size_t n, O
 // then die where they are (_PyFrame_ClearLocals, the variables' destructors); one held by something else (a traceback's entry,
 // a frame object of a frame this one called, as f_back) takes them, and f_back is the caller's. A generator's resume that ends
 // at a yield hands the frame on (clear_gen_frame comes only at its end); the generator's slots after its variables die with
-// clear_frame (an exception that leaves has popped them, and a return has none)
+// clear_frame (an exception that leaves has popped them, and a return has none). A generator's frame has no f_back:
+// clear_gen_frame sets frame->previous to NULL before it clears the frame, so take_ownership finds no frame before it (RL-912)
 void detail::frame_ends(FrameRecord& f, Ref* const* locals, std::size_t n, bool unwinding) noexcept {
     if (f.resumed != nullptr) {
         f.resumed->id = f.id;
@@ -1369,7 +1378,8 @@ void detail::frame_ends(FrameRecord& f, Ref* const* locals, std::size_t n, bool 
     }
     if (f.frame_obj.get().is_unset()) return;
     Ref held = std::move(f.frame_obj);
-    if (held.get().object()->refs > 1) take_ownership(static_cast<FrameObject*>(held.get().object()), locals, n, f.ns, f.caller);
+    if (held.get().object()->refs > 1)
+        take_ownership(static_cast<FrameObject*>(held.get().object()), locals, n, f.ns, f.resumed != nullptr ? nullptr : f.caller);
 }
 
 }  // namespace bella

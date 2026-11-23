@@ -1,0 +1,48 @@
+import sys, traceback, gc, weakref
+row=sys.argv[1]
+held=[]
+class T:
+    def __init__(self, n): self.n=n
+    def __del__(self): print("drop", self.n)
+class Clear:
+    def __del__(self):
+        print("again")
+        traceback.clear_frames(held[0])
+        print("back")
+def reentrant():
+    a=T("a")
+    b=Clear()
+    try: raise LookupError()
+    except LookupError as e: held.append(e.__traceback__)
+def waiting():
+    a=T("a")
+    try: raise KeyError(T("error"))
+    except KeyError:
+        try: raise OSError(T("nested"))
+        except OSError as e: held.append(e.__traceback__)
+        yield 1
+        if row=="ignoreclose":
+            try: yield 2
+            except GeneratorExit: yield 3
+def caller():
+    a=T("caller")
+    it=waiting()
+    next(it)
+    if row=="cyclegen":
+        v=[it]; v.append(v)
+        del v,it
+        gc.collect()
+    elif row=="ignoreclose":
+        next(it)
+        try: it.close()
+        except RuntimeError: print("ignored")
+        it.close()
+    elif row=="delete": del it
+    else: it.close()
+if row=="reenter":
+    reentrant()
+    traceback.clear_frames(held[0])
+else: caller()
+print("returned")
+held.clear()
+print("done")

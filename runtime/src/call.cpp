@@ -2593,10 +2593,10 @@ Ref i_traceback_names(Obj, Args a) {
     return tuple_new({locals.get(), globals.get(), builtins.get()});
 }
 // frame.clear() of the frame a traceback's entry stands for (traceback.clear_frames; runtime/replaced). A frame that is over has
-// given its frame object its values (take_ownership), and they go now, last first, then a class body's namespace, as
-// frame_tp_clear releases them. A frame still running, or a generator's that waits, has given none: CPython's refuses with a
-// RuntimeError, which clear_frames ignores. True for a traceback's entry, False for what is none, which the adaptation then
-// clears as CPython does
+// given its frame object its values (take_ownership), and they go now, each slot in place, last first, then a class body's
+// namespace, as frame_tp_clear releases them (a finaliser of one still finds the ones below it, RL-917). A frame still running,
+// or a generator's that waits, has given none: CPython's refuses with a RuntimeError, which clear_frames ignores. True for a
+// traceback's entry, False for what is none, which the adaptation then clears as CPython does
 Ref i_traceback_clear(Obj, Args a) {
     positional_only(a, "traceback_clear", 1, 1);
     if (!is_kind(a.pos(0), Kind::Traceback)) return Ref::steal(boolean(false));
@@ -2605,11 +2605,7 @@ Ref i_traceback_clear(Obj, Args a) {
     Ref held = entry->frame_obj;                 // the frame object lives while its values go: a finaliser may reach the traceback
     auto* frame = static_cast<FrameObject*>(held.get().object());
     if (!frame->owned) return Ref::steal(boolean(true));
-    std::vector<Ref> values = std::move(frame->values);
-    frame->values.clear();
-    for (auto it = values.rbegin(); it != values.rend(); ++it) *it = Ref{};
-    Ref ns = std::move(frame->ns);
-    ns = Ref{};
+    detail::clear_frame_values(frame);
     return Ref::steal(boolean(true));
 }
 Ref i_exception(Obj, Args a) {

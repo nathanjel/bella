@@ -1,0 +1,41 @@
+import gc, re, struct, sys, zlib
+gc.disable()
+def resize(b):
+    try:
+        b.append(1); b.pop(); return "released"
+    except BufferError:
+        return "held"
+class C:
+    pass
+def view_in_cycle():
+    b = bytearray(b"abc")
+    c = C(); c.v = memoryview(b); c.c = c
+    del c; gc.collect(); return resize(b)
+def view_of_view_in_cycle():
+    b = bytearray(b"abc")
+    c = C(); c.v = memoryview(memoryview(b)[1:]); c.c = c
+    del c; gc.collect(); return resize(b)
+def iter_in_cycle():
+    b = bytearray(b"ab")
+    it = struct.iter_unpack("B", b); next(it)
+    c = C(); c.it = it; c.c = c
+    del c, it; gc.collect(); return resize(b)
+def iter_fresh_in_cycle():
+    b = bytearray(b"ab")
+    c = C(); c.it = struct.iter_unpack("B", b); c.c = c
+    del c; gc.collect(); return resize(b)
+def scanner_in_cycle():
+    b = bytearray(b"ab")
+    c = C(); c.s = re.compile(b".").scanner(b); c.c = c
+    del c; gc.collect(); return resize(b)
+def finditer_in_cycle():
+    b = bytearray(b"ab")
+    c = C(); c.s = re.compile(b".").finditer(b); c.c = c
+    del c; gc.collect(); return resize(b)
+def decompressor_in_cycle():
+    c = C(); c.d = zlib.decompressobj(); c.c = c
+    del c; gc.collect(); return "ok"
+ROWS = [view_in_cycle, view_of_view_in_cycle, iter_in_cycle, iter_fresh_in_cycle, scanner_in_cycle, finditer_in_cycle, decompressor_in_cycle]
+for f in ROWS:
+    if sys.argv[1] == f.__name__ or sys.argv[1] == "all":
+        print(f.__name__, f())

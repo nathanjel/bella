@@ -1,0 +1,10 @@
+import binascii, sys
+b=bytearray(b"xy")
+class Sep(str):
+    def __len__(self):
+        b[0]=65
+        return 1
+try: print(binascii.hexlify(b,Sep(sys.argv[1])))
+except Exception as e: print(type(e).__name__)
+b.append(0)
+print(bytes(b))

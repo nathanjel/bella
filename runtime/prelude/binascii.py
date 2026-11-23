@@ -269,17 +269,21 @@ def a2b_base64(*args: object, **kwds: object) -> bytes:
     When set to true, reject non-zero padding bits per RFC 4648 section 3.5."""
     data, strict_mode, padded, alphabet, ignorechars, canonical = _unpack("a2b_base64", args, kwds, 1, ("strict_mode", "padded", "alphabet", "ignorechars", "canonical"))
     held = _held_ascii(data)
+    ignore_held: object = None
     try:
+        # the clinic's order (RL-915): strict_mode, padded, the alphabet's check, ignorechars' Py_buffer, held too (RL-914), canonical
         strict = bool(strict_mode) if strict_mode is not _ABSENT else -1
         is_padded = True if padded is _ABSENT else bool(padded)
+        alpha = None if alphabet is _ABSENT else _bytes_arg("a2b_base64", "alphabet", alphabet)
+        ignore_held = None if ignorechars is _ABSENT else _held(ignorechars)
         is_canonical = False if canonical is _ABSENT else bool(canonical)
-        ignore: bytes | None = None if ignorechars is _ABSENT else _buffer(ignorechars)
-        ascii_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
         if strict == -1:
-            strict = ignore is not None
-        if not strict or ignore is None or len(ignore) == 0:
-            ignore = None
-        table = _TABLE_A2B_BASE64 if alphabet is _ABSENT else _reverse_table(_bytes_arg("a2b_base64", "alphabet", alphabet), 64, _BASE64_PAD)
+            strict = ignore_held is not None
+        ignoring = bool(strict) and ignore_held is not None and len(_buffer_bytes(ignore_held)) != 0
+        table = _TABLE_A2B_BASE64 if alpha is None else _reverse_table(alpha, 64, _BASE64_PAD)   # its hash may run code
+        # then the octets, read through the held buffers where the C reads them (RL-702, RL-920)
+        ascii_data = _buffer_bytes(held)
+        ignore: bytes | None = _buffer_bytes(ignore_held) if ignoring else None
 
         def ignored(c: int) -> bool:                 # ignorechar
             return ignore is not None and c in ignore
@@ -333,7 +337,9 @@ def a2b_base64(*args: object, **kwds: object) -> bytes:
             raise Error("Non-zero padding bits")
         return bytes(out)
     finally:
-        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work, data first
+        if ignore_held is not None:
+            _buffer_export(ignore_held, -1)
 
 
 def _wraplines(data: bytearray, width: int) -> bytearray:   # wraplines: '\n' every width characters
@@ -424,12 +430,17 @@ def a2b_base32(*args: object, **kwds: object) -> bytes:
     When set to true, reject non-zero padding bits per RFC 4648 section 3.5."""
     data, padded, alphabet, ignorechars, canonical = _unpack("a2b_base32", args, kwds, 1, ("padded", "alphabet", "ignorechars", "canonical"))
     held = _held_ascii(data)
+    ignore_held: object = None
     try:
+        # the clinic's order: padded, the alphabet's check, ignorechars' Py_buffer, held too (RL-914), canonical; the impl then
+        # builds the alphabet's table, its length checked there (RL-919), and reads the octets through the held buffers
         is_padded = True if padded is _ABSENT else bool(padded)
-        table = _TABLE_A2B_BASE32 if alphabet is _ABSENT else _reverse_table(_bytes_arg("a2b_base32", "alphabet", alphabet), 32, _BASE32_PAD)
-        ignore: bytes | None = None if ignorechars is _ABSENT else _buffer(ignorechars)
+        alpha = None if alphabet is _ABSENT else _bytes_arg("a2b_base32", "alphabet", alphabet)
+        ignore_held = None if ignorechars is _ABSENT else _held(ignorechars)
         is_canonical = False if canonical is _ABSENT else bool(canonical)
-        ascii_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)
+        table = _TABLE_A2B_BASE32 if alpha is None else _reverse_table(alpha, 32, _BASE32_PAD)   # its hash may run code
+        ascii_data = _buffer_bytes(held)
+        ignore: bytes | None = None if ignore_held is None else _buffer_bytes(ignore_held)
         if ignore is not None and len(ignore) == 0:
             ignore = None
 
@@ -496,7 +507,9 @@ def a2b_base32(*args: object, **kwds: object) -> bytes:
             raise Error("Non-zero padding bits")
         return bytes(out)
     finally:
-        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work
+        _buffer_export(held, -1)               # PyBuffer_Release: the clinic's exit, after the work, data first
+        if ignore_held is not None:
+            _buffer_export(ignore_held, -1)
 
 
 def b2a_base32(*args: object, **kwds: object) -> bytes:
@@ -624,12 +637,16 @@ def _strhex(name: str, args: tuple[object, ...], kwds: dict[str, object]) -> byt
         else:
             if len(sep) != 1:  # type: ignore[arg-type]   # PyObject_Length, then the test
                 raise ValueError("sep must be length 1.")
+            # then what the object stores, whatever its __len__ said (RL-921): a str's kind, one byte a character, and its
+            # character 0 (PyUnicode_READ_CHAR; the terminating NUL of one that stores none); a bytes' octet 0 likewise
             if issubclass(type(sep), str):
-                sep_char = ord(sep)  # type: ignore[arg-type]
-                if sep_char > 255:
+                stored = str.__str__(sep)  # type: ignore[arg-type]
+                if any(ord(c) > 255 for c in stored):
                     raise ValueError("sep must be ASCII.")
+                sep_char = ord(stored[0]) if stored else 0
             elif issubclass(type(sep), bytes):
-                sep_char = _buffer_bytes(sep)[0]     # PyBytes_AS_STRING(sep)[0]: the byte itself (RL-680)
+                octets = _buffer_bytes(sep)
+                sep_char = octets[0] if octets else 0   # PyBytes_AS_STRING(sep)[0]: the byte itself (RL-680)
             else:
                 raise TypeError("sep must be str or bytes.")
         bin_data = _buffer_bytes(held)   # read where the C reads it, the buffer held from the parsing (RL-702)

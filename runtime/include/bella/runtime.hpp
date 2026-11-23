@@ -690,7 +690,8 @@ void frame_ends(FrameRecord& f, Ref* const* locals, std::size_t n, bool unwindin
 Obj frame_object(FrameRecord& f);                // _PyFrame_GetFrameObject: made at the first asking
 // take_ownership: the values (moved out of where the frame had them), a class body's namespace, and f_back if the frame has a caller
 void take_ownership(FrameObject* f, Ref* const* values, std::size_t n, Obj ns, FrameRecord* back) noexcept;
-void enter_frame();                              // RecursionError past the limit (spec D-17), and where the native stack is nearly used
+void clear_frame_values(FrameObject* f) noexcept;   // frame_tp_clear: the values in place, last first, then f_locals
+void enter_frame();                             // RecursionError past the limit (spec D-17), and where the native stack is nearly used
 void leave_frame() noexcept;
 void enter_hidden_frame();                       // a frame CPython does not have: the look at the native stack, and no count (RL-632)
 // A generator's frame lives across its resumes, where each resume has a record of its own: what the records hand on, as

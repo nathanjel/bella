@@ -1,0 +1,39 @@
+import sys, struct, binascii, zlib, os, gc, _blake2, weakref
+row = sys.argv[1]
+b = bytearray(b"?")
+class Flag:
+    def __bool__(self):
+        print("bool")
+        if row.endswith("write"): b[0] = 33
+        else:
+            try: b.append(33)
+            except BufferError: print("held")
+        return False
+class Fail:
+    def __index__(self): raise LookupError()
+try:
+    if row.startswith("key"): _blake2.blake2b(key=b, salt=None)
+    elif row.startswith("salt"): _blake2.blake2s(salt=b, person=None)
+    elif row.startswith("32"): print(binascii.a2b_base32(b"ME======!", ignorechars=b, canonical=Flag()))
+    elif row.startswith("64"): print(binascii.a2b_base64(b"!YQ==", ignorechars=b, canonical=Flag()))
+    elif row == "alphabet": binascii.a2b_base64(b"", alphabet=1, canonical=Flag())
+    elif row == "ignore": binascii.a2b_base64(b"", ignorechars=1, canonical=Flag())
+    elif row == "itererror": struct.iter_unpack("2s", b)
+    elif row == "unpack": struct.unpack_from("B", b, Fail())
+    elif row == "pwrite": os.pwrite(-1, b, 0)
+    elif row == "crc": zlib.crc32(b, Fail())
+    elif row == "compress": zlib.compress(b, Fail())
+    elif row == "max": zlib.decompressobj().decompress(b, Fail())
+    elif row == "iterator":
+        s = struct.Struct("B")
+        it = s.iter_unpack(b)
+        del s
+        print(next(it))
+        try: b.append(42)
+        except BufferError: print("held")
+        cycle = [it]; cycle.append(cycle)
+        del cycle, it
+        gc.collect()
+except Exception as e: print(type(e).__name__)
+try: b.append(0); print("released")
+except BufferError: print("still held")
