@@ -144,7 +144,7 @@ def _pack_single(view: memoryview, at: int, value: object) -> None:   # pack_sin
     try:
         octet = _number_index(value)             # pylong_as_lu: PyNumber_Index
     except (TypeError, OverflowError, ValueError) as error:
-        wrong = TypeError if isinstance(error, TypeError) else ValueError
+        wrong = TypeError if issubclass(type(error), TypeError) else ValueError   # PyErr_ExceptionMatches: the class
     if wrong is not None:                        # fix_error_int: the error replaced, outside the handler (RL-448, RL-902)
         raise wrong("memoryview: invalid " + ("type" if wrong is TypeError else "value") + " for format 'B'")
     exporter = _exporter(view)                   # CHECK_RELEASED_INT_AGAIN: the conversion may have released the view (RL-891)
