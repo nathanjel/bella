@@ -114,6 +114,17 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   staging prototype comes before the first path is done. `make targets-closure` computes the
   stages from `targets.toml` (`targets/closure-summary.json`, checked in CI). The tricky three
   follow phase 1; their recordings stay oracles.
+* **1c's gate (the author, Question 32, 2026-11-24: B; DECISIONS).** The sweep of the manifest's modules (one program a
+  module: each public name's type, module and callability) agrees but where a deviation, an exclusion or \[P2+\] decides
+  otherwise; every \[P1\] row 1c's modules belong to has a case passing compiled; the compiled corpus passes; the six targets
+  agree; a full run before the claim. On the day: 21 of 1c's 28 modules agree, `secrets` differs by D-20. To do:
+  * the `asyncio` and `socket` shims (the manifest: the import succeeds, the rest is \[P2+\]), which also unblocks `unittest`
+    and `unittest.async_case`;
+  * `marshal` and `zipimport` (Question 33);
+  * the 22 names of `sys` that no exclusion or \[P2+\] covers, each implemented or decided (`displayhook`, `breakpointhook`,
+    `addaudithook`, `abi_info`, `getdlopenflags`, the REPL's hooks, the build's facts, remote debugging);
+  * cases for t-strings, `secrets`, `uuid`, `unittest`'s runner and loader, `logging`'s handlers and formatters;
+  * the sweep as a test (`pipeline/tests`), over the whole manifest.
 * Measured 2026-11-02 (review log D-10; `docs/measurements.md`, `tools/scope.py`,
   `targets/scope/*.json`): `cli_easy_slugs`'s closure is 73 modules, 3,607 code objects and
   35,360 lines. Its recorded run executes 253 code objects (7 %) and 6,816 lines (19 %); with
