@@ -743,15 +743,17 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   runtime recurses on a program's data, to be swept with the same guard: `isinstance` and `issubclass` over nested tuples of
   classes, the runtime's report of a long chain of causes; `copy.deepcopy` and `json` are Python's own depth. And a speed
   seen with C-8-21: `repr` of a list nested 50 000 deep takes 73 s compiled, 1 s under CPython.
-* **For the author (RL-626, review A28; measured 2026-11-21): a starred tuple reaches some callables written in C as itself.**
-  `f(*t)` with an exact tuple hands `t` to `PyObject_Call`. A class called through `type`'s own call keeps it:
-  `MyError(*t).args is t`, `StopIteration(*t).args is t`, `self.args is args` after `super().__init__(*args)`,
-  `itemgetter(*t).__reduce__()[1] is t`, and an untyped `lru_cache` without keywords uses it as the key (no `__hash__` call
-  for a tuple that has its hash; compiled makes four). A built-in exception class that inherits `__new__` and `__init__`
-  from BaseException has a vectorcall of its own and makes a new tuple: `Exception(*t).args is t` is False, `KeyError`'s
-  too, and `OSError`'s. Compiled answers False everywhere. Exact: the call carries the tuple to the callee (a side channel
-  beside the arguments, no cost for a call without a star) and a table of the classes that take a new one. Or a registered
-  deviation of identity beside D-03, which leaves the `__hash__` calls of a cache's key. To ask after Question 28.
+* **A starred tuple reaches the callee as itself (the author, Question 29, 2026-11-24: A; RL-626; DECISIONS).** Case
+  first, CPython passing, from the 30 rows of the measurement (an exception class of the program's, `StopIteration`,
+  `super().__init__(*args)`, `e.__init__(*t)`, its reduce, `itemgetter`'s reduce, `partial(MyError)(*t)`, the untyped
+  cache's `__hash__` calls with two items, one and a bound, and the controls that are False in CPython too: `Exception`,
+  `KeyError`, `OSError`, `BaseException.__new__`, two stars, a list, a tuple subclass, a function written in Python, typed
+  or keyword caches). Then `call_ex` (`runtime/src/call.cpp`) passes the tuple's own items, not a copy, and notes the tuple
+  for the call (saved and restored around it); the keepers take the tuple when the arguments are exactly its items with no
+  keywords: `BaseException_new`'s `args` (also through `__init__`), `lru_cache`'s key, `itemgetter`, and `partial` with no
+  stored arguments passing it on. A built-in exception class makes a new tuple when its `__new__` and `__init__` are
+  BaseException's (CPython's `_PyExc_InitTypes` gives those `BaseException_vectorcall`), read from the runtime's class
+  dicts, no table. A call without a star unchanged; the starred call's cost measured (it loses a copy).
 * **For the author, a wording (RL-623, review A28):** D-03's row names small ints and interned strings and says `is` is true
   more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
   object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
