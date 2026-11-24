@@ -812,13 +812,18 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   leaves sys.modules (its count is not known then: references to an immortal object are not counted); or the module objects
   are counted objects that sys.modules keeps alive, with D-19 narrowed to "a weak reference to a module never dies" or
   dropped. The first is what is done today; the others change D-19.
-* **For the author, two questions to put after Question 29 (found 2026-11-22 with the sweep): `marshal` and `zipimport`.**
-  Neither can be exact as CPython has it. `marshal.dumps` at the default version sets a reference flag on an object by its
-  reference count at that moment (`w_ref`: no flag where the count is 1), so its bytes depend on CPython's counts, which a
-  compiled program does not share (`marshal.dumps((1, 'a'))` is `a902e901000000da0161`: flags on the tuple, the int and the
-  str); `loads` is exact either way, and so is `dumps` at version 2 and below. Code objects cannot be written or read at
-  all. `zipimport` can list and read an archive, but loading a module from one means compiling or unmarshalling code at
-  run time (E-01). Each wants a decision: what is provided, what is a registered deviation, what stops by name.
+* **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
+  objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
+  version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads
+  CPython's, so the bytes may differ in type bytes and back-reference numbers, never in length or in what `loads` returns.
+  A case first, with the rows measured on the day (a global, a temporary, a local, a literal inside a list, an object held
+  twice; `pipeline`'s own shape of the case: a row a process, the bytes printed), then the port; D-31's lint rule in
+  `bella-lint` when it is written. The question's text had `marshal.dumps((1, 'a'))` as `a902e9…` with a flag on the tuple:
+  measured on 3.15.2 it is `2902e901000000da0161`, the tuple unflagged (3.15 borrows a constant's reference), and the version
+  is 6.
+* **For the author, Question 34 (found 2026-11-22 with the sweep): `zipimport`.** It imports `marshal` at its top. It can
+  list and read an archive, but loading a module from one means compiling or unmarshalling code at run time (E-01), and
+  `sys.path_hooks` is E-04. What is provided, what is a deviation, what stops by name.
 * **Two modules of the manifest that cannot be imported (the sweep of 2026-11-22; toward increment 1c).** `marshal` (a core
   module: `dumps`, `loads`, `dump`, `load`, `version`; a port of `Python/marshal.c` for the types that are not code objects,
   and a stop by name for those) and `zipimport` (CPython's `Lib/zipimport.py`, frozen: compile it with the program as the
