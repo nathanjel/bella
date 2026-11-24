@@ -1,0 +1,11 @@
+import sys
+import os
+class K(str):
+    armed = False
+    def __hash__(self, h=str.__hash__, w=os.write):
+        if self.armed:
+            w(1, b'hash\n')
+        return h(self)
+k = K(sys.argv[1])
+sys.__dict__[k] = 123
+K.armed = True

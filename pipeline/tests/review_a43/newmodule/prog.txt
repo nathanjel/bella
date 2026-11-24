@@ -1,0 +1,21 @@
+# The reviewer's probe, with entries put into sys.modules before the late one. Without them the late module's entry lands
+# behind the removal's position: the insert resizes the table, whose deleted entries go, and PyDict_Next goes on from where
+# it was. Under CPython that happens too, where the table is full at that insert (43 deleted entries made before, the
+# session's sweep); this runtime's sys.modules is smaller (D-30), so it is full there with none. With room, both reach it.
+import os, sys, types, builtins
+class Watch:
+    def __del__(self, w=os.write, s=sys, b=builtins.__dict__):
+        w(1, '{} {}\n'.format(s.__dict__.get('stdout') is None,b.get('print') is None).encode())
+class Maker:
+    def __del__(self, s=sys, M=types.ModuleType, W=Watch, w=os.write):
+        for i in range(64):
+            s.modules['filler%d' % i] = 0
+        m = M('late_module')
+        m.item=W()
+        s.saved = m
+        s.modules['late_module'] = m
+        w(1,b'created\n')
+def install():
+    import data
+    data.obj = Maker()
+install()

@@ -621,13 +621,16 @@ Ref maketrans_m(Obj, Args a) {
 // ---- hex ----
 Ref hex_m(Obj self, Args a) {                     // _Py_strhex_with_sep
     if (a.npos + a.nkw > 2) raise_new("TypeError", "hex() takes at most 2 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
+    // _PyArg_UnpackKeywords takes every argument to its place, refusing a keyword it does not know, before the clinic
+    // converts bytes_per_sep (RL-924)
     Obj sep = a.npos > 0 ? a.pos(0) : Obj{};
-    std::int64_t per = a.npos > 1 ? ssize_arg(a.pos(1)) : 1;
+    Obj per_arg = a.npos > 1 ? a.pos(1) : Obj{};
     for (std::size_t k = 0; k < a.nkw; ++k) {
         if (a.kwnames[k] == N("sep") && a.npos < 1) sep = a.kw(k);
-        else if (a.kwnames[k] == N("bytes_per_sep") && a.npos < 2) per = ssize_arg(a.kw(k));
+        else if (a.kwnames[k] == N("bytes_per_sep") && a.npos < 2) per_arg = a.kw(k);
         else unexpected_keyword("hex()", a.kwnames[k], {"sep", "bytes_per_sep"});
     }
+    std::int64_t per = per_arg.is_unset() ? 1 : ssize_arg(per_arg);
     char sep_char = 0;
     bool has_sep = false;                        // no separator: no groups (a NUL one is written, RL-922)
     if (!sep.is_unset()) {

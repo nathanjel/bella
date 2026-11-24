@@ -63,11 +63,6 @@ def _refused(src: str, reason: str) -> None:
     assert got.returncode == 70 and reason in got.stderr, got
 
 
-def test_get_dump_refuses_what_it_would_show_as_weak_references() -> None:
-    """A set with entries holds classes here and weak references there: refused until step 3c."""
-    _refused("from abc import ABC\nclass A(ABC):\n    pass\nA.register(int)\nA._dump_registry()\n", "_abc._get_dump")
-
-
 def test_the_subclasses_of_a_builtin_are_refused() -> None:
     """CPython's list names classes of its own, which a compiled program does not have."""
     _refused("print(object.__subclasses__())\n", "the subclasses of the built-in type 'object'")
@@ -85,5 +80,4 @@ def test_as_cpython(message: tuple[str, str]) -> None:
 if __name__ == "__main__":
     for item in MESSAGES:
         test_as_cpython(item)
-    test_get_dump_refuses_what_it_would_show_as_weak_references()
     test_the_subclasses_of_a_builtin_are_refused()

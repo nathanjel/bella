@@ -1,0 +1,11 @@
+import sys
+import os
+import _frozen_importlib
+import _frozen_importlib_external
+class Mark:
+    def __del__(self, w=os.write):
+        w(1, b'released\n')
+if sys.argv[1] == 'internal':
+    _frozen_importlib.test_holder = Mark()
+else:
+    _frozen_importlib_external.test_holder = Mark()

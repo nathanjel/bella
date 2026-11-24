@@ -1,0 +1,12 @@
+import sys
+import os
+class K(str):
+    active = False
+    def __hash__(self, base=str.__hash__, w=os.write, E=ValueError):
+        if self.active:
+            w(1, b'hash\n')
+            raise E('module key')
+        return base(self)
+k=K('additional_module')
+sys.modules[k]=sys
+K.active=True

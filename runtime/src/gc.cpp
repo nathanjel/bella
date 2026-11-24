@@ -154,6 +154,36 @@ const std::map<std::string_view, Primitive>& primitives() {
 }  // namespace
 
 bool gc_is_enabled() { return detail::collector().enabled; }
+// _PyGC_DumpShutdownStats, at exit after the collection that follows the builtins' restoring: a garbage list with something in
+// it, unless DEBUG_SAVEALL put it there, is told of as a ResourceWarning (PyErr_WarnExplicitFormat: file "gc", line 0, module
+// "gc", no registry), what that raises reported as ignored; with DEBUG_UNCOLLECTABLE the list's repr follows (RL-923)
+void dump_gc_shutdown_stats() {
+    constexpr int DEBUG_UNCOLLECTABLE = 4, DEBUG_SAVEALL = 32;
+    const GcState& s = state();
+    if ((s.debug & DEBUG_SAVEALL) || s.garbage.is_unset()) return;
+    std::size_t n = static_cast<List*>(s.garbage.object())->items.size();
+    if (n == 0) return;
+    std::string message = "gc: " + std::to_string(n) + " uncollectable objects at shutdown";
+    if (!(s.debug & DEBUG_UNCOLLECTABLE)) message += "; use gc.set_debug(gc.DEBUG_UNCOLLECTABLE) to list them";
+    try {
+        Ref text = str_new(message), where = str_new("gc");
+        invoke(warning_function(true), {text.get(), Obj::of(exception_class("ResourceWarning")), where.get(), Obj::small(0), where.get()});
+    } catch (const PyError& e) {
+        report_unraisable("Exception ignored in GC shutdown", e);
+    }
+    if (!(s.debug & DEBUG_UNCOLLECTABLE)) return;
+    Ref repr;
+    try {
+        repr = repr_of(s.garbage);
+    } catch (const PyError& e) {
+        report_unraisable("Exception ignored in GC shutdown while formatting garbage", e);
+        return;
+    }
+    const Str* text = as_str(repr.get());
+    for (std::size_t i = 0; i < text->length; ++i)   // PyUnicode_EncodeFSDefault's surrogateescape, then PyUnicode_FromString
+        if (text->at(i) >= 0xD800 && text->at(i) <= 0xDFFF) throw NotImplemented("gc's shutdown list of garbage whose repr has a surrogate");
+    sys_write_stderr("      " + text->text + "\n");
+}
 void release_gc_lists() {                        // _PyGC_Fini: Py_CLEAR(gcstate->garbage), Py_CLEAR(gcstate->callbacks)
     for (Obj* slot : {&state().garbage, &state().callbacks}) decref(std::exchange(*slot, Obj{}));
 }

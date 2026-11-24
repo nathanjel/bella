@@ -1,10 +1,13 @@
 // _abc (Modules/_abc.c): what abc.ABCMeta calls.
 //
-// CPython's three sets hold weak references to classes; here they hold the classes, until step 3c
-// (confirmed by the author, 2026-11-04). No class dies before the collector exists, so what a
-// program can see differs only where a reference itself would show: _get_dump refuses a set with
-// entries, and a metaclass's __hash__ runs at each look-up where CPython's reference keeps the first
-// answer. COLLECTION_FLAGS are checked but have no reader until `match` is compiled (TODO.md).
+// The registry and the two caches hold weak references to classes, as CPython's do (_add_to_weak_set: each with a callback,
+// `_destroy`, that takes it out of its set when the class dies), so an ABC holds nothing of what it has registered or cached:
+// the exit's collections see that. A look-up (_in_weak_set) asks with a weak reference to the object, which for a class is the
+// one its bases' lists of subclasses hold in CPython, so its hash is the class's computed once and kept; each entry of that
+// hash is then compared by its target's __eq__ (weakref_richcompare). For a class that is done here without making the
+// reference; for anything else (an instance's __class__ may say anything) the reference is made as CPython makes it.
+// COLLECTION_FLAGS are checked but have no reader until `match` is compiled (TODO.md).
+#include <unordered_map>
 #include <utility>
 
 #include "bella/runtime.hpp"
@@ -67,17 +70,94 @@ std::int64_t reference_hash(Obj obj) {
     }
 }
 
+// PyWeakref_NewRef's type, weakref.ReferenceType: _weakref's (runtime/prelude/_weakref.py), from the namespace its prelude runs
+// in, which no program reaches. CPython's type is there from the start; here the module is made for it if it was not, as the
+// import system makes a built-in module (_imp.create_builtin), and an import of it later finds that one (D-30: sys.modules
+// has it only then)
+Obj reference_type() {
+    static Obj type;
+    if (type.is_unset()) {
+        if (native_module_made("_weakref") == nullptr) {
+            Obj name = Obj::of(N("_weakref"));
+            i_bella_create_builtin(Obj{}, Args{&name, 1, nullptr, 0});
+        }
+        for (Module* h : hidden_modules())
+            if (as_str(h->name.get())->text == "_weakref") type = dict_get(h->dict, Obj::of(N("ReferenceType")));
+        if (!is_kind(type, Kind::Class)) throw NotImplemented("_abc's weak references without _weakref's type");
+    }
+    return type;
+}
+
+// weakref_hash of a class's basic reference: the class's hash the first time it is asked for, kept from then on (the reference
+// lives as long as the class, held by its bases' lists of subclasses); one that raises is not kept
+std::int64_t class_reference_hash(Obj cls) {
+    static std::unordered_map<const Object*, std::int64_t> kept;
+    if (auto it = kept.find(cls.object()); it != kept.end()) return it->second;
+    std::int64_t hash = reference_hash(cls);
+    kept.emplace(cls.object(), hash);
+    return hash;
+}
+
+// A metaclass whose __hash__ and __eq__ are object's: hashing or comparing its classes runs no code of the program's. `type`
+// cannot be changed; another is asked again when its version says it changed (a class's version moves with every change
+// to it or its bases)
+bool plain_metaclass(ClassObject* meta) {
+    if (meta == types().type) return true;
+    static const ClassObject* last = nullptr;
+    static std::uint64_t last_version = 0;
+    static bool last_plain = false;
+    if (meta == last && meta->version == last_version) return last_plain;
+    static const Str* const eq = N("__eq__");
+    static const Str* const hash = N("__hash__");
+    last_plain = type_lookup(meta, eq) == type_lookup(types().object, eq) && type_lookup(meta, hash) == type_lookup(types().object, hash);
+    last = meta;
+    last_version = meta->version;
+    return last_plain;
+}
+
 bool in_weak_set(const Ref& set, Obj obj) {      // _in_weak_set
     if (set.get().is_unset()) return false;
     auto* s = static_cast<SetObject*>(set.get().object());
     if (s->used == 0 || !supports_weakrefs(obj)) return false;   // PyWeakref_NewRef's TypeError is "not in it"
-    return set_contains_hashed(s, obj, reference_hash(obj));
+    if (!is_kind(obj, Kind::Class)) {            // the object's basic reference if it has one, else a new one (PySet_Contains)
+        Ref ref = invoke(reference_type(), {obj});
+        return set_contains(s, ref.get());
+    }
+    // set_lookkey with the class's basic reference: weakref_richcompare of each entry of its hash, a dead entry equal only to itself.
+    // A metaclass that keeps object's __hash__ and __eq__ runs nothing for either: its hash needs no keeping, and the class
+    // itself compares equal (object_richcompare) with no call
+    bool plain = plain_metaclass(type_of(obj));
+    return set_contains_by(s, plain ? hash_of(obj) : class_reference_hash(obj), [obj, plain](Obj stored) {
+        Object* target = weak_target(weak_record(stored.object()));
+        if (target == nullptr) return false;
+        if (plain && target == obj.object()) return true;
+        Ref held = Ref::share(Obj::of(target));
+        Ref r = compare(CmpOp::Eq, held.get(), obj);
+        return truth(r.get());
+    });
 }
 
-void add_to_weak_set(Ref& set, Obj obj) {        // _add_to_weak_set: only ever a class, which any reference can name
-    std::int64_t hash = reference_hash(obj);
+Ref destroy(Obj self, Args a) {                  // _destroy (METH_O, bound to a reference to its set): the dead reference out of it
+    onearg(a, "_destroy");
+    Object* set = weak_target(weak_record(self.object()));
+    if (set == nullptr) return none_ref();
+    Ref held = Ref::share(Obj::of(set));
+    set_discard(static_cast<SetObject*>(set), a.pos(0));
+    return none_ref();
+}
+
+void add_to_weak_set(Ref& set, Obj obj) {        // _add_to_weak_set: a reference with a callback, added as any key is (its hash)
     if (set.get().is_unset()) set = own(new SetObject(false));
-    set_add_hashed(set.get(), obj, hash);
+    Ref held = Ref::share(set.get());
+    Ref wr = invoke(reference_type(), {held.get()});                // PyWeakref_NewRef(set, NULL)
+    Ref callback = own(new Builtin("_destroy", destroy, wr.get()));   // PyCFunction_NewEx(&_destroy_def, wr, NULL)
+    Ref ref = invoke(reference_type(), {obj, callback.get()});
+    callback = Ref{};
+    set_add(held.get(), ref.get());
+}
+
+void clear_weak_set(const Ref& set) {            // PySet_Clear of a set made, which stays the set its references' callbacks name
+    if (!set.get().is_unset()) set_clear(static_cast<SetObject*>(set.get().object()));
 }
 
 bool is_abstract(Obj value) {                    // _PyObject_IsAbstract
@@ -203,14 +283,19 @@ bool is_subtype(Obj derived, Obj base) {         // PyType_IsSubtype: pointers a
     return false;
 }
 
-// subclasscheck_check_registry: the true answer found, else false. A copy: a check can register.
+// subclasscheck_check_registry: the true answer found, else false. A frozenset copy: a check can register, a callback take
+// an entry out; a reference whose class has gone is passed over
 bool in_registry(AbcData* data, Obj subclass) {
     if (in_weak_set(data->registry, subclass)) return true;
     if (data->registry.get().is_unset()) return false;
-    std::vector<Ref> registered;
-    for (const auto& e : static_cast<SetObject*>(data->registry.get().object())->table)
-        if (!e.key.is_unset()) registered.push_back(Ref::share(e.key));
-    for (const Ref& key : registered) {
+    Ref registered = own(new SetObject(true));
+    set_update(registered.get(), data->registry.get());
+    const auto& table = static_cast<SetObject*>(registered.get().object())->table;
+    for (std::size_t i = 0; i < table.size(); ++i) {
+        if (table[i].key.is_unset()) continue;
+        Object* target = weak_target(weak_record(table[i].key.object()));   // PyWeakref_GetRef
+        if (target == nullptr) continue;
+        Ref key = Ref::share(Obj::of(target));
         if (object_issubclass(subclass, key.get())) {
             add_to_weak_set(data->cache, subclass);
             return true;
@@ -230,7 +315,7 @@ Ref a_abc_subclasscheck(Obj, Args a) {
     if (in_weak_set(data->cache, subclass)) return Ref::steal(boolean(true));
     // 2. the negative cache; it may have to be forgotten
     if (data->negative_cache_version < invalidation_counter) {
-        data->negative_cache = Ref{};
+        clear_weak_set(data->negative_cache);
         data->negative_cache_version = invalidation_counter;
     } else if (in_weak_set(data->negative_cache, subclass)) {
         return Ref::steal(boolean(false));
@@ -271,15 +356,15 @@ Ref a_abc_subclasscheck(Obj, Args a) {
 Ref a_reset_registry(Obj, Args a) {
     onearg(a, "_abc._reset_registry");
     Ref impl = get_impl(a.pos(0));
-    data_of(impl)->registry = Ref{};
+    clear_weak_set(data_of(impl)->registry);
     return none_ref();
 }
 
 Ref a_reset_caches(Obj, Args a) {
     onearg(a, "_abc._reset_caches");
     Ref impl = get_impl(a.pos(0));
-    data_of(impl)->cache = Ref{};
-    data_of(impl)->negative_cache = Ref{};
+    clear_weak_set(data_of(impl)->cache);
+    clear_weak_set(data_of(impl)->negative_cache);   // also the second cache
     return none_ref();
 }
 
@@ -289,10 +374,10 @@ Ref a_get_dump(Obj, Args a) {
     AbcData* data = data_of(impl);
     Ref sets[3];
     int i = 0;
-    for (const Ref* held : {&data->registry, &data->cache, &data->negative_cache}) {
-        if (!held->get().is_unset() && static_cast<SetObject*>(held->get().object())->used != 0)
-            throw NotImplemented("_abc._get_dump of a set with entries: they are weak references (step 3c)");
-        sets[i++] = own(new SetObject(false));
+    for (const Ref* held : {&data->registry, &data->cache, &data->negative_cache}) {   // PySet_New of each: shallow copies
+        sets[i] = own(new SetObject(false));
+        if (!held->get().is_unset()) set_update(sets[i].get(), held->get());
+        ++i;
     }
     return tuple_new({sets[0].get(), sets[1].get(), sets[2].get(), Obj::small(static_cast<std::int64_t>(data->negative_cache_version))});
 }

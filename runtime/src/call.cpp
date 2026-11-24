@@ -487,6 +487,36 @@ void write_stderr(const std::string& text) {
     } catch (const PyError&) {
     }
 }
+// PySys_WriteStderr (sys_write): what fits a buffer of 1001 bytes, written with sys.stderr's write, or to the C stream when
+// that fails (no sys.stderr, None, a write that raises); "... truncated" after it the same way when it did not fit
+void sys_write_stderr(const std::string& text) {
+    auto one = [](const std::string& part) {
+        Obj f = std_stream("stderr");
+        bool written = false;
+        if (!f.is_unset()) {
+            try {
+                Ref s = str_new(part);
+                Ref w = getattr(f, intern("write"));
+                invoke(w.get(), {s.get()});
+                written = true;
+            } catch (const PyError&) {
+            }
+        }
+        if (!written) {
+            err_stream().write(part);
+            err_stream().flush();
+        }
+    };
+    if (text.size() <= 1000) {
+        one(text);
+        return;
+    }
+    std::size_t cut = 1000;                      // PyUnicode_FromString of the cut text: one cut inside a character fails
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
+    if (cut != 1000) throw NotImplemented("a line of PySys_WriteStderr's cut inside a character");
+    one(text.substr(0, 1000));
+    one("... truncated");
+}
 bool flush_std_stream(const char* name, bool report) {   // a closed file is left alone, as file_is_closed says
     Obj f = std_stream(name);
     if (f.is_unset() || f == None()) return true;
@@ -1317,9 +1347,13 @@ Ref sys_setswitchinterval(Obj, Args a) {          // sys_setswitchinterval_impl:
     switch_interval() = interval;
     return none_ref();
 }
+bool& finalizing() {                             // _Py_IsInterpreterFinalizing: from the end of the pre-finalization calls on
+    static bool on = false;
+    return on;
+}
 Ref sys_is_finalizing(Obj, Args a) {
     noargs(a, "sys.is_finalizing");
-    return Ref::steal(boolean(shutting_down()));
+    return Ref::steal(boolean(finalizing()));
 }
 Ref sys_getdefaultencoding(Obj, Args a) {
     noargs(a, "sys.getdefaultencoding");
@@ -3503,10 +3537,9 @@ Module* globals_of(const Object* o) {
     return m.is_object() && is_kind(m, Kind::Module) ? static_cast<Module*>(m.object()) : nullptr;
 }
 // Every object reached from `roots` that `seen` does not hold yet, in the order first met (breadth first). With `view`, each
-// reference to a module object is counted (not those of `uncounted`, sys.modules while it lets go of them), and each holder of
-// a module's namespace
-std::vector<Object*> reach(const std::vector<Object*>& roots, std::unordered_set<Object*>& seen, ExitView* view = nullptr,
-                           const Object* uncounted = nullptr) {
+// reference to a module object is counted, sys.modules' entries among them (each is one of its count: an alias keeps a module
+// as long as it is there, RL-936), and each holder of a module's namespace
+std::vector<Object*> reach(const std::vector<Object*>& roots, std::unordered_set<Object*>& seen, ExitView* view = nullptr) {
     struct Mode {
         Mode() { detail::tracing_everything = true; }
         ~Mode() { detail::tracing_everything = false; }
@@ -3526,9 +3559,8 @@ std::vector<Object*> reach(const std::vector<Object*>& roots, std::unordered_set
             for (ClassObject* m : c->mro) kids.push_back(m);
         }
         if (view != nullptr) {
-            if (o != uncounted)
-                for (Object* k : kids)
-                    if (k->kind == Kind::Module) ++view->referrers[static_cast<Module*>(k)];
+            for (Object* k : kids)
+                if (k->kind == Kind::Module) ++view->referrers[static_cast<Module*>(k)];
             if (Module* g = globals_of(o); g != nullptr && (g->flags & IMMORTAL)) ++view->globals_held[g];
         }
         for (Object* k : kids)
@@ -3556,8 +3588,8 @@ void recount(ExitView& v) {
     v.referrers.clear();
     v.globals_held.clear();
     std::unordered_set<Object*> seen;
-    reach(interpreter_roots(v), seen, &v, sys_modules());
-    reach(module_objects(), seen, &v, sys_modules());
+    reach(interpreter_roots(v), seen, &v);
+    reach(module_objects(), seen, &v);
 }
 void module_goes(ExitView& v, Module* m, bool top = true);
 // dict_dealloc of a module's namespace: each entry in order, its key, then its value; a module object whose last reference that
@@ -3602,24 +3634,52 @@ void settle(ExitView& v) {
         i = static_cast<std::size_t>(-1);        // from the start again, counted anew
     }
 }
+// A namespace whose module is gone goes when its count's last reference does (dict_dealloc), in whatever step that is: what
+// held it besides the module (sys.saved = mod.__dict__, a container) let go of, it goes then, before the next entry (RL-930)
+void release_pending(ExitView& v) {
+    // Only a holder that counts the namespace (its dict's count) can have let go of it since the last trace; the functions,
+    // frames and generators that hold it as their globals hold the module instead, so a namespace the last trace found held
+    // by them waits for the next trace, as before
+    bool any = false;
+    for (Module* m : v.gone) {
+        if (v.released.contains(m) || m->dict->refs != 1) continue;
+        auto held = v.globals_held.find(m);
+        any = any || held == v.globals_held.end() || held->second == 0;
+    }
+    if (!any) return;
+    recount(v);
+    settle(v);
+}
 // _PyModule_ClearDict: the names with one underscore first, then every other but __builtins__, each set to None in the dict's
-// order as it stands (what a value let go of runs may change the dict); a module whose last reference goes goes then
+// order as it stands (what a value let go of runs may change the dict); a module whose last reference goes goes then. The set
+// is PyDict_SetItem's: a key that is not an exact str is hashed (its class's __hash__ runs) and looked up, and a failure is
+// reported as ignored (RL-931)
 void clear_module_dict(Dict* d, ExitView& v) {
     for (int pass = 0; pass < 2; ++pass)
         for (std::size_t i = 0; i < d->entries.size(); ++i) {
-            Dict::Entry& e = d->entries[i];
-            if (e.key.is_unset() || e.value == None()) continue;
-            const Str* k = as_str(e.key);
+            if (d->entries[i].key.is_unset() || d->entries[i].value == None()) continue;
+            const Str* k = as_str(d->entries[i].key);
             if (k == nullptr) continue;
             bool one_underscore = !k->text.empty() && k->text[0] == '_' && (k->text.size() < 2 || k->text[1] != '_');
             if (pass == 0 ? !one_underscore : k->text == "__builtins__") continue;
-            Ref key = Ref::share(e.key);
-            Obj old = std::exchange(e.value, None());
-            if (is_kind(old, Kind::Module) && (old.object()->flags & IMMORTAL)) {
-                auto* m = static_cast<Module*>(old.object());
-                if (--v.referrers[m] == 0 && v.removed.contains(m) && !v.gone.contains(m) && !v.own.contains(m)) module_goes(v, m, false);
+            Ref key = Ref::share(d->entries[i].key);
+            Obj before = d->entries[i].value;
+            auto* module = is_kind(before, Kind::Module) && (before.object()->flags & IMMORTAL) ? static_cast<Module*>(before.object()) : nullptr;
+            bool replaced = true;
+            if (type_of(key.get()) == types().str) {
+                decref(std::exchange(d->entries[i].value, None()));   // its hash is the stored one: nothing runs but the value's release
+            } else {
+                try {
+                    dict_set(d, key.get(), None());
+                } catch (const PyError& e) {
+                    report_unraisable("Exception ignored while clearing module dict", e);
+                }
+                replaced = i < d->entries.size() && d->entries[i].value == None();   // a hash of its own may have put another key
             }
-            decref(old);
+            if (module != nullptr && replaced && --v.referrers[module] == 0 && v.removed.contains(module) && !v.gone.contains(module) &&
+                !v.own.contains(module))
+                module_goes(v, module, false);
+            release_pending(v);
         }
 }
 // _PyGC_CollectNoFail: gc.c's sequence, whatever gc.enable said and with no gc.callbacks, over the cyclic garbage of the
@@ -3683,8 +3743,31 @@ void release_state(const char* module, std::initializer_list<const char*> names)
     for (const char* n : names)
         if (!dict_get(m->dict, Obj::of(intern(n))).is_unset()) put(m->dict, n, None());
 }
+// The program's view of the import system's two namespaces, which the runtime's code keeps: what each held when the program
+// started. What the program stored there since is let go of when they are wiped, as CPython's wiping lets go of it (RL-926)
+std::unordered_map<Module*, Ref>& namespaces_at_start() {
+    static std::unordered_map<Module*, Ref> kept;
+    return kept;
+}
+// _PyModule_ClearDict over such a namespace: in its two passes, each value that is not the one the program started with goes,
+// the runtime's own put back (a name it did not have is None, as CPython's is)
+void release_program_values(Dict* d, Dict* start) {
+    for (int pass = 0; pass < 2; ++pass)
+        for (std::size_t i = 0; i < d->entries.size(); ++i) {
+            if (d->entries[i].key.is_unset()) continue;
+            const Str* k = as_str(d->entries[i].key);
+            if (k == nullptr) continue;
+            bool one_underscore = !k->text.empty() && k->text[0] == '_' && (k->text.size() < 2 || k->text[1] != '_');
+            if (pass == 0 ? !one_underscore : k->text == "__builtins__") continue;
+            Obj was = dict_get(start, d->entries[i].key);
+            Obj put_back = was.is_unset() ? None() : was;
+            if (d->entries[i].value == put_back) continue;
+            incref(put_back);
+            decref(std::exchange(d->entries[i].value, put_back));
+        }
+}
 }  // namespace
-void finalize_at_exit(const std::unordered_set<Module*>& runtime_own) {
+void finalize_at_exit(const std::unordered_set<Module*>& runtime_own, int& status) {
     ExitView v;
     v.own = runtime_own;
     for (Module* m : made_native_modules()) v.own.insert(m);
@@ -3704,21 +3787,27 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own) {
         put(sys->dict, name, value.is_unset() ? None() : value);
     }
     shutting_down() = true;
-    // finalize_remove_modules: each module of sys.modules, in its order, replaced by None (the weaklist keeps them, in that order)
+    // finalize_remove_modules: each module of sys.modules, in its order, replaced by None, and kept in the weaklist as it is
+    // met (one a finaliser adds on the way too, RL-935). Each entry is one of the module's references: the module goes when its
+    // last does (an alias keeps it, RL-936). A key that is not an exact str is hashed, which may run anything: the count is
+    // taken again then. A set that fails is reported, and the next entry follows (RL-934)
     Dict* modules = sys_modules();
     std::vector<Module*> imported;
-    for (std::size_t i = 0; i < modules->entries.size(); ++i) {
-        Obj value = modules->entries[i].value;
-        if (!modules->entries[i].key.is_unset() && is_kind(value, Kind::Module)) imported.push_back(static_cast<Module*>(value.object()));
-    }
     recount(v);
     for (std::size_t i = 0; i < modules->entries.size(); ++i) {
-        Dict::Entry& e = modules->entries[i];
-        if (e.key.is_unset() || !is_kind(e.value, Kind::Module)) continue;
-        auto* m = static_cast<Module*>(e.value.object());
-        Ref key = Ref::share(e.key);
-        dict_set(modules, key.get(), None());
+        if (modules->entries[i].key.is_unset() || !is_kind(modules->entries[i].value, Kind::Module)) continue;
+        auto* m = static_cast<Module*>(modules->entries[i].value.object());
+        imported.push_back(m);
+        Ref key = Ref::share(modules->entries[i].key);
+        bool plain = type_of(key.get()) == types().str;
+        try {
+            dict_set(modules, key.get(), None());
+        } catch (const PyError& e) {
+            report_unraisable("Exception ignored while removing modules", e);
+        }
         v.removed.insert(m);
+        if (plain && v.referrers.contains(m)) --v.referrers[m];
+        else recount(v);                         // a key's own hash ran, or a finaliser made the module since the last count
         if (!v.own.contains(m) && !v.gone.contains(m) && v.referrers[m] == 0) module_goes(v, m);
     }
     // the modules that left sys.modules before the end (an import that failed) are as removed: nothing holds them but what does
@@ -3729,13 +3818,20 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own) {
     if (Dict* copy = builtins_copy(); copy != nullptr) {   // finalize_restore_builtins
         Ref was = dict_copy(builtins->dict);
         dict_clear(builtins->dict);
-        for (std::size_t i = 0; i < copy->entries.size(); ++i)
-            if (!copy->entries[i].key.is_unset()) dict_set(builtins->dict, copy->entries[i].key, copy->entries[i].value);
+        try {
+            for (std::size_t i = 0; i < copy->entries.size(); ++i)
+                if (!copy->entries[i].key.is_unset()) dict_set(builtins->dict, copy->entries[i].key, copy->entries[i].value);
+        } catch (const PyError& e) {
+            report_unraisable("Exception ignored while restoring builtins", e);
+        }
     }
     collect_at_exit(v);
+    release_pending(v);
+    dump_gc_shutdown_stats();                    // _PyGC_DumpShutdownStats, "before it's too late" for the warnings (RL-923)
     // finalize_modules_clear_weaklist: the modules still alive, last imported first, but builtins and sys. A built-in module's
     // prelude runs in a namespace of its own, so the one the program sees is cleared as CPython's; the import system's two,
-    // whose code is the runtime's too, keep their namespace for it and show the program a copy with its names None
+    // whose code is the runtime's too, keep their namespace for it and show the program a copy with its names None, and what
+    // the program stored in them goes as it goes in CPython's wiping (RL-926)
     recount(v);
     for (auto it = imported.rbegin(); it != imported.rend(); ++it) {
         Module* m = *it;
@@ -3744,6 +3840,9 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own) {
             if (m->program_view != nullptr) continue;
             m->program_view = static_cast<Dict*>(dict_copy(m->dict).release().object());
             clear_module_dict(m->program_view, v);
+            if (auto start = namespaces_at_start().find(m); start != namespaces_at_start().end())
+                release_program_values(m->dict, static_cast<Dict*>(start->second.get().object()));
+            release_pending(v);
         } else {
             clear_module_dict(m->dict, v);
         }
@@ -3760,12 +3859,22 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own) {
     clear_module_dict(sys->dict, v);
     clear_module_dict(builtins->dict, v);
     collect_at_exit(v);                          // "Collect garbage once more"
+    release_pending(v);
+    // _Py_Finalize's second flush_std_files, on what sys.stdout and sys.stderr are now: None, unless a finaliser of the last
+    // collections put a stream there; its failure is status 120 as the first's (RL-925)
+    if (!flush_std_stream("stdout", true)) status = 120;
+    if (!flush_std_stream("stderr", false)) status = 120;
     // finalize_interp_clear (_PyInterpreterState_Clear): the thread's state, the codec registry (_PyCodec_Fini), then the
-    // interpreter's last collection, then gc's lists (_PyGC_Fini) and the warnings' state (_PyWarnings_Fini)
+    // interpreter's last collection, then gc's lists (_PyGC_Fini: the garbage first; the gc prelude binds the same two lists,
+    // RL-928) and the warnings' state (_PyWarnings_Fini)
     release_state("_contextvars", {"_current"});
+    release_pending(v);
     release_state("_codecs", {"_search_path", "_search_cache", "_error_registry", "_library"});
+    release_pending(v);
     collect_at_exit(v);
+    release_pending(v);
     release_gc_lists();
+    release_state("gc", {"garbage", "callbacks"});
     release_state("_warnings", {"filters", "_onceregistry", "_defaultaction", "_state"});
 }
 
@@ -4378,6 +4487,10 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                 for (const char* n : {"__package__", "__loader__", "__spec__"}) put(d, n, None());
                 builtins_copy_slot() = static_cast<Dict*>(copy.release().object());
             }
+            for (Module* m : runtime_own) {          // the import system's two namespaces as the program finds them (RL-926)
+                const std::string& name = as_str(m->name.get())->text;
+                if (name == "_frozen_importlib" || name == "_frozen_importlib_external") namespaces_at_start()[m] = dict_copy(m->dict);
+            }
             note_filled(builtins_module());        // from here on a name missing from them is one the program deleted
             note_filled(native_modules()["sys"]);
             note_filled(main);
@@ -4418,24 +4531,17 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
             }
             finish_pending_calls();              // _Py_FinishPendingCalls: a failed wakeup write's report still queued is printed before atexit
             if (Obj handlers = dict_get(intrinsics(), Obj::of(intern("_atexit_call"))); !handlers.is_unset()) invoke(handlers, {});
+            finalizing() = true;                 // _PyInterpreterState_SetFinalizing, after the pre-finalization calls (RL-927)
             if (!flush_std_stream("stdout", true)) status = 120;
             if (!flush_std_stream("stderr", false)) status = 120;
             // _PySignal_Fini, between flush_std_files and finalize_modules: the handlers go (a handler's own finaliser runs
             // here, and getsignal says None inside it), a signal Python handled is the default's again and ends the process
             // if it comes during the teardown, an ignored one stays ignored
             signals_fini();
-            finalize_at_exit(runtime_own);
-            // What the finalisers printed goes out now. In CPython sys.stdout is None by this time (finalize_modules cleared
-            // sys), so its second flush_std_files does nothing, and the text leaves when the stream itself is finalised
-            // (iobase_finalize), where a failure is dropped: no report, and the status is not its (RL-532). So only a
-            // stream of _io's is asked: an object of the program's own in sys.__stdout__ is let go of with no call (RL-556)
-            for (const char* name : {"stdout", "stderr"}) {
-                Obj f = std_stream(name);
-                bool io_stream = false;
-                if (f.is_object())
-                    for (const ClassObject* c : type_of(f)->mro) io_stream = io_stream || (c_type(c) && c->name.starts_with("_io."));
-                if (io_stream) flush_std_stream(name, false);
-            }
+            // finalize_modules, the second flush_std_files on what sys then has (None unless a late finaliser put a stream
+            // there, RL-925), then finalize_interp_clear. What the finalisers wrote to the original stream leaves when that
+            // stream is finalised (iobase_finalize), where a failure is dropped (RL-532)
+            finalize_at_exit(runtime_own, status);
         }
     } catch (const NotImplemented& e) {
         try {

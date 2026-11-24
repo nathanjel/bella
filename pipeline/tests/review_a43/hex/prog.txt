@@ -1,0 +1,18 @@
+import sys
+import binascii
+class N:
+    def __index__(self):
+        print('index')
+        return 1
+data = b'ab'
+fn = {'bytes': data.hex, 'array': bytearray(data).hex,
+      'hexlify': lambda *a, **kw: binascii.hexlify(data, *a, **kw)}[sys.argv[1]]
+for kw in [{'bad': 1}, {'sep': ':'}, {'bytes_per_sep': N()}]:
+    try:
+        fn(':', N(), **kw)
+    except Exception as e:
+        print(type(e).__name__)
+try:
+    fn(bytes_per_sep=N(), wat=1)
+except Exception as e:
+    print(type(e).__name__)

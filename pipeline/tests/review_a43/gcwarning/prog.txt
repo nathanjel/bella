@@ -1,0 +1,7 @@
+import gc
+import sys
+import warnings
+warnings.simplefilter('always', ResourceWarning)
+if sys.argv[1] == 'save':
+    gc.set_debug(gc.DEBUG_SAVEALL)
+gc.garbage.append('retained')

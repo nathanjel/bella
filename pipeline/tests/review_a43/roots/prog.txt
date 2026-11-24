@@ -1,0 +1,47 @@
+import sys
+import gc
+import os
+import builtins
+import codecs
+import contextvars
+import warnings
+import weakref
+class P:
+    def __call__(self, *args):
+        pass
+    def __del__(self, w=os.write,s=sys,b=builtins.__dict__):
+        w(1, '{} {}\n'.format(s.__dict__.get('stdout') is None, b.get('print') is None).encode())
+p = P()
+p.loop = p
+row = sys.argv[1]
+if row == 'garbage':
+    gc.garbage.append(p)
+elif row == 'callback':
+    gc.callbacks.append(p)
+elif row == 'context':
+    contextvars.ContextVar('hold').set(p)
+elif row == 'codec':
+    codecs.register_error('test', p)
+elif row == 'warning':
+    class Cat(Warning):
+        holder = p
+    warnings.simplefilter('ignore', Cat)
+elif row == 'resurrect':
+    class Res:
+        def __del__(self, watched=p, s=sys):
+            s.resurrected = watched
+    r = Res()
+elif row == 'newcycle':
+    class New:
+        def __del__(self, cls=P):
+            watch = cls()
+            watch.loop = watch
+    new = New()
+elif row == 'unraisable':
+    def hook(arg, w=os.write):
+        w(1, b'hook\n')
+    sys.unraisablehook = hook
+    class Bad:
+        def __del__(self):
+            raise ValueError('boom')
+    bad = Bad()

@@ -11,8 +11,10 @@ builtins get back the names they had before the program (no `open`); a collectio
 still held from sys, last imported first, have their names set to None, those with one underscore first; then sys's and the
 builtins' names; a last collection, which finds what only sys or the builtins held (a module's names whole, but no builtin
 and no stream); and once the interpreter's own state is cleared (the context, the codec registry), the interpreter's last
-collection. What the warning filters or gc.callbacks hold is never finalised. Each row starts the program again, sets up one
+collection. What the warning filters or gc.callbacks hold is never finalised. An ABC holds what it registers and has
+cached by weak references only, so an ABC the interpreter keeps keeps none of them. Each row starts the program again, sets up one
 thing and ends; its finalisers write with `os.write` alone. Nothing assigns to the builtins (E-06)."""
+import abc
 import binascii
 import codecs
 import contextvars
@@ -29,7 +31,7 @@ from exitpkg import fin
 SHOW = "BELLA_CASE_SHOW"
 LABEL = "main"
 ROWS = ("stdout", "cycle", "cycle_disabled", "data", "plain", "classattr", "resurrect", "restored", "alive", "weak", "hook",
-        "weak_main", "cmodule", "codec", "context", "warnings", "gc_callbacks")
+        "weak_main", "cmodule", "codec", "context", "warnings", "gc_callbacks", "abc")
 held: object = None
 asked: object = None
 variable: contextvars.ContextVar[object] = contextvars.ContextVar("variable")
@@ -37,6 +39,16 @@ variable: contextvars.ContextVar[object] = contextvars.ContextVar("variable")
 
 class Holder:
     """A class whose attribute holds an object."""
+
+    held: object = None
+
+
+class Kept(abc.ABC):  # noqa: B024  -- an ABC with no abstract method: only its registry and caches matter
+    """An ABC that sys keeps to the end."""
+
+
+class Registered:
+    """A class that only the program's namespace holds, and an ABC's registry and cache by weak references."""
 
     held: object = None
 
@@ -156,6 +168,11 @@ def set_up(row: str) -> None:
     elif row == "gc_callbacks":
         gc.callbacks.append(on_collection)
         held = fin.C("a global", globals())
+    elif row == "abc":
+        sys.__dict__["kept"] = Kept
+        Registered.held = fin.C("a registered class's attribute", globals())
+        Kept.register(Registered)
+        print("  registered:", issubclass(Registered, Kept), isinstance(Registered(), Kept))
 
 
 def again(row: str) -> None:

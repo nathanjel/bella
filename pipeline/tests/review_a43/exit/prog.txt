@@ -1,0 +1,72 @@
+import sys
+import os
+import gc
+import weakref
+import codecs
+import contextvars
+import warnings
+import functools
+import atexit
+from obs import Watch
+
+row = sys.argv[1]
+def setup():
+    if row == 'alias':
+        import data
+        sys.modules['z_alias'] = data
+    elif row == 'failed':
+        try:
+            import bad
+        except ValueError:
+            pass
+        os.write(1, b'after\n')
+    elif row == 'dynamic':
+        import types
+        m = types.ModuleType('dynamic')
+        m.held = Watch()
+        sys.modules['dynamic'] = m
+    elif row == 'cache':
+        @functools.lru_cache()
+        def f():
+            return Watch()
+        f()
+        sys.holder = f
+    elif row == 'generator':
+        def g():
+            item = Watch()
+            yield 1
+        sys.holder = g()
+        next(sys.holder)
+    elif row == 'errorhandler':
+        def handler(exc, x=Watch()):
+            return '', 0
+        codecs.register_error('probe', handler)
+    elif row == 'garbage':
+        gc.garbage.append(Watch())
+    elif row == 'warning':
+        class Category(Warning):
+            item = Watch()
+        warnings.simplefilter('ignore', Category)
+    elif row == 'after':
+        atexit.register(lambda x: None, Watch())
+    elif row == 'weakfinal':
+        global target
+        target = Watch()
+        weakref.finalize(target, os.write, 1, b'finalize\n')
+    elif row == 'context':
+        v = contextvars.ContextVar('v')
+        v.set([Watch()])
+    elif row == 'deep':
+        global nest
+        nest = Watch()
+        for i in range(150000):
+            nest = [nest]
+    elif row == 'trace':
+        def boom():
+            x = Watch()
+            raise ValueError()
+        try:
+            boom()
+        except ValueError as e:
+            sys.holder = e
+setup()

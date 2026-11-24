@@ -1,0 +1,21 @@
+import sys
+import os
+import contextvars
+row = sys.argv[1]
+if row == 'ns':
+    def pin():
+        import leaf
+        sys.saved = leaf.__dict__
+    pin()
+else:
+    class Emit:
+        def __del__(self, out=sys.stdout, w=os.write):
+            w(1, b'before\n')
+            out.write('text\n')
+            w(1, b'after\n')
+    if row == 'cycle':
+        x = Emit()
+        x.loop = x
+        del x
+    else:
+        x = Emit()

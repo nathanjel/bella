@@ -1,0 +1,4 @@
+import os, builtins
+class P:
+    def __del__(self, w=os.write, b=builtins.__dict__):
+        w(1,b'original\n' if b.get('open') is not None else b'restored\n')

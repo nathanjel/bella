@@ -1,0 +1,41 @@
+import sys
+import gc
+import os
+import contextvars
+from obs import Watch
+
+row = sys.argv[1]
+def setup():
+    from pkg import middle
+    from pkg import leaf
+    if row == 'closure':
+        sys.keep = lambda: leaf
+    elif row == 'default':
+        sys.keep = lambda v=leaf: v
+    elif row == 'instance':
+        class Base:
+            held = middle
+        class C(Base):
+            pass
+        sys.keep = C()
+    elif row == 'dict':
+        middle.table = {'nested': [leaf]}
+        sys.keep = middle
+    elif row == 'namespace':
+        sys.keep = leaf.__dict__
+    elif row == 'sys_exit':
+        sys.keep = lambda: leaf
+        sys.exit(7)
+    elif row == 'uncaught':
+        sys.keep = lambda: leaf
+        raise ValueError('test')
+    elif row == 'buffer':
+        class Early:
+            def __del__(self, stdout=sys.stdout):
+                stdout.write('buffered\n')
+        class Late:
+            def __del__(self, w=os.write):
+                w(1, b'late\n')
+        leaf.extra = Early()
+        contextvars.ContextVar('v').set(Late())
+setup()

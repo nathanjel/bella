@@ -1,0 +1,25 @@
+import gc
+import sys
+import os
+class P:
+    def __call__(self, *a):
+        pass
+    def __del__(self, w=os.write):
+        w(1,b'P\n')
+class New:
+    def __del__(self, cls=P, w=os.write, mode=sys.argv[1]):
+        w(1,b'begin\n')
+        y=cls()
+        if mode != 'immediate':
+            y.loop=y
+        w(1,b'end\n')
+row = sys.argv[1]
+if row == 'garbage':
+    gc.garbage.append(P())
+elif row == 'callback':
+    gc.callbacks.append(P())
+elif row == 'kept':
+    sys.keeper = P
+    x=New()
+else:
+    x=New()

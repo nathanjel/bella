@@ -1,0 +1,17 @@
+import os
+import sys
+class Stream:
+    closed = False
+    def flush(self, w=os.write, fail=sys.argv[1]=='fail', E=OSError):
+        w(1, b'flush\n')
+        if fail:
+            raise E('late flush')
+class Install:
+    def __del__(self, s=sys, dest=Stream(), w=os.write):
+        w(1, b'install\n')
+        s.stdout = dest
+def setup():
+    x = Install()
+    x.cycle = x
+    sys.holder = x
+setup()

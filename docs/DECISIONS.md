@@ -1810,3 +1810,40 @@ All seventeen agree compiled. eval1 and eval2 do not model the exit; the case is
 **Notes.**
 * RL-514's verdict was corrected: the finaliser runs after sys's and the builtins' names are cleared, but with its module's names whole (`__main__` died when sys.modules let go of it, so its namespace was never wiped).
 * A question for the author: C-9-13's `alive` row checks an order inside one module's wiping (one underscore first), which D-07 leaves unspecified. D-07 could be narrowed to "within one collection" (D-04), since the exit is now exact.
+
+**2026-11-24 — review A43's fixes, and `_abc` holds weak references (the rest of H4; RL-923 to RL-936, C-7-19, C-9-13).** Review A43 (codex) of the exit step found fourteen differences, all confirmed (review log). Eleven are fixed in the exit's design:
+
+* **Steps where CPython has them.**
+  * `sys.is_finalizing()` is true from the end of the pre-finalization calls (threads, atexit), as `_PyInterpreterState_SetFinalizing`, no longer from the start of the modules' removal (RL-927). The import system's own test (`shutting_down()`) is unchanged.
+  * `_PyGC_DumpShutdownStats` runs after the collection that follows the builtins' restoring: a `gc.garbage` with something in it, unless `DEBUG_SAVEALL` put it there, is a ResourceWarning of file `gc`, line 0 (RL-923). With `DEBUG_UNCOLLECTABLE`, the list's repr follows through `sys_write_stderr`, which is `PySys_WriteStderr`: 1000 bytes, then `... truncated`, or the C stream when sys.stderr cannot be written.
+  * `_Py_Finalize`'s second `flush_std_files` is inside `finalize_at_exit`, right after `finalize_modules`' last collection, on what sys has then (RL-925). That is None unless a late finaliser put a stream there; a failure is status 120, as the first flush's is. The old flush after the interpreter's state, of `_io` streams only and with no status (RL-532, RL-556), is gone. It read the wiped sys, so it did nothing, except where it was wrong.
+* **What the runtime's own namespaces held of the program's.**
+  * The import system's two namespaces are copied as the program finds them (`namespaces_at_start`). At their wiping, each value that is not the start's is let go of in `_PyModule_ClearDict`'s two passes, and the start's value is put back for the runtime's code (RL-926). The program still sees the copy with its names None.
+  * gc's two lists are let go of by the gc prelude's namespace too, the garbage first, as `_PyGC_Fini` lets go of them (RL-928).
+* **Module objects by their count.**
+  * Each sys.modules entry is one of a module's references, so an alias keeps a module until it is replaced too (RL-936). The count is taken again after a key that is not an exact str, whose hash may run anything.
+  * The modules to wipe are listed as their entries are met, a module a finaliser adds on the way included (RL-935).
+  * A gone module's namespace goes as soon as only its module holds it, in whatever step that comes (RL-930). `release_pending` checks after each value a wiping or a release lets go of, and after each collection; before, it went at the next trace only. It takes a new count only when a namespace's own count fell to its module's and the last count found no function, frame or generator holding it. Those hold the module, not the namespace, so a namespace they held still waits for the next trace, and the check costs no trace per entry.
+  * A module a finaliser makes while sys.modules is emptied gets a count of its own before its entry decides (RL-935's probe showed it): the last count did not know it.
+* **What a step runs or raises.**
+  * The wiping sets a key that is not an exact str through `dict_set`, which hashes it, as `PyDict_SetItem` does (RL-931).
+  * A failure while removing modules, clearing a namespace or restoring the builtins is reported in CPython's words and the next entry follows (RL-934); it ended the process before.
+* `bytes.hex` and `bytearray.hex` check their keywords before converting `bytes_per_sep` (RL-924).
+
+**Not fixed here.**
+* RL-929 and RL-932 are of classes being immortal, which D-19's summary does not allow: "functions, classes and every other definition-time object are reference-counted like any other". C-3-12 is the case that waits for classes as counted objects; both findings wait with it (TODO).
+  * RL-929: what a finaliser's new object holds of a dead class is not kept through the collection.
+  * RL-932: a stream that only a dead class's method holds is never finalised. The DECISIONS entry of 2026-11-23 said "finalised but not freed"; a class that no module reaches is not even found dead.
+* RL-933, a module whose body raised keeps its globals until the exit, is a question for the author: whether D-19's immortal module objects cover what their namespaces hold.
+
+**`_abc`.** The registry and the two caches hold weak references with a callback, `_destroy`, as `_add_to_weak_set` makes them, so an ABC holds nothing it registered or cached. C-9-13's new row `abc` shows it: an ABC sys keeps no longer keeps a registered class's attribute past the collection after sys.modules is emptied. `_get_dump` returns shallow copies of the three sets, so its stop is gone. Resets and the negative cache's invalidation clear the sets in place.
+
+A look-up makes no reference for a class. CPython looks up with the class's basic weak reference, which its bases' lists of subclasses hold for as long as the class lives, so its hash is computed once and kept, and each entry of that hash is compared by its target's `__eq__`. The runtime keeps each class's hash once computed and compares the targets (`set_contains_by`, set_lookkey with a comparison of the caller's). So a metaclass's `__hash__` and `__eq__` run as CPython runs them, and an `isinstance` against an ABC allocates nothing.
+
+The cost of a look-up:
+* A metaclass that keeps `object`'s two methods (`type`, which cannot change, or another by its version) needs no kept hash, and the class itself is a hit without a call.
+* A loop of 3,000,000 `isinstance` checks against `Sized` and `Mapping` takes 2.5% longer than with the strong sets (7.4 s against 7.2 s; CPython's is 1.1 s). That is the weak record's look-up per hit; the first version, without the metaclass test kept, was 8% slower. For what is not a class, the reference is made as CPython makes it.
+
+`_weakref` is made when `_abc` first needs its type, if the program has not imported it. That is as `_imp.create_builtin` makes it, so sys.modules has it only once imported (D-30).
+
+The class's basic weak reference itself is not there: `weakref.getweakrefcount(C)` is one less than CPython's, `weakref.ref(C)` is a new object when none is held, and a program's hash of one is not the one `_abc` keeps (TODO). C-7-19's rows count references as differences for that reason.

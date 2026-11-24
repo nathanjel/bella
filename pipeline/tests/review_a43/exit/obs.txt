@@ -1,0 +1,7 @@
+import os
+import sys
+import builtins
+
+class Watch:
+    def __del__(self, w=os.write, s=sys, b=builtins.__dict__):
+        w(1, '{} {} {} {}\n'.format(s.__dict__.get('modules') == {}, b.get('open') is None, b.get('print') is None, s.__dict__.get('stdout') is None).encode())

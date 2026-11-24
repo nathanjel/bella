@@ -671,6 +671,7 @@ void report_unraisable(const std::string& context, Obj exc);   // the same, for 
 void report_unraisable(Obj exc);                  // one whose message did not format (PyErr_FormatUnraisable clears that error): no first line
 void report_unraisable(const char* context, Obj shown, const PyError& e);   // context + repr(shown); no first line if the repr raises (RL-705)
 void write_stderr(const std::string& text);       // PyFile_WriteString to sys.stderr: nothing when it is None, errors ignored
+void sys_write_stderr(const std::string& text);   // PySys_WriteStderr: sys.stderr's write, else the C stream; 1000 bytes
 bool flush_std_stream(const char* name, bool report = false);   // flush_std_files' half for sys.stdout or sys.stderr: false when its flush raised, reported as ignored if asked
 // While an except clause runs, its exception is the one being handled: what a bare `raise`
 // re-raises and what a new exception records as __context__ (sys.exception()).
@@ -1036,7 +1037,9 @@ void set_add_hashed(Obj set, Obj key, std::int64_t hash);   // a key's stored ha
 void set_update(Obj set, Obj iterable);
 bool set_contains(SetObject* s, Obj key);
 bool set_contains_hashed(SetObject* s, Obj key, std::int64_t hash);
+bool set_contains_by(SetObject* s, std::int64_t hash, const std::function<bool(Obj)>& eq);   // a look-up by a key not made (_abc's)
 bool set_discard(SetObject* s, Obj key);
+void set_clear(SetObject* s);                    // set_clear_internal: PySet_Clear
 Ref set_binary(BinOp op, Obj a, Obj b);                      // | & - ^ of sets and frozensets, else NotImplemented
 Ref set_inplace(BinOp op, Obj a, Obj b);                     // |= &= -= ^= of a set
 Ref dictview_binary(BinOp op, Obj a, Obj b);                 // - & | ^ with a dict keys or items view on either side: a set
@@ -1423,6 +1426,7 @@ Ref i_signals(Obj, Args a);                      // _signal.py's, and _thread.in
 Ref i_gc(Obj, Args a);                           // gc.py's: the collector's state, by name (runtime/src/gc.cpp)
 bool gc_is_enabled();                            // PyGC_IsEnabled
 void release_gc_lists();                         // _PyGC_Fini, at exit (runtime/src/gc.cpp)
+void dump_gc_shutdown_stats();                   // _PyGC_DumpShutdownStats, at exit (runtime/src/gc.cpp)
 
 // A module of the prelude, run before the program as the module it names (builtins, or
 // _frozen_importlib for runtime/prelude/bootstrap.py).

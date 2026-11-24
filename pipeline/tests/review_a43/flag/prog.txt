@@ -1,0 +1,28 @@
+import sys
+import gc
+import os
+class P:
+    def __del__(self, w=os.write, f=sys.is_finalizing):
+        w(1, b'finalizing\n' if f() else b'running\n')
+class C:
+    def __call__(self, phase, info, w=os.write, f=sys.is_finalizing):
+        w(1, '{} {}\n'.format(phase,f()).encode())
+row = sys.argv[1]
+if row == 'cycle':
+    x = [P()]
+    x.append(x)
+    del x
+elif row == 'flush':
+    class S:
+        def flush(self, w=os.write, f=sys.is_finalizing):
+            w(1, b'finalizing\n' if f() else b'running\n')
+    sys.stdout = S()
+elif row == 'callback':
+    gc.callbacks.append(C())
+elif row == 'path':
+    sys.path_hooks = P()
+elif row == 'disabled':
+    gc.disable()
+    x = [P()]
+    x.append(x)
+    del x

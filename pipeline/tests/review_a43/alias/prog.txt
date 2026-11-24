@@ -1,0 +1,11 @@
+import os, sys
+class K(str):
+    def __hash__(self, h=str.__hash__, s=sys, final=sys.is_finalizing, w=os.write):
+        if final():
+            s.kept = s.modules['zz_alias']
+            w(1,b'kept\n')
+        return h(self)
+def setup():
+    import data
+    sys.modules[K('zz_alias')] = data
+setup()

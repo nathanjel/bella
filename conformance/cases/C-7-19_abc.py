@@ -4,10 +4,13 @@
 # source: PEP 3119, Lib/abc.py and Modules/_abc.c (the first native module a frozen module needs)
 """Abstract classes: which class cannot be made and why, the abstract names a class inherits and
 drops, virtual subclasses, the hook, and when the caches answer without asking the hook again.
-The token's value depends on what else has registered, so only its changes are shown."""
+The token's value depends on what else has registered, so only its changes are shown. The registry
+and the two caches hold weak references, each with a callback that would take it out of its set;
+a look-up makes a reference of its own, so a metaclass's __hash__ and __eq__ run at each one."""
 # ruff: noqa: B024  # ABCs with no abstract method are what this case is about
 import _abc  # type: ignore[import-not-found]
 import abc
+import weakref
 from abc import ABC, ABCMeta, abstractmethod
 
 
@@ -468,3 +471,90 @@ class Fresh(ABC):
 print("empty dump:", _abc._get_dump(Fresh)[:3] == (set(), set(), set()), len(_abc._get_dump(Fresh)), type(_abc._get_dump(Fresh)[2]).__name__, type(_abc._get_dump(Fresh)[3]).__name__)
 _abc._abc_init(Plain)
 print("init by hand:", "_abc_impl" in vars(Plain), Plain.__abstractmethods__ == set())  # type: ignore[attr-defined]
+
+
+# ---- the three sets hold weak references (_add_to_weak_set), and the dump copies them
+class Holder(ABC):
+    pass
+
+
+class Registered:
+    pass
+
+
+before = weakref.getweakrefcount(Registered)  # what else refers to the class weakly is not this case's
+Holder.register(Registered)
+print("checked:", issubclass(Registered, Holder), isinstance(1, Holder))
+registry, cache, negative, version = _abc._get_dump(Holder)
+print("registry:", [type(r).__name__ for r in registry], [r() is Registered for r in registry])
+print("caches:", [r() is Registered for r in cache], [r() is int for r in negative], version == abc.get_cache_token())
+print("references to the class:", weakref.getweakrefcount(Registered) - before)
+first = next(iter(registry))
+callback = first.__callback__
+print("callback:", type(callback).__name__, callback.__name__, callback.__module__, type(callback.__self__).__name__)
+print("its set:", callback.__self__() == registry, callback.__self__() is registry)
+again = _abc._get_dump(Holder)
+print("a new copy each time:", again[0] is registry, next(iter(again[0])) is first)
+_abc._reset_caches(Holder)
+print("caches reset:", _abc._get_dump(Holder)[1:3] == (set(), set()), len(_abc._get_dump(Holder)[0]), weakref.getweakrefcount(Registered) - before)
+_abc._reset_registry(Holder)
+print("registry reset:", _abc._get_dump(Holder)[0] == set(), weakref.getweakrefcount(Registered) - before, callback.__self__() == set())
+
+# ---- a look-up makes a reference of its own: a metaclass's __hash__ and __eq__ run at each one
+calls: list[str] = []
+
+
+class Counted(ABCMeta):
+    def __hash__(cls) -> int:
+        calls.append("hash " + cls.__name__)
+        return 7
+
+    def __eq__(cls, other: object) -> bool:
+        calls.append("eq " + cls.__name__ + " " + (other.__name__ if isinstance(other, type) else type(other).__name__))
+        return cls is other
+
+
+class Watched(ABC):
+    pass
+
+
+class Seen(metaclass=Counted):
+    pass
+
+
+class Other(metaclass=Counted):
+    pass
+
+
+def shown(label: str, result: object) -> None:
+    print(label, result, calls)
+    calls.clear()
+
+
+calls.clear()
+shown("register:", Watched.register(Seen) is Seen)
+shown("subclass:", issubclass(Seen, Watched))
+shown("again:", issubclass(Seen, Watched))
+shown("instance:", isinstance(Seen(), Watched))
+shown("another of the same hash:", issubclass(Other, Watched))
+shown("and again:", issubclass(Other, Watched))
+
+
+class NoHash(ABCMeta):
+    def __eq__(cls, other: object) -> bool:
+        return cls is other
+
+
+class Unhashable(metaclass=NoHash):
+    pass
+
+
+def unhashable_check() -> object:
+    return issubclass(Unhashable, Watched)
+
+
+def unhashable_register() -> object:
+    return Watched.register(Unhashable)
+
+
+print("unhashable:", failed(unhashable_check), failed(unhashable_register))

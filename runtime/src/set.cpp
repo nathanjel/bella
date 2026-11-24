@@ -1,5 +1,7 @@
 // runtime/src/set.cpp -- set and frozenset: CPython 3.15.2's table (Objects/setobject.c), so that
 // iteration order and the __eq__ calls a lookup makes are CPython's (spec D-05).
+#include <functional>
+
 #include "bella/runtime.hpp"
 
 namespace bella {
@@ -146,6 +148,36 @@ auto with_set_key(Obj key, F f) {
 }  // namespace
 
 bool set_contains_hashed(SetObject* s, Obj key, std::int64_t hash) { return lookkey(s, key, hash) < s->table.size(); }
+// set_lookkey for a key that is not made: each entry of the hash is compared by `eq(stored)`, which stands for
+// PyObject_RichCompareBool(stored, key) past its identity test (no entry is the key), the stored key held meanwhile; a table
+// that changed under the comparison is looked in again
+bool set_contains_by(SetObject* s, std::int64_t hash, const std::function<bool(Obj)>& eq) {
+restart:
+    std::size_t mask = s->table.size() - 1;
+    std::size_t i = static_cast<std::size_t>(hash) & mask;
+    auto perturb = static_cast<std::size_t>(hash);
+    for (;;) {
+        int probes = (i + LINEAR_PROBES <= mask) ? LINEAR_PROBES : 0;
+        for (std::size_t k = i;; ++k) {
+            auto& e = s->table[k];
+            if (empty(e)) return false;
+            if (active(e) && e.hash == hash) {
+                Obj startkey = e.key;
+                std::size_t size = s->table.size();
+                bool same;
+                {
+                    Ref hold = Ref::share(startkey);
+                    same = eq(startkey);
+                }
+                if (s->table.size() != size || s->table[k].key != startkey) goto restart;
+                if (same) return true;
+            }
+            if (probes-- == 0) break;
+        }
+        perturb >>= PERTURB_SHIFT;
+        i = (i * 5 + 1 + perturb) & mask;
+    }
+}
 bool set_contains(SetObject* s, Obj key) {
     return with_set_key(key, [s](Obj k, std::int64_t hash) { return lookkey(s, k, hash) < s->table.size(); });
 }
@@ -360,6 +392,8 @@ void swap_bodies(SetObject* a, SetObject* b) {   // set_swap_bodies; a finger st
     std::swap(a->used, b->used);
 }
 }  // namespace
+
+void set_clear(SetObject* s) { clear_set(s); }
 
 Ref set_binary(BinOp op, Obj a, Obj b) {
     if (!is_kind(a, Kind::Set) || !is_kind(b, Kind::Set)) return Ref::steal(Obj::of(NOTIMPLEMENTED));

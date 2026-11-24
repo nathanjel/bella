@@ -543,11 +543,19 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          (H3) `gc`: collect, get_count, get_stats, is_tracked, is_finalized, the threshold and the looks (exact: CPython's
          points; lean: gc.collect, the runtime's looks, exit). (H4, the exit, done 2026-11-23: DECISIONS, C-9-13; the exit is
          finalize_modules' sequence with its collections, over a trace in CPython's view since modules and classes are
-         immortal here; left of H4: `_abc`'s real weak references, and the known gaps the DECISIONS entry lists). (H5) the
-         seven cases into the compiled baseline, and a codex review of the collector.
-       * 3c, what is left: `_abc` takes real weak references, which only the collector can tell from today's strong ones (a
-         class is in a cycle with its own mro); classes as counted objects (C-3-12), which would let the exit's collections
-         free what only a dead class holds (today they finalise it and leave it alive).
+         immortal here; review A43's fixes and `_abc`'s weak references done 2026-11-24: DECISIONS, C-7-19, C-9-13's row
+         `abc`; the known gaps that entry and the one of 2026-11-23 list). (H5) the seven cases into the compiled baseline,
+         and a codex review of the collector.
+       * 3c, what is left: classes as counted objects (C-3-12), which D-19's summary asks for ("classes ... are
+         reference-counted like any other"). Waiting on it: RL-929 (a finaliser's new object does not keep what it holds of
+         a dead class through the collection: gc.c's resurrection is by counts) and RL-932 (a stream that only a dead class's
+         method holds is never finalised, and a class no module reaches is not even found dead at the exit). Today the
+         exit's collections finalise what only a dead class reached from a module holds and leave it alive.
+       * A class's basic weak reference (CPython's: its bases' lists of subclasses, `tp_subclasses`, hold one for as long as
+         the class lives) is not there: `weakref.getweakrefcount(C)` is one less, `weakref.ref(C)` is a new object when the
+         program holds none (CPython's is the same one each time), and a program's `hash()` of it is not the hash `_abc`
+         keeps for the class, so a metaclass's `__hash__` can run once more than CPython's. Found 2026-11-24 with `_abc`'s
+         weak references (C-7-19 counts references as differences for it).
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
     design's level table says every L2 expression carries the oracle's type. Closes in phase 2,
     when a pass produces `Fact.TYPES` (none does today, so none can require it). Until then no
@@ -772,6 +780,14 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   program's objects have. The ways: CPython's figures, computed from a table of its sizes (exact for programs that print
   or compare them, and a number that is true of nothing in the compiled program); the runtime's own sizes as a registered
   deviation; or the stop as it is. RL-592 (the default pickling state over a C type with fields) needs the same table.
+* **For the author, a question to put (2026-11-24, RL-933 of review A43): what D-19's immortal module objects cover.** A
+  module whose body raises is taken out of sys.modules by the import system, and CPython frees it with the exception's last
+  frame, its namespace with it, so its globals go then (before the `except` clause's next statement). Here the module object
+  never dies (D-19), so its namespace lives until the exit's trace finds it. The ways: D-19's note says so (a module the
+  import system lets go of during the run keeps its globals until the exit); the module object is counted from the moment it
+  leaves sys.modules (its count is not known then: references to an immortal object are not counted); or the module objects
+  are counted objects that sys.modules keeps alive, with D-19 narrowed to "a weak reference to a module never dies" or
+  dropped. The first is what is done today; the others change D-19.
 * **For the author, two questions to put after Question 29 (found 2026-11-22 with the sweep): `marshal` and `zipimport`.**
   Neither can be exact as CPython has it. `marshal.dumps` at the default version sets a reference flag on an object by its
   reference count at that moment (`w_ref`: no flag where the count is 1), so its bytes depend on CPython's counts, which a
