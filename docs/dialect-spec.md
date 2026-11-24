@@ -35,7 +35,7 @@ A compiled program is equivalent to the same program under CPython 3.15 when, fo
 | `is` between equal immutable values (int, float, complex, str, bytes, tuple, frozenset): whether an operation gives back the object it was given or an equal new one, and whether a constant is one object | May differ in either direction: equal small-integer immediates and interned strings are identical more often; a tuple of constants is made at each evaluation; a library function may give back its argument where CPython makes a copy, or the other way. CPython already warns about code that depends on it (D-03) |
 | The moment a reference cycle is collected, and the finaliser order among its members | Collector timing (D-04) |
 | Finalisation order of objects still alive at interpreter exit, and the step of the exit a finaliser runs in | Unspecified in CPython too; which objects are finalised is not (D-07) |
-| `sys.getsizeof` values, memory addresses, allocation counts | Implementation detail |
+| `sys.getsizeof` values and the sizes they are made from (`__sizeof__`, a type's `__basicsize__` and `__itemsize__`), memory addresses, allocation counts | Implementation detail: the compiled program's own sizes, not CPython's |
 | Thread interleavings | Nondeterministic in CPython too; \[P2+\] |
 | Traceback line text | Decision D-06; the exception type and message are observable |
 | Performance, memory footprint, start-up time | Not semantics |
@@ -358,3 +358,5 @@ v0.34 (2026-11-24, the author's decision): D-17 says what the recursion limit co
 v0.35 (2026-11-24, the author's decision): D-07 sharpened: which objects still alive at exit are finalised is CPython's (a file left open is flushed and closed); the order among them and the step of the exit each finaliser runs in stay unspecified, kept free for a faster exit, though the runtime follows CPython 3.15.2's order (sections 2, 9 and 11).
 
 v0.36 (2026-11-24, the author's decision): all of a one-dimensional view of octets is \[P1\], as the Builtins row says: the `bytes`, `bytearray` row adds `hex`, `count`, `index`, `toreadonly`, `__buffer__` and `__release_buffer__`, assignment through a view, a view as a buffer written into, and the view CPython hands a program's own `readinto`.
+
+v0.37 (2026-11-24, the author's decision): section 2's row of sizes names what `sys.getsizeof` is made from (`__sizeof__`, a type's `__basicsize__` and `__itemsize__`) and says the numbers are the compiled program's own.

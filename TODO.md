@@ -809,7 +809,7 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   bytes, `__length_hint__`, `__reduce_ex__`), so every `type_lookup` of a name the table may lack needs checking first, and
   `tools/missing_names.py` must tell a stub from a name. A listing alone (len, iteration) could stop today without that.
 * **The runtime's own sizes (the author, Question 35, 2026-11-24: A; DECISIONS).** No deviation: section 2 declares
-  `sys.getsizeof` values unobservable. Case first (CPython passes it): relations only, never a number (a longer list's
+  `sys.getsizeof` values and the sizes they are made from unobservable (Question 41: A, spec v0.37). Case first (CPython passes it): relations only, never a number (a longer list's
   size is not smaller, a str's grows with its text, a program's `__sizeof__` returning n gives `getsizeof` at least n,
   a negative one is a ValueError, `__sizeof__ = None` a TypeError, `__basicsize__` and `__itemsize__` are ints and
   `object`'s `__basicsize__` is not more than `list`'s). Then `object.__sizeof__` (the object's
