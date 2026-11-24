@@ -1230,7 +1230,12 @@ void raise_new(const char* type, const std::string& message) {
     raise(exc.get());
 }
 
-bool is_subclass(ClassObject* c, ClassObject* base) {
+bool is_subclass(ClassObject* c, ClassObject* base) {   // PyType_IsSubtype: is_subtype_with_mro
+    if (c->mro.empty()) [[unlikely]] {           // no tp_mro yet, while a metaclass's mro() runs (RL-940): the tp_base chain
+        for (ClassObject* a = c; a != types().object; a = best_base_of(a))   // (type_is_subtype_base_chain)
+            if (a == base) return true;
+        return base == types().object;
+    }
     return std::find(c->mro.begin(), c->mro.end(), base) != c->mro.end();
 }
 

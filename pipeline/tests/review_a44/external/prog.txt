@@ -1,0 +1,11 @@
+import sys,os,gc
+gc.disable()
+class Name(str):
+    def __del__(self,w=os.write,s=sys):
+        w(1,'name {}\n'.format(s.__dict__.get('stdout') is None).encode())
+class C: pass
+def put():
+    name=Name('alternate')
+    if sys.argv[1]=='cycle': name.owner=C
+    C.__name__=name
+put()

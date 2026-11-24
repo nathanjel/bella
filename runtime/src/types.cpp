@@ -830,6 +830,10 @@ void mro_invoke(ClassObject* c) {
         mro.push_back(b);
     }
     c->set_mro(std::move(mro));
+    // mro_internal keeps the tuple mro_invoke made of the result, the very object when it is a tuple (RL-941); one a program
+    // read before, of an order the class no longer has, goes (RL-940's mroread)
+    if (!c->mro_tuple.is_unset()) decref(c->mro_tuple);
+    c->mro_tuple = held.release();
 }
 }  // namespace
 
@@ -890,6 +894,8 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     if (is_subclass_instance(ns_obj)) ns_copy = dict_copy(static_cast<Dict*>(ns_obj.object()));   // type_new: PyDict_Copy
     auto* ns = static_cast<Dict*>((ns_copy.get().is_unset() ? ns_obj : ns_copy.get()).object());
     ClassSpec spec{.name = name->text, .bases = bases};
+    spec.mro_hook = meta != types().type;         // mro_internal calls the metaclass's mro() with tp_mro NULL (RL-940)
+    Ref slot_names;                              // ht_slots, where a name is an object of a str subclass's (RL-939)
     std::string qualname = name->text;
     Obj classcell, classdictcell;
     std::vector<std::pair<const Str*, Obj>> entries;   // borrowed from ns, which outlives this call
@@ -978,6 +984,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
                 list_append(names.get(), as_object.get());
             }
             Ref sorted = list_sort_m(names.get(), Args{});
+            slot_names = tuple_copy(static_cast<List*>(names.get().object())->items);   // the sorted names, as type_new keeps them
             std::vector<std::string> ordered;    // one cell a name; a name's other cells are counted (repeated_slots, RL-591)
             for (Obj v : static_cast<List*>(names.get().object())->items)
                 if (std::find(ordered.begin(), ordered.end(), as_str(v)->text) == ordered.end()) ordered.push_back(as_str(v)->text);
@@ -1029,6 +1036,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     detail::FrameRecord* maker = detail::current_frame();
     if (maker == nullptr || maker->module == nullptr || runtime_namespace(maker->module)) c->flags |= IMMORTAL;
     Ref made = Ref::steal(Obj::of(c));
+    if (!slot_names.get().is_unset()) c->slot_names = slot_names.release();
     incref(meta);                                           // a heap type's object holds its type: a metaclass of the program's
     c->cls = meta;
     c->qualname = qualname;
@@ -1475,8 +1483,15 @@ Ref type_subclasses(Obj self, Args a) {
 }
 Ref type_mro(Obj self, Args a) {
     arity(a, "mro", 0, 0);
+    ClassObject* c = as_class(self);
+    std::vector<ClassObject*> order;
+    try {
+        order = c3(c);
+    } catch (const bella::TypeError&) {          // mro_implementation's pmerge: set_mro_error (a metaclass's mro() that asks
+        raise_new("TypeError", "Cannot create a consistent method resolution order (MRO) for bases " + mro_conflict(c->bases));
+    }                                            // type.mro() of a class C3 has no order for, RL-940)
     Ref l = list_new({});
-    for (ClassObject* m : c3(as_class(self))) list_append(l.get(), Obj::of(m));
+    for (ClassObject* m : order) list_append(l.get(), Obj::of(m));
     return l;
 }
 void no_arguments(Args a, const char* name);
@@ -1613,20 +1628,21 @@ ClassObject* self_class(Obj self) { return as_class(self); }
 // A class's __name__ and __qualname__ as objects. The runtime keeps the two as text (tp_name is text in CPython too), and
 // CPython keeps beside it the object a program assigned (ht_name, ht_qualname), which the getter gives back: an instance of
 // a str subclass comes back as itself. Kept here only for such an object; an exact str is made from the text (RL-755)
+// The tables are never destroyed: a class alive at the process's end keeps its names, as CPython frees no object then, so no
+// name's finaliser runs in the C++ teardown (RL-942)
 namespace {
 std::unordered_map<const ClassObject*, Ref>& given_names() {
-    static std::unordered_map<const ClassObject*, Ref> table;
-    return table;
+    static auto* table = new std::unordered_map<const ClassObject*, Ref>;
+    return *table;
 }
 std::unordered_map<const ClassObject*, Ref>& given_qualnames() {
-    static std::unordered_map<const ClassObject*, Ref> table;
-    return table;
+    static auto* table = new std::unordered_map<const ClassObject*, Ref>;
+    return *table;
 }
-// type_dealloc lets go of ht_name and ht_qualname: a dead class's are forgotten with it (C-3-12), as _abc's kept hash is
+// type_dealloc lets go of ht_name and ht_qualname: a dead class's are forgotten with it (C-3-12)
 void forget_class(const ClassObject* c) {
     given_names().erase(c);
     given_qualnames().erase(c);
-    forget_class_hash(c);
 }
 const bool class_forgetting = (detail::class_forgotten = forget_class, true);
 void keep_given(std::unordered_map<const ClassObject*, Ref>& table, const ClassObject* c, Obj v) {
@@ -1794,6 +1810,7 @@ void set_type_bases(Obj self, Obj v) {
 Ref type_dict(Obj self) { return class_proxy(self_class(self)); }   // type_dict: a proxy of tp_dict
 Ref type_mro_attr(Obj self) {                    // tp_mro: one tuple until the hierarchy's bases are assigned
     ClassObject* c = self_class(self);
+    if (c->mro.empty()) return none_ref();       // type_get_mro: no tp_mro yet, while the metaclass's mro() runs (RL-940)
     if (c->mro_tuple.is_unset()) {
         std::vector<Obj> items;
         for (ClassObject* m : c->mro) items.push_back(Obj::of(m));
@@ -2843,6 +2860,9 @@ Ref beg_subgroup(Obj self, Args a) {             // BaseExceptionGroup.subgroup(
 }
 }  // namespace
 Obj proxy_stands_for(Obj v) { return is_kind(v, Kind::Proxy) ? class_dict(v) : v; }   // a mappingproxy's mapping, anything else itself
+Obj class_dict_object(ClassObject* c) { return class_dict_of(c); }
+ClassObject* best_base_of(ClassObject* c) { return tp_base(c); }
+Ref class_mro_tuple(ClassObject* c) { return type_mro_attr(Obj::of(c)); }
 
 // ---- except* (Python/ceval.c: CHECK_EG_MATCH, _PyEval_ExceptionGroupMatch; Objects/exceptions.c: _PyExc_PrepReraiseStar,
 // exception_group_projection, is_same_exception_metadata), what the frontend's desugaring of try/except* calls ----

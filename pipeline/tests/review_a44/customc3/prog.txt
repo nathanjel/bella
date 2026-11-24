@@ -1,0 +1,14 @@
+import gc
+gc.disable()
+class X: pass
+class Y: pass
+class A(X,Y): pass
+class B(Y,X): pass
+class M(type):
+    def mro(cls):
+        print('mro')
+        return (cls,A,B,X,Y,object)
+try:
+    class C(A,B,metaclass=M): pass
+except TypeError: print('TypeError')
+else: print(C.__mro__[1] is A)

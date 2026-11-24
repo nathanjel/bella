@@ -3699,17 +3699,28 @@ std::int64_t collect_at_exit(ExitView& v) {
     c.candidates.clear();
     c.tombstones = 0;
     c.roots = roots.size();
-    detail::GcList survivors, unreachable, final;
+    detail::GcList survivors, unreachable, final, base;
     detail::trial_deletion(roots, unreachable);
     std::vector<Module*> lost_modules;
+    std::vector<Object*> lost;
     {
         std::unordered_set<Object*> seen;
         reach(interpreter_roots(v), seen);
         for (Object* o : reach(module_objects(), seen)) {
-            if (o->kind == Kind::Module && (o->flags & IMMORTAL)) lost_modules.push_back(static_cast<Module*>(o));
-            else if (detail::walked(o) && !(o->flags & LISTED)) detail::list_append(o, unreachable);
+            if (o->kind == Kind::Module && (o->flags & IMMORTAL)) {
+                lost_modules.push_back(static_cast<Module*>(o));
+                lost.push_back(o);
+            } else if (detail::walked(o) && !(o->flags & LISTED)) {
+                detail::list_append(o, base);
+            }
         }
     }
+    // What the lost modules reach is reckoned by counts with what trial deletion found, as the step after the finalisers is
+    // (RL-929): the modules' holds are subtracted as a dead holder's, and what something outside holds lives with what it
+    // reaches, as in CPython's collection. A name a class was given is one (ht_name, which type_traverse does not visit: RL-942)
+    detail::list_merge(unreachable, base);
+    detail::deduce_unreachable(base, unreachable, lost, true);
+    detail::list_merge(base, survivors);
     std::int64_t collected = detail::handle_weakref_callbacks(unreachable, survivors);
     detail::finalize_garbage(unreachable);
     {                                            // handle_resurrected_objects
@@ -3721,7 +3732,7 @@ std::int64_t collect_at_exit(ExitView& v) {
                 v.gone.insert(m);
                 dead.push_back(m);
             }
-        detail::deduce_unreachable(unreachable, final, dead);
+        detail::deduce_unreachable(unreachable, final, dead, true);
         for (Object* o : detail::list_items(final))
             if (again.contains(o)) detail::list_move(o, unreachable);   // what the roots reach lives on, as before
     }

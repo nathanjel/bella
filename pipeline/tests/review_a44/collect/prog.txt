@@ -1,0 +1,24 @@
+import gc,sys,weakref
+gc.disable()
+row=sys.argv[1]
+class Base: pass
+refs=[]
+def observe(*args):
+    print([c.__name__ for c in Base.__subclasses__()])
+def make():
+    class Child(Base):
+        mark='A44'
+    if row=='callback': refs.append(weakref.ref(Child,observe))
+    elif row=='final':
+        class Fin:
+            def __del__(self): observe()
+        Child.item=Fin()
+    elif row=='savedict': pass
+    elif row=='savemro': pass
+if row.startswith('save'): gc.set_debug(gc.DEBUG_SAVEALL)
+make()
+gc.collect()
+if row=='savedict': print(any(isinstance(x,dict) and x.get('mark')=='A44' for x in gc.garbage))
+if row=='savemro': print(any(isinstance(x,tuple) and len(x)==3 and x[1] is Base for x in gc.garbage))
+gc.set_debug(0)
+gc.garbage.clear()

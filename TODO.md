@@ -557,7 +557,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          the class lives) is not there: `weakref.getweakrefcount(C)` is one less, `weakref.ref(C)` is a new object when the
          program holds none (CPython's is the same one each time), and a program's `hash()` of it is not the hash `_abc`
          keeps for the class, so a metaclass's `__hash__` can run once more than CPython's. Found 2026-11-24 with `_abc`'s
-         weak references (C-7-19 counts references as differences for it).
+         weak references (C-7-19 counts references as differences for it). Since RL-938 `_abc`'s hash is the class's field
+         (`ClassObject::reference_hash`); a program's weak reference to the class neither reads nor fills it.
   * **Gap, marked (2026-11-02):** L2 v1 has a type slot on every place, always `object`; the
     design's level table says every L2 expression carries the oracle's type. Closes in phase 2,
     when a pass produces `Fact.TYPES` (none does today, so none can require it). Until then no
@@ -663,6 +664,11 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   refused at -O2, 2026-11-24), so which of its hot calls are inlined depends on the rest of the header: C-3-12's first build
   lost `ClassObject::lookup` that way, 3% of a method call (DECISIONS, 2026-11-24). When speed becomes a goal: find the
   hot paths it refuses (`-fopt-info-inline-missed`), and split the unit or mark them.
+
+* Speeds seen measuring review A44's fixes (2026-11-24, one machine, compiled against CPython 3.15.2): 3 million turns of
+  `isinstance(x, Sized) + isinstance(d, Mapping)` 13.1 s against 3.4 s; of `isinstance(x, Base) + isinstance(x, int)` with
+  a plain class 3.2 s against 0.4 s; 30 000 classes made by `ABCMeta(...)` 2.2 s against 0.25 s. Not looked into: a loop's
+  own arithmetic, `isinstance`'s call and `_abc`'s look-ups are each a candidate.
 
 * The author's direction (P-3, 2026-11-02): a whole-program pass that glues the modules' globals
   into one application-wide object with fixed slots, once the closed world and the staging

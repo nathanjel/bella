@@ -91,19 +91,6 @@ Obj reference_type() {
     return type;
 }
 
-// weakref_hash of a class's basic reference: the class's hash the first time it is asked for, kept from then on (the reference
-// lives as long as the class, held by its bases' lists of subclasses); one that raises is not kept. Forgotten with the class
-std::unordered_map<const Object*, std::int64_t>& kept_class_hashes() {
-    static std::unordered_map<const Object*, std::int64_t> kept;
-    return kept;
-}
-std::int64_t class_reference_hash(Obj cls) {
-    auto& kept = kept_class_hashes();
-    if (auto it = kept.find(cls.object()); it != kept.end()) return it->second;
-    std::int64_t hash = reference_hash(cls);
-    kept.emplace(cls.object(), hash);
-    return hash;
-}
 
 // A metaclass whose __hash__ and __eq__ are object's: hashing or comparing its classes runs no code of the program's. `type`
 // cannot be changed; another is asked again when its version says it changed (a class's version moves with every change
@@ -133,8 +120,12 @@ bool in_weak_set(const Ref& set, Obj obj) {      // _in_weak_set
     // set_lookkey with the class's basic reference: weakref_richcompare of each entry of its hash, a dead entry equal only to itself.
     // A metaclass that keeps object's __hash__ and __eq__ runs nothing for either: its hash needs no keeping, and the class
     // itself compares equal (object_richcompare) with no call
+    // weakref_hash of the class's basic reference: its hash the first time a look-up asks, kept from then on whatever the
+    // metaclass's __hash__ becomes (ClassObject::reference_hash, RL-938); one that raises is not kept
     bool plain = plain_metaclass(type_of(obj));
-    return set_contains_by(s, plain ? hash_of(obj) : class_reference_hash(obj), [obj, plain](Obj stored) {
+    auto* cls = static_cast<ClassObject*>(obj.object());
+    if (cls->reference_hash == -1) cls->reference_hash = plain ? hash_of(obj) : reference_hash(obj);
+    return set_contains_by(s, cls->reference_hash, [obj, plain](Obj stored) {
         Object* target = weak_target(weak_record(stored.object()));
         if (target == nullptr) return false;
         if (plain && target == obj.object()) return true;
@@ -396,7 +387,6 @@ Ref a_get_cache_token(Obj, Args a) {
 
 }  // namespace
 
-void forget_class_hash(const ClassObject* c) { kept_class_hashes().erase(c); }
 
 void fill_abc(Module* m) {
     destroyer(Kind::AbcData) = [](Object* o) { detail::free_object(static_cast<AbcData*>(o)); };

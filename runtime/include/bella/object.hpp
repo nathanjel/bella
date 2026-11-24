@@ -924,6 +924,16 @@ struct ClassObject : Object {
     // equal to attrs from then on; its counts are dropped first, so attrs decides when a value dies
     DictObject* dict_view = nullptr;
     std::shared_ptr<SharedKeys> keys;
+    // Made for its metaclass's mro(), which has given no MRO yet (RefClass mro_hook, RL-940): `mro` is empty, so a lookup
+    // finds nothing and __mro__ is None, it holds no count of an MRO and is not among its bases' subclasses
+    bool mro_hook = false;
+    // The hash its basic weak reference keeps (weakref_hash, the first time _abc's look-ups ask for it; -1 until then): what
+    // the class's metaclass's __hash__ becomes afterwards is not asked (RL-938). The class's own field, as the reference lives
+    // as long as the class (its bases' lists of subclasses hold it)
+    std::int64_t reference_hash = -1;
+    // ht_slots: the names of its __slots__ as the program gave them, where one is an object of a str subclass's, sorted as
+    // type_new sorts them and held to the class's dealloc, after its names (RL-939); plain strs need no holding
+    Obj slot_names;
     ClassObject() : Object(Kind::Class) { flags |= IMMORTAL; }
 
     std::vector<const Str*> own_slot_names() const {
@@ -961,6 +971,10 @@ struct ClassObject : Object {
     void set_mro(std::vector<ClassObject*> m) {
         hold_mro(std::move(m));
         version = versions().issue();
+        if (mro_hook) {                          // type_ready_add_subclasses, once mro_internal gave an MRO
+            mro_hook = false;
+            for (ClassObject* b : bases) b->subclasses.push_back(this);
+        }
     }
     // tp_mro replaced (Py_XSETREF): the new one's classes held, then the old one's let go of, last to first
     void hold_mro(std::vector<ClassObject*> m) {
@@ -1060,6 +1074,7 @@ struct ClassSpec {
     bool slots_ordered = false;                                      // the slots are in the order type_new's sort left them (RefClass slots_ordered)
     std::uint32_t repeated_slots = 0;                                // how many times its __slots__ names a slot again (RL-591)
     bool static_type = false;                                        // a built-in type: immortal (RefClass static)
+    bool mro_hook = false;                                           // its metaclass's mro() gives its MRO (RefClass mro_hook)
 };
 
 // RefClass(release=...), also for a class that exists (the prelude's, presented as CPython's after its class statement):
@@ -1141,6 +1156,21 @@ inline void hide_slots(ClassObject* c, const std::vector<const Str*>& names, con
     }
 }
 
+// _layout_order: the order the layout is read in, C3's; where a metaclass's mro() will give an order C3 has none of, the
+// bases' orders, each class once (CPython reads the layout along tp_base's chain, the same fields wherever C3 has an order)
+inline std::vector<ClassObject*> layout_order(ClassObject* c, bool mro_hook) {
+    try {
+        return c3(c);
+    } catch (const TypeError&) {
+        if (!mro_hook) throw;
+    }
+    std::vector<ClassObject*> out{c};
+    for (ClassObject* b : c->bases)
+        for (ClassObject* m : b->mro)
+            if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
+    return out;
+}
+
 // RefClass.__init__
 inline ClassObject* make_class(const ClassSpec& spec) {
     auto* c = new ClassObject();
@@ -1152,15 +1182,18 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     c->name = spec.name;
     c->qualname = spec.name;
     c->bases = spec.bases;
-    c->mro = c3(c);
-    for (ClassObject* m : c->mro) incref(m);     // tp_mro's counts, the class's own first, then tp_bases'
+    c->mro = layout_order(c, spec.mro_hook);     // the layout's order; a class made for its metaclass's mro() has no MRO
+    c->mro_hook = spec.mro_hook;                 // until the hook gives one (set_mro)
+    if (!spec.mro_hook)
+        for (ClassObject* m : c->mro) incref(m);     // tp_mro's counts, the class's own first, then tp_bases'
     for (ClassObject* b : c->bases) incref(b);
     for (auto& [k, v] : spec.attrs) {
         incref(v);
         c->attrs.set(intern(k), v);
     }
     c->version = versions().issue();
-    for (ClassObject* b : c->bases) b->subclasses.push_back(c);
+    if (!spec.mro_hook)
+        for (ClassObject* b : c->bases) b->subclasses.push_back(c);
     if (spec.slots) {
         c->slots.emplace();
         for (const auto& s : *spec.slots) c->slots->push_back(intern(s));
@@ -1275,6 +1308,7 @@ inline ClassObject* make_class(const ClassSpec& spec) {
     std::sort(statics.begin(), statics.end());
     for (const auto& n : statics) c->keys->note(intern(n));
     heap().classes.push_back(c);
+    if (spec.mro_hook) c->mro.clear();           // the layout is read: no MRO until the metaclass's mro() gives one
     return c;
 }
 
@@ -2412,7 +2446,8 @@ inline void (*class_forgotten)(const ClassObject*) = nullptr;
     c->cleared = true;
     for (auto it = c->mro.rbegin(); it != c->mro.rend(); ++it)
         if (*it != c) decref(*it);               // the class's own count went with its clear: it has none left
-    if (class_forgotten != nullptr) class_forgotten(c);
+    if (class_forgotten != nullptr) class_forgotten(c);   // ht_name, ht_qualname
+    if (!c->slot_names.is_unset()) decref(std::exchange(c->slot_names, Obj{}));   // ht_slots
     bury(c);
 }
 }  // namespace detail
@@ -2644,12 +2679,16 @@ inline void visit_attributes(T* obj, std::vector<Object*>& out) {
 }
 // type_traverse (RefClass.traverse): tp_dict (the values, and the view's object), tp_mro's classes and tuple, tp_bases' and
 // their tuple, and a metaclass the program made (a heap type's object holds its type). The exit's trace sees CPython's view
-// of every class, an immortal one's too: tp_dict's values, tp_bases, tp_mro (reach adds the type)
+// of every class, an immortal one's too: tp_dict's values, tp_bases, tp_mro (reach adds the type), and the objects the runtime
+// has of the three (the dict's view, the tuples), so that the exit's reckoning by counts sees each holder (RL-942)
 [[gnu::noinline]] inline void visit_class(ClassObject* c, std::vector<Object*>& out) {
     for (auto& [k, v] : c->attrs.items()) visit(v, out);
     if (tracing_everything) [[unlikely]] {
         for (ClassObject* b : c->bases) visit(Obj::of(b), out);
         for (ClassObject* m : c->mro) visit(Obj::of(m), out);
+        if (c->dict_view != nullptr) visit(Obj::of(c->dict_view), out);
+        visit(c->mro_tuple, out);
+        visit(c->bases_tuple, out);
         return;
     }
     if (c->dict_view != nullptr) visit(Obj::of(c->dict_view), out);
@@ -2899,8 +2938,11 @@ inline void trial_deletion(const std::vector<Object*>& roots, GcList& unreachabl
 // gc.c's update_refs, subtract_refs and move_unreachable over a collection's own list (collector.deduce_unreachable): `base`
 // keeps what is reachable from outside it, in the order the scan keeps it; the rest moves to `unreachable`, in order. What
 // `dead` holds is not a reference from outside: the exit's module objects that are found dead and have no count to tell it
-// (D-19), whose namespaces are in the list
-inline void deduce_unreachable(GcList& base, GcList& unreachable, const std::vector<Object*>& dead = {}) {
+// (D-19), whose namespaces are in the list. With `cpython_view` (the exit's), what is reachable reaches also what it reaches
+// in CPython's view of the heap (tracing_everything: a function, a frame, a traceback entry its module's namespace, which
+// CPython's holds counted and visits): that edge has no count here and is not subtracted, so the counts are CPython's, and
+// it carries reachability as func_globals does (RL-942)
+inline void deduce_unreachable(GcList& base, GcList& unreachable, const std::vector<Object*>& dead = {}, bool cpython_view = false) {
     std::unordered_map<Object*, std::int64_t> refs;
     std::vector<Object*> order = list_items(base), kids;
     for (Object* o : order) {
@@ -2922,6 +2964,13 @@ inline void deduce_unreachable(GcList& base, GcList& unreachable, const std::vec
         if (in_list(o, unreachable)) continue;
         if (refs[o] > 0) {
             children_of(o, kids);
+            if (cpython_view) {
+                std::vector<Object*> more;
+                tracing_everything = true;
+                children_of(o, more);
+                tracing_everything = false;
+                kids.insert(kids.end(), more.begin(), more.end());
+            }
             for (Object* k : kids) {
                 auto it = refs.find(k);
                 if (it == refs.end()) continue;

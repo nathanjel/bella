@@ -191,6 +191,16 @@ namespace {
 void save_to_garbage(Object* o) {                 // DEBUG_SAVEALL: PyList_Append(gcstate->garbage, op)
     Ref list = g_list(state().garbage);
     list_append(list.get(), Obj::of(o));
+    // A class's dict and its MRO's tuple are objects of CPython's that the class's cycle holds (type_traverse), unreachable with
+    // it, so they join gc.garbage too (RL-937); here they exist once asked for, and are made now when they were not (one made
+    // before is among the unreachable by the class's traverse, and comes on its own). A tuple of untracked objects only, as
+    // __static_attributes__' or ht_slots, is untracked by CPython's collection and stays out; the bases' tuple, when the class
+    // has one, is reached by its traverse
+    if (o->kind == Kind::Class && !(o->flags & IMMORTAL)) {
+        auto* c = static_cast<ClassObject*>(o);
+        if (c->dict_view == nullptr) list_append(list.get(), class_dict_object(c));
+        if (c->mro_tuple.is_unset() && !c->mro.empty()) list_append(list.get(), class_mro_tuple(c).get());
+    }
 }
 void refuse_debugging(const char* what) { throw NotImplemented(what); }
 const bool debugging_hooked = (detail::collector().debug = &state().debug, detail::collector().save_garbage = save_to_garbage,

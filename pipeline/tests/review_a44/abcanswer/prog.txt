@@ -1,0 +1,14 @@
+import abc,gc
+gc.disable()
+accept=False
+class A(abc.ABC):
+    @classmethod
+    def __subclasshook__(cls,k): return accept
+class Old: pass
+class M(type): pass
+class C(metaclass=M): pass
+issubclass(Old,A)
+print(issubclass(C,A))
+M.__hash__=lambda cls: 12
+accept=True
+print(issubclass(C,A))

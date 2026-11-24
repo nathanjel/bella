@@ -1,0 +1,16 @@
+import gc,os,sys
+gc.disable()
+row=sys.argv[1]
+class N(str):
+    def __del__(self,w=os.write): w(1,b'name\n')
+class C: pass
+n=N('label')
+if row=='cycle': n.holds=C
+if row=='attr': C.label=n
+elif row=='qual': C.__qualname__=n
+else: C.__name__=n
+del n
+if row=='drop':
+    del C
+    gc.collect()
+    print('collected')

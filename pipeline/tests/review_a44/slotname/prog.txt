@@ -1,0 +1,15 @@
+import gc,sys
+gc.disable()
+class S(str):
+    def __del__(self): print('gone')
+def make():
+    names=[S('field')]
+    C=type('C',(),{'__slots__':names})
+    names.clear()
+    return C
+C=make()
+gc.collect()
+print('kept')
+del C
+gc.collect()
+print('done')

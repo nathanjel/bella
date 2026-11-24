@@ -1,0 +1,9 @@
+import gc
+gc.disable()
+class Side: x=1
+class M(type):
+    def mro(cls):
+        old=cls.__mro__
+        return (cls,Side,object)
+class C(metaclass=M): pass
+print(C.x,Side in C.__mro__)

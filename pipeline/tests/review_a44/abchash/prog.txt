@@ -1,0 +1,32 @@
+import abc,gc,sys
+gc.disable()
+class A(abc.ABC): pass
+class M(type): pass
+class C(metaclass=M): pass
+class Old: pass
+def changed(cls):
+    print('hash')
+    return 12
+row=sys.argv[1]
+if row=='empty':
+    issubclass(Old,A)
+    A._abc_caches_clear()
+    M.__hash__=changed
+    print(issubclass(C,A))
+elif row=='unhashable':
+    issubclass(Old,A)
+    A._abc_caches_clear()
+    M.__hash__=None
+    calls=[]
+    A.__subclasshook__=classmethod(lambda cls,k:calls.append('hook') or False)
+    try: issubclass(C,A)
+    except TypeError: pass
+    print(calls)
+else:
+    if row=='restore': M.__hash__=changed
+    issubclass(Old,A)
+    issubclass(C,A)
+    if row=='restore': del M.__hash__
+    else: M.__hash__=changed
+    print('again')
+    print(issubclass(C,A))

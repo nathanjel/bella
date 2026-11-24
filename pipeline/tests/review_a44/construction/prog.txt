@@ -1,0 +1,19 @@
+import gc,weakref,sys
+gc.disable()
+row=sys.argv[1]
+seen=[]
+class Base: pass
+class M(type):
+    def mro(cls):
+        print(cls in Base.__subclasses__())
+        seen.append(weakref.ref(cls))
+        if row=='fail': raise ValueError
+        return super().mro()
+def make():
+    try:
+        class C(Base,metaclass=M): pass
+    except ValueError: pass
+make()
+print(len(Base.__subclasses__()),seen[0]() is None)
+gc.collect()
+print(len(Base.__subclasses__()),seen[0]() is None)

@@ -1,0 +1,12 @@
+import gc,sys,weakref
+gc.disable()
+hold=[]
+class M(type):
+    def mro(cls):
+        if sys.argv[1]=='building': print(cls.__mro__ is None)
+        t=tuple(super().mro())
+        hold.append(t)
+        return t
+class C(metaclass=M): pass
+if sys.argv[1]=='identity':
+    print(C.__mro__ is hold[0])
