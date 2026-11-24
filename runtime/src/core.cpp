@@ -138,11 +138,8 @@ SliceObject::SliceObject(Obj a, Obj b, Obj c) : Object(Kind::Slice), start(a), s
     incref(stop);
     incref(step);
 }
-Proxy::Proxy(ClassObject* c) : Object(Kind::Proxy), of(c) {   // holds the class (C-3-12), whose dict it shows
-    cls = types().mappingproxy;
-    incref(c);
-}
-Proxy::Proxy(Obj given) : Object(Kind::Proxy), of(nullptr), mapping(Ref::share(given)) { cls = types().mappingproxy; }
+Proxy::Proxy(Obj given) : Object(Kind::Proxy), mapping(Ref::share(given)) { cls = types().mappingproxy; }
+Proxy::Proxy(ClassObject* immortal) : Object(Kind::Proxy), of(immortal) { cls = types().mappingproxy; }
 Method::Method(Obj f, Obj s) : Object(Kind::Method), func(f), self(s) {
     cls = types().method;
     incref(func);
@@ -330,10 +327,7 @@ bool register_deaths() {
         decref(std::exchange(s->stop, Obj{}));
         destroy<SliceObject>(o);
     };
-    destroyer(Kind::Proxy) = [](Object* o) {
-        detail::release_type(std::exchange(static_cast<Proxy*>(o)->of, nullptr));
-        destroy<Proxy>(o);
-    };
+    destroyer(Kind::Proxy) = [](Object* o) { destroy<Proxy>(o); };
     return true;
 }
 const bool deaths_registered = register_deaths();
@@ -454,11 +448,7 @@ bool register_traversals() {
         visit(s->stop, out);
         visit(s->step, out);
     };
-    detail::traverser(Kind::Proxy) = [](Object* o, std::vector<Object*>& out) {
-        auto* p = static_cast<Proxy*>(o);
-        if (p->of != nullptr) detail::visit(Obj::of(p->of), out);
-        visit_ref(p->mapping, out);
-    };
+    detail::traverser(Kind::Proxy) = [](Object* o, std::vector<Object*>& out) { visit_ref(static_cast<Proxy*>(o)->mapping, out); };
     detail::traverser(Kind::Generator) = [](Object* o, std::vector<Object*>& out) {   // gen_traverse: its names, its frame, its exc_state
         auto* g = static_cast<Generator*>(o);
         visit_ref(g->name, out);

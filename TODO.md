@@ -547,11 +547,9 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          `abc`; the known gaps that entry and the one of 2026-11-23 list). (H5, done: the seven cases joined the compiled
          baseline as each passed, and review A41 was codex's of the collector, `7355673..256985b`.)
        * 3c, classes as counted objects done 2026-11-24 (C-3-12 compiled; DECISIONS; RL-929, RL-932): D-19's summary
-         ("classes ... are reference-counted like any other"), the model first (`RefClass`), then the header. Left from it:
-         a mappingproxy of a class's dict (`C.__dict__`, `__classdictcell__`) holds the class, where CPython's holds the
-         dict only, so a class whose own dict names nothing of it (a subclass that adds neither a dict nor slots) lives as
-         long as the proxy here and dies in CPython (its dict emptied by type_clear): the proxy over the class's dict as an
-         object of its own (`dict_view`), measured first; a metaclass of the program's with `__del__` stops by name (its
+         ("classes ... are reference-counted like any other"), the model first (`RefClass`), then the header. The proxy gap
+         left from it is closed (2026-11-24, C-3-82): a mappingproxy of a class's dict holds the dict (`dict_view`), not
+         the class. Left from it: a metaclass of the program's with `__del__` stops by name (its
          finaliser at each class's death, slot_tp_finalize on the class); a class the runtime's own code makes (a prelude's,
          the bootstrap's) is immortal, as a C type is, which holds for a prelude that makes classes on a program's behalf
          too (none is known).

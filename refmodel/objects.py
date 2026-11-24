@@ -524,6 +524,19 @@ def _c3(cls: RefClass) -> list[RefClass]:
                 del seq[0]
 
 
+def _layout_order(cls: RefClass, mro_hook: bool) -> tuple[RefClass, ...]:
+    """The order a class's layout is read in (its slots, hidden and promoted fields, dict kind, native fields): C3's. CPython
+    reads the layout along tp_base's chain, which gives the same fields wherever C3 has an order, since only one base may
+    have a layout ("multiple bases have instance lay-out conflict"). A metaclass's mro() may give an order where C3 has
+    none: then the bases' orders, each class once."""
+    try:
+        return tuple(_c3(cls))
+    except TypeError:
+        if not mro_hook:
+            raise
+        return (cls, *dict.fromkeys(c for b in cls.bases for c in b.mro))
+
+
 class RefClass:
     def __init__(
         self,
@@ -544,6 +557,7 @@ class RefClass:
         release: tuple[str, ...] | None = None,
         slots_ordered: bool = False,
         static: bool = False,
+        mro_hook: bool = False,
     ) -> None:
         self.name = name
         # type_new sorts a class's slot names as objects (PyList_Sort), which for plain strs is their order by code point.
@@ -554,7 +568,12 @@ class RefClass:
         # with (type_new keeps the one it is given; a class with none gets a new (object,) of its own, which the model
         # leaves out with object itself), and `__mro__` the tuple mro_internal made
         self.bases = tuple(bases)
-        self.mro: tuple[RefClass, ...] = tuple(_c3(self))
+        # A metaclass's mro() gives the MRO (mro_internal, which type_ready calls with tp_mro still NULL): until set_mro
+        # the class has none, so `__mro__` is None and a lookup finds nothing, it holds no count of one, and it is not among
+        # its bases' subclasses (type_ready_add_subclasses comes after). Its layout is read in C3's order all the same
+        # (RL-940)
+        self.mro_hook = mro_hook
+        self.mro: tuple[RefClass, ...] = _layout_order(self, mro_hook)
         self.attrs: dict[str, Any] = dict(attrs or {})
         for v in self.attrs.values():
             incref(v)
@@ -573,8 +592,9 @@ class RefClass:
         self.heap = heap if heap is not None else HEAP
         self.heap.classes.add(self)
         self.subclasses: list[RefClass] = []
-        for b in self.bases:
-            b.subclasses.append(self)
+        if not mro_hook:
+            for b in self.bases:
+                b.subclasses.append(self)
         # A class is a counted object (C-3-12; D-19: "classes ... are reference-counted like any other"). type_new returns
         # a new reference, its creator's, and the class holds tp_bases and tp_mro, whose first entry is the class itself,
         # so a class never dies by its count alone: the collector frees it (traverse, gc_clear, dealloc below). Each of its
@@ -589,10 +609,10 @@ class RefClass:
         self.cleared = False                     # type_clear ran: no dict and no tp_mro, so a lookup finds nothing
         self.weakrefs: list[RefWeak] = []        # type's instances are weakly referenceable (tp_weaklistoffset)
         # the classes tp_mro holds a count of: all of the MRO until type_clear, then all but the class itself (below)
-        self.mro_held: tuple[RefClass, ...] = () if static else self.mro
+        self.mro_held: tuple[RefClass, ...] = () if static or mro_hook else self.mro
         if not static:
             self.heap.gc.link(self)              # type_new: a heap type is tracked from its allocation
-            for c in self.mro:
+            for c in self.mro_held:
                 incref(c)
             for b in self.bases:
                 incref(b)
@@ -692,11 +712,18 @@ class RefClass:
         for n in self.native_fields:
             if n in self.promoted_fields:
                 raise ValueError(f"{n!r} is a field of a built-in base")
+        if mro_hook:                             # the layout is read: no MRO until the metaclass's mro() gives one
+            self.mro = ()
 
     def set_mro(self, mro: list[RefClass]) -> None:
-        """A metaclass's mro() (mro_internal): every lookup walks it, under a new version."""
+        """A metaclass's mro() (mro_internal): every lookup walks it, under a new version. A class made for its metaclass's
+        mro() joins its bases' subclasses now (type_ready_add_subclasses)."""
         self._hold_mro(tuple(mro))
         self.version = VERSIONS.issue()
+        if self.mro_hook:
+            self.mro_hook = False
+            for b in self.bases:
+                b.subclasses.append(self)
 
     def _hold_mro(self, mro: tuple[RefClass, ...]) -> None:
         """tp_mro replaced (Py_XSETREF): the new tuple's classes held, the old tuple's let go of, last to first."""
@@ -819,7 +846,9 @@ class RefClass:
         values = list(self.attrs.values())
         self.attrs.clear()
         if self.dict_view is not None:
-            view, self.dict_view = list(self.dict_view.values()), None
+            view = list(self.dict_view.values())
+            self.dict_view.clear()               # emptied in place: a mappingproxy holds the dict, not the class (C-3-82)
+            self.dict_view = None
             for v in view:
                 decref(v)
         for v in values:

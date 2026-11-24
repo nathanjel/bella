@@ -2081,6 +2081,144 @@ def test_a_class_is_a_counted_object_c_3_12() -> None:
     assert model() == want
 
 
+def test_a_class_dict_outlives_its_class_c_3_82() -> None:
+    """C-3-82 (2026-11-24): a mappingproxy of a class's dict holds the dict, not the class, so a class whose dict names
+    nothing of it dies in a collection while the dict is held, and the dict is left empty (type_clear's PyDict_Clear);
+    what only the dict held dies there. The same story under CPython."""
+    from refmodel import collector
+    from refmodel import objects as O
+
+    def real() -> list[object]:
+        log: list[object] = []
+
+        class Fin:
+            def __del__(self) -> None:
+                log.append("held dies")
+
+        class Base:
+            pass
+
+        class K(Base):
+            held = Fin()
+
+        view = K.__dict__
+        r = weakref.ref(K)
+        del K
+        gc.collect()
+        log.append(("after a collection", r() is None, "held" in view, len(view)))
+        return log
+
+    def model() -> list[object]:
+        log: list[object] = []
+        saved = O.HEAP
+        heap = O.HEAP = O.Heap()
+        try:
+            Fin = RefClass("Fin", attrs={"__del__": lambda self: log.append("held dies")}, heap=heap)
+            Base = RefClass("Base", heap=heap)
+            K = RefClass("K", (Base,), heap=heap)
+            held = RefObject(Fin)
+            incref(held)
+            K.set_attr("held", held)
+            decref(held)
+            view = K.class_dict()
+            r = O.weak_ref(K)
+            K.dispose()
+            collector.collect(heap)
+            log.append(("after a collection", r() is None, "held" in view, len(view)))
+            assert not K.alive and not held.alive
+            return log
+        finally:
+            O.HEAP = saved
+
+    want = real()
+    assert want == ["held dies", ("after a collection", True, False, 0)], want
+    assert model() == want
+
+
+def test_a_metaclass_mro_sees_a_class_with_no_mro_rl_940() -> None:
+    """RL-940 (review A44, 2026-11-24): type_ready calls a metaclass's mro() with tp_mro still NULL and adds the class to its
+    bases' subclasses only after it. So the hook sees no `__mro__` and a class not yet among the subclasses; a class it
+    fails for holds no MRO, and its creator's letting go frees it at once; and the hook may give an order C3 refuses. The
+    same story under CPython."""
+    from refmodel import objects as O
+
+    def real() -> list[object]:
+        log: list[object] = []
+        refs: list[weakref.ref[type]] = []
+
+        class Base:
+            pass
+
+        class X:
+            pass
+
+        class Y:
+            pass
+
+        class A(X, Y):
+            pass
+
+        class B(Y, X):
+            pass
+
+        class M(type):
+            def mro(cls) -> list[type]:
+                log.append(("hook", cls.__name__, cls.__mro__ is None, cls in Base.__subclasses__()))
+                if cls.__name__ == "Bad":
+                    refs.append(weakref.ref(cls))
+                    raise ValueError
+                if cls.__name__ == "Crossed":
+                    return [cls, A, B, X, Y, object]
+                return super().mro()
+
+        class Good(Base, metaclass=M):
+            pass
+        log.append(("made", Good in Base.__subclasses__(), [c.__name__ for c in Good.__mro__ if c is not object]))
+        try:
+            class Bad(Base, metaclass=M):
+                pass
+        except ValueError:
+            pass
+        log.append(("failed", refs[0]() is None, len(Base.__subclasses__())))
+
+        class Crossed(A, B, metaclass=M):  # type: ignore[misc]   # C3 has no order: the hook gives one
+            pass
+        log.append(("crossed", [c.__name__ for c in Crossed.__mro__ if c is not object]))
+        return log
+
+    def model() -> list[object]:
+        log: list[object] = []
+        saved = O.HEAP
+        heap = O.HEAP = O.Heap()
+        try:
+            Base = RefClass("Base", heap=heap)
+            X = RefClass("X", heap=heap)
+            Y = RefClass("Y", heap=heap)
+            A = RefClass("A", (X, Y), heap=heap)
+            B = RefClass("B", (Y, X), heap=heap)
+            Good = RefClass("Good", (Base,), heap=heap, mro_hook=True)
+            log.append(("hook", "Good", Good.mro == (), Good in Base.subclasses))
+            Good.set_mro([Good, Base])
+            log.append(("made", Good in Base.subclasses, [c.name for c in Good.mro]))
+            Bad = RefClass("Bad", (Base,), heap=heap, mro_hook=True)
+            log.append(("hook", "Bad", Bad.mro == (), Bad in Base.subclasses))
+            r = O.weak_ref(Bad)
+            Bad.dispose()                         # type_new's error path lets go of the class
+            log.append(("failed", r() is None, len(Base.subclasses)))
+            Crossed = RefClass("Crossed", (A, B), heap=heap, mro_hook=True)
+            log.append(("hook", "Crossed", Crossed.mro == (), Crossed in A.subclasses))
+            Crossed.set_mro([Crossed, A, B, X, Y])
+            log.append(("crossed", [c.name for c in Crossed.mro]))
+            assert not Bad.alive and Good.refs == 2 and Crossed in A.subclasses and Crossed in B.subclasses
+            return log
+        finally:
+            O.HEAP = saved
+
+    want = real()
+    assert want[-1] == ("crossed", ["Crossed", "A", "B", "X", "Y"]) and ("failed", True, 1) in want, want
+    assert model() == want
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

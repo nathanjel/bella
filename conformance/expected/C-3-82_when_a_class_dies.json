@@ -1,0 +1,12 @@
+{
+ "case": "C-3-82_when_a_class_dies.py",
+ "clause": "C-3-82",
+ "spec": "section 3 (classes; D-19: a class is reference-counted like any other definition-time object)",
+ "status": "P1",
+ "source": "Objects/typeobject.c (type_traverse, type_clear, type_dealloc, type_new_set_classdictcell), Objects/descrobject.c",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "dropped ['dropped.x']\ninstance kept []\ninstance gone ['instance.x']\nsubclass kept []\nsubclass base ['Sub', 'B', 'A', 'object']\nsubclass gone ['subclass.base.x', 'subclass.y']\ncallback ['callback', 'callback.x']\ncallback ref True\nproxy before ['__doc__', '__firstlineno__', '__module__', '__static_attributes__', 'x'] True\nproxy plain ['proxy.x']\nproxy len 0 keys [] in False False\nproxy get None default\nproxy getitem KeyError ('x',)\nproxy repr mappingproxy({}) eq True copy {}\nproxy views [] [] []\nproxy or {'k': 1} {'k': 1}\nproxy plain gone []\nproxy named []\nproxy named ['__doc__', '__firstlineno__', '__module__', '__static_attributes__', 'me', 'x'] 6\nproxy named gone ['named.x']\niterator ['iterator.x']\niterator first __module__ values 0 [] items 0\niterator next RuntimeError\nannotated before {'y': <class 'int'>}\nannotated ['annotated.x']\nannotated after NameError T\nannotated gone []\nend []\n",
+ "stderr": "",
+ "exit_code": 0
+}

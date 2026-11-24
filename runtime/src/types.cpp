@@ -848,6 +848,8 @@ GetSet* weakref_getset() {                        // CPython's belongs to object
     return g;
 }
 
+Obj class_dict_of(ClassObject* c);               // below, with the mappingproxy
+Ref class_proxy(ClassObject* c);
 Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw) {
     const Str* name = as_str(name_obj);
     if (name == nullptr) raise_new("TypeError", "type.__new__() argument 1 must be str, not " + type_of(name_obj)->name);
@@ -1075,7 +1077,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     }
     if (!classdictcell.is_unset() && is_kind(classdictcell, Kind::Cell)) {
         auto* cell = static_cast<Cell*>(classdictcell.object());
-        Ref proxy = own(new Proxy(c));
+        Ref proxy = class_proxy(c);                         // CPython's cell holds tp_dict itself (RL-489): here a proxy of it
         decref(std::exchange(cell->value, proxy.release()));
     }
     // inherit_patma_flags: the first base in the MRO with either
@@ -1789,7 +1791,7 @@ void set_type_bases(Obj self, Obj v) {
     for (ClassObject* b : c->bases) b->subclasses.push_back(c);
     c->bump();
 }
-Ref type_dict(Obj self) { return own(new Proxy(self_class(self))); }
+Ref type_dict(Obj self) { return class_proxy(self_class(self)); }   // type_dict: a proxy of tp_dict
 Ref type_mro_attr(Obj self) {                    // tp_mro: one tuple until the hierarchy's bases are assigned
     ClassObject* c = self_class(self);
     if (c->mro_tuple.is_unset()) {
@@ -2174,9 +2176,14 @@ void cell_contents_set(Obj self, Obj v) {       // cell_set_contents: a delete e
     if (!old.is_unset()) decref(old);
 }
 
-// mappingproxy over a class's own attributes
+// mappingproxy: every reading is its mapping's (Objects/descrobject.c), a counted class's dict an exact dict read in place;
+// an immortal class's attributes are read live
 ClassObject* proxied(Obj self) { return static_cast<Proxy*>(self.object())->of; }
 Obj proxy_mapping(Obj self) { return static_cast<Proxy*>(self.object())->mapping.get(); }
+Dict* proxy_exact_dict(Obj self) {               // the mapping when it is an exact dict, whose methods nothing overrides
+    Obj m = proxy_mapping(self);
+    return !m.is_unset() && is_exact_dict(m) ? static_cast<Dict*>(m.object()) : nullptr;
+}
 Ref proxy_new(Obj, Args a) {                     // mappingproxy_new_impl
     ClassObject* cls = new_wrapper_class(a, types().mappingproxy);
     (void)cls;
@@ -2189,54 +2196,93 @@ Ref proxy_new(Obj, Args a) {                     // mappingproxy_new_impl
         raise_new("TypeError", "mappingproxy() argument must be a mapping, not " + type_of(mapping)->name);
     return own(new Proxy(mapping));
 }
-// mappingproxy reads a dict: a key is hashed, whether it could be an attribute's name or not
+// mappingproxy_getitem: PyObject_GetItem on the mapping; an exact dict's is dict_subscript, read here in place
 Ref proxy_getitem(Obj self, Args a) {
     arity(a, "__getitem__", 1, 1);
-    if (proxied(self) == nullptr) return getitem(proxy_mapping(self), a.pos(0));
-    dict_key_hash(a.pos(0));
-    const Str* k = as_str(a.pos(0));
-    if (k != nullptr)
-        if (const Obj* v = proxied(self)->attrs.find(intern(k->text))) return Ref::share(*v);
+    if (ClassObject* c = proxied(self)) {        // a key is hashed, whether it could be an attribute's name or not
+        dict_key_hash(a.pos(0));
+        const Str* k = as_str(a.pos(0));
+        if (k != nullptr)
+            if (const Obj* v = c->attrs.find(intern(k->text))) return Ref::share(*v);
+        Ref exc = invoke(Obj::of(exception_class("KeyError")), {a.pos(0)});
+        raise(exc.get());
+    }
+    Dict* d = proxy_exact_dict(self);
+    if (d == nullptr) return getitem(proxy_mapping(self), a.pos(0));
+    Obj v = dict_get(d, a.pos(0));               // the key hashed, an unhashable one refused as the dict refuses it
+    if (!v.is_unset()) return Ref::share(v);
     Ref exc = invoke(Obj::of(exception_class("KeyError")), {a.pos(0)});
     raise(exc.get());
 }
-Ref proxy_contains(Obj self, Args a) {
+Ref proxy_contains(Obj self, Args a) {           // mappingproxy_contains: PyDict_Contains for an exact dict
     arity(a, "__contains__", 1, 1);
-    if (proxied(self) == nullptr) return compare(CmpOp::In, a.pos(0), proxy_mapping(self));
-    dict_key_hash(a.pos(0));
-    const Str* k = as_str(a.pos(0));
-    return Ref::steal(boolean(k != nullptr && proxied(self)->attrs.contains(intern(k->text))));
+    if (ClassObject* c = proxied(self)) {
+        dict_key_hash(a.pos(0));
+        const Str* k = as_str(a.pos(0));
+        return Ref::steal(boolean(k != nullptr && c->attrs.contains(intern(k->text))));
+    }
+    Dict* d = proxy_exact_dict(self);
+    if (d == nullptr) return compare(CmpOp::In, a.pos(0), proxy_mapping(self));
+    return Ref::steal(boolean(!dict_get(d, a.pos(0)).is_unset()));
 }
 Ref proxy_get(Obj self, Args a) {
     arity(a, "get", 1, 2);
-    if (proxied(self) == nullptr) {              // mappingproxy_get: the mapping's own
+    if (ClassObject* c = proxied(self)) {
+        dict_key_hash(a.pos(0));
+        const Str* k = as_str(a.pos(0));
+        if (k != nullptr)
+            if (const Obj* v = c->attrs.find(intern(k->text))) return Ref::share(*v);
+        return a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
+    }
+    Dict* d = proxy_exact_dict(self);
+    if (d == nullptr) {                          // mappingproxy_get: the mapping's own get
         Ref f = getattr(proxy_mapping(self), N("get"));
         return a.npos > 1 ? invoke(f.get(), {a.pos(0), a.pos(1)}) : invoke(f.get(), {a.pos(0), None()});
     }
-    dict_key_hash(a.pos(0));
-    const Str* k = as_str(a.pos(0));
-    if (k != nullptr)
-        if (const Obj* v = proxied(self)->attrs.find(intern(k->text))) return Ref::share(*v);
+    Obj v = dict_get(d, a.pos(0));               // dict.get's
+    if (!v.is_unset()) return Ref::share(v);
     return a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
 }
 Ref proxy_len(Obj self, Args a) {
     dunder_args(self, a, "__len__", 0);            // a slot wrapper counts its arguments (RL-752)
-    if (proxied(self) == nullptr) return call_special(proxy_mapping(self), "__len__", {});
-    return Ref::steal(Obj::small(static_cast<std::int64_t>(proxied(self)->attrs.size())));
+    if (ClassObject* c = proxied(self)) return Ref::steal(Obj::small(static_cast<std::int64_t>(c->attrs.size())));
+    Dict* d = proxy_exact_dict(self);
+    if (d == nullptr) return call_special(proxy_mapping(self), "__len__", {});
+    return Ref::steal(Obj::small(static_cast<std::int64_t>(d->used)));
 }
 // What a program reaches through the proxy's dict: the class's dict, live (ClassObject::dict_view)
 Obj class_dict_of(ClassObject* c) {              // the class's names as a dict, made at the first asking and kept in step
     if (c->dict_view == nullptr) {
         Ref d = dict_new();
-        for (auto& [k, v] : c->attrs.items()) dict_set(static_cast<Dict*>(d.get().object()), Obj::of(k), v);
+        auto* dict = static_cast<Dict*>(d.get().object());
+        std::size_t n = c->attrs.size();
+        detail::rebuild(dict, n + n / 2 + 1);    // the table the names need, so that none of them makes it grow (unobservable:
+        dict->entries.reserve(n);                // a dict's size shows only through __sizeof__, a stop)
+        for (auto& [k, v] : c->attrs.items()) dict_set(dict, Obj::of(k), v);
         c->dict_view = static_cast<Dict*>(d.release().object());
+    } else if (c->flags & IMMORTAL) {            // an immortal class's attributes are written in place as the runtime presents
+        Dict* view = c->dict_view;               // its types (present_methods, hide_slots), past set_attr: its view is brought
+        bool same = view->used == c->attrs.size();   // in step when asked, in place, for what holds it
+        std::size_t ix = 0;
+        for (auto& [k, v] : c->attrs.items()) {
+            if (!same) break;
+            while (ix < view->entries.size() && view->entries[ix].key.is_unset()) ++ix;
+            same = ix < view->entries.size() && view->entries[ix].key.object() == k && view->entries[ix].value == v;
+            ++ix;
+        }
+        if (!same) {
+            detail::release_entries(dict_take_all(view), nullptr);
+            for (auto& [k, v] : c->attrs.items()) dict_set(view, Obj::of(k), v);
+        }
     }
     return Obj::of(c->dict_view);
 }
-Obj class_dict(Obj self) {
+Obj class_dict(Obj self) {                       // what the proxy's other methods read
     ClassObject* c = proxied(self);
-    if (c == nullptr) return proxy_mapping(self);
-    return class_dict_of(c);
+    return c != nullptr ? class_dict_of(c) : proxy_mapping(self);
+}
+Ref class_proxy(ClassObject* c) {                // a class's mappingproxy: an immortal class's reads it; a counted one's, its dict
+    return (c->flags & IMMORTAL) ? own(new Proxy(c)) : own(new Proxy(class_dict_of(c)));
 }
 Ref proxy_mapping_call(Obj self, const char* name) {   // mappingproxy_keys and the others: the mapping's own method
     Ref f = getattr(class_dict(self), N(name));
@@ -3106,11 +3152,17 @@ Ref mapping_get(Obj mapping, Obj key) {
         Obj v = dict_get(static_cast<Dict*>(mapping.object()), key);
         return v.is_unset() ? Ref{} : Ref::share(v);
     }
-    if (is_kind(mapping, Kind::Proxy) && proxied(mapping) != nullptr) {
-        const Str* k = as_str(key);
-        if (k == nullptr) return Ref{};
-        const Obj* v = proxied(mapping)->attrs.find(intern(k->text));
-        return v ? Ref::share(*v) : Ref{};
+    if (is_kind(mapping, Kind::Proxy)) {                                      // a class's dict through its proxy (the
+        if (ClassObject* c = proxied(mapping)) {                              // annotation scope's cell): its getitem
+            const Str* k = as_str(key);
+            if (k == nullptr) return Ref{};
+            const Obj* v = c->attrs.find(intern(k->text));
+            return v ? Ref::share(*v) : Ref{};
+        }
+        if (Dict* d = proxy_exact_dict(mapping)) {
+            Obj v = dict_get(d, key);
+            return v.is_unset() ? Ref{} : Ref::share(v);
+        }
     }
     try {
         return getitem(mapping, key);

@@ -97,11 +97,12 @@ struct SliceObject : Object {                    // slice(start, stop, step), ea
     SliceObject(Obj a, Obj b, Obj c);
 };
 // types.MappingProxyType(mapping) holds the mapping and asks it; a class's __dict__ has no dict to hold
-struct Proxy : Object {                          // a mappingproxy over a class's own attributes
-    ClassObject* of;
-    Ref mapping;                                 // what MappingProxyType was given: `of` is then null
-    explicit Proxy(ClassObject* c);
-    explicit Proxy(Obj given);
+struct Proxy : Object {                          // a mappingproxy: over what MappingProxyType was given, or a class's dict
+    ClassObject* of = nullptr;                   // a class that never dies (a built-in type, one the runtime's code made): its
+                                                 // attributes read live, as the runtime adds to them as it goes; not counted
+    Ref mapping;                                 // else the mapping: a counted class's dict (ClassObject::dict_view), which it
+    explicit Proxy(Obj given);                   // holds and not the class, as CPython's holds tp_dict: the class can die
+    explicit Proxy(ClassObject* immortal);       // first, its dict emptied (C-3-82)
 };
 // CPython's set table (Objects/setobject.c): linear probes, then perturbation; deleted entries
 // are dummies; iteration in table order, which D-05 matches for value-hashed elements
