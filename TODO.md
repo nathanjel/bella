@@ -798,12 +798,17 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   identity and `is None` answer as CPython's do; but a stub changes what the runtime's own lookups find (`__buffer__` on
   bytes, `__length_hint__`, `__reduce_ex__`), so every `type_lookup` of a name the table may lack needs checking first, and
   `tools/missing_names.py` must tell a stub from a name. A listing alone (len, iteration) could stop today without that.
-* **For the author, a question to put (2026-11-22): `__sizeof__` and `sys.getsizeof`.** 163 of the 182 stops the sweep of
-  argument counts lists are a type's `__sizeof__`: no type answers it. CPython's numbers are the sizes of its own C structs
-  (`tp_basicsize` and an item size, plus what a type allocates beside the object), which are not the sizes a compiled
-  program's objects have. The ways: CPython's figures, computed from a table of its sizes (exact for programs that print
-  or compare them, and a number that is true of nothing in the compiled program); the runtime's own sizes as a registered
-  deviation; or the stop as it is. RL-592 (the default pickling state over a C type with fields) needs the same table.
+* **The runtime's own sizes (the author, Question 35, 2026-11-24: A; DECISIONS).** No deviation: section 2 declares
+  `sys.getsizeof` values unobservable. Case first (CPython passes it): relations only, never a number (a longer list's
+  size is not smaller, a str's grows with its text, a program's `__sizeof__` returning n gives `getsizeof` at least n,
+  a negative one is a ValueError, `__sizeof__ = None` a TypeError, `__basicsize__` and `__itemsize__` are ints and
+  `object`'s `__basicsize__` is not more than `list`'s). Then `object.__sizeof__` (the object's
+  struct, header included), a `__sizeof__` per kind whose storage varies (list and bytearray by capacity, dict and set by
+  table, str, bytes, int by digits, tuple, the preludes' types with buffers), `sys.getsizeof` adding what lies before the
+  object (`runtime/src/call.cpp`: the flat 64 goes, the `+16` checked against the runtime's own header), `__basicsize__`
+  and `__itemsize__` from the runtime's structs. `tools/missing_names.py --update` then, and the stop rows of the argument
+  counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
+  of CPython's facts, not the numbers shown.
 * **For the author, a question to put (2026-11-24, RL-933 of review A43): what D-19's immortal module objects cover.** A
   module whose body raises is taken out of sys.modules by the import system, and CPython frees it with the exception's last
   frame, its namespace with it, so its globals go then (before the `except` clause's next statement). Here the module object
