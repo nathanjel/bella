@@ -670,6 +670,11 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   its C walks take 100 to 200 bytes a level. To analyse: where the bytes of a frame go (the guards, the argument arrays,
   what the lowering keeps alive across a call), whether deep recursion should have frames off the native stack, and
   whether the preludes' walks should be loops or leaner native code; then revise the approach.
+  Again with Question 42 (2026-11-24, B: other threads' stack is decided with `threading`, not 2 MiB): "later on we need
+  to think about this more as this limit feels artificial and let's me thing that there is something off in the general
+  design". Measured that day: `json.dumps` of nested lists at the default limit reaches 990 levels under CPython in the
+  main thread and in a thread; compiled, 990 on the 256 MiB stack, 800 on 8 MiB and 100 (200 fails) on 2 MiB. The
+  threads milestone decides the threads' size from this analysis, not before it.
 
 * `runtime/src/ops.cpp` is at GCC's limit for a unit's growth by inlining (`--param inline-unit-growth`; about 2,080 calls
   refused at -O2, 2026-11-24), so which of its hot calls are inlined depends on the rest of the header: C-3-12's first build
