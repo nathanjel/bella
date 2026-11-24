@@ -821,9 +821,14 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   `bella-lint` when it is written. The question's text had `marshal.dumps((1, 'a'))` as `a902e9…` with a flag on the tuple:
   measured on 3.15.2 it is `2902e901000000da0161`, the tuple unflagged (3.15 borrows a constant's reference), and the version
   is 6.
-* **For the author, Question 34 (found 2026-11-22 with the sweep): `zipimport`.** It imports `marshal` at its top. It can
-  list and read an archive, but loading a module from one means compiling or unmarshalling code at run time (E-01), and
-  `sys.path_hooks` is E-04. What is provided, what is a deviation, what stops by name.
+* **`zipimport` (the author, Question 34, 2026-11-24: A; spec v0.31).** CPython's `Lib/zipimport.py` compiled with the
+  program, as the import system's own modules are (the build compiles one more frozen module; its tracebacks name
+  `<frozen zipimport>` as CPython's do). The reading half runs as CPython's code: `zipimporter`, `get_data`, `is_package`,
+  `get_source`, `get_filename`, `find_spec`, `get_resource_reader`, `invalidate_caches`, `ZipImportError`; `get_code`,
+  `exec_module` and `load_module` stop by name (E-01 for a source, E-02 for a `.pyc`'s code object), a zstd member as
+  \[P2+\]; an archive on `sys.path` stays E-04. After `marshal` (it imports `marshal` at its top). A case first: the rows
+  measured on the day (`get_data`, `is_package`, `get_source`, `find_spec`'s name and loader) and a stop row for `get_code`;
+  the archive written by the case's own bytes, since `zipfile` is \[P2+\].
 * **Two modules of the manifest that cannot be imported (the sweep of 2026-11-22; toward increment 1c).** `marshal` (a core
   module: `dumps`, `loads`, `dump`, `load`, `version`; a port of `Python/marshal.c` for the types that are not code objects,
   and a stop by name for those) and `zipimport` (CPython's `Lib/zipimport.py`, frozen: compile it with the program as the
