@@ -34,7 +34,7 @@ A compiled program is equivalent to the same program under CPython 3.15 when, fo
 | `id()` values and the addresses inside default reprs (`<Foo object at 0x...>`) | Implementation addresses (D-01, D-02), compared up to a consistent renaming within one run: every equality and inequality CPython shows between address-derived values MUST hold in the compiled program; only the numbers may differ |
 | `is` between equal immutable values (int, float, complex, str, bytes, tuple, frozenset): whether an operation gives back the object it was given or an equal new one, and whether a constant is one object | May differ in either direction: equal small-integer immediates and interned strings are identical more often; a tuple of constants is made at each evaluation; a library function may give back its argument where CPython makes a copy, or the other way. CPython already warns about code that depends on it (D-03) |
 | The moment a reference cycle is collected, and the finaliser order among its members | Collector timing (D-04) |
-| Finalisation order of module globals at interpreter exit | Unspecified in CPython too (D-07) |
+| Finalisation order of objects still alive at interpreter exit, and the step of the exit a finaliser runs in | Unspecified in CPython too; which objects are finalised is not (D-07) |
 | `sys.getsizeof` values, memory addresses, allocation counts | Implementation detail |
 | Thread interleavings | Nondeterministic in CPython too; \[P2+\] |
 | Traceback line text | Decision D-06; the exception type and message are observable |
@@ -192,7 +192,7 @@ Reference counting is part of the dialect's semantics, not an implementation cho
 - A generator whose last reference is dropped while suspended is closed: `GeneratorExit` is raised at the suspension point, `finally` blocks and `__exit__` methods run, and a generator that yields during close raises `RuntimeError`, as CPython does.
 - A file object finalised while open is closed, with a `ResourceWarning` under the same conditions as CPython.
 - `with` is the only guaranteed resource discipline for cyclic or shared objects, because finaliser timing for those is unobservable.
-- At exit, `atexit` handlers run in LIFO order, then module globals are finalised in an unspecified order (D-07); daemon threads are \[P2+\].
+- At exit, `atexit` handlers run in LIFO order; which of the objects still alive are then finalised is CPython's (a file left open is flushed and closed), but the order among them, and the step of the exit at which each finaliser runs (what it still finds of its module's globals, `sys` and the builtins), are unspecified (D-07); daemon threads are \[P2+\].
 - Module objects are immortal (D-19). Functions, classes and every other object created while a module initialises are reference-counted like any other, so `del f` releases a function's defaults and closure exactly when CPython would.
 
 ## 10. Conformance
@@ -219,7 +219,7 @@ Deviations. A difference inside the first table that the project chooses to keep
 | D-04 | Reference cycles are collected at a different moment and their members are finalised in a different order | Accepted | Partial: classes with `__del__` that can form cycles |
 | D-05 | `set` and `frozenset` iteration order for elements hashed by value (`int`, `str`, `bytes`, tuples of these); for identity-hashed elements the order is unobservable in CPython as well, so no rule applies | Decided (decision 4): CPython's set table algorithm, so order matches for value-hashed elements | Yes: iteration over a set reaching output |
 | D-06 | Traceback line text in uncaught-exception reports and `traceback` formatting | Decided (decision 6): release builds print file and line only; debug builds reproduce CPython's format from source maps | Yes: `traceback` module use |
-| D-07 | Finalisation order of module globals at exit | Accepted (unspecified in CPython) | No |
+| D-07 | The order in which objects still alive at exit are finalised, and the step of the exit at which each finaliser runs (what it finds of its module's globals, `sys` and the builtins); which objects are finalised is CPython's | Accepted (unspecified in CPython; sharpened by the author, 2026-11-24) | No |
 | D-08 | Runtime-generated human-readable wording of built-in exception messages ("list index out of range", "unsupported operand type(s)"); structured and user-supplied payloads are not covered and must match (section 2) | Decided (decision 11): wording free for now; a program that prints or branches on the exempt wording (`str(exc)` or `exc.args[0]` of a built-in exception the runtime raised) is outside the guarantee, and `bella-lint` flags such uses where it can see the exception's type; the harness masks the wording per exception type; revisit at phase 2 | No |
 | D-09 | `assert` is always active; `-O` and `-OO` do not exist | Decided (decision 7): assertions active by default; a build-profile switch that strips them and makes `__debug__` false is planned \[P2+\] | Yes: `__debug__` reads |
 | D-10 | `return`, `break` or `continue` leaving `finally` is a compile-time error (CPython warns) | Decided (decision 8): compile-time error | Yes |
@@ -354,3 +354,5 @@ v0.32 (2026-11-24, the author's decision): D-32, `TextIOWrapper.tell` caps its e
 v0.33 (2026-11-24, the author's decision): D-03 widened to identity between equal immutable values in either direction (a tuple of constants made at each evaluation, a library function giving back its argument or a copy), identity only; its lint to `is` with a literal operand or one declared int, float, complex, str, bytes, tuple or frozenset (sections 2 and 11).
 
 v0.34 (2026-11-24, the author's decision): D-17 says what the recursion limit counts (an entry per call of a function written in Python, two for a class's call that enters a Python `__init__`, as CPython's specialised call does) and where CPython's count differs (a call site's first calls; its import system's frames); the stack's bound is one CPython reaches at another depth, or not at all, where it said later (sections 8 and 11; RL-639, RL-883).
+
+v0.35 (2026-11-24, the author's decision): D-07 sharpened: which objects still alive at exit are finalised is CPython's (a file left open is flushed and closed); the order among them and the step of the exit each finaliser runs in stay unspecified, kept free for a faster exit, though the runtime follows CPython 3.15.2's order (sections 2, 9 and 11).

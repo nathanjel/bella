@@ -44,10 +44,10 @@ lint = "yes"
 note = "release builds print file and line only; debug builds reproduce CPython's format from source maps"
 
 [deviations.D-07]
-summary = "finalisation order of module globals at exit"
+summary = "the order in which objects still alive at exit are finalised, and the step of the exit at which each finaliser runs (what it finds of its module's globals, sys and the builtins); which objects are finalised is CPython's (a file left open is flushed and closed)"
 status = "accepted"
 lint = "no"
-note = "unspecified in CPython too"
+note = "unspecified in CPython too: its language reference does not guarantee that __del__ runs for objects alive at exit, and warns that the globals a finaliser needs may be deleted or None. Sharpened by the author on 2026-11-24 (Question 39: B; it read 'finalisation order of module globals at exit'): the freedom is kept for a faster exit, which A (the exit's order promised as CPython's) would have closed. The runtime follows CPython 3.15.2's order today (H4, RL-514; finalize_modules' steps); a change that relaxes it gets a DECISIONS entry. C-9-13 keeps the rows of which objects are finalised; its rows of order and step are the runtime's choice, held by a design test"
 
 [deviations.D-08]
 summary = "runtime-generated human-readable wording of built-in exception messages"
