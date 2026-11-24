@@ -809,14 +809,21 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   and `__itemsize__` from the runtime's structs. `tools/missing_names.py --update` then, and the stop rows of the argument
   counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
   of CPython's facts, not the numbers shown.
-* **For the author, a question to put (2026-11-24, RL-933 of review A43): what D-19's immortal module objects cover.** A
-  module whose body raises is taken out of sys.modules by the import system, and CPython frees it with the exception's last
-  frame, its namespace with it, so its globals go then (before the `except` clause's next statement). Here the module object
-  never dies (D-19), so its namespace lives until the exit's trace finds it. The ways: D-19's note says so (a module the
-  import system lets go of during the run keeps its globals until the exit); the module object is counted from the moment it
-  leaves sys.modules (its count is not known then: references to an immortal object are not counted); or the module objects
-  are counted objects that sys.modules keeps alive, with D-19 narrowed to "a weak reference to a module never dies" or
-  dropped. The first is what is done today; the others change D-19.
+* **The program's module objects counted (the author, Question 36, 2026-11-24: B; RL-933; DECISIONS). Next, before the
+  1c ports.** As C-3-12 did for classes: the model first (`refmodel/objects.py`, a counted module whose namespace its
+  functions, frames, generators and traceback entries hold; `python3 -m refmodel.selftest` on several seeds), then the
+  header from it. A module of the program's (an import's, `types.ModuleType`'s) is counted from its making; the runtime's
+  own (sys, builtins, the preludes', CPython's C modules', `runtime_namespace`) stay immortal. Cases first, CPython passing:
+  a failed import's globals dropped when the `except` clause ends (no cycle) and at `gc.collect()` (a class in the module),
+  a `ModuleType` dropped at `del` with its weak reference dead, a function kept from a failed import reading its own
+  namespace after a re-import (agrees today; keep it so). Then the exit: `ExitView`'s reckoning for uncounted modules
+  (`runtime/src/call.cpp`, `globals_of`, `deduce_unreachable`'s `dead`) replaced by the counts, H4's and A43/A44's rows
+  rerun. The cost measured as the class step's was (a module value loaded in a loop: `os.path.join`). The residue to
+  register: compiled code reaches its globals through `fn->module`, so a function, frame or traceback entry keeps the
+  module object (CPython's keeps its dict), seen only by a weak reference to the module or a `ModuleType` subclass's
+  `__del__`. D-19's summary and note and the spec's section 11 sentence ("a module can leave `sys.modules` only through
+  E-04", which is false) change with the step; their words are the author's, drafted and shown then. A codex review
+  after it (lifetimes, broadly).
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
   version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads
