@@ -725,15 +725,12 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
-* **For the author, with D-17's wording (RL-639, 2026-11-21):** CPython counts two entries of the recursion limit for a class
-  called with a Python `__init__` (its specialised instruction pushes a frame of its own), and one on the calls made before
-  the instruction specialises; a compiled program counts one, so it goes twice as deep through constructors. Counting two
-  would agree from the third call of a site on. And the frames of the import system: CPython's `importlib` is Python and
-  its frames count (several an `import`), the runtime's is a prelude and none does.
-* **For the author, a wording (RL-883, review A39):** D-17's row and the Resources paragraph (v0.28) say CPython reaches the
-  stack's bound "later or not at all". It also reaches it earlier: a recursion through `functools.lru_cache` or `partial`
-  20 000 deep is a RecursionError under CPython on a shell's 8 MiB (each level goes through C) and succeeds compiled on
-  256 MiB. Proposed: "which CPython reaches at another depth, or not at all".
+* **A class's call that enters a Python `__init__` takes two entries of the recursion limit (the author, Question 38,
+  2026-11-24: B; RL-639; D-17 and spec v0.34; DECISIONS).** As CPython's `CALL_ALLOC_AND_ENTER_INIT` does once a site is
+  specialised (its shim frame and `__init__`'s). Case first: the row `__init__` of `pipeline/tests/test_recursion_counts.py`
+  (`NOT_COMPARED` today) compared from a site's third call on, with a control that its first calls differ by CPython's
+  warm-up (D-17's words); measured on the day, limit 60 run twice: CPython 30 then 29, compiled 58 and 58 (29 and 29 once it
+  counts two). The import system's frames and the warm-up stay as D-17's words say. RL-883's wording is done (v0.34).
 * **A comprehension's helper is a variable of the enclosing frame until the frame ends (left of RL-882; low).** CPython's
   function object for a comprehension is a temporary: made, called, let go of (a generator keeps its own). The helper the
   frontend defines stays bound under its generated name, with the cells it closes over, so what a frame lets go of at
