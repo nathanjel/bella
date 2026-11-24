@@ -779,10 +779,19 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **`ast.AST.__init__` after a failed store of a field whose name has a `__hash__` written in Python stops by name (RL-852).**
   CPython calls the hash with the store's error still set, and its body ends with a SystemError at the first C function it
   calls. Exact only with a way to run a function of the program's "with an exception set"; nothing else needs one so far.
-* **The minimal memoryview: done 2026-11-22 (C-6-25, spec v0.29; DECISIONS).** Left of CPython's type, each a stop by name:
-  `cast`, `hex`, `count`, `index`, `toreadonly`, `__buffer__` and `__release_buffer__`, slice assignment, a view as a buffer to
-  write into (`readinto`, `pack_into`, `os.readv`), `__sizeof__`. A consumer holds a buffer of a view while it runs: RL-702
-  and RL-583, done 2026-11-23 for the preludes' functions with a later converted argument. Of the nine \[P1\] cases outside the compiled baseline six are left, all waiting for the collector.
+* **The minimal memoryview: done 2026-11-22 (C-6-25, spec v0.29; DECISIONS).** A consumer holds a buffer of a view while
+  it runs: RL-702 and RL-583, done 2026-11-23 for the preludes' functions with a later converted argument. Of the nine
+  \[P1\] cases outside the compiled baseline six are left, all waiting for the collector.
+* **All of a one-dimensional view of octets (the author, Question 40, 2026-11-24: B, "it needs to be solid early on";
+  spec v0.36; DECISIONS). Before the 1c ports that need it (socket).** Case first, CPython passing: `hex` (with a
+  separator and bytes per separator), `count`, `index`, `toreadonly`, `__buffer__` and `__release_buffer__`, item and
+  slice assignment through a view of a bytearray (lengths that differ are a ValueError, a read-only view a TypeError),
+  a view as a buffer written into (`readinto` of FileIO, BytesIO and the buffered classes, `socket.recv_into` and
+  `recvfrom_into`, `struct.pack_into`, `os.readv`, `os.preadv`, and the rest CPython writes into: sweep the preludes for
+  `w*` arguments), each holding the export while it writes (RL-702's hold, the model first if the hold changes), and a
+  buffered stream handing a program's own `readinto` a memoryview over its buffer, released after the call, as CPython's
+  does (found 2026-11-24: the prelude hands a bytearray; `type(b).__name__` differs). `__sizeof__` with Question 35's
+  step. The stops' rows (`tools/missing_names.py --update`, and the tests that hold a stop by name).
 * **What a frame object does not have yet (left by RL-222, 2026-11-23).** A frame object is shared by a frame's traceback entries
   and takes the frame's values when it is over, but: (a) `traceback.walk_stack` (and the signal handler's frame) make a new
   frame object at each asking, not the frame's own, so holding one keeps nothing (CPython's would keep the values past the
