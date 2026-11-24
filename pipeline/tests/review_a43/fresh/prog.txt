@@ -1,0 +1,15 @@
+import os, sys
+class WithDefault:
+    def __del__(self, w=os.write):
+        self.sink(1,b'entered\n')
+        w(1,b'default\n')
+class Bare:
+    def __del__(self):
+        self.sink(1,b'entered\n')
+class New:
+    def __del__(self, cls=WithDefault if sys.argv[1]=='default' else Bare, sink=os.write):
+        item=cls()
+        item.sink=sink
+        item.loop=item
+        sink(1,b'created\n')
+x=New()

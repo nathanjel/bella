@@ -471,7 +471,9 @@ Ref i_shim_set_class(Obj, Args a) {
                 to->bases == from->bases && to->slot_fields == from->slot_fields && to->native_fields == from->native_fields &&
                 to->promoted_fields == from->promoted_fields && to->field_index == from->field_index && to->shadowed == from->shadowed;
     if (!same) throw NotImplemented("[P2+] __class__ assignment (spec section 3): annotationlib's from '" + from->name + "' to '" + to->name + "', another layout");
+    incref(to);                                  // object_set_class: the new type held, then the old one let go of
     inst->cls = to;
+    detail::release_type(const_cast<ClassObject*>(from));
     return none_ref();
 }
 // annotate_freevars(annotate): the names _build_closure pairs with the function's cells, an entry point's or, for a function the

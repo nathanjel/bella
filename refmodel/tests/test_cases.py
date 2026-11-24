@@ -419,6 +419,8 @@ def test_dead_class_entries_never_match_a_new_class_c_3_12() -> None:
             assert first == rt.getattr(o, "x", site) == (stored or "class attribute")
             ref = weakref.ref(K)
             decref(o)
+            K.dispose()                     # the program's variable: nothing but its MRO holds the class, which dies
+            assert not K.alive, name
             del K, o
             gc.collect()
             assert ref() is None, f"a cache entry kept {name} alive"
@@ -1198,8 +1200,8 @@ def test_every_collection_is_a_full_one() -> None:
         incref(gone)
         incref(gone)
         decref(gone)                              # a candidate
-        decref(gone)                              # and dead: it leaves the buffer
-        assert heap.deaths == ["gone"] and heap.gc.count() == (0, 0, 0)
+        decref(gone)                              # and dead: it leaves the buffer, and its class, let go of, is one
+        assert heap.deaths == ["gone"] and list(heap.gc.candidates.values()) == [K]
         assert (heap.gc.collections, heap.gc.collected) == (4, 2)
     finally:
         O.HEAP = saved
@@ -1293,13 +1295,13 @@ def test_a_collection_is_scheduled_by_the_buffer_and_runs_at_a_look() -> None:
         decref(made[2000])
         assert scheduled()                          # the 2001st candidate, with nothing tracked after a collection before
         assert collector.look(heap) == 0 and not scheduled() and heap.gc.count() == (0, 0, 0)
-        assert heap.gc.alive_after == 2001
+        assert heap.gc.alive_after == 2002          # the objects and their class
         more = [held_twice() for _ in range(8000)]
         collector.collect(heap)
-        assert heap.gc.alive_after == 10001
+        assert heap.gc.alive_after == 10002
         for o in more[:2001]:
             decref(o)
-        assert not scheduled()                      # more than the threshold, but not a quarter of the 10001 tracked
+        assert not scheduled()                      # more than the threshold, but not a quarter of the 10002 tracked
         for o in more[2001:2501]:
             decref(o)
         assert scheduled()                          # 2501: a quarter passed
@@ -1603,7 +1605,8 @@ def test_the_state_of_a_built_in_type_has_no_name() -> None:
                 rt.state_set(m, name, held)
             else:
                 rt.setattr(m, name, held)
-        assert [v.tag for v in m.traverse()] == ["b", "a", "c"]        # as the class declares them: its clear function's order
+        assert [getattr(v, "tag", v) for v in m.traverse()] == ["b", "a", "c", M]   # as the class declares them (its clear
+        #                                                                                 function's order), then the type
         rt.state_set(m, "c", RefObject(T, tag="c2"))
         assert heap.deaths == ["c"]
         decref(m)
@@ -1806,7 +1809,7 @@ def test_a_slot_declared_again_is_a_second_cell() -> None:
     O.incref(h)
     for name, tag in (("a", "Low.a"), ("low_x", "Low.x"), ("z", "Low.z"), ("m", "High.m"), ("x", "High.x")):
         _store(rt, h, name, tag)
-    assert [getattr(v, "tag", None) for v in h.traverse()] == ["High.m", "High.x", "Low.a", "Low.x", "Low.z"]
+    assert [getattr(v, "tag", v) for v in h.traverse()] == ["High.m", "High.x", "Low.a", "Low.x", "Low.z", High]
     O.decref(h)
     assert _deaths() == ["High.m", "High.x", "Low.a", "Low.x", "Low.z"]
     # slots whose names were sorted as objects, by a str subclass's own __lt__, stand in the order that sort left them:
@@ -1819,7 +1822,7 @@ def test_a_slot_declared_again_is_a_second_cell() -> None:
     O.incref(s)
     for name in ("a", "b", "c"):
         _store(rt, s, name, "Sorted." + name)
-    assert [getattr(v, "tag", None) for v in s.traverse()] == ["Sorted.c", "Sorted.b", "Sorted.a"]
+    assert [getattr(v, "tag", v) for v in s.traverse()] == ["Sorted.c", "Sorted.b", "Sorted.a", Sorted]
     O.decref(s)
     assert _deaths() == ["Sorted.c", "Sorted.b", "Sorted.a"]
     _fresh_heap()
@@ -1991,6 +1994,91 @@ def test_a_chain_longer_than_the_native_stack() -> None:
             deaths = chain(300, order, room)
             assert sorted(map(str, deaths)) == sorted([f"n{i}" for i in range(300)] + [f"p{i}" for i in range(300)]), (room, order)
             assert [d for d in deaths if str(d).startswith("n")] == [f"n{i}" for i in range(300)], (room, order)   # a node before the one it held
+
+
+def test_a_class_is_a_counted_object_c_3_12() -> None:
+    """C-3-12 and D-19 (2026-11-24): a class is held by its creator and by each of its objects, and holds itself through
+    its MRO, so it dies in a collection only, once nothing outside holds it. A weak reference to it is cleared there and
+    its callback runs before the finalisers of what it held, its base's subclasses forget it, and a class whose dict
+    holds an object of its own goes with that object. The same story under CPython."""
+    from refmodel import collector
+    from refmodel import objects as O
+
+    def real() -> list[object]:
+        log: list[object] = []
+
+        class Base:
+            pass
+
+        class K(Base):
+            pass
+
+        class Fin:
+            def __del__(self) -> None:
+                log.append(("dies", "held"))
+
+        K.held = Fin()                                       # type: ignore[attr-defined]
+        r = weakref.ref(K, lambda w: log.append("K's callback"))
+        o = K()
+        del K
+        gc.collect()
+        log.append(("after the class's name", r() is not None))
+        del o
+        log.append(("after its object", r() is not None))
+        gc.collect()
+        log.append(("after a collection", r() is None, len(Base.__subclasses__())))
+
+        class Selfish:
+            pass
+
+        Selfish.me = Selfish()                              # type: ignore[attr-defined]
+        r2 = weakref.ref(Selfish)
+        del Selfish
+        gc.collect()
+        log.append(("a class and its object in its dict", r2() is None))
+        return log
+
+    def model() -> list[object]:
+        log: list[object] = []
+        saved = O.HEAP
+        heap = O.HEAP = O.Heap()
+        try:
+            Base = RefClass("Base", heap=heap)
+            K = RefClass("K", (Base,), heap=heap)
+            Fin = RefClass("Fin", attrs={"__del__": lambda self: log.append(("dies", "held"))}, heap=heap)
+            held = RefObject(Fin)
+            incref(held)
+            K.set_attr("held", held)
+            decref(held)
+            r = O.weak_ref(K, lambda w: log.append("K's callback"))
+            o = RefObject(K)
+            incref(o)
+            K.dispose()                                     # del K: its object holds it
+            collector.collect(heap)
+            log.append(("after the class's name", r() is not None))
+            decref(o)
+            log.append(("after its object", r() is not None))
+            collector.collect(heap)
+            log.append(("after a collection", r() is None, len(Base.subclasses)))
+            assert not K.alive and not held.alive and Base.alive
+
+            Selfish = RefClass("Selfish", heap=heap)
+            me = RefObject(Selfish)
+            incref(me)
+            Selfish.set_attr("me", me)
+            decref(me)
+            r2 = O.weak_ref(Selfish)
+            Selfish.dispose()
+            collector.collect(heap)
+            log.append(("a class and its object in its dict", r2() is None))
+            assert not me.alive
+            return log
+        finally:
+            O.HEAP = saved
+
+    want = real()
+    assert want[-1] == ("a class and its object in its dict", True) and "K's callback" in want, want
+    assert model() == want
 
 
 if __name__ == "__main__":

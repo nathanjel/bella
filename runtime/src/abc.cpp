@@ -22,7 +22,10 @@ struct AbcData : Object {                        // _abc_data: a set is made at 
     Ref cache;
     Ref negative_cache;
     std::uint64_t negative_cache_version;
-    AbcData(ClassObject* c, std::uint64_t version) : Object(Kind::AbcData), negative_cache_version(version) { cls = c; }
+    AbcData(ClassObject* c, std::uint64_t version) : Object(Kind::AbcData), negative_cache_version(version) {
+        cls = c;                                 // a subclass of the program's is held (free_object lets it go)
+        incref(c);
+    }
 };
 
 std::uint64_t invalidation_counter = 0;          // abc_invalidation_counter
@@ -89,9 +92,13 @@ Obj reference_type() {
 }
 
 // weakref_hash of a class's basic reference: the class's hash the first time it is asked for, kept from then on (the reference
-// lives as long as the class, held by its bases' lists of subclasses); one that raises is not kept
-std::int64_t class_reference_hash(Obj cls) {
+// lives as long as the class, held by its bases' lists of subclasses); one that raises is not kept. Forgotten with the class
+std::unordered_map<const Object*, std::int64_t>& kept_class_hashes() {
     static std::unordered_map<const Object*, std::int64_t> kept;
+    return kept;
+}
+std::int64_t class_reference_hash(Obj cls) {
+    auto& kept = kept_class_hashes();
     if (auto it = kept.find(cls.object()); it != kept.end()) return it->second;
     std::int64_t hash = reference_hash(cls);
     kept.emplace(cls.object(), hash);
@@ -389,10 +396,13 @@ Ref a_get_cache_token(Obj, Args a) {
 
 }  // namespace
 
+void forget_class_hash(const ClassObject* c) { kept_class_hashes().erase(c); }
+
 void fill_abc(Module* m) {
     destroyer(Kind::AbcData) = [](Object* o) { detail::free_object(static_cast<AbcData*>(o)); };
-    detail::traverser(Kind::AbcData) = [](Object* o, std::vector<Object*>& out) {   // abc_data_traverse (its type is immortal)
+    detail::traverser(Kind::AbcData) = [](Object* o, std::vector<Object*>& out) {   // abc_data_traverse, and a subclass's type
         auto* d = static_cast<AbcData*>(o);
+        if (!(d->cls->flags & IMMORTAL)) detail::visit(Obj::of(d->cls), out);
         detail::visit(d->registry.get(), out);
         detail::visit(d->cache.get(), out);
         detail::visit(d->negative_cache.get(), out);

@@ -304,11 +304,20 @@ inline void unlist(Object* o) {                  // out of the collection's list
     --list->size;
     o->flags &= static_cast<std::uint16_t>(~LISTED);
 }
-// The end of an object's memory: what the buffer names is left as a tombstone, its destructor run now as any other's.
+inline void release_type(ClassObject* c);     // below ClassObject: a counted class let go of
+// The end of an object's memory: what the buffer names is left as a tombstone, its destructor run now as any other's. Then its
+// class is let go of, which a class a program made counts (subtype_dealloc: the type last, after the memory; RefObject.dealloc).
+// The class's release is a plain call on the common path, so that the function stays small where it is inlined; only the
+// buffered path, whose compaction can throw, holds it in a guard
 template <class T>
 inline void free_object(T* o) {
+    ClassObject* type = o->cls;
     if (o->flags & LISTED) [[unlikely]] unlist(o);
     if (o->flags & BUFFERED) [[unlikely]] {
+        struct Last {
+            ClassObject* type;
+            ~Last() { release_type(type); }
+        } last{type};
         o->~T();
         Object* tomb = new (static_cast<void*>(o)) Object(Kind::Marker);
         tomb->flags = DEAD | BUFFERED | TOMBSTONE;
@@ -318,6 +327,7 @@ inline void free_object(T* o) {
         return;
     }
     delete o;
+    release_type(type);
 }
 }  // namespace detail
 
@@ -842,6 +852,12 @@ struct ClassObject : Object {
     std::vector<ClassObject*> subclasses;
     NameMap attrs;                               // owns one count of each value
     std::uint64_t version = NO_VERSION;
+    // A class a program made is a counted object (C-3-12, D-19; refmodel RefClass): its creator, its objects and its member
+    // descriptors hold it, and it holds its bases, its MRO (itself first: so it dies in a collection only) and its metaclass.
+    // A built-in type and a class the runtime's own code makes are immortal, as CPython's C types are. `cleared`: type_clear
+    // ran, so the dict and the MRO's count of the class itself are gone, and a lookup finds nothing; the rest of the MRO
+    // stays held until the class's dealloc, after its last object's end, which walks it (RefClass.mro_held)
+    bool cleared = false;
     std::optional<std::vector<const Str*>> slots;    // as declared; nullopt: no __slots__
     std::vector<const Str*> promoted;            // this class's own promoted fields
     std::vector<const Str*> slot_fields;         // inherited, in MRO-reversed declaration order
@@ -926,8 +942,11 @@ struct ClassObject : Object {
         }
         return *slot_release_order;
     }
-    // lookup along the MRO: (found, owner) or nullopt
-    std::optional<std::pair<Obj, ClassObject*>> lookup(const Str* n) const {
+    // lookup along the MRO: (found, owner) or nullopt. Inlined always: it is every attribute access's walk, and GCC's budget for a
+    // unit's growth by inlining, which ops.cpp reaches, otherwise decides by the rest of the header whether it is (3% of a method
+    // call when it was not, measured 2026-11-24)
+    [[gnu::always_inline]] std::optional<std::pair<Obj, ClassObject*>> lookup(const Str* n) const {
+        if (cleared) [[unlikely]] return std::nullopt;   // find_name_in_mro with no tp_mro
         for (ClassObject* c : mro)
             if (const Obj* v = c->attrs.find(n)) return std::pair{*v, c};
         return std::nullopt;
@@ -940,8 +959,15 @@ struct ClassObject : Object {
     // type_setattro: the new value stored and the class modified before the old one is released
     // RefClass.set_mro: a metaclass's mro(): what every lookup walks from now on, a new version as for an attribute
     void set_mro(std::vector<ClassObject*> m) {
-        mro = std::move(m);
+        hold_mro(std::move(m));
         version = versions().issue();
+    }
+    // tp_mro replaced (Py_XSETREF): the new one's classes held, then the old one's let go of, last to first
+    void hold_mro(std::vector<ClassObject*> m) {
+        std::vector<ClassObject*> old = std::exchange(mro, std::move(m));
+        if ((flags & IMMORTAL) || cleared) return;
+        for (ClassObject* c : mro) incref(c);
+        for (auto it = old.rbegin(); it != old.rend(); ++it) decref(*it);
     }
     void set_attr(const Str* n, Obj v) {
         incref(v);
@@ -958,18 +984,22 @@ struct ClassObject : Object {
         decref(old);
     }
     void unregister() {
-        for (ClassObject* b : bases) std::erase(b->subclasses, this);
+        leave_bases();
         std::erase(heap().classes, this);
     }
-    // The class dies: it leaves the live classes, then releases its attributes in order.
-    void dispose() {
-        unregister();
-        for (auto& [k, v] : attrs.take_all()) decref(v);
-        if (dict_view != nullptr) decref(Obj::of(std::exchange(dict_view, nullptr)));
-        for (Obj* t : {&bases_tuple, &mro_tuple})
-            if (!t->is_unset()) decref(std::exchange(*t, Obj{}));
+    void leave_bases() {                         // RefClass.leave_bases: tp_subclasses' weak references to it are gone
+        for (ClassObject* b : bases) std::erase(b->subclasses, this);
     }
+    // RefClass.dispose: the program lets go of a class it made; what the collector does to one nothing else holds is done in
+    // place (type_clear, then the count's end). Defined with the collector below
+    void dispose();
 };
+
+namespace detail {
+inline void release_type(ClassObject* c) {      // an object's class, let go of: a counted class only (C-3-12)
+    if (c != nullptr && !(c->flags & IMMORTAL)) decref(c);
+}
+}  // namespace detail
 
 // the builtin classes of the objects this header makes: immortal, no attributes
 inline ClassObject* builtin_class(const char* name) {
@@ -1029,6 +1059,7 @@ struct ClassSpec {
     std::optional<std::vector<std::string>> release = std::nullopt;  // a built-in type's dealloc order (RefClass release)
     bool slots_ordered = false;                                      // the slots are in the order type_new's sort left them (RefClass slots_ordered)
     std::uint32_t repeated_slots = 0;                                // how many times its __slots__ names a slot again (RL-591)
+    bool static_type = false;                                        // a built-in type: immortal (RefClass static)
 };
 
 // RefClass(release=...), also for a class that exists (the prelude's, presented as CPython's after its class statement):
@@ -1113,11 +1144,17 @@ inline void hide_slots(ClassObject* c, const std::vector<const Str*>& names, con
 // RefClass.__init__
 inline ClassObject* make_class(const ClassSpec& spec) {
     auto* c = new ClassObject();
+    if (!spec.static_type) {                     // counted: the creator's count (type_new returns a new reference)
+        c->flags &= ~IMMORTAL;
+        c->refs = 1;
+    }
     c->cls = builtin_class("type");
     c->name = spec.name;
     c->qualname = spec.name;
     c->bases = spec.bases;
     c->mro = c3(c);
+    for (ClassObject* m : c->mro) incref(m);     // tp_mro's counts, the class's own first, then tp_bases'
+    for (ClassObject* b : c->bases) incref(b);
     for (auto& [k, v] : spec.attrs) {
         incref(v);
         c->attrs.set(intern(k), v);
@@ -1156,7 +1193,8 @@ inline ClassObject* make_class(const ClassSpec& spec) {
         for (const Str* s : own) {
             if (c->hidden.contains(s) && !listed(spec.members, s)) continue;   // a field of the C struct: no member of the type
             auto* d = new SlotDescriptor(s);
-            d->owner = c;
+            d->owner = c;                        // descr_new: the member holds its type
+            incref(c);
             d->readonly = listed(spec.readonly, s);
             incref(d);
             c->attrs.set(s, Obj::of(d));
@@ -1243,6 +1281,7 @@ inline ClassObject* make_class(const ClassSpec& spec) {
 // ---- instances (refmodel RefObject) ----
 // An instance that keeps its values in it takes one of the places its class's shared keys have (SharedKeys::instance_made).
 inline void instance_made(ClassObject* c) {
+    incref(c);                                   // PyType_GenericAlloc: an object of a heap type holds its type (RefObject)
     if (c->has_dict && c->dict_kind == DictKind::Inline && c->keys) c->keys->instance_made();
 }
 struct Instance : Object {
@@ -2085,8 +2124,10 @@ inline void check_not_named(Object* o) {
 }
 inline void bury(Object* o) {
     if (o->flags & LISTED) unlist(o);            // a dead object leaves a collection's list, kept in the quarantine or not
-    if (heap().quarantine) heap().graveyard.push_back(o);
-    else {
+    if (heap().quarantine) {
+        heap().graveyard.push_back(o);           // kept, never freed: its class is let go of all the same
+        release_type(o->cls);
+    } else {
         switch (o->kind) {
             case Kind::Instance: free_object(static_cast<Instance*>(o)); break;
             case Kind::Dict:
@@ -2105,7 +2146,8 @@ inline void bury(Object* o) {
             case Kind::Function: free_object(static_cast<Function*>(o)); break;
             case Kind::SlotDescriptor: free_object(static_cast<SlotDescriptor*>(o)); break;
             case Kind::Marker: free_object(static_cast<Marker*>(o)); break;
-            default: break;          // strings and classes are not freed here
+            case Kind::Class: free_object(static_cast<ClassObject*>(o)); break;   // a counted class's; its metaclass after it
+            default: break;          // strings are not freed here
         }
     }
 }
@@ -2116,7 +2158,10 @@ inline void empty_graveyard() {
     auto dead = std::move(heap().graveyard);
     heap().graveyard.clear();
     bool saved = std::exchange(heap().quarantine, false);
-    for (Object* o : dead) detail::bury(o);
+    for (Object* o : dead) {
+        o->cls = nullptr;                        // let go of when it died (bury)
+        detail::bury(o);
+    }
     heap().quarantine = saved;
 }
 
@@ -2326,10 +2371,87 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
     }
     return true;
 }
+
+// ---- a class as a counted object (C-3-12, D-19; refmodel RefClass: traverse, gc_clear, dealloc, dispose) ----
+// What the runtime keeps by a class's address beyond the object model (a __name__ assigned as given, _abc's kept hash):
+// forgotten when the class dies, before its memory goes
+inline void (*class_forgotten)(const ClassObject*) = nullptr;
+// RefClass._release_dict: the dict's values let go of in its order (PyDict_Clear, dict_dealloc); the view's second counts first,
+// the view emptied in place as CPython's one dict is, so that attrs alone decides when a value dies (class_dict)
+[[gnu::noinline]] inline void release_class_dict(ClassObject* c) {
+    if (c->dict_view != nullptr) {
+        DictObject* view = std::exchange(c->dict_view, nullptr);
+        release_entries(dict_take_all(view), nullptr);
+        decref(view);
+    }
+    for (auto& [k, v] : c->attrs.take_all()) decref(v);
+}
+// type_clear (RefClass.gc_clear): the class modified first (PyType_Modified: no entry is valid for it or a subclass from here),
+// its dict cleared, then tp_mro let go of: the tuple, and of the MRO's counts the class's own, which is the cycle. The rest of
+// the MRO stays held until the dealloc, after the last object's end, which walks it
+[[gnu::noinline]] inline void class_clear(ClassObject* c) {
+    c->bump();
+    release_class_dict(c);
+    if (c->cleared) return;
+    c->cleared = true;
+    if (!c->mro_tuple.is_unset()) decref(std::exchange(c->mro_tuple, Obj{}));
+    for (ClassObject* m : c->mro)
+        if (m == c) decref(c);                   // the collector, or dispose, holds a count meanwhile
+}
+// type_dealloc (RefClass.dealloc): out of its bases' subclasses and of the live classes, its weak references cleared, then the
+// dict, tp_bases and the rest of tp_mro let go of, each last to first; its memory, then its metaclass (subtype_dealloc's last)
+[[gnu::noinline]] inline void class_dealloc(ClassObject* c) {
+    c->flags |= DEAD;
+    if (heap().checking) check_not_named(c);
+    c->unregister();
+    if (c->flags & HAS_WEAKREFS) clear_weakrefs(c);
+    release_class_dict(c);
+    for (auto it = c->bases.rbegin(); it != c->bases.rend(); ++it) decref(*it);
+    if (!c->bases_tuple.is_unset()) decref(std::exchange(c->bases_tuple, Obj{}));
+    if (!c->mro_tuple.is_unset()) decref(std::exchange(c->mro_tuple, Obj{}));
+    c->cleared = true;
+    for (auto it = c->mro.rbegin(); it != c->mro.rend(); ++it)
+        if (*it != c) decref(*it);               // the class's own count went with its clear: it has none left
+    if (class_forgotten != nullptr) class_forgotten(c);
+    bury(c);
+}
 }  // namespace detail
+
+// RefClass.dispose: the program lets go of the class (its creator's count). One that nothing but itself holds (its MRO, its MRO's
+// tuple, member descriptors only its dict holds) is cleared here, as a collection would, and dies; one an object of its own
+// still holds lives on, whole
+[[gnu::noinline]] inline void ClassObject::dispose() {
+    if (refs <= 1 || cleared) {                  // the last count (an MRO without the class, or one cleared): it dies, or lives on
+        decref(this);
+        return;
+    }
+    decref(this);
+    std::uint32_t own = 0;
+    for (ClassObject* m : mro) own += m == this;
+    if (!mro_tuple.is_unset() && mro_tuple.object()->refs == 1) ++own;
+    for (auto& [k, v] : attrs.items())
+        if (v.is_object() && v.object()->kind == Kind::SlotDescriptor && v.object()->refs == 1 &&
+            static_cast<const SlotDescriptor*>(v.object())->owner == this)
+            ++own;
+    if (refs != own) return;
+    incref(this);
+    detail::class_clear(this);
+    decref(this);
+}
 
 inline void dealloc(Object* o) {
     switch (o->kind) {
+        case Kind::Class:                        // (the cases below fall through to `default`: these two come first)
+            detail::class_dealloc(static_cast<ClassObject*>(o));
+            return;
+        case Kind::SlotDescriptor: {             // descr_dealloc: its type let go of, then its memory
+            o->flags |= DEAD;
+            if (heap().checking) detail::check_not_named(o);
+            ClassObject* owner = std::exchange(static_cast<SlotDescriptor*>(o)->owner, nullptr);
+            detail::release_type(owner);
+            detail::bury(o);
+            return;
+        }
         case Kind::Instance:
             if (!detail::release_attributes(static_cast<Instance*>(o))) return;
             if (o->flags & WEAK_REFERENCE) weak_holder_dies(o);
@@ -2506,11 +2628,37 @@ inline void visit_attributes(T* obj, std::vector<Object*>& out) {
         for (const Str* n : obj->order)
             for (auto& [m, v] : held) if (m == n && !v.is_unset()) { visit(v, out); v = Obj{}; }
     };
+    // the type, a counted class only: before a built-in base's own fields (which have the dict among them), else after the dict
+    // and before a built-in kind's own data, which the caller visits next (RefObject.traverse)
+    bool fields = !obj->cls->native_fields.empty();
+    auto type = [&] {
+        if (!(obj->cls->flags & IMMORTAL)) visit(Obj::of(obj->cls), out);
+    };
+    if (fields) type();
     if (obj->cls->native.empty()) dict_values();
     for (const Str* n : obj->cls->native) {
         if (n == dict) dict_values();
         else visit(slot_cell(obj, nullptr, n), out);
     }
+    if (!fields) type();
+}
+// type_traverse (RefClass.traverse): tp_dict (the values, and the view's object), tp_mro's classes and tuple, tp_bases' and
+// their tuple, and a metaclass the program made (a heap type's object holds its type). The exit's trace sees CPython's view
+// of every class, an immortal one's too: tp_dict's values, tp_bases, tp_mro (reach adds the type)
+[[gnu::noinline]] inline void visit_class(ClassObject* c, std::vector<Object*>& out) {
+    for (auto& [k, v] : c->attrs.items()) visit(v, out);
+    if (tracing_everything) [[unlikely]] {
+        for (ClassObject* b : c->bases) visit(Obj::of(b), out);
+        for (ClassObject* m : c->mro) visit(Obj::of(m), out);
+        return;
+    }
+    if (c->dict_view != nullptr) visit(Obj::of(c->dict_view), out);
+    for (ClassObject* m : c->mro)
+        if (!c->cleared || m != c) visit(Obj::of(m), out);
+    visit(c->mro_tuple, out);
+    for (ClassObject* b : c->bases) visit(Obj::of(b), out);
+    visit(c->bases_tuple, out);
+    if (c->cls != nullptr && !(c->cls->flags & IMMORTAL)) visit(Obj::of(c->cls), out);
 }
 inline void visit_callback(Object* holder, std::vector<Object*>& out) {   // a weak reference's gc_traverse: its callback
     auto it = heap().weak_records.find(holder);
@@ -2545,6 +2693,10 @@ inline void children_of(Object* o, std::vector<Object*>& out) {
         case Kind::Bytes:
         case Kind::ByteArray:
             if (has_attributes(o)) visit_attributes(static_cast<BytesInstance*>(o), out);
+            break;
+        case Kind::Class: visit_class(static_cast<ClassObject*>(o), out); break;
+        case Kind::SlotDescriptor:               // descr_traverse: its type
+            if (ClassObject* owner = static_cast<SlotDescriptor*>(o)->owner) visit(Obj::of(owner), out);
             break;
         default:
             if (Traverser tr = traverser(o->kind)) tr(o, out);
@@ -2618,6 +2770,7 @@ inline void clear_object(Object* o) {            // tp_clear
         case Kind::ByteArray:
             if (has_attributes(o)) clear_attributes(static_cast<BytesInstance*>(o));
             break;
+        case Kind::Class: class_clear(static_cast<ClassObject*>(o)); break;
         default:
             if (Clearer cl = clearer(o->kind)) cl(o);
             break;
@@ -2744,19 +2897,25 @@ inline void trial_deletion(const std::vector<Object*>& roots, GcList& unreachabl
 }
 
 // gc.c's update_refs, subtract_refs and move_unreachable over a collection's own list (collector.deduce_unreachable): `base`
-// keeps what is reachable from outside it, in the order the scan keeps it; the rest moves to `unreachable`, in order
-inline void deduce_unreachable(GcList& base, GcList& unreachable) {
+// keeps what is reachable from outside it, in the order the scan keeps it; the rest moves to `unreachable`, in order. What
+// `dead` holds is not a reference from outside: the exit's module objects that are found dead and have no count to tell it
+// (D-19), whose namespaces are in the list
+inline void deduce_unreachable(GcList& base, GcList& unreachable, const std::vector<Object*>& dead = {}) {
     std::unordered_map<Object*, std::int64_t> refs;
     std::vector<Object*> order = list_items(base), kids;
     for (Object* o : order) {
         if (o->refs == 0) throw ModelError("an object is in a collection's list with no count");
         refs[o] = o->refs;
     }
-    for (Object* o : order) {
-        children_of(o, kids);
-        for (Object* k : kids)
-            if (auto it = refs.find(k); it != refs.end()) --it->second;
-    }
+    auto subtract = [&](const std::vector<Object*>& holders) {
+        for (Object* o : holders) {
+            children_of(o, kids);
+            for (Object* k : kids)
+                if (auto it = refs.find(k); it != refs.end()) --it->second;
+        }
+    };
+    subtract(order);
+    subtract(dead);
     std::vector<Object*> kept;
     for (std::size_t i = 0; i < order.size(); ++i) {
         Object* o = order[i];
@@ -2885,6 +3044,8 @@ inline void clear_unreachable_weakrefs(GcList& unreachable) {
             std::vector<WeakRecord*> records = lit->second;
             for (WeakRecord* r : records) weak_unlink(r);
         }
+        // a class's bases' lists of subclasses hold weak references without callbacks: they forget it here (RefClass.leave_bases)
+        if (op->kind == Kind::Class) static_cast<ClassObject*>(op)->leave_bases();
     }
 }
 // Each object's clear, the object held; one that is still first afterwards lives on and joins `old` (one with no tp_clear

@@ -87,6 +87,9 @@ struct World {
         for (Object* w : reviver_weaks) decref(w);
         // newest first: a subclass dies before its bases, which it holds (as CPython frees them)
         for (auto it = made.rbegin(); it != made.rend(); ++it) (*it)->dispose();
+        // what the world leaves (a cycle no operation collected, a class only such a cycle holds) goes now, with its finalisers
+        // logging here: the model's worlds each have a heap of their own (C-3-12: a class is counted, and its garbage holds it)
+        collect_cycles();
     }
 
     // The oracle's tagged objects log their tag in a finaliser (Tagged.__del__, DescR.__del__; the model's has_finalizer): so
@@ -563,6 +566,7 @@ struct World {
                     forget(o);
                     decref(o);
                 }
+                for (auto& [name, value] : old->attrs.items()) old->del_attr(name);   // both sides let go of them now
                 old->dispose();
                 std::erase(made, old);
                 classes.pop_back();

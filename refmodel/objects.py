@@ -86,9 +86,13 @@ What is modelled (design document, section 3, as revised by review rounds two an
   collector over them.
 
 What is not modelled yet: ``__setattr__``/``__delattr__``/``__getattribute__`` overrides,
-``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, and classes as
-counted objects (a class dies only by ``RefClass.dispose``; its cycles are the collector's, spec
-D-04, and C-3-12 waits for them). Each is a TODO with a conformance case first.
+``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, and a class's
+metaclass as a counted object. Each is a TODO with a conformance case first.
+
+A class is a counted object (C-3-12, 2026-11-24; D-19): its creator holds it, its instances hold it
+(``RefObject.cls``), and it holds its bases, its MRO (itself first) and its attributes, so it dies in
+a collection, by ``RefClass.traverse``, ``gc_clear`` and ``dealloc`` (type_traverse, type_clear,
+type_dealloc). ``RefClass(static=True)`` stands for a built-in type: immortal.
 """
 from __future__ import annotations
 
@@ -293,7 +297,7 @@ class Heap:
         here it is the room less the deallocs in flight."""
         return 1 << 30 if self.stack_room is None else self.stack_room - self.dealloc_depth
 
-    def died(self, obj: RefObject) -> None:
+    def died(self, obj: Any) -> None:
         """RL-20: an entry a live class still validates never names an object that dies."""
         live = {c.version for c in self.classes}
         for site in self.sites:
@@ -306,19 +310,20 @@ HEAP = Heap()
 
 
 def _counted(v: Any) -> bool:
-    """A value that is a counted object of the model's (a class is not one yet, nor an int or a tag)."""
-    return isinstance(v, (RefObject, RefDict, RefWeak))
+    """A value that is a counted object of the model's: an object, a dict, a weak reference, or a class a program made (a
+    static type, an int or a tag is not one)."""
+    return isinstance(v, (RefObject, RefDict, RefWeak)) or (isinstance(v, RefClass) and not v.static)
 
 
 def incref(v: Any) -> None:
-    if isinstance(v, (RefObject, RefDict, RefWeak)):
+    if _counted(v):
         if not v.alive:
             raise ModelError(f"a reference to a dead {v!r} was taken")
         v.refs += 1
 
 
 def decref(v: Any) -> None:
-    if isinstance(v, (RefObject, RefDict, RefWeak)):
+    if _counted(v):
         if v.refs <= 0:
             raise ModelError(f"{v!r} released more often than it was held")
         v.refs -= 1
@@ -477,6 +482,28 @@ class RefDict(dict[Any, Any]):
 # Classes
 # ---------------------------------------------------------------------------------------------
 
+def _clear_weak_list(obj: Any) -> None:
+    """PyObject_ClearWeakRefs, of an object or a class: the basic references go first, with no callback; each of the
+    rest is cleared, and held while the object is given no chance to be reached through it; a reference already dying
+    has no callback called; then the callbacks in list order, and the holds are released last to first, as the tuple
+    that holds them in the C is."""
+    while obj.weakrefs and obj.weakrefs[0].basic:
+        obj.weakrefs.pop(0).target = None
+    pending: list[tuple[RefWeak, Any]] = []
+    for w in obj.weakrefs:
+        w.target = None
+        callback, w.callback = w.callback, None
+        if w.refs > 0:
+            incref(w)
+            pending.append((w, callback))
+    obj.weakrefs = []
+    for w, callback in pending:
+        if callback is not None:
+            callback(w)
+    for w, _ in reversed(pending):
+        decref(w)
+
+
 def _c3(cls: RefClass) -> list[RefClass]:
     """C3 linearisation (the same algorithm CPython uses)."""
     seqs = [[cls]] + [list(b.mro) for b in cls.bases] + [list(cls.bases)]
@@ -516,6 +543,7 @@ class RefClass:
         readonly: tuple[str, ...] = (),
         release: tuple[str, ...] | None = None,
         slots_ordered: bool = False,
+        static: bool = False,
     ) -> None:
         self.name = name
         # type_new sorts a class's slot names as objects (PyList_Sort), which for plain strs is their order by code point.
@@ -547,6 +575,27 @@ class RefClass:
         self.subclasses: list[RefClass] = []
         for b in self.bases:
             b.subclasses.append(self)
+        # A class is a counted object (C-3-12; D-19: "classes ... are reference-counted like any other"). type_new returns
+        # a new reference, its creator's, and the class holds tp_bases and tp_mro, whose first entry is the class itself,
+        # so a class never dies by its count alone: the collector frees it (traverse, gc_clear, dealloc below). Each of its
+        # instances holds it too (PyType_GenericAlloc). A static type (one of CPython's built-in types) is immortal and
+        # holds nothing counted.
+        self.static: bool = static
+        if static and not all(b.static for b in self.bases):
+            raise ValueError("a static type derives from static types only")
+        self.refs = 0 if static else 1
+        self.alive = True
+        self.put_off = False
+        self.cleared = False                     # type_clear ran: no dict and no tp_mro, so a lookup finds nothing
+        self.weakrefs: list[RefWeak] = []        # type's instances are weakly referenceable (tp_weaklistoffset)
+        # the classes tp_mro holds a count of: all of the MRO until type_clear, then all but the class itself (below)
+        self.mro_held: tuple[RefClass, ...] = () if static else self.mro
+        if not static:
+            self.heap.gc.link(self)              # type_new: a heap type is tracked from its allocation
+            for c in self.mro:
+                incref(c)
+            for b in self.bases:
+                incref(b)
         self.slots = tuple(slots) if slots is not None else None
         self.promoted = tuple(promoted)
         # inherited layout capability (spec, section 3)
@@ -646,8 +695,19 @@ class RefClass:
 
     def set_mro(self, mro: list[RefClass]) -> None:
         """A metaclass's mro() (mro_internal): every lookup walks it, under a new version."""
-        self.mro = tuple(mro)
+        self._hold_mro(tuple(mro))
         self.version = VERSIONS.issue()
+
+    def _hold_mro(self, mro: tuple[RefClass, ...]) -> None:
+        """tp_mro replaced (Py_XSETREF): the new tuple's classes held, the old tuple's let go of, last to first."""
+        self.mro = mro
+        if self.static or self.cleared:
+            return
+        old, self.mro_held = self.mro_held, mro
+        for c in mro:
+            incref(c)
+        for c in reversed(old):
+            decref(c)
 
     def _own_slot_names(self) -> tuple[str, ...]:
         return tuple(s for s in (self.slots or ()) if s != "__dict__")
@@ -670,6 +730,8 @@ class RefClass:
 
     # -- lookup along the MRO -----------------------------------------------------------------
     def lookup(self, name: str) -> tuple[Any, RefClass] | None:
+        if self.cleared:                         # find_name_in_mro with no tp_mro: nothing
+            return None
         for c in self.mro:
             if name in c.attrs:
                 return c.attrs[name], c
@@ -733,30 +795,96 @@ class RefClass:
     def _mro_hierarchy(self) -> None:
         """mro_hierarchy: the class's MRO computed again (mro_internal makes a new tuple, equal to the old one when the bases
         are the same), then each subclass's, in the order of its base's subclasses."""
-        self.mro = tuple(_c3(self))
+        self._hold_mro(tuple(_c3(self)))
         for s in list(self.subclasses):
             s._mro_hierarchy()
+
+    def leave_bases(self) -> None:
+        """Its bases' lists of subclasses forget it (tp_subclasses holds weak references: a collection clears them with
+        the class's other weak references without callbacks, and type_dealloc's remove_all_subclasses takes the
+        entries out): they stop propagating versions to it, and __subclasses__() no longer lists it."""
+        for b in self.bases:
+            if self in b.subclasses:
+                b.subclasses.remove(self)
 
     def unregister(self) -> None:
         """The class is dying: its bases stop propagating versions to it. Cache entries need no
         cleanup, since its versions are never issued again (review log D-1)."""
-        for b in self.bases:
-            b.subclasses.remove(self)
+        self.leave_bases()
         self.heap.classes.discard(self)
 
-    def dispose(self) -> None:
-        """The class dies (the collector frees it: its MRO holds itself): it leaves the live
-        classes first, so no entry is valid for it, then releases its attributes in its
-        dictionary's order (type_dealloc clears tp_dict)."""
-        self.unregister()
+    def _release_dict(self) -> None:
+        """The dict's values let go of in its order (PyDict_Clear, dict_dealloc); the view's second counts first, so that
+        attrs alone decides when a value dies (class_dict)."""
         values = list(self.attrs.values())
         self.attrs.clear()
+        if self.dict_view is not None:
+            view, self.dict_view = list(self.dict_view.values()), None
+            for v in view:
+                decref(v)
         for v in values:
             decref(v)
-        if self.dict_view is not None:
-            for v in self.dict_view.values():
-                decref(v)
-            self.dict_view = None
+
+    def traverse(self) -> list[Any]:
+        """type_traverse: tp_dict (its values in its order, a str-keyed dict's traverse; the view's second counts with
+        them), tp_mro's classes and tp_bases'. The model has no tuple objects for the two: the classes in them are visited
+        as the tuples would visit them. tp_base is not a count of the model's."""
+        if self.static:
+            return []
+        out = list(self.attrs.values()) + (list(self.dict_view.values()) if self.dict_view is not None else [])
+        out += list(self.mro_held) + list(self.bases)
+        return [v for v in out if _counted(v)]
+
+    def gc_clear(self) -> None:
+        """type_clear: the class modified first (PyType_Modified: no entry is valid for it or a subclass from here), its
+        dict cleared, then tp_mro let go of. Of tp_mro's counts the class's own goes here, which is the cycle; the others,
+        its bases' and their bases', at its dealloc, after its last object's end, which walks the MRO's layout (tp_base's
+        chain in CPython, which type_dealloc lets go of; tp_bases holds every class of it until then, so nothing a program
+        sees tells the two apart)."""
+        self.bump()
+        self._release_dict()
+        if not self.cleared:
+            self.cleared = True
+            own = [c for c in self.mro_held if c is self]
+            self.mro_held = tuple(c for c in self.mro_held if c is not self)
+            for c in own:
+                decref(c)
+
+    def has_finalizer(self) -> bool:
+        return False                             # type has no tp_finalize
+
+    def clear_weakrefs(self) -> None:
+        _clear_weak_list(self)
+
+    def dealloc(self) -> None:
+        """type_dealloc: untracked, out of its bases' subclasses (remove_all_subclasses) and of the live classes, its weak
+        references cleared, then tp_dict let go of (empty after a collection's clear), tp_bases and tp_mro (each a
+        tuple's dealloc: last to first), and freed."""
+        gc = self.heap.gc
+        gc.untrack(self)
+        self.unregister()
+        self.alive = False
+        self.heap.died(self)
+        self.clear_weakrefs()
+        self._release_dict()
+        for b in reversed(self.bases):
+            decref(b)
+        self.cleared = True
+        held, self.mro_held = self.mro_held, ()
+        for c in reversed(held):
+            decref(c)
+        gc.free(self)
+
+    def dispose(self) -> None:
+        """The program lets go of a class it made (its creator's count). What CPython's collector does to a class that
+        nothing else holds, whose only cycle is its MRO, is done in place, as a collection would (type_clear, then the
+        count's end): a full collection at every such step would make the model's Hypothesis run five times slower. A
+        class an object of its own still holds lives on, whole."""
+        decref(self)
+        if self.alive and not self.cleared and self.refs == 1:     # tp_mro's own count alone
+            incref(self)
+            self.gc_clear()
+            decref(self)
 
     def __repr__(self) -> str:
         return f"<RefClass {self.name} v{self.version}>"
@@ -820,6 +948,7 @@ class _SlotsOf:
 
 class RefObject:
     def __init__(self, cls: RefClass, tag: Any = None) -> None:
+        incref(cls)                         # PyType_GenericAlloc: an object of a heap type holds its type
         self.cls = cls
         self.inline: dict[str, Any] = {n: UNSET for n in cls.slot_fields + cls.native_fields + cls.promoted_fields}
         self.state: dict[str, Any] = {n: UNSET for n in cls.hidden_fields}     # a built-in type's fields that have no name
@@ -853,32 +982,16 @@ class RefObject:
                 == (old.slot_fields, old.native_fields, old.promoted_fields, old.hidden_fields, old.shadowed_fields))
         if not same or cls.has_dict or old.has_dict or cls.has_weakref != old.has_weakref or cls.bases != old.bases:
             raise ModelError(f"__class__ from {old.name} to {cls.name}: another layout")
+        incref(cls)                         # object_set_class: the new type held, then the old one let go of
         self.cls = cls
+        decref(old)
 
     def has_finalizer(self) -> bool:
         """tp_finalize: a class with __del__; a tagged object stands for one whose __del__ logs its tag."""
         return self.tag is not None or self.cls.lookup("__del__") is not None
 
     def clear_weakrefs(self) -> None:
-        """PyObject_ClearWeakRefs: the basic references go first, with no callback; each of the rest is
-        cleared, and held while the object is given no chance to be reached through it; a reference
-        already dying has no callback called; then the callbacks in list order, and the holds are
-        released last to first, as the tuple that holds them in the C is."""
-        while self.weakrefs and self.weakrefs[0].basic:
-            self.weakrefs.pop(0).target = None
-        pending: list[tuple[RefWeak, Any]] = []
-        for w in self.weakrefs:
-            w.target = None
-            callback, w.callback = w.callback, None
-            if w.refs > 0:
-                incref(w)
-                pending.append((w, callback))
-        self.weakrefs = []
-        for w, callback in pending:
-            if callback is not None:
-                callback(w)
-        for w, _ in reversed(pending):
-            decref(w)
+        _clear_weak_list(self)
 
     def finalize(self) -> None:
         """PEP 442: a finaliser runs once, whether the object's last count went or the collector
@@ -919,18 +1032,24 @@ class RefObject:
             self.clear_weakrefs()
         self._clear_contents(late_weakrefs=self.cls.base_weaklist, dying=True)
         gc.free(self)
+        decref(self.cls)                    # subtype_dealloc: the type last, after the object's memory
 
     def traverse(self) -> list[Any]:
         """subtype_traverse: each class's __slots__ in the base chain (traverse_slots, in member order: sorted), then
         the managed dict (PyObject_VisitManagedDict: the dict when there is one, GH-130327, else the values the object
-        keeps, in its class's keys' order), then the type (not a counted object in the model), then the built-in base's
-        own traverse (BaseException_traverse: the dict, args, notes, the traceback, the cause, the context, in the order
-        its clear function has them; dict_traverse for a dict's entries)."""
+        keeps, in its class's keys' order), then the type (a heap type's objects hold it), then the built-in base's own
+        traverse (BaseException_traverse: the dict, args, notes, the traceback, the cause, the context, in the order its
+        clear function has them; dict_traverse for a dict's entries). A built-in base with fields of its own has the dict
+        too, so the type comes before it."""
         out: list[Any] = []
         for c in self.cls.mro:
             for name in c._release_order():
                 out.append(self._slots_of(c).get(name, UNSET))
+        if self.cls.native_fields:
+            out.append(self.cls)
         for name in self.cls.native:
+            if name == "__payload__" and not self.cls.native_fields:
+                out.append(self.cls)
             if name == "__dict__":
                 out.extend(self._dict_referents())
             elif name == "__payload__":
@@ -943,6 +1062,8 @@ class RefObject:
             else:
                 cells, key = _cell_of(self, None, name)
                 out.append(cells[key])
+        if not self.cls.native_fields and "__payload__" not in self.cls.native:
+            out.append(self.cls)                # object's layout: the managed dict, then the type
         return [v for v in out if _counted(v)]
 
     def _dict_referents(self) -> list[Any]:
@@ -1031,8 +1152,8 @@ class RefWeak:
     """A weak reference: a count of its own and a target it does not count. `target` is None once the
     target has died; `basic` is the one reference of an object with no callback, which is shared."""
 
-    def __init__(self, target: RefObject, callback: Any) -> None:
-        self.target: RefObject | None = target
+    def __init__(self, target: RefObject | RefClass, callback: Any) -> None:
+        self.target: RefObject | RefClass | None = target
         self.callback = callback
         self.basic = callback is None
         self.refs = 0
@@ -1040,7 +1161,7 @@ class RefWeak:
         self.heap = target.heap
         self.heap.gc.link(self)             # a weak reference is a tracked object (its callback is a reference)
 
-    def __call__(self) -> RefObject | None:
+    def __call__(self) -> RefObject | RefClass | None:
         if self.target is not None and getattr(self.target, "put_off", False):
             return None                 # PyWeakref_GetRef on an object whose dealloc is put off: gone
         return self.target
@@ -1072,10 +1193,11 @@ class RefWeak:
         self.unlink()
 
 
-def weak_ref(target: RefObject, callback: Any = None) -> RefWeak:
+def weak_ref(target: RefObject | RefClass, callback: Any = None) -> RefWeak:
     """get_or_create_weakref: a new count on the shared basic reference if there is one; else a new
-    one, the basic at the head of the list and any other right after it, so the newest comes first."""
-    if not target.cls.has_weakref:
+    one, the basic at the head of the list and any other right after it, so the newest comes first.
+    A class can always be referred to (type's objects have a list)."""
+    if isinstance(target, RefObject) and not target.cls.has_weakref:
         raise TypeError(f"cannot create weak reference to '{target.cls.name}' object")
     if callback is None and target.weakrefs and target.weakrefs[0].basic:
         incref(target.weakrefs[0])
@@ -1117,8 +1239,8 @@ class RefManagedBuffer(RefObject):
 
 def buffer_classes(heap: Heap) -> tuple[RefClass, RefClass]:
     """The two classes of a world's buffers: the managed buffer and the memoryview, each with its one field."""
-    mbuf = RefClass("managedbuffer", slots=("obj",), hidden=("obj",), release=("obj",), heap=heap)
-    view = RefClass("memoryview", slots=("mbuf",), hidden=("mbuf",), release=("mbuf",), heap=heap)
+    mbuf = RefClass("managedbuffer", slots=("obj",), hidden=("obj",), release=("obj",), heap=heap, static=True)
+    view = RefClass("memoryview", slots=("mbuf",), hidden=("mbuf",), release=("mbuf",), heap=heap, static=True)
     return mbuf, view
 
 

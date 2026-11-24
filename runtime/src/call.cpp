@@ -1921,6 +1921,7 @@ void allocated_state(const ClassObject* cls, Obj made) {
 void note_prelude_class(const ClassObject* c) {
     prelude_classes().insert(c);
     auto* cls = const_cast<ClassObject*>(c);
+    cls->flags |= IMMORTAL;                      // a C type's: never let go of (the runtime keeps some by their address)
     // a type of CPython's has its own tp_new or its base's, never slot_tp_new: what its class statement noted of the __new__ it
     // was written with (as of a class of the program's, which it looked like until now) does not hold for it (RL-810, RL-841)
     cls->slot_tp_new = false;
@@ -3549,15 +3550,8 @@ std::vector<Object*> reach(const std::vector<Object*>& roots, std::unordered_set
         if (r != nullptr && seen.insert(r).second) order.push_back(r);
     for (std::size_t i = 0; i < order.size(); ++i) {
         Object* o = order[i];
-        detail::children_of(o, kids);
+        detail::children_of(o, kids);            // a class's: tp_dict's values, tp_bases, tp_mro (detail::visit_class)
         if (o->cls != nullptr) kids.push_back(o->cls);
-        if (o->kind == Kind::Class) {
-            auto* c = static_cast<ClassObject*>(o);
-            for (auto& [name, value] : c->attrs.items())
-                if (value.is_object() && detail::walked(value.object())) kids.push_back(const_cast<Object*>(value.object()));
-            for (ClassObject* b : c->bases) kids.push_back(b);
-            for (ClassObject* m : c->mro) kids.push_back(m);
-        }
         if (view != nullptr) {
             for (Object* k : kids)
                 if (k->kind == Kind::Module) ++view->referrers[static_cast<Module*>(k)];
@@ -3683,9 +3677,11 @@ void clear_module_dict(Dict* d, ExitView& v) {
         }
 }
 // _PyGC_CollectNoFail: gc.c's sequence, whatever gc.enable said and with no gc.callbacks, over the cyclic garbage of the
-// collector's buffer and what the trace finds dead (all that the module objects reach and the interpreter's roots do not); what
-// a finaliser makes reachable from the roots again lives on, with what it reaches. A module object found dead goes
-// (module_clear), its namespace cleared with the rest if it is among them
+// collector's buffer and what the trace finds dead (all that the module objects reach and the interpreter's roots do not).
+// What a finaliser makes reachable again lives on, with what it reaches: handle_resurrected_objects' reckoning by counts, in
+// which a module object found dead holds nothing from outside, and what the roots reach again (a class a finaliser's new
+// object refers to is kept by that object's count, RL-929). A module object found dead goes (module_clear), its namespace
+// cleared with the rest if it is among them
 std::int64_t collect_at_exit(ExitView& v) {
     detail::Collector& c = detail::collector();
     if (c.collecting) return 0;
@@ -3716,13 +3712,18 @@ std::int64_t collect_at_exit(ExitView& v) {
     }
     std::int64_t collected = detail::handle_weakref_callbacks(unreachable, survivors);
     detail::finalize_garbage(unreachable);
-    {                                            // handle_resurrected_objects, by the trace
+    {                                            // handle_resurrected_objects
         std::unordered_set<Object*> again;
         reach(interpreter_roots(v), again);
-        for (Object* o : detail::list_items(unreachable))
-            if (!again.contains(o)) detail::list_move(o, final);
+        std::vector<Object*> dead;
         for (Module* m : lost_modules)
-            if (!again.contains(m)) v.gone.insert(m);
+            if (!again.contains(m)) {
+                v.gone.insert(m);
+                dead.push_back(m);
+            }
+        detail::deduce_unreachable(unreachable, final, dead);
+        for (Object* o : detail::list_items(final))
+            if (again.contains(o)) detail::list_move(o, unreachable);   // what the roots reach lives on, as before
     }
     detail::list_merge(unreachable, survivors);
     detail::clear_unreachable_weakrefs(final);
@@ -4165,6 +4166,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                 // and bootstrap.py's), which no program can name.
                 Module* pm = new_module(pm_entry.name);
                 runtime_own.insert(pm);
+                note_runtime_namespace(pm);
                 {
                     Ref walk = own(new Builtin("_dict_next", i_dict_next));
                     put(pm->dict, "_dict_next", walk.get());

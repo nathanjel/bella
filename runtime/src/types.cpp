@@ -1008,6 +1008,10 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             module_name = Ref::share(dict_get(frame->module->dict, Obj::of(N("__name__"))));
             if (!module_name.get().is_unset()) spec.attrs.emplace_back("__module__", module_name.get());
         }
+    // A metaclass of the program's with a finaliser runs it at each of its classes' deaths (slot_tp_finalize on the class): not
+    // written, so a stop before the class exists
+    if (!(meta->flags & IMMORTAL) && meta->lookup(N("__del__")))
+        throw NotImplemented("a class whose metaclass '" + meta->name + "' has __del__ (its finaliser at the class's death)");
     ClassObject* c = nullptr;
     try {
         c = make_class(spec);
@@ -1016,6 +1020,14 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     } catch (const ModelError& e) {                         // a layout the object model has no account of: a stop, not an abort (RL-564)
         throw NotImplemented("the class '" + name->text + "': " + e.what());
     }
+    // The class is the program's, counted (C-3-12, D-19), unless the runtime's own code makes it: a prelude's, the bootstrap's,
+    // a built-in module's hidden namespace's, or one no frame makes, which stands for a type CPython writes in C and is immortal
+    // as those are (the runtime keeps some by their address). `made` is type_new's new reference: what fails from here lets
+    // the class go, as type_new_impl's error path does, and a collection finds it
+    detail::FrameRecord* maker = detail::current_frame();
+    if (maker == nullptr || maker->module == nullptr || runtime_namespace(maker->module)) c->flags |= IMMORTAL;
+    Ref made = Ref::steal(Obj::of(c));
+    incref(meta);                                           // a heap type's object holds its type: a metaclass of the program's
     c->cls = meta;
     c->qualname = qualname;
     c->heap_type = true;
@@ -1058,6 +1070,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         if (!is_kind(classcell, Kind::Cell))
             raise_new("TypeError", "__classcell__ must be a nonlocal cell, not " + type_of(classcell)->name);
         auto* cell = static_cast<Cell*>(classcell.object());
+        incref(c);                                          // PyCell_Set: the cell holds the class
         decref(std::exchange(cell->value, Obj::of(c)));
     }
     if (!classdictcell.is_unset() && is_kind(classdictcell, Kind::Cell)) {
@@ -1090,7 +1103,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         invoke(bound.get(), kw);
         break;
     }
-    return Ref::share(Obj::of(c));
+    return made;
 }
 
 Ref type_new_builtin(Obj, Args a) {                 // type.__new__(meta, name, bases, ns, **kw)
@@ -1607,6 +1620,13 @@ std::unordered_map<const ClassObject*, Ref>& given_qualnames() {
     static std::unordered_map<const ClassObject*, Ref> table;
     return table;
 }
+// type_dealloc lets go of ht_name and ht_qualname: a dead class's are forgotten with it (C-3-12), as _abc's kept hash is
+void forget_class(const ClassObject* c) {
+    given_names().erase(c);
+    given_qualnames().erase(c);
+    forget_class_hash(c);
+}
+const bool class_forgetting = (detail::class_forgotten = forget_class, true);
 void keep_given(std::unordered_map<const ClassObject*, Ref>& table, const ClassObject* c, Obj v) {
     if (is_exact_str(v)) table.erase(c);
     else table[c] = Ref::share(v);

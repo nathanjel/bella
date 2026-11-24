@@ -1,0 +1,16 @@
+import sys, os, weakref, gc, contextvars
+def setup():
+    import data
+    class Early:
+        def __del__(self, out=sys.stdout):
+            out.write('text\n')
+    class Late:
+        def __del__(self, ref=weakref.ref(sys.stdout), check=gc.is_finalized, write=os.write):
+            s=ref()
+            if s is None:
+                write(2,b'gone\n')
+            else:
+                write(2,b'finalized\n' if check(s) else b'unfinalized\n')
+    contextvars.ContextVar('v').set(Late())
+    data.x=Early()
+setup()

@@ -1,0 +1,17 @@
+import sys
+import os
+import contextvars
+def setup():
+    import data
+    class Early:
+        def __del__(self, out=sys.stdout, w=os.write):
+            w(1,b'before\n')
+            out.write('text\n')
+            w(1,b'after\n')
+    class Late:
+        def __del__(self, w=os.write):
+            w(1,b'late\n')
+    data.early = Early()
+    if sys.argv[1] != 'noctx':
+        contextvars.ContextVar('v').set(Late())
+setup()

@@ -1,0 +1,12 @@
+import os, sys
+def setup():
+    import data
+    class Early:
+        def __del__(self, out=sys.stdout, w=os.write, flush=sys.argv[1]=='flush'):
+            w(2,b'before\n')
+            out.write('text\n')
+            if flush:
+                out.flush()
+            w(2,b'after\n')
+    data.early = Early()
+setup()

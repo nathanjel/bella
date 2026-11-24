@@ -1,0 +1,15 @@
+import sys, os, contextvars, codecs
+def setup():
+    import data
+    class Early:
+        def __del__(self, out=sys.stdout, w=os.write):
+            out.write('text\n')
+            w(2,b'after\n')
+    data.x = Early()
+    if sys.argv[1]=='ctx':
+        contextvars.ContextVar('v').set(Early)
+    elif sys.argv[1]=='sys':
+        sys.saved=Early
+    elif sys.argv[1]=='handler':
+        codecs.register_error('keep', Early)
+setup()

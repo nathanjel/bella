@@ -676,11 +676,13 @@ class World:
             decref(m)
             del m, r
         # the class is cyclic garbage in CPython (D-04: collected at an unspecified time): both
-        # sides release its attributes now, in its dictionary's order, and drop it
+        # sides release its attributes now, in its dictionary's order, and drop it (RefClass.dispose:
+        # what the collector does to it, in place, once nothing but its MRO holds it)
         for name in [n for n in vars(old_r) if n in old.attrs]:
             delattr(old_r, name)
+        for name in list(old.attrs):
+            old.del_attr(name)
         old.dispose()
-        old.mro = ()
         del old, old_r
         mc, rc = self._make_runtime_class(variant)
         self.classes.append((mc, rc))

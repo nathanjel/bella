@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from refmodel.objects import GcList, GcState, Heap, ModelError, RefObject, RefWeak, decref, incref
+from refmodel.objects import GcList, GcState, Heap, ModelError, RefClass, RefObject, RefWeak, decref, incref
 
 GENERATION_AUTO = -1
 
@@ -189,7 +189,7 @@ def handle_weakref_callbacks(gc: GcState, unreachable: GcList, old: GcList) -> i
     moves to `old`, the collection's survivors. The number of those that died meanwhile."""
     to_call = GcList("weakref callbacks")
     for op in unreachable:
-        if not isinstance(op, RefObject):
+        if not isinstance(op, (RefObject, RefClass)):
             continue
         for wr in list(op.weakrefs):
             if wr.callback is None:
@@ -236,13 +236,15 @@ def handle_resurrected_objects(gc: GcState, unreachable: GcList, old: GcList) ->
 
 def clear_weakrefs(unreachable: GcList) -> None:
     """No unreachable object is weakly referenced any more, and no callback runs; an unreachable weak reference is
-    cleared too."""
+    cleared too. A class's bases' lists of subclasses hold weak references without callbacks: they forget it here."""
     for op in unreachable:
         if isinstance(op, RefWeak):
             op.clear_ref()
-        if isinstance(op, RefObject):
+        if isinstance(op, (RefObject, RefClass)):
             while op.weakrefs:
                 op.weakrefs[0].clear_ref()
+        if isinstance(op, RefClass):
+            op.leave_bases()
 
 
 def delete_garbage(gc: GcState, collectable: GcList, old: GcList) -> None:

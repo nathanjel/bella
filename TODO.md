@@ -528,7 +528,7 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          taken, for the author to overrule), and a lean build collects only when asked, at the runtime's looks and
          at exit (D-24 gets it); then `make object-test` with `World(cycles=True)`.
        * 3c, the header from the model (planned 2026-11-23), in five parts, each with its checks:
-         (H1, H2 and H3 done 2026-11-23: DECISIONS; what is left of H2, classes as counted objects for C-3-12; and the
+         (H1, H2 and H3 done 2026-11-23: DECISIONS; what was left of H2, classes as counted objects, done 2026-11-24, C-3-12; and the
          collector's speed: trial counts in the objects' own counts and colours in the header's free bits, measured 3x
          on a loop that keeps 2,000,000 lists) `object.hpp` over the object model's own kinds (an instance and the attribute storage of every built-in
          base, dicts, weak references): a BUFFERED flag and the candidate buffer, an object that dies while buffered
@@ -544,13 +544,17 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
          points; lean: gc.collect, the runtime's looks, exit). (H4, the exit, done 2026-11-23: DECISIONS, C-9-13; the exit is
          finalize_modules' sequence with its collections, over a trace in CPython's view since modules and classes are
          immortal here; review A43's fixes and `_abc`'s weak references done 2026-11-24: DECISIONS, C-7-19, C-9-13's row
-         `abc`; the known gaps that entry and the one of 2026-11-23 list). (H5) the seven cases into the compiled baseline,
-         and a codex review of the collector.
-       * 3c, what is left: classes as counted objects (C-3-12), which D-19's summary asks for ("classes ... are
-         reference-counted like any other"). Waiting on it: RL-929 (a finaliser's new object does not keep what it holds of
-         a dead class through the collection: gc.c's resurrection is by counts) and RL-932 (a stream that only a dead class's
-         method holds is never finalised, and a class no module reaches is not even found dead at the exit). Today the
-         exit's collections finalise what only a dead class reached from a module holds and leave it alive.
+         `abc`; the known gaps that entry and the one of 2026-11-23 list). (H5, done: the seven cases joined the compiled
+         baseline as each passed, and review A41 was codex's of the collector, `7355673..256985b`.)
+       * 3c, classes as counted objects done 2026-11-24 (C-3-12 compiled; DECISIONS; RL-929, RL-932): D-19's summary
+         ("classes ... are reference-counted like any other"), the model first (`RefClass`), then the header. Left from it:
+         a mappingproxy of a class's dict (`C.__dict__`, `__classdictcell__`) holds the class, where CPython's holds the
+         dict only, so a class whose own dict names nothing of it (a subclass that adds neither a dict nor slots) lives as
+         long as the proxy here and dies in CPython (its dict emptied by type_clear): the proxy over the class's dict as an
+         object of its own (`dict_view`), measured first; a metaclass of the program's with `__del__` stops by name (its
+         finaliser at each class's death, slot_tp_finalize on the class); a class the runtime's own code makes (a prelude's,
+         the bootstrap's) is immortal, as a C type is, which holds for a prelude that makes classes on a program's behalf
+         too (none is known).
        * A class's basic weak reference (CPython's: its bases' lists of subclasses, `tp_subclasses`, hold one for as long as
          the class lives) is not there: `weakref.getweakrefcount(C)` is one less, `weakref.ref(C)` is a new object when the
          program holds none (CPython's is the same one each time), and a program's `hash()` of it is not the hash `_abc`
@@ -656,6 +660,11 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   its C walks take 100 to 200 bytes a level. To analyse: where the bytes of a frame go (the guards, the argument arrays,
   what the lowering keeps alive across a call), whether deep recursion should have frames off the native stack, and
   whether the preludes' walks should be loops or leaner native code; then revise the approach.
+
+* `runtime/src/ops.cpp` is at GCC's limit for a unit's growth by inlining (`--param inline-unit-growth`; about 2,080 calls
+  refused at -O2, 2026-11-24), so which of its hot calls are inlined depends on the rest of the header: C-3-12's first build
+  lost `ClassObject::lookup` that way, 3% of a method call (DECISIONS, 2026-11-24). When speed becomes a goal: find the
+  hot paths it refuses (`-fopt-info-inline-missed`), and split the unit or mark them.
 
 * The author's direction (P-3, 2026-11-02): a whole-program pass that glues the modules' globals
   into one application-wide object with fixed slots, once the closed world and the staging

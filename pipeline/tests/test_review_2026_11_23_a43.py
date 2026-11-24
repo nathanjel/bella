@@ -4,9 +4,7 @@ C-9-13), and A42's fixes again.
 Fourteen findings, RL-923 to RL-936; `docs/reviews/review-log.md` has each with its verdict. The programs are the reviewer's
 own probes, a directory each with the modules a probe imports (`review_a43/<probe>/*.txt`, read as `.py`), one row a process,
 compared on standard output, standard error and the exit status: the rows that differed and agree now, with the reviewer's
-controls beside them. Left out until their causes are done: RL-929 and RL-932, of classes being immortal (C-3-12:
-`reduce/cycle`, `reduce/kept`, `roots/newcycle`, `fresh`, `imports/buffer` and the stream probes), and RL-933, a question for
-the author (`exit/failed`).
+controls beside them. Left out: RL-933, a question for the author (`exit/failed`).
 
 * The exit's steps where CPython has them: the shutdown warning of a `gc.garbage` with something in it (`gcwarning`:
   RL-923); `sys.is_finalizing()` true from the end of atexit's handlers (`flag`: RL-927); the second `flush_std_files` on the
@@ -21,6 +19,10 @@ the author (`exit/failed`).
 * The wiping hashes a key that is not an exact str (`key`: RL-931), and an exception while sys.modules is emptied is
   reported as ignored (`modkey`: RL-934).
 * `bytes.hex` and `bytearray.hex` refuse an unknown keyword before they convert `bytes_per_sep` (`hex`: RL-924).
+* With classes as counted objects (C-3-12, 2026-11-24): a class that a finaliser's new object refers to lives through the
+  exit's collection, whose reckoning of what is reachable again is by counts (`fresh`, `reduce/cycle`, `reduce/kept`,
+  `roots/newcycle`: RL-929), and a stream that only a dead class holds is finalised when the class goes (`buffer`, `drain`,
+  `streamheld`, `pipe`, `imports/buffer`: RL-932).
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_23_a43
 """
@@ -42,19 +44,24 @@ HERE = Path(__file__).resolve().parent / "review_a43"
 ROWS: dict[str, tuple[str, ...]] = {
     "alias": ("keep",),
     "bootstrap": ("internal", "external"),
+    "buffer": ("noctx", "ctx"),
+    "drain": ("observe",),
     "exit": ("garbage", "alias", "dynamic", "cache", "generator", "errorhandler", "warning", "after", "weakfinal", "context",
              "deep", "trace"),
     "flag": ("path", "cycle", "callback", "flush", "disabled"),
+    "fresh": ("default", "bare"),
     "gcwarning": ("warn", "save"),
     "hex": ("bytes", "array", "hexlify"),
-    "imports": ("namespace", "closure", "default", "instance", "dict", "sys_exit", "uncaught"),
+    "imports": ("namespace", "closure", "default", "instance", "dict", "sys_exit", "uncaught", "buffer"),
     "key": ("visible", "_private"),
     "lateflush": ("ok", "fail"),
     "modkey": ("alias",),
     "newmodule": ("insert",),
     "phase": ("ns", "cycle", "plain"),
-    "reduce": ("garbage", "callback", "immediate"),
-    "roots": ("garbage", "callback", "context", "codec", "warning", "resurrect", "unraisable"),
+    "pipe": ("open",),
+    "reduce": ("garbage", "callback", "immediate", "cycle", "kept"),
+    "roots": ("garbage", "callback", "context", "codec", "warning", "resurrect", "unraisable", "newcycle"),
+    "streamheld": ("ctx", "sys", "handler"),
 }
 
 

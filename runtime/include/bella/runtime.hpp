@@ -221,6 +221,8 @@ struct Module : Object {
 };
 inline Dict* program_dict(const Module* m) { return m->program_view != nullptr ? m->program_view : m->dict; }   // its namespace, as the program sees it
 void forget_module(const Module* m);             // the runtime's own: cleared by nothing at exit
+void note_runtime_namespace(const Module* m);    // a prelude's module, which the runtime's own code runs in
+bool runtime_namespace(const Module* m);         // the runtime's own code runs in it: a prelude's, a hidden one (a class made there is a C type's)
 std::vector<Module*>& all_modules();             // every module made, oldest first (immortal: D-19)
 std::vector<Module*>& hidden_modules();          // the runtime's own namespaces no program sees (a built-in module's prelude's, match's)
 std::vector<Module*> made_native_modules();      // the built-in modules made so far, CPython's C ones (imports.cpp's registry)
@@ -1038,6 +1040,7 @@ void set_update(Obj set, Obj iterable);
 bool set_contains(SetObject* s, Obj key);
 bool set_contains_hashed(SetObject* s, Obj key, std::int64_t hash);
 bool set_contains_by(SetObject* s, std::int64_t hash, const std::function<bool(Obj)>& eq);   // a look-up by a key not made (_abc's)
+void forget_class_hash(const ClassObject* c);    // _abc's kept hash of a class's basic reference, when the class dies
 bool set_discard(SetObject* s, Obj key);
 void set_clear(SetObject* s);                    // set_clear_internal: PySet_Clear
 Ref set_binary(BinOp op, Obj a, Obj b);                      // | & - ^ of sets and frozensets, else NotImplemented
