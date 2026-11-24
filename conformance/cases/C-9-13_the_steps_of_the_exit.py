@@ -13,7 +13,11 @@ builtins' names; a last collection, which finds what only sys or the builtins he
 and no stream); and once the interpreter's own state is cleared (the context, the codec registry), the interpreter's last
 collection. What the warning filters or gc.callbacks hold is never finalised. An ABC holds what it registers and has
 cached by weak references only, so an ABC the interpreter keeps keeps none of them. Each row starts the program again, sets up one
-thing and ends; its finalisers write with `os.write` alone. Nothing assigns to the builtins (E-06)."""
+thing and ends; its finalisers write with `os.write` alone. Nothing assigns to the builtins (E-06).
+
+Section 9 promises which of the objects still alive are finalised, not their order or the step each runs in (D-07): a
+row prints the tags of what its finalisers wrote, sorted. With BELLA_CASE_STEPS set, a row prints all they wrote, in order
+(what each one still finds), which pipeline/tests/test_exit_steps.py compares: the runtime's choice, CPython's order."""
 import abc
 import binascii
 import codecs
@@ -29,6 +33,7 @@ from collections.abc import Callable
 from exitpkg import fin
 
 SHOW = "BELLA_CASE_SHOW"
+STEPS = "BELLA_CASE_STEPS"
 LABEL = "main"
 ROWS = ("stdout", "cycle", "cycle_disabled", "data", "plain", "classattr", "resurrect", "restored", "alive", "weak", "hook",
         "weak_main", "cmodule", "codec", "context", "warnings", "gc_callbacks", "abc")
@@ -88,7 +93,8 @@ class Restored:
 class Asker:
     """A finaliser that asks a builtin: after the builtins are cleared it fails, with nothing left to report it."""
 
-    def __del__(self) -> None:
+    def __del__(self, w: Callable[[int, bytes], int] = os.write) -> None:
+        w(1, b"  asker: finalised\n")
         print("  asker: print works")
 
 
@@ -188,7 +194,10 @@ def again(row: str) -> None:
     os.close(here)
     status = os.waitstatus_to_exitcode(os.waitpid(child, 0)[1])
     print(row, "-> status", status)
-    for line in wrote.decode().splitlines():
+    lines = wrote.decode().splitlines()
+    if STEPS not in os.environ:                  # which finalisers ran, in no order (D-07)
+        lines = sorted(line.split(":", 1)[0] for line in lines)
+    for line in lines:
         print(line)
 
 

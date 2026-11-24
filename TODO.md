@@ -725,13 +725,10 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   C-8-17); no colour in the runtime's report (RL-528, D-28); the state of a built-in type written in Python has no name (RL-507,
   C-3-76, C-3-77); a finaliser at exit when `sys` still reaches its module's globals: exact, with the collector (RL-514, listed
   there); the main program's decimal literals are checked against the limit of digits at its start (RL-555, C-8-18).
-* **C-9-13 split by D-07 as sharpened (the author, Question 39, 2026-11-24: B; spec v0.35; DECISIONS).** The case keeps
-  what section 9 promises: for each of its 18 rows the status and the finalisers that ran, as a sorted set (the order is
-  free), which objects are never finalised (`warnings`, `gc_callbacks`), and that a weak reference's callback is called;
-  recorded again from CPython (`make record`), never edited. The order and the steps (what each finaliser sees: `LABEL`,
-  `modules`, `open`, `print`, `stdout`, the restored builtins, a kept module's names None, `alive`'s one underscore first,
-  the asker's print failing) move to a design test under `pipeline/tests`, CPython against compiled as the case is run now,
-  whose docstring says it holds the runtime's choice under D-07. The split is shown to the author before it is made.
+* **C-9-13 split by D-07 as sharpened: done 2026-11-24 (the author, Question 39: B; spec v0.35; DECISIONS).** The case
+  prints, per row, the sorted tags of what its finalisers wrote (which objects are finalised; `warnings` and
+  `gc_callbacks` none), recorded again from CPython; with BELLA_CASE_STEPS set it prints all they wrote in order, which
+  `pipeline/tests/test_exit_steps.py` compares under CPython and compiled (the runtime's choice: CPython's order).
 * **A class's call that enters a Python `__init__` takes two entries of the recursion limit (the author, Question 38,
   2026-11-24: B; RL-639; D-17 and spec v0.34; DECISIONS).** As CPython's `CALL_ALLOC_AND_ENTER_INIT` does once a site is
   specialised (its shim frame and `__init__`'s). Case first: the row `__init__` of `pipeline/tests/test_recursion_counts.py`
