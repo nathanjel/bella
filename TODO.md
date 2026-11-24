@@ -764,11 +764,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   x`, `open(..., x).mode is x`, `struct.unpack('5s', x)[0] is x` (False under CPython, True compiled), `TextIOWrapper.newlines`
   (a new tuple at each read under CPython). With RL-623 (a tuple of constants is one object in CPython) this is one wording:
   D-03 names small ints and interned strings, and decision 1 accepted identity differences in general.
-* **For the author (RL-756, review A34): `TextIOWrapper.tell` after a seek.** With the ratio of bytes to characters left from
-  the chunk before a `seek`, CPython's `tell` estimates more bytes to decode again than its snapshot has and, in a release
-  build, hands the decoder the snapshot's bytes and the NUL that ends every bytes object (`decode(b'a\r\x00')`); its own
-  assert forbids the state. The prelude caps the estimate at the snapshot (RL-347), so a decoder written in Python sees
-  other calls; the position agrees. A deviation, the one NUL, or open: Question 31 (drafted), after Question 30.
+* **`TextIOWrapper.tell` after a seek: D-32 (the author, Question 31, 2026-11-24: A; RL-756; DECISIONS).** The cap
+  stays (RL-347) and is registered; nothing to implement. To be reported upstream: see Housekeeping.
 * **Open from review A34:** the argument counts of every method of every type were swept on 2026-11-22
   (`pipeline/tests/test_argument_counts.py`); what it leaves is `__sizeof__` (163 of its 182 stops: no type answers it yet).
   (RL-776, `Struct.__init__` with no format, was done on 2026-11-22 with the Struct step, C-7-92.)
@@ -935,3 +932,13 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * ~~Turn the closure step on in `.github/workflows/ci.yml` once task 1 is done.~~ Done
   2026-11-01: both jobs run it without `continue-on-error`, and the pinned job also requires the
   committed `closure.lock.json` to match.
+* **Report upstream to CPython (the author asked, 2026-11-24, with Question 31; D-32, RL-756).** `TextIOWrapper.tell`
+  after a `seek`: with the bytes-to-characters ratio left from the chunk before the seek, `skip_bytes` exceeds the
+  snapshot's length; `Modules/_io/textio.c:2949` asserts `skip_bytes <= PyBytes_GET_SIZE(next_input)` and a release build
+  goes on to `DECODER_DECODE(input, skip_bytes, ...)`, handing the decoder the snapshot and the bytes after it (first the
+  terminating NUL: `decode(b'a\r\x00', False)` on 3.15.2); `Lib/_pyio.py:2444` raises AssertionError at the same point.
+  The reproduction: a Python decoder that decodes two bytes at a time, `_CHUNK_SIZE = 3`, a read-only `BytesIO` of
+  `b"a\r\nb"` with `newline="\n"`, `t.read(1); t.seek(t.tell()); t.read(1); t.tell()` (review A34's A34-03,
+  `docs/reviews/2026-11-22-codex-astra-34-review.md`). Before filing: search the tracker for an existing issue, check the
+  main branch, and reduce the reproduction to the stock library. Filing is the author's, from the author's account: draft
+  the issue text and show it; nothing is posted without the author's go-ahead. When upstream settles it, revisit D-32.
