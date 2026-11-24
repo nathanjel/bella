@@ -32,7 +32,7 @@ A compiled program is equivalent to the same program under CPython 3.15 when, fo
 | Declared unobservable: MAY differ | Reason |
 | --- | --- |
 | `id()` values and the addresses inside default reprs (`<Foo object at 0x...>`) | Implementation addresses (D-01, D-02), compared up to a consistent renaming within one run: every equality and inequality CPython shows between address-derived values MUST hold in the compiled program; only the numbers may differ |
-| `is` between equal small-integer immediates and between equal interned strings | More often true than in CPython; CPython already warns about code that depends on it (D-03) |
+| `is` between equal immutable values (int, float, complex, str, bytes, tuple, frozenset): whether an operation gives back the object it was given or an equal new one, and whether a constant is one object | May differ in either direction: equal small-integer immediates and interned strings are identical more often; a tuple of constants is made at each evaluation; a library function may give back its argument where CPython makes a copy, or the other way. CPython already warns about code that depends on it (D-03) |
 | The moment a reference cycle is collected, and the finaliser order among its members | Collector timing (D-04) |
 | Finalisation order of module globals at interpreter exit | Unspecified in CPython too (D-07) |
 | `sys.getsizeof` values, memory addresses, allocation counts | Implementation detail |
@@ -215,7 +215,7 @@ Deviations. A difference inside the first table that the project chooses to keep
 | --- | --- | --- | --- |
 | D-01 | `id()` returns a runtime address that differs from CPython's and may be reused differently | Accepted (decision 1) | Yes: any `id(` call |
 | D-02 | Default `__repr__` prints a different address after `at 0x` | Accepted (decision 1) | Yes: `repr` of an object without `__repr__` in output |
-| D-03 | `is` is true between equal small-integer immediates and between equal interned strings more often than in CPython | Accepted (decision 1; code that depends on it is wrong by the dialect's standards) | Yes: `is` with a literal operand |
+| D-03 | `is` between equal immutable values may differ from CPython's in either direction: equal small-integer immediates and equal interned strings are identical more often; a tuple of constants is a new object at each evaluation where CPython's compiler makes it one constant; a library function may give back the object it was given where CPython's makes an equal new one, or the other way. Identity only: values, hashes and the calls made into the program's own code agree. Where an identity difference changes another observable, it is a defect, not this deviation | Accepted (decision 1; code that depends on it is wrong by the dialect's standards; widened by the author, 2026-11-24) | Yes: `is` or `is not` where an operand is a literal, or its declared type is int, float, complex, str, bytes, tuple or frozenset |
 | D-04 | Reference cycles are collected at a different moment and their members are finalised in a different order | Accepted | Partial: classes with `__del__` that can form cycles |
 | D-05 | `set` and `frozenset` iteration order for elements hashed by value (`int`, `str`, `bytes`, tuples of these); for identity-hashed elements the order is unobservable in CPython as well, so no rule applies | Decided (decision 4): CPython's set table algorithm, so order matches for value-hashed elements | Yes: iteration over a set reaching output |
 | D-06 | Traceback line text in uncaught-exception reports and `traceback` formatting | Decided (decision 6): release builds print file and line only; debug builds reproduce CPython's format from source maps | Yes: `traceback` module use |
@@ -350,3 +350,5 @@ v0.30 (2026-11-24, the author's decision): `marshal` is \[P1\] but for code obje
 v0.31 (2026-11-24, the author's decision): `zipimport` is \[P1\] for reading an archive, CPython's own module compiled with the program; what makes code stops by name (E-01, E-02), and an archive on `sys.path` stays E-04 (section 7's Persistence and compression row).
 
 v0.32 (2026-11-24, the author's decision): D-32, `TextIOWrapper.tell` caps its estimate of the bytes to decode again at the snapshot's length, where CPython's C reads past the snapshot (section 11).
+
+v0.33 (2026-11-24, the author's decision): D-03 widened to identity between equal immutable values in either direction (a tuple of constants made at each evaluation, a library function giving back its argument or a copy), identity only; its lint to `is` with a literal operand or one declared int, float, complex, str, bytes, tuple or frozenset (sections 2 and 11).

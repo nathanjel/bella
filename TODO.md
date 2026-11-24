@@ -754,16 +754,17 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   stored arguments passing it on. A built-in exception class makes a new tuple when its `__new__` and `__init__` are
   BaseException's (CPython's `_PyExc_InitTypes` gives those `BaseException_vectorcall`), read from the runtime's class
   dicts, no table. A call without a star unchanged; the starred call's cost measured (it loses a copy).
-* **For the author, a wording (RL-623, review A28):** D-03's row names small ints and interned strings and says `is` is true
-  more often than in CPython. A tuple of constants is the other way round: CPython's compiler makes it one constant of the code
-  object (`def pair(): return (11, 22)`; `pair() is pair()`), and a compiled program makes it each time. Decision 1 accepts
-  identity differences; the row should name this one. To ask next.
-* **For the author, with D-03's wording (RL-623; review A32, RL-699 to RL-701, RL-704, RL-719, RL-720): the identity of an
-  equal immutable object.** Which of two equal strs, bytes or tuples a library function gives back: `BytesIO(x).getvalue()
-  is x` (True under CPython, False compiled), `StringIO(x).getvalue() is x`, `os.path.normpath(x) is x`, `splitroot(x)[2] is
-  x`, `open(..., x).mode is x`, `struct.unpack('5s', x)[0] is x` (False under CPython, True compiled), `TextIOWrapper.newlines`
-  (a new tuple at each read under CPython). With RL-623 (a tuple of constants is one object in CPython) this is one wording:
-  D-03 names small ints and interned strings, and decision 1 accepted identity differences in general.
+* **D-03 widened (the author, Question 37, 2026-11-24: B; spec v0.33; DECISIONS).** Identity between equal immutable
+  values in either direction, identity only; RL-699 to RL-701, RL-704, RL-719 and RL-720 covered. Left: bella-lint's rule
+  (`is`/`is not` with a literal operand or one declared int, float, complex, str, bytes, tuple or frozenset).
+* **Tuples of constants folded as CPython's compiler folds them (the author, Question 37, 2026-11-24: B; RL-623).** Case
+  first, CPython passing, of identity and of the counts of objects made (`def pair(): return (11, 22)`, `pair() is
+  pair()`; a nested tuple; `-1` and a folded operation inside one; `x in [1, 2]` and `for x in [1, 2]` as a tuple
+  constant, `x in {1, 2}` as a frozenset; the limits). Then a pass mirroring CPython 3.15.2's `Python/flowgraph.c`:
+  `fold_tuple_of_constants` (1529), `optimize_lists_and_sets` (1697), `fold_const_binop` and `fold_const_unaryop` (1946,
+  2035) with their limits (`MAX_INT_SIZE` 128 bits, `MAX_COLLECTION_SIZE` 256, `MAX_STR_SIZE` 4096, `MAX_TOTAL_ITEMS`
+  1024), the folded value a module constant (`K_n`, `init_constants()`), with its `PassSpec`. What folding gets wrong is
+  identity only and stays under D-03; an evaluation saves the tuple's allocation (measured).
 * **`TextIOWrapper.tell` after a seek: D-32 (the author, Question 31, 2026-11-24: A; RL-756; DECISIONS).** The cap
   stays (RL-347) and is registered; nothing to implement. To be reported upstream: see Housekeeping.
 * **Open from review A34:** the argument counts of every method of every type were swept on 2026-11-22
