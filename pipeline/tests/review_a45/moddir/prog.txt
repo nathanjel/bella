@@ -1,0 +1,33 @@
+import math
+import sys
+from types import ModuleType
+
+
+class Key(str):
+    def __hash__(self):
+        print("hash")
+        return 123
+
+
+def subclass():
+    m = ModuleType("sample")
+    vars(m)[Key("public")] = 1
+    print("listing")
+    print("public" in dir(m))
+
+
+def native():
+    names = dir(math)
+    print("pi" in names, "tau" in names, len(names) == len(set(names)), names == sorted(names))
+    del math.tau
+    print("tau" in dir(math), "pi" in dir(math))
+
+
+def plain():
+    m = ModuleType("sample")
+    m.b = 1
+    m.a = 2
+    print(dir(m))
+
+
+{"subclass": subclass, "native": native, "plain": plain}[sys.argv[1]]()

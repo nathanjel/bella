@@ -222,7 +222,9 @@ struct Module : Object {
     Ref name;
     Dict* dict;                                  // its namespace: held while holds_namespace, and by each holder (null: neither)
     Dict* builtins = nullptr;                    // a staged text's, when not the builtins module's own (held as dict is)
-    Dict* locals = nullptr;                      // a staged text's namespace when exec gives one of its own (PyEval_EvalCode's locals), else dict (held as dict is)
+    // a staged text's namespace when exec gives one of its own (PyEval_EvalCode's locals), held by the text's record alone and
+    // let go of with its namespace: its top-level frame's f_locals, which no function holds (RL-945); else null
+    Dict* locals = nullptr;
     // A module CPython writes in C that the exit has cleared (finalize_modules_clear_weaklist): what the program sees of it, its
     // names None, while the runtime's own code goes on with `dict` (C-9-13). Null otherwise (owned)
     Dict* program_view = nullptr;
@@ -233,14 +235,15 @@ struct Module : Object {
     Module(const char* n, bool counted);         // counted: a module of the program's
     Module(Dict* globals, Dict* given_builtins); // a text's frame, held by its run: not a module of the program's
 };
-// What runs in a module takes its namespace as its globals, and lets go of it (func_clear's Py_CLEAR(func_globals)); with the
-// last holder of a module that no longer holds its namespace, the way to it goes. Nothing for an immortal module
+// What runs in a module takes its namespace as its globals, and a staged text's builtins of its own, and lets go of them
+// (func_clear's Py_CLEAR(func_globals), then func_builtins); never a text's locals, which a function does not hold (RL-945). With
+// the last holder of a module that no longer holds its namespace, the way to it goes. Nothing for an immortal module
 void hold_counted_globals(Module* m);
 void release_counted_globals(Module* m);
 Module* live_module(std::uint64_t serial);       // the counted module of that serial number while it lives, else null
 inline void hold_globals(Module* m) {
     if (m->flags & IMMORTAL) return;
-    if (m->builtins == nullptr && m->locals == nullptr && m->dict != nullptr) [[likely]] {   // a module's: its namespace alone
+    if (m->builtins == nullptr && m->dict != nullptr) [[likely]] {   // a module's: its namespace alone
         ++m->holders;
         incref(m->dict);
         return;
@@ -249,7 +252,7 @@ inline void hold_globals(Module* m) {
 }
 inline void release_globals(Module* m) {
     if (m->flags & IMMORTAL) return;
-    if (m->builtins == nullptr && m->locals == nullptr && (m->holders > 1 || (m->holders == 1 && m->holds_namespace))) [[likely]] {
+    if (m->builtins == nullptr && (m->holders > 1 || (m->holders == 1 && m->holds_namespace))) [[likely]] {
         --m->holders;                            // the way to the namespace stays: the module, or another holder, holds it
         decref(m->dict);
         return;

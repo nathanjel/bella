@@ -2288,16 +2288,18 @@ Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the
     if (is_bootstrap_prelude(m)) refuse_bootstrap_namespace(m);
     Ref dirfunc = resolved_dict_item(m->dict, N("__dir__"));
     if (!dirfunc.get().is_unset()) return invoke(dirfunc.get(), {});
-    Ref names = dict_new();                      // a native module has CPython's names, whichever it has written
-    auto* d = static_cast<Dict*>(names.get().object());
+    Ref keys = list_new({});                     // PyDict_Keys: no key is hashed or compared (RL-947)
     for (auto& e : m->dict->entries)
-        if (!e.key.is_unset()) dict_set(d, e.key, None());
-    if (std::string_view native = native_module_name(m); !native.empty())
-        for (std::string_view n : cpython_names_of(native))
-            if (!was_filled(m, n)) dict_set(d, Obj::of(intern(n)), None());   // not one the program deleted
-    Ref keys = list_new({});
-    for (auto& e : d->entries)
         if (!e.key.is_unset()) list_append(keys.get(), e.key);
+    if (std::string_view native = native_module_name(m); !native.empty()) {
+        // a native module has CPython's names, whichever it has written: those not written yet after its keys, found missing by
+        // their text among the str keys (a subclass's read as stored, no method called), and none the program deleted
+        std::unordered_set<std::string_view> present;
+        for (auto& e : m->dict->entries)
+            if (const Str* s = e.key.is_unset() ? nullptr : as_str(e.key)) present.insert(s->text);
+        for (std::string_view n : cpython_names_of(native))
+            if (!present.contains(n) && !was_filled(m, n)) list_append(keys.get(), Obj::of(intern(n)));
+    }
     return keys;
 }
 Ref module_dict_get(Obj self) {
@@ -2338,7 +2340,7 @@ Ref module_init_m(Obj self, Args a) {            // module___init___impl: module
     dict_set(m->dict, Obj::of(N("__package__")), None());
     dict_set(m->dict, Obj::of(N("__loader__")), None());
     dict_set(m->dict, Obj::of(N("__spec__")), None());
-    m->name = Ref::share(name);
+    if (is_exact_str(name)) m->name = Ref::share(name);   // md_name: an exact str's only, else the namespace alone holds it (RL-943)
     return none_ref();
 }
 

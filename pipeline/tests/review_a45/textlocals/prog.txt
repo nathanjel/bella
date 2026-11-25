@@ -1,0 +1,44 @@
+import gc
+import sys
+import types
+from dataclasses import dataclass
+
+
+@dataclass
+class Point:
+    x: int
+    y: int = 2
+
+
+@dataclass(frozen=True)
+class Pair:
+    a: int
+
+
+def saveall():
+    global Point
+    gc.collect()
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    del Point
+    gc.collect()
+    print(sum(isinstance(o, types.FunctionType) and o.__name__ == "__create_fn__" for o in gc.garbage))
+    gc.set_debug(0)
+    gc.garbage.clear()
+
+
+def methods():
+    gc.collect()
+    p = Point(1)
+    print(p, p == Point(1, 2), Point.__init__.__globals__ is globals(), Point.__init__.__builtins__ is vars(__builtins__))
+
+
+def frozen():
+    gc.collect()
+    try:
+        Pair(1).a = 2
+    except Exception as e:
+        print(type(e).__name__)
+    print(hash(Pair(1)) == hash(Pair(1)))
+
+
+{"saveall": saveall, "methods": methods, "frozen": frozen}[sys.argv[1]]()

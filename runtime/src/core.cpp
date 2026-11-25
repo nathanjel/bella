@@ -270,11 +270,10 @@ void let_go_of_namespace(Module* m) {
     m->holds_namespace = false;
     Dict* d = m->dict;
     Dict* b = m->builtins;
-    Dict* l = m->locals != m->dict ? m->locals : nullptr;
+    Dict* l = std::exchange(m->locals, nullptr);  // a text's locals: the record's alone (RL-945)
     if (m->holders == 0) {
         m->dict = nullptr;
         m->builtins = nullptr;
-        m->locals = nullptr;
     }
     if (d != nullptr) decref(d);
     if (b != nullptr) decref(b);
@@ -292,22 +291,18 @@ void hold_counted_globals(Module* m) {
     ++m->holders;
     incref(m->dict);
     if (m->builtins != nullptr) incref(m->builtins);
-    if (m->locals != nullptr && m->locals != m->dict) incref(m->locals);
 }
 void release_counted_globals(Module* m) {
     if (m->holders <= 0) throw ModelError("a module's namespace let go of by more holders than held it");
     Dict* d = m->dict;
     Dict* b = m->builtins;
-    Dict* l = m->locals != m->dict ? m->locals : nullptr;
     if (--m->holders == 0 && !m->holds_namespace) {
         m->dict = nullptr;
         m->builtins = nullptr;
-        m->locals = nullptr;
         if (m->flags & DEAD) free_module(m);
     }
     decref(d);                                   // func_clear's order: the globals, then the builtins
     if (b != nullptr) decref(b);
-    if (l != nullptr) decref(l);
 }
 
 namespace {
@@ -440,12 +435,11 @@ bool rooted_namespace(const Module* m) {
     return held.is_object() && held.object() == m;
 }
 // What a function, a frame object or a traceback entry holds of its module: what hold_globals took, its namespace (func_globals)
-// and a staged text's builtins and locals; nothing of an immortal module, nor of one whose namespace is rooted
+// and a staged text's builtins; nothing of an immortal module, nor of one whose namespace is rooted
 void visit_globals(const Module* m, std::vector<Object*>& out) {
     if (m == nullptr || (m->flags & IMMORTAL) || rooted_namespace(m)) return;
     if (m->dict != nullptr) detail::visit(Obj::of(m->dict), out);
     if (m->builtins != nullptr) detail::visit(Obj::of(m->builtins), out);
-    if (m->locals != nullptr && m->locals != m->dict) detail::visit(Obj::of(m->locals), out);
 }
 bool register_traversals() {
     using detail::visit;
@@ -1513,8 +1507,14 @@ void detail::frame_ends(FrameRecord& f, Ref* const* locals, std::size_t n, bool 
     }
     if (f.frame_obj.get().is_unset()) return;
     Ref held = std::move(f.frame_obj);
-    if (held.get().object()->refs > 1)
-        take_ownership(static_cast<FrameObject*>(held.get().object()), locals, n, f.ns, f.resumed != nullptr ? nullptr : f.caller);
+    if (held.get().object()->refs > 1) {
+        // f_locals: a class body's namespace, or the locals a staged text's top level ran with, which only its record held
+        // (RL-945); a module's frame has its globals for locals, which its frame object holds as its globals already
+        Obj ns = f.ns;
+        if (ns.is_unset() && f.module != nullptr && f.module->locals != nullptr && std::string_view(f.code->name) == "<module>")
+            ns = Obj::of(f.module->locals);
+        take_ownership(static_cast<FrameObject*>(held.get().object()), locals, n, ns, f.resumed != nullptr ? nullptr : f.caller);
+    }
 }
 
 }  // namespace bella

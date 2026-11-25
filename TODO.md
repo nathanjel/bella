@@ -824,6 +824,13 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   and `__itemsize__` from the runtime's structs. `tools/missing_names.py --update` then, and the stop rows of the argument
   counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
   of CPython's facts, not the numbers shown.
+* **Questions from review A45 (to put after Question 43 and D-19's words).** RL-944: a class's dict reached through the
+  proxy's reflected `|` (`mappingproxy_or` hands a reflected `__ror__` the class's dict itself) and written is not what a
+  look-up on the class reads, the class's attributes being its own store and the dict a view of them (C-3-82); options: an
+  exclusion beside E-05 (which has `gc.get_referents`, the other way to that object), or writes to the view taken into the
+  store (CPython's look-up then where its type cache has no entry). RL-946: a module that rebinds `__builtins__` has
+  CPython's later functions take it as their builtins (`len` there is the dict's), and the runtime ignores it, its builtins
+  bound at compile time; options: E-06's words widened to name it (a lint rule: an assignment to the name), or honoured.
 * **Question 43 (to put): D-19's words, and a failed import's module object.** The program's module objects are counted
   (Question 36, done 2026-11-25: C-9-14, DECISIONS). D-19's summary and note and the spec's sentences (section 9, "Module
   objects are immortal (D-19)"; section 11's paragraph, whose premise "a module can leave `sys.modules` only through E-04" is

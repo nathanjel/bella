@@ -2610,8 +2610,13 @@ Ref i_traceback_names(Obj, Args a) {
     Ref locals;
     if (module == nullptr) {
         locals = dict_new();
-    } else if ((code.flags & 0x1) == 0 && is_module) {   // a module's body: its namespace, which stays
-        locals = Ref::share(Obj::of(module->locals != nullptr ? module->locals : module->dict));
+    } else if ((code.flags & 0x1) == 0 && is_module) {   // a module's body: its namespace, which stays; a text's own locals
+        if (module->locals != nullptr)           // while the text runs, and its frame object's f_locals after (RL-945)
+            locals = Ref::share(Obj::of(module->locals));
+        else if (kept != nullptr && !kept->ns.get().is_unset())
+            locals = kept->ns;
+        else
+            locals = Ref::share(Obj::of(module->dict));
     } else if (running != nullptr) {
         if ((code.flags & 0x1) == 0) locals = Ref::share(running->ns);   // a class body's namespace
         else locals = function_locals(code, [running](int slot) { return running->slots == nullptr ? Obj{} : running->slots[slot]->get(); });

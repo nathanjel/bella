@@ -1,0 +1,34 @@
+import sys
+from types import ModuleType
+
+
+class Name(str):
+    def __del__(self):
+        print("name released")
+
+
+def replaced():
+    m = ModuleType(Name("sample"))
+    m.__name__ = "renamed"
+    print("renamed")
+    del m
+    print("done")
+
+
+def kept():
+    m = ModuleType(Name("sample"))
+    print("made", m.__name__)
+    del m
+    print("done")
+
+
+def reinit():
+    m = ModuleType("plain")
+    m.__init__(Name("again"))
+    m.__name__ = "third"
+    print("renamed", repr(m))
+    del m
+    print("done")
+
+
+{"replaced": replaced, "kept": kept, "reinit": reinit}[sys.argv[1]]()
