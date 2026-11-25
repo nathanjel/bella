@@ -1842,13 +1842,34 @@ std::unordered_set<const ClassObject*>& prelude_classes() {     // the prelude's
     static std::unordered_set<const ClassObject*> classes;
     return classes;
 }
+// Names CPython has that the runtime leaves out by a registered difference, not for want of work: the stop says which entry
+// (docs/deviations.toml), where any other absent name says "not yet". Sorted by key, as CPYTHON_NAMES is.
+struct AbsentByEntry { std::string_view key, why; };
+constexpr std::string_view MODULE_LOCKS = "a module lock: the import system takes none until the threads milestone, D-33";
+constexpr AbsentByEntry ABSENT_BY_ENTRY[] = {
+    {"_frozen_importlib:_BlockingOnManager", MODULE_LOCKS}, {"_frozen_importlib:_DeadlockError", MODULE_LOCKS},
+    {"_frozen_importlib:_DummyModuleLock", MODULE_LOCKS},   {"_frozen_importlib:_ImportLockContext", MODULE_LOCKS},
+    {"_frozen_importlib:_List", MODULE_LOCKS},              {"_frozen_importlib:_ModuleLock", MODULE_LOCKS},
+    {"_frozen_importlib:_ModuleLockManager", MODULE_LOCKS}, {"_frozen_importlib:_WeakValueDictionary", MODULE_LOCKS},
+    {"_frozen_importlib:_blocking_on", MODULE_LOCKS},       {"_frozen_importlib:_get_module_lock", MODULE_LOCKS},
+    {"_frozen_importlib:_has_deadlocked", MODULE_LOCKS},    {"_frozen_importlib:_module_locks", MODULE_LOCKS},
+    {"_frozen_importlib:_thread", MODULE_LOCKS},            {"_frozen_importlib:_weakref", MODULE_LOCKS},
+};
+static_assert(std::ranges::is_sorted(ABSENT_BY_ENTRY, {}, &AbsentByEntry::key));
+// the stop for a name of CPython's the runtime lacks: `scope.name (why)`
+std::string absent_name(std::string_view scope, std::string_view name) {
+    std::string key = std::string(scope).append(":").append(name);
+    auto it = std::ranges::lower_bound(ABSENT_BY_ENTRY, std::string_view(key), {}, &AbsentByEntry::key);
+    std::string_view why = it != std::end(ABSENT_BY_ENTRY) && it->key == key ? it->why : "CPython has it; the runtime does not yet";
+    return std::string(scope).append(".").append(name).append(" (").append(why).append(")");
+}
 void refuse_in(const std::vector<ClassObject*>& mro, const Str* name) {
     for (const ClassObject* c : mro) {
         if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(table_name(c), name->text))
-            throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
+            throw NotImplemented(absent_name(c->name, name->text));
         if (c->heap_type)                        // a class of the import system's two modules: its own names are the table's too
             if (std::string scope = bootstrap_class_scope(c); !scope.empty() && cpython_has(scope, name->text))
-                throw NotImplemented(scope + "." + name->text + " (CPython has it; the runtime does not yet)");
+                throw NotImplemented(absent_name(scope, name->text));
     }
 }
 }  // namespace
@@ -2031,7 +2052,7 @@ void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, con
         const ClassObject* c = mro[i];
         if (c->attrs.contains(name)) return;
         if ((!c->heap_type || prelude_classes().contains(c)) && cpython_has(table_name(c), name->text))
-            throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
+            throw NotImplemented(absent_name(c->name, name->text));
     }
 }
 // A native module's names once it was filled. One of them that is absent later is one the program deleted, by `del`, delattr or
@@ -2059,7 +2080,7 @@ void refuse_absent_attribute(Obj obj, const Str* name) {
         auto it = native_modules().find(mod);
         bool tabled = (it != native_modules().end() && it->second == m) || is_bootstrap_prelude(m);   // its names are the table's
         if (tabled && cpython_has(mod, name->text) && !was_filled(m, name->text))
-            throw NotImplemented(mod + "." + name->text + " (CPython has it; the runtime does not yet)");
+            throw NotImplemented(absent_name(mod, name->text));
     }
     if (is_kind(obj, Kind::Class)) refuse_in(static_cast<ClassObject*>(obj.object())->mro, name);
     refuse_in(type_of(obj)->mro, name);
@@ -2069,7 +2090,7 @@ void refuse_absent_data_descriptor(Obj obj, const Str* name) {
         if (c->heap_type) continue;              // the prelude's classes keep their fields as they choose
         std::string_view kind = cpython_attribute_kind(c, name->text);
         if (kind == "member_descriptor" || kind == "getset_descriptor")
-            throw NotImplemented(c->name + "." + name->text + " (CPython has it; the runtime does not yet)");
+            throw NotImplemented(absent_name(c->name, name->text));
     }
 }
 std::string_view cpython_attribute_kind(const ClassObject* owner, std::string_view name) {

@@ -676,6 +676,16 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   main thread and in a thread; compiled, 990 on the 256 MiB stack, 800 on 8 MiB and 100 (200 fails) on 2 MiB. The
   threads milestone decides the threads' size from this analysis, not before it.
 
+* **CPython's module locks, with the threads milestone (Question 47: C; D-33).** Port `Lib/importlib/_bootstrap.py:52-480`
+  (`_WeakValueDictionary`, `_List`, `_BlockingOnManager`, `_DeadlockError`, `_has_deadlocked`, `_ModuleLock`,
+  `_DummyModuleLock`, `_ModuleLockManager`, `_get_module_lock`, `_lock_unlock_module`) and `_ImportLockContext` into the
+  prelude as CPython's text, `_find_and_load`'s lock with them, on the threads milestone's `_thread`; `_setup` binds
+  `_thread` and `_weakref` as CPython's does; `__import__` calls `_lock_unlock_module` for a module still initialising, as
+  `import.c` does. Measured 2026-11-25 under CPython: 12 Python calls more for each first import of a module (and 6 of
+  `_ImportLockContext` with the finder's loop), the lock code at most 4 frames below `_find_and_load` (the finder 10).
+  Then `pipeline/tests/test_module_locks.py`'s rows agree, `LOCKS` leaves the A46 test's `OPEN`, the names leave
+  `ABSENT_BY_ENTRY`, and D-33 ends (D-17's clause keeps the finder and the code's reading).
+
 * `runtime/src/ops.cpp` is at GCC's limit for a unit's growth by inlining (`--param inline-unit-growth`; about 2,080 calls
   refused at -O2, 2026-11-24), so which of its hot calls are inlined depends on the rest of the header: C-3-12's first build
   lost `ClassObject::lookup` that way, 3% of a method call (DECISIONS, 2026-11-24). When speed becomes a goal: find the
@@ -827,15 +837,11 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
 * **Question 43 (the author, 2026-11-25: B): the import system's frames as CPython's frames.** Done 2026-11-25 (C-8-22;
   C-9-14 joins the compiled baseline; `tools/bootstrap_frames.py`, checked by `make verify`; DECISIONS). Review A46's fixes
   the same day (RL-949, RL-951, RL-952, RL-948 in part) changed the comments of the runtime and the model that named D-19.
-* **Question 47: the import system's module locks and D-17's import clause (put to the author 2026-11-25; RL-950).** With
-  Question 43's step what is left of the import system's frames is what CPython enters and leaves before a module's body
-  runs. Its path finder and its reading of the code cannot run in a closed world and are seen only through a recursion at
-  the limit during an import; its module locks can run in one thread, and a program sees them otherwise too (review A46,
-  RL-950: a name's `__hash__` called by the lock table, `_ModuleLock` and its kin, which stop by name, the local `lock` of
-  `_find_and_load` and `_lock_unlock_module`). The options: A, words now (D-17's clause names all three, "(decided
-  2026-11-24, narrowed 2026-11-25)", and an entry for the locks' other traces; v0.42); B, CPython's locks now, on the
-  runtime's `_thread` of one thread, D-17 naming the finder and the code's reading only; C, A now and B with the threads
-  milestone. Recommended C.
+* **Question 47 (the author, 2026-11-25: C): the import system's module locks registered until the threads milestone.**
+  Done 2026-11-25: D-17's import clause narrowed to what CPython's import system enters and leaves before a module's body
+  runs (its path finder, its module locks, its reading of the code), D-33 for what one thread sees of the locks (spec
+  v0.42; RL-950), and the fourteen names of the lock machinery stop with D-33's words (`ABSENT_BY_ENTRY`, call.cpp);
+  `pipeline/tests/test_module_locks.py` holds it. CPython's locks themselves go with the threads milestone (Later).
 * **Question 48: the code objects of the functions the closed world rewrote (RL-948's remainder; after Question 47).** 27
   of the 149 code objects that the functions of `runtime/prelude/bootstrap_frames.json` reach have the rewrite's locals
   where CPython's have its text's (`co_varnames`, `co_nlocals`, `_setup`'s `co_argcount`; [P1] under E-02): the path
@@ -844,6 +850,17 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   They are the A46 test's `OPEN`, beside the two of the locks. The options to put: registered (an entry naming them, or
   E-04's reason widened), CPython's text where it can run and the table carrying CPython's names and counts for the rest,
   or in part; the evidence to count first (who reads these functions' code objects).
+* **The methods of a module name that is a str subclass (review W47: RL-955, then RL-954).** An import by such a name
+  (`__import__`, `importlib.__import__`, a lazy import's first use) calls its methods otherwise than CPython does: measured
+  2026-11-25 for a module found on the path, CPython `__add__` 14, `__hash__` 16, `rpartition` 4, `__ne__` 1, `split` 1;
+  compiled `__hash__` 4, `rpartition` 2, `split` 1, `__repr__` 1. Three sources: the locks (D-33), the path finder (RL-954,
+  the closed world's) and the prelude's own text, which is CPython's and still differs (RL-955: no hash in
+  `_init_module_attrs` or `_load_unlocked`, a `__repr__` in `_find_and_load_unlocked`). First RL-955: find each difference
+  of the prelude's text, make it CPython's, and keep a sweep (a logging subclass over the import routes: a plain import, a
+  package and its submodule, a from-import, a missing module, a body that raises) as a test. Then put RL-954 to the author:
+  register what the finder calls, or refuse an import by a name whose type is a str subclass with methods of its own, as
+  an attribute name of that kind is refused (`call.cpp`, "an attribute name of a subclass of str with a __hash__ or __eq__
+  of its own").
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
   version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads

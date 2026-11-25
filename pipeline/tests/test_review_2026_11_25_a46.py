@@ -14,9 +14,10 @@ compared on standard output, standard error and the exit status:
 
 The class of RL-948, the names and counts of the code objects of the import system's functions, is swept by `codeobjects`:
 every function `runtime/prelude/bootstrap_frames.json` names, reached by name on both sides. The functions in `OPEN` differ
-(the module locks, RL-950 and Question 47; the closed world's rewrites of the finders, the bytecode cache and the installer,
-Question 48); every other one must agree, and one of `OPEN` that comes to agree is to leave it. Two the prelude had rewritten
-where CPython's text runs as it is are CPython's now, and `rewrites` holds what else they show (`relax`, `loaders`).
+(`LOCKS`, the module locks: RL-950, registered as D-33; `REWRITTEN`, the closed world's rewrites of the finders, the bytecode
+cache and the installer: Question 48); every other one must agree, and one of `OPEN` that comes to agree is to leave it. Two
+the prelude had rewritten where CPython's text runs as it is are CPython's now, and `rewrites` holds what else they show
+(`relax`, `loaders`).
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_25_a46
 """
@@ -43,20 +44,26 @@ ROWS: dict[str, tuple[str, ...]] = {
     "codeobjects": ("all",),
 }
 
-OPEN = frozenset({
-    "_bootstrap.FrozenImporter.exec_module", "_bootstrap._exec", "_bootstrap._find_and_load", "_bootstrap._find_spec",
-    "_bootstrap._lock_unlock_module", "_bootstrap._setup", "_bootstrap_external.AppleFrameworkLoader.create_module",
-    "_bootstrap_external.ExtensionFileLoader.create_module", "_bootstrap_external.FileFinder._fill_cache",
-    "_bootstrap_external.FileFinder._find_children", "_bootstrap_external.FileFinder.find_spec",
-    "_bootstrap_external.NamespaceLoader.get_resource_reader", "_bootstrap_external.PathFinder._get_spec",
-    "_bootstrap_external.PathFinder._path_hooks", "_bootstrap_external.PathFinder._path_importer_cache",
-    "_bootstrap_external.PathFinder.discover", "_bootstrap_external.PathFinder.find_distributions",
-    "_bootstrap_external.PathFinder.find_spec", "_bootstrap_external.PathFinder.invalidate_caches",
-    "_bootstrap_external.SourcelessFileLoader.get_code", "_bootstrap_external.WindowsRegistryFinder._search_registry",
-    "_bootstrap_external.WindowsRegistryFinder.find_spec", "_bootstrap_external._code_to_hash_pyc",
-    "_bootstrap_external._code_to_timestamp_pyc", "_bootstrap_external._compile_bytecode", "_bootstrap_external._install",
-    "_bootstrap_external._write_atomic", "_bootstrap_external.cache_from_source", "_bootstrap_external.source_from_cache",
+# the module locks, registered as D-33 until the threads milestone (Question 47: C; pipeline/tests/test_module_locks.py)
+LOCKS = frozenset({
+    "_bootstrap._find_and_load", "_bootstrap._lock_unlock_module",
 })
+# the functions the closed world rewrote or refuses (Question 48)
+REWRITTEN = frozenset({
+    "_bootstrap.FrozenImporter.exec_module", "_bootstrap._exec", "_bootstrap._find_spec", "_bootstrap._setup",
+    "_bootstrap_external.AppleFrameworkLoader.create_module", "_bootstrap_external.ExtensionFileLoader.create_module",
+    "_bootstrap_external.FileFinder._fill_cache", "_bootstrap_external.FileFinder._find_children",
+    "_bootstrap_external.FileFinder.find_spec", "_bootstrap_external.NamespaceLoader.get_resource_reader",
+    "_bootstrap_external.PathFinder._get_spec", "_bootstrap_external.PathFinder._path_hooks",
+    "_bootstrap_external.PathFinder._path_importer_cache", "_bootstrap_external.PathFinder.discover",
+    "_bootstrap_external.PathFinder.find_distributions", "_bootstrap_external.PathFinder.find_spec",
+    "_bootstrap_external.PathFinder.invalidate_caches", "_bootstrap_external.SourcelessFileLoader.get_code",
+    "_bootstrap_external.WindowsRegistryFinder._search_registry", "_bootstrap_external.WindowsRegistryFinder.find_spec",
+    "_bootstrap_external._code_to_hash_pyc", "_bootstrap_external._code_to_timestamp_pyc",
+    "_bootstrap_external._compile_bytecode", "_bootstrap_external._install", "_bootstrap_external._write_atomic",
+    "_bootstrap_external.cache_from_source", "_bootstrap_external.source_from_cache",
+})
+OPEN = LOCKS | REWRITTEN
 
 
 def table_names() -> list[tuple[str, str]]:
