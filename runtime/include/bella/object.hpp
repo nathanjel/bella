@@ -2616,14 +2616,9 @@ inline Finalizer& finalizer(Kind k) {
     static Finalizer table[static_cast<std::size_t>(Kind::KindCount)] = {};
     return table[static_cast<std::size_t>(k)];
 }
-// The exit's trace (runtime/src/call.cpp, finalize): CPython's view of the heap, in which a module and a class are objects like
-// any other (D-19 and C-3-12 make them immortal here). While it runs the traverses name the immortal and the untracked too;
-// no collection runs then, and no count is touched
-inline bool tracing_everything = false;
 // Tracked and alive: what a collection walks. Its count is not asked: trial deletion lowers the counts in place, and an object
 // that is not dead has one above nought (one whose count reached nought is DEAD before any code runs, or put off)
 inline bool walked(const Object* o) {
-    if (tracing_everything) [[unlikely]] return holds_others(o->kind, o->flags) && !(o->flags & (DEAD | PUT_OFF | TOMBSTONE));
     return holds_others(o->kind, o->flags) && !(o->flags & (IMMORTAL | DEAD | PUT_OFF | TOMBSTONE)) && !(o->cls != nullptr && o->cls->gc_untracked);
 }
 inline void visit(Obj v, std::vector<Object*>& out) {
@@ -2678,19 +2673,9 @@ inline void visit_attributes(T* obj, std::vector<Object*>& out) {
     if (!fields) type();
 }
 // type_traverse (RefClass.traverse): tp_dict (the values, and the view's object), tp_mro's classes and tuple, tp_bases' and
-// their tuple, and a metaclass the program made (a heap type's object holds its type). The exit's trace sees CPython's view
-// of every class, an immortal one's too: tp_dict's values, tp_bases, tp_mro (reach adds the type), and the objects the runtime
-// has of the three (the dict's view, the tuples), so that the exit's reckoning by counts sees each holder (RL-942)
+// their tuple, and a metaclass the program made (a heap type's object holds its type)
 [[gnu::noinline]] inline void visit_class(ClassObject* c, std::vector<Object*>& out) {
     for (auto& [k, v] : c->attrs.items()) visit(v, out);
-    if (tracing_everything) [[unlikely]] {
-        for (ClassObject* b : c->bases) visit(Obj::of(b), out);
-        for (ClassObject* m : c->mro) visit(Obj::of(m), out);
-        if (c->dict_view != nullptr) visit(Obj::of(c->dict_view), out);
-        visit(c->mro_tuple, out);
-        visit(c->bases_tuple, out);
-        return;
-    }
     if (c->dict_view != nullptr) visit(Obj::of(c->dict_view), out);
     for (ClassObject* m : c->mro)
         if (!c->cleared || m != c) visit(Obj::of(m), out);
@@ -2936,41 +2921,25 @@ inline void trial_deletion(const std::vector<Object*>& roots, GcList& unreachabl
 }
 
 // gc.c's update_refs, subtract_refs and move_unreachable over a collection's own list (collector.deduce_unreachable): `base`
-// keeps what is reachable from outside it, in the order the scan keeps it; the rest moves to `unreachable`, in order. What
-// `dead` holds is not a reference from outside: the exit's module objects that are found dead and have no count to tell it
-// (D-19), whose namespaces are in the list. With `cpython_view` (the exit's), what is reachable reaches also what it reaches
-// in CPython's view of the heap (tracing_everything: a function, a frame, a traceback entry its module's namespace, which
-// CPython's holds counted and visits): that edge has no count here and is not subtracted, so the counts are CPython's, and
-// it carries reachability as func_globals does (RL-942)
-inline void deduce_unreachable(GcList& base, GcList& unreachable, const std::vector<Object*>& dead = {}, bool cpython_view = false) {
+// keeps what is reachable from outside it, in the order the scan keeps it; the rest moves to `unreachable`, in order
+inline void deduce_unreachable(GcList& base, GcList& unreachable) {
     std::unordered_map<Object*, std::int64_t> refs;
     std::vector<Object*> order = list_items(base), kids;
     for (Object* o : order) {
         if (o->refs == 0) throw ModelError("an object is in a collection's list with no count");
         refs[o] = o->refs;
     }
-    auto subtract = [&](const std::vector<Object*>& holders) {
-        for (Object* o : holders) {
-            children_of(o, kids);
-            for (Object* k : kids)
-                if (auto it = refs.find(k); it != refs.end()) --it->second;
-        }
-    };
-    subtract(order);
-    subtract(dead);
+    for (Object* o : order) {
+        children_of(o, kids);
+        for (Object* k : kids)
+            if (auto it = refs.find(k); it != refs.end()) --it->second;
+    }
     std::vector<Object*> kept;
     for (std::size_t i = 0; i < order.size(); ++i) {
         Object* o = order[i];
         if (in_list(o, unreachable)) continue;
         if (refs[o] > 0) {
             children_of(o, kids);
-            if (cpython_view) {
-                std::vector<Object*> more;
-                tracing_everything = true;
-                children_of(o, more);
-                tracing_everything = false;
-                kids.insert(kids.end(), more.begin(), more.end());
-            }
             for (Object* k : kids) {
                 auto it = refs.find(k);
                 if (it == refs.end()) continue;

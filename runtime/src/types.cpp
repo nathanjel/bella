@@ -1913,9 +1913,14 @@ void set_fn_module(Obj self, Obj v) {
 }
 Ref fn_defaults(Obj self) { return fn_of(self)->defaults.get().is_unset() ? none_ref() : fn_of(self)->defaults; }
 Ref fn_kwdefaults(Obj self) { return fn_of(self)->kwdefaults.get().is_unset() ? none_ref() : fn_of(self)->kwdefaults; }
-Ref fn_globals(Obj self) { return Ref::share(Obj::of(fn_of(self)->module->dict)); }
+// func_globals and func_builtins, members: None once a collection has cleared the function (func_clear), as a member reads NULL
+Ref fn_globals(Obj self) {
+    Module* m = fn_of(self)->module;
+    return m == nullptr ? none_ref() : Ref::share(Obj::of(m->dict));
+}
 Ref fn_builtins(Obj self) {
     Module* m = fn_of(self)->module;
+    if (m == nullptr) return none_ref();
     return Ref::share(Obj::of(m->builtins != nullptr ? m->builtins : builtins_module()->dict));
 }
 void set_fn_defaults(Obj self, Obj v) {          // func_set_defaults: None and del mean none at all

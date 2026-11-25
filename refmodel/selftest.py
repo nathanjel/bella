@@ -21,7 +21,7 @@ def run(iterations: int, seed: int, ops_per_world: int = 60) -> tuple[int, int, 
     rng = random.Random(seed)
     worlds = ops = hits = misses = deaths = 0
     while ops < iterations:
-        world = World(cycles=True, buffers=True)
+        world = World(cycles=True, buffers=True, modules=True)
         worlds += 1
         try:
             for _ in range(ops_per_world):

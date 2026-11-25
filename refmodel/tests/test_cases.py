@@ -2219,6 +2219,144 @@ def test_a_metaclass_mro_sees_a_class_with_no_mro_rl_940() -> None:
     assert model() == want
 
 
+def test_a_module_is_a_counted_object() -> None:
+    """The author's decision of 2026-11-24 (Question 36, RL-933): a module of the program's is counted. What runs in it
+    holds its namespace, not the module, so the module dies when the program lets go of it, its weak references' callbacks
+    first, and its namespace with it when nothing else holds that; a function kept from it keeps the namespace, reads it,
+    and makes new functions there, after the module has died; a namespace that holds such a function, or the module
+    itself, goes in a collection. The same story under CPython."""
+    import types
+
+    from refmodel import collector
+    from refmodel import objects as O
+
+    class Fin:
+        def __init__(self, tag: str, log: list[object]) -> None:
+            self.tag, self.log = tag, log
+
+        def __del__(self) -> None:
+            self.log.append(("dies", self.tag))
+
+    def real() -> list[object]:
+        log: list[object] = []
+        # a module and nothing that runs in it
+        m = types.ModuleType("plain")
+        m.x = Fin("plain.x", log)                            # type: ignore[attr-defined]
+        r = weakref.ref(m, lambda w: log.append(("callback", "plain")))
+        del m
+        log.append("plain dropped")
+        # a function kept from it: the module dies, the namespace lives with the function
+        m = types.ModuleType("kept")
+        exec("def f():\n    def g():\n        return x\n    return g\n", m.__dict__)  # noqa: S102 -- CPython's side: a def run in a module's namespace
+        m.x = Fin("kept.x", log)                             # type: ignore[attr-defined]
+        f = m.__dict__.pop("f")
+        r = weakref.ref(m, lambda w: log.append(("callback", "kept")))
+        del m
+        log.append(("kept dropped", r() is None, f.__globals__["x"].tag))
+        g = f()                                              # a function made there after the module died
+        del f
+        log.append(("f dropped", g.__globals__["x"].tag))
+        del g
+        log.append("g dropped")
+        # the namespace holds its function: a cycle that a collection takes
+        m = types.ModuleType("cycle")
+        exec("def f():\n    return x\n", m.__dict__)  # noqa: S102 -- CPython's side: a def run in a module's namespace
+        m.x = Fin("cycle.x", log)                            # type: ignore[attr-defined]
+        r = weakref.ref(m, lambda w: log.append(("callback", "cycle")))
+        del m
+        log.append(("cycle dropped", r() is None))
+        gc.collect()
+        log.append("cycle collected")
+        # the namespace holds the module
+        m = types.ModuleType("selfish")
+        m.me = m                                             # type: ignore[attr-defined]
+        m.x = Fin("selfish.x", log)                          # type: ignore[attr-defined]
+        r = weakref.ref(m, lambda w: log.append(("callback", "selfish")))
+        del m
+        log.append(("selfish dropped", r() is None))
+        gc.collect()
+        log.append(("selfish collected", r() is None))
+        return log
+
+    def model() -> list[object]:
+        log: list[object] = []
+        saved = O.HEAP
+        heap = O.HEAP = O.Heap()
+        try:
+            Fin_m = RefClass("Fin", attrs={"__del__": lambda self: log.append(("dies", self.label))}, heap=heap)
+
+            def fin(tag: str) -> RefObject:
+                o = RefObject(Fin_m)
+                o.label = tag                                # type: ignore[attr-defined]
+                return o
+
+            def store(m: O.RefModule, name: str, value: object) -> None:
+                assert m.namespace is not None
+                m.namespace.store(name, value)
+                decref(value)                                # the statement's temporary
+
+            def made(o: RefObject | O.RefModule) -> RefObject | O.RefModule:
+                incref(o)
+                return o
+
+            m = O.RefModule("plain", heap)
+            incref(m)
+            store(m, "x", made(fin("plain.x")))
+            r = O.weak_ref(m, lambda w: log.append(("callback", "plain")))
+            decref(m)
+            log.append("plain dropped")
+
+            m = O.RefModule("kept", heap)
+            incref(m)
+            f = O.RefFunction(m)
+            incref(f)                                        # exec's def, then the pop: the program's f holds it
+            store(m, "x", made(fin("kept.x")))
+            r = O.weak_ref(m, lambda w: log.append(("callback", "kept")))
+            decref(m)
+            log.append(("kept dropped", r() is None, f.globals()["x"].label))
+            assert not m.alive and m.namespace is not None and m.holders == 1
+            g = O.RefFunction(f.module)                      # type: ignore[arg-type]
+            incref(g)
+            decref(f)
+            log.append(("f dropped", g.globals()["x"].label))
+            decref(g)
+            log.append("g dropped")
+            gone: object = m.namespace                       # what was left of the module went with g
+            assert gone is None and m.holders == 0
+
+            m = O.RefModule("cycle", heap)
+            incref(m)
+            f = O.RefFunction(m)
+            incref(f)
+            store(m, "f", f)                                 # exec's def: the name holds it
+            store(m, "x", made(fin("cycle.x")))
+            r = O.weak_ref(m, lambda w: log.append(("callback", "cycle")))
+            decref(m)
+            log.append(("cycle dropped", r() is None))
+            collector.collect(heap)
+            log.append("cycle collected")
+            assert (f.alive, m.namespace) == (False, None)
+
+            m = O.RefModule("selfish", heap)
+            incref(m)
+            store(m, "me", made(m))
+            store(m, "x", made(fin("selfish.x")))
+            r = O.weak_ref(m, lambda w: log.append(("callback", "selfish")))
+            decref(m)
+            log.append(("selfish dropped", r() is None))
+            collector.collect(heap)
+            log.append(("selfish collected", r() is None))
+            assert not m.alive
+            return log
+        finally:
+            O.HEAP = saved
+
+    want = real()
+    assert want[:3] == [("callback", "plain"), ("dies", "plain.x"), "plain dropped"], want
+    assert ("kept dropped", True, "kept.x") in want and want[-1] == ("selfish collected", True), want
+    assert model() == want
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

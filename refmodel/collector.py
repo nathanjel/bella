@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from refmodel.objects import GcList, GcState, Heap, ModelError, RefClass, RefObject, RefWeak, decref, incref
+from refmodel.objects import GcList, GcState, Heap, ModelError, RefClass, RefFunction, RefModule, RefObject, RefWeak, decref, incref
 
 GENERATION_AUTO = -1
 
@@ -189,7 +189,7 @@ def handle_weakref_callbacks(gc: GcState, unreachable: GcList, old: GcList) -> i
     moves to `old`, the collection's survivors. The number of those that died meanwhile."""
     to_call = GcList("weakref callbacks")
     for op in unreachable:
-        if not isinstance(op, (RefObject, RefClass)):
+        if not isinstance(op, (RefObject, RefClass, RefModule, RefFunction)):
             continue
         for wr in list(op.weakrefs):
             if wr.callback is None:
@@ -240,7 +240,7 @@ def clear_weakrefs(unreachable: GcList) -> None:
     for op in unreachable:
         if isinstance(op, RefWeak):
             op.clear_ref()
-        if isinstance(op, (RefObject, RefClass)):
+        if isinstance(op, (RefObject, RefClass, RefModule, RefFunction)):
             while op.weakrefs:
                 op.weakrefs[0].clear_ref()
         if isinstance(op, RefClass):

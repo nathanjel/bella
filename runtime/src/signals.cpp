@@ -153,7 +153,7 @@ Ref exchange_handler(int signum, Obj fresh) {    // set_handler(signum, Py_NewRe
 Ref frame_argument(const std::shared_ptr<bool>& live) {
     detail::FrameRecord* interrupted = detail::current_frame();
     if (lean_build || interrupted == nullptr) return none_ref();
-    auto* frame = new FrameObject(interrupted->code, interrupted->module != nullptr ? Ref::share(Obj::of(interrupted->module)) : Ref{});
+    auto* frame = new FrameObject(interrupted->code, interrupted->module);
     frame->record = interrupted;
     frame->live = live;
     return own(frame);

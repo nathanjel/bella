@@ -185,15 +185,32 @@ DictView::DictView(Obj d, Which w) : Object(Kind::DictView), which(w), dict(d) {
 PyFunction::PyFunction(const Code* c, Ref (*e)(PyFunction*, Args), Module* m)
     : Object(Kind::PyFunction), code(c), entry(e), module(m) {
     cls = types().function;
-    incref(static_cast<Object*>(m));
+    hold_globals(m);                             // func_globals
     // func_new_impl: __module__ is the globals' __name__ as it stands now; a module that renames itself afterwards
     // (importlib renames _frozen_importlib) leaves its functions' __module__ as it was (review G15 range: importlib)
     if (Obj n = dict_get(m->dict, Obj::of(intern("__name__"))); !n.is_unset()) module_name = Ref::share(n);
 }
-Module::Module(const char* n) : Object(Kind::Module), name(str_new(n)), dict(new Dict) {
+Module::Module(const char* n) : Module(n, false) {}
+namespace {
+std::unordered_map<std::uint64_t, Module*>& live_modules() {   // the counted modules alive, by serial number
+    static std::unordered_map<std::uint64_t, Module*> table;
+    return table;
+}
+std::uint64_t module_serials = 0;
+}  // namespace
+Module* live_module(std::uint64_t serial) {
+    auto it = live_modules().find(serial);
+    return it == live_modules().end() ? nullptr : it->second;
+}
+Module::Module(const char* n, bool counted) : Object(Kind::Module), name(str_new(n)), dict(new Dict) {
     cls = types().module;
-    flags |= IMMORTAL;                           // phase 1: modules live as long as the program
     incref(dict);
+    if (counted) {
+        serial = ++module_serials;
+        live_modules()[serial] = this;
+        return;
+    }
+    flags |= IMMORTAL;                           // the runtime's own: it lives as long as the program
     all_modules().push_back(this);
 }
 Module::Module(Dict* globals, Dict* given_builtins) : Object(Kind::Module), name(str_new("<string>")), dict(globals) {
@@ -227,7 +244,7 @@ std::vector<Module*>& all_modules() {
 }
 LazyImport::LazyImport() : Object(Kind::LazyImport) { cls = types().lazy_import; }
 CodeObject::CodeObject(const Code* c) : Object(Kind::CodeKind), code(c) { cls = types().code; }
-FrameObject::FrameObject(const Code* c, Ref m) : Object(Kind::Frame), code(c), module(std::move(m)) {
+FrameObject::FrameObject(const Code* c, Module* m) : Object(Kind::Frame), code(c), module(m) {
     static ClassObject* const frame_class = no_instances_yet("frame");
     cls = frame_class;
 }
@@ -245,25 +262,72 @@ void release_backwards(std::vector<Obj>& items) {
     for (auto it = items.rbegin(); it != items.rend(); ++it) decref(std::exchange(*it, Obj{}));
 }
 
+// A module's own holds on its namespace (md_dict; a staged text's builtins and locals with it), let go of when it dies or a
+// collection clears it (module_dealloc, module_clear). Its holders keep the way to the namespace through it; with none, the way
+// goes before the namespace's count does, which may run anything
+void let_go_of_namespace(Module* m) {
+    if (!m->holds_namespace) return;
+    m->holds_namespace = false;
+    Dict* d = m->dict;
+    Dict* b = m->builtins;
+    Dict* l = m->locals != m->dict ? m->locals : nullptr;
+    if (m->holders == 0) {
+        m->dict = nullptr;
+        m->builtins = nullptr;
+        m->locals = nullptr;
+    }
+    if (d != nullptr) decref(d);
+    if (b != nullptr) decref(b);
+    if (l != nullptr) decref(l);
+}
+void free_module(Module* m) {                    // what was left of a dead module, once nothing finds its namespace through it
+    forget_filled(m);
+    m->name = Ref{};
+    destroy<Module>(m);
+}
+}  // namespace
+
+void hold_counted_globals(Module* m) {
+    if (m->dict == nullptr) throw ModelError("a module's namespace taken as globals through a module that has no way to it");
+    ++m->holders;
+    incref(m->dict);
+    if (m->builtins != nullptr) incref(m->builtins);
+    if (m->locals != nullptr && m->locals != m->dict) incref(m->locals);
+}
+void release_counted_globals(Module* m) {
+    if (m->holders <= 0) throw ModelError("a module's namespace let go of by more holders than held it");
+    Dict* d = m->dict;
+    Dict* b = m->builtins;
+    Dict* l = m->locals != m->dict ? m->locals : nullptr;
+    if (--m->holders == 0 && !m->holds_namespace) {
+        m->dict = nullptr;
+        m->builtins = nullptr;
+        m->locals = nullptr;
+        if (m->flags & DEAD) free_module(m);
+    }
+    decref(d);                                   // func_clear's order: the globals, then the builtins
+    if (b != nullptr) decref(b);
+    if (l != nullptr) decref(l);
+}
+
+namespace {
+
 bool register_deaths() {
     destroyer(Kind::Str) = [](Object* o) { delete static_cast<Str*>(o); };
     destroyer(Kind::Tuple) = [](Object* o) { release_backwards(static_cast<Tuple*>(o)->items); destroy<Tuple>(o); };
     destroyer(Kind::List) = [](Object* o) { release_backwards(static_cast<List*>(o)->items); destroy<List>(o); };
     destroyer(Kind::Cell) = [](Object* o) { decref(std::exchange(static_cast<Cell*>(o)->value, Obj{})); destroy<Cell>(o); };
-    destroyer(Kind::Module) = [](Object* o) {     // a staged text's: the program's modules are immortal
-        auto* m = static_cast<Module*>(o);
-        Dict* d = std::exchange(m->dict, nullptr);
-        Dict* b = std::exchange(m->builtins, nullptr);
-        Dict* l = std::exchange(m->locals, nullptr);
-        decref(d);
-        if (b != nullptr) decref(b);
-        if (l != nullptr) decref(l);
-        m->name = Ref{};
-        destroy<Module>(o);
+    destroyer(Kind::Module) = [](Object* o) {     // module_dealloc, its weak references cleared by now: its namespace let go of,
+        auto* m = static_cast<Module*>(o);        // and its memory, unless what holds the namespace as its globals finds it here
+        if (m->serial != 0) live_modules().erase(m->serial);
+        bool kept = m->holders > 0;
+        if (kept && (o->flags & LISTED)) detail::unlist(o);   // out of a collection's lists, as freed memory is
+        let_go_of_namespace(m);
+        if (!kept) free_module(m);                // (a holder that let go meanwhile has freed it: m->holders was not 0)
     };
     destroyer(Kind::PyFunction) = [](Object* o) {
         auto* f = static_cast<PyFunction*>(o);     // func_clear's order: its globals first, then __module__ (RL-579)
-        decref(static_cast<Object*>(f->module));
+        if (Module* m = std::exchange(f->module, nullptr)) release_globals(m);
         f->module_name = Ref{};
         f->defaults = Ref{};
         f->kwdefaults = Ref{};
@@ -307,16 +371,18 @@ bool register_deaths() {
     destroyer(Kind::DictView) = [](Object* o) { decref(std::exchange(static_cast<DictView*>(o)->dict, Obj{})); destroy<DictView>(o); };
     destroyer(Kind::CodeKind) = [](Object* o) { destroy<CodeObject>(o); };
     destroyer(Kind::Frame) = [](Object* o) {     // frame_dealloc: the values it owns (a class body's namespace, then the rest, last
-        auto* f = static_cast<FrameObject*>(o);  // first), then f_back
+        auto* f = static_cast<FrameObject*>(o);  // first), then f_back; f_funcobj, which holds its globals, first of all
+        f->module.reset();
         f->ns = Ref{};
         for (auto it = f->values.rbegin(); it != f->values.rend(); ++it) *it = Ref{};
         f->back = Ref{};
         destroy<FrameObject>(o);
     };
     destroyer(Kind::Traceback) = [](Object* o) {
-        auto* t = static_cast<Traceback*>(o);      // tb_dealloc: the deeper entries, then the frame
+        auto* t = static_cast<Traceback*>(o);      // tb_dealloc: the deeper entries, then the frame (its function's globals last)
         t->next = Ref{};
         t->frame_obj = Ref{};
+        t->module.reset();
         destroy<Traceback>(o);
     };
     destroyer(Kind::Native) = [](Object* o) { destroy<Native>(o); };
@@ -336,14 +402,50 @@ const bool deaths_registered = register_deaths();
 // A traverse names the counted references the kind's release lets go of; a kind CPython gives no tp_clear has none here: a
 // cycle through it is broken by clearing another of its members.
 void visit_ref(const Ref& r, std::vector<Object*>& out) { detail::visit(r.get(), out); }
-// What a function, a frame, a generator or a traceback entry holds of its module: the module, which a program's is immortal
-// and the collector does not walk (a staged text's is counted). In CPython's view, the exit's trace, it is the namespace
-// (func_globals, f_globals): what holds a function keeps its module's names, not its module (C-9-13)
-void visit_globals(Obj m, std::vector<Object*>& out) {
-    if (detail::tracing_everything && is_kind(m, Kind::Module) && (m.object()->flags & IMMORTAL))
-        detail::visit(Obj::of(static_cast<Module*>(m.object())->dict), out);
-    else
-        detail::visit(m, out);
+// A namespace whose module sys.modules holds under its own name is reachable from outside (sys.modules is the interpreter's,
+// a root), and so is all it reaches: the collector does not walk it, from the module or from what holds it as its globals.
+// Trial deletion finds the same groups in the same order (what the walk leaves out is held from outside), without walking the
+// program's whole module graph from every function among its candidates (refmodel/objects.py: RefModule.rooted). The look-up
+// runs no code of the program's: an exact str's, in the table the import system keeps (writes to it are E-04)
+namespace {
+// What an exact str names in a dict, found along lookdict's probe and compared as unicode_eq compares, or Unset; Unset too where
+// the probe meets a key of the same hash that is not an exact str, whose == would be the program's code
+Obj exact_str_get(const Dict* d, const Str* key) {
+    if (d->indices.empty()) return Obj{};
+    std::int64_t hash = hash_of(Obj::of(key));   // an exact str's: its text's, kept
+    std::size_t mask = d->indices.size() - 1;
+    auto perturb = static_cast<std::uint64_t>(hash);
+    for (std::size_t i = static_cast<std::size_t>(hash) & mask;; i = (i * 5 + static_cast<std::size_t>(perturb) + 1) & mask) {
+        std::int64_t ix = d->indices[i];
+        if (ix == detail::DKIX_EMPTY) return Obj{};
+        if (ix >= 0) {
+            const auto& e = d->entries[static_cast<std::size_t>(ix)];
+            if (!e.key.is_unset() && e.hash == hash) {
+                if (e.key.object() == key) return e.value;
+                if (!is_exact_str(e.key)) return Obj{};
+                if (as_str(e.key)->text == key->text) return e.value;
+            }
+        }
+        perturb >>= detail::PERTURB_SHIFT;
+    }
+}
+}  // namespace
+bool rooted_namespace(const Module* m) {
+    if (m->serial == 0 || (m->flags & DEAD) || !m->holds_namespace) return false;
+    Dict* modules = sys_modules();
+    if (modules == nullptr) return false;
+    Obj name = exact_str_get(m->dict, intern("__name__"));
+    if (!name.is_object() || !is_exact_str(name)) return false;
+    Obj held = exact_str_get(modules, as_str(name));
+    return held.is_object() && held.object() == m;
+}
+// What a function, a frame object or a traceback entry holds of its module: what hold_globals took, its namespace (func_globals)
+// and a staged text's builtins and locals; nothing of an immortal module, nor of one whose namespace is rooted
+void visit_globals(const Module* m, std::vector<Object*>& out) {
+    if (m == nullptr || (m->flags & IMMORTAL) || rooted_namespace(m)) return;
+    if (m->dict != nullptr) detail::visit(Obj::of(m->dict), out);
+    if (m->builtins != nullptr) detail::visit(Obj::of(m->builtins), out);
+    if (m->locals != nullptr && m->locals != m->dict) detail::visit(Obj::of(m->locals), out);
 }
 bool register_traversals() {
     using detail::visit;
@@ -351,7 +453,7 @@ bool register_traversals() {
     detail::clearer(Kind::Cell) = [](Object* o) { decref(std::exchange(static_cast<Cell*>(o)->value, Obj{})); };
     detail::traverser(Kind::PyFunction) = [](Object* o, std::vector<Object*>& out) {   // func_traverse's order
         auto* f = static_cast<PyFunction*>(o);
-        if (f->module != nullptr) visit_globals(Obj::of(f->module), out);   // its globals
+        visit_globals(f->module, out);           // its globals
         visit_ref(f->module_name, out);
         visit_ref(f->defaults, out);
         visit_ref(f->kwdefaults, out);
@@ -365,8 +467,9 @@ bool register_traversals() {
         visit_ref(f->type_params, out);
         visit_ref(f->qualname, out);
     };
-    detail::clearer(Kind::PyFunction) = [](Object* o) {   // func_clear's order; its globals stay, which the program's modules are
+    detail::clearer(Kind::PyFunction) = [](Object* o) {   // func_clear's order: its globals first
         auto* f = static_cast<PyFunction*>(o);
+        if (Module* m = std::exchange(f->module, nullptr)) release_globals(m);
         f->module_name = Ref{};
         f->defaults = Ref{};
         f->kwdefaults = Ref{};
@@ -391,12 +494,14 @@ bool register_traversals() {
         visit(m->func, out);
         visit(m->self, out);
     };
-    detail::traverser(Kind::Module) = [](Object* o, std::vector<Object*>& out) {    // a staged text's: module_traverse, md_dict
+    detail::traverser(Kind::Module) = [](Object* o, std::vector<Object*>& out) {    // module_traverse: md_dict, unless rooted
         auto* m = static_cast<Module*>(o);
+        if (!m->holds_namespace || rooted_namespace(m)) return;
         if (m->dict != nullptr) visit(Obj::of(m->dict), out);
         if (m->builtins != nullptr) visit(Obj::of(m->builtins), out);
         if (m->locals != nullptr && m->locals != m->dict) visit(Obj::of(m->locals), out);
     };
+    detail::clearer(Kind::Module) = [](Object* o) { let_go_of_namespace(static_cast<Module*>(o)); };   // module_clear
     detail::traverser(Kind::Iterator) = [](Object* o, std::vector<Object*>& out) {  // dictiter_traverse, listiter_traverse
         auto* it = static_cast<Iterator*>(o);
         visit(it->seq, out);
@@ -425,7 +530,7 @@ bool register_traversals() {
         auto* t = static_cast<Traceback*>(o);
         visit_ref(t->next, out);
         visit_ref(t->frame_obj, out);
-        visit_globals(t->module.get(), out);
+        visit_globals(t->module.module(), out);
     };
     detail::clearer(Kind::Traceback) = [](Object* o) {   // tb_clear: the next entry, then the frame (its locals, last first)
         auto* t = static_cast<Traceback*>(o);
@@ -436,7 +541,7 @@ bool register_traversals() {
         auto* f = static_cast<FrameObject*>(o);  // (_PyFrame_Traverse: f_locals, the function's globals, the values in order)
         visit_ref(f->back, out);
         visit_ref(f->ns, out);
-        visit_globals(f->module.get(), out);
+        visit_globals(f->module.module(), out);
         for (const Ref& r : f->values) visit_ref(r, out);
     };
     detail::clearer(Kind::Frame) = [](Object* o) {   // frame_tp_clear: the values, last first, then f_locals; f_back stays
@@ -456,7 +561,6 @@ bool register_traversals() {
         if (g->state != GenState::Finished) {
             visit_ref(g->resumed.frame_obj, out);
             visit_ref(g->function, out);
-            if (detail::tracing_everything && g->module != nullptr) visit_globals(Obj::of(g->module), out);   // its frame's f_globals
             for (const Ref& r : g->slots) visit_ref(r, out);
             visit_ref(g->sent, out);
             visit_ref(g->pending, out);
@@ -1308,7 +1412,7 @@ Ref make_entry(detail::FrameRecord& f, Ref next) {
     auto* tb = static_cast<Traceback*>(held.get().object());
     tb->frame = f.id;
     tb->frame_obj = Ref::share(detail::frame_object(f));
-    if (f.module != nullptr) tb->module = Ref::share(Obj::of(f.module));
+    if (f.module != nullptr) tb->module = GlobalsRef(f.module);
     return held;
 }
 // prepends the frame's entry to exc's traceback, as PyTraceBack_Here does
@@ -1320,7 +1424,7 @@ void add_entry(Obj exc, detail::FrameRecord& f) {
 }  // namespace
 
 Obj detail::frame_object(FrameRecord& f) {
-    if (f.frame_obj.get().is_unset()) f.frame_obj = own(new FrameObject(f.code, f.module != nullptr ? Ref::share(Obj::of(f.module)) : Ref{}));
+    if (f.frame_obj.get().is_unset()) f.frame_obj = own(new FrameObject(f.code, f.module));
     return f.frame_obj.get();
 }
 

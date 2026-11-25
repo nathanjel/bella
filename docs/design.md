@@ -72,7 +72,7 @@ public:
 
 // ---- Header: 24 bytes. Every location another thread may read while this one writes is atomic. ----
 enum Flag : std::uint32_t {
-  IMMORTAL      = 1u << 0,  // never freed: None, True, False, interned strs, module objects (D-19)
+  IMMORTAL      = 1u << 0,  // never freed: None, True, False, interned strs, the runtime's own modules (a program's are counted: C-9-14)
   GC_TRACKED    = 1u << 1,  // set per object: the class may form cycles, or an instance dict was attached
   COLOR_MASK    = 3u << 2,  // trial-deletion colour, written only by the collector thread
   BUFFERED      = 1u << 4,  // already in a candidate buffer

@@ -2023,6 +2023,7 @@ bool was_filled(const Module* m, std::string_view name) {
     auto it = filled_names().find(m);
     return it != filled_names().end() && it->second.contains(std::string(name));
 }
+void forget_filled(const Module* m) { filled_names().erase(m); }
 void refuse_absent_attribute(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Module)) {
         auto* m = static_cast<Module*>(obj.object());
@@ -2087,8 +2088,8 @@ std::string_view native_module_name(const Module* m) {
         if (module == m) return name;
     return {};
 }
-Module* new_module(const char* name) {
-    auto* m = new Module(name);
+Module* new_module(const char* name, bool counted) {
+    auto* m = new Module(name, counted);
     put(m->dict, "__name__", m->name.get());
     for (const char* n : {"__doc__", "__package__", "__loader__", "__spec__"}) put(m->dict, n, None());
     return m;
@@ -2531,7 +2532,7 @@ Ref i_traceback_frame(Obj, Args a) {
     if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
     auto* tb = static_cast<Traceback*>(a.pos(0).object());
     if (is_kind(tb->frame_obj.get(), Kind::Frame)) return tb->frame_obj;
-    return own(new FrameObject(tb->code, tb->module));
+    return own(new FrameObject(tb->code, tb->module.module()));
 }
 // The code of such a frame, where an adaptation reads a frame's code (traceback's StackSummary): the code object its function's
 // __code__ gives, or None for what is no frame of the runtime's (a traceback where a frame is wanted, an object of the program's
@@ -2564,7 +2565,7 @@ Ref i_stack(Obj, Args a) {
     Ref out = list_new({});
     for (detail::FrameRecord* f = from; f != nullptr; f = f->caller) {
         if (!f->code->shown) continue;
-        Ref frame = own(new FrameObject(f->code, f->module != nullptr ? Ref::share(Obj::of(f->module)) : Ref{}));
+        Ref frame = own(new FrameObject(f->code, f->module));
         Ref line = int_from_i64(f->line);
         Ref pair = tuple_new({frame.get(), line.get()});
         list_append(out.get(), pair.get());
@@ -2576,8 +2577,8 @@ Ref i_stack(Obj, Args a) {
 Ref i_traceback_globals(Obj, Args a) {
     positional_only(a, "traceback_globals", 1, 1);
     if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
-    Obj m = static_cast<Traceback*>(a.pos(0).object())->module.get();
-    return m.is_unset() ? dict_new() : Ref::share(Obj::of(static_cast<Module*>(m.object())->dict));
+    Module* m = static_cast<Traceback*>(a.pos(0).object())->module.module();
+    return m == nullptr ? dict_new() : Ref::share(Obj::of(m->dict));
 }
 // The names the frame a traceback's entry stands for can see, where traceback looks for the name that was probably meant
 // (_compute_suggestion_error; runtime/replaced): its f_locals, f_globals and f_builtins, or None for what is no traceback of
@@ -2591,7 +2592,7 @@ Ref i_traceback_names(Obj, Args a) {
     positional_only(a, "traceback_names", 1, 1);
     if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
     auto* tb = static_cast<Traceback*>(a.pos(0).object());
-    auto* module = tb->module.get().is_unset() ? nullptr : static_cast<Module*>(tb->module.get().object());
+    Module* module = tb->module.module();
     Ref globals = module == nullptr ? dict_new() : Ref::share(Obj::of(module->dict));
     Ref builtins = Ref::share(Obj::of(module == nullptr || module->builtins == nullptr ? builtins_module()->dict : module->builtins));
     const Code& code = *tb->code;
@@ -3510,145 +3511,38 @@ const bool weakref_hook_installed = (weakref_callback_hook() = call_weakref_call
 //   has its names set to None (finalize_modules_clear_weaklist), then sys's and the builtins' (finalize_clear_sys_builtins_dict);
 //   a last collection. finalize_interp_clear: the thread's state (the context), the codec registry; the interpreter's last
 //   collection; then gc's lists and the warning filters, whose cycles no collection meets any more.
-// The program's modules and classes are immortal here (D-19, C-3-12), and the cycle collector cannot see through them, so what
-// a step finds dead is found by a trace in CPython's view (object.hpp's tracing_everything): a module object holds its
-// namespace, a function, a frame and a generator their module's namespace, a class its attributes, bases and type, and every
-// object its class. Its roots are what the interpreter holds: sys, the builtins and their copy, and the runtime's own modules
-// (CPython's C ones and the prelude's), whose state is where the codec registry, the warning filters and the context are; and
-// the runtime's own code keeps working with their namespaces after the program's view of them is cleared.
+// The program's modules and classes are counted (Question 36, C-9-14; C-3-12), so what goes at each step goes by the counts and
+// the collector, as in CPython. The runtime's own modules (sys, builtins, CPython's C ones and the preludes') are immortal: what
+// they hold is held, as the interpreter's state holds it in CPython, and the runtime's own code keeps working with their
+// namespaces after the program's view of them is cleared.
 namespace {
-struct ExitView {
-    std::unordered_set<Module*> own;             // sys, builtins, the prelude's, CPython's C modules: never freed
-    std::unordered_set<Module*> gone;            // the module objects CPython has freed by now
-    std::unordered_set<Module*> removed;         // those sys.modules has let go of
-    std::unordered_set<Module*> released;        // those whose namespace has gone
-    std::unordered_map<Module*, std::int64_t> referrers;   // the references to each module object, as last counted
-    std::unordered_map<Module*, std::int64_t> globals_held;   // what holds each one's namespace as its globals, as last counted
+// A module finalize_remove_modules met, held weakly (STORE_MODULE_WEAKREF): one of the program's by its serial number, which no
+// module made later shares, while it lives; one of the runtime's own always. CPython's weak reference is one of the module's
+// (weakref.getweakrefcount sees it), so its basic one is made too, once the program has loaded _weakref: before that nothing
+// the program can run counts a module's weak references
+struct MetModule {
+    Module* module;
+    std::uint64_t serial;                        // 0: one of the runtime's own
+    Ref weak;
 };
-// A function's, a frame's, a generator's or a traceback entry's module, whose namespace it holds as its globals
-Module* globals_of(const Object* o) {
-    Obj m;
-    switch (o->kind) {
-        case Kind::PyFunction: m = Obj::of(static_cast<const PyFunction*>(o)->module); break;
-        case Kind::Frame: m = static_cast<const FrameObject*>(o)->module.get(); break;
-        case Kind::Generator: m = Obj::of(static_cast<const Generator*>(o)->module); break;
-        case Kind::Traceback: m = static_cast<const Traceback*>(o)->module.get(); break;
-        default: return nullptr;
-    }
-    return m.is_object() && is_kind(m, Kind::Module) ? static_cast<Module*>(m.object()) : nullptr;
+Ref basic_weak_reference(Module* m) {            // PyWeakref_NewRef(mod, NULL): the shared one if it has one
+    Module* w = native_module_named("_weakref");
+    if (w == nullptr) return Ref{};
+    Obj type = dict_get(w->dict, Obj::of(intern("ref")));
+    if (!is_kind(type, Kind::Class)) return Ref{};
+    if (Object* found = weak_basic(m, WeakKind::BasicRef)) return Ref::share(Obj::of(found));
+    Ref self = own(new_instance(static_cast<ClassObject*>(type.object())));
+    weak_link(self.get().object(), m, Obj{}, WeakKind::BasicRef);
+    return self;
 }
-// Every object reached from `roots` that `seen` does not hold yet, in the order first met (breadth first). With `view`, each
-// reference to a module object is counted, sys.modules' entries among them (each is one of its count: an alias keeps a module
-// as long as it is there, RL-936), and each holder of a module's namespace
-std::vector<Object*> reach(const std::vector<Object*>& roots, std::unordered_set<Object*>& seen, ExitView* view = nullptr) {
-    struct Mode {
-        Mode() { detail::tracing_everything = true; }
-        ~Mode() { detail::tracing_everything = false; }
-    } mode;
-    std::vector<Object*> order, kids;
-    for (Object* r : roots)
-        if (r != nullptr && seen.insert(r).second) order.push_back(r);
-    for (std::size_t i = 0; i < order.size(); ++i) {
-        Object* o = order[i];
-        detail::children_of(o, kids);            // a class's: tp_dict's values, tp_bases, tp_mro (detail::visit_class)
-        if (o->cls != nullptr) kids.push_back(o->cls);
-        if (view != nullptr) {
-            for (Object* k : kids)
-                if (k->kind == Kind::Module) ++view->referrers[static_cast<Module*>(k)];
-            if (Module* g = globals_of(o); g != nullptr && (g->flags & IMMORTAL)) ++view->globals_held[g];
-        }
-        for (Object* k : kids)
-            if (seen.insert(k).second) order.push_back(k);
-    }
-    return order;
-}
-std::vector<Object*> interpreter_roots(const ExitView& v) {
-    std::vector<Object*> roots;
-    for (Module* m : v.own) {
-        roots.push_back(m);
-        roots.push_back(m->dict);
-    }
-    if (Dict* copy = builtins_copy(); copy != nullptr) roots.push_back(copy);
-    roots.push_back(intrinsics());
-    return roots;
-}
-std::vector<Object*> module_objects() {
-    std::vector<Object*> out;
-    for (Module* m : all_modules()) out.push_back(m);
-    return out;
-}
-// The references to each module object and the holders of each namespace, from all that lives
-void recount(ExitView& v) {
-    v.referrers.clear();
-    v.globals_held.clear();
-    std::unordered_set<Object*> seen;
-    reach(interpreter_roots(v), seen, &v);
-    reach(module_objects(), seen, &v);
-}
-void module_goes(ExitView& v, Module* m, bool top = true);
-// dict_dealloc of a module's namespace: each entry in order, its key, then its value; a module object whose last reference that
-// was goes there and then, before the next entry
-void release_namespace(ExitView& v, Module* m) {
-    v.released.insert(m);
-    for (auto& [key, value] : dict_take_all(m->dict)) {
-        decref(key);
-        if (is_kind(value, Kind::Module) && (value.object()->flags & IMMORTAL)) {
-            auto* held = static_cast<Module*>(value.object());
-            if (--v.referrers[held] == 0 && v.removed.contains(held) && !v.gone.contains(held) && !v.own.contains(held))
-                module_goes(v, held, false);
-        }
-        decref(value);
-    }
-}
-bool namespace_goes(const ExitView& v, Module* m) {    // only the module holds its namespace (as its md_dict)
-    auto held = v.globals_held.find(m);
-    return !v.released.contains(m) && m->dict->refs == 1 && (held == v.globals_held.end() || held->second == 0);
-}
-void settle(ExitView& v);
-// module_dealloc: a module nothing holds goes, and its namespace with it if nothing else holds that. What that let go of is
-// counted again afterwards: another module, or a namespace whose last holder that was, goes then
-void module_goes(ExitView& v, Module* m, bool top) {
-    v.gone.insert(m);
-    if (!namespace_goes(v, m)) return;           // its functions hold it: nothing is let go of, nothing to count again
-    release_namespace(v, m);
-    if (!top) return;
-    recount(v);
-    settle(v);
-}
-// The modules sys.modules has let go of that nothing holds now go, and the namespaces of those gone that nothing holds now
-void settle(ExitView& v) {
-    for (std::size_t i = 0; i < all_modules().size(); ++i) {   // a finaliser that runs may make a module
-        Module* m = all_modules()[i];
-        if (!v.removed.contains(m) || v.own.contains(m)) continue;
-        if (!v.gone.contains(m) && v.referrers[m] == 0) v.gone.insert(m);
-        else if (!v.gone.contains(m)) continue;
-        if (!namespace_goes(v, m)) continue;
-        release_namespace(v, m);
-        recount(v);
-        i = static_cast<std::size_t>(-1);        // from the start again, counted anew
-    }
-}
-// A namespace whose module is gone goes when its count's last reference does (dict_dealloc), in whatever step that is: what
-// held it besides the module (sys.saved = mod.__dict__, a container) let go of, it goes then, before the next entry (RL-930)
-void release_pending(ExitView& v) {
-    // Only a holder that counts the namespace (its dict's count) can have let go of it since the last trace; the functions,
-    // frames and generators that hold it as their globals hold the module instead, so a namespace the last trace found held
-    // by them waits for the next trace, as before
-    bool any = false;
-    for (Module* m : v.gone) {
-        if (v.released.contains(m) || m->dict->refs != 1) continue;
-        auto held = v.globals_held.find(m);
-        any = any || held == v.globals_held.end() || held->second == 0;
-    }
-    if (!any) return;
-    recount(v);
-    settle(v);
+Module* still_alive(const MetModule& met) {
+    if (met.serial == 0) return met.module;
+    return live_module(met.serial);
 }
 // _PyModule_ClearDict: the names with one underscore first, then every other but __builtins__, each set to None in the dict's
-// order as it stands (what a value let go of runs may change the dict); a module whose last reference goes goes then. The set
-// is PyDict_SetItem's: a key that is not an exact str is hashed (its class's __hash__ runs) and looked up, and a failure is
-// reported as ignored (RL-931)
-void clear_module_dict(Dict* d, ExitView& v) {
+// order as it stands (what a value let go of runs may change the dict). The set is PyDict_SetItem's: a key that is not an exact
+// str is hashed (its class's __hash__ runs) and looked up, and a failure is reported as ignored (RL-931)
+void clear_module_dict(Dict* d) {
     for (int pass = 0; pass < 2; ++pass)
         for (std::size_t i = 0; i < d->entries.size(); ++i) {
             if (d->entries[i].key.is_unset() || d->entries[i].value == None()) continue;
@@ -3657,94 +3551,19 @@ void clear_module_dict(Dict* d, ExitView& v) {
             bool one_underscore = !k->text.empty() && k->text[0] == '_' && (k->text.size() < 2 || k->text[1] != '_');
             if (pass == 0 ? !one_underscore : k->text == "__builtins__") continue;
             Ref key = Ref::share(d->entries[i].key);
-            Obj before = d->entries[i].value;
-            auto* module = is_kind(before, Kind::Module) && (before.object()->flags & IMMORTAL) ? static_cast<Module*>(before.object()) : nullptr;
-            bool replaced = true;
             if (type_of(key.get()) == types().str) {
                 decref(std::exchange(d->entries[i].value, None()));   // its hash is the stored one: nothing runs but the value's release
-            } else {
-                try {
-                    dict_set(d, key.get(), None());
-                } catch (const PyError& e) {
-                    report_unraisable("Exception ignored while clearing module dict", e);
-                }
-                replaced = i < d->entries.size() && d->entries[i].value == None();   // a hash of its own may have put another key
+                continue;
             }
-            if (module != nullptr && replaced && --v.referrers[module] == 0 && v.removed.contains(module) && !v.gone.contains(module) &&
-                !v.own.contains(module))
-                module_goes(v, module, false);
-            release_pending(v);
-        }
-}
-// _PyGC_CollectNoFail: gc.c's sequence, whatever gc.enable said and with no gc.callbacks, over the cyclic garbage of the
-// collector's buffer and what the trace finds dead (all that the module objects reach and the interpreter's roots do not).
-// What a finaliser makes reachable again lives on, with what it reaches: handle_resurrected_objects' reckoning by counts, in
-// which a module object found dead holds nothing from outside, and what the roots reach again (a class a finaliser's new
-// object refers to is kept by that object's count, RL-929). A module object found dead goes (module_clear), its namespace
-// cleared with the rest if it is among them
-std::int64_t collect_at_exit(ExitView& v) {
-    detail::Collector& c = detail::collector();
-    if (c.collecting) return 0;
-    c.collecting = true;
-    struct Done {
-        ~Done() { detail::collector().collecting = false; }
-    } done;
-    c.scheduled = false;
-    std::vector<Object*> roots;
-    for (Object* o : c.candidates) {
-        o->flags &= static_cast<std::uint16_t>(~BUFFERED);
-        if (o->flags & TOMBSTONE) detail::free_tombstone(o);
-        else if (detail::walked(o) && o->refs > 0) roots.push_back(o);
-    }
-    c.candidates.clear();
-    c.tombstones = 0;
-    c.roots = roots.size();
-    detail::GcList survivors, unreachable, final, base;
-    detail::trial_deletion(roots, unreachable);
-    std::vector<Module*> lost_modules;
-    std::vector<Object*> lost;
-    {
-        std::unordered_set<Object*> seen;
-        reach(interpreter_roots(v), seen);
-        for (Object* o : reach(module_objects(), seen)) {
-            if (o->kind == Kind::Module && (o->flags & IMMORTAL)) {
-                lost_modules.push_back(static_cast<Module*>(o));
-                lost.push_back(o);
-            } else if (detail::walked(o) && !(o->flags & LISTED)) {
-                detail::list_append(o, base);
+            try {
+                dict_set(d, key.get(), None());
+            } catch (const PyError& e) {
+                report_unraisable("Exception ignored while clearing module dict", e);
             }
         }
-    }
-    // What the lost modules reach is reckoned by counts with what trial deletion found, as the step after the finalisers is
-    // (RL-929): the modules' holds are subtracted as a dead holder's, and what something outside holds lives with what it
-    // reaches, as in CPython's collection. A name a class was given is one (ht_name, which type_traverse does not visit: RL-942)
-    detail::list_merge(unreachable, base);
-    detail::deduce_unreachable(base, unreachable, lost, true);
-    detail::list_merge(base, survivors);
-    std::int64_t collected = detail::handle_weakref_callbacks(unreachable, survivors);
-    detail::finalize_garbage(unreachable);
-    {                                            // handle_resurrected_objects
-        std::unordered_set<Object*> again;
-        reach(interpreter_roots(v), again);
-        std::vector<Object*> dead;
-        for (Module* m : lost_modules)
-            if (!again.contains(m)) {
-                v.gone.insert(m);
-                dead.push_back(m);
-            }
-        detail::deduce_unreachable(unreachable, final, dead, true);
-        for (Object* o : detail::list_items(final))
-            if (again.contains(o)) detail::list_move(o, unreachable);   // what the roots reach lives on, as before
-    }
-    detail::list_merge(unreachable, survivors);
-    detail::clear_unreachable_weakrefs(final);
-    collected += static_cast<std::int64_t>(final.size);
-    detail::delete_garbage(final, survivors);
-    for (detail::GcList* l : {&survivors, &unreachable, &final}) detail::list_release(*l);
-    ++c.collections;
-    c.collected += collected;
-    return collected;
 }
+// _PyGC_CollectNoFail: gc.c's sequence, whatever gc.enable said and with no gc.callbacks
+void collect_at_exit() { collect_cycles(); }
 // What a built-in module's prelude holds under a name of its interpreter's state, let go of. The prelude runs in a namespace of
 // its own (imports.cpp's fill_in_python), the module the program sees having what it exports
 void release_state(const char* module, std::initializer_list<const char*> names) {
@@ -3780,10 +3599,9 @@ void release_program_values(Dict* d, Dict* start) {
 }
 }  // namespace
 void finalize_at_exit(const std::unordered_set<Module*>& runtime_own, int& status) {
-    ExitView v;
-    v.own = runtime_own;
-    for (Module* m : made_native_modules()) v.own.insert(m);
-    for (Module* m : hidden_modules()) v.own.insert(m);
+    std::unordered_set<Module*> own = runtime_own;  // sys, builtins, the prelude's, CPython's C modules: never freed
+    for (Module* m : made_native_modules()) own.insert(m);
+    for (Module* m : hidden_modules()) own.insert(m);
     Module* sys = native_modules()["sys"];
     Module* builtins = builtins_module();
     if (gc_is_enabled()) run_collection();       // PyGC_Collect
@@ -3799,34 +3617,24 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own, int& statu
         put(sys->dict, name, value.is_unset() ? None() : value);
     }
     shutting_down() = true;
-    // finalize_remove_modules: each module of sys.modules, in its order, replaced by None, and kept in the weaklist as it is
-    // met (one a finaliser adds on the way too, RL-935). Each entry is one of the module's references: the module goes when its
-    // last does (an alias keeps it, RL-936). A key that is not an exact str is hashed, which may run anything: the count is
-    // taken again then. A set that fails is reported, and the next entry follows (RL-934)
+    // finalize_remove_modules: each module of sys.modules, in its order, kept weakly as it is met (one a finaliser adds on the way
+    // too, RL-935), then replaced by None: the entry was one of its references, and it goes when its last does (an alias keeps
+    // it, RL-936). A key that is not an exact str is hashed, which may run anything; a set that fails is reported, and the next
+    // entry follows (RL-934)
     Dict* modules = sys_modules();
-    std::vector<Module*> imported;
-    recount(v);
+    std::vector<MetModule> weaklist;
     for (std::size_t i = 0; i < modules->entries.size(); ++i) {
         if (modules->entries[i].key.is_unset() || !is_kind(modules->entries[i].value, Kind::Module)) continue;
         auto* m = static_cast<Module*>(modules->entries[i].value.object());
-        imported.push_back(m);
+        weaklist.push_back({m, own.contains(m) ? 0 : m->serial, own.contains(m) ? Ref{} : basic_weak_reference(m)});
         Ref key = Ref::share(modules->entries[i].key);
-        bool plain = type_of(key.get()) == types().str;
         try {
             dict_set(modules, key.get(), None());
         } catch (const PyError& e) {
             report_unraisable("Exception ignored while removing modules", e);
         }
-        v.removed.insert(m);
-        if (plain && v.referrers.contains(m)) --v.referrers[m];
-        else recount(v);                         // a key's own hash ran, or a finaliser made the module since the last count
-        if (!v.own.contains(m) && !v.gone.contains(m) && v.referrers[m] == 0) module_goes(v, m);
     }
-    // the modules that left sys.modules before the end (an import that failed) are as removed: nothing holds them but what does
-    for (Module* m : all_modules())
-        if (!v.own.contains(m)) v.removed.insert(m);
-    settle(v);
-    dict_clear(modules);                         // finalize_clear_modules_dict; the modules live on (D-19)
+    dict_clear(modules);                         // finalize_clear_modules_dict
     if (Dict* copy = builtins_copy(); copy != nullptr) {   // finalize_restore_builtins
         Ref was = dict_copy(builtins->dict);
         dict_clear(builtins->dict);
@@ -3837,54 +3645,50 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own, int& statu
             report_unraisable("Exception ignored while restoring builtins", e);
         }
     }
-    collect_at_exit(v);
-    release_pending(v);
+    collect_at_exit();
     dump_gc_shutdown_stats();                    // _PyGC_DumpShutdownStats, "before it's too late" for the warnings (RL-923)
-    // finalize_modules_clear_weaklist: the modules still alive, last imported first, but builtins and sys. A built-in module's
-    // prelude runs in a namespace of its own, so the one the program sees is cleared as CPython's; the import system's two,
-    // whose code is the runtime's too, keep their namespace for it and show the program a copy with its names None, and what
-    // the program stored in them goes as it goes in CPython's wiping (RL-926)
-    recount(v);
-    for (auto it = imported.rbegin(); it != imported.rend(); ++it) {
-        Module* m = *it;
-        if (v.gone.contains(m) || m == sys || m == builtins || m->dict == sys->dict || m->dict == builtins->dict) continue;
-        if (runtime_own.contains(m)) {
+    // finalize_modules_clear_weaklist: the modules still alive, last imported first, but builtins and sys, each held while its
+    // names are set to None (_PyModule_Clear: a namespace a collection took is no more). A built-in module's prelude runs in a
+    // namespace of its own, so the one the program sees is cleared as CPython's; the import system's two, whose code is the
+    // runtime's too, keep their namespace for it and show the program a copy with its names None, and what the program stored
+    // in them goes as it goes in CPython's wiping (RL-926)
+    for (auto it = weaklist.rbegin(); it != weaklist.rend(); ++it) {
+        Module* m = still_alive(*it);
+        if (m == nullptr || m == sys || m == builtins || m->dict == sys->dict || m->dict == builtins->dict) continue;
+        if (runtime_own.contains(m)) {           // a prelude's module, which the runtime's own code runs in
             if (m->program_view != nullptr) continue;
             m->program_view = static_cast<Dict*>(dict_copy(m->dict).release().object());
-            clear_module_dict(m->program_view, v);
+            clear_module_dict(m->program_view);
             if (auto start = namespaces_at_start().find(m); start != namespaces_at_start().end())
                 release_program_values(m->dict, static_cast<Dict*>(start->second.get().object()));
-            release_pending(v);
-        } else {
-            clear_module_dict(m->dict, v);
+        } else {                                 // a module of the program's, or one of CPython's C modules
+            Ref held = (m->flags & IMMORTAL) ? Ref{} : Ref::share(Obj::of(m));
+            if (m->holds_namespace) clear_module_dict(m->dict);
         }
     }
+    weaklist.clear();                            // Py_DECREF(weaklist)
     // finalize_clear_sys_builtins_dict. The runtime's own code keeps the builtins it had: its modules get a copy of their own
     {
         Ref kept = dict_copy(builtins->dict);
-        for (Module* m : v.own)
+        for (Module* m : own)
             if (m->builtins == nullptr && m != builtins && m != sys) {
                 m->builtins = static_cast<Dict*>(kept.get().object());
                 incref(kept.get());
             }
     }
-    clear_module_dict(sys->dict, v);
-    clear_module_dict(builtins->dict, v);
-    collect_at_exit(v);                          // "Collect garbage once more"
-    release_pending(v);
+    clear_module_dict(sys->dict);
+    clear_module_dict(builtins->dict);
+    collect_at_exit();                           // "Collect garbage once more"
     // _Py_Finalize's second flush_std_files, on what sys.stdout and sys.stderr are now: None, unless a finaliser of the last
     // collections put a stream there; its failure is status 120 as the first's (RL-925)
     if (!flush_std_stream("stdout", true)) status = 120;
     if (!flush_std_stream("stderr", false)) status = 120;
-    // finalize_interp_clear (_PyInterpreterState_Clear): the thread's state, the codec registry (_PyCodec_Fini), then the
-    // interpreter's last collection, then gc's lists (_PyGC_Fini: the garbage first; the gc prelude binds the same two lists,
+    // finalize_interp_clear (_PyInterpreterState_Clear): the thread's state (the context), the codec registry (_PyCodec_Fini), then
+    // the interpreter's last collection, then gc's lists (_PyGC_Fini: the garbage first; the gc prelude binds the same two lists,
     // RL-928) and the warnings' state (_PyWarnings_Fini)
     release_state("_contextvars", {"_current"});
-    release_pending(v);
     release_state("_codecs", {"_search_path", "_search_cache", "_error_registry", "_library"});
-    release_pending(v);
-    collect_at_exit(v);
-    release_pending(v);
+    collect_at_exit();
     release_gc_lists();
     release_state("gc", {"garbage", "callbacks"});
     release_state("_warnings", {"filters", "_onceregistry", "_defaultaction", "_state"});
@@ -3928,7 +3732,7 @@ int exit_status(Obj exc) {
 // CPython's main module (pymain_run_file, add_main_module): module_init_dict's names, then
 // __builtins__ (the module), __file__, and the loader replacing the None in __loader__
 Module* make_main(const char* main_file) {
-    Module* main = new_module("__main__");
+    Module* main = new_module("__main__", true);   // a module of the program's: counted (Question 36)
     put(main->dict, "__builtins__", Obj::of(builtins_module()));
     Ref file = str_new(main_file);
     put(main->dict, "__file__", file.get());
@@ -4108,6 +3912,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
     bool exited = false;                         // Py_Exit from inside the report: no look after the program
     bool ran = false;                            // the program's first line was reached
     Module* main_module = nullptr;               // the program's __main__, once made
+    Ref main_held;                               // _PyRun_SimpleFileObject's `m`: held while the program runs
     std::unordered_set<Module*> runtime_own;
     // An exception nothing caught, as Modules/main.c's pymain_exit_err_print takes it. _Py_HandleSystemExitAndKeyboardInterrupt
     // first: a KeyboardInterrupt is noted, for the way the process ends, and reported like any other; a SystemExit is its
@@ -4482,6 +4287,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
             hide_bootstrap_names();              // start-up is over: what the two import-system modules hold beyond CPython's names
             Module* main = make_main(main_file);
             main_module = main;
+            main_held = Ref::share(Obj::of(main));
             if (bootstrap != nullptr) {
                 Obj loader_class = dict_get(bootstrap->dict, Obj::of(intern("SourceFileLoader")));
                 Ref file = str_new(main_file);
@@ -4517,6 +4323,8 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
         // _PyRun_SimpleFileObject's `done:`: the __file__ it set is taken out of the program's globals again, after the
         // report of an uncaught exception and before anything that runs at exit (an atexit callback, a __del__) (RL-501)
         if (main_module != nullptr) dict_del(main_module->dict, Obj::of(intern("__file__")));
+        main_module = nullptr;                   // and its `m` let go of (Py_XDECREF(m))
+        main_held = Ref{};
         // pymain_check_signals again (Modules/main.c:757), however the program ended: a handler whose signal no look has met
         // yet runs now, with no frame (None), before threading's shutdown and atexit. What it raises is reported as an
         // uncaught exception is, and its status replaces the program's (SystemExit(9) is 9, anything else 1)

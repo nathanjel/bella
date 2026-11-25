@@ -27,6 +27,7 @@ from __future__ import annotations
 import functools
 import gc
 import random
+import types
 import weakref
 from dataclasses import dataclass, field
 from typing import Any
@@ -40,6 +41,8 @@ RUNTIME_CLASS = 8                     # index in World.classes of the class recr
 RUNTIME_OBJECTS = (10, 11)            # indices in World.objects of its instances
 BUFFER_SLOTS = 3                      # the exporters a world with buffers keeps, and its views
 VIEW_SLOTS = 4
+MODULE_SLOTS = 2                      # the modules a world with modules keeps, and the functions made in them
+FUNCTION_SLOTS = 3
 RUNTIME_VARIANTS = 5
 
 Outcome = tuple[str, Any]   # ("value", v) | ("error", "AttributeError") | ("dict", [(k, v), ...])
@@ -94,6 +97,8 @@ def _norm(v: Any) -> Any:
         return ("T", v.tag)
     if CURRENT is not None and (isinstance(v, RefObject) or type(v) in CURRENT.real_classes):
         return ("O", CURRENT.which(v))
+    if CURRENT is not None and isinstance(v, (O.RefModule, types.ModuleType)):
+        return ("M", CURRENT.which_module(v))
     if isinstance(v, (list, tuple)):
         return type(v)(_norm(x) for x in v)
     return v
@@ -123,11 +128,16 @@ class DescriptorPair:
 class World:
     """A model world and a CPython world built from the same class definitions."""
 
-    def __init__(self, cycles: bool = False, buffers: bool = False) -> None:
+    def __init__(self, cycles: bool = False, buffers: bool = False, modules: bool = False) -> None:
         global CURRENT
         CURRENT = self
         self.cycles = cycles
         self.buffers = buffers                    # memoryviews and their exporters too (the header has no buffers yet)
+        self.modules = modules                    # module objects and functions made in them (the runtime's, not the header's)
+        self.module_slots: list[tuple[O.RefModule, Any] | None] = [None] * MODULE_SLOTS
+        self.function_slots: list[tuple[O.RefFunction, Any] | None] = [None] * FUNCTION_SLOTS
+        self.module_weaks: list[tuple[RefWeak, Any]] = []
+        self.module_table: list[tuple[O.RefModule, Any]] = []   # the interpreter's table (sys.modules): a root that holds modules
         if cycles:
             gc.disable()                          # collections on CPython's side only when an operation asks
         O.HEAP = self.heap = O.Heap()
@@ -229,6 +239,13 @@ class World:
                 return i
         return "elsewhere"
 
+    def which_module(self, v: Any) -> Any:
+        """A module of the program's as its slot, from either side."""
+        for i, pair in enumerate(self.module_slots):
+            if pair is not None and (v is pair[0] or v is pair[1]):
+                return i
+        return "elsewhere"
+
     def close(self) -> None:
         """CPython's automatic collector back on after a world with cycles."""
         if self.cycles:
@@ -279,6 +296,12 @@ class World:
             m, r = self.objects[v[1]]
             incref(m)
             return m, r
+        if isinstance(v, tuple) and v[0] == "M":           # one of the program's modules, or None for an empty slot
+            held = self.module_slots[v[1]]
+            if held is None:
+                return None, None
+            incref(held[0])
+            return held[0], held[1]
         return v, v
 
     def new_tag(self) -> tuple[str, str]:
@@ -817,6 +840,164 @@ class World:
                 _outcome(lambda: delattr(pair.real_cls, "__set__")))
 
     # ---- comparison ------------------------------------------------------------------------
+    # ---- modules (refmodel/objects.py, "Modules, and what runs in them") --------------------------------------------------
+    def _set_module(self, s: int, new: tuple[O.RefModule, Any] | None) -> None:
+        """The slot's assignment: the new value stored, then the old one let go of."""
+        old = self.module_slots[s]
+        self.module_slots[s] = new
+        if old is not None:
+            m, r = old
+            del old
+            decref(m)
+            del m, r
+
+    def _set_function(self, f: int, new: tuple[O.RefFunction, Any] | None) -> None:
+        old = self.function_slots[f]
+        self.function_slots[f] = new
+        if old is not None:
+            m, r = old
+            del old
+            decref(m)
+            del m, r
+
+    def op_module_new(self, s: int, tag: tuple[str, str]) -> tuple[Outcome, Outcome]:
+        """types.ModuleType(name), with a tagged object as its `x`, in the slot (the old module let go of)."""
+        m = O.RefModule(f"m{s}", self.heap)
+        incref(m)
+        r = types.ModuleType(f"m{s}")
+        vm, vr = self.value(tag)
+        assert m.namespace is not None
+        m.namespace.store("x", vm)
+        decref(vm)
+        r.x = vr                                       # type: ignore[attr-defined]
+        del vr
+        self._set_module(s, (m, r))
+        del m, r
+        return ("value", None), ("value", None)
+
+    def op_module_def(self, f: int, s: int, named: bool) -> tuple[Outcome, Outcome]:
+        """A function defined in the module (exec of a def in its namespace) into the function slot; `named`: the
+        namespace keeps its name too, so the namespace and the function hold each other."""
+        held = self.module_slots[s]
+        if held is None:
+            return ("value", "empty"), ("value", "empty")
+        m, r = held
+        fm = O.RefFunction(m)
+        incref(fm)
+        assert m.namespace is not None
+        if named:
+            m.namespace.store("f", fm)
+        exec("def _made():\n    return x\n", r.__dict__)  # noqa: S102 -- CPython's side: a def run in a module's namespace
+        fr = r.__dict__.pop("_made")                   # a def under a name of its own, so that only `named` binds f
+        if named:
+            r.f = fr
+        del m, r, held
+        self._set_function(f, (fm, fr))
+        del fm, fr
+        return ("value", None), ("value", None)
+
+    def op_module_inner(self, f: int, g: int) -> tuple[Outcome, Outcome]:
+        """The function in slot f makes one more there (its g), into slot g: its module may be gone."""
+        held = self.function_slots[f]
+        if held is None:
+            return ("value", "empty"), ("value", "empty")
+        assert held[0].module is not None
+        gm = O.RefFunction(held[0].module)
+        incref(gm)
+        exec("def g():\n    return x\n", held[1].__globals__)  # noqa: S102 -- a def run in its globals, the new function's
+        gr = held[1].__globals__.pop("g")
+        del held
+        self._set_function(g, (gm, gr))
+        del gm, gr
+        return ("value", None), ("value", None)
+
+    def op_module_store(self, s: int, value: Any) -> tuple[Outcome, Outcome]:
+        """The module's `y` set: a tag, one of the program's objects, or a module (itself, or the other)."""
+        held = self.module_slots[s]
+        if held is None:
+            return ("value", "empty"), ("value", "empty")
+        m, r = held
+        vm, vr = self.value(value)
+        assert m.namespace is not None
+        m.namespace.store("y", vm)
+        decref(vm)
+        r.y = vr
+        del m, r, held, vm, vr
+        return ("value", None), ("value", None)
+
+    def op_module_read(self, f: int) -> tuple[Outcome, Outcome]:
+        """What the function finds in its globals: `x` and `y`, through the module on the model's side."""
+        held = self.function_slots[f]
+        if held is None:
+            return ("value", "empty"), ("value", "empty")
+        fm, fr = held
+        return (_outcome(lambda: (fm.globals().get("x"), fm.globals().get("y"))),
+                _outcome(lambda: (fr.__globals__.get("x"), fr.__globals__.get("y"))))
+
+    def op_module_drop(self, s: int) -> tuple[Outcome, Outcome]:
+        self._set_module(s, None)
+        return ("value", None), ("value", None)
+
+    def op_function_drop(self, f: int) -> tuple[Outcome, Outcome]:
+        self._set_function(f, None)
+        return ("value", None), ("value", None)
+
+    def op_module_weak(self, s: int) -> tuple[Outcome, Outcome]:
+        """A weak reference to the module with a callback, kept by the program: the callback's run is a death."""
+        held = self.module_slots[s]
+        if held is None:
+            return ("value", "empty"), ("value", "empty")
+        number = len(self.module_weaks)
+        log_m, log_r = self.heap.deaths, self.real_deaths
+        wm = O.weak_ref(held[0], lambda w: log_m.append(("module callback", number, w() is None)))
+        wr = weakref.ref(held[1], lambda w: log_r.append(("module callback", number, w() is None)))
+        del held
+        self.module_weaks.append((wm, wr))
+        return ("value", None), ("value", None)
+
+    def op_module_table(self, s: int, put: bool) -> tuple[Outcome, Outcome]:
+        """The interpreter's table takes the module (the import system's sys.modules[name] = module), or lets go of the one it
+        took first. CPython's side is a plain holder: what the table changes is only what the model's collector walks."""
+        if put:
+            held = self.module_slots[s]
+            if held is None or held[0].in_table:
+                return ("value", "empty"), ("value", "empty")
+            incref(held[0])
+            held[0].in_table = True
+            self.module_table.append(held)
+            del held
+            return ("value", None), ("value", None)
+        if not self.module_table:
+            return ("value", "empty"), ("value", "empty")
+        m, r = self.module_table.pop(0)
+        m.in_table = False
+        decref(m)
+        del m, r
+        return ("value", None), ("value", None)
+
+    def random_module_op(self, rng: random.Random) -> tuple[Any, ...]:
+        roll = rng.random()
+        if roll < 0.18:
+            return ("module_new", rng.randrange(MODULE_SLOTS), self.new_tag())
+        if roll < 0.36:
+            return ("module_def", rng.randrange(FUNCTION_SLOTS), rng.randrange(MODULE_SLOTS), rng.random() < 0.5)
+        if roll < 0.44:
+            return ("module_inner", rng.randrange(FUNCTION_SLOTS), rng.randrange(FUNCTION_SLOTS))
+        if roll < 0.58:
+            pick = rng.random()
+            value = (self.new_tag() if pick < 0.4 else ("M", rng.randrange(MODULE_SLOTS)) if pick < 0.7
+                     else ("O", rng.randrange(RUNTIME_OBJECTS[0])))
+            return ("module_store", rng.randrange(MODULE_SLOTS), value)
+        if roll < 0.66:
+            return ("module_read", rng.randrange(FUNCTION_SLOTS))
+        if roll < 0.78:
+            return ("module_drop", rng.randrange(MODULE_SLOTS))
+        if roll < 0.86:
+            return ("function_drop", rng.randrange(FUNCTION_SLOTS))
+        if roll < 0.94:
+            return ("module_table", rng.randrange(MODULE_SLOTS), rng.random() < 0.6)
+        return ("module_weak", rng.randrange(MODULE_SLOTS))
+
     # ---- buffers (refmodel/objects.py, "Buffers") ---------------------------------------------------------------------
     def _set_exporter(self, b: int, new: tuple[RefObject, Any, str] | None) -> None:
         """The slot's assignment: the new value stored, then the old one let go of, as CPython's store does."""
@@ -967,6 +1148,8 @@ class World:
         n_obj = len(self.objects)
         if self.buffers and rng.random() < 0.3:
             return self.random_buffer_op(rng)
+        if self.modules and rng.random() < 0.25:
+            return self.random_module_op(rng)
         if self.cycles:
             roll = rng.random()
             if roll < 0.06:

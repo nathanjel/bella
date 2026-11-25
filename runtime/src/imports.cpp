@@ -2308,7 +2308,7 @@ Ref module_dict_get(Obj self) {
 Ref module_new_m(Obj, Args a) {                  // ModuleType(name, doc=None): __new__ makes it empty
     if (a.npos < 1 || !is_kind(a.pos(0), Kind::Class) || static_cast<ClassObject*>(a.pos(0).object()) != types().module)
         throw NotImplemented("a subclass of the module type (step 3b)");
-    auto* m = new Module("?");
+    auto* m = new Module("?", true);              // a module of the program's: counted (Question 36)
     dict_del(m->dict, Obj::of(N("__name__")));
     return Ref::share(Obj::of(m));
 }

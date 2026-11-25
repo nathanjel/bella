@@ -310,9 +310,9 @@ HEAP = Heap()
 
 
 def _counted(v: Any) -> bool:
-    """A value that is a counted object of the model's: an object, a dict, a weak reference, or a class a program made (a
-    static type, an int or a tag is not one)."""
-    return isinstance(v, (RefObject, RefDict, RefWeak)) or (isinstance(v, RefClass) and not v.static)
+    """A value that is a counted object of the model's: an object, a dict, a weak reference, a module or a function, or a
+    class a program made (a static type, an int or a tag is not one)."""
+    return isinstance(v, (RefObject, RefDict, RefWeak, RefModule, RefFunction)) or (isinstance(v, RefClass) and not v.static)
 
 
 def incref(v: Any) -> None:
@@ -1181,8 +1181,8 @@ class RefWeak:
     """A weak reference: a count of its own and a target it does not count. `target` is None once the
     target has died; `basic` is the one reference of an object with no callback, which is shared."""
 
-    def __init__(self, target: RefObject | RefClass, callback: Any) -> None:
-        self.target: RefObject | RefClass | None = target
+    def __init__(self, target: RefObject | RefClass | RefModule | RefFunction, callback: Any) -> None:
+        self.target: RefObject | RefClass | RefModule | RefFunction | None = target
         self.callback = callback
         self.basic = callback is None
         self.refs = 0
@@ -1190,7 +1190,7 @@ class RefWeak:
         self.heap = target.heap
         self.heap.gc.link(self)             # a weak reference is a tracked object (its callback is a reference)
 
-    def __call__(self) -> RefObject | RefClass | None:
+    def __call__(self) -> RefObject | RefClass | RefModule | RefFunction | None:
         if self.target is not None and getattr(self.target, "put_off", False):
             return None                 # PyWeakref_GetRef on an object whose dealloc is put off: gone
         return self.target
@@ -1222,7 +1222,7 @@ class RefWeak:
         self.unlink()
 
 
-def weak_ref(target: RefObject | RefClass, callback: Any = None) -> RefWeak:
+def weak_ref(target: RefObject | RefClass | RefModule | RefFunction, callback: Any = None) -> RefWeak:
     """get_or_create_weakref: a new count on the shared basic reference if there is one; else a new
     one, the basic at the head of the list and any other right after it, so the newest comes first.
     A class can always be referred to (type's objects have a list)."""
@@ -1238,6 +1238,154 @@ def weak_ref(target: RefObject | RefClass, callback: Any = None) -> RefWeak:
     else:
         target.weakrefs.insert(1, w)
     return w
+
+
+# ---------------------------------------------------------------------------------------------
+# Modules, and what runs in them (Objects/moduleobject.c, Objects/funcobject.c; the author's decision of 2026-11-24,
+# Question 36: a module of the program's is counted)
+# ---------------------------------------------------------------------------------------------
+#
+# A module object holds its namespace (md_dict); what runs in the module (a function, a frame object, a traceback
+# entry: `RefFunction` here) holds the namespace as its globals (func_globals), not the module. The runtime's compiled code
+# reaches its globals through the module object (`fn->module`), so the object outlives the module as CPython sees it for
+# as long as something that runs in the module is left: the module's count is CPython's (what holds the module object),
+# and `holders` counts what holds its namespace as its globals, each of which also holds the namespace itself. So the
+# module dies when CPython's does (module_dealloc: untracked, its weak references cleared, md_dict let go of) and the
+# namespace when CPython's does; what is left of the module is its holders' way to the namespace, gone with the last of
+# them, to which nothing can take a reference (a module whose count went is dead to `incref`).
+#
+# A module the interpreter's table holds (`in_table`: sys.modules, a root) is reachable from outside, and so is all its
+# namespace reaches: the collector need not walk the namespace, from the module or from what holds it as its globals, to
+# find what is garbage. Trial deletion then finds the same groups, in the same order (what the walk leaves out is black, and
+# a namespace it reaches no further is held from outside), and does not walk the program's whole module graph from every
+# function among its candidates.
+
+class RefModule:
+    """A module object of the program's: counted, tracked, weakly referable, holding its namespace (`namespace`, while
+    `holds_namespace`) and found through by its `holders`."""
+
+    def __init__(self, name: str, heap: Heap | None = None) -> None:
+        self.heap = heap if heap is not None else HEAP
+        self.name = name
+        self.refs = 0
+        self.alive = True
+        self.put_off = False
+        self.weakrefs: list[RefWeak] = []
+        self.namespace: RefDict | None = RefDict().made()   # new_module_notrack: the dict first, then the module tracked
+        incref(self.namespace)
+        self.holds_namespace = True               # md_dict: until the module dies, or a collection clears it
+        self.holders = 0                          # what holds the namespace as its globals, and finds it through here
+        self.in_table = False                     # the interpreter's table of modules holds it (sys.modules)
+        self.heap.gc.link(self)
+
+    def rooted(self) -> bool:
+        """Its namespace is reachable from outside: the module lives in the interpreter's table, holding it."""
+        return self.in_table and self.alive and self.holds_namespace
+
+    def traverse(self) -> list[Any]:
+        """module_traverse: md_dict, unless the table holds the module (rooted)."""
+        return [self.namespace] if self.holds_namespace and not self.rooted() else []
+
+    def has_finalizer(self) -> bool:
+        return False                              # a subclass of the module type stops by name (the runtime's step 3b)
+
+    def clear_weakrefs(self) -> None:
+        _clear_weak_list(self)
+
+    def _let_go_of_namespace(self) -> None:
+        if not self.holds_namespace:
+            return
+        self.holds_namespace = False
+        d = self.namespace
+        if self.holders == 0:
+            self.namespace = None                 # nothing finds it through the module any more
+        decref(d)
+
+    def gc_clear(self) -> None:
+        """module_clear: Py_CLEAR(md_dict)."""
+        self._let_go_of_namespace()
+
+    def dealloc(self) -> None:
+        """module_dealloc: untracked, its weak references cleared (their callbacks run), md_dict let go of, its memory.
+        While something holds the namespace as its globals, what is left is the holders' way to it (release_globals)."""
+        self.heap.gc.untrack(self)
+        self.alive = False
+        _clear_weak_list(self)
+        self._let_go_of_namespace()
+        self.heap.gc.free(self)
+
+    def __repr__(self) -> str:
+        return f"<RefModule {self.name!r}>"
+
+
+def hold_globals(m: RefModule) -> None:
+    """What runs in the module takes its namespace as its globals: one more holder, and the namespace's count. The module
+    itself may have died: a function made by a function of a module that is gone."""
+    if m.namespace is None:
+        raise ModelError(f"{m!r}: the way to its namespace is gone")
+    m.holders += 1
+    incref(m.namespace)
+
+
+def release_globals(m: RefModule) -> None:
+    """A holder lets go of the namespace (func_clear's Py_CLEAR(func_globals)); with the last holder of a module that no
+    longer holds its namespace, the way to it goes, before the namespace's count does (which may run anything)."""
+    if m.holders <= 0:
+        raise ModelError(f"{m!r}: its namespace released by more holders than held it")
+    d = m.namespace
+    m.holders -= 1
+    if m.holders == 0 and not m.holds_namespace:
+        m.namespace = None
+    decref(d)
+
+
+class RefFunction:
+    """A function of the program's as the lifetimes see it (Objects/funcobject.c): it holds its module's namespace as its
+    globals, reached through the module (`module`), and is tracked and weakly referable. It stands for a frame object and
+    a traceback entry too, which hold their globals the same way."""
+
+    def __init__(self, module: RefModule) -> None:
+        self.heap = module.heap
+        self.refs = 0
+        self.alive = True
+        self.put_off = False
+        self.weakrefs: list[RefWeak] = []
+        hold_globals(module)
+        self.module: RefModule | None = module
+        self.heap.gc.link(self)
+
+    def globals(self) -> RefDict:
+        """func.__globals__, as the compiled code finds it: through the module."""
+        if self.module is None or self.module.namespace is None:
+            raise ModelError(f"{self!r} has no globals")
+        return self.module.namespace
+
+    def traverse(self) -> list[Any]:
+        """func_traverse: func_globals first, unless the namespace is reachable from outside (its module rooted)."""
+        return [self.module.namespace] if self.module is not None and not self.module.rooted() else []
+
+    def has_finalizer(self) -> bool:
+        return False
+
+    def clear_weakrefs(self) -> None:
+        _clear_weak_list(self)
+
+    def gc_clear(self) -> None:
+        """func_clear: func_globals first."""
+        m, self.module = self.module, None
+        if m is not None:
+            release_globals(m)
+
+    def dealloc(self) -> None:
+        """func_dealloc: untracked, its weak references cleared, func_clear, its memory."""
+        self.heap.gc.untrack(self)
+        self.alive = False
+        _clear_weak_list(self)
+        self.gc_clear()
+        self.heap.gc.free(self)
+
+    def __repr__(self) -> str:
+        return f"<RefFunction of {self.module.name if self.module is not None else '?'}>"
 
 
 # ---------------------------------------------------------------------------------------------

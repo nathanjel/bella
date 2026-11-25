@@ -4,7 +4,8 @@ C-9-13), and A42's fixes again.
 Fourteen findings, RL-923 to RL-936; `docs/reviews/review-log.md` has each with its verdict. The programs are the reviewer's
 own probes, a directory each with the modules a probe imports (`review_a43/<probe>/*.txt`, read as `.py`), one row a process,
 compared on standard output, standard error and the exit status: the rows that differed and agree now, with the reviewer's
-controls beside them. Left out: RL-933, a question for the author (`exit/failed`).
+controls beside them. RL-933 (`exit/failed`), decided by the author on 2026-11-24 (Question 36: a module of the program's is
+counted), joined them with that step (C-9-14).
 
 * The exit's steps where CPython has them: the shutdown warning of a `gc.garbage` with something in it (`gcwarning`:
   RL-923); `sys.is_finalizing()` true from the end of atexit's handlers (`flag`: RL-927); the second `flush_std_files` on the
@@ -47,7 +48,7 @@ ROWS: dict[str, tuple[str, ...]] = {
     "buffer": ("noctx", "ctx"),
     "drain": ("observe",),
     "exit": ("garbage", "alias", "dynamic", "cache", "generator", "errorhandler", "warning", "after", "weakfinal", "context",
-             "deep", "trace"),
+             "deep", "trace", "failed"),
     "flag": ("path", "cycle", "callback", "flush", "disabled"),
     "fresh": ("default", "bare"),
     "gcwarning": ("warn", "save"),

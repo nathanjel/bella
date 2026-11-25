@@ -1,0 +1,12 @@
+{
+ "case": "C-9-14_when_a_module_dies.py",
+ "clause": "C-9-14",
+ "spec": "section 9 (lifetimes; D-19, the author's decision of 2026-11-24: a module of the program's is counted)",
+ "status": "P1",
+ "source": "Objects/moduleobject.c (module_dealloc, module_traverse, module_clear), Objects/funcobject.c (func_clear),",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "made namespace ['x'] made\nmade dropped ['made callback', 'made.x']\nheld kept []\nheld ref True True\nheld dropped ['held callback', 'held.x']\nheld ref True\nnamespace module dropped ['namespace callback']\nnamespace names ['x']\nnamespace dropped ['namespace.x']\nselfish dropped []\nselfish collected ['selfish callback', 'selfish.x']\npair a dropped []\npair b dropped []\npair collected ['a callback', 'a.x', 'b callback', 'b.x']\nfailed caught []\nfailed in sys.modules False ValueError\nfailed after ['fails callback', 'fails.held']\nfailed class caught []\nfailed class after ['fails_class callback']\nfailed class collected ['fails_class.held']\nonce failed ['fails_once1 callback']\nonce kept [1] [1]\nonce imported []\nonce kept [1, 2] 2 2 [1, 2]\nonce first given back []\nonce first 1 1 True\nonce first dropped []\nonce collected ['fails_once.held1']\nwatched 10 9\nend []\n",
+ "stderr": "",
+ "exit_code": 0
+}

@@ -196,7 +196,7 @@ struct CodeObject : Object {                     // `code`: the names and counts
 struct PyFunction : Object {
     const Code* code;
     Ref (*entry)(PyFunction* self, Args args);
-    Module* module;                              // its globals (the module is immortal in phase 1)
+    Module* module;                              // its globals (hold_globals): null once the collector has cleared it (func_clear)
     Ref defaults;                                // a tuple, or Unset
     Ref kwdefaults;                              // a dict, or Unset
     std::vector<Ref> closure;                    // cells, in the order of co_freevars
@@ -209,16 +209,75 @@ struct PyFunction : Object {
 
 using Dict = DictObject;                         // object.hpp's: every dict, an instance's __dict__ included
 
+// A module object. The runtime's own (sys, builtins, CPython's C modules, the preludes' and hidden namespaces) are immortal. A
+// module of the program's (an import's, a ModuleType's, __main__) is counted as CPython's is (the author's decision of
+// 2026-11-24, Question 36; C-9-14): what holds the module object is its count, and what runs in it (a function, a frame object,
+// a traceback entry) holds its namespace as its globals, as CPython's holds func_globals, and finds the namespace through the
+// module object (compiled code's `fn->module`) without being one of its references: `holders` counts those, each of which holds
+// the namespace itself (hold_globals). So the module dies when CPython's does (module_dealloc: its weak references cleared, its
+// namespace let go of) and the namespace when CPython's does, while what is left of the module object stays as its holders'
+// way to their globals, gone with the last of them, dead to every reference (refmodel/objects.py: RefModule). A staged text's
+// frame is one too, held by the text's run and not a module the program sees
 struct Module : Object {
     Ref name;
-    Dict* dict;                                  // owned
-    Dict* builtins = nullptr;                    // a staged text's, when not the builtins module's own (owned)
-    Dict* locals = nullptr;                      // a staged text's namespace when exec gives one of its own (PyEval_EvalCode's locals), else dict (owned)
+    Dict* dict;                                  // its namespace: held while holds_namespace, and by each holder (null: neither)
+    Dict* builtins = nullptr;                    // a staged text's, when not the builtins module's own (held as dict is)
+    Dict* locals = nullptr;                      // a staged text's namespace when exec gives one of its own (PyEval_EvalCode's locals), else dict (held as dict is)
     // A module CPython writes in C that the exit has cleared (finalize_modules_clear_weaklist): what the program sees of it, its
     // names None, while the runtime's own code goes on with `dict` (C-9-13). Null otherwise (owned)
     Dict* program_view = nullptr;
-    explicit Module(const char* n);
-    Module(Dict* globals, Dict* given_builtins); // a text's frame, which lives as its functions do: not a module of the program's
+    std::int64_t holders = 0;                    // what holds its namespace as its globals (hold_globals); never an immortal's
+    bool holds_namespace = true;                 // md_dict: until the module dies, or a collection clears it (module_clear)
+    std::uint64_t serial = 0;                    // a counted module's, unique (live_module); 0 for the others
+    explicit Module(const char* n);              // one of the runtime's own: immortal
+    Module(const char* n, bool counted);         // counted: a module of the program's
+    Module(Dict* globals, Dict* given_builtins); // a text's frame, held by its run: not a module of the program's
+};
+// What runs in a module takes its namespace as its globals, and lets go of it (func_clear's Py_CLEAR(func_globals)); with the
+// last holder of a module that no longer holds its namespace, the way to it goes. Nothing for an immortal module
+void hold_counted_globals(Module* m);
+void release_counted_globals(Module* m);
+Module* live_module(std::uint64_t serial);       // the counted module of that serial number while it lives, else null
+inline void hold_globals(Module* m) {
+    if (m->flags & IMMORTAL) return;
+    if (m->builtins == nullptr && m->locals == nullptr && m->dict != nullptr) [[likely]] {   // a module's: its namespace alone
+        ++m->holders;
+        incref(m->dict);
+        return;
+    }
+    hold_counted_globals(m);
+}
+inline void release_globals(Module* m) {
+    if (m->flags & IMMORTAL) return;
+    if (m->builtins == nullptr && m->locals == nullptr && (m->holders > 1 || (m->holders == 1 && m->holds_namespace))) [[likely]] {
+        --m->holders;                            // the way to the namespace stays: the module, or another holder, holds it
+        decref(m->dict);
+        return;
+    }
+    release_counted_globals(m);
+}
+// A frame object's or a traceback entry's hold on its module's namespace (hold_globals), or none
+class GlobalsRef {
+public:
+    GlobalsRef() = default;
+    explicit GlobalsRef(Module* m) : m_(m) {
+        if (m_ != nullptr) hold_globals(m_);
+    }
+    GlobalsRef(const GlobalsRef& o) : m_(o.m_) {
+        if (m_ != nullptr) hold_globals(m_);
+    }
+    GlobalsRef(GlobalsRef&& o) noexcept : m_(std::exchange(o.m_, nullptr)) {}
+    GlobalsRef& operator=(GlobalsRef o) {        // the new one taken, then the old let go of
+        std::swap(m_, o.m_);
+        return *this;
+    }
+    ~GlobalsRef() { reset(); }
+    void reset() {
+        if (Module* m = std::exchange(m_, nullptr)) release_globals(m);
+    }
+    Module* module() const { return m_; }
+private:
+    Module* m_ = nullptr;
 };
 inline Dict* program_dict(const Module* m) { return m->program_view != nullptr ? m->program_view : m->dict; }   // its namespace, as the program sees it
 void forget_module(const Module* m);             // the runtime's own: cleared by nothing at exit
@@ -227,7 +286,7 @@ bool runtime_namespace(const Module* m);         // the runtime's own code runs 
 Obj class_dict_object(ClassObject* c);          // a class's dict as the object CPython's class holds (dict_view), made if not yet
 Ref class_mro_tuple(ClassObject* c);            // its __mro__'s tuple, made if not yet; None while it has no MRO (RL-940)
 ClassObject* best_base_of(ClassObject* c);      // tp_base: best_base of its bases, object for none
-std::vector<Module*>& all_modules();             // every module made, oldest first (immortal: D-19)
+std::vector<Module*>& all_modules();             // every module of the runtime's own made, oldest first (immortal)
 std::vector<Module*>& hidden_modules();          // the runtime's own namespaces no program sees (a built-in module's prelude's, match's)
 std::vector<Module*> made_native_modules();      // the built-in modules made so far, CPython's C ones (imports.cpp's registry)
 Dict* builtins_copy();                           // interp->builtins_copy: the builtins as they were before the program, or null before then
@@ -235,8 +294,8 @@ Dict* builtins_copy();                           // interp->builtins_copy: the b
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
     const Code* code;
     int line;
-    Ref module;                                  // the frame's module, whose dict is its f_globals, held as CPython's frame holds its globals (a staged
-                                                 // text's lives as its functions do); Unset: _PyTraceback_Add's entry, whose frame has an empty dict
+    GlobalsRef module;                           // the frame's module, whose dict is its f_globals, held as CPython's frame holds its globals (hold_globals);
+                                                 // none: _PyTraceback_Add's entry, whose frame has an empty dict
     std::uint64_t frame = 0;                     // the frame (a FrameGuard's id) it records
     Ref frame_obj;                               // tb_frame: the frame object the frame's entries share; unset for an entry no frame made
     Ref next;
@@ -255,7 +314,7 @@ struct Traceback : Object {                      // one frame's entry; `next` go
 namespace detail { struct FrameRecord; }
 struct FrameObject : Object {
     const Code* code;
-    Ref module;                                  // as a traceback entry's: a staged text's code lives as its namespace does
+    GlobalsRef module;                           // as a traceback entry's
     bool owned = false;                          // the frame is over, and the values it had then are here
     std::vector<Ref> values;                     // its variables in the frame's order (Code::frame_slots), and a generator's stack values after them
     Ref ns;                                      // a class body's namespace (its f_locals)
@@ -265,7 +324,7 @@ struct FrameObject : Object {
     // on, and the record is not to be read. Any other frame object has none.
     detail::FrameRecord* record = nullptr;
     std::shared_ptr<bool> live;
-    FrameObject(const Code* c, Ref m);
+    FrameObject(const Code* c, Module* m);
 };
 
 // ---- the builtin types and singletons (made at start-up) ----
@@ -1134,7 +1193,7 @@ void mapping_set(Obj mapping, Obj key, Obj value);
 
 // ---- modules and start-up ----
 Module* builtins_module();
-Module* new_module(const char* name);
+Module* new_module(const char* name, bool counted = false);   // PyModule_New; counted: a module of the program's
 using ModuleBody = Ref (*)(Module* m);
 bool is_attribute_error(const PyError& e);
 Ref positional_only(Args a, const char* name, std::size_t lo, std::size_t hi);   // a C function's arity check
@@ -1323,6 +1382,7 @@ ClassObject* builtin_type(const char* name, std::vector<ClassObject*> bases);   
 void note_native_module(const char* name, Module* m);   // its absent names are refused by the table
 void note_filled(const Module* m);               // a module is filled (a native module, or a program's before its body runs): the names it has
 bool was_filled(const Module* m, std::string_view name);   // now are the runtime's, and one absent later is one the program deleted
+void forget_filled(const Module* m);             // a counted module's memory goes: its names are no one's
 std::string_view native_module_name(const Module* m);   // empty for any other module
 void set_bootstrap_module(Module* m);
 void set_stdlib_dir(const char* dir);             // sys._stdlib_dir, the build's interpreter's (pipeline/build.py main_unit), before run_main

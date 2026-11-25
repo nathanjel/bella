@@ -11,7 +11,9 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import assume, settings, strategies as st  # noqa: E402
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule  # noqa: E402
 
-from refmodel.oracle import BUFFER_SLOTS, NAMES, RUNTIME_CLASS, RUNTIME_OBJECTS, RUNTIME_VARIANTS, VIEW_SLOTS, World  # noqa: E402
+from refmodel.oracle import (  # noqa: E402
+    BUFFER_SLOTS, FUNCTION_SLOTS, MODULE_SLOTS, NAMES, RUNTIME_CLASS, RUNTIME_OBJECTS, RUNTIME_VARIANTS, VIEW_SLOTS, World,
+)
 
 objects = st.integers(0, 11)
 classes = st.integers(0, 8)
@@ -24,7 +26,7 @@ ring_classes = st.lists(st.integers(0, 7).filter(lambda c: c != RUNTIME_CLASS), 
 class AttributeModel(RuleBasedStateMachine):
     def __init__(self) -> None:
         super().__init__()
-        self.world = World(cycles=True, buffers=True)
+        self.world = World(cycles=True, buffers=True, modules=True)
         assert len(self.world.objects) == 12 and len(self.world.classes) == 9
 
     def teardown(self) -> None:
@@ -80,6 +82,44 @@ class AttributeModel(RuleBasedStateMachine):
     @rule(slot=st.integers(0, BUFFER_SLOTS - 1))
     def resize(self, slot: int) -> None:
         self.world.apply(("resize", slot))
+
+    # ---- modules and the functions made in them (refmodel/objects.py, "Modules, and what runs in them") ----
+    @rule(slot=st.integers(0, MODULE_SLOTS - 1))
+    def module_new(self, slot: int) -> None:
+        self.world.apply(("module_new", slot, self.world.new_tag()))
+
+    @rule(fn=st.integers(0, FUNCTION_SLOTS - 1), slot=st.integers(0, MODULE_SLOTS - 1), named=st.booleans())
+    def module_def(self, fn: int, slot: int, named: bool) -> None:
+        self.world.apply(("module_def", fn, slot, named))
+
+    @rule(fn=st.integers(0, FUNCTION_SLOTS - 1), into=st.integers(0, FUNCTION_SLOTS - 1))
+    def module_inner(self, fn: int, into: int) -> None:
+        self.world.apply(("module_inner", fn, into))
+
+    @rule(slot=st.integers(0, MODULE_SLOTS - 1), value=st.one_of(st.just("tagged"), st.tuples(st.just("M"), st.integers(0, MODULE_SLOTS - 1)),
+                                                             st.tuples(st.just("O"), held)))
+    def module_store(self, slot: int, value: object) -> None:
+        self.world.apply(("module_store", slot, self.world.new_tag() if value == "tagged" else value))
+
+    @rule(fn=st.integers(0, FUNCTION_SLOTS - 1))
+    def module_read(self, fn: int) -> None:
+        self.world.apply(("module_read", fn))
+
+    @rule(slot=st.integers(0, MODULE_SLOTS - 1))
+    def module_drop(self, slot: int) -> None:
+        self.world.apply(("module_drop", slot))
+
+    @rule(fn=st.integers(0, FUNCTION_SLOTS - 1))
+    def function_drop(self, fn: int) -> None:
+        self.world.apply(("function_drop", fn))
+
+    @rule(slot=st.integers(0, MODULE_SLOTS - 1), put=st.booleans())
+    def module_table(self, slot: int, put: bool) -> None:
+        self.world.apply(("module_table", slot, put))
+
+    @rule(slot=st.integers(0, MODULE_SLOTS - 1))
+    def module_weak(self, slot: int) -> None:
+        self.world.apply(("module_weak", slot))
 
     @rule(generation=st.integers(0, 2))
     def collect(self, generation: int) -> None:
