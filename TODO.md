@@ -842,7 +842,7 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   runs (its path finder, its module locks, its reading of the code), D-33 for what one thread sees of the locks (spec
   v0.42; RL-950), and the fourteen names of the lock machinery stop with D-33's words (`ABSENT_BY_ENTRY`, call.cpp);
   `pipeline/tests/test_module_locks.py` holds it. CPython's locks themselves go with the threads milestone (Later).
-* **Question 48: the code objects of the functions the closed world rewrote (RL-948's remainder; after Question 47).** 27
+* **Question 48: the code objects of the functions the closed world rewrote (RL-948's remainder; put to the author 2026-11-25).** 27
   of the 149 code objects that the functions of `runtime/prelude/bootstrap_frames.json` reach have the rewrite's locals
   where CPython's have its text's (`co_varnames`, `co_nlocals`, `_setup`'s `co_argcount`; [P1] under E-02): the path
   finders and `_install` (11), the bytecode cache (7), the extension loaders (2), what needs `importlib.metadata` or
@@ -850,6 +850,10 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   They are the A46 test's `OPEN`, beside the two of the locks. The options to put: registered (an entry naming them, or
   E-04's reason widened), CPython's text where it can run and the table carrying CPython's names and counts for the rest,
   or in part; the evidence to count first (who reads these functions' code objects).
+  `cache_from_source` and `source_from_cache` are CPython's text cut short after the raise their first lines make, since
+  `cache_tag` is None (D-16): the whole text runs as it is, so they become CPython's with RL-955's step, whatever the
+  answer; the question is about the other 25 (20 refused, 5 rewritten), with RL-957 (`importlib.invalidate_caches()`
+  not importing `importlib.metadata`).
 * **The methods of a module name that is a str subclass (review W47: RL-955, then RL-954).** An import by such a name
   (`__import__`, `importlib.__import__`, a lazy import's first use) calls its methods otherwise than CPython does: measured
   2026-11-25 for a module found on the path, CPython `__add__` 14, `__hash__` 16, `rpartition` 4, `__ne__` 1, `split` 1;
