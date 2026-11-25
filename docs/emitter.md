@@ -368,7 +368,7 @@ At exit, on every way out but a refusal (a normal end, `sys.exit`, an uncaught e
 report), each module's globals are released in insertion order, the modules in `sys.modules` order
 and then those it no longer holds, oldest first: `finalize_remove_modules` drops `sys.modules`'
 entries in that order and a module whose last count goes releases its namespace (measured on
-3.15.2; modules are immortal here, D-19, so only the namespaces are cleared, and D-07 leaves the
+3.15.2; a module of the program's is counted as CPython's is since Question 36, and D-07 leaves the
 order open where a module is held by another or a traceback holds `__main__`). The status is
 `_Py_HandleSystemExitAndKeyboardInterrupt`'s: a SystemExit's code, truncated to a C int.
 

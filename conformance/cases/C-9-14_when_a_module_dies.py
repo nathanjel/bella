@@ -1,5 +1,5 @@
 # clause: C-9-14
-# spec: section 9 (lifetimes; D-19, the author's decision of 2026-11-24: a module of the program's is counted)
+# spec: section 9 (lifetimes: a module object is reference-counted like any other; the author's decisions of 2026-11-24 and 2026-11-25)
 # status: P1
 # source: Objects/moduleobject.c (module_dealloc, module_traverse, module_clear), Objects/funcobject.c (func_clear),
 #         Lib/importlib/_bootstrap.py (_load_unlocked), Python/import.c (remove_importlib_frames)

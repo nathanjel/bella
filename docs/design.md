@@ -164,7 +164,7 @@ inline std::uint64_t new_class_version() noexcept {
   return v;
 }
 
-// ---- Class object: one per Python class, created at module initialisation (reference-counted, D-19) or at runtime ----
+// ---- Class object: one per Python class, created at module initialisation (reference-counted, C-3-12) or at runtime ----
 enum ClassFlag : std::uint32_t {
   HAS_INSTANCE_DICT = 1u << 0, HAS_GETATTR = 1u << 1, HAS_GETATTRIBUTE = 1u << 2, HAS_SETATTR = 1u << 3,
   CYCLE_FREE = 1u << 4, DICT_MODE = 1u << 5, MAY_RECEIVE_COMPUTED_WRITES = 1u << 6,

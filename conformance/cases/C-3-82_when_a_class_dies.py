@@ -1,5 +1,5 @@
 # clause: C-3-82
-# spec: section 3 (classes; D-19: a class is reference-counted like any other definition-time object)
+# spec: section 3 (classes; section 9: a class is reference-counted like any other object)
 # status: P1
 # source: Objects/typeobject.c (type_traverse, type_clear, type_dealloc, type_new_set_classdictcell), Objects/descrobject.c
 #         (mappingproxy_getitem, mappingproxy_get, mappingproxy_contains, mappingproxy_len, mappingproxy_traverse)

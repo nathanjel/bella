@@ -1,5 +1,5 @@
 # clause: C-9-05
-# spec: section 9 (D-19 is limited to module objects)
+# spec: section 9 (everything created while a module initialises is counted)
 # status: P1
 # source: review round 3, finding 5 (a function's defaults die with the function)
 """Deleting a function releases its default values: functions are ordinary reference-counted objects."""

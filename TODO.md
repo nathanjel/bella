@@ -824,7 +824,7 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   and `__itemsize__` from the runtime's structs. `tools/missing_names.py --update` then, and the stop rows of the argument
   counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
   of CPython's facts, not the numbers shown.
-* **Questions from review A45 (to put after Question 44, D-19's words).** RL-944: a class's dict reached through the
+* **Questions from review A45 (to put: Question 45 is RL-944, Question 46 RL-946).** RL-944: a class's dict reached through the
   proxy's reflected `|` (`mappingproxy_or` hands a reflected `__ror__` the class's dict itself) and written is not what a
   look-up on the class reads, the class's attributes being its own store and the dict a view of them (C-3-82); options: an
   exclusion beside E-05 (which has `gc.get_referents`, the other way to that object), or writes to the view taken into the
@@ -845,11 +845,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   `__import__` trims a raised traceback as `remove_importlib_frames` does (all of them for an ImportError, a chunk ending
   in `_call_with_frames_removed` otherwise); `warnings`' stack level skips them as `_is_internal_frame` and `_warnings.c`'s
   `is_internal_filename` do. D-17's clause narrows to the finder's frames (a closed world has no path finder) and C-9-14
-  joins the compiled baseline. D-19's words and the spec's sentences are Question 44.
-* **Question 44 (to put): D-19's words.** Module objects of the program's are counted (Question 36) and, with Question 43's
-  step, nothing of D-19 is left that a program can see: its summary, its note, section 9's bullet ("Module objects are
-  immortal (D-19)") and section 11's paragraph (whose premise "a module can leave `sys.modules` only through E-04" is false)
-  are the author's to reword; draft the words and show them.
+  joins the compiled baseline. D-19 ended with Question 44 (2026-11-25, v0.39); the comments of the runtime and the model
+  that name it beside C-3-12 change with this step.
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
   version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads
