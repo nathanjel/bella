@@ -824,22 +824,14 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   and `__itemsize__` from the runtime's structs. `tools/missing_names.py --update` then, and the stop rows of the argument
   counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
   of CPython's facts, not the numbers shown.
-* **Question 43 (the author, 2026-11-25: B): the import system's frames as CPython's frames.** The runtime runs CPython's
-  `_bootstrap` text as a prelude, whose frames are hidden (`Code::shown`), so three rows differ (measured 2026-11-25): a failed
-  import's module object dies when the import ends, where CPython's `_load_unlocked` frame keeps it (through the failed
-  module's frame object's `f_back`) until the exception goes; `traceback.extract_stack()` (and `format_stack`, `print_stack`,
-  logging's `stack_info`) during an import lacks CPython's `<frozen importlib._bootstrap>` and `_bootstrap_external` entries
-  (five for a plain import); the recursion depth inside an imported module's body (D-17's clause). A case first (the stack
-  during an import: plain, a package's parent, a from-import of a submodule, `importlib.import_module`, nested; the depth; a
-  warning's `stacklevel` from a module body; each trimming rule of a traceback; the failed module's weak reference), then:
-  the import system's Python functions by name (not the prelude's C stand-ins: GenericAlias, Union, SimpleNamespace) linked
-  and counted with CPython's file names and line numbers (a line map built from CPython's `_bootstrap.py` and
-  `_bootstrap_external.py` text, checked by a test); `exec_module` through `_call_with_frames_removed` as CPython's;
-  `__import__` trims a raised traceback as `remove_importlib_frames` does (all of them for an ImportError, a chunk ending
-  in `_call_with_frames_removed` otherwise); `warnings`' stack level skips them as `_is_internal_frame` and `_warnings.c`'s
-  `is_internal_filename` do. D-17's clause narrows to the finder's frames (a closed world has no path finder) and C-9-14
-  joins the compiled baseline. D-19 ended with Question 44 (2026-11-25, v0.39); the comments of the runtime and the model
-  that name it beside C-3-12 change with this step.
+* **Question 43 (the author, 2026-11-25: B): the import system's frames as CPython's frames.** Done 2026-11-25 (C-8-22;
+  C-9-14 joins the compiled baseline; `tools/bootstrap_frames.py`, checked by `make verify`; DECISIONS). The comments of the
+  runtime and the model that name D-19 beside C-3-12 (`object.hpp`, `types.cpp`, `refmodel/objects.py`,
+  `refmodel/tests/test_cases.py`) change with the next edit of the header, which rebuilds every unit anyway.
+* **Question 47: D-17's import clause narrowed (put to the author 2026-11-25).** With Question 43's step what is left of the
+  import system's frames is what CPython enters and leaves before a module's body runs (its path finder, its module locks,
+  its reading of the code), seen only through a recursion at the limit during an import. The words drafted: the register's
+  summary and section 11's row name that, "(decided 2026-11-24, narrowed 2026-11-25)", v0.42.
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
   version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads

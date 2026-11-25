@@ -389,6 +389,10 @@ class FunctionDef(Stmt):
     module_frame: bool = False
     # co_firstlineno: the first decorator's line when there are decorators, else the def's (`line`)
     first_line: int = 0
+    # a function of CPython's import system in the bootstrap preludes: the file its frame names (`<frozen importlib._bootstrap>`
+    # or `_bootstrap_external`), its lines CPython's (tools/bootstrap_frames.py; Question 43, C-8-22). It has a frame, where
+    # the rest of a prelude stands for C and has none. Empty for every other function
+    frame_file: str = ""
 
 
 @dataclass(frozen=True)

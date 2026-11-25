@@ -92,6 +92,7 @@ verify:
 	$(PY) tools/cpython_names.py --check
 	$(PY) tools/unicode_tables.py --check
 	$(PY) tools/opcode_tables.py --check
+	$(PY) tools/bootstrap_frames.py --check
 
 check-conformance:
 	$(PY) conformance/harness.py check --runner "$(RUNNER)"

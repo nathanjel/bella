@@ -322,8 +322,10 @@ class Emitter:
         if self.parent_kind.get(id(c)) == "classbody" and c.kind not in ("module", "classbody"):
             flags |= 0x8000000                                         # CO_METHOD
         # a frame CPython does not have (the prelude's C functions, an inlined comprehension)
-        # never enters a traceback (RL-223, RL-224)
-        shown = "false" if self.prelude or dict(c.meta).get("inlined", False) else "true"
+        # never enters a traceback (RL-223, RL-224); a function of CPython's import system in the bootstrap preludes has
+        # CPython's frame, its file CPython's (Question 43, C-8-22)
+        frame_file = str(dict(c.meta).get("frame_file", "") or "")
+        shown = "true" if frame_file else "false" if self.prelude or dict(c.meta).get("inlined", False) else "true"
         inlined = "true" if dict(c.meta).get("inlined", False) and not self.prelude else "false"   # the prelude stands for C, which has none
         def strings(ns: list[str]) -> str:
             return "{" + ", ".join(c_string(n) for n in ns) + "}"
@@ -337,7 +339,7 @@ class Emitter:
         internal = {public[p.name]: p.name for p in params}
         named = [*names, *(n for n in cellvars if n not in names), *freevars]
         slots = [2 * frame_locals.index(m) + (m in frame_cells) if (m := internal.get(n, n)) in frame_locals else -1 for n in named]
-        return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(self.filename)}, "
+        return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(frame_file or self.filename)}, "
                 f"{c.first_line}, {len(positional)}, {posonly}, {len(kwonly)}, {str(varargs).lower()}, "
                 f"{str(varkw).lower()}, {strings(names)}, {doc}, {shown}, {strings(cellvars)}, {strings(freevars)}, {flags}, {inlined}, "
                 f"{{{', '.join(map(str, slots))}}}}};")

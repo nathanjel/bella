@@ -148,6 +148,7 @@ class _Code:
             meta=(("hidden", frozenset(n for n in s.varnames if n in s.synthetic)),
                   ("needs_classdict", s.needs_classdict),
                   ("inlined", isinstance(node, L.FunctionDef) and node.inlined),
+                  ("frame_file", node.frame_file if isinstance(node, L.FunctionDef) else ""),
                   ("co_varnames", co_varnames(s)), ("co_cellvars", co_cellvars(s))))
 
     def child(self, node: L.FunctionDef | L.Lambda | L.ClassBody) -> G.Code:

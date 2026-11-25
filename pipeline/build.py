@@ -89,6 +89,17 @@ PRELUDE = [(ROOT / "runtime" / "prelude" / "build_class.py", "builtins"), (ROOT 
            (ROOT / "runtime" / "prelude" / "templatelib.py", "builtins"),
            (ROOT / "runtime" / "prelude" / "bootstrap.py", "_frozen_importlib"),
            (ROOT / "runtime" / "prelude" / "bootstrap_external.py", "_frozen_importlib_external")]
+# the import system's functions in the two bootstrap preludes that have CPython's frames, with CPython's files and lines
+# (tools/bootstrap_frames.py writes it, make verify checks it; Question 43, C-8-22)
+BOOTSTRAP_FRAMES = ROOT / "runtime" / "prelude" / "bootstrap_frames.json"
+
+
+@cache
+def bootstrap_frames() -> dict[str, dict[str, dict[str, typing.Any]]]:
+    table: dict[str, dict[str, dict[str, typing.Any]]] = json.loads(BOOTSTRAP_FRAMES.read_text(encoding="utf-8"))["preludes"]
+    return table
+
+
 # built-in modules CPython writes in C and this runtime in Python: compiled with the prelude, run at the
 # first import (runtime/src/imports.cpp)
 NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runtime" / "prelude" / "_operator.py",
@@ -174,13 +185,14 @@ def prelude_state() -> frozenset[str]:
 
 
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mode: str = "exec",
-           future: frozenset[str] = frozenset(), looks: bool = True, tree: ast.Module | None = None) -> str:
+           future: frozenset[str] = frozenset(), looks: bool = True, tree: ast.Module | None = None,
+           frames: dict[str, dict[str, typing.Any]] | None = None) -> str:
     # the passes walk the tree by recursion, and a chain of operators, calls or elif branches is as deep as it is long: the
     # limit eval1's run has (pipeline/l1/run.py), and past it a refusal by name, not a traceback (review F17 #14)
     limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(limit, 20000))
     try:
-        module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future, tree=tree)))
+        module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future, tree=tree, frames=frames)))
         wf2.check(module, lifetimes=True)
         return emit_module(module, namespace, filename, prelude, looks, prelude_state() if prelude else frozenset())
     except RecursionError:
@@ -318,6 +330,7 @@ class _Lock:
 def _runtime_key(cxx: str, std: str) -> str:
     """What the runtime library is built from. No fidelity: one library serves an exact build and a lean one."""
     return _key(*(s.read_bytes() for s in [*SOURCES, *INCLUDED, *VENDORED_C, *VENDORED_H]), *(p.read_bytes() for p, _ in PRELUDE),
+                BOOTSTRAP_FRAMES.read_bytes(),
                 *(p.read_bytes() for p in [*NATIVE_IN_PYTHON, *RUNTIME_PYTHON]), *_pipeline_bytes(),
                 " ".join([cxx, std, *RUNTIME_FLAGS, *PRELUDE_FLAGS, *VENDORED_FLAGS]).encode())
 
@@ -332,7 +345,8 @@ def runtime_library(cxx: str = CXX, std: str = STD) -> Path:
         units = [(u, RUNTIME_FLAGS) for u in SOURCES] + [(u, VENDORED_FLAGS) for u in VENDORED_C]
         for p in [*(p for p, _ in PRELUDE), *NATIVE_IN_PYTHON, *RUNTIME_PYTHON]:
             cpp = out / f"prelude_{p.stem}.cpp"
-            cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem.lstrip('_')}", prelude=True),
+            cpp.write_text(to_cpp(p.read_text(encoding="utf-8"), f"<bella prelude {p.name}>", f"bella::prelude_{p.stem.lstrip('_')}", prelude=True,
+                                  frames=bootstrap_frames().get(p.name)),
                            encoding="utf-8")
             units.append((cpp, PRELUDE_FLAGS))
         objs = [out / f"{u.stem}{'.c' if u.suffix == '.c' else ''}.o" for u, _ in units]   # zlib's crc32.c beside the runtime's units

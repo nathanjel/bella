@@ -2504,7 +2504,8 @@ class _ToL1:
                              classdict=bool(getattr(f, "bella_classdict", False)),
                              inlined=bool(getattr(f, "bella_inlined", False)),
                              module_frame=bool(getattr(f, "bella_module_frame", False)),
-                             first_line=int(getattr(f, "bella_first_line", 0)) or f.lineno)
+                             first_line=int(getattr(f, "bella_first_line", 0)) or f.lineno,
+                             frame_file=str(getattr(f, "bella_frame_file", "")))
 
     def class_(self, c: ast.ClassDef) -> L.Assign:
         """``C = d1(d2(build_class(<body>, "C", *bases, **keywords)))``: the decorators (already
@@ -2688,6 +2689,32 @@ def check_compile(tree: ast.Module | ast.Expression, filename: str, mode: str, i
     return code
 
 
+def mark_frames(tree: ast.Module, rows: dict[str, dict[str, Any]]) -> None:
+    """The bootstrap preludes' functions of CPython's import system (tools/bootstrap_frames.py; Question 43, C-8-22): each has
+    a frame named for CPython's file (`bella_frame_file`), and every node in it CPython's line, so its frame's line is the one
+    CPython's frame is at. A function the table does not have is the runtime's own: it keeps its lines and has no frame."""
+    def visit(node: ast.AST, prefix: str, lines: dict[int, int] | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner, inner_prefix = lines, prefix
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                qualname = prefix + child.name
+                row = rows.get(qualname)
+                inner = {int(a): int(b) for a, b in row["lines"]} if row is not None else None
+                if row is not None:
+                    child.bella_frame_file = str(row["file"])  # type: ignore[union-attr]
+                inner_prefix = qualname + ".<locals>."
+            elif isinstance(child, ast.ClassDef):
+                inner_prefix = prefix + child.name + "."
+            if inner is not None and isinstance(getattr(child, "lineno", None), int):
+                start: int = child.lineno  # type: ignore[attr-defined]
+                child.lineno = inner.get(start, start)  # type: ignore[attr-defined]
+                end = getattr(child, "end_lineno", None)
+                if isinstance(end, int):
+                    child.end_lineno = inner.get(end, end)  # type: ignore[attr-defined]
+            visit(child, inner_prefix, inner)
+    visit(tree, "", None)
+
+
 def mark_looking_breaks(tree: ast.Module, code: CodeType) -> None:
     """The `break` statements CPython 3.15.2 compiles to JUMP_BACKWARD, marked `bella_looks`: its eval loop looks
     there (_CHECK_PERIODIC), so a compiled program looks too. A break is a plain JUMP to its loop's exit
@@ -2844,13 +2871,15 @@ def replace_functions(tree: ast.Module, filename: str) -> None:
 
 
 def lower(source: str, filename: str = "<module>", mode: str = "exec",
-          inherit_future: frozenset[str] = frozenset(), tree: ast.Module | None = None) -> L.Module:
+          inherit_future: frozenset[str] = frozenset(), tree: ast.Module | None = None,
+          frames: dict[str, dict[str, Any]] | None = None) -> L.Module:
     """Parse and lower a program to L1 through the registered passes in fact order. Mode "eval"
     lowers an expression (a staged eval text): the module's last statement is its value.
     `inherit_future` are the caller's __future__ features (a staged exec text compiled in the
     context of the function that runs it). `tree`: a module the build made rather than parsed, whose
     positions are another text's (the S-1 entry points of a module's annotations, pipeline/build.py);
-    `source` is then unused and no function of it is replaced."""
+    `source` is then unused and no function of it is replaced. `frames`: a bootstrap prelude's table of the import system's
+    functions, which have CPython's frames (mark_frames)."""
     check_host_grammar()
     if mode == "eval":
         expression = _parse(source, filename, "eval", inherit_future)
@@ -2868,6 +2897,8 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
         mark_looking_breaks(tree, check_compile(tree, filename, mode, inherit_future))
     check_finally(tree)
     check_builtins_binding(tree)
+    if frames:
+        mark_frames(tree, frames)
     tree.bella_source = filename  # type: ignore[attr-defined]
     tree.bella_future = future_features(tree) | inherit_future  # type: ignore[attr-defined]
     global _counter

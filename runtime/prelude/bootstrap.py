@@ -1412,9 +1412,10 @@ class _LoaderBasics:
     def exec_module(self, module):
         """Execute the module."""
         # bella: CPython gets the code (get_code(module.__name__), which checks the name) and execs
-        # it in module.__dict__; a compiled program runs the module's compiled body there
+        # it in module.__dict__; a compiled program runs the module's compiled body there, through
+        # _call_with_frames_removed as CPython's exec does (its frame is on the stack: C-8-22)
         self.get_filename(module.__name__)
-        _bella_exec(self.name, module)
+        _call_with_frames_removed(_bella_exec, self.name, module)  # cpython: 751
 
 
 class SourceLoader(_LoaderBasics):

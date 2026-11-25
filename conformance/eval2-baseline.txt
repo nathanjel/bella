@@ -195,4 +195,5 @@ C-9-07_weakref_callback_cleared_before_finaliser.py
 C-9-08_attribute_value_lifetimes.py
 C-9-09_finalisers_at_exit.py
 C-9-10_weakref_objects.py
+C-9-14_when_a_module_dies.py
 X-4-01_eval_rejected.py

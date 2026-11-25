@@ -1455,9 +1455,49 @@ Ref i_bella_refuse(Obj, Args a) {                // a facility phase 1 lacks, wh
     throw NotImplemented(as_str(a.pos(0))->text);
 }
 
+// remove_importlib_frames (Python/import.c): a traceback that leaves an import loses the import system's entries (their
+// frames are CPython's: Question 43, C-8-22), all of them for an ImportError and otherwise each stretch of them that ends in
+// _call_with_frames_removed; CPython keeps them under -v, which a compiled program never has (D-18). Link for link as
+// CPython's: an entry let go of here keeps nothing alive that its frame object does not
+static void remove_importlib_frames(Obj exc) {
+    if (!is_exception_instance(exc)) return;
+    const bool always_trim = isinstance(exc, exception_class("ImportError"));
+    Obj first = traceback_of(exc);
+    Ref base = first.is_unset() || first == None() ? Ref{} : Ref::share(first);
+    Ref* prev_link = &base;
+    Ref* outer_link = nullptr;
+    bool in_importlib = false;
+    Obj tb = base.get();
+    while (!tb.is_unset() && is_kind(tb, Kind::Traceback)) {
+        auto* t = static_cast<Traceback*>(tb.object());
+        Obj next = t->next.get();
+        const std::string_view file = t->code->filename;
+        const bool now_in_importlib = file == "<frozen importlib._bootstrap>" || file == "<frozen importlib._bootstrap_external>";
+        if (now_in_importlib && !in_importlib) outer_link = prev_link;   // the link to this stretch of the import system's entries
+        in_importlib = now_in_importlib;
+        if (in_importlib && (always_trim || std::string_view(t->code->name) == "_call_with_frames_removed")) {
+            *outer_link = next.is_unset() ? Ref{} : Ref::share(next);   // Py_XSETREF(*outer_link, Py_XNewRef(next)): next first
+            prev_link = outer_link;
+        } else {
+            prev_link = &t->next;
+        }
+        tb = next;
+    }
+    set_exception_field(exc, "__traceback__", base.get().is_unset() ? None() : base.get());
+}
+
 // ---- PyImport_ImportModuleLevelObject ----
+static Ref import_level(Obj name, Obj globals, Obj fromlist, std::int64_t level);
 Ref import_module_level(Obj name, Obj globals, Obj locals, Obj fromlist, std::int64_t level) {
     (void)locals;
+    try {
+        return import_level(name, globals, fromlist, level);
+    } catch (const PyError& e) {                 // the error exit: final_mod == NULL
+        remove_importlib_frames(e.exc.get());
+        rethrow(e);
+    }
+}
+static Ref import_level(Obj name, Obj globals, Obj fromlist, std::int64_t level) {
     if (name.is_unset()) raise_new("ValueError", "Empty module name");
     if (as_str(name) == nullptr) raise_new("TypeError", "module name must be a string");
     if (level < 0) raise_new("ValueError", "level must be >= 0");
@@ -2032,6 +2072,7 @@ Ref try_load_lazy_submodule(Module* m, const Str* attr_name, bool suppress, bool
             if (dict_get(m->dict, Obj::of(attr_name)) == loaded.get()) dict_del(m->dict, Obj::of(attr_name));
             children().try_emplace(attr_name->text, source);
         }
+        remove_importlib_frames(e.exc.get());     // _PyImport_TryLoadLazySubmodule's, as the import statement's
         rethrow(e);
     }
     // missing children stay pending: a finder may provide them later
