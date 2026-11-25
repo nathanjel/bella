@@ -82,6 +82,123 @@ def _identifiers(tree: ast.AST) -> set[str]:
 # Dialect checks on L0 (compile-time errors with a register id)
 # ---------------------------------------------------------------------------------------------
 
+class _BuiltinsBinding(ast.NodeVisitor):
+    """E-06 (the author's decision of 2026-11-25, Question 46): rebinding a module's `__builtins__` is excluded, and its
+    direct forms are refused at compile time. CPython's functions made after the binding take it as their builtins
+    (`_PyDict_LoadBuiltinsFromGlobals`), the runtime's never do, so a program with one would run on the wrong builtins.
+    What binds the module's name: a store at module scope (an assignment, `for`, `with`, `except ... as`, an import, a
+    `def` or `class`, a match capture, `type`), a walrus there (in a comprehension too, which binds in the enclosing
+    scope), and any `global __builtins__`. A deletion is not refused: CPython's functions made after it take the running
+    frame's builtins, which are the builtins module's, as the runtime's are. An annotation without a value binds nothing; a
+    function's local or a class body's attribute of that name leaves the builtins alone, as in CPython."""
+
+    NAME = "__builtins__"
+
+    def __init__(self) -> None:
+        self.scope = 0                           # functions, lambdas and class bodies around the node
+        self.comprehensions = 0
+
+    def refuse(self, node: ast.AST, how: str) -> None:
+        raise L.DialectError(f"E-06: {how} `__builtins__` (rebinding a module's builtins is excluded) "
+                             f"(line {getattr(node, 'lineno', '?')})")
+
+    def binds_module(self) -> bool:
+        return self.scope == 0 and self.comprehensions == 0
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id == self.NAME and isinstance(node.ctx, ast.Store) and self.binds_module():
+            self.refuse(node, "assigning to")
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is None:                   # `__builtins__: T` binds nothing
+            self.visit(node.annotation)
+        else:
+            self.generic_visit(node)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        if node.target.id == self.NAME and self.scope == 0:
+            self.refuse(node, "assigning to")
+        self.visit(node.value)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        if self.NAME in node.names:
+            self.refuse(node, "a global declaration of")
+
+    def visit_alias(self, node: ast.alias) -> None:
+        if (node.asname or node.name.split(".")[0]) == self.NAME and self.binds_module():
+            self.refuse(node, "importing as")
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name == self.NAME and self.binds_module():
+            self.refuse(node, "binding an exception to")
+        self.generic_visit(node)
+
+    def _capture(self, node: ast.MatchAs | ast.MatchStar | ast.MatchMapping, name: str | None) -> None:
+        if name == self.NAME and self.binds_module():
+            self.refuse(node, "a match capture of")
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        self._capture(node, node.name)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        self._capture(node, node.name)
+
+    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        self._capture(node, node.rest)
+
+    def _enter(self, node: ast.AST, outside: list[ast.AST], inside: list[ast.AST]) -> None:
+        for n in outside:                         # evaluated where the definition is: decorators, defaults, bases
+            self.visit(n)
+        self.scope += 1
+        for n in inside:
+            self.visit(n)
+        self.scope -= 1
+
+    def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        if node.name == self.NAME and self.binds_module():
+            self.refuse(node, "defining a function named")
+        a = node.args
+        self._enter(node, [*node.decorator_list, *a.defaults, *(d for d in a.kw_defaults if d is not None)], [*node.body])
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._function(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if node.name == self.NAME and self.binds_module():
+            self.refuse(node, "defining a class named")
+        self._enter(node, [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)], [*node.body])
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        a = node.args
+        self._enter(node, [*a.defaults, *(d for d in a.kw_defaults if d is not None)], [node.body])
+
+    def _comprehension(self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp) -> None:
+        self.comprehensions += 1
+        self.generic_visit(node)
+        self.comprehensions -= 1
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._comprehension(node)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._comprehension(node)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._comprehension(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._comprehension(node)
+
+
+def check_builtins_binding(tree: ast.AST) -> None:
+    """E-06: a binding of a module's `__builtins__` is refused at compile time (_BuiltinsBinding)."""
+    _BuiltinsBinding().visit(tree)
+
+
 def check_finally(tree: ast.AST) -> None:
     """D-10: return, break or continue that would leave a finally block is a compile-time error
     (CPython 3.14+ warns, PEP 765). break/continue of a loop inside the finally block are fine."""
@@ -2750,6 +2867,7 @@ def lower(source: str, filename: str = "<module>", mode: str = "exec",
         replace_functions(tree, filename)
         mark_looking_breaks(tree, check_compile(tree, filename, mode, inherit_future))
     check_finally(tree)
+    check_builtins_binding(tree)
     tree.bella_source = filename  # type: ignore[attr-defined]
     tree.bella_future = future_features(tree) | inherit_future  # type: ignore[attr-defined]
     global _counter

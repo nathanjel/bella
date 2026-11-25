@@ -77,7 +77,7 @@ Each exclusion is a compile-time error with an id, reported at the file and line
 | E-03 | Tracing and profiling hooks: `sys.settrace`, `sys.setprofile`, `sys.monitoring`, `threading.settrace`, `bdb`, `pdb`, `cProfile`, `profile`, `profiling` (PEP 799, new in 3.15; `cProfile` is now its alias), `tracemalloc` | Interpreter instrumentation |
 | E-04 | Import-system customisation: `sys.meta_path`, `sys.path_hooks`, finders and loaders from `importlib.abc`, replacing `__import__`, `importlib.reload`, `sys.set_lazy_imports`, `sys.set_lazy_imports_filter`, writes to `sys.modules`, writes to `sys.path`, `.pth` and `site` customisation | The closed world is resolved at build time (section 8) |
 | E-05 | CPython internals: `ctypes.py_object`, `ctypes.pythonapi`, `gc.get_objects`, `gc.get_referrers`, `gc.get_referents`, `sys.getrefcount`, `object.__reduce_ex__` tricks that rely on `copyreg` internals, and writing a class's own dict where a reflected operator of its mapping proxy hands it out (`mappingproxy.__or__`) | No CPython object graph exists; what CPython's class finds after such a write depends on its type cache |
-| E-06 | Assignment to attributes of the `builtins` module, and assignment to attributes of built-in types | Builtins are bound at compile time; CPython already rejects the second |
+| E-06 | Assignment to attributes of the `builtins` module, assignment to attributes of built-in types, and rebinding a module's `__builtins__` (refused at compile time where the module's text binds it) | Builtins are bound at compile time; CPython already rejects the second |
 | E-07 | Creating functions from code objects (`types.FunctionType(code, ...)`), `exec`-based templating at runtime | Same reason as E-01 |
 | E-08 | `doctest`, `code`, `codeop`, `timeit` with string statements, `pydoc` interactive use | Built on E-01. `traceback` imports a `codeop` shim (section 7); a program's own use of `codeop` is still this error |
 
@@ -366,3 +366,5 @@ v0.38 (2026-11-24, the author's decision): the stack of threads other than the m
 v0.39 (2026-11-25, the author's decision): D-19 ends: module objects are reference-counted like any other object (section 9); section 11 says so, and the number is not reused.
 
 v0.40 (2026-11-25, the author's decision): E-05 also excludes writing a class's own dict where a reflected operator of its mapping proxy hands it out (`mappingproxy.__or__`), since what CPython's class finds after such a write depends on its type cache (review log RL-944).
+
+v0.41 (2026-11-25, the author's decision): E-06 also excludes rebinding a module's `__builtins__`, which CPython's functions made afterwards take as their builtins; the compiler refuses the forms a module's text binds it by (review log RL-946).

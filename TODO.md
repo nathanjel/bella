@@ -824,14 +824,6 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   and `__itemsize__` from the runtime's structs. `tools/missing_names.py --update` then, and the stop rows of the argument
   counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
   of CPython's facts, not the numbers shown.
-* **Question 46 (the author, 2026-11-25: B; RL-946): a rebound `__builtins__` honoured.** After Question 43's step. A
-  function takes its builtins from its globals' `__builtins__` when it is made, as `_PyDict_LoadBuiltinsFromGlobals` does (a
-  dict as itself, a module as its dict, none the running frame's); one whose builtins are not the builtins module's gets a
-  record with its own (the staged texts' `Module(globals, builtins)`, which `load_global` reads), so its look-ups, its
-  `__builtins__` and the class bodies and lambdas made after are CPython's; a module's frame keeps the builtins it started
-  with. Case first, from the rows of the DECISIONS entry (before and after, a class body, a lambda, a module as the value,
-  an empty dict, `del`, `fn.__builtins__`); the look at `__builtins__` per function made measured (callgrind, a function
-  made and dropped), its slot remembered; more than noise, and C is put to the author instead.
 * **Question 43 (the author, 2026-11-25: B): the import system's frames as CPython's frames.** The runtime runs CPython's
   `_bootstrap` text as a prelude, whose frames are hidden (`Code::shown`), so three rows differ (measured 2026-11-25): a failed
   import's module object dies when the import ends, where CPython's `_load_unlocked` frame keeps it (through the failed
