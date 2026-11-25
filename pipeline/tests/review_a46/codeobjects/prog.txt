@@ -1,0 +1,46 @@
+# Review A46, RL-948: the names and counts of the code objects of the import system's functions (every one the table
+# tools/bootstrap_frames.py names, reached by name), a line each.
+import sys
+import types
+from importlib import _bootstrap, _bootstrap_external
+
+ATTRS = ("co_name", "co_qualname", "co_filename", "co_firstlineno", "co_argcount", "co_posonlyargcount",
+         "co_kwonlyargcount", "co_nlocals", "co_varnames", "co_freevars", "co_cellvars")
+
+
+def show(path: str, f: object) -> None:
+    code = getattr(f, "__code__", None)
+    if not isinstance(code, types.CodeType):
+        return
+    parts = []
+    for a in ATTRS:
+        try:
+            v = getattr(code, a)
+        except AttributeError:
+            v = "<absent>"
+        parts.append(f"{a}={v!r}")
+    print(path, f"__name__={getattr(f, '__name__', None)!r}", f"__qualname__={getattr(f, '__qualname__', None)!r}", *parts)
+
+
+
+NAMES: list[tuple[str, str]] = []  # the test writes the names of runtime/prelude/bootstrap_frames.json here
+MODS = {"_bootstrap": _bootstrap, "_bootstrap_external": _bootstrap_external}
+assert sys.argv[1] == "all"
+for short, qualname in NAMES:
+    obj: object = MODS[short]
+    parts = qualname.split(".")
+    for i, part in enumerate(parts):
+        if i == len(parts) - 1 and isinstance(obj, type):
+            obj = obj.__dict__.get(part)
+        else:
+            obj = getattr(obj, part, None)
+    where = short + "." + qualname
+    if isinstance(obj, (staticmethod, classmethod)):
+        show(where, obj.__func__)
+    elif isinstance(obj, property):
+        show(where + ".fget", obj.fget)
+        show(where + ".fset", obj.fset)
+    elif obj is None:
+        print(where, "<absent>")
+    else:
+        show(where, obj)

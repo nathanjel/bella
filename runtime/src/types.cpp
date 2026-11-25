@@ -1029,7 +1029,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
     } catch (const ModelError& e) {                         // a layout the object model has no account of: a stop, not an abort (RL-564)
         throw NotImplemented("the class '" + name->text + "': " + e.what());
     }
-    // The class is the program's, counted (C-3-12, D-19), unless the runtime's own code makes it: a prelude's, the bootstrap's,
+    // The class is the program's, counted (C-3-12, spec section 9), unless the runtime's own code makes it: a prelude's, the bootstrap's,
     // a built-in module's hidden namespace's, or one no frame makes, which stands for a type CPython writes in C and is immortal
     // as those are (the runtime keeps some by their address). `made` is type_new's new reference: what fails from here lets
     // the class go, as type_new_impl's error path does, and a collection finds it

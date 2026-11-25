@@ -33,6 +33,14 @@ _NOT_GIVEN = object()
 _repr_running = []
 
 
+def _wrap(new, old):
+    """Simple substitute for functools.update_wrapper."""
+    for replace in ['__module__', '__name__', '__qualname__', '__doc__']:
+        if hasattr(old, replace):
+            setattr(new, replace, getattr(old, replace))
+    new.__dict__.update(old.__dict__)
+
+
 def _new_module(name):
     return type(sys)(name)
 
@@ -56,6 +64,28 @@ def _call_with_frames_removed(f, *args, **kwds):
     module code)
     """
     return f(*args, **kwds)
+
+
+def _requires_builtin(fxn):
+    """Decorator to verify the named module is built-in."""
+    def _requires_builtin_wrapper(self, fullname):
+        if not _bella_is_builtin(fullname):  # bella: `fullname not in sys.builtin_module_names`, which _setup's specs come before
+            raise ImportError(f'{fullname!r} is not a built-in module',
+                              name=fullname)
+        return fxn(self, fullname)
+    _wrap(_requires_builtin_wrapper, fxn)
+    return _requires_builtin_wrapper
+
+
+def _requires_frozen(fxn):
+    """Decorator to verify the named module is frozen."""
+    def _requires_frozen_wrapper(self, fullname):
+        if not _imp.is_frozen(fullname):
+            raise ImportError(f'{fullname!r} is not a frozen module',
+                              name=fullname)
+        return fxn(self, fullname)
+    _wrap(_requires_frozen_wrapper, fxn)
+    return _requires_frozen_wrapper
 
 
 # Module specifications #######################################################
@@ -420,37 +450,23 @@ class BuiltinImporter:
         """Exec a built-in module"""
         # bella: _imp.exec_builtin: create_module made the whole of it
 
-    # bella: @_requires_builtin, written out (it needs functions' __dict__); `self` is the wrapper's name for the class
     @classmethod
-    def get_code(self, fullname):
+    @_requires_builtin
+    def get_code(cls, fullname):
         """Return None as built-in modules do not have code objects."""
-        _check_builtin(fullname)
         return None
 
     @classmethod
-    def get_source(self, fullname):
+    @_requires_builtin
+    def get_source(cls, fullname):
         """Return None as built-in modules do not have source code."""
-        _check_builtin(fullname)
         return None
 
     @classmethod
-    def is_package(self, fullname):
+    @_requires_builtin
+    def is_package(cls, fullname):
         """Return False as built-in modules are never packages."""
-        _check_builtin(fullname)
         return False
-
-
-def _check_builtin(fullname):
-    if not _bella_is_builtin(fullname):
-        raise ImportError(f'{fullname!r} is not a built-in module',
-                          name=fullname)
-
-
-def _check_frozen(fullname):
-    import _imp
-    if not _imp.is_frozen(fullname):
-        raise ImportError(f'{fullname!r} is not a frozen module',
-                          name=fullname)
 
 
 class FrozenImporter:
@@ -470,7 +486,6 @@ class FrozenImporter:
 
     @classmethod
     def _fix_up_module(cls, module):
-        import _imp  # bella: the module's own `_imp` is _setup's argument; it is imported where it is used
         spec = module.__spec__
         state = spec.loader_state
         if state is None:
@@ -565,7 +580,6 @@ class FrozenImporter:
 
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
-        import _imp  # bella: the module's own `_imp` is _setup's argument; it is imported where it is used
         info = _call_with_frames_removed(_imp.find_frozen, fullname)
         if info is None:
             return None
@@ -613,25 +627,22 @@ class FrozenImporter:
         # bella: _imp.get_frozen_object and exec, the module's compiled body
         _bella_exec(name, module)
 
-    # bella: @_requires_frozen, written out (it needs functions' __dict__); `self` is the wrapper's name for the class
     @classmethod
-    def get_code(self, fullname):
+    @_requires_frozen
+    def get_code(cls, fullname):
         """Return the code object for the frozen module."""
-        import _imp
-        _check_frozen(fullname)
         return _imp.get_frozen_object(fullname)
 
     @classmethod
-    def get_source(self, fullname):
+    @_requires_frozen
+    def get_source(cls, fullname):
         """Return None as frozen modules do not have source code."""
-        _check_frozen(fullname)
         return None
 
     @classmethod
-    def is_package(self, fullname):
+    @_requires_frozen
+    def is_package(cls, fullname):
         """Return True if the frozen module is a package."""
-        import _imp
-        _check_frozen(fullname)
         return _imp.is_frozen_package(fullname)
 
 
@@ -1481,6 +1492,36 @@ class SourceLoader(_LoaderBasics):
         _bella_refuse("a source loader's get_code (a compiled program has no code objects to load)")
 
 
+def _check_name(method):
+    """Decorator to verify that the module being requested matches the one the
+    loader can handle.
+
+    The first argument (self) must define _name which the second argument is
+    compared against. If the comparison fails then ImportError is raised.
+
+    """
+    def _check_name_wrapper(self, name=None, *args, **kwargs):
+        if name is None:
+            name = self.name
+        elif self.name != name:
+            raise ImportError('loader for %s cannot handle %s' %
+                                (self.name, name), name=name)
+        return method(self, name, *args, **kwargs)
+
+    # FIXME: @_check_name is used to define class methods before the
+    # _bootstrap module is set by _set_bootstrap_module().
+    # bella: written here, in _bootstrap, for the external module's FileLoader, which this one makes: the branch CPython's
+    # takes while there is no _bootstrap yet, as there is none when its classes are made
+    def _wrap(new, old):
+        for replace in ['__module__', '__name__', '__qualname__', '__doc__']:
+            if hasattr(old, replace):
+                setattr(new, replace, getattr(old, replace))
+        new.__dict__.update(old.__dict__)
+
+    _wrap(_check_name_wrapper, method)
+    return _check_name_wrapper
+
+
 class FileLoader:
 
     """Base file loader class which implements the loader protocol methods that
@@ -1501,30 +1542,18 @@ class FileLoader:
     def __hash__(self):
         return hash(self.name) ^ hash(self.path)
 
-    def get_filename(self, name=None, *args, **kwargs):
+    @_check_name
+    def get_filename(self, fullname):
         """Return the path to the source file as found by the finder."""
-        # bella: @_check_name, written out (it needs functions' __dict__): the wrapper's parameters and its check, then the
-        # method, which takes the name alone
-        if name is None:
-            name = self.name
-        elif self.name != name:
-            # bella: CPython's text formats with %, which the runtime lacks yet; the same message
-            raise ImportError(f'loader for {self.name} cannot handle {name}', name=name)
-        if args or kwargs:
-            _bella_refuse("FileLoader.get_filename with arguments beyond the name (the method under @_check_name takes none: a TypeError of its own)")
         return self.path
 
     def get_data(self, path):
         """Return the data from path as raw bytes."""
         _bella_refuse("a file loader's get_data (step 3b: reading files)")
 
-    def get_resource_reader(self, name=None, *args, **kwargs):
-        # bella: @_check_name, written out: its check comes first
-        if name is None:
-            name = self.name
-        elif self.name != name:
-            raise ImportError(f'loader for {self.name} cannot handle {name}', name=name)
-        _bella_refuse("a source loader's get_resource_reader (importlib.resources is [P2+])")
+    @_check_name
+    def get_resource_reader(self, module):
+        _bella_refuse("a source loader's get_resource_reader (importlib.resources is [P2+])")  # bella: FileReader(self)
 
 
 class SourceFileLoader(FileLoader, SourceLoader):
@@ -1910,6 +1939,8 @@ def _setup(builtin_names):
     modules, those two modules must be explicitly passed in.
 
     """
+    global _imp  # bella: CPython's _setup is given it (`_imp = _imp_module`); the runtime's start imported it before
+    import _imp
     # bella: the part of _setup a compiled program observes: the specs and loaders of the built-in
     # modules the runtime made before this module ran (sys.builtin_module_names among them), and of
     # the import system's two frozen modules (_imp.is_frozen of the others is the registry's)

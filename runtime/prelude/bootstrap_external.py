@@ -42,10 +42,19 @@ _CASE_INSENSITIVE_PLATFORMS = (_CASE_INSENSITIVE_PLATFORMS_BYTES_KEY
 
 
 def _make_relax_case():
-    # bella: linux is case-sensitive: the function that always answers False
-    def _relax_case():
-        """True if filenames must be checked case-insensitively and ignore environment flags are not set."""
-        return False
+    if sys.platform.startswith(_CASE_INSENSITIVE_PLATFORMS):
+        if sys.platform.startswith(_CASE_INSENSITIVE_PLATFORMS_STR_KEY):
+            key = 'PYTHONCASEOK'
+        else:
+            key = b'PYTHONCASEOK'
+
+        def _relax_case():
+            """True if filenames must be checked case-insensitively and ignore environment flags are not set."""
+            return not sys.flags.ignore_environment and key in _os.environ
+    else:
+        def _relax_case():
+            """True if filenames must be checked case-insensitively."""
+            return False
     return _relax_case
 
 
@@ -250,6 +259,37 @@ def _calc_mode(path):
     return mode
 
 
+def _check_name(method):
+    """Decorator to verify that the module being requested matches the one the
+    loader can handle.
+
+    The first argument (self) must define _name which the second argument is
+    compared against. If the comparison fails then ImportError is raised.
+
+    """
+    def _check_name_wrapper(self, name=None, *args, **kwargs):
+        if name is None:
+            name = self.name
+        elif self.name != name:
+            raise ImportError('loader for %s cannot handle %s' %
+                                (self.name, name), name=name)
+        return method(self, name, *args, **kwargs)
+
+    # FIXME: @_check_name is used to define class methods before the
+    # _bootstrap module is set by _set_bootstrap_module().
+    if _bootstrap is not None:
+        _wrap = _bootstrap._wrap
+    else:
+        def _wrap(new, old):
+            for replace in ['__module__', '__name__', '__qualname__', '__doc__']:
+                if hasattr(old, replace):
+                    setattr(new, replace, getattr(old, replace))
+            new.__dict__.update(old.__dict__)
+
+    _wrap(_check_name_wrapper, method)
+    return _check_name_wrapper
+
+
 def _classify_pyc(data, name, exc_details):
     """Perform basic validity checking of a pyc header and return the flags field,
     which determines how the pyc should be further validated against the source.
@@ -302,7 +342,6 @@ def decode_source(source_bytes):
     Universal newline support is used in the decoding.
     """
     import tokenize  # To avoid bootstrap issues.
-    import _io
     source_bytes_readline = _io.BytesIO(source_bytes).readline
     encoding = tokenize.detect_encoding(source_bytes_readline)
     return _io.TextIOWrapper(_io.BytesIO(source_bytes), encoding=encoding[0], newline=None).read()
@@ -513,15 +552,9 @@ class ExtensionFileLoader(FileLoader, _LoaderBasics):
         """Return None as extension modules have no source code."""
         return None
 
-    def get_filename(self, name=None, *args, **kwargs):
+    @_check_name
+    def get_filename(self, fullname):
         """Return the path to the source file as found by the finder."""
-        # bella: @_check_name, written out: the wrapper's parameters and its check, then the method, which takes the name alone
-        if name is None:
-            name = self.name
-        elif self.name != name:
-            raise ImportError(f'loader for {self.name} cannot handle {name}', name=name)
-        if args or kwargs:
-            _bella_refuse("ExtensionFileLoader.get_filename with arguments beyond the name (the method under @_check_name takes none: a TypeError of its own)")
         return self.path
 
 
@@ -851,8 +884,14 @@ def _get_supported_file_loaders():
 
     Each item is a tuple (loader, suffixes).
     """
-    # bella: _imp.create_dynamic exists, so the extension loader is listed, as on the pin (linux)
-    extension_loaders = [(ExtensionFileLoader, list(EXTENSION_SUFFIXES))]
+    extension_loaders = []
+    if hasattr(_imp, 'create_dynamic'):
+        if sys.platform in {"ios", "tvos", "watchos"}:
+            extension_loaders = [(AppleFrameworkLoader, [
+                suffix.replace(".so", ".fwork")
+                for suffix in _imp.extension_suffixes()
+            ])]
+        extension_loaders.append((ExtensionFileLoader, _imp.extension_suffixes()))
     source = SourceFileLoader, SOURCE_SUFFIXES
     bytecode = SourcelessFileLoader, BYTECODE_SUFFIXES
     return extension_loaders + [source, bytecode]

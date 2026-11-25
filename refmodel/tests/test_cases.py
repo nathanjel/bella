@@ -1997,7 +1997,7 @@ def test_a_chain_longer_than_the_native_stack() -> None:
 
 
 def test_a_class_is_a_counted_object_c_3_12() -> None:
-    """C-3-12 and D-19 (2026-11-24): a class is held by its creator and by each of its objects, and holds itself through
+    """C-3-12 and spec section 9 (2026-11-24; D-19 then): a class is held by its creator and by each of its objects, and holds itself through
     its MRO, so it dies in a collection only, once nothing outside holds it. A weak reference to it is cleared there and
     its callback runs before the finalisers of what it held, its base's subclasses forget it, and a class whose dict
     holds an object of its own goes with that object. The same story under CPython."""

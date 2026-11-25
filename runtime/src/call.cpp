@@ -1996,6 +1996,34 @@ std::vector<std::string_view> cpython_names_of(std::string_view scope) {   // it
     for (; it != std::end(CPYTHON_NAMES) && it->key.starts_with(prefix); ++it) out.push_back(it->key.substr(prefix.size()));
     return out;
 }
+// A built-in module's names in the order CPython's namespace has them (its method table's, then what its exec slots add)
+std::vector<std::string_view> cpython_order_of(std::string_view module) {
+    std::vector<std::string_view> out;
+    auto it = std::lower_bound(std::begin(CPYTHON_MODULE_ORDER), std::end(CPYTHON_MODULE_ORDER), module,
+                               [](const CPythonOrder& row, std::string_view key) { return row.module < key; });
+    for (; it != std::end(CPYTHON_MODULE_ORDER) && it->module == module; ++it) out.push_back(it->name);
+    return out;
+}
+// A native module's namespace, once its body has filled it, laid out as CPython's is (review A46, RL-951): the names of
+// CPython's module in its order, then any other in the order it came. Nothing has read the namespace yet, and its keys
+// are exact strs: no code of the program's runs.
+void order_as_cpython(Module* m, std::string_view module) {
+    std::unordered_map<std::string_view, std::size_t> rank;
+    for (std::string_view n : cpython_order_of(module)) rank.emplace(n, rank.size());
+    if (rank.empty()) return;
+    auto rank_of = [&](Obj key) {
+        const Str* s = as_str(key);
+        auto found = s == nullptr ? rank.end() : rank.find(s->text);
+        return found == rank.end() ? rank.size() : found->second;
+    };
+    auto items = dict_take_all(m->dict);
+    std::stable_sort(items.begin(), items.end(), [&](const auto& a, const auto& b) { return rank_of(a.first) < rank_of(b.first); });
+    for (auto& [k, v] : items) {
+        dict_set(m->dict, k, v);
+        decref(k);
+        decref(v);
+    }
+}
 // A name found on a later class of the MRO that an earlier built-in type has its own of in CPython:
 // a base's method would be the wrong answer (`(5).__lt__` is not object's), so it is refused (RL-310).
 void refuse_shadowed(const std::vector<ClassObject*>& mro, std::size_t from, const Str* name) {

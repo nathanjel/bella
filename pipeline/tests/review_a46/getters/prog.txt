@@ -1,0 +1,18 @@
+# Review A46, RL-952: a property's getter and setter each have CPython's lines.
+import sys
+import traceback
+
+import sample
+
+row = sys.argv[1]
+spec_type = type(sample.__spec__)
+for name in ("has_location", "cached", "parent"):
+    p = getattr(spec_type, name)
+    lines = [p.fget.__code__.co_firstlineno, p.fset.__code__.co_firstlineno if p.fset is not None else None]
+    if row == "lines":
+        print(name, lines)
+    elif row == "raised":
+        try:
+            p.fget(object())
+        except AttributeError as exc:
+            print(name, [(f.filename.rsplit("/", 1)[-1], f.name, f.lineno) for f in traceback.extract_tb(exc.__traceback__)][1:])

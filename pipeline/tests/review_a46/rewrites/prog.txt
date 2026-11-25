@@ -1,0 +1,14 @@
+# Review A46, RL-948: two functions the prelude had rewritten where CPython's text runs as it is on linux: _make_relax_case
+# (its cell, and the docstring of the _relax_case it returns) and _get_supported_file_loaders (its comprehension's name).
+import sys
+from importlib import _bootstrap_external as e
+
+row = sys.argv[1]
+if row == "relax":
+    f = e._relax_case
+    print(f.__qualname__, repr(f.__doc__), f.__code__.co_firstlineno, f.__code__.co_freevars, f())
+    print(e._make_relax_case.__code__.co_cellvars, e._make_relax_case().__doc__ == f.__doc__)
+elif row == "loaders":
+    for loader, suffixes in e._get_supported_file_loaders():
+        print(loader.__name__, suffixes)
+    print(e._get_supported_file_loaders.__code__.co_varnames)

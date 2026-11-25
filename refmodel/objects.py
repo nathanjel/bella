@@ -89,7 +89,7 @@ What is not modelled yet: ``__setattr__``/``__delattr__``/``__getattribute__`` o
 ``__class__`` assignment, dict-mode (runtime-created) classes, setattr caching, and a class's
 metaclass as a counted object. Each is a TODO with a conformance case first.
 
-A class is a counted object (C-3-12, 2026-11-24; D-19): its creator holds it, its instances hold it
+A class is a counted object (C-3-12, 2026-11-24; spec section 9): its creator holds it, its instances hold it
 (``RefObject.cls``), and it holds its bases, its MRO (itself first) and its attributes, so it dies in
 a collection, by ``RefClass.traverse``, ``gc_clear`` and ``dealloc`` (type_traverse, type_clear,
 type_dealloc). ``RefClass(static=True)`` stands for a built-in type: immortal.
@@ -595,7 +595,7 @@ class RefClass:
         if not mro_hook:
             for b in self.bases:
                 b.subclasses.append(self)
-        # A class is a counted object (C-3-12; D-19: "classes ... are reference-counted like any other"). type_new returns
+        # A class is a counted object (C-3-12; spec section 9, which D-19 said until it ended: "classes ... are reference-counted like any other"). type_new returns
         # a new reference, its creator's, and the class holds tp_bases and tp_mro, whose first entry is the class itself,
         # so a class never dies by its count alone: the collector frees it (traverse, gc_clear, dealloc below). Each of its
         # instances holds it too (PyType_GenericAlloc). A static type (one of CPython's built-in types) is immortal and

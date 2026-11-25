@@ -1,0 +1,50 @@
+# Review A46, RL-949: the import system's decorators (_check_name, _requires_builtin, _requires_frozen) are CPython's.
+import sys
+import traceback
+from importlib import _bootstrap
+
+import sample
+
+
+def entries(error: BaseException) -> list[tuple[str, str, int | None]]:
+    return [(f.filename.rsplit("/", 1)[-1], f.name, f.lineno) for f in traceback.extract_tb(error.__traceback__)][1:]
+
+
+def code(f: object) -> tuple[object, ...]:
+    c = getattr(f, "__code__")
+    return (c.co_name, c.co_qualname, c.co_firstlineno, c.co_varnames, c.co_freevars)
+
+
+row = sys.argv[1]
+loader = sample.__loader__
+if row == "wrongname":
+    try:
+        loader.get_filename("other")
+    except ImportError as error:
+        print(type(error).__name__, error.name, entries(error))
+elif row == "rightname":
+    print(loader.get_filename("sample").rsplit("/", 1)[-1], loader.get_filename().rsplit("/", 1)[-1])
+elif row == "extra":
+    try:
+        loader.get_filename("sample", 1)
+    except TypeError as error:
+        print(type(error).__name__, entries(error))
+elif row == "names":
+    f = type(loader).get_filename
+    print(f.__name__, f.__qualname__, f.__module__, f.__doc__, hasattr(f, "__wrapped__"), code(f))
+elif row == "builtin":
+    for name in ("sys", "nope"):
+        try:
+            print(_bootstrap.BuiltinImporter.get_code(name), _bootstrap.BuiltinImporter.is_package(name))
+        except ImportError as error:
+            print(type(error).__name__, error.name, entries(error))
+    f = _bootstrap.BuiltinImporter.get_source
+    print(f.__name__, f.__qualname__, code(f.__func__))
+elif row == "frozen":
+    for name in ("zipimport", "nope"):
+        try:
+            print(_bootstrap.FrozenImporter.get_source(name), _bootstrap.FrozenImporter.is_package(name))
+        except ImportError as error:
+            print(type(error).__name__, error.name, entries(error))
+    f = _bootstrap.FrozenImporter.is_package
+    print(f.__name__, f.__qualname__, code(f.__func__))

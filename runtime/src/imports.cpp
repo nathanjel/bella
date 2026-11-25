@@ -1434,6 +1434,7 @@ Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one mod
         note_native_module(name == "_math_integer" ? "math.integer" : name.c_str(), n.made);
         n.fill(n.made);
         adopt_functions(n.made);
+        order_as_cpython(n.made, name == "_math_integer" ? "math.integer" : std::string_view(name));
         note_filled(n.made);
     }
     return Ref::share(Obj::of(n.made));
@@ -2333,13 +2334,37 @@ Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the
     for (auto& e : m->dict->entries)
         if (!e.key.is_unset()) list_append(keys.get(), e.key);
     if (std::string_view native = native_module_name(m); !native.empty()) {
-        // a native module has CPython's names, whichever it has written: those not written yet after its keys, found missing by
-        // their text among the str keys (a subclass's read as stored, no method called), and none the program deleted
+        // a native module has CPython's names, whichever it has written: those not written yet, found missing by their text among
+        // the str keys (a subclass's read as stored, no method called), and none the program deleted, each where CPython's
+        // namespace has it, among the keys that are still in that order (RL-951); after them, the names the program added
         std::unordered_set<std::string_view> present;
         for (auto& e : m->dict->entries)
             if (const Str* s = e.key.is_unset() ? nullptr : as_str(e.key)) present.insert(s->text);
-        for (std::string_view n : cpython_names_of(native))
-            if (!present.contains(n) && !was_filled(m, n)) list_append(keys.get(), Obj::of(intern(n)));
+        std::vector<std::string_view> order = cpython_order_of(native);
+        std::unordered_map<std::string_view, std::size_t> rank;
+        for (std::string_view n : order) rank.emplace(n, rank.size());
+        std::vector<std::string_view> missing;
+        for (std::string_view n : order)
+            if (!present.contains(n) && !was_filled(m, n)) missing.push_back(n);
+        Ref merged = list_new({});
+        std::size_t next = 0, last = 0;
+        bool ordered = true;
+        auto* list = static_cast<List*>(keys.get().object());
+        for (Obj k : list->items) {
+            const Str* s = as_str(k);
+            auto found = s == nullptr ? rank.end() : rank.find(s->text);
+            if (ordered && found != rank.end() && found->second >= last) {
+                for (; next < missing.size() && rank[missing[next]] < found->second; ++next)
+                    list_append(merged.get(), Obj::of(intern(missing[next])));
+                last = found->second;
+            } else if (ordered) {
+                ordered = false;
+                for (; next < missing.size(); ++next) list_append(merged.get(), Obj::of(intern(missing[next])));
+            }
+            list_append(merged.get(), k);
+        }
+        for (; next < missing.size(); ++next) list_append(merged.get(), Obj::of(intern(missing[next])));
+        return merged;
     }
     return keys;
 }

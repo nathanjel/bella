@@ -852,7 +852,7 @@ struct ClassObject : Object {
     std::vector<ClassObject*> subclasses;
     NameMap attrs;                               // owns one count of each value
     std::uint64_t version = NO_VERSION;
-    // A class a program made is a counted object (C-3-12, D-19; refmodel RefClass): its creator, its objects and its member
+    // A class a program made is a counted object (C-3-12, spec section 9; refmodel RefClass): its creator, its objects and its member
     // descriptors hold it, and it holds its bases, its MRO (itself first: so it dies in a collection only) and its metaclass.
     // A built-in type and a class the runtime's own code makes are immortal, as CPython's C types are. `cleared`: type_clear
     // ran, so the dict and the MRO's count of the class itself are gone, and a lookup finds nothing; the rest of the MRO
@@ -2406,7 +2406,7 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
     return true;
 }
 
-// ---- a class as a counted object (C-3-12, D-19; refmodel RefClass: traverse, gc_clear, dealloc, dispose) ----
+// ---- a class as a counted object (C-3-12, spec section 9; refmodel RefClass: traverse, gc_clear, dealloc, dispose) ----
 // What the runtime keeps by a class's address beyond the object model (a __name__ assigned as given, _abc's kept hash):
 // forgotten when the class dies, before its memory goes
 inline void (*class_forgotten)(const ClassObject*) = nullptr;

@@ -33,15 +33,16 @@ OVERRIDE = re.compile(r"\s*# cpython: (\d+)\s*$")
 VERSION = "3.15.2"
 
 
-def functions(text: str) -> dict[str, tuple[int, int]]:
-    """Every function's qualified name and its lines, from its first decorator's to its last."""
-    out: dict[str, tuple[int, int]] = {}
+def functions(text: str) -> dict[str, list[tuple[int, int]]]:
+    """Every function's qualified name and the lines of each definition under it, from its first decorator's to its last:
+    a property's getter and setter are two (review A46, RL-952)."""
+    out: dict[str, list[tuple[int, int]]] = {}
 
     def walk(body: list[ast.stmt], prefix: str) -> None:
         for n in body:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 start = min([n.lineno, *(d.lineno for d in n.decorator_list)])
-                out[prefix + n.name] = (start, n.end_lineno or n.lineno)
+                out.setdefault(prefix + n.name, []).append((start, n.end_lineno or n.lineno))
                 walk(n.body, prefix + n.name + ".<locals>.")
             elif isinstance(n, ast.ClassDef):
                 walk(n.body, prefix + n.name + ".")
@@ -85,12 +86,23 @@ def table() -> dict[str, object]:
         text = (ROOT / "runtime" / "prelude" / prelude).read_text(encoding="utf-8")
         ours = text.splitlines()
         rows: dict[str, object] = {}
-        for qualname, (start, end) in functions(text).items():
+        for qualname, spans in functions(text).items():
             found = next((f for f in order if qualname in theirs[f]), None)
             if found is None:
                 continue                         # the runtime's own: a C function's stand-in, no frame
-            cstart, cend = theirs[found][qualname]
-            lines = line_map(ours[start - 1:end], start, cpython[found].splitlines()[cstart - 1:cend], cstart)
+            lines: list[list[int]] = []
+            text_of = cpython[found].splitlines()
+            free = list(theirs[found][qualname])
+            # each definition beside the one of CPython's its text is closest to: a property's getter and its setter, and
+            # of a function CPython defines once for Windows and once for POSIX, the POSIX one the prelude keeps
+            for start, end in spans:
+                mine = [OVERRIDE.sub("", line).strip() for line in ours[start - 1:end]]
+                cstart, cend = max(free, key=lambda span: difflib.SequenceMatcher(
+                    None, mine, [line.strip() for line in text_of[span[0] - 1:span[1]]], autojunk=False).ratio())
+                free.remove((cstart, cend))
+                lines += line_map(ours[start - 1:end], start, text_of[cstart - 1:cend], cstart)
+                if not free:
+                    break
             rows[qualname] = {"file": FILES[found], "lines": lines}
         out["preludes"][prelude] = rows    # type: ignore[index]
     return out

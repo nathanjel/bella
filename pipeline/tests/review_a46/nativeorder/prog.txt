@@ -1,0 +1,63 @@
+# Review A46, RL-951: a native module's namespace is in CPython's order (its method table's, then its exec slots').
+import sys
+import _ast
+import atexit
+import binascii
+import _bisect
+import _blake2
+import cmath
+import _codecs
+import _collections
+import _contextvars
+import _csv
+import errno
+import _functools
+import gc
+import grp
+import _heapq
+import _hmac
+import _imp
+import _io
+import itertools
+import _json
+import _locale
+import _math_integer
+import math
+import _md5
+import _opcode
+import _operator
+import posix
+import pwd
+import _random
+import _sha1
+import _sha2
+import _sha3
+import _signal
+import _sre
+import _statistics
+import _stat
+import _string
+import _struct
+import _suggestions
+import _thread
+import time
+import _tokenize
+import _typing
+import unicodedata
+import _warnings
+import _weakref
+import zlib
+
+row = sys.argv[1]
+if row == "dir":
+    for m in [_ast, atexit, binascii, _bisect, _blake2, cmath, _codecs, _collections, _contextvars, _csv, errno, _functools, gc, grp, _heapq, _hmac, _imp, _io, itertools, _json, _locale, _math_integer, math, _md5, _opcode, _operator, posix, pwd, _random, _sha1, _sha2, _sha3, _signal, _sre, _statistics, _stat, _string, _struct, _suggestions, _thread, time, _tokenize, _typing, unicodedata, _warnings, _weakref, zlib]:
+        print(m.__name__, m.__dir__())
+elif row == "changed":
+    # the program's own names after CPython's, a deleted name gone, one deleted and set again at the end
+    math.added = 1  # type: ignore[attr-defined]
+    del math.tau
+    del math.pi
+    math.pi = 3.0
+    print(list(vars(math))[-4:], math.__dir__()[-4:], [n for n in vars(math)].index("sin"))
+elif row == "vars":
+    print(list(vars(time))[:12], list(vars(errno))[:8])

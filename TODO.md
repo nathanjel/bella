@@ -825,13 +825,25 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
   of CPython's facts, not the numbers shown.
 * **Question 43 (the author, 2026-11-25: B): the import system's frames as CPython's frames.** Done 2026-11-25 (C-8-22;
-  C-9-14 joins the compiled baseline; `tools/bootstrap_frames.py`, checked by `make verify`; DECISIONS). The comments of the
-  runtime and the model that name D-19 beside C-3-12 (`object.hpp`, `types.cpp`, `refmodel/objects.py`,
-  `refmodel/tests/test_cases.py`) change with the next edit of the header, which rebuilds every unit anyway.
-* **Question 47: D-17's import clause narrowed (put to the author 2026-11-25).** With Question 43's step what is left of the
-  import system's frames is what CPython enters and leaves before a module's body runs (its path finder, its module locks,
-  its reading of the code), seen only through a recursion at the limit during an import. The words drafted: the register's
-  summary and section 11's row name that, "(decided 2026-11-24, narrowed 2026-11-25)", v0.42.
+  C-9-14 joins the compiled baseline; `tools/bootstrap_frames.py`, checked by `make verify`; DECISIONS). Review A46's fixes
+  the same day (RL-949, RL-951, RL-952, RL-948 in part) changed the comments of the runtime and the model that named D-19.
+* **Question 47: the import system's module locks and D-17's import clause (put to the author 2026-11-25; RL-950).** With
+  Question 43's step what is left of the import system's frames is what CPython enters and leaves before a module's body
+  runs. Its path finder and its reading of the code cannot run in a closed world and are seen only through a recursion at
+  the limit during an import; its module locks can run in one thread, and a program sees them otherwise too (review A46,
+  RL-950: a name's `__hash__` called by the lock table, `_ModuleLock` and its kin, which stop by name, the local `lock` of
+  `_find_and_load` and `_lock_unlock_module`). The options: A, words now (D-17's clause names all three, "(decided
+  2026-11-24, narrowed 2026-11-25)", and an entry for the locks' other traces; v0.42); B, CPython's locks now, on the
+  runtime's `_thread` of one thread, D-17 naming the finder and the code's reading only; C, A now and B with the threads
+  milestone. Recommended C.
+* **Question 48: the code objects of the functions the closed world rewrote (RL-948's remainder; after Question 47).** 27
+  of the 149 code objects that the functions of `runtime/prelude/bootstrap_frames.json` reach have the rewrite's locals
+  where CPython's have its text's (`co_varnames`, `co_nlocals`, `_setup`'s `co_argcount`; [P1] under E-02): the path
+  finders and `_install` (11), the bytecode cache (7), the extension loaders (2), what needs `importlib.metadata` or
+  `importlib.resources` (3), and the runtime's own import (`_find_spec`, `FrozenImporter.exec_module`, `_exec`, `_setup`).
+  They are the A46 test's `OPEN`, beside the two of the locks. The options to put: registered (an entry naming them, or
+  E-04's reason widened), CPython's text where it can run and the table carrying CPython's names and counts for the rest,
+  or in part; the evidence to count first (who reads these functions' code objects).
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
   version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads

@@ -634,6 +634,8 @@ Ref unicode_decode(std::string_view s, const std::string* encoding, const std::s
 std::array<std::int64_t, 4> slice_indices(Obj sl, std::int64_t length,    // PySlice_Unpack and AdjustIndices: start, stop, step, count
                                           const char* message = "slice indices must be integers or have an __index__ method");
 std::vector<std::string_view> cpython_names_of(std::string_view scope);   // the names table's rows under a scope
+std::vector<std::string_view> cpython_order_of(std::string_view module);  // a built-in module's names in CPython's order
+void order_as_cpython(Module* m, std::string_view module);   // a native module's namespace laid out in that order (RL-951)
 void adopt_functions(Module* m);                 // the module's functions say it is theirs (__self__, __module__)
 bool object_issubclass(Obj derived, Obj cls);    // PyObject_IsSubclass
 // CPython's argument checks by calling convention, each with its message
