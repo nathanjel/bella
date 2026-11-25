@@ -824,13 +824,10 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   and `__itemsize__` from the runtime's structs. `tools/missing_names.py --update` then, and the stop rows of the argument
   counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
   of CPython's facts, not the numbers shown.
-* **Questions from review A45 (to put: Question 45 is RL-944, Question 46 RL-946).** RL-944: a class's dict reached through the
-  proxy's reflected `|` (`mappingproxy_or` hands a reflected `__ror__` the class's dict itself) and written is not what a
-  look-up on the class reads, the class's attributes being its own store and the dict a view of them (C-3-82); options: an
-  exclusion beside E-05 (which has `gc.get_referents`, the other way to that object), or writes to the view taken into the
-  store (CPython's look-up then where its type cache has no entry). RL-946: a module that rebinds `__builtins__` has
+* **Question 46 (to put; review A45, RL-946): a rebound `__builtins__`.** A module that rebinds `__builtins__` has
   CPython's later functions take it as their builtins (`len` there is the dict's), and the runtime ignores it, its builtins
   bound at compile time; options: E-06's words widened to name it (a lint rule: an assignment to the name), or honoured.
+  (Question 45, RL-944, answered A on 2026-11-25: E-05, spec v0.40.)
 * **Question 43 (the author, 2026-11-25: B): the import system's frames as CPython's frames.** The runtime runs CPython's
   `_bootstrap` text as a prelude, whose frames are hidden (`Code::shown`), so three rows differ (measured 2026-11-25): a failed
   import's module object dies when the import ends, where CPython's `_load_unlocked` frame keeps it (through the failed
