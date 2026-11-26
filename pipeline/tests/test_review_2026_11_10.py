@@ -1057,17 +1057,12 @@ def _text_units(path: Path) -> dict[str, tuple[str, str | None]]:
 def test_the_bootstrap_preludes_keep_the_pins_parameters_and_docstrings() -> None:
     """Seen with RL-419: the two preludes are CPython's text, and seven docstrings, a class's and three parameter lists had
     drifted from the pin's (one function was an older release's). Whatever they share with the pin's modules by name has the
-    pin's parameters and docstring, but for what a decorator written out stands for, which has the wrapper's parameters."""
+    pin's parameters and docstring. The decorators are CPython's text since review A46 (RL-949), so what they decorate has the
+    pin's parameters too; `_setup` alone differs, taking what the runtime's start gives it (D-34)."""
     import importlib as pinned  # noqa: PLC0415
     lib = Path(pinned.__file__).parent
     prelude = Path(__file__).resolve().parents[2] / "runtime" / "prelude"
-    written_out = {                              # the wrapper's parameters, under the name of what it wraps
-        "_setup": "builtin_names",               # start-up's own: the runtime calls it
-        "BuiltinImporter.get_code": "self, fullname", "BuiltinImporter.get_source": "self, fullname", "BuiltinImporter.is_package": "self, fullname",
-        "FrozenImporter.get_code": "self, fullname", "FrozenImporter.get_source": "self, fullname", "FrozenImporter.is_package": "self, fullname",
-        "FileLoader.get_filename": "self, name=None, *args, **kwargs", "FileLoader.get_resource_reader": "self, name=None, *args, **kwargs",
-        "ExtensionFileLoader.get_filename": "self, name=None, *args, **kwargs",
-    }
+    written_out = {"_setup": "builtin_names"}    # start-up's own: the runtime calls it (D-34)
     first = _text_units(prelude / "bootstrap.py")          # which also holds the source loaders of the second module
     shared = 0
     for ours, theirs in ((first, _text_units(lib / "_bootstrap.py")),
