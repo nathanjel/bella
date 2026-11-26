@@ -1,0 +1,97 @@
+"""Review F48 (RL-980; Question 49: A): the frames CPython enters without checking the recursion limit, a row a process.
+
+CPython's specialised instructions for a generator resumed by `for` or `yield from`, a call with `*args` or `**kwargs` and a
+bound method object called with a keyword push a frame and count it, and do not test the limit; a compiled program tests
+it at every entry (D-17). A recursion made only of such frames runs past the default limit under CPython and raises
+RecursionError compiled; with an ordinary call a level, or a `for` that also meets what is no generator, both raise.
+"""
+import functools
+import itertools
+import sys
+from collections.abc import Callable, Iterator
+
+
+def relay(inner: Iterator[int]) -> Iterator[int]:
+    yield from inner
+
+
+def loop(inner: Iterator[int]) -> Iterator[int]:
+    for x in inner:
+        yield x
+
+
+def walk(depth: int) -> Iterator[int]:
+    yield depth
+    if depth:
+        yield from walk(depth - 1)
+
+
+def without(numbers: Iterator[int], p: int) -> Iterator[int]:
+    for x in numbers:
+        if x % p:
+            yield x
+
+
+def primes() -> Iterator[int]:
+    numbers: Iterator[int] = itertools.count(2)
+    while True:
+        p = next(numbers)
+        yield p
+        numbers = without(numbers, p)
+
+
+def star(n: int, *rest: int) -> int:
+    return n if n == 0 else star(n - 1, *rest)
+
+
+def double(n: int, **rest: int) -> int:
+    return n if n == 0 else double(n - 1, **rest)
+
+
+class Box:
+    def down(self, n: int = 0) -> int:
+        again = self.down
+        return n if n == 0 else again(n=n - 1)
+
+
+def logged(f: Callable[..., int]) -> Callable[..., int]:
+    @functools.wraps(f)
+    def wrapper(*args: int) -> int:
+        return f(*args)
+    return wrapper
+
+
+@logged
+def wrapped(n: int) -> int:
+    return n if n == 0 else wrapped(n - 1)
+
+
+def chain(stage: Callable[[Iterator[int]], Iterator[int]], size: int) -> int:
+    g: Iterator[int] = iter([7])
+    for _ in range(size):
+        g = stage(g)
+    return next(g)
+
+
+row, size = sys.argv[1], int(sys.argv[2])
+try:
+    if row == "yield from":
+        print(chain(relay, size))
+    elif row == "for":
+        print(chain(loop, size))
+    elif row == "*args":
+        print(star(size))
+    elif row == "**kwargs":
+        print(double(size))
+    elif row == "bound method":
+        print(Box().down(size))
+    elif row == "recursive generator":
+        print(sum(1 for _ in walk(size)))
+    elif row == "sieve":
+        print(list(itertools.islice(primes(), size))[-1])
+    elif row == "decorated":
+        print(wrapped(size))
+    else:
+        raise SystemExit("no such row: " + row)
+except RecursionError:
+    print("RecursionError")

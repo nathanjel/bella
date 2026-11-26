@@ -1,0 +1,16 @@
+"yield from" 900
+"yield from" 1200
+for 900
+for 1200
+*args 900
+*args 1200
+**kwargs 900
+**kwargs 1200
+"bound method" 900
+"bound method" 1200
+"recursive generator" 900
+"recursive generator" 1200
+sieve 900
+sieve 1200
+decorated 400
+decorated 1200

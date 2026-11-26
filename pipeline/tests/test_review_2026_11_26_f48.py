@@ -14,7 +14,15 @@ argument list a line), one row a process, compared on standard output, standard 
 * A class with a long chain of bases is made in time in proportion to it (`basechain`: RL-1039; a chain of 300, a ladder of
   40 diamonds, 60 class statements, and what `__base__` is with slots and built-in bases).
 
-A row of `STOPS` must stop with its words and a row of `OPEN` must differ: one that comes to agree is to leave its table.
+And one registered difference is held as D-17 words it (the author's decision of 2026-11-26, Question 49: A; RL-980):
+
+* The frames CPython enters without checking the recursion limit (`unchecked`): 1,200 generators chained by `yield from` or
+  by `for`, and a recursion 1,200 deep through `*args`, `**kwargs` or a bound method object called with a keyword, end
+  under CPython and raise RecursionError compiled (`REGISTERED`); at 900 both end, and a recursive generator, the lazy
+  sieve and a decorated recursion raise on both sides at 1,200.
+
+A row of `STOPS` must stop with its words, a row of `OPEN` must differ, and a row of `REGISTERED` must give what its entry
+says: one that comes to agree with CPython is to leave its table.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_26_f48
 """
@@ -39,6 +47,10 @@ KINDS = ("int", "none", "bytes", "float", "list", "tuple", "strsub", "strsub2", 
 STOPS: dict[tuple[str, tuple[str, ...]], str] = {
     **{("entrynames", ("source.exec_module", kind)): NOT_COMPILED for kind in KINDS},
     **{("entrynames", ("frozen.exec_module", kind)): NOT_COMPILED for kind in KINDS if kind != "strsub2"},
+}
+# rows that differ as a registered deviation says: what the compiled program prints there
+REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
+    ("unchecked", (shape, "1200")): ("D-17", "RecursionError\n") for shape in ("yield from", "for", "*args", "**kwargs", "bound method")
 }
 # rows that differ until the author has decided (Question 48)
 OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset({
@@ -70,6 +82,12 @@ def rows_agree(probe: str) -> None:
             if stop is not None:
                 if got[2] != 70 or stop not in "\n".join(got[1]):
                     wrong.append(f"{probe}/{row}: compiled {got!r}, where it is to stop with {stop!r}")
+            elif (probe, row) in REGISTERED:
+                entry, printed = REGISTERED[(probe, row)]
+                if got == want:
+                    wrong.append(f"{probe}/{row} agrees now: take it out of REGISTERED and narrow {entry}")
+                elif got != (printed, [], 0) or want[1:] != ([], 0):
+                    wrong.append(f"{probe}/{row}: compiled {got!r}, CPython {want!r}, where {entry} says {printed!r} against a run that ends")
             elif (probe, row) in OPEN:
                 if got == want:
                     wrong.append(f"{probe}/{row} agrees now: take it out of OPEN")
