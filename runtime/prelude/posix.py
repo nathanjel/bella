@@ -1359,7 +1359,11 @@ def _exit(*args: object, **kwds: object) -> None:
     _sys("exit", _int(_unpack("_exit", args, kwds, ("status",), 1, 1)[0]))
 
 
-_at_fork: list[object] = []                      # nothing runs them until the runtime can fork, which stops by name
+# The interpreter's three lists of handlers. Nothing runs them until the runtime can fork, which stops by name; the exit lets
+# go of them where interpreter_clear does, before its last collection (RL-1070)
+_before_forkers: list[object] = []
+_after_forkers_parent: list[object] = []
+_after_forkers_child: list[object] = []
 
 
 def register_at_fork(*args: object, **kwds: object) -> None:
@@ -1369,7 +1373,12 @@ def register_at_fork(*args: object, **kwds: object) -> None:
     for value, name in ((before, "before"), (child, "after_in_child"), (parent, "after_in_parent")):
         if value is not _ABSENT and not callable(value):
             raise TypeError("'" + name + "' must be callable, not " + _tp_name(value))
-    _at_fork.append((before, child, parent))
+    if before is not _ABSENT:
+        _before_forkers.append(before)
+    if child is not _ABSENT:
+        _after_forkers_child.append(child)
+    if parent is not _ABSENT:
+        _after_forkers_parent.append(parent)
 
 
 # ---- paths

@@ -55,7 +55,7 @@ const StagedSite* site_row(std::span<const StagedSite> rows, const std::string& 
 const StagedText& find_text(const std::string& site, const char* kind, Obj source) {
     if (const StagedSite* r = site_row(table().refused, site)) refused(r->message);
     bool bytes = is_bytes_like(source);
-    std::string data = bytes ? bytes_data(source) : as_str(source)->text;
+    std::string data = bytes ? bytes_data(source) : name_arg(source)->text;
     for (const StagedText& t : table().texts)
         if (t.bytes == bytes && site == t.site && std::string_view(kind) == t.kind && std::string_view(t.source, t.length) == data) {
             if (t.body == nullptr) refused(std::string(kind) + " at " + site + ": " + t.why);
@@ -304,7 +304,7 @@ Ref b_compile(Obj, Args a) {
     if (!bytes && as_str(source) == nullptr) refused("E-01: compile at " + site + " of a " + type_of(source)->name + " (the dry run stages str and bytes)");
     // PyEval_MergeCompilerFlags: the calling frame's __future__ features, as the dry run merged them into the key
     int merged = flags | (dont_inherit || caller == nullptr ? 0 : caller->code->flags & FUTURE_MASK);
-    std::string data = bytes ? bytes_data(source) : as_str(source)->text;
+    std::string data = bytes ? bytes_data(source) : name_arg(source)->text;
     const Str* module = modname == None() ? nullptr : as_str(modname);
     for (const StagedCompile& c : table().compiles) {
         if (c.bytes != bytes || site != c.site || std::string_view(c.source, c.length) != data || filename->text != c.filename ||

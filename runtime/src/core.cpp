@@ -418,7 +418,7 @@ Obj exact_str_get(const Dict* d, const Str* key) {
             if (!e.key.is_unset() && e.hash == hash) {
                 if (e.key.object() == key) return e.value;
                 if (!is_exact_str(e.key)) return Obj{};
-                if (as_str(e.key)->text == key->text) return e.value;
+                if (name_arg(e.key)->text == key->text) return e.value;
             }
         }
         perturb >>= detail::PERTURB_SHIFT;
@@ -589,6 +589,11 @@ Ref str_from_codepoints(std::u32string_view cps) {
 const Str* as_str(Obj v) {
     if (!v.is_object() || v.object()->kind != Kind::Str) return nullptr;
     return static_cast<const Str*>(v.object());
+}
+const Str* name_arg(Obj v) {                     // the str a prelude hands a primitive: anything else stops by name, never a null read (RL-1033)
+    const Str* s = as_str(v);
+    if (s == nullptr) throw NotImplemented("a primitive of the runtime handed a '" + type_of(v)->name + "' object where it takes a str");
+    return s;
 }
 
 // ---- tuples and lists ----
@@ -1090,7 +1095,7 @@ std::int64_t frozendict_hash(Obj v) {
 namespace {
 bool keys_equal(Obj a, Obj b) {
     if (a == b) return true;
-    if (is_exact_str(a) && is_exact_str(b)) return as_str(a)->text == as_str(b)->text;   // unicode_eq; a subclass's __eq__ may have a say
+    if (is_exact_str(a) && is_exact_str(b)) return name_arg(a)->text == name_arg(b)->text;   // unicode_eq; a subclass's __eq__ may have a say
     Ref r = compare(CmpOp::Eq, a, b);
     return truth(r.get());
 }
@@ -1131,7 +1136,7 @@ std::int64_t container_hash(Obj key, const char* as) {
         if (type_of(e.exc.get()) != exception_class("TypeError")) rethrow(e);
         Ref text = str_of(e.exc.get());
         raise_new("TypeError", "cannot use '" + fully_qualified_name(type_of(key)) + "' as a " + as + " (" +
-                                   as_str(text.get())->text + ")");
+                                   name_arg(text.get())->text + ")");
     }
 }
 }  // namespace
@@ -1346,8 +1351,8 @@ Ref instantiate(Obj cls) {
     Ref made = invoke(cls, {});
     if (!is_exception_instance(made.get())) {
         Ref shown = repr_of(cls), got = repr_of(Obj::of(type_of(made.get())));
-        raise_new("TypeError", "calling " + as_str(shown.get())->text + " should have returned an instance of BaseException, not " +
-                                   as_str(got.get())->text);
+        raise_new("TypeError", "calling " + name_arg(shown.get())->text + " should have returned an instance of BaseException, not " +
+                                   name_arg(got.get())->text);
     }
     return made;
 }

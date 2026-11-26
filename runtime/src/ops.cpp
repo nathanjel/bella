@@ -563,7 +563,7 @@ bool tuple_items_contain(Obj container, Obj item) {   // tuple_contains: the ite
 bool str_contains(Obj self, Obj item) {
     const Str* sub = as_str(item);
     if (sub == nullptr) raise_new("TypeError", "'in <string>' requires string as left operand, not " + type_of(item)->name);
-    return as_str(self)->text.find(sub->text) != std::string::npos;
+    return name_arg(self)->text.find(sub->text) != std::string::npos;
 }
 namespace {
 bool contains(Obj container, Obj item) {
@@ -1044,7 +1044,7 @@ Ref repr_unchecked(Obj v) {
         case Kind::Slice: {                          // slice_repr
             auto* s = static_cast<SliceObject*>(o);
             Ref a = repr_of(s->start), b = repr_of(s->stop), c = repr_of(s->step);
-            return str_new("slice(" + as_str(a.get())->text + ", " + as_str(b.get())->text + ", " + as_str(c.get())->text + ")");
+            return str_new("slice(" + name_arg(a.get())->text + ", " + name_arg(b.get())->text + ", " + name_arg(c.get())->text + ")");
         }
         case Kind::Builtin: {
             auto* b = static_cast<Builtin*>(o);
@@ -1069,15 +1069,15 @@ Ref repr_unchecked(Obj v) {
         }
         case Kind::PyFunction:
             if (presents_as_builtin(v))
-                return str_new("<built-in function " + as_str(static_cast<PyFunction*>(o)->name.get())->text + ">");
-            return str_new("<function " + as_str(static_cast<PyFunction*>(o)->qualname.get())->text + " at " + address(v) + ">");
+                return str_new("<built-in function " + name_arg(static_cast<PyFunction*>(o)->name.get())->text + ">");
+            return str_new("<function " + name_arg(static_cast<PyFunction*>(o)->qualname.get())->text + " at " + address(v) + ">");
         case Kind::Method: {
             auto* m = static_cast<Method*>(o);   // method_repr: __qualname__, else __name__, and "?" for none or one that is no str (RL-749)
             Ref fname = optional_getattr(m->func, intern("__qualname__"));
             if (fname.get().is_unset()) fname = optional_getattr(m->func, intern("__name__"));
             const Str* named = fname.get().is_unset() ? nullptr : as_str(fname.get());
             Ref self = repr_of(m->self);
-            return str_new("<bound method " + (named != nullptr ? named->text : std::string("?")) + " of " + as_str(self.get())->text + ">");
+            return str_new("<bound method " + (named != nullptr ? named->text : std::string("?")) + " of " + name_arg(self.get())->text + ">");
         }
         case Kind::Instance: return call_special(v, "__repr__", {});
         case Kind::Cell: {                       // cell_repr
@@ -1091,7 +1091,7 @@ Ref repr_unchecked(Obj v) {
                 if (!*frame->live)
                     throw NotImplemented("the repr of the frame a signal handler was given, after its handlers have run (the line it was at then: E-02)");
                 Ref file = str_new(frame->code->filename);
-                return str_new("<frame at " + address(v) + ", file " + as_str(repr_of(file.get()).get())->text + ", line " +
+                return str_new("<frame at " + address(v) + ", file " + name_arg(repr_of(file.get()).get())->text + ", line " +
                                std::to_string(frame->record->line) + ", code " + frame->code->name + ">");
             }
             throw NotImplemented("the repr of a frame (its file, line and function: E-02)");   // which no other frame of the runtime's gives
@@ -1301,13 +1301,13 @@ void state_del(Obj obj, const Str* name) {
 }
 Ref i_bella_state_get(Obj, Args a) {
     positional_only(a, "_bella_state_get", 2, 2);
-    return state_get(a.pos(0), intern(as_str(a.pos(1))->text));
+    return state_get(a.pos(0), intern(name_arg(a.pos(1))->text));
 }
 // the store of a C function into its own struct: the field, or, for a member CPython's type has too, the member's store
 // (PyObject_GenericSetAttr: whatever __setattr__ a class that derives from the type has)
 Ref i_bella_state_set(Obj, Args a) {
     positional_only(a, "_bella_state_set", 3, 3);
-    const Str* name = intern(as_str(a.pos(1))->text);
+    const Str* name = intern(name_arg(a.pos(1))->text);
     if (state_cell(a.pos(0), name) != nullptr) state_set(a.pos(0), name, a.pos(2));
     else invoke(type_lookup(types().object, intern("__setattr__")), {a.pos(0), a.pos(1), a.pos(2)});
     return none_ref();
@@ -1334,7 +1334,7 @@ Ref object_getattribute(Obj self, Args a) {
 }
 Ref i_bella_ga_get(Obj, Args a) {                // bootstrap.py's: a generic alias's own member
     positional_only(a, "_bella_ga_get", 2, 2);
-    return instance_member(a.pos(0), intern(as_str(a.pos(1))->text));
+    return instance_member(a.pos(0), intern(name_arg(a.pos(1))->text));
 }
 
 // a getset with no setter says "not writable"; a member (PyMemberDef) "readonly attribute", whether the runtime has it as a
@@ -2325,12 +2325,12 @@ void each_item(Obj mapping, F f) {
 std::string callable_name(Obj func) {            // _PyObject_FunctionStr
     if (is_kind(func, Kind::Builtin)) return static_cast<Builtin*>(func.object())->name + "()";
     Ref qualname = optional_getattr(func, intern("__qualname__"));
-    if (qualname.get().is_unset()) return as_str(str_of(func).get())->text;
-    std::string q = as_str(str_of(qualname.get()).get())->text;
+    if (qualname.get().is_unset()) return name_arg(str_of(func).get())->text;
+    std::string q = name_arg(str_of(qualname.get()).get())->text;
     Ref module = optional_getattr(func, intern("__module__"));
     if (!module.get().is_unset() && module.get() != None()) {
         const Str* m = as_str(module.get());
-        if (m == nullptr || m->text != "builtins") return as_str(str_of(module.get()).get())->text + "." + q + "()";
+        if (m == nullptr || m->text != "builtins") return name_arg(str_of(module.get()).get())->text + "." + q + "()";
     }
     return q + "()";
 }

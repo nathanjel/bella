@@ -179,7 +179,7 @@ std::string format_v(const char* format, va_list vargs) {
         switch (*f) {
             case 'c': {
                 std::u32string one(1, static_cast<char32_t>(va_arg(vargs, int)));
-                out += as_str(str_from_codepoints(one).get())->text;
+                out += name_arg(str_from_codepoints(one).get())->text;
                 break;
             }
             case 'd':
@@ -602,7 +602,7 @@ void _PyTokenizer_raise_init_error(PyObject* filename) {
         Ref errstr = str_of(fetched.exc.get());
         Ref zero = int_from_i64(0), minus = int_from_i64(-1);
         Ref where = tuple_new({Obj::of(filename), zero.get(), minus.get(), None()});
-        Ref message = str_new("encoding problem: " + as_str(errstr.get())->text);
+        Ref message = str_new("encoding problem: " + name_arg(errstr.get())->text);
         set_error("SyntaxError", {message.get(), where.get()});
     } catch (const PyError& raised) {
         set_pending(raised);
@@ -1356,7 +1356,7 @@ std::int64_t next_id = 1;
 //   "next", handle -> the token's tuple, or None at the end (tokenizeriter_next); an error is raised
 //   "free", handle -> None (tokenizeriter_dealloc)
 Ref i_tokenizer(Obj, Args a) {
-    const std::string& name = as_str(a.pos(0))->text;
+    const std::string& name = name_arg(a.pos(0))->text;
     if (name == "new") {
         Pending saved = std::move(indicator());      // a readline may run another tokenizer: each call has the indicator to itself
         indicator() = Pending{};

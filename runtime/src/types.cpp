@@ -294,12 +294,12 @@ Ref descriptor_doc(Obj self) {
     if (!c_type(owner)) return none_ref();
     Obj recorded = cpython_doc("member:" + owner->name + "." + name);
     if (recorded == None()) throw NotImplemented(type_of(self)->name + ".__doc__ of '" + name + "' (CPython has it; the runtime does not yet)");
-    return as_str(recorded)->text.empty() ? none_ref() : Ref::share(recorded);
+    return name_arg(recorded)->text.empty() ? none_ref() : Ref::share(recorded);
 }
 Ref descriptor_objclass(Obj self) { return Ref::share(Obj::of(descriptor_owner(self))); }
 Ref descriptor_qualname(Obj self) {              // descr_get_qualname: the type's qualified name, a dot, its own
     Ref owner = getattr(Obj::of(descriptor_owner(self)), N("__qualname__"));
-    return str_new(as_str(owner.get())->text + "." + descriptor_text(self));
+    return str_new(name_arg(owner.get())->text + "." + descriptor_text(self));
 }
 // descr_setcheck: a getset's __set__ and __delete__ take what its __get__ takes
 void check_descriptor_applies(Obj self, Obj obj) {
@@ -555,7 +555,7 @@ Ref generic_getattr(Obj obj, const Str* name) {
         return getattr(static_cast<Method*>(obj.object())->func, name);
     refuse_absent_attribute(obj, name);
     if (is_kind(obj, Kind::Module))
-        raise_attribute_error(obj, name, "module '" + as_str(static_cast<Module*>(obj.object())->name.get())->text +
+        raise_attribute_error(obj, name, "module '" + name_arg(static_cast<Module*>(obj.object())->name.get())->text +
                                              "' has no attribute '" + name->text + "'");
     raise_attribute_error(obj, name, "'" + c->name + "' object has no attribute '" + name->text + "'");
 }
@@ -617,6 +617,9 @@ ClassObject* solid_base(ClassObject* c) {
     return solid_base(c->bases.empty() ? types().object : tp_base(c));
 }
 ClassObject* tp_base(ClassObject* c) {
+    // worked out once a class: asked again at every level of a chain for every level under it, a chain of thirty bases
+    // did not end (RL-1039)
+    if (c->layout_base != nullptr) return c->layout_base;
     ClassObject *base = nullptr, *winner = nullptr;
     for (ClassObject* b : c->bases) {            // best_base: the first base whose solid base is the most derived
         ClassObject* s = solid_base(b);
@@ -624,7 +627,7 @@ ClassObject* tp_base(ClassObject* c) {
         winner = s;
         base = b;
     }
-    return base != nullptr ? base : types().object;
+    return c->layout_base = base != nullptr ? base : types().object;
 }
 
 // [P2+] (spec section 3): a class that overrides __getattribute__ makes no instance, whatever would make it: object.__new__,
@@ -683,7 +686,7 @@ Ref object_new(Obj, Args a) {
         std::size_t count = static_cast<List*>(listed.get().object())->items.size();
         listed = Ref{};
         raise_new("TypeError", "Can't instantiate abstract class " + cls->name + " without an implementation for abstract method" +
-                                   (count > 1 ? "s" : "") + " '" + as_str(joined.get())->text + "'");
+                                   (count > 1 ? "s" : "") + " '" + name_arg(joined.get())->text + "'");
     }
     refuse_getattribute_override(cls);
     Ref made = own(new_instance(cls));
@@ -987,7 +990,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             slot_names = tuple_copy(static_cast<List*>(names.get().object())->items);   // the sorted names, as type_new keeps them
             std::vector<std::string> ordered;    // one cell a name; a name's other cells are counted (repeated_slots, RL-591)
             for (Obj v : static_cast<List*>(names.get().object())->items)
-                if (std::find(ordered.begin(), ordered.end(), as_str(v)->text) == ordered.end()) ordered.push_back(as_str(v)->text);
+                if (std::find(ordered.begin(), ordered.end(), name_arg(v)->text) == ordered.end()) ordered.push_back(name_arg(v)->text);
             for (const std::string& s : slots)
                 if (s == "__dict__" || s == "__weakref__") ordered.push_back(s);
             slots = ordered;
@@ -1098,7 +1101,7 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
             Ref r = call_special(v, "__set_name__", {Obj::of(c), Obj::of(k)}, &found);
         } catch (const PyError& e) {
             Ref key = repr_of(Obj::of(k));
-            add_note(e.exc.get(), "Error calling __set_name__ on '" + type_of(v)->name + "' instance " + as_str(key.get())->text + " in '" + c->name + "'");
+            add_note(e.exc.get(), "Error calling __set_name__ on '" + type_of(v)->name + "' instance " + name_arg(key.get())->text + " in '" + c->name + "'");
             rethrow(e);
         }
     }
@@ -1213,7 +1216,7 @@ Ref str_new_m(Obj, Args a) {                     // unicode_new, unicode_subtype
     if (rest.npos + rest.nkw > 3) raise_new("TypeError", std::string("str() takes at most 3 ") + (rest.npos == 0 ? "keyword " : "") + "arguments (" + std::to_string(rest.npos + rest.nkw) + " given)");   // not through unicode_vectorcall
     Ref made = invoke(Obj::of(types().str), rest);
     if (cls == types().str) return made;
-    return own(new StrInstance(cls, as_str(made.get())->text));
+    return own(new StrInstance(cls, name_arg(made.get())->text));
 }
 Ref dict_new_m(Obj, Args a) {
     ClassObject* cls = new_wrapper_class(a, types().dict);
@@ -1309,7 +1312,7 @@ Ref int_from_str(const Str* s, std::int64_t base) {
         std::u32string shown;                       // %.200R: the repr, cut at 200 code points
         for (std::size_t k = 0; k < std::min<std::size_t>(rs->length, 200); ++k) shown += rs->at(k);
         Ref cut = str_from_codepoints(shown);
-        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + as_str(cut.get())->text);
+        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + name_arg(cut.get())->text);
     });
 }
 // PyLong_FromString on a bytes-like object's octets: ASCII digits and spaces, and a message showing it
@@ -1323,7 +1326,7 @@ Ref int_from_bytes(Obj x, std::int64_t base) {
         std::u32string shown;
         for (std::size_t k = 0; k < std::min<std::size_t>(rs->length, 200); ++k) shown += rs->at(k);
         Ref cut = str_from_codepoints(shown);
-        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + as_str(cut.get())->text);
+        raise_new("ValueError", "invalid literal for int() with base " + std::to_string(base) + ": " + name_arg(cut.get())->text);
     };
     if (!usable) invalid();
     return int_from_text(b, base, invalid);
@@ -1757,7 +1760,7 @@ void set_type_annotations(Obj self, Obj v) {
 Ref type_doc(Obj self) {
     ClassObject* c = self_class(self);
     if (c_type(c))                               // type_get_doc: a static type's tp_doc (the names table's type: scope), whatever its dict holds (property's member)
-        if (Obj d = cpython_doc("type:" + c->name); d != None() && !as_str(d)->text.empty()) return Ref::share(d);
+        if (Obj d = cpython_doc("type:" + c->name); d != None() && !name_arg(d)->text.empty()) return Ref::share(d);
     if (const Obj* d = c->attrs.find(N("__doc__"))) return descr_get(*d, None(), self);
     return none_ref();
 }
@@ -2065,7 +2068,7 @@ Ref builtin_descr_qualname(Obj self) {           // descr_get_qualname, wrapper_
     auto* b = static_cast<Builtin*>(self.object());
     Ref owner = builtin_objclass(self);
     Ref qualname = getattr(owner.get(), N("__qualname__"));
-    return str_new(as_str(qualname.get())->text + "." + b->name);
+    return str_new(name_arg(qualname.get())->text + "." + b->name);
 }
 // ---- __reduce__ of a range, a slice, the two named singletons and the callables: how each says it is made again ----
 // E-06: the builtins' getattr is the one the program began with (_PyEval_GetBuiltin)
@@ -2140,7 +2143,7 @@ Ref builtin_doc(Obj self) {                      // from the table, for the ones
     }
     Ref module = builtin_module(self), name = builtin_name(self);
     const Str* m = as_str(module.get());
-    if (as_str(name.get())->text == "__new__") {     // tp_new's builtin, bound to its type: the table's new:<tp_name> row
+    if (name_arg(name.get())->text == "__new__") {     // tp_new's builtin, bound to its type: the table's new:<tp_name> row
         Ref bound = builtin_self(self);
         if (is_kind(bound.get(), Kind::Class))
             if (auto text = cpython_doc_text("new:" + static_cast<ClassObject*>(bound.get().object())->name)) {
@@ -2149,11 +2152,11 @@ Ref builtin_doc(Obj self) {                      // from the table, for the ones
             }
     }
     if (m != nullptr || module.get() == None())      // the table's rows are <__module__>.<__name__>, "" for None (the error handlers of _codecs)
-        if (auto text = cpython_doc_text((m == nullptr ? "" : m->text) + "." + as_str(name.get())->text)) {
+        if (auto text = cpython_doc_text((m == nullptr ? "" : m->text) + "." + name_arg(name.get())->text)) {
             if (text->empty()) return none_ref();
             return Ref::share(Obj::of(intern(std::string(*text))));
         }
-    throw NotImplemented("builtin_function_or_method.__doc__ of '" + as_str(name.get())->text + "' (CPython has it; the runtime does not yet)");
+    throw NotImplemented("builtin_function_or_method.__doc__ of '" + name_arg(name.get())->text + "' (CPython has it; the runtime does not yet)");
 }
 // wrapperdescr_get_doc and wrapper_doc: the slot's own text (d_base->doc), which is one per slot name but for a few types whose
 // slot is another of the same name (a weak proxy's nb_inplace_add where a sequence has sq_inplace_concat): the table's
@@ -2172,7 +2175,7 @@ Ref builtin_qualname(Obj self) {                 // meth_get__qualname__
     if (bound.get() == None() || is_kind(bound.get(), Kind::Module)) return name;
     Obj owner = is_kind(bound.get(), Kind::Class) ? bound.get() : Obj::of(type_of(bound.get()));
     Ref qualname = getattr(owner, N("__qualname__"));
-    return str_new(as_str(qualname.get())->text + "." + as_str(name.get())->text);
+    return str_new(name_arg(qualname.get())->text + "." + name_arg(name.get())->text);
 }
 Ref builtin_module(Obj self) {                   // m_module: None for a method, and once deleted
     if (is_kind(self, Kind::PyFunction)) return fn_module(self);    // the prelude's print
@@ -2318,7 +2321,7 @@ Ref proxy_iter(Obj self, Args a) { dunder_args(self, a, "__iter__", 0); return i
 Ref proxy_repr(Obj self, Args a) {
     dunder_args(self, a, "__repr__", 0);
     Ref text = repr_of(class_dict(self));
-    return str_new("mappingproxy(" + as_str(text.get())->text + ")");
+    return str_new("mappingproxy(" + name_arg(text.get())->text + ")");
 }
 Ref proxy_str(Obj self, Args a) { dunder_args(self, a, "__str__", 0); return str_of(class_dict(self)); }
 Ref proxy_hash(Obj self, Args a) {               // mappingproxy_hash: the mapping's, and a dict has none
@@ -2551,8 +2554,8 @@ Ref oserror_init_m(Obj self, Args a) {           // OSError_init: all done in __
     return none_ref();
 }
 Ref or_none(Obj v) { return v.is_unset() ? none_ref() : Ref::share(v); }
-std::string shown_str(Obj v) { Ref s = str_of(v); return as_str(s.get())->text; }
-std::string shown_repr(Obj v) { Ref s = repr_of(v); return as_str(s.get())->text; }
+std::string shown_str(Obj v) { Ref s = str_of(v); return name_arg(s.get())->text; }
+std::string shown_repr(Obj v) { Ref s = repr_of(v); return name_arg(s.get())->text; }
 Ref exception_str(Obj self, Args);
 Ref exception_args(Obj self);
 void no_wrapper_args(Args a, const char* name) {  // wrapper_call, check_num_args
@@ -2751,7 +2754,7 @@ Ref beg_str(Obj self, Args a) {                  // "%S (%zd sub-exception%s)"
     no_wrapper_args(a, "__str__");
     Ref text = str_of(exception_field(self, "msg"));
     std::size_t n = static_cast<Tuple*>(exception_field(self, "excs").object())->items.size();
-    return str_new(as_str(text.get())->text + " (" + std::to_string(n) + " sub-exception" + (n > 1 ? "s" : "") + ")");
+    return str_new(name_arg(text.get())->text + " (" + std::to_string(n) + " sub-exception" + (n > 1 ? "s" : "") + ")");
 }
 Ref beg_repr(Obj self, Args a) {                 // "%s(%R, %U)": self.exceptions shown as self.args[1] was, a list as a list
     no_wrapper_args(a, "__repr__");
@@ -2771,7 +2774,7 @@ Ref beg_repr(Obj self, Args a) {                 // "%s(%R, %U)": self.exception
         }
     }
     Ref message = repr_of(exception_field(self, "msg"));
-    return str_new(short_type_name(type_of(self)) + "(" + as_str(message.get())->text + ", " + as_str(exceptions_str.get())->text + ")");
+    return str_new(short_type_name(type_of(self)) + "(" + name_arg(message.get())->text + ", " + name_arg(exceptions_str.get())->text + ")");
 }
 Ref beg_message_get(Obj self) { return or_none(exception_field(self, "msg")); }
 Ref beg_exceptions_get(Obj self) { return or_none(exception_field(self, "excs")); }
@@ -2984,14 +2987,14 @@ Ref syntax_error_str(Obj self, Args a) {         // SyntaxError_str
     std::string base;
     bool has_file = !filename.is_unset() && as_str(filename) != nullptr;
     if (has_file) {                              // my_basename
-        const std::string& whole = as_str(filename)->text;
+        const std::string& whole = name_arg(filename)->text;
         std::size_t slash = whole.rfind('/');
         base = slash == std::string::npos ? whole : whole.substr(slash + 1);
     }
     bool have_lineno = !lineno.is_unset() && (lineno.is_small() || is_kind(lineno, Kind::BigInt));
     Ref text = str_of(or_none(msg).get());
     if (!has_file && !have_lineno) return text;  // PyObject_Str's result itself: an instance of a str subclass stays one (RL-761)
-    std::string shown = as_str(text.get())->text;
+    std::string shown = name_arg(text.get())->text;
     std::int64_t line = -1;
     if (have_lineno && !int_fits_i64(lineno, line)) line = -1;   // PyLong_AsLongAndOverflow: -1 on overflow
     if (has_file && have_lineno) return str_new(shown + " (" + base + ", line " + std::to_string(line) + ")");
@@ -3045,7 +3048,7 @@ Ref exception_repr(Obj self, Args a) {
     Ref args = exception_args(self);
     auto& items = static_cast<Tuple*>(args.get().object())->items;
     Ref inner = items.size() == 1 ? repr_of(items[0]) : repr_of(args.get());
-    std::string text = as_str(inner.get())->text;
+    std::string text = name_arg(inner.get())->text;
     return str_new(type_of(self)->name + (items.size() == 1 ? "(" + text + ")" : text));
 }
 // BaseException's getset and member descriptors (Objects/exceptions.c): each checks what it is
@@ -3137,18 +3140,18 @@ Ref import_error_repr(Obj self, Args a) {         // ImportError_repr: BaseExcep
     Obj name = exception_field(self, "name"), path = exception_field(self, "path");
     if (name.is_unset() && path.is_unset()) return exception_repr(self, a);
     Ref base = exception_repr(self, a);
-    std::string text = as_str(base.get())->text;
+    std::string text = name_arg(base.get())->text;
     text.pop_back();
     Ref args = exception_args(self);
     bool hasargs = !static_cast<Tuple*>(args.get().object())->items.empty();
     if (!name.is_unset()) {
         if (hasargs) text += ", ";
-        text += "name=" + as_str(repr_of(name).get())->text;
+        text += "name=" + name_arg(repr_of(name).get())->text;
         hasargs = true;
     }
     if (!path.is_unset()) {
         if (hasargs) text += ", ";
-        text += "path=" + as_str(repr_of(path).get())->text;
+        text += "path=" + name_arg(repr_of(path).get())->text;
     }
     return str_new(text + ")");
 }
@@ -3325,11 +3328,11 @@ Ref type_or(Obj a, Obj b) {
 Ref i_present_c_class(Obj, Args a) {             // (cls, module): named for the module, made by the module's functions alone
     positional_only(a, "_present", 4, 4);        // (cls, module, its __getitem__ is mp_subscript alone, its METH_METHOD methods)
     ClassObject* c = as_class(a.pos(0));
-    present_native_class(c, as_str(a.pos(1))->text);
+    present_native_class(c, name_arg(a.pos(1))->text);
     c->disallow_instantiation = true;
     c->mapping_getitem = truth(a.pos(2));
     for (Obj n : static_cast<Tuple*>(a.pos(3).object())->items)
-        if (const Obj* m = c->attrs.find(intern(as_str(n)->text)); m != nullptr && is_kind(*m, Kind::Builtin)) static_cast<Builtin*>(m->object())->bound_cmethod = true;
+        if (const Obj* m = c->attrs.find(intern(name_arg(n)->text)); m != nullptr && is_kind(*m, Kind::Builtin)) static_cast<Builtin*>(m->object())->bound_cmethod = true;
     return none_ref();
 }
 Ref i_bella_new_instance(Obj, Args a) {
@@ -3361,13 +3364,13 @@ Ref i_bella_structseq_finish(Obj, Args a) {      // (cls, module, fields, has_ne
     positional_only(a, "_bella_structseq_finish", 4, 4);
     static constexpr auto members = structseq_members(std::make_index_sequence<32>{});
     auto* c = as_class(a.pos(0));
-    present_native_class(c, as_str(a.pos(1))->text);      // and _s_past is a field with no name from here (note_prelude_class)
+    present_native_class(c, name_arg(a.pos(1))->text);      // and _s_past is a field with no name from here (note_prelude_class)
     c->disallow_instantiation = !truth(a.pos(3));
     c->struct_sequence = true;
     auto& fields = static_cast<List*>(a.pos(2).object())->items;
     for (std::size_t i = 0; i < fields.size(); ++i) {
         if (fields[i] == None()) continue;
-        const Str* name = intern(as_str(fields[i])->text);
+        const Str* name = intern(name_arg(fields[i])->text);
         auto* g = new GetSet(name->text.c_str(), c, members.at(i), nullptr);
         g->cls = types().member_descriptor;
         c->attrs.set(name, Obj::of(g));
@@ -3603,7 +3606,7 @@ void present_descriptor_kinds(ClassObject* c) {
 void present_builtin_class(ClassObject* c) {
     if (c->attrs.contains(N("__module__")) && !cpython_has(c->name, "__module__")) c->del_attr(N("__module__"));
     if (cpython_attribute_kind(c, "__doc__") == "str")
-        if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !as_str(doc)->text.empty()) c->set_attr(N("__doc__"), doc);
+        if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !name_arg(doc)->text.empty()) c->set_attr(N("__doc__"), doc);
     present_descriptor_kinds(c);
     if (cpython_has(c->name, "__class_getitem__") && !c->attrs.contains(N("__class_getitem__"))) method(c, "__class_getitem__", class_getitem, Binding::ClassMethod);
 }
@@ -3612,7 +3615,7 @@ void present_builtin_class(ClassObject* c) {
 void present_native_class(ClassObject* c, const std::string& module) {
     std::string short_name = c->name;
     const Obj* own_module = c->attrs.find(N("__module__"));
-    std::string says = own_module != nullptr && as_str(*own_module) != nullptr ? as_str(*own_module)->text : module;
+    std::string says = own_module != nullptr && as_str(*own_module) != nullptr ? name_arg(*own_module)->text : module;
     if (says != "builtins" && !cpython_has("shortname", says + "." + short_name)) {
         c->name = module + "." + short_name;     // tp_name: "module.Name" for a static type and a spec's; the bare name for a type of
         c->name_prefix = module.size() + 1;      // builtins (NoDefaultType) and one C made with type() (ast's nodes, io.UnsupportedOperation)
@@ -3625,7 +3628,7 @@ void present_native_class(ClassObject* c, const std::string& module) {
     present_methods(c);
     c->has_weakref = cpython_has("weakref", c->name);
     if (Obj doc = cpython_doc("type:" + c->name); doc != None())   // the type's own doc; an empty row says CPython has None
-        c->set_attr(N("__doc__"), as_str(doc)->text.empty() ? None() : doc);
+        c->set_attr(N("__doc__"), name_arg(doc)->text.empty() ? None() : doc);
     else if (!c->attrs.contains(N("__doc__")) && !cpython_attribute_kind(c, "__doc__").empty())   // a type the docs' table has no row
         c->set_attr(N("__doc__"), None());                                                         // for: its dict has the name, as every type's has
     if (cpython_has(c->name, "__class_getitem__") && !c->attrs.contains(N("__class_getitem__")))   // Py_GenericAlias, unless the class has its own

@@ -430,7 +430,7 @@ const std::string& data_of(Obj v) {
 
 Ref i_hash_new(Obj, Args a) {
     positional_only(a, "_hash_new", 2, 2);
-    Algo algo = algo_by_name(as_str(a.pos(0))->text);
+    Algo algo = algo_by_name(name_arg(a.pos(0))->text);
     switch (algo) {
         case Algo::md5: { Md5 s; md5_init(s); return pack_state(algo, s); }
         case Algo::sha1: { Sha1 s; sha1_init(s); return pack_state(algo, s); }

@@ -1,0 +1,85 @@
+"""Review F48 (RL-1039): a class with a long chain of bases is made in time in proportion to the chain, a row a process.
+
+The layout a class extends (CPython's tp_base, `__base__`) was worked out again at every level for every level under it,
+so a chain of 30 classes did not end. Each row makes classes and says what `__base__`, the MRO and a layout conflict are.
+"""
+import sys
+
+ROW = sys.argv[1]
+
+
+def chain(depth: int, slots_every: int = 0) -> type:
+    made: type = type("C0", (), {})
+    for i in range(1, depth):
+        body: dict[str, object] = {"__slots__": (f"s{i}",)} if slots_every and i % slots_every == 0 else {}
+        made = type(f"C{i}", (made,), body)
+    return made
+
+
+def ladder(depth: int) -> type:
+    top: type = type("A0", (), {})
+    for i in range(1, depth):
+        left = type(f"B{i}", (top,), {})
+        right = type(f"D{i}", (top,), {})
+        top = type(f"A{i}", (left, right), {})
+    return top
+
+
+def bases_of(cls: type) -> list[str]:
+    out: list[str] = []
+    while cls is not object:
+        cls = cls.__base__  # type: ignore[assignment]
+        out.append(cls.__name__)
+    return out
+
+
+if ROW == "chain":
+    last = chain(int(sys.argv[2]))
+    print(len(last.__mro__), last.__base__.__name__, type(last()).__name__, issubclass(last, last.__mro__[-2]))
+elif ROW == "slots":
+    last = chain(int(sys.argv[2]), 7)
+    print(len(last.__mro__), bases_of(last)[:9])
+    x = last()
+    x.s7 = 1  # type: ignore[attr-defined]
+    print(x.s7, hasattr(x, "__dict__"))  # type: ignore[attr-defined]
+elif ROW == "ladder":
+    last = ladder(int(sys.argv[2]))
+    print(len(last.__mro__), last.__base__.__name__, last.__mro__[1].__name__, last.__mro__[2].__name__)
+elif ROW == "statements":
+    import deep
+    print(len(deep.E59.__mro__), deep.E59.__base__.__name__, deep.E59().depth())
+elif ROW == "best":
+    class Mixin:
+        pass
+
+    class Number(int):
+        pass
+
+    class Slotted:
+        __slots__ = ("a",)
+
+    class Both(Mixin, Number):
+        pass
+
+    class Three(Mixin, Slotted):
+        pass
+
+    print(Both.__base__.__name__, Three.__base__.__name__, Number.__base__.__name__, Mixin.__base__.__name__)
+    try:
+        type("Clash", (Number, Slotted), {})
+    except TypeError:
+        print("a lay-out conflict")
+elif ROW == "samebases":
+    class First:
+        pass
+
+    class Middle(First):
+        pass
+
+    class Under(Middle):
+        pass
+
+    Middle.__bases__ = (First,)                  # the bases it has, assigned again: every MRO of the hierarchy is made again
+    print(Middle.__base__.__name__, Under.__base__.__name__, [c.__name__ for c in Under.__mro__], bases_of(chain(40))[:2])
+else:
+    raise SystemExit("no such row: " + ROW)

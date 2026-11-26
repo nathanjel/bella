@@ -431,7 +431,7 @@ class BuiltinImporter:
 
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
-        if _bella_is_builtin(fullname):  # bella: _imp.is_builtin
+        if _bella_is_builtin(fullname, 'is_builtin'):  # bella: _imp.is_builtin, of the built-in modules the runtime has
             return spec_from_loader(fullname, cls, origin=cls._ORIGIN)
         else:
             return None

@@ -1,0 +1,91 @@
+"""Review F48 (RL-1033): the import system's entry points handed a module name that is not a str, a row a process.
+
+prog.py ENTRY VALUE     ENTRY one of ENTRIES, VALUE one of VALUES
+"""
+import _imp
+import importlib
+import importlib.machinery
+import importlib.util
+import sys
+import types
+from importlib import _bootstrap, _bootstrap_external
+
+import helper
+
+
+class Name(str):
+    pass
+
+
+VALUES: dict[str, object] = {"int": 7, "none": None, "bytes": b"sys", "float": 1.5, "list": ["sys"], "tuple": ("sys",),
+                             "strsub": Name("sys"), "strsub2": Name("helper"), "str": "sys"}
+
+
+def run(entry: str, value: object) -> object:
+    builtin = importlib.machinery.BuiltinImporter
+    frozen = importlib.machinery.FrozenImporter
+    if entry == "builtin.find_spec":
+        return builtin.find_spec(value)  # type: ignore[arg-type]
+    if entry == "builtin.is_package":
+        return builtin.is_package(value)  # type: ignore[arg-type]
+    if entry == "builtin.get_code":
+        return builtin.get_code(value)  # type: ignore[arg-type]
+    if entry == "builtin.get_source":
+        return builtin.get_source(value)  # type: ignore[arg-type]
+    if entry == "builtin.create_module":
+        return type(builtin.create_module(types.SimpleNamespace(name=value))).__name__  # type: ignore[arg-type]
+    if entry == "frozen.find_spec":
+        return frozen.find_spec(value)  # type: ignore[arg-type]
+    if entry == "frozen.is_package":
+        return frozen.is_package(value)  # type: ignore[arg-type]
+    if entry == "frozen.get_source":
+        return frozen.get_source(value)  # type: ignore[arg-type]
+    if entry == "frozen.exec_module":
+        module = types.ModuleType("fresh")
+        module.__spec__ = types.SimpleNamespace(name=value)  # type: ignore[assignment]
+        return frozen.exec_module(module)
+    if entry == "source.exec_module":
+        loader = _bootstrap_external.SourceFileLoader(value, "/nonexistent-q48.py")  # type: ignore[arg-type]
+        module = types.SimpleNamespace(__name__=value)
+        return loader.exec_module(module)  # type: ignore[arg-type]
+    if entry == "_find_spec":
+        return _bootstrap._find_spec(value, None)  # type: ignore[attr-defined]
+    if entry == "util.find_spec":
+        return importlib.util.find_spec(value)  # type: ignore[arg-type]
+    if entry == "import_module":
+        return type(importlib.import_module(value)).__name__  # type: ignore[arg-type]
+    if entry == "__import__":
+        return type(__import__(value)).__name__  # type: ignore[arg-type]
+    if entry == "importlib.__import__":
+        return type(importlib.__import__(value)).__name__  # type: ignore[arg-type]
+    if entry == "_imp.is_builtin":
+        return _imp.is_builtin(value)  # type: ignore[arg-type]
+    if entry == "_imp.is_frozen":
+        return _imp.is_frozen(value)  # type: ignore[arg-type]
+    if entry == "_imp.find_frozen":
+        return _imp.find_frozen(value) is None  # type: ignore[arg-type]
+    if entry == "_imp.is_frozen_package":
+        return _imp.is_frozen_package(value)  # type: ignore[arg-type]
+    if entry == "_imp.create_builtin":
+        return type(_imp.create_builtin(types.SimpleNamespace(name=value))).__name__  # type: ignore[arg-type]
+    if entry == "spec_from_loader":
+        return importlib.util.spec_from_loader(value, importlib.machinery.BuiltinImporter) is not None  # type: ignore[arg-type]
+    if entry == "module_from_spec":
+        spec = importlib.machinery.ModuleSpec(value, importlib.machinery.BuiltinImporter)  # type: ignore[arg-type]
+        return type(importlib.util.module_from_spec(spec)).__name__
+    raise SystemExit(f"no such entry: {entry}")
+
+
+def main(argv: list[str]) -> None:
+    entry, kind = argv[1], argv[2]
+    print(entry, kind, flush=True)
+    try:
+        result = run(entry, VALUES[kind])
+    except Exception as e:
+        print("raised", type(e).__name__, flush=True)
+        return
+    text = repr(result)
+    print("returns", text.split(" at 0x")[0][:120], flush=True)
+
+
+main(sys.argv)

@@ -15,7 +15,7 @@ namespace bella {
 namespace {
 using Cps = std::u32string;
 
-Ref unchanged(Obj self) { return is_exact_str(self) ? Ref::share(self) : str_new(as_str(self)->text); }   // unicode_result_unchanged
+Ref unchanged(Obj self) { return is_exact_str(self) ? Ref::share(self) : str_new(name_arg(self)->text); }   // unicode_result_unchanged
 
 const Str* self_str(Obj self, const char* method) {
     const Str* s = as_str(self);
@@ -679,7 +679,7 @@ Ref str_translate_m(Obj self, Args a) {          // _PyUnicode_TranslateCharmap 
                 if (t == Translated::Deleted) table[ch] = 0xfe;
                 else if (t == Translated::AsItIs) table[ch] = ch;
                 else if (t == Translated::Char && replace <= 127) table[ch] = static_cast<unsigned char>(replace);
-                else if (t == Translated::Text && as_str(item.get())->length == 1 && as_str(item.get())->at(0) <= 127) table[ch] = static_cast<unsigned char>(as_str(item.get())->at(0));
+                else if (t == Translated::Text && name_arg(item.get())->length == 1 && name_arg(item.get())->at(0) <= 127) table[ch] = static_cast<unsigned char>(name_arg(item.get())->at(0));
                 else {
                     all = false;
                     break;
@@ -716,7 +716,7 @@ Ref str_translate_m(Obj self, Args a) {          // _PyUnicode_TranslateCharmap 
 Ref str_getnewargs_m(Obj self, Args a) {
     noargs(a, "str.__getnewargs__");
     self_str(self, "__getnewargs__");
-    Ref copy = str_new(as_str(self)->text);
+    Ref copy = str_new(name_arg(self)->text);
     return tuple_new({copy.get()});
 }
 Ref str_str_m(Obj self, Args a) {                // object_str: a wrapper, of a str itself

@@ -124,7 +124,7 @@ Ref create_exception(Obj typ, Obj val) {
     }
     if (!is_exception_instance(made.get())) {
         Ref shown = repr_of(typ);
-        raise_new("TypeError", "calling " + as_str(shown.get())->text + " should have returned an instance of BaseException, not " + type_of(made.get())->name);
+        raise_new("TypeError", "calling " + name_arg(shown.get())->text + " should have returned an instance of BaseException, not " + type_of(made.get())->name);
     }
     return made;
 }
@@ -305,7 +305,7 @@ Ref repr_slot(Obj self, Args a) {
     wrapper_args(a, "__repr__", 0);
     char buf[32];
     std::snprintf(buf, sizeof buf, "%p", static_cast<void*>(self.object()));
-    return str_new("<generator object " + as_str(gen_self(self)->qualname.get())->text + " at " + buf + ">");
+    return str_new("<generator object " + name_arg(gen_self(self)->qualname.get())->text + " at " + buf + ">");
 }
 Ref get_name(Obj self) { return gen_self(self)->name; }
 void set_name(Obj self, Obj v) {

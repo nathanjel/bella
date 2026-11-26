@@ -193,13 +193,13 @@ Ref resolve_name(Obj name, Obj globals, std::int64_t level) {
         if (package.get().is_unset()) raise_new("KeyError", "'__name__' not in globals");
         if (as_str(package.get()) == nullptr) raise_new("TypeError", "__name__ must be a string");
         if (dict_get(g, Obj::of(N("__path__"))).is_unset()) {
-            const std::string& n = as_str(package.get())->text;
+            const std::string& n = name_arg(package.get())->text;
             std::size_t dot = n.rfind('.');
             if (dot == std::string::npos) raise_new("ImportError", "attempted relative import with no known parent package");
             package = str_new(n.substr(0, dot));
         }
     }
-    const std::string& pkg = as_str(package.get())->text;
+    const std::string& pkg = name_arg(package.get())->text;
     std::size_t last_dot = pkg.size();
     if (last_dot == 0) raise_new("ImportError", "attempted relative import with no known parent package");
     for (std::int64_t up = 1; up < level; ++up) {
@@ -209,14 +209,14 @@ Ref resolve_name(Obj name, Obj globals, std::int64_t level) {
         last_dot = dot;
     }
     std::string base = pkg.substr(0, last_dot);
-    const std::string& n = as_str(name)->text;
+    const std::string& n = name_arg(name)->text;
     return str_new(n.empty() ? base : base + "." + n);
 }
 
 // _PyImport_GetAbsName
 Ref absolute_name(Obj name, Obj globals, std::int64_t level) {
     if (level > 0) return resolve_name(name, globals, level);
-    if (as_str(name)->text.empty()) raise_new("ValueError", "Empty module name");
+    if (name_arg(name)->text.empty()) raise_new("ValueError", "Empty module name");
     return Ref::share(name);
 }
 
@@ -240,7 +240,7 @@ Ref spec_file_origin(Obj spec) {
 // _PyModule_IsPossiblyShadowing: the module's directory (a package's parent) is sys.path[0]
 bool possibly_shadowing(Obj origin) {
     if (origin.is_unset()) return false;
-    std::string root = as_str(origin)->text;
+    std::string root = name_arg(origin)->text;
     std::size_t sep = root.rfind('/');
     if (sep == std::string::npos) return false;
     if (root.substr(sep + 1) == "__init__.py") {
@@ -257,7 +257,7 @@ bool is_stdlib_name(Obj name) {                   // sys.stdlib_module_names (th
     return s != nullptr && cpython_has("stdlib", s->text);
 }
 
-std::string quoted(Obj v) { return as_str(repr_of(v).get())->text; }
+std::string quoted(Obj v) { return name_arg(repr_of(v).get())->text; }
 }  // namespace
 
 // ---- the registry the program's main unit hands over ----
@@ -289,19 +289,19 @@ Ref i_bella_import_if_held(Obj, Args a) {         // (importer, name): importer(
         const std::string* was;
         explicit Scope(const std::string* name) : was(absent_if_not_held()) { absent_if_not_held() = name; }
         ~Scope() { absent_if_not_held() = was; }
-    } scope(&as_str(a.pos(1))->text);
+    } scope(&name_arg(a.pos(1))->text);
     return invoke(a.pos(0), {a.pos(1)});
 }
 Ref i_bella_holds(Obj, Args a) {                  // the program holds a module of this name: its own, or the library's, compiled in
     positional_only(a, "_bella_holds", 1, 1);
-    auto it = registry().find(as_str(a.pos(0))->text);
+    auto it = registry().find(name_arg(a.pos(0))->text);
     return Ref::steal(boolean(it != registry().end() && it->second.kind != ModuleKind::Omitted && it->second.kind != ModuleKind::Refused));
 }
 
 // The prelude's primitives for bootstrap.py, which no program can name.
 Ref i_bella_find(Obj, Args a) {                  // the registry's (origin, is_package, frozen), or None
     positional_only(a, "_bella_find", 1, 1);
-    const Str* name = as_str(a.pos(0));
+    const Str* name = name_arg(a.pos(0));
     auto it = registry().find(name->text);
     const bool may_be_absent = absent_if_not_held() != nullptr && *absent_if_not_held() == name->text;
     if (it != registry().end() && it->second.kind == ModuleKind::Refused) {   // frozen in CPython: found whatever the path says
@@ -335,8 +335,8 @@ namespace { Module*& bootstrap_module(); }
 // as importing it does
 Ref i_bella_discover(Obj, Args a) {
     positional_only(a, "_bella_discover", 2, 2);
-    const std::string& directory = as_str(a.pos(0))->text;
-    const std::string& prefix = as_str(a.pos(1))->text;
+    const std::string& directory = name_arg(a.pos(0))->text;
+    const std::string& prefix = name_arg(a.pos(1))->text;
     std::vector<std::string> names;
     for (const auto& [name, c] : registry()) {
         if (name.size() <= prefix.size() || name.compare(0, prefix.size(), prefix) != 0 || name.find('.', prefix.size()) != std::string::npos)
@@ -520,8 +520,8 @@ Ref i_shim_annotate_with(Obj, Args a) {
 }
 Ref i_bella_exec(Obj, Args a) {                  // the compiled body, in the module's namespace
     positional_only(a, "_bella_exec", 2, 2);
-    const Str* name = as_str(a.pos(0));
-    auto it = registry().find(name->text);
+    const Str* name = as_str(a.pos(0));          // a name that is no str names no compiled module (RL-1033)
+    auto it = name == nullptr ? registry().end() : registry().find(name->text);
     if (it == registry().end() || !is_kind(a.pos(1), Kind::Module))
         throw NotImplemented("executing a module the program does not have compiled");
     auto* m = static_cast<Module*>(a.pos(1).object());
@@ -635,7 +635,7 @@ Ref i_resource_warning(Obj, Args a) {
 // _PyObject_IsUniquelyReferenced of what an attribute holds: the attribute's count, and this read's
 Ref i_held_once(Obj, Args a) {
     positional_only(a, "_held_once", 2, 2);
-    Ref value = state_get(a.pos(0), intern(as_str(a.pos(1))->text));
+    Ref value = state_get(a.pos(0), intern(name_arg(a.pos(1))->text));
     return Ref::steal(boolean(value.get().is_object() && value.get().object()->refs == 2));
 }
 Ref i_tuple_set(Obj, Args a) {                   // PyTuple_SET_ITEM and the Py_DECREF of what was there
@@ -650,8 +650,8 @@ Ref i_tuple_set(Obj, Args a) {                   // PyTuple_SET_ITEM and the Py_
 Ref i_keyword_suggestion(Obj, Args a) {
     positional_only(a, "_keyword_suggestion", 2, 2);
     std::vector<std::string> known;
-    for (Obj n : static_cast<Tuple*>(a.pos(0).object())->items) known.push_back(as_str(n)->text);
-    std::string s = keyword_suggestion(as_str(a.pos(1))->text, known);
+    for (Obj n : static_cast<Tuple*>(a.pos(0).object())->items) known.push_back(name_arg(n)->text);
+    std::string s = keyword_suggestion(name_arg(a.pos(1))->text, known);
     return s.empty() ? none_ref() : str_new(s);
 }
 // _PyArg_UnpackKeywords (Python/getargs.c) for the preludes' clinic functions: _unpack_keywords(fname, names, posonly, minpos,
@@ -661,7 +661,7 @@ Ref i_keyword_suggestion(Obj, Args a) {
 // parameter, the first `posonly` positional-only; minkw counts the required keyword-only ones.
 Ref i_cpython_table(Obj, Args a) {               // a row of the names table (tools/cpython_names.py), the pin's build constants among them
     positional_only(a, "_cpython_table", 1, 1);
-    Obj doc = cpython_doc(as_str(a.pos(0))->text);
+    Obj doc = cpython_doc(name_arg(a.pos(0))->text);
     return doc == None() ? none_ref() : Ref::share(doc);
 }
 Ref i_source_hash(Obj, Args a) {                 // _imp.source_hash: _Py_KeyedHash's 8 bytes in the machine's order (little-endian here)
@@ -683,7 +683,7 @@ Ref i_as_double(Obj, Args a) {                   // PyFloat_AsDouble for a prelu
 }
 Ref i_unpack_keywords(Obj, Args a) {
     positional_only(a, "_unpack_keywords", 9, 9);
-    const std::string fname = as_str(a.pos(0))->text;
+    const std::string fname = name_arg(a.pos(0))->text;
     const auto& names = static_cast<Tuple*>(a.pos(1).object())->items;
     auto posonly = static_cast<std::size_t>(index_value(a.pos(2)));
     auto minpos = static_cast<std::size_t>(index_value(a.pos(3)));
@@ -717,19 +717,19 @@ Ref i_unpack_keywords(Obj, Args a) {
             buf[i] = current;
             --left;
         } else if (i < minpos || (maxpos <= i && i < reqlimit)) {
-            raise_new("TypeError", fname + "() missing required argument '" + as_str(names[i])->text + "' (pos " + std::to_string(i + 1) + ")");
+            raise_new("TypeError", fname + "() missing required argument '" + name_arg(names[i])->text + "' (pos " + std::to_string(i + 1) + ")");
         }
     }
     if (left > 0) {
         for (std::size_t i = posonly; i < nargs; ++i)
             if (!dict_get(kwds, names[i]).is_unset())
-                raise_new("TypeError", "argument for " + fname + "() given by name ('" + as_str(names[i])->text + "') and position (" + std::to_string(i + 1) + ")");
+                raise_new("TypeError", "argument for " + fname + "() given by name ('" + name_arg(names[i])->text + "') and position (" + std::to_string(i + 1) + ")");
         std::vector<std::string> known;
-        for (std::size_t i = posonly; i < maxargs; ++i) known.push_back(as_str(names[i])->text);
+        for (std::size_t i = posonly; i < maxargs; ++i) known.push_back(name_arg(names[i])->text);
         for (const auto& e : kwds->entries) {
             if (e.key.is_unset()) continue;
             if (as_str(e.key) == nullptr) raise_new("TypeError", "keywords must be strings");
-            const std::string& keyword = as_str(e.key)->text;
+            const std::string& keyword = name_arg(e.key)->text;
             if (std::find(known.begin(), known.end(), keyword) != known.end()) continue;
             std::string suggestion = keyword_suggestion(keyword, known);
             raise_new("TypeError", fname + "() got an unexpected keyword argument '" + keyword + "'" + (suggestion.empty() ? "" : ". Did you mean '" + suggestion + "'?"));
@@ -813,7 +813,7 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         for (Obj n : static_cast<List*>(hidden.object())->items) {                               // (_typing._ConstEvaluator): its own module
             auto* c = static_cast<ClassObject*>(dict_get(ns->dict, n).object());
             const Obj* own = c->attrs.find(N("__module__"));
-            present_native_class(c, own != nullptr && as_str(*own) != nullptr ? as_str(*own)->text : std::string(types_module));
+            present_native_class(c, own != nullptr && as_str(*own) != nullptr ? name_arg(*own)->text : std::string(types_module));
             c->disallow_instantiation = cpython_attribute_kind(c, "__new__").empty();
         }
     for (Obj n : static_cast<List*>(dict_get(ns->dict, Obj::of(N("__all__"))).object())->items) {
@@ -821,7 +821,7 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         if (is_kind(v, Kind::Class) && !c_type(static_cast<ClassObject*>(v.object()))) {   // a class may have two names
             auto* c = static_cast<ClassObject*>(v.object());
             const Obj* own = c->attrs.find(N("__module__"));   // the class statement's __module__ is the file's name; the type's is its tp_name's
-            if (own != nullptr && as_str(*own) != nullptr && as_str(*own)->text == name && std::string_view(name) != types_module)
+            if (own != nullptr && as_str(*own) != nullptr && name_arg(*own)->text == name && std::string_view(name) != types_module)
                 c->set_attr(N("__module__"), Obj::of(intern(types_module)));
             present_native_class(c, types_module);
             if (auto flags = cpython_type_number("flags", c); flags && (*flags & (1 << 7)))    // Py_TPFLAGS_DISALLOW_INSTANTIATION
@@ -831,7 +831,7 @@ void fill_in_python(Module* m, const char* name, const char* types_module, Ref (
         dict_set(m->dict, n, v);
     }
     if (Obj doc = cpython_doc(name); doc != None())   // the module's docstring is CPython's; an empty row says CPython has None
-        dict_set(m->dict, Obj::of(N("__doc__")), as_str(doc)->text.empty() ? None() : doc);
+        dict_set(m->dict, Obj::of(N("__doc__")), name_arg(doc)->text.empty() ? None() : doc);
 }
 }  // namespace
 void fill_itertools(Module* m) {
@@ -939,7 +939,7 @@ Ref i_native_thread_id(Obj, Args a) {
 }
 Ref handle_ident(Obj self) { return state_get(self, N("_a_ident")); }
 Ref local_getattribute(Obj self, Args a) {       // local_getattro: the rest is the generic path's
-    if (a.npos == 1 && a.nkw == 0 && as_str(a.pos(0)) != nullptr && as_str(a.pos(0))->text == "__dict__") return instance_dict_of(self);
+    if (a.npos == 1 && a.nkw == 0 && as_str(a.pos(0)) != nullptr && name_arg(a.pos(0))->text == "__dict__") return instance_dict_of(self);
     return object_getattribute(self, a);
 }
 void fill_thread(Module* m) {
@@ -1040,9 +1040,9 @@ Ref i_view_dict(Obj, Args a) {                   // (view): dv_dict
 }
 Ref i_view_subtype(Obj, Args a) {                // (name, base, namespace): a C type over a dict view's, its methods the namespace's
     positional_only(a, "_view_subtype", 3, 3);
-    ClassObject* c = builtin_type(as_str(a.pos(0))->text.c_str(), {static_cast<ClassObject*>(a.pos(1).object())});
+    ClassObject* c = builtin_type(name_arg(a.pos(0))->text.c_str(), {static_cast<ClassObject*>(a.pos(1).object())});
     for (auto& e : static_cast<Dict*>(a.pos(2).object())->entries)
-        if (!e.key.is_unset()) c->set_attr(intern(as_str(e.key)->text), e.value);
+        if (!e.key.is_unset()) c->set_attr(intern(name_arg(e.key)->text), e.value);
     return Ref::share(Obj::of(c));
 }
 void fill_collections(Module* m) {               // its types are named for `collections`, the module that shows them
@@ -1155,13 +1155,13 @@ IoHooks& io_hooks() {
 Ref i_unraisable(Obj, Args a) {                   // _unraisable(message, exception): PyErr_FormatUnraisable, for an exception a prelude
     positional_only(a, "_unraisable", 2, 2);     // caught; the message is None when it did not format (a %R whose repr raised)
     if (a.pos(0) == None()) report_unraisable(a.pos(1));
-    else report_unraisable(as_str(a.pos(0))->text, a.pos(1));
+    else report_unraisable(name_arg(a.pos(0))->text, a.pos(1));
     return none_ref();
 }
 Ref i_io_call(Obj, Args a) {                      // _io_call(name, ...)
-    const std::string& name = as_str(a.pos(0))->text;
+    const std::string& name = name_arg(a.pos(0))->text;
     Args r{a.data + 1, a.npos - 1, nullptr, 0};
-    if (name == "refuse") throw NotImplemented(as_str(r.pos(0))->text);
+    if (name == "refuse") throw NotImplemented(name_arg(r.pos(0))->text);
     if (name == "unraisable") return i_unraisable(Obj{}, r);   // (message or None, exception)
     if (name == "resource_warning") return i_resource_warning(Obj{}, r);   // (message, source)
     if (name == "warn") return i_bella_import_warning(Obj{}, r);   // (message, the category's name): PyErr_WarnEx(category, message, 1)
@@ -1214,8 +1214,8 @@ void fill_ast(Module* m) {
 }
 Ref i_bella_bootstrap(Obj, Args a) {             // a call of _frozen_importlib's function by name: what the prelude shares with bootstrap.py
     if (a.npos < 1 || a.nkw != 0) raise_new("TypeError", "_bella_bootstrap() takes a name and positional arguments");
-    Obj fn = dict_get(bootstrap_module()->dict, Obj::of(intern(as_str(a.pos(0))->text)));
-    if (fn.is_unset()) raise_new("SystemError", "no " + as_str(a.pos(0))->text + " in _frozen_importlib");
+    Obj fn = dict_get(bootstrap_module()->dict, Obj::of(intern(name_arg(a.pos(0))->text)));
+    if (fn.is_unset()) raise_new("SystemError", "no " + name_arg(a.pos(0))->text + " in _frozen_importlib");
     std::vector<Obj> rest;
     for (std::size_t i = 1; i < a.npos; ++i) rest.push_back(a.pos(i));
     return invoke(fn, Args{rest.data(), rest.size(), nullptr, 0});
@@ -1223,7 +1223,7 @@ Ref i_bella_bootstrap(Obj, Args a) {             // a call of _frozen_importlib'
 Ref i_bella_class_set(Obj, Args a) {             // a store into a type's dict as C makes one: a member a class statement cannot declare (__qualname__)
     positional_only(a, "_bella_class_set", 3, 3);
     if (!is_kind(a.pos(0), Kind::Class)) raise_new("TypeError", "_bella_class_set() needs a class");
-    static_cast<ClassObject*>(a.pos(0).object())->set_attr(intern(as_str(a.pos(1))->text), a.pos(2));
+    static_cast<ClassObject*>(a.pos(0).object())->set_attr(intern(name_arg(a.pos(1))->text), a.pos(2));
     return none_ref();
 }
 void fill_json(Module* m) {
@@ -1416,16 +1416,24 @@ void refuse_bootstrap_namespace(const Module* m) {
     throw NotImplemented(std::string("the namespace of ") + bootstrap_scope(m) + " as a whole (dir, vars or __dict__: the runtime keeps names of its own "
                          "in it, which CPython's module does not have)");
 }
-Ref i_bella_is_builtin(Obj, Args a) {            // _imp.is_builtin: sys and builtins, then the table
-    positional_only(a, "_bella_is_builtin", 1, 1);
-    const std::string& name = as_str(a.pos(0))->text;
+Ref i_bella_is_builtin(Obj, Args a) {            // one of the runtime's built-in modules: sys and builtins, then the table
+    positional_only(a, "_bella_is_builtin", 1, 2);
+    if (as_str(a.pos(0)) == nullptr) {           // no str: not among sys.builtin_module_names, and with a function's name given
+        if (a.npos == 2)                         // second that function's TypeError, as _imp.is_builtin's (RL-1033)
+            raise_new("TypeError", name_arg(a.pos(1))->text + "() argument must be str, not " +
+                                       (a.pos(0) == None() ? std::string("None") : type_of(a.pos(0))->name));
+        return Ref::steal(boolean(false));
+    }
+    const std::string& name = name_arg(a.pos(0))->text;
     return Ref::steal(boolean(name == "sys" || name == "builtins" || native_registry().contains(name)));
 }
 Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one module per name
     positional_only(a, "_bella_create_builtin", 1, 1);
-    const std::string& name = as_str(a.pos(0))->text;
+    const std::string& name = name_arg(a.pos(0))->text;
     if (name == "sys") return Ref::share(Obj::of(sys_module()));
     if (name == "builtins") return Ref::share(Obj::of(builtins_module()));
+    if (!native_registry().contains(name))       // one of sys.builtin_module_names the runtime has not written
+        throw NotImplemented("the built-in module '" + name + "' (CPython has it; the runtime does not yet)");
     NativeModule& n = native_registry().at(name);
     if (n.made == nullptr) {
         n.made = new_module(name.c_str());
@@ -1443,7 +1451,7 @@ Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one mod
 void warn_ex(const char* category, const std::string& message) { runtime_warning(category, message); }   // for the rest of the runtime
 Ref i_bella_import_warning(Obj, Args a) {        // _warnings.warn(msg, ImportWarning), or of the category named second: see runtime_warning
     positional_only(a, "_bella_import_warning", 1, 2);
-    runtime_warning(a.npos == 2 ? as_str(a.pos(1))->text.c_str() : "ImportWarning", as_str(a.pos(0))->text);
+    runtime_warning(a.npos == 2 ? name_arg(a.pos(1))->text.c_str() : "ImportWarning", name_arg(a.pos(0))->text);
     return none_ref();
 }
 bool& shutting_down() {
@@ -1453,7 +1461,7 @@ bool& shutting_down() {
 Ref i_bella_shutting_down(Obj, Args) { return Ref::steal(boolean(shutting_down())); }
 Ref i_bella_refuse(Obj, Args a) {                // a facility phase 1 lacks, where it would run
     positional_only(a, "_bella_refuse", 1, 1);
-    throw NotImplemented(as_str(a.pos(0))->text);
+    throw NotImplemented(name_arg(a.pos(0))->text);
 }
 
 // remove_importlib_frames (Python/import.c): a traceback that leaves an import loses the import system's entries (their
@@ -1508,13 +1516,13 @@ static Ref import_level(Obj name, Obj globals, Obj fromlist, std::int64_t level)
         bool initializing = ensure_initialized(mod.get());
         Ref check = get_module(abs_name.get());
         if (check.get() != mod.get()) mod = call_bootstrap("_find_and_load", {abs_name.get(), import_func()});
-        else if (!initializing && has_lazy_submodules()) clear_lazy_submodule(as_str(abs_name.get())->text, true);
+        else if (!initializing && has_lazy_submodules()) clear_lazy_submodule(name_arg(abs_name.get())->text, true);
     } else {
         mod = call_bootstrap("_find_and_load", {abs_name.get(), import_func()});
     }
     bool has_from = !fromlist.is_unset() && fromlist != None() && truth(fromlist);
     if (!has_from) {
-        const std::string& n = as_str(name)->text;
+        const std::string& n = name_arg(name)->text;
         if (level == 0 || !n.empty()) {
             std::size_t dot = n.find('.');
             if (dot == std::string::npos) return mod;
@@ -1523,7 +1531,7 @@ static Ref import_level(Obj name, Obj globals, Obj fromlist, std::int64_t level)
                 return import_module_level(front.get(), Obj{}, Obj{}, Obj{}, 0);
             }
             std::size_t cut_off = n.size() - dot;
-            const std::string& abs = as_str(abs_name.get())->text;
+            const std::string& abs = name_arg(abs_name.get())->text;
             Ref to_return = str_new(abs.substr(0, abs.size() - cut_off));
             Ref final_mod = get_module(to_return.get());
             if (final_mod.get().is_unset()) {
@@ -1564,7 +1572,7 @@ Ref b_import(Obj, Args a) {
 Ref import_name(Obj name, Obj fromlist, Obj level, Obj mode, Module* m, Obj ns) {
     Obj globals = Obj::of(m->dict);
     Obj builtins = Obj::of(builtins_module()->dict);       // the frame's: a compiled module's are the builtins module's dict
-    std::string_view how = as_str(mode)->text;
+    std::string_view how = name_arg(mode)->text;
     bool lazy = how == "lazy";
     if (how == "default" && ns == globals) {
         // __lazy_modules__ at module level names the module (the lazy-imports mode is always "normal", D-18)
@@ -1597,7 +1605,7 @@ Ref import_from(Obj v, const Str* name) {
     // in case this failed because of a circular relative import, the module itself from sys.modules
     Ref mod_name = optional_attr(v, N("__name__"));
     if (!mod_name.get().is_unset() && as_str(mod_name.get()) != nullptr) {
-        Ref full = str_new(as_str(mod_name.get())->text + "." + name->text);
+        Ref full = str_new(name_arg(mod_name.get())->text + "." + name->text);
         Ref found = get_initialized_module(full.get());
         if (!found.get().is_unset()) return found;
     } else {
@@ -1628,12 +1636,12 @@ Ref import_from(Obj v, const Str* name) {
                       " if it has the same name as a library you intended to import)";
             else if (!origin.get().is_unset())
                 msg = "cannot import name " + n + " from partially initialized module " + mn +
-                      " (most likely due to a circular import) (" + as_str(origin.get())->text + ")";
+                      " (most likely due to a circular import) (" + name_arg(origin.get())->text + ")";
             else
                 msg = "cannot import name " + n + " from partially initialized module " + mn +
                       " (most likely due to a circular import)";
         } else if (!origin.get().is_unset()) {
-            msg = "cannot import name " + n + " from " + mn + " (" + as_str(origin.get())->text + ")";
+            msg = "cannot import name " + n + " from " + mn + " (" + name_arg(origin.get())->text + ")";
         } else {
             msg = "cannot import name " + n + " from " + mn + " (unknown location)";
         }
@@ -1674,7 +1682,7 @@ void import_star(Obj v, Obj locals) {
             if (as_str(modname.get()) == nullptr)
                 raise_new("TypeError", "module __name__ must be a string, not " + type_of(modname.get())->name);
             raise_new("TypeError", std::string(skip_leading_underscores ? "Key" : "Item") + " in " +
-                                       as_str(modname.get())->text + "." +
+                                       name_arg(modname.get())->text + "." +
                                        (skip_leading_underscores ? "__dict__" : "__all__") + " must be str, not " +
                                        type_of(name.get())->name);
         }
@@ -1753,9 +1761,9 @@ Ref loaded_attr(Obj name, const Str* attr_name) {
 std::string lazy_path(LazyImport* m) {
     if (is_lazy(m->from.get())) {
         RecursionGuard guard;
-        return lazy_path(as_lazy(m->from.get())) + "." + as_str(m->attr.get())->text;
+        return lazy_path(as_lazy(m->from.get())) + "." + name_arg(m->attr.get())->text;
     }
-    const std::string& from = as_str(m->from.get())->text;
+    const std::string& from = name_arg(m->from.get())->text;
     Obj attr = m->attr.get();
     if (!attr.is_unset() && (!is_kind(attr, Kind::Tuple) || !static_cast<Tuple*>(attr.object())->items.empty())) return from;
     return from.substr(0, from.find('.'));       // __import__("a.b") returns the top-level package `a`
@@ -1763,7 +1771,7 @@ std::string lazy_path(LazyImport* m) {
 // lazy_import_name
 std::string lazy_name(LazyImport* m) {
     if (is_lazy(m->from.get())) return lazy_path(m);
-    const std::string& from = as_str(m->from.get())->text;
+    const std::string& from = name_arg(m->from.get())->text;
     Obj attr = m->attr.get();
     if (!attr.is_unset() && (!is_kind(attr, Kind::Tuple) || !static_cast<Tuple*>(attr.object())->items.empty())) return from + "...";
     return from;
@@ -1786,7 +1794,7 @@ Ref lazy_replay_from(Obj mod, LazyImport* lz) {
     if (!is_lazy(lz->from.get())) return Ref::share(mod);
     RecursionGuard guard;
     Ref from = lazy_replay_from(mod, as_lazy(lz->from.get()));
-    return lazy_resolve_result(import_from(from.get(), intern(as_str(lz->attr.get())->text)));
+    return lazy_resolve_result(import_from(from.get(), intern(name_arg(lz->attr.get())->text)));
 }
 
 // lazy_import_add_exception_cause: the resolution error keeps its chain and gets the declaration:
@@ -1857,7 +1865,7 @@ Ref lazy_resolve_impl(Obj lazy, Ref* imported_module) {
             default_import && root->builtins.get() == Obj::of(builtins_module()->dict)) {
             // A plain import binds the root package; its pending children are imported separately,
             // when their attributes are accessed. Aliased or non-package parents stay eager.
-            const std::string n = as_str(name.get())->text;
+            const std::string n = name_arg(name.get())->text;
             std::size_t dot = n.find('.');
             if (dot != std::string::npos) {
                 bool regular = true, complete = true;
@@ -1886,7 +1894,7 @@ Ref lazy_resolve_impl(Obj lazy, Ref* imported_module) {
                            !dict_get(static_cast<Module*>(obj.get().object())->dict, Obj::of(N("__path__"))).is_unset();
             if (!package) obj = import_with(f.get(), root->from.get(), globals, globals, fromlist.get(), 0);
         } else if (default_import) {
-            clear_lazy_submodule(as_str(name.get())->text, false);
+            clear_lazy_submodule(name_arg(name.get())->text, false);
         }
         obj = lazy_resolve_result(std::move(obj));
         // the normal importer may publish this module on its parent; a hook keeps control of its own
@@ -1910,7 +1918,7 @@ Ref lazy_resolve_impl(Obj lazy, Ref* imported_module) {
 // _PyLazyImport_LoadChild: a pending child resolved as an aliased import, keeping its declaration
 Ref lazy_load_child(Obj declaration, Obj name) {
     LazyImport* source = as_lazy(declaration);
-    const std::string n = as_str(name)->text;
+    const std::string n = name_arg(name)->text;
     Ref lz = lazy_new(false, source->builtins.get(), name, Obj{});
     std::size_t dot = n.find('.');
     while (dot != std::string::npos) {
@@ -1923,7 +1931,7 @@ Ref lazy_load_child(Obj declaration, Obj name) {
     child->code = source->code;
     child->line = source->line;
     Ref result = lazy_resolve_impl(lz.get(), nullptr);
-    if (is_kind(result.get(), Kind::Module) && as_str(source->from.get())->text != n &&
+    if (is_kind(result.get(), Kind::Module) && name_arg(source->from.get())->text != n &&
         dict_get(static_cast<Module*>(result.get().object())->dict, Obj::of(N("__path__"))).is_unset())
         return lazy_load_child(declaration, source->from.get());   // a non-package must still reject an invalid dotted import
     return result;
@@ -1942,7 +1950,7 @@ void lazy_replace_child(Obj placeholder, const Str* name, Dict* ns, Obj child, O
     LazyImport* root = as_lazy(placeholder);
     if (!is_lazy(root->from.get())) return;
     while (is_lazy(root->from.get())) root = as_lazy(root->from.get());
-    const std::string& from = as_str(root->from.get())->text;
+    const std::string& from = name_arg(root->from.get())->text;
     std::size_t dot = from.rfind('.');
     if (dot == std::string::npos || from.substr(dot + 1) != name->text) return;
     Ref parent_name = str_new(from.substr(0, dot));
@@ -1965,14 +1973,14 @@ Ref lazy_import_module_level(Obj name, Obj builtins, Obj globals, Obj fromlist, 
             if (as_str(item) == nullptr) raise_new("TypeError", "Item in ``from list'' must be str, not " + type_of(item)->name);
     Ref res = lazy_new(true, builtins, abs_name.get(), list.get());
     Ref existing = get_module(abs_name.get());
-    const std::string& abs = as_str(abs_name.get())->text;
+    const std::string& abs = name_arg(abs_name.get())->text;
     if (is_kind(list.get(), Kind::Tuple) && !static_cast<Tuple*>(list.get().object())->items.empty()) {
         for (Obj item : static_cast<Tuple*>(list.get().object())->items) {
             // register_from_lazy_on_parent: IMPORT_FROM returns stored attributes directly
             if (is_kind(existing.get(), Kind::Module) &&
                 !dict_get(static_cast<Module*>(existing.get().object())->dict, item).is_unset())
                 continue;
-            register_lazy_on_parent(abs + "." + as_str(item)->text, None());
+            register_lazy_on_parent(abs + "." + name_arg(item)->text, None());
         }
     } else {
         register_lazy_on_parent(abs, res.get());
@@ -2038,7 +2046,7 @@ void clear_lazy_submodule(const std::string& name, bool bind) {
 // _imp._set_lazy_attributes: (sys.lazy_modules, left out,) and the name's pending entry
 Ref i_bella_set_lazy_attributes(Obj, Args a) {
     positional_only(a, "_bella_set_lazy_attributes", 2, 2);
-    clear_lazy_submodule(as_str(a.pos(1))->text, false);
+    clear_lazy_submodule(name_arg(a.pos(1))->text, false);
     return none_ref();
 }
 
@@ -2047,7 +2055,7 @@ Ref try_load_lazy_submodule(Module* m, const Str* attr_name, bool suppress, bool
     recheck_dict = false;
     Obj mod_name = dict_get(m->dict, Obj::of(N("__name__")));
     if (mod_name.is_unset() || as_str(mod_name) == nullptr) return Ref{};
-    auto parent_entry = pending_submodules().find(as_str(mod_name)->text);
+    auto parent_entry = pending_submodules().find(name_arg(mod_name)->text);
     if (parent_entry == pending_submodules().end()) return Ref{};
     recheck_dict = true;
     std::string parent_text = parent_entry->first;
@@ -2236,21 +2244,21 @@ Ref module_getattr(Obj obj, const Str* name, bool suppress) {
     Obj mod_name = dict_get(m->dict, Obj::of(N("__name__")));
     if (mod_name.is_unset() || as_str(mod_name) == nullptr)
         raise_attribute_error(obj, name, "module has no attribute '" + name->text + "'");
-    const std::string& mn = as_str(mod_name)->text;
+    const std::string& mn = name_arg(mod_name)->text;
     Ref spec = Ref::share(dict_get(m->dict, Obj::of(N("__spec__"))));
     if (spec.get().is_unset()) raise_attribute_error(obj, name, "module '" + mn + "' has no attribute '" + name->text + "'");
     Ref origin = spec_file_origin(spec.get());
     bool shadowing = possibly_shadowing(origin.get());
     if (shadowing && is_stdlib_name(mod_name))
         raise_attribute_error(obj, name, "module '" + mn + "' has no attribute '" + name->text + "' (consider renaming '" +
-                                             as_str(origin.get())->text + "' since it has the same name as the standard "
+                                             name_arg(origin.get())->text + "' since it has the same name as the standard "
                                              "library module named '" + mn + "' and prevents importing that standard library module)");
     if (spec_is_initializing(spec.get())) {
         if (shadowing)
             raise_attribute_error(obj, name, "module '" + mn + "' has no attribute '" + name->text + "' (consider renaming '" +
-                                                 as_str(origin.get())->text + "' if it has the same name as a library you intended to import)");
+                                                 name_arg(origin.get())->text + "' if it has the same name as a library you intended to import)");
         if (!origin.get().is_unset())
-            raise_attribute_error(obj, name, "partially initialized module '" + mn + "' from '" + as_str(origin.get())->text +
+            raise_attribute_error(obj, name, "partially initialized module '" + mn + "' from '" + name_arg(origin.get())->text +
                                                  "' has no attribute '" + name->text + "' (most likely due to a circular import)");
         raise_attribute_error(obj, name, "partially initialized module '" + mn + "' has no attribute '" + name->text +
                                              "' (most likely due to a circular import)");
@@ -2438,7 +2446,7 @@ Ref b_dir(Obj, Args a) {
     auto& items = static_cast<List*>(list.get().object())->items;
     for (Obj x : items)
         if (as_str(x) == nullptr) throw NotImplemented("dir() of names that are not all str (list.sort: step 3b)");
-    std::stable_sort(items.begin(), items.end(), [](Obj x, Obj y) { return as_str(x)->text < as_str(y)->text; });
+    std::stable_sort(items.begin(), items.end(), [](Obj x, Obj y) { return name_arg(x)->text < name_arg(y)->text; });
     return list;
 }
 

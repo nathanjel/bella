@@ -174,7 +174,7 @@ double parse_double(const char* s, const char* last, const char*& end) {
 
 [[noreturn]] void cannot_convert(Obj shown) {
     Ref r = repr_of(shown);
-    raise_new("ValueError", "could not convert string to float: " + as_str(r.get())->text);
+    raise_new("ValueError", "could not convert string to float: " + name_arg(r.get())->text);
 }
 
 // _Py_string_to_number_with_underscores around float_from_string_inner
@@ -606,7 +606,7 @@ std::string without_underscores(const std::string& given, const char* what, Obj 
     if (std::strchr(given.c_str(), '_') == nullptr) return given;
     auto wrong = [&] {
         Ref r = repr_of(shown);
-        raise_new("ValueError", std::string("could not convert string to ") + what + ": " + as_str(r.get())->text);
+        raise_new("ValueError", std::string("could not convert string to ") + what + ": " + name_arg(r.get())->text);
     };
     std::string text;
     char prev = '\0';

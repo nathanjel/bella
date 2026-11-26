@@ -208,6 +208,6 @@ const bool debugging_hooked = (detail::collector().debug = &state().debug, detai
 }  // namespace
 
 Ref i_gc(Obj, Args a) {                          // _gc(name, ...)
-    return primitives().at(as_str(a.pos(0))->text)(Args{a.data + 1, a.npos - 1, nullptr, 0});
+    return primitives().at(name_arg(a.pos(0))->text)(Args{a.data + 1, a.npos - 1, nullptr, 0});
 }
 }  // namespace bella

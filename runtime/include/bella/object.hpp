@@ -844,6 +844,8 @@ struct ClassObject : Object {
     bool heap_type = false;                      // a class a program made (Py_TPFLAGS_HEAPTYPE)
     std::vector<ClassObject*> bases;
     std::vector<ClassObject*> mro;               // C3, self first
+    ClassObject* layout_base = nullptr;          // tp_base, kept once worked out as type_new keeps it: a class's bases do not
+                                                 // change (set_type_bases), and its bases hold the class it names (RL-1039)
     // tp_bases and tp_mro as objects (RefClass.bases, .mro): one each until replaced. bases_tuple is the tuple the class was
     // made with or the one assigned to __bases__; either is made at the first read when the class has none yet (a C++ type,
     // a class with no bases: a new (object,)), and the MRO's is dropped when the hierarchy's bases are assigned (mro_hierarchy)

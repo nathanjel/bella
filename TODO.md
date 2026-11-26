@@ -737,7 +737,8 @@ Review F48 (`docs/reviews/2026-11-26-claude-fable-48-review.md`, RL-958 to RL-11
 code of 2026-11-24 and 25. Its rows are in the log with their verdicts; nothing is built on a decision it shook until the
 author has seen the measurement. In this order:
 
-* **Defects that end a program or lose its data, first.** RL-1033 (a module name that is no str: SIGSEGV in the import
+* ~~**Defects that end a program or lose its data, first.**~~ Fixed 2026-11-26 (the entry of that day; what is left of
+  RL-1033 goes with Question 48's recount). RL-1033 (a module name that is no str: SIGSEGV in the import
   system's primitives; sweep every unchecked `as_str(...)->` of `runtime/src` as the class), RL-1070 (handlers given to
   `os.register_at_fork` are never let go of at the exit, so with `from logging import ...` and a filter or handler of the
   program's own, the main module's globals are not finalised and a file left open stays empty), RL-1039 (making a class

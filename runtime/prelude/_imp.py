@@ -179,8 +179,12 @@ def source_hash(*args: object, **kwds: object) -> bytes:
 
 def create_builtin(*args: object, **kwds: object) -> object:
     spec = _one("create_builtin", args, kwds)
-    spec.name                                    # noqa: B018  # create_builtin reads the spec's name first: its AttributeError for anything else
-    return _bella_create_builtin(spec)
+    name = spec.name                             # create_builtin reads the spec's name first: its AttributeError for anything else
+    if not isinstance(name, str):
+        raise TypeError("name must be string, not " + _tp_name(name))
+    if name not in sys.builtin_module_names:
+        raise ModuleNotFoundError(name + " module not found", name=name)
+    return _bella_create_builtin(name)
 
 
 def exec_builtin(*args: object, **kwds: object) -> int:

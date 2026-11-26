@@ -770,10 +770,10 @@ std::u32string code_points(const Str* s) {
 }
 
 Ref from_object(Obj input) {                    // PyUnicode_FromObject: the str itself, a subclass's as a new str
-    return is_exact_str(input) ? Ref::share(input) : str_new(as_str(input)->text);
+    return is_exact_str(input) ? Ref::share(input) : str_new(name_arg(input)->text);
 }
 
-bool form_is(Obj form, const char* name) { return as_str(form)->text == name; }   // PyUnicode_CompareWithASCIIString(form, name) == 0
+bool form_is(Obj form, const char* name) { return name_arg(form)->text == name; }   // PyUnicode_CompareWithASCIIString(form, name) == 0
 
 Ref is_normalized(bool old, Obj form, Obj input_obj)   // unicodedata_UCD_is_normalized_impl
 {
@@ -1565,7 +1565,7 @@ std::int64_t i64_arg(Obj v) {
 
 // _ucd_call(name, ...): the prelude's way in. `old` is UCD_Check(self): the 3.2.0 database.
 Ref dispatch(Args a) {
-    const std::string& op = as_str(a.pos(0))->text;
+    const std::string& op = name_arg(a.pos(0))->text;
     auto arg = [&a](std::size_t i) { return a.pos(i + 1); };
     auto flag = [&a](std::size_t i) { return truth(a.pos(i + 1)); };
     if (op == "decimal") return int_from_i64(decimal(code_arg(arg(0)), flag(1)));   // (code, old): -1 for none
@@ -1613,7 +1613,7 @@ Ref dispatch(Args a) {
     }
     if (op == "unidata_version") return str_new(UNIDATA_VERSION);   // the databases' own words (unicodedata_db.inc, unicodename_db.inc)
     if (op == "name_maxlen") return int_from_i64(NAME_MAXLEN);
-    if (op == "length") return int_from_i64(static_cast<std::int64_t>(as_str(arg(0))->length));   // PyUnicode_GET_LENGTH
+    if (op == "length") return int_from_i64(static_cast<std::int64_t>(name_arg(arg(0))->length));   // PyUnicode_GET_LENGTH
     if (op == "substring") {                     // (str, start, end): PyUnicode_Substring
         const Str* s = as_str(arg(0));
         if (s == nullptr || !is_int(arg(1)) || !is_int(arg(2))) fields_changed();

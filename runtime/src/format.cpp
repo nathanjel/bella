@@ -692,7 +692,7 @@ Ref get_field_object(const SubString& input, Obj args, Obj kwargs, AutoNumber* a
     while (rest.next(is_attribute, index, name) == 2) {
         if (is_attribute) {
             Ref attr = name.object();
-            obj = getattr(obj.get(), intern(as_str(attr.get())->text));
+            obj = getattr(obj.get(), intern(name_arg(attr.get())->text));
         } else if (index == -1) {
             Ref key = name.object();
             obj = getitem(obj.get(), key.get());
@@ -893,7 +893,7 @@ struct Percent {
     [[noreturn]] void error(const PercentArg& arg, const char* exc, const std::string& message) const {   // FORMAT_ERROR
         if (!arg.key.get().is_unset()) {
             Ref shown = repr_of(arg.key.get());
-            raise_new(exc, "format argument " + as_str(shown.get())->text + ": " + message);
+            raise_new(exc, "format argument " + name_arg(shown.get())->text + ": " + message);
         }
         if (argidx >= 0) raise_new(exc, "format argument " + std::to_string(argidx) + ": " + message);
         raise_new(exc, "format argument: " + message);
@@ -1210,7 +1210,7 @@ struct BytesPercent {
     [[noreturn]] void error(const char* exc, const std::string& message) const {   // FORMAT_ERROR
         if (!key.get().is_unset()) {
             Ref shown = repr_of(key.get());
-            raise_new(exc, "format argument " + as_str(shown.get())->text + ": " + message);
+            raise_new(exc, "format argument " + name_arg(shown.get())->text + ": " + message);
         }
         if (argidx >= 0) raise_new(exc, "format argument " + std::to_string(argidx) + ": " + message);
         raise_new(exc, "format argument: " + message);
@@ -1401,7 +1401,7 @@ struct BytesPercent {
                 case 'r':
                 case 'a': {                      // %r is only for 2/3 code; %a: PyObject_ASCII
                     Ref s = ascii_of(v);
-                    text = as_str(s.get())->text;
+                    text = name_arg(s.get())->text;
                     if (prec >= 0 && static_cast<std::int64_t>(text.size()) > prec) text.resize(static_cast<std::size_t>(prec));
                     break;
                 }

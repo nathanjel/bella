@@ -1955,7 +1955,7 @@ void note_prelude_class(const ClassObject* c) {
     std::vector<const Str*> names, members, readonly, boolean;
     for (auto [said, into] : {std::pair{intern("__readonly__"), &readonly}, std::pair{intern("__boolean__"), &boolean}})
         if (const Obj* listed = cls->attrs.find(said); listed != nullptr && is_kind(*listed, Kind::Tuple)) {
-            for (Obj n : static_cast<Tuple*>(listed->object())->items) into->push_back(intern(as_str(n)->text));
+            for (Obj n : static_cast<Tuple*>(listed->object())->items) into->push_back(intern(name_arg(n)->text));
             cls->del_attr(said);
         }
     for (const Str* s : cls->own_slot_names()) {
@@ -1969,7 +1969,7 @@ void note_prelude_class(const ClassObject* c) {
     if (auto flags = cpython_type_number("flags", cls); flags && !(*flags & (1 << 14))) cls->gc_untracked = true;
     static const Str* const said_untraversed = intern("__untraversed__");
     if (const Obj* listed = cls->attrs.find(said_untraversed); listed != nullptr && is_kind(*listed, Kind::Tuple)) {
-        for (Obj n : static_cast<Tuple*>(listed->object())->items) cls->untraversed.push_back(intern(as_str(n)->text));
+        for (Obj n : static_cast<Tuple*>(listed->object())->items) cls->untraversed.push_back(intern(name_arg(n)->text));
         cls->del_attr(said_untraversed);
     }
     // The type's dealloc (RL-565), for a type CPython writes in C (one it writes in Python has __firstlineno__ in the names
@@ -1979,7 +1979,7 @@ void note_prelude_class(const ClassObject* c) {
     std::vector<const Str*> order;
     bool said = false;
     if (const Obj* listed = cls->attrs.find(said_release); listed != nullptr && is_kind(*listed, Kind::Tuple)) {
-        for (Obj n : static_cast<Tuple*>(listed->object())->items) order.push_back(intern(as_str(n)->text));
+        for (Obj n : static_cast<Tuple*>(listed->object())->items) order.push_back(intern(name_arg(n)->text));
         cls->del_attr(said_release);
         said = true;
     }
@@ -2006,7 +2006,7 @@ void note_prelude_class(const ClassObject* c) {
     static const Str* const module = intern("__module__");
     if (const Obj* m = cls->attrs.find(module); m != nullptr && as_str(*m) != nullptr && cpython_attribute_kind(cls, "__module__").empty()) {
         std::string derived = cls->name_prefix > 0 ? cls->name.substr(0, cls->name_prefix - 1) : "builtins";
-        if (as_str(*m)->text == derived) cls->del_attr(module);
+        if (name_arg(*m)->text == derived) cls->del_attr(module);
     }
 }
 std::vector<std::string_view> cpython_names_of(std::string_view scope) {   // its rows, in the table's order
@@ -2076,7 +2076,7 @@ void forget_filled(const Module* m) { filled_names().erase(m); }
 void refuse_absent_attribute(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Module)) {
         auto* m = static_cast<Module*>(obj.object());
-        const std::string& mod = as_str(m->name.get())->text;
+        const std::string& mod = name_arg(m->name.get())->text;
         auto it = native_modules().find(mod);
         bool tabled = (it != native_modules().end() && it->second == m) || is_bootstrap_prelude(m);   // its names are the table's
         if (tabled && cpython_has(mod, name->text) && !was_filled(m, name->text))
@@ -2162,7 +2162,7 @@ namespace {
 Ref i_special(Obj, Args a) {                    // _PyObject_LookupSpecial, as the with statement uses it
     positional_only(a, "special", 2, 2);
     Obj obj = a.pos(0);
-    const Str* name = as_str(a.pos(1));
+    const Str* name = name_arg(a.pos(1));
     Obj found = type_lookup(type_of(obj), intern(name->text));
     if (found.is_unset())
         raise_new("TypeError", "'" + type_of(obj)->name + "' object does not support the context manager protocol");
@@ -2174,7 +2174,7 @@ Ref i_special(Obj, Args a) {                    // _PyObject_LookupSpecial, as t
 }  // namespace
 Ref i_lookup_special(Obj, Args a) {              // _PyObject_LookupSpecial: the bound method in a tuple, or ()
     positional_only(a, "_lookup_special", 2, 2);
-    const Str* name = intern(as_str(a.pos(1))->text);
+    const Str* name = intern(name_arg(a.pos(1))->text);
     Obj found = type_lookup(type_of(a.pos(0)), name);
     if (found.is_unset()) {
         refuse_absent_attribute(a.pos(0), name);  // CPython's type has it and the runtime lacks it: never "absent"
@@ -2188,11 +2188,11 @@ Ref i_lookup_special(Obj, Args a) {              // _PyObject_LookupSpecial: the
 // a metaclass's property of that name answers first (RL-644); so the walk is the runtime's, in every prelude.
 Ref i_has_slot(Obj, Args a) {                    // (value, name): whether a class of its type's MRO has the name
     positional_only(a, "_has_slot", 2, 2);
-    return Ref::steal(boolean(!type_lookup(type_of(a.pos(0)), intern(as_str(a.pos(1))->text)).is_unset()));
+    return Ref::steal(boolean(!type_lookup(type_of(a.pos(0)), intern(name_arg(a.pos(1))->text)).is_unset()));
 }
 Ref i_type_lookup(Obj, Args a) {                 // (value, name, absent): what the type has under the name, unbound, or `absent`
     positional_only(a, "_type_lookup", 3, 3);
-    Obj found = type_lookup(type_of(a.pos(0)), intern(as_str(a.pos(1))->text));
+    Obj found = type_lookup(type_of(a.pos(0)), intern(name_arg(a.pos(1))->text));
     return Ref::share(found.is_unset() ? a.pos(2) : found);
 }
 // The text the C formats into a message or a repr (PyUnicode_FromFormat's %R and %S, PyUnicodeWriter_WriteRepr): PyObject_Repr
@@ -2202,12 +2202,12 @@ Ref i_type_lookup(Obj, Args a) {                 // (value, name, absent): what 
 Ref i_repr_text(Obj, Args a) {
     positional_only(a, "_repr_text", 1, 1);
     Ref r = repr_of(a.pos(0));
-    return is_exact_str(r.get()) ? r : str_new(as_str(r.get())->text);
+    return is_exact_str(r.get()) ? r : str_new(name_arg(r.get())->text);
 }
 Ref i_str_text(Obj, Args a) {
     positional_only(a, "_str_text", 1, 1);
     Ref r = str_of(a.pos(0));
-    return is_exact_str(r.get()) ? r : str_new(as_str(r.get())->text);
+    return is_exact_str(r.get()) ? r : str_new(name_arg(r.get())->text);
 }
 // What CPython's C reads of an argument once it has tested its type: the object's own data, through the concrete API
 // (PyUnicode_*, PyLong_As*, PyFloat_AS_DOUBLE, PyTuple_GET_ITEM, the buffer of a bytes), which calls nothing of the object's
@@ -2223,7 +2223,7 @@ Ref i_own_data(Obj, Args a) {
     switch (v.object()->kind) {
         case Kind::IntInstance: return big_plain(v);
         case Kind::FloatInstance: return float_ref(float_value(v));
-        case Kind::Str: return has_attributes(v.object()) ? str_new(as_str(v)->text) : Ref::share(v);
+        case Kind::Str: return has_attributes(v.object()) ? str_new(name_arg(v)->text) : Ref::share(v);
         case Kind::Bytes: return has_attributes(v.object()) ? bytes_new(static_cast<BytesObject*>(v.object())->data) : Ref::share(v);
         case Kind::Tuple: return has_attributes(v.object()) ? tuple_copy(static_cast<Tuple*>(v.object())->items) : Ref::share(v);
         default: return Ref::share(v);
@@ -2570,7 +2570,7 @@ Ref i_bella_type_name(Obj, Args a) {             // PyErr_Format's %T: PyType_Ge
 }
 Ref i_bella_getenv(Obj, Args a) {                // Py_GETENV: the process's environment as it is now, None for a name that is not in it
     positional_only(a, "_bella_getenv", 1, 1);
-    const char* value = std::getenv(as_str(a.pos(0))->text.c_str());
+    const char* value = std::getenv(name_arg(a.pos(0))->text.c_str());
     return value == nullptr ? none_ref() : str_new(value);
 }
 // The frame a traceback's entry stands for, where an adaptation walks a traceback's frames (traceback's
@@ -2792,7 +2792,7 @@ Ref runtime_call(const char* intrinsic, Obj ns, Module* m, std::initializer_list
     std::string_view name(intrinsic);
     std::vector<Obj> a(args);
     if (name == "import_name") return import_name(a.at(0), a.at(1), a.at(2), a.at(3), m, ns);
-    if (name == "import_from") return import_from(a.at(0), intern(as_str(a.at(1))->text));
+    if (name == "import_from") return import_from(a.at(0), intern(name_arg(a.at(1))->text));
     if (name == "import_star") {
         import_star(a.at(0), ns);
         return none_ref();
@@ -2917,7 +2917,7 @@ void write_unraisable(Obj type, Obj value, Obj tb, Obj message, Obj object) {
     std::string text;                            // PyFile_WriteObject(value): what its str() raises is cleared (RL-518)
     try {
         Ref shown = str_of(value);
-        text = as_str(shown.get())->text;
+        text = name_arg(shown.get())->text;
     } catch (const PyError&) {
         text = "<exception str() failed>";
     }
@@ -2972,7 +2972,7 @@ void report_unraisable(const char* context, Obj shown, const PyError& e) {
     std::string text;
     try {
         Ref r = repr_of(shown);
-        text = as_str(r.get())->text;
+        text = name_arg(r.get())->text;
     } catch (const PyError&) {
         return report_unraisable(e.exc.get());
     }
@@ -3004,14 +3004,14 @@ struct Record {                                  // a TracebackException
 std::string safe_string(Obj v, const char* what, bool use_repr) {   // _safe_string: a bare except, so anything it raises
     try {
         Ref s = use_repr ? repr_of(v) : str_of(v);
-        return as_str(s.get())->text;
+        return name_arg(s.get())->text;
     } catch (const PyError&) {
         return std::string("<") + what + " " + (use_repr ? "repr" : "str") + "() failed>";
     }
 }
 std::string shown_text(Obj v) {                  // "{}".format(v)
     Ref s = str_of(v);
-    return as_str(s.get())->text;
+    return name_arg(s.get())->text;
 }
 struct Records {
     std::vector<std::unique_ptr<Record>> all;
@@ -3177,7 +3177,7 @@ void emit_syntax_error(ErrSink& err, const PrintContext& ctx, const Record& r) {
     std::string suffix;
     if (r.lineno.get() != None()) {
         std::string name = truth(r.filename.get()) ? shown_text(r.filename.get()) : std::string("<string>");
-        emit(err, ctx, "  File \"" + name + "\", line " + as_str(r.lineno.get())->text + "\n");
+        emit(err, ctx, "  File \"" + name + "\", line " + name_arg(r.lineno.get())->text + "\n");
     } else if (r.filename.get() != None()) {
         suffix = " (" + shown_text(r.filename.get()) + ")";
     }
@@ -3422,7 +3422,7 @@ void print_plain_one(ErrSink& err, Obj value, bool past_traceback = false) {  //
     err.raw(type->qualname);                     // PyType_GetQualName: the class's own
     try {
         Ref s = str_of(value);
-        const std::string& text = as_str(s.get())->text;
+        const std::string& text = name_arg(s.get())->text;
         if (!text.empty()) err.raw(": ");
         err.raw(text);
     } catch (const PyError&) {
@@ -3623,7 +3623,7 @@ void collect_at_exit() { collect_cycles(); }
 void release_state(const char* module, std::initializer_list<const char*> names) {
     Module* m = nullptr;
     for (Module* h : hidden_modules())
-        if (as_str(h->name.get())->text == module) m = h;
+        if (name_arg(h->name.get())->text == module) m = h;
     if (m == nullptr) return;
     for (const char* n : names)
         if (!dict_get(m->dict, Obj::of(intern(n))).is_unset()) put(m->dict, n, None());
@@ -3737,11 +3737,13 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own, int& statu
     // collections put a stream there; its failure is status 120 as the first's (RL-925)
     if (!flush_std_stream("stdout", true)) status = 120;
     if (!flush_std_stream("stderr", false)) status = 120;
-    // finalize_interp_clear (_PyInterpreterState_Clear): the thread's state (the context), the codec registry (_PyCodec_Fini), then
-    // the interpreter's last collection, then gc's lists (_PyGC_Fini: the garbage first; the gc prelude binds the same two lists,
-    // RL-928) and the warnings' state (_PyWarnings_Fini)
+    // finalize_interp_clear (_PyInterpreterState_Clear): the thread's state (the context), the codec registry (_PyCodec_Fini), the
+    // three lists of at-fork handlers (which logging, threading and random fill when imported: what they reach is finalised by
+    // the collection after, RL-1070), then the interpreter's last collection, then gc's lists (_PyGC_Fini: the garbage first; the
+    // gc prelude binds the same two lists, RL-928) and the warnings' state (_PyWarnings_Fini)
     release_state("_contextvars", {"_current"});
     release_state("_codecs", {"_search_path", "_search_cache", "_error_registry", "_library"});
+    release_state("posix", {"_before_forkers", "_after_forkers_parent", "_after_forkers_child"});
     collect_at_exit();
     release_gc_lists();
     release_state("gc", {"garbage", "callbacks"});
@@ -3770,8 +3772,8 @@ int exit_status(Obj exc) {
     bool to_c = file.is_unset() || file == None();
     try {
         Ref text = str_of(code.get().is_unset() ? exc : code.get());
-        if (to_c) err_stream().write(as_str(text.get())->text);
-        else write_stderr(as_str(text.get())->text);
+        if (to_c) err_stream().write(name_arg(text.get())->text);
+        else write_stderr(name_arg(text.get())->text);
     } catch (const PyError&) {
     }
     if (to_c) {
@@ -4143,8 +4145,8 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                     for (Obj n : static_cast<List*>(hidden.object())->items) {
                         auto* c = static_cast<ClassObject*>(dict_get(pm->dict, n).object());
                         const Obj* own_module = c->attrs.find(intern("__module__"));   // a type of another module's (string.templatelib.Template)
-                        if (own_module != nullptr && as_str(*own_module) != nullptr && as_str(*own_module)->text != "builtins") {
-                            present_native_class(c, as_str(*own_module)->text);
+                        if (own_module != nullptr && as_str(*own_module) != nullptr && name_arg(*own_module)->text != "builtins") {
+                            present_native_class(c, name_arg(*own_module)->text);
                         } else {
                             note_prelude_class(c);
                             forget_python_origin(c);
@@ -4170,8 +4172,8 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                         Obj cls = is_kind(e.key, Kind::Class) ? e.key : dict_get(builtins_module()->dict, e.key);   // a type, or a builtin's name
                         for (auto& m : static_cast<Dict*>(e.value.object())->entries)
                             if (!m.key.is_unset()) {
-                                static_cast<ClassObject*>(cls.object())->set_attr(intern(as_str(m.key)->text), m.value);
-                                present_type_method(static_cast<ClassObject*>(cls.object()), intern(as_str(m.key)->text));   // CPython's slot wrapper
+                                static_cast<ClassObject*>(cls.object())->set_attr(intern(name_arg(m.key)->text), m.value);
+                                present_type_method(static_cast<ClassObject*>(cls.object()), intern(name_arg(m.key)->text));   // CPython's slot wrapper
                             }
                     }
             }
@@ -4204,7 +4206,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
             adopt_functions(native_modules()["sys"]);
             auto own_doc = [](ClassObject* c) {       // the built-in types' docstrings, as their own: None for a type without one
                 if (c->attrs.contains(intern("__doc__"))) return;   // (type_dict_set_doc), which hides object's from its instances
-                if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !as_str(doc)->text.empty()) c->set_attr(intern("__doc__"), doc);
+                if (Obj doc = cpython_doc("type:" + c->name); doc != None() && !name_arg(doc)->text.empty()) c->set_attr(intern("__doc__"), doc);
                 else if (cpython_attribute_kind(c, "__doc__") == "NoneType") c->set_attr(intern("__doc__"), None());
             };
             for (ClassObject* c : builtin_types()) own_doc(c);
@@ -4223,9 +4225,9 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                 put(sys_dict, "stdlib_module_names", stdlib.get());
                 for (auto& e : static_cast<Dict*>(surface.get().object())->entries) {
                     if (e.key.is_unset()) continue;
-                    if (as_str(e.key)->text == "_bella_unraisable_args") unraisable_args_type() = Ref::share(e.value);   // no module's
+                    if (name_arg(e.key)->text == "_bella_unraisable_args") unraisable_args_type() = Ref::share(e.value);   // no module's
                     else dict_set(sys_dict, e.key, e.value);
-                    if (as_str(e.key)->text == "flags") sys_flags_class() = type_of(e.value);
+                    if (name_arg(e.key)->text == "flags") sys_flags_class() = type_of(e.value);
                 }
             }
             // importlib._bootstrap._setup: the built-in modules' specs and loaders
@@ -4317,7 +4319,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                     std::vector<std::pair<Obj, Obj>> items = dict_take_all(sys_dict);
                     auto value_of = [&](const char* n) {
                         for (auto& [k, v] : items)
-                            if (as_str(k) != nullptr && as_str(k)->text == n) return v;
+                            if (as_str(k) != nullptr && name_arg(k)->text == n) return v;
                         return Obj{};
                     };
                     bool placed = false;
@@ -4326,7 +4328,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                         placed = true;
                     };
                     for (auto& [k, v] : items) {
-                        const std::string& n = as_str(k)->text;
+                        const std::string& n = name_arg(k)->text;
                         if (n == "stderr" || n == "__stderr__") continue;
                         dict_set(sys_dict, k, v);
                         if (n == "modules") place();
@@ -4361,7 +4363,7 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                 builtins_copy_slot() = static_cast<Dict*>(copy.release().object());
             }
             for (Module* m : runtime_own) {          // the import system's two namespaces as the program finds them (RL-926)
-                const std::string& name = as_str(m->name.get())->text;
+                const std::string& name = name_arg(m->name.get())->text;
                 if (name == "_frozen_importlib" || name == "_frozen_importlib_external") namespaces_at_start()[m] = dict_copy(m->dict);
             }
             note_filled(builtins_module());        // from here on a name missing from them is one the program deleted

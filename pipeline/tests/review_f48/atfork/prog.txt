@@ -1,0 +1,102 @@
+"""Review F48 (RL-1070): what a handler given to os.register_at_fork reaches is finalised at the exit, a row a process.
+
+CPython lets go of the interpreter's three lists of handlers in interpreter_clear, before its last collection; logging,
+threading and random register theirs when they are imported. Each row leaves a global of the main module with a finaliser
+that writes to file descriptor 1, and says how the main module's namespace comes to be reached from a handler.
+"""
+import os
+import sys
+from collections.abc import Callable
+
+ROW = sys.argv[1]
+
+
+class F:
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    def __del__(self, w: Callable[[int, bytes], int] = os.write) -> None:
+        w(1, ("finalised: " + self.tag + "\n").encode())
+
+
+class Hook:
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    def __call__(self) -> None:
+        pass
+
+    def __del__(self, w: Callable[[int, bytes], int] = os.write) -> None:
+        w(1, ("handler let go of: " + self.tag + "\n").encode())
+
+
+def hook() -> None:
+    pass
+
+
+if ROW == "before":
+    os.register_at_fork(before=hook)
+elif ROW == "child":
+    os.register_at_fork(after_in_child=hook)
+elif ROW == "parent":
+    os.register_at_fork(after_in_parent=hook)
+elif ROW == "lambda":
+    os.register_at_fork(before=lambda: None)
+elif ROW == "three":
+    os.register_at_fork(before=Hook("before 1"), after_in_child=Hook("child 1"), after_in_parent=Hook("parent 1"))
+    os.register_at_fork(before=Hook("before 2"), after_in_child=Hook("child 2"), after_in_parent=Hook("parent 2"))
+elif ROW == "twice":
+    shared = Hook("one object in all three")
+    os.register_at_fork(before=shared, after_in_child=shared, after_in_parent=shared)
+    del shared
+elif ROW == "from_handler":
+    from logging import Handler, LogRecord, getLogger
+
+    class Mine(Handler):
+        def emit(self, record: LogRecord) -> None:
+            os.write(1, ("emitted " + record.getMessage() + "\n").encode())
+
+    getLogger("app").addHandler(Mine())
+    getLogger("app").warning("a record")
+elif ROW == "from_filter":
+    from logging import getLogger
+    getLogger("app").addFilter(lambda record: True)
+    getLogger("app").warning("a record")
+elif ROW == "from_formatter":
+    from logging import Formatter, LogRecord, StreamHandler, getLogger
+
+    class Short(Formatter):
+        def format(self, record: LogRecord) -> str:
+            return "short: " + record.getMessage()
+
+    handler = StreamHandler(sys.stdout)
+    handler.setFormatter(Short())
+    getLogger("app").addHandler(handler)
+    getLogger("app").warning("a record")
+elif ROW == "from_plain":
+    from logging import getLogger
+    getLogger("app").warning("a record")
+elif ROW == "import_handler":
+    import logging
+
+    class Mine2(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            os.write(1, ("emitted " + record.getMessage() + "\n").encode())
+
+    logging.getLogger("app").addHandler(Mine2())
+    logging.getLogger("app").warning("a record")
+elif ROW == "from_thread":
+    from threading import current_thread
+    current_thread().request = F("an attribute of the main thread's object")  # type: ignore[attr-defined]
+elif ROW == "from_random":
+    from random import Random
+
+    class Mine3(Random):
+        pass
+
+    rng = Mine3(3)
+elif ROW != "control":
+    raise SystemExit("no such row: " + ROW)
+
+held = F("a global of the main module")
+print("the end of the program's text", flush=True)

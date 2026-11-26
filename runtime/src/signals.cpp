@@ -496,6 +496,6 @@ const std::map<std::string_view, Primitive>& primitives() {
 }  // namespace
 
 Ref i_signals(Obj, Args a) {                     // _signals(name, ...)
-    return primitives().at(as_str(a.pos(0))->text)(Args{a.data + 1, a.npos - 1, nullptr, 0});
+    return primitives().at(name_arg(a.pos(0))->text)(Args{a.data + 1, a.npos - 1, nullptr, 0});
 }
 }  // namespace bella

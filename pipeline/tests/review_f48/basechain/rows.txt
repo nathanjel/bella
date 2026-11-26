@@ -1,0 +1,9 @@
+chain 12
+chain 60
+chain 300
+slots 60
+ladder 12
+ladder 40
+statements
+best
+samebases

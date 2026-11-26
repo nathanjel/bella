@@ -1146,7 +1146,7 @@ Ref p_environ(Args) {                            // convertenviron: of a name gi
     }
     return d;
 }
-Ref p_refuse(Args a) { throw NotImplemented(as_str(a.pos(0))->text + " (CPython has it; the runtime does not yet)"); }
+Ref p_refuse(Args a) { throw NotImplemented(name_arg(a.pos(0))->text + " (CPython has it; the runtime does not yet)"); }
 
 // ---- time (Modules/timemodule.c, Python/pytime.c): one C library call each --------------------------------------------------
 Ref timespec_pair(const timespec& ts) {
@@ -1273,7 +1273,7 @@ const std::map<std::string_view, Primitive>& primitives() {
 }  // namespace
 
 Ref i_posix_sys(Obj, Args a) {                   // _sys(name, ...)
-    return primitives().at(as_str(a.pos(0))->text)(Args{a.data + 1, a.npos - 1, nullptr, 0});
+    return primitives().at(name_arg(a.pos(0))->text)(Args{a.data + 1, a.npos - 1, nullptr, 0});
 }
 // _Py_SetLocaleFromEnv(LC_CTYPE), then _Py_CoerceLegacyLocale (PEP 538): the C locale becomes the first of C.UTF-8, C.utf8 and
 // UTF-8 the library has, and LC_CTYPE in the environment says so; PYTHONCOERCECLOCALE=0 leaves it

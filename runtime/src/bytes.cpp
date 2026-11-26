@@ -1183,16 +1183,16 @@ SourceArgs source_args(Args a, const char* function) {
     }
     if (!out.encoding.is_unset() && as_str(out.encoding) == nullptr)
         raise_new("TypeError", std::string(function) + "() argument 'encoding' must be str, not " + type_of(out.encoding)->name);
-    if (!out.encoding.is_unset()) no_null(as_str(out.encoding)->text);
+    if (!out.encoding.is_unset()) no_null(name_arg(out.encoding)->text);
     if (!out.errors.is_unset() && as_str(out.errors) == nullptr)
         raise_new("TypeError", std::string(function) + "() argument 'errors' must be str, not " + type_of(out.errors)->name);
-    if (!out.errors.is_unset()) no_null(as_str(out.errors)->text);
+    if (!out.errors.is_unset()) no_null(name_arg(out.errors)->text);
     return out;
 }
 std::string encoded_source(const SourceArgs& s) {
     std::optional<std::string> encoding, errors;
-    if (!s.encoding.is_unset()) encoding = as_str(s.encoding)->text;
-    if (!s.errors.is_unset()) errors = as_str(s.errors)->text;
+    if (!s.encoding.is_unset()) encoding = name_arg(s.encoding)->text;
+    if (!s.errors.is_unset()) errors = name_arg(s.errors)->text;
     Ref made = encode_with(s.source, encoding ? &*encoding : nullptr, errors ? &*errors : nullptr);
     return bytes_data(made.get());
 }
@@ -1645,7 +1645,7 @@ Ref translate_error_init(Obj self, Args a) {
 std::string text_of(Obj v) {                     // PyObject_Str, which says <NULL> of a member that was deleted
     if (v.is_unset()) return "<NULL>";
     Ref s = str_of(v);
-    return as_str(s.get())->text;
+    return name_arg(s.get())->text;
 }
 // The object as the three __str__ read it, after str() of the reason and the encoding (which may have changed it):
 // check_unicode_error_attribute
@@ -1827,8 +1827,8 @@ Ref str_from_bytes(Obj source, Obj encoding, Obj errors) {   // str(b, encoding,
         raise_new("TypeError", "decoding to str: need a bytes-like object, " + type_of(source)->name + " found");
     std::string copy = is_memoryview(source) ? std::string(simple_view(source)) : bytes_data(source);
     std::optional<std::string> enc, err;
-    if (!encoding.is_unset()) no_null(enc.emplace(as_str(encoding)->text));
-    if (!errors.is_unset()) no_null(err.emplace(as_str(errors)->text));
+    if (!encoding.is_unset()) no_null(enc.emplace(name_arg(encoding)->text));
+    if (!errors.is_unset()) no_null(err.emplace(name_arg(errors)->text));
     return decode_with(copy, enc ? &*enc : nullptr, err ? &*err : nullptr);
 }
 
@@ -1939,7 +1939,7 @@ void init_bytes() {
 
 // ---- _codecs.py's primitive: the codecs here, by name, and what it keeps of an exception ----
 Ref i_codecs_call(Obj, Args a) {
-    const std::string& name = as_str(a.pos(0))->text;
+    const std::string& name = name_arg(a.pos(0))->text;
     Args r{a.data + 1, a.npos - 1, nullptr, 0};
     if (name == "name_capi") {                   // (): _PyUnicode_GetNameCAPI, before the handler reads its exception
         unicode_name_capi();
@@ -1951,38 +1951,38 @@ Ref i_codecs_call(Obj, Args a) {
     }
     if (name == "decode") {                      // (codec, bytes, errors or None, final): (str, consumed)
         std::string data = bytes_data(r.pos(1));
-        std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
+        std::string errors = r.pos(2) == None() ? "strict" : name_arg(r.pos(2))->text;
         bool final = truth(r.pos(3));
-        const std::string& codec = as_str(r.pos(0))->text;
+        const std::string& codec = name_arg(r.pos(0))->text;
         std::size_t consumed = data.size();
         Ref text = codec == "utf-8" ? decode_utf8(data, errors, final ? nullptr : &consumed)
                  : codec == "ascii" ? decode_ascii(data, errors) : decode_latin1(data);
         return tuple_new({text.get(), Obj::small(static_cast<std::int64_t>(consumed))});
     }
     if (name == "encode") {                      // (codec, str, errors or None): bytes
-        const std::string& codec = as_str(r.pos(0))->text;
-        std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
+        const std::string& codec = name_arg(r.pos(0))->text;
+        std::string errors = r.pos(2) == None() ? "strict" : name_arg(r.pos(2))->text;
         const Str* s = as_str(r.pos(1));
         return bytes_new(codec == "utf-8" ? encode_utf8(s, r.pos(1), errors) : encode_ucs1(s, r.pos(1), codec == "ascii" ? 128 : 256, errors));
     }
     if (name == "decode_wide") {                 // ("utf-16" or "utf-32", bytes, errors or None, byteorder, final): (str, consumed, byteorder)
         std::string data = bytes_data(r.pos(1));
-        std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
+        std::string errors = r.pos(2) == None() ? "strict" : name_arg(r.pos(2))->text;
         int order = static_cast<int>(r.pos(3).small_value());
         bool final = truth(r.pos(4));
         std::size_t consumed = data.size();       // overwritten unless final
-        Ref text = as_str(r.pos(0))->text == "utf-16" ? decode_utf16(data, errors, &order, final ? nullptr : &consumed)
+        Ref text = name_arg(r.pos(0))->text == "utf-16" ? decode_utf16(data, errors, &order, final ? nullptr : &consumed)
                                                       : decode_utf32(data, errors, &order, final ? nullptr : &consumed);
         return tuple_new({text.get(), Obj::small(static_cast<std::int64_t>(consumed)), Obj::small(order)});
     }
     if (name == "encode_wide") {                 // ("utf-16" or "utf-32", str, errors or None, byteorder): bytes
-        std::string errors = r.pos(2) == None() ? "strict" : as_str(r.pos(2))->text;
+        std::string errors = r.pos(2) == None() ? "strict" : name_arg(r.pos(2))->text;
         int order = static_cast<int>(r.pos(3).small_value());
-        return bytes_new(encode_utf_wide(as_str(r.pos(1)), r.pos(1), errors, order, as_str(r.pos(0))->text == "utf-16" ? 2 : 4));
+        return bytes_new(encode_utf_wide(as_str(r.pos(1)), r.pos(1), errors, order, name_arg(r.pos(0))->text == "utf-16" ? 2 : 4));
     }
     if (name == "buffer") return bytes_new(buffer_of(r.pos(0)));   // PyObject_GetBuffer: the bytes of a bytes-like object
     if (name == "field") {                       // (exc, name, default): what the exception holds, raw
-        Obj v = exception_field(r.pos(0), as_str(r.pos(1))->text.c_str());
+        Obj v = exception_field(r.pos(0), name_arg(r.pos(1))->text.c_str());
         return Ref::share(v.is_unset() ? r.pos(2) : v);
     }
     if (name == "builtin") {                     // PyCFunction_NewEx(def, NULL, NULL): a built-in function of no module
@@ -1990,7 +1990,7 @@ Ref i_codecs_call(Obj, Args a) {
         setattr(r.pos(0), N("__module__"), None());
         return none_ref();
     }
-    if (name == "refuse") throw NotImplemented(as_str(r.pos(0))->text);
+    if (name == "refuse") throw NotImplemented(name_arg(r.pos(0))->text);
     if (name == "hooks") {                       // (text_encode, text_decode, unknown_handler, start)
         codec_hooks().text_encode = Ref::share(r.pos(0));
         codec_hooks().text_decode = Ref::share(r.pos(1));

@@ -66,7 +66,7 @@ Ref pair(double r, int err) {
 // modf ((fraction, integral), errno), fma takes three
 Ref i_libm(Obj, Args a) {
     positional_only(a, "_libm", 2, 4);
-    const std::string& name = as_str(a.pos(0))->text;
+    const std::string& name = name_arg(a.pos(0))->text;
     double x = float_as_double(a.pos(1));
     errno = 0;
     if (name == "ldexp") {

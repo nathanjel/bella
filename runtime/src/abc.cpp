@@ -69,7 +69,7 @@ std::int64_t reference_hash(Obj obj) {
     } catch (const PyError& e) {
         if (type_of(e.exc.get()) != exception_class("TypeError")) rethrow(e);
         Ref text = str_of(e.exc.get());
-        raise_new("TypeError", "cannot use 'weakref.ReferenceType' as a set element (" + as_str(text.get())->text + ")");
+        raise_new("TypeError", "cannot use 'weakref.ReferenceType' as a set element (" + name_arg(text.get())->text + ")");
     }
 }
 
@@ -85,7 +85,7 @@ Obj reference_type() {
             i_bella_create_builtin(Obj{}, Args{&name, 1, nullptr, 0});
         }
         for (Module* h : hidden_modules())
-            if (as_str(h->name.get())->text == "_weakref") type = dict_get(h->dict, Obj::of(N("ReferenceType")));
+            if (name_arg(h->name.get())->text == "_weakref") type = dict_get(h->dict, Obj::of(N("ReferenceType")));
         if (!is_kind(type, Kind::Class)) throw NotImplemented("_abc's weak references without _weakref's type");
     }
     return type;

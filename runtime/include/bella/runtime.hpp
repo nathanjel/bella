@@ -870,6 +870,7 @@ StackValues(L&...) -> StackValues<sizeof...(L)>;
 Ref str_new(std::string_view utf8);                          // a new (counted) str
 Ref str_from_codepoints(std::u32string_view cps);
 const Str* as_str(Obj v);                                    // nullptr unless a str
+const Str* name_arg(Obj v);                                  // a str, or the program stops by name: for a primitive's own arguments (RL-1033)
 Ref str_of(Obj v);                                           // str(v)
 Ref repr_of(Obj v);                                          // repr(v)
 

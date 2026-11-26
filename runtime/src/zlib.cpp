@@ -169,7 +169,7 @@ std::int64_t put(std::unique_ptr<ZHandle> h) {
 }  // namespace
 
 Ref i_zlib(Obj, Args a) {                         // _zlib(name, ...)
-    const std::string& name = as_str(a.pos(0))->text;
+    const std::string& name = name_arg(a.pos(0))->text;
     if (name == "version") {
         Ref compiled = str_new(ZLIB_VERSION), runtime = str_new(zlibVersion());
         return tuple_new({compiled.get(), runtime.get()});

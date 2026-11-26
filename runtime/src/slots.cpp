@@ -145,7 +145,7 @@ Ref type_ror_slot(Obj self, Args a) { wrapper_args(a, "__ror__", 1); return type
 // str's own: its text, whatever a subclass says
 Ref str_repr_slot(Obj self, Args a) { wrapper_args(a, "__repr__", 0); return str_new(str_repr_of(as_str(self))); }
 Ref str_hash_slot(Obj self, Args a) { wrapper_args(a, "__hash__", 0); return int_from_i64(str_hash(as_str(self))); }
-Ref str_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int_from_i64(static_cast<std::int64_t>(as_str(self)->length)); }
+Ref str_len_slot(Obj self, Args a) { wrapper_args(a, "__len__", 0); return int_from_i64(static_cast<std::int64_t>(name_arg(self)->length)); }
 Ref str_iter_slot(Obj self, Args a) { wrapper_args(a, "__iter__", 0); return own(new Iterator(Iterator::StrIt, self)); }
 Ref str_contains_slot(Obj self, Args a) { wrapper_args(a, "__contains__", 1); return Ref::steal(boolean(str_contains(self, a.pos(0)))); }
 Ref str_getitem_slot(Obj self, Args a) { wrapper_args(a, "__getitem__", 1); return str_subscript(self, a.pos(0)); }

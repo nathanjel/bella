@@ -1,0 +1,301 @@
+"""Sixty classes, each written out and derived from the one before (review F48, RL-1039)."""
+
+
+class E0:
+    def depth(self) -> int:
+        return 0
+
+
+class E1(E0):
+    def depth(self) -> int:
+        return 1
+
+
+class E2(E1):
+    def depth(self) -> int:
+        return 2
+
+
+class E3(E2):
+    def depth(self) -> int:
+        return 3
+
+
+class E4(E3):
+    def depth(self) -> int:
+        return 4
+
+
+class E5(E4):
+    def depth(self) -> int:
+        return 5
+
+
+class E6(E5):
+    def depth(self) -> int:
+        return 6
+
+
+class E7(E6):
+    def depth(self) -> int:
+        return 7
+
+
+class E8(E7):
+    def depth(self) -> int:
+        return 8
+
+
+class E9(E8):
+    def depth(self) -> int:
+        return 9
+
+
+class E10(E9):
+    def depth(self) -> int:
+        return 10
+
+
+class E11(E10):
+    def depth(self) -> int:
+        return 11
+
+
+class E12(E11):
+    def depth(self) -> int:
+        return 12
+
+
+class E13(E12):
+    def depth(self) -> int:
+        return 13
+
+
+class E14(E13):
+    def depth(self) -> int:
+        return 14
+
+
+class E15(E14):
+    def depth(self) -> int:
+        return 15
+
+
+class E16(E15):
+    def depth(self) -> int:
+        return 16
+
+
+class E17(E16):
+    def depth(self) -> int:
+        return 17
+
+
+class E18(E17):
+    def depth(self) -> int:
+        return 18
+
+
+class E19(E18):
+    def depth(self) -> int:
+        return 19
+
+
+class E20(E19):
+    def depth(self) -> int:
+        return 20
+
+
+class E21(E20):
+    def depth(self) -> int:
+        return 21
+
+
+class E22(E21):
+    def depth(self) -> int:
+        return 22
+
+
+class E23(E22):
+    def depth(self) -> int:
+        return 23
+
+
+class E24(E23):
+    def depth(self) -> int:
+        return 24
+
+
+class E25(E24):
+    def depth(self) -> int:
+        return 25
+
+
+class E26(E25):
+    def depth(self) -> int:
+        return 26
+
+
+class E27(E26):
+    def depth(self) -> int:
+        return 27
+
+
+class E28(E27):
+    def depth(self) -> int:
+        return 28
+
+
+class E29(E28):
+    def depth(self) -> int:
+        return 29
+
+
+class E30(E29):
+    def depth(self) -> int:
+        return 30
+
+
+class E31(E30):
+    def depth(self) -> int:
+        return 31
+
+
+class E32(E31):
+    def depth(self) -> int:
+        return 32
+
+
+class E33(E32):
+    def depth(self) -> int:
+        return 33
+
+
+class E34(E33):
+    def depth(self) -> int:
+        return 34
+
+
+class E35(E34):
+    def depth(self) -> int:
+        return 35
+
+
+class E36(E35):
+    def depth(self) -> int:
+        return 36
+
+
+class E37(E36):
+    def depth(self) -> int:
+        return 37
+
+
+class E38(E37):
+    def depth(self) -> int:
+        return 38
+
+
+class E39(E38):
+    def depth(self) -> int:
+        return 39
+
+
+class E40(E39):
+    def depth(self) -> int:
+        return 40
+
+
+class E41(E40):
+    def depth(self) -> int:
+        return 41
+
+
+class E42(E41):
+    def depth(self) -> int:
+        return 42
+
+
+class E43(E42):
+    def depth(self) -> int:
+        return 43
+
+
+class E44(E43):
+    def depth(self) -> int:
+        return 44
+
+
+class E45(E44):
+    def depth(self) -> int:
+        return 45
+
+
+class E46(E45):
+    def depth(self) -> int:
+        return 46
+
+
+class E47(E46):
+    def depth(self) -> int:
+        return 47
+
+
+class E48(E47):
+    def depth(self) -> int:
+        return 48
+
+
+class E49(E48):
+    def depth(self) -> int:
+        return 49
+
+
+class E50(E49):
+    def depth(self) -> int:
+        return 50
+
+
+class E51(E50):
+    def depth(self) -> int:
+        return 51
+
+
+class E52(E51):
+    def depth(self) -> int:
+        return 52
+
+
+class E53(E52):
+    def depth(self) -> int:
+        return 53
+
+
+class E54(E53):
+    def depth(self) -> int:
+        return 54
+
+
+class E55(E54):
+    def depth(self) -> int:
+        return 55
+
+
+class E56(E55):
+    def depth(self) -> int:
+        return 56
+
+
+class E57(E56):
+    def depth(self) -> int:
+        return 57
+
+
+class E58(E57):
+    def depth(self) -> int:
+        return 58
+
+
+class E59(E58):
+    def depth(self) -> int:
+        return 59

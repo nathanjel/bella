@@ -1063,7 +1063,7 @@ Ref i_unicode_upper(Obj, Args a) { return int_from_i64(sre_upper_unicode(static_
 }  // namespace
 
 Ref i_sre_call(Obj, Args a) {                    // _sre_call(name, ...)
-    const std::string& name = as_str(a.pos(0))->text;
+    const std::string& name = name_arg(a.pos(0))->text;
     Args rest{a.data + 1, a.npos - 1, nullptr, 0};
     if (name == "run") return i_run(Obj{}, rest);
     if (name == "slice") return i_slice(Obj{}, rest);
