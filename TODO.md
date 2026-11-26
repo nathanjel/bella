@@ -731,6 +731,43 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   of `hashlib`, closing that part of deviation D-20 (review log D-6, option 2). When a target
   program needs either; then add a case, narrow D-20, and record it in `docs/DECISIONS.md`.
 
+## Open from review F48 (2026-11-26)
+
+Review F48 (`docs/reviews/2026-11-26-claude-fable-48-review.md`, RL-958 to RL-1101) went through Questions 33 to 48 and the
+code of 2026-11-24 and 25. Its rows are in the log with their verdicts; nothing is built on a decision it shook until the
+author has seen the measurement. In this order:
+
+* **Defects that end a program or lose its data, first.** RL-1033 (a module name that is no str: SIGSEGV in the import
+  system's primitives; sweep every unchecked `as_str(...)->` of `runtime/src` as the class), RL-1070 (handlers given to
+  `os.register_at_fork` are never let go of at the exit, so with `from logging import ...` and a filter or handler of the
+  program's own, the main module's globals are not finalised and a file left open stays empty), RL-1039 (making a class
+  with a deep chain of bases takes time doubling with each level).
+* **The decisions to put back to the author**, one question a message, each with its measurement: Question 48's recount
+  (RL-1032 to RL-1036, RL-1090); Question 38 (RL-979 to RL-984; do not build the queued step as worded); Question 44 and
+  D-19 (RL-1011 to RL-1014); Question 46 and `del __builtins__` (RL-1019 to RL-1021); Question 39 and D-07 (RL-985 to
+  RL-990, RL-1071, RL-1072); Question 37 and D-03 (RL-972 to RL-978); Questions 35 and 41 (RL-966, RL-967, RL-998 to
+  RL-1001); Question 45 and E-05 (RL-1015 to RL-1018); Questions 33 and 34 (RL-958 to RL-964); Question 40 (RL-991 to
+  RL-997); Question 47 and D-33 (RL-1024 to RL-1031, RL-1065 to RL-1069); what D-17 says of frames CPython enters with
+  no check of the limit (RL-980).
+* **A str subclass with methods of its own as a name** (RL-1099, with RL-954 and RL-955): put RL-954's question first, as
+  one decision for the class wherever the runtime takes a name, with a count of use, before RL-955's sweep.
+* **The other defects**, each with a sweep of its class kept as a test: RL-1037 (`fromhex` on a subclass), RL-1043 (a class
+  with no MRO as a base), RL-1044 (`__firstlineno__` after `__module__` is assigned), RL-1052 (`dir(x)` and a name's
+  `__lt__`), RL-1053 (`__qualname__` inside a generator expression), RL-1054 (`repr` of a class without a module),
+  RL-1057 (the import system's warnings and their stack level), RL-1058 and RL-1063 (lines of the frames table),
+  RL-1059 (two functions of the prelude are 3.14's text), RL-1060 (an argument error names the code object's qualname),
+  RL-1075 (`maxsplit` converted before an unknown keyword is refused), RL-1012 (a traceback entry's own hold), RL-1013,
+  RL-1025, RL-1040, RL-1048 to RL-1050, RL-1062, RL-1065 to RL-1068, RL-1094, RL-965, RL-992.
+* **Tests that do not hold what they say** (RL-1055, RL-1067, RL-1076 to RL-1078, RL-1026, RL-1042, RL-1051): the A46
+  sweep first (it must fail on `<absent>` on CPython's side and reach each function where CPython defines it).
+* **Cost** (RL-1082 to RL-1087): a missed attribute read throws three times (22 microseconds against CPython's 0.1; the
+  design says it never throws); the names table searched at every first store of an attribute; start-up's interning.
+* **The queue's order and the stack** (RL-1097, RL-1098, RL-1004, RL-1005): one ordered list with the gate's items
+  first; the measuring half of the stack analysis before Question 30's step.
+* **The records** (the rows whose status is "Open (the records)"): corrected with the step that touches each.
+* The review worktree (`../bella-r48`) keeps the reviewers' probes until the fixes' tests have taken their rows; then its
+  probes are read through as the log's last section says, and it goes.
+
 ## Open from reviews S22 and A22 (2026-11-19)
 
 The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-454 to RL-522). Left after the round's commit:
@@ -842,7 +879,9 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   runs (its path finder, its module locks, its reading of the code), D-33 for what one thread sees of the locks (spec
   v0.42; RL-950), and the fourteen names of the lock machinery stop with D-33's words (`ABSENT_BY_ENTRY`, call.cpp);
   `pipeline/tests/test_module_locks.py` holds it. CPython's locks themselves go with the threads milestone (Later).
-* **Question 48: the code objects of the functions the closed world rewrote (RL-948's remainder; put to the author 2026-11-25).** 27
+* **Question 48: the code objects of the functions the closed world rewrote (RL-948's remainder; put to the author 2026-11-25;
+  answered A on 2026-11-26, and held: review F48 found the count wrong, 33 functions and not 25, with more beside it
+  (RL-1032 to RL-1036, RL-1090): the corrected facts go back to the author before D-34 is written).** 27
   of the 149 code objects that the functions of `runtime/prelude/bootstrap_frames.json` reach have the rewrite's locals
   where CPython's have its text's (`co_varnames`, `co_nlocals`, `_setup`'s `co_argcount`; [P1] under E-02): the path
   finders and `_install` (11), the bytecode cache (7), the extension loaders (2), what needs `importlib.metadata` or
