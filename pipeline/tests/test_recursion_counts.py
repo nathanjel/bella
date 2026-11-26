@@ -7,11 +7,18 @@ helper of a comprehension and the functions of the preludes that stand for C fun
 depth CPython reaches. Review A29 found it for four shapes; the counter counts the frames CPython has now
 (`FrameGuard`: a frame that is not shown takes the look at the native stack and no count).
 
-The sweep recurses through 53 shapes, one call of the program's own function a level, under limits of 60 and 150, twice
-each, and prints the count at the RecursionError: a process for each row, compiled against CPython. One row is not
-compared: a class called with a Python `__init__`. CPython's specialised instruction for that call pushes a second
-frame, so it counts two entries a level, and one more on the calls made before the instruction specialises (29, then
-28); a compiled program counts one (RL-639, open).
+The sweep recurses through 69 shapes, one call of the program's own function a level, under limits of 60 and 150, twice
+each, and prints the count at the RecursionError: a process for each row, compiled against CPython.
+
+Three rows differ, as D-17 registers (the author's decision of 2026-11-26, Question 38 put again: one entry everywhere;
+RL-639, RL-979): a class's call that CPython's specialised instruction serves. That instruction pushes a second frame, so
+CPython counts two entries a level, and one on the calls made before it specialises (29, then 28); a compiled program
+counts one. CPython serves a call written with positional arguments only, of a class whose metaclass is `type` and whose
+`__new__` is `object`'s, entering an `__init__` written in Python without `*args`, `**kwargs` or a keyword-only parameter
+(`Python/specialize.c`, `specialize_class_call`): the rows `__init__` and `__init__ with a default left out`, and in part
+`__init__ at a site that calls two classes`. Fifteen more rows are class calls it does not serve, which take one entry on
+both sides and are compared. A row of `REGISTERED` must differ, and never by the compiled count being the smaller: one
+that comes to agree is to leave the set.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_recursion_counts
 """
@@ -29,6 +36,7 @@ from pipeline.build import build
 SWEEP = r'''
 """How many calls of a program's own function fit under a recursion limit, when each level goes through something that
 is no Python frame in CPython: a function written in C, a descriptor, a comprehension. One row a process (argv[1])."""
+import abc
 import collections
 import functools
 import itertools
@@ -299,6 +307,120 @@ class Newer:
         return Newer()
 
 
+# ---- a class's call that enters a Python `__init__`: CPython takes a second entry only where its specialised instruction
+# serves the call (`Made` above); each of these it does not serve (D-17; Question 38, RL-979)
+
+ARGS: tuple[int, ...] = (1,)
+KW: dict[str, int] = {"x": 1}
+
+
+class Keyed:
+    def __init__(self, x: int = 0) -> None:
+        count()
+        Keyed(x=1)
+
+
+class Starred:
+    def __init__(self, x: int = 0) -> None:
+        count()
+        Starred(*ARGS)
+
+
+class Doubled:
+    def __init__(self, x: int = 0) -> None:
+        count()
+        Doubled(**KW)
+
+
+class Defaulted:
+    def __init__(self, x: int = 0) -> None:
+        count()
+        Defaulted()
+
+
+class VarInit:
+    def __init__(self, *args: int) -> None:
+        count()
+        VarInit(1)
+
+
+class KwInit:
+    def __init__(self, **kwargs: int) -> None:
+        count()
+        KwInit()
+
+
+class OnlyInit:
+    def __init__(self, *, k: int = 0) -> None:
+        count()
+        OnlyInit()
+
+
+class Failure(Exception):
+    def __init__(self) -> None:
+        count()
+        Failure()
+
+
+class Listed(list[int]):
+    def __init__(self) -> None:
+        count()
+        Listed()
+
+
+class Mapped(dict[str, int]):
+    def __init__(self) -> None:
+        count()
+        Mapped()
+
+
+class Worded(str):
+    def __init__(self) -> None:
+        count()
+        Worded()
+
+
+class Both:
+    def __new__(cls) -> "Both":
+        return super().__new__(cls)
+
+    def __init__(self) -> None:
+        count()
+        Both()
+
+
+class Meta(type):
+    pass
+
+
+class Under(metaclass=Meta):
+    def __init__(self) -> None:
+        count()
+        Under()
+
+
+class Abstract(abc.ABC):
+    def __init__(self) -> None:
+        count()
+        Abstract()
+
+
+class ByType:
+    def __init__(self) -> None:
+        count()
+        type.__call__(ByType)
+
+
+class Two:
+    def __init__(self, other: "type[Two]") -> None:
+        count()
+        other(type(self))
+
+
+class TwoMore(Two):
+    pass
+
+
 class Sub:
     def __init_subclass__(cls) -> None:
         count()
@@ -330,6 +452,13 @@ ROWS = {
     "__index__": lambda: operator.index(Shapes()), "with": lambda: Shapes().__enter__(), "__add__": lambda: Shapes() + 1,
     "__neg__": lambda: -Shapes(), "a descriptor's __get__": lambda: Holder().attr, "__init__": Made, "__new__": Newer,
     "__init_subclass__": lambda: type("First", (Sub,), {}), "yield from": lambda: list(go_yield_from()),  # type: ignore[call-overload]
+    "a class called with a keyword": lambda: Keyed(x=1), "a class called with *args": lambda: Starred(*ARGS),
+    "a class called with **kwargs": lambda: Doubled(**KW),
+    "__init__ with a default left out": Defaulted, "__init__ with *args": VarInit, "__init__ with **kwargs": KwInit,
+    "__init__ with a keyword-only parameter": OnlyInit, "__init__ of an Exception subclass": Failure,
+    "__init__ of a list subclass": Listed, "__init__ of a dict subclass": Mapped, "__init__ of a str subclass": Worded,
+    "__new__ and __init__": Both, "__init__ under a metaclass": Under, "__init__ of an abc.ABC subclass": Abstract,
+    "__init__ through type.__call__": lambda: type.__call__(ByType), "__init__ at a site that calls two classes": lambda: Two(TwoMore),
 }
 
 
@@ -358,7 +487,13 @@ if __name__ == "__main__":
             print(label)
 '''
 
-NOT_COMPARED = {"__init__"}                      # RL-639: CPython's own count there is its specialiser's
+# D-17: CPython's specialised class call takes a second entry (Question 38, 2026-11-26: A)
+REGISTERED = {"__init__", "__init__ with a default left out", "__init__ at a site that calls two classes"}
+
+
+def counts(stdout: str) -> list[int]:
+    return [int(x) for x in stdout.strip().rsplit("[", 1)[1].rstrip("]").split(",")]
+
 
 
 def test_the_recursion_limit_counts_the_frames_cpython_has() -> None:
@@ -372,7 +507,7 @@ def test_the_recursion_limit_counts_the_frames_cpython_has() -> None:
         listed = subprocess.run([sys.executable, str(program)], capture_output=True, text=True, env=env, cwd=folder, timeout=300)
         assert listed.returncode == 0, listed.stderr
         labels = listed.stdout.splitlines()
-        assert len(labels) == 53 and NOT_COMPARED <= set(labels), labels
+        assert len(labels) == 69 and REGISTERED <= set(labels), labels
         binary = str(build(program, "prog.py", notes=False))
         wrong: list[str] = []
         for label in labels:                     # a process for each row: one that ends takes no other with it
@@ -380,7 +515,13 @@ def test_the_recursion_limit_counts_the_frames_cpython_has() -> None:
                      for command in ([sys.executable, str(program)], [binary])]
             reference, compiled = sides
             assert reference.returncode == 0 and reference.stdout.startswith(label + " | ["), (label, reference)
-            if label not in NOT_COMPARED and (compiled.returncode, compiled.stdout) != (reference.returncode, reference.stdout):
+            if label in REGISTERED:
+                if compiled.returncode != 0 or compiled.stdout == reference.stdout:
+                    wrong.append(f"{label}: compiled {compiled.stdout.strip()!r} (status {compiled.returncode}) agrees with CPython or fails: "
+                                 "take it out of REGISTERED")
+                elif not all(c >= r for c, r in zip(counts(compiled.stdout), counts(reference.stdout), strict=True)):
+                    wrong.append(f"{label}: compiled {compiled.stdout.strip()!r} reaches less than CPython {reference.stdout.strip()!r}")
+            elif (compiled.returncode, compiled.stdout) != (reference.returncode, reference.stdout):
                 wrong.append(f"{label}: compiled {compiled.stdout.strip()!r} (status {compiled.returncode}, {compiled.stderr.strip()[-200:]!r}), "
                              f"CPython {reference.stdout.strip()!r}")
         assert not wrong, "\n".join(wrong)

@@ -744,7 +744,7 @@ author has seen the measurement. In this order:
   program's own, the main module's globals are not finalised and a file left open stays empty), RL-1039 (making a class
   with a deep chain of bases takes time doubling with each level).
 * **The decisions to put back to the author**, one question a message, each with its measurement: Question 48's recount
-  (RL-1032 to RL-1036, RL-1090); Question 38 (RL-979 to RL-984; do not build the queued step as worded); Question 44 and
+  (RL-1032 to RL-1036, RL-1090); ~~Question 38~~ (answered A on 2026-11-26: D-17, spec v0.43; RL-980 and RL-983 are the next question); Question 44 and
   D-19 (RL-1011 to RL-1014); Question 46 and `del __builtins__` (RL-1019 to RL-1021); Question 39 and D-07 (RL-985 to
   RL-990, RL-1071, RL-1072); Question 37 and D-03 (RL-972 to RL-978); Questions 35 and 41 (RL-966, RL-967, RL-998 to
   RL-1001); Question 45 and E-05 (RL-1015 to RL-1018); Questions 33 and 34 (RL-958 to RL-964); Question 40 (RL-991 to
@@ -782,12 +782,10 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   prints, per row, the sorted tags of what its finalisers wrote (which objects are finalised; `warnings` and
   `gc_callbacks` none), recorded again from CPython; with BELLA_CASE_STEPS set it prints all they wrote in order, which
   `pipeline/tests/test_exit_steps.py` compares under CPython and compiled (the runtime's choice: CPython's order).
-* **A class's call that enters a Python `__init__` takes two entries of the recursion limit (the author, Question 38,
-  2026-11-24: B; RL-639; D-17 and spec v0.34; DECISIONS).** As CPython's `CALL_ALLOC_AND_ENTER_INIT` does once a site is
-  specialised (its shim frame and `__init__`'s). Case first: the row `__init__` of `pipeline/tests/test_recursion_counts.py`
-  (`NOT_COMPARED` today) compared from a site's third call on, with a control that its first calls differ by CPython's
-  warm-up (D-17's words); measured on the day, limit 60 run twice: CPython 30 then 29, compiled 58 and 58 (29 and 29 once it
-  counts two). The import system's frames and the warm-up stay as D-17's words say. RL-883's wording is done (v0.34).
+* ~~**A class's call that enters a Python `__init__` takes two entries of the recursion limit (Question 38, 2026-11-24: B).**~~
+  Dropped 2026-11-26: put again after review F48 (RL-979), the author answered A: one entry everywhere, D-17 names where
+  CPython takes a second (spec v0.43; `pipeline/tests/test_recursion_counts.py` holds fifteen class calls that agree and
+  three that are registered).
 * **A comprehension's helper is a variable of the enclosing frame until the frame ends (left of RL-882; low).** CPython's
   function object for a comprehension is a temporary: made, called, let go of (a generator keeps its own). The helper the
   frontend defines stays bound under its generated name, with the cells it closes over, so what a frame lets go of at
