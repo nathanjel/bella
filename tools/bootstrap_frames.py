@@ -8,8 +8,11 @@ counts and a frame object of the module being imported keeps through `f_back`. T
 so: for each function of the two preludes that CPython's Lib/importlib/_bootstrap.py or _bootstrap_external.py defines
 under the same qualified name, the file CPython's frame names and, for every line of the function in the prelude, the line
 of CPython's text it is. The prelude's text is CPython's but where a line says `bella:` (the closed world), so most lines
-are found as they are; a line the closed world rewrote is given the first line of CPython's text it stands for, and a line
-whose CPython line that would not find says so itself with a trailing `# cpython: N`.
+are found as they are. A line the closed world rewrote, and a line of the prelude's own, says which line of CPython's text
+it is with a trailing `# cpython: N`, and the tool fails on one that does not (review F48, RL-1058): the first line of
+the stretch it replaces, which the table gave such a line before, was CPython's line for some and not for others, and a
+check that regenerates by the same rule could not tell them apart. A refusal says nothing: the program stops there, so
+no frame of it is seen.
 
     python tools/bootstrap_frames.py            write runtime/prelude/bootstrap_frames.json
     python tools/bootstrap_frames.py --check    fail if it is not what the preludes and the pinned CPython give
@@ -54,9 +57,17 @@ def functions(text: str) -> dict[str, list[tuple[int, int]]]:
     return out
 
 
-def line_map(ours: list[str], first: int, theirs: list[str], their_first: int) -> list[list[int]]:
-    """[prelude line, CPython line] for each line of the function: equal lines as they are, a rewritten stretch the first line
-    of CPython's it replaces, lines CPython has not the line before them, an override where the prelude gives one."""
+def stated(line: str) -> bool:
+    """Whether a line the closed world rewrote needs no CPython line of its own: a blank or a comment, a refusal, or one
+    that states it."""
+    text = line.strip()
+    return not text or text.startswith("#") or text.startswith("_bella_refuse(") or OVERRIDE.search(line) is not None
+
+
+def line_map(ours: list[str], first: int, theirs: list[str], their_first: int, unstated: list[int]) -> list[list[int]]:
+    """[prelude line, CPython line] for each line of the function: equal lines as they are, a rewritten line or one of the
+    prelude's own the line it states (the first line of the stretch it replaces, or the line before it, until then: the line
+    is put in `unstated`)."""
     plain = [OVERRIDE.sub("", line).strip() for line in ours]
     sm = difflib.SequenceMatcher(None, plain, [line.strip() for line in theirs], autojunk=False)
     lines: list[list[int]] = []
@@ -64,10 +75,10 @@ def line_map(ours: list[str], first: int, theirs: list[str], their_first: int) -
         for k in range(i1, i2):
             if tag == "equal":
                 to = j1 + (k - i1)
-            elif tag == "replace":
-                to = j1
-            else:                                # lines of the prelude's own: the CPython line before them
-                to = max(j1 - 1, 0)
+            else:
+                to = j1 if tag == "replace" else max(j1 - 1, 0)
+                if not stated(ours[k]):
+                    unstated.append(first + k)
             lines.append([first + k, their_first + to])
     for pair in lines:
         if m := OVERRIDE.search(ours[pair[0] - first]):
@@ -75,7 +86,7 @@ def line_map(ours: list[str], first: int, theirs: list[str], their_first: int) -
     return lines
 
 
-def table() -> dict[str, object]:
+def table(unstated: list[str]) -> dict[str, object]:
     if ".".join(map(str, sys.version_info[:3])) != VERSION:
         raise SystemExit(f"bootstrap_frames: CPython {VERSION} is the pin; this is {sys.version.split()[0]}")
     lib = Path(importlib.__file__).resolve().parent
@@ -100,7 +111,9 @@ def table() -> dict[str, object]:
                 cstart, cend = max(free, key=lambda span: difflib.SequenceMatcher(
                     None, mine, [line.strip() for line in text_of[span[0] - 1:span[1]]], autojunk=False).ratio())
                 free.remove((cstart, cend))
-                lines += line_map(ours[start - 1:end], start, text_of[cstart - 1:cend], cstart)
+                missing: list[int] = []
+                lines += line_map(ours[start - 1:end], start, text_of[cstart - 1:cend], cstart, missing)
+                unstated += [f"runtime/prelude/{prelude}:{at} ({qualname}): {ours[at - 1].strip()}" for at in missing]
                 if not free:
                     break
             rows[qualname] = {"file": FILES[found], "lines": lines}
@@ -109,7 +122,12 @@ def table() -> dict[str, object]:
 
 
 def main(argv: list[str]) -> int:
-    made = json.dumps(table(), indent=None, separators=(",", ":"), sort_keys=True) + "\n"
+    unstated: list[str] = []
+    made = json.dumps(table(unstated), indent=None, separators=(",", ":"), sort_keys=True) + "\n"
+    if unstated:
+        print("bootstrap_frames: a line the closed world rewrote does not say which line of CPython's text it is "
+              "(a trailing `# cpython: N`):", *unstated, sep="\n  ", file=sys.stderr)
+        return 1
     if argv[1:] == ["--check"]:
         if not TABLE.exists() or TABLE.read_text(encoding="utf-8") != made:
             print("bootstrap_frames: runtime/prelude/bootstrap_frames.json is not what the preludes and CPython give; "

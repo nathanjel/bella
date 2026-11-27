@@ -1,0 +1,99 @@
+"""The lines of the import system's frames where the closed world rewrote CPython's text (review F48, RL-1058, RL-1063)."""
+import importlib
+import importlib.machinery
+import os
+import sys
+import traceback
+from collections.abc import Callable, Generator
+
+ROUTE = sys.argv[1] if len(sys.argv) > 1 else ""
+
+
+def frozen(entries: list[traceback.FrameSummary]) -> list[tuple[str, int | None]]:
+    """The import system's entries: their function and line."""
+    return [(e.name, e.lineno) for e in entries if e.filename.startswith("<frozen importlib")]
+
+
+def r_cached() -> None:
+    """ModuleSpec.cached's getter calls _get_cached (CPython's line 622), which fails on an origin that is not a str."""
+    spec = importlib.machinery.ModuleSpec("m", None, origin=5)  # type: ignore[arg-type]
+    spec.has_location = True
+    try:
+        print(spec.cached)
+    except AttributeError as e:
+        print("AttributeError at", frozen(traceback.extract_tb(e.__traceback__)))
+
+
+def r_discover() -> None:
+    """PathFinder.discover suspended in its `yield from` (CPython's line 1305), as an exception thrown in shows it. The closed
+    world's finder for a directory yields the modules the program imports from it (D-34): t_found."""
+    import t_found  # noqa: F401
+    sys.path[:] = [os.getcwd()]
+    gen: Generator[object] = importlib.machinery.PathFinder.discover()  # type: ignore[assignment]
+    print("found", next(gen, None) is not None)
+    try:
+        gen.throw(LookupError("thrown in"))
+    except LookupError as e:
+        print("thrown in at", frozen(traceback.extract_tb(e.__traceback__))[:1])
+
+
+class Seen:
+    """Stands in sys.modules for os, which a frozen module imports: the import reads its __spec__; any other name is os's."""
+
+    def __init__(self, real: object) -> None:
+        self.real = real
+        self.stack: list[tuple[str, int | None]] | None = None
+
+    def __getattr__(self, name: str) -> object:
+        if name == "__spec__" and self.stack is None:
+            self.stack = []                  # the stack's lines are read through linecache, which imports os: this again
+            self.stack = frozen(traceback.extract_stack())
+        return getattr(self.real, name)
+
+
+def r_exec() -> None:
+    """A frozen module's body runs in FrozenImporter.exec_module's exec (CPython's line 1095): ntpath's, run again."""
+    print("frozen", importlib.machinery.FrozenImporter.find_spec("ntpath") is not None)
+    real, before = sys.modules["os"], sys.modules.pop("ntpath", None)
+    seen = Seen(real)
+    sys.modules["os"] = seen  # type: ignore[assignment]
+    try:
+        importlib.import_module("ntpath")
+    finally:
+        sys.modules["os"] = real
+        sys.modules.pop("ntpath", None)
+        if before is not None:
+            sys.modules["ntpath"] = before
+    print("exec_module", [line for name, line in seen.stack or [] if name == "exec_module"])
+
+
+class Late:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __del__(self, find: Callable[[str], object] = importlib.import_module, write: Callable[[int, bytes], int] = os.write) -> None:
+        try:
+            find("t_never")
+            write(1, (self.name + ": the import worked\n").encode())
+        except ImportError as e:
+            lines: list[int] = []
+            tb = e.__traceback__
+            while tb is not None:
+                lines.append(tb.tb_lineno)
+                tb = tb.tb_next
+            write(1, (self.name + ": ImportError: " + str(e) + " at lines " + str(lines[1:]) + "\n").encode())
+
+
+if ROUTE == "late":
+    keep = Late("a global of the main module")
+    print("set", flush=True)
+elif ROUTE == "late_cycle":
+    cycle: list[object] = [Late("an object in a cycle")]
+    cycle.append(cycle)
+    print("set", flush=True)
+elif ROUTE == "cached":
+    r_cached()
+elif ROUTE == "discover":
+    r_discover()
+elif ROUTE == "exec":
+    r_exec()

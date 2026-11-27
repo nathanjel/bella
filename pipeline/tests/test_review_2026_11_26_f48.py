@@ -30,6 +30,9 @@ argument list a line), one row a process, compared on standard output, standard 
   `__dict__` (`moduletype`, RL-1094), and `_io._IOBase.__subclasses__()` stops (RL-1025).
 * A failed import's kept traceback entry lets its module's namespace go with the entry's frame (`tbhold`, 10 rows of the q44
   reviewer's, with a package; RL-1012).
+* The import system's frames have CPython's lines where the closed world rewrote its text (`importlines`, 5 rows: the exit's
+  import and `_find_spec`'s raise, `ModuleSpec.cached`'s getter, `PathFinder.discover` suspended, a frozen module's body as
+  a hook sees its stack; RL-1058, RL-1063).
 * An argument by name and position, a second built-in module, a key in a built-in type's dict, a module's class, and
   `dir()`'s sort (`lookups`, 8 rows: RL-965, RL-1013, RL-1048, RL-1050, RL-1052).
 * Five defects of a class's shape and a call's message (`shapes`, 5 rows, each with the neighbours of the reviewer's

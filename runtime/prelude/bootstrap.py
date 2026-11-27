@@ -55,7 +55,7 @@ def _lock_unlock_module(name):
     event it is being imported by another thread.
     """
     # bella: one thread: the lock is free or this thread's own, so taking it waits for nothing
-    return None
+    return None  # cpython: 472
 
 
 def _call_with_frames_removed(f, *args, **kwds):
@@ -196,7 +196,7 @@ class ModuleSpec:
         if self._cached is None:
             if self.origin is not None and self._set_fileattr:
                 # bella: _bootstrap_external's _get_cached, below
-                self._cached = _get_cached(self.origin)
+                self._cached = _get_cached(self.origin)  # cpython: 622
         return self._cached
 
     @cached.setter
@@ -637,7 +637,7 @@ class FrozenImporter:
         spec = module.__spec__
         name = spec.name
         # bella: _imp.get_frozen_object and exec, the module's compiled body
-        _bella_exec(name, module)
+        _bella_exec(name, module)  # cpython: 1095
 
     @classmethod
     @_requires_frozen
@@ -1390,25 +1390,25 @@ class SimpleNamespace:
 
 def _path_split(path):
     """Replacement for os.path.split()."""
-    i = path.rfind('/')  # bella: path_separators is '/' on the targets (posix)
+    i = path.rfind('/')  # bella: path_separators is '/' on the targets (posix)  # cpython: 139
     if i < 0:
         return '', path
     return path[:i], path[i + 1:]
 
 
-def cache_from_source(path):
+def cache_from_source(path):  # cpython: 239
     # bella: _bootstrap_external's, for _get_cached below: sys.implementation.cache_tag is None (D-16), so a compiled
     # program has no bytecode cache to name. The module's own function, with CPython's parameters, is bootstrap_external.py's
     raise NotImplementedError('sys.implementation.cache_tag is None')
 
 
 def _get_cached(filename):
-    if filename.endswith('.py'):  # bella: SOURCE_SUFFIXES
+    if filename.endswith('.py'):  # bella: SOURCE_SUFFIXES  # cpython: 359
         try:
             return cache_from_source(filename)
         except NotImplementedError:
             pass
-    elif filename.endswith('.pyc'):
+    elif filename.endswith('.pyc'):  # cpython: 364
         return filename
     else:
         return None
@@ -1437,7 +1437,7 @@ class _LoaderBasics:
         # bella: CPython gets the code (get_code(module.__name__), which checks the name) and execs
         # it in module.__dict__; a compiled program runs the module's compiled body there, through
         # _call_with_frames_removed as CPython's exec does (its frame is on the stack: C-8-22)
-        self.get_filename(module.__name__)
+        self.get_filename(module.__name__)  # cpython: 747
         _call_with_frames_removed(_bella_exec, self.name, module)  # cpython: 751
 
 
@@ -1624,17 +1624,17 @@ def _spec_from_compiled(name):
 def _find_spec(name, path, target=None):
     """Find a module's spec."""
     # bella: the closed world's registry stands for sys.meta_path's finders (spec section 8)
-    if _bella_shutting_down():
+    if _bella_shutting_down():  # cpython: 1143
         # CPython: sys.meta_path is None once finalize_modules has begun
-        raise ImportError("sys.meta_path is None, Python is likely shutting down")
+        raise ImportError("sys.meta_path is None, Python is likely shutting down")  # cpython: 1144
 
     # We check sys.modules here for the reload case.  While a passed-in
     # target will usually indicate a reload there is no guarantee, whereas
     # sys.modules provides one.
     is_reload = name in sys.modules
-    spec = BuiltinImporter.find_spec(name, path, target)
-    if spec is None:
-        spec = _spec_from_compiled(name)
+    spec = BuiltinImporter.find_spec(name, path, target)  # cpython: 1164
+    if spec is None:  # cpython: 1157
+        spec = _spec_from_compiled(name)  # cpython: 1164
     if spec is not None:
         # The parent import may have already imported this module.
         if not is_reload and name in sys.modules:
@@ -1868,7 +1868,7 @@ def _gcd_import(name, package=None, level=0):
     the loader did not.
 
     """
-    _bella_plain_name(name)  # bella: a name whose class overrides a method of str stops the program (E-04)
+    _bella_plain_name(name)  # bella: a name whose class overrides a method of str stops the program (E-04)  # cpython: 1386
     _sanity_check(name, package, level)
     if level > 0:
         name = _resolve_name(name, package, level)
@@ -1945,7 +1945,7 @@ def _exec(spec, module):
     _bella_refuse("importlib.reload (running a module's body again is import-system customisation, E-04)")
 
 
-def _setup(builtin_names):
+def _setup(builtin_names):  # cpython: 1500
     """Setup importlib by importing needed built-in modules and injecting them
     into the global namespace.
 
@@ -1955,29 +1955,29 @@ def _setup(builtin_names):
     """
     # bella: CPython's _setup is given _imp (`_imp = _imp_module`) and binds _warnings among the modules it loads itself
     # (_builtin_from_name). _imp is this module's from its first line (see there); importing it gives it its spec
-    global _imp, _warnings
-    import _imp
-    import _warnings
+    global _imp, _warnings  # cpython: 1508
+    import _imp  # cpython: 1509
+    import _warnings  # cpython: 1531
     # bella: the part of _setup a compiled program observes: the specs and loaders of the built-in
     # modules the runtime made before this module ran (sys.builtin_module_names among them), and of
     # the import system's two frozen modules (_imp.is_frozen of the others is the registry's)
     module_type = type(sys)
     for name, module in sys.modules.items():
         if isinstance(module, module_type):
-            if name in builtin_names:
+            if name in builtin_names:  # cpython: 1516
                 loader = BuiltinImporter
-            elif name == '_frozen_importlib':
+            elif name == '_frozen_importlib':  # cpython: 1518
                 loader = FrozenImporter
-            elif name == '_frozen_importlib_external':
-                _bella_import_external(module)
-                continue
+            elif name == '_frozen_importlib_external':  # cpython: 1518
+                _bella_import_external(module)  # cpython: 1519
+                continue  # cpython: 1521
             else:
                 continue
             spec = _spec_from_module(module, loader)
             _init_module_attrs(spec, module)
             if loader is FrozenImporter:
                 # bella: FrozenImporter._fix_up_module, which runs before sys._stdlib_dir is known: no file
-                spec.loader_state = SimpleNamespace(filename=None, origname='importlib._bootstrap')
+                spec.loader_state = SimpleNamespace(filename=None, origname='importlib._bootstrap')  # cpython: 1525
 
 
 def _bella_import_external(module):

@@ -763,7 +763,7 @@ author has seen the measurement. In this order:
   2026-11-27: an import by such a name stops (E-04, spec v0.47); RL-954 is excluded, and RL-955 is the import text's
   difference from CPython's, with Question 48 (below).
 * **The other defects**, each with a sweep of its class kept as a test (RL-1037, RL-1044, RL-1054, RL-1060, RL-1075, RL-965,
-  RL-992, RL-1048, RL-1050, RL-1052, RL-1012, RL-1025, RL-1043, RL-1065 to RL-1068 and RL-1094 done 2026-11-27,
+  RL-992, RL-1048, RL-1050, RL-1052, RL-1012, RL-1025, RL-1043, RL-1065 to RL-1068, RL-1094, RL-1058 and RL-1063 done 2026-11-27,
   RL-1013, RL-1040 and RL-1049 to the author; RL-1053, RL-1057, RL-1059 and RL-1062 with the steps before): ~~RL-1037 (`fromhex` on a subclass)~~, RL-1043 (a class
   with no MRO as a base), RL-1044 (`__firstlineno__` after `__module__` is assigned), RL-1052 (`dir(x)` and a name's
   `__lt__`), RL-1053 (`__qualname__` inside a generator expression), RL-1054 (`repr` of a class without a module),
@@ -895,9 +895,9 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   that stop, six of the closed world's own, 32 code objects with the runtime's locals.
 * ~~**The import system's text against CPython's (RL-955 and Question 48's D-34).**~~ Done 2026-11-27: 22 functions are
   CPython's text again, 39 of 149 differ and are listed with their reasons (`pipeline/tests/test_import_text.py`), the
-  sweep of code objects is repaired, `__globals__` of the two modules stops, and D-34 is written (spec v0.49). Left: the
-  three lines of the frames table that are off (RL-1058, RL-1063: `_find_spec`'s two and `ModuleSpec.cached`'s getter;
-  `--check` regenerates by the same rule and cannot see them), and the four source loaders, which live in the first
+  sweep of code objects is repaired, `__globals__` of the two modules stops, and D-34 is written (spec v0.49). The lines of
+  the frames table that were off are CPython's (RL-1058, RL-1063, 2026-11-27: each rewritten line states its line, and the tool
+  fails on one that does not). Left: the four source loaders, which live in the first
   prelude and belong to the second module.
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at

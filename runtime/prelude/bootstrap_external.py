@@ -718,7 +718,7 @@ class NamespacePath:
 
     def _recalculate(self):
         # If the parent's path has changed, recalculate _path
-        parent_path = tuple(self._get_parent_path())  # Make a copy
+        parent_path = tuple(self._get_parent_path()) # Make a copy
         if parent_path != self._last_parent_path or self._epoch != self._last_epoch:
             spec = self._path_finder(self._name, parent_path)
             # Note that no changes are made if a loader is returned, but we
@@ -851,14 +851,14 @@ class PathFinder:
             # bella: the closed world's path entry finder for `entry` (spec section 8; decision of 2026-11-03): the modules the build
             # found in its directory, with the specs an import gives them, where CPython's FileFinder lists the directory and asks its
             # find_spec for each; `_path_importer_cache` and FileFinder's __init__ make the directory absolute as below
-            if entry == '':
-                try:
-                    entry = _os.getcwd()
-                except (FileNotFoundError, PermissionError):
+            if entry == '':  # cpython: 1302
+                try:  # cpython: 1302
+                    entry = _os.getcwd()  # cpython: 1302
+                except (FileNotFoundError, PermissionError):  # cpython: 1302
                     continue
-            directory = _os.getcwd() if entry == '.' else _path_abspath(entry)
-            prefix = f'{parent.name}.' if parent else ''
-            yield from _bella_discover(directory, prefix)
+            directory = _os.getcwd() if entry == '.' else _path_abspath(entry)  # cpython: 1302
+            prefix = f'{parent.name}.' if parent else ''  # cpython: 1304
+            yield from _bella_discover(directory, prefix)  # cpython: 1305
 
     @staticmethod
     def find_distributions(*args, **kwargs):
@@ -941,7 +941,7 @@ class FileFinder:
         # bella: _os.scandir of the directory, for a search the closed world does not make (E-04); a generator, as CPython's
         # is, so nothing is asked of the directory before the first item
         _bella_refuse("FileFinder._find_children (a directory listing for a path finder's search, E-04)")
-        yield
+        yield  # cpython: 1457
 
     def discover(self, parent=None):
         if parent and parent.submodule_search_locations is None:
