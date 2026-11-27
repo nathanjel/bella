@@ -1856,6 +1856,7 @@ def _gcd_import(name, package=None, level=0):
     the loader did not.
 
     """
+    _bella_plain_name(name)  # bella: a name whose class overrides a method of str stops the program (E-04)
     _sanity_check(name, package, level)
     if level > 0:
         name = _resolve_name(name, package, level)

@@ -8,8 +8,9 @@ built once (`prog.py` beside a one-line `sample.py`):
 
 * each of the fourteen names of the lock machinery stops the program with D-33's words, where CPython has the object (`name`);
   a name of `_frozen_importlib`'s that is absent for want of work still says "not yet" (`other`);
-* an import by a name that is a str subclass does not call its `__hash__` in `_get_module_lock` (`hash`), and otherwise imports
-  as CPython does (`plain`);
+* an import by a name whose class overrides `__hash__`, which CPython calls in `_get_module_lock`, stops by name (`hash`: E-04,
+  the author's decision of 2026-11-27, Question 52), and a str subclass that overrides nothing imports as CPython does
+  (`plain`);
 * `_find_and_load` and `_lock_unlock_module` have no local `lock` (`varnames`).
 
 When the threads milestone brings CPython's locks, every row agrees with CPython and D-33 ends; this test then goes.
@@ -46,8 +47,7 @@ class Name(str):
 
 
 class Plain(str):
-    def __hash__(self) -> int:
-        return super().__hash__()
+    pass
 
 
 def include() -> None:
@@ -81,7 +81,8 @@ CPYTHON: dict[tuple[str, ...], tuple[str, list[str], int]] = {
 }
 COMPILED: dict[tuple[str, ...], tuple[str, list[str], int]] = {
     ("other",): ("", ["bella: not implemented: _frozen_importlib._verbose_message (CPython has it; the runtime does not yet)"], 70),
-    ("hash",): ("42\n", [], 0),
+    ("hash",): ("", ["bella: not implemented: an import by a name whose class overrides str's __hash__ (CPython's import system calls "
+                     "the methods of the name it is handed: E-04)"], 70),
     ("plain",): ("42\n", [], 0),
     ("varnames",): ("_find_and_load 5 ('name', 'import_', 'lazy_submodule', 'module', 'message')\n"
                     "_lock_unlock_module 1 ('name',)\n", [], 0),

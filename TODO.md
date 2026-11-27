@@ -758,8 +758,9 @@ author has seen the measurement. In this order:
   module-level container of the preludes that a program's object can reach through the module's functions, each with a
   finaliser's row; then each let go of where CPython lets go of it (`release_state` in `finalize_at_exit`, as the at-fork
   lists are), and sys's dict cleared at the end as `interpreter_clear` does (`Python/pystate.c:924`). About a day.
-* **A str subclass with methods of its own as a name** (RL-1099, with RL-954 and RL-955): put RL-954's question first, as
-  one decision for the class wherever the runtime takes a name, with a count of use, before RL-955's sweep.
+* ~~**A str subclass with methods of its own as a name** (RL-1099, with RL-954 and RL-955).~~ Question 52, answered A on
+  2026-11-27: an import by such a name stops (E-04, spec v0.47); RL-954 is excluded, and RL-955 is the import text's
+  difference from CPython's, with Question 48 (below).
 * **The other defects**, each with a sweep of its class kept as a test: RL-1037 (`fromhex` on a subclass), RL-1043 (a class
   with no MRO as a base), RL-1044 (`__firstlineno__` after `__module__` is assigned), RL-1052 (`dir(x)` and a name's
   `__lt__`), RL-1053 (`__qualname__` inside a generator expression), RL-1054 (`repr` of a class without a module),
@@ -900,17 +901,16 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   `cache_tag` is None (D-16): the whole text runs as it is, so they become CPython's with RL-955's step, whatever the
   answer; the question is about the other 25 (20 refused, 5 rewritten), with RL-957 (`importlib.invalidate_caches()`
   not importing `importlib.metadata`).
-* **The methods of a module name that is a str subclass (review W47: RL-955, then RL-954).** An import by such a name
-  (`__import__`, `importlib.__import__`, a lazy import's first use) calls its methods otherwise than CPython does: measured
-  2026-11-25 for a module found on the path, CPython `__add__` 14, `__hash__` 16, `rpartition` 4, `__ne__` 1, `split` 1;
-  compiled `__hash__` 4, `rpartition` 2, `split` 1, `__repr__` 1. Three sources: the locks (D-33), the path finder (RL-954,
-  the closed world's) and the prelude's own text, which is CPython's and still differs (RL-955: no hash in
-  `_init_module_attrs` or `_load_unlocked`, a `__repr__` in `_find_and_load_unlocked`). First RL-955: find each difference
-  of the prelude's text, make it CPython's, and keep a sweep (a logging subclass over the import routes: a plain import, a
-  package and its submodule, a from-import, a missing module, a body that raises) as a test. Then put RL-954 to the author:
-  register what the finder calls, or refuse an import by a name whose type is a str subclass with methods of its own, as
-  an attribute name of that kind is refused (`call.cpp`, "an attribute name of a subclass of str with a __hash__ or __eq__
-  of its own").
+* **The import system's text against CPython's (RL-955 and Question 48's D-34).** Question 52 (2026-11-27: A) took the calls
+  of a str subclass's methods out of it: such a name stops at the import (E-04). What is left: 60 of the 148 functions the
+  two bootstrap preludes share with CPython's `_bootstrap.py` and `_bootstrap_external.py` differ in text (an AST
+  comparison, 2026-11-26), 33 of them in their code objects' locals. First a test that compares the text function by
+  function, with a table of the functions that may differ and why (a refusal, the closed world's own part, a primitive
+  standing for a native call); then CPython's text wherever it runs as it is (`cache_from_source`, `source_from_cache`,
+  `_write_atomic`, the Windows registry finder, `FrozenImporter.exec_module`'s first lines, the warnings' stack level
+  of RL-1057, `_fix_up_module` and `_bless_my_loader`, which are 3.14's text: RL-1059), the A46 sweep made to reach each
+  function where CPython defines it and to fail on `<absent>` (RL-1032), `__globals__` of the two modules' functions
+  stopped as their namespaces are (RL-1090); then D-34's words, shown to the author with the count.
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
   version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads

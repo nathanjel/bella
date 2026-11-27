@@ -1,0 +1,128 @@
+"""Review F48 (RL-954, RL-955, RL-1099; Question 52: A): an import by a name that is a str subclass, a row a process.
+
+CPython's import system is Python code and calls the methods of the name it is handed. Where it would take the module's
+lock by a name whose class overrides a method of str, a compiled program stops by name (E-04); a subclass that overrides
+none, or only `__new__`, imports as under CPython, and `importlib.import_module` makes an exact str of any name first.
+
+prog.py ENTRY KIND TARGET     TARGET: found (a module beside the program), loaded (one imported before), missing
+"""
+import enum
+import importlib
+import sys
+
+import loaded  # noqa: F401
+
+calls: list[str] = []
+
+
+def closure() -> None:
+    """Never called: the module the rows find is one of the program's."""
+    import sample  # noqa: F401
+
+
+class Plain(str):
+    pass
+
+
+class Made(str):
+    def __new__(cls, text: str) -> "Made":
+        return super().__new__(cls, text.lower())
+
+
+class Extra(str):
+    def shout(self) -> str:
+        return "!"
+
+
+class Hashed(str):
+    def __hash__(self) -> int:
+        calls.append("__hash__")
+        return super().__hash__()
+
+
+class Equal(str):
+    __hash__ = str.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        calls.append("__eq__")
+        return super().__eq__(other)
+
+
+class Added(str):
+    def __add__(self, other: str) -> str:
+        calls.append("__add__")
+        return super().__add__(other)
+
+
+class Parted(str):
+    def rpartition(self, sep: str) -> tuple[str, str, str]:
+        calls.append("rpartition")
+        return super().rpartition(sep)
+
+
+class Upper(str):
+    def upper(self) -> str:
+        calls.append("upper")
+        return super().upper()
+
+
+class Starts(str):
+    def startswith(self, *args: object) -> bool:
+        calls.append("startswith")
+        return super().startswith(*args)  # type: ignore[arg-type]
+
+
+class Repred(str):
+    # not counted: CPython calls it for a message it may never show, and how often depends on its bytecode cache
+    def __repr__(self) -> str:
+        return "Repred(" + super().__repr__() + ")"
+
+
+class Kind(enum.StrEnum):
+    found = "sample"
+    loaded = "loaded"
+    missing = "nosuchmodule"
+
+
+class Hooked(enum.StrEnum):
+    found = "sample"
+    loaded = "loaded"
+    missing = "nosuchmodule"
+
+    def __hash__(self) -> int:
+        calls.append("__hash__")
+        return str.__hash__(self)
+
+
+TEXT = {"found": "sample", "loaded": "loaded", "missing": "nosuchmodule"}
+KINDS: dict[str, type[str]] = {"str": str, "plain": Plain, "made": Made, "extra": Extra, "hashed": Hashed, "equal": Equal, "added": Added,
+                               "parted": Parted, "upper": Upper, "starts": Starts, "repred": Repred}
+
+
+def name_of(kind: str, target: str) -> str:
+    if kind == "strenum":
+        return Kind[target]
+    if kind == "hooked":
+        return Hooked[target]
+    return KINDS[kind](TEXT[target])
+
+
+def main(entry: str, kind: str, target: str) -> None:
+    name = name_of(kind, target)
+    calls.clear()
+    try:
+        if entry == "__import__":
+            module = __import__(name)
+        elif entry == "importlib.__import__":
+            module = importlib.__import__(name)
+        elif entry == "import_module":
+            module = importlib.import_module(name)
+        else:
+            raise SystemExit("no such entry: " + entry)
+    except ImportError as error:
+        print(entry, kind, target, "->", type(error).__name__, type(error.name).__name__, calls)
+        return
+    print(entry, kind, target, "->", module.answer, type(module.__name__).__name__, calls)
+
+
+main(sys.argv[1], sys.argv[2], sys.argv[3])

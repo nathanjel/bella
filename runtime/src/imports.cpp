@@ -1416,6 +1416,28 @@ void refuse_bootstrap_namespace(const Module* m) {
     throw NotImplemented(std::string("the namespace of ") + bootstrap_scope(m) + " as a whole (dir, vars or __dict__: the runtime keeps names of its own "
                          "in it, which CPython's module does not have)");
 }
+// An import by a name whose class overrides a method of str stops the program (E-04; the author's decision of 2026-11-26,
+// Question 52). CPython's import system is Python and calls the methods of the name it is handed (the lock table's
+// `__hash__` and `__eq__`, the path finder's `__add__` and `rpartition`), which a closed world of one thread does not do
+// alike; an exact str, and a subclass that overrides none of str's methods, have nothing a program sees. Two are left
+// out: `__new__` makes the object and no later call reaches it, and `__repr__` the import system's text calls where
+// CPython's does, for the message of a module not found (every StrEnum member has Enum's). `importlib.import_module`
+// makes an exact str of the name first
+void refuse_hooked_name(Obj name) {
+    if (as_str(name) == nullptr || is_exact_str(name)) return;
+    ClassObject* cls = type_of(name);
+    for (auto& [k, v] : types().str->attrs.items()) {
+        if (k->text == "__new__" || k->text == "__repr__" || k->text == "__doc__") continue;
+        if (type_lookup(cls, k) != v)
+            throw NotImplemented("an import by a name whose class overrides str's " + k->text +
+                                 " (CPython's import system calls the methods of the name it is handed: E-04)");
+    }
+}
+Ref i_bella_plain_name(Obj, Args a) {            // the same for the import system's own text (_gcd_import)
+    positional_only(a, "_bella_plain_name", 1, 1);
+    refuse_hooked_name(a.pos(0));
+    return none_ref();
+}
 Ref i_bella_is_builtin(Obj, Args a) {            // one of the runtime's built-in modules: sys and builtins, then the table
     positional_only(a, "_bella_is_builtin", 1, 2);
     if (as_str(a.pos(0)) == nullptr) {           // no str: not among sys.builtin_module_names, and with a function's name given
@@ -1510,6 +1532,7 @@ static Ref import_level(Obj name, Obj globals, Obj fromlist, std::int64_t level)
     if (name.is_unset()) raise_new("ValueError", "Empty module name");
     if (as_str(name) == nullptr) raise_new("TypeError", "module name must be a string");
     if (level < 0) raise_new("ValueError", "level must be >= 0");
+    refuse_hooked_name(name);
     Ref abs_name = absolute_name(name, globals, level);
     Ref mod = get_module(abs_name.get());
     if (!mod.get().is_unset() && mod.get() != None()) {

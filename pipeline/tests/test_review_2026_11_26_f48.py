@@ -37,6 +37,15 @@ And a registered difference that came back (the author's decision of 2026-11-26,
   42 of them under CPython and never compiled (`OWN_MODULES`); for 89 (the modules compiled from Python, which die on both
   sides, and the ones CPython does not free either) the two agree; `marshal` is not ported yet and stops by name.
 
+And an exclusion (the author's decision of 2026-11-27, Question 52: A; RL-954, RL-955, RL-1099):
+
+* An import by a name whose class overrides a method of str stops by name (E-04), where CPython's import system calls the
+  name's methods (`importnames`, 117 rows: `__import__`, `importlib.__import__` and `importlib.import_module`, each handed
+  thirteen kinds of name for a module to be found, one already imported and a missing one). The 42 rows of the first two
+  entries with a name that overrides `__hash__`, `__eq__`, `__add__`, `rpartition`, `upper` or `startswith`, or a StrEnum
+  member that does, stop; an exact str, a subclass that overrides nothing, only `__new__` or only `__repr__` (as every
+  StrEnum member's class does), and every name through `import_module` (which makes an exact str of it first) agree.
+
 A row of `STOPS` must stop with its words, a row of `OPEN` must differ, and a row of `REGISTERED` must give what its entry
 says: one that comes to agree with CPython is to leave its table.
 
@@ -58,12 +67,15 @@ HERE = Path(__file__).resolve().parent / "review_f48"
 
 NOT_COMPILED = "bella: not implemented: executing a module the program does not have compiled"
 KINDS = ("int", "none", "bytes", "float", "list", "tuple", "strsub", "strsub2", "str")
+HOOKED_NAME = "bella: not implemented: an import by a name whose class overrides str's "
 
 # rows where the compiled program stops by name, CPython doing what a compiled program cannot
 STOPS: dict[tuple[str, tuple[str, ...]], str] = {
     **{("entrynames", ("source.exec_module", kind)): NOT_COMPILED for kind in KINDS},
     **{("entrynames", ("frozen.exec_module", kind)): NOT_COMPILED for kind in KINDS if kind != "strsub2"},
     ("ownmodules", ("marshal",)): "bella: not implemented: importing 'marshal' (the standard library: step 3b)",
+    **{("importnames", (entry, kind, target)): HOOKED_NAME for entry in ("__import__", "importlib.__import__")
+       for kind in ("hashed", "equal", "added", "parted", "upper", "starts", "hooked") for target in ("found", "loaded", "missing")},
 }
 # the modules CPython writes in C and frees at the exit, which here live to the end of the process (D-19)
 OWN_MODULES = ("atexit", "binascii", "cmath", "gc", "grp", "pwd", "time", "unicodedata", "zlib", "_bisect", "_blake2",
