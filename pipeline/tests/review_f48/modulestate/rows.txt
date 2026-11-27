@@ -1,0 +1,9 @@
+control
+"dialect copied"
+"dialect kept"
+"dialect replaced"
+"dialect keywords"
+"struct format"
+"struct pack"
+"sys late"
+"sys attribute"

@@ -751,7 +751,8 @@ author has seen the measurement. In this order:
   RL-997); Question 47 and D-33 (RL-1024 to RL-1031, RL-1065 to RL-1069); ~~what D-17 says of frames CPython enters with no check of the limit~~ (Question 49, answered A on 2026-11-26:
   registered, spec v0.44; RL-980); ~~the entries `decimal` and `datetime` take as Python modules~~ (Question 50, answered B on 2026-11-26: their
   frames are none a program sees, D-20 lists the rest, spec v0.45; RL-983).
-* **What only a built-in module's state holds, let go of at the exit (RL-987; the class of RL-1070).** D-07 promises that
+* ~~**What only a built-in module's state holds, let go of at the exit (RL-987; the class of RL-1070).**~~ Done 2026-11-27
+  (`_csv._dialects`, `_struct._cache`, sys's dict cleared last; `modulestate`, 9 rows). D-07 promises that
   which objects are finalised at the exit is CPython's. Measured 2026-11-26: an object with a finaliser given to
   `csv.register_dialect`, a str subclass's object used as a `struct` format (the cache keeps it), and a new object a late
   finaliser stores in sys's dict are finalised under CPython and never compiled. A sweep first, kept as a test: every

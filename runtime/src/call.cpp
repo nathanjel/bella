@@ -3764,10 +3764,18 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own, int& statu
     release_state("_contextvars", {"_current"});
     release_state("_codecs", {"_search_path", "_search_cache", "_error_registry", "_library"});
     release_state("posix", {"_before_forkers", "_after_forkers_parent", "_after_forkers_child"});
+    // a C module's state, which CPython frees with the module (m_clear) and here stays with the immortal module (D-19): what
+    // only it holds of the program's is finalised by the collection after, as D-07 promises (RL-987): the dialects csv keeps
+    // (a subclass of _csv.Dialect is kept as itself) and the formats struct's cache keeps (a str subclass's object as itself)
+    release_state("_csv", {"_dialects"});
+    release_state("_struct", {"_cache"});
     collect_at_exit();
     release_gc_lists();
     release_state("gc", {"garbage", "callbacks"});
     release_state("_warnings", {"filters", "_onceregistry", "_defaultaction", "_state"});
+    // interpreter_clear's last steps: PyDict_Clear(interp->sysdict) (Python/pystate.c:924), after the last collection, so what
+    // a late finaliser stored in sys goes now, by its count (RL-987)
+    dict_clear(sys->dict);
 }
 
 // _Py_HandleSystemExitAndKeyboardInterrupt: the exit status a SystemExit asks for: its `code`

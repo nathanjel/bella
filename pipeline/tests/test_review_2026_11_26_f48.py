@@ -13,6 +13,9 @@ argument list a line), one row a process, compared on standard output, standard 
   them).
 * A class with a long chain of bases is made in time in proportion to it (`basechain`: RL-1039; a chain of 300, a ladder of
   40 diamonds, 60 class statements, and what `__base__` is with slots and built-in bases).
+* What only a built-in module's state holds of the program's is finalised at the exit (`modulestate`: RL-987, the class of
+  RL-1070): a subclass of `_csv.Dialect` kept by `csv.register_dialect`, a str subclass's object kept by struct's cache,
+  and what the program or a late finaliser stored in sys, which CPython lets go of when it clears sys's dict last.
 
 * What is made inside a generator expression is named `<genexpr>.<lambda>` and `<genexpr>.<genexpr>`, with no `.<locals>`
   (`qualnames`: RL-1053; at module level, in a function, in a class body and a method).

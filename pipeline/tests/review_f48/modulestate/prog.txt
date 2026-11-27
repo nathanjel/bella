@@ -1,0 +1,75 @@
+"""Review F48 (RL-987; the class of RL-1070): what only a built-in module's state holds is finalised at the exit, a row a
+process. CPython frees a C module's state with the module (`m_clear`), and clears sys's dict at the very end
+(`interpreter_clear`); D-07 promises that which objects are finalised at the exit is CPython's, whatever their order.
+"""
+import _csv
+import csv
+import os
+import struct
+import sys
+from collections.abc import Callable
+
+
+class Said:
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    def __del__(self, w: Callable[[int, bytes], int] = os.write) -> None:
+        w(1, ("finalised: " + self.tag + "\n").encode())
+
+
+class Copied(csv.excel):
+    """A class of csv's: register_dialect makes a dialect of its own from it, and keeps nothing of the program's."""
+
+
+class Dialect(_csv.Dialect):
+    """A subclass of the C type: register_dialect keeps the object itself."""
+
+    def __del__(self, w: Callable[[int, bytes], int] = os.write) -> None:
+        w(1, b"finalised: a dialect object csv.register_dialect keeps\n")
+
+
+class Text(str):
+    """A str subclass whose objects carry a finaliser of their own, through an attribute."""
+
+
+class Late:
+    def __del__(self) -> None:
+        sys.__dict__["late"] = Said("an object a finaliser stored in sys")
+
+
+ROW = sys.argv[1]
+if ROW == "control":
+    held = Said("a global of the main module")
+elif ROW == "dialect copied":
+    d = Copied()
+    d.keep = Said("what a csv.excel subclass's object holds, which register_dialect copies")  # type: ignore[attr-defined]
+    csv.register_dialect("mine", d)
+    del d
+elif ROW == "dialect kept":
+    csv.register_dialect("mine", Dialect(csv.excel))
+elif ROW == "dialect replaced":
+    csv.register_dialect("mine", Dialect(csv.excel))
+    csv.register_dialect("mine", csv.excel)
+    print("replaced", flush=True)
+elif ROW == "dialect keywords":
+    csv.register_dialect("mine", delimiter=";")
+    csv.get_dialect("mine").__class__  # noqa: B018
+    held = Said("a global beside a dialect made from keywords")
+elif ROW == "struct format":
+    fmt = Text("i")
+    fmt.keep = Said("what a struct format kept in struct's cache holds")  # type: ignore[attr-defined]
+    struct.calcsize(fmt)
+    del fmt
+elif ROW == "struct pack":
+    fmt = Text(">h")
+    fmt.keep = Said("a format struct.pack cached")  # type: ignore[attr-defined]
+    struct.pack(fmt, 1)
+    del fmt
+elif ROW == "sys late":
+    late = Late()
+elif ROW == "sys attribute":
+    sys.__dict__["mine"] = Said("an object the program stored in sys")
+else:
+    raise SystemExit("no such row: " + ROW)
+print("the end of the program's text", flush=True)
