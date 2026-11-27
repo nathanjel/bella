@@ -88,9 +88,13 @@ class _BuiltinsBinding(ast.NodeVisitor):
     (`_PyDict_LoadBuiltinsFromGlobals`), the runtime's never do, so a program with one would run on the wrong builtins.
     What binds the module's name: a store at module scope (an assignment, `for`, `with`, `except ... as`, an import, a
     `def` or `class`, a match capture, `type`), a walrus there (in a comprehension too, which binds in the enclosing
-    scope), and any `global __builtins__`. A deletion is not refused: CPython's functions made after it take the running
-    frame's builtins, which are the builtins module's, as the runtime's are. An annotation without a value binds nothing; a
-    function's local or a class body's attribute of that name leaves the builtins alone, as in CPython."""
+    scope), any `global __builtins__`, and an import of a submodule of that name, which CPython sets as its package's
+    attribute. A deletion at module scope is refused too (review F48, RL-1019): CPython's C looks the namespace's
+    `__builtins__` up again when it imports (`PyImport_Import`), so after `del __builtins__` a generic class statement,
+    `time.strptime` and the like raise KeyError there. An annotation without a value binds nothing, but CPython evaluates
+    what its target is made of (`box[(__builtins__ := 1)]: int`); a function's local or a class body's attribute of that
+    name leaves the builtins alone, as in CPython. What reaches the name otherwise (`globals()`, `vars()`, `setattr`) is
+    not detected: the write stays in the namespace and is not used (section 4 of the specification)."""
 
     NAME = "__builtins__"
 
@@ -106,11 +110,16 @@ class _BuiltinsBinding(ast.NodeVisitor):
         return self.scope == 0 and self.comprehensions == 0
 
     def visit_Name(self, node: ast.Name) -> None:
-        if node.id == self.NAME and isinstance(node.ctx, ast.Store) and self.binds_module():
-            self.refuse(node, "assigning to")
+        if node.id == self.NAME and self.binds_module():
+            if isinstance(node.ctx, ast.Store):
+                self.refuse(node, "assigning to")
+            if isinstance(node.ctx, ast.Del):
+                self.refuse(node, "deleting")
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        if node.value is None:                   # `__builtins__: T` binds nothing
+        if node.value is None:                   # `__builtins__: T` binds nothing; a subscript's or attribute's object is evaluated
+            if not isinstance(node.target, ast.Name):
+                self.visit(node.target)
             self.visit(node.annotation)
         else:
             self.generic_visit(node)
@@ -127,6 +136,13 @@ class _BuiltinsBinding(ast.NodeVisitor):
     def visit_alias(self, node: ast.alias) -> None:
         if (node.asname or node.name.split(".")[0]) == self.NAME and self.binds_module():
             self.refuse(node, "importing as")
+        if self.NAME in node.name.split(".")[1:]:    # `import pkg.__builtins__`: the package's attribute, wherever the import is
+            self.refuse(node, "importing a submodule named")
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module is not None and self.NAME in node.module.split("."):
+            self.refuse(node, "importing a submodule named")
+        self.generic_visit(node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if node.name == self.NAME and self.binds_module():
@@ -997,6 +1013,8 @@ class _ClassBodies:
         kind, qual, globals_, _, _ = self.stack[-1]
         if kind == "module" or name in globals_:
             return name
+        # compiler_set_qualname adds `.<locals>` under a function, an async function or a lambda only: what is made inside
+        # a generator expression is `<genexpr>.<lambda>` (RL-1053)
         return f"{qual}.<locals>.{name}" if kind == "function" else f"{qual}.{name}"
 
     def run(self, tree: ast.Module) -> ast.Module:
@@ -1028,7 +1046,7 @@ class _ClassBodies:
             # what a zero-argument super() inside it takes, as in any function (review A39, RL-881). The name is the one
             # the helper's first parameter will have (_Comprehensions)
             n.bella_first = _tmp("it")  # type: ignore[attr-defined]
-            self.stack.append(("function", n.bella_qualname, frozenset(), n.bella_first, in_class))  # type: ignore[attr-defined]
+            self.stack.append(("genexpr", n.bella_qualname, frozenset(), n.bella_first, in_class))  # type: ignore[attr-defined]
             n.elt = self.node(n.elt)  # type: ignore[assignment]
             for i, g in enumerate(n.generators):
                 g.target = self.node(g.target)  # type: ignore[assignment]
@@ -1038,7 +1056,7 @@ class _ClassBodies:
             self.stack.pop()
             return n
         if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "super" and not n.args
-                and not n.keywords and self.stack[-1][0] == "function"):
+                and not n.keywords and self.stack[-1][0] in ("function", "genexpr")):
             _, _, _, first, in_class = self.stack[-1]
             ln = n
             cell: ast.expr = _intrinsic("classcell") if in_class else _intrinsic("missing")

@@ -4,8 +4,10 @@ and its direct forms are refused at compile time with the exclusion's id.
 CPython's function takes its builtins from its globals' `__builtins__` when it is made (`_PyDict_LoadBuiltinsFromGlobals`),
 so after `__builtins__ = {"len": f}` the functions, lambdas and class bodies made later look `len` up there; the runtime's
 never do. The rows: each way a module binds the name is refused (`check_builtins_binding`), and the command says so with
-status 70; what does not bind it (a read, a deletion, an annotation alone, a function's local or parameter, a class body's
-attribute, a comprehension's own variable) is compiled and agrees with CPython.
+status 70; what does not bind it (a read, an annotation alone, a function's local or parameter, a class body's attribute, a
+comprehension's own variable) is compiled and agrees with CPython. A deletion at module scope is refused too (review F48,
+RL-1019: CPython's C imports look the name up again and raise KeyError after it), and so are the bindings the first check
+let through (RL-1020): a walrus in the target of an annotation without a value, and a submodule of that name.
 
 Run under pytest or directly: python3 -m pipeline.tests.test_builtins_binding
 """
@@ -39,6 +41,13 @@ REFUSED = {
     "walrus in a comprehension": "[(__builtins__ := i) for i in range(1)]\n",
     "match": "match 1:\n    case __builtins__:\n        pass\n",
     "type": "type __builtins__ = int\n",
+    "delete": "del __builtins__\n",
+    "delete among others": "a = 1\ndel a, __builtins__\n",
+    "walrus in an annotation's subscript": "box: dict = {}\nbox[(__builtins__ := 1)]: int\n",
+    "walrus in an annotation's attribute": "(__builtins__ := {}).a: int\n",
+    "submodule": "import pkg.__builtins__\n",
+    "submodule in a function": "def f():\n    import pkg.__builtins__\n",
+    "from a submodule": "from pkg.__builtins__ import x\n",
 }
 
 ALLOWED = """\
@@ -67,14 +76,18 @@ print("local", local(), "parameter", parameter(5), "class body", Body.__builtins
 m = types.ModuleType("m")
 m.x = 6
 print("module attribute", m.x, len([1, 2]))
-del __builtins__
+box: dict[int, int] = {}
+box[len([1, 2])]: int
+print("an annotation's target evaluated", box)
 
 
-def after() -> int:
+def local_delete() -> int:
+    __builtins__ = 1
+    del __builtins__
     return len([1, 2, 3])
 
 
-print("deleted", after(), after.__builtins__ is vars(builtins))
+print("a local deleted", local_delete())
 """
 
 

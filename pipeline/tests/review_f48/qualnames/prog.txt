@@ -1,0 +1,58 @@
+"""Review F48 (RL-1053): the qualified name of what is made inside a generator expression, a row a process.
+
+CPython's compiler adds `.<locals>` to a name under a function, an async function or a lambda only: a lambda or a
+generator expression made inside a generator expression is `<genexpr>.<lambda>` and `<genexpr>.<genexpr>`.
+"""
+import sys
+from collections.abc import Callable, Iterator
+
+
+def names(f: object) -> str:
+    code = getattr(f, "__code__", None)          # a function's; a generator's own name is all a compiled program has of it
+    return f"{f.__qualname__} | {code.co_qualname if code is not None else '-'}"  # type: ignore[attr-defined]
+
+
+MODULE_LAMBDA: Callable[[], int] = next((lambda: 0) for _ in (0,))
+MODULE_GENEXP: Iterator[int] = next((x for x in (1,)) for _ in (0,))
+MODULE_LIST: Callable[[], int] = [lambda: 0 for _ in (0,)][0]
+MODULE_NESTED: Callable[[], int] = next((lambda: (lambda: 0)) for _ in (0,))()
+MODULE_DEEP: Callable[[], int] = next(next((lambda: 0) for _ in (0,)) for _ in (0,))
+MODULE_COND: Callable[[], int] = next(f for f in (lambda: 0,) if (lambda: True)())
+
+
+def function() -> list[object]:
+    a = next((lambda: 0) for _ in (0,))
+    b = next((x for x in (1,)) for _ in (0,))
+    c = [lambda: 0 for _ in (0,)][0]
+    d = next((lambda: (lambda: 0)) for _ in (0,))()
+    e = next(next((lambda: 0) for _ in (0,)) for _ in (0,))
+    f = {k: (lambda: 0) for k in (0,)}[0]
+    g = next(iter({(lambda: 0) for _ in (0,)}))
+    h = next((lambda: (y for y in (1,)))() for _ in (0,))
+    return [a, b, c, d, e, f, g, h]
+
+
+class Body:
+    in_body: Callable[[], int] = next((lambda: 0) for _ in (0,))
+    inner: Iterator[int] = next((x for x in (1,)) for _ in (0,))
+
+    def method(self) -> list[object]:
+        a = next((lambda: 0) for _ in (0,))
+        b = next((x for x in (1,)) for _ in (0,))
+        return [a, b]
+
+
+row = sys.argv[1]
+if row == "module":
+    for item in (MODULE_LAMBDA, MODULE_GENEXP, MODULE_LIST, MODULE_NESTED, MODULE_DEEP, MODULE_COND):
+        print(names(item))
+elif row == "function":
+    for item in function():
+        print(names(item))
+elif row == "class":
+    for item in (Body.in_body, Body.inner, *Body().method()):
+        print(names(item))
+elif row == "repr":
+    print(repr(MODULE_LAMBDA).split(" at ")[0], repr(function()[0]).split(" at ")[0], repr(MODULE_GENEXP).split(" at ")[0])
+else:
+    raise SystemExit("no such row: " + row)

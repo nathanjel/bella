@@ -14,6 +14,9 @@ argument list a line), one row a process, compared on standard output, standard 
 * A class with a long chain of bases is made in time in proportion to it (`basechain`: RL-1039; a chain of 300, a ladder of
   40 diamonds, 60 class statements, and what `__base__` is with slots and built-in bases).
 
+* What is made inside a generator expression is named `<genexpr>.<lambda>` and `<genexpr>.<genexpr>`, with no `.<locals>`
+  (`qualnames`: RL-1053; at module level, in a function, in a class body and a method).
+
 And one registered difference is held as D-17 words it (the author's decision of 2026-11-26, Question 49: A; RL-980):
 
 * The frames CPython enters without checking the recursion limit (`unchecked`): 1,200 generators chained by `yield from` or

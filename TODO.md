@@ -745,9 +745,10 @@ author has seen the measurement. In this order:
   with a deep chain of bases takes time doubling with each level).
 * **The decisions to put back to the author**, one question a message, each with its measurement: Question 48's recount
   (RL-1032 to RL-1036, RL-1090); ~~Question 38~~ (answered A on 2026-11-26: D-17, spec v0.43; RL-980 and RL-983 are the next question); ~~Question 44 and D-19~~ (Question 51, answered A on 2026-11-26: D-19 back, narrowed to the runtime's own modules, spec
-  v0.46; RL-1012 to RL-1014 are defects, below); Question 46 and `del __builtins__` (RL-1019 to RL-1021); Question 39 and D-07 (RL-985 to
+  v0.46; RL-1012 to RL-1014 are defects, below); ~~Question 46 and `del __builtins__`~~ (Question 53, answered A on 2026-11-27: section 4's opening and the two rows,
+  spec v0.48; the deletion and two missed bindings refused); Question 39 and D-07 (RL-985 to
   RL-990, RL-1071, RL-1072); Question 37 and D-03 (RL-972 to RL-978); Questions 35 and 41 (RL-966, RL-967, RL-998 to
-  RL-1001); Question 45 and E-05 (RL-1015 to RL-1018); Questions 33 and 34 (RL-958 to RL-964); Question 40 (RL-991 to
+  RL-1001); ~~Question 45 and E-05~~ (Question 53: worded by the write, v0.48; RL-1017 and RL-1018 are records and a test); Questions 33 and 34 (RL-958 to RL-964); Question 40 (RL-991 to
   RL-997); Question 47 and D-33 (RL-1024 to RL-1031, RL-1065 to RL-1069); ~~what D-17 says of frames CPython enters with no check of the limit~~ (Question 49, answered A on 2026-11-26:
   registered, spec v0.44; RL-980); ~~the entries `decimal` and `datetime` take as Python modules~~ (Question 50, answered B on 2026-11-26: their
   frames are none a program sees, D-20 lists the rest, spec v0.45; RL-983).
