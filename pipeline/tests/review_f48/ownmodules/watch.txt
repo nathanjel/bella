@@ -1,0 +1,46 @@
+"""The shared log of the probe (from review F48, q44): a marker's finaliser and a weak reference's callback say what died."""
+import os
+import weakref
+from collections.abc import Callable
+
+deaths: list[str] = []
+kept: list[object] = []
+refs: list[tuple[str, weakref.ref[object]]] = []
+LOUD: list[bool] = []
+
+
+class Marker:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __del__(self, log: list[str] = deaths, loud: list[bool] = LOUD, w: Callable[[int, bytes], int] = os.write) -> None:
+        if loud:
+            w(1, ("  died: " + self.name + "\n").encode())
+        else:
+            log.append(self.name)
+
+
+class Callback:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __call__(self, ref: object, log: list[str] = deaths, loud: list[bool] = LOUD,
+                 w: Callable[[int, bytes], int] = os.write) -> None:
+        if loud:
+            w(1, ("  died: " + self.name + "!\n").encode())
+        else:
+            log.append(self.name + "!")
+
+
+def watched(obj: object, name: str) -> None:
+    """A weak reference to an object, whose callback says it died (name!)."""
+    refs.append((name, weakref.ref(obj, Callback(name))))
+
+
+def show(label: str) -> None:
+    print(label, deaths, flush=True)
+    deaths.clear()
+
+
+def alive() -> list[str]:
+    return sorted(name for name, ref in refs if ref() is not None)

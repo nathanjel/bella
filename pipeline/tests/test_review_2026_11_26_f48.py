@@ -30,6 +30,13 @@ And one decision's step (the author's, 2026-11-26, Question 50: B; RL-983):
   of `datetime`, charged to the caller's line. What stays the Python version's is registered (D-20): what a signal of
   `decimal` carries, and a rounding mode's name that is not checked.
 
+And a registered difference that came back (the author's decision of 2026-11-26, Question 51: A; RL-1011):
+
+* The runtime's own modules live to the end of the process (D-19), where CPython frees the modules it writes in C at the
+  exit (`ownmodules`, 132 rows, a module each): the callback of a weak reference that sys holds is called at the exit for
+  42 of them under CPython and never compiled (`OWN_MODULES`); for 89 (the modules compiled from Python, which die on both
+  sides, and the ones CPython does not free either) the two agree; `marshal` is not ported yet and stops by name.
+
 A row of `STOPS` must stop with its words, a row of `OPEN` must differ, and a row of `REGISTERED` must give what its entry
 says: one that comes to agree with CPython is to leave its table.
 
@@ -56,10 +63,18 @@ KINDS = ("int", "none", "bytes", "float", "list", "tuple", "strsub", "strsub2", 
 STOPS: dict[tuple[str, tuple[str, ...]], str] = {
     **{("entrynames", ("source.exec_module", kind)): NOT_COMPILED for kind in KINDS},
     **{("entrynames", ("frozen.exec_module", kind)): NOT_COMPILED for kind in KINDS if kind != "strsub2"},
+    ("ownmodules", ("marshal",)): "bella: not implemented: importing 'marshal' (the standard library: step 3b)",
 }
+# the modules CPython writes in C and frees at the exit, which here live to the end of the process (D-19)
+OWN_MODULES = ("atexit", "binascii", "cmath", "gc", "grp", "pwd", "time", "unicodedata", "zlib", "_bisect", "_blake2",
+               "_collections", "_contextvars", "_csv", "_functools", "_heapq", "_json", "_locale", "_md5", "_opcode",
+               "_operator", "_random", "_sha1", "_sha2", "_sha3", "_sre", "_stat", "_statistics", "_string", "_struct",
+               "_typing", "math", "_hmac", "_frozen_importlib_external", "_imp", "_signal", "_warnings", "_weakref",
+               "_tokenize", "_suggestions", "_ast", "_types")
 # rows that differ as a registered deviation says: what the compiled program prints there
 REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
     **{("unchecked", (shape, "1200")): ("D-17", "RecursionError\n") for shape in ("yield from", "for", "*args", "**kwargs", "bound method")},
+    **{("ownmodules", (name,)): ("D-19", "the end\n") for name in OWN_MODULES},
     # decimal is CPython's _pydecimal: its signals carry a text where the C module's carry the conditions, and it takes a
     # rounding mode's name unchecked
     ("cmodules", ("frames", "16")): ("D-20", "Decimal(1).to_integral_value(rounding='up') -> no error: Decimal\n"),

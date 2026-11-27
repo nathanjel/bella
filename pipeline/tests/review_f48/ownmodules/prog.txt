@@ -1,0 +1,100 @@
+"""Review F48 (RL-1011; Question 51: A): at the exit, is the callback of a weak reference to a module called? One module a
+run, imported by its name; sys holds the weak reference, and the callback reaches no namespace of the program's. CPython frees
+the modules it writes in C; the runtime's own live to the end of the process (D-19)."""
+import importlib
+import sys
+
+import watch
+from watch import LOUD, watched
+
+
+def closure() -> None:
+    """Never called: the modules the rows import by name."""
+    import abc  # noqa: F401
+    import argparse  # noqa: F401
+    import ast  # noqa: F401
+    import atexit  # noqa: F401
+    import base64  # noqa: F401
+    import binascii  # noqa: F401
+    import bisect  # noqa: F401
+    import calendar  # noqa: F401
+    import cmath  # noqa: F401
+    import codecs  # noqa: F401
+    import collections  # noqa: F401
+    import collections.abc  # noqa: F401
+    import contextlib  # noqa: F401
+    import contextvars  # noqa: F401
+    import copy  # noqa: F401
+    import copyreg  # noqa: F401
+    import csv  # noqa: F401
+    import dataclasses  # noqa: F401
+    import datetime  # noqa: F401
+    import decimal  # noqa: F401
+    import difflib  # noqa: F401
+    import dis  # noqa: F401
+    import enum  # noqa: F401
+    import errno  # noqa: F401
+    import fnmatch  # noqa: F401
+    import fractions  # noqa: F401
+    import functools  # noqa: F401
+    import gc  # noqa: F401
+    import gettext  # noqa: F401
+    import glob  # noqa: F401
+    import hashlib  # noqa: F401
+    import heapq  # noqa: F401
+    import hmac  # noqa: F401
+    import html  # noqa: F401
+    import inspect  # noqa: F401
+    import io  # noqa: F401
+    import itertools  # noqa: F401
+    import json  # noqa: F401
+    import keyword  # noqa: F401
+    import linecache  # noqa: F401
+    import locale  # noqa: F401
+    import logging  # noqa: F401
+    import math  # noqa: F401
+    import numbers  # noqa: F401
+    import opcode  # noqa: F401
+    import operator  # noqa: F401
+    import os  # noqa: F401
+    import pathlib  # noqa: F401
+    import pprint  # noqa: F401
+    import random  # noqa: F401
+    import re  # noqa: F401
+    import reprlib  # noqa: F401
+    import secrets  # noqa: F401
+    import shutil  # noqa: F401
+    import signal  # noqa: F401
+    import stat  # noqa: F401
+    import statistics  # noqa: F401
+    import string  # noqa: F401
+    import struct  # noqa: F401
+    import tempfile  # noqa: F401
+    import textwrap  # noqa: F401
+    import threading  # noqa: F401
+    import time  # noqa: F401
+    import token  # noqa: F401
+    import tokenize  # noqa: F401
+    import traceback  # noqa: F401
+    import types  # noqa: F401
+    import typing  # noqa: F401
+    import unicodedata  # noqa: F401
+    import urllib.parse  # noqa: F401
+    import uuid  # noqa: F401
+    import warnings  # noqa: F401
+    import weakref  # noqa: F401
+    import zlib  # noqa: F401
+
+
+def main() -> None:
+    name = sys.argv[1]
+    if name == "__main__":
+        watched(sys.modules["__main__"], name)
+    else:
+        watched(importlib.import_module(name), name)
+    sys.__dict__["q44refs"] = watch.refs
+    LOUD.append(True)
+    print("the end", flush=True)
+
+
+main()
