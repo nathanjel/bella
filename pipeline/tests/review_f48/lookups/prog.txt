@@ -1,0 +1,114 @@
+"""Review F48 (RL-965, RL-1013, RL-1048, RL-1050, RL-1052): an argument taken twice, a second built-in module, a key found
+in a built-in type's dict, a module's class set, and dir()'s sort, a row a process, each with its neighbours."""
+import importlib.util
+import sys
+import types
+from collections.abc import Callable
+
+ROW = sys.argv[1]
+
+
+def show(call: Callable[[], object]) -> str:
+    try:
+        return repr(call())
+    except KeyError:                             # its text is the key's repr, which may show an address
+        return "KeyError"
+    except Exception as error:  # noqa: BLE001
+        return f"{type(error).__name__}: {error}"
+
+
+class Big:
+    def __sizeof__(self) -> int:
+        print("Big.__sizeof__")
+        return 100
+
+
+if ROW == "getsizeof":
+    for call in (lambda: sys.getsizeof(Big(), object=Big()), lambda: sys.getsizeof(object=Big()), lambda: sys.getsizeof(Big(), default=3),  # type: ignore[call-overload]
+                 lambda: sys.getsizeof(Big(), 2), lambda: sys.getsizeof(Big(), bogus=2), lambda: sys.getsizeof(Big(), 2, object=3),  # type: ignore[call-overload]
+                 lambda: sys.getsizeof(bogus=1), lambda: sys.getsizeof(**{"object": Big(), "x": 2}),  # type: ignore[call-overload]
+                 lambda: sys.getsizeof(*[Big()], **{"object": 1})):  # type: ignore[call-overload]
+        print(show(lambda: type(call()).__name__))  # noqa: B023  # the size is the runtime's own (an unobservable value)
+elif ROW == "module class":
+    m = types.ModuleType("m")
+
+    def same() -> object:
+        m.__class__ = types.ModuleType
+        return type(m).__name__
+
+    print(show(same), show(lambda: setattr(m, "__class__", int)), show(lambda: setattr(m, "__class__", 5)))
+elif ROW == "module class other":
+    class Mine(types.ModuleType):
+        pass
+
+    m = types.ModuleType("m")
+    m.__class__ = Mine
+    print(type(m).__name__)
+elif ROW == "dir":
+    order: list[str] = []
+
+    class Name(str):
+        def __lt__(self, other: object) -> bool:
+            order.append(f"{self}<{other}")
+            return str.__gt__(self, other)  # type: ignore[operator]
+
+    class Names:
+        def __dir__(self) -> list[str]:
+            return [Name("a"), Name("c"), Name("b")]
+
+    class Mixed:
+        def __dir__(self) -> list[object]:
+            return ["a", 1]
+
+    class Plain:
+        def __dir__(self) -> tuple[str, ...]:
+            return ("b", "a")
+
+    print(dir(Names()), len(order) > 0, show(lambda: dir(Mixed())), dir(Plain()))
+elif ROW == "proxy":
+    calls: list[str] = []
+
+    class Key:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def __hash__(self) -> int:
+            calls.append("hash")
+            return hash(self.text)
+
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            return other == self.text
+
+    class Logged(str):
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            return str.__eq__(self, other)
+
+        __hash__ = str.__hash__
+
+    class Seven(str):
+        def __hash__(self) -> int:
+            return 7
+
+    for mapping in (vars(int), vars(str), vars(type)):
+        for key in (Key("real"), Logged("real"), Seven("real"), Key("__doc__"), Logged("__doc__"), Seven("__doc__"), "__doc__", 5):
+            calls.clear()
+            got = show(lambda: type(mapping[key]).__name__)  # type: ignore[index]  # noqa: B023
+            print(type(key).__name__, got, key in mapping, type(mapping.get(key)).__name__, calls)  # type: ignore[call-overload]
+    print(show(lambda: vars(int)[[1]]), show(lambda: [1] in vars(int)), show(lambda: vars(int).get([1])))  # type: ignore[index, call-overload]
+elif ROW == "builtin same":
+    for name in ("sys", "builtins"):
+        made = importlib.util.module_from_spec(importlib.util.find_spec(name))  # type: ignore[arg-type]
+        print(name, made is sys.modules[name])
+elif ROW == "builtin second":
+    import math
+    made = importlib.util.module_from_spec(importlib.util.find_spec("math"))  # type: ignore[arg-type]
+    print(made is math)
+elif ROW == "builtin again":
+    import math
+    del sys.modules["math"]
+    import math as again
+    print(again is math)
+else:
+    raise SystemExit("no such row: " + ROW)

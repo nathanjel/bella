@@ -1468,6 +1468,8 @@ Ref i_bella_create_builtin(Obj, Args a) {        // _imp.create_builtin: one mod
         order_as_cpython(n.made, name == "_math_integer" ? "math.integer" : std::string_view(name));
         note_filled(n.made);
     }
+    // CPython's makes a module each time it is called (but for sys and builtins); the runtime gives the one it has: the
+    // author's to decide (RL-1013; a stop broke an import after a delete from sys.modules, which agrees with CPython's text)
     return Ref::share(Obj::of(n.made));
 }
 
@@ -2468,11 +2470,8 @@ Ref b_dir(Obj, Args a) {
         refuse_absent_attribute(obj, N("__dir__"));
         raise_new("TypeError", "object does not provide __dir__");
     }
-    Ref list = invoke(Obj::of(types().list), {result.get()});
-    auto& items = static_cast<List*>(list.get().object())->items;
-    for (Obj x : items)
-        if (as_str(x) == nullptr) throw NotImplemented("dir() of names that are not all str (list.sort: step 3b)");
-    std::stable_sort(items.begin(), items.end(), [](Obj x, Obj y) { return name_arg(x)->text < name_arg(y)->text; });
+    Ref list = invoke(Obj::of(types().list), {result.get()});   // PySequence_List, then PyList_Sort: a name's own __lt__ (RL-1052)
+    list_sort_m(list.get(), Args{});
     return list;
 }
 

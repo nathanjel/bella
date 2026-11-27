@@ -1365,12 +1365,16 @@ Ref sys_getsizeof(Obj, Args a) {                  // sys_getsizeof, _PySys_GetSi
     if (a.npos + a.nkw == 0) raise_new("TypeError", "getsizeof() missing required argument 'object' (pos 1)");
     if (a.npos + a.nkw > 2) raise_new("TypeError", "getsizeof() takes at most 2 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
     Obj object = a.npos > 0 ? a.pos(0) : Obj{}, fallback = a.npos > 1 ? a.pos(1) : Obj{};
+    bool twice = false;                          // `object` by name beside a position: refused after the missing check (RL-965)
     for (std::size_t k = 0; k < a.nkw; ++k) {
         const std::string& name = a.kwnames[k]->text;
-        if (name == "object") object = a.kw(k);
-        else if (name == "default") fallback = a.kw(k);
+        if (name == "object") {
+            if (a.npos > 0) twice = true;
+            else object = a.kw(k);
+        } else if (name == "default") fallback = a.kw(k);
     }
     if (object.is_unset()) raise_new("TypeError", "getsizeof() missing required argument 'object' (pos 1)");
+    if (twice) raise_new("TypeError", "argument for getsizeof() given by name ('object') and position (1)");
     for (std::size_t k = 0; k < a.nkw; ++k)
         if (a.kwnames[k]->text != "object" && a.kwnames[k]->text != "default") unexpected_keyword("getsizeof()", a.kwnames[k], {"object", "default"});
     Obj method = object.is_object() ? type_lookup(type_of(object), intern("__sizeof__")) : Obj{};

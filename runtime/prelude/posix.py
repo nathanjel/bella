@@ -2099,6 +2099,8 @@ def readinto(*args: object, **kwds: object) -> int:   # os_readinto_impl
     _positional("readinto", args, kwds, 2)
     fd = _int(args[0])
     buffer = args[1]
+    if _is_view(buffer):                         # CPython writes into a writable one (RL-992)
+        _refuse("a memoryview as a writable buffer (readinto() argument 2)")
     if not issubclass(type(buffer), bytearray):  # Py_buffer(accept={rwbuffer})
         if not issubclass(type(buffer), bytes) and _has_slot(buffer, "__buffer__"):
             _refuse("os.readinto() into a buffer that is not a bytearray")
@@ -2360,7 +2362,9 @@ def setxattr(*args: object, **kwds: object) -> None:   # os_setxattr_impl
     path, attribute, value, flags, follow = _unpack("setxattr", args, kwds, ("path", "attribute", "value", "flags", "follow_symlinks"), 3, 4)
     data, shown = _path("setxattr", "path", path, allow_fd=True)
     name = _path("setxattr", "attribute", attribute)[0]
-    if not issubclass(type(value), (bytes, bytearray)):   # the Py_buffer converter
+    if _is_view(value):
+        _buffer_bytes(value)                     # a memoryview: its simple buffer, or the error of taking it (RL-992)
+    elif not issubclass(type(value), (bytes, bytearray)):   # the Py_buffer converter
         if _has_slot(value, "__buffer__"):
             _refuse("os.setxattr() of a buffer that is not bytes or bytearray")
         raise TypeError("a bytes-like object is required, not '" + _type_name(value) + "'")

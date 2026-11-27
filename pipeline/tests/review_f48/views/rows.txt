@@ -1,0 +1,564 @@
+'bytes.count' c
+'bytes.count' w
+'bytes.count' s
+'bytes.index' c
+'bytes.index' w
+'bytes.index' s
+'bytes.rfind' c
+'bytes.rfind' w
+'bytes.rfind' s
+'bytes.rindex' c
+'bytes.rindex' w
+'bytes.rindex' s
+'bytes.endswith' c
+'bytes.endswith' w
+'bytes.endswith' s
+'bytes.startswith tuple' c
+'bytes.startswith tuple' w
+'bytes.startswith tuple' s
+'bytes.replace' c
+'bytes.replace' w
+'bytes.replace' s
+'bytes.strip' c
+'bytes.strip' w
+'bytes.strip' s
+'bytes.lstrip' c
+'bytes.lstrip' w
+'bytes.lstrip' s
+'bytes.rstrip' c
+'bytes.rstrip' w
+'bytes.rstrip' s
+'bytes.rsplit' c
+'bytes.rsplit' w
+'bytes.rsplit' s
+'bytes.split maxsplit' c
+'bytes.split maxsplit' w
+'bytes.split maxsplit' s
+'bytes.removeprefix' c
+'bytes.removeprefix' w
+'bytes.removeprefix' s
+'bytes.removesuffix' c
+'bytes.removesuffix' w
+'bytes.removesuffix' s
+'bytes.translate table' c
+'bytes.translate table' w
+'bytes.translate table' s
+'bytes.translate delete' c
+'bytes.translate delete' w
+'bytes.translate delete' s
+'bytes.center' c
+'bytes.center' w
+'bytes.center' s
+'bytes.ljust' c
+'bytes.ljust' w
+'bytes.ljust' s
+'bytes.rpartition' c
+'bytes.rpartition' w
+'bytes.rpartition' s
+'bytes.join of ints' c
+'bytes.join of ints' w
+'bytes.join of ints' s
+'bytes == view' c
+'bytes == view' w
+'bytes == view' s
+'bytes < view' c
+'bytes < view' w
+'bytes < view' s
+'bytes.__contains__' c
+'bytes.__contains__' w
+'bytes.__contains__' s
+'bytes.__add__' c
+'bytes.__add__' w
+'bytes.__add__' s
+'bytes % view' c
+'bytes % view' w
+'bytes % view' s
+'bytes(view, encoding)' c
+'bytes(view, encoding)' w
+'bytes(view, encoding)' s
+'bytearray == view' c
+'bytearray == view' w
+'bytearray == view' s
+'bytearray < view' c
+'bytearray < view' w
+'bytearray < view' s
+'bytearray + view' c
+'bytearray + view' w
+'bytearray + view' s
+'bytearray.join' c
+'bytearray.join' w
+'bytearray.join' s
+'bytearray.find' c
+'bytearray.find' w
+'bytearray.find' s
+'bytearray.count' c
+'bytearray.count' w
+'bytearray.count' s
+'bytearray.replace' c
+'bytearray.replace' w
+'bytearray.replace' s
+'bytearray.startswith' c
+'bytearray.startswith' w
+'bytearray.startswith' s
+'bytearray.split' c
+'bytearray.split' w
+'bytearray.split' s
+'bytearray.strip' c
+'bytearray.strip' w
+'bytearray.strip' s
+'bytearray.translate' c
+'bytearray.translate' w
+'bytearray.translate' s
+'bytearray.removeprefix' c
+'bytearray.removeprefix' w
+'bytearray.removeprefix' s
+'bytearray.__contains__' c
+'bytearray.__contains__' w
+'bytearray.__contains__' s
+'bytearray.index' c
+'bytearray.index' w
+'bytearray.index' s
+'bytearray % view' c
+'bytearray % view' w
+'bytearray % view' s
+'bytearray(view)[::-1]' c
+'bytearray(view)[::-1]' w
+'bytearray(view)[::-1]' s
+'bytearray.__init__ again' c
+'bytearray.__init__ again' w
+'bytearray.__init__ again' s
+'int(view)' c
+'int(view)' w
+'int(view)' s
+'int(view, 10)' c
+'int(view, 10)' w
+'int(view, 10)' s
+'float(view)' c
+'float(view)' w
+'float(view)' s
+'complex(view)' c
+'complex(view)' w
+'complex(view)' s
+'ord(view)' c
+'ord(view)' w
+'ord(view)' s
+'int.from_bytes signed' c
+'int.from_bytes signed' w
+'int.from_bytes signed' s
+'str(view, utf-8)' c
+'str(view, utf-8)' w
+'str(view, utf-8)' s
+'str(view, ascii)' c
+'str(view, ascii)' w
+'str(view, ascii)' s
+'str(view, utf-16-le)' c
+'str(view, utf-16-le)' w
+'str(view, utf-16-le)' s
+'str(view, utf-32)' c
+'str(view, utf-32)' w
+'str(view, utf-32)' s
+'str(view, utf-8, replace)' c
+'str(view, utf-8, replace)' w
+'str(view, utf-8, replace)' s
+'str(view, utf-8-sig)' c
+'str(view, utf-8-sig)' w
+'str(view, utf-8-sig)' s
+'codecs.utf_8_decode' c
+'codecs.utf_8_decode' w
+'codecs.utf_8_decode' s
+'codecs.utf_8_decode final' c
+'codecs.utf_8_decode final' w
+'codecs.utf_8_decode final' s
+'codecs.latin_1_decode' c
+'codecs.latin_1_decode' w
+'codecs.latin_1_decode' s
+'codecs.ascii_decode' c
+'codecs.ascii_decode' w
+'codecs.ascii_decode' s
+'codecs.utf_16_le_decode' c
+'codecs.utf_16_le_decode' w
+'codecs.utf_16_le_decode' s
+'codecs.utf_16_decode' c
+'codecs.utf_16_decode' w
+'codecs.utf_16_decode' s
+'codecs.utf_32_le_decode' c
+'codecs.utf_32_le_decode' w
+'codecs.utf_32_le_decode' s
+'codecs.escape_decode' c
+'codecs.escape_decode' w
+'codecs.escape_decode' s
+'codecs.unicode_escape_decode' c
+'codecs.unicode_escape_decode' w
+'codecs.unicode_escape_decode' s
+'codecs.raw_unicode_escape_decode' c
+'codecs.raw_unicode_escape_decode' w
+'codecs.raw_unicode_escape_decode' s
+'codecs.readbuffer_encode' c
+'codecs.readbuffer_encode' w
+'codecs.readbuffer_encode' s
+'codecs.charmap_decode' c
+'codecs.charmap_decode' w
+'codecs.charmap_decode' s
+'codecs.decode utf-8' c
+'codecs.decode utf-8' w
+'codecs.decode utf-8' s
+'codecs.utf_8_encode' c
+'codecs.utf_8_encode' w
+'codecs.utf_8_encode' s
+'incremental decoder' c
+'incremental decoder' w
+'incremental decoder' s
+'json.loads' c
+'json.loads' w
+'json.loads' s
+'re.escape' c
+'re.escape' w
+'re.escape' s
+'unicodedata.lookup' c
+'unicodedata.lookup' w
+'unicodedata.lookup' s
+'BytesIO.writelines' c
+'BytesIO.writelines' w
+'BytesIO.writelines' s
+'BufferedWriter.write' c
+'BufferedWriter.write' w
+'BufferedWriter.write' s
+'open(wb).write' c
+'open(wb).write' w
+'open(wb).write' s
+'FileIO.write' c
+'FileIO.write' w
+'FileIO.write' s
+'TextIOWrapper.write' c
+'TextIOWrapper.write' w
+'TextIOWrapper.write' s
+'BytesIO(view).read' c
+'BytesIO(view).read' w
+'BytesIO(view).read' s
+'Path.write_bytes' c
+'Path.write_bytes' w
+'Path.write_bytes' s
+'os.writev' c
+'os.writev' w
+'os.writev' s
+'os.pwrite' c
+'os.pwrite' w
+'os.pwrite' s
+'os.pwritev' c
+'os.pwritev' w
+'os.pwritev' s
+'os.setxattr' c
+'os.setxattr' w
+'os.setxattr' s
+'os.fsencode' c
+'os.fsencode' w
+'os.fsencode' s
+'os.fspath' c
+'os.fspath' w
+'os.fspath' s
+'os.stat' c
+'os.stat' w
+'os.stat' s
+'os.path.exists' c
+'os.path.exists' w
+'os.path.exists' s
+'open(view)' c
+'open(view)' w
+'open(view)' s
+'Struct.unpack' c
+'Struct.unpack' w
+'Struct.unpack' s
+'Struct.unpack_from' c
+'Struct.unpack_from' w
+'Struct.unpack_from' s
+'Struct.iter_unpack' c
+'Struct.iter_unpack' w
+'Struct.iter_unpack' s
+'struct.pack s' c
+'struct.pack s' w
+'struct.pack s' s
+'struct.calcsize' c
+'struct.calcsize' w
+'struct.calcsize' s
+'struct.unpack format' c
+'struct.unpack format' w
+'struct.unpack format' s
+'binascii.b2a_base64' c
+'binascii.b2a_base64' w
+'binascii.b2a_base64' s
+'binascii.a2b_base64' c
+'binascii.a2b_base64' w
+'binascii.a2b_base64' s
+'binascii.b2a_hex sep' c
+'binascii.b2a_hex sep' w
+'binascii.b2a_hex sep' s
+'binascii.hexlify sep view' c
+'binascii.hexlify sep view' w
+'binascii.hexlify sep view' s
+'binascii.crc_hqx' c
+'binascii.crc_hqx' w
+'binascii.crc_hqx' s
+'binascii.b2a_qp' c
+'binascii.b2a_qp' w
+'binascii.b2a_qp' s
+'binascii.a2b_qp' c
+'binascii.a2b_qp' w
+'binascii.a2b_qp' s
+'binascii.b2a_uu' c
+'binascii.b2a_uu' w
+'binascii.b2a_uu' s
+'binascii.a2b_uu' c
+'binascii.a2b_uu' w
+'binascii.a2b_uu' s
+'binascii.b2a_base32' c
+'binascii.b2a_base32' w
+'binascii.b2a_base32' s
+'binascii.a2b_base32' c
+'binascii.a2b_base32' w
+'binascii.a2b_base32' s
+'binascii.b2a_base85' c
+'binascii.b2a_base85' w
+'binascii.b2a_base85' s
+'binascii.a2b_base85' c
+'binascii.a2b_base85' w
+'binascii.a2b_base85' s
+'binascii.b2a_ascii85' c
+'binascii.b2a_ascii85' w
+'binascii.b2a_ascii85' s
+'binascii.a2b_ascii85' c
+'binascii.a2b_ascii85' w
+'binascii.a2b_ascii85' s
+'base64.b64decode' c
+'base64.b64decode' w
+'base64.b64decode' s
+'base64.b64encode altchars' c
+'base64.b64encode altchars' w
+'base64.b64encode altchars' s
+'base64.b64decode altchars' c
+'base64.b64decode altchars' w
+'base64.b64decode altchars' s
+'base64.urlsafe_b64encode' c
+'base64.urlsafe_b64encode' w
+'base64.urlsafe_b64encode' s
+'base64.urlsafe_b64decode' c
+'base64.urlsafe_b64decode' w
+'base64.urlsafe_b64decode' s
+'base64.standard_b64decode' c
+'base64.standard_b64decode' w
+'base64.standard_b64decode' s
+'base64.b32encode' c
+'base64.b32encode' w
+'base64.b32encode' s
+'base64.b32decode' c
+'base64.b32decode' w
+'base64.b32decode' s
+'base64.b32hexencode' c
+'base64.b32hexencode' w
+'base64.b32hexencode' s
+'base64.b16encode' c
+'base64.b16encode' w
+'base64.b16encode' s
+'base64.b16decode' c
+'base64.b16decode' w
+'base64.b16decode' s
+'base64.b85encode' c
+'base64.b85encode' w
+'base64.b85encode' s
+'base64.b85decode' c
+'base64.b85decode' w
+'base64.b85decode' s
+'base64.a85encode' c
+'base64.a85encode' w
+'base64.a85encode' s
+'base64.a85decode' c
+'base64.a85decode' w
+'base64.a85decode' s
+'base64.z85encode' c
+'base64.z85encode' w
+'base64.z85encode' s
+'base64.encodebytes' c
+'base64.encodebytes' w
+'base64.encodebytes' s
+'base64.decodebytes' c
+'base64.decodebytes' w
+'base64.decodebytes' s
+'zlib.adler32' c
+'zlib.adler32' w
+'zlib.adler32' s
+'zlib.adler32 start' c
+'zlib.adler32 start' w
+'zlib.adler32 start' s
+'zlib.decompress' c
+'zlib.decompress' w
+'zlib.decompress' s
+'zlib.compressobj.compress' c
+'zlib.compressobj.compress' w
+'zlib.compressobj.compress' s
+'zlib.decompressobj.decompress' c
+'zlib.decompressobj.decompress' w
+'zlib.decompressobj.decompress' s
+'zlib.compressobj zdict' c
+'zlib.compressobj zdict' w
+'zlib.compressobj zdict' s
+'zlib.decompressobj zdict' c
+'zlib.decompressobj zdict' w
+'zlib.decompressobj zdict' s
+'hashlib.sha1' c
+'hashlib.sha1' w
+'hashlib.sha1' s
+'hashlib.sha512' c
+'hashlib.sha512' w
+'hashlib.sha512' s
+'hashlib.sha3_256' c
+'hashlib.sha3_256' w
+'hashlib.sha3_256' s
+'hashlib.shake_128' c
+'hashlib.shake_128' w
+'hashlib.shake_128' s
+'hashlib.blake2s' c
+'hashlib.blake2s' w
+'hashlib.blake2s' s
+'hashlib.new' c
+'hashlib.new' w
+'hashlib.new' s
+'sha256.update' c
+'sha256.update' w
+'sha256.update' s
+'sha3_256.update' c
+'sha3_256.update' w
+'sha3_256.update' s
+'blake2b key' c
+'blake2b key' w
+'blake2b key' s
+'blake2b salt' c
+'blake2b salt' w
+'blake2b salt' s
+'blake2b person' c
+'blake2b person' w
+'blake2b person' s
+'hmac.new' c
+'hmac.new' w
+'hmac.new' s
+'hmac.update' c
+'hmac.update' w
+'hmac.update' s
+'hmac.digest msg' c
+'hmac.digest msg' w
+'hmac.digest msg' s
+'hmac.compare_digest' c
+'hmac.compare_digest' w
+'hmac.compare_digest' s
+'secrets.compare_digest' c
+'secrets.compare_digest' w
+'secrets.compare_digest' s
+'uuid.UUID(bytes=)' c
+'uuid.UUID(bytes=)' w
+'uuid.UUID(bytes=)' s
+'uuid.uuid5' c
+'uuid.uuid5' w
+'uuid.uuid5' s
+'urllib.parse.unquote_to_bytes' c
+'urllib.parse.unquote_to_bytes' w
+'urllib.parse.unquote_to_bytes' s
+'urllib.parse.quote_from_bytes' c
+'urllib.parse.quote_from_bytes' w
+'urllib.parse.quote_from_bytes' s
+'urllib.parse.parse_qsl' c
+'urllib.parse.parse_qsl' w
+'urllib.parse.parse_qsl' s
+'sum min max' c
+'sum min max' w
+'sum min max' s
+'reversed in enumerate' c
+'reversed in enumerate' w
+'reversed in enumerate' s
+'random seed' c
+'random seed' w
+'random seed' s
+'random.choice' c
+'random.choice' w
+'random.choice' s
+'random.shuffle' c
+'random.shuffle' w
+'random.shuffle' s
+'random.sample' c
+'random.sample' w
+'random.sample' s
+'bisect' c
+'bisect' w
+'bisect' s
+'Counter' c
+'Counter' w
+'Counter' s
+'deque' c
+'deque' w
+'deque' s
+'SequenceMatcher' c
+'SequenceMatcher' w
+'SequenceMatcher' s
+'operator.concat' c
+'operator.concat' w
+'operator.concat' s
+'operator.contains' c
+'operator.contains' w
+'operator.contains' s
+'operator.countOf' c
+'operator.countOf' w
+'operator.countOf' s
+'operator.index' c
+'operator.index' w
+'operator.index' s
+'copy.copy' c
+'copy.copy' w
+'copy.copy' s
+'copy.deepcopy' c
+'copy.deepcopy' w
+'copy.deepcopy' s
+'format spec' c
+'format spec' w
+'format spec' s
+'view + bytes' c
+'view + bytes' w
+'view + bytes' s
+'view * 2' c
+'view * 2' w
+'view * 2' s
+'view < view' c
+'view < view' w
+'view < view' s
+'view == view' c
+'view == view' w
+'view == view' s
+'BytesIO.readinto' c
+'BytesIO.readinto' w
+'BytesIO.readinto' s
+'BufferedIOBase.readinto default' c
+'BufferedIOBase.readinto default' w
+'BufferedIOBase.readinto default' s
+'BufferedIOBase.readinto1 default' c
+'BufferedIOBase.readinto1 default' w
+'BufferedIOBase.readinto1 default' s
+'BufferedRandom.readinto' c
+'BufferedRandom.readinto' w
+'BufferedRandom.readinto' s
+'BufferedRWPair.readinto' c
+'BufferedRWPair.readinto' w
+'BufferedRWPair.readinto' s
+'FileIO.readinto' c
+'FileIO.readinto' w
+'FileIO.readinto' s
+'os.readinto' c
+'os.readinto' w
+'os.readinto' s
+'os.readv' c
+'os.readv' w
+'os.readv' s
+'os.preadv' c
+'os.preadv' w
+'os.preadv' s
+'struct.pack_into' c
+'struct.pack_into' w
+'struct.pack_into' s
+'Struct.pack_into' c
+'Struct.pack_into' w
+'Struct.pack_into' s

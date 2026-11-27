@@ -669,6 +669,11 @@ Ref native_compare(CmpOp op, Obj a, Obj b) {
     if (is_kind(a, Kind::Set) && is_kind(b, Kind::Set)) return set_compare(op, a, b);
     // bytes_richcompare takes bytes alone, so a bytearray answers from its side; bytearray_richcompare takes either
     if ((is_kind(a, Kind::ByteArray) && is_bytes_like(b)) || (is_kind(a, Kind::Bytes) && is_kind(b, Kind::Bytes))) return bytes_compare(op, a, b);
+    if (is_kind(a, Kind::ByteArray) && is_memoryview(b)) {   // a view: its simple buffer, or NotImplemented (released, strided) (RL-992)
+        if (!view_simple_ok(b)) return Ref::steal(Obj::of(NOTIMPLEMENTED));
+        Ref other = bytes_new(simple_view(b));
+        return bytes_compare(op, a, other.get());
+    }
     if (is_kind(a, Kind::Range) && is_kind(b, Kind::Range)) {   // range_richcompare: == and != only
         if (op != CmpOp::Eq && op != CmpOp::Ne) return Ref::steal(Obj::of(NOTIMPLEMENTED));
         return Ref::steal(boolean((a == b || range_equal(a, b)) == (op == CmpOp::Eq)));
@@ -1455,8 +1460,10 @@ void setattr(Obj obj, const Str* name, Obj value) {
             if (!is_kind(value, Kind::Class))
                 raise_new("TypeError", "__class__ must be set to a class, not '" + type_of(value)->name + "' object");
             auto* c = static_cast<ClassObject*>(value.object());
-            if (!c->heap_type || !is_subclass(c, types().module))
+            // compatible_for_assignment: two module types may be swapped, immutable or not; the same one changes nothing (RL-1050)
+            if (!is_subclass(c, types().module))
                 raise_new("TypeError", "__class__ assignment only supported for mutable types or ModuleType subclasses");
+            if (c == type_of(obj)) return;
             throw NotImplemented("[P2+] __class__ assignment (spec section 3)");
         }
         if (Obj found = type_lookup(type_of(obj), name); is_kind(found, Kind::GetSet)) {   // ModuleType's own: __annotations__, __annotate__

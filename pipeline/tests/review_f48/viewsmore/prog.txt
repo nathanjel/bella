@@ -1,0 +1,133 @@
+"""Review F48, q40, probe 3: the five consumers of probe 2 that answer a view with a TypeError, beside the same call with
+bytes and a bytearray (which must agree), and the write side of a buffered stream over a program's raw stream.
+argv[1] the row, argv[2] what is passed: b (bytes), a (bytearray), c (a view of bytes), w (a view of a bytearray)."""
+import io
+import os
+import sys
+from collections.abc import Callable
+
+
+def as_bytes(data: bytes) -> object:
+    return data
+
+
+def as_bytearray(data: bytes) -> object:
+    return bytearray(data)
+
+
+def as_view(data: bytes) -> object:
+    return memoryview(data)
+
+
+def as_writable_view(data: bytes) -> object:
+    return memoryview(bytearray(data))
+
+
+KINDS: dict[str, Callable[[bytes], object]] = {"b": as_bytes, "a": as_bytearray, "c": as_view, "w": as_writable_view}
+
+
+def scratch() -> str:
+    return "q40-p3-" + str(os.getpid()) + ".bin"
+
+
+def xattr(value: object) -> object:
+    name = scratch()
+    with open(name, "wb") as out:
+        out.write(b"x")
+    try:
+        os.setxattr(name, "user.q40", value)  # type: ignore[arg-type]
+        return os.getxattr(name, "user.q40")
+    finally:
+        os.unlink(name)
+
+
+def readinto(target: object) -> object:
+    name = scratch()
+    with open(name, "wb") as out:
+        out.write(b"12345")
+    fd = os.open(name, os.O_RDONLY)
+    try:
+        n = os.readinto(fd, target)  # type: ignore[arg-type]
+        return n, bytes(target)  # type: ignore[call-overload]
+    finally:
+        os.close(fd)
+        os.unlink(name)
+
+
+def ordered(other: object) -> object:
+    left = bytearray(b"\x01\x05")
+    return left < other, left <= other, left > other, left >= other  # type: ignore[operator]
+
+
+def methods(other: object) -> object:
+    left = bytearray(b"\x01\x05")
+    return bytearray.__eq__(left, other), bytearray.__ne__(left, other), bytearray.__lt__(left, other), bytearray.__ge__(left, other)  # type: ignore[arg-type]
+
+
+class Sink(io.RawIOBase):
+    def __init__(self) -> None:
+        self.at = 0
+
+    def writable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return 0
+
+    def tell(self) -> int:
+        return 0
+
+    def readinto(self, b: object) -> int:  # type: ignore[override]
+        print("  readinto is handed a", type(b).__name__)
+        return 0
+
+    def write(self, b: object) -> int:  # type: ignore[override]
+        print("  write is handed a", type(b).__name__, "of", len(b), "| readonly:", getattr(b, "readonly", "no such attribute"),  # type: ignore[arg-type]
+              "| obj:", getattr(b, "obj", "no such attribute"))
+        return len(b)  # type: ignore[arg-type]
+
+
+def random_write(data: object) -> object:
+    stream = io.BufferedRandom(Sink(), 8)  # type: ignore[arg-type]
+    stream.write(data)  # type: ignore[arg-type]
+    stream.flush()
+    stream.write(b"0123456789abcdef")
+    stream.flush()
+    return "done"
+
+
+ROWS: dict[str, Callable[[Callable[[bytes], object]], object]] = {
+    "int": lambda k: int(k(b"12")),  # type: ignore[call-overload]
+    "int spaces": lambda k: int(k(b" 1_2 ")),  # type: ignore[call-overload]
+    "int bad": lambda k: int(k(b"x")),  # type: ignore[call-overload]
+    "float": lambda k: float(k(b"1.5")),  # type: ignore[arg-type]
+    "float nan": lambda k: str(float(k(b" nan "))),  # type: ignore[arg-type]
+    "float bad": lambda k: float(k(b"x")),  # type: ignore[arg-type]
+    "bytearray ordered": lambda k: ordered(k(b"\x01\x06")),
+    "bytearray methods": lambda k: methods(k(b"\x01\x06")),
+    "sorted": lambda k: [type(x).__name__ for x in sorted([bytearray(b"b"), k(b"a")])],  # type: ignore[type-var]
+    "os.setxattr": lambda k: xattr(k(b"value")),
+    "os.readinto": lambda k: readinto(k(b"......")),
+    "BufferedRandom.write": lambda k: random_write(k(b"abc")),
+}
+
+
+def main() -> None:
+    if sys.argv[1] == "--list":
+        for name in ROWS:
+            for kind in KINDS:
+                print("'" + name + "' " + kind)
+        return
+    try:
+        print(sys.argv[1], sys.argv[2], "->", repr(ROWS[sys.argv[1]](KINDS[sys.argv[2]])))
+    except Exception as error:
+        print(sys.argv[1], sys.argv[2], "->", type(error).__name__)
+
+
+main()

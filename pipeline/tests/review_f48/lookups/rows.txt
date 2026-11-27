@@ -1,0 +1,8 @@
+getsizeof
+"module class"
+"module class other"
+dir
+proxy
+"builtin same"
+"builtin second"
+"builtin again"

@@ -16,6 +16,12 @@ argument list a line), one row a process, compared on standard output, standard 
 * What only a built-in module's state holds of the program's is finalised at the exit (`modulestate`: RL-987, the class of
   RL-1070): a subclass of `_csv.Dialect` kept by `csv.register_dialect`, a str subclass's object kept by struct's cache,
   and what the program or a late finaliser stored in sys, which CPython lets go of when it clears sys's dict last.
+* A view wherever bytes-like data is taken (`views`, 564 rows, and `viewsmore`, 48: the q40 reviewer's sweeps, RL-992):
+  `int()` and `float()` of a view, a bytearray compared with one, and `os.setxattr` agree now; what is not written yet
+  stops by name (codecs outside phase 1, six functions of binascii, a view written into), and a buffered writer's raw
+  write() waits for Question 40 (RL-991).
+* An argument by name and position, a second built-in module, a key in a built-in type's dict, a module's class, and
+  `dir()`'s sort (`lookups`, 8 rows: RL-965, RL-1013, RL-1048, RL-1050, RL-1052).
 * Five defects of a class's shape and a call's message (`shapes`, 5 rows, each with the neighbours of the reviewer's
   example): `fromhex` on a subclass of bytes or bytearray calls the subclass with the result (RL-1037); assigning a class's
   `__module__` drops its `__firstlineno__` (RL-1044); `repr()` of a class, and the default `repr()` of its instance, say the
@@ -90,11 +96,31 @@ NOT_COMPILED = "bella: not implemented: executing a module the program does not 
 KINDS = ("int", "none", "bytes", "float", "list", "tuple", "strsub", "strsub2", "str")
 HOOKED_NAME = "bella: not implemented: an import by a name whose class overrides str's "
 
+_CODEC = " (not a phase-1 codec: specification section 7)"
+_WRITTEN_INTO = "a memoryview as a writable buffer ("
+VIEW_STOPS: dict[str, str] = {
+    **{"codecs." + name: "_codecs." + name + _CODEC for name in ("escape_decode", "unicode_escape_decode", "raw_unicode_escape_decode", "charmap_decode")},
+    **{"binascii." + name: "binascii." + name for name in ("crc_hqx", "b2a_qp", "a2b_qp", "b2a_uu", "b2a_base85", "b2a_ascii85")},
+    **{"binascii." + name: "binascii." + made for name, made in (("a2b_uu", "b2a_uu"), ("a2b_base85", "b2a_base85"), ("a2b_ascii85", "b2a_ascii85"))},
+    **{"base64." + name: "binascii." + made for name, made in (("b85encode", "b2a_base85"), ("b85decode", "b2a_base85"), ("a85encode", "b2a_ascii85"),
+                                                               ("a85decode", "b2a_ascii85"), ("z85encode", "b2a_base85"))},
+    **{row: _WRITTEN_INTO + said + ")" for row, said in (
+        ("BytesIO.readinto", "readinto() argument"), ("BufferedIOBase.readinto default", "readinto() argument"),
+        ("BufferedIOBase.readinto1 default", "readinto1() argument"), ("BufferedRandom.readinto", "readinto() argument"),
+        ("BufferedRWPair.readinto", "readinto() argument"), ("FileIO.readinto", "readinto() argument 1"),
+        ("os.readinto", "readinto() argument 2"), ("struct.pack_into", "pack_into() argument 2"), ("Struct.pack_into", "pack_into() argument 1"))},
+    **{row: "os: a memoryview as a buffer to read into" for row in ("os.readv", "os.preadv")},
+}
 # rows where the compiled program stops by name, CPython doing what a compiled program cannot
 STOPS: dict[tuple[str, tuple[str, ...]], str] = {
     **{("entrynames", ("source.exec_module", kind)): NOT_COMPILED for kind in KINDS},
     **{("entrynames", ("frozen.exec_module", kind)): NOT_COMPILED for kind in KINDS if kind != "strsub2"},
     ("ownmodules", ("marshal",)): "bella: not implemented: importing 'marshal' (the standard library: step 3b)",
+    ("lookups", ("module class other",)): "bella: not implemented: [P2+] __class__ assignment (spec section 3)",
+    # the view sweep (RL-992): what stops by name there is what is not written yet, whatever the buffer, and a view where a
+    # buffer is written into (Question 40's queue)
+    **{("views", (row, kind)): "bella: not implemented: " + words for row, words in VIEW_STOPS.items() for kind in "cws"},
+    **{("viewsmore", ("os.readinto", kind)): "bella: not implemented: a memoryview as a writable buffer (readinto() argument 2)" for kind in "cw"},
     **{("importnames", (entry, kind, target)): HOOKED_NAME for entry in ("__import__", "importlib.__import__")
        for kind in ("hashed", "equal", "added", "parted", "upper", "starts", "hooked") for target in ("found", "loaded", "missing")},
 }
@@ -125,8 +151,11 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
     ("cmodules", ("args", "12")): ("D-20", "Decimal(1).quantize(Decimal('1e-400'), context) -> InvalidOperation "
                                            "('quantize result has too many digits for current context',)\n"),
 }
-# rows that differ until the author has decided: none now
-OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset()
+# rows that differ until the author has decided: a buffered writer hands a program's raw write() a bytes where CPython hands
+# a read-only memoryview (RL-991, with Question 40); a second module object of a built-in module, which CPython makes at each
+# _imp.create_builtin and the runtime does not (RL-1013)
+OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset({("viewsmore", ("BufferedRandom.write", kind)) for kind in "bacw"} |
+                                                          {("lookups", (row,)) for row in ("builtin second", "builtin again")})
 
 
 def rows_of(probe: str) -> list[tuple[str, ...]]:

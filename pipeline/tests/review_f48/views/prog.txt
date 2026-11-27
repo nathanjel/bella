@@ -1,0 +1,490 @@
+"""Review F48, q40, probe 2: "a view wherever bytes-like data is taken and wherever CPython writes into a buffer" (spec
+v0.36, the bytes row): consumers that pipeline/tests/test_memoryview.py's 51 do not have, each with a view of bytes (c),
+a view of a bytearray (w) and a strided view of a bytearray (s). One row a process: argv[1] the consumer, argv[2] the kind.
+An exception shows as its class (the wording is D-08's)."""
+import base64
+import binascii
+import codecs
+import hashlib
+import hmac
+import io
+import os
+import struct
+import sys
+import zlib
+from collections.abc import Callable
+
+Maker = Callable[[bytes], memoryview]
+
+
+def contiguous(data: bytes) -> memoryview:
+    return memoryview(data)
+
+
+def writable(data: bytes) -> memoryview:
+    return memoryview(bytearray(data))
+
+
+def strided(data: bytes) -> memoryview:
+    wide = bytearray(len(data) * 2)
+    wide[::2] = data
+    return memoryview(wide)[::2]
+
+
+KINDS: dict[str, Maker] = {"c": contiguous, "w": writable, "s": strided}
+
+
+def scratch() -> str:
+    return "q40-p2-" + str(os.getpid()) + ".bin"
+
+
+def with_fd(data: bytes, use: Callable[[int], object]) -> object:
+    name = scratch()
+    with open(name, "wb") as out:
+        out.write(data)
+    fd = os.open(name, os.O_RDWR)
+    try:
+        got = use(fd)
+        with open(name, "rb") as back:
+            return got, back.read()
+    finally:
+        os.close(fd)
+        os.unlink(name)
+
+
+def into(view: memoryview, use: Callable[[memoryview], object]) -> object:
+    got = use(view)
+    return got, view.tobytes()
+
+
+def xattr(view: memoryview) -> object:
+    name = scratch()
+    with open(name, "wb") as out:
+        out.write(b"x")
+    try:
+        os.setxattr(name, "user.q40", view)
+        return os.getxattr(name, "user.q40")
+    finally:
+        os.unlink(name)
+
+
+def sha_update(view: memoryview) -> str:
+    h = hashlib.sha256()
+    h.update(view)
+    return h.hexdigest()[:8]
+
+
+def sha3_update(view: memoryview) -> str:
+    h = hashlib.sha3_256()
+    h.update(view)
+    return h.hexdigest()[:8]
+
+
+def hmac_update(view: memoryview) -> str:
+    h = hmac.new(b"k", None, "sha256")
+    h.update(view)
+    return h.hexdigest()[:8]
+
+
+def compress_object(view: memoryview) -> int:
+    c = zlib.compressobj()
+    return len(c.compress(view) + c.flush())
+
+
+def decompress_object(view: memoryview) -> bytes:
+    return zlib.decompressobj().decompress(view)
+
+
+def writelines(view: memoryview) -> bytes:
+    out = io.BytesIO()
+    out.writelines([view, view])
+    return out.getvalue()
+
+
+def buffered_write(view: memoryview) -> bytes:
+    sink = io.BytesIO()
+    writer = io.BufferedWriter(sink, 4)  # type: ignore[arg-type]
+    writer.write(view)
+    writer.flush()
+    return sink.getvalue()
+
+
+def file_write(view: memoryview) -> object:
+    name = scratch()
+    try:
+        with open(name, "wb") as out:
+            n = out.write(view)
+        with open(name, "rb") as back:
+            return n, back.read()
+    finally:
+        os.unlink(name)
+
+
+def fileio_write(view: memoryview) -> object:
+    name = scratch()
+    try:
+        with io.FileIO(name, "w") as out:
+            n = out.write(view)
+        with open(name, "rb") as back:
+            return n, back.read()
+    finally:
+        os.unlink(name)
+
+
+def text_write(view: memoryview) -> object:
+    return io.TextIOWrapper(io.BytesIO()).write(view)  # type: ignore[arg-type]
+
+
+def incremental(view: memoryview) -> str:
+    return codecs.getincrementaldecoder("utf-8")().decode(view)
+
+
+def path_write(view: memoryview) -> object:
+    import pathlib
+    name = scratch()
+    try:
+        n = pathlib.Path(name).write_bytes(view)
+        return n, pathlib.Path(name).read_bytes()
+    finally:
+        os.unlink(name)
+
+
+def json_loads(view: memoryview) -> object:
+    import json
+    return json.loads(view)  # type: ignore[arg-type]
+
+
+def re_escape(view: memoryview) -> object:
+    import re
+    return re.escape(view)  # type: ignore[type-var]
+
+
+def uuid_bytes(view: memoryview) -> str:
+    import uuid
+    return str(uuid.UUID(bytes=view))  # type: ignore[arg-type]
+
+
+def uuid_five(view: memoryview) -> str:
+    import uuid
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, view))  # type: ignore[arg-type]
+
+
+def random_seed(view: memoryview) -> float:
+    import random
+    return random.Random(view).random()  # type: ignore[arg-type]
+
+
+def random_choice(view: memoryview) -> object:
+    import random
+    return random.Random(7).choice(view)
+
+
+def random_shuffle(view: memoryview) -> bytes:
+    import random
+    random.Random(7).shuffle(view)  # type: ignore[arg-type]
+    return view.tobytes()
+
+
+def random_sample(view: memoryview) -> object:
+    import random
+    return random.Random(7).sample(view, 2)
+
+
+def bisect_left(view: memoryview) -> int:
+    import bisect
+    return bisect.bisect_left(view, 3)
+
+
+def counter(view: memoryview) -> object:
+    import collections
+    return collections.Counter(view).most_common(1)
+
+
+def deque(view: memoryview) -> object:
+    import collections
+    return list(collections.deque(view, 2))
+
+
+def matcher(view: memoryview) -> float:
+    import difflib
+    return difflib.SequenceMatcher(None, view, b"\x01\x02\x09\x04").ratio()
+
+
+def op_concat(view: memoryview) -> object:
+    import operator
+    return operator.concat(b"a", view)
+
+
+def op_contains(view: memoryview) -> object:
+    import operator
+    return operator.contains(b"\x00\x01\x02\x03\x04\x05", view)
+
+
+def op_count(view: memoryview) -> object:
+    import operator
+    return operator.countOf(view, 2), operator.indexOf(view, 3), operator.length_hint(view)
+
+
+def op_index(view: memoryview) -> object:
+    import operator
+    return operator.index(view)  # type: ignore[arg-type]
+
+
+def copy_copy(view: memoryview) -> object:
+    import copy
+    return copy.copy(view).tobytes()
+
+
+def copy_deep(view: memoryview) -> object:
+    import copy
+    return copy.deepcopy(view).tobytes()
+
+
+def secrets_compare(view: memoryview) -> bool:
+    import secrets
+    return secrets.compare_digest(view, b"\x01\x02\x03\x04")
+
+
+def unquote(view: memoryview) -> object:
+    import urllib.parse
+    return urllib.parse.unquote_to_bytes(view)  # type: ignore[arg-type]
+
+
+def quote(view: memoryview) -> object:
+    import urllib.parse
+    return urllib.parse.quote_from_bytes(view)  # type: ignore[arg-type]
+
+
+def parse_qsl(view: memoryview) -> object:
+    import urllib.parse
+    return urllib.parse.parse_qsl(view)  # type: ignore[type-var]
+
+
+def lookup(view: memoryview) -> object:
+    import unicodedata
+    return unicodedata.lookup(view)  # type: ignore[arg-type]
+
+
+class Stream(io.BufferedIOBase):
+    def read(self, size: int | None = -1) -> bytes:
+        return b"xy"
+
+    def read1(self, size: int = -1) -> bytes:
+        return b"z"
+
+
+D = b"\x01\x02\x03\x04"
+TABLE = bytes(range(255, -1, -1))
+PACKED = zlib.compress(b"abcabc")
+
+ROWS: dict[str, Callable[[Maker], object]] = {
+    # ---- bytes and bytearray methods ----
+    "bytes.count": lambda v: b"\x01\x02\x01".count(v(b"\x01")),
+    "bytes.index": lambda v: b"\x01\x02\x01".index(v(b"\x02")),
+    "bytes.rfind": lambda v: b"\x01\x02\x01".rfind(v(b"\x01")),
+    "bytes.rindex": lambda v: b"\x01\x02\x01".rindex(v(b"\x01")),
+    "bytes.endswith": lambda v: b"\x01\x02".endswith(v(b"\x02")),
+    "bytes.startswith tuple": lambda v: b"\x01\x02".startswith((v(b"\x09"), v(b"\x01"))),
+    "bytes.replace": lambda v: b"\x01\x02\x01".replace(v(b"\x01"), v(b"\x09\x09")),
+    "bytes.strip": lambda v: b"\x01\x02\x01".strip(v(b"\x01")),
+    "bytes.lstrip": lambda v: b"\x01\x02\x01".lstrip(v(b"\x01")),
+    "bytes.rstrip": lambda v: b"\x01\x02\x01".rstrip(v(b"\x01")),
+    "bytes.rsplit": lambda v: b"\x01\x02\x01".rsplit(v(b"\x02")),
+    "bytes.split maxsplit": lambda v: b"\x01\x02\x01\x02\x01".split(v(b"\x02"), 1),
+    "bytes.removeprefix": lambda v: b"\x01\x02\x01".removeprefix(v(b"\x01")),
+    "bytes.removesuffix": lambda v: b"\x01\x02\x01".removesuffix(v(b"\x01")),
+    "bytes.translate table": lambda v: b"\x01\x02".translate(v(TABLE)),
+    "bytes.translate delete": lambda v: b"\x01\x02\x01".translate(None, v(b"\x01")),
+    "bytes.center": lambda v: b"a".center(5, v(b"-")),  # type: ignore[arg-type]
+    "bytes.ljust": lambda v: b"a".ljust(3, v(b"-")),  # type: ignore[arg-type]
+    "bytes.rpartition": lambda v: [type(x).__name__ for x in b"\x00\x01\x03".rpartition(v(b"\x01"))],
+    "bytes.join of ints": lambda v: b"-".join(v(b"ab")),  # type: ignore[arg-type]
+    "bytes == view": lambda v: (b"\x01\x02" == v(b"\x01\x02"), b"\x01\x02" != v(b"\x01\x02"), bytes.__eq__(b"\x01", v(b"\x01"))),
+    "bytes < view": lambda v: b"\x01" < v(b"\x02"),  # type: ignore[operator]
+    "bytes.__contains__": lambda v: b"\x00\x01\x02".__contains__(v(b"\x01\x02")),
+    "bytes.__add__": lambda v: b"a".__add__(v(b"b")),
+    "bytes % view": lambda v: b"%s|%b" % (v(b"ab"), v(b"cd")),
+    "bytes(view, encoding)": lambda v: bytes(v(b"a"), "utf-8"),  # type: ignore[call-overload]
+    "bytearray == view": lambda v: (bytearray(b"\x01\x02") == v(b"\x01\x02"), bytearray(b"\x01") != v(b"\x01")),
+    "bytearray < view": lambda v: (bytearray(b"\x01") < v(b"\x02"), bytearray(b"\x03") >= v(b"\x02")),
+    "bytearray + view": lambda v: bytearray(b"a") + v(b"b"),
+    "bytearray.join": lambda v: bytearray(b"-").join([v(b"a"), v(b"b")]),
+    "bytearray.find": lambda v: bytearray(b"\x01\x02\x01").find(v(b"\x02")),
+    "bytearray.count": lambda v: bytearray(b"\x01\x02\x01").count(v(b"\x01")),
+    "bytearray.replace": lambda v: bytearray(b"\x01\x02\x01").replace(v(b"\x01"), v(b"\x09")),
+    "bytearray.startswith": lambda v: bytearray(b"\x01\x02").startswith(v(b"\x01")),
+    "bytearray.split": lambda v: bytearray(b"\x01\x02\x01").split(v(b"\x02")),
+    "bytearray.strip": lambda v: bytearray(b"\x01\x02\x01").strip(v(b"\x01")),
+    "bytearray.translate": lambda v: bytearray(b"\x01\x02").translate(v(TABLE)),
+    "bytearray.removeprefix": lambda v: bytearray(b"\x01\x02").removeprefix(v(b"\x01")),
+    "bytearray.__contains__": lambda v: v(b"\x02") in bytearray(b"\x01\x02"),
+    "bytearray.index": lambda v: bytearray(b"\x01\x02").index(v(b"\x02")),
+    "bytearray % view": lambda v: bytearray(b"%b") % v(b"ab"),
+    "bytearray(view)[::-1]": lambda v: bytearray(v(D))[::-1],
+    "bytearray.__init__ again": lambda v: bytearray.__init__(bytearray(b"zz"), v(D)),
+    # ---- numbers and text ----
+    "int(view)": lambda v: int(v(b"12")),  # type: ignore[call-overload]
+    "int(view, 10)": lambda v: int(v(b"12"), 10),  # type: ignore[call-overload]
+    "float(view)": lambda v: float(v(b"1.5")),  # type: ignore[arg-type]
+    "complex(view)": lambda v: complex(v(b"1")),  # type: ignore[call-overload]
+    "ord(view)": lambda v: ord(v(b"a")),  # type: ignore[arg-type]
+    "int.from_bytes signed": lambda v: int.from_bytes(v(b"\xff\x01"), "little", signed=True),
+    "str(view, utf-8)": lambda v: str(v(b"a\xc3\xa9"), "utf-8"),
+    "str(view, ascii)": lambda v: str(v(b"ab"), "ascii"),
+    "str(view, utf-16-le)": lambda v: str(v(b"a\x00b\x00"), "utf-16-le"),
+    "str(view, utf-32)": lambda v: str(v(b"a\x00\x00\x00"), "utf-32-le"),
+    "str(view, utf-8, replace)": lambda v: str(v(b"a\xff"), "utf-8", "replace"),
+    "str(view, utf-8-sig)": lambda v: str(v(b"\xef\xbb\xbfa"), "utf-8-sig"),
+    "codecs.utf_8_decode": lambda v: codecs.utf_8_decode(v(b"a\xc3")),
+    "codecs.utf_8_decode final": lambda v: codecs.utf_8_decode(v(b"ab"), "strict", True),
+    "codecs.latin_1_decode": lambda v: codecs.latin_1_decode(v(b"a\xe9")),
+    "codecs.ascii_decode": lambda v: codecs.ascii_decode(v(b"ab")),
+    "codecs.utf_16_le_decode": lambda v: codecs.utf_16_le_decode(v(b"a\x00")),
+    "codecs.utf_16_decode": lambda v: codecs.utf_16_decode(v(b"\xff\xfea\x00")),
+    "codecs.utf_32_le_decode": lambda v: codecs.utf_32_le_decode(v(b"a\x00\x00\x00")),
+    "codecs.escape_decode": lambda v: codecs.escape_decode(v(b"a\\n")),
+    "codecs.unicode_escape_decode": lambda v: codecs.unicode_escape_decode(v(b"a\\n")),
+    "codecs.raw_unicode_escape_decode": lambda v: codecs.raw_unicode_escape_decode(v(b"a\\u0041")),
+    "codecs.readbuffer_encode": lambda v: codecs.readbuffer_encode(v(b"ab")),
+    "codecs.charmap_decode": lambda v: codecs.charmap_decode(v(b"ab")),
+    "codecs.decode utf-8": lambda v: codecs.decode(v(b"ab"), "utf-8"),
+    "codecs.utf_8_encode": lambda v: codecs.utf_8_encode(v(b"ab")),  # type: ignore[arg-type]
+    "incremental decoder": lambda v: incremental(v(b"a\xc3\xa9")),
+    "json.loads": lambda v: json_loads(v(b"[1]")),
+    "re.escape": lambda v: re_escape(v(b"a.b")),
+    "unicodedata.lookup": lambda v: lookup(v(b"SPACE")),
+    # ---- streams and descriptors, read from the view ----
+    "BytesIO.writelines": lambda v: writelines(v(b"ab")),
+    "BufferedWriter.write": lambda v: buffered_write(v(b"abcdefgh")),
+    "open(wb).write": lambda v: file_write(v(b"abc")),
+    "FileIO.write": lambda v: fileio_write(v(b"abc")),
+    "TextIOWrapper.write": lambda v: text_write(v(b"abc")),
+    "BytesIO(view).read": lambda v: io.BytesIO(v(b"abc")).read(2),
+    "Path.write_bytes": lambda v: path_write(v(b"abc")),
+    "os.writev": lambda v: with_fd(b"", lambda fd: os.writev(fd, [v(b"ab"), v(b"cd")])),
+    "os.pwrite": lambda v: with_fd(b"0123", lambda fd: os.pwrite(fd, v(b"ab"), 1)),
+    "os.pwritev": lambda v: with_fd(b"0123", lambda fd: os.pwritev(fd, [v(b"ab")], 2)),
+    "os.setxattr": lambda v: xattr(v(b"value")),
+    "os.fsencode": lambda v: os.fsencode(v(b"a")),  # type: ignore[arg-type]
+    "os.fspath": lambda v: os.fspath(v(b"a")),  # type: ignore[call-overload]
+    "os.stat": lambda v: os.stat(v(b".")).st_size >= 0,  # type: ignore[call-overload]
+    "os.path.exists": lambda v: os.path.exists(v(b".")),  # type: ignore[arg-type]
+    "open(view)": lambda v: open(v(b"no-such-file")).close(),  # type: ignore[call-overload]
+    # ---- struct, binascii, base64, zlib, the digests ----
+    "Struct.unpack": lambda v: struct.Struct("4B").unpack(v(D)),
+    "Struct.unpack_from": lambda v: struct.Struct("2B").unpack_from(v(D), 1),
+    "Struct.iter_unpack": lambda v: list(struct.Struct("2B").iter_unpack(v(D))),
+    "struct.pack s": lambda v: struct.pack("4s", v(D)),  # type: ignore[arg-type]
+    "struct.calcsize": lambda v: struct.calcsize(v(b"B")),  # type: ignore[arg-type]
+    "struct.unpack format": lambda v: struct.unpack(v(b"2B"), b"ab"),  # type: ignore[arg-type]
+    "binascii.b2a_base64": lambda v: binascii.b2a_base64(v(D)),
+    "binascii.a2b_base64": lambda v: binascii.a2b_base64(v(b"AQID")),
+    "binascii.b2a_hex sep": lambda v: binascii.b2a_hex(v(D), "-"),
+    "binascii.hexlify sep view": lambda v: binascii.hexlify(D, v(b"-")),  # type: ignore[arg-type]
+    "binascii.crc_hqx": lambda v: binascii.crc_hqx(v(D), 0),
+    "binascii.b2a_qp": lambda v: binascii.b2a_qp(v(b"a=b")),
+    "binascii.a2b_qp": lambda v: binascii.a2b_qp(v(b"a=3Db")),
+    "binascii.b2a_uu": lambda v: binascii.b2a_uu(v(D)),
+    "binascii.a2b_uu": lambda v: binascii.a2b_uu(v(binascii.b2a_uu(D))),
+    "binascii.b2a_base32": lambda v: binascii.b2a_base32(v(D)),
+    "binascii.a2b_base32": lambda v: binascii.a2b_base32(v(b"AEBAGBA=")),
+    "binascii.b2a_base85": lambda v: binascii.b2a_base85(v(D)),
+    "binascii.a2b_base85": lambda v: binascii.a2b_base85(v(binascii.b2a_base85(D))),
+    "binascii.b2a_ascii85": lambda v: binascii.b2a_ascii85(v(D)),
+    "binascii.a2b_ascii85": lambda v: binascii.a2b_ascii85(v(binascii.b2a_ascii85(D))),
+    "base64.b64decode": lambda v: base64.b64decode(v(b"AQID")),
+    "base64.b64encode altchars": lambda v: base64.b64encode(b"\xfb\xff", altchars=v(b"-_")),
+    "base64.b64decode altchars": lambda v: base64.b64decode(b"-_8=", altchars=v(b"-_")),
+    "base64.urlsafe_b64encode": lambda v: base64.urlsafe_b64encode(v(b"\xfb\xff")),
+    "base64.urlsafe_b64decode": lambda v: base64.urlsafe_b64decode(v(b"-_8=")),
+    "base64.standard_b64decode": lambda v: base64.standard_b64decode(v(b"AQID")),
+    "base64.b32encode": lambda v: base64.b32encode(v(D)),
+    "base64.b32decode": lambda v: base64.b32decode(v(b"AEBAGBA=")),
+    "base64.b32hexencode": lambda v: base64.b32hexencode(v(D)),
+    "base64.b16encode": lambda v: base64.b16encode(v(D)),
+    "base64.b16decode": lambda v: base64.b16decode(v(b"0102")),
+    "base64.b85encode": lambda v: base64.b85encode(v(D)),
+    "base64.b85decode": lambda v: base64.b85decode(v(base64.b85encode(D))),
+    "base64.a85encode": lambda v: base64.a85encode(v(D)),
+    "base64.a85decode": lambda v: base64.a85decode(v(base64.a85encode(D))),
+    "base64.z85encode": lambda v: base64.z85encode(v(D)),
+    "base64.encodebytes": lambda v: base64.encodebytes(v(D)),
+    "base64.decodebytes": lambda v: base64.decodebytes(v(b"AQID\n")),
+    "zlib.adler32": lambda v: zlib.adler32(v(D)),
+    "zlib.adler32 start": lambda v: zlib.adler32(v(D), 7),
+    "zlib.decompress": lambda v: zlib.decompress(v(PACKED)),
+    "zlib.compressobj.compress": lambda v: compress_object(v(D)),
+    "zlib.decompressobj.decompress": lambda v: decompress_object(v(PACKED)),
+    "zlib.compressobj zdict": lambda v: len(zlib.compressobj(zdict=v(b"abc")).flush()),
+    "zlib.decompressobj zdict": lambda v: zlib.decompressobj(zdict=v(b"abc")).eof,
+    "hashlib.sha1": lambda v: hashlib.sha1(v(D)).hexdigest()[:8],
+    "hashlib.sha512": lambda v: hashlib.sha512(v(D)).hexdigest()[:8],
+    "hashlib.sha3_256": lambda v: hashlib.sha3_256(v(D)).hexdigest()[:8],
+    "hashlib.shake_128": lambda v: hashlib.shake_128(v(D)).hexdigest(4),
+    "hashlib.blake2s": lambda v: hashlib.blake2s(v(D)).hexdigest()[:8],
+    "hashlib.new": lambda v: hashlib.new("sha256", v(D)).hexdigest()[:8],
+    "sha256.update": lambda v: sha_update(v(D)),
+    "sha3_256.update": lambda v: sha3_update(v(D)),
+    "blake2b key": lambda v: hashlib.blake2b(b"m", key=v(b"k")).hexdigest()[:8],
+    "blake2b salt": lambda v: hashlib.blake2b(b"m", salt=v(b"s")).hexdigest()[:8],
+    "blake2b person": lambda v: hashlib.blake2b(b"m", person=v(b"p")).hexdigest()[:8],
+    "hmac.new": lambda v: hmac.new(v(b"k"), v(b"m"), "sha256").hexdigest()[:8],
+    "hmac.update": lambda v: hmac_update(v(b"m")),
+    "hmac.digest msg": lambda v: hmac.digest(b"k", v(b"m"), "sha256")[:2],
+    "hmac.compare_digest": lambda v: hmac.compare_digest(v(D), v(D)),
+    "secrets.compare_digest": lambda v: secrets_compare(v(D)),
+    "uuid.UUID(bytes=)": lambda v: uuid_bytes(v(bytes(range(16)))),
+    "uuid.uuid5": lambda v: uuid_five(v(b"x")),
+    "urllib.parse.unquote_to_bytes": lambda v: unquote(v(b"a%20b")),
+    "urllib.parse.quote_from_bytes": lambda v: quote(v(b"a b")),
+    "urllib.parse.parse_qsl": lambda v: parse_qsl(v(b"a=1&b=2")),
+    # ---- as a sequence ----
+    "sum min max": lambda v: (sum(v(D)), min(v(D)), max(v(D)), sorted(v(b"\x03\x01")), tuple(v(D)), all(v(D)), len(set(v(D)))),
+    "reversed in enumerate": lambda v: (list(reversed(v(D))), 3 in v(D), 9 in v(D), list(enumerate(v(b"ab")))),
+    "random seed": lambda v: random_seed(v(b"ab")),
+    "random.choice": lambda v: random_choice(v(D)),
+    "random.shuffle": lambda v: random_shuffle(v(D)),
+    "random.sample": lambda v: random_sample(v(D)),
+    "bisect": lambda v: bisect_left(v(D)),
+    "Counter": lambda v: counter(v(b"\x01\x01\x02")),
+    "deque": lambda v: deque(v(D)),
+    "SequenceMatcher": lambda v: matcher(v(D)),
+    "operator.concat": lambda v: op_concat(v(b"b")),
+    "operator.contains": lambda v: op_contains(v(b"\x02\x03")),
+    "operator.countOf": lambda v: op_count(v(b"\x02\x03\x02")),
+    "operator.index": lambda v: op_index(v(D)),
+    "copy.copy": lambda v: copy_copy(v(D)),
+    "copy.deepcopy": lambda v: copy_deep(v(D)),
+    "format spec": lambda v: format(v(D), "x"),
+    "view + bytes": lambda v: v(D) + b"a",  # type: ignore[operator]
+    "view * 2": lambda v: v(D) * 2,  # type: ignore[operator]
+    "view < view": lambda v: v(D) < v(D),  # type: ignore[operator]
+    "view == view": lambda v: (v(D) == v(D), v(D) != v(b"\x01"), v(D) == D, v(D) == bytearray(D), v(D) == [1, 2, 3, 4]),
+    # ---- a view written into ----
+    "BytesIO.readinto": lambda v: into(v(b"......"), lambda m: io.BytesIO(b"12345").readinto(m)),
+    "BufferedIOBase.readinto default": lambda v: into(v(b"......"), lambda m: Stream().readinto(m)),
+    "BufferedIOBase.readinto1 default": lambda v: into(v(b"......"), lambda m: Stream().readinto1(m)),
+    "BufferedRandom.readinto": lambda v: into(v(b"......"), lambda m: io.BufferedRandom(io.BytesIO(b"12345")).readinto(m)),  # type: ignore[arg-type]
+    "BufferedRWPair.readinto": lambda v: into(v(b"......"), lambda m: io.BufferedRWPair(io.BytesIO(b"12345"), io.BytesIO()).readinto(m)),  # type: ignore[arg-type]
+    "FileIO.readinto": lambda v: into(v(b"......"), lambda m: with_fd(b"12345", lambda fd: io.FileIO(fd, "r", closefd=False).readinto(m))),
+    "os.readinto": lambda v: into(v(b"......"), lambda m: with_fd(b"12345", lambda fd: os.readinto(fd, m))),
+    "os.readv": lambda v: into(v(b"......"), lambda m: with_fd(b"12345", lambda fd: os.readv(fd, [m]))),
+    "os.preadv": lambda v: into(v(b"......"), lambda m: with_fd(b"12345", lambda fd: os.preadv(fd, [m], 1))),
+    "struct.pack_into": lambda v: into(v(b"......"), lambda m: struct.pack_into("<H", m, 1, 0x4142)),
+    "Struct.pack_into": lambda v: into(v(b"......"), lambda m: struct.Struct("<H").pack_into(m, 1, 0x4142)),
+}
+
+
+def main() -> None:
+    if sys.argv[1] == "--list":
+        for name in ROWS:
+            for kind in KINDS:
+                print("'" + name + "' " + kind)
+        return
+    try:
+        print(sys.argv[1], sys.argv[2], "->", repr(ROWS[sys.argv[1]](KINDS[sys.argv[2]])))
+    except Exception as error:
+        print(sys.argv[1], sys.argv[2], "->", type(error).__name__)
+
+
+main()

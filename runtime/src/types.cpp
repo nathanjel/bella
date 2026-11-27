@@ -1354,6 +1354,11 @@ Ref number_long(Obj x) {
     if (python && !type_lookup(type_of(x), N("__index__")).is_unset()) return int_index_of(x);
     if (const Str* s = as_str(x)) return int_from_str(s, 10);
     if (is_bytes_like(x)) return int_from_bytes(x, 10);
+    if (is_memoryview(x) && view_simple_ok(x)) {   // PyObject_GetBuffer(PyBUF_SIMPLE), copied to a bytes, which an error shows; a
+                                                 // strided or released view's failure is the TypeError below (RL-992)
+        Ref copy = bytes_new(simple_view(x));
+        return int_from_bytes(copy.get(), 10);
+    }
     raise_new("TypeError", "int() argument must be a string, a bytes-like object or a real number, not '" + type_of(x)->name + "'");
 }
 
@@ -2228,14 +2233,34 @@ Ref proxy_new(Obj, Args a) {                     // mappingproxy_new_impl
         raise_new("TypeError", "mappingproxy() argument must be a mapping, not " + type_of(mapping)->name);
     return own(new Proxy(mapping));
 }
+// An immortal class's attribute by a key, as its dict's lookup finds it (unicodekeys_lookup_generic): the key hashed; an exact
+// str by its text; anything else against each name of the same hash, by identity and then `name == key`, which a key's __eq__
+// may answer; a lookup the comparison changed the attributes under starts again (RL-1048)
+Obj proxied_find(ClassObject* c, Obj key) {
+    std::int64_t h = dict_key_hash(key);
+    if (is_exact_str(key)) {
+        const Obj* v = c->attrs.find(intern(name_arg(key)->text));
+        return v != nullptr ? *v : Obj{};
+    }
+    for (;;) {
+        bool restart = false;
+        for (auto& [name, value] : c->attrs.items()) {
+            if (str_hash(name) != h) continue;
+            if (Obj::of(name) == key) return value;
+            Ref eq = compare(CmpOp::Eq, Obj::of(name), key);
+            bool same = truth(eq.get());
+            const Obj* now = c->attrs.find(name);
+            if (now == nullptr || *now != value) { restart = true; break; }
+            if (same) return *now;
+        }
+        if (!restart) return Obj{};
+    }
+}
 // mappingproxy_getitem: PyObject_GetItem on the mapping; an exact dict's is dict_subscript, read here in place
 Ref proxy_getitem(Obj self, Args a) {
     arity(a, "__getitem__", 1, 1);
-    if (ClassObject* c = proxied(self)) {        // a key is hashed, whether it could be an attribute's name or not
-        dict_key_hash(a.pos(0));
-        const Str* k = as_str(a.pos(0));
-        if (k != nullptr)
-            if (const Obj* v = c->attrs.find(intern(k->text))) return Ref::share(*v);
+    if (ClassObject* c = proxied(self)) {
+        if (Obj v = proxied_find(c, a.pos(0)); !v.is_unset()) return Ref::share(v);
         Ref exc = invoke(Obj::of(exception_class("KeyError")), {a.pos(0)});
         raise(exc.get());
     }
@@ -2248,11 +2273,7 @@ Ref proxy_getitem(Obj self, Args a) {
 }
 Ref proxy_contains(Obj self, Args a) {           // mappingproxy_contains: PyDict_Contains for an exact dict
     arity(a, "__contains__", 1, 1);
-    if (ClassObject* c = proxied(self)) {
-        dict_key_hash(a.pos(0));
-        const Str* k = as_str(a.pos(0));
-        return Ref::steal(boolean(k != nullptr && c->attrs.contains(intern(k->text))));
-    }
+    if (ClassObject* c = proxied(self)) return Ref::steal(boolean(!proxied_find(c, a.pos(0)).is_unset()));
     Dict* d = proxy_exact_dict(self);
     if (d == nullptr) return compare(CmpOp::In, a.pos(0), proxy_mapping(self));
     return Ref::steal(boolean(!dict_get(d, a.pos(0)).is_unset()));
@@ -2260,10 +2281,7 @@ Ref proxy_contains(Obj self, Args a) {           // mappingproxy_contains: PyDic
 Ref proxy_get(Obj self, Args a) {
     arity(a, "get", 1, 2);
     if (ClassObject* c = proxied(self)) {
-        dict_key_hash(a.pos(0));
-        const Str* k = as_str(a.pos(0));
-        if (k != nullptr)
-            if (const Obj* v = c->attrs.find(intern(k->text))) return Ref::share(*v);
+        if (Obj v = proxied_find(c, a.pos(0)); !v.is_unset()) return Ref::share(v);
         return a.npos > 1 ? Ref::share(a.pos(1)) : none_ref();
     }
     Dict* d = proxy_exact_dict(self);
@@ -3189,10 +3207,8 @@ Ref mapping_get(Obj mapping, Obj key) {
     }
     if (is_kind(mapping, Kind::Proxy)) {                                      // a class's dict through its proxy (the
         if (ClassObject* c = proxied(mapping)) {                              // annotation scope's cell): its getitem
-            const Str* k = as_str(key);
-            if (k == nullptr) return Ref{};
-            const Obj* v = c->attrs.find(intern(k->text));
-            return v ? Ref::share(*v) : Ref{};
+            Obj v = proxied_find(c, key);
+            return v.is_unset() ? Ref{} : Ref::share(v);
         }
         if (Dict* d = proxy_exact_dict(mapping)) {
             Obj v = dict_get(d, key);

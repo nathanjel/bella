@@ -198,6 +198,8 @@ Ref float_from_string(Obj v) {                   // PyFloat_FromString
         return float_from_text(decimal_and_space_to_ascii(s, transformed), v);   // _PyUnicode_TransformDecimalAndSpaceToASCII
     }
     if (is_bytes_like(v)) return float_from_text(bytes_data(v), v);
+    if (is_memoryview(v) && view_simple_ok(v))   // PyBUF_SIMPLE, else the TypeError below; an error shows the view (RL-992)
+        return float_from_text(std::string(simple_view(v)), v);
     raise_new("TypeError", "float() argument must be a string or a real number, not '" + type_of(v)->name + "'");
 }
 

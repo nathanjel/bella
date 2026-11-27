@@ -1,0 +1,48 @@
+'int' b
+'int' a
+'int' c
+'int' w
+'int spaces' b
+'int spaces' a
+'int spaces' c
+'int spaces' w
+'int bad' b
+'int bad' a
+'int bad' c
+'int bad' w
+'float' b
+'float' a
+'float' c
+'float' w
+'float nan' b
+'float nan' a
+'float nan' c
+'float nan' w
+'float bad' b
+'float bad' a
+'float bad' c
+'float bad' w
+'bytearray ordered' b
+'bytearray ordered' a
+'bytearray ordered' c
+'bytearray ordered' w
+'bytearray methods' b
+'bytearray methods' a
+'bytearray methods' c
+'bytearray methods' w
+'sorted' b
+'sorted' a
+'sorted' c
+'sorted' w
+'os.setxattr' b
+'os.setxattr' a
+'os.setxattr' c
+'os.setxattr' w
+'os.readinto' b
+'os.readinto' a
+'os.readinto' c
+'os.readinto' w
+'BufferedRandom.write' b
+'BufferedRandom.write' a
+'BufferedRandom.write' c
+'BufferedRandom.write' w
