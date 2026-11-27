@@ -1,0 +1,15 @@
+"""Raises from a function it defined: the function holds the namespace, which holds the function."""
+import sys
+
+from watch import Marker, watched
+
+held = Marker("bad_func.held")
+watched(sys.modules[__name__], "bad_func")
+
+
+def boom() -> None:
+    inner = Marker("bad_func.boom.local")
+    raise ValueError("bad_func" + inner.name[:0])
+
+
+boom()

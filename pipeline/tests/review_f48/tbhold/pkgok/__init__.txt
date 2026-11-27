@@ -1,0 +1,6 @@
+"""A package that succeeds."""
+import sys
+
+from watch import watched
+
+watched(sys.modules[__name__], "pkgok")

@@ -1,0 +1,12 @@
+"""Raises, with several markers in its namespace: the order they go in."""
+import sys
+
+from watch import Marker, watched
+
+z = Marker("order.z")
+a = Marker("order.a")
+m = Marker("order.m")
+del a
+a = Marker("order.a2")
+watched(sys.modules[__name__], "bad_order")
+raise ValueError("bad_order")

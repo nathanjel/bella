@@ -1400,6 +1400,10 @@ bool exception_matches(Obj exc, Obj spec) {
 }
 
 Obj traceback_of(Obj exc) { return is_exception_instance(exc) ? exception_field(exc, "__traceback__") : Obj{}; }
+Module* entry_module(const Traceback* tb) {      // through the frame object the entry holds (tb_frame), as CPython's tb_frame->f_globals
+    if (is_kind(tb->frame_obj.get(), Kind::Frame)) return static_cast<FrameObject*>(tb->frame_obj.get().object())->module.module();
+    return tb->module.module();
+}
 
 namespace {
 std::uint64_t frame_ids = 0;                     // a frame's id, given on its first record: never reused
@@ -1410,9 +1414,8 @@ Ref make_entry(detail::FrameRecord& f, Ref next) {
     Ref held = own(new Traceback(f.code, f.line, std::move(next)));
     auto* tb = static_cast<Traceback*>(held.get().object());
     tb->frame = f.id;
-    tb->frame_obj = Ref::share(detail::frame_object(f));
-    if (f.module != nullptr) tb->module = GlobalsRef(f.module);
-    return held;
+    tb->frame_obj = Ref::share(detail::frame_object(f));   // which holds the frame's globals: tb_dealloc lets go of tb_next and tb_frame
+    return held;                                           // only, so the namespace goes with the frame object, before its f_back (RL-1012)
 }
 // prepends the frame's entry to exc's traceback, as PyTraceBack_Here does
 void add_entry(Obj exc, detail::FrameRecord& f) {

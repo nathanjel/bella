@@ -1471,6 +1471,7 @@ void setattr(Obj obj, const Str* name, Obj value) {
             return;
         }
         if (auto* m = static_cast<Module*>(obj.object()); bootstrap_hides(m, name)) refuse_bootstrap_assignment(m, name);
+        refuse_absent_store(static_cast<Module*>(obj.object()), name);
         dict_set(program_dict(static_cast<Module*>(obj.object())), Obj::of(name), value);
         return;
     }
@@ -1526,8 +1527,10 @@ void delattr(Obj obj, const Str* name) {
             return;
         }
         if (bootstrap_hides(static_cast<Module*>(obj.object()), name) ||     // not an attribute of the module, as in CPython
-            !dict_del(program_dict(static_cast<Module*>(obj.object())), Obj::of(name)))
+            !dict_del(program_dict(static_cast<Module*>(obj.object())), Obj::of(name))) {
+            refuse_absent_attribute(obj, name);  // one CPython's module has and the runtime's lacks: a stop, as a read is (RL-1065)
             raise_attribute_error(obj, name, "'" + type_of(obj)->name + "' object has no attribute '" + name->text + "'");
+        }
         return;
     }
     // a C++ type's getset (a member): deleted through its setter when it allows that (super's

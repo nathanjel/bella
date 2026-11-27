@@ -1,0 +1,16 @@
+mro_inherited_type
+mro_static
+mro_classmethod
+mro_none_attr
+mro_property
+mro_callable_object
+mro_in_class_namespace
+mro_on_meta_meta
+mro_two_levels
+mro_order_of_hooks
+mro_changed_later
+mro_returns_other_classes_mro
+mro_custom_c3_use
+escape_failed
+escape_failed_subclass
+escape_ok_then_use_in_hook

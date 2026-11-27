@@ -1,0 +1,356 @@
+"""Probe q44/p2 (review F48): release order through a kept traceback entry, the runtime's own modules at the exit,
+what a module makes while it initialises, and p1's rows that stopped at gc.is_tracked. One row a run."""
+import collections
+import csv
+import gc
+import importlib
+import importlib.machinery
+import importlib.util
+import sys
+import types
+import weakref
+from contextlib import suppress
+
+import watch
+from watch import LOUD, Marker, deaths, kept, show, watched
+
+g_kept: object = None
+
+
+def collect(label: str) -> None:
+    gc.collect()
+    print(label, sorted(deaths), flush=True)
+    deaths.clear()
+
+
+def do_import(name: str) -> None:
+    if name == "bad_plain":
+        import bad_plain  # noqa: F401
+    elif name == "bad_outer":
+        import bad_outer  # noqa: F401
+    elif name == "bad_func":
+        import bad_func  # noqa: F401
+    elif name == "pkgok.badsub":
+        import pkgok.badsub  # noqa: F401
+    elif name == "bad_order":
+        import bad_order  # noqa: F401
+    elif name == "bad_tbkeep":
+        import bad_tbkeep  # noqa: F401
+    elif name == "bad_gen2":
+        import bad_gen2  # noqa: F401
+    elif name == "bad_fn2":
+        import bad_fn2  # noqa: F401
+    elif name == "live":
+        import live
+        live.boom()
+    else:
+        raise SystemExit("no such name: " + name)
+
+
+# ---- a kept traceback entry ----
+
+def deepest(tb: types.TracebackType | None) -> types.TracebackType | None:
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    return tb
+
+
+def innermost(name: str) -> types.TracebackType | None:
+    """The deepest entry of a failed import's traceback, from a function that has returned."""
+    local = Marker("importer.local")
+    try:
+        do_import(name)
+    except ValueError as e:
+        return deepest(e.__traceback__)
+    return None if local else None
+
+
+def tbinner(name: str) -> None:
+    tb = innermost(name)
+    show("the deepest entry kept")
+    del tb
+    show("the entry dropped")
+    collect("collected")
+
+
+def tbexc(name: str) -> None:
+    """The exception kept, its traceback cut down to the deepest entry."""
+    local = Marker("importer.local")
+
+    def attempt() -> BaseException | None:
+        inner = Marker("attempt.local")
+        try:
+            do_import(name)
+        except ValueError as e:
+            return e.with_traceback(deepest(e.__traceback__)) if inner else None
+        return None
+
+    e = attempt()
+    show("the exception kept" + local.name[:0])
+    del e
+    show("the exception dropped")
+    collect("collected")
+
+
+def order() -> None:
+    try:
+        do_import("bad_order")
+    except ValueError:
+        show("in except")
+    show("after except")
+
+
+def gen2() -> None:
+    with suppress(ValueError):
+        do_import("bad_gen2")
+    show("after with")
+    kept.clear()
+    show("the generator dropped")
+    collect("collected")
+
+
+def fn2() -> None:
+    with suppress(ValueError):
+        do_import("bad_fn2")
+    show("after with")
+    kept.clear()
+    show("the function dropped")
+    collect("collected")
+
+
+def lazy() -> None:
+    import lazy_user
+    try:
+        lazy_user.touch()
+    except ValueError as e:
+        print("caught", type(e).__name__, "bad_lazy" in sys.modules)
+        show("in except")
+    show("after except")
+    try:
+        lazy_user.touch()
+    except ValueError:
+        show("in except, again")
+    show("after except, again")
+    collect("collected")
+
+
+def garbage(name: str) -> None:
+    gc.collect()
+    with suppress(ValueError):
+        do_import(name)
+    show("after with")
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    n = gc.collect()
+    counts = collections.Counter(type(o).__name__ for o in gc.garbage)
+    print("found", n, len(gc.garbage))
+    for k in sorted(counts):
+        print(" ", k, counts[k])
+    gc.set_debug(0)
+    gc.garbage.clear()
+    show("garbage let go of")
+
+
+# ---- types.ModuleType and others the program makes ----
+
+def mt_basic() -> None:
+    m = types.ModuleType("made")
+    m.z = Marker("z")  # type: ignore[attr-defined]
+    m.a = Marker("a")  # type: ignore[attr-defined]
+    m.m = Marker("m")  # type: ignore[attr-defined]
+    del m.a
+    m.a = Marker("a2")  # type: ignore[attr-defined]
+    print("count before", weakref.getweakrefcount(m))
+    watched(m, "made")
+    print("count after", weakref.getweakrefcount(m))
+    del m
+    show("dropped")
+
+
+def mt_new() -> None:
+    m = types.ModuleType.__new__(types.ModuleType)
+    print(repr(m), m.__dict__)
+    try:
+        print(m.__name__)
+    except AttributeError as e:
+        print("AttributeError", e)
+    watched(m, "bare")
+    del m
+    show("dropped")
+
+
+def spec() -> None:
+    s = importlib.machinery.ModuleSpec("q44spec", None)
+    m = importlib.util.module_from_spec(s)
+    m.x = Marker("q44spec.x")  # type: ignore[attr-defined]
+    watched(m, "q44spec")
+    print(m.__name__, "q44spec" in sys.modules, m.__spec__ is s)
+    del m
+    show("dropped")
+    del s
+    show("spec dropped")
+
+
+def decimal_row() -> None:
+    import decimal
+    print(decimal.__name__, decimal.Decimal.__module__, sys.modules["decimal"] is decimal,
+          "_pydecimal" in sys.modules and sys.modules["_pydecimal"] is decimal, type(decimal.Decimal("1.5") + 1).__name__)
+
+
+# ---- what a module makes while it initialises ----
+
+def defs_row(names: list[str]) -> None:
+    import defs
+    show("imported")
+    for n in names:
+        delattr(defs, n)
+    show("deleted")
+    collect("collected")
+    alive = watch.alive()
+    print("alive", [n for n in names if n in alive])
+
+
+def bf(mod: str, attr: str) -> None:
+    m = importlib.import_module(mod)
+    f = getattr(m, attr)
+    try:
+        r = weakref.ref(f)
+    except TypeError:
+        print("no weak reference to a", type(f).__name__)
+        return
+    print(type(f).__name__, r() is f)
+    del f
+    delattr(m, attr)
+    print("dead", r() is None)
+    gc.collect()
+    print("dead after a collection", r() is None)
+
+
+def code_row() -> None:
+    import spare
+    c = spare.value.__code__
+    try:
+        r = weakref.ref(c)
+    except TypeError:
+        print("no weak reference to a", type(c).__name__)
+        return
+    print(type(c).__name__, r() is c, r() is spare.value.__code__)
+    del c
+    print("alive with its function", r() is not None)
+    del spare.value
+    print("dead", r() is None)
+    gc.collect()
+    print("dead after a collection", r() is None)
+
+
+# ---- the runtime's own modules ----
+
+def own_weak(name: str) -> None:
+    m = importlib.import_module(name)
+    n0 = weakref.getweakrefcount(m)
+    r = weakref.ref(m)
+    print(name, n0, weakref.getweakrefcount(m), r() is m, weakref.ref(m) is r, type(m).__name__)
+    p = weakref.proxy(m)
+    print(p.__name__, weakref.getweakrefcount(m))
+    del p, r
+    print(weakref.getweakrefcount(m))
+
+
+def at_exit() -> None:
+    sys.__dict__["q44refs"] = watch.refs
+    LOUD.append(True)
+    print("the end", flush=True)
+
+
+def x_attr(name: str) -> None:
+    """At the exit: is what only this module's namespace holds finalised?"""
+    global g_kept
+    if name == "made":
+        g_kept = types.ModuleType("made")
+        m = g_kept
+    else:
+        m = importlib.import_module(name)
+    assert isinstance(m, types.ModuleType)
+    setattr(m, "q44held", Marker(name + ".q44held"))
+    at_exit()
+
+
+def x_fin(name: str) -> None:
+    """At the exit: a weakref.finalize on this module that is not for the exit."""
+    global g_kept
+    if name == "made":
+        g_kept = types.ModuleType("made")
+        m = g_kept
+    else:
+        m = importlib.import_module(name)
+    f = weakref.finalize(m, watch.Callback(name + " finalize"), None)
+    f.atexit = False
+    LOUD.append(True)
+    print("the end", flush=True)
+
+
+def x_state() -> None:
+    """At the exit: what only a C module's state holds (a registered csv dialect)."""
+
+    class D(csv.excel):
+        held = Marker("dialect.held")
+
+    csv.register_dialect("q44", D)
+    at_exit()
+
+
+def main() -> None:
+    row = sys.argv[1]
+    args = sys.argv[2:]
+    if row == "tbinner":
+        tbinner(args[0])
+    elif row == "tbexc":
+        tbexc(args[0])
+    elif row == "order":
+        order()
+    elif row == "gen2":
+        gen2()
+    elif row == "fn2":
+        fn2()
+    elif row == "lazy":
+        lazy()
+    elif row == "garbage":
+        garbage(args[0])
+    elif row == "mt_basic":
+        mt_basic()
+    elif row == "mt_new":
+        mt_new()
+    elif row == "spec":
+        spec()
+    elif row == "decimal":
+        decimal_row()
+    elif row == "def":
+        defs_row(args)
+    elif row == "bf":
+        bf(args[0], args[1])
+    elif row == "code":
+        code_row()
+    elif row == "own_weak":
+        own_weak(args[0])
+    elif row == "x_attr":
+        x_attr(args[0])
+        return
+    elif row == "x_fin":
+        x_fin(args[0])
+        return
+    elif row == "x_state":
+        x_state()
+        return
+    else:
+        raise SystemExit("no such row: " + row)
+    show("returned")
+    collect("end")
+
+
+gc.disable()
+import errno  # noqa: E402, F401
+import itertools  # noqa: E402, F401
+import json  # noqa: E402, F401
+import math  # noqa: E402, F401
+import time  # noqa: E402, F401
+
+main()

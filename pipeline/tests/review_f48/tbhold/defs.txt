@@ -1,0 +1,171 @@
+"""What a module makes while it initialises, each kind watched by a weak reference."""
+import abc
+import collections
+import dataclasses
+import enum
+import functools
+import typing
+from collections.abc import Callable
+
+from watch import Marker, watched
+
+
+def fn_default(d: Marker = Marker("fn_default.d"), *, k: Marker = Marker("fn_default.k")) -> str:
+    return d.name + k.name
+
+
+watched(fn_default, "fn_default")
+
+
+def _make_closure() -> Callable[[], str]:
+    cell = Marker("fn_closure.cell")
+
+    def inner() -> str:
+        return cell.name
+
+    return inner
+
+
+fn_closure = _make_closure()
+watched(fn_closure, "fn_closure")
+
+
+class cls_plain:
+    held = Marker("cls_plain.held")
+
+    def method(self) -> str:
+        return "m"
+
+
+watched(cls_plain, "cls_plain")
+
+
+class cls_slots:
+    __slots__ = ("a", "b")
+    held = Marker("cls_slots.held")
+
+
+watched(cls_slots, "cls_slots")
+
+
+class Meta(type):
+    pass
+
+
+class cls_meta(metaclass=Meta):
+    held = Marker("cls_meta.held")
+
+
+watched(cls_meta, "cls_meta")
+watched(Meta, "Meta")
+
+
+@dataclasses.dataclass
+class dc:
+    x: int = 0
+    held: typing.ClassVar[Marker] = Marker("dc.held")
+
+
+watched(dc, "dc")
+
+
+class en(enum.Enum):
+    A = 1
+    B = 2
+
+
+watched(en, "en")
+
+
+class nt(typing.NamedTuple):
+    x: int
+    y: int = 0
+
+
+watched(nt, "nt")
+
+cnt = collections.namedtuple("cnt", "a b")
+watched(cnt, "cnt")
+
+
+class td(typing.TypedDict):
+    x: int
+
+
+watched(td, "td")
+
+
+class proto(typing.Protocol):
+    def meth(self) -> int: ...
+
+
+watched(proto, "proto")
+
+
+class ab(abc.ABC):
+    @abc.abstractmethod
+    def meth(self) -> int: ...
+
+
+watched(ab, "ab")
+
+
+@functools.lru_cache(maxsize=None)
+def lru(x: int) -> Marker:
+    return Marker("lru.value" + str(x))
+
+
+lru(1)
+watched(lru, "lru")
+
+part = functools.partial(fn_default, Marker("part.arg"))
+watched(part, "part")
+
+
+class base:
+    held = Marker("base.held")
+
+
+class sub(base):
+    held2 = Marker("sub.held")
+
+
+watched(base, "base")
+watched(sub, "sub")
+
+
+class exc(Exception):
+    held = Marker("exc.held")
+
+
+watched(exc, "exc")
+
+
+class inst_cls:
+    held = Marker("inst_cls.held")
+
+
+inst = inst_cls()
+watched(inst_cls, "inst_cls")
+
+lam: Callable[[], int] = lambda: 0  # noqa: E731
+watched(lam, "lam")
+
+
+class prop:
+    held = Marker("prop.held")
+
+    @property
+    def p(self) -> int:
+        return 1
+
+    @staticmethod
+    def s() -> int:
+        return 2
+
+    @classmethod
+    def c(cls) -> int:
+        return 3
+
+
+watched(prop, "prop")

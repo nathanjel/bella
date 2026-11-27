@@ -1,0 +1,13 @@
+"""Raises after its namespace kept an exception whose traceback has its own frame."""
+import sys
+
+from watch import Marker, watched
+
+held = Marker("bad_tbkeep.held")
+watched(sys.modules[__name__], "bad_tbkeep")
+saved: BaseException | None = None
+try:
+    raise KeyError("inner")
+except KeyError as e:
+    saved = e
+raise ValueError("bad_tbkeep")

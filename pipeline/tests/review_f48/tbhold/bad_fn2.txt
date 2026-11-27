@@ -1,0 +1,24 @@
+"""Raises after it gave away a function and deleted it: the function alone holds the namespace."""
+import sys
+from collections.abc import Callable
+
+from watch import Marker, kept, watched
+
+held = Marker("fn2.held")
+watched(sys.modules[__name__], "bad_fn2")
+
+
+def outer() -> Callable[[], str]:
+    cellv = Marker("fn2.cell")
+
+    def reader(d: Marker = Marker("fn2.default"), *, k: Marker = Marker("fn2.kwdefault")) -> str:
+        return held.name + cellv.name + d.name + k.name
+
+    return reader
+
+
+r = outer()
+r.attr = Marker("fn2.attr")  # type: ignore[attr-defined]
+kept.append(r)
+del r, outer
+raise ValueError("bad_fn2")

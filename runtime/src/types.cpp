@@ -1049,9 +1049,14 @@ Ref type_new(ClassObject* meta, Obj name_obj, Obj bases_obj, Obj ns_obj, Args kw
         c->bases_tuple = bases_obj;
     }
     c->dict_kind = dict_kind_of(c);
+    // type_ready_set_new: a class with no __new__ of its own takes its base's tp_new, which is NULL for a base still making its
+    // MRO (its type_ready has not reached that step) and for a class that took it so: "cannot create 'D' instances" (RL-1043)
+    if (!c->attrs.contains(N("__new__")) && best->heap_type && !c_type(best) && (best->mro.empty() || best->disallow_instantiation))
+        c->disallow_instantiation = true;
     // What the class adds to its layout is what the best base lacks (type_new_slots: may_add_dict, may_add_weak; another
     // base's dict or weak list is added to it, type_new_slots_bases; RL-566), and it has a getset for each thing it adds
-    bool base_has_dict = best->has_dict && !best->dict_without_getset;
+    bool base_has_dict = (best->has_dict && !best->dict_without_getset) ||
+                         (types().module != nullptr && is_subclass(best, types().module));   // md_dict: no __dict__ added (RL-1094)
     // type_ready's order: the getsets (__dict__, __weakref__) and only then the members. The room for weak
     // references comes by itself unless the object has a variable size, as an int's has; a slot asks for it there
     std::vector<std::pair<const Str*, Ref>> members;
@@ -1484,7 +1489,8 @@ Ref object_subclasshook(Obj, Args a) {
 Ref type_subclasses(Obj self, Args a) {
     ClassObject* c = as_class(self);
     noargs(a, c->qualname + ".__subclasses__");
-    if (!c->heap_type) throw NotImplemented("the subclasses of the built-in type '" + c->name + "': CPython's list names its own classes");
+    if (c_type(c))                               // a static type, or one a prelude presents as CPython's (weakref.ref, _io._IOBase: RL-1025)
+        throw NotImplemented("the subclasses of the built-in type '" + c->name + "': CPython's list names its own classes");
     Ref l = list_new({});
     for (ClassObject* s : c->subclasses) list_append(l.get(), Obj::of(s));
     return l;
@@ -1492,6 +1498,10 @@ Ref type_subclasses(Obj self, Args a) {
 Ref type_mro(Obj self, Args a) {
     arity(a, "mro", 0, 0);
     ClassObject* c = as_class(self);
+    // mro_implementation_unlocked: a base with no MRO yet, inside its metaclass's mro() or left by one that failed, is refused
+    // before the merge (RL-1043); a metaclass's mro() that gives an order of its own asks nothing of it
+    for (ClassObject* b : c->bases)
+        if (b->mro.empty()) raise_new("TypeError", "Cannot extend an incomplete type '" + b->name + "'");
     std::vector<ClassObject*> order;
     try {
         order = c3(c);

@@ -1,0 +1,41 @@
+"""Review F48 (RL-1094, RL-1025): what a subclass of the module type has in its own namespace, and the subclasses of a type
+of CPython's that a prelude presents, a row a process."""
+import _io
+import sys
+import types
+import weakref
+
+ROW = sys.argv[1]
+
+if ROW == "namespace":
+    class M(types.ModuleType):
+        pass
+
+    class N(M):
+        x = 1
+
+    class S(types.ModuleType):
+        __slots__ = ("a",)
+
+    for cls in (M, N, S):
+        print(cls.__name__, sorted(k for k in vars(cls) if k.startswith("__") and k not in ("__module__", "__qualname__", "__doc__",
+                                                                                              "__firstlineno__", "__static_attributes__")),
+              "__dict__" in dir(cls), "__weakref__" in vars(cls))
+    print(type(vars(types.ModuleType)["__dict__"]).__name__)
+elif ROW == "program subclasses":
+    class Base:
+        pass
+
+    class A(Base):
+        pass
+
+    class B(Base):
+        pass
+
+    print([c.__name__ for c in Base.__subclasses__()])
+elif ROW == "ref subclasses":
+    print([c.__name__ for c in weakref.ref.__subclasses__()])
+elif ROW == "iobase subclasses":
+    print([c.__name__ for c in _io._IOBase.__subclasses__()])
+else:
+    raise SystemExit("no such row: " + ROW)

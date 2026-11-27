@@ -20,6 +20,16 @@ argument list a line), one row a process, compared on standard output, standard 
   `int()` and `float()` of a view, a bytearray compared with one, and `os.setxattr` agree now; what is not written yet
   stops by name (codecs outside phase 1, six functions of binascii, a view written into), and a buffered writer's raw
   write() waits for Question 40 (RL-991).
+* The fourteen names of the lock machinery, every way a program reaches one (`locknames`, the c07 reviewer's 467 rows, whose
+  289 stops are its own `stops.txt`; RL-1065 to RL-1068): a read, a delete and a store stop with D-33's words; the import
+  system's functions are the importlib module's attributes at each call (`importcalls`, 8 rows: a replaced `_find_and_load`,
+  `_handle_fromlist`, `_lock_unlock_module` or `_module_repr` is called, a deleted one is an AttributeError), and a name the
+  module had and the program deleted is absent as in CPython.
+* A class over a base still making its MRO (`incomplete`, 56 rows, and `mrohooks`, 16, the c02 reviewer's; RL-1043): type.mro()
+  refuses the base, and a class an explicit mro() made over one cannot make instances; a module type's subclass adds no
+  `__dict__` (`moduletype`, RL-1094), and `_io._IOBase.__subclasses__()` stops (RL-1025).
+* A failed import's kept traceback entry lets its module's namespace go with the entry's frame (`tbhold`, 10 rows of the q44
+  reviewer's, with a package; RL-1012).
 * An argument by name and position, a second built-in module, a key in a built-in type's dict, a module's class, and
   `dir()`'s sort (`lookups`, 8 rows: RL-965, RL-1013, RL-1048, RL-1050, RL-1052).
 * Five defects of a class's shape and a call's message (`shapes`, 5 rows, each with the neighbours of the reviewer's
@@ -117,6 +127,9 @@ STOPS: dict[tuple[str, tuple[str, ...]], str] = {
     **{("entrynames", ("frozen.exec_module", kind)): NOT_COMPILED for kind in KINDS if kind != "strsub2"},
     ("ownmodules", ("marshal",)): "bella: not implemented: importing 'marshal' (the standard library: step 3b)",
     ("lookups", ("module class other",)): "bella: not implemented: [P2+] __class__ assignment (spec section 3)",
+    # the subclasses of a type of CPython's a prelude presents name CPython's own classes (RL-1025)
+    ("moduletype", ("iobase subclasses",)): "bella: not implemented: the subclasses of the built-in type '_io._IOBase': CPython's list names its own classes",
+    ("moduletype", ("ref subclasses",)): "bella: not implemented: the subclasses of the built-in type 'weakref.ReferenceType': CPython's list names its own classes",
     # the view sweep (RL-992): what stops by name there is what is not written yet, whatever the buffer, and a view where a
     # buffer is written into (Question 40's queue)
     **{("views", (row, kind)): "bella: not implemented: " + words for row, words in VIEW_STOPS.items() for kind in "cws"},
@@ -162,23 +175,40 @@ def rows_of(probe: str) -> list[tuple[str, ...]]:
     return [tuple(shlex.split(line)) for line in (HERE / probe / "rows.txt").read_text(encoding="utf-8").splitlines()]
 
 
+def stops_of(probe: str) -> dict[tuple[str, ...], str]:
+    """A probe's own table of the rows that stop by name (`row => words`, a line each), for a probe with too many to list here."""
+    path = HERE / probe / "stops.txt"
+    if not path.exists():
+        return {}
+    out: dict[tuple[str, ...], str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.startswith("#"):
+            row, words = line.split(" => ", 1)
+            out[tuple(shlex.split(row))] = words
+    return out
+
+
 def rows_agree(probe: str) -> None:
-    """A probe's files copied as modules beside its prog.py, built once; each row under CPython and compiled."""
+    """A probe's files copied as modules beside its prog.py (a folder of them as a package), built once; each row under
+    CPython and compiled."""
     if shutil.which("g++") is None:
         return
     folder = Path(tempfile.mkdtemp(prefix="bella-f48-"))
     try:
-        for source in sorted((HERE / probe).glob("*.txt")):
-            if source.name != "rows.txt":
-                (folder / source.with_suffix(".py").name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        for source in sorted((HERE / probe).rglob("*.txt")):   # a folder in the probe is a package of the program's
+            if source not in (HERE / probe / "rows.txt", HERE / probe / "stops.txt"):
+                target = folder / source.relative_to(HERE / probe).with_suffix(".py")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
         binary = str(build(folder / "prog.py", "prog.py", notes=False))
         rows = rows_of(probe)
         assert rows, f"{probe}: no rows"
-        wrong: list[str] = []
+        own_stops = stops_of(probe)
+        wrong: list[str] = [f"{probe}/{row}: in stops.txt and no row" for row in sorted(set(own_stops) - set(rows))]
         for row in rows:
             want = _run([sys.executable, "prog.py", *row], folder)
             got = _run([binary, *row], folder)
-            stop = STOPS.get((probe, row))
+            stop = STOPS.get((probe, row), own_stops.get(row))
             if stop is not None:
                 if got[2] != 70 or stop not in "\n".join(got[1]):
                     wrong.append(f"{probe}/{row}: compiled {got!r}, where it is to stop with {stop!r}")

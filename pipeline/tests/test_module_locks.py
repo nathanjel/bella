@@ -11,7 +11,11 @@ built once (`prog.py` beside a one-line `sample.py`):
 * an import by a name whose class overrides `__hash__`, which CPython calls in `_get_module_lock`, stops by name (`hash`: E-04,
   the author's decision of 2026-11-27, Question 52), and a str subclass that overrides nothing imports as CPython does
   (`plain`);
-* `_find_and_load` and `_lock_unlock_module` have no local `lock` (`varnames`).
+* a store to one of the fourteen, which CPython's import system would read, and a delete of one, stop the same way (`set`,
+  `del`: RL-1065);
+* `_find_and_load` and `_lock_unlock_module` have no local `lock` (`varnames`);
+* the fourteen are one list in the runtime's table of entries, the names table, D-33's words and here, and CPython's module
+  has no other name the prelude lacks but its dunders and the functions not written yet (no build: RL-1067).
 
 When the threads milestone brings CPython's locks, every row agrees with CPython and D-33 ends; this test then goes.
 
@@ -19,6 +23,8 @@ Run under pytest or directly: python3 -m pipeline.tests.test_module_locks
 """
 from __future__ import annotations
 
+import ast
+import re
 import shutil
 import sys
 import tempfile
@@ -66,6 +72,12 @@ elif row == "hash":
         print(error)
 elif row == "plain":
     print(__import__(Plain("sample")).answer)
+elif row == "set":
+    setattr(_bootstrap, sys.argv[2], 5)
+    print("stored")
+elif row == "del":
+    delattr(_bootstrap, sys.argv[2])
+    print("deleted")
 elif row == "varnames":
     for f in (_bootstrap._find_and_load, _bootstrap._lock_unlock_module):
         print(f.__name__, f.__code__.co_nlocals, f.__code__.co_varnames)
@@ -89,6 +101,9 @@ COMPILED: dict[tuple[str, ...], tuple[str, list[str], int]] = {
 }
 for _name in LOCK_NAMES:
     COMPILED[("name", _name)] = ("", [f"bella: not implemented: _frozen_importlib.{_name} ({WHY})"], 70)
+    # a store is one CPython's import system would read, and a delete is of an object the runtime lacks (RL-1065)
+    COMPILED[("set", _name)] = ("", [f"bella: not implemented: a store to _frozen_importlib.{_name} ({WHY})"], 70)
+    COMPILED[("del", _name)] = ("", [f"bella: not implemented: _frozen_importlib.{_name} ({WHY})"], 70)
 
 
 def rows_hold() -> None:
@@ -113,6 +128,50 @@ def rows_hold() -> None:
         assert not wrong, "\n".join(wrong)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
+
+
+def bound_names(path: Path) -> set[str]:
+    """What a prelude's module binds: its definitions, its assignments and imports at module level, and its globals."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                names.update(n.id for n in ast.walk(target) if isinstance(n, ast.Name))
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+    for inner in ast.walk(tree):
+        if isinstance(inner, ast.Global):
+            names.update(inner.names)
+    return names
+
+
+def test_the_fourteen_names_are_one_list() -> None:
+    """RL-1067: the names are kept in four places (the runtime's ABSENT_BY_ENTRY, the names table, D-33's words, this test);
+    they are one list, each a name of CPython's `_frozen_importlib` the prelude does not bind, and what else CPython's module
+    has and the prelude lacks is a module's own dunder or one of the functions not written yet (test_import_text's ABSENT)."""
+    import _frozen_importlib  # noqa: PLC0415
+    import tomllib  # noqa: PLC0415
+
+    from pipeline.tests.test_import_text import ABSENT, NOT_YET  # noqa: PLC0415
+    root = Path(__file__).resolve().parents[2]
+    entries = set(re.findall(r'\{"_frozen_importlib:(\w+)", MODULE_LOCKS\}', (root / "runtime" / "src" / "call.cpp").read_text(encoding="utf-8")))
+    table = (root / "runtime" / "src" / "cpython_names.inc").read_text(encoding="utf-8")
+    words = tomllib.loads((root / "docs" / "deviations.toml").read_text(encoding="utf-8"))["deviations"]["D-33"]["summary"]
+    bound = bound_names(root / "runtime" / "prelude" / "bootstrap.py")
+    lacks = set(dir(_frozen_importlib)) - bound
+    not_yet = {name.split(".", 1)[1] for name, why in ABSENT.items() if why == NOT_YET and name.startswith("_bootstrap.")}
+    dunders = {"__builtins__", "__doc__", "__file__", "__loader__", "__name__", "__package__", "__spec__"}   # __file__: set by
+    # FrozenImporter's fixing up where the standard library's folder is known (under pytest), absent in a plain run
+    wrong = [f"ABSENT_BY_ENTRY has {sorted(entries ^ set(LOCK_NAMES))} beyond or short of the test's list"] if entries != set(LOCK_NAMES) else []
+    wrong += [f"{n}: not in the names table" for n in LOCK_NAMES if f'"_frozen_importlib:{n}"' not in table]
+    wrong += [f"{n}: D-33's words do not name it" for n in LOCK_NAMES if f"`{n}`" not in words]
+    wrong += [f"{n}: the prelude binds it, so its entry is dead" for n in sorted(set(LOCK_NAMES) & bound)]
+    wrong += [f"{n}: CPython's module has it and the prelude lacks it, and it is neither a lock's nor not yet"
+              for n in sorted(lacks - set(LOCK_NAMES) - dunders - not_yet)]
+    assert not wrong, "\n".join(wrong)
 
 
 def test_module_locks() -> None:

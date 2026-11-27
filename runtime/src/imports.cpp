@@ -138,26 +138,41 @@ bool spec_is_initializing(Obj spec) {
     return !v.get().is_unset() && truth(v.get());
 }
 
-// import_ensure_initialized: a module still initialising is waited for; with one thread the
-// thread initialising it is this one, so _lock_unlock_module returns at once (bootstrap.py)
-bool ensure_initialized(Obj mod) {
+bool importlib_ready = false;                    // the start is over: the import system's functions are its module's attributes
+Ref call_bootstrap(const char* fn, std::initializer_list<Obj> args);
+Module*& bootstrap_module();
+
+// import_ensure_initialized: a module still initialising is waited for, by the importlib module's _lock_unlock_module (with
+// one thread the thread initialising it is this one, so the prelude's returns at once: D-33)
+bool ensure_initialized(Obj mod, Obj name) {
     Ref spec = optional_attr(mod, N("__spec__"));
-    return !spec.get().is_unset() && spec_is_initializing(spec.get());
+    bool busy = !spec.get().is_unset() && spec_is_initializing(spec.get());
+    if (busy) call_bootstrap("_lock_unlock_module", {name});
+    return busy;
 }
 
 // PyImport_GetModule
 Ref get_initialized_module(Obj name) {
     Ref mod = get_module(name);
     if (!mod.get().is_unset() && mod.get() != None()) {
-        ensure_initialized(mod.get());
+        ensure_initialized(mod.get(), name);
         Ref check = get_module(name);
         if (check.get() != mod.get()) return Ref{};
     }
     return mod;
 }
 
+// PyObject_CallMethodObjArgs(IMPORTLIB(interp), fn, ...): CPython's C reaches _find_and_load, _find_and_load_lazy_submodule,
+// _handle_fromlist, _lock_unlock_module and _module_repr as attributes of the importlib module at each call, so a program's
+// replacement is called and a deleted one is an AttributeError (RL-1066); before the start is over, the runtime's own
 Ref call_bootstrap(const char* fn, std::initializer_list<Obj> args) {
-    Ref f = builtin(fn);
+    Ref f;
+    if (importlib_ready) {
+        f = getattr(Obj::of(bootstrap_module()), intern(fn));
+    } else {                                     // the start: the bootstrap's namespace as it is, or the intrinsic before it is made
+        Obj v = bootstrap_module() != nullptr ? dict_get(bootstrap_module()->dict, Obj::of(intern(fn))) : Obj{};
+        f = v.is_unset() ? builtin(fn) : Ref::share(v);
+    }
     return invoke(f.get(), args);
 }
 
@@ -1403,6 +1418,8 @@ std::string bootstrap_class_scope(const ClassObject* c) {
 void hide_bootstrap_names() {
     for (Module* m : {bootstrap_module(), external_module()}) {
         if (m == nullptr) continue;
+        note_filled(m);                          // a name of CPython's absent later is one the program deleted (RL-1068)
+        if (m == bootstrap_module()) importlib_ready = true;
         for (auto& e : m->dict->entries)
             if (!e.key.is_unset())
                 if (const Str* k = as_str(e.key); k != nullptr && !cpython_has(bootstrap_scope(m), k->text)) hidden_names(m).insert(k->text);
@@ -1539,7 +1556,7 @@ static Ref import_level(Obj name, Obj globals, Obj fromlist, std::int64_t level)
     Ref abs_name = absolute_name(name, globals, level);
     Ref mod = get_module(abs_name.get());
     if (!mod.get().is_unset() && mod.get() != None()) {
-        bool initializing = ensure_initialized(mod.get());
+        bool initializing = ensure_initialized(mod.get(), abs_name.get());
         Ref check = get_module(abs_name.get());
         if (check.get() != mod.get()) mod = call_bootstrap("_find_and_load", {abs_name.get(), import_func()});
         else if (!initializing && has_lazy_submodules()) clear_lazy_submodule(name_arg(abs_name.get())->text, true);

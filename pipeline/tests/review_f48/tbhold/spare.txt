@@ -1,0 +1,11 @@
+"""A module that succeeds."""
+import sys
+
+from watch import Marker, watched
+
+held = Marker("spare.held")
+watched(sys.modules[__name__], "spare")
+
+
+def value() -> str:
+    return held.name

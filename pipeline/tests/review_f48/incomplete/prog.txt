@@ -1,0 +1,105 @@
+"""A class with no MRO as a base (RL-940's neighbour): CPython refuses it ("Cannot extend an incomplete type"); what the
+compiled program makes of it, one use a row."""
+import gc
+import sys
+from typing import Any
+
+gc.disable()
+how: str = sys.argv[1]
+use: str = sys.argv[2]
+seen: list[Any] = []
+made: list[Any] = []
+
+
+class Base:
+    inherited = "inh"
+
+    def meth(self) -> str:
+        return "base"
+
+
+class M(type):
+    def mro(cls) -> Any:
+        if cls.__name__ == "C":
+            seen.append(cls)
+            if how == "inhook":
+                try:
+                    made.append(M("D", (cls,), {"own": 1}))
+                except TypeError:
+                    print("refused in the hook")
+            if how == "inhook_explicit":
+                try:
+                    made.append(M("D", (cls,), {"own": 1}))
+                except TypeError:
+                    print("refused in the hook")
+            if how in ("failed", "failed_type"):
+                raise ValueError("no")
+        if how == "inhook_explicit" and cls.__name__ == "D":
+            return (cls, cls.__bases__[0], Base, object)
+        return super().mro()
+
+
+def build() -> Any:
+    try:
+        c = M("C", (Base,), {"cattr": 2})
+    except ValueError:
+        print("C failed")
+        c = None
+    if how == "failed":
+        try:
+            made.append(M("D", (seen[0],), {"own": 1}))
+        except TypeError:
+            print("refused after the failure")
+    elif how == "failed_type":
+        try:
+            made.append(type("D", (seen[0],), {"own": 1}))
+        except TypeError:
+            print("refused after the failure")
+    return c
+
+
+c = build()
+if not made:
+    print("no class was made")
+    raise SystemExit(0)
+d = made[0]
+print("a class was made")
+if use == "mro":
+    print([k.__name__ for k in d.__mro__], [k.__name__ for k in d.__bases__])
+elif use == "issubclass":
+    print(issubclass(d, Base), issubclass(d, object), issubclass(d, seen[0]))
+elif use == "own":
+    print(d.own)
+elif use == "inherited":
+    print(d.inherited)
+elif use == "cattr":
+    print(d.cattr)
+elif use == "instance":
+    o = d()
+    print(type(o).__name__)
+elif use == "instance_repr":
+    o = d()
+    print(repr(o).startswith("<"))
+elif use == "instance_attr":
+    o = d()
+    o.x = 1
+    print(o.x, o.own)
+elif use == "instance_meth":
+    o = d()
+    print(o.meth())
+elif use == "instance_isinstance":
+    o = d()
+    print(isinstance(o, Base), isinstance(o, object), isinstance(o, d))
+elif use == "instance_eq_hash":
+    o = d()
+    print(o == o, hash(o) == hash(o), o != d())
+elif use == "subclasses":
+    print([k.__name__ for k in seen[0].__subclasses__()], [k.__name__ for k in Base.__subclasses__()])
+elif use == "repr":
+    print(repr(d), str(d), d.__name__, d.__doc__, d.__module__)
+elif use == "collect":
+    del d, c
+    made.clear()
+    seen.clear()
+    print(gc.collect() >= 0)
+    print("collected")

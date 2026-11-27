@@ -1,0 +1,77 @@
+"""Review F48 (RL-1066, RL-1068): CPython's C reaches the import system's functions as attributes of the importlib module at
+each call (`_find_and_load`, `_handle_fromlist`, `_lock_unlock_module`, `_module_repr`), so a program's replacement is
+called and a deleted one is an AttributeError; and a name the module had, deleted by the program, is absent as in CPython.
+A row a process."""
+import sys
+from collections.abc import Callable
+from importlib import _bootstrap
+
+ROW = sys.argv[1]
+CALLS: list[str] = []
+
+
+def logged(name: str) -> Callable[..., object]:
+    original = getattr(_bootstrap, name)
+
+    def call(*args: object, **kwds: object) -> object:
+        CALLS.append(name + " " + str(args[0]) if args and isinstance(args[0], str) else name)
+        return original(*args, **kwds)
+    return call
+
+
+def include() -> None:
+    import sample  # noqa: F401
+    import cycle_a  # noqa: F401
+
+
+if ROW == "find":
+    setattr(_bootstrap, "_find_and_load", logged("_find_and_load"))
+    import sample
+    import sample as again
+    print(sample.answer, again is sample, CALLS)
+elif ROW == "fromlist":
+    setattr(_bootstrap, "_handle_fromlist", logged("_handle_fromlist"))
+    from sample import answer                    # a module: no call (only a package's fromlist is handled)
+    from importlib import machinery              # a package's
+    print(answer, machinery.__name__, CALLS)
+elif ROW == "unlock":
+    setattr(_bootstrap, "_lock_unlock_module", logged("_lock_unlock_module"))
+    import cycle_a
+    print(cycle_a.done, CALLS)
+elif ROW == "repr":
+    setattr(_bootstrap, "_module_repr", lambda module: "<the program's repr of " + module.__name__ + ">")
+    import sample
+    print(repr(sample), repr(sys))
+elif ROW == "deleted":
+    delattr(_bootstrap, "_find_and_load")
+    try:
+        import sample  # noqa: F401
+        print("imported")
+    except AttributeError as error:
+        print("AttributeError", error.name)
+    print(hasattr(_bootstrap, "_find_and_load"), getattr(_bootstrap, "_find_and_load", "absent"))
+elif ROW == "deleted others":
+    for name in ("_gcd_import", "_imp", "_bootstrap_external", "__spec__"):
+        delattr(_bootstrap, name)
+        print(name, hasattr(_bootstrap, name))
+elif ROW == "deleted fromlist":
+    delattr(_bootstrap, "_handle_fromlist")
+    from sample import answer  # noqa: F401
+    print("a module's fromlist")
+    try:
+        from importlib import machinery  # noqa: F401
+        print("imported")
+    except AttributeError as error:
+        print("AttributeError", error.name)
+elif ROW == "raises":
+    def refuse(*args: object) -> object:
+        raise LookupError("the program's _find_and_load")
+    setattr(_bootstrap, "_find_and_load", refuse)
+    try:
+        import sample  # noqa: F401
+    except LookupError as error:
+        print("LookupError", error)
+    import sys as same
+    print(same is sys)
+else:
+    raise SystemExit("no such row: " + ROW)

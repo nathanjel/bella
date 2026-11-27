@@ -1,0 +1,8 @@
+"""Raises; imported lazily by lazy_user."""
+import sys
+
+from watch import Marker, watched
+
+held = Marker("bad_lazy.held")
+watched(sys.modules[__name__], "bad_lazy")
+raise ValueError("bad_lazy")

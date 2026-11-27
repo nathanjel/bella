@@ -1,0 +1,8 @@
+"""Its import of a module that raises is not caught: both go."""
+import sys
+
+from watch import Marker, watched
+
+held = Marker("bad_outer.held")
+watched(sys.modules[__name__], "bad_outer")
+import bad_plain  # noqa: E402, F401

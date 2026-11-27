@@ -1,0 +1,6 @@
+"""Imports a module lazily; the module's body raises at the first use of the name."""
+lazy import bad_lazy
+
+
+def touch() -> object:
+    return bad_lazy.held

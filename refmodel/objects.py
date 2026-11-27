@@ -529,6 +529,10 @@ def _layout_order(cls: RefClass, mro_hook: bool) -> tuple[RefClass, ...]:
     reads the layout along tp_base's chain, which gives the same fields wherever C3 has an order, since only one base may
     have a layout ("multiple bases have instance lay-out conflict"). A metaclass's mro() may give an order where C3 has
     none: then the bases' orders, each class once."""
+    if not mro_hook:                             # type.mro(): a base waiting for its MRO (inside its metaclass's mro(), or left
+        for b in cls.bases:                      # by a failed one) is refused, mro_implementation_unlocked (RL-1043)
+            if b.mro_hook and not b.mro:
+                raise TypeError(f"Cannot extend an incomplete type '{b.name}'")
     try:
         return tuple(_c3(cls))
     except TypeError:
@@ -1245,8 +1249,9 @@ def weak_ref(target: RefObject | RefClass | RefModule | RefFunction, callback: A
 # Question 36: a module of the program's is counted)
 # ---------------------------------------------------------------------------------------------
 #
-# A module object holds its namespace (md_dict); what runs in the module (a function, a frame object, a traceback
-# entry: `RefFunction` here) holds the namespace as its globals (func_globals), not the module. The runtime's compiled code
+# A module object holds its namespace (md_dict); what runs in the module (a function, a frame object: `RefFunction` here)
+# holds the namespace as its globals (func_globals), not the module. A traceback entry holds its frame's frame object
+# (tb_frame), which holds the globals, and not the namespace itself (RL-1012). The runtime's compiled code
 # reaches its globals through the module object (`fn->module`), so the object outlives the module as CPython sees it for
 # as long as something that runs in the module is left: the module's count is CPython's (what holds the module object),
 # and `holders` counts what holds its namespace as its globals, each of which also holds the namespace itself. So the

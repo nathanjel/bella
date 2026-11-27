@@ -1,0 +1,8 @@
+"""A submodule that raises."""
+import sys
+
+from watch import Marker, watched
+
+held = Marker("pkgok.badsub.held")
+watched(sys.modules[__name__], "pkgok.badsub")
+raise ValueError("pkgok.badsub")

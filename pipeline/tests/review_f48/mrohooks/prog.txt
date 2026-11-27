@@ -1,0 +1,439 @@
+"""Follow-ups: other kinds of mro attribute, a half-made class that escapes a failed mro(), an order C3 refuses in use,
+and the rows the first sweeps left open."""
+import abc
+import collections
+import gc
+import sys
+import types
+import weakref
+from typing import Any
+
+gc.disable()
+row: str = sys.argv[1]
+seen: list[Any] = []
+
+
+def say(label: str, f: Any) -> None:
+    try:
+        print(label, f())
+    except BaseException as e:  # noqa: BLE001
+        print(label, "raised", type(e).__name__)
+
+
+class Marker:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __del__(self) -> None:
+        print("del", self.name)
+
+
+class Base:
+    inherited = "inh"
+
+
+def names(c: Any) -> Any:
+    return [k.__name__ for k in c.__mro__]
+
+
+def mro_kinds() -> None:
+    if row == "mro_inherited_type":
+        class M(type):
+            pass
+        c = M("C", (Base,), {})
+        print(names(c), c.__mro__ is c.__mro__, type(c.__mro__).__name__, [k.__name__ for k in Base.__subclasses__()])
+    elif row == "mro_static":
+        class M(type):  # type: ignore[no-redef]
+            @staticmethod
+            def mro() -> Any:  # type: ignore[override]
+                print("static mro called")
+                return (Base, object)
+        say("made", lambda: names(M("C", (Base,), {})))
+    elif row == "mro_classmethod":
+        class M(type):  # type: ignore[no-redef]
+            @classmethod
+            def mro(mcs) -> Any:  # type: ignore[override]
+                print("classmethod mro called with", mcs.__name__)
+                return (Base, object)
+        say("made", lambda: names(M("C", (Base,), {})))
+    elif row == "mro_none_attr":
+        class M(type):  # type: ignore[no-redef]
+            mro = None  # type: ignore[assignment]
+        say("made", lambda: names(M("C", (Base,), {})))
+    elif row == "mro_property":
+        class M(type):  # type: ignore[no-redef]
+            @property
+            def mro(cls) -> Any:  # type: ignore[override]
+                print("property read, mro is", cls.__mro__)
+                return lambda: (cls, Base, object)
+        say("made", lambda: names(M("C", (Base,), {})))
+    elif row == "mro_callable_object":
+        class Call:
+            def __call__(self) -> Any:
+                print("callable object called")
+                return (Base, object)
+
+        class M(type):  # type: ignore[no-redef]
+            mro = Call()  # type: ignore[assignment]
+        say("made", lambda: names(M("C", (Base,), {})))
+    elif row == "mro_in_class_namespace":
+        class M(type):  # type: ignore[no-redef]
+            pass
+        c = M("C", (Base,), {"mro": lambda: 5})
+        print(names(c), c.mro())
+    elif row == "mro_on_meta_meta":
+        class MM(type):
+            def mro(cls) -> Any:
+                print("meta-meta mro for", cls.__name__)
+                return super().mro()
+
+        class M(type, metaclass=MM):  # type: ignore[no-redef]
+            pass
+        c = M("C", (Base,), {})
+        print(names(c))
+    elif row == "mro_two_levels":
+        class M1(type):
+            def mro(cls) -> Any:
+                print("M1.mro", cls.__name__, cls.__mro__)
+                return super().mro()
+
+        class M2(M1):
+            def mro(cls) -> Any:
+                print("M2.mro", cls.__name__, cls.__mro__)
+                got = super().mro()
+                print("M2 got", type(got).__name__, cls.__mro__)
+                return got
+        c = M2("C", (Base,), {})
+        d = M2("D", (c,), {})
+        print(names(c), names(d), [k.__name__ for k in c.__subclasses__()])
+    elif row == "mro_order_of_hooks":
+        class Desc:
+            def __set_name__(self, owner: Any, name: str) -> None:
+                print("set_name", name, owner.__mro__ is not None)
+
+        class Root:
+            def __init_subclass__(cls, **kw: Any) -> None:
+                print("init_subclass", cls.__name__, cls.__mro__ is not None)
+
+        class M(type):  # type: ignore[no-redef]
+            def __new__(mcs, name: str, bases: Any, ns: Any) -> Any:
+                print("meta new before")
+                c = super().__new__(mcs, name, bases, ns)
+                print("meta new after")
+                return c
+
+            def __init__(cls, name: str, bases: Any, ns: Any) -> None:
+                print("meta init")
+                super().__init__(name, bases, ns)
+
+            def mro(cls) -> Any:
+                print("mro")
+                return super().mro()
+
+        class C(Root, metaclass=M):
+            d = Desc()
+        print(names(C))
+    elif row == "mro_changed_later":
+        class M(type):  # type: ignore[no-redef]
+            def mro(cls) -> Any:
+                return super().mro()
+        c = M("C", (Base,), {})
+        M.mro = lambda cls: (cls, object)  # type: ignore[method-assign, assignment]
+        d = M("D", (c,), {})
+        print(names(c), names(d))
+        say("inherited", lambda: d.inherited)
+    elif row == "mro_returns_other_classes_mro":
+        hold: list[Any] = []
+
+        class M(type):  # type: ignore[no-redef]
+            def mro(cls) -> Any:
+                if hold:
+                    return hold[0].__mro__
+                return super().mro()
+        c = M("C", (Base,), {})
+        hold.append(c)
+        say("made", lambda: names(M("D", (Base,), {})))
+        say("made sub", lambda: names(M("E", (c,), {})))
+    elif row == "mro_custom_c3_use":
+        class X:
+            def who(self) -> str:
+                return "X"
+
+        class Y:
+            def who(self) -> str:
+                return "Y"
+
+        class A(X, Y):
+            pass
+
+        class B(Y, X):
+            pass
+
+        class M(type):  # type: ignore[no-redef]
+            def mro(cls) -> Any:
+                try:
+                    return type.mro(cls)
+                except TypeError:
+                    print("C3 has none")
+                    return (cls, A, B, X, Y, object) if cls.__name__ == "C" else (cls, *cls.__bases__[0].__mro__)
+
+        class C(A, B, metaclass=M):
+            def who(self) -> str:
+                return "C>" + super().who()
+        o = C()
+        o.attr = 1
+        print(names(C), o.who(), isinstance(o, B), issubclass(C, Y), o.attr, [k.__name__ for k in A.__subclasses__()], [k.__name__ for k in B.__subclasses__()])
+
+        class D(C):
+            pass
+        print(names(D), D().who())
+        say("plain subclass of the two", lambda: type("E", (A, B), {}))
+    elif row == "escape_failed":
+        class M(type):  # type: ignore[no-redef]
+            def mro(cls) -> Any:
+                seen.append(cls)
+                raise ValueError("no")
+        try:
+            M("C", (Base,), {"own": 1, "marker": Marker("C.marker")})
+        except ValueError:
+            print("failed")
+        c = seen[0]
+        say("mro", lambda: c.__mro__)
+        say("name", lambda: c.__name__)
+        say("bases", lambda: [b.__name__ for b in c.__bases__])
+        say("own", lambda: c.own)
+        say("dict", lambda: sorted(c.__dict__))
+        say("subclasses", lambda: (c.__subclasses__(), [k.__name__ for k in Base.__subclasses__()]))
+        say("issubclass", lambda: (issubclass(c, Base), issubclass(c, object), issubclass(Base, c)))
+        say("isinstance", lambda: isinstance(Base(), c))
+        say("call", lambda: type(c()).__name__)
+        say("repr", lambda: repr(c))
+        say("weakref", lambda: weakref.ref(c)() is c)
+        say("setattr", lambda: setattr(c, "late", 2))
+        say("late in dict", lambda: "late" in c.__dict__)
+        gc.collect()
+        print("collected")
+        seen.clear()
+        del c
+        print("dropped")
+        gc.collect()
+        print("end")
+    elif row == "escape_failed_subclass":
+        calls: list[str] = []
+
+        class M(type):  # type: ignore[no-redef]
+            def mro(cls) -> Any:
+                calls.append(cls.__name__)
+                if cls.__name__ == "C" and len(calls) == 1:
+                    seen.append(cls)
+                    raise ValueError("no")
+                return super().mro()
+        try:
+            M("C", (Base,), {"own": 1})
+        except ValueError:
+            print("failed")
+        c = seen[0]
+
+        def sub() -> Any:
+            d = M("D", (c,), {})
+            return (names(d), c.__mro__ is None, calls)
+        say("subclass of the half-made class", sub)
+        say("plain subclass", lambda: names(type("P", (c,), {})))
+    elif row == "escape_ok_then_use_in_hook":
+        class M(type):  # type: ignore[no-redef]
+            def mro(cls) -> Any:
+                if cls.__name__ == "C":
+                    say("subclass in hook", lambda: names(M("D", (cls,), {})))
+                return super().mro()
+        c = M("C", (Base,), {})
+        print(names(c), [k.__name__ for k in c.__subclasses__()])
+
+
+def leftovers() -> None:
+    if row == "module_drops_firstlineno":
+        class C:
+            pass
+        print("before", "__firstlineno__" in C.__dict__, isinstance(C.__firstlineno__, int))
+        C.__module__ = "elsewhere"
+        print("after", "__firstlineno__" in C.__dict__, C.__module__, list(C.__dict__))
+        say("attribute", lambda: C.__firstlineno__)
+    elif row == "module_same_value":
+        class C:  # type: ignore[no-redef]
+            pass
+        C.__module__ = C.__module__
+        print("after", "__firstlineno__" in C.__dict__)
+    elif row == "module_setattr_routes":
+        class C:  # type: ignore[no-redef]
+            pass
+        setattr(C, "__module__", "m2")
+        print("setattr", "__firstlineno__" in C.__dict__)
+
+        class D:
+            pass
+        type.__dict__["__module__"].__set__(D, "m3")
+        print("descriptor", "__firstlineno__" in D.__dict__)
+
+        class E:
+            pass
+        import functools
+
+        def deco(cls: Any) -> Any:
+            return cls
+        functools.update_wrapper(E, Base, updated=())
+        print("update_wrapper", "__firstlineno__" in E.__dict__, E.__module__)
+    elif row == "list_of_proxy_len":
+        log: list[str] = []
+
+        class MyDict(dict):  # type: ignore[type-arg]
+            def __len__(self) -> int:
+                log.append("len")
+                return 1
+
+            def __iter__(self) -> Any:
+                log.append("iter")
+                return iter(["I"])
+
+        class Obj:
+            def __len__(self) -> int:
+                log.append("len")
+                return 1
+
+            def __iter__(self) -> Any:
+                log.append("iter")
+                return iter(["I"])
+        print(list(Obj()), log)
+        log.clear()
+        print(list(MyDict()), log)
+        log.clear()
+        p = types.MappingProxyType(MyDict(a=1))
+        print(list(p), log)
+        log.clear()
+        print(tuple(p), log)
+        log.clear()
+        print(sorted(p), log)
+        log.clear()
+        print([*p], log)
+        log.clear()
+        print(set(p), log)
+    elif row == "proxy_misc":
+        class C:  # type: ignore[no-redef]
+            y = 2
+        p = C.__dict__
+        say("weakref", lambda: weakref.ref(p))
+        say("attrs", lambda: p.foo)
+        say("setattr", lambda: setattr(p, "foo", 1))
+        say("class getitem", lambda: repr(types.MappingProxyType[int, str]))
+        say("bool", lambda: (bool(p), bool(types.MappingProxyType({}))))
+        say("dir", lambda: [n for n in dir(p) if not n.startswith("_")])
+        say("dunders", lambda: sorted(n for n in type(p).__dict__ if n.startswith("__")))
+        say("dict()", lambda: sorted(dict(p)) == sorted(p))
+        say("star", lambda: sorted({**p}) == sorted(p))
+        say("update", lambda: len({}.__or__(dict(p))) == len(p))
+        say("OrderedDict", lambda: list(collections.OrderedDict(p)) == list(p))
+        say("isinstance Mapping", lambda: isinstance(p, collections.abc.Mapping))
+        say("sorted items", lambda: [k for k, v in sorted(p.items(), key=lambda kv: kv[0])][:2])
+        say("len hint", lambda: p.__len__())
+        say("iter type", lambda: type(iter(p)).__name__)
+        say("contains method", lambda: p.__contains__("y"))
+        say("getitem method", lambda: p.__getitem__("y"))
+        say("init", lambda: p.__init__())
+        say("type call no arg", lambda: type(p)())
+        say("copy module", lambda: __import__("copy").copy(p))
+        say("pickle", lambda: __import__("pickle").dumps(p))
+    elif row == "view_made_late":
+        class C:  # type: ignore[no-redef]
+            a = 1
+            b = 2
+        del C.a
+        C.c = 3
+        C.a = 4
+        C.b = 5
+        print(list(C.__dict__))
+        C.__annotations__ = {}
+        del C.c
+        print(list(C.__dict__))
+    elif row == "annotate_write":
+        class C:  # type: ignore[no-redef]
+            y = 2
+        p = C.__dict__
+        say("annotate", lambda: setattr(C, "__annotate__", None))
+        print(list(p))
+        say("annotations", lambda: C.__annotations__)
+        print(list(p))
+
+        def ann(format: int) -> dict[str, Any]:
+            return {"q": int}
+        say("annotate fn", lambda: setattr(C, "__annotate__", ann))
+        print(list(p))
+        say("annotations", lambda: C.__annotations__)
+        print(list(p))
+    elif row == "saveall_static_attributes":
+        gc.collect()
+        gc.set_debug(gc.DEBUG_SAVEALL)
+
+        def make() -> None:
+            class K(Base):
+                def __init__(self) -> None:
+                    self.v = 1
+                    self.w = 2
+        make()
+        gc.collect()
+        gc.set_debug(0)
+        print(sorted(("tuple " + ",".join(type(e).__name__ for e in x)) for x in gc.garbage if isinstance(x, tuple) and not any(isinstance(e, type) for e in x)))
+        gc.garbage.clear()
+    elif row == "saveall_atoms_tuple":
+        gc.collect()
+        gc.set_debug(gc.DEBUG_SAVEALL)
+
+        class O:
+            pass
+
+        def make2() -> None:
+            o = O()
+            o.me = o  # type: ignore[attr-defined]
+            o.t = (1, "x")  # type: ignore[attr-defined]
+            o.u = (1, [2])  # type: ignore[attr-defined]
+            o.s = "text"  # type: ignore[attr-defined]
+            o.f = frozenset({1})  # type: ignore[attr-defined]
+        make2()
+        gc.collect()
+        gc.set_debug(0)
+        print(sorted(type(x).__name__ + (" " + ",".join(type(e).__name__ for e in x) if isinstance(x, tuple) else "") for x in gc.garbage))
+        gc.garbage.clear()
+    elif row == "abc_answer_after_refhash":
+        accept = [False]
+
+        class A(abc.ABC):
+            @classmethod
+            def __subclasshook__(cls, k: Any) -> Any:
+                return accept[0]
+
+        class Old:
+            pass
+
+        class M(type):  # type: ignore[no-redef]
+            pass
+
+        class C(metaclass=M):  # type: ignore[no-redef]
+            pass
+        hash(weakref.ref(C))
+        issubclass(Old, A)
+        M.__hash__ = lambda cls: 12  # type: ignore[method-assign, assignment]
+        print(issubclass(C, A))
+        accept[0] = True
+        print(issubclass(C, A))
+    elif row == "weak_hash_twice":
+        class H(type):
+            def __hash__(cls) -> int:
+                print("hash called")
+                return 5
+
+        class K(metaclass=H):
+            pass
+        print(hash(weakref.ref(K)))
+        print(hash(weakref.ref(K)))
+        print(weakref.ref(K) is weakref.ref(K), weakref.getweakrefcount(K))
+
+
+mro_kinds()
+leftovers()

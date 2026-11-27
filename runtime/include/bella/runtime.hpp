@@ -295,13 +295,15 @@ ClassObject* best_base_of(ClassObject* c);      // tp_base: best_base of its bas
 std::vector<Module*>& all_modules();             // every module of the runtime's own made, oldest first (immortal)
 std::vector<Module*>& hidden_modules();          // the runtime's own namespaces no program sees (a built-in module's prelude's, match's)
 std::vector<Module*> made_native_modules();      // the built-in modules made so far, CPython's C ones (imports.cpp's registry)
+struct Traceback;
+Module* entry_module(const Traceback* tb);       // the module whose dict a traceback entry's frame has as its globals, or null
 Dict* builtins_copy();                           // interp->builtins_copy: the builtins as they were before the program, or null before then
 
 struct Traceback : Object {                      // one frame's entry; `next` goes deeper
     const Code* code;
     int line;
-    GlobalsRef module;                           // the frame's module, whose dict is its f_globals, held as CPython's frame holds its globals (hold_globals);
-                                                 // none: _PyTraceback_Add's entry, whose frame has an empty dict
+    GlobalsRef module;                           // none: an entry with a frame object reaches its globals through it (tb_frame, RL-1012), and
+                                                 // _PyTraceback_Add's entry has a frame with an empty dict
     std::uint64_t frame = 0;                     // the frame (a FrameGuard's id) it records
     Ref frame_obj;                               // tb_frame: the frame object the frame's entries share; unset for an entry no frame made
     Ref next;
@@ -1158,6 +1160,7 @@ Ref descr_get(Obj found, Obj obj, Obj type);                 // type(found).__ge
 // with AttributeError or NameError (runtime/src/cpython_names.inc, tools/cpython_names.py): an
 // attribute of a built-in class in the MRO, of a class's metatype, of sys or builtins; a global.
 void refuse_absent_attribute(Obj obj, const Str* name);
+void refuse_absent_store(const Module* m, const Str* name);   // a store to a name of CPython's import system the runtime's lacks
 // a store or delete of a name the runtime's classes lack where CPython's built-in base has a data
 // descriptor (a member or getset: StopIteration.value): CPython sets the field, never the __dict__
 void refuse_absent_data_descriptor(Obj obj, const Str* name);

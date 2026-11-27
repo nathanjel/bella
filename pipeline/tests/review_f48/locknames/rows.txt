@@ -1,0 +1,467 @@
+same
+attr _BlockingOnManager
+default _BlockingOnManager
+hasattr _BlockingOnManager
+try _BlockingOnManager
+objga _BlockingOnManager
+modga _BlockingOnManager
+strsub _BlockingOnManager
+fromlist _BlockingOnManager
+set _BlockingOnManager
+setdel _BlockingOnManager
+del _BlockingOnManager
+deltry _BlockingOnManager
+delhas _BlockingOnManager
+hook _BlockingOnManager
+attr _DeadlockError
+default _DeadlockError
+hasattr _DeadlockError
+try _DeadlockError
+objga _DeadlockError
+modga _DeadlockError
+strsub _DeadlockError
+fromlist _DeadlockError
+set _DeadlockError
+setdel _DeadlockError
+del _DeadlockError
+deltry _DeadlockError
+delhas _DeadlockError
+hook _DeadlockError
+attr _DummyModuleLock
+default _DummyModuleLock
+hasattr _DummyModuleLock
+try _DummyModuleLock
+objga _DummyModuleLock
+modga _DummyModuleLock
+strsub _DummyModuleLock
+fromlist _DummyModuleLock
+set _DummyModuleLock
+setdel _DummyModuleLock
+del _DummyModuleLock
+deltry _DummyModuleLock
+delhas _DummyModuleLock
+hook _DummyModuleLock
+attr _ImportLockContext
+default _ImportLockContext
+hasattr _ImportLockContext
+try _ImportLockContext
+objga _ImportLockContext
+modga _ImportLockContext
+strsub _ImportLockContext
+fromlist _ImportLockContext
+set _ImportLockContext
+setdel _ImportLockContext
+del _ImportLockContext
+deltry _ImportLockContext
+delhas _ImportLockContext
+hook _ImportLockContext
+attr _List
+default _List
+hasattr _List
+try _List
+objga _List
+modga _List
+strsub _List
+fromlist _List
+set _List
+setdel _List
+del _List
+deltry _List
+delhas _List
+hook _List
+attr _ModuleLock
+default _ModuleLock
+hasattr _ModuleLock
+try _ModuleLock
+objga _ModuleLock
+modga _ModuleLock
+strsub _ModuleLock
+fromlist _ModuleLock
+set _ModuleLock
+setdel _ModuleLock
+del _ModuleLock
+deltry _ModuleLock
+delhas _ModuleLock
+hook _ModuleLock
+attr _ModuleLockManager
+default _ModuleLockManager
+hasattr _ModuleLockManager
+try _ModuleLockManager
+objga _ModuleLockManager
+modga _ModuleLockManager
+strsub _ModuleLockManager
+fromlist _ModuleLockManager
+set _ModuleLockManager
+setdel _ModuleLockManager
+del _ModuleLockManager
+deltry _ModuleLockManager
+delhas _ModuleLockManager
+hook _ModuleLockManager
+attr _WeakValueDictionary
+default _WeakValueDictionary
+hasattr _WeakValueDictionary
+try _WeakValueDictionary
+objga _WeakValueDictionary
+modga _WeakValueDictionary
+strsub _WeakValueDictionary
+fromlist _WeakValueDictionary
+set _WeakValueDictionary
+setdel _WeakValueDictionary
+del _WeakValueDictionary
+deltry _WeakValueDictionary
+delhas _WeakValueDictionary
+hook _WeakValueDictionary
+attr _blocking_on
+default _blocking_on
+hasattr _blocking_on
+try _blocking_on
+objga _blocking_on
+modga _blocking_on
+strsub _blocking_on
+fromlist _blocking_on
+set _blocking_on
+setdel _blocking_on
+del _blocking_on
+deltry _blocking_on
+delhas _blocking_on
+hook _blocking_on
+attr _get_module_lock
+default _get_module_lock
+hasattr _get_module_lock
+try _get_module_lock
+objga _get_module_lock
+modga _get_module_lock
+strsub _get_module_lock
+fromlist _get_module_lock
+set _get_module_lock
+setdel _get_module_lock
+del _get_module_lock
+deltry _get_module_lock
+delhas _get_module_lock
+hook _get_module_lock
+attr _has_deadlocked
+default _has_deadlocked
+hasattr _has_deadlocked
+try _has_deadlocked
+objga _has_deadlocked
+modga _has_deadlocked
+strsub _has_deadlocked
+fromlist _has_deadlocked
+set _has_deadlocked
+setdel _has_deadlocked
+del _has_deadlocked
+deltry _has_deadlocked
+delhas _has_deadlocked
+hook _has_deadlocked
+attr _module_locks
+default _module_locks
+hasattr _module_locks
+try _module_locks
+objga _module_locks
+modga _module_locks
+strsub _module_locks
+fromlist _module_locks
+set _module_locks
+setdel _module_locks
+del _module_locks
+deltry _module_locks
+delhas _module_locks
+hook _module_locks
+attr _thread
+default _thread
+hasattr _thread
+try _thread
+objga _thread
+modga _thread
+strsub _thread
+fromlist _thread
+set _thread
+setdel _thread
+del _thread
+deltry _thread
+delhas _thread
+hook _thread
+attr _weakref
+default _weakref
+hasattr _weakref
+try _weakref
+objga _weakref
+modga _weakref
+strsub _weakref
+fromlist _weakref
+set _weakref
+setdel _weakref
+del _weakref
+deltry _weakref
+delhas _weakref
+hook _weakref
+attr _verbose_message
+default _verbose_message
+hasattr _verbose_message
+try _verbose_message
+objga _verbose_message
+modga _verbose_message
+strsub _verbose_message
+fromlist _verbose_message
+set _verbose_message
+setdel _verbose_message
+del _verbose_message
+deltry _verbose_message
+delhas _verbose_message
+attr _load
+default _load
+hasattr _load
+try _load
+objga _load
+modga _load
+strsub _load
+fromlist _load
+set _load
+setdel _load
+del _load
+deltry _load
+delhas _load
+hook _load
+attr _install
+default _install
+hasattr _install
+try _install
+objga _install
+modga _install
+strsub _install
+fromlist _install
+set _install
+setdel _install
+del _install
+deltry _install
+delhas _install
+hook _install
+attr _object_name
+default _object_name
+hasattr _object_name
+try _object_name
+objga _object_name
+modga _object_name
+strsub _object_name
+fromlist _object_name
+set _object_name
+setdel _object_name
+del _object_name
+deltry _object_name
+delhas _object_name
+hook _object_name
+attr _builtin_from_name
+default _builtin_from_name
+hasattr _builtin_from_name
+try _builtin_from_name
+objga _builtin_from_name
+modga _builtin_from_name
+strsub _builtin_from_name
+fromlist _builtin_from_name
+set _builtin_from_name
+setdel _builtin_from_name
+del _builtin_from_name
+deltry _builtin_from_name
+delhas _builtin_from_name
+hook _builtin_from_name
+attr _install_external_importers
+default _install_external_importers
+hasattr _install_external_importers
+try _install_external_importers
+objga _install_external_importers
+modga _install_external_importers
+strsub _install_external_importers
+fromlist _install_external_importers
+set _install_external_importers
+setdel _install_external_importers
+del _install_external_importers
+deltry _install_external_importers
+delhas _install_external_importers
+hook _install_external_importers
+attr _imp
+default _imp
+hasattr _imp
+try _imp
+objga _imp
+modga _imp
+strsub _imp
+fromlist _imp
+set _imp
+setdel _imp
+del _imp
+deltry _imp
+delhas _imp
+hook _imp
+attr _warnings
+default _warnings
+hasattr _warnings
+try _warnings
+objga _warnings
+modga _warnings
+strsub _warnings
+fromlist _warnings
+set _warnings
+setdel _warnings
+del _warnings
+deltry _warnings
+delhas _warnings
+hook _warnings
+attr _lock_unlock_module
+default _lock_unlock_module
+hasattr _lock_unlock_module
+try _lock_unlock_module
+deltry _lock_unlock_module
+delhas _lock_unlock_module
+attr _find_and_load
+default _find_and_load
+hasattr _find_and_load
+try _find_and_load
+deltry _find_and_load
+delhas _find_and_load
+attr _bootstrap_external
+default _bootstrap_external
+hasattr _bootstrap_external
+try _bootstrap_external
+deltry _bootstrap_external
+delhas _bootstrap_external
+attr __name__
+default __name__
+hasattr __name__
+try __name__
+deltry __name__
+delhas __name__
+try '_threa'
+default '_threa'
+hasattr '_threa'
+deltry '_threa'
+try '_thread_'
+default '_thread_'
+hasattr '_thread_'
+deltry '_thread_'
+try '_ModuleLoc'
+default '_ModuleLoc'
+hasattr '_ModuleLoc'
+deltry '_ModuleLoc'
+try '_ModuleLockX'
+default '_ModuleLockX'
+hasattr '_ModuleLockX'
+deltry '_ModuleLockX'
+try '_module_lock'
+default '_module_lock'
+hasattr '_module_lock'
+deltry '_module_lock'
+try '_weakrefs'
+default '_weakrefs'
+hasattr '_weakrefs'
+deltry '_weakrefs'
+try '_Lis'
+default '_Lis'
+hasattr '_Lis'
+deltry '_Lis'
+try '_List_'
+default '_List_'
+hasattr '_List_'
+deltry '_List_'
+try '_thread:'
+default '_thread:'
+hasattr '_thread:'
+deltry '_thread:'
+try ':_thread'
+default ':_thread'
+hasattr ':_thread'
+deltry ':_thread'
+try '_frozen_importlib:_thread'
+default '_frozen_importlib:_thread'
+hasattr '_frozen_importlib:_thread'
+deltry '_frozen_importlib:_thread'
+try ''
+default ''
+hasattr ''
+deltry ''
+try '_thread.x'
+default '_thread.x'
+hasattr '_thread.x'
+deltry '_thread.x'
+try _thread frozen
+hasattr _thread frozen
+try _ModuleLock frozen
+hasattr _ModuleLock frozen
+try _verbose_message frozen
+hasattr _verbose_message frozen
+try _thread attr
+hasattr _thread attr
+try _ModuleLock attr
+hasattr _ModuleLock attr
+try _verbose_message attr
+hasattr _verbose_message attr
+try _thread sysfrozen
+hasattr _thread sysfrozen
+try _ModuleLock sysfrozen
+hasattr _ModuleLock sysfrozen
+try _verbose_message sysfrozen
+hasattr _verbose_message sysfrozen
+try _thread syspkg
+hasattr _thread syspkg
+try _ModuleLock syspkg
+hasattr _ModuleLock syspkg
+try _verbose_message syspkg
+hasattr _verbose_message syspkg
+try _thread ext
+hasattr _thread ext
+try _ModuleLock ext
+hasattr _ModuleLock ext
+try _verbose_message ext
+hasattr _verbose_message ext
+try _thread imported
+hasattr _thread imported
+try _ModuleLock imported
+hasattr _ModuleLock imported
+try _verbose_message imported
+hasattr _verbose_message imported
+try _thread external
+hasattr _thread external
+try _ModuleLock external
+hasattr _ModuleLock external
+try _verbose_message external
+hasattr _verbose_message external
+try _thread made
+hasattr _thread made
+try _ModuleLock made
+hasattr _ModuleLock made
+try _verbose_message made
+hasattr _verbose_message made
+vars _thread
+dict _thread
+dir _thread
+rename _thread
+class _thread
+instance _thread
+vars _module_locks
+dict _module_locks
+dir _module_locks
+rename _module_locks
+class _module_locks
+instance _module_locks
+vars _verbose_message
+dict _verbose_message
+dir _verbose_message
+rename _verbose_message
+class _verbose_message
+instance _verbose_message
+vars _find_and_load
+dict _find_and_load
+dir _find_and_load
+rename _find_and_load
+class _find_and_load
+instance _find_and_load
+dirall x
+wrap x
+spy x
+lockheld
+unlock
+from_pkg
+from_frozen
+from_try
+from_other
+from_none
+stmt

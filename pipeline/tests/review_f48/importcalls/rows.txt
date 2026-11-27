@@ -1,0 +1,8 @@
+find
+fromlist
+unlock
+repr
+deleted
+"deleted others"
+"deleted fromlist"
+raises

@@ -1,0 +1,8 @@
+"""Raises, nothing in a cycle."""
+import sys
+
+from watch import Marker, watched
+
+held = Marker("bad_plain.held")
+watched(sys.modules[__name__], "bad_plain")
+raise ValueError("bad_plain")

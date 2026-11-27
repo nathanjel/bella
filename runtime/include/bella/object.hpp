@@ -1161,6 +1161,9 @@ inline void hide_slots(ClassObject* c, const std::vector<const Str*>& names, con
 // _layout_order: the order the layout is read in, C3's; where a metaclass's mro() will give an order C3 has none of, the
 // bases' orders, each class once (CPython reads the layout along tp_base's chain, the same fields wherever C3 has an order)
 inline std::vector<ClassObject*> layout_order(ClassObject* c, bool mro_hook) {
+    if (!mro_hook)                               // type.mro(): a base waiting for its MRO is refused (refmodel: _layout_order)
+        for (ClassObject* b : c->bases)
+            if (b->mro.empty()) throw TypeError("Cannot extend an incomplete type '" + b->name + "'");
     try {
         return c3(c);
     } catch (const TypeError&) {

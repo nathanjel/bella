@@ -2091,6 +2091,17 @@ void refuse_absent_attribute(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Class)) refuse_in(static_cast<ClassObject*>(obj.object())->mro, name);
     refuse_in(type_of(obj)->mro, name);
 }
+// A store to one of the names the import system's text reads and the runtime's module lacks, the lock machinery's (D-33): a
+// replaced `_get_module_lock` is called at the next first import under CPython, and here it would be kept and never read
+// (RL-1065). Any other name is the program's to store, as `importlib/__init__.py` stores `_bootstrap_external.__file__`.
+void refuse_absent_store(const Module* m, const Str* name) {
+    if (!is_bootstrap_prelude(m)) return;
+    const std::string& scope = name_arg(m->name.get())->text;
+    std::string key = scope + ":" + name->text;
+    auto it = std::ranges::lower_bound(ABSENT_BY_ENTRY, std::string_view(key), {}, &AbsentByEntry::key);
+    if (it != std::end(ABSENT_BY_ENTRY) && it->key == key && dict_get(m->dict, Obj::of(name)).is_unset())
+        throw NotImplemented("a store to " + absent_name(scope, name->text));
+}
 void refuse_absent_data_descriptor(Obj obj, const Str* name) {
     for (const ClassObject* c : type_of(obj)->mro) {
         if (c->heap_type) continue;              // the prelude's classes keep their fields as they choose
@@ -2587,7 +2598,7 @@ Ref i_traceback_frame(Obj, Args a) {
     if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
     auto* tb = static_cast<Traceback*>(a.pos(0).object());
     if (is_kind(tb->frame_obj.get(), Kind::Frame)) return tb->frame_obj;
-    return own(new FrameObject(tb->code, tb->module.module()));
+    return own(new FrameObject(tb->code, entry_module(tb)));
 }
 // The code of such a frame, where an adaptation reads a frame's code (traceback's StackSummary): the code object its function's
 // __code__ gives, or None for what is no frame of the runtime's (a traceback where a frame is wanted, an object of the program's
@@ -2632,7 +2643,7 @@ Ref i_stack(Obj, Args a) {
 Ref i_traceback_globals(Obj, Args a) {
     positional_only(a, "traceback_globals", 1, 1);
     if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
-    Module* m = static_cast<Traceback*>(a.pos(0).object())->module.module();
+    Module* m = entry_module(static_cast<Traceback*>(a.pos(0).object()));
     return m == nullptr ? dict_new() : Ref::share(Obj::of(m->dict));
 }
 // The names the frame a traceback's entry stands for can see, where traceback looks for the name that was probably meant
@@ -2647,7 +2658,7 @@ Ref i_traceback_names(Obj, Args a) {
     positional_only(a, "traceback_names", 1, 1);
     if (!is_kind(a.pos(0), Kind::Traceback)) return none_ref();
     auto* tb = static_cast<Traceback*>(a.pos(0).object());
-    Module* module = tb->module.module();
+    Module* module = entry_module(tb);
     Ref globals = module == nullptr ? dict_new() : Ref::share(Obj::of(module->dict));
     Ref builtins = Ref::share(Obj::of(module == nullptr || module->builtins == nullptr ? builtins_module()->dict : module->builtins));
     const Code& code = *tb->code;

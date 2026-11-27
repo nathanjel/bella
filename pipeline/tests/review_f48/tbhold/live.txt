@@ -1,0 +1,7 @@
+"""A module that succeeds, with a function that raises."""
+from watch import Marker
+
+
+def boom() -> None:
+    inner = Marker("live.boom.local")
+    raise ValueError("live" + inner.name[:0])

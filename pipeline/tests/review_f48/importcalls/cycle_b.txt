@@ -1,0 +1,2 @@
+import cycle_a
+seen = "cycle_b saw " + type(cycle_a).__name__

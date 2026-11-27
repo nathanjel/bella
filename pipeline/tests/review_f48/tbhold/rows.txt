@@ -1,0 +1,10 @@
+tbinner bad_plain
+tbinner bad_outer
+tbinner bad_func
+tbinner pkgok.badsub
+tbinner bad_order
+tbinner live
+tbexc bad_plain
+tbexc bad_outer
+tbexc bad_order
+tbexc live

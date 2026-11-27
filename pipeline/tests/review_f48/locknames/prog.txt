@@ -1,0 +1,210 @@
+"""F48 c07-d33-stops, probe 1: every way of reaching a name of _frozen_importlib's that CPython has and the runtime lacks.
+
+argv: route name [alias]
+"""
+import sys
+import types
+import importlib
+import _imp
+import _frozen_importlib
+import _frozen_importlib_external
+from importlib import _bootstrap
+
+
+class S(str):
+    pass
+
+
+class Spy(dict[str, object]):
+    hits: int = 0
+
+    def __getitem__(self, key: str) -> object:
+        Spy.hits += 1
+        return super().__getitem__(key)
+
+    def __setitem__(self, key: str, value: object) -> None:
+        Spy.hits += 1
+        super().__setitem__(key, value)
+
+    def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+        Spy.hits += 1
+        return super().get(key, default)
+
+
+CALLS: list[str] = []
+
+
+def wrapper(name: str) -> object:
+    CALLS.append(str(name))
+    raise RuntimeError("the program's _get_module_lock was called for " + str(name))
+
+
+def hook(name: str) -> object:
+    return "from the module's __getattr__: " + name
+
+
+def module_of(alias: str) -> types.ModuleType:
+    if alias == "frozen":
+        return _frozen_importlib
+    if alias == "pkg":
+        return _bootstrap
+    if alias == "attr":
+        return importlib._bootstrap
+    if alias == "sysfrozen":
+        return sys.modules["_frozen_importlib"]
+    if alias == "syspkg":
+        return sys.modules["importlib._bootstrap"]
+    if alias == "ext":
+        return _frozen_importlib_external._bootstrap
+    if alias == "imported":
+        return importlib.import_module("importlib._bootstrap")
+    if alias == "external":
+        return _frozen_importlib_external
+    if alias == "made":
+        return types.ModuleType("_frozen_importlib")
+    raise SystemExit("no alias " + alias)
+
+
+def from_pkg() -> None:
+    from importlib._bootstrap import _ModuleLock
+    print(type(_ModuleLock).__name__)
+
+
+def from_frozen() -> None:
+    from _frozen_importlib import _module_locks
+    print(type(_module_locks).__name__)
+
+
+def from_try() -> None:
+    try:
+        from importlib._bootstrap import _thread
+        print(type(_thread).__name__)
+    except ImportError as error:
+        print("ImportError", error.name)
+
+
+def from_other() -> None:
+    from importlib._bootstrap import _verbose_message
+    print(type(_verbose_message).__name__)
+
+
+def from_none() -> None:
+    try:
+        from importlib._bootstrap import _no_such_name
+        print(type(_no_such_name).__name__)
+    except ImportError as error:
+        print("ImportError", error.name)
+
+
+def stmt() -> None:
+    import importlib._bootstrap as b
+    print(type(b._get_module_lock).__name__)
+
+
+def main() -> None:
+    route = sys.argv[1]
+    name = sys.argv[2] if len(sys.argv) > 2 else ""
+    alias = sys.argv[3] if len(sys.argv) > 3 else "pkg"
+    if route == "same":
+        print(_frozen_importlib is _bootstrap, importlib._bootstrap is _bootstrap, sys.modules["importlib._bootstrap"] is _bootstrap,
+              sys.modules["_frozen_importlib"] is _bootstrap, _frozen_importlib_external._bootstrap is _bootstrap)
+        print(_bootstrap.__name__, _frozen_importlib_external.__name__)
+        return
+    if route == "from_pkg":
+        return from_pkg()
+    if route == "from_frozen":
+        return from_frozen()
+    if route == "from_try":
+        return from_try()
+    if route == "from_other":
+        return from_other()
+    if route == "from_none":
+        return from_none()
+    if route == "stmt":
+        return stmt()
+    M = module_of(alias)
+    if route == "attr":
+        print(type(getattr(M, name)).__name__)
+    elif route == "default":
+        print(getattr(M, name, "DEFAULT") == "DEFAULT")
+    elif route == "hasattr":
+        print(hasattr(M, name))
+    elif route == "try":
+        try:
+            print(type(getattr(M, name)).__name__)
+        except AttributeError as error:
+            print("AttributeError", error.name)
+    elif route == "strsub":
+        print(type(getattr(M, S(name))).__name__)
+    elif route == "objga":
+        print(type(object.__getattribute__(M, name)).__name__)
+    elif route == "modga":
+        print(type(types.ModuleType.__getattribute__(M, name)).__name__)
+    elif route == "vars":
+        print(name in vars(M), type(vars(M)[name]).__name__)
+    elif route == "dict":
+        print(name in M.__dict__, type(M.__dict__[name]).__name__)
+    elif route == "dir":
+        print(name in dir(M))
+    elif route == "dirall":
+        print(sorted(dir(M)))
+    elif route == "fromlist":
+        got = __import__("importlib._bootstrap", None, None, [name])
+        print(got is M, type(got).__name__)
+    elif route == "set":
+        setattr(M, name, 5)
+        print(getattr(M, name), hasattr(M, name), getattr(M, name, "DEFAULT"))
+    elif route == "setdel":
+        setattr(M, name, 5)
+        delattr(M, name)
+        print(hasattr(M, name))
+    elif route == "del":
+        delattr(M, name)
+        print("deleted")
+    elif route == "deltry":
+        try:
+            delattr(M, name)
+            print("deleted")
+        except AttributeError as error:
+            print("AttributeError", error)
+    elif route == "delhas":
+        try:
+            delattr(M, name)
+        except AttributeError:
+            pass
+        print(hasattr(M, name))
+    elif route == "hook":
+        setattr(M, "__getattr__", hook)
+        print(getattr(M, name))
+    elif route == "rename":
+        setattr(M, "__name__", "elsewhere")
+        print(type(getattr(M, name)).__name__)
+    elif route == "wrap":
+        setattr(M, "_get_module_lock", wrapper)
+        try:
+            import sample1
+            print("imported", sample1.answer, CALLS)
+        except RuntimeError as error:
+            print("RuntimeError", error, CALLS)
+    elif route == "spy":
+        setattr(M, "_module_locks", Spy())
+        import sample2
+        print("imported", sample2.answer, Spy.hits > 0)
+    elif route == "lockheld":
+        print(_imp.lock_held())
+        _imp.acquire_lock()
+        print(_imp.lock_held())
+        _imp.release_lock()
+        print(_imp.lock_held())
+    elif route == "unlock":
+        print(_bootstrap._lock_unlock_module("sample1"), "sample1" in sys.modules)
+    elif route == "class":
+        print(getattr(_bootstrap.ModuleSpec, name, "DEFAULT"), hasattr(_bootstrap.BuiltinImporter, name))
+    elif route == "instance":
+        spec = _bootstrap.ModuleSpec("x", None)
+        print(getattr(spec, name, "DEFAULT"))
+    else:
+        raise SystemExit("no route " + route)
+
+
+main()
