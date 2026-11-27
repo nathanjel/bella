@@ -1,0 +1,6 @@
+"""helper's doc"""
+value: int = 1
+
+
+def fn() -> int:
+    return value

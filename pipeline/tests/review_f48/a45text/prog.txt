@@ -1,0 +1,239 @@
+import gc
+import sys
+from collections import namedtuple
+from dataclasses import dataclass, field
+
+ROW: str = sys.argv[1] if len(sys.argv) > 1 else "all"
+RESULTS: dict[str, list[str]] = {}
+
+
+class Tracker:
+    def __init__(self, label: str, log: list[str]) -> None:
+        self.label = label
+        self.log = log
+
+    def __del__(self) -> None:
+        self.log.append("released " + self.label)
+
+
+def t_basic() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log}
+    l: dict[str, object] = {}
+    exec("t = Tracker('local-only', log)\ndef f():\n    return 1\n", g, l)
+    f = l["f"]
+    log.append("exec done " + str(sorted(l)))
+    del l["f"]
+    log.append("globals is g: " + str(f.__globals__ is g) + " " + str(f()))  # type: ignore[attr-defined,operator]
+    del l
+    log.append("locals dropped")
+    del f
+    log.append("function dropped")
+    return log
+
+
+def t_kinds() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log}
+    l: dict[str, object] = {}
+    exec("t = Tracker('local-only', log)\n"
+         "class C:\n    def m(self):\n        return 2\n"
+         "lam = lambda: 3\n"
+         "def genf():\n    yield 4\n"
+         "started = genf()\n"
+         "ge = (i for i in range(5, 6))\n"
+         "def outer():\n    def inner():\n        return 6\n    return inner\n"
+         "inn = outer()\n"
+         "bound = C().m\n", g, l)
+    keep = [l["C"], l["lam"], l["started"], l["ge"], l["inn"], l["bound"]]
+    log.append("exec done " + str(sorted(l)))
+    del l
+    log.append("locals dropped")
+    log.append(str([keep[0]().m(), keep[1](), next(keep[2]), next(keep[3]), keep[4](), keep[5]()]))  # type: ignore[operator,call-overload]
+    del keep
+    log.append("kept dropped")
+    return log
+
+
+def t_raise() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log}
+    l: dict[str, object] = {}
+    saved: BaseException | None = None
+    try:
+        exec("t = Tracker('in-frame', log)\nraise ValueError('x')\n", g, l)
+    except ValueError as e:
+        saved = e
+    log.append("caught " + str(sorted(l)))
+    del l
+    log.append("locals dropped")
+    saved = None
+    log.append("exception dropped")
+    return log
+
+
+def t_inner_raise() -> list[str]:
+    log: list[str] = []
+    keep: list[BaseException] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log, "keep": keep}
+    l: dict[str, object] = {}
+    exec("t = Tracker('held-by-tb', log)\ndef boom():\n    raise KeyError('k')\ntry:\n    boom()\nexcept KeyError as e:\n    keep.append(e)\n", g, l)
+    log.append("exec done " + str(sorted(l)))
+    del l
+    log.append("locals dropped")
+    keep.clear()
+    log.append("exception dropped")
+    return log
+
+
+def t_inner_dropped() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log}
+    l: dict[str, object] = {}
+    exec("t = Tracker('not-held', log)\ndef boom():\n    raise KeyError('k')\ntry:\n    boom()\nexcept KeyError as e:\n    pass\n", g, l)
+    log.append("exec done " + str(sorted(l)))
+    del l
+    log.append("locals dropped")
+    return log
+
+
+def t_names() -> list[str]:
+    log: list[str] = []
+    same: list[object] = []
+    g: dict[str, object] = {"log": log, "same": same}
+    l: dict[str, object] = {}
+    g["LOCALS"] = l
+    exec("a = 1\nL = locals()\nsame.append(L is LOCALS)\nV = vars()\nsame.append(V is LOCALS)\nD = dir()\n"
+         "same.append(globals() is LOCALS)\nlocals()['w'] = 5\nsame.append(w)\n", g, l)
+    log.append(str(same) + " " + str(l["D"]) + " " + str(sorted(l)) + " " + str(sorted(k for k in g if k != "__builtins__")))
+    l2: dict[str, object] = {}
+    exec("x = 1\nclass C:\n    try:\n        y = x\n    except NameError:\n        y = 'NameError'\n"
+         "def f():\n    return x\n"
+         "comp = [x for _ in range(1)]\n"
+         "try:\n    ge = list(x for _ in range(1))\nexcept NameError:\n    ge = 'NameError'\n"
+         "try:\n    fv = f()\nexcept NameError:\n    fv = 'NameError'\n"
+         "try:\n    lv = (lambda: x)()\nexcept NameError:\n    lv = 'NameError'\n", g, l2)
+    log.append(str([l2["C"].y, l2["comp"], l2["ge"], l2["fv"], l2["lv"]]))  # type: ignore[attr-defined]
+    g["x"] = "global"
+    log.append(str(l2["f"]()))  # type: ignore[operator]
+    return log
+
+
+def t_builtins() -> list[str]:
+    log: list[str] = []
+    b: dict[str, object] = {"len": len, "marker": Tracker("builtins", log)}
+    g: dict[str, object] = {"__builtins__": b, "gt": Tracker("globals", log)}
+    l: dict[str, object] = {"lt": Tracker("locals", log)}
+    exec("def f():\n    return len('ab')\n", g, l)
+    f = l["f"]
+    log.append(str([f.__builtins__ is b, f.__globals__ is g, f()]))  # type: ignore[attr-defined,operator]
+    del b, g
+    log.append("globals and builtins dropped")
+    del l
+    log.append("locals dropped")
+    del f
+    log.append("function dropped")
+    return log
+
+
+def t_cycle() -> list[str]:
+    log: list[str] = []
+    gc.collect()
+    g: dict[str, object] = {"Tracker": Tracker, "log": log}
+    l: dict[str, object] = {}
+    g["l"] = l
+    exec("t = Tracker('cycle', log)\ndef f():\n    return 1\n", g, l)
+    del g, l
+    log.append("dropped")
+    gc.collect()
+    log.append("collected")
+    return log
+
+
+def t_same_dict() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log}
+    exec("t = Tracker('one-dict', log)\ndef f():\n    return t.label\n", g, g)
+    f = g["f"]
+    del g
+    log.append("dict dropped " + str(f()))  # type: ignore[operator]
+    del f
+    gc.collect()
+    log.append("function dropped")
+    g2: dict[str, object] = {"Tracker": Tracker, "log": log}
+    exec("t = Tracker('globals-only', log)\ndef f():\n    return t.label\n", g2)
+    f2 = g2["f"]
+    del g2
+    log.append("dict dropped " + str(f2()))  # type: ignore[operator]
+    del f2
+    gc.collect()
+    log.append("function dropped")
+    return log
+
+
+def t_eval() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"log": log}
+    l: dict[str, object] = {"t": Tracker("eval-local", log)}
+    fn = eval("lambda: 7", g, l)
+    comp = eval("[t.label for _ in range(1)]", g, l)
+    same = eval("locals()", g, l) is l
+    del l
+    log.append("locals dropped " + str([fn(), comp, same, fn.__globals__ is g]))
+    del fn
+    log.append("function dropped")
+    return log
+
+
+def t_class() -> list[str]:
+    class InClass:
+        exec("made_in_class = 1\ndef meth(self):\n    return 8\n", globals(), locals())
+
+    return [str([InClass.made_in_class, InClass().meth(), "made_in_class" in globals()])]  # type: ignore[attr-defined]
+
+
+@dataclass(slots=True, order=True)
+class Slotted:
+    x: int
+    y: list[int] = field(default_factory=list)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Frozen:
+    a: int = 1
+
+    def __post_init__(self) -> None:
+        pass
+
+
+P = namedtuple("P", "x y")
+
+
+def t_library() -> list[str]:
+    log: list[str] = []
+    s = Slotted(1)
+    log.append(str([s, s < Slotted(2), s == Slotted(1), Slotted.__match_args__, Slotted.__slots__, Frozen(a=2), hash(Frozen()) == hash(Frozen())]))
+    log.append(str([Slotted.__init__.__globals__ is globals(), Slotted.__init__.__builtins__ is vars(sys.modules["builtins"]),
+                    Slotted.__init__.__module__, Slotted.__init__.__qualname__, Slotted.__lt__.__qualname__]))
+    new = P.__new__
+    log.append(str([P(1, 2), sorted(new.__globals__), new.__globals__["__name__"], new.__builtins__, new.__module__, new.__qualname__,
+                    new.__name__]))
+    gc.collect()
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    gc.collect()
+    log.append(str(len(gc.garbage)))
+    gc.set_debug(0)
+    gc.garbage.clear()
+    return log
+
+
+EXPERIMENTS = {"basic": t_basic, "kinds": t_kinds, "raise": t_raise, "inner_raise": t_inner_raise, "inner_dropped": t_inner_dropped,
+               "names": t_names, "builtins": t_builtins, "cycle": t_cycle, "same_dict": t_same_dict, "eval": t_eval, "class": t_class,
+               "library": t_library}
+for _name, _fn in EXPERIMENTS.items():
+    if ROW in ("all", _name):
+        RESULTS[_name] = _fn()
+
+if __name__ == "__main__":
+    for line in RESULTS[ROW]:
+        print(line)

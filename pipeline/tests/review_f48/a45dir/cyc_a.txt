@@ -1,0 +1,3 @@
+early: int = 1
+import cyc_b
+late: int = 2

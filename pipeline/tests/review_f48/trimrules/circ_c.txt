@@ -1,0 +1,8 @@
+import watch
+
+try:
+    import circ_d  # noqa: F401
+except AttributeError as e:
+    watch.entries("circular attribute", e)
+    print(e)
+y = 1

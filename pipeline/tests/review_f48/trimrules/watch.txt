@@ -1,0 +1,56 @@
+"""Shared helpers: weak references to modules, a marker with a finaliser, the running stack and a traceback's entries."""
+import traceback
+import weakref
+from types import ModuleType, TracebackType
+
+events: list[str] = []
+refs: list["weakref.ref[ModuleType]"] = []
+saved: list[BaseException] = []
+
+
+class Marker:
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __del__(self) -> None:
+        events.append("finalised " + self.label)
+
+
+def watch(m: ModuleType, label: str) -> None:
+    def gone(r: "weakref.ref[ModuleType]") -> None:
+        events.append("died " + label)
+    refs.append(weakref.ref(m, gone))
+
+
+def where(filename: str) -> str:
+    return filename.rsplit("/", 1)[-1]
+
+
+def stack(label: str) -> None:
+    print(label, [(where(e.filename), e.lineno, e.name) for e in traceback.extract_stack()[:-1]])
+
+
+def entries(label: str, e: BaseException) -> None:
+    print(label, type(e).__name__, [(where(t.filename), t.lineno, t.name) for t in traceback.extract_tb(e.__traceback__)])
+
+
+def tb_entries(label: str, tb: TracebackType | None) -> None:
+    print(label, [(where(t.filename), t.lineno, t.name) for t in traceback.extract_tb(tb)])
+
+
+def show(label: str) -> None:
+    print(label, events)
+    events.clear()
+
+
+class Plain:
+    pass
+
+
+others: list["weakref.ref[object]"] = []
+
+
+def watch_object(o: object, label: str) -> None:
+    def gone(r: "weakref.ref[object]") -> None:
+        events.append("died " + label)
+    others.append(weakref.ref(o, gone))

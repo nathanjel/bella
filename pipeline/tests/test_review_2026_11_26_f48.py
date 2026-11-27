@@ -41,6 +41,17 @@ argument list a line), one row a process, compared on standard output, standard 
   type's `__name__` where its module is not a str or is builtins (RL-1054); an argument error names the function by its own
   `__qualname__`, which `functools.wraps` and an assignment change (RL-1060); and `split` and `rsplit` of bytes and
   bytearray refuse an unknown keyword before they convert `maxsplit` (RL-1075).
+* The tests that did not hold what they say (RL-1010, RL-1018, RL-1055), with the reviewers' probes: the keeping half of
+  the import system's trimming rule (`trimrules`, 12 rows of the q43 reviewer's: a module's `__getattr__` raising under a
+  from-import, a from-list or `__all__` item that is no str; `getframe` stops, E-02); what a read sees of a class's dict
+  handed out (`classdict`, 18 rows, and `classstate`, 2, of the q45 reviewer's: one object by each way, following the class,
+  `object.__getstate__` of a class; the writes are E-05's); and the A45 fixes' two halves (`a45text` 12 rows, `a45suggest`
+  10, `a45more` 11, `a45dir` 18, of the c04 reviewer's: a text's locals through a frame object, the suggestions read from
+  them, `dir()` of a module). `a45dir`'s `descriptor` row found two messages: `object.__getattribute__` of a module words
+  its AttributeError as `PyObject_GenericGetAttr` does, and five native methods check their arguments as their calling
+  convention does (`nativeargs`: a slot wrapper's `__repr__` of a module, a lazy import and a capsule, METH_NOARGS
+  `module.__dir__`, `dir`'s PyArg_UnpackTuple). A C method bound to a module keeps its type's name in the message where
+  CPython's has its own name alone (D-08's wording: `nativeargs`'s `bound`, `a45dir`'s `descriptor`).
 
 * What is made inside a generator expression is named `<genexpr>.<lambda>` and `<genexpr>.<genexpr>`, with no `.<locals>`
   (`qualnames`: RL-1053; at module level, in a function, in a class body and a method).
@@ -101,7 +112,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.build import build
-from pipeline.tests.test_review_2026_11_23_a43 import _run
+from pipeline.tests.test_review_2026_11_23_a43 import _run, silent
 
 HERE = Path(__file__).resolve().parent / "review_f48"
 
@@ -131,6 +142,9 @@ STOPS: dict[tuple[str, tuple[str, ...]], str] = {
     ("ownmodules", ("marshal",)): "bella: not implemented: importing 'marshal' (the standard library: step 3b)",
     ("lookups", ("module class other",)): "bella: not implemented: [P2+] __class__ assignment (spec section 3)",
     # the subclasses of a type of CPython's a prelude presents name CPython's own classes (RL-1025)
+    ("a45dir", ("lazy",)): "bella: not implemented: importing 'colorsys' (the standard library: step 3b)",
+    ("a45dir", ("subclass",)): "bella: not implemented: a subclass of the module type (step 3b)",
+    ("a45dir", ("subclass_plain",)): "bella: not implemented: a subclass of the module type (step 3b)",
     ("moduletype", ("iobase subclasses",)): "bella: not implemented: the subclasses of the built-in type '_io._IOBase': CPython's list names its own classes",
     ("moduletype", ("ref subclasses",)): "bella: not implemented: the subclasses of the built-in type 'weakref.ReferenceType': CPython's list names its own classes",
     # the view sweep (RL-992): what stops by name there is what is not written yet, whatever the buffer, and a view where a
@@ -155,6 +169,17 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
     ("entrynames", ("frozen.exec_module", "strsub2")): ("D-34", "helper body runs\nfrozen.exec_module strsub2\nhelper body runs\nreturns None\n"),
     # a compiled program has no bytecode cache: sys.implementation.cache_tag is None, and CPython's text raises for it
     ("importtext", ("cache",)): ("D-16", "NotImplementedError NotImplementedError TypeError\n"),
+    # a C method bound to a module is named by its own name alone in its argument error (meth_get__qualname__), and the
+    # runtime's names it as its type's: the wording of a built-in message (RL-1055)
+    ("nativeargs", ("bound",)): ("D-08", "__dir__, one TypeError module.__dir__() takes no arguments (1 given)\n"
+                                         "__dir__, keyword TypeError module.__dir__() takes no keyword arguments\n"
+                                         "__format__, two TypeError object.__format__() takes exactly one argument (2 given)\n"
+                                         "__reduce_ex__, two TypeError object.__reduce_ex__() takes exactly one argument (2 given)\n"),
+    ("a45dir", ("descriptor",)): ("D-08", "method_descriptor __dir__ module.__dir__\nunbound True\nwrong raised TypeError descriptor "
+                                          "'__dir__' for 'module' objects doesn't apply to a 'int' object\nargs raised TypeError "
+                                          "module.__dir__() takes no arguments (1 given)\nkw raised TypeError module.__dir__() takes no "
+                                          "keyword arguments\nobject True\ngetattribute raised AttributeError 'module' object has no "
+                                          "attribute 'nope'\nplain raised AttributeError module 'sample' has no attribute 'nope'\nis True\n"),
     # decimal is CPython's _pydecimal: its signals carry a text where the C module's carry the conditions, and it takes a
     # rounding mode's name unchecked
     ("cmodules", ("frames", "16")): ("D-20", "Decimal(1).to_integral_value(rounding='up') -> no error: Decimal\n"),
@@ -171,7 +196,8 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
 # a read-only memoryview (RL-991, with Question 40); a second module object of a built-in module, which CPython makes at each
 # _imp.create_builtin and the runtime does not (RL-1013)
 OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset({("viewsmore", ("BufferedRandom.write", kind)) for kind in "bacw"} |
-                                                          {("lookups", (row,)) for row in ("builtin second", "builtin again")})
+                                                          {("lookups", (row,)) for row in ("builtin second", "builtin again")} |
+                                                          {("a45more", ("native_direct",))})   # sys's and builtins' order: RL-1061
 
 
 def rows_of(probe: str) -> list[tuple[str, ...]]:
@@ -212,7 +238,9 @@ def rows_agree(probe: str) -> None:
             want = _run([sys.executable, "prog.py", *row], folder)
             got = _run([binary, *row], folder)
             stop = STOPS.get((probe, row), own_stops.get(row))
-            if stop is not None:
+            if silent(want):
+                wrong.append(f"{probe}/{row}: prints nothing under CPython (RL-1077)")
+            elif stop is not None:
                 if got[2] != 70 or stop not in "\n".join(got[1]):
                     wrong.append(f"{probe}/{row}: compiled {got!r}, where it is to stop with {stop!r}")
             elif (probe, row) in REGISTERED:

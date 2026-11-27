@@ -1,0 +1,11 @@
+import sys
+
+first: int = 1
+names_inside: list[str] = dir()
+same_inside: bool = locals() is globals() and vars() is globals()
+locals()["written_inside"] = 41
+after_write: bool = "written_inside" in globals()
+
+
+def late() -> list[str]:
+    return sorted(k for k in globals() if not k.startswith("__"))

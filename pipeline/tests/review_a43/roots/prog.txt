@@ -45,3 +45,4 @@ elif row == 'unraisable':
         def __del__(self):
             raise ValueError('boom')
     bad = Bad()
+print('set', flush=True)  # RL-1077: the row reached its end; what the exit does comes after

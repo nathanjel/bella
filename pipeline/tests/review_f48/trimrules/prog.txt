@@ -1,0 +1,188 @@
+"""Review F48, q43, probe 2: the trimming rules, other bootstrap functions on a traceback, counts, and what frames hold
+(RL-1010: the keeping half of the trimming rule, which C-8-22 did not hold: a module __getattr__ raising under a
+from-import, a from-list item that is no str, an __all__ item that is no str)."""
+import gc
+import importlib
+import sys
+import traceback
+import unittest
+
+import watch
+from watch import entries, show
+
+
+def tb_getattr_raises() -> None:
+    try:
+        from pkgh import boom  # type: ignore[attr-defined]  # noqa: F401
+    except ValueError as e:
+        entries("a module __getattr__ raises under the from-import", e)
+    try:
+        importlib.import_module("pkgh").boom
+    except ValueError as e:
+        entries("and under a plain attribute read", e)
+
+
+def tb_fromlist_nonstr() -> None:
+    try:
+        __import__("pkgf", None, None, [1])  # type: ignore[list-item]
+    except TypeError as e:
+        entries("a from list item that is no str", e)
+        print(e)
+    try:
+        __import__("pkgf", None, None, ["okname", "nothere"])
+    except Exception as e:
+        entries("a from list name that is missing", e)
+    print("no error for a missing from list name")
+
+
+def tb_all_nonstr() -> None:
+    try:
+        import starbad  # noqa: F401
+    except TypeError as e:
+        entries("an __all__ item that is no str", e)
+        print(e)
+
+
+def stack_star() -> None:
+    import staruser  # noqa: F401
+
+
+def spec_weak() -> None:
+    kept: BaseException | None = None
+    try:
+        import specfail  # noqa: F401
+    except ValueError as e:
+        show("in except")
+        kept = e
+    show("after except")
+    kept = None
+    show("after release")
+    print(kept)
+
+
+def tb_notpkg() -> None:
+    try:
+        importlib.import_module("watch.sub")
+    except ImportError as e:
+        entries("by name, the parent is no package", e)
+        print(e)
+    try:
+        import watch.sub  # type: ignore[import-not-found]  # noqa: F401
+    except ImportError as e:
+        entries("by statement, the parent is no package", e)
+        print(e)
+
+
+def tb_sanity() -> None:
+    for label, name, package in (("empty", "", None), ("beyond", "..x", "pkgf"), ("no package", ".x", None), ("relative missing", ".nothere", "pkgf")):
+        try:
+            importlib.import_module(name, package)
+        except Exception as e:
+            entries(label, e)
+            print(type(e).__name__, e)
+    for label, level in (("negative level", -1), ("level without globals", 1)):
+        try:
+            importlib.__import__("x", None, None, (), level)
+        except Exception as e:
+            entries(label, e)
+            print(type(e).__name__, e)
+    try:
+        importlib.__import__(5)  # type: ignore[arg-type]
+    except Exception as e:
+        entries("a name that is no str", e)
+        print(type(e).__name__, e)
+
+
+def circular() -> None:
+    import circ_a  # noqa: F401
+    import circ_c  # noqa: F401
+
+
+def limit_msg() -> None:
+    try:
+        sys.setrecursionlimit(1)
+    except RecursionError as e:
+        print("in a function:", e)
+    import limit_plain  # noqa: F401
+    from pkgf import limitsub  # noqa: F401
+    importlib.import_module("limit_byname")
+
+
+def down(n: int, what: str) -> int:
+    try:
+        if what == "repr":
+            repr(watch)
+        elif what == "cached":
+            import watch as again  # noqa: F401
+        elif what == "fromlist":
+            from pkgf import okname  # noqa: F401
+        elif what == "byname":
+            importlib.import_module("watch")
+        elif what == "dunder":
+            __import__("pkgf.okname2")
+    except RecursionError:
+        return n
+    except ImportError:
+        pass
+    try:
+        return down(n + 1, what)
+    except RecursionError:
+        return -n
+
+
+def depth_calls() -> None:
+    import pkgf  # noqa: F401
+    limit = sys.getrecursionlimit()
+    for what in ("none", "repr", "cached", "fromlist", "byname"):
+        sys.setrecursionlimit(70)
+        reached = down(0, what)
+        sys.setrecursionlimit(limit)
+        print("the level at which", what, "first met the limit", reached)
+
+
+def getframe() -> None:
+    f = sys._getframe(0)
+    print(type(f).__name__)
+    print(f.f_code.co_name)
+
+
+class ImportsByName(unittest.TestCase):
+    def test_by_name(self) -> None:
+        importlib.import_module("testfail")
+
+    def test_by_statement(self) -> None:
+        import testfail  # noqa: F401
+
+
+def unittest_rows() -> None:
+    result = unittest.TestResult()
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(ImportsByName)
+    suite.run(result)
+    for test, text in result.errors:
+        print(test.id().rsplit(".", 1)[-1])
+        for line in text.splitlines():
+            if line.startswith("  File"):
+                print("   ", line.strip().removeprefix('File "').rsplit("/", 1)[-1])   # the file's base name on both sides
+            elif not line.startswith("    "):
+                print("   ", line)
+
+
+def a31_row_11() -> None:
+    def go() -> None:
+        importlib.import_module("badmodule")
+    for attempt in range(2):
+        try:
+            go()
+        except ArithmeticError as e:
+            frames = traceback.extract_tb(e.__traceback__)
+            print(len(frames), [f.name for f in frames])
+
+
+ROWS = {f.__name__: f for f in (
+    tb_getattr_raises, tb_fromlist_nonstr, tb_all_nonstr, stack_star, spec_weak, tb_notpkg, tb_sanity, circular, limit_msg,
+    depth_calls, getframe, unittest_rows, a31_row_11,
+)}
+
+gc.disable()
+ROWS[sys.argv[1]]()
+sys.stdout.flush()

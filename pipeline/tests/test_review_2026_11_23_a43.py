@@ -59,7 +59,7 @@ ROWS: dict[str, tuple[str, ...]] = {
     "modkey": ("alias",),
     "newmodule": ("insert",),
     "phase": ("ns", "cycle", "plain"),
-    "pipe": ("open",),
+    "pipe": ("open", "flush"),
     "reduce": ("garbage", "callback", "immediate", "cycle", "kept"),
     "roots": ("garbage", "callback", "context", "codec", "warning", "resurrect", "unraisable", "newcycle"),
     "streamheld": ("ctx", "sys", "handler"),
@@ -71,6 +71,12 @@ def _run(command: list[str], folder: Path) -> tuple[str, list[str], int]:
     env.pop("PYTHONWARNINGS", None)
     done = subprocess.run(command, capture_output=True, text=True, env=env, cwd=folder, timeout=120, stdin=subprocess.DEVNULL)
     return done.stdout, _report(done.stderr), done.returncode
+
+
+def silent(want: tuple[str, list[str], int]) -> bool:
+    """A row that prints nothing under CPython and ends well proves nothing: any two runs that end alike agree on it
+    (review F48, RL-1077). A row about what is never done prints that it got there."""
+    return want == ("", [], 0)
 
 
 def rows_agree(probe: str) -> None:
@@ -88,7 +94,9 @@ def rows_agree(probe: str) -> None:
         for row in ROWS[probe]:
             want = _run([sys.executable, "prog.py", row], folder)
             got = _run([binary, row], folder)
-            if got != want:
+            if silent(want):
+                wrong.append(f"{probe}/{row}: prints nothing under CPython (RL-1077)")
+            elif got != want:
                 wrong.append(f"{probe}/{row}: compiled {got!r}, CPython {want!r}")
         assert not wrong, "\n".join(wrong)
     finally:

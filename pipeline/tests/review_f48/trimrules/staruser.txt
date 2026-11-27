@@ -1,0 +1,3 @@
+from pkgstar import *  # noqa: F403
+
+print(sorted(n for n in globals() if not n.startswith("__")))

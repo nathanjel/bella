@@ -5,3 +5,4 @@ warnings.simplefilter('always', ResourceWarning)
 if sys.argv[1] == 'save':
     gc.set_debug(gc.DEBUG_SAVEALL)
 gc.garbage.append('retained')
+print('set', flush=True)  # RL-1077: the row reached its end; what the exit does comes after

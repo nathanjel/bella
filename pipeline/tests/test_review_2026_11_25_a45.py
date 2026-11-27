@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.build import build
-from pipeline.tests.test_review_2026_11_23_a43 import _run
+from pipeline.tests.test_review_2026_11_23_a43 import _run, silent
 
 HERE = Path(__file__).resolve().parent / "review_a45"
 
@@ -48,7 +48,9 @@ def rows_agree(probe: str) -> None:
         for row in ROWS[probe]:
             want = _run([sys.executable, "prog.py", row], folder)
             got = _run([binary, row], folder)
-            if got != want:
+            if silent(want):
+                wrong.append(f"{probe}/{row}: prints nothing under CPython (RL-1077)")
+            elif got != want:
                 wrong.append(f"{probe}/{row}: compiled {got!r}, CPython {want!r}")
         assert not wrong, "\n".join(wrong)
     finally:

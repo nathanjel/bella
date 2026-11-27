@@ -1546,7 +1546,7 @@ const char* block(Py_UCS4 c)                    // unicodedata_block_impl
 namespace {
 ClassObject* capsule_class() { return no_instances_yet("PyCapsule"); }   // PyCapsule_Type, which types.CapsuleType names
 Ref capsule_repr(Obj self, Args a) {             // capsule_repr: the one capsule the runtime makes is unicodedata's
-    positional_only(a, "__repr__", 0, 0);
+    dunder_args(self, a, "__repr__", 0);         // a slot wrapper's check (review F48, RL-1055)
     char buf[96];
     std::snprintf(buf, sizeof buf, "<capsule object \"unicodedata._ucnhash_CAPI\" at %p>", static_cast<void*>(self.object()));
     return str_new(buf);

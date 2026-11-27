@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.build import build
-from pipeline.tests.test_review_2026_11_23_a43 import _run
+from pipeline.tests.test_review_2026_11_23_a43 import _run, silent
 
 HERE = Path(__file__).resolve().parent / "review_a46"
 TABLE = Path(__file__).resolve().parents[2] / "runtime" / "prelude" / "bootstrap_frames.json"
@@ -102,7 +102,9 @@ def rows_agree(probe: str) -> None:
         for row in ROWS[probe]:
             want = _run([sys.executable, "prog.py", row], folder)
             got = _run([binary, row], folder)
-            if probe == "codeobjects" and got[1:] == want[1:]:
+            if silent(want):
+                wrong.append(f"{probe}/{row}: prints nothing under CPython (RL-1077)")
+            elif probe == "codeobjects" and got[1:] == want[1:]:
                 cpython, compiled = by_function(want[0]), by_function(got[0])
                 wrong += [f"{name}: not reached under CPython: the sweep compares nothing there" for name, line in sorted(cpython.items())
                           if "<absent>" in line]

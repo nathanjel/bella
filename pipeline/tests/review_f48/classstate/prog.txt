@@ -1,0 +1,77 @@
+"""Review F48, q45, second probe: the annotation scope's cell (RL-489), and what a class shows after a write
+to its dict reached without any operator of the proxy. One row a process: prog.py <row>."""
+import copyreg
+import sys
+
+assert copyreg
+
+
+class Noted:
+    x: int = 1
+
+
+class Plain:
+    x = 1
+
+
+def row_cell() -> None:
+    fn = Noted.__annotate__
+    print(fn.__code__.co_freevars, len(fn.__closure__ or ()))
+    inside = fn.__closure__[0].cell_contents
+    print(type(inside).__name__, inside is object.__getstate__(Noted), inside["x"])
+
+
+def row_cell_write() -> None:
+    inside = Noted.__annotate__.__closure__[0].cell_contents
+    try:
+        inside["y"] = 42
+        print("written")
+    except TypeError:
+        print("TypeError")
+    print("y" in Noted.__dict__, getattr(Noted, "y", None))
+
+
+def row_getstate_read() -> None:
+    d = object.__getstate__(Plain)
+    print(type(d).__name__, d["x"], sorted(k for k in d if not k.startswith("__")))
+    Plain.z = 2  # type: ignore[attr-defined]
+    print(d["z"], len(d) == len(Plain.__dict__))
+
+
+def row_getstate_seen() -> None:
+    d = object.__getstate__(Plain)
+    assert isinstance(d, dict)
+    d["y"] = 42
+    print(hasattr(Plain, "y"), "y" in dir(Plain), "y" in vars(Plain), getattr(Plain(), "y", None))
+    try:
+        del Plain.y  # type: ignore[attr-defined]
+        print("deleted")
+    except AttributeError:
+        print("AttributeError")
+    print("y" in vars(Plain))
+
+
+def row_getstate_instance() -> None:
+    o = Plain()
+    o.k = 1  # type: ignore[attr-defined]
+    d = object.__getstate__(o)
+    print(d, d is o.__dict__)
+
+
+def main() -> None:
+    row = sys.argv[1]
+    if row == "cell":
+        row_cell()
+    elif row == "cell_write":
+        row_cell_write()
+    elif row == "getstate_read":
+        row_getstate_read()
+    elif row == "getstate_seen":
+        row_getstate_seen()
+    elif row == "getstate_instance":
+        row_getstate_instance()
+    else:
+        raise SystemExit("no such row: " + row)
+
+
+main()

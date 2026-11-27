@@ -1,0 +1,178 @@
+import sys
+import traceback
+
+ROW: str = sys.argv[1] if len(sys.argv) > 1 else "all"
+RESULTS: dict[str, list[str]] = {}
+
+
+class Tracker:
+    def __init__(self, label: str, log: list[str]) -> None:
+        self.label = label
+        self.log = log
+
+    def __del__(self) -> None:
+        self.log.append("released " + self.label)
+
+
+def last(e: BaseException) -> str:
+    return traceback.format_exception(e)[-1].strip()
+
+
+def last_only(e: BaseException) -> str:
+    return traceback.format_exception_only(e)[-1].strip()
+
+
+def t_after() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"global_lengthy": 1}
+    l: dict[str, object] = {}
+    saved: BaseException | None = None
+    try:
+        exec("lengthy_name = 1\nvalue = lengthy_nam\n", g, l)
+    except NameError as e:
+        saved = e
+    assert saved is not None
+    log.append(last(saved))
+    log.append(last(saved))
+    log.append(str(sorted(l)))
+    return log
+
+
+def t_after_dropped() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log}
+    l: dict[str, object] = {}
+    saved: BaseException | None = None
+    try:
+        exec("t = Tracker('held', log)\nlengthy_name = 1\nvalue = lengthy_nam\n", g, l)
+    except NameError as e:
+        saved = e
+    assert saved is not None
+    del l
+    log.append("locals dropped")
+    log.append(last(saved))
+    saved = None
+    log.append("exception dropped")
+    return log
+
+
+def t_global_name() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"global_lengthy": 1}
+    l: dict[str, object] = {"unrelated": 1}
+    saved: BaseException | None = None
+    try:
+        exec("value = global_length\n", g, l)
+    except NameError as e:
+        saved = e
+    assert saved is not None
+    log.append(last(saved))
+    return log
+
+
+def t_one_dict() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {}
+    saved: BaseException | None = None
+    try:
+        exec("lengthy_name = 1\nvalue = lengthy_nam\n", g)
+    except NameError as e:
+        saved = e
+    assert saved is not None
+    log.append(last(saved))
+    return log
+
+
+def t_running() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"last": last, "log": log}
+    l: dict[str, object] = {}
+    exec("lengthy_name = 1\ntry:\n    value = lengthy_nam\nexcept NameError as e:\n    log.append(last(e))\n", g, l)
+    return log
+
+
+def t_caught_inside() -> list[str]:
+    log: list[str] = []
+    keep: list[BaseException] = []
+    g: dict[str, object] = {"keep": keep}
+    l: dict[str, object] = {}
+    exec("lengthy_name = 1\ntry:\n    value = lengthy_nam\nexcept NameError as e:\n    keep.append(e)\n", g, l)
+    del l
+    log.append(last(keep[0]))
+    return log
+
+
+def t_cleared() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"global_lengthy": 1, "Tracker": Tracker, "log": log}
+    l: dict[str, object] = {}
+    saved: BaseException | None = None
+    try:
+        exec("t = Tracker('cleared', log)\nlengthy_name = 1\nvalue = lengthy_nam\n", g, l)
+    except NameError as e:
+        saved = e
+    assert saved is not None
+    del l
+    log.append("locals dropped")
+    traceback.clear_frames(saved.__traceback__)
+    log.append("frames cleared")
+    log.append(last(saved))
+    return log
+
+
+def t_function_later() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"global_lengthy": 1}
+    l: dict[str, object] = {"local_lengthy": 1}
+    exec("def f(parameter_lengthy):\n    return parameter_length\ndef g2():\n    return local_length\ndef g3():\n    return global_length\n", g, l)
+    for name in ("f", "g2", "g3"):
+        try:
+            l[name](1) if name == "f" else l[name]()  # type: ignore[operator]
+        except NameError as e:
+            log.append(last(e))
+    return log
+
+
+def t_class_body() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {}
+    l: dict[str, object] = {"outer_lengthy": 1}
+    saved: BaseException | None = None
+    try:
+        exec("class C:\n    inner_lengthy = 1\n    value = inner_length\n", g, l)
+    except NameError as e:
+        saved = e
+    assert saved is not None
+    log.append(last(saved))
+    saved = None
+    try:
+        exec("class D:\n    value = outer_length\n", g, l)
+    except NameError as e:
+        saved = e
+    assert saved is not None
+    log.append(last(saved))
+    return log
+
+
+def t_self_attr() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {}
+    l: dict[str, object] = {}
+    exec("class C:\n    def __init__(self):\n        self.blech = 1\n    def m(self):\n        return blech\n", g, l)
+    try:
+        l["C"]().m()  # type: ignore[operator]
+    except NameError as e:
+        log.append(last(e))
+    return log
+
+
+EXPERIMENTS = {"after": t_after, "after_dropped": t_after_dropped, "global_name": t_global_name, "one_dict": t_one_dict,
+               "running": t_running, "caught_inside": t_caught_inside, "cleared": t_cleared, "function_later": t_function_later,
+               "class_body": t_class_body, "self_attr": t_self_attr}
+for _name, _fn in EXPERIMENTS.items():
+    if ROW in ("all", _name):
+        RESULTS[_name] = _fn()
+
+if __name__ == "__main__":
+    for line in RESULTS[ROW]:
+        print(line)

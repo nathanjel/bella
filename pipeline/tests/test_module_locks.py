@@ -3,8 +3,11 @@ C; review A46, RL-950).
 
 CPython 3.15.2's `_find_and_load` takes a lock for the name of a module it is about to load (`Lib/importlib/_bootstrap.py:1339`,
 `_get_module_lock`, which looks the name up in `_module_locks` at 438); the runtime's one thread never waits for one, and its
-prelude takes none. The register says what a program sees of that, and this test holds each part, a row a process, the program
-built once (`prog.py` beside a one-line `sample.py`):
+prelude takes none. The register says what a program sees of that, and this test holds the parts below, a row a process,
+the program built once (`prog.py` beside a one-line `sample.py`). The rest of what the register states no test holds (review
+F48, RL-1026): `_imp.lock_held()` false in code CPython runs under its import lock, an exception in a lock's weak-reference
+callback that CPython reports as ignored, `_lock_unlock_module`'s argument unchecked (RL-956), and the frames the locks add
+toward the recursion limit (D-17). The parts held:
 
 * each of the fourteen names of the lock machinery stops the program with D-33's words, where CPython has the object (`name`);
   a name of `_frozen_importlib`'s that is absent for want of work still says "not yet" (`other`);

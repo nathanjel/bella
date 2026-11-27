@@ -1,0 +1,2 @@
+# the rows of this probe that stop by name (E-02: sys._getframe)
+getframe => bella: not implemented: sys._getframe (a frame object: frame introspection, E-02)

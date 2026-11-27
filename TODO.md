@@ -771,8 +771,9 @@ author has seen the measurement. In this order:
   RL-1059 (two functions of the prelude are 3.14's text), RL-1060 (an argument error names the code object's qualname),
   RL-1075 (`maxsplit` converted before an unknown keyword is refused), RL-1012 (a traceback entry's own hold), RL-1013,
   RL-1025, RL-1040, RL-1048 to RL-1050, RL-1062, RL-1065 to RL-1068, RL-1094, RL-965, RL-992.
-* **Tests that do not hold what they say** (RL-1055, RL-1067, RL-1076 to RL-1078, RL-1026, RL-1042, RL-1051): the A46
-  sweep first (it must fail on `<absent>` on CPython's side and reach each function where CPython defines it).
+* ~~**Tests that do not hold what they say**~~ (RL-1010, RL-1018, RL-1026, RL-1042, RL-1051, RL-1055, RL-1067 and RL-1077
+  done 2026-11-27, the A46 sweep first, with RL-1032; RL-1076 goes with the records, RL-1078 to the author). Every runner of
+  the review tests now fails a row that prints nothing under CPython (RL-1077's class).
 * **Cost** (RL-1082 to RL-1087): a missed attribute read throws three times (22 microseconds against CPython's 0.1; the
   design says it never throws); the names table searched at every first store of an attribute; start-up's interning.
 * **The queue's order and the stack** (RL-1097, RL-1098, RL-1004, RL-1005): one ordered list with the gate's items

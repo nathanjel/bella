@@ -94,7 +94,9 @@ def probe_rows_agree(source: Path, rows: tuple[str, ...], warnings_shown: bool =
             want = _run([sys.executable, str(program), row], folder, warnings_shown)
             got = _run([binary, row], folder, warnings_shown)
             assert want[0] == 0, (probe, row, want)
-            if got != want:
+            if want == (0, ""):              # nothing printed proves nothing: two runs that end alike agree (RL-1077)
+                wrong.append(f"{probe}/{row}: prints nothing under CPython")
+            elif got != want:
                 wrong.append(f"{probe}/{row}: compiled {got[1].split(chr(10))!r} (status {got[0]}), CPython {want[1].split(chr(10))!r}")
         assert not wrong, "\n".join(wrong)
     finally:

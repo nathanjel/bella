@@ -1,0 +1,4 @@
+import cyc_a
+
+seen: list[str] = [n for n in dir(cyc_a) if not n.startswith("__")]
+seen_direct: list[str] = [n for n in cyc_a.__dir__() if not n.startswith("__")]

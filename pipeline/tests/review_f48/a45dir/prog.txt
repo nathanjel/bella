@@ -1,0 +1,219 @@
+import math
+import sys
+import types
+from types import ModuleType
+
+import cyc_a
+import cyc_b
+import helper_all
+import helper_dir
+import helper_lazy
+import helper_plain
+import pkg
+import pkg.sub
+
+
+class K(str):
+    def __lt__(self, other: object) -> bool:
+        print("lt", str(self), str(other))
+        return str(self) < str(other)
+
+    def __gt__(self, other: object) -> bool:
+        print("gt", str(self), str(other))
+        return str(self) > str(other)
+
+
+class H(str):
+    def __hash__(self) -> int:
+        print("hash", str(self))
+        return 123
+
+    def __eq__(self, other: object) -> bool:
+        print("eq", str(self))
+        return self is other
+
+
+def show(label: str, fn: object) -> None:
+    try:
+        print(label, fn())  # type: ignore[operator]
+    except BaseException as e:
+        print(label, "raised", type(e).__name__, e)
+
+
+def lt_keys() -> None:
+    m = ModuleType("sample")
+    vars(m)[K("public")] = 1
+    vars(m)[K("apple")] = 2
+    print("listing")
+    print(dir(m))
+    print("direct")
+    print(m.__dir__())
+
+
+def hash_keys() -> None:
+    m = ModuleType("sample")
+    vars(m)[H("public")] = 1
+    vars(m)[H("other")] = 2
+    print("listing")
+    print(dir(m))
+    print("direct")
+    print(m.__dir__())
+    print("vars")
+    print(list(vars(m)))
+
+
+def lt_class_dir() -> None:
+    class C:
+        def __dir__(self) -> list[str]:
+            return [K("b"), K("a"), K("c")]
+
+    print(dir(C()))
+
+
+def own_dir() -> None:
+    print(dir(helper_dir))
+    print(helper_dir.__dir__())
+    print(type(helper_dir).__dir__(helper_dir))
+    print(sorted(vars(helper_dir)) == sorted(helper_dir.__dict__), "alpha" in vars(helper_dir))
+    print(helper_dir.__all__)
+
+
+def all_only() -> None:
+    print([n for n in dir(helper_all) if not n.startswith("__")])
+    print([n for n in helper_all.__dir__() if not n.startswith("__")])
+    print([n for n in dir(helper_all) if n.startswith("__")])
+    print([n for n in helper_all.__dir__() if n.startswith("__")])
+
+
+def dir_values() -> None:
+    for label, value in (("int", 5), ("none", None), ("tuple", lambda: ("b", "a")), ("gen", lambda: (c for c in "cab")),
+                         ("str", lambda: "cba"), ("dict", lambda: {"y": 1, "x": 2}), ("nonevalue", lambda: None),
+                         ("raises", lambda: 1 // 0), ("empty", lambda: []), ("set", lambda: frozenset(["q"])),
+                         ("dup", lambda: ["a", "a", "B", "_z"])):
+        m = ModuleType("sample")
+        m.__dir__ = value  # type: ignore[method-assign,assignment]
+        show(label, lambda: dir(m))
+
+
+def changed() -> None:
+    m = ModuleType("sample")
+    m.b = 1
+    m.a = 2
+    print(dir(m), m.__dir__())
+    del m.b
+    m.c = 3
+    m.b = 4
+    print(dir(m), m.__dir__())
+    del m.__name__
+    del m.__spec__
+    print(dir(m), m.__dir__())
+    vars(m).clear()
+    print(dir(m), m.__dir__())
+    m.__dict__["x y"] = 1
+    m.__dict__[""] = 2
+    m.__dict__["é"] = 3
+    m.__dict__["Z"] = 4
+    m.__dict__["\U0001f600"] = 5
+    m.__dict__["￿"] = 6
+    print([ascii(n) for n in dir(m)], [ascii(n) for n in m.__dir__()])
+
+
+def descriptor() -> None:
+    m = ModuleType("sample")
+    print(type(ModuleType.__dir__).__name__, ModuleType.__dir__.__name__, ModuleType.__dir__.__qualname__)
+    show("unbound", lambda: ModuleType.__dir__(m) == m.__dir__())
+    show("wrong", lambda: ModuleType.__dir__(5))  # type: ignore[arg-type]
+    show("args", lambda: m.__dir__(1))  # type: ignore[call-arg]
+    show("kw", lambda: m.__dir__(x=1))  # type: ignore[call-arg]
+    show("object", lambda: sorted(object.__dir__(m)) == sorted(set(dir(ModuleType)) | set(vars(m))))
+    show("getattribute", lambda: object.__getattribute__(m, "nope"))
+    show("plain", lambda: m.nope)
+    show("is", lambda: vars(m) is m.__dict__)
+
+
+def native() -> None:
+    names = dir(math)
+    direct = math.__dir__()
+    print(names == sorted(direct), len(names), names[:8], direct[:8])
+    del math.tau
+    math.added = 1  # type: ignore[attr-defined]
+    math.pi = 3.0  # type: ignore[misc]
+    print("tau" in dir(math), math.__dir__()[-3:], list(vars(math))[-3:])
+    math.__dir__ = lambda: ["only"]  # type: ignore[method-assign]
+    print(dir(math))
+
+
+def native_sys() -> None:
+    print(dir(sys) == sorted(sys.__dir__()), len(dir(sys)) == len(set(dir(sys))))
+    print([n for n in dir(sys) if n.startswith("s")])
+    print([n for n in dir(types) if n.startswith("M")])
+
+
+def lazy() -> None:
+    print("colorsys" in sys.modules)
+    print([n for n in dir(helper_lazy) if not n.startswith("__")])
+    print([n for n in helper_lazy.__dir__() if not n.startswith("__")])
+    print("colorsys" in sys.modules)
+    print(type(vars(helper_lazy)["colorsys"]).__name__)
+    print(helper_lazy.colorsys.__name__, "colorsys" in sys.modules)
+
+
+def inside() -> None:
+    print([n for n in helper_plain.names_inside if not n.startswith("__")])
+    print([n for n in helper_plain.names_inside if n.startswith("__")])
+    print(helper_plain.same_inside, helper_plain.after_write, vars(helper_plain)["written_inside"])
+    print(helper_plain.late())
+    print([n for n in dir(helper_plain) if not n.startswith("__")])
+
+
+def cycle() -> None:
+    print(cyc_b.seen, cyc_b.seen_direct)
+    print([n for n in dir(cyc_a) if not n.startswith("__")])
+
+
+def package() -> None:
+    print([n for n in dir(pkg) if not n.startswith("__")], [n for n in pkg.__dir__() if not n.startswith("__")])
+    print([n for n in dir(pkg) if n.startswith("__")], [n for n in pkg.__dir__() if n.startswith("__")])
+    print([n for n in dir(pkg.sub) if n.startswith("__")], [n for n in pkg.sub.__dir__() if n.startswith("__")])
+
+
+def main_module() -> None:
+    main = sys.modules["__main__"]
+    print([n for n in dir(main) if n.startswith("__")])
+    print([n for n in main.__dir__() if n.startswith("__")])
+    print([n for n in main.__dir__() if not n.startswith("__")])
+    print(dir(main) == sorted(globals()), vars(main) is globals())
+
+
+def subclass() -> None:
+    class M(ModuleType):
+        def __dir__(self) -> list[str]:
+            return ["mine"]
+
+    m = M("sub")
+    print(dir(m), repr(m), type(m).__name__)
+
+
+def subclass_plain() -> None:
+    class M(ModuleType):
+        pass
+
+    m = M("sub")
+    m.x = 1  # type: ignore[attr-defined]
+    print([n for n in dir(m) if not n.startswith("__")], repr(m), type(m).__name__)
+
+
+def non_str() -> None:
+    m = ModuleType("sample")
+    vars(m)[5] = 1
+    show("int key direct", lambda: m.__dir__())
+    show("int key", lambda: dir(m))
+    m2 = ModuleType("sample")
+    m2.__dir__ = lambda: [3, 1, 2]  # type: ignore[method-assign,assignment,list-item]
+    show("ints", lambda: dir(m2))
+
+
+ROWS = {f.__name__: f for f in (lt_keys, hash_keys, lt_class_dir, own_dir, all_only, dir_values, changed, descriptor, native,
+                                native_sys, lazy, inside, cycle, package, main_module, subclass, subclass_plain, non_str)}
+if __name__ == "__main__":
+    ROWS[sys.argv[1]]()

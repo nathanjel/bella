@@ -1,0 +1,2 @@
+__all__ = ["value", 3]  # type: ignore[list-item]
+value = 2

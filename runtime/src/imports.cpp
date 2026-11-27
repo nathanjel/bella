@@ -2186,7 +2186,7 @@ Ref lazy_getattr(Obj lazy, const Str* name) {
 }
 namespace {
 Ref lazy_repr_m(Obj self, Args a) {
-    positional_only(a, "__repr__", 0, 0);
+    dunder_args(self, a, "__repr__", 0);         // a slot wrapper's check (review F48, RL-1055)
     return str_new("<lazy_import '" + lazy_name(as_lazy(self)) + "'>");
 }
 Ref lazy_resolve_m(Obj self, Args a) {           // lazy_import.resolve(): METH_NOARGS
@@ -2373,12 +2373,12 @@ void module_annotations_set(Obj self, Obj value) {
 }
 
 Ref module_repr_m(Obj self, Args a) {            // module_repr: importlib._bootstrap._module_repr
-    positional_only(a, "__repr__", 0, 0);
+    dunder_args(self, a, "__repr__", 0);         // a slot wrapper's check (review F48, RL-1055)
     as_module(self, "__repr__");
     return call_bootstrap("_module_repr", {self});
 }
 Ref module_dir_m(Obj self, Args a) {             // module_dir: __dir__ from the namespace, else its keys
-    positional_only(a, "__dir__", 0, 0);
+    dunder_args(self, a, "__dir__", 0);          // METH_NOARGS (RL-1055)
     Module* m = as_module(self, "__dir__");
     if (is_bootstrap_prelude(m)) refuse_bootstrap_namespace(m);
     Ref dirfunc = resolved_dict_item(m->dict, N("__dir__"));
@@ -2465,7 +2465,7 @@ Ref module_init_m(Obj self, Args a) {            // module___init___impl: module
 
 // dir(obj): type(obj).__dir__(obj), as a sorted list (PyObject_Dir, _dir_object)
 Ref b_dir(Obj, Args a) {
-    positional_only(a, "dir", 0, 1);
+    clinic(a, "dir", "dir", 0, 1);               // PyArg_UnpackTuple (RL-1055)
     if (a.npos == 0) {                           // _dir_locals: the sorted keys of the calling frame's locals
         Ref locals = frame_locals("dir()");
         Ref names;

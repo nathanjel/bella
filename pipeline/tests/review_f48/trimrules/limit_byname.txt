@@ -1,0 +1,6 @@
+import sys
+
+try:
+    sys.setrecursionlimit(1)
+except RecursionError as e:
+    print("by name:", e)

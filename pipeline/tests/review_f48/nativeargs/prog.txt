@@ -1,0 +1,44 @@
+"""The argument checks of the runtime's native methods that a program reaches (review F48, RL-1055's `descriptor` row):
+each in CPython's words for its calling convention (a slot wrapper, METH_NOARGS, PyArg_UnpackTuple)."""
+import sys
+import types
+import unicodedata
+from collections.abc import Callable
+
+lazy import t_lazy  # noqa: F401
+
+ROUTE = sys.argv[1] if len(sys.argv) > 1 else ""
+
+
+def show(label: str, call: Callable[[], object]) -> None:
+    try:
+        call()
+        print(label, "returned")
+    except TypeError as e:
+        print(label, "TypeError", e)
+
+
+def objects() -> dict[str, object]:
+    return {"module": sys, "lazy": globals()["t_lazy"], "capsule": unicodedata._ucnhash_CAPI}  # type: ignore[attr-defined]
+
+
+if ROUTE == "repr":
+    for name, obj in objects().items():
+        print(name, type(obj).__name__)
+        show("  bound, one", lambda: obj.__repr__(1))  # type: ignore[call-arg]
+        show("  bound, keyword", lambda: obj.__repr__(x=1))  # type: ignore[call-arg]
+        show("  unbound, one", lambda: type(obj).__repr__(obj, 1))  # type: ignore[call-arg]
+        show("  unbound, none", lambda: type(obj).__repr__())  # type: ignore[call-arg]
+elif ROUTE == "dir":
+    show("module unbound, one", lambda: types.ModuleType.__dir__(sys, 1))  # type: ignore[call-arg]
+    show("module unbound, keyword", lambda: types.ModuleType.__dir__(sys, x=1))  # type: ignore[call-arg]
+    show("module unbound, none", lambda: types.ModuleType.__dir__())  # type: ignore[call-arg]
+    show("object unbound, two", lambda: object.__format__(sys, "", 2))  # type: ignore[call-arg]
+    show("builtin, two", lambda: dir(sys, 1))  # type: ignore[call-arg]
+    show("builtin, keyword", lambda: dir(x=1))  # type: ignore[call-arg]
+elif ROUTE == "bound":
+    # a C method bound to a module is named by its own name alone (meth_get__qualname__): D-08's wording
+    show("__dir__, one", lambda: sys.__dir__(1))  # type: ignore[call-arg]
+    show("__dir__, keyword", lambda: sys.__dir__(x=1))  # type: ignore[call-arg]
+    show("__format__, two", lambda: sys.__format__("", 2))  # type: ignore[call-arg]
+    show("__reduce_ex__, two", lambda: sys.__reduce_ex__(1, 2))  # type: ignore[call-arg]

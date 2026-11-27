@@ -1,0 +1,12 @@
+__all__ = ["shown"]
+
+shown: int = 1
+other: int = 2
+
+
+def fn() -> int:
+    return 3
+
+
+class Cls:
+    pass

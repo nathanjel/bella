@@ -7,6 +7,7 @@ or directly: python -m refmodel.tests.test_cases
 from __future__ import annotations
 
 import gc
+import sys
 from collections.abc import Callable
 import weakref
 
@@ -1407,6 +1408,34 @@ def test_a_class_keeps_one_mro_and_one_bases_object_until_its_bases_are_assigned
         O.HEAP = saved
 
 
+def test_assigning_a_class_its_bases_lets_go_of_the_old_mros() -> None:
+    """RL-1042: an MRO holds its classes, and a new one replaces it (Py_XSETREF of tp_mro), so assigning a class the bases it
+    has, as typing's NamedTuple does, leaves the count of a class in its MRO and its subclass's as it was: the old tuples die
+    and the new ones hold it. The model's count against CPython's."""
+    from refmodel import objects as O
+
+    A = type("A", (), {})
+    B = type("B", (A,), {})
+    C = type("C", (B,), {})
+    before = sys.getrefcount(A)
+    B.__bases__ = B.__bases__
+    cpython = sys.getrefcount(A) - before
+    assert C.__mro__ == (C, B, A, object)            # the subclass's MRO, made again, holds A too
+
+    saved = O.HEAP
+    heap = O.HEAP = O.Heap()
+    try:
+        a = RefClass("A", heap=heap)
+        b = RefClass("B", (a,), heap=heap)
+        c = RefClass("C", (b,), heap=heap)
+        held = (a.refs, b.refs)
+        b.reassign_bases(b.bases)
+        assert (a.refs - held[0], b.refs - held[1]) == (cpython, 0) == (0, 0), (a.refs - held[0], b.refs - held[1], cpython)
+        assert c.mro == (c, b, a)
+    finally:
+        O.HEAP = saved
+
+
 def test_assigning_the_bases_a_class_has_moves_it_last_among_the_subclasses() -> None:
     """typing's NamedTuple assigns each class it makes the bases it has (type_set_bases): the MROs come out as they were,
     the class is last among each base's subclasses, and it and its subclasses get new versions (a cached lookup misses).
@@ -1470,7 +1499,9 @@ def test_an_object_given_a_class_of_its_layout_keeps_its_fields_and_misses_the_c
     o = A()
     o.first = 1
     seen = [o.kind()]
+    before = (sys.getrefcount(A), sys.getrefcount(B))
     o.__class__ = B
+    counts = (sys.getrefcount(A) - before[0], sys.getrefcount(B) - before[1])   # the instance holds its class (RL-1042)
     seen += [o.kind(), o.first]
     try:
         seen.append(o.second)
@@ -1489,7 +1520,9 @@ def test_an_object_given_a_class_of_its_layout_keeps_its_fields_and_misses_the_c
         rt.setattr(m, "first", 1)
         site = Site(heap)
         got: list[object] = ["A" if rt.getattr(m, "kind", site) is fa else "?"]
+        held = (a.refs, b.refs)
         m.set_class(b)
+        assert (a.refs - held[0], b.refs - held[1]) == counts == (-1, 1), (a.refs - held[0], b.refs - held[1], counts)
         got += ["B" if rt.getattr(m, "kind", site) is fb else "?", rt.getattr(m, "first")]
         try:
             rt.getattr(m, "second")

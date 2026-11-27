@@ -1,0 +1,10 @@
+"""A module with __dir__ and __all__ at module level (PEP 562)."""
+__all__ = ["beta", "alpha"]
+
+alpha: int = 1
+beta: int = 2
+_hidden: int = 3
+
+
+def __dir__() -> list[str]:
+    return ["zeta", "beta", "alpha", "beta"]

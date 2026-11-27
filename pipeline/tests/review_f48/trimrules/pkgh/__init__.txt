@@ -1,0 +1,4 @@
+def __getattr__(name: str) -> int:
+    if name == "boom":
+        raise ValueError("pkgh.__getattr__ raises for " + name)
+    raise AttributeError(name)

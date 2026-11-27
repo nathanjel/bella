@@ -1,0 +1,8 @@
+import watch
+
+try:
+    import circ_b  # noqa: F401
+except ImportError as e:
+    watch.entries("circular from-import", e)
+    print(str(e).replace(__file__.rsplit("/", 1)[0], "<dir>"))
+x = 1

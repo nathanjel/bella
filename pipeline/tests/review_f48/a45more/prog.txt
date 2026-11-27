@@ -1,0 +1,241 @@
+import _abc
+import _types
+import builtins
+import sys
+import traceback
+from collections.abc import Callable, Iterator
+from types import ModuleType
+
+import helper
+
+ROW: str = sys.argv[1] if len(sys.argv) > 1 else "all"
+RESULTS: dict[str, list[str]] = {}
+
+
+class Tracker:
+    def __init__(self, label: str, log: list[str]) -> None:
+        self.label = label
+        self.log = log
+
+    def __del__(self) -> None:
+        self.log.append("released " + self.label)
+
+
+class H(str):
+    def __hash__(self) -> int:
+        print("hash", str(self))
+        return 123
+
+    def __eq__(self, other: object) -> bool:
+        print("eq", str(self))
+        return self is other
+
+
+class Rev(str):
+    def __lt__(self, other: object) -> bool:
+        return str(self) > str(other)
+
+
+class Name(str):
+    def __del__(self) -> None:
+        print("released", str(self))
+
+
+def t_args_order() -> list[str]:
+    log: list[str] = []
+    exec("x = 1\n", {"gt": Tracker("globals", log)}, {"lt": Tracker("locals", log)})
+    log.append("exec done")
+    eval("1", {"gt": Tracker("eval globals", log)}, {"lt": Tracker("eval locals", log)})
+    log.append("eval done")
+    return log
+
+
+def t_eval_raise() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"log": log}
+    l: dict[str, object] = {"t": Tracker("eval-frame", log), "lengthy_name": 1}
+    saved: BaseException | None = None
+    try:
+        eval("lengthy_nam + 1", g, l)
+    except NameError as e:
+        saved = e
+    assert saved is not None
+    del l
+    log.append("locals dropped")
+    log.append(traceback.format_exception(saved)[-1].strip())
+    log.append(str([(f.name, f.lineno) for f in traceback.extract_tb(saved.__traceback__)]))
+    saved = None
+    log.append("exception dropped")
+    return log
+
+
+def t_back_chain() -> list[str]:
+    log: list[str] = []
+    keep: list[BaseException] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log, "keep": keep}
+    l: dict[str, object] = {}
+    exec("t = Tracker('behind', log)\ndef inner():\n    try:\n        raise KeyError('k')\n    except KeyError as e:\n        keep.append(e)\ninner()\n", g, l)
+    log.append("exec done " + str(sorted(l)))
+    del l
+    log.append("locals dropped")
+    keep.clear()
+    log.append("exception dropped")
+    return log
+
+
+def t_two_runs() -> list[str]:
+    log: list[str] = []
+    g: dict[str, object] = {"Tracker": Tracker, "log": log}
+    l: dict[str, object] = {}
+    fs: list[object] = []
+    for _ in range(2):
+        exec("n = len(log)\nt = Tracker('run', log)\ndef f():\n    return n\n", g, l)
+        fs.append(l["f"])
+        log.append("ran")
+    del l
+    log.append("locals dropped " + str([f() for f in fs if callable(f)] if False else len(fs)))
+    del fs
+    log.append("functions dropped")
+    return log
+
+
+EXPERIMENTS = {"args_order": t_args_order, "eval_raise": t_eval_raise, "back_chain": t_back_chain, "two_runs": t_two_runs}
+for _name, _fn in EXPERIMENTS.items():
+    if ROW in ("all", _name):
+        RESULTS[_name] = _fn()
+
+
+def staged(name: str) -> Callable[[], None]:
+    def run() -> None:
+        for line in RESULTS[name]:
+            print(line)
+
+    return run
+
+
+def native_direct() -> None:
+    for m in (sys, builtins, _abc, _types):
+        print(m.__name__, m.__dir__() == list(vars(m)), dir(m) == sorted(vars(m)))
+        print(m.__dir__())
+
+
+def object_dir_hash() -> None:
+    class O:
+        pass
+
+    o = O()
+    vars(o)[H("public")] = 1
+    print("listing")
+    names = dir(o)
+    print("listed", len([n for n in names if not n.startswith("__")]))
+    print("direct")
+    direct = o.__dir__()
+    print("done", len([n for n in direct if not n.startswith("__")]))
+
+
+def reversed_order() -> None:
+    class C:
+        def __dir__(self) -> list[str]:
+            return [Rev("b"), Rev("a"), Rev("c")]
+
+    print(dir(C()))
+    m = ModuleType("sample")
+    m.__dir__ = lambda: [Rev("b"), Rev("a"), Rev("c")]  # type: ignore[method-assign]
+    print(dir(m))
+    m2 = ModuleType("sample")
+    vars(m2).clear()
+    vars(m2)[Rev("b")] = 1
+    vars(m2)[Rev("a")] = 1
+    vars(m2)[Rev("c")] = 1
+    print(dir(m2), m2.__dir__())
+
+
+class Meta(type):
+    @classmethod
+    def __prepare__(mcs, name: str, bases: tuple[type, ...], **kw: object) -> dict[str, object]:  # type: ignore[override]
+        return Space()
+
+
+class Space(dict[str, object]):
+    def keys(self) -> object:  # type: ignore[override]
+        print("keys called")
+        return (k for k in sorted(dict.keys(self), reverse=True))
+
+
+def prepared() -> None:
+    class Body(metaclass=Meta):
+        b = 1
+        a = 2
+        same = locals() is vars()
+        kind = type(locals()).__name__
+        names = dir()
+
+    print(Body.names, Body.same, Body.kind)
+
+
+def arg_errors() -> None:
+    for label, fn in (("locals1", lambda: locals(1)), ("vars2", lambda: vars(1, 2)), ("dir2", lambda: dir(1, 2)),  # type: ignore[call-arg,call-overload]
+                      ("vars5", lambda: vars(5)), ("varskw", lambda: vars(x=1)), ("dirkw", lambda: dir(x=1)),  # type: ignore[call-overload]
+                      ("globals1", lambda: globals(1)), ("varsmod", lambda: vars(sys) is sys.__dict__),  # type: ignore[call-arg]
+                      ("varscls", lambda: type(vars(int)).__name__)):
+        try:
+            print(label, fn())  # type: ignore[no-untyped-call]
+        except BaseException as e:
+            print(label, "raised", type(e).__name__)
+
+
+def reinit_imported() -> None:
+    helper.__init__(Name("again"))  # type: ignore[misc]
+    print(repr(helper).split(" from ")[0], helper.__doc__, helper.__package__, helper.__loader__, helper.__spec__, helper.fn(),
+          "__file__" in vars(helper), list(vars(helper))[:5])
+    helper.__name__ = "third"
+    print("renamed", sys.modules["helper"] is helper)
+    import helper as again
+    print(again is helper, again.__name__)
+
+
+def qual_more() -> None:
+    def generic[T](x: T) -> Callable[[], T]:
+        def inner() -> T:
+            return x
+
+        return inner
+
+    class G[T]:
+        def m(self) -> Callable[[], int]:
+            return lambda: 0
+
+        class Nested:
+            pass
+
+    print((lambda: (lambda: 0))().__qualname__, generic.__qualname__, generic(1).__qualname__, G.__qualname__, G.m.__qualname__,
+          G().m().__qualname__, G.Nested.__qualname__)
+    gen = (i for i in range(1))
+    print(gen.__qualname__, gen.__name__, MOD_GENERIC.__qualname__, MOD_GENERIC(1).__qualname__, MOD_G.m.__qualname__)
+    print(next((lambda: (j for j in range(1)))() for _ in [1]).__qualname__)
+    print(list({(lambda: 0).__qualname__ for _ in [1]}), [(lambda: 0).__qualname__ for _ in [1]],
+          list((lambda: 0).__qualname__ for _ in [1]), {1: (lambda: 0).__qualname__ for _ in [1]})
+
+
+def MOD_GENERIC[T](x: T) -> Callable[[], T]:
+    def inner() -> T:
+        return x
+
+    return inner
+
+
+class MOD_G[T]:
+    def m(self) -> int:
+        return 1
+
+
+def run_gen() -> Iterator[int]:
+    yield 1
+
+
+ROWS: dict[str, Callable[[], None]] = {f.__name__: f for f in (native_direct, object_dir_hash, reversed_order, prepared, arg_errors,
+                                                               reinit_imported, qual_more)}
+for _name in EXPERIMENTS:
+    ROWS[_name] = staged(_name)
+if __name__ == "__main__":
+    ROWS[ROW]()

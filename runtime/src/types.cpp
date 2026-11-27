@@ -554,9 +554,8 @@ Ref generic_getattr(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Method))                  // method_getattro: the function's attributes
         return getattr(static_cast<Method*>(obj.object())->func, name);
     refuse_absent_attribute(obj, name);
-    if (is_kind(obj, Kind::Module))
-        raise_attribute_error(obj, name, "module '" + name_arg(static_cast<Module*>(obj.object())->name.get())->text +
-                                             "' has no attribute '" + name->text + "'");
+    // a module too: its own message is module_getattr's (_Py_module_getattro), and this is PyObject_GenericGetAttr, which
+    // object.__getattribute__ calls (review F48, RL-1055's `descriptor` row)
     raise_attribute_error(obj, name, "'" + c->name + "' object has no attribute '" + name->text + "'");
 }
 

@@ -1,0 +1,471 @@
+"""Review F48, q45: a class's own dict behind its proxy. One row a process: prog.py <row>."""
+import gc
+import importlib
+import operator
+import sys
+import types
+from collections import OrderedDict, defaultdict
+from collections.abc import Iterator
+
+
+class Grab:
+    """Keeps whatever a binary operator or a comparison hands it."""
+
+    def __init__(self) -> None:
+        self.seen: list[object] = []
+
+    def __ror__(self, other: object) -> object:
+        self.seen.append(other)
+        return other
+
+    def __or__(self, other: object) -> object:
+        self.seen.append(other)
+        if type(other) is types.MappingProxyType:
+            return NotImplemented
+        return other
+
+    def __ior__(self, other: object) -> object:
+        self.seen.append(other)
+        return NotImplemented
+
+    def __eq__(self, other: object) -> bool:
+        self.seen.append(other)
+        return True
+
+    def __ne__(self, other: object) -> bool:
+        self.seen.append(other)
+        return True
+
+
+class Own:
+    """A mapping of the program's, to stand behind a proxy of its own."""
+
+    def __init__(self) -> None:
+        self.seen: list[object] = []
+
+    def __getitem__(self, key: object) -> object:
+        raise KeyError(key)
+
+    def __len__(self) -> int:
+        return 0
+
+    def __iter__(self) -> Iterator[object]:
+        return iter([])
+
+    def keys(self) -> list[object]:
+        return []
+
+    def __eq__(self, other: object) -> bool:
+        self.seen.append(other)
+        return True
+
+    def __ne__(self, other: object) -> bool:
+        self.seen.append(other)
+        return True
+
+    def __or__(self, other: object) -> object:
+        self.seen.append(other)
+        return other
+
+    def __ror__(self, other: object) -> object:
+        self.seen.append(other)
+        return other
+
+
+SEEN: list[object] = []
+
+
+class DictSub(dict):  # type: ignore[type-arg]
+    def __ror__(self, other: object) -> object:  # type: ignore[override]
+        SEEN.append(other)
+        return other
+
+
+class OrderedSub(OrderedDict):  # type: ignore[type-arg]
+    def __init__(self, *args: object) -> None:
+        SEEN.extend(args)
+        super().__init__()
+
+
+class DefaultSub(defaultdict):  # type: ignore[type-arg]
+    def __init__(self, *args: object) -> None:
+        SEEN.extend(args)
+        super().__init__()
+
+
+def new_class() -> type:
+    class C:
+        x = 1
+
+    return C
+
+
+def kinds(seen: list[object]) -> list[str]:
+    return [type(o).__name__ for o in seen]
+
+
+def handed(cls: type, route: str) -> list[object]:
+    """What the route hands the program, in order."""
+    g = Grab()
+    own = Own()
+    del SEEN[:]
+    if route == "ror":
+        cls.__dict__ | g
+        return g.seen
+    if route == "or":
+        g | cls.__dict__
+        return g.seen
+    if route == "ior":
+        g |= cls.__dict__
+        return g.seen if isinstance(g, Grab) else [g]
+    if route == "dunder_or":
+        cls.__dict__.__or__(g)
+        return g.seen
+    if route == "dunder_ror":
+        cls.__dict__.__ror__(g)
+        return g.seen
+    if route == "operator":
+        operator.or_(cls.__dict__, g)
+        return g.seen
+    if route == "eq":
+        cls.__dict__ == g
+        return g.seen
+    if route == "ne":
+        cls.__dict__ != g
+        return g.seen
+    if route == "eq_reflected":
+        g == cls.__dict__
+        return g.seen
+    if route == "eq_own_proxy":
+        cls.__dict__ == types.MappingProxyType(own)
+        return own.seen
+    if route == "ne_own_proxy":
+        cls.__dict__ != types.MappingProxyType(own)
+        return own.seen
+    if route == "own_proxy_eq":
+        types.MappingProxyType(own) == cls.__dict__
+        return own.seen
+    if route == "or_own_proxy":
+        cls.__dict__ | types.MappingProxyType(own)
+        return own.seen
+    if route == "own_proxy_or":
+        types.MappingProxyType(own) | cls.__dict__
+        return own.seen
+    if route == "dictsub":
+        cls.__dict__ | DictSub()
+        return list(SEEN)
+    if route == "orderedsub":
+        o = OrderedSub()
+        del SEEN[:]
+        cls.__dict__ | o
+        return list(SEEN)
+    if route == "defaultsub":
+        dd = DefaultSub()
+        del SEEN[:]
+        cls.__dict__ | dd
+        return list(SEEN)
+    if route == "getstate":
+        return [object.__getstate__(cls)]
+    if route == "type_getstate":
+        return [type.__getstate__(cls)]
+    if route == "copy":
+        return [cls.__dict__.copy()]
+    if route == "keys_mapping":
+        return [cls.__dict__.keys().mapping]
+    if route == "referents":
+        return list(gc.get_referents(cls.__dict__))
+    if route == "referents_class":
+        return [o for o in gc.get_referents(cls) if type(o) is dict]
+    if route == "referrers":
+        return [o for o in gc.get_referrers(cls.__dict__["__module__"]) if type(o) is dict and "x" in o]
+    if route == "objects":
+        return [o for o in gc.get_objects() if type(o) is dict and o.get("x") == 1 and "__module__" in o and "__weakref__" in o]
+    if route == "getrefcount":
+        return [sys.getrefcount(cls)]
+    if route == "ctypes":
+        return [importlib.import_module(sys.argv[2]).py_object]
+    raise SystemExit("no such route: " + route)
+
+
+def the_dict(cls: type, route: str = "ror") -> dict[str, object]:
+    found = [o for o in handed(cls, route) if type(o) is dict]
+    assert found, route
+    last = found[-1]
+    assert isinstance(last, dict)
+    return last
+
+
+def plain(cls: type) -> list[str]:
+    return sorted(k for k in cls.__dict__ if isinstance(k, str) and not k.startswith("__"))
+
+
+def row_route(route: str) -> None:
+    cls = new_class()
+    seen = handed(cls, route)
+    print("handed:", kinds(seen))
+    found = [o for o in seen if type(o) is dict]
+    if not found:
+        return
+    d = found[-1]
+    assert isinstance(d, dict)
+    d["y"] = 42
+    print("after d['y'] = 42:", d["y"], "y" in cls.__dict__, getattr(cls, "y", None), getattr(cls(), "y", None))
+
+
+def row_saveall() -> None:
+    gc.collect()
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    cls = new_class()
+    del cls
+    gc.collect()
+    gc.set_debug(0)
+    classes = [o for o in gc.garbage if isinstance(o, type) and o.__name__ == "C"]
+    dicts = [o for o in gc.garbage if type(o) is dict and o.get("x") == 1 and "__module__" in o and "__weakref__" in o]
+    print("in gc.garbage:", len(classes), "class,", len(dicts), "dict of it")
+    again = classes[0]
+    d = dicts[0]
+    d["y"] = 42
+    print("after d['y'] = 42:", d["y"], "y" in again.__dict__, getattr(again, "y", None), getattr(again(), "y", None))
+
+
+def row_fresh() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    d["y"] = 42
+    print(d["y"], getattr(cls, "y", None), getattr(cls(), "y", None))
+
+
+def row_delete() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    del d["x"]
+    print("x" in d, getattr(cls, "x", None))
+
+
+def added(self: object, other: object) -> str:
+    return "added"
+
+
+def row_add() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    d["__add__"] = added
+    try:
+        print(cls() + 1)
+    except TypeError:
+        print("TypeError")
+    try:
+        print(cls().__add__(1))
+    except AttributeError:
+        print("AttributeError")
+
+
+def row_warm(times: int) -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    for _ in range(times):
+        cls.x
+    d["x"] = 2
+    print(cls.x, cls().x, getattr(cls, "x"), d["x"])
+
+
+def row_miss(times: int) -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    for _ in range(times):
+        getattr(cls, "y", None)
+    d["y"] = 42
+    print(getattr(cls, "y", None), getattr(cls(), "y", None), d["y"])
+
+
+def row_merge() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    left = cls.__dict__ | {"k": 1}
+    right = {"k": 1} | cls.__dict__
+    print(type(left).__name__, type(right).__name__, left is d, right is d, "k" in cls.__dict__, left["k"], right["x"])
+
+
+def row_readonly() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    print(type(d) is dict, len(d) == len(cls.__dict__), d["x"], list(d) == list(cls.__dict__), d == cls.__dict__)
+
+
+def row_in_step() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    cls.z = 1  # type: ignore[attr-defined]
+    print("z" in d, d.get("z"))
+    del cls.x  # type: ignore[attr-defined]
+    print("x" in d, list(d)[-1])
+
+
+def row_identity() -> None:
+    cls = new_class()
+    first = the_dict(cls, "ror")
+    second = the_dict(cls, "or")
+    third = the_dict(cls, "getstate")
+    print(first is second, first is third, type(first) is dict)
+
+
+def row_set_other() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    for _ in range(3):
+        getattr(cls, "y", None)
+    d["y"] = 42
+    print("before:", getattr(cls, "y", None))
+    cls.z = 5  # type: ignore[attr-defined]
+    print("after cls.z = 5:", getattr(cls, "y", None), plain(cls))
+
+
+def row_set_same() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    d["y"] = 42
+    cls.y = 7  # type: ignore[attr-defined]
+    print(d["y"], getattr(cls, "y", None))
+    del cls.y  # type: ignore[attr-defined]
+    print("y" in d, getattr(cls, "y", None))
+
+
+def row_del_then_del() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    del d["x"]
+    try:
+        del cls.x  # type: ignore[attr-defined]
+        print("deleted")
+    except AttributeError:
+        print("AttributeError")
+    print(getattr(cls, "x", None), "x" in d)
+
+
+def row_del_then_set() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    del d["x"]
+    cls.x = 9  # type: ignore[attr-defined]
+    print(d.get("x"), getattr(cls, "x", None), plain(cls))
+
+
+def row_clear() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    d.clear()
+    print(len(cls.__dict__), getattr(cls, "x", None))
+
+
+def row_subclass() -> None:
+    base = new_class()
+
+    class Sub(base):  # type: ignore[valid-type,misc]
+        pass
+
+    d = the_dict(base)
+    d["m"] = 5
+    print(getattr(Sub, "m", None), getattr(Sub(), "m", None), "m" in base.__dict__)
+
+
+def called(self: object) -> str:
+    return "called"
+
+
+def row_method() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    d["f"] = called
+    try:
+        print(cls().f())
+    except AttributeError:
+        print("AttributeError")
+
+
+def row_update() -> None:
+    cls = new_class()
+    d = the_dict(cls)
+    d.update({"y": 1})
+    d.setdefault("w", 2)
+    d.pop("x")
+    d |= {"v": 3}
+    print(plain(cls), [getattr(cls, n, None) for n in ("y", "w", "x", "v")])
+
+
+def row_builtin() -> None:
+    g = Grab()
+    int.__dict__ | g
+    d = g.seen[-1]
+    print(type(d).__name__)
+    assert isinstance(d, dict)
+    d["zz"] = 1
+    print(d["zz"], getattr(int, "zz", None), getattr(5, "zz", None), "zz" in int.__dict__)
+    print(d.get("zz"))
+
+
+def row_instance() -> None:
+    cls = new_class()
+    o = cls()
+    o.__dict__["k"] = 1
+    print(o.k, vars(o))
+
+
+def row_class_setattr() -> None:
+    cls = new_class()
+    for _ in range(3):
+        cls.x
+    setattr(cls, "x", 2)
+    print(cls.x, cls().x, cls.__dict__["x"])
+
+
+def main() -> None:
+    row = sys.argv[1]
+    if row.startswith("route:"):
+        row_route(row[6:])
+    elif row == "saveall":
+        row_saveall()
+    elif row == "fresh":
+        row_fresh()
+    elif row == "delete":
+        row_delete()
+    elif row == "add":
+        row_add()
+    elif row.startswith("warm:"):
+        row_warm(int(row[5:]))
+    elif row.startswith("miss:"):
+        row_miss(int(row[5:]))
+    elif row == "merge":
+        row_merge()
+    elif row == "readonly":
+        row_readonly()
+    elif row == "in_step":
+        row_in_step()
+    elif row == "identity":
+        row_identity()
+    elif row == "set_other":
+        row_set_other()
+    elif row == "set_same":
+        row_set_same()
+    elif row == "del_then_del":
+        row_del_then_del()
+    elif row == "del_then_set":
+        row_del_then_set()
+    elif row == "clear":
+        row_clear()
+    elif row == "subclass":
+        row_subclass()
+    elif row == "method":
+        row_method()
+    elif row == "update":
+        row_update()
+    elif row == "builtin":
+        row_builtin()
+    elif row == "instance":
+        row_instance()
+    elif row == "class_setattr":
+        row_class_setattr()
+    else:
+        raise SystemExit("no such row: " + row)
+
+
+main()
