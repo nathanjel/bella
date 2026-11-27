@@ -1346,7 +1346,8 @@ void fill_signal(Module* m) {                    // its two types are named for 
 void fill_imp(Module* m) {
     fill_in_python(m, "_imp", "_imp", prelude_imp::module_body,
                    {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_cpython_table", i_cpython_table}, {"_source_hash", i_source_hash},
-                    {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes}});
+                    {"_bella_create_builtin", i_bella_create_builtin}, {"_bella_set_lazy_attributes", i_bella_set_lazy_attributes},
+                    {"_bella_is_builtin", i_bella_is_builtin}});
 }
 void fill_contextvars(Module* m) { fill_in_python(m, "_contextvars", "_contextvars", prelude_contextvars::module_body, {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}}); }
 void fill_typing(Module* m) {
@@ -1413,7 +1414,7 @@ void refuse_bootstrap_assignment(const Module* m, const Str* name) {
                          "name in the module)");
 }
 void refuse_bootstrap_namespace(const Module* m) {
-    throw NotImplemented(std::string("the namespace of ") + bootstrap_scope(m) + " as a whole (dir, vars or __dict__: the runtime keeps names of its own "
+    throw NotImplemented(std::string("the namespace of ") + bootstrap_scope(m) + " as a whole (dir, vars, __dict__ or a function's __globals__: the runtime keeps names of its own "
                          "in it, which CPython's module does not have)");
 }
 // An import by a name whose class overrides a method of str stops the program (E-04; the author's decision of 2026-11-26,
@@ -2124,6 +2125,8 @@ Ref try_load_lazy_submodule(Module* m, const Str* attr_name, bool suppress, bool
 }
 
 // _PyEval_LazyImportFrom
+// a module's lazy import of another by name, for a namespace the runtime fills itself (_frozen_importlib_external's `_os`)
+Ref lazy_import_of(const char* name) { return lazy_new(false, Obj::of(builtins_module()->dict), Obj::of(intern(name)), Obj{}); }
 Ref lazy_import_from(Obj v, const Str* name) {
     LazyImport* lz = as_lazy(v);
     // only `from a import b` can take b off an already imported a; `import a.b as c` imports a.b first

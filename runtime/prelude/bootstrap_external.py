@@ -28,6 +28,8 @@ import _warnings
 _bootstrap = _bootstrap                           # noqa: PLW0127  # bella: set by the runtime before the body runs (_set_bootstrap_module)
 
 _MS_WINDOWS = False                               # bella: the targets are posix (manifest [platform])
+# bella: `import posix as _os` (the `else:` of CPython's `if _MS_WINDOWS:`). The runtime binds `_os` before this body runs, as
+# a lazy import of posix that the first use makes: a program that asks nothing of it pays nothing at its start
 
 path_separators = ['/']                           # bella: _os.sep and altsep on posix
 path_sep = path_separators[0]
@@ -105,7 +107,7 @@ def _path_stat(path):
     (e.g. cache stat results).
 
     """
-    _bella_refuse("the import system's _path_stat (a path finder's search: the closed world is resolved at build time, E-04)")
+    return _os.stat(path)
 
 
 def _path_is_mode_type(path, mode):
@@ -125,7 +127,7 @@ def _path_isfile(path):
 def _path_isdir(path):
     """Replacement for os.path.isdir."""
     if not path:
-        path = _os_getcwd()
+        path = _os.getcwd()
     return _path_is_mode_type(path, 0o040000)
 
 
@@ -139,26 +141,31 @@ def _path_abspath(path):
     if not _path_isabs(path):
         for sep in path_separators:
             path = path.removeprefix(f".{sep}")
-        return _path_join(_os_getcwd(), path)
+        return _path_join(_os.getcwd(), path)
     else:
         return path
-
-
-def _os_getcwd():                                 # bella: posix.getcwd through the posix module, which _os stands for in CPython
-    import posix
-    return posix.getcwd()
-
-
-def _os_fspath(path):                             # bella: _os.fspath
-    import posix
-    return posix.fspath(path)
 
 
 def _write_atomic(path, data, mode=0o666):
     """Best-effort function to write data to a path atomically.
     Be prepared to handle a FileExistsError if concurrent writing of the
     temporary file is attempted."""
-    _bella_refuse("the import system's _write_atomic (a compiled program writes no bytecode)")
+    # id() is used to generate a pseudo-random filename.
+    path_tmp = f'{path}.{id(path)}'
+    fd = _os.open(path_tmp,
+                  _os.O_EXCL | _os.O_CREAT | _os.O_WRONLY, mode & 0o666)
+    try:
+        # We first write data to a temporary file, and then use os.replace() to
+        # perform an atomic rename.
+        with _io.open(fd, 'wb') as file:
+            file.write(data)
+        _os.replace(path_tmp, path)
+    except OSError:
+        try:
+            _os.unlink(path_tmp)
+        except OSError:
+            pass
+        raise
 
 
 _code_type = type(_write_atomic.__code__)
@@ -191,15 +198,50 @@ def cache_from_source(path, *, optimization=None):
     If sys.implementation.cache_tag is None then NotImplementedError is raised.
 
     """
-    path = _os_fspath(path)  # bella: _os.fspath
+    path = _os.fspath(path)
     head, tail = _path_split(path)
     base, sep, rest = tail.rpartition('.')
     tag = sys.implementation.cache_tag
     if tag is None:
         raise NotImplementedError('sys.implementation.cache_tag is None')
-    # bella: the tag is always None here (D-16: a compiled program has no bytecode cache), so the rest of CPython's
-    # function, which builds the name, is never reached
-    _bella_refuse("importlib.util.cache_from_source with a cache tag (D-16: sys.implementation.cache_tag is None)")
+    almost_filename = ''.join([(base if base else rest), sep, tag])
+    if optimization is None:
+        if sys.flags.optimize == 0:
+            optimization = ''
+        else:
+            optimization = sys.flags.optimize
+    optimization = str(optimization)
+    if optimization != '':
+        if not optimization.isalnum():
+            raise ValueError(f'{optimization!r} is not alphanumeric')
+        almost_filename = f'{almost_filename}.{_OPT}{optimization}'
+    filename = almost_filename + BYTECODE_SUFFIXES[0]
+    if sys.pycache_prefix is not None:
+        # We need an absolute path to the py file to avoid the possibility of
+        # collisions within sys.pycache_prefix, if someone has two different
+        # `foo/bar.py` on their system and they import both of them using the
+        # same sys.pycache_prefix. Let's say sys.pycache_prefix is
+        # `C:\Bytecode`; the idea here is that if we get `Foo\Bar`, we first
+        # make it absolute (`C:\Somewhere\Foo\Bar`), then make it root-relative
+        # (`Somewhere\Foo\Bar`), so we end up placing the bytecode file in an
+        # unambiguous `C:\Bytecode\Somewhere\Foo\Bar\`.
+        head = _path_abspath(head)
+
+        # Strip initial drive from a Windows path. We know we have an absolute
+        # path here, so the second part of the check rules out a POSIX path that
+        # happens to contain a colon at the second character.
+        # Slicing avoids issues with an empty (or short) `head`.
+        if head[1:2] == ':' and head[0:1] not in path_separators:
+            head = head[2:]
+
+        # Strip initial path separator from `head` to complete the conversion
+        # back to a root-relative path before joining.
+        return _path_join(
+            sys.pycache_prefix,
+            head.lstrip(path_separators),
+            filename,
+        )
+    return _path_join(head, _PYCACHE, filename)
 
 
 def source_from_cache(path):
@@ -211,8 +253,35 @@ def source_from_cache(path):
     sys.implementation.cache_tag is None then NotImplementedError is raised.
 
     """
-    # bella: sys.implementation.cache_tag is None (D-16): a compiled program has no bytecode cache
-    raise NotImplementedError('sys.implementation.cache_tag is None')
+    if sys.implementation.cache_tag is None:
+        raise NotImplementedError('sys.implementation.cache_tag is None')
+    path = _os.fspath(path)
+    head, pycache_filename = _path_split(path)
+    found_in_pycache_prefix = False
+    if sys.pycache_prefix is not None:
+        stripped_path = sys.pycache_prefix.rstrip(path_separators)
+        if head.startswith(stripped_path + path_sep):
+            head = head[len(stripped_path):]
+            found_in_pycache_prefix = True
+    if not found_in_pycache_prefix:
+        head, pycache = _path_split(head)
+        if pycache != _PYCACHE:
+            raise ValueError(f'{_PYCACHE} not bottom-level directory in '
+                             f'{path!r}')
+    dot_count = pycache_filename.count('.')
+    if dot_count not in {2, 3}:
+        raise ValueError(f'expected only 2 or 3 dots in {pycache_filename!r}')
+    elif dot_count == 3:
+        optimization = pycache_filename.rsplit('.', 2)[-2]
+        if not optimization.startswith(_OPT):
+            raise ValueError("optimization portion of filename does not start "
+                             f"with {_OPT!r}")
+        opt_level = optimization[len(_OPT):]
+        if not opt_level.isalnum():
+            raise ValueError(f"optimization level {optimization!r} is not an "
+                             "alphanumeric value")
+    base_filename = pycache_filename.partition('.')[0]
+    return _path_join(head, base_filename + SOURCE_SUFFIXES[0])
 
 
 def _get_sourcefile(bytecode_path):
@@ -309,9 +378,11 @@ def _classify_pyc(data, name, exc_details):
     magic = data[:4]
     if magic != MAGIC_NUMBER:
         message = f'bad magic number in {name!r}: {magic!r}'
+        _bootstrap._verbose_message('{}', message)
         raise ImportError(message, **exc_details)
     if len(data) < 16:
         message = f'reached EOF while reading pyc header of {name!r}'
+        _bootstrap._verbose_message('{}', message)
         raise EOFError(message)
     flags = _unpack_uint32(data[4:8])
     # Only the first two flags are defined.
@@ -376,7 +447,7 @@ def spec_from_file_location(name, location=None, *, loader=None,
             except ImportError:
                 pass
     else:
-        location = _os_fspath(location)
+        location = _os.fspath(location)
         try:
             location = _path_abspath(location)
         except OSError:
@@ -441,6 +512,10 @@ def _bless_my_loader(module_globals):
     loader = module_globals.get('__loader__', None)
     spec = module_globals.get('__spec__', missing)
 
+    # The __main__ module of a script or the REPL has __spec__ set to None.
+    if spec is None and module_globals.get('__name__') == '__main__':
+        return loader
+
     if loader is None:
         if spec is missing:
             # If working with a module:
@@ -455,12 +530,17 @@ def _bless_my_loader(module_globals):
         if loader is None:
             exc = AttributeError if spec_loader is missing else ValueError
             raise exc('Module globals is missing a __spec__.loader')
-        _bella_refuse("_bless_my_loader's DeprecationWarning for a module without __spec__.loader (warnings from the import system: step 3b)")
+        _warnings.warn(
+            'Module globals is missing a __spec__.loader',
+            DeprecationWarning)
         spec_loader = loader
 
     assert spec_loader is not None
     if loader is not None and loader != spec_loader:
-        _bella_refuse("_bless_my_loader's DeprecationWarning for a __loader__ that is not __spec__.loader (step 3b)")
+        _warnings.warn(
+            'Module globals; __loader__ != __spec__.loader',
+            DeprecationWarning)
+        return loader
 
     return spec_loader
 
@@ -481,15 +561,47 @@ class WindowsRegistryFinder:
 
     @staticmethod
     def _open_registry(key):
-        _bella_refuse("WindowsRegistryFinder (the Windows registry: the targets are posix)")
+        try:
+            return winreg.OpenKey(winreg.HKEY_CURRENT_USER, key)
+        except OSError:
+            return winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key)
 
     @classmethod
     def _search_registry(cls, fullname):
-        _bella_refuse("WindowsRegistryFinder (the Windows registry: the targets are posix)")
+        if cls.DEBUG_BUILD:
+            registry_key = cls.REGISTRY_KEY_DEBUG
+        else:
+            registry_key = cls.REGISTRY_KEY
+        key = registry_key.format(fullname=fullname,
+                                  sys_version='%d.%d' % sys.version_info[:2])
+        try:
+            with cls._open_registry(key) as hkey:
+                filepath = winreg.QueryValue(hkey, '')
+        except OSError:
+            return None
+        return filepath
 
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
-        _bella_refuse("WindowsRegistryFinder (the Windows registry: the targets are posix)")
+        _warnings.warn('importlib.machinery.WindowsRegistryFinder is '
+                       'deprecated; use site configuration instead. '
+                       'Future versions of Python may not enable this '
+                       'finder by default.',
+                       DeprecationWarning, stacklevel=2)
+
+        filepath = cls._search_registry(fullname)
+        if filepath is None:
+            return None
+        try:
+            _path_stat(filepath)
+        except OSError:
+            return None
+        for loader, suffixes in _get_supported_file_loaders():
+            if filepath.endswith(tuple(suffixes)):
+                spec = _bootstrap.spec_from_loader(fullname,
+                                                   loader(fullname, filepath),
+                                                   origin=filepath)
+                return spec
 
 
 # bella: bootstrap.py's loader classes are this module's (their __module__ says so), as the import system itself uses them
@@ -741,10 +853,10 @@ class PathFinder:
             # find_spec for each; `_path_importer_cache` and FileFinder's __init__ make the directory absolute as below
             if entry == '':
                 try:
-                    entry = _os_getcwd()
+                    entry = _os.getcwd()
                 except (FileNotFoundError, PermissionError):
                     continue
-            directory = _os_getcwd() if entry == '.' else _path_abspath(entry)
+            directory = _os.getcwd() if entry == '.' else _path_abspath(entry)
             prefix = f'{parent.name}.' if parent else ''
             yield from _bella_discover(directory, prefix)
 
@@ -780,7 +892,7 @@ class FileFinder:
         self._loaders = loaders
         # Base (directory) path
         if not path or path == '.':
-            self.path = _os_getcwd()
+            self.path = _os.getcwd()
         else:
             self.path = _path_abspath(path)
         self._path_mtime = -1
@@ -873,7 +985,6 @@ def _fix_up_module(ns, name, pathname, cpathname=None):
         ns['__spec__'] = spec
         ns['__loader__'] = loader
         ns['__file__'] = pathname
-        ns['__cached__'] = cpathname
     except Exception:
         # Not important enough to report.
         pass

@@ -58,7 +58,7 @@ row = sys.argv[1]
 if row == "name":
     print(type(getattr(_bootstrap, sys.argv[2])).__name__)
 elif row == "other":
-    print(type(_bootstrap._verbose_message).__name__)
+    print(type(_bootstrap._load).__name__)
 elif row == "hash":
     try:
         print(__import__(Name("sample")).answer)
@@ -80,7 +80,7 @@ CPYTHON: dict[tuple[str, ...], tuple[str, list[str], int]] = {
                     "_lock_unlock_module 2 ('name', 'lock')\n", [], 0),
 }
 COMPILED: dict[tuple[str, ...], tuple[str, list[str], int]] = {
-    ("other",): ("", ["bella: not implemented: _frozen_importlib._verbose_message (CPython has it; the runtime does not yet)"], 70),
+    ("other",): ("", ["bella: not implemented: _frozen_importlib._load (CPython has it; the runtime does not yet)"], 70),
     ("hash",): ("", ["bella: not implemented: an import by a name whose class overrides str's __hash__ (CPython's import system calls "
                      "the methods of the name it is handed: E-04)"], 70),
     ("plain",): ("42\n", [], 0),

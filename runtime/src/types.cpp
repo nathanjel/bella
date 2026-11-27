@@ -1919,6 +1919,9 @@ Ref fn_kwdefaults(Obj self) { return fn_of(self)->kwdefaults.get().is_unset() ? 
 // func_globals and func_builtins, members: None once a collection has cleared the function (func_clear), as a member reads NULL
 Ref fn_globals(Obj self) {
     Module* m = fn_of(self)->module;
+    // the namespace of one of the import system's two modules holds names of the runtime's own, primitives among them, and
+    // is no more a program's to read through a function than through dir() or vars() (RL-419; review F48, RL-1090)
+    if (is_bootstrap_prelude(m)) refuse_bootstrap_namespace(m);
     return m == nullptr ? none_ref() : Ref::share(Obj::of(m->dict));
 }
 Ref fn_builtins(Obj self) {

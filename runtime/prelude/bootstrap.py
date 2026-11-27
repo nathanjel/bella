@@ -17,9 +17,8 @@ a closed world uses (licences.md L-01), unchanged except where a line says `bell
   waits for nothing and never deadlocks, and `_find_and_load` does what CPython's does when the
   lock is free.
 * What phase 1 lacks is refused where it would run (`_bella_refuse`, exit 70): the loader's
-  methods that read files. An ImportWarning goes to
-  `_bella_import_warning`: the default filters ignore it, so it has no effect until a warnings
-  module could have changed them, and is refused from then on.
+  methods that read files. A warning of the import system's is CPython's own call of
+  `_warnings.warn`, which `_setup` binds as CPython's does.
 
 The module runs as `_frozen_importlib`, so its classes say so in `__module__`, as CPython's do.
 """
@@ -28,6 +27,10 @@ import sys
 __intrinsics__ = ["_find_and_load", "_find_and_load_lazy_submodule", "_handle_fromlist", "_module_repr", "_setup"]
 
 _bootstrap_external = None
+
+# bella: CPython's C makes _imp before any import can run and hands it to _setup. The text that imports a built-in
+# module asks it (BuiltinImporter.find_spec), and the second module's body imports before _setup runs: so it is made here
+_imp = _bella_create_builtin('_imp')
 
 _NOT_GIVEN = object()
 _repr_running = []
@@ -66,10 +69,18 @@ def _call_with_frames_removed(f, *args, **kwds):
     return f(*args, **kwds)
 
 
+def _verbose_message(message, *args, verbosity=1):
+    """Print the message to stderr if -v/PYTHONVERBOSE is turned on."""
+    if sys.flags.verbose >= verbosity:
+        if not message.startswith(('#', 'import ')):
+            message = '# ' + message
+        print(message.format(*args), file=sys.stderr)
+
+
 def _requires_builtin(fxn):
     """Decorator to verify the named module is built-in."""
     def _requires_builtin_wrapper(self, fullname):
-        if not _bella_is_builtin(fullname):  # bella: `fullname not in sys.builtin_module_names`, which _setup's specs come before
+        if fullname not in sys.builtin_module_names:
             raise ImportError(f'{fullname!r} is not a built-in module',
                               name=fullname)
         return fxn(self, fullname)
@@ -397,7 +408,7 @@ def _load_unlocked(spec):
                 # A namespace package so do nothing.
             else:
                 spec.loader.exec_module(module)
-        except:  # noqa: E722  # CPython's own text: any exception
+        except:
             try:
                 del sys.modules[spec.name]
             except KeyError:
@@ -409,7 +420,7 @@ def _load_unlocked(spec):
         # their own.
         module = sys.modules.pop(spec.name)
         sys.modules[spec.name] = module
-        # bella: no -v (sys.flags.verbose is 0), so no _verbose_message
+        _verbose_message('import {!r} # {!r}', spec.name, spec.loader)
     finally:
         spec._initializing = False
 
@@ -431,7 +442,7 @@ class BuiltinImporter:
 
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
-        if _bella_is_builtin(fullname, 'is_builtin'):  # bella: _imp.is_builtin, of the built-in modules the runtime has
+        if _imp.is_builtin(fullname):
             return spec_from_loader(fullname, cls, origin=cls._ORIGIN)
         else:
             return None
@@ -439,15 +450,15 @@ class BuiltinImporter:
     @staticmethod
     def create_module(spec):
         """Create a built-in module"""
-        # bella: _imp.create_builtin; sys.builtin_module_names is not there yet, _imp.is_builtin decides
-        if not _bella_is_builtin(spec.name):
+        if spec.name not in sys.builtin_module_names:
             raise ImportError(f'{spec.name!r} is not a built-in module',
                               name=spec.name)
-        return _call_with_frames_removed(_bella_create_builtin, spec.name)
+        return _call_with_frames_removed(_imp.create_builtin, spec)
 
     @staticmethod
     def exec_module(module):
         """Exec a built-in module"""
+        _call_with_frames_removed(_imp.exec_builtin, module)
         # bella: _imp.exec_builtin: create_module made the whole of it
 
     @classmethod
@@ -623,7 +634,8 @@ class FrozenImporter:
 
     @staticmethod
     def exec_module(module):
-        name = module.__spec__.name
+        spec = module.__spec__
+        name = spec.name
         # bella: _imp.get_frozen_object and exec, the module's compiled body
         _bella_exec(name, module)
 
@@ -1580,6 +1592,9 @@ for _cls in (_LoaderBasics, SourceLoader, FileLoader, SourceFileLoader):
         _f = _cls.__dict__[_name]
         if callable(_f):
             _f.__module__ = '_frozen_importlib_external'
+            for _cell in getattr(_f, '__closure__', None) or ():   # what _check_name wraps
+                if callable(_cell.cell_contents):
+                    _cell.cell_contents.__module__ = '_frozen_importlib_external'
 
 
 def _spec_from_compiled(name):
@@ -1700,16 +1715,13 @@ def _find_and_load_unlocked(name, import_, *, lazy_submodule=False):
             setattr(parent_module, child, module)
         except AttributeError:
             msg = f"Cannot set an attribute on {parent!r} for child module {child!r}"
-            # bella: _warnings.warn(msg, ImportWarning), which the default filters ignore; refused once
-            # a warnings module could have changed them (runtime/src/imports.cpp, import_warning)
-            _bella_import_warning(msg)
+            _warnings.warn(msg, ImportWarning)
     # Set attributes to lazy submodules on the module.
     try:
-        _bella_set_lazy_attributes(module, name)  # bella: _imp._set_lazy_attributes
+        _imp._set_lazy_attributes(module, name)
     except Exception as e:
         msg = f"Cannot set lazy attributes on {name!r}: {e!r}"
-        # bella: _warnings.warn(msg, ImportWarning), as above
-        _bella_import_warning(msg)
+        _warnings.warn(msg, ImportWarning)
     return module
 
 
@@ -1874,15 +1886,16 @@ def _calc___package__(globals):
     spec = globals.get('__spec__')
     if package is not None:
         if spec is not None and package != spec.parent:
-            # bella: the runtime's warning, through the _warnings prelude (runtime_warning)
-            _bella_import_warning("__package__ != __spec__.parent "
-                                  f"({package!r} != {spec.parent!r})", "DeprecationWarning")
+            _warnings.warn("__package__ != __spec__.parent "
+                           f"({package!r} != {spec.parent!r})",
+                           DeprecationWarning, stacklevel=3)
         return package
     elif spec is not None:
         return spec.parent
     else:
-        _bella_import_warning("can't resolve package from __spec__ or __package__, "
-                              "falling back on __name__ and __path__")
+        _warnings.warn("can't resolve package from __spec__ or __package__, "
+                       "falling back on __name__ and __path__",
+                       ImportWarning, stacklevel=3)
         package = globals['__name__']
         if '__path__' not in globals:
             package = package.rpartition('.')[0]
@@ -1940,8 +1953,11 @@ def _setup(builtin_names):
     modules, those two modules must be explicitly passed in.
 
     """
-    global _imp  # bella: CPython's _setup is given it (`_imp = _imp_module`); the runtime's start imported it before
+    # bella: CPython's _setup is given _imp (`_imp = _imp_module`) and binds _warnings among the modules it loads itself
+    # (_builtin_from_name). _imp is this module's from its first line (see there); importing it gives it its spec
+    global _imp, _warnings
     import _imp
+    import _warnings
     # bella: the part of _setup a compiled program observes: the specs and loaders of the built-in
     # modules the runtime made before this module ran (sys.builtin_module_names among them), and of
     # the import system's two frozen modules (_imp.is_frozen of the others is the registry's)

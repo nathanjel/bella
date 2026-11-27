@@ -743,8 +743,7 @@ author has seen the measurement. In this order:
   `os.register_at_fork` are never let go of at the exit, so with `from logging import ...` and a filter or handler of the
   program's own, the main module's globals are not finalised and a file left open stays empty), RL-1039 (making a class
   with a deep chain of bases takes time doubling with each level).
-* **The decisions to put back to the author**, one question a message, each with its measurement: Question 48's recount
-  (RL-1032 to RL-1036, RL-1090); ~~Question 38~~ (answered A on 2026-11-26: D-17, spec v0.43; RL-980 and RL-983 are the next question); ~~Question 44 and D-19~~ (Question 51, answered A on 2026-11-26: D-19 back, narrowed to the runtime's own modules, spec
+* **The decisions to put back to the author**, one question a message, each with its measurement: ~~Question 48's recount~~ (D-34 written 2026-11-27, spec v0.49); ~~Question 38~~ (answered A on 2026-11-26: D-17, spec v0.43; RL-980 and RL-983 are the next question); ~~Question 44 and D-19~~ (Question 51, answered A on 2026-11-26: D-19 back, narrowed to the runtime's own modules, spec
   v0.46; RL-1012 to RL-1014 are defects, below); ~~Question 46 and `del __builtins__`~~ (Question 53, answered A on 2026-11-27: section 4's opening and the two rows,
   spec v0.48; the deletion and two missed bindings refused); Question 39 and D-07 (RL-985 to
   RL-990, RL-1071, RL-1072); Question 37 and D-03 (RL-972 to RL-978); Questions 35 and 41 (RL-966, RL-967, RL-998 to
@@ -888,30 +887,15 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   runs (its path finder, its module locks, its reading of the code), D-33 for what one thread sees of the locks (spec
   v0.42; RL-950), and the fourteen names of the lock machinery stop with D-33's words (`ABSENT_BY_ENTRY`, call.cpp);
   `pipeline/tests/test_module_locks.py` holds it. CPython's locks themselves go with the threads milestone (Later).
-* **Question 48: the code objects of the functions the closed world rewrote (RL-948's remainder; put to the author 2026-11-25;
-  answered A on 2026-11-26, and held: review F48 found the count wrong, 33 functions and not 25, with more beside it
-  (RL-1032 to RL-1036, RL-1090): the corrected facts go back to the author before D-34 is written).** 27
-  of the 149 code objects that the functions of `runtime/prelude/bootstrap_frames.json` reach have the rewrite's locals
-  where CPython's have its text's (`co_varnames`, `co_nlocals`, `_setup`'s `co_argcount`; [P1] under E-02): the path
-  finders and `_install` (11), the bytecode cache (7), the extension loaders (2), what needs `importlib.metadata` or
-  `importlib.resources` (3), and the runtime's own import (`_find_spec`, `FrozenImporter.exec_module`, `_exec`, `_setup`).
-  They are the A46 test's `OPEN`, beside the two of the locks. The options to put: registered (an entry naming them, or
-  E-04's reason widened), CPython's text where it can run and the table carrying CPython's names and counts for the rest,
-  or in part; the evidence to count first (who reads these functions' code objects).
-  `cache_from_source` and `source_from_cache` are CPython's text cut short after the raise their first lines make, since
-  `cache_tag` is None (D-16): the whole text runs as it is, so they become CPython's with RL-955's step, whatever the
-  answer; the question is about the other 25 (20 refused, 5 rewritten), with RL-957 (`importlib.invalidate_caches()`
-  not importing `importlib.metadata`).
-* **The import system's text against CPython's (RL-955 and Question 48's D-34).** Question 52 (2026-11-27: A) took the calls
-  of a str subclass's methods out of it: such a name stops at the import (E-04). What is left: 60 of the 148 functions the
-  two bootstrap preludes share with CPython's `_bootstrap.py` and `_bootstrap_external.py` differ in text (an AST
-  comparison, 2026-11-26), 33 of them in their code objects' locals. First a test that compares the text function by
-  function, with a table of the functions that may differ and why (a refusal, the closed world's own part, a primitive
-  standing for a native call); then CPython's text wherever it runs as it is (`cache_from_source`, `source_from_cache`,
-  `_write_atomic`, the Windows registry finder, `FrozenImporter.exec_module`'s first lines, the warnings' stack level
-  of RL-1057, `_fix_up_module` and `_bless_my_loader`, which are 3.14's text: RL-1059), the A46 sweep made to reach each
-  function where CPython defines it and to fail on `<absent>` (RL-1032), `__globals__` of the two modules' functions
-  stopped as their namespaces are (RL-1090); then D-34's words, shown to the author with the count.
+* ~~**Question 48: the code objects of the functions the closed world rewrote (RL-948's remainder).**~~ Answered A on
+  2026-11-26 and written on 2026-11-27 as D-34 (spec v0.49), after review F48's recount and the text step: thirty functions
+  that stop, six of the closed world's own, 32 code objects with the runtime's locals.
+* ~~**The import system's text against CPython's (RL-955 and Question 48's D-34).**~~ Done 2026-11-27: 22 functions are
+  CPython's text again, 39 of 149 differ and are listed with their reasons (`pipeline/tests/test_import_text.py`), the
+  sweep of code objects is repaired, `__globals__` of the two modules stops, and D-34 is written (spec v0.49). Left: the
+  three lines of the frames table that are off (RL-1058, RL-1063: `_find_spec`'s two and `ModuleSpec.cached`'s getter;
+  `--check` regenerates by the same rule and cannot see them), and the four source loaders, which live in the first
+  prelude and belong to the second module.
 * **`marshal` (the author, Question 33, 2026-11-24: A; D-31).** A port of `Python/marshal.c` for every type but code
   objects, which stop by name (E-02): `loads` and `load` exact, `dumps` and `dump` exact at version 2 and below, and at
   version 3 and above (the default, 6) an object's reference flag set by the runtime's own count where CPython's `w_ref` reads

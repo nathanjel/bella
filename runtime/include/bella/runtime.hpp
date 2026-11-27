@@ -1420,6 +1420,7 @@ void drop_instance_dict(Obj self);               // the instance has no dict aga
 void instance_dict_set(Obj self, Obj d);         // the same getset's store: the given dict is the instance's from now on
 Ref i_bella_is_builtin(Obj, Args a);
 Ref i_bella_plain_name(Obj, Args a);
+Ref lazy_import_of(const char* name);             // a lazy import placeholder for a namespace the runtime fills (imports.cpp)
 Ref i_bella_create_builtin(Obj, Args a);
 Ref i_bella_find(Obj, Args a);                   // bootstrap.py's primitives
 Ref i_bella_discover(Obj, Args a);               // bootstrap_external.py's: PathFinder.discover's path entry finder

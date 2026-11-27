@@ -13,11 +13,12 @@ compared on standard output, standard error and the exit status:
   class), and the program's own changes after it (`changed`, `vars`: RL-951).
 
 The class of RL-948, the names and counts of the code objects of the import system's functions, is swept by `codeobjects`:
-every function `runtime/prelude/bootstrap_frames.json` names, reached by name on both sides. The functions in `OPEN` differ
-(`LOCKS`, the module locks: RL-950, registered as D-33; `REWRITTEN`, the closed world's rewrites of the finders, the bytecode
-cache and the installer: Question 48); every other one must agree, and one of `OPEN` that comes to agree is to leave it. Two
-the prelude had rewritten where CPython's text runs as it is are CPython's now, and `rewrites` holds what else they show
-(`relax`, `loaders`).
+every function `runtime/prelude/bootstrap_frames.json` names, reached by name on both sides in the module CPython defines
+it in, with what a decorator's wrapper wraps. The functions in `OPEN` differ (`LOCKS`, the module locks: RL-950, registered
+as D-33; `REWRITTEN`, what the closed world refuses or does its own part of: Question 48, D-34); every other one must agree,
+one of `OPEN` that comes to agree is to leave it, and a name not reached under CPython fails the test (it compared nothing
+for 20 lines until review F48, RL-1032). Two the prelude had rewritten where CPython's text runs as it is are CPython's since
+A46's fixes, and `rewrites` holds what else they show (`relax`, `loaders`).
 
 Run under pytest or directly: python3 -m pipeline.tests.test_review_2026_11_25_a46
 """
@@ -48,29 +49,35 @@ ROWS: dict[str, tuple[str, ...]] = {
 LOCKS = frozenset({
     "_bootstrap._find_and_load", "_bootstrap._lock_unlock_module",
 })
-# the functions the closed world rewrote or refuses (Question 48)
+# the functions the closed world rewrote or refuses (Question 48: registered, D-34). Until 2026-11-27 the sweep looked the
+# source loaders up in the wrong module and did not see eight of them (review F48, RL-1032); five others are CPython's text
+# again and left (`cache_from_source`, `source_from_cache`, `_write_atomic`, the Windows registry finder's two)
 REWRITTEN = frozenset({
     "_bootstrap.FrozenImporter.exec_module", "_bootstrap._exec", "_bootstrap._find_spec", "_bootstrap._setup",
     "_bootstrap_external.AppleFrameworkLoader.create_module", "_bootstrap_external.ExtensionFileLoader.create_module",
     "_bootstrap_external.FileFinder._fill_cache", "_bootstrap_external.FileFinder._find_children",
-    "_bootstrap_external.FileFinder.find_spec", "_bootstrap_external.NamespaceLoader.get_resource_reader",
+    "_bootstrap_external.FileFinder.find_spec", "_bootstrap_external.FileLoader.get_data",
+    "_bootstrap_external.FileLoader.get_resource_reader.cell0", "_bootstrap_external.NamespaceLoader.get_resource_reader",
     "_bootstrap_external.PathFinder._get_spec", "_bootstrap_external.PathFinder._path_hooks",
     "_bootstrap_external.PathFinder._path_importer_cache", "_bootstrap_external.PathFinder.discover",
     "_bootstrap_external.PathFinder.find_distributions", "_bootstrap_external.PathFinder.find_spec",
-    "_bootstrap_external.PathFinder.invalidate_caches", "_bootstrap_external.SourcelessFileLoader.get_code",
-    "_bootstrap_external.WindowsRegistryFinder._search_registry", "_bootstrap_external.WindowsRegistryFinder.find_spec",
+    "_bootstrap_external.PathFinder.invalidate_caches", "_bootstrap_external.SourceFileLoader._cache_bytecode",
+    "_bootstrap_external.SourceFileLoader.path_stats", "_bootstrap_external.SourceFileLoader.set_data",
+    "_bootstrap_external.SourceLoader.get_code", "_bootstrap_external.SourceLoader.get_source",
+    "_bootstrap_external.SourcelessFileLoader.get_code", "_bootstrap_external._LoaderBasics.exec_module",
     "_bootstrap_external._code_to_hash_pyc", "_bootstrap_external._code_to_timestamp_pyc",
-    "_bootstrap_external._compile_bytecode", "_bootstrap_external._install", "_bootstrap_external._write_atomic",
-    "_bootstrap_external.cache_from_source", "_bootstrap_external.source_from_cache",
+    "_bootstrap_external._compile_bytecode", "_bootstrap_external._install",
 })
 OPEN = LOCKS | REWRITTEN
 
 
 def table_names() -> list[tuple[str, str]]:
-    """The functions the table gives CPython's frames, by the module a program reaches them in."""
-    modules = {"bootstrap.py": "_bootstrap", "bootstrap_external.py": "_bootstrap_external"}
+    """The functions the table gives CPython's frames, by the module a program reaches them in: the one CPython defines
+    each in, which the row's file says. The first prelude also holds the source loaders of the second module, and looked up
+    in `_bootstrap` they were absent on both sides, which compared nothing for 20 of 149 lines (review F48, RL-1032)."""
+    modules = {"<frozen importlib._bootstrap>": "_bootstrap", "<frozen importlib._bootstrap_external>": "_bootstrap_external"}
     preludes = json.loads(TABLE.read_text(encoding="utf-8"))["preludes"]
-    return sorted({(modules[p], q) for p, rows in preludes.items() for q in rows if "<locals>" not in q})
+    return sorted({(modules[row["file"]], q) for rows in preludes.values() for q, row in rows.items() if "<locals>" not in q})
 
 
 def by_function(stdout: str) -> dict[str, str]:
@@ -97,6 +104,8 @@ def rows_agree(probe: str) -> None:
             got = _run([binary, row], folder)
             if probe == "codeobjects" and got[1:] == want[1:]:
                 cpython, compiled = by_function(want[0]), by_function(got[0])
+                wrong += [f"{name}: not reached under CPython: the sweep compares nothing there" for name, line in sorted(cpython.items())
+                          if "<absent>" in line]
                 differ = {name for name in cpython if compiled.get(name) != cpython[name]} | (set(compiled) - set(cpython))
                 wrong += [f"{name}: compiled {compiled.get(name)!r}, CPython {cpython[name]!r}" for name in sorted(differ - OPEN)]
                 wrong += [f"{name} agrees now: take it out of OPEN" for name in sorted(OPEN & set(cpython) - differ)]

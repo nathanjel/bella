@@ -3,21 +3,22 @@
 `runtime/prelude/bootstrap.py` and `bootstrap_external.py` are CPython 3.15.2's `Lib/importlib/_bootstrap.py` and
 `_bootstrap_external.py` adapted to a closed world of one thread. Since the import system's functions run as CPython's
 frames (Question 43), what a program sees of them is their text: their lines, their locals, what they call and in which
-order. The sweep of code objects in the A46 test compares names and counts and found 29 differing functions; this test
-compares the text itself, function by function by qualified name, and every function that differs is in `DIFFERS` with
-the reason:
+order. The sweep of code objects in the A46 test compares names and counts; this test compares the text itself, function
+by function by qualified name, and every function that differs is in `DIFFERS` with the reason:
 
 * `REFUSED`: the body is one refusal by name, where a closed world cannot do what CPython's text does (a path finder's
-  search, bytecode, an extension module, the Windows registry) or the work is not there yet;
+  search, bytecode, reading a source file, an extension module) or the module it needs is outside the manifest;
 * `PART`: CPython's text up to a refusal;
 * `CLOSED`: the closed world's own part of it (the modules are found at build time and run compiled);
-* `PRIMITIVE`: a primitive of the runtime where CPython's text names a native function the runtime has under another
-  name or not at start-up (`_imp.is_builtin`, `_os.getcwd`, `_warnings.warn`);
 * `LOCKS`: the module locks, left out until the threads milestone (D-33);
-* `VERBOSE`: a call of `_verbose_message` left out (`-v` is not a compiled program's);
-* `HOOKED`: the stop for a name whose class overrides a method of str (E-04, Question 52);
-* `STALE`: not the pin's text and to be made it (RL-1059);
-* `CUT`: CPython's text cut short after a raise that always fires here, and to be made whole.
+* `HOOKED`: the stop for a name whose class overrides a method of str (E-04, Question 52).
+
+On 2026-11-26 the table had 61 of the 148 functions the preludes share with CPython's modules. 22 were CPython's text
+again the next day, which ran as it is once `_os`, `_warnings` and `_imp` were bound as CPython binds them: the ones that
+named a primitive of the runtime for a native function, the calls of `_verbose_message` left out, two functions that were
+3.14's text (RL-1059), `cache_from_source` and `source_from_cache` cut short at their raise, and five refusals of what
+CPython's text does as well here (`_path_stat`, `_write_atomic`, the Windows registry finder, which raises NameError on
+posix under CPython too).
 
 A function that comes to agree is to leave the table, a function that starts to differ fails until it is listed with its
 reason, and a function listed as `REFUSED` must be nothing but its refusal. `ABSENT` lists what CPython's two modules
@@ -30,45 +31,26 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-REFUSED, PART, CLOSED, PRIMITIVE, LOCKS, VERBOSE, HOOKED, STALE, CUT = (
-    "refused", "refused after a first part", "the closed world's part", "a primitive for a native function", "the module locks (D-33)",
-    "_verbose_message left out", "the stop for a hooked name (E-04)", "not the pin's text (RL-1059)", "cut short after its raise")
+REFUSED, PART, CLOSED, LOCKS, HOOKED = (
+    "refused", "refused after a first part", "the closed world's part", "the module locks (D-33)", "the stop for a hooked name (E-04)")
 
 DIFFERS: dict[str, str] = {
     # ---- _bootstrap
     "_bootstrap._lock_unlock_module": LOCKS,
     "_bootstrap._find_and_load": LOCKS,              # and sys.audit("import", ...), which calls no hook here
-    "_bootstrap._requires_builtin": PRIMITIVE,
-    "_bootstrap._requires_builtin.<locals>._requires_builtin_wrapper": PRIMITIVE,
-    "_bootstrap.BuiltinImporter.find_spec": PRIMITIVE,
-    "_bootstrap.BuiltinImporter.create_module": PRIMITIVE,
-    "_bootstrap.BuiltinImporter.exec_module": PRIMITIVE,   # _imp.exec_builtin: a built-in module here is made whole
-    "_bootstrap._find_and_load_unlocked": PRIMITIVE,
-    "_bootstrap._calc___package__": PRIMITIVE,       # its warnings have lost CPython's stack level: RL-1057
-    "_bootstrap._load_unlocked": VERBOSE,
     "_bootstrap._gcd_import": HOOKED,
     "_bootstrap._exec": REFUSED,
     "_bootstrap._find_spec": CLOSED,
     "_bootstrap.FrozenImporter.exec_module": CLOSED,
     "_bootstrap._setup": CLOSED,
     # ---- _bootstrap_external
-    "_bootstrap_external._path_isdir": PRIMITIVE,
-    "_bootstrap_external._path_abspath": PRIMITIVE,
-    "_bootstrap_external.spec_from_file_location": PRIMITIVE,
-    "_bootstrap_external.FileFinder.__init__": PRIMITIVE,
-    "_bootstrap_external._classify_pyc": VERBOSE,
-    "_bootstrap_external.cache_from_source": PART,   # D-16: no cache tag; CPython's whole text runs as it is and is to replace it
-    "_bootstrap_external.source_from_cache": CUT,
     "_bootstrap_external.FileFinder._find_children": PART,
     "_bootstrap_external._install": PART,
-    "_bootstrap_external._bless_my_loader": STALE,
-    "_bootstrap_external._fix_up_module": STALE,
     "_bootstrap_external._LoaderBasics.exec_module": CLOSED,
     "_bootstrap_external.PathFinder.discover": CLOSED,
     "_bootstrap_external.PathFinder.invalidate_caches": CLOSED,
     **{"_bootstrap_external." + name: REFUSED for name in (
-        "_path_stat", "_write_atomic", "_compile_bytecode", "_code_to_timestamp_pyc", "_code_to_hash_pyc",
-        "WindowsRegistryFinder._open_registry", "WindowsRegistryFinder._search_registry", "WindowsRegistryFinder.find_spec",
+        "_compile_bytecode", "_code_to_timestamp_pyc", "_code_to_hash_pyc",
         "SourceLoader.path_mtime", "SourceLoader.path_stats", "SourceLoader._cache_bytecode", "SourceLoader.get_source",
         "SourceLoader.source_to_code", "SourceLoader.get_code", "FileLoader.get_data", "FileLoader.get_resource_reader",
         "SourceFileLoader.path_stats", "SourceFileLoader._cache_bytecode", "SourceFileLoader.set_data", "SourcelessFileLoader.get_code",
@@ -91,8 +73,7 @@ ABSENT: dict[str, str] = {
         "_get_module_lock", "_has_deadlocked")},
     **{name: NOT_YET for name in (
         "_bootstrap._builtin_from_name", "_bootstrap._install", "_bootstrap._install_external_importers", "_bootstrap._load",
-        "_bootstrap._object_name", "_bootstrap._verbose_message", "_bootstrap_external._validate_hash_pyc",
-        "_bootstrap_external._validate_timestamp_pyc")},
+        "_bootstrap._object_name", "_bootstrap_external._validate_hash_pyc", "_bootstrap_external._validate_timestamp_pyc")},
 }
 
 
@@ -144,7 +125,7 @@ def compared() -> tuple[dict[str, bool], set[str], set[str]]:
 
 def test_the_import_systems_text_is_cpythons_but_for_the_listed_functions() -> None:
     same, absent, refusals = compared()
-    assert len(same) == 148, len(same)
+    assert len(same) == 149, len(same)
     differ = {name for name, agrees in same.items() if not agrees}
     wrong = [f"{name}: its text is not CPython's and it is not listed" for name in sorted(differ - set(DIFFERS))]
     wrong += [f"{name}: its text is CPython's now: take it out of DIFFERS" for name in sorted(set(DIFFERS) - differ)]
@@ -164,4 +145,4 @@ def counts() -> dict[str, int]:
 
 if __name__ == "__main__":
     test_the_import_systems_text_is_cpythons_but_for_the_listed_functions()
-    print("ok", len(DIFFERS), "of 148 differ:", counts())
+    print("ok", len(DIFFERS), "of", len(compared()[0]), "differ:", counts())

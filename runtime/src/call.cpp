@@ -4127,6 +4127,10 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
                 }
                 if (std::string_view(pm_entry.name) == "_frozen_importlib_external") {   // bootstrap_external.py: _set_bootstrap_module's work, its primitives
                     put(pm->dict, "_bootstrap", Obj::of(bootstrap));
+                    {                            // `import posix as _os`, as a lazy import the first use makes (the body's text says why)
+                        Ref os = lazy_import_of("posix");
+                        put(pm->dict, "_os", os.get());
+                    }
                     for (auto [n, fn] : std::initializer_list<std::pair<const char*, NativeFn>>{{"_bella_refuse", i_bella_refuse}, {"_cpython_table", i_cpython_table},
                                                                                                        {"_bella_discover", i_bella_discover}}) {
                         Ref b = own(new Builtin(n, fn));
@@ -4203,6 +4207,26 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
             init_float();
             init_complex();
             init_generator();
+            // sys's named tuples, which are made in Python: before the second import module's body, whose imports are the
+            // first to run CPython's text (_verbose_message reads sys.flags)
+            if (bootstrap != nullptr) {
+                char buffer[64] = "";
+                confstr(_CS_GNU_LIBPTHREAD_VERSION, buffer, sizeof buffer);
+                std::int64_t randomized = !start_up().use_hash_seed || start_up().hash_seed != 0;   // config.use_hash_seed == 0 || config.hash_seed != 0
+                Ref version = str_new(buffer), flag = int_from_i64(randomized), digits = int_from_i64(start_up().int_max_str_digits);
+                Ref surface = invoke(dict_get(bootstrap->dict, Obj::of(intern("_bella_sys_surface"))), {version.get(), flag.get(), digits.get()});
+                auto* sys_dict = native_modules()["sys"]->dict;
+                Ref names = list_new({});
+                for (std::string_view n : cpython_names_of("stdlib")) list_append(names.get(), Obj::of(intern(std::string(n))));
+                Ref stdlib = invoke(Obj::of(types().frozenset), {names.get()});
+                put(sys_dict, "stdlib_module_names", stdlib.get());
+                for (auto& e : static_cast<Dict*>(surface.get().object())->entries) {
+                    if (e.key.is_unset()) continue;
+                    if (name_arg(e.key)->text == "_bella_unraisable_args") unraisable_args_type() = Ref::share(e.value);   // no module's
+                    else dict_set(sys_dict, e.key, e.value);
+                    if (name_arg(e.key)->text == "flags") sys_flags_class() = type_of(e.value);
+                }
+            }
             if (external != nullptr) {
                 external_body(external);         // bootstrap_external.py, now that int and str have their methods
                 // sys.meta_path: the finders the import system stands for, as CPython's _install and _install_external_importers
@@ -4233,24 +4257,6 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
             for (ClassObject* c : builtin_types()) own_doc(c);
             for (ClassObject* c : exception_classes()) own_doc(c);
             if (bootstrap != nullptr) present_as_c_types(bootstrap);
-            if (bootstrap != nullptr) {                   // sys's named tuples, which are made in Python
-                char buffer[64] = "";
-                confstr(_CS_GNU_LIBPTHREAD_VERSION, buffer, sizeof buffer);
-                std::int64_t randomized = !start_up().use_hash_seed || start_up().hash_seed != 0;   // config.use_hash_seed == 0 || config.hash_seed != 0
-                Ref version = str_new(buffer), flag = int_from_i64(randomized), digits = int_from_i64(start_up().int_max_str_digits);
-                Ref surface = invoke(dict_get(bootstrap->dict, Obj::of(intern("_bella_sys_surface"))), {version.get(), flag.get(), digits.get()});
-                auto* sys_dict = native_modules()["sys"]->dict;
-                Ref names = list_new({});
-                for (std::string_view n : cpython_names_of("stdlib")) list_append(names.get(), Obj::of(intern(std::string(n))));
-                Ref stdlib = invoke(Obj::of(types().frozenset), {names.get()});
-                put(sys_dict, "stdlib_module_names", stdlib.get());
-                for (auto& e : static_cast<Dict*>(surface.get().object())->entries) {
-                    if (e.key.is_unset()) continue;
-                    if (name_arg(e.key)->text == "_bella_unraisable_args") unraisable_args_type() = Ref::share(e.value);   // no module's
-                    else dict_set(sys_dict, e.key, e.value);
-                    if (name_arg(e.key)->text == "flags") sys_flags_class() = type_of(e.value);
-                }
-            }
             // importlib._bootstrap._setup: the built-in modules' specs and loaders
             {
                 Ref names = tuple_new({Obj::of(intern("builtins")), Obj::of(intern("sys"))});

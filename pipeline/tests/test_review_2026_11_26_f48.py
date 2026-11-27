@@ -6,7 +6,7 @@ argument list a line), one row a process, compared on standard output, standard 
 
 * A module name that is not a str does not end the program: 22 entry points of the import system, each handed nine kinds of
   name (`entrynames`: RL-1033). The rows in `STOPS` stop by name, where a compiled program has no source or frozen code to
-  run; the row in `OPEN` waits for Question 48 (what `FrozenImporter.exec_module` does for a module that is not frozen).
+  run; what `FrozenImporter.exec_module` does for a module that is not frozen is registered (D-34).
 * What a handler given to `os.register_at_fork` reaches is finalised at the exit, and the three lists of handlers are let go
   of in CPython's order (`atfork`: RL-1070; logging, threading and random register theirs when imported, so a filter, a
   handler or a formatter of the program's own kept the main module's globals from being finalised, a file left open with
@@ -49,6 +49,15 @@ And an exclusion (the author's decision of 2026-11-27, Question 52: A; RL-954, R
   member that does, stop; an exact str, a subclass that overrides nothing, only `__new__` or only `__repr__` (as every
   StrEnum member's class does), and every name through `import_module` (which makes an exact str of it first) agree.
 
+And the import system's text (RL-955, RL-1057, RL-1059; the step before Question 48's words):
+
+* 22 functions of the import system are CPython's text again, and do what CPython's do on what a program can hand them
+  (`importtext`, 11 rows: the path helpers and `_write_atomic` on real paths; `spec_from_file_location`; the Windows
+  registry finder, a NameError on posix and its DeprecationWarning; `_bless_my_loader` over eight namespaces;
+  `_fix_up_module`, which sets no `__cached__`; `_classify_pyc`; `_verbose_message`; the built-in importer's methods; and
+  the two warnings of a relative import whose package cannot be told, charged to the caller's line as CPython's stack
+  level has it). `cache_from_source` and `source_from_cache` raise as D-16 says.
+
 A row of `STOPS` must stop with its words, a row of `OPEN` must differ, and a row of `REGISTERED` must give what its entry
 says: one that comes to agree with CPython is to leave its table.
 
@@ -90,6 +99,11 @@ OWN_MODULES = ("atexit", "binascii", "cmath", "gc", "grp", "pwd", "time", "unico
 REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
     **{("unchecked", (shape, "1200")): ("D-17", "RecursionError\n") for shape in ("yield from", "for", "*args", "**kwargs", "bound method")},
     **{("ownmodules", (name,)): ("D-19", "the end\n") for name in OWN_MODULES},
+    # FrozenImporter.exec_module runs the compiled body of any module the program has, where CPython's raises ImportError
+    # for one that is not frozen (Question 48: A)
+    ("entrynames", ("frozen.exec_module", "strsub2")): ("D-34", "helper body runs\nfrozen.exec_module strsub2\nhelper body runs\nreturns None\n"),
+    # a compiled program has no bytecode cache: sys.implementation.cache_tag is None, and CPython's text raises for it
+    ("importtext", ("cache",)): ("D-16", "NotImplementedError NotImplementedError TypeError\n"),
     # decimal is CPython's _pydecimal: its signals carry a text where the C module's carry the conditions, and it takes a
     # rounding mode's name unchecked
     ("cmodules", ("frames", "16")): ("D-20", "Decimal(1).to_integral_value(rounding='up') -> no error: Decimal\n"),
@@ -102,10 +116,8 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
     ("cmodules", ("args", "12")): ("D-20", "Decimal(1).quantize(Decimal('1e-400'), context) -> InvalidOperation "
                                            "('quantize result has too many digits for current context',)\n"),
 }
-# rows that differ until the author has decided (Question 48)
-OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset({
-    ("entrynames", ("frozen.exec_module", "strsub2")),
-})
+# rows that differ until the author has decided: none now
+OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset()
 
 
 def rows_of(probe: str) -> list[tuple[str, ...]]:

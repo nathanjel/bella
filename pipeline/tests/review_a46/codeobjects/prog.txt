@@ -5,7 +5,7 @@ import types
 from importlib import _bootstrap, _bootstrap_external
 
 ATTRS = ("co_name", "co_qualname", "co_filename", "co_firstlineno", "co_argcount", "co_posonlyargcount",
-         "co_kwonlyargcount", "co_nlocals", "co_varnames", "co_freevars", "co_cellvars")
+         "co_kwonlyargcount", "co_nlocals", "co_varnames", "co_freevars", "co_cellvars", "co_flags")
 
 
 def show(path: str, f: object) -> None:
@@ -20,6 +20,10 @@ def show(path: str, f: object) -> None:
             v = "<absent>"
         parts.append(f"{a}={v!r}")
     print(path, f"__name__={getattr(f, '__name__', None)!r}", f"__qualname__={getattr(f, '__qualname__', None)!r}", *parts)
+    # what a wrapper of the import system's decorators wraps (_check_name, _requires_builtin, _requires_frozen)
+    for i, cell in enumerate(getattr(f, "__closure__", None) or ()):
+        if isinstance(cell.cell_contents, types.FunctionType):
+            show(f"{path}.cell{i}", cell.cell_contents)
 
 
 

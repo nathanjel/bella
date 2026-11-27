@@ -18,6 +18,7 @@ try:
     _cpython_table                               # noqa: B018  # a row of the names table (tools/cpython_names.py): the pin's build constants
     _source_hash                                 # noqa: B018  # _Py_KeyedHash: siphash13 with the key and 0
     _bella_create_builtin                        # noqa: B018  # the runtime's built-in module for a spec
+    _bella_is_builtin                            # noqa: B018  # whether the runtime has a built-in module of that name
     _bella_set_lazy_attributes                   # noqa: B018  # _imp._set_lazy_attributes
     _has_slot                                    # noqa: B018  # a slot of the type, by its own MRO and dicts: the runtime's (RL-644)
     _repr_text                                   # noqa: B018  # %R: the characters of an object's repr, an exact str (RL-748's class)
@@ -42,6 +43,7 @@ except NameError:
     _cpython_table: Callable[..., Any] = _missing
     _source_hash: Callable[..., Any] = _missing
     _bella_create_builtin: Callable[..., Any] = _missing
+    _bella_is_builtin: Callable[..., Any] = _missing
     _bella_set_lazy_attributes: Callable[..., Any] = _missing
 
     def _tp_name(o: object) -> str:
@@ -112,7 +114,10 @@ def is_builtin(*args: object, **kwds: object) -> int:   # is_builtin: -1 for a m
     name = _str_arg("is_builtin", _one("is_builtin", args, kwds))
     if name in ("sys", "builtins"):
         return -1
-    return 1 if name in sys.builtin_module_names else 0
+    # a built-in module of the pin's that the manifest omits behaves as not installed (D-20: `_datetime`, whose absence
+    # `datetime` falls back from), and one the runtime has not written is found by nothing and stops where it is imported:
+    # the import system's finder (BuiltinImporter.find_spec, CPython's text) is to answer for neither
+    return 1 if _bella_is_builtin(name) else 0
 
 
 def is_frozen(*args: object, **kwds: object) -> bool:

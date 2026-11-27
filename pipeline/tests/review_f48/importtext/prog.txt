@@ -1,0 +1,126 @@
+"""Review F48 (RL-955, RL-1057, RL-1059; Question 48): the functions of the import system that are CPython's text again,
+a row a process: what each does on what a program can hand it.
+"""
+import importlib
+import importlib.machinery
+import importlib.util
+import os
+import sys
+import types
+import warnings
+from collections.abc import Callable
+from importlib import _bootstrap, _bootstrap_external
+
+ROW = sys.argv[1]
+
+
+def outcome(call: Callable[[], object]) -> str:
+    try:
+        return repr(call())
+    except Exception as error:  # noqa: BLE001
+        return type(error).__name__
+
+
+def recorded(call: Callable[[], object]) -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = outcome(call)
+    print(result, [(w.category.__name__, os.path.basename(w.filename), w.lineno) for w in caught])
+
+
+class Pathlike:
+    def __fspath__(self) -> str:
+        return "/somewhere/else.py"
+
+
+class Loader:
+    pass
+
+
+if ROW == "paths":
+    e = _bootstrap_external
+    print(e._path_isdir("."), e._path_isdir(""), e._path_isfile("prog.py"), e._path_isdir("prog.py"), e._path_isfile("nosuchfile"))
+    print(e._path_abspath("x") == os.path.join(os.getcwd(), "x"), e._path_abspath("/a/b"), e._path_stat("prog.py").st_size > 0,
+          outcome(lambda: e._path_stat("nosuchfile")), outcome(lambda: e._path_stat(5.5)))
+elif ROW == "atomic":
+    e = _bootstrap_external
+    print(outcome(lambda: e._write_atomic("atomic.txt", b"data")))
+    with open("atomic.txt", "rb") as written:
+        print(written.read())
+    os.unlink("atomic.txt")
+    print(outcome(lambda: e._write_atomic("nosuchdirectory/atomic.txt", b"data")), sorted(n for n in os.listdir(".") if n.startswith("atomic")))
+elif ROW == "cache":
+    print(outcome(lambda: importlib.util.cache_from_source("x.py")), outcome(lambda: importlib.util.source_from_cache("__pycache__/x.cpython-315.pyc")),
+          outcome(lambda: importlib.util.cache_from_source(5)))  # type: ignore[arg-type]
+elif ROW == "spec":
+    for location in ("/somewhere/m.py", "/somewhere/p/__init__.py", Pathlike()):
+        s = importlib.util.spec_from_file_location("m", location)
+        assert s is not None
+        print(s.name, s.origin, type(s.loader).__name__, s.has_location, s.submodule_search_locations)
+    print(outcome(lambda: importlib.util.spec_from_file_location("m", "/somewhere/m.txt")),
+          outcome(lambda: importlib.util.spec_from_file_location("m", 5)))  # type: ignore[arg-type]
+elif ROW == "registry":
+    finder = importlib.machinery.WindowsRegistryFinder
+    print(outcome(lambda: finder._open_registry("key")), outcome(lambda: finder._search_registry("module")))  # type: ignore[attr-defined]
+    recorded(lambda: finder.find_spec("module"))
+elif ROW == "bless":
+    bless = _bootstrap_external._bless_my_loader
+    mine = Loader()
+    other = Loader()
+    cases: list[dict[str, object]] = [
+        {"__name__": "__main__", "__spec__": None, "__loader__": mine},
+        {"__loader__": mine, "__spec__": types.SimpleNamespace(loader=mine)},
+        {"__spec__": types.SimpleNamespace(loader=mine)},
+        {"__loader__": mine, "__spec__": types.SimpleNamespace(loader=other)},
+        {"__loader__": mine},
+        {"__loader__": mine, "__spec__": types.SimpleNamespace()},
+        {},
+        {"__spec__": None},
+    ]
+    for case in cases:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                got = bless(case)
+                said = "mine" if got is mine else "other" if got is other else repr(got)
+            except (ValueError, AttributeError) as error:
+                said = type(error).__name__
+        print(sorted(case), "->", said, [w.category.__name__ for w in caught])
+elif ROW == "fixup":
+    ns: dict[str, object] = {}
+    _bootstrap_external._fix_up_module(ns, "m", "/somewhere/m.py", "/somewhere/m.pyc")
+    spec = ns["__spec__"]
+    print(sorted(ns), type(ns["__loader__"]).__name__, spec.name, spec.origin, ns.get("__cached__", "no __cached__"))  # type: ignore[attr-defined]
+    ns = {}
+    _bootstrap_external._fix_up_module(ns, "m", "/somewhere/m.pyc")
+    print(sorted(ns), type(ns["__loader__"]).__name__, ns["__file__"])
+elif ROW == "classify":
+    for data in (b"xxxx" + bytes(12), b""):
+        try:
+            print(_bootstrap_external._classify_pyc(data, "m", {"name": "m", "path": "m.pyc"}))
+        except ImportError as error:
+            print(type(error).__name__, error.name, error.path)
+elif ROW == "verbose":
+    print(_bootstrap._verbose_message("a message {}", 1), _bootstrap._verbose_message.__name__, _bootstrap._verbose_message.__code__.co_varnames)
+elif ROW == "builtin":
+    b = importlib.machinery.BuiltinImporter
+    for name in ("math", "sys", "nosuchmodule"):
+        s = b.find_spec(name)
+        print(name, None if s is None else (s.name, s.origin, type(s.loader).__name__),
+              outcome(lambda: b.get_code(name)), outcome(lambda: b.get_source(name)), outcome(lambda: b.is_package(name)))
+    # a built-in module of CPython's that the runtime has not: the loader's methods ask sys.builtin_module_names, as CPython's
+    # text does (its finder is asked nothing here: the module is outside the manifest and behaves as not installed, D-20)
+    print("array", outcome(lambda: b.get_code("array")), outcome(lambda: b.get_source("array")), outcome(lambda: b.is_package("array")))
+    print(importlib.util.find_spec("nosuchmodule"))
+    print(outcome(lambda: b.create_module(importlib.machinery.ModuleSpec("nosuchmodule", b))),
+          outcome(lambda: b.exec_module(sys)), type(b.create_module(b.find_spec("math"))).__name__)  # type: ignore[arg-type]
+elif ROW == "package":
+    def relative(namespace: dict[str, object]) -> object:
+        return importlib.__import__("sibling", namespace, {}, (), 1)
+
+    recorded(lambda: relative({"__package__": "a", "__spec__": types.SimpleNamespace(parent="b")}))
+    recorded(lambda: relative({"__name__": "a.b"}))
+    recorded(lambda: relative({"__name__": "a.b", "__path__": []}))
+    recorded(lambda: relative({"__package__": "a", "__spec__": types.SimpleNamespace(parent="a")}))
+else:
+    raise SystemExit("no such row: " + ROW)
