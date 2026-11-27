@@ -976,9 +976,10 @@ Ref type_repr_of(Obj v) {
     Obj mod = Obj{};
     if (const Obj* m = c->attrs.find(intern("__module__"))) mod = *m;
     const Str* ms = as_str(mod);
-    std::string prefix = ms == nullptr || ms->text == "builtins" ? "" : ms->text + ".";
-    if (ms == nullptr && c->name_prefix > 0 && c_type(c)) prefix = c->name.substr(0, c->name_prefix);   // its tp_name's
-    return str_new("<class '" + prefix + c->qualname + "'>");
+    // type_repr: "<class 'module.qualname'>" for a module that is a str other than builtins, else the type's tp_name, which is
+    // a class's __name__ (not its __qualname__) and a static type's dotted name (RL-1054)
+    if (ms == nullptr || ms->text == "builtins") return str_new("<class '" + c->name + "'>");
+    return str_new("<class '" + ms->text + "." + c->qualname + "'>");
 }
 
 // tp_repr, whatever it gives; what asks for a str says which method failed to give one

@@ -1540,10 +1540,11 @@ Ref object_repr(Obj self, Args a) {
     no_arguments(a, "__repr__");
     ClassObject* c = type_of(self);
     std::string mod = module_text(c);            // object_repr: the type's module, which a static type's tp_name says
-    mod = mod.empty() || mod == "builtins" ? "" : mod + ".";
     char buf[32];
     std::snprintf(buf, sizeof buf, "%p", static_cast<void*>(self.object()));
-    return str_new("<" + mod + c->qualname + " object at " + buf + ">");
+    // with no module that is a str, or builtins, the type's tp_name: a class's __name__, not its __qualname__ (RL-1054)
+    if (mod.empty() || mod == "builtins") return str_new("<" + c->name + " object at " + buf + ">");
+    return str_new("<" + mod + "." + c->qualname + " object at " + buf + ">");
 }
 Ref object_str(Obj self, Args a) {               // object_str: tp_repr itself; PyObject_Str checks what comes back
     no_arguments(a, "__str__");
@@ -1701,6 +1702,9 @@ Ref type_module(Obj self) {
 void set_type_module(Obj self, Obj v) {          // type_set_module: the class's own __module__
     ClassObject* c = self_class(self);
     check_special(c, v, "__module__");
+    // type_set_module: PyDict_Pop(dict, "__firstlineno__") first, so the line the class body was at goes with the module it
+    // was written in (RL-1044)
+    if (c->attrs.contains(N("__firstlineno__"))) c->del_attr(N("__firstlineno__"));
     c->set_attr(N("__module__"), v);
 }
 // type_get_annotate, type_set_annotate, type_get_annotations, type_set_annotations: a class's annotations live in its dict as

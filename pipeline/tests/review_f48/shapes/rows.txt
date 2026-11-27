@@ -1,0 +1,5 @@
+fromhex
+firstlineno
+repr
+arguments
+maxsplit

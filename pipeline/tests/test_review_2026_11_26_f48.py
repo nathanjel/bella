@@ -16,6 +16,12 @@ argument list a line), one row a process, compared on standard output, standard 
 * What only a built-in module's state holds of the program's is finalised at the exit (`modulestate`: RL-987, the class of
   RL-1070): a subclass of `_csv.Dialect` kept by `csv.register_dialect`, a str subclass's object kept by struct's cache,
   and what the program or a late finaliser stored in sys, which CPython lets go of when it clears sys's dict last.
+* Five defects of a class's shape and a call's message (`shapes`, 5 rows, each with the neighbours of the reviewer's
+  example): `fromhex` on a subclass of bytes or bytearray calls the subclass with the result (RL-1037); assigning a class's
+  `__module__` drops its `__firstlineno__` (RL-1044); `repr()` of a class, and the default `repr()` of its instance, say the
+  type's `__name__` where its module is not a str or is builtins (RL-1054); an argument error names the function by its own
+  `__qualname__`, which `functools.wraps` and an assignment change (RL-1060); and `split` and `rsplit` of bytes and
+  bytearray refuse an unknown keyword before they convert `maxsplit` (RL-1075).
 
 * What is made inside a generator expression is named `<genexpr>.<lambda>` and `<genexpr>.<genexpr>`, with no `.<locals>`
   (`qualnames`: RL-1053; at module level, in a function, in a class body and a method).

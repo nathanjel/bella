@@ -1,0 +1,135 @@
+"""Review F48 (RL-1037, RL-1044, RL-1054, RL-1060, RL-1075): five defects of a class's shape and a call's message, a row a
+process, each with the neighbours of the reviewer's example."""
+import functools
+import sys
+from collections.abc import Callable
+
+ROW = sys.argv[1]
+
+
+def show(call: Callable[[], object]) -> str:
+    try:
+        return repr(call())
+    except Exception as error:  # noqa: BLE001
+        return f"{type(error).__name__}: {error}"
+
+
+if ROW == "fromhex":
+    class B1(bytes):
+        pass
+
+    class B2(bytearray):
+        pass
+
+    class B3(bytes):
+        def __new__(cls, value: bytes) -> "B3":
+            print("B3.__new__ given", type(value).__name__)
+            return super().__new__(cls, value)
+
+    class B4(bytearray):
+        def __init__(self, value: bytes) -> None:
+            print("B4.__init__ given", type(value).__name__)
+            super().__init__(value)
+
+    for cls in (bytes, bytearray, B1, B2, B3, B4):
+        made = cls.fromhex("6869")
+        print(cls.__name__, type(made).__name__, bytes(made))
+    print(show(lambda: B1.fromhex("zz")), show(lambda: B2.fromhex(5)))  # type: ignore[arg-type]
+elif ROW == "firstlineno":
+    class C:
+        pass
+
+    class D:
+        pass
+
+    class E:
+        pass
+
+    print(C.__firstlineno__ > 0, "__firstlineno__" in C.__dict__)
+    C.__module__ = C.__module__
+    print(show(lambda: C.__firstlineno__), "__firstlineno__" in C.__dict__, list(C.__dict__))
+    setattr(D, "__module__", "elsewhere")
+    print(show(lambda: D.__firstlineno__), D.__module__)
+    type.__dict__["__module__"].__set__(E, "other")
+    print(show(lambda: E.__firstlineno__), E.__module__)
+    class F:
+        pass
+
+    F.__module__ = "x"
+    F.__module__ = "y"                           # a second assignment finds nothing to drop
+    print(show(lambda: F.__firstlineno__), F.__module__, list(F.__dict__)[:2])
+elif ROW == "repr":
+    def make() -> list[type]:
+        class Outer:
+            class Inner:
+                __module__ = "builtins"
+
+            class Other:
+                __module__ = 5  # type: ignore[assignment]
+
+        class Named:
+            pass
+
+        Named.__qualname__ = "Q.R"
+        return [Outer, Outer.Inner, Outer.Other, Named]
+
+    classes = make()
+    for cls in classes:
+        print(repr(cls), repr(cls()).split(" at ")[0])
+    classes[3].__name__ = "N"
+    print(repr(classes[3]), repr(classes[3]()).split(" at ")[0])
+    classes[1].__name__ = "Renamed"              # no module: the tp_name, which follows __name__
+    print(repr(classes[1]), repr(classes[1]()).split(" at ")[0], classes[1].__qualname__)
+    print(repr(int), repr(dict), repr(type(sys)), repr(sys.flags.__class__))
+elif ROW == "arguments":
+    def area(x: int) -> int:
+        return x
+
+    def deco(f: Callable[..., int]) -> Callable[..., int]:
+        @functools.wraps(f)
+        def wrapper(x: int) -> int:
+            return f(x)
+        return wrapper
+
+    wrapped_area = deco(area)
+
+    class Renamed:
+        def g(self) -> None:
+            pass
+
+    Renamed.g.__qualname__ = "Renamed.g"
+
+    def target(*, k: int) -> int:
+        return k
+
+    def kwonly(*, k: int) -> int:
+        return k
+
+    functools.update_wrapper(kwonly, target)
+
+    def plain(a: int, b: int = 2) -> int:
+        return a + b
+
+    plain.__qualname__ = "a.different.name"
+    for call in (lambda: wrapped_area(), lambda: Renamed().g(1), lambda: kwonly(), lambda: plain(), lambda: plain(1, 2, 3),  # type: ignore[call-arg]
+                 lambda: plain(1, c=3), lambda: plain(1, a=2)):  # type: ignore[call-arg, misc]
+        print(show(call))
+elif ROW == "maxsplit":
+    calls: list[str] = []
+
+    class R:
+        def __index__(self) -> int:
+            calls.append("index")
+            return 1
+
+    for name, call in (("bytes.split", lambda: b"a b".split(maxsplit=R(), bogus=1)),  # type: ignore[call-overload]
+                       ("bytes.rsplit", lambda: b"a b".rsplit(maxsplit=R(), bogus=1)),  # type: ignore[call-overload]
+                       ("bytearray.split", lambda: bytearray(b"a b").split(maxsplit=R(), bogus=1)),  # type: ignore[call-overload]
+                       ("bytearray.rsplit", lambda: bytearray(b"a b").rsplit(maxsplit=R(), bogus=1)),  # type: ignore[call-overload]
+                       ("bytes.split ok", lambda: b"a b c".split(maxsplit=R())),  # type: ignore[call-overload]
+                       ("bytes.split positional", lambda: b"a b c".split(None, R())),  # type: ignore[call-overload]
+                       ("str.split", lambda: "a b".split(maxsplit=R(), bogus=1))):  # type: ignore[call-overload]
+        calls.clear()
+        print(name, show(call), calls)
+else:
+    raise SystemExit("no such row: " + ROW)

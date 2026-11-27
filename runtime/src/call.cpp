@@ -250,7 +250,9 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
     std::vector<Ref*> slot(params);
     auto n = static_cast<std::size_t>(c.argcount);
     auto nkwonly = static_cast<std::size_t>(c.kwonlyargcount);
-    std::string who = std::string(c.qualname) + "()";
+    // the function's own __qualname__ (func_qualname), which functools.wraps, _wrap and an assignment change (RL-1060)
+    const Str* own = fn->qualname.get().is_unset() ? nullptr : as_str(fn->qualname.get());
+    std::string who = (own != nullptr ? own->text : std::string(c.qualname)) + "()";
     std::size_t varargs_slot = n + nkwonly;
     std::size_t varkw_slot = varargs_slot + (c.varargs ? 1 : 0);
     Dict* kwdict = nullptr;

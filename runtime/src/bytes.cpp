@@ -311,13 +311,15 @@ Ref strip_m(Obj self, Args a) {
 void split_args(Obj self, Args a, const char* name, Obj& sep, std::int64_t& maxsplit) {
     (void)self;
     if (a.npos + a.nkw > 2) raise_new("TypeError", std::string(name) + "() takes at most 2 arguments (" + std::to_string(a.npos + a.nkw) + " given)");
+    // the clinic's order: every keyword checked first (_PyArg_UnpackKeywords), then the arguments converted (RL-1075)
+    Obj given_maxsplit = a.npos > 1 ? a.pos(1) : Obj{};
     sep = a.npos > 0 ? a.pos(0) : None();
-    maxsplit = a.npos > 1 ? ssize_arg(a.pos(1)) : -1;
     for (std::size_t k = 0; k < a.nkw; ++k) {
         if (a.kwnames[k] == N("sep") && a.npos < 1) sep = a.kw(k);
-        else if (a.kwnames[k] == N("maxsplit") && a.npos < 2) maxsplit = ssize_arg(a.kw(k));
+        else if (a.kwnames[k] == N("maxsplit") && a.npos < 2) given_maxsplit = a.kw(k);
         else unexpected_keyword(std::string(name) + "()", a.kwnames[k], {"sep", "maxsplit"});
     }
+    maxsplit = given_maxsplit.is_unset() ? -1 : ssize_arg(given_maxsplit);
     if (maxsplit < 0) maxsplit = INT64_MAX;
 }
 Ref split_m(Obj self, Args a) {
@@ -692,7 +694,10 @@ Ref fromhex_m(Obj cls, Args a) {                  // _PyBytes_FromHex
         ++i;
         out += static_cast<char>(top * 16 + bottom);
     }
-    return cls == Obj::of(types().bytearray) ? new_bytearray(out) : bytes_new(out);
+    if (cls == Obj::of(types().bytearray)) return new_bytearray(out);
+    Ref made = bytes_new(out);
+    if (cls == Obj::of(types().bytes)) return made;
+    return invoke(cls, {made.get()});            // a subclass's: type(result), bytes for bytearray's too (RL-1037)
 }
 
 // ---- codecs ----
