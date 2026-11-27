@@ -149,11 +149,14 @@ class _Function:
 
 class Emitter:
     def __init__(self, module: G.Module, namespace: str, filename: str, prelude: bool = False, looks: bool = True,
-                 state: frozenset[str] = frozenset()) -> None:
+                 state: frozenset[str] = frozenset(), unseen: bool = False) -> None:
         self.module = module
         self.namespace = namespace
         self.filename = filename
         self.prelude = prelude                   # the prelude: C functions in CPython, no frames
+        # a module of the standard library compiled from CPython's Python version where CPython runs a C module (decimal,
+        # datetime): no frames either, and a warning its own text raises counts its frames as levels (rt::Code::quiet)
+        self.unseen = unseen
         # The prelude's units only: the names its classes declare as slots. A built-in type's C function reads a field of
         # its struct, which has no name (RL-507): an attribute of one of these names is that field where the object's type
         # keeps one, with no lookup and no hook of any class, and the attribute it ever was on any other object
@@ -325,8 +328,9 @@ class Emitter:
         # never enters a traceback (RL-223, RL-224); a function of CPython's import system in the bootstrap preludes has
         # CPython's frame, its file CPython's (Question 43, C-8-22)
         frame_file = str(dict(c.meta).get("frame_file", "") or "")
-        shown = "true" if frame_file else "false" if self.prelude or dict(c.meta).get("inlined", False) else "true"
-        inlined = "true" if dict(c.meta).get("inlined", False) and not self.prelude else "false"   # the prelude stands for C, which has none
+        shown = "true" if frame_file else "false" if self.prelude or self.unseen or dict(c.meta).get("inlined", False) else "true"
+        inlined = "true" if dict(c.meta).get("inlined", False) and not (self.prelude or self.unseen) else "false"   # the prelude stands for C, which has none
+        quiet = ", true" if self.unseen else ""
         def strings(ns: list[str]) -> str:
             return "{" + ", ".join(c_string(n) for n in ns) + "}"
         # where the frame keeps each of those names (what locals() reads): twice its place among the variables the frame guard
@@ -342,7 +346,7 @@ class Emitter:
         return (f"static const rt::Code {fn.cname}{{{c_string(c.name)}, {c_string(c.qualname)}, {c_string(frame_file or self.filename)}, "
                 f"{c.first_line}, {len(positional)}, {posonly}, {len(kwonly)}, {str(varargs).lower()}, "
                 f"{str(varkw).lower()}, {strings(names)}, {doc}, {shown}, {strings(cellvars)}, {strings(freevars)}, {flags}, {inlined}, "
-                f"{{{', '.join(map(str, slots))}}}}};")
+                f"{{{', '.join(map(str, slots))}}}{quiet}}};")
 
     @staticmethod
     def param_order(c: G.Code) -> list[G.Param]:
@@ -362,7 +366,7 @@ class Emitter:
         self.flat = False
         # PEP 709: an inlined comprehension runs in its enclosing frame, so its lines are that frame's (a warning's stacklevel, a
         # traceback through the enclosing call); its own record is not on the frame chain (review G15 #2)
-        self.inlined = bool(dict(c.meta).get("inlined", False)) and not self.prelude
+        self.inlined = bool(dict(c.meta).get("inlined", False)) and not (self.prelude or self.unseen)
         params = [p.name for p in self.param_order(c)]
         frame_locals = [*c.varnames, *(n for n in c.cellvars if n not in c.varnames), *c.freevars]
         self.vars = {n: cpp_name(n) for n in frame_locals}
@@ -1306,5 +1310,5 @@ def _returns_through_finally(body: tuple[G.Stmt, ...], in_finally: bool = False)
 
 
 def emit_module(module: G.Module, namespace: str, filename: str, prelude: bool = False, looks: bool = True,
-                state: frozenset[str] = frozenset()) -> str:
-    return Emitter(module, namespace, filename, prelude, looks, state).emit()
+                state: frozenset[str] = frozenset(), unseen: bool = False) -> str:
+    return Emitter(module, namespace, filename, prelude, looks, state, unseen).emit()

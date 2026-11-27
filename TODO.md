@@ -749,7 +749,8 @@ author has seen the measurement. In this order:
   RL-990, RL-1071, RL-1072); Question 37 and D-03 (RL-972 to RL-978); Questions 35 and 41 (RL-966, RL-967, RL-998 to
   RL-1001); Question 45 and E-05 (RL-1015 to RL-1018); Questions 33 and 34 (RL-958 to RL-964); Question 40 (RL-991 to
   RL-997); Question 47 and D-33 (RL-1024 to RL-1031, RL-1065 to RL-1069); ~~what D-17 says of frames CPython enters with no check of the limit~~ (Question 49, answered A on 2026-11-26:
-  registered, spec v0.44; RL-980); the entries `decimal` and `datetime` take as Python modules (RL-983).
+  registered, spec v0.44; RL-980); ~~the entries `decimal` and `datetime` take as Python modules~~ (Question 50, answered B on 2026-11-26: their
+  frames are none a program sees, D-20 lists the rest, spec v0.45; RL-983).
 * **A str subclass with methods of its own as a name** (RL-1099, with RL-954 and RL-955): put RL-954's question first, as
   one decision for the class wherever the runtime takes a name, with a count of use, before RL-955's sweep.
 * **The other defects**, each with a sweep of its class kept as a test: RL-1037 (`fromhex` on a subclass), RL-1043 (a class

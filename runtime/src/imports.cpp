@@ -1325,7 +1325,7 @@ Obj warning_function(bool explicitly) {
 }
 void fill_warnings(Module* m) {
     fill_in_python(m, "_warnings", "_warnings", prelude_warnings::module_body,
-                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame},
+                   {{"_bella_refuse", i_bella_refuse}, {"_tp_name", i_tp_name}, {"_number_index", i_number_index}, {"_frame", i_warnings_frame}, {"_quiet_callers", i_warnings_quiet_callers},
                     {"_bella_shutting_down", i_bella_shutting_down}, {"_bella_import_if_held", i_bella_import_if_held},
                     {"_find_source_encoding", i_find_source_encoding}, {"_fd_seek", i_fd_seek}, {"_bella_holds", i_bella_holds}});
     warning_hooks().warn = Ref::share(dict_get(m->dict, Obj::of(N("warn"))));

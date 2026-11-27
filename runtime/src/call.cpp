@@ -2838,6 +2838,26 @@ void detail::enter_frame() {
 }
 void detail::leave_frame() noexcept { --recursion_depth(); }
 void detail::enter_hidden_frame() { check_native_stack(" while calling a Python object"); }
+// The frames of quiet code that are running, innermost last. Such a module's own text warns with a stack level that counts
+// its frames (`warnings.warn(..., stacklevel=2)` in datetime.utcnow, where CPython's C says 1): the warning takes them off
+namespace {
+std::vector<const detail::FrameRecord*>& quiet_frames() {
+    static std::vector<const detail::FrameRecord*> running;
+    return running;
+}
+}
+void detail::enter_quiet_frame(const FrameRecord* f) { quiet_frames().push_back(f); }
+void detail::leave_quiet_frame() noexcept { quiet_frames().pop_back(); }
+// _quiet_callers() for the _warnings prelude: how many frames of quiet code the warning was raised under with no frame of
+// the program's between, which are the levels such a module's text counts for itself and CPython's C does not have
+Ref i_warnings_quiet_callers(Obj, Args a) {
+    positional_only(a, "_quiet_callers", 0, 0);
+    const detail::FrameRecord* f = detail::current_frame();
+    while (f != nullptr && !f->code->shown) f = f->caller;
+    std::int64_t n = 0;
+    for (auto it = quiet_frames().rbegin(); it != quiet_frames().rend() && (*it)->caller == f; ++it) ++n;
+    return Ref::steal(Obj::small(n));
+}
 detail::FrameRecord*& detail::current_frame() {
     static FrameRecord* f = nullptr;
     return f;

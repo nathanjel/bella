@@ -126,8 +126,10 @@ NATIVE_IN_PYTHON = [ROOT / "runtime" / "prelude" / "itertools.py", ROOT / "runti
 # and match's MATCH_* instructions, which eval1 and eval2 run too (runtime/src/call.cpp, load_match)
 RUNTIME_PYTHON = [ROOT / "pipeline" / "staging" / "annotate_rt.py", ROOT / "runtime" / "prelude" / "match.py"]
 # standard-library modules that stand for a C accelerator CPython has and the closure omits (manifest.toml [adaptations],
-# decimal and datetime): CPython's C looks for signals nowhere in them, so their units have no looks (pipeline/backend/cpp.py)
-LOOK_FREE = frozenset({"_pydecimal", "_pydatetime"})
+# decimal and datetime): CPython's C looks for signals nowhere in them, so their units have no looks, and its C functions
+# have no frames, so theirs are none a program sees: not in a traceback, not counted by the recursion limit (the author's
+# decision of 2026-11-26, Question 50; pipeline/backend/cpp.py)
+STAND_FOR_C = frozenset({"_pydecimal", "_pydatetime"})
 CXX = os.environ.get("CXX", "g++")
 STD = os.environ.get("CXXSTD", "c++26")
 # -ffp-contract=off: a*b + c is two operations with two roundings, as the reference computes it. A compiler that
@@ -186,7 +188,7 @@ def prelude_state() -> frozenset[str]:
 
 def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mode: str = "exec",
            future: frozenset[str] = frozenset(), looks: bool = True, tree: ast.Module | None = None,
-           frames: dict[str, dict[str, typing.Any]] | None = None) -> str:
+           frames: dict[str, dict[str, typing.Any]] | None = None, unseen: bool = False) -> str:
     # the passes walk the tree by recursion, and a chain of operators, calls or elif branches is as deep as it is long: the
     # limit eval1's run has (pipeline/l1/run.py), and past it a refusal by name, not a traceback (review F17 #14)
     limit = sys.getrecursionlimit()
@@ -194,7 +196,7 @@ def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mo
     try:
         module: G.Module = lifetimes(to_l2(lower(source, filename, mode=mode, inherit_future=future, tree=tree, frames=frames)))
         wf2.check(module, lifetimes=True)
-        return emit_module(module, namespace, filename, prelude, looks, prelude_state() if prelude else frozenset())
+        return emit_module(module, namespace, filename, prelude, looks, prelude_state() if prelude else frozenset(), unseen)
     except RecursionError:
         raise Unsupported(f"{filename}: a chain of operators, calls or branches too long for the compiler's passes") from None
     finally:
@@ -202,16 +204,16 @@ def to_cpp(source: str, filename: str, namespace: str, prelude: bool = False, mo
 
 
 def lowered_unit(source: str, filename: str, namespace: str, mode: str = "exec", future: frozenset[str] = frozenset(),
-                 looks: bool = True) -> str:
+                 looks: bool = True, unseen: bool = False) -> str:
     """to_cpp, kept under build/compiled/lowered by what decides its text: a closure's modules are
     the same for every program that imports them, and lowering them takes seconds each time. The
     compiler's macros are part of it: they decide which names the emitter escapes."""
     key = _key(source.encode(), filename.encode(), namespace.encode(), mode.encode(), " ".join(sorted(future)).encode(), *_pipeline_bytes(),
-               " ".join(sorted(header_macros())).encode(), b"looks" if looks else b"no looks")
+               " ".join(sorted(header_macros())).encode(), b"looks" if looks else b"no looks", b"unseen" if unseen else b"seen")
     kept = BUILD / "lowered" / f"{namespace.replace('::', '_')}-{key}.cpp"
     if kept.exists():
         return kept.read_text(encoding="utf-8")
-    text = to_cpp(source, filename, namespace, mode=mode, future=future, looks=looks)
+    text = to_cpp(source, filename, namespace, mode=mode, future=future, looks=looks, unseen=unseen)
     kept.parent.mkdir(parents=True, exist_ok=True)
     tmp = kept.with_name(kept.name + f".{os.getpid()}.tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -859,7 +861,7 @@ def _build(program: Path, filename: str, cxx: str, std: str, keep: Path | None, 
             shown = f"<frozen {m.name}>" if m.frozen else str(m.origin or m.path)
             library = m.frozen or m.origin is not None or m.path.is_relative_to(STDLIB)
             source = read_source(m.path)
-            units.append((lowered_unit(source, shown, namespace_of(m.name), looks=m.name not in LOOK_FREE), m.name,
+            units.append((lowered_unit(source, shown, namespace_of(m.name), looks=m.name not in STAND_FOR_C, unseen=m.name in STAND_FOR_C), m.name,
                           LIBRARY_FLAGS if library else PROGRAM_FLAGS))
             entry_points(source, shown, namespace_of(m.name), m.name, LIBRARY_FLAGS if library else PROGRAM_FLAGS)
     said: list[str] = []

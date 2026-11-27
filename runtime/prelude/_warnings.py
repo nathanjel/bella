@@ -18,6 +18,7 @@ try:
     _tp_name                                     # noqa: B018  # Py_TYPE(o)->tp_name
     _number_index                                # noqa: B018  # PyNumber_Index
     _frame                                       # noqa: B018  # the frame n callers above the one calling into this module: (globals, filename, lineno), or None
+    _quiet_callers                               # noqa: B018  # the frames of a Python module that stands for a C module, with no frame of the program's between them and here
     _unpack_keywords                             # noqa: B018  # _PyArg_UnpackKeywords
     _bella_shutting_down                         # noqa: B018  # _Py_IsInterpreterFinalizing
     _bella_import_if_held                        # noqa: B018  # (importer, name): importer(name), where a module of that name the program does not hold is not found
@@ -42,6 +43,9 @@ except NameError:
         return type(o).__name__
 
     _number_index: Callable[[object], int] = operator.index
+
+    def _quiet_callers() -> int:
+        return 0
 
     def _unpack_keywords(fname: str, names: tuple[str, ...], posonly: int, minpos: int, maxpos: int, minkw: int, args: tuple[object, ...],
                          kwds: dict[str, object], absent: object) -> list[object]:
@@ -628,6 +632,12 @@ def warn(*args: object, **kwds: object) -> None:
             raise OverflowError("Python int too large to convert to C ssize_t")
     if source is _ABSENT:
         source = None
+    # decimal and datetime are CPython's Python versions here, and such a module's own text counts its frames as levels
+    # (`stacklevel=2` in datetime.utcnow, where the C module warns at level 1): its frames are none a program sees, so the
+    # levels it counts for them are taken off (Question 50)
+    quiet = _quiet_callers()
+    if quiet and level > 1:
+        level = max(1, level - quiet)
     prefixes: tuple[object, ...] | None
     if skip_file_prefixes is _ABSENT:
         prefixes = None

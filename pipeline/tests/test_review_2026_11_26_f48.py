@@ -21,6 +21,15 @@ And one registered difference is held as D-17 words it (the author's decision of
   under CPython and raise RecursionError compiled (`REGISTERED`); at 900 both end, and a recursive generator, the lazy
   sieve and a decorated recursion raise on both sides at 1,200.
 
+And one decision's step (the author's, 2026-11-26, Question 50: B; RL-983):
+
+* `decimal` and `datetime` are CPython's Python versions here, and the frames of their functions are none a program sees, as
+  CPython's C modules have none (`cmodules`, 60 rows): 33 operations that raise, each with the entries of its traceback; an
+  uncaught one; 13 ways the two modules call the program back (a tzinfo's methods, a Rational's numerator), with the stack
+  there and a warning charged two levels up; a recursion that ends in an operation, counted; the two deprecation warnings
+  of `datetime`, charged to the caller's line. What stays the Python version's is registered (D-20): what a signal of
+  `decimal` carries, and a rounding mode's name that is not checked.
+
 A row of `STOPS` must stop with its words, a row of `OPEN` must differ, and a row of `REGISTERED` must give what its entry
 says: one that comes to agree with CPython is to leave its table.
 
@@ -50,7 +59,18 @@ STOPS: dict[tuple[str, tuple[str, ...]], str] = {
 }
 # rows that differ as a registered deviation says: what the compiled program prints there
 REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
-    ("unchecked", (shape, "1200")): ("D-17", "RecursionError\n") for shape in ("yield from", "for", "*args", "**kwargs", "bound method")
+    **{("unchecked", (shape, "1200")): ("D-17", "RecursionError\n") for shape in ("yield from", "for", "*args", "**kwargs", "bound method")},
+    # decimal is CPython's _pydecimal: its signals carry a text where the C module's carry the conditions, and it takes a
+    # rounding mode's name unchecked
+    ("cmodules", ("frames", "16")): ("D-20", "Decimal(1).to_integral_value(rounding='up') -> no error: Decimal\n"),
+    ("cmodules", ("args", "0")): ("D-20", "Decimal('x') -> InvalidOperation (\"Invalid literal for Decimal: 'x'\",)\n"),
+    ("cmodules", ("args", "1")): ("D-20", "Decimal(1) / Decimal(0) -> DivisionByZero ('x / 0',)\n"),
+    ("cmodules", ("args", "2")): ("D-20", "Decimal(0) / Decimal(0) -> InvalidOperation ('0 / 0',)\n"),
+    ("cmodules", ("args", "3")): ("D-20", "Decimal(-1).sqrt() -> InvalidOperation ('sqrt(-x), x > 0',)\n"),
+    ("cmodules", ("args", "6")): ("D-20", "Decimal('1e999999999') * 10 -> Overflow ('above Emax',)\n"),
+    ("cmodules", ("args", "7")): ("D-20", "Decimal('NaN') < 1 -> InvalidOperation ('comparison involving NaN',)\n"),
+    ("cmodules", ("args", "12")): ("D-20", "Decimal(1).quantize(Decimal('1e-400'), context) -> InvalidOperation "
+                                           "('quantize result has too many digits for current context',)\n"),
 }
 # rows that differ until the author has decided (Question 48)
 OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset({

@@ -424,7 +424,7 @@ def _bootstrap(find: Any) -> Any:
     primitives stood in for: what the compiled runtime gives it, for the spec it builds."""
     source = (PRELUDE / "bootstrap.py").read_text(encoding="utf-8")
     module = types.ModuleType("_frozen_importlib")
-    module.__dict__.update(_bella_find=find, _bella_is_builtin=lambda name: False, _bella_refuse=None, _bella_exec=None,
+    module.__dict__.update(_bella_find=find, _bella_is_builtin=lambda name, who=None: False, _bella_refuse=None, _bella_exec=None,
                            _bella_create_builtin=None, _bella_import_warning=None, _bella_set_lazy_attributes=None,
                            _bella_shutting_down=lambda: False, _bella_ga_get=object.__getattribute__, _bella_state_set=object.__setattr__,
                            _own_data=lambda value: value, _repr_text=lambda value: str.__str__(repr(value)),   # the text a C format takes

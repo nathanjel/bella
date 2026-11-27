@@ -182,6 +182,9 @@ struct Code {
     // a cell of the compiled frame and a fast local of CPython's); -1 for a name the compiled function has no variable
     // for (it is never bound). What locals() is made from.
     std::vector<int> frame_slots;
+    // a function of a module compiled from CPython's Python version where CPython runs a C module (_pydecimal, _pydatetime):
+    // not shown, and the levels its own text counts for its frames when it warns are none here (Question 50)
+    bool quiet = false;
     mutable bool module_rebound = false;         // a function of this code had its __module__ rebound: a frame's name is no longer its globals'
     mutable Ref object;                          // its code object, made at the first f.__code__ (one per record: equality is identity)
 };
@@ -456,6 +459,7 @@ Ref i_dict_next_hashed(Obj, Args a);            // _PyDict_Next and _PyDict_SetI
 Ref i_dict_set_hashed(Obj, Args a);
 Ref i_number_index(Obj, Args a);
 Ref i_warnings_frame(Obj, Args a);
+Ref i_warnings_quiet_callers(Obj, Args a);
 Ref frame_locals(const char* asked);              // runtime/src/call.cpp: the calling frame's locals, for locals(), vars() and dir()
 Ref i_find_source_encoding(Obj, Args a);          // runtime/src/tokenizer.cpp: (fd, filename, io) -> (the encoding or None, an error left behind)
 std::uint64_t keyed_hash(std::uint64_t key, const unsigned char* src, std::size_t len);   // _Py_KeyedHash: siphash13 with the key and 0 (core.cpp)
@@ -772,6 +776,9 @@ void clear_frame_values(FrameObject* f) noexcept;   // frame_tp_clear: the value
 void enter_frame();                             // RecursionError past the limit (spec D-17), and where the native stack is nearly used
 void leave_frame() noexcept;
 void enter_hidden_frame();                       // a frame CPython does not have: the look at the native stack, and no count (RL-632)
+struct FrameRecord;
+void enter_quiet_frame(const FrameRecord* f);    // a quiet code's frame, for the warning its text raises (Code::quiet)
+void leave_quiet_frame() noexcept;
 // A generator's frame lives across its resumes, where each resume has a record of its own: what the records hand on, as
 // CPython's generator keeps its one frame (its id, which its traceback entries name, and its frame object)
 struct ResumedFrame {
@@ -820,6 +827,7 @@ public:
         } else {
             detail::enter_hidden_frame();
             if (c.inlined && caller != nullptr) ++caller->comprehensions;
+            if (c.quiet) detail::enter_quiet_frame(this);
         }
     }
     void arrived(PyError& e) noexcept { detail::arrive(*this, e); }
@@ -832,6 +840,7 @@ public:
     }
     ~FrameGuard() {
         if (code->shown) detail::leave_frame();
+        else if (code->quiet) detail::leave_quiet_frame();
         detail::current_frame() = caller;
         if (!code->shown && code->inlined && caller != nullptr) --caller->comprehensions;
         const bool unwinding = std::uncaught_exceptions() > uncaught_;

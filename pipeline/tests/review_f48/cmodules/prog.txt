@@ -1,0 +1,224 @@
+"""Review F48 (RL-983; Question 50: B): `decimal` and `datetime` are CPython's Python versions here, and their functions'
+frames are no frames a program sees, as CPython's C modules have none. A row a process.
+
+frames N      the Nth operation that raises: the exception's type and the entries of its traceback
+uncaught      a traceback through `datetime` on standard error
+callback N    the Nth way the two modules call the program back: the stack there, and a warning charged two levels up
+depth KIND    a recursion that ends in an operation, counted at the RecursionError under limits of 60 and 150
+warning N     the two deprecation warnings of `datetime`: the file and line each is charged to
+args N        what a signal of `decimal` carries: registered (D-20), the Python version's text for the C module's list
+"""
+import datetime
+import decimal
+import numbers
+import os
+import sys
+import traceback
+import warnings
+from collections.abc import Callable
+from decimal import Decimal
+
+ROW = sys.argv[1]
+N = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 0
+
+
+def set_prec(value: int) -> None:
+    decimal.getcontext().prec = value
+
+
+RAISES: list[tuple[str, Callable[[], object]]] = [
+    ("Decimal('x')", lambda: Decimal("x")),
+    ("Decimal(1) / Decimal(0)", lambda: Decimal(1) / Decimal(0)),
+    ("Decimal(0) / Decimal(0)", lambda: Decimal(0) / Decimal(0)),
+    ("Decimal(-1).sqrt()", lambda: Decimal(-1).sqrt()),
+    ("Decimal(1) + 1.5", lambda: Decimal(1) + 1.5),  # type: ignore[operator]
+    ("the context's prec = 0", lambda: set_prec(0)),
+    ("Decimal('1e999999999') * 10", lambda: Decimal("1e999999999") * 10),
+    ("Decimal('NaN') < 1", lambda: Decimal("NaN") < 1),
+    ("int(Decimal('NaN'))", lambda: int(Decimal("NaN"))),
+    ("int(Decimal('Infinity'))", lambda: int(Decimal("Infinity"))),
+    ("hash(Decimal('sNaN'))", lambda: hash(Decimal("sNaN"))),
+    ("format(Decimal(1), 'q')", lambda: format(Decimal(1), "q")),
+    ("Decimal(1).quantize(Decimal('1e-400'), context)", lambda: Decimal(1).quantize(Decimal("1e-400"), context=decimal.Context(prec=3))),
+    ("Decimal.from_float('x')", lambda: Decimal.from_float("x")),  # type: ignore[arg-type]
+    ("Decimal((0, (1, 2), 'x'))", lambda: Decimal((0, (1, 2), "x"))),  # type: ignore[arg-type]
+    ("Context(prec=-1)", lambda: decimal.Context(prec=-1)),
+    ("Decimal(1).to_integral_value(rounding='up')", lambda: Decimal(1).to_integral_value(rounding="up")),
+    ("date(2026, 2, 30)", lambda: datetime.date(2026, 2, 30)),
+    ("datetime(2026, 1, 1, 25)", lambda: datetime.datetime(2026, 1, 1, 25)),
+    ("date.fromisoformat('x')", lambda: datetime.date.fromisoformat("x")),
+    ("timedelta(days=10**10)", lambda: datetime.timedelta(days=10**10)),
+    ("date(2026, 1, 1) + 5", lambda: datetime.date(2026, 1, 1) + 5),  # type: ignore[operator]
+    ("time(24)", lambda: datetime.time(24)),
+    ("datetime.strptime('x', '%Y')", lambda: datetime.datetime.strptime("x", "%Y")),
+    ("date.fromordinal(0)", lambda: datetime.date.fromordinal(0)),
+    ("date(2026, 1, 1).replace(year=0)", lambda: datetime.date(2026, 1, 1).replace(year=0)),
+    ("timezone(timedelta(days=2))", lambda: datetime.timezone(datetime.timedelta(days=2))),
+    ("date.max + timedelta(days=1)", lambda: datetime.date.max + datetime.timedelta(days=1)),
+    ("time.fromisoformat('25')", lambda: datetime.time.fromisoformat("25")),
+    ("datetime(2026, 1, 1).strftime(5)", lambda: datetime.datetime(2026, 1, 1).strftime(5)),  # type: ignore[arg-type]
+    ("date.fromisocalendar(2026, 60, 1)", lambda: datetime.date.fromisocalendar(2026, 60, 1)),
+    ("datetime.now(tz=5)", lambda: datetime.datetime.now(tz=5)),  # type: ignore[arg-type]
+    ("an aware datetime < a naive one", lambda: datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC) < datetime.datetime(2026, 1, 1)),
+]
+
+
+def where() -> list[str]:
+    return [entry.name for entry in traceback.extract_stack()[:-1]]
+
+
+class Zone(datetime.tzinfo):
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+
+    def utcoffset(self, when: datetime.datetime | None) -> datetime.timedelta:
+        print("utcoffset from", where())
+        warnings.warn("charged two levels up", UserWarning, stacklevel=2)
+        if self.fail:
+            raise LookupError("no offset")
+        return datetime.timedelta(hours=1)
+
+    def dst(self, when: datetime.datetime | None) -> datetime.timedelta:
+        print("dst from", where())
+        return datetime.timedelta(0)
+
+    def tzname(self, when: datetime.datetime | None) -> str:
+        print("tzname from", where())
+        return "ZONE"
+
+
+class Ratio:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+
+    @property
+    def numerator(self) -> int:
+        print("numerator from", where())
+        if self.fail:
+            raise LookupError("no numerator")
+        return 1
+
+    @property
+    def denominator(self) -> int:
+        return 2
+
+
+numbers.Rational.register(Ratio)
+AWARE = datetime.datetime(2026, 1, 1, tzinfo=Zone())
+BROKEN = datetime.datetime(2026, 1, 1, tzinfo=Zone(fail=True))
+
+CALLS: list[tuple[str, Callable[[], object]]] = [
+    ("str(aware)", lambda: str(AWARE)),
+    ("aware.utcoffset()", lambda: AWARE.utcoffset()),
+    ("aware.isoformat()", lambda: AWARE.isoformat()),
+    ("aware.strftime('%Z %z')", lambda: AWARE.strftime("%Z %z")),
+    ("aware.timetuple()", lambda: AWARE.timetuple().tm_isdst),
+    ("aware - aware", lambda: AWARE - AWARE),
+    ("aware == aware", lambda: AWARE == datetime.datetime(2026, 1, 1, tzinfo=Zone())),
+    ("hash(aware)", lambda: hash(AWARE) == hash(AWARE)),
+    ("aware.astimezone(UTC)", lambda: AWARE.astimezone(datetime.UTC).hour),
+    ("str(broken)", lambda: str(BROKEN)),
+    ("Decimal(1) == Ratio()", lambda: Decimal(1) == Ratio()),
+    ("Decimal(1) < Ratio()", lambda: Decimal(1) < Ratio()),
+    ("Decimal(1) < Ratio(fail)", lambda: Decimal(1) < Ratio(fail=True)),
+]
+
+n = 0
+
+
+def deep_decimal(x: Decimal) -> Decimal:
+    global n
+    n += 1
+    return deep_decimal(x) if n < 10_000 else x
+
+
+def run_depth(kind: str) -> None:
+    global n
+    reached = []
+    for limit in (60, 150):
+        sys.setrecursionlimit(limit)
+        n = 0
+        try:
+            if kind == "decimal":
+                go_decimal(Decimal(3))
+            elif kind == "date":
+                go_date(datetime.date(2026, 1, 1))
+            else:
+                go_aware()
+        except RecursionError:
+            reached.append(n)
+    sys.setrecursionlimit(1000)
+    print(kind, reached)
+
+
+def go_decimal(x: Decimal) -> Decimal:
+    global n
+    n += 1
+    x * 2 + x / 3
+    return go_decimal(x)
+
+
+def go_date(d: datetime.date) -> datetime.date:
+    global n
+    n += 1
+    (d + datetime.timedelta(days=1)).isoformat()
+    return go_date(d)
+
+
+class Quiet(datetime.tzinfo):
+    def utcoffset(self, when: datetime.datetime | None) -> datetime.timedelta:
+        return go_aware()
+
+    def dst(self, when: datetime.datetime | None) -> datetime.timedelta:
+        return datetime.timedelta(0)
+
+
+def go_aware() -> datetime.timedelta:
+    global n
+    n += 1
+    return datetime.datetime(2026, 1, 1, tzinfo=Quiet()).utcoffset() or datetime.timedelta(0)
+
+
+def show(error: BaseException) -> list[tuple[str, str]]:
+    return [(os.path.basename(e.filename), e.name) for e in traceback.extract_tb(error.__traceback__)]
+
+
+if ROW == "count":
+    print(len(RAISES), len(CALLS))
+elif ROW == "frames":
+    label, call = RAISES[N]
+    try:
+        print(label, "-> no error:", type(call()).__name__)
+    except Exception as error:
+        print(label, "->", type(error).__name__, show(error))
+elif ROW == "uncaught":
+    datetime.date(2026, 2, 30)
+elif ROW == "callback":
+    label, call = CALLS[N]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        try:
+            print(label, "->", call())
+        except LookupError as error:
+            print(label, "-> LookupError", show(error))
+    print([(os.path.basename(w.filename), w.lineno) for w in caught])
+elif ROW == "depth":
+    run_depth(sys.argv[2])
+elif ROW == "warning":
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        if N == 0:
+            datetime.datetime.utcnow()
+        else:
+            datetime.datetime.utcfromtimestamp(0)
+    print([(os.path.basename(w.filename), w.lineno, w.category.__name__) for w in caught])
+elif ROW == "shown":
+    datetime.datetime.utcnow()
+elif ROW == "args":
+    label, call = RAISES[N]
+    try:
+        call()
+    except decimal.DecimalException as error:
+        print(label, "->", type(error).__name__, error.args)
+else:
+    raise SystemExit("no such row: " + ROW)
