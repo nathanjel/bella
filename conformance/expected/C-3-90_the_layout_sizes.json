@@ -1,0 +1,12 @@
+{
+ "case": "C-3-90_the_layout_sizes.py",
+ "clause": "C-3-90",
+ "spec": "section 3",
+ "status": "P1",
+ "source": "the author's decision of 2026-11-28 (Question 67): type.__basicsize__ and __itemsize__ as CPython's; RL-592",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "object 16 0\nint 24 4\nbool 24 4\nfloat 24 0\ncomplex 32 0\nstr 64 0\nbytes 33 1\nbytearray 64 0\ntuple 32 8\nlist 40 0\ndict 48 0\nset 200 0\nfrozenset 200 0\ntype 944 40\nBaseException 72 0\nException 72 0\nKeyError 72 0\nOSError 112 0\nproperty 64 0\nstaticmethod 32 0\nclassmethod 32 0\nrange 48 0\nslice 40 0\nenumerate 56 0\nzip 48 0\npartial 80 0\ndeque 216 0\nOrderedDict 112 0\nchain 32 0\nBytesIO 64 0\nStringIO 120 0\nReferenceType 64 0\nPlain 16 0\nSlotted 32 0\nSlotsDict 24 0\nSlotsWeak 24 0\nEmptySlots 16 0\nMoreSlots 40 0\nNoSlots 32 0\nIntSub 24 4\nIntNoSlots 24 4\nTupleSub 32 8\nBytesSub 33 1\nStrSub 64 0\nExcSub 72 0\nExcSlots 80 0\nDictSub 48 0\nListSub 40 0\nPropertySub 64 0\nAccounted {'__doc__': None}\nShort TypeError\nPropertySub TypeError\n",
+ "stderr": "",
+ "exit_code": 0
+}

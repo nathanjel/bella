@@ -220,9 +220,7 @@ traceback:__dir__
 traceback:__new__
 traceback:tb_frame
 traceback:tb_lasti
-type:__basicsize__
 type:__getattribute__
-type:__itemsize__
 type:__sizeof__
 type:__text_signature__
 type:__type_params__

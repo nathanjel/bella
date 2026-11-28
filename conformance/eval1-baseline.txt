@@ -64,6 +64,7 @@ C-3-77_the_members_a_built_in_type_shows.py
 C-3-78_a_slot_a_class_declares_again.py
 C-3-79_the_order_of_a_displays_stores.py
 C-3-80_the_order_of_a_patterns_stores.py
+C-3-90_the_layout_sizes.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

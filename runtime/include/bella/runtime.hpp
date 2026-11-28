@@ -507,8 +507,8 @@ void fill_posix(Module* m);                       // and runtime/prelude/posix.p
 Ref i_posix_sys(Obj, Args a);                     // posix.py's: its system calls, by name
 Ref i_structseq(Obj, Args a);                     // a prelude module's: bootstrap.py's _bella_structseq
 Ref i_bella_structseq_finish(Obj, Args a);        // bootstrap.py's: makes a type of named tuples look as C makes it
-Ref i_bella_pickle_layout(Obj, Args a);           // bootstrap.py's, for object.__reduce_ex__ and __getstate__: what a type's C fields say
-Ref i_bella_slot_cells(Obj, Args a);              // and how many slots its objects have room for
+Ref i_bella_type_itemsize(Obj, Args a);           // bootstrap.py's, for object.__reduce_ex__ and __getstate__: tp_itemsize
+Ref i_bella_pickle_short(Obj, Args a);            // and whether tp_basicsize is more than the dict, weak list and names account for
 Ref i_bella_no_tp_new(Obj, Args a);
 Ref i_bella_tp_name_of(Obj, Args a);
 Ref i_bella_instance_dict(Obj, Args a);

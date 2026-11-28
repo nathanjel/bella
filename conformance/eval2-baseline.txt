@@ -70,6 +70,7 @@ C-3-79_the_order_of_a_displays_stores.py
 C-3-80_the_order_of_a_patterns_stores.py
 C-3-81_a_generator_expressions_iterable.py
 C-3-82_when_a_class_dies.py
+C-3-90_the_layout_sizes.py
 C-6-01_int_exactness.py
 C-6-02_float_int_exact_comparison.py
 C-6-03_container_order.py

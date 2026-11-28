@@ -71,7 +71,7 @@ REFUSED = {
     "an attribute of sys": "import sys\nsys.getallocatedblocks",
     "an object method": "class C:\n    pass\nC().__sizeof__()",
     "before __getattr__": "class H:\n    def __getattr__(self, n):\n        print('hook', n)\nH().__sizeof__()",
-    "a member of type": "class C:\n    pass\nC.__basicsize__",
+    "a member of type": "class C:\n    pass\nC.__text_signature__",   # __basicsize__ is CPython's since Question 67
 }
 
 

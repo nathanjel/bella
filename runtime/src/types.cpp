@@ -399,8 +399,18 @@ bool meta_descriptor_store(ClassObject* cls, const Str* name, Obj value) {
     if (meta_attr.is_unset()) return false;
     if (is_kind(meta_attr, Kind::GetSet)) {
         auto* g = static_cast<GetSet*>(meta_attr.object());
-        if (g->set == nullptr || (value.is_unset() && !g->deletable))
+        if (g->set == nullptr || (value.is_unset() && !g->deletable)) {
+            // a member (PyMemberDef) says "readonly attribute", where the runtime has it as a member or CPython's type has it
+            // as one (__base__), as the instance path's not_writable does; a getset with no setter "not writable" (RL-1104)
+            bool member = g->cls == types().member_descriptor;
+            for (const ClassObject* c : meta->mro)
+                if (std::string_view kind = cpython_attribute_kind(c, name->text); !member && !kind.empty()) {
+                    member = kind == "member_descriptor";
+                    break;
+                }
+            if (member) raise_new("AttributeError", "readonly attribute");
             raise_new("AttributeError", std::string("attribute '") + g->name + "' of 'type' objects is not writable");
+        }
         g->set(Obj::of(cls), value);
         return true;
     }
@@ -1895,6 +1905,29 @@ std::pair<std::int64_t, std::int64_t> type_offsets(ClassObject* c) {
     if (w == 0 && c->has_weakref && !cpython_has("itemsize", static_base(c)->name)) w = -32;
     return {d, w};
 }
+// how many slot cells a class's objects have: one for each declaration on its line of bases, a name a subclass declares
+// again and a name one __slots__ has twice included (RL-541, RL-567, RL-591); a managed dict and weak reference take none
+std::int64_t slot_cells(const ClassObject* c) {
+    std::size_t cells = c->slot_fields.size();
+    for (const auto& behind : c->shadowed) cells += behind.owner != nullptr;
+    for (const ClassObject* k : c->mro) cells += k->repeated_slots;
+    return static_cast<std::int64_t>(cells);
+}
+// type.__basicsize__ and __itemsize__ (tp_basicsize, tp_itemsize): CPython's numbers (Question 67). A C type's from the table;
+// a class's as type_new makes them: its C base's struct, a pointer more for each slot cell, and its base's item size
+std::pair<std::int64_t, std::int64_t> type_sizes(ClassObject* c) {
+    ClassObject* k = c;
+    while (!c_type(k)) k = tp_base(k);
+    auto text = cpython_type_text("sizes", k);
+    if (!text) throw NotImplemented("the __basicsize__ and __itemsize__ of '" + k->name + "' (CPython has it; the runtime does not yet)");
+    std::int64_t basic = 0, item = 0;
+    auto comma = text->find(',');
+    std::from_chars(text->data(), text->data() + comma, basic);
+    std::from_chars(text->data() + comma + 1, text->data() + text->size(), item);
+    return {k == c ? basic : basic + 8 * slot_cells(c), item};
+}
+Ref type_basicsize(Obj self) { return int_from_i64(type_sizes(self_class(self)).first); }
+Ref type_itemsize(Obj self) { return int_from_i64(type_sizes(self_class(self)).second); }
 Ref type_dictoffset(Obj self) { return int_from_i64(type_offsets(self_class(self)).first); }
 Ref type_weakrefoffset(Obj self) { return int_from_i64(type_offsets(self_class(self)).second); }
 }  // namespace
@@ -3430,19 +3463,23 @@ Ref i_structseq(Obj, Args a) { return invoke(dict_get(bootstrap_of_types()->dict
 // The methods of a C type the prelude writes in Python are what the names table says, as a built-in type's own are, so that
 // type(), repr(), binding and the receiver's check see one kind of thing; what runs is the prelude's function. The file's other
 // functions, which have no row, stay as they are: they are its own.
-Ref i_bella_pickle_layout(Obj, Args a) {         // _PyObject's itemsize and basicsize tests, by the first type written in C
-    positional_only(a, "_bella_pickle_layout", 1, 1);
-    ClassObject* c = as_class(a.pos(0));
-    while (!c_type(c) && !c->bases.empty()) c = tp_base(c);   // a subclass has its base's C fields (property's, staticmethod's)
-    return int_from_i64(cpython_has("itemsize", c->name) ? 2 : cpython_has("state", c->name) ? 1 : 0);
+Ref i_bella_type_itemsize(Obj, Args a) {         // object_getstate_default's first test: tp_itemsize
+    positional_only(a, "_bella_type_itemsize", 1, 1);
+    return int_from_i64(type_sizes(as_class(a.pos(0))).second);
 }
-Ref i_bella_slot_cells(Obj, Args a) {            // how many slots tp_basicsize has room for: one for each declaration (RL-541, RL-567)
-    positional_only(a, "_bella_slot_cells", 1, 1);
+// object_getstate_default's size test (Objects/typeobject.c:8008-8027): tp_basicsize past object's, a dict that is no managed
+// one, a weak list at an offset of its own and a pointer for each slot name (none for a slotnames of None, -1 here): a C type's
+// fields or slots the names do not account for, refused (Question 67, RL-592)
+Ref i_bella_pickle_short(Obj, Args a) {
+    positional_only(a, "_bella_pickle_short", 2, 2);
     ClassObject* c = as_class(a.pos(0));
-    std::size_t cells = c->slot_fields.size();
-    for (const auto& behind : c->shadowed) cells += behind.owner != nullptr;
-    for (const ClassObject* k : c->mro) cells += k->repeated_slots;   // a name one __slots__ has twice is two cells (RL-591)
-    return int_from_i64(static_cast<std::int64_t>(cells));
+    const std::int64_t names = index_value(a.pos(1));
+    std::int64_t accounted = type_sizes(types().object).first;
+    auto [d, w] = type_offsets(c);
+    if (d != 0 && d != -1) accounted += 8;       // tp_dictoffset without Py_TPFLAGS_MANAGED_DICT, which is -1
+    if (w > 0) accounted += 8;
+    if (names > 0) accounted += 8 * names;
+    return Ref::steal(boolean(type_sizes(c).first > accounted));
 }
 Ref i_bella_no_tp_new(Obj, Args a) {             // tp_new is NULL: a static type with object for its base and no __new__ of its own
     positional_only(a, "_bella_no_tp_new", 1, 1);
@@ -3824,7 +3861,8 @@ void init_types() {
     getset(t.type, "__bases__", type_bases, set_type_bases);
     getset(t.type, "__base__", type_base);
     for (auto [name, get] : std::initializer_list<std::pair<const char*, Ref (*)(Obj)>>{
-             {"__flags__", type_flags}, {"__dictoffset__", type_dictoffset}, {"__weakrefoffset__", type_weakrefoffset}}) {
+             {"__flags__", type_flags}, {"__dictoffset__", type_dictoffset}, {"__weakrefoffset__", type_weakrefoffset},
+             {"__basicsize__", type_basicsize}, {"__itemsize__", type_itemsize}}) {
         auto* g = new GetSet(name, t.type, get, nullptr);
         g->cls = t.member_descriptor;
         t.type->attrs.set(N(name), Obj::of(g));

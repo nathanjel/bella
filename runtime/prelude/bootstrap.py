@@ -2185,14 +2185,14 @@ def _get_slotnames(cls):                         # _PyType_GetSlotNames
 
 def _getstate_default(obj, required):            # object_getstate_default
     cls = type(obj)
-    layout = _bella_pickle_layout(cls)           # 2: tp_itemsize; 1: a C type's fields, which neither dict nor slots hold
-    if required and layout == 2:
+    itemsize = _bella_type_itemsize(cls)         # tp_itemsize
+    if required and itemsize:
         raise TypeError("cannot pickle " + _bella_tp_name_of(cls) + " objects")
     state = _bella_instance_dict(obj)
     slotnames = _get_slotnames(cls)
     # tp_basicsize against what the dict, the weak list and the names account for: a C type's own fields, or more slots
     # in the object than names (a class that sets __slotnames__ itself; copyreg's has a name for each declaration, RL-567)
-    if required and (layout == 1 or _bella_slot_cells(cls) > (list.__len__(slotnames) if slotnames is not None else 0)):
+    if required and _bella_pickle_short(cls, list.__len__(slotnames) if slotnames is not None else -1):
         raise TypeError("cannot pickle '" + _bella_tp_name_of(cls) + "' object")
     if slotnames is not None and list.__len__(slotnames) > 0:
         slots = {}

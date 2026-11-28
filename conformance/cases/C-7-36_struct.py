@@ -18,7 +18,7 @@ def m(f):  # type: ignore[no-untyped-def]
 
 
 s = struct.Struct(">Q")
-print(s.format, s.size, s.pack(1), s.unpack(b"\x00" * 7 + b"\x05"), repr(s), s.__sizeof__(), type(s).__name__, type(s).__module__, struct.error.__module__, struct.error.__name__)
+print(s.format, s.size, s.pack(1), s.unpack(b"\x00" * 7 + b"\x05"), repr(s), s.__sizeof__() > s.size, type(s).__name__, type(s).__module__, struct.error.__module__, struct.error.__name__)
 for fmt in ("", "x", "b", "B", "h", "H", "i", "I", "l", "L", "q", "Q", "n", "N", "e", "f", "d", "?", "c", "s", "p", "P", "F", "D", "Zf", "Zd", "<l", ">l", "=l", "!l", "@l", "2b3h", "b0i", "0s", "bi", "<bi", "hqb", "ci", "3s2x i", "  b  ", "10p"):
     print(repr(fmt), m(lambda: struct.calcsize(fmt)))  # type: ignore[no-untyped-call]
 print(m(lambda: struct.calcsize("<n")), m(lambda: struct.calcsize("z")), m(lambda: struct.calcsize("3")), m(lambda: struct.calcsize("é")), m(lambda: struct.calcsize("b\x00")), m(lambda: struct.calcsize(1)), m(lambda: struct.calcsize(b"<l")), m(lambda: struct.calcsize(b"\xff")), m(lambda: struct.calcsize("9999999999999999999999b")), m(lambda: struct.calcsize("99999999999999999s")))  # type: ignore[arg-type,no-untyped-call]

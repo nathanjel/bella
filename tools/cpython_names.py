@@ -25,6 +25,8 @@ exit 70). This tool records, from the pinned CPython, which names exist:
 * `flags:<name>`, `heapflags:<name>`: a type's tp_flags in the kind column, and those of a class that says nothing on it as its base;
 * `itemsize:<name>`, `state:<name>`: the built-in types with items in the object, and those with C fields past what object has, by
   which object.__getstate__ and __reduce_ex__ refuse what they could not bring back;
+* `sizes:<name>`: a type's tp_basicsize and tp_itemsize in the kind column, as "basicsize,itemsize": its `__basicsize__` and
+  `__itemsize__`, and the struct object_getstate_default compares with what the slot names account for (Question 67, RL-592);
 * `builtin_module:<name>`: `sys.builtin_module_names`, which the runtime gives as the pin's;
 * `final:<tp_name>`: the built-in types a class cannot derive from (no Py_TPFLAGS_BASETYPE);
 * `<type>:<name>`: each built-in type's own attributes (its `__dict__`), keyed by `__name__`, with
@@ -60,6 +62,7 @@ WEAKREF = set()
 FLAGS = {}
 HEAPFLAGS = {}
 OFFSETS = {}                                     # tp_dictoffset and tp_weaklistoffset, as "dictoffset,weakrefoffset"
+SIZES = {}                                       # tp_basicsize and tp_itemsize, as "basicsize,itemsize"
 ITEMSIZE = set()
 STATE = set()
 SOLID = set()                                    # a type with a C struct of its own: solid_base's shape_differs (typeobject.c), RL-599
@@ -123,6 +126,7 @@ def type_names():
                 WEAKREF.add(key)
             FLAGS[key] = str(t.__flags__)
             OFFSETS[key] = f"{t.__dictoffset__},{t.__weakrefoffset__}"
+            SIZES[key] = f"{t.__basicsize__},{t.__itemsize__}"
             if t.__flags__ & (1 << 10) and key not in HEAPFLAGS:   # what a class that says nothing has, on this base
                 try:
                     HEAPFLAGS[key] = str(type("Z", (t,), {}).__flags__)
@@ -292,7 +296,7 @@ def docs():
 SITE = sorted(n for n in dir(builtins) if type(getattr(builtins, n)).__module__ == "_sitebuiltins")
 assert SITE == ["copyright", "credits", "exit", "help", "license", "quit"], SITE
 print(json.dumps({"docs": docs(), "builtins": sorted(set(dir(builtins)) - set(SITE)), "globals": GLOBALS, "sys": sorted(dir(sys)),
-                  "types": type_names(), "member_docs": MEMBER_DOCS, "wrapper_docs": WRAPPER_DOCS, "method_docs": METHOD_DOCS, "final": sorted(FINAL), "solid": sorted(SOLID), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "generic_getattro": sorted(GENERIC_GETATTRO), "generic_setattro": sorted(GENERIC_SETATTRO), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
+                  "types": type_names(), "member_docs": MEMBER_DOCS, "wrapper_docs": WRAPPER_DOCS, "method_docs": METHOD_DOCS, "final": sorted(FINAL), "solid": sorted(SOLID), "weakref": sorted(WEAKREF), "flags": FLAGS, "heapflags": HEAPFLAGS, "sizes": SIZES, "offsets": OFFSETS, "itemsize": sorted(ITEMSIZE), "state": sorted(STATE), "shortname": sorted(SHORTNAME), "generic_getattro": sorted(GENERIC_GETATTRO), "generic_setattro": sorted(GENERIC_SETATTRO), "operators": operators(), "builtin_module": sorted(sys.builtin_module_names), "stdlib": sorted(sys.stdlib_module_names),
                   "modules": native_modules(sys.argv[1:]), "bootstrap_classes": bootstrap_classes()}))
 '''
 
@@ -315,7 +319,7 @@ def record() -> tuple[str, list[tuple[str, str]], list[tuple[str, str]], list[tu
     names = {(f"{scope}:{n}", "") for scope in ("builtins", "globals", "sys", "stdlib", "final", "solid", "weakref", "itemsize", "state", "shortname", "generic_getattro", "generic_setattro", "builtin_module") for n in data[scope]}
     names |= {(f"{t}:{n}", kind) for t, ns in data["types"].items() for n, kind in ns.items()}
     names |= {(key, "") for key in data["operators"]}
-    names |= {(f"{scope}:{t}", value) for scope in ("flags", "heapflags", "offsets") for t, value in data[scope].items()}
+    names |= {(f"{scope}:{t}", value) for scope in ("flags", "heapflags", "offsets", "sizes") for t, value in data[scope].items()}
     names |= {(f"{module}:{n}", "") for module, ns in data["modules"].items() for n in ns}
     names |= {(f"{cls}:{n}", "") for cls, ns in data["bootstrap_classes"].items() for n in ns}
     version = ".".join(map(str, sys.version_info[:3]))

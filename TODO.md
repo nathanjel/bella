@@ -902,17 +902,19 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   identity and `is None` answer as CPython's do; but a stub changes what the runtime's own lookups find (`__buffer__` on
   bytes, `__length_hint__`, `__reduce_ex__`), so every `type_lookup` of a name the table may lack needs checking first, and
   `tools/missing_names.py` must tell a stub from a name. A listing alone (len, iteration) could stop today without that.
-* **The runtime's own sizes (the author, Question 35, 2026-11-24: A; DECISIONS).** No deviation: section 2 declares
-  `sys.getsizeof` values and the sizes they are made from unobservable (Question 41: A, spec v0.37). Case first (CPython passes it): relations only, never a number (a longer list's
-  size is not smaller, a str's grows with its text, a program's `__sizeof__` returning n gives `getsizeof` at least n,
-  a negative one is a ValueError, `__sizeof__ = None` a TypeError, `__basicsize__` and `__itemsize__` are ints and
-  `object`'s `__basicsize__` is not more than `list`'s). Then `object.__sizeof__` (the object's
-  struct, header included), a `__sizeof__` per kind whose storage varies (list and bytearray by capacity, dict and set by
-  table, str, bytes, int by digits, tuple, the preludes' types with buffers), `sys.getsizeof` adding what lies before the
-  object (`runtime/src/call.cpp`: the flat 64 goes, the `+16` checked against the runtime's own header), `__basicsize__`
-  and `__itemsize__` from the runtime's structs. `tools/missing_names.py --update` then, and the stop rows of the argument
-  counts sweep (163 of its 182 stops). RL-592 (the default pickling state over a C type with fields) is separate: a table
-  of CPython's facts, not the numbers shown.
+* **The runtime's own sizes (the author, Question 35, 2026-11-24: A; narrowed by Question 67, 2026-11-28: A; DECISIONS).**
+  No deviation: section 2 declares `sys.getsizeof` values and the `__sizeof__` they are made from unobservable (Question 41: A,
+  spec v0.37); a type's `__basicsize__` and `__itemsize__` are CPython's numbers since v0.62 (done: C-3-90, the names table's
+  `sizes:` rows and type_new's rule for a class, which `object.__getstate__`'s test uses, RL-592). Case first (CPython passes
+  it), with no relation between sizes as a promise (CPython keeps the two the entry named only for chosen pairs, RL-1000):
+  a program's `__sizeof__` returning n gives `getsizeof` at least n, a negative one is a ValueError, `__sizeof__ = None` a
+  TypeError. Then `object.__sizeof__` (the object's struct, header included), a `__sizeof__` per kind whose storage varies
+  (list and bytearray by capacity, dict and set by table, str, bytes, int by digits, tuple, the preludes' types with buffers,
+  `struct.Struct`, whose prelude gives CPython's figure today, RL-968), `sys.getsizeof` adding what lies before the object
+  (`runtime/src/call.cpp`: the flat 64 goes, the `+16` checked against the runtime's own header). `tools/missing_names.py
+  --update` then, and the stop rows of the argument counts sweep (163 of its 182 stops). `bella-lint`'s rule for a size a
+  program reads is section 2's row and its consequence sentence: the lint item names `sys.getsizeof` and `__sizeof__` beside
+  D-03's and D-31's rules (RL-966, RL-1001).
 * **Question 43 (the author, 2026-11-25: B): the import system's frames as CPython's frames.** Done 2026-11-25 (C-8-22;
   C-9-14 joins the compiled baseline; `tools/bootstrap_frames.py`, checked by `make verify`; DECISIONS). Review A46's fixes
   the same day (RL-949, RL-951, RL-952, RL-948 in part) changed the comments of the runtime and the model that named D-19.
@@ -938,7 +940,9 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
     reference flag set by the runtime's own count where CPython's `w_ref` reads CPython's, so the bytes may differ, length
     included, and a set `loads` returns may iterate in another order (D-31 as corrected on 2026-11-28, Question 60: B). A
     case first (a global, a temporary, a local, a literal inside a list, an object held twice; a row a process, the bytes
-    printed), then the port; D-31's lint rule in `bella-lint`. `marshal.dumps((1, 'a'))` measured on 3.15.2 is
+    printed), then the port; D-31's lint rule in `bella-lint`. Under D-31 the flag bytes follow the compiled program's
+    counts, so `marshal.dumps(x)[0] >= 0x80` reads whether x has a second reference, the fact E-05 excludes as
+    `sys.getrefcount`: the port says so, or sets the flag by a rule over the value (RL-960). `marshal.dumps((1, 'a'))` measured on 3.15.2 is
     `2902e901000000da0161`, the tuple unflagged (3.15 borrows a constant's reference), and the version is 6.
   * `zipimport`, after `marshal` (it imports `marshal` at its top): CPython's `Lib/zipimport.py` compiled with the program,
     as the import system's own modules are (tracebacks name `<frozen zipimport>`). The reading half runs as CPython's code

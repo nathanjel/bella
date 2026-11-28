@@ -27,7 +27,7 @@ CLASS_ATTRIBUTES = 'class C:\n    "first"\nC.__doc__ = "second"\nprint(C.__doc__
 # never put in the class's dict
 REFUSED_STORES = (
     "class C:\n    pass\nC.__type_params__ = ()",
-    "class C:\n    pass\nC.__basicsize__ = 3",
+    "class C:\n    pass\nC.__text_signature__ = None",   # __basicsize__ is CPython's since Question 67: test_type_attribute_stores.py
     "class A:\n    pass\nclass C:\n    pass\nC.__bases__ = (A,)",
 )
 
