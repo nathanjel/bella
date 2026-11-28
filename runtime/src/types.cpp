@@ -633,8 +633,9 @@ ClassObject* tp_base(ClassObject* c) {
 // the call of the class, a built-in type's own __new__ under a class that derives from it (RL-533: a class that derived
 // from deque or dict ran with its override never asked)
 void refuse_getattribute_override(ClassObject* cls) {
-    if (cls->has("__getattribute__") && type_lookup(cls, N("__getattribute__")) != type_lookup(types().object, N("__getattribute__")) &&
-        !is_kind(type_lookup(cls, N("__getattribute__")), Kind::Builtin))   // _thread._local's is no program's
+    static const Str* const name = intern("__getattribute__");   // looked up at each instance made: interned once (RL-1086)
+    if (cls->lookup(name).has_value() && type_lookup(cls, name) != type_lookup(types().object, name) &&
+        !is_kind(type_lookup(cls, name), Kind::Builtin))   // _thread._local's is no program's
         throw NotImplemented("[P2+] a class that overrides __getattribute__ (spec section 3)");
 }
 // A class of the program's inherits its base's tp_new where it defines no __new__ (type_ready_set_new), so one that derives

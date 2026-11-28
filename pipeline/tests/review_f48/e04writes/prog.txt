@@ -1,0 +1,100 @@
+"""RL-1102: each write E-04 names, under CPython and compiled: refused, stopped by name, or neither."""
+import builtins
+import importlib
+import sys
+import types
+
+
+def include() -> None:
+    import t_mod  # noqa: F401
+
+
+class Finder:
+    def find_spec(self, name: str, path: object = None, target: object = None) -> None:
+        if name == "t_mod":
+            print("finder asked", name)
+        return None
+
+
+def attempt(step: str) -> None:
+    try:
+        if step == "import":
+            import t_mod
+            print("imported", t_mod.answer)
+        elif step == "reimport":
+            m = importlib.import_module("t_mod")
+            print("imported", m.answer)
+    except Exception as error:
+        print("raised", type(error).__name__)
+
+
+row = sys.argv[1]
+if row == "meta_insert":
+    sys.meta_path.insert(0, Finder())
+    attempt("import")
+elif row == "meta_clear":
+    sys.meta_path.clear()
+    attempt("import")
+elif row == "meta_assign":
+    sys.meta_path = []
+    attempt("import")
+elif row == "path_clear":
+    sys.path.clear()
+    attempt("import")
+elif row == "path_assign":
+    sys.path = []
+    attempt("import")
+elif row == "path_insert":
+    sys.path.insert(0, "nowhere")
+    attempt("import")
+elif row == "path_hooks":
+    try:
+        print(type(sys.path_hooks).__name__)
+    except Exception as error:
+        print("raised", type(error).__name__)
+elif row == "importer_cache":
+    sys.path_importer_cache.clear()
+    attempt("import")
+elif row == "modules_put":
+    made = types.ModuleType("t_put")
+    made.answer = 7
+    sys.modules["t_put"] = made
+    import t_put  # type: ignore[import-not-found]
+    print(t_put is made, t_put.answer)
+elif row == "modules_replace":
+    import t_mod
+    sys.modules["t_mod"] = types.ModuleType("t_mod")
+    attempt("reimport")
+elif row == "modules_del":
+    import t_mod
+    del sys.modules["t_mod"]
+    attempt("reimport")
+elif row == "modules_none":
+    sys.modules["t_mod"] = None  # type: ignore[assignment]
+    attempt("import")
+elif row == "dunder_import":
+    real = builtins.__import__
+
+    def hook(name: str, *args: object, **kwargs: object) -> object:
+        if name == "t_mod":
+            print("hook asked", name)
+        return real(name, *args, **kwargs)  # type: ignore[arg-type]
+    setattr(builtins, "__import__", hook)
+    attempt("import")
+elif row == "lazy_mode":
+    try:
+        sys.set_lazy_imports("all")
+        print("set", sys.get_lazy_imports())
+    except Exception as error:
+        print("raised", type(error).__name__)
+elif row == "lazy_filter":
+    try:
+        sys.set_lazy_imports_filter(lambda importer, name, fromlist: True)
+        print("set", sys.get_lazy_imports_filter() is not None)
+    except Exception as error:
+        print("raised", type(error).__name__)
+elif row == "reload":
+    import t_mod
+    importlib.reload(t_mod)
+    print("reloaded")
+print("end", row)

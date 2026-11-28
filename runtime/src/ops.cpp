@@ -1139,8 +1139,9 @@ Ref str_of(Obj v) {                              // PyObject_Str
 
 // ---- attributes ----
 namespace {
-bool overrides(Obj obj, const char* name) {
-    return type_lookup(type_of(obj), intern(name)) != type_lookup(types().object, intern(name));
+// the name interned once by each caller: a store and a delete ask at every one (RL-1086)
+bool overrides(Obj obj, const Str* name) {
+    return type_lookup(type_of(obj), name) != type_lookup(types().object, name);
 }
 }  // namespace
 
@@ -1435,7 +1436,8 @@ void refuse_readonly_member(Obj obj, const Str* name, Obj value) {
 }
 void setattr(Obj obj, const Str* name, Obj value) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
-        if (overrides(obj, "__setattr__")) {
+        static const Str* const setattr_name = intern("__setattr__");
+        if (overrides(obj, setattr_name)) {
             call_special(obj, "__setattr__", {Obj::of(name), value});
             return;
         }
@@ -1501,7 +1503,8 @@ void setattr(Obj obj, const Str* name, Obj value) {
 
 void delattr(Obj obj, const Str* name) {
     if (is_kind(obj, Kind::Instance) || is_subclass_instance(obj)) {
-        if (overrides(obj, "__delattr__")) {
+        static const Str* const delattr_name = intern("__delattr__");
+        if (overrides(obj, delattr_name)) {
             call_special(obj, "__delattr__", {Obj::of(name)});
             return;
         }

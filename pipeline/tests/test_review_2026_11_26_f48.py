@@ -55,6 +55,11 @@ argument list a line), one row a process, compared on standard output, standard 
 
 * What is made inside a generator expression is named `<genexpr>.<lambda>` and `<genexpr>.<genexpr>`, with no `.<locals>`
   (`qualnames`: RL-1053; at module level, in a function, in a class body and a method).
+* Each write and name E-04 lists, under CPython and compiled (`e04writes`, 16 rows; RL-1102): `sys.path_hooks`,
+  `sys.set_lazy_imports` and `sys.set_lazy_imports_filter` stop with E-04's words, as `importlib.reload` does; writes to
+  `sys.modules` (a module put in, one replaced, one deleted and imported again, `None`) and `__import__` replaced through
+  `setattr` do what CPython does; a write to `sys.meta_path` or `sys.path` is neither refused nor stopped, and the import
+  after it finds the module where CPython asks the program's finder or finds nothing (`OPEN`, the author's).
 
 And one registered difference is held as D-17 words it (the author's decision of 2026-11-26, Question 49: A; RL-980):
 
@@ -153,6 +158,11 @@ STOPS: dict[tuple[str, tuple[str, ...]], str] = {
     **{("viewsmore", ("os.readinto", kind)): "bella: not implemented: a memoryview as a writable buffer (readinto() argument 2)" for kind in "cw"},
     **{("importnames", (entry, kind, target)): HOOKED_NAME for entry in ("__import__", "importlib.__import__")
        for kind in ("hashed", "equal", "added", "parted", "upper", "starts", "hooked") for target in ("found", "loaded", "missing")},
+    # the names of sys that E-04 names stop with its words (RL-1102), as importlib.reload does
+    **{("e04writes", (row,)): f"bella: not implemented: sys.{name} (import-system customisation: the closed world is resolved at "
+       "build time, E-04)" for row, name in (("path_hooks", "path_hooks"), ("lazy_mode", "set_lazy_imports"),
+                                             ("lazy_filter", "set_lazy_imports_filter"))},
+    ("e04writes", ("reload",)): "bella: not implemented: importlib.reload (running a module's body again is import-system customisation, E-04)",
 }
 # the modules CPython writes in C and frees at the exit, which here live to the end of the process (D-19)
 OWN_MODULES = ("atexit", "binascii", "cmath", "gc", "grp", "pwd", "time", "unicodedata", "zlib", "_bisect", "_blake2",
@@ -194,10 +204,13 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
 }
 # rows that differ until the author has decided: a buffered writer hands a program's raw write() a bytes where CPython hands
 # a read-only memoryview (RL-991, with Question 40); a second module object of a built-in module, which CPython makes at each
-# _imp.create_builtin and the runtime does not (RL-1013)
+# _imp.create_builtin and the runtime does not (RL-1013); a write to sys.meta_path or sys.path, which E-04 excludes and
+# nothing refuses or stops, and which an import after it does not see (RL-1102)
 OPEN: frozenset[tuple[str, tuple[str, ...]]] = frozenset({("viewsmore", ("BufferedRandom.write", kind)) for kind in "bacw"} |
                                                           {("lookups", (row,)) for row in ("builtin second", "builtin again")} |
-                                                          {("a45more", ("native_direct",))})   # sys's and builtins' order: RL-1061
+                                                          {("a45more", ("native_direct",))} |   # sys's and builtins' order: RL-1061
+                                                          {("e04writes", (row,)) for row in ("meta_insert", "meta_clear", "meta_assign",
+                                                                                             "path_clear", "path_assign")})
 
 
 def rows_of(probe: str) -> list[tuple[str, ...]]:

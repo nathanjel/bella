@@ -247,12 +247,13 @@ Ref make_function(const Code& code, Ref (*entry)(PyFunction*, Args), Module* m, 
 
 void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
     const Code& c = *fn->code;
-    std::vector<Ref*> slot(params);
+    Ref* const* slot = params.begin();            // the generated call's own array: no copy (RL-1086)
     auto n = static_cast<std::size_t>(c.argcount);
     auto nkwonly = static_cast<std::size_t>(c.kwonlyargcount);
     // the function's own __qualname__ (func_qualname), which functools.wraps, _wrap and an assignment change (RL-1060)
     const Str* own = fn->qualname.get().is_unset() ? nullptr : as_str(fn->qualname.get());
-    std::string who = (own != nullptr ? own->text : std::string(c.qualname)) + "()";
+    // the name an argument error gives, built only by an error (RL-1086: built at every call, it was 42% of one)
+    auto who = [&] { return (own != nullptr ? own->text : std::string(c.qualname)) + "()"; };
     std::size_t varargs_slot = n + nkwonly;
     std::size_t varkw_slot = varargs_slot + (c.varargs ? 1 : 0);
     Dict* kwdict = nullptr;
@@ -285,20 +286,20 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
             if (kwdict == nullptr) {             // ceval's kw_fail: _Py_CalculateSuggestions over the keyword-capable parameters
                 std::vector<std::string> possible(c.varnames.begin() + c.posonlyargcount, c.varnames.begin() + static_cast<std::ptrdiff_t>(n + nkwonly));
                 std::string suggestion = keyword_suggestion(name->text, possible);
-                raise_new("TypeError", who + " got an unexpected keyword argument '" + name->text + "'" +
+                raise_new("TypeError", who() + " got an unexpected keyword argument '" + name->text + "'" +
                                            (suggestion.empty() ? "" : ". Did you mean '" + suggestion + "'?"));
             }
             dict_set(kwdict, Obj::of(name), value);
             continue;
         }
         if (!slot[found]->get().is_unset())
-            raise_new("TypeError", who + " got multiple values for argument '" + name->text + "'");
+            raise_new("TypeError", who() + " got multiple values for argument '" + name->text + "'");
         *slot[found] = Ref::share(value);
     }
     if (!posonly_as_kw.empty()) {
         std::string list;
         for (std::size_t i = 0; i < posonly_as_kw.size(); ++i) list += (i ? ", '" : "'") + posonly_as_kw[i] + "'";
-        raise_new("TypeError", who + " got some positional-only arguments passed as keyword arguments: " + list);
+        raise_new("TypeError", who() + " got some positional-only arguments passed as keyword arguments: " + list);
     }
     // initialize_locals: the keywords' errors come before too many positional arguments (RL-303)
     if (!c.varargs && args.npos > n) {
@@ -315,7 +316,7 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
                                                 (given_kwonly == 1 ? "" : "s") + ")"
                                           : "";
         // too_many_positional: the keyword-only clause, then was or were (A10-13)
-        raise_new("TypeError", who + " takes " + takes + " positional argument" + plural + " but " +
+        raise_new("TypeError", who() + " takes " + takes + " positional argument" + plural + " but " +
                                    std::to_string(args.npos) + kwpart + (args.npos == 1 && !given_kwonly ? " was" : " were") +
                                    " given");
     }
@@ -335,7 +336,7 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
         else missing.push_back(c.varnames[i]);
     }
     if (!missing.empty())
-        raise_new("TypeError", who + " missing " + std::to_string(missing.size()) + " required positional argument" +
+        raise_new("TypeError", who() + " missing " + std::to_string(missing.size()) + " required positional argument" +
                                    (missing.size() == 1 ? "" : "s") + ": " + quoted_list(missing));
     for (std::size_t j = n; j < n + nkwonly; ++j) {
         if (!slot[j]->get().is_unset()) continue;
@@ -345,7 +346,7 @@ void bind(PyFunction* fn, Args args, std::initializer_list<Ref*> params) {
         else missing.push_back(c.varnames[j]);
     }
     if (!missing.empty())
-        raise_new("TypeError", who + " missing " + std::to_string(missing.size()) + " required keyword-only argument" +
+        raise_new("TypeError", who() + " missing " + std::to_string(missing.size()) + " required keyword-only argument" +
                                    (missing.size() == 1 ? "" : "s") + ": " + quoted_list(missing));
 }
 
@@ -1848,10 +1849,13 @@ std::unordered_set<const ClassObject*>& prelude_classes() {     // the prelude's
     static std::unordered_set<const ClassObject*> classes;
     return classes;
 }
-// Names CPython has that the runtime leaves out by a registered difference, not for want of work: the stop says which entry
-// (docs/deviations.toml), where any other absent name says "not yet". Sorted by key, as CPYTHON_NAMES is.
+// Names CPython has that the runtime leaves out by a registered difference or an exclusion, not for want of work: the stop
+// says which entry (docs/deviations.toml, spec section 4), where any other absent name says "not yet". Sorted by key, as
+// CPYTHON_NAMES is.
 struct AbsentByEntry { std::string_view key, why; };
 constexpr std::string_view MODULE_LOCKS = "a module lock: the import system takes none until the threads milestone, D-33";
+// the names of sys that E-04 names (review F48, RL-1102: they said "not yet", and X-4-02 failed compiled for it)
+constexpr std::string_view IMPORT_CUSTOMISATION = "import-system customisation: the closed world is resolved at build time, E-04";
 constexpr AbsentByEntry ABSENT_BY_ENTRY[] = {
     {"_frozen_importlib:_BlockingOnManager", MODULE_LOCKS}, {"_frozen_importlib:_DeadlockError", MODULE_LOCKS},
     {"_frozen_importlib:_DummyModuleLock", MODULE_LOCKS},   {"_frozen_importlib:_ImportLockContext", MODULE_LOCKS},
@@ -1860,6 +1864,8 @@ constexpr AbsentByEntry ABSENT_BY_ENTRY[] = {
     {"_frozen_importlib:_blocking_on", MODULE_LOCKS},       {"_frozen_importlib:_get_module_lock", MODULE_LOCKS},
     {"_frozen_importlib:_has_deadlocked", MODULE_LOCKS},    {"_frozen_importlib:_module_locks", MODULE_LOCKS},
     {"_frozen_importlib:_thread", MODULE_LOCKS},            {"_frozen_importlib:_weakref", MODULE_LOCKS},
+    {"sys:path_hooks", IMPORT_CUSTOMISATION},               {"sys:set_lazy_imports", IMPORT_CUSTOMISATION},
+    {"sys:set_lazy_imports_filter", IMPORT_CUSTOMISATION},
 };
 static_assert(std::ranges::is_sorted(ABSENT_BY_ENTRY, {}, &AbsentByEntry::key));
 // the stop for a name of CPython's the runtime lacks: `scope.name (why)`

@@ -764,7 +764,9 @@ author has seen the measurement. In this order:
   difference from CPython's, with Question 48 (below).
 * **The other defects**, each with a sweep of its class kept as a test (RL-1037, RL-1044, RL-1054, RL-1060, RL-1075, RL-965,
   RL-992, RL-1048, RL-1050, RL-1052, RL-1012, RL-1025, RL-1043, RL-1065 to RL-1068, RL-1094, RL-1058 and RL-1063 done 2026-11-27,
-  RL-1013, RL-1040 and RL-1049 to the author; RL-1053, RL-1057, RL-1059 and RL-1062 with the steps before): ~~RL-1037 (`fromhex` on a subclass)~~, RL-1043 (a class
+  RL-1013 with RL-1102 (the exclusions neither refused nor stopped: writes to `sys.modules`, which work, to `sys.meta_path`
+  and `sys.path`, which an import does not see, and a program's own staged `eval`; its stops' words fixed), RL-1040 and
+  RL-1049 to the author; RL-1053, RL-1057, RL-1059 and RL-1062 with the steps before): ~~RL-1037 (`fromhex` on a subclass)~~, RL-1043 (a class
   with no MRO as a base), RL-1044 (`__firstlineno__` after `__module__` is assigned), RL-1052 (`dir(x)` and a name's
   `__lt__`), RL-1053 (`__qualname__` inside a generator expression), RL-1054 (`repr` of a class without a module),
   RL-1057 (the import system's warnings and their stack level), RL-1058 and RL-1063 (lines of the frames table),
@@ -774,8 +776,11 @@ author has seen the measurement. In this order:
 * ~~**Tests that do not hold what they say**~~ (RL-1010, RL-1018, RL-1026, RL-1042, RL-1051, RL-1055, RL-1067 and RL-1077
   done 2026-11-27, the A46 sweep first, with RL-1032; RL-1076 goes with the records, RL-1078 to the author). Every runner of
   the review tests now fails a row that prints nothing under CPython (RL-1077's class).
-* **Cost** (RL-1082 to RL-1087): a missed attribute read throws three times (22 microseconds against CPython's 0.1; the
-  design says it never throws); the names table searched at every first store of an attribute; start-up's interning.
+* **Cost** (RL-1082 to RL-1087; RL-1083 and RL-1086 done 2026-11-27: a call 31% fewer instructions, an instance 23%, the
+  start 6%): a missed attribute read throws three times (22 microseconds against CPython's 0.1; design.md and l2.md now say
+  so), and `import sys` twice (RL-1082, RL-1085): a look-up that reports absence without raising, written in the model first;
+  the names table searched at every first store of an attribute (RL-1084); start-up's interning, an `N()` that still hashes
+  at each call (a per-site cache), and Str::index's u32string (RL-1087).
 * **The queue's order and the stack** (RL-1097, RL-1098, RL-1004, RL-1005): one ordered list with the gate's items
   first; the measuring half of the stack analysis before Question 30's step.
 * **The records** (the rows whose status is "Open (the records)"): corrected with the step that touches each.

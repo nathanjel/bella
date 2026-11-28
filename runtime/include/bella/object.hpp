@@ -428,9 +428,15 @@ private:
             for (int k = 0; k < width; ++k) units += static_cast<char>((c >> (8 * k)) & 0xFF);
     }
 };
+// the table is looked up by the view itself (a transparent hash): a name is copied when it is first interned, not at every
+// look-up (review F48, RL-1086, RL-1087: a copy at each, 24% of a start's instructions)
+struct InternHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view s) const noexcept { return std::hash<std::string_view>{}(s); }
+};
 inline const Str* intern(std::string_view s) {
-    static std::unordered_map<std::string, std::unique_ptr<Str>> table;
-    auto it = table.find(std::string(s));
+    static std::unordered_map<std::string, std::unique_ptr<Str>, InternHash, std::equal_to<>> table;
+    auto it = table.find(s);
     if (it == table.end()) {
         it = table.emplace(std::string(s), std::make_unique<Str>(std::string(s))).first;
         it->second->cls = builtin_class("str");
@@ -940,7 +946,9 @@ struct ClassObject : Object {
 
     std::vector<const Str*> own_slot_names() const {
         std::vector<const Str*> out;
-        if (slots) for (const Str* s : *slots) if (s != intern("__dict__") && s != intern("__weakref__")) out.push_back(s);
+        static const Str* const dict = intern("__dict__");
+        static const Str* const weak = intern("__weakref__");
+        if (slots) for (const Str* s : *slots) if (s != dict && s != weak) out.push_back(s);
         return out;
     }
     // own_slot_names in the order a release lets them go (each class's sorted by name, as type_new stores them; a built-in
@@ -2352,7 +2360,8 @@ template <class T>
 inline void finalize_once(T* obj) {
     if (obj->flags & FINALIZED) return;
     obj->flags |= FINALIZED;
-    if (auto fin = obj->cls->lookup(intern("__del__"))) {
+    static const Str* const del = intern("__del__");
+    if (auto fin = obj->cls->lookup(del)) {
         Ref fn = Ref::share(fin->first);
         if (finalizer_hook() != nullptr) finalizer_hook()(fn.get(), Obj::of(obj));
         else decref(call(fn.get(), {Obj::of(obj)}));
@@ -2363,7 +2372,9 @@ inline void finalize_once(T* obj) {
 // keeps its own weak reference list (set's), which its dealloc clears after the slots and the dict, so they are left to the caller.
 template <class T>
 inline bool release_attributes(T* obj, bool base_weak = false) {
-    auto fin = (obj->flags & FINALIZED) ? std::nullopt : obj->cls->lookup(intern("__del__"));
+    static const Str* const del = intern("__del__");   // at every object's death: interned once (RL-1086)
+    static const Str* const dict = intern("__dict__");
+    auto fin = (obj->flags & FINALIZED) ? std::nullopt : obj->cls->lookup(del);
     if (fin) {
         obj->refs = 1;                          // held by the finaliser's call, so it cannot die again
         Ref fn = Ref::share(fin->first);
@@ -2386,13 +2397,10 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
         if (c == base) break;
         // each class's slots sorted by name, as CPython sorts them when it makes the class; a built-in type's fields in the
         // order it declares them, which is its clear function's (RefClass._release_order)
-        auto names = c->own_slot_names();
-        if (c->hidden.empty() && !c->slots_ordered) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
-        for (const Str* s : names) decref(std::exchange(slot_cell(obj, c, s), Obj{}));
+        for (const Str* s : c->release_order_of_slots()) decref(std::exchange(slot_cell(obj, c, s), Obj{}));   // made once (RL-1086)
     }
     if (base != nullptr) {                       // the built-in type's own dealloc, in its order (RefObject._clear_contents)
         static const Str* const weak = intern("__weakref__");
-        static const Str* const dict = intern("__dict__");
         if (!base->release_has_dict) detail::release_instance_dict(obj);     // a dict a deriving class added: gone before it runs
         for (const Str* n : *base->release) {
             if (n == weak) {
@@ -2405,7 +2413,7 @@ inline bool release_attributes(T* obj, bool base_weak = false) {
     // the built-in base's clear function: its fields, the dict at its place (RefObject.dealloc)
     if (obj->cls->native.empty()) detail::release_instance_dict(obj);
     for (const Str* n : obj->cls->native) {
-        if (n == intern("__dict__")) detail::release_instance_dict(obj);
+        if (n == dict) detail::release_instance_dict(obj);
         else decref(std::exchange(slot_cell(obj, nullptr, n), Obj{}));
     }
     return true;
@@ -2743,9 +2751,7 @@ inline void clear_attributes(T* obj) {
     ClassObject* base = obj->cls->dealloc_base;
     for (ClassObject* c : obj->cls->mro) {
         if (c == base) break;
-        auto names = c->own_slot_names();
-        if (c->hidden.empty() && !c->slots_ordered) std::sort(names.begin(), names.end(), [](const Str* a, const Str* b) { return a->text < b->text; });
-        for (const Str* s : names) decref(std::exchange(slot_cell(obj, c, s), Obj{}));
+        for (const Str* s : c->release_order_of_slots()) decref(std::exchange(slot_cell(obj, c, s), Obj{}));   // made once (RL-1086)
     }
     if (base != nullptr) {
         if (!base->release_has_dict) release_instance_dict(obj);

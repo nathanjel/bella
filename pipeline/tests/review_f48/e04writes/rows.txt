@@ -1,0 +1,16 @@
+meta_insert
+meta_clear
+meta_assign
+path_clear
+path_assign
+path_insert
+path_hooks
+importer_cache
+modules_put
+modules_replace
+modules_del
+modules_none
+dunder_import
+lazy_mode
+lazy_filter
+reload

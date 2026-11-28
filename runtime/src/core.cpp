@@ -429,7 +429,8 @@ bool rooted_namespace(const Module* m) {
     if (m->serial == 0 || (m->flags & DEAD) || !m->holds_namespace) return false;
     Dict* modules = sys_modules();
     if (modules == nullptr) return false;
-    Obj name = exact_str_get(m->dict, intern("__name__"));
+    static const Str* const dunder_name = intern("__name__");   // at every visit of the collector's: interned once (RL-1083)
+    Obj name = exact_str_get(m->dict, dunder_name);
     if (!name.is_object() || !is_exact_str(name)) return false;
     Obj held = exact_str_get(modules, as_str(name));
     return held.is_object() && held.object() == m;
