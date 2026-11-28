@@ -64,6 +64,10 @@ argument list a line), one row a process, compared on standard output, standard 
   program changed stops with E-04's words (Question 55); with the list put back, `None` (CPython's ImportError), or of a
   module already loaded, it agrees; an import with `sys.path` cleared or assigned empty stops, the program's directory
   being gone (Question 56).
+* atexit's rounds at the exit (`atexitrounds`, 5 rows; RL-1071): a finaliser that the clearing of the list runs registers,
+  and the handler is called in a further round, as `make_pre_finalization_calls` loops; a chain of three rounds; a handler
+  registered while handlers run goes uncalled; one registered after the last round goes with its arguments, uncalled
+  (`_PyAtExit_Fini`).
 * The `__firstlineno__` of the import system's classes is CPython's line (`classlines`, 2 rows, the 15 classes but the lock
   machinery's; RL-1092): `tools/bootstrap_frames.py` gives each class CPython's first line, which the front end stores; the
   other preludes' classes stand for C types and have none (`test_prelude_class_lines.py`, 273 classes).

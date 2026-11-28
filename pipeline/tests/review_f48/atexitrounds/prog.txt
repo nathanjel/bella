@@ -1,0 +1,69 @@
+"""RL-1071 and RL-1072: atexit's rounds at the exit. CPython 3.15.2 runs atexit's handlers again while the list is not empty
+(make_pre_finalization_calls): clearing the list after a round lets go of the registrations, and a finaliser that
+registers then has its handler called in a further round; one registered after the last round is let go of with its
+arguments, uncalled (_PyAtExit_Fini). Each row registers in one place and the program ends."""
+import atexit
+import os
+import sys
+from collections.abc import Callable
+
+
+def say(text: str, w: Callable[[int, bytes], int] = os.write) -> None:
+    w(1, (text + "\n").encode())
+
+
+class Registers:
+    """Its finaliser registers an atexit handler with an argument that says when it goes."""
+
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    def __call__(self) -> None:
+        say("handler " + self.tag + " called")
+
+    def __del__(self, reg: Callable[..., object] = atexit.register, w: Callable[[int, bytes], int] = os.write) -> None:
+        w(1, ("fin " + self.tag + ", registering\n").encode())
+        reg(late, Tells("the late handler's argument"))
+
+
+class Tells:
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    def __del__(self, w: Callable[[int, bytes], int] = os.write) -> None:
+        w(1, ("fin " + self.tag + "\n").encode())
+
+
+def late(argument: Tells, w: Callable[[int, bytes], int] = os.write) -> None:
+    w(1, ("late handler called with " + argument.tag + "\n").encode())
+
+
+def noop(*args: object) -> None:
+    return None
+
+
+row = sys.argv[1]
+if row == "round2":                              # the handler itself, let go of when the list is cleared
+    atexit.register(Registers("a handler"))
+elif row == "round2_arg":                        # a handler's argument
+    atexit.register(noop, Registers("a handler's argument"))
+elif row == "inside":                            # a handler that registers another while it runs
+    def first() -> None:
+        say("first handler")
+        atexit.register(late, Tells("registered inside a handler"))
+    atexit.register(first)
+elif row == "late":                              # a global, finalised after the last round
+    held = Registers("a global")
+elif row == "three":                             # a chain: each round's finaliser registers the next
+    class Chain:
+        def __init__(self, n: int) -> None:
+            self.n = n
+
+        def __call__(self) -> None:
+            say(f"chain handler {self.n}")
+
+        def __del__(self, reg: Callable[..., object] = atexit.register) -> None:
+            if self.n < 3:
+                reg(Chain(self.n + 1))
+    atexit.register(Chain(1))
+say("end " + row)

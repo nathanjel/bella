@@ -3803,6 +3803,8 @@ void finalize_at_exit(const std::unordered_set<Module*>& runtime_own, int& statu
     release_state("_contextvars", {"_current"});
     release_state("_codecs", {"_search_path", "_search_cache", "_error_registry", "_library"});
     release_state("posix", {"_before_forkers", "_after_forkers_parent", "_after_forkers_child"});
+    // _PyAtExit_Fini: what was registered after the last round goes uncalled, its arguments with it (RL-1071)
+    release_state("atexit", {"_callbacks"});
     // a C module's state, which CPython frees with the module (m_clear) and here stays with the immortal module (D-19): what
     // only it holds of the program's is finalised by the collection after, as D-07 promises (RL-987): the dialects csv keeps
     // (a subclass of _csv.Dialect is kept as itself) and the formats struct's cache keeps (a str subclass's object as itself)
@@ -4492,20 +4494,25 @@ int run_program(int argc, char** argv, ModuleBody main_body, const char* main_fi
         // Py_FinalizeEx, on every way out of the program but a refusal. First make_pre_finalization_calls, while the
         // program is whole: threading._shutdown if threading is among sys.modules (wait_for_thread_shutdown; what it
         // raises is reported as ignored), then atexit's handlers (_PyAtExit_Call: the prelude's, there once atexit was
-        // imported). One round is all: a handler's own registration goes with the list, and no thread is left to wait for.
+        // imported), in its loop: again while a round leaves callbacks, which a finaliser the round's clear ran registered
+        // (RL-1071; a handler's own registration goes with the list, and no thread is left to wait for).
         // Then flush_std_files, whose failure is exit status 120 (reported as an exception ignored), and the modules'
         // globals go (spec section 9)
         if (sys_modules() != nullptr) {
-            try {
-                if (Obj threading = dict_get(sys_modules(), Obj::of(intern("threading"))); !threading.is_unset()) {
-                    Ref shutdown = getattr(threading, intern("_shutdown"));
-                    invoke(shutdown.get(), {});
+            for (bool again = true; again;) {
+                try {
+                    if (Obj threading = dict_get(sys_modules(), Obj::of(intern("threading"))); !threading.is_unset()) {
+                        Ref shutdown = getattr(threading, intern("_shutdown"));
+                        invoke(shutdown.get(), {});
+                    }
+                } catch (const PyError& e) {
+                    report_unraisable("Exception ignored on threading shutdown", e);
                 }
-            } catch (const PyError& e) {
-                report_unraisable("Exception ignored on threading shutdown", e);
+                finish_pending_calls();          // _Py_FinishPendingCalls: a failed wakeup write's report still queued is printed before atexit
+                again = false;
+                if (Obj handlers = dict_get(intrinsics(), Obj::of(intern("_atexit_call"))); !handlers.is_unset())
+                    again = is_true(invoke(handlers, {}));
             }
-            finish_pending_calls();              // _Py_FinishPendingCalls: a failed wakeup write's report still queued is printed before atexit
-            if (Obj handlers = dict_get(intrinsics(), Obj::of(intern("_atexit_call"))); !handlers.is_unset()) invoke(handlers, {});
             finalizing() = true;                 // _PyInterpreterState_SetFinalizing, after the pre-finalization calls (RL-927)
             if (!flush_std_stream("stdout", true)) status = 120;
             if (!flush_std_stream("stderr", false)) status = 120;

@@ -2,7 +2,9 @@
 first; register and unregister with the C's own parsing and messages, unregister's walk from the oldest registration on with
 PyObject_RichCompareBool (identity, then `func == registered`) and its search for the entry again after a comparison that may
 have changed the list; _clear, _ncallbacks and _run_exitfuncs. The runtime calls _atexit_call at the end of the program
-(Python/pylifecycle.c, make_pre_finalization_calls), after threading._shutdown and before the standard streams are flushed.
+(Python/pylifecycle.c, make_pre_finalization_calls), after threading._shutdown and before the standard streams are flushed,
+and again while a round leaves registrations (RL-1071); what is registered after the last round goes uncalled when the
+interpreter's state is cleared (_PyAtExit_Fini).
 The functions' docstrings are the names table's rows, as every built-in function's."""
 
 __all__ = ["_clear", "_ncallbacks", "_run_exitfuncs", "register", "unregister"]
@@ -38,24 +40,33 @@ def _noargs(qualname: str, args: tuple[object, ...], kwds: dict[str, object]) ->
         raise TypeError(qualname + "() takes no arguments (" + str(len(args)) + " given)")
 
 
-def _atexit_call() -> None:                      # atexit_callfuncs: over a copy, and whatever was registered meanwhile goes unrun
+def _call_one(func: object, args: tuple[object, ...], kwargs: dict[str, object] | None) -> None:
+    failed: BaseException | None = None
+    try:
+        if kwargs is None:
+            func(*args)  # type: ignore[operator]
+        else:
+            func(*args, **kwargs)  # type: ignore[operator]
+    except BaseException as e:  # noqa: BLE001  # PyErr_FormatUnraisable takes whatever is set: SystemExit and KeyboardInterrupt too
+        failed = e
+    if failed is not None:                       # the error is pending, not handled, while the C makes its report: the repr and the
+        try:                                     # hook see what was handled around the callbacks (RL-728); %R is the characters (RL-748)
+            message: str | None = "Exception ignored in atexit callback " + _repr_text(func)
+        except BaseException:  # noqa: BLE001  # PyUnicode_FromFormatV failed on %R: PyErr_Clear, and the report has no first line
+            message = None
+        _unraisable(message, failed)
+
+
+def _atexit_call() -> bool:                      # atexit_callfuncs: over a copy, and whatever was registered meanwhile goes unrun
     copy = list(_callbacks)
-    for func, args, kwargs in copy:
-        failed: BaseException | None = None
-        try:
-            if kwargs is None:
-                func(*args)  # type: ignore[operator]
-            else:
-                func(*args, **kwargs)  # type: ignore[operator]
-        except BaseException as e:  # noqa: BLE001  # PyErr_FormatUnraisable takes whatever is set: SystemExit and KeyboardInterrupt too
-            failed = e
-        if failed is not None:                   # the error is pending, not handled, while the C makes its report: the repr and the
-            try:                                 # hook see what was handled around the callbacks (RL-728); %R is the characters (RL-748)
-                message: str | None = "Exception ignored in atexit callback " + _repr_text(func)
-            except BaseException:  # noqa: BLE001  # PyUnicode_FromFormatV failed on %R: PyErr_Clear, and the report has no first line
-                message = None
-            _unraisable(message, failed)
+    entry = None
+    for entry in copy:
+        _call_one(*entry)
+    # Py_DECREF(copy), then atexit_cleanup: the C borrows each entry, so the list's clear is what lets go of the registrations,
+    # and a finaliser it runs may register again, which make_pre_finalization_calls calls in another round (RL-1071)
+    entry = copy = None
     _callbacks.clear()
+    return bool(_callbacks)
 
 
 def register(*args: object, **kwargs: object) -> object:
