@@ -6,7 +6,7 @@
  "source": "Python/pylifecycle.c (_Py_Finalize, finalize_modules and its steps, finalize_interp_clear), Python/pystate.c",
  "recorded_with": "3.15.2",
  "authoritative": true,
- "stdout": "stdout -> status 0\n  sys.stdout\ncycle -> status 0\n  a cycle\ncycle_disabled -> status 0\n  a cycle\ndata -> status 0\n  data\nplain -> status 0\n  a global\nclassattr -> status 0\n  a class attribute\nresurrect -> status 0\n  resurrected\nrestored -> status 0\n  restored\nalive -> status 0\n  a global\n  kept._under\n  kept.plain\nweak -> status 0\n  a global\n  its weak reference's callback\nhook -> status 0\n  a global\n  asker\nweak_main -> status 0\n  a global\ncmodule -> status 0\n  late\ncodec -> status 0\n  a global\ncontext -> status 0\n  a context variable's value\nwarnings -> status 0\ngc_callbacks -> status 0\nabc -> status 0\n  a registered class's attribute\n  registered\n",
+ "stdout": "stdout -> status 0\n  sys.stdout\ncycle -> status 0\n  a cycle\ncycle_disabled -> status 0\n  a cycle\ndata -> status 0\n  data\nplain -> status 0\n  a global\nclassattr -> status 0\n  a class attribute\nresurrect -> status 0\n  resurrected\nrestored -> status 0\n  restored\nalive -> status 0\n  a global\n  kept._under\n  kept.plain\nhook -> status 0\n  a global\n  asker\ncmodule -> status 0\n  late\ncodec -> status 0\n  a global\ncontext -> status 0\n  a context variable's value\nwarnings -> status 0\ngc_callbacks -> status 0\nabc -> status 0\n  a registered class's attribute\n  registered\n",
  "stderr": "",
  "exit_code": 0
 }

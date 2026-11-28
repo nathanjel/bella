@@ -6,7 +6,8 @@ finds of its module's globals, `sys` and the builtins) are unspecified but for t
 reference guarantees, kept free for a faster exit. The exit's steps are CPython's (H4, RL-514: `finalize_modules`' steps,
 `_PyModule_ClearDict`'s two passes); within a step the runtime finalises in its own order, which differs from CPython's in
 some placements (RL-988). This test holds C-9-13's rows: the same case with BELLA_CASE_STEPS set prints all its finalisers
-wrote, in order, under CPython and compiled.
+wrote, in order, under CPython and compiled, and adds the rows whose outcome follows the order, a weak reference's callback
+at exit among them (`ORDER_ROWS`; Question 66: B).
 A change that relaxes the order changes this test openly, with an entry in docs/DECISIONS.md.
 """
 from __future__ import annotations

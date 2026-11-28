@@ -35,8 +35,11 @@ from exitpkg import fin
 SHOW = "BELLA_CASE_SHOW"
 STEPS = "BELLA_CASE_STEPS"
 LABEL = "main"
-ROWS = ("stdout", "cycle", "cycle_disabled", "data", "plain", "classattr", "resurrect", "restored", "alive", "weak", "hook",
-        "weak_main", "cmodule", "codec", "context", "warnings", "gc_callbacks", "abc")
+ROWS = ("stdout", "cycle", "cycle_disabled", "data", "plain", "classattr", "resurrect", "restored", "alive", "hook", "cmodule",
+        "codec", "context", "warnings", "gc_callbacks", "abc")
+# a weak reference's callback at exit runs or not by the order D-07 frees (Question 66: B): the runtime's choice, which
+# pipeline/tests/test_exit_steps.py holds, and no promise of the case's
+ORDER_ROWS = ("weak", "weak_main")
 held: object = None
 asked: object = None
 variable: contextvars.ContextVar[object] = contextvars.ContextVar("variable")
@@ -204,5 +207,5 @@ def again(row: str) -> None:
 if SHOW in os.environ:
     set_up(os.environ[SHOW])
 else:
-    for name in ROWS:
+    for name in ROWS + (ORDER_ROWS if STEPS in os.environ else ()):
         again(name)
