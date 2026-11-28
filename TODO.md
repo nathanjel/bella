@@ -770,6 +770,11 @@ author has seen the measurement. In this order:
 * ~~**Promises stronger than CPython's** (the author's rule of 2026-11-28, Question 58)~~: done the same day (Question
   65): section 2's tables, section 9, and every "never", "always", "complete", "exactly" and "guarantee" read; the
   promises of that kind were those Questions 58 to 61 corrected, and `__subclasses__()`' "complete" (spec v0.60).
+* **Where exact is the cheaper direction (RL-973).** D-03 lets a library give back an equal new object where CPython
+  gives back the one it was given; there the compiled program does extra work: `BytesIO` holds a `bytearray` of its
+  initial bytes and `getvalue` copies three times where CPython copies none, 15 int operations copy an int beyond the
+  immediates, a class's `__name__` is a new str at each read. Give the object back as CPython does, a sweep of the class
+  first (review/q37/p4, p1 row int, p2 row names).
 * **Section 4's compile-time refusals** (RL-1102, 2026-11-28): what the compiler sees of E-02 to E-04 in the program's
   own text (`sys.set_lazy_imports(...)`, `sys.meta_path.insert(...)`, `importlib.reload(...)`, `sys._getframe()`) is to
   be a compile-time error with the id, as section 4 says; today only E-06's text is, and the rest stop at run time
@@ -851,7 +856,10 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   `f() is f(), [f()].count(f()), f() in [f()], len({f(), f()})`, compiled today `False 0 False 2`, RL-972; the limits). Then a pass mirroring CPython 3.15.2's `Python/flowgraph.c`:
   `fold_tuple_of_constants` (1529), `optimize_lists_and_sets` (1697), `fold_const_binop` and `fold_const_unaryop` (1946,
   2035) with their limits (`MAX_INT_SIZE` 128 bits, `MAX_COLLECTION_SIZE` 256, `MAX_STR_SIZE` 4096, `MAX_TOTAL_ITEMS`
-  1024), the folded value a module constant (`K_n`, `init_constants()`), with its `PassSpec`. What folding gets wrong is
+  1024, and `_PY_STACK_USE_GUIDELINE`, 30, above which `fold_constant_seq_into_load_const` still makes a literal tuple one
+  constant: a 35-item one is one, RL-978), the folded value a module constant (`K_n`, `init_constants()`) keyed as CPython's
+  `_PyCode_ConstantKey` keys it, by type and value, so equal constants of other types (1, 1.0, True; 0.0 and -0.0) stay
+  apart (RL-978), with its `PassSpec`. What folding gets wrong is
   identity only and stays under D-03, but for a NaN, where identity decides containment and the equality of containers,
   so a NaN the pass does not fold as CPython's compiler does is a defect by D-03's own rule (RL-972); an evaluation saves
   the tuple's allocation (measured).

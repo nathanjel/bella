@@ -1,0 +1,19 @@
+"""Question 68 (answered A; RL-974): a library's `is` against a sentinel of its own, given a program's equal literal:
+D-03's, registered. The compiled program interns every literal; CPython interns one of name characters, and folds
+`"SUPPRESS" + "USAGE"` into one (the folding pass is queued, RL-978)."""
+import argparse
+import optparse
+import sys
+
+row = sys.argv[1]
+if row == "argparse":                            # default equal to argparse.SUPPRESS, a literal of the program's own
+    parser = argparse.ArgumentParser(prog="p")
+    parser.add_argument("--x", default="==SUPPRESS==")
+    print(vars(parser.parse_args([])))
+elif row == "argparse_help":
+    parser = argparse.ArgumentParser(prog="p", add_help=False)
+    parser.add_argument("--y", help="==SUPPRESS==")
+    print(parser.format_help().strip())
+elif row == "optparse":
+    op = optparse.OptionParser(prog="p", usage="SUPPRESS" + "USAGE")
+    print(repr(op.get_usage()))

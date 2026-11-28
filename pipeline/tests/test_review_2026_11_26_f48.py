@@ -73,6 +73,8 @@ argument list a line), one row a process, compared on standard output, standard 
 * The `__firstlineno__` of the import system's classes is CPython's line (`classlines`, 2 rows, the 15 classes but the lock
   machinery's; RL-1092): `tools/bootstrap_frames.py` gives each class CPython's first line, which the front end stores; the
   other preludes' classes stand for C types and have none (`test_prelude_class_lines.py`, 273 classes).
+* A library's `is` against a sentinel of its own, given the program's equal literal (`sentinels`, 3 rows; Question 68: A,
+  registered under D-03): `argparse`'s `SUPPRESS` as a default and as a help, `optparse`'s `SUPPRESS_USAGE` folded.
 * The lock code's calls an import makes under CPython (`_thread.RLock`, `allocate_lock`, `get_ident`, `_weakref.ref`,
   `_imp.acquire_lock`, `release_lock`, each replaced by a counting wrapper), none compiled (`lockcalls`, 1 row; Question 63:
   A, registered under D-33).
@@ -221,6 +223,10 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
                                          "__dir__, keyword TypeError module.__dir__() takes no keyword arguments\n"
                                          "__format__, two TypeError object.__format__() takes exactly one argument (2 given)\n"
                                          "__reduce_ex__, two TypeError object.__reduce_ex__() takes exactly one argument (2 given)\n"),
+    # a library's `is` against its own sentinel, given a program's equal literal (Question 68: A; RL-974)
+    ("sentinels", ("argparse",)): ("D-03", "{}\n"),
+    ("sentinels", ("argparse_help",)): ("D-03", "usage: p\n"),
+    ("sentinels", ("optparse",)): ("D-03", "'Usage: SUPPRESSUSAGE\\n'\n"),
     # the lock code's calls, which an import that takes no locks does not make (Question 63: A; RL-1024)
     ("lockcalls", ("patch_all",)): ("D-33", "patch_all [] True\n"),
     # what one gc.collect() frees where the runtime's objects are not CPython's (Question 58: N; RL-1040, RL-1049, RL-1103)
