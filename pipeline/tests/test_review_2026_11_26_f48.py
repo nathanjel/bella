@@ -64,6 +64,10 @@ argument list a line), one row a process, compared on standard output, standard 
   program changed stops with E-04's words (Question 55); with the list put back, `None` (CPython's ImportError), or of a
   module already loaded, it agrees; an import with `sys.path` cleared or assigned empty stops, the program's directory
   being gone (Question 56).
+* What one `gc.collect()` frees where the runtime's objects are not CPython's (`gcmoment`, 6 rows; Question 58: N): a
+  class's `__mro__` tuple or namespace view that a finaliser reads first keeps the class to the next collection
+  (RL-1040), and `gc.garbage`'s objects (RL-1103) and order (RL-1049) under DEBUG_SAVEALL are the runtime's own, each
+  registered under D-04; the same reads made before, and the program's own objects of the collection, agree.
 * Writes to `sys.path` and the search an import makes after one (`syspath`, 13 rows; Question 56, C-8-23): the program's
   directory again, `''`, an entry that does not exist or that `sys.path_importer_cache` says has no finder, a namespace
   portion before a regular module, and a module no entry holds agree; a file the build did not compile, before or after
@@ -205,6 +209,12 @@ REGISTERED: dict[tuple[str, tuple[str, ...]], tuple[str, str]] = {
                                          "__dir__, keyword TypeError module.__dir__() takes no keyword arguments\n"
                                          "__format__, two TypeError object.__format__() takes exactly one argument (2 given)\n"
                                          "__reduce_ex__, two TypeError object.__reduce_ex__() takes exactly one argument (2 given)\n"),
+    # what one gc.collect() frees where the runtime's objects are not CPython's (Question 58: N; RL-1040, RL-1049, RL-1103)
+    ("gcmoment", ("mro_none",)): ("D-04", "mro_none dead after one: False after two: True [2]\n"),
+    ("gcmoment", ("dict_none",)): ("D-04", "dict_none dead after one: False after two: True [['me', 'x']]\n"),
+    ("gcmoment", ("saveall_order",)): ("D-04", "saveall_order ['module', 'dict']\nsaveall_order the program's own: ['module']\n"),
+    ("gcmoment", ("saveall_class",)): ("D-04", "saveall_class ['K', 'cell', 'dict', 'function', 'function', 'mappingproxy', 'tuple', "
+                                               "'type']\nsaveall_class the program's own: ['K', 'type']\n"),
     ("a45dir", ("descriptor",)): ("D-08", "method_descriptor __dir__ module.__dir__\nunbound True\nwrong raised TypeError descriptor "
                                           "'__dir__' for 'module' objects doesn't apply to a 'int' object\nargs raised TypeError "
                                           "module.__dir__() takes no arguments (1 given)\nkw raised TypeError module.__dir__() takes no "

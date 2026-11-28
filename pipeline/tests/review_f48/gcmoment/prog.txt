@@ -1,0 +1,71 @@
+"""Question 58 (answered N): what one gc.collect() frees where the runtime's objects are not CPython's, registered under
+D-04: a class's __mro__ tuple or namespace view a finaliser reads first keeps the class to a later collection (RL-1040);
+gc.garbage's objects (RL-1103) and order (RL-1049) under DEBUG_SAVEALL are the runtime's own. And the neighbours that agree:
+the same read made before, and the program's own objects of the collection."""
+import gc
+import sys
+import types
+import weakref
+
+row = sys.argv[1]
+log: list[object] = []
+
+
+class Reader:
+    def __del__(self) -> None:
+        log.append(sorted(n for n in type(self).__dict__ if not n.startswith("__")))
+
+
+def moment(shape: str) -> None:
+    if shape.startswith("mro"):
+        class K:
+            def __del__(self) -> None:
+                log.append(len(type(self).__mro__))
+        if shape == "mro_pre":
+            K.__mro__
+        made: type = K
+        del K
+    else:
+        class Slotted(Reader):                  # its __del__ inherited: the first read of its own namespace
+            __slots__ = ("x", "me")
+        if shape == "dict_pre":
+            Slotted.__dict__
+        made = Slotted
+        del Slotted
+    o = made()
+    o.me = o  # type: ignore[attr-defined]
+    r = weakref.ref(made)
+    del made, o
+    gc.collect()
+    one = r() is None
+    gc.collect()
+    print(shape, "dead after one:", one, "after two:", r() is None, log)
+
+
+def saveall(shape: str) -> None:
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    if shape == "saveall_order":
+        m = types.ModuleType("saved")
+        m.me = m  # type: ignore[attr-defined]
+        del m
+    else:
+        class K:
+            def __del__(self) -> None:
+                pass
+        K.__mro__
+        o = K()
+        o.me = o  # type: ignore[attr-defined]
+        del K, o
+    gc.collect()
+    gc.set_debug(0)
+    names = [type(x).__name__ for x in gc.garbage]
+    print(shape, names if shape == "saveall_order" else sorted(names))
+    print(shape, "the program's own:", sorted(n for n in names if n in ("module", "K", "type")))
+    gc.garbage.clear()
+
+
+gc.collect()
+if row.startswith(("mro", "dict")):
+    moment(row)
+else:
+    saveall(row)

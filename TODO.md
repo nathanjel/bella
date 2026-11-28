@@ -762,6 +762,10 @@ author has seen the measurement. In this order:
 * ~~**A str subclass with methods of its own as a name** (RL-1099, with RL-954 and RL-955).~~ Question 52, answered A on
   2026-11-27: an import by such a name stops (E-04, spec v0.47); RL-954 is excluded, and RL-955 is the import text's
   difference from CPython's, with Question 48 (below).
+* **Promises stronger than CPython's** (the author's rule of 2026-11-28, Question 58): read the spec for a guarantee
+  stronger than what CPython itself gives, in its documents and its behaviour (as "a complete collection" was: CPython
+  leaves what its finalisers make to a later one), and word each as what a program may rely on when run uncompiled;
+  exactness where CPython does a thing stays. Put the list to the author before changing words.
 * **Section 4's compile-time refusals** (RL-1102, 2026-11-28): what the compiler sees of E-02 to E-04 in the program's
   own text (`sys.set_lazy_imports(...)`, `sys.meta_path.insert(...)`, `importlib.reload(...)`, `sys._getframe()`) is to
   be a compile-time error with the id, as section 4 says; today only E-06's text is, and the rest stop at run time
