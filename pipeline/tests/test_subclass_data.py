@@ -43,7 +43,8 @@ STOPS = {
 # a registered deviation that shows in the sweep: without OpenSSL's _hashlib (D-20) hashlib.new looks its constructor up by
 # the name in a dict of hashlib.py's own, which hashes a str subclass; CPython's _hashlib.new reads the name's characters
 DEVIATES = {305: "D-20"}
-# the report's reduced programs: selection 11 is RL-668 (importlib's frames in a traceback), which is open
+# the report's reduced programs: selection 11 imports a module of its own the test does not write; what it showed, RL-668
+# (importlib's frames in a traceback), C-8-22 holds since 2026-11-25
 EXAMPLES_OPEN = {11}
 
 

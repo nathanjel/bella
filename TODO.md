@@ -672,7 +672,8 @@ means. Order matters: 1 constrains everything after it; 4 is where the next revi
   whether the preludes' walks should be loops or leaner native code; then revise the approach.
   Again with Question 42 (2026-11-24, B: other threads' stack is decided with `threading`, not 2 MiB): "later on we need
   to think about this more as this limit feels artificial and let's me thing that there is something off in the general
-  design". Measured that day: `json.dumps` of nested lists at the default limit reaches 990 levels under CPython in the
+  design". Measured that day (990 was the deepest tried, RL-1002: CPython 3.15.2's json reaches about 57,900 levels on 8 MiB
+  and 14,265 on 2 MiB, its guard a stack-pointer check; compiled 27,891 on 256 MiB): `json.dumps` of nested lists at the default limit reaches 990 levels under CPython in the
   main thread and in a thread; compiled, 990 on the 256 MiB stack, 800 on 8 MiB and 100 (200 fails) on 2 MiB. The
   threads milestone decides the threads' size from this analysis, not before it.
 
@@ -977,7 +978,8 @@ The review log has each with its reproduction (`docs/reviews/review-log.md`, RL-
   `a b subject`); with a case after it, or a guard, both sides agree. To do: `capture_plan` already has every POP_TOP with its
   place; name what each one pops (the keys, a copy of the subject, an item) and let the lowering clear that temporary where
   `store_order` puts the POP_TOP, and delete the subject where the last case's pattern consumes it.
-* **Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668). `importlib.import_module` of a module
+* ~~**Open from review A31** (2026-11-21, night): importlib's frames in a traceback (RL-668).~~ Done 2026-11-25 (Question 43: B,
+  C-8-22). `importlib.import_module` of a module
   that raises shows `_gcd_import`, `_find_and_load`, `_find_and_load_unlocked`, `_load_unlocked`, `exec_module` and
   `_call_with_frames_removed` under CPython, where they are Python frames and are removed only for the import statement and
   `__import__` (`remove_importlib_frames`); the runtime's `bootstrap.py` is a prelude, whose frames are never shown. A step of
