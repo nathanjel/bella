@@ -1,0 +1,12 @@
+{
+ "case": "C-8-25_the_lazy_imports_mode_read.py",
+ "clause": "C-8-25",
+ "spec": "section 8",
+ "status": "P1",
+ "source": "the author's decision of 2026-11-28 (Question 64): the lazy-imports mode a program reads (D-18)",
+ "recorded_with": "3.15.2",
+ "authoritative": true,
+ "stdout": "normal str None\n[1] normal None\nget_lazy_imports builtin_function_or_method TypeError\nget_lazy_imports_filter builtin_function_or_method TypeError\n",
+ "stderr": "",
+ "exit_code": 0
+}

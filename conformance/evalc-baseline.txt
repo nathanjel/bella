@@ -222,6 +222,7 @@ C-8-21_the_stack_a_program_is_given.py
 C-8-22_the_import_systems_frames.py
 C-8-23_sys_path_written.py
 C-8-24_a_programs_own_staged_texts.py
+C-8-25_the_lazy_imports_mode_read.py
 C-9-01_cyclic_disposal_order.py
 C-9-02_cyclic_resurrection.py
 C-9-03_refcount_disposal_order.py

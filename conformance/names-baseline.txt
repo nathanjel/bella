@@ -197,8 +197,6 @@ sys:deactivate_stack_trampoline
 sys:displayhook
 sys:get_asyncgen_hooks
 sys:get_coroutine_origin_tracking_depth
-sys:get_lazy_imports
-sys:get_lazy_imports_filter
 sys:getallocatedblocks
 sys:getdlopenflags
 sys:getprofile

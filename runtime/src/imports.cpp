@@ -1886,7 +1886,8 @@ void import_star(Obj v, Obj locals) {
 
 // ---- lazy imports (PEP 810; Objects/lazyimportobject.c and Python/import.c, 3.15.2) ----
 // With one thread and D-18's fixed mode: no filter (sys.set_lazy_imports_filter is X-4-02's), and
-// sys.lazy_modules, whose only effect is that a program can read it, is left out until sys has it.
+// sys.lazy_modules, whose only effect is that a program can read it, stops by name: it would hold the start's lazy
+// imports, which are not CPython's (D-30; Question 64)
 namespace {
 LazyImport* as_lazy(Obj v) { return static_cast<LazyImport*>(v.object()); }
 bool is_lazy(Obj v) { return is_kind(v, Kind::LazyImport); }

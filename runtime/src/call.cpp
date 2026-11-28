@@ -1320,6 +1320,16 @@ Ref sys_excepthook(Obj, Args a) {                 // sys_excepthook_impl: PyErr_
     print_traceback(value);
     return none_ref();
 }
+// sys.get_lazy_imports and get_lazy_imports_filter (Python/sysmodule.c): the mode D-18 fixes at "normal", and no filter,
+// which only sys.set_lazy_imports_filter sets (E-04): CPython's answers here (Question 64, RL-1093)
+Ref sys_get_lazy_imports(Obj, Args a) {
+    noargs(a, "sys.get_lazy_imports");
+    return Ref::share(Obj::of(intern("normal")));
+}
+Ref sys_get_lazy_imports_filter(Obj, Args a) {
+    noargs(a, "sys.get_lazy_imports_filter");
+    return none_ref();
+}
 Ref sys_getrecursionlimit(Obj, Args a) {
     noargs(a, "sys.getrecursionlimit");
     return int_from_i64(recursion_limit());
@@ -1775,6 +1785,8 @@ Module* make_sys(int argc, char** argv) {
     put_builtin(d, "_getframe", sys_getframe);
     put(d, "maxsize", int_from_i64(INT64_MAX).get());
     put_builtin(d, "getrecursionlimit", sys_getrecursionlimit);
+    put_builtin(d, "get_lazy_imports", sys_get_lazy_imports);
+    put_builtin(d, "get_lazy_imports_filter", sys_get_lazy_imports_filter);
     put_builtin(d, "setrecursionlimit", sys_setrecursionlimit);
     put_builtin(d, "getswitchinterval", sys_getswitchinterval);
     put_builtin(d, "setswitchinterval", sys_setswitchinterval);
@@ -1856,6 +1868,9 @@ struct AbsentByEntry { std::string_view key, why; };
 constexpr std::string_view MODULE_LOCKS = "a module lock: the import system takes none until the threads milestone, D-33";
 // the names of sys that E-04 names (review F48, RL-1102: they said "not yet", and X-4-02 failed compiled for it)
 constexpr std::string_view IMPORT_CUSTOMISATION = "import-system customisation: the closed world is resolved at build time, E-04";
+// sys.lazy_modules holds the lazy imports not resolved yet, CPython's start's among them (Question 64, RL-1093)
+constexpr std::string_view START_LAZY = "the lazy imports not resolved yet, among them those of the modules the start imports, which "
+                                        "are not CPython's: D-30";
 constexpr AbsentByEntry ABSENT_BY_ENTRY[] = {
     {"_frozen_importlib:_BlockingOnManager", MODULE_LOCKS}, {"_frozen_importlib:_DeadlockError", MODULE_LOCKS},
     {"_frozen_importlib:_DummyModuleLock", MODULE_LOCKS},   {"_frozen_importlib:_ImportLockContext", MODULE_LOCKS},
@@ -1864,6 +1879,7 @@ constexpr AbsentByEntry ABSENT_BY_ENTRY[] = {
     {"_frozen_importlib:_blocking_on", MODULE_LOCKS},       {"_frozen_importlib:_get_module_lock", MODULE_LOCKS},
     {"_frozen_importlib:_has_deadlocked", MODULE_LOCKS},    {"_frozen_importlib:_module_locks", MODULE_LOCKS},
     {"_frozen_importlib:_thread", MODULE_LOCKS},            {"_frozen_importlib:_weakref", MODULE_LOCKS},
+    {"sys:lazy_modules", START_LAZY},
     {"sys:path_hooks", IMPORT_CUSTOMISATION},               {"sys:set_lazy_imports", IMPORT_CUSTOMISATION},
     {"sys:set_lazy_imports_filter", IMPORT_CUSTOMISATION},
 };

@@ -360,8 +360,8 @@ imports it when read; `hasattr` and `getattr` with a default take `_Py_module_ge
 suppressing path (`optional_getattr`). A placeholder resolving itself raises `ImportCycleError`. A
 resolution error keeps its chain and names the declaration: an `ImportError` as its cause with
 a traceback entry, or, when it has a chain already, a note. No filter and no `lazy_imports` mode
-exist (D-18, E-04), and `sys.lazy_modules` is left out, since a program could only read it (refused
-by name); calling `__lazy_import__` outside module level is refused until `SyntaxError` exists.
+exist (D-18, E-04): `sys.get_lazy_imports()` is `"normal"` and `sys.get_lazy_imports_filter()` `None`,
+CPython's answers, and `sys.lazy_modules` stops by name, since it would hold the start's lazy imports (D-30); calling `__lazy_import__` outside module level is refused until `SyntaxError` exists.
 
 What follows from that, each as CPython: a module's namespace starts with `module_init_dict`'s five
 names, then `__path__`, `__file__`, `__builtins__` (the dict; `__main__`'s is the module); a module
